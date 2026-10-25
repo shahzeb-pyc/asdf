@@ -27,9 +27,9 @@
  * read washed out.
  *
  * No visual, no cards, no dashboard preview, no timeline: hierarchy
- * and whitespace only. The panel content is centred in the panel
- * (items-center + justify-center on the outer flex), not stretched
- * with a footer pinned to the bottom edge.
+ * and whitespace only. The panel content is centred by the layout
+ * wrapper (auth-split-layout.tsx), not stretched with a footer
+ * pinned to the bottom edge.
  *
  * The copy is the approved block of 2026-10-16 (spec 136 §3.1),
  * carried verbatim: the eyebrow, the two-line headline (this panel

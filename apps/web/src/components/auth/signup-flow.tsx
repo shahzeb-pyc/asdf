@@ -12,6 +12,15 @@
  * Preserved behaviours: direct entry at the OTP step, the OTP step
  * staying completable while signups are paused, and the layout
  * titles/descriptions per state.
+ *
+ * Paused back-navigation guard: when the server page renders this
+ * flow while paused (OTP step only — the details step is paused-card
+ * only on the server), BOTH back paths from the OTP step — the
+ * footer "Return to form" button and the OTP step's "Wrong email?
+ * Edit" button — land on the paused card, never on the details
+ * form. Without this, a paused user on the OTP step could reach
+ * the form and submit into a 403, the exact flash pattern the
+ * server-side gate exists to prevent.
  */
 
 import React, { useState } from 'react';
@@ -20,6 +29,7 @@ import Link from 'next/link';
 import { AuthSplitLayout } from '@/components/auth/auth-split-layout';
 import { SignupDetailsForm } from '@/components/auth/signup-details-form';
 import { SignupOtpStep } from '@/components/auth/signup-otp-step';
+import { SignupPausedCard } from '@/components/auth/signup-paused-card';
 import { getSignupLayoutMeta } from '@/app/signup/signup-layout-meta';
 
 export interface SignupFlowProps {
@@ -27,6 +37,13 @@ export interface SignupFlowProps {
   initialEmail?: string;
   initialReturnUrl?: string | undefined;
   initialSuccessNotice?: string | null;
+  /**
+   * True when the server page rendered this flow while signups are
+   * paused (OTP step only). The details step is never reachable
+   * while paused: any step change back to 'details' renders the
+   * paused card instead of the form.
+   */
+  initialIsPaused?: boolean;
 }
 
 export function SignupFlow({
@@ -34,6 +51,7 @@ export function SignupFlow({
   initialEmail = '',
   initialReturnUrl,
   initialSuccessNotice = null,
+  initialIsPaused = false,
 }: Readonly<SignupFlowProps>) {
   const [step, setStep] = useState<'details' | 'otp'>(initialStep);
   const [email, setEmail] = useState(initialEmail);
@@ -43,7 +61,10 @@ export function SignupFlow({
 
   // The paused gate lives in the server page; by the time this renders,
   // signups are either enabled or the user is on the OTP step.
-  const layoutMeta = getSignupLayoutMeta(false, step, email);
+  // The paused-details guard below is the client half of that gate:
+  // it only fires when the server already said paused.
+  const isPausedDetails = initialIsPaused && step === 'details';
+  const layoutMeta = getSignupLayoutMeta(isPausedDetails, step, email);
 
   const signInFooter = (
     <span className="text-metadata text-ink-sub">
@@ -78,6 +99,18 @@ export function SignupFlow({
           initialCooldown={otpCooldown}
           onBack={() => setStep('details')}
         />
+      </AuthSplitLayout>
+    );
+  }
+
+  if (isPausedDetails) {
+    return (
+      <AuthSplitLayout
+        title={layoutMeta.title}
+        description={layoutMeta.description}
+        footer={signInFooter}
+      >
+        <SignupPausedCard />
       </AuthSplitLayout>
     );
   }

@@ -16,9 +16,12 @@ vi.mock('next/navigation', () => ({
 }));
 
 describe('Auth Inline Error Highlighting & Edge Cases (Spec 016)', () => {
+  // login-fixes migration: SignupPage is now an async server component,
+  // so it is awaited before the synchronous static-markup render.
+  // Assertions are unchanged — only the rendering harness adapted.
   describe('SignupPage Inline Validation & Edge Cases', () => {
-    it('does not render PasswordStrengthMeter or strength bars anywhere in signup form', () => {
-      const { html, hasText } = render(<SignupPage />);
+    it('does not render PasswordStrengthMeter or strength bars anywhere in signup form', async () => {
+      const { html, hasText } = render(await SignupPage({}));
 
       // PasswordStrengthMeter elements must be absent
       expect(hasText('Password strength:')).toBe(false);
@@ -29,14 +32,14 @@ describe('Auth Inline Error Highlighting & Edge Cases (Spec 016)', () => {
       expect(html).not.toContain('fbu-password-meter');
     });
 
-    it('does not render top-level Alert error box on initial render', () => {
-      const { html } = render(<SignupPage />);
+    it('does not render top-level Alert error box on initial render', async () => {
+      const { html } = render(await SignupPage({}));
       expect(html).not.toContain('fbu-alert-error');
       expect(html).not.toContain("Couldn't create account");
     });
 
-    it('renders clean helper text without robotic jargon', () => {
-      const { hasText } = render(<SignupPage />);
+    it('renders clean helper text without robotic jargon', async () => {
+      const { hasText } = render(await SignupPage({}));
       expect(hasText('Include country code starting with + (e.g. +1... or +92...)')).toBe(true);
       expect(hasText('Only @gmail.com accounts are supported')).toBe(true);
       expect(hasText('Minimum 8 characters')).toBe(true);

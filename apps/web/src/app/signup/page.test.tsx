@@ -387,6 +387,49 @@ describe("signup paused gate — server-side (§4.2.4)", () => {
     expect(await screen.findByLabelText("6-Digit Verification Code")).toBeTruthy();
     expect(screen.queryByText("New registrations are currently closed")).toBeNull();
   });
+
+  it("paused OTP step: Return to form lands on the paused card, never the details form", async () => {
+    const user = userEvent.setup();
+    render(
+      <SignupFlow initialStep="otp" initialEmail={VALID.email} initialIsPaused />
+    );
+    expect(await screen.findByLabelText("6-Digit Verification Code")).toBeTruthy();
+    await user.click(
+      screen.getByRole("button", { name: "Need to change your details? Return to form" })
+    );
+    expect(screen.getByRole("heading", { name: "Registration Paused" })).toBeTruthy();
+    expect(screen.getByText("New registrations are currently closed")).toBeTruthy();
+    expect(screen.queryByLabelText("Full Name")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Create Account" })).toBeNull();
+  });
+
+  it("paused OTP step: Wrong email? Edit lands on the paused card, never the details form", async () => {
+    const user = userEvent.setup();
+    render(
+      <SignupFlow initialStep="otp" initialEmail={VALID.email} initialIsPaused />
+    );
+    expect(await screen.findByLabelText("6-Digit Verification Code")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Wrong email? Edit" }));
+    expect(screen.getByRole("heading", { name: "Registration Paused" })).toBeTruthy();
+    expect(screen.getByText("New registrations are currently closed")).toBeTruthy();
+    expect(screen.queryByLabelText("Full Name")).toBeNull();
+  });
+
+  it("paused OTP step via the server page: Return to form lands on the paused card", async () => {
+    const user = userEvent.setup();
+    process.env.NEXT_PUBLIC_SIGNUPS_ENABLED = "false";
+    render(
+      await SignupPage({
+        searchParams: Promise.resolve({ step: "otp", email: VALID.email }),
+      })
+    );
+    expect(await screen.findByLabelText("6-Digit Verification Code")).toBeTruthy();
+    await user.click(
+      screen.getByRole("button", { name: "Need to change your details? Return to form" })
+    );
+    expect(screen.getByRole("heading", { name: "Registration Paused" })).toBeTruthy();
+    expect(screen.queryByLabelText("Full Name")).toBeNull();
+  });
 });
 
 describe("validateSignupDetails (schema-backed parity helper)", () => {

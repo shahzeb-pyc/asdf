@@ -136,12 +136,17 @@ export default async function SignupPage({
     );
   }
 
+  // When paused, the flow only ever renders for the OTP step (the
+  // details branch above already returned the paused card). Pass
+  // the paused state in so a back-navigation from the OTP step
+  // lands on the paused card, never on the details form.
   return (
     <SignupFlow
       initialStep={initial.step ?? 'details'}
       initialEmail={initial.email ?? ''}
       initialReturnUrl={initial.returnUrl}
       initialSuccessNotice={initial.successNotice ?? null}
+      initialIsPaused={!isSignupEnabled()}
     />
   );
 }
