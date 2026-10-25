@@ -1,18 +1,19 @@
 'use client';
 
 /**
- * Platform credentials — local status mark (2026-10-25 redesign).
+ * Platform credentials tabs — local status mark (2026-10-25 redesign).
  *
- * Per Shahzeb's standing rule, a redesigned tab NEVER uses a dot for
- * status: connected is a tick in a green circle, not connected is a
- * cross in a red circle. This mark is deliberately LOCAL to the
- * redesigned platform tabs — the shared `StatusDot` primitive is
+ * Per Shahzeb's standing rule, these tabs NEVER use a dot for status:
+ * connected is a tick in a green circle, not connected is a cross in a
+ * red circle. This mark is deliberately LOCAL to the platform settings
+ * tabs (Instagram, Threads) — the shared `StatusDot` primitive is
  * untouched, so every other surface that uses it keeps its existing
  * presentation. Colours come from the design-system signal tokens, so
  * the mark works in light and dark themes; the icon colour is the
  * neutral white used for icons on coloured fills elsewhere in the app.
  * The container renders this mark only for tabs that opt into the
- * two-column variant; classic tabs keep `StatusDot` unchanged.
+ * two-column or single-column variants; classic tabs keep `StatusDot`
+ * unchanged. Mirrors the Facebook tab's local status mark.
  */
 
 import * as React from 'react';

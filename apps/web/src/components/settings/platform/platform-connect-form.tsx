@@ -100,13 +100,6 @@ export interface PlatformConnectFormProps {
   onCancelEdit: () => void;
   /** The platform's setup guide, shown above the "Add them here" step. */
   children?: React.ReactNode;
-  /**
-   * Hide the numbered step badge on "Add them here" (2026-10-25
-   * redesign). Tabs whose guide was removed have no steps 1–4, so a
-   * lone "5" badge would be orphaned; those tabs hide it and the
-   * heading stands on its own. Classic tabs keep the badge.
-   */
-  showStepBadge?: boolean;
 }
 
 const LABEL_CLASS_NAME =
@@ -122,9 +115,8 @@ export function PlatformConnectForm({
   onConnect,
   onCancelEdit,
   children,
-  showStepBadge = true,
 }: Readonly<PlatformConnectFormProps>) {
-  const { displayName, appIdLabel, appSecretLabel, testIdPrefix, appIdHelper, formStepNumber } =
+  const { displayName, appIdLabel, appSecretLabel, testIdPrefix, appIdHelper } =
     config;
   const appIdFieldId = `${testIdPrefix}-app-id-input`;
   const appSecretFieldId = `${testIdPrefix}-app-secret-input`;
@@ -179,14 +171,7 @@ export function PlatformConnectForm({
 
       <div className="flex flex-col gap-4">
         <div className="flex items-center gap-2">
-          {showStepBadge && (
-            <span
-              aria-hidden="true"
-              className="flex size-6 shrink-0 items-center justify-center rounded-full border border-line bg-canvas text-metadata font-semibold text-ink-sub"
-            >
-              {formStepNumber}
-            </span>
-          )}
+
           <h3 className="text-body font-semibold text-ink">Add them here</h3>
         </div>
 
@@ -198,7 +183,7 @@ export function PlatformConnectForm({
               void form.handleSubmit(handleValidSubmit)(event);
             }}
             className={
-              showStepBadge ? 'flex flex-col gap-4 pl-8 max-sm:pl-0' : 'flex flex-col gap-4'
+              'flex flex-col gap-4'
             }
           >
             <FormErrorSummary errors={summaryEntries} />

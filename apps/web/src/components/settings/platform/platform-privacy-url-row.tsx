@@ -1,15 +1,17 @@
 'use client';
 
 /**
- * Platform credentials — Privacy Policy URL row (2026-10-25 redesign).
+ * Platform credentials tabs — Privacy Policy URL row (2026-10-25).
  *
  * Shown in a redesigned tab's panel in BOTH connected and not-connected
  * states: Meta needs this URL regardless of connection state, so the
  * user can paste it into the Privacy Policy URL field of their Meta
  * app. Copy follows the same 2-second feedback pattern as the Copy App
  * ID and Copy callback buttons elsewhere in these tabs. The URL itself
- * is built by the caller from the workspace subdomain plus the root
- * domain — never hard-coded to one workspace.
+ * is built from the workspace subdomain plus the root domain (by the
+ * caller in the two-column variant, by the container via
+ * `buildPrivacyPolicyUrl` in the single-column variant) — never
+ * hard-coded to one workspace.
  */
 
 import * as React from 'react';
