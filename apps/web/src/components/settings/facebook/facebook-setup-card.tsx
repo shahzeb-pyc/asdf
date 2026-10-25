@@ -56,7 +56,7 @@ export function FacebookSetupCard() {
     <section
       data-testid="fb-one-more-step-card"
       aria-labelledby="fb-one-more-step-heading"
-      className="flex flex-col gap-4 rounded-md border border-line bg-panel p-6 shadow-card"
+      className="flex flex-col gap-4"
     >
       <div>
         <h3 id="fb-one-more-step-heading" className="text-lg font-semibold text-ink">

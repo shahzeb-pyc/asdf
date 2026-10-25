@@ -83,6 +83,11 @@ describe('SettingsShell', () => {
     for (const id of ['youtube', 'x', 'tiktok']) {
       expect(screen.queryByTestId(`settings-tab-${id}`)).toBeNull();
     }
+    // The Facebook tab is labelled "Facebook App"; its id/testid stay
+    // "facebook" so ?tab=facebook and the byoc alias keep working.
+    expect(screen.getByTestId('settings-tab-facebook').textContent).toBe(
+      'Facebook App'
+    );
     expect(screen.getByTestId('settings-tab-general').getAttribute('aria-selected')).toBe(
       'true'
     );

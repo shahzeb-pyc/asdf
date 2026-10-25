@@ -51,7 +51,9 @@ import { queryKeys } from '@/lib/data/query-keys';
 import { Banner } from '@/components/shared/ui/banner';
 import { Button } from '@/components/shared/ui/button';
 import { Skeleton } from '@/components/shared/ui/skeleton';
-import { StatusDot } from '@/components/shared/ui/status-dot';
+import { FacebookStatusMark } from './facebook-status-mark';
+import { FacebookPrivacyUrlRow } from './facebook-privacy-url-row';
+import { getWorkspacePrivacyUrl } from './facebook-privacy-url';
 import { toast } from '@/components/shared/ui/toast';
 
 import {
@@ -216,8 +218,21 @@ export function FacebookSettingsView({ subdomain }: Readonly<FacebookSettingsVie
   const hasSavedCredentials = Boolean(credentials.fbAppId && credentials.hasSecret);
   const isConnectedState = hasSavedCredentials && !isEditMode;
 
+  // The left column mirrors the approved two-column layout of the
+  // General tab: section title + description + status. The status mark
+  // reflects the saved credentials, not the edit mode — while editing,
+  // the app is still connected (mockup screen 3), even though the form
+  // is showing. The description follows the mockup per state: edit
+  // mode gets its own line; every other state keeps the §5.2 sentences
+  // verbatim.
+  const leftDescription = isEditMode
+    ? 'Edit your saved Facebook app details.'
+    : isConnectedState
+      ? 'Your Facebook app is linked and publishing is ready to go.'
+      : 'Link your Facebook app to start publishing from this workspace.';
+
   return (
-    <div className="flex w-full max-w-3xl flex-col gap-6">
+    <div className="flex w-full max-w-4xl flex-col gap-6">
       {showReconnectNotice && (
         <Banner
           variant="warning"
@@ -226,60 +241,63 @@ export function FacebookSettingsView({ subdomain }: Readonly<FacebookSettingsVie
         />
       )}
 
-      <section
-        data-testid="facebook-settings-card"
-        aria-labelledby="facebook-settings-heading"
-        className="flex flex-col gap-6 rounded-md border border-line bg-panel p-6 shadow-card"
-      >
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h2 id="facebook-settings-heading" className="text-lg font-semibold text-ink">
-              Connect Facebook
-            </h2>
-            <p className="mt-1 text-body text-ink-sub">
-              {isConnectedState
-                ? 'Your Facebook app is linked and publishing is ready to go.'
-                : 'Link your Facebook app to start publishing from this workspace.'}
-            </p>
-          </div>
-          <div data-testid="facebook-status-badge" className="shrink-0">
-            <StatusDot
-              status={isConnectedState ? 'operational' : 'idle'}
-              label={isConnectedState ? 'Connected' : 'Not connected'}
-            />
+      <div className="grid w-full gap-7 md:grid-cols-[220px_minmax(0,1fr)]">
+        <div>
+          <h2 id="facebook-settings-heading" className="text-lg font-semibold text-ink">
+            Facebook App
+          </h2>
+          <p className="mt-1 text-body text-ink-sub">{leftDescription}</p>
+          <div data-testid="facebook-status-badge" className="mt-3">
+            <FacebookStatusMark connected={hasSavedCredentials} />
           </div>
         </div>
 
-        {isConnectedState ? (
-          <FacebookConnectedView
-            fbAppId={credentials.fbAppId}
-            connectedAt={credentials.connectedAt}
-            onRevealSecret={handleRevealSecret}
-            onEditDetails={() => {
-              setServerError(null);
-              setIsEditMode(true);
-            }}
-            onDisconnectClick={() => setDisconnectOpen(true)}
-          />
-        ) : (
-          <FacebookConnectForm
-            key={isEditMode ? 'edit' : 'connect'}
-            initialAppId={credentials.fbAppId}
-            hasExistingSecret={credentials.hasSecret}
-            isEditMode={isEditMode}
-            isConnecting={connectMutation.isPending}
-            serverError={serverError}
-            onConnect={handleConnect}
-            onCancelEdit={() => {
-              setServerError(null);
-              setIsEditMode(false);
-            }}
-          />
-        )}
-      </section>
+        <section
+          data-testid="facebook-settings-card"
+          aria-labelledby="facebook-settings-heading"
+          className="flex flex-col gap-6 rounded-md border border-line bg-panel p-6 shadow-card"
+        >
+          {isConnectedState ? (
+            <FacebookConnectedView
+              fbAppId={credentials.fbAppId}
+              connectedAt={credentials.connectedAt}
+              onRevealSecret={handleRevealSecret}
+              onEditDetails={() => {
+                setServerError(null);
+                setIsEditMode(true);
+              }}
+              onDisconnectClick={() => setDisconnectOpen(true)}
+            />
+          ) : (
+            <FacebookConnectForm
+              key={isEditMode ? 'edit' : 'connect'}
+              initialAppId={credentials.fbAppId}
+              hasExistingSecret={credentials.hasSecret}
+              isEditMode={isEditMode}
+              isConnecting={connectMutation.isPending}
+              serverError={serverError}
+              onConnect={handleConnect}
+              onCancelEdit={() => {
+                setServerError(null);
+                setIsEditMode(false);
+              }}
+            />
+          )}
 
-      {/* "One more step" — add/edit only, never in the connected state (§5.2). */}
-      {(!hasSavedCredentials || isEditMode) && <FacebookSetupCard />}
+          {/* Privacy Policy URL — both states: Facebook needs this
+              address regardless of connection state. */}
+          <FacebookPrivacyUrlRow privacyUrl={getWorkspacePrivacyUrl(subdomain)} />
+
+          {/* "One more step" — folded into this panel as a step below
+              the main content, add/edit only, never in the connected
+              state (§5.2). It is no longer a separate floating card. */}
+          {(!hasSavedCredentials || isEditMode) && (
+            <div className="border-t border-line pt-6">
+              <FacebookSetupCard />
+            </div>
+          )}
+        </section>
+      </div>
 
       <FacebookDisconnectDialog
         open={disconnectOpen}

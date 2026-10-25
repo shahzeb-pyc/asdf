@@ -147,7 +147,7 @@ test.describe('settings — BYOC save/test flow (spec 135 §9)', () => {
     // Not-connected form with the guide and the "One more step" card.
     await expect(page.getByTestId('fb-connect-btn')).toBeVisible();
     await expect(
-      page.getByRole('heading', { name: 'Connect Facebook' })
+      page.getByRole('heading', { name: 'Facebook App' })
     ).toBeVisible();
     await expect(page.getByTestId('fb-one-more-step-card')).toBeVisible();
 

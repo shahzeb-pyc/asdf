@@ -294,11 +294,17 @@ describe('FacebookSettingsView — not connected', () => {
   it('renders the §5.2 header, status, and guided 2-step form verbatim', async () => {
     renderView(NOT_CONNECTED);
 
-    expect(screen.getByRole('heading', { name: 'Connect Facebook' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Facebook App' })).toBeTruthy();
     expect(screen.getByTestId('facebook-settings-card')).toBeTruthy();
     expect(screen.getByTestId('facebook-status-badge').textContent).toContain(
       'Not connected'
     );
+    // The redesign's status mark is a tick/cross in a coloured circle —
+    // never the shared StatusDot's dot.
+    expect(
+      screen.getByTestId('facebook-status-mark').getAttribute('data-status')
+    ).toBe('not-connected');
+    expect(document.querySelector('[data-slot="status-dot"]')).toBeNull();
     expect(
       screen.getByText('Link your Facebook app to start publishing from this workspace.')
     ).toBeTruthy();
@@ -330,6 +336,11 @@ describe('FacebookSettingsView — not connected', () => {
     expect(
       screen.getByText('We check everything works the moment you connect.')
     ).toBeTruthy();
+
+    // Privacy Policy URL row: workspace-subdomain address, both states.
+    expect(screen.getByTestId('fb-privacy-url').textContent).toBe(
+      'https://acme.fbuploadpro.com/privacy'
+    );
   });
 
   it('renders the "One more step" card with the sign-in address from the callback helper', async () => {
@@ -495,11 +506,19 @@ describe('FacebookSettingsView — connected state', () => {
 
     expect(screen.getByTestId('facebook-status-badge').textContent).toContain('Connected');
     expect(
+      screen.getByTestId('facebook-status-mark').getAttribute('data-status')
+    ).toBe('connected');
+    expect(document.querySelector('[data-slot="status-dot"]')).toBeNull();
+    expect(
       screen.getByText('Your Facebook app is linked and publishing is ready to go.')
     ).toBeTruthy();
 
     expect(screen.getByTestId('fb-saved-app-id').textContent).toBe(SAVED_APP_ID);
     expect(screen.getByTestId('fb-copy-app-id-btn').textContent).toBe('Copy App ID');
+    // Privacy Policy URL row is present in the connected state too.
+    expect(screen.getByTestId('fb-privacy-url').textContent).toBe(
+      'https://acme.fbuploadpro.com/privacy'
+    );
 
     expect(screen.getByTestId('fb-saved-app-secret').textContent).toBe('•'.repeat(24));
     expect(screen.getByTestId('fb-state2-secret-toggle').textContent).toBe('Show');
@@ -574,6 +593,16 @@ describe('FacebookSettingsView — edit mode', () => {
 
     expect(screen.getByText('Get your app details')).toBeTruthy();
     expect(screen.getByText('Add them here')).toBeTruthy();
+    // While editing, the app is still connected: tick, not a cross.
+    expect(
+      screen.getByTestId('facebook-status-mark').getAttribute('data-status')
+    ).toBe('connected');
+    // "One more step" is folded into the same panel, not a separate card.
+    expect(
+      screen
+        .getByTestId('fb-one-more-step-card')
+        .closest('[data-testid="facebook-settings-card"]')
+    ).toBeTruthy();
     expect((screen.getByTestId('fb-app-id-input') as HTMLInputElement).value).toBe(
       SAVED_APP_ID
     );
