@@ -218,14 +218,15 @@ export function FacebookSettingsView({ subdomain }: Readonly<FacebookSettingsVie
   const hasSavedCredentials = Boolean(credentials.fbAppId && credentials.hasSecret);
   const isConnectedState = hasSavedCredentials && !isEditMode;
 
-  // The left column mirrors the approved two-column layout of the
-  // General tab: section title + description + status. The status mark
-  // reflects the saved credentials, not the edit mode — while editing,
-  // the app is still connected (mockup screen 3), even though the form
-  // is showing. The description follows the mockup per state: edit
-  // mode gets its own line; every other state keeps the §5.2 sentences
-  // verbatim.
-  const leftDescription = isEditMode
+  // Single-column layout (2026-10-25 correction to the two-column
+  // redesign): heading + description + status stacked on TOP, panels
+  // below at full content width — no left column with cards on the
+  // right at any width. The status mark reflects the saved
+  // credentials, not the edit mode — while editing, the app is still
+  // connected (mockup screen 3), even though the form is showing. The
+  // description follows the mockup per state: edit mode gets its own
+  // line; every other state keeps the §5.2 sentences verbatim.
+  const headerDescription = isEditMode
     ? 'Edit your saved Facebook app details.'
     : isConnectedState
       ? 'Your Facebook app is linked and publishing is ready to go.'
@@ -241,63 +242,62 @@ export function FacebookSettingsView({ subdomain }: Readonly<FacebookSettingsVie
         />
       )}
 
-      <div className="grid w-full gap-7 md:grid-cols-[220px_minmax(0,1fr)]">
-        <div>
-          <h2 id="facebook-settings-heading" className="text-lg font-semibold text-ink">
-            Facebook App
-          </h2>
-          <p className="mt-1 text-body text-ink-sub">{leftDescription}</p>
-          <div data-testid="facebook-status-badge" className="mt-3">
-            <FacebookStatusMark connected={hasSavedCredentials} />
-          </div>
+      <div>
+        <h2 id="facebook-settings-heading" className="text-lg font-semibold text-ink">
+          Facebook App
+        </h2>
+        <p className="mt-1 text-body text-ink-sub">{headerDescription}</p>
+        <div data-testid="facebook-status-badge" className="mt-3">
+          <FacebookStatusMark connected={hasSavedCredentials} />
         </div>
-
-        <section
-          data-testid="facebook-settings-card"
-          aria-labelledby="facebook-settings-heading"
-          className="flex flex-col gap-6 rounded-md border border-line bg-panel p-6 shadow-card"
-        >
-          {isConnectedState ? (
-            <FacebookConnectedView
-              fbAppId={credentials.fbAppId}
-              connectedAt={credentials.connectedAt}
-              onRevealSecret={handleRevealSecret}
-              onEditDetails={() => {
-                setServerError(null);
-                setIsEditMode(true);
-              }}
-              onDisconnectClick={() => setDisconnectOpen(true)}
-            />
-          ) : (
-            <FacebookConnectForm
-              key={isEditMode ? 'edit' : 'connect'}
-              initialAppId={credentials.fbAppId}
-              hasExistingSecret={credentials.hasSecret}
-              isEditMode={isEditMode}
-              isConnecting={connectMutation.isPending}
-              serverError={serverError}
-              onConnect={handleConnect}
-              onCancelEdit={() => {
-                setServerError(null);
-                setIsEditMode(false);
-              }}
-            />
-          )}
-
-          {/* Privacy Policy URL — both states: Facebook needs this
-              address regardless of connection state. */}
-          <FacebookPrivacyUrlRow privacyUrl={getWorkspacePrivacyUrl(subdomain)} />
-
-          {/* "One more step" — folded into this panel as a step below
-              the main content, add/edit only, never in the connected
-              state (§5.2). It is no longer a separate floating card. */}
-          {(!hasSavedCredentials || isEditMode) && (
-            <div className="border-t border-line pt-6">
-              <FacebookSetupCard />
-            </div>
-          )}
-        </section>
       </div>
+
+      <section
+        data-testid="facebook-settings-card"
+        aria-labelledby="facebook-settings-heading"
+        className="flex flex-col gap-6 rounded-md border border-line bg-panel p-6 shadow-card"
+      >
+        {isConnectedState ? (
+          <FacebookConnectedView
+            fbAppId={credentials.fbAppId}
+            connectedAt={credentials.connectedAt}
+            onRevealSecret={handleRevealSecret}
+            onEditDetails={() => {
+              setServerError(null);
+              setIsEditMode(true);
+            }}
+            onDisconnectClick={() => setDisconnectOpen(true)}
+          />
+        ) : (
+          <FacebookConnectForm
+            key={isEditMode ? 'edit' : 'connect'}
+            initialAppId={credentials.fbAppId}
+            hasExistingSecret={credentials.hasSecret}
+            isEditMode={isEditMode}
+            isConnecting={connectMutation.isPending}
+            serverError={serverError}
+            onConnect={handleConnect}
+            onCancelEdit={() => {
+              setServerError(null);
+              setIsEditMode(false);
+            }}
+          />
+        )}
+      </section>
+
+      {/* "One more step" — its own panel below the main panel,
+          add/edit only, never in the connected state (§5.2). */}
+      {(!hasSavedCredentials || isEditMode) && (
+        <section className="flex flex-col gap-6 rounded-md border border-line bg-panel p-6 shadow-card">
+          <FacebookSetupCard />
+        </section>
+      )}
+
+      {/* Privacy Policy URL — its own panel, both states: Facebook
+          needs this address regardless of connection state. */}
+      <section className="flex flex-col gap-6 rounded-md border border-line bg-panel p-6 shadow-card">
+        <FacebookPrivacyUrlRow privacyUrl={getWorkspacePrivacyUrl(subdomain)} />
+      </section>
 
       <FacebookDisconnectDialog
         open={disconnectOpen}
