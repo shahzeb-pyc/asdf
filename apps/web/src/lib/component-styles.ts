@@ -34,7 +34,7 @@ import {
 export const COMPONENT_STYLES = {
   /**
    * Primary Action Button Preset (Gold fill, bold black text, inset highlight)
-   * WCAG AAA 14.86:1 contrast ratio.
+   * WCAG AAA 14.71:1 contrast ratio (Binance gold on black).
    */
   get primaryButton() {
     return {

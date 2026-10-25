@@ -94,7 +94,7 @@ describe("error boundaries", () => {
     expect(html).toContain("Something went wrong");
     expect(html).toContain("Try again");
     // Self-contained fallback styling carries the Binance gold token value.
-    expect(html).toContain("#fad734");
+    expect(html).toContain("#fcd535");
     expect(typeof reset).toBe("function");
   });
 

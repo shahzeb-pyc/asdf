@@ -104,7 +104,7 @@ AI agents and software engineers operating in this workspace MUST follow this no
 
 ### E. Primary Action Buttons
 * ❌ **FORBIDDEN**: Multiple solid yellow/gold buttons on the same view, or yellow buttons with low-contrast white text.
-* ✅ **MANDATED**: Exactly ONE primary button per screen or major action surface, pairing Gold (`#fad734`) with bold Pitch Black (`#000000`) text for 14.86:1 WCAG AAA contrast, using `COMPONENT_STYLES.primaryButton`.
+* ✅ **MANDATED**: Exactly ONE primary button per screen or major action surface, pairing Gold (`#fcd535`) with bold Pitch Black (`#000000`) text for 14.71:1 WCAG AAA contrast, using `COMPONENT_STYLES.primaryButton`.
 
 ---
 
