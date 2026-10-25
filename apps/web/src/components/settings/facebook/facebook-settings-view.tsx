@@ -53,7 +53,7 @@ import { Button } from '@/components/shared/ui/button';
 import { Skeleton } from '@/components/shared/ui/skeleton';
 import { FacebookStatusMark } from './facebook-status-mark';
 import { FacebookPrivacyUrlRow } from './facebook-privacy-url-row';
-import { getWorkspacePrivacyUrl } from './facebook-privacy-url';
+import { buildPrivacyPolicyUrl } from '@/lib/privacy-url';
 import { toast } from '@/components/shared/ui/toast';
 
 import {
@@ -296,7 +296,7 @@ export function FacebookSettingsView({ subdomain }: Readonly<FacebookSettingsVie
       {/* Privacy Policy URL — its own panel, both states: Facebook
           needs this address regardless of connection state. */}
       <section className="flex flex-col gap-6 rounded-md border border-line bg-panel p-6 shadow-card">
-        <FacebookPrivacyUrlRow privacyUrl={getWorkspacePrivacyUrl(subdomain)} />
+        <FacebookPrivacyUrlRow privacyUrl={buildPrivacyPolicyUrl(subdomain)} />
       </section>
 
       <FacebookDisconnectDialog
