@@ -144,7 +144,7 @@ test.describe('signup → OTP', () => {
     await otp.fill('123');
     await page.getByRole('button', { name: 'Verify & Activate Account' }).click();
     await expect(page.locator('#signup-otp-code-message')).toHaveText(
-      'Please enter the complete 6-digit verification code.'
+      'Enter the full 6-digit code.'
     );
     expect(verifyRequests).toBe(0);
   });

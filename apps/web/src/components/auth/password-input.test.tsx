@@ -29,12 +29,12 @@ describe("PasswordInput (shared auth password control)", () => {
       <PasswordInput
         label="Confirm Password"
         helperText="Minimum 8 characters"
-        error="Passwords do not match. Please verify both password fields."
+        error="Passwords do not match. Enter the same password in both fields."
       />
     );
     expect(screen.getByText("Minimum 8 characters")).toBeTruthy();
     const alert = screen.getByRole("alert");
-    expect(alert.textContent).toBe("Passwords do not match. Please verify both password fields.");
+    expect(alert.textContent).toBe("Passwords do not match. Enter the same password in both fields.");
     expect(screen.getByLabelText("Confirm Password").getAttribute("aria-invalid")).toBe("true");
   });
 

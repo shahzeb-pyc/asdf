@@ -98,7 +98,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         success: true,
-        message: 'A fresh 6-digit verification code has been dispatched to your email.',
+        message: 'A new 6-digit code has been sent to your email.',
       },
       { status: 200 }
     );

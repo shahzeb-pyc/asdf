@@ -256,7 +256,7 @@ export function SignupDetailsForm({
                 />
               </FormControl>
               <FormDescription>
-                Include country code starting with + (e.g. +1... or +92...)
+                Include your country code, e.g. +1 or +92.
               </FormDescription>
               <FormMessage />
             </FormItem>
@@ -283,7 +283,7 @@ export function SignupDetailsForm({
                   }}
                 />
               </FormControl>
-              <FormDescription>Only @gmail.com accounts are supported</FormDescription>
+              <FormDescription>Only @gmail.com (or @googlemail.com) accounts are supported.</FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -366,7 +366,7 @@ export function SignupDetailsForm({
             : {})}
           className="mt-1 w-full"
         >
-          {cooldown > 0 ? `Please wait (${cooldown}s)` : 'Create Account'}
+          {cooldown > 0 ? `Please wait ${cooldown}s` : 'Create Account'}
         </Button>
 
         <p className="mt-1 text-center text-metadata leading-body text-ink-sub">

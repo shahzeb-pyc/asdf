@@ -68,11 +68,11 @@ describe("login form (form standard reference conversion)", () => {
     render(<LoginPage />);
     expect(screen.getByRole("heading", { name: "Sign In" })).toBeTruthy();
     expect(
-      screen.getByText("Welcome back! Sign in to keep your content flowing across every platform.")
+      screen.getByText("Welcome back. Sign in to your workspace.")
     ).toBeTruthy();
     expect(screen.getByLabelText("Email Address")).toBeTruthy();
     expect(screen.getByLabelText("Password", { exact: true })).toBeTruthy();
-    expect(screen.getByText("Only @gmail.com accounts are supported")).toBeTruthy();
+    expect(screen.getByText("Only @gmail.com (or @googlemail.com) accounts are supported.")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Forgot password?" }).getAttribute("href")).toBe(
       "/forgot-password"
     );
@@ -88,9 +88,11 @@ describe("login form (form standard reference conversion)", () => {
     await user.type(email, "owner@example.com");
     await user.click(screen.getByLabelText("Password", { exact: true }));
 
+    // Helper + inline error now share one wording (copy unification):
+    // both render, so two matches are correct; aria-invalid proves the error.
     expect(
-      await screen.findByText("Only @gmail.com (or @googlemail.com) accounts are supported.")
-    ).toBeTruthy();
+      await screen.findAllByText("Only @gmail.com (or @googlemail.com) accounts are supported.")
+    ).toHaveLength(2);
     expect(email.getAttribute("aria-invalid")).toBe("true");
     expect(document.querySelector('[data-slot="form-error-summary"]')).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
@@ -101,12 +103,10 @@ describe("login form (form standard reference conversion)", () => {
     render(<LoginPage />);
     await fillAndSubmit(user, "owner@example.com", "some-password-1");
 
-    expect(
-      await screen.findByText("Only @gmail.com (or @googlemail.com) accounts are supported.")
-    ).toBeTruthy();
+    // Helper + inline error share one wording now: 2 matches, still no summary box.
     expect(
       screen.getAllByText("Only @gmail.com (or @googlemail.com) accounts are supported.")
-    ).toHaveLength(1);
+    ).toHaveLength(2);
     expect(document.querySelector('[data-slot="form-error-summary"]')).toBeNull();
     expect((screen.getByLabelText("Email Address") as HTMLInputElement).value).toBe(
       "owner@example.com"

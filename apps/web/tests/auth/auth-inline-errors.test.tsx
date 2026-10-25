@@ -40,8 +40,8 @@ describe('Auth Inline Error Highlighting & Edge Cases (Spec 016)', () => {
 
     it('renders clean helper text without robotic jargon', async () => {
       const { hasText } = render(await SignupPage({}));
-      expect(hasText('Include country code starting with + (e.g. +1... or +92...)')).toBe(true);
-      expect(hasText('Only @gmail.com accounts are supported')).toBe(true);
+      expect(hasText('Include your country code, e.g. +1 or +92.')).toBe(true);
+      expect(hasText('Only @gmail.com (or @googlemail.com) accounts are supported.')).toBe(true);
       expect(hasText('Minimum 8 characters')).toBe(true);
     });
   });
@@ -100,11 +100,11 @@ describe('Auth Inline Error Highlighting & Edge Cases (Spec 016)', () => {
       // message — the legacy `has-error` class / hex assertions belonged
       // to the legacy Input it replaced.
       const { html, hasText, hasAttribute } = render(
-        <PasswordInput label="Confirm Password" error="Passwords do not match. Please verify both password fields." />
+        <PasswordInput label="Confirm Password" error="Passwords do not match. Enter the same password in both fields." />
       );
 
       expect(hasText('Confirm Password')).toBe(true);
-      expect(hasText('Passwords do not match. Please verify both password fields.')).toBe(true);
+      expect(hasText('Passwords do not match. Enter the same password in both fields.')).toBe(true);
       expect(hasAttribute('aria-invalid', 'true')).toBe(true);
       expect(html).toContain('role="alert"');
       expect(html).toContain('text-brand-rose');

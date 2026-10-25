@@ -64,7 +64,7 @@ const FEATURES: readonly FeatureItem[] = [
   {
     icon: <ClockIcon className="mt-0.5 size-5.5 shrink-0 text-primary" aria-hidden="true" />,
     title: 'Post from anywhere',
-    desc: 'Schedule from your phone or laptop — your posts publish from the cloud.',
+    desc: 'Schedule from your phone or laptop; publishing runs in the cloud.',
   },
   {
     icon: <LayoutGridIcon className="mt-0.5 size-5.5 shrink-0 text-primary" aria-hidden="true" />,
@@ -74,7 +74,7 @@ const FEATURES: readonly FeatureItem[] = [
   {
     icon: <LockIcon className="mt-0.5 size-5.5 shrink-0 text-primary" aria-hidden="true" />,
     title: 'Your accounts stay yours',
-    desc: 'You sign in through each platform directly — your passwords never leave them.',
+    desc: 'You sign in on each platform itself, so we never see your passwords.',
   },
 ] as const;
 
@@ -113,7 +113,7 @@ export function AuthShowcasePanel() {
         {/* Subhead */}
         <p className="mb-9 text-lg leading-body text-ink-sub">
           Schedule reels and posts across Facebook, Instagram, TikTok, YouTube, Threads, and X —
-          they go live while you sleep, even when your laptop is closed.
+          they publish on time, even when your device is off.
         </p>
 
         {/* Feature list — three rows, spacing alone separates them:
@@ -135,7 +135,7 @@ export function AuthShowcasePanel() {
 
         {/* Trust line — a quiet line under the content, not a bordered footer. */}
         <p className="mt-9 text-metadata text-ink-dim">
-          Official platform logins · Encrypted end-to-end
+          Sign in on the platforms themselves · Your data is encrypted
         </p>
       </div>
     </div>

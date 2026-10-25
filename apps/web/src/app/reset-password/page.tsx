@@ -34,8 +34,8 @@ export default function ResetPasswordPage() {
 
   return (
     <AuthSplitLayout
-      title="Password Recovery"
-      description="Password recovery is now managed securely with a 6-digit verification code."
+      title="Reset password"
+      description="Password reset uses a 6-digit code sent to your email."
       footer={
         <span className="text-metadata text-ink-sub">
           Back to{' '}
@@ -48,15 +48,14 @@ export default function ResetPasswordPage() {
       <div className="flex flex-col gap-6">
         <Alert>
           <div className="flex flex-col gap-1">
-            <AlertTitle>Redirecting to Password Recovery</AlertTitle>
+            <AlertTitle>Redirecting to Reset password</AlertTitle>
             <AlertDescription>
-              Password recovery is now handled directly using a 6-digit code. Redirecting you to
-              the recovery page...
+              Taking you to the reset page…
             </AlertDescription>
           </div>
         </Alert>
         <Button asChild size="lg" className="w-full">
-          <Link href="/forgot-password">Go to Password Recovery</Link>
+          <Link href="/forgot-password">Go to Reset password</Link>
         </Button>
       </div>
     </AuthSplitLayout>

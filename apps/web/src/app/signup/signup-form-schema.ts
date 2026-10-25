@@ -15,7 +15,7 @@ export const signupFormSchema = z
       .string()
       .trim()
       .min(1, 'Full name is required.')
-      .max(100, 'Full name cannot exceed 100 characters.'),
+      .max(100, 'Full name must be 100 characters or fewer.'),
     phone: z.string().superRefine((value, ctx) => {
       const result = validateClientPhoneNumber(value);
       if (!result.isValid) {
@@ -40,7 +40,7 @@ export const signupFormSchema = z
     confirmPassword: z.string().min(1, 'Please confirm your password.'),
   })
   .refine((values) => values.password === values.confirmPassword, {
-    message: 'Passwords do not match. Please verify both password fields.',
+    message: 'Passwords do not match. Enter the same password in both fields.',
     path: ['confirmPassword'],
   });
 
@@ -56,7 +56,7 @@ export const signupOtpFormSchema = z.object({
     .string()
     .refine(
       (value) => /^\d{6}$/.test(value),
-      'Please enter the complete 6-digit verification code.'
+      'Enter the full 6-digit code.'
     ),
 });
 

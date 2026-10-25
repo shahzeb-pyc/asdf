@@ -45,8 +45,8 @@ describe('Password Recovery - Reset Password (US2)', () => {
     it('renders redirection guidance to /forgot-password with recovery button', () => {
       const { hasText, html } = render(<ResetPasswordPage />);
 
-      expect(hasText('Redirecting to Password Recovery')).toBe(true);
-      expect(hasText('Go to Password Recovery')).toBe(true);
+      expect(hasText('Redirecting to Reset password')).toBe(true);
+      expect(hasText('Go to Reset password')).toBe(true);
       expect(html).toContain('href="/forgot-password"');
       expect(html).toContain('href="/login"');
     });

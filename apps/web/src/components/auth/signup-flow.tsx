@@ -16,7 +16,7 @@
  * Paused back-navigation guard: when the server page renders this
  * flow while paused (OTP step only — the details step is paused-card
  * only on the server), BOTH back paths from the OTP step — the
- * footer "Return to form" button and the OTP step's "Wrong email?
+ * footer "Edit your details" button and the OTP step's "Wrong email?
  * Edit" button — land on the paused card, never on the details
  * form. Without this, a paused user on the OTP step could reach
  * the form and submit into a 403, the exact flash pattern the
@@ -89,7 +89,7 @@ export function SignupFlow({
             onClick={() => setStep('details')}
             className="inline-flex min-h-11 items-center px-3 py-2.5 text-metadata text-ink-sub underline"
           >
-            Need to change your details? Return to form
+            Need to change your details? Edit your details
           </button>
         }
       >
