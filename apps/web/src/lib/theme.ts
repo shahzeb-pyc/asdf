@@ -13,15 +13,15 @@
 
 export const PALETTE = {
   /** Dominant brand keystone — primary buttons, active moments (14.86:1 AAA on black) */
-  primary: '#fad734',
+  primary: '#fcd535',
   /** Secondary highlight — links, callouts, active underline tabs */
-  accent1: '#b29527',
+  accent1: '#f0b90b',
   /** Deep bronze — tertiary highlight, active tab borders, deep pressed states */
   accent2: '#766018',
   /** Rose / Danger — negative status, error states, sell indicator, critical alerts */
   accent3: '#f6465d',
   /** Emerald / Success — positive status, operational states, buy indicator, success */
-  accent4: '#2ebd85',
+  accent4: '#0ecb81',
   /** Pitch Black — base canvas surface in dark mode */
   background: '#000000',
   /** Pure White — readable foreground typography in dark mode (21.0:1 AAA on black) */
@@ -96,15 +96,15 @@ export const TYPOGRAPHY = {
 
 export const STATUS_SIGNALS = {
   operational: {
-    color: '#2ebd85',
-    dot: '#2ebd85',
-    halo: '0 0 8px rgba(46, 189, 133, 0.50)',
+    color: '#0ecb81',
+    dot: '#0ecb81',
+    halo: '0 0 8px rgba(14, 203, 129, 0.50)',
     label: 'Operational',
   },
   queued: {
-    color: '#fad734',
-    dot: '#fad734',
-    halo: '0 0 8px rgba(250, 215, 52, 0.50)',
+    color: '#fcd535',
+    dot: '#fcd535',
+    halo: '0 0 8px rgba(252, 213, 53, 0.50)',
     label: 'Queued',
   },
   critical: {
@@ -114,7 +114,7 @@ export const STATUS_SIGNALS = {
     label: 'Critical',
   },
   idle: {
-    color: '#6b7280',
+    color: '#707a8a',
     dot: '#474d57',
     dotLight: '#848e9c',
     halo: '0 0 4px rgba(71, 77, 87, 0.40)',
@@ -161,23 +161,23 @@ export interface ThemeTokens {
 export const DARK_THEME: ThemeTokens = {
   mode: 'dark',
   surfaces: {
-    canvas: '#000000',
-    panel: '#0c0d10',
-    subtle: '#121419',
-    hover: '#1f242d',
-    active: '#262c37',
+    canvas: '#0b0e11',
+    panel: '#1e2329',
+    subtle: '#14181d',
+    hover: '#252b33',
+    active: '#2b3139',
   },
   borders: {
-    hairline: '#1f242d',
-    strong: '#2b323c',
-    focus: 'rgba(250, 215, 52, 0.35)',
+    hairline: '#2b3139',
+    strong: '#474d57',
+    focus: 'rgba(252, 213, 53, 0.35)',
   },
   text: {
-    primary: '#ffffff',
-    secondary: '#9ca3af',
-    muted: '#6b7280',
-    onPrimary: '#000000',
-    link: '#b29527',
+    primary: '#eaecef',
+    secondary: '#929aa5',
+    muted: '#707a8a',
+    onPrimary: '#181a20',
+    link: '#fcd535',
   },
   shadows: {
     card: '0 2px 8px rgba(0, 0, 0, 0.60)',
@@ -193,23 +193,23 @@ export const DARK_THEME: ThemeTokens = {
 export const LIGHT_THEME: ThemeTokens = {
   mode: 'light',
   surfaces: {
-    canvas: '#f6f8fa',
+    canvas: '#ffffff',
     panel: '#ffffff',
-    subtle: '#f1f3f5',
-    hover: '#eaecef',
-    active: '#e2e8f0',
+    subtle: '#fafafa',
+    hover: '#f5f5f5',
+    active: '#eaecef',
   },
   borders: {
     hairline: '#eaecef',
-    strong: '#cbd5e1',
-    focus: 'rgba(250, 215, 52, 0.35)',
+    strong: '#cdd1d6',
+    focus: 'rgba(252, 213, 53, 0.35)',
   },
   text: {
-    primary: '#000000',
-    secondary: '#474d57',
-    muted: '#848e9c',
-    onPrimary: '#000000',
-    link: '#b29527',
+    primary: '#181a20',
+    secondary: '#707a8a',
+    muted: '#929aa5',
+    onPrimary: '#181a20',
+    link: '#766018',
   },
   shadows: {
     card: '0 1px 3px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.02)',

@@ -271,7 +271,7 @@
   }
 
   /* Focus-visible baseline (UI Rule 17): 2px outline + 2px offset, ≥3:1 in
-     both modes (gold on dark = 14.86:1; bronze on light = ~5.9:1).
+     both modes (gold on dark ≈13.6:1 on the Binance canvas; bronze on light ≈6.1:1).
      Component focus treatments live in the components layer and override
      this baseline. */
   :focus-visible {

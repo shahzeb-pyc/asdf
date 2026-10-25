@@ -1,16 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" fill="none">
   <!-- SQUIRCLE BRAND CONTAINER (--surface-panel: #0c0d10, --border-hairline: #2b323c): High-contrast backing for Light & Dark browser tabs -->
-  <rect width="64" height="64" rx="14" fill="#0c0d10"/>
-  <rect x="0.75" y="0.75" width="62.5" height="62.5" rx="13.25" stroke="#2b323c" stroke-width="1.5"/>
+  <rect width="64" height="64" rx="14" fill="#0b0e11"/>
+  <rect x="0.75" y="0.75" width="62.5" height="62.5" rx="13.25" stroke="#2b3139" stroke-width="1.5"/>
 
-  <!-- PRIMARY GOLD (--color-primary: #fad734): Unified Ascending Upload Arrow + "F" Crown & Spine -->
-  <path d="M24 11L12 23L17 28L20 25V51L28 45V23H45L53 15H28L24 11Z" fill="#fad734"/>
+  <!-- PRIMARY GOLD (--color-primary: #fcd535): Unified Ascending Upload Arrow + "F" Crown & Spine -->
+  <path d="M24 11L12 23L17 28L20 25V51L28 45V23H45L53 15H28L24 11Z" fill="#fcd535"/>
 
   <!-- PURE WHITE SPECULAR EDGE (--color-text: #ffffff @ 0.35 opacity per DESIGN.md Section 7.1) -->
   <path d="M24 11L12 23L13.2 24.2L24 13.4L28 17.4H50.6L53 15H28L24 11Z" fill="#ffffff" fill-opacity="0.35"/>
 
-  <!-- PERU ACCENT 1 (--color-accent-1: #b29527): Middle "F" Crossbar & Active Stream Wing -->
-  <path d="M32 30H48L40 38H32V30Z" fill="#b29527"/>
+  <!-- PERU ACCENT 1 (--color-accent-1: #f0b90b): Middle "F" Crossbar & Active Stream Wing -->
+  <path d="M32 30H48L40 38H32V30Z" fill="#f0b90b"/>
 
   <!-- BRONZE ACCENT 2 (--color-accent-2: #766018): Recurring Queue Slot Anchor -->
   <path d="M32 43H41L35 49H32V43Z" fill="#766018"/>

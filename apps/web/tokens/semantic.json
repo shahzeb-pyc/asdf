@@ -1,5 +1,5 @@
 {
-  "$description": "Semantic design tokens \u2014 mode-specific aliases over primitives (spec 129 \u00a75.2). Components consume semantic tokens ONLY; semantic tokens alias primitives; primitives are never referenced from component code. Dark is the default mode (OD-1: both themes kept, both generated from this single source).",
+  "$description": "Semantic design tokens — mode-specific aliases over primitives (spec 129 §5.2). Components consume semantic tokens ONLY; semantic tokens alias primitives; primitives are never referenced from component code. Dark is the default mode (OD-1: both themes kept, both generated from this single source).",
   "semantic": {
     "dark": {
       "border": {
@@ -9,7 +9,7 @@
         },
         "hairline": {
           "$type": "color",
-          "$value": "{color.neutral.slate}"
+          "$value": "{color.border.darkHairline}"
         },
         "strong": {
           "$type": "color",
@@ -79,11 +79,11 @@
         },
         "canvas": {
           "$type": "color",
-          "$value": "{color.neutral.black}"
+          "$value": "{color.surface.darkCanvas}"
         },
         "hover": {
           "$type": "color",
-          "$value": "{color.neutral.slate}"
+          "$value": "{color.surface.darkHover}"
         },
         "panel": {
           "$type": "color",
@@ -97,7 +97,7 @@
       "text": {
         "link": {
           "$type": "color",
-          "$value": "{color.brand.peru}"
+          "$value": "{color.brand.gold}"
         },
         "muted": {
           "$type": "color",
@@ -105,11 +105,11 @@
         },
         "onPrimary": {
           "$type": "color",
-          "$value": "{color.neutral.black}"
+          "$value": "{color.text.lightPrimary}"
         },
         "primary": {
           "$type": "color",
-          "$value": "{color.neutral.white}"
+          "$value": "{color.text.darkPrimary}"
         },
         "secondary": {
           "$type": "color",
@@ -125,7 +125,7 @@
         },
         "hairline": {
           "$type": "color",
-          "$value": "{color.surface.lightHover}"
+          "$value": "{color.border.lightHairline}"
         },
         "strong": {
           "$type": "color",
@@ -213,23 +213,23 @@
       "text": {
         "link": {
           "$type": "color",
-          "$value": "{color.brand.peru}"
+          "$value": "{color.brand.bronze}"
         },
         "muted": {
           "$type": "color",
-          "$value": "{color.gray.mutedLight}"
+          "$value": "{color.gray.400}"
         },
         "onPrimary": {
           "$type": "color",
-          "$value": "{color.neutral.black}"
+          "$value": "{color.text.lightPrimary}"
         },
         "primary": {
           "$type": "color",
-          "$value": "{color.neutral.black}"
+          "$value": "{color.text.lightPrimary}"
         },
         "secondary": {
           "$type": "color",
-          "$value": "{color.gray.slateText}"
+          "$value": "{color.gray.500}"
         }
       }
     }
