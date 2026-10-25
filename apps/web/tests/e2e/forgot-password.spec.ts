@@ -109,7 +109,7 @@ test.describe('forgot → reset', () => {
     ).toBeVisible();
   });
 
-  test('empty step-1 submit shows the Gmail error in summary + inline and makes no request', async ({
+  test('empty step-1 submit shows the Gmail error inline and makes no request', async ({
     page,
   }) => {
     let requests = 0;
@@ -121,10 +121,9 @@ test.describe('forgot → reset', () => {
     await page.goto('/forgot-password');
     await page.getByRole('button', { name: 'Send Verification Code' }).click();
 
-    const summary = page.locator('[data-slot="form-error-summary"]');
-    await expect(summary).toBeVisible();
-    await expect(summary).toContainText('Please enter a valid Gmail address.');
-    await expect(summary).toBeFocused();
+    // PR #5 removed the FormErrorSummary box from auth pages: the error
+    // renders inline only, and no summary box exists at all.
+    await expect(page.locator('[data-slot="form-error-summary"]')).toHaveCount(0);
     await expect(page.locator('#forgot-email-message')).toHaveText(
       'Please enter a valid Gmail address.'
     );
