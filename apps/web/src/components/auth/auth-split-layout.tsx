@@ -50,7 +50,7 @@ export function AuthSplitLayout({
     <section
       aria-label="FBUploadPro Showcase"
       className={cn(
-        'relative hidden w-1/2 overflow-hidden border-line bg-canvas lg:block',
+        'relative hidden w-9/20 overflow-hidden border-line bg-canvas lg:block',
         isFormLeft ? 'border-l' : 'border-r'
       )}
     >
@@ -65,7 +65,7 @@ export function AuthSplitLayout({
   );
 
   const formNode = (
-    <main className="flex min-h-screen w-full items-center justify-center bg-canvas px-4 py-8 lg:w-1/2 lg:px-6">
+    <main className="flex min-h-screen w-full items-center justify-center bg-canvas px-4 py-8 lg:w-11/20 lg:px-6">
       <div className="flex w-full max-w-md flex-col">
         {/* Mobile brand header (rendered when the showcase is hidden). */}
         <div className="mb-6 flex items-center justify-center gap-2.5 lg:hidden">
