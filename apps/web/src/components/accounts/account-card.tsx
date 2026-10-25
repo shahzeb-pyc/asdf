@@ -4,8 +4,9 @@
  * Account card (spec 131 PR-131-1) — rebuilt on the design system:
  * token-backed Tailwind utilities only (zero inline styles), avatars
  * on `next/image` (the file's 2 raw img elements are deleted), and status
- * as colour + icon + text via the shared/ui `StatusDot` (spec §6.4.1 /
- * OD-3) fed by the single account-health model in `account-health.ts`
+ * as icon + text via the local `AccountHealthMark` below (no status dot:
+ * connected is the tick, expired/error is the cross, expiring-soon is
+ * the clock) fed by the single account-health model in `account-health.ts`
  * (logic carried over untouched). Layout, copy, testids, and the
  * hover/disconnect/reconnect behaviours are preserved from the
  * previous implementation (spec §6 parity).
@@ -13,9 +14,8 @@
 import * as React from 'react';
 import Image from 'next/image';
 import { useRouter, useParams } from 'next/navigation';
-import { ExternalLinkIcon, TriangleAlertIcon } from 'lucide-react';
+import { CheckIcon, CircleIcon, ClockIcon, ExternalLinkIcon, TriangleAlertIcon, XIcon } from 'lucide-react';
 
-import { StatusDot } from '@/components/shared/ui/status-dot';
 import { Button } from '@/components/shared/ui/button';
 import { getUserInitials } from '@/lib/user-initials';
 import { cn } from '@/lib/utils';
@@ -72,6 +72,46 @@ const RING_CLASSES = {
   critical: 'border-signal-critical',
   idle: 'border-signal-idle',
 } as const;
+
+/**
+ * Account-card status mark — icon + text only, deliberately NOT the
+ * shared `StatusDot` (which renders a coloured dot before its icon).
+ * The card's tick already says "connected" and its cross says
+ * "expired/error", so the dot is redundant here. Other `StatusDot`
+ * consumers are untouched by this local mark.
+ * `idle` is unreachable from the card's health model (connected maps to
+ * operational, expired/error to critical, expiring-soon to queued) and
+ * keeps the shared component's circle icon only for exhaustiveness.
+ */
+const HEALTH_MARK_META = {
+  operational: { Icon: CheckIcon, iconName: 'check', textClass: 'text-signal-operational' },
+  queued: { Icon: ClockIcon, iconName: 'clock', textClass: 'text-signal-queued' },
+  critical: { Icon: XIcon, iconName: 'cross', textClass: 'text-signal-critical' },
+  idle: { Icon: CircleIcon, iconName: 'circle', textClass: 'text-signal-idle' },
+} as const;
+
+function AccountHealthMark({
+  status,
+  label,
+}: Readonly<{
+  status: keyof typeof HEALTH_MARK_META;
+  label: string;
+}>) {
+  const meta = HEALTH_MARK_META[status];
+  const { Icon } = meta;
+  return (
+    <span
+      data-testid="account-health-mark"
+      data-status={status}
+      role="status"
+      aria-label={label}
+      className={cn('inline-flex items-center gap-1.5 text-metadata font-medium', meta.textClass)}
+    >
+      <Icon aria-hidden data-icon={meta.iconName} className="size-3.5 shrink-0" />
+      <span>{label}</span>
+    </span>
+  );
+}
 
 function LinkedPageRow({ page }: Readonly<{ page: FacebookAccountLinkedPageItem }>) {
   const [failedUrl, setFailedUrl] = React.useState<string | null>(null);
@@ -294,11 +334,7 @@ export function AccountCard({
 
           <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
             <span data-testid="account-health-label" className="inline-flex">
-              <StatusDot
-                data-testid="account-health-dot"
-                status={statusSignal}
-                label={statusLabel}
-              />
+              <AccountHealthMark status={statusSignal} label={statusLabel} />
             </span>
             <span data-testid="account-connected-date" className="text-metadata text-ink-dim">
               · Connected {formattedDate}
