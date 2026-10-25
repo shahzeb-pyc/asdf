@@ -59,7 +59,6 @@ import {
   type AccountStatusFilter,
 } from '@/components/accounts/accounts-helpers';
 import { ConnectAccountModal } from '@/components/accounts/connect-account-modal';
-import { SocialAccountsList } from '@/components/accounts/social-accounts-list';
 import { DisconnectAccountDialog } from '@/components/accounts/disconnect-account-dialog';
 
 export interface AccountsShellProps {
@@ -415,9 +414,6 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
       {!byocStatus.isLoading && !byocStatus.isConfigured && !byocStatus.error && (
         <ByocRequiredBanner subdomain={subdomain} />
       )}
-
-      {/* Unified cross-platform accounts list (Spec 123) */}
-      <SocialAccountsList subdomain={subdomain} />
 
       {/* Search & Status Filter Bar */}
       {!isLoading && accounts.length > 0 && (
