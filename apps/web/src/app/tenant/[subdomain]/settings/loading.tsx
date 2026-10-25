@@ -1,7 +1,7 @@
 /**
  * Settings loading (spec 137 §3.3.3 / PR-A2; geometry aligned to the
  * rebuilt shell in spec 135 PR-135-1) — heading, horizontal tab rail
- * (7 tabs at the shell's final geometry), and the active panel below,
+ * (4 tabs at the shell's final geometry), and the active panel below,
  * matching `settings-shell.tsx` so the loaded shell replaces this
  * skeleton without layout shift.
  */

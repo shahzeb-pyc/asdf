@@ -2,21 +2,19 @@
  * Settings route — server component (spec 135 PR-135-1, spec §6.2).
  *
  * Server-first pattern (spec 137 §3.2.4): the active tab is resolved
- * from `searchParams` here on the server (the 7 ids + the legacy
- * `byoc` → `facebook` alias + default `general`, spec §5.6), the
+ * from `searchParams` here on the server (the 4 ids + the legacy
+ * `byoc` → `facebook` alias + default `general`, spec §5.6 as amended
+ * 2026-10-25 — youtube/x/tiktok now resolve to `general`), the
  * active tab's initial data plus the workspace list are fetched in
  * parallel, and the result is dehydrated into the React Query cache
  * the client island (`SettingsShell`) reads from — zero fetch-on-mount
  * for initial data, zero raw fetch in the subtree.
  *
- * The per-tab server-data contract is wired generically for all 7
- * tabs, keyed by the existing `queryKeys` factory, so the tab PRs
- * that follow (135-2/3/4) replace view components without touching
- * this route again:
+ * The per-tab server-data contract is wired generically for all 4
+ * tabs, keyed by the existing `queryKeys` factory:
  *   general          → workspace list only
  *   facebook / `byoc` → workspace list + `queryKeys.settings.byoc`
  *   instagram/threads → workspace list + `queryKeys.settings.platformCredentials(platform)`
- *   youtube/x/tiktok → workspace list only (explanation tabs hold no data)
  *
  * Data source: preference (2) of spec 137 §3.2.4 — the cookie-forwarding
  * server variant of the typed API client (`serverApiFetch`) against the

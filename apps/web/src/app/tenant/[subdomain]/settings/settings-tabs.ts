@@ -11,28 +11,24 @@
  * route down in the production build; the shell re-exports these so
  * its existing importers are unchanged.
  *
- * Deep-link contract (spec 135 §5.6, preserved verbatim): the 7 tab
+ * Deep-link contract (spec 135 §5.6, as amended 2026-10-25): the 4 tab
  * ids, the legacy `byoc` value resolving to `facebook`, a
- * missing/unknown value landing on `general`.
+ * missing/unknown value landing on `general`. YouTube, X, and TikTok
+ * were removed from the Settings tab row, so their ids now land on
+ * `general` like any unknown value.
  */
 
 export type SettingsTab =
   | 'general'
   | 'facebook'
   | 'instagram'
-  | 'threads'
-  | 'youtube'
-  | 'x'
-  | 'tiktok';
+  | 'threads';
 
 export const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTab; label: string }> = [
   { id: 'general', label: 'General' },
   { id: 'facebook', label: 'Facebook' },
   { id: 'instagram', label: 'Instagram' },
   { id: 'threads', label: 'Threads' },
-  { id: 'youtube', label: 'YouTube' },
-  { id: 'x', label: 'X' },
-  { id: 'tiktok', label: 'TikTok' },
 ];
 
 const SETTINGS_TAB_IDS: readonly string[] = SETTINGS_TABS.map((tab) => tab.id);

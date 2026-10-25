@@ -17,12 +17,12 @@
  * secret — Show drives the reveal endpoint (stubbed below) and only
  * then does the value reach the screen.
  *
- * The YouTube/X/TikTok explanation-tab portions were migrated to
- * behavioural tests in spec 135 PR-135-4, completing this file's
- * migration: every tab is now rendered into jsdom and asserted on
- * its rendered output (no static harness remains in this file). The
- * page-level tab cases live in tests/ui/settings-shell.test.tsx
- * (PR-135-1). The plain-language (no-jargon) lint covers every tab.
+ * The page-level tab cases live in tests/ui/settings-shell.test.tsx
+ * (PR-135-1). The plain-language (no-jargon) lint covers every
+ * remaining tab. The YouTube/X/TikTok explanation tabs were removed
+ * from Settings on 2026-10-25 (their views and this file's cases
+ * for them were deleted with them); connecting still happens in
+ * Accounts, which is what those cards pointed to.
  */
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -32,18 +32,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { InstagramSettingsView } from '@/components/settings/instagram-settings-view';
 import { ThreadsSettingsView } from '@/components/settings/threads-settings-view';
-import {
-  YouTubeSettingsView,
-  YOUTUBE_CONNECT_INFO_CONFIG,
-} from '@/components/settings/youtube-settings-view';
-import {
-  XSettingsView,
-  X_CONNECT_INFO_CONFIG,
-} from '@/components/settings/x-settings-view';
-import {
-  TikTokSettingsView,
-  TIKTOK_CONNECT_INFO_CONFIG,
-} from '@/components/settings/tiktok-settings-view';
 import { createPlatformConnectFormSchema } from '@/components/settings/platform/platform-connect-form';
 import { formatPlatformConnectedDate } from '@/components/settings/platform/platform-credentials-helpers';
 import {
@@ -888,84 +876,6 @@ describe('Threads guide (§5.4 verbatim)', () => {
   });
 });
 
-describe('Spec 123 Part B: YouTube, X and TikTok explanation tabs (§5.5, PR-135-4)', () => {
-  const cases = [
-    {
-      name: 'YouTube',
-      view: YouTubeSettingsView,
-      card: 'youtube-connect-info-card',
-      link: 'youtube-accounts-link',
-      paragraphs: [
-        'You connect your YouTube channel through our publishing partner, so there is nothing to set up or paste here.',
-        'When you are ready, go to Accounts and choose Connect. You will choose your channel and approve the connection there, and then you can schedule and publish videos from here as normal.',
-      ],
-    },
-    {
-      name: 'X',
-      view: XSettingsView,
-      card: 'x-connect-info-card',
-      link: 'x-accounts-link',
-      paragraphs: [
-        'You simply sign in with X and approve the connection. There are no keys to create or paste here.',
-        'When you are ready, go to Accounts and choose Connect. X will ask you to confirm that you want to connect your account, and when you are done you will be back in your Accounts list.',
-      ],
-    },
-    {
-      name: 'TikTok',
-      view: TikTokSettingsView,
-      card: 'tiktok-connect-info-card',
-      link: 'tiktok-accounts-link',
-      paragraphs: [
-        'You connect your TikTok account through our publishing partner, so there is nothing to set up or paste here.',
-        'When you are ready, go to Accounts and choose Connect. You will sign in with TikTok and approve the connection there, and then you can schedule and publish videos from here as normal.',
-      ],
-    },
-  ] as const;
-
-  for (const c of cases) {
-    it(`${c.name} tab renders both paragraphs verbatim, has no form controls, and links to Accounts`, () => {
-      const View = c.view;
-      const { container } = render(<View subdomain="acme" />);
-
-      expect(
-        screen.getByRole('heading', { name: `Connect ${c.name}` })
-      ).toBeTruthy();
-      expect(screen.getByTestId(c.card)).toBeTruthy();
-      for (const paragraph of c.paragraphs) {
-        expect(screen.getByText(paragraph)).toBeTruthy();
-      }
-
-      // Explanation-only (spec 123 D1/D3/D4): no form, no input, no
-      // paste field of any kind is rendered on these tabs.
-      expect(
-        container.querySelectorAll('form, input, textarea, select')
-      ).toHaveLength(0);
-
-      const link = screen.getByTestId(c.link);
-      expect(link.tagName).toBe('A');
-      expect(link.textContent).toBe('Go to Accounts');
-      expect(link.getAttribute('href')).toBe('/tenant/acme/accounts');
-    });
-  }
-
-  it('X tab copy is byte-identical to the shipped strings (OD-135-3a)', () => {
-    expect(X_CONNECT_INFO_CONFIG.platform).toBe('x');
-    expect(X_CONNECT_INFO_CONFIG.displayName).toBe('X');
-    expect([...X_CONNECT_INFO_CONFIG.paragraphs]).toEqual([
-      'You simply sign in with X and approve the connection. There are no keys to create or paste here.',
-      'When you are ready, go to Accounts and choose Connect. X will ask you to confirm that you want to connect your account, and when you are done you will be back in your Accounts list.',
-    ]);
-    expect([...YOUTUBE_CONNECT_INFO_CONFIG.paragraphs]).toEqual([
-      'You connect your YouTube channel through our publishing partner, so there is nothing to set up or paste here.',
-      'When you are ready, go to Accounts and choose Connect. You will choose your channel and approve the connection there, and then you can schedule and publish videos from here as normal.',
-    ]);
-    expect([...TIKTOK_CONNECT_INFO_CONFIG.paragraphs]).toEqual([
-      'You connect your TikTok account through our publishing partner, so there is nothing to set up or paste here.',
-      'When you are ready, go to Accounts and choose Connect. You will sign in with TikTok and approve the connection there, and then you can schedule and publish videos from here as normal.',
-    ]);
-  });
-});
-
 describe('Spec 123 Part B: shared callback addresses', () => {
   it('builds the three addresses on the given origin', () => {
     expect(getPlatformCallbackUrls('threads', 'https://app.example.com')).toEqual({
@@ -1007,7 +917,7 @@ function stripToVisibleText(html: string): string {
     .toLowerCase();
 }
 
-describe('plain-language lint over user-facing copy (§5.3/§5.4/§5.5)', () => {
+describe('plain-language lint over user-facing copy (§5.3/§5.4)', () => {
   const BANNED = ['oauth', 'scope', 'endpoint', 'api key', 'token'];
 
   it('no banned terms appear in any tab copy', () => {
@@ -1022,16 +932,6 @@ describe('plain-language lint over user-facing copy (§5.3/§5.4/§5.5)', () => 
       cleanup();
       void notConnected;
     }
-
-    render(<YouTubeSettingsView subdomain="acme" />);
-    htmls.push(document.body.innerHTML);
-    cleanup();
-    render(<XSettingsView subdomain="acme" />);
-    htmls.push(document.body.innerHTML);
-    cleanup();
-    render(<TikTokSettingsView subdomain="acme" />);
-    htmls.push(document.body.innerHTML);
-    cleanup();
 
     for (const html of htmls) {
       const text = stripToVisibleText(html);

@@ -10,7 +10,7 @@
  * active tab kept in sync with `?tab=` in both directions via
  * `router.replace` (no history spam), and the per-tab panels.
  *
- * Deep-link contract (spec §5.6, preserved verbatim): the 7 tab ids,
+ * Deep-link contract (spec §5.6, as amended 2026-10-25): the 4 tab ids,
  * the legacy `byoc` value resolving to `facebook`, a missing/unknown
  * value landing on `general`, and the `settings-tab-<id>` testids.
  * Credential panels keep reading `?notice=reconnect` themselves, as
@@ -53,22 +53,6 @@ const ThreadsSettingsView = React.lazy(() =>
     default: m.ThreadsSettingsView,
   }))
 );
-const YouTubeSettingsView = React.lazy(() =>
-  import('@/components/settings/youtube-settings-view').then((m) => ({
-    default: m.YouTubeSettingsView,
-  }))
-);
-const XSettingsView = React.lazy(() =>
-  import('@/components/settings/x-settings-view').then((m) => ({
-    default: m.XSettingsView,
-  }))
-);
-const TikTokSettingsView = React.lazy(() =>
-  import('@/components/settings/tiktok-settings-view').then((m) => ({
-    default: m.TikTokSettingsView,
-  }))
-);
-
 function TabPanelFallback() {
   return (
     <div aria-busy="true" aria-label="Loading settings section" className="flex w-full max-w-2xl flex-col gap-4">
@@ -143,21 +127,6 @@ export function SettingsShell({ subdomain, initialTab }: Readonly<SettingsShellP
         <TabsContent value="threads">
           <React.Suspense fallback={<TabPanelFallback />}>
             <ThreadsSettingsView subdomain={subdomain} />
-          </React.Suspense>
-        </TabsContent>
-        <TabsContent value="youtube">
-          <React.Suspense fallback={<TabPanelFallback />}>
-            <YouTubeSettingsView subdomain={subdomain} />
-          </React.Suspense>
-        </TabsContent>
-        <TabsContent value="x">
-          <React.Suspense fallback={<TabPanelFallback />}>
-            <XSettingsView subdomain={subdomain} />
-          </React.Suspense>
-        </TabsContent>
-        <TabsContent value="tiktok">
-          <React.Suspense fallback={<TabPanelFallback />}>
-            <TikTokSettingsView subdomain={subdomain} />
           </React.Suspense>
         </TabsContent>
       </Tabs>

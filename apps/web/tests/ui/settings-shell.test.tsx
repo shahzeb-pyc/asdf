@@ -2,7 +2,7 @@
  * Settings shell — behavioural tests (spec 135 PR-135-1, T6).
  *
  * The shell island (settings-shell.tsx) owns: the deep-link contract
- * (§5.6 — the 7 tab ids, the legacy `byoc` → facebook alias,
+ * (§5.6 as amended 2026-10-25 — the 4 tab ids, the legacy `byoc` → facebook alias,
  * unknown/missing → general, `settings-tab-<id>` testids), the
  * shared/ui Tabs keyboard pattern, and URL ↔ tab sync via
  * `router.replace`. The per-tab views are stubbed here — each view's
@@ -35,15 +35,6 @@ vi.mock('@/components/settings/instagram-settings-view', () => ({
 vi.mock('@/components/settings/threads-settings-view', () => ({
   ThreadsSettingsView: () => <div>Threads panel</div>,
 }));
-vi.mock('@/components/settings/youtube-settings-view', () => ({
-  YouTubeSettingsView: () => <div>YouTube panel</div>,
-}));
-vi.mock('@/components/settings/x-settings-view', () => ({
-  XSettingsView: () => <div>X panel</div>,
-}));
-vi.mock('@/components/settings/tiktok-settings-view', () => ({
-  TikTokSettingsView: () => <div>TikTok panel</div>,
-}));
 
 import { SettingsShell, resolveSettingsTab } from '@/app/tenant/[subdomain]/settings/settings-shell';
 
@@ -57,9 +48,15 @@ afterEach(() => {
 });
 
 describe('resolveSettingsTab — the §5.6 deep-link contract', () => {
-  it('resolves every one of the 7 ids to itself', () => {
-    for (const id of ['general', 'facebook', 'instagram', 'threads', 'youtube', 'x', 'tiktok']) {
+  it('resolves every one of the 4 ids to itself', () => {
+    for (const id of ['general', 'facebook', 'instagram', 'threads']) {
       expect(resolveSettingsTab(id)).toBe(id);
+    }
+  });
+
+  it('lands removed tab ids (youtube, x, tiktok) on General', () => {
+    for (const id of ['youtube', 'x', 'tiktok']) {
+      expect(resolveSettingsTab(id)).toBe('general');
     }
   });
 
@@ -76,12 +73,15 @@ describe('resolveSettingsTab — the §5.6 deep-link contract', () => {
 });
 
 describe('SettingsShell', () => {
-  it('renders the heading and all 7 tabs with their preserved testids, General active by default', () => {
+  it('renders the heading and all 4 tabs with their preserved testids, General active by default, and no removed tabs', () => {
     render(<SettingsShell subdomain="acme" initialTab="general" />);
 
     expect(screen.getByRole('heading', { name: 'Settings' })).toBeTruthy();
-    for (const id of ['general', 'facebook', 'instagram', 'threads', 'youtube', 'x', 'tiktok']) {
+    for (const id of ['general', 'facebook', 'instagram', 'threads']) {
       expect(screen.getByTestId(`settings-tab-${id}`)).toBeTruthy();
+    }
+    for (const id of ['youtube', 'x', 'tiktok']) {
+      expect(screen.queryByTestId(`settings-tab-${id}`)).toBeNull();
     }
     expect(screen.getByTestId('settings-tab-general').getAttribute('aria-selected')).toBe(
       'true'

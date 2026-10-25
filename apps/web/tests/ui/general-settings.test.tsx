@@ -22,6 +22,7 @@ const INTERACTION_TIMEOUT = 20_000;
 import userEvent from '@testing-library/user-event';
 
 import {
+  formatWorkspaceCreatedAt,
   GeneralSettingsView,
   workspaceNameFormSchema,
 } from '@/components/settings/general-settings-view';
@@ -134,16 +135,44 @@ describe('workspace name schema (§5.1 messages verbatim)', () => {
 });
 
 describe('GeneralSettingsView — display state', () => {
-  it('renders the §5.1 copy verbatim around the current name', () => {
+  it('renders the workspace name without the removed sentences', () => {
     render(<GeneralSettingsView subdomain={SUBDOMAIN} workspaceName="Acme Studio" />);
 
     expect(screen.getByRole('heading', { name: 'About this workspace' })).toBeTruthy();
-    expect(screen.getByText('Name your workspace.')).toBeTruthy();
     expect(screen.getByTestId('workspace-name-display').textContent).toBe('Acme Studio');
+    expect(screen.queryByText('Name your workspace.')).toBeNull();
     expect(
-      screen.getByText('Rename it any time — the new name shows up everywhere.')
-    ).toBeTruthy();
+      screen.queryByText('Rename it any time — the new name shows up everywhere.')
+    ).toBeNull();
     expect(screen.getByTestId('workspace-name-edit-btn').textContent).toBe('Edit');
+  });
+
+  it('shows the Created row formatted from createdAt', () => {
+    render(
+      <GeneralSettingsView
+        subdomain={SUBDOMAIN}
+        workspaceName="Acme Studio"
+        workspaceCreatedAt="2026-10-24T00:00:00.000Z"
+      />
+    );
+
+    expect(screen.getByTestId('workspace-created-row').textContent).toContain(
+      '24 October 2026'
+    );
+  });
+
+  it('hides the Created row when createdAt is missing', () => {
+    render(<GeneralSettingsView subdomain={SUBDOMAIN} workspaceName="Acme Studio" />);
+
+    expect(screen.queryByTestId('workspace-created-row')).toBeNull();
+  });
+});
+
+describe('formatWorkspaceCreatedAt', () => {
+  it('formats a valid date in day-month-year form and returns null otherwise', () => {
+    expect(formatWorkspaceCreatedAt('2026-10-24T00:00:00.000Z')).toBe('24 October 2026');
+    expect(formatWorkspaceCreatedAt(undefined)).toBeNull();
+    expect(formatWorkspaceCreatedAt('not-a-date')).toBeNull();
   });
 });
 
