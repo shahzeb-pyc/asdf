@@ -79,12 +79,24 @@ export interface SetupAddress {
 /**
  * The "One more step" card: shows the address (or addresses) the user must
  * paste into the platform's own settings, each with a Copy button.
+ *
+ * `bare` (2026-10-25 redesign): render without the card chrome — no
+ * border, background, padding, or shadow — for tabs whose panel already
+ * provides the card, where the step is folded into that panel instead
+ * of floating as a separate card. Classic tabs omit `bare` and keep
+ * the card exactly as before.
  */
 export function PlatformSetupCard({
   testIdPrefix,
   description,
   addresses,
-}: Readonly<{ testIdPrefix: string; description: string; addresses: SetupAddress[] }>) {
+  bare = false,
+}: Readonly<{
+  testIdPrefix: string;
+  description: string;
+  addresses: SetupAddress[];
+  bare?: boolean;
+}>) {
   const [copiedKey, setCopiedKey] = React.useState<string | null>(null);
   const feedbackTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -114,7 +126,11 @@ export function PlatformSetupCard({
     <section
       data-testid={`${testIdPrefix}-one-more-step-card`}
       aria-labelledby={`${testIdPrefix}-one-more-step-heading`}
-      className="flex flex-col gap-6 rounded-md border border-line bg-panel p-6 shadow-card"
+      className={
+        bare
+          ? 'flex flex-col gap-4'
+          : 'flex flex-col gap-6 rounded-md border border-line bg-panel p-6 shadow-card'
+      }
     >
       <div>
         <h3

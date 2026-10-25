@@ -27,7 +27,7 @@ export type SettingsTab =
 export const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTab; label: string }> = [
   { id: 'general', label: 'General' },
   { id: 'facebook', label: 'Facebook App' },
-  { id: 'instagram', label: 'Instagram' },
+  { id: 'instagram', label: 'Instagram App' },
   { id: 'threads', label: 'Threads' },
 ];
 

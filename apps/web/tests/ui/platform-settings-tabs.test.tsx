@@ -363,8 +363,13 @@ for (const c of PLATFORM_CASES) {
     it('renders the header, status, and form verbatim (§5.3/§5.4)', () => {
       renderView(c, notConnectedPayload(p));
 
+      // 2026-10-25 redesign: Instagram's left-column heading is
+      // "Instagram App" and its guide is removed; Threads keeps the
+      // classic "Connect Threads" heading and its guide.
       expect(
-        screen.getByRole('heading', { name: `Connect ${c.displayName}` })
+        screen.getByRole('heading', {
+          name: p === 'instagram' ? 'Instagram App' : `Connect ${c.displayName}`,
+        })
       ).toBeTruthy();
       expect(screen.getByTestId(`${p}-settings-card`)).toBeTruthy();
       expect(screen.getByTestId(`${p}-status-badge`).textContent).toContain('Not connected');
@@ -374,7 +379,11 @@ for (const c of PLATFORM_CASES) {
         )
       ).toBeTruthy();
 
-      expect(screen.getByTestId(`${p}-setup-guide`)).toBeTruthy();
+      if (p === 'instagram') {
+        expect(screen.queryByTestId(`${p}-setup-guide`)).toBeNull();
+      } else {
+        expect(screen.getByTestId(`${p}-setup-guide`)).toBeTruthy();
+      }
       expect(screen.getByText('Add them here')).toBeTruthy();
       expect(screen.getByText(c.appIdLabel)).toBeTruthy();
       expect(screen.getByText(c.appSecretLabel)).toBeTruthy();
@@ -755,34 +764,25 @@ for (const c of PLATFORM_CASES) {
   });
 }
 
-describe('Instagram guide (§5.3 verbatim)', () => {
-  it('renders all four guide steps with the approved copy', () => {
+describe('Instagram redesign (2026-10-25)', () => {
+  it('shows NO setup guide in the not-connected state — the guide is removed', () => {
     const c = PLATFORM_CASES[0] as PlatformCase;
     renderView(c, notConnectedPayload('instagram'));
 
-    expect(screen.getByText('Create your Meta app')).toBeTruthy();
-    expect(screen.getByText(/choose the option for connecting an Instagram account/)).toBeTruthy();
-    expect(screen.getByText('Add Instagram to your app')).toBeTruthy();
-    expect(
-      screen.getByText(/find Instagram in the list of things you can add, and/)
-    ).toBeTruthy();
-    expect(screen.getByText('Finish the Instagram sign-in setup')).toBeTruthy();
-    expect(screen.getByText(/Complete the sign-in setup there/)).toBeTruthy();
-    expect(screen.getByText('Add the sign-in address we show')).toBeTruthy();
-    expect(
-      screen.getByText(/in the field for addresses that can bring people back after they sign/)
-    ).toBeTruthy();
-
-    const dashboardLink = screen.getByTestId('instagram-meta-dashboard-link');
-    expect(dashboardLink.getAttribute('href')).toBe('https://developers.facebook.com');
-    expect(dashboardLink.textContent).toBe('Meta App Dashboard →');
-
+    expect(screen.queryByTestId('instagram-setup-guide')).toBeNull();
+    expect(screen.queryByText('Create your Meta app')).toBeNull();
+    expect(screen.queryByText('Add Instagram to your app')).toBeNull();
+    expect(screen.queryByText('Finish the Instagram sign-in setup')).toBeNull();
+    expect(screen.queryByText('Add the sign-in address we show')).toBeNull();
+    expect(screen.queryByTestId('instagram-meta-dashboard-link')).toBeNull();
+    // The form itself (and its helper) is still there.
+    expect(screen.getByText('Add them here')).toBeTruthy();
     expect(
       screen.getByText("You'll find this in your Meta app under Settings → Basic.")
     ).toBeTruthy();
   });
 
-  it('shows the sign-in address card with the §5.3 description, label, and helper', () => {
+  it('shows the sign-in address step with the §5.3 description, label, and helper', () => {
     const c = PLATFORM_CASES[0] as PlatformCase;
     renderView(c, notConnectedPayload('instagram'));
 
@@ -798,7 +798,52 @@ describe('Instagram guide (§5.3 verbatim)', () => {
       )
     ).toBeTruthy();
     expect(screen.getByTestId('instagram-copy-signin-btn')).toBeTruthy();
+    // Callback address uses the connect path (never the old /api/auth
+    // path); its origin is window.location.origin in production, i.e.
+    // the workspace subdomain when the user is in their workspace —
+    // jsdom's origin is localhost here, so only the path is asserted.
+    const address = screen.getByTestId('instagram-setup-address-signin').textContent ?? '';
+    expect(address.endsWith('/api/connect/instagram/callback')).toBe(true);
+    expect(address).not.toContain('/api/auth/');
   });
+
+  it('shows the tick/cross status mark (never a dot) in both states', () => {
+    const c = PLATFORM_CASES[0] as PlatformCase;
+    renderView(c, notConnectedPayload('instagram'));
+    expect(screen.getByTestId('instagram-status-mark').getAttribute('data-status')).toBe(
+      'not-connected'
+    );
+    expect(screen.getByTestId('instagram-status-badge').textContent).toContain('Not connected');
+
+    cleanup();
+    renderView(c, connectedPayload(c));
+    expect(screen.getByTestId('instagram-status-mark').getAttribute('data-status')).toBe(
+      'connected'
+    );
+    expect(screen.getByTestId('instagram-status-badge').textContent).toContain('Connected');
+  });
+
+  it('shows the Privacy Policy URL row in both states, with Copy feedback', async () => {
+    const c = PLATFORM_CASES[0] as PlatformCase;
+    renderView(c, notConnectedPayload('instagram'));
+    expect(screen.getByTestId('instagram-privacy-url').textContent).toBe(
+      'https://acme.fbuploadpro.com/privacy'
+    );
+
+    cleanup();
+    renderView(c, connectedPayload(c));
+    expect(screen.getByTestId('instagram-privacy-url').textContent).toBe(
+      'https://acme.fbuploadpro.com/privacy'
+    );
+
+    const user = userEvent.setup();
+    installClipboardMock();
+    await user.click(screen.getByTestId('instagram-copy-privacy-url-btn'));
+    expect(clipboardWriteText).toHaveBeenCalledWith('https://acme.fbuploadpro.com/privacy');
+    await waitFor(() =>
+      expect(screen.getByTestId('instagram-copy-privacy-url-btn').textContent).toBe('Copied')
+    );
+  }, INTERACTION_TIMEOUT);
 });
 
 describe('Threads guide (§5.4 verbatim)', () => {
