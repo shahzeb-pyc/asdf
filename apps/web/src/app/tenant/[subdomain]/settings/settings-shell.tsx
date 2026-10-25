@@ -118,6 +118,7 @@ export function SettingsShell({ subdomain, initialTab }: Readonly<SettingsShellP
             <TabsTrigger
               key={tab.id}
               value={tab.id}
+              variant="line"
               data-testid={`settings-tab-${tab.id}`}
               className="h-10 flex-none px-3"
             >
