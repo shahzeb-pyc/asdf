@@ -40,7 +40,7 @@ export interface SignupFlowProps {
   /**
    * True when the server page rendered this flow while signups are
    * paused (OTP step only). The details step is never reachable
-   * while paused: any step change back to 'details' renders the
+   * while paused, stepping back to 'details' renders the
    * paused card instead of the form.
    */
   initialIsPaused?: boolean;
