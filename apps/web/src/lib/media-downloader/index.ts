@@ -20,6 +20,13 @@ export { resolveAllowedMimeType, type AllowedMediaMime } from './mime';
 
 export { MediaDownloaderError, type DownloaderErrorCode } from './resolvers';
 
+export {
+  DownloadAbortedError,
+  type DownloadProgress,
+  type MediaStreamSink,
+  type StreamDownloadOptions,
+} from './storage-upload';
+
 export interface UploadedDownloadedMediaItem {
   mediaId: string;
   name: string;
@@ -41,6 +48,19 @@ export interface ResolveAndUploadMediaParams {
   storage: IStorageService;
   fetchImpl?: typeof fetch | undefined;
   extractorApiUrl?: string | null | undefined;
+  /**
+   * Live byte progress for the caller (the worker maps it onto the job
+   * row). For multi-item links this reports the item currently
+   * streaming; single-item links — the overwhelmingly common case —
+   * report exact progress.
+   */
+  onProgress?: ((progress: import('./storage-upload').DownloadProgress) => void) | undefined;
+  signal?: AbortSignal | undefined;
+  /** Sink for the streamed media bytes (spec 149: never buffered whole). */
+  createSink: (
+    key: string,
+    contentType: string
+  ) => import('./storage-upload').MediaStreamSink;
 }
 
 export interface ResolveAndUploadMediaResult {
@@ -98,7 +118,12 @@ export async function resolveAndUploadMediaFromUrl(
         params.userId,
         params.storage,
         fetchFn,
-        idx === 0 ? prefetchedBinaryResponse : undefined
+        idx === 0 ? prefetchedBinaryResponse : undefined,
+        {
+          onProgress: params.onProgress,
+          signal: params.signal,
+          createSink: params.createSink,
+        }
       )
     )
   );

@@ -1,0 +1,23 @@
+# Example systemd unit for the download worker (spec 149).
+# Copy to /etc/systemd/system/download-worker.service on the VPS server,
+# set WorkingDirectory to the repo checkout and EnvironmentFile to a
+# root-only file holding the worker's environment (see README.md),
+# then: systemctl daemon-reload && systemctl enable --now download-worker
+[Unit]
+Description=FBUploadPro download worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/fbuploadpro
+EnvironmentFile=/etc/fbuploadpro/download-worker.env
+ExecStart=/usr/bin/pnpm --filter @fbuploadpro/download-worker start
+Restart=always
+RestartSec=5
+# The worker logs JSON lines to stdout/stderr; the journal keeps them.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -26,7 +26,10 @@ describe('WorkspaceBreadcrumb (Spec 052)', () => {
     expect(computeBreadcrumbs('/tenant/acme', 'acme')).toEqual([{ label: 'Home' }]);
     expect(computeBreadcrumbs('/tenant/acme/', 'acme')).toEqual([{ label: 'Home' }]);
     expect(computeBreadcrumbs('/tenant/acme/media', 'acme')).toEqual([{ label: 'Media Library' }]);
-    expect(computeBreadcrumbs('/tenant/acme/downloader', 'acme')).toEqual([{ label: 'Downloader' }]);
+    // Spec 149: /downloader is no longer a curated route — the
+    // Downloader entry was deleted from the breadcrumb map with the
+    // sidebar leaf (the generic fallback still title-cases unknown
+    // segments, which is out of scope for this surface).
     expect(computeBreadcrumbs('/tenant/acme/fdola-studio', 'acme')).toEqual([
       { label: 'Fdola Studio' },
     ]);

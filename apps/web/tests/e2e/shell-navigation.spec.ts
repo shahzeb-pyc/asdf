@@ -86,9 +86,11 @@ test.describe('shell navigation + workspace switch (spec 130 §5.9)', () => {
     await expect(page).toHaveURL(new RegExp(`/tenant/${TENANT.subdomain}/media$`));
     await expect(page.getByTestId('workspace-breadcrumb')).toContainText('Media Library');
 
-    await page.getByRole('link', { name: /^Downloader/ }).click();
-    await expect(page).toHaveURL(new RegExp(`/tenant/${TENANT.subdomain}/downloader$`));
-    await expect(page.getByTestId('workspace-breadcrumb')).toContainText('Downloader');
+    // The old Downloader leaf is gone (spec 149: downloads live in the
+    // Media Library now); Fdola Studio is the next primary leaf.
+    await page.getByRole('link', { name: /^Fdola Studio/ }).click();
+    await expect(page).toHaveURL(new RegExp(`/tenant/${TENANT.subdomain}/fdola-studio$`));
+    await expect(page.getByTestId('workspace-breadcrumb')).toContainText('Fdola Studio');
 
     await page.getByRole('link', { name: /^Accounts/ }).first().click();
     await expect(page).toHaveURL(new RegExp(`/tenant/${TENANT.subdomain}/accounts$`));

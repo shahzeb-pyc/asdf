@@ -68,6 +68,7 @@ export type { MediaImportModalProps } from './media-import-progress';
 export type { ActiveDropdownKey } from './media-library-filters';
 import { MediaToolbar } from './media-library-toolbar';
 import { MediaLibraryHeader } from './media-library-header';
+import { DownloadDialog } from './download-dialog';
 import { MediaLibraryMain } from './media-library-main';
 import { MediaLibraryOverlays } from './media-library-overlays';
 export type { MediaViewMode, MediaTypeFilterKey, AspectRatioFilterKey, CaptionStatusFilterKey, SortOptionKey, MediaSmartViewKey } from './media-types';
@@ -149,6 +150,7 @@ export function MediaLibraryExplorer({
   }, [searchInput]);
 
   // Modals
+  const [isDownloadDialogOpen, setIsDownloadDialogOpen] = useState(false);
   const [isNewFolderOpen, setIsNewFolderOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [stagedFilesForImport, setStagedFilesForImport] = useState<File[]>([]);
@@ -544,7 +546,18 @@ export function MediaLibraryExplorer({
         }}
         onNewFolderClick={() => setIsNewFolderOpen(true)}
         onUploadClick={handleUploadClick}
+        onDownloadClick={() => setIsDownloadDialogOpen(true)}
       />
+
+      {/* Download dialog (spec 149): mounted fresh on every open so the
+          destination defaults to the folder currently open. */}
+      {isDownloadDialogOpen && (
+        <DownloadDialog
+          subdomain={subdomain}
+          initialFolderId={currentFolderId}
+          onClose={() => setIsDownloadDialogOpen(false)}
+        />
+      )}
 
       {/* 2. Toolbar (Single divider-separated row, 3 zones, NO boxes) */}
       <MediaToolbar

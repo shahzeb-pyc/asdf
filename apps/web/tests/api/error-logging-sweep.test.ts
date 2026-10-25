@@ -90,12 +90,16 @@ describe('C1 — media/check-duplicates no longer leaks the PostgREST error', ()
 
 describe('C1 — downloader GET no longer leaks the raw error message', () => {
   it('returns { error: "Internal Error" } only, and logs the thrown error', async () => {
-    const mockDb: Partial<DatabaseClient> = {
-      query: vi.fn().mockRejectedValue(new Error('pg connection reset by peer')),
+    // Spec 149: the jobs endpoint reads via the Supabase client, not
+    // the SQL client — the throwing seam is now the query chain.
+    const mockDb = {
+      from: vi.fn().mockImplementation(() => {
+        throw new Error('pg connection reset by peer');
+      }),
     };
 
     const req = authedRequest('http://localhost:3000/api/tenant/acme/downloader');
-    const res = await handleGetDownloadJobs(req, 'acme', mockDb as DatabaseClient);
+    const res = await handleGetDownloadJobs(req, 'acme', mockDb as never);
 
     expect(res.status).toBe(500);
     const body = await res.json();

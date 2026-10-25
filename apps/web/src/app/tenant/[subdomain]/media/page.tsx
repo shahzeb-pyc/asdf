@@ -30,12 +30,21 @@ import {
  */
 export default async function TenantMediaLibraryPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ subdomain: string }>;
+  searchParams?: Promise<{ folder?: string | string[] }>;
 }) {
   const { subdomain } = await params;
   const tenant = queryKeys.tenant(subdomain);
   const queryClient = createServerQueryClient(subdomain);
+
+  // The tray's "View in library" deep-links here (?folder=<id>). The id
+  // is validated against the fetched folders server-side: an unknown
+  // id falls back to root instead of rendering an empty folder view.
+  const search = await searchParams;
+  const requestedFolder =
+    search?.folder && typeof search.folder === 'string' ? search.folder : null;
 
   const dehydratedState = await prefetchServerQueries(queryClient, [
     {
@@ -60,9 +69,20 @@ export default async function TenantMediaLibraryPage({
     },
   ]);
 
+  const folders = queryClient.getQueryData(tenant.media.folders) as
+    | Array<{ id: string }>
+    | undefined;
+  const initialCurrentFolderId =
+    requestedFolder && folders?.some((folder) => folder.id === requestedFolder)
+      ? requestedFolder
+      : null;
+
   return (
     <DataHydration state={dehydratedState}>
-      <MediaLibraryExplorer subdomain={subdomain} />
+      <MediaLibraryExplorer
+        subdomain={subdomain}
+        initialCurrentFolderId={initialCurrentFolderId}
+      />
     </DataHydration>
   );
 }

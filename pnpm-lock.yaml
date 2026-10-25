@@ -46,6 +46,34 @@ importers:
         specifier: ^4.0.0
         version: 4.1.12(@types/node@22.20.5)(@vitest/coverage-v8@4.1.12)(jsdom@30.1.3)(vite@7.3.7(@types/node@22.20.5)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.15))
 
+  apps/download-worker:
+    dependencies:
+      '@aws-sdk/client-s3':
+        specifier: ^3.1147.0
+        version: 3.1152.0
+      '@aws-sdk/s3-request-presigner':
+        specifier: ^3.1147.0
+        version: 3.1152.0
+      '@fbuploadpro/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@supabase/supabase-js':
+        specifier: ^2.117.3
+        version: 2.118.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.13.4
+        version: 22.20.5
+      tsx:
+        specifier: ^4.23.15
+        version: 4.23.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^4.0.0
+        version: 4.1.12(@types/node@22.20.5)(@vitest/coverage-v8@4.1.12)(jsdom@30.1.3)(vite@7.3.7(@types/node@22.20.5)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.15))
+
   apps/extension:
     dependencies:
       '@fbuploadpro/contracts':

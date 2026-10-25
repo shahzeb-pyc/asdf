@@ -10,7 +10,7 @@
  *
  * Behaviour preserved verbatim (spec §4.1):
  * - Structure and order: branding header (logo + wordmark, a Link to
- *   Home) → primary group (Home, Media Library, Downloader, Fdola
+ *   Home) → primary group (Home, Media Library, Fdola
  *   Studio) → Facebook collapsible group (default open; Accounts,
  *   Pages, Publish Now) → one collapsible group per upcoming platform, each with a
  *   single Accounts item and the testing-placeholder note → footer.
@@ -130,7 +130,6 @@ export function WorkspaceSidebar({
   const href = (path: string) => buildTenantHref(subdomain, path, useCleanPaths);
   const homeHref = href('/');
   const mediaHref = href('/media');
-  const downloaderHref = href('/downloader');
   const fdolaStudioHref = href('/fdola-studio');
   const promptsHref = href('/prompts');
   const accountsHref = href('/accounts');
@@ -139,9 +138,6 @@ export function WorkspaceSidebar({
 
   const isHomeActive = effectivePath === normalizeTenantPath(homeHref, subdomain);
   const isMediaActive = effectivePath.startsWith(normalizeTenantPath(mediaHref, subdomain));
-  const isDownloaderActive = effectivePath.startsWith(
-    normalizeTenantPath(downloaderHref, subdomain)
-  );
   const isFdolaStudioActive = effectivePath.startsWith(
     normalizeTenantPath(fdolaStudioHref, subdomain)
   );
@@ -206,18 +202,6 @@ export function WorkspaceSidebar({
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
           <polygon points="10 11 16 14 10 17 10 11" />
-        </svg>
-      ),
-    },
-    {
-      label: 'Downloader',
-      href: downloaderHref,
-      isActive: isDownloaderActive,
-      icon: (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-          <polyline points="7 10 12 15 17 10" />
-          <line x1="12" x2="12" y1="15" y2="3" />
         </svg>
       ),
     },

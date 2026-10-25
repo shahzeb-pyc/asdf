@@ -6,11 +6,6 @@ import {
   deduplicateBatchUrls,
   DownloaderIngestRequestSchema,
   DownloaderIngestResponseSchema,
-  DownloadJobStatusValues,
-  DownloadJobStatusSchema,
-  EnqueueDownloadJobRequestSchema,
-  DownloadJobResponseSchema,
-  EnqueueDownloadJobResponseSchema,
 } from '../src/index.js';
 
 describe('Cloud Media Downloader Contracts (Spec 031)', () => {
@@ -185,69 +180,5 @@ describe('Cloud Media Downloader Contracts (Spec 031)', () => {
     });
   });
 
-  describe('Asynchronous Download Job Schemas (Spec 043)', () => {
-    it('validates DownloadJobStatusValues enum', () => {
-      expect(DownloadJobStatusValues).toEqual([
-        'queued',
-        'downloading',
-        'processing',
-        'completed',
-        'failed',
-        'cancelled',
-      ]);
-      expect(DownloadJobStatusSchema.safeParse('queued').success).toBe(true);
-      expect(DownloadJobStatusSchema.safeParse('downloading').success).toBe(true);
-      expect(DownloadJobStatusSchema.safeParse('processing').success).toBe(true);
-      expect(DownloadJobStatusSchema.safeParse('completed').success).toBe(true);
-      expect(DownloadJobStatusSchema.safeParse('failed').success).toBe(true);
-      expect(DownloadJobStatusSchema.safeParse('cancelled').success).toBe(true);
-      expect(DownloadJobStatusSchema.safeParse('unknown').success).toBe(false);
-    });
-
-    it('validates EnqueueDownloadJobRequestSchema with optional folderId and customFilename', () => {
-      const valid = EnqueueDownloadJobRequestSchema.safeParse({
-        url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-        folderId: '11111111-1111-4111-a111-111111111111',
-        customFilename: 'custom_video.mp4',
-      });
-      expect(valid.success).toBe(true);
-      if (valid.success) {
-        expect(valid.data.customFilename).toBe('custom_video.mp4');
-      }
-
-      const invalidUrl = EnqueueDownloadJobRequestSchema.safeParse({
-        url: 'not-a-valid-url',
-      });
-      expect(invalidUrl.success).toBe(false);
-    });
-
-    it('validates DownloadJobResponseSchema and EnqueueDownloadJobResponseSchema', () => {
-      const nowIso = new Date().toISOString();
-      const mockJob = {
-        id: '11111111-1111-4111-a111-111111111111',
-        userId: '22222222-2222-4222-a222-222222222222',
-        sourceUrl: 'https://cdn.example.com/stream.mp4',
-        sourcePlatform: 'direct',
-        targetFolderId: null,
-        status: 'downloading',
-        progressPercent: 42,
-        totalBytes: 104857600,
-        downloadedBytes: 44040192,
-        mediaId: null,
-        metadata: {},
-        createdAt: nowIso,
-        updatedAt: nowIso,
-      };
-
-      const validJob = DownloadJobResponseSchema.safeParse(mockJob);
-      expect(validJob.success).toBe(true);
-
-      const validEnvelope = EnqueueDownloadJobResponseSchema.safeParse({
-        success: true,
-        job: mockJob,
-      });
-      expect(validEnvelope.success).toBe(true);
-    });
-  });
 });
 

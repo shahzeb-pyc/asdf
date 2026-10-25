@@ -1,526 +1,372 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import {
-  canAccessTenant,
-  DownloaderIngestRequestSchema,
-  DownloaderIngestResponseSchema,
-  getSessionSecret,
-  MediaItemResponseSchema,
-  validateSafeRemoteUrl,
-  verifySessionToken,
-  type DatabaseClient,
-  type IStorageService,
-  type MediaItemResponse,
+  CancelDownloadJobRequestSchema,
+  DownloadJobActionResponseSchema,
+  DownloadJobsStatusResponseSchema,
+  RetryDownloadJobRequestSchema,
+  SubmitDownloadJobsRequestSchema,
+  SubmitDownloadJobsResponseSchema,
+  deduplicateBatchUrls,
+  detectSourcePlatform,
+  parseDownloadJobRow,
+  type DownloadJob,
+  type SessionPayload,
 } from '@fbuploadpro/contracts';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { isLegacyClient, getRouteSupabase } from '@/lib/route-auth';
-import { getStorageService } from '@/lib/storage';
+import { authenticateTenantRoute, getRouteSupabase } from '@/lib/route-auth';
 import { bodyTooLargeResponse, enforceIpRateLimit, readJsonBody } from '@/lib/request-body';
 import { logServerError } from '@/lib/server-analytics';
-import {
-  MediaDownloaderError,
-  resolveAndUploadMediaFromUrl,
-} from '@/lib/media-downloader/index';
 
-type NullableNumeric = string | number | null;
-type NumericString = string | number;
+/**
+ * Download jobs API (spec 149). The browser NEVER downloads media
+ * itself anymore: POST only validates links and writes job rows, GET
+ * reports open jobs for the tray, and retry/cancel mutate job state.
+ * The VPS worker owns resolving, streaming, and library-row creation.
+ * The old single-link ingest path (resolve + upload inside the request)
+ * is deleted, not kept alongside this one.
+ */
 
-interface MediaItemDbRow {
-  id: string;
-  user_id: string;
-  folder_id: string | null;
-  name: string;
-  file_size: NumericString;
-  mime_type: string;
-  media_type: 'video' | 'image';
-  storage_key: string;
-  url: string;
-  thumbnail_key: string | null;
-  thumbnail_url: string | null;
-  duration_seconds: NullableNumeric;
-  aspect_ratio: string | null;
-  caption_text: string | null;
-  width?: NullableNumeric;
-  height?: NullableNumeric;
-  created_at: Date | string;
-  updated_at: Date | string;
+const OPEN_JOB_STATUSES = ['queued', 'resolving', 'downloading', 'failed'] as const;
+const CANCELLABLE_STATUSES = ['queued', 'resolving', 'downloading', 'processing'] as const;
+
+function supabaseOr500(
+  dbClient: SupabaseClient | undefined
+): { supabase: SupabaseClient } | { error: NextResponse } {
+  const supabase = getRouteSupabase(dbClient);
+  if (!supabase) {
+    return {
+      error: NextResponse.json({ error: 'Database service unavailable' }, { status: 500 }),
+    };
+  }
+  return { supabase };
 }
 
-function normalizeQueryRows<T>(result: unknown): T[] {
-  if (Array.isArray(result)) {
-    return result as T[];
-  }
-  if (result && typeof result === 'object' && 'rows' in result) {
-    const rows = (result as { rows?: unknown }).rows;
-    if (Array.isArray(rows)) {
-      return rows as T[];
+/** Parses rows, skipping (and counting) any that fail validation. */
+function toWireJobs(rows: unknown[]): { jobs: DownloadJob[]; skipped: number } {
+  const jobs: DownloadJob[] = [];
+  let skipped = 0;
+  for (const row of rows) {
+    const job = parseDownloadJobRow(row);
+    if (job) {
+      jobs.push(job);
+    } else {
+      skipped += 1;
     }
   }
-  return [];
-}
-
-function mapRowToMediaItemResponse(row: MediaItemDbRow): MediaItemResponse {
-  return MediaItemResponseSchema.parse({
-    id: row.id,
-    userId: row.user_id,
-    folderId: row.folder_id ?? null,
-    name: row.name,
-    fileSize: Number(row.file_size),
-    mimeType: row.mime_type,
-    mediaType: row.media_type,
-    storageKey: row.storage_key,
-    url: row.url,
-    thumbnailKey: row.thumbnail_key ?? null,
-    thumbnailUrl: row.thumbnail_url ?? null,
-    durationSeconds:
-      row.duration_seconds !== null && row.duration_seconds !== undefined
-        ? Number(row.duration_seconds)
-        : null,
-    aspectRatio: row.aspect_ratio ?? 'unknown',
-    captionText: row.caption_text ?? null,
-    width:
-      row.width !== null && row.width !== undefined
-        ? Number(row.width)
-        : null,
-    height:
-      row.height !== null && row.height !== undefined
-        ? Number(row.height)
-        : null,
-    createdAt: new Date(row.created_at as string).toISOString(),
-    updatedAt: new Date(row.updated_at as string).toISOString(),
-  });
-}
-
-async function cleanupUploadedItems(
-  storage: IStorageService,
-  items: Array<{ storageKey: string; thumbnailKey?: string | null }>
-): Promise<void> {
-  await Promise.allSettled(
-    items.map(async (item) => {
-      try {
-        await storage.deleteObject(item.storageKey);
-        if (item.thumbnailKey) {
-          await storage.deleteObject(item.thumbnailKey);
-        }
-      } catch (_e) {
-        // ignore cleanup error
-        void _e;
-      }
-    })
-  );
+  return { jobs, skipped };
 }
 
 async function verifyFolderOwnership(
-  db: DatabaseClient,
-  targetFolderId: string,
+  supabase: SupabaseClient,
+  folderId: string | null,
   userId: string
 ): Promise<boolean> {
-  const checkFolder = async (
-    queryFn: (sql: string, params?: unknown[]) => Promise<unknown>
-  ) => {
-    const res = await queryFn(
-      'SELECT id FROM media_folders WHERE id = $1 AND user_id = $2',
-      [targetFolderId, userId]
-    );
-    return normalizeQueryRows<{ id: string }>(res);
-  };
+  if (folderId === null) return true;
+  const { data: folder } = await supabase
+    .from('media_folders')
+    .select('id')
+    .eq('id', folderId)
+    .eq('user_id', userId)
+    .maybeSingle();
+  return Boolean(folder);
+}
 
-  if (typeof db.query === 'function') {
-    const rows = await checkFolder((sql, params) => db.query(sql, params));
-    return rows.length > 0;
+async function fetchOwnedJob(
+  supabase: SupabaseClient,
+  jobId: string,
+  userId: string
+): Promise<{ row: Record<string, unknown> } | { error: NextResponse }> {
+  const { data: job, error } = await supabase
+    .from('media_download_jobs')
+    .select('*')
+    .eq('id', jobId)
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (error || !job) {
+    return {
+      error: NextResponse.json({ error: 'Job not found' }, { status: 404 }),
+    };
   }
-  if (typeof db.withTransaction === 'function') {
-    const rows = await db.withTransaction((tx) =>
-      checkFolder((sql, params) => tx.query(sql, params))
-    );
-    return rows.length > 0;
-  }
-  return false;
+  return { row: job as Record<string, unknown> };
 }
 
-async function insertSingleResolvedItem(
-  tx: { query: (sql: string, params?: unknown[]) => Promise<unknown> },
-  userId: string,
-  targetFolderId: string | null,
-  item: Awaited<ReturnType<typeof resolveAndUploadMediaFromUrl>>['items'][number]
-): Promise<MediaItemDbRow | null> {
-  const insertRes = await tx.query(
-    `INSERT INTO media_items (
-       id, user_id, folder_id, name, file_size, mime_type, media_type,
-       storage_key, url, thumbnail_key, thumbnail_url, duration_seconds,
-       aspect_ratio, caption_text, created_at, updated_at
-     ) VALUES (
-       $1, $2, $3, $4, $5, $6, $7,
-       $8, $9, $10, $11, $12,
-       $13, $14, now(), now()
-     )
-     RETURNING *`,
-    [
-      item.mediaId,
-      userId,
-      targetFolderId,
-      item.name,
-      item.fileSize,
-      item.mimeType,
-      item.mediaType,
-      item.storageKey,
-      item.url,
-      item.thumbnailKey,
-      item.thumbnailUrl,
-      item.durationSeconds,
-      item.aspectRatio,
-      item.captionText,
-    ]
-  );
-
-  const rows = normalizeQueryRows<MediaItemDbRow>(insertRes);
-  return rows[0] ?? null;
-}
-
-async function persistResolvedMediaItems(
-  db: DatabaseClient,
-  userId: string,
-  targetFolderId: string | null,
-  items: Awaited<ReturnType<typeof resolveAndUploadMediaFromUrl>>['items']
-): Promise<MediaItemDbRow[]> {
-  const executeInserts = async (tx: {
-    query: (sql: string, params?: unknown[]) => Promise<unknown>;
-  }): Promise<MediaItemDbRow[]> => {
-    const inserted = await Promise.all(
-      items.map((item) => insertSingleResolvedItem(tx, userId, targetFolderId, item))
-    );
-    return inserted.filter((row): row is MediaItemDbRow => row !== null);
-  };
-
-  if (typeof db.withTransaction === 'function') {
-    return db.withTransaction(executeInserts);
-  }
-  return executeInserts({
-    query: (sql, params) => (db as DatabaseClient).query(sql, params),
-  });
-}
-
-interface ValidatedDownloadInput {
-  session: { userId: string; email?: string; [key: string]: unknown };
-  body: { url: string; folderId?: string | null | undefined };
-}
-
-async function validateDownloadAuthAndPayload(
+async function readJobIdBody(
   request: NextRequest,
-  subdomain: string
-): Promise<{ errorResponse?: NextResponse; validated?: ValidatedDownloadInput }> {
-  const sessionSecret = getSessionSecret();
-  const sessionCookie = request.cookies.get('fbup_session')?.value;
-  if (!sessionCookie) {
-    return { errorResponse: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) };
-  }
-
-  let session;
-  try {
-    session = await verifySessionToken(sessionCookie, sessionSecret);
-  } catch {
-    return { errorResponse: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) };
-  }
-
-  const access = canAccessTenant(session, subdomain);
-  if (!access.allowed) {
-    return { errorResponse: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) };
-  }
-
+  schema: typeof RetryDownloadJobRequestSchema | typeof CancelDownloadJobRequestSchema
+): Promise<{ jobId: string } | { error: NextResponse }> {
   const bodyResult = await readJsonBody(request);
   if (!bodyResult.ok) {
     if (bodyResult.reason === 'too-large') {
-      return { errorResponse: bodyTooLargeResponse() };
+      return { error: bodyTooLargeResponse() };
     }
     return {
-      errorResponse: NextResponse.json(
+      error: NextResponse.json(
         { error: 'INVALID_REQUEST', message: 'Invalid JSON request payload.' },
         { status: 400 }
       ),
     };
   }
-  const rawBody: unknown = bodyResult.value;
-
-  const parsed = DownloaderIngestRequestSchema.safeParse(rawBody);
+  const parsed = schema.safeParse(bodyResult.value);
   if (!parsed.success) {
     return {
-      errorResponse: NextResponse.json(
-        {
-          error: 'INVALID_REQUEST',
-          message: 'Please enter a valid link starting with http:// or https://.',
-          details: parsed.error.flatten(),
-        },
+      error: NextResponse.json(
+        { error: 'INVALID_REQUEST', message: 'A valid job id is required.' },
         { status: 400 }
       ),
     };
   }
-
-  const safety = validateSafeRemoteUrl(parsed.data.url);
-  if (!safety.valid || !safety.url) {
-    return {
-      errorResponse: NextResponse.json(
-        {
-          error: 'UNSAFE_URL',
-          message: safety.reason ?? 'Please enter a valid public http:// or https:// link.',
-        },
-        { status: 400 }
-      ),
-    };
-  }
-
-  return { validated: { session, body: parsed.data } };
+  return { jobId: parsed.data.jobId };
 }
 
-async function verifyTargetFolderOwnership(
-  dbClient: DatabaseClient | SupabaseClient | undefined,
-  targetFolderId: string | null,
-  userId: string
-): Promise<boolean> {
-  if (targetFolderId === null) return true;
-
-  if (isLegacyClient(dbClient)) {
-    return verifyFolderOwnership(dbClient, targetFolderId, userId);
-  }
-
-  const supabase = getRouteSupabase(dbClient);
-  if (!supabase) return false;
-
-  const { data: folder } = await supabase
-    .from('media_folders')
-    .select('id')
-    .eq('id', targetFolderId)
-    .eq('user_id', userId)
-    .maybeSingle();
-
-  return Boolean(folder);
-}
-
-async function persistMediaRecords(
-  dbClient: DatabaseClient | SupabaseClient | undefined,
-  userId: string,
-  targetFolderId: string | null,
-  resolvedItems: Awaited<ReturnType<typeof resolveAndUploadMediaFromUrl>>['items']
-): Promise<MediaItemResponse[] | null> {
-  if (isLegacyClient(dbClient)) {
-    const insertedRows = await persistResolvedMediaItems(
-      dbClient,
-      userId,
-      targetFolderId,
-      resolvedItems
-    );
-    if (insertedRows.length !== resolvedItems.length) {
-      return null;
-    }
-    return insertedRows.map(mapRowToMediaItemResponse);
-  }
-
-  const supabase = getRouteSupabase(dbClient);
-  if (!supabase) return null;
-
-  const insertRecords = resolvedItems.map((item) => ({
-    id: item.mediaId,
-    user_id: userId,
-    folder_id: targetFolderId,
-    name: item.name,
-    file_size: item.fileSize,
-    mime_type: item.mimeType,
-    media_type: item.mediaType,
-    storage_key: item.storageKey,
-    url: item.url,
-    thumbnail_key: item.thumbnailKey,
-    thumbnail_url: item.thumbnailUrl,
-    duration_seconds: item.durationSeconds,
-    aspect_ratio: item.aspectRatio,
-    caption_text: item.captionText,
-  }));
-
-  const { data: insertedRows, error: insertErr } = await supabase
-    .from('media_items')
-    .insert(insertRecords)
-    .select();
-
-  if (insertErr || !insertedRows || insertedRows.length !== resolvedItems.length) {
-    return null;
-  }
-
-  return (insertedRows as MediaItemDbRow[]).map(mapRowToMediaItemResponse);
-}
-
-export async function handleDownloadMediaFromUrl(
+export async function handleSubmitDownloadJobs(
   request: NextRequest,
   subdomain: string,
-  dbClient?: DatabaseClient | SupabaseClient,
-  storageService?: IStorageService,
-  fetchImpl?: typeof fetch,
-  extractorApiUrl?: string | null
+  dbClient?: SupabaseClient
 ): Promise<NextResponse> {
-  const { errorResponse, validated } = await validateDownloadAuthAndPayload(request, subdomain);
+  const { session, errorResponse } = await authenticateTenantRoute(request, subdomain);
   if (errorResponse) return errorResponse;
-  const { session, body } = validated!;
+  const userId = (session as SessionPayload).userId;
 
-  const storage = storageService ?? getStorageService();
-  const targetFolderId = body.folderId ?? null;
-  let uploadedItemsToCleanup: Array<{ storageKey: string; thumbnailKey?: string | null }> | null = null;
-
-  try {
-    const folderValid = await verifyTargetFolderOwnership(dbClient, targetFolderId, session.userId);
-    if (!folderValid) {
-      return NextResponse.json(
-        {
-          error: 'FOLDER_NOT_FOUND',
-          message: 'Selected destination folder was not found.',
-        },
-        { status: 404 }
-      );
-    }
-
-    const resolved = await resolveAndUploadMediaFromUrl({
-      sourceUrl: body.url,
-      userId: session.userId,
-      storage,
-      fetchImpl,
-      extractorApiUrl,
-    });
-    uploadedItemsToCleanup = resolved.items;
-
-    const responseItems = await persistMediaRecords(
-      dbClient,
-      session.userId,
-      targetFolderId,
-      resolved.items
-    );
-
-    if (!responseItems) {
-      await cleanupUploadedItems(storage, uploadedItemsToCleanup);
-      return NextResponse.json(
-        {
-          error: 'INTERNAL_ERROR',
-          message: 'Could not save media from this link right now. Please try again.',
-        },
-        { status: 500 }
-      );
-    }
-
-    uploadedItemsToCleanup = null;
-    const responsePayload = DownloaderIngestResponseSchema.parse({
-      sourceUrl: resolved.sourceUrl,
-      platform: resolved.platform,
-      items: responseItems,
-    });
-
-    return NextResponse.json(responsePayload, { status: 201 });
-  } catch (err) {
-    if (uploadedItemsToCleanup && uploadedItemsToCleanup.length > 0) {
-      await cleanupUploadedItems(storage, uploadedItemsToCleanup);
-    }
-    if (!(err instanceof MediaDownloaderError) || err.statusCode >= 500) {
-      logServerError('[downloader] Media download failed', err, {
-        source: 'downloader-ingest',
-        subdomain,
-      });
-    }
-    if (err instanceof MediaDownloaderError) {
-      return NextResponse.json(
-        { error: err.code, message: err.message },
-        { status: err.statusCode }
-      );
+  const bodyResult = await readJsonBody(request);
+  if (!bodyResult.ok) {
+    if (bodyResult.reason === 'too-large') {
+      return bodyTooLargeResponse();
     }
     return NextResponse.json(
+      { error: 'INVALID_REQUEST', message: 'Invalid JSON request payload.' },
+      { status: 400 }
+    );
+  }
+  const parsed = SubmitDownloadJobsRequestSchema.safeParse(bodyResult.value);
+  if (!parsed.success) {
+    return NextResponse.json(
       {
-        error: 'INTERNAL_ERROR',
-        message: 'Could not save media from this link right now. Please try again.',
+        error: 'INVALID_REQUEST',
+        message: 'Please paste at least one link to save to your Media Library.',
+        details: parsed.error.flatten(),
       },
+      { status: 400 }
+    );
+  }
+
+  const { links, folderId } = parsed.data;
+  const deduped = deduplicateBatchUrls(links.join('\n'));
+  if (deduped.urls.length === 0) {
+    return NextResponse.json(
+      {
+        error: 'INVALID_REQUEST',
+        message: 'Please enter at least one valid public link.',
+        invalidLinks: deduped.invalidUrls,
+      },
+      { status: 400 }
+    );
+  }
+
+  const resolved = supabaseOr500(dbClient);
+  if ('error' in resolved) return resolved.error;
+  const supabase = resolved.supabase;
+
+  const folderValid = await verifyFolderOwnership(supabase, folderId ?? null, userId);
+  if (!folderValid) {
+    return NextResponse.json(
+      { error: 'FOLDER_NOT_FOUND', message: 'Selected destination folder was not found.' },
+      { status: 404 }
+    );
+  }
+
+  const rowsToInsert = deduped.urls.map((url) => ({
+    user_id: userId,
+    source_url: url,
+    source_platform: detectSourcePlatform(url),
+    target_folder_id: folderId ?? null,
+    status: 'queued',
+    progress_percent: 0,
+    total_bytes: null,
+    downloaded_bytes: 0,
+    media_id: null,
+    error_code: null,
+    error_message: null,
+    attempts: 0,
+    claimed_at: null,
+    claimed_by: null,
+  }));
+
+  const { data: inserted, error: insertErr } = await supabase
+    .from('media_download_jobs')
+    .insert(rowsToInsert)
+    .select('*');
+
+  if (insertErr || !inserted || inserted.length !== rowsToInsert.length) {
+    logServerError('[downloader] Failed to enqueue download jobs', insertErr ?? new Error('Insert mismatch'), {
+      source: 'downloader-submit',
+      subdomain,
+    });
+    return NextResponse.json(
+      { error: 'INTERNAL_ERROR', message: 'Could not start these downloads right now. Please try again.' },
       { status: 500 }
     );
   }
+
+  const { jobs, skipped } = toWireJobs(inserted);
+  if (skipped > 0) {
+    logServerError('[downloader] Enqueued jobs failed validation', new Error(`${skipped} rows skipped`), {
+      source: 'downloader-submit',
+      subdomain,
+    });
+    return NextResponse.json(
+      { error: 'INTERNAL_ERROR', message: 'Could not start these downloads right now. Please try again.' },
+      { status: 500 }
+    );
+  }
+
+  const payload = SubmitDownloadJobsResponseSchema.parse({
+    jobs,
+    skippedDuplicates: deduped.duplicateCount,
+    invalidLinks: deduped.invalidUrls,
+  });
+  return NextResponse.json(payload, { status: 201 });
 }
 
 export async function handleGetDownloadJobs(
   request: NextRequest,
   subdomain: string,
-  dbClient?: DatabaseClient | SupabaseClient
+  dbClient?: SupabaseClient
 ): Promise<NextResponse> {
-  const sessionSecret = getSessionSecret();
-  const sessionCookie = request.cookies.get('fbup_session')?.value;
-  if (!sessionCookie) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const { session, errorResponse } = await authenticateTenantRoute(request, subdomain);
+  if (errorResponse) return errorResponse;
+  const userId = (session as SessionPayload).userId;
 
-  let session;
-  try {
-    session = await verifySessionToken(sessionCookie, sessionSecret);
-  } catch {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const access = canAccessTenant(session, subdomain);
-  if (!access.allowed) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
-
-  const jobId = request.nextUrl.searchParams.get('jobId');
+  const resolved = supabaseOr500(dbClient);
+  if ('error' in resolved) return resolved.error;
+  const supabase = resolved.supabase;
 
   try {
-    if (isLegacyClient(dbClient)) {
-      if (jobId) {
-        const res = await (dbClient as DatabaseClient).query(
-          'SELECT * FROM media_download_jobs WHERE id = $1 AND user_id = $2',
-          [jobId, session.userId]
-        );
-        const rows = normalizeQueryRows<Record<string, unknown>>(res);
-        if (rows.length === 0) {
-          return NextResponse.json({ error: 'Job not found' }, { status: 404 });
-        }
-        return NextResponse.json({ success: true, job: rows[0] }, { status: 200 });
-      }
-
-      const res = await (dbClient as DatabaseClient).query(
-        'SELECT * FROM media_download_jobs WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50',
-        [session.userId]
-      );
-      const rows = normalizeQueryRows<Record<string, unknown>>(res);
-      return NextResponse.json({ success: true, jobs: rows }, { status: 200 });
-    }
-
-    const supabase = getRouteSupabase(dbClient);
-    if (!supabase) {
-      return NextResponse.json({ error: 'Database service unavailable' }, { status: 500 });
-    }
-
-    if (jobId) {
-      const { data: job, error } = await supabase
-        .from('media_download_jobs')
-        .select('*')
-        .eq('id', jobId)
-        .eq('user_id', session.userId)
-        .maybeSingle();
-
-      if (error || !job) {
-        return NextResponse.json({ error: 'Job not found' }, { status: 404 });
-      }
-      return NextResponse.json({ success: true, job }, { status: 200 });
-    }
-
-    const { data: jobs, error } = await supabase
+    const { data: rows, error } = await supabase
       .from('media_download_jobs')
       .select('*')
-      .eq('user_id', session.userId)
-      .order('created_at', { ascending: false })
-      .limit(50);
+      .eq('user_id', userId)
+      .in('status', [...OPEN_JOB_STATUSES])
+      .order('created_at', { ascending: true })
+      .limit(100);
 
     if (error) {
       return NextResponse.json({ error: 'Failed to fetch jobs' }, { status: 500 });
     }
 
-    return NextResponse.json({ success: true, jobs: jobs || [] }, { status: 200 });
+    const { jobs, skipped } = toWireJobs(rows ?? []);
+    if (skipped > 0) {
+      logServerError('[downloader] Job rows failed validation', new Error(`${skipped} rows skipped`), {
+        source: 'downloader-jobs',
+        subdomain,
+      });
+    }
+
+    const payload = DownloadJobsStatusResponseSchema.parse({ jobs });
+    return NextResponse.json(payload, { status: 200 });
   } catch (err: unknown) {
-    // Spec 139 C1: log the detail server-side; the client gets the
-    // generic shape only (the raw error message used to leak here).
     logServerError('[downloader] Failed to fetch download jobs', err, {
       source: 'downloader-jobs',
       subdomain,
     });
     return NextResponse.json({ error: 'Internal Error' }, { status: 500 });
   }
+}
+
+export async function handleRetryDownloadJob(
+  request: NextRequest,
+  subdomain: string,
+  dbClient?: SupabaseClient
+): Promise<NextResponse> {
+  const { session, errorResponse } = await authenticateTenantRoute(request, subdomain);
+  if (errorResponse) return errorResponse;
+  const userId = (session as SessionPayload).userId;
+
+  const body = await readJobIdBody(request, RetryDownloadJobRequestSchema);
+  if ('error' in body) return body.error;
+
+  const resolved = supabaseOr500(dbClient);
+  if ('error' in resolved) return resolved.error;
+  const supabase = resolved.supabase;
+
+  const fetched = await fetchOwnedJob(supabase, body.jobId, userId);
+  if ('error' in fetched) return fetched.error;
+  if (fetched.row['status'] !== 'failed') {
+    return NextResponse.json(
+      { error: 'JOB_NOT_RETRYABLE', message: 'Only failed downloads can be retried.' },
+      { status: 409 }
+    );
+  }
+
+  const { data: updated, error: updateErr } = await supabase
+    .from('media_download_jobs')
+    .update({
+      status: 'queued',
+      error_code: null,
+      error_message: null,
+      progress_percent: 0,
+      downloaded_bytes: 0,
+      total_bytes: null,
+      claimed_at: null,
+      claimed_by: null,
+    })
+    .eq('id', body.jobId)
+    .eq('user_id', userId)
+    .select('*')
+    .maybeSingle();
+
+  if (updateErr || !updated) {
+    return NextResponse.json({ error: 'Failed to retry job' }, { status: 500 });
+  }
+
+  const job = parseDownloadJobRow(updated);
+  if (!job) {
+    return NextResponse.json({ error: 'Failed to retry job' }, { status: 500 });
+  }
+  return NextResponse.json(DownloadJobActionResponseSchema.parse({ job }), { status: 200 });
+}
+
+export async function handleCancelDownloadJob(
+  request: NextRequest,
+  subdomain: string,
+  dbClient?: SupabaseClient
+): Promise<NextResponse> {
+  const { session, errorResponse } = await authenticateTenantRoute(request, subdomain);
+  if (errorResponse) return errorResponse;
+  const userId = (session as SessionPayload).userId;
+
+  const body = await readJobIdBody(request, CancelDownloadJobRequestSchema);
+  if ('error' in body) return body.error;
+
+  const resolved = supabaseOr500(dbClient);
+  if ('error' in resolved) return resolved.error;
+  const supabase = resolved.supabase;
+
+  const fetched = await fetchOwnedJob(supabase, body.jobId, userId);
+  if ('error' in fetched) return fetched.error;
+  if (!(CANCELLABLE_STATUSES as readonly string[]).includes(String(fetched.row['status']))) {
+    return NextResponse.json(
+      { error: 'JOB_NOT_CANCELLABLE', message: 'This download can no longer be cancelled.' },
+      { status: 409 }
+    );
+  }
+
+  const { data: updated, error: updateErr } = await supabase
+    .from('media_download_jobs')
+    .update({ status: 'cancelled' })
+    .eq('id', body.jobId)
+    .eq('user_id', userId)
+    .select('*')
+    .maybeSingle();
+
+  if (updateErr || !updated) {
+    return NextResponse.json({ error: 'Failed to cancel job' }, { status: 500 });
+  }
+
+  const job = parseDownloadJobRow(updated);
+  if (!job) {
+    return NextResponse.json({ error: 'Failed to cancel job' }, { status: 500 });
+  }
+  return NextResponse.json(DownloadJobActionResponseSchema.parse({ job }), { status: 200 });
 }
 
 export async function POST(
@@ -530,7 +376,7 @@ export async function POST(
   const { subdomain } = await context.params;
   const limited = await enforceIpRateLimit(request, 'tenant_downloader', 10);
   if (limited) return limited;
-  return handleDownloadMediaFromUrl(request, subdomain);
+  return handleSubmitDownloadJobs(request, subdomain);
 }
 
 export async function GET(
@@ -540,4 +386,3 @@ export async function GET(
   const { subdomain } = await context.params;
   return handleGetDownloadJobs(request, subdomain);
 }
-
