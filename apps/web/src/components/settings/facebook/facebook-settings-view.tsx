@@ -289,7 +289,7 @@ export function FacebookSettingsView({ subdomain }: Readonly<FacebookSettingsVie
           add/edit only, never in the connected state (§5.2). */}
       {(!hasSavedCredentials || isEditMode) && (
         <section className="flex flex-col gap-6 rounded-md border border-line bg-panel p-6 shadow-card">
-          <FacebookSetupCard />
+          <FacebookSetupCard subdomain={subdomain} />
         </section>
       )}
 

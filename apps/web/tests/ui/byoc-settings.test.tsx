@@ -343,7 +343,7 @@ describe('FacebookSettingsView — not connected', () => {
     );
   });
 
-  it('renders the "One more step" card with the sign-in address from the callback helper', async () => {
+  it('renders the "One more step" card with the real Facebook OAuth callback address', async () => {
     renderView(NOT_CONNECTED);
 
     expect(screen.getByTestId('fb-one-more-step-card')).toBeTruthy();
@@ -355,7 +355,14 @@ describe('FacebookSettingsView — not connected', () => {
     ).toBeTruthy();
     expect(screen.getByText('Sign-in address')).toBeTruthy();
     const address = screen.getByTestId('fb-signin-address').textContent ?? '';
-    expect(address.endsWith('/api/connect/facebook/callback')).toBe(true);
+    // The address must match the redirect_uri the Facebook OAuth flow
+    // actually sends (see buildSubdomainOAuthRedirectUri) — the generic
+    // /api/connect/facebook/callback path is never used by that flow,
+    // so Meta would reject it as unregistered. Scheme is not asserted
+    // here: it follows the page origin (https in production, http in
+    // this jsdom run); the host + path are what Meta matches.
+    expect(address).toContain('acme.fbuploadpro.com/api/auth/facebook/callback');
+    expect(address).not.toContain('/api/connect/facebook/callback');
     expect(
       screen.getByText('Paste this into the "Valid OAuth Redirect URIs" field in your Meta app.')
     ).toBeTruthy();

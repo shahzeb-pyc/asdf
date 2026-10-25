@@ -7,10 +7,15 @@
  * Shown ONLY while the workspace has no saved Facebook app details or
  * while those details are being edited; the connected view never
  * mounts it (the visibility rule is the container's, §5.2). The
- * address comes from the existing callback-URL helper
- * (`lib/platforms/callback-urls`) — the value is computed from the
- * app origin, never hard-coded here, so the address shown can never
- * drift from the address the connect flow actually uses.
+ * address is built with the SAME builder the real Facebook OAuth
+ * flow uses (`buildSubdomainOAuthRedirectUri` from
+ * @fbuploadpro/contracts) — https://<workspace>.<root>/api/auth/facebook/callback
+ * in production — so the address shown can never drift from the
+ * address the connect flow actually sends to Meta. It must NOT use
+ * the generic callback-URL helper (`lib/platforms/callback-urls`):
+ * that helper gives /api/connect/facebook/callback, a path the
+ * Facebook flow never uses (Instagram/Threads do use it, and still
+ * get their addresses from that helper).
  *
  * Copy is spec §5.2 verbatim, including Meta's own field name
  * ("Valid OAuth Redirect URIs"), carried like "App ID" / "App Secret".
@@ -18,13 +23,26 @@
 
 import * as React from 'react';
 
-import { getPlatformCallbackUrl } from '@/lib/platforms/callback-urls';
+import { buildSubdomainOAuthRedirectUri } from '@fbuploadpro/contracts';
 
 /** How long the "Copied" feedback stays visible (as shipped). */
 const COPY_FEEDBACK_DURATION_MS = 2000;
 
-export function FacebookSetupCard() {
-  const callbackUrl = getPlatformCallbackUrl('facebook', 'signIn');
+export function FacebookSetupCard({ subdomain }: Readonly<{ subdomain: string }>) {
+  // Same builder as the OAuth initiators
+  // (apps/web/src/app/api/auth/facebook/route.ts and
+  // apps/web/src/app/connect/facebook/route.ts): production shows the
+  // workspace-subdomain form, never the app host or a preview host;
+  // local/preview behaviour follows the flow's own fallback.
+  const callbackUrl = buildSubdomainOAuthRedirectUri(
+    subdomain,
+    typeof window !== 'undefined' ? window.location.origin : null,
+    // Same default as the privacy-URL helpers: without it, an unset
+    // root domain would fall back to a localhost address, which is
+    // never the address Meta must have on file.
+    process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'fbuploadpro.com',
+    process.env.NEXT_PUBLIC_APP_URL
+  );
   const [copied, setCopied] = React.useState(false);
   const feedbackTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
