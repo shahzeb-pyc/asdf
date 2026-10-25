@@ -597,12 +597,14 @@ describe('FacebookSettingsView — edit mode', () => {
     expect(
       screen.getByTestId('facebook-status-mark').getAttribute('data-status')
     ).toBe('connected');
-    // "One more step" is folded into the same panel, not a separate card.
+    // "One more step" is its own panel below the main panel in the
+    // single-column layout — a sibling, not nested inside the main card.
     expect(
       screen
         .getByTestId('fb-one-more-step-card')
         .closest('[data-testid="facebook-settings-card"]')
-    ).toBeTruthy();
+    ).toBeNull();
+    expect(screen.getByTestId('fb-one-more-step-card')).toBeTruthy();
     expect((screen.getByTestId('fb-app-id-input') as HTMLInputElement).value).toBe(
       SAVED_APP_ID
     );

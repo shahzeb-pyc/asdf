@@ -41,8 +41,11 @@ export function FacebookPrivacyUrlRow({
     }
   };
 
+  // Standalone panel in the single-column layout (2026-10-25): the
+  // parent section already supplies the panel chrome, so this row
+  // carries no top border of its own.
   return (
-    <div className="border-t border-line pt-6">
+    <div>
       <div className="flex flex-col gap-1.5">
         <span className="text-metadata font-medium tracking-caption text-ink-dim uppercase">
           Privacy Policy URL
