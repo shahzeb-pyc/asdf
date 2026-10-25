@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import {
   encryptToken,
@@ -366,6 +366,191 @@ describe('Magic Link Facebook Connection Endpoints (Spec 027)', () => {
       expect(res.status).toBe(307);
       expect(res.headers.get('location')).toBe(
         'http://localhost:3000/connect/facebook/success'
+      );
+    });
+  });
+
+  // Magic-link host fix: the callback runs on the workspace-subdomain
+  // host, but the connect pages only exist on the app host. Every
+  // magic redirect out of the callback must therefore land on the app
+  // host, or the magic browser (which holds no fbup_session) is sent
+  // to /login by the tenant login gate despite the account having
+  // just connected.
+  describe('OAuth callback on a tenant host redirects magic flows to the app host', () => {
+    beforeEach(() => {
+      process.env.NEXT_PUBLIC_ROOT_DOMAIN = 'fbuploadpro.com';
+      process.env.NEXT_PUBLIC_APP_URL = 'https://app.fbuploadpro.com';
+    });
+
+    afterEach(() => {
+      delete process.env.NEXT_PUBLIC_ROOT_DOMAIN;
+      process.env.NEXT_PUBLIC_APP_URL = 'http://localhost:3000';
+    });
+
+    const signMagicState = async () =>
+      signOAuthState(
+        {
+          tenantSubdomain: 'acme',
+          userId,
+          nonce: 'tenant_host_magic_nonce_1234',
+          iat: Math.floor(Date.now() / 1000),
+          exp: Math.floor(Date.now() / 1000) + 600,
+          isMagic: true,
+        },
+        TEST_SECRET
+      );
+
+    const mockGraphSuccess = () => {
+      global.fetch = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            access_token: 'mock_short_token',
+            token_type: 'bearer',
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            access_token: 'mock_long_token',
+            token_type: 'bearer',
+            expires_in: 5184000,
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            id: 'fb_user_magic_999',
+            name: 'Magic User',
+            gender: 'female',
+            link: 'https://facebook.com/magicuser',
+            picture: {
+              data: {
+                url: 'https://graph.facebook.com/v26.0/magic/picture',
+              },
+            },
+          }),
+        });
+    };
+
+    const mockDbFor = (alreadyExisted: boolean): DatabaseClient =>
+      ({
+        query: vi.fn().mockImplementation((sql: string) => {
+          if (sql.includes('FROM workspaces')) {
+            return Promise.resolve([{ id: 'workspace_acme_123' }]);
+          }
+          if (sql.includes('FROM platform_credentials')) {
+            return Promise.resolve([
+              {
+                client_id: 'fb_app_id_123',
+                encrypted_client_secret: validEncryptedFbAppSecret,
+              },
+            ]);
+          }
+          if (sql.includes('SELECT id, status FROM social_accounts')) {
+            return Promise.resolve(
+              alreadyExisted ? [{ id: 'existing_acct', status: 'active' }] : []
+            );
+          }
+          return Promise.resolve([{ id: 'mock-account-uuid' }]);
+        }),
+      }) as unknown as DatabaseClient;
+
+    const tenantCallbackUrl = (query: string) =>
+      `https://acme.fbuploadpro.com/api/auth/facebook/callback?${query}`;
+
+    it('redirects a fresh magic success to the app host, not the tenant host', async () => {
+      const state = await signMagicState();
+      mockGraphSuccess();
+      const req = new NextRequest(
+        tenantCallbackUrl(`code=mock_code&state=${state}`)
+      );
+      const res = await handleFacebookCallback(req, mockDbFor(false));
+
+      expect(res.status).toBe(307);
+      expect(res.headers.get('location')).toBe(
+        'https://app.fbuploadpro.com/connect/facebook/success'
+      );
+    });
+
+    it('redirects an already-connected magic success to the app host with already_connected=1', async () => {
+      const state = await signMagicState();
+      mockGraphSuccess();
+      const req = new NextRequest(
+        tenantCallbackUrl(`code=mock_code&state=${state}`)
+      );
+      const res = await handleFacebookCallback(req, mockDbFor(true));
+
+      expect(res.status).toBe(307);
+      const location = new URL(res.headers.get('location')!);
+      expect(location.origin).toBe('https://app.fbuploadpro.com');
+      expect(location.pathname).toBe('/connect/facebook/success');
+      expect(location.searchParams.get('already_connected')).toBe('1');
+      expect(location.searchParams.get('accountName')).toBe('Magic User');
+    });
+
+    it('redirects a magic cancellation to the app-host error page', async () => {
+      const state = await signMagicState();
+      const req = new NextRequest(
+        tenantCallbackUrl(
+          `error=access_denied&error_description=User+denied&state=${state}`
+        )
+      );
+      const res = await handleFacebookCallback(req, mockDbFor(false));
+
+      expect(res.status).toBe(307);
+      expect(res.headers.get('location')).toBe(
+        'https://app.fbuploadpro.com/connect/facebook/error?reason=cancelled'
+      );
+    });
+
+    it('redirects a magic token-exchange failure to the app-host error page', async () => {
+      const state = await signMagicState();
+      global.fetch = vi.fn().mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ error: { message: 'Invalid verification code' } }),
+          { status: 400 }
+        )
+      );
+      const req = new NextRequest(
+        tenantCallbackUrl(`code=bad_code&state=${state}`)
+      );
+      const res = await handleFacebookCallback(req, mockDbFor(false));
+
+      expect(res.status).toBe(307);
+      expect(res.headers.get('location')).toBe(
+        'https://app.fbuploadpro.com/connect/facebook/error?reason=oauth_failed'
+      );
+    });
+
+    it('redirects a magic credentials failure to the app-host error page', async () => {
+      const state = await signMagicState();
+      const noWorkspaceDb = {
+        query: vi.fn().mockResolvedValue([]),
+      } as unknown as DatabaseClient;
+      const req = new NextRequest(
+        tenantCallbackUrl(`code=mock_code&state=${state}`)
+      );
+      const res = await handleFacebookCallback(req, noWorkspaceDb);
+
+      expect(res.status).toBe(307);
+      expect(res.headers.get('location')).toBe(
+        'https://app.fbuploadpro.com/connect/facebook/error?reason=credentials_required'
+      );
+    });
+
+    it('redirects a magic internal error to the app-host error page', async () => {
+      const state = await signMagicState();
+      global.fetch = vi.fn().mockRejectedValue(new Error('graph down'));
+      const req = new NextRequest(
+        tenantCallbackUrl(`code=mock_code&state=${state}`)
+      );
+      const res = await handleFacebookCallback(req, mockDbFor(false));
+
+      expect(res.status).toBe(307);
+      expect(res.headers.get('location')).toBe(
+        'https://app.fbuploadpro.com/connect/facebook/error?reason=internal_oauth_error'
       );
     });
   });
