@@ -363,7 +363,7 @@ for (const c of PLATFORM_CASES) {
     it('renders the header, status, and form verbatim (§5.3/§5.4)', () => {
       renderView(c, notConnectedPayload(p));
 
-      // 2026-10-25 redesign: Instagram's left-column heading is
+      // 2026-10-25 redesign: Instagram's single-column heading is
       // "Instagram App" and its guide is removed; Threads keeps the
       // classic "Connect Threads" heading and its guide.
       expect(
@@ -805,6 +805,25 @@ describe('Instagram redesign (2026-10-25)', () => {
     const address = screen.getByTestId('instagram-setup-address-signin').textContent ?? '';
     expect(address.endsWith('/api/connect/instagram/callback')).toBe(true);
     expect(address).not.toContain('/api/auth/');
+  });
+
+  it('renders single-column: header stacked above the panel, never split side by side', () => {
+    const c = PLATFORM_CASES[0] as PlatformCase;
+    renderView(c, notConnectedPayload('instagram'));
+
+    // No two-column grid anywhere in the Instagram tab: the header
+    // (title + description + status) sits above the full-width
+    // panel, on desktop and mobile alike.
+    expect(document.querySelector('[class*="grid-cols"]')).toBeNull();
+    const heading = screen.getByRole('heading', { name: 'Instagram App' });
+    const card = screen.getByTestId('instagram-settings-card');
+    expect(
+      Boolean(heading.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING)
+    ).toBe(true);
+    // Status still travels with the header, not the panel.
+    expect(screen.getByTestId('instagram-status-badge').textContent).toContain(
+      'Not connected'
+    );
   });
 
   it('shows the tick/cross status mark (never a dot) in both states', () => {

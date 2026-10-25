@@ -80,15 +80,18 @@ export interface PlatformCredentialsViewProps {
   /** Extra card shown under the main card in the form and edit states. */
   setupCard?: React.ReactNode;
   /**
-   * Two-column redesign variant (2026-10-25): left column = section
-   * title + description + tick/cross status, right column = ONE token
-   * panel with the privacy URL row (both states) and "One more step"
-   * folded into the panel (add/edit only). Tabs that omit this keep
-   * the classic layout, dot status, and separate setup card exactly
-   * as before.
+   * Redesign variants (2026-10-25). `twoColumn`: left column =
+   * section title + description + tick/cross status, right column =
+   * ONE token panel with the privacy URL row (both states) and "One
+   * more step" folded into the panel (add/edit only). `singleColumn`:
+   * the same header (title + description + tick/cross status) and
+   * the same panel, but stacked in one full-width column — header on
+   * top, panel below — on desktop and mobile alike, never side by
+   * side. Tabs that omit this keep the classic layout, dot status,
+   * and separate setup card exactly as before.
    */
-  variant?: 'classic' | 'twoColumn';
-  /** Privacy Policy URL shown in the panel in both states (twoColumn only). */
+  variant?: 'classic' | 'twoColumn' | 'singleColumn';
+  /** Privacy Policy URL shown in the panel in both states (redesign variants only). */
   privacyUrl?: string;
 }
 
@@ -258,18 +261,95 @@ export function PlatformCredentialsView({
   const hasSavedCredentials = Boolean(credentials.appId && credentials.hasSecret);
   const isConnectedState = hasSavedCredentials && !isEditMode;
 
-  if (variant === 'twoColumn') {
-    // The left column mirrors the approved two-column layout of the
-    // General and Facebook App tabs: section title + description +
-    // status. The status mark reflects the saved credentials, not the
-    // edit mode — while editing, the app is still connected, even
-    // though the form is showing. The description follows the classic
-    // sentences verbatim, with an edit-mode line of its own.
-    const leftDescription = isEditMode
+  if (variant === 'twoColumn' || variant === 'singleColumn') {
+    // Shared redesign branch: the header (title + description +
+    // tick/cross status) and the panel are identical in both
+    // variants — only their arrangement differs. `twoColumn` puts
+    // them side by side on desktop; `singleColumn` stacks them in
+    // one full-width column (header on top, panel below) at every
+    // width, never split. The status mark reflects the saved
+    // credentials, not the edit mode — while editing, the app is
+    // still connected, even though the form is showing. The
+    // description follows the classic sentences verbatim, with an
+    // edit-mode line of its own.
+    const isSingleColumn = variant === 'singleColumn';
+    const headerDescription = isEditMode
       ? `Edit your saved ${displayName} app details.`
       : isConnectedState
         ? `Your ${displayName} app is linked and publishing is ready to go.`
         : `Link your ${displayName} app to start publishing from this workspace.`;
+
+    const headerBlock = (
+      <div>
+        <h2
+          id={`${testIdPrefix}-settings-heading`}
+          className="text-lg font-semibold text-ink"
+        >
+          {`${displayName} App`}
+        </h2>
+        <p className="mt-1 text-body text-ink-sub">{headerDescription}</p>
+        <div data-testid={`${testIdPrefix}-status-badge`} className="mt-3">
+          <PlatformStatusMark
+            testIdPrefix={testIdPrefix}
+            connected={hasSavedCredentials}
+          />
+        </div>
+      </div>
+    );
+
+    const mainPanel = (
+      <section
+        data-testid={`${testIdPrefix}-settings-card`}
+        aria-labelledby={`${testIdPrefix}-settings-heading`}
+        className="flex flex-col gap-6 rounded-md border border-line bg-panel p-6 shadow-card"
+      >
+        {isConnectedState ? (
+          <PlatformConnectedView
+            config={config}
+            appId={credentials.appId}
+            connectedAt={credentials.connectedAt}
+            onRevealSecret={handleRevealSecret}
+            onEditDetails={() => {
+              setServerError(null);
+              setIsEditMode(true);
+            }}
+            onDisconnectClick={() => setDisconnectOpen(true)}
+          />
+        ) : (
+          <PlatformConnectForm
+            key={isEditMode ? 'edit' : 'connect'}
+            config={config}
+            initialAppId={credentials.appId}
+            hasExistingSecret={credentials.hasSecret}
+            isEditMode={isEditMode}
+            isConnecting={connectMutation.isPending}
+            serverError={serverError}
+            onConnect={handleConnect}
+            showStepBadge={false}
+            onCancelEdit={() => {
+              setServerError(null);
+              setIsEditMode(false);
+            }}
+          >
+            {children}
+          </PlatformConnectForm>
+        )}
+
+        {/* Privacy Policy URL — both states: Meta needs this
+            address regardless of connection state. */}
+        {privacyUrl && (
+          <PlatformPrivacyUrlRow testIdPrefix={testIdPrefix} privacyUrl={privacyUrl} />
+        )}
+
+        {/* "One more step" — folded into this panel as a step
+            below the main content, add/edit only, never in the
+            connected state. It is no longer a separate floating
+            card in these variants. */}
+        {(!hasSavedCredentials || isEditMode) && (
+          <div className="border-t border-line pt-6">{setupCard}</div>
+        )}
+      </section>
+    );
 
     return (
       <div className="flex w-full max-w-4xl flex-col gap-6">
@@ -281,75 +361,17 @@ export function PlatformCredentialsView({
           />
         )}
 
-        <div className="grid w-full gap-7 md:grid-cols-[220px_minmax(0,1fr)]">
-          <div>
-            <h2
-              id={`${testIdPrefix}-settings-heading`}
-              className="text-lg font-semibold text-ink"
-            >
-              {`${displayName} App`}
-            </h2>
-            <p className="mt-1 text-body text-ink-sub">{leftDescription}</p>
-            <div data-testid={`${testIdPrefix}-status-badge`} className="mt-3">
-              <PlatformStatusMark
-                testIdPrefix={testIdPrefix}
-                connected={hasSavedCredentials}
-              />
-            </div>
+        {isSingleColumn ? (
+          <>
+            {headerBlock}
+            {mainPanel}
+          </>
+        ) : (
+          <div className="grid w-full gap-7 md:grid-cols-[220px_minmax(0,1fr)]">
+            {headerBlock}
+            {mainPanel}
           </div>
-
-          <section
-            data-testid={`${testIdPrefix}-settings-card`}
-            aria-labelledby={`${testIdPrefix}-settings-heading`}
-            className="flex flex-col gap-6 rounded-md border border-line bg-panel p-6 shadow-card"
-          >
-            {isConnectedState ? (
-              <PlatformConnectedView
-                config={config}
-                appId={credentials.appId}
-                connectedAt={credentials.connectedAt}
-                onRevealSecret={handleRevealSecret}
-                onEditDetails={() => {
-                  setServerError(null);
-                  setIsEditMode(true);
-                }}
-                onDisconnectClick={() => setDisconnectOpen(true)}
-              />
-            ) : (
-              <PlatformConnectForm
-                key={isEditMode ? 'edit' : 'connect'}
-                config={config}
-                initialAppId={credentials.appId}
-                hasExistingSecret={credentials.hasSecret}
-                isEditMode={isEditMode}
-                isConnecting={connectMutation.isPending}
-                serverError={serverError}
-                onConnect={handleConnect}
-                showStepBadge={false}
-                onCancelEdit={() => {
-                  setServerError(null);
-                  setIsEditMode(false);
-                }}
-              >
-                {children}
-              </PlatformConnectForm>
-            )}
-
-            {/* Privacy Policy URL — both states: Meta needs this
-                address regardless of connection state. */}
-            {privacyUrl && (
-              <PlatformPrivacyUrlRow testIdPrefix={testIdPrefix} privacyUrl={privacyUrl} />
-            )}
-
-            {/* "One more step" — folded into this panel as a step
-                below the main content, add/edit only, never in the
-                connected state. It is no longer a separate floating
-                card in this variant. */}
-            {(!hasSavedCredentials || isEditMode) && (
-              <div className="border-t border-line pt-6">{setupCard}</div>
-            )}
-          </section>
-        </div>
+        )}
 
         <PlatformDisconnectDialog
           config={config}

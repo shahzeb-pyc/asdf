@@ -5,9 +5,10 @@
  * `components/settings/platform/` (spec 135 PR-135-3, spec §5.3 / §8.2).
  *
  * 2026-10-25 redesign: the tab is renamed "Instagram App" in the tab
- * row (settings-tabs.ts), renders in the shared container's two-column
- * variant (left title + description + tick/cross status, right single
- * panel), and the 4-step "Set up your Meta app" guide is REMOVED
+ * row (settings-tabs.ts), renders in the shared container's
+ * single-column variant (title + description + tick/cross status on
+ * top, full-width panel below — never split into side-by-side
+ * columns on desktop), and the 4-step "Set up your Meta app" guide is REMOVED
  * entirely — Shahzeb: it does not need to be shown. Threads keeps its
  * own guide; this file no longer passes any guide children to the
  * container, so the container renders the form without a guide. The
@@ -30,7 +31,7 @@ export const INSTAGRAM_CREDENTIALS_CONFIG = {
   appSecretLabel: 'Instagram App Secret',
   testIdPrefix: 'instagram',
   appIdHelper: "You'll find this in your Meta app under Settings → Basic.",
-  // The step badge is hidden in the two-column variant (the container
+  // The step badge is hidden in the redesign variants (the container
   // passes showStepBadge={false}), since the guide steps it counted
   // from no longer exist; the number is kept for classic consumers.
   formStepNumber: 5,
@@ -47,7 +48,7 @@ export function InstagramSettingsView({ subdomain }: Readonly<InstagramSettingsV
     <PlatformCredentialsView
       subdomain={subdomain}
       config={INSTAGRAM_CREDENTIALS_CONFIG}
-      variant="twoColumn"
+      variant="singleColumn"
       privacyUrl={buildPrivacyPolicyUrl(subdomain)}
       setupCard={
         <PlatformSetupCard
