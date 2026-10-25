@@ -215,7 +215,7 @@ function WorkspaceNameForm({
           About this workspace
         </h2>
         <p className="mt-1 text-metadata text-ink-sub">
-          Your workspace identity, shown across the app.
+          The name of this workspace.
         </p>
       </div>
 

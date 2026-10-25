@@ -10,8 +10,8 @@
  * card hidden) → Edit details (card reappears) → Disconnect via
  * the alert-dialog → not-connected form returns. A second case
  * forces the save route to fail at the network layer and asserts
- * the exact fixed-sentence toast "Network error while connecting
- * Facebook." (§5.2). A third case, added when the YouTube/X/TikTok
+ * the exact fixed-sentence toast "Could not connect Facebook. Check
+ * your connection and try again." (§5.2). A third case, added when the YouTube/X/TikTok
  * explanation tabs were removed from Settings on 2026-10-25,
  * asserts those deep links now land on General at mobile widths,
  * with the General panel (including its Created row) fitting the
@@ -217,7 +217,7 @@ test.describe('settings — BYOC save/test flow (spec 135 §9)', () => {
     await page.getByTestId('fb-connect-btn').click();
 
     await expect(
-      page.getByText('Network error while connecting Facebook.', { exact: true })
+      page.getByText('Could not connect Facebook. Check your connection and try again.', { exact: true })
     ).toBeVisible();
     // The tab stays on the form with the input preserved.
     await expect(page.getByTestId('fb-app-id-input')).toHaveValue('123456789012345');

@@ -309,15 +309,15 @@ describe('FacebookSettingsView — not connected', () => {
       screen.getByText('Link your Facebook app to start publishing from this workspace.')
     ).toBeTruthy();
 
-    expect(screen.getByText('Get your app details')).toBeTruthy();
+    expect(screen.getByText('Find your app details')).toBeTruthy();
     const dashboardLink = screen.getByTestId('fb-meta-dashboard-link');
     expect(dashboardLink.getAttribute('href')).toBe('https://developers.facebook.com');
-    expect(dashboardLink.textContent).toBe('Meta App Dashboard →');
+    expect(dashboardLink.textContent).toBe('Meta developer dashboard →');
     expect(
       screen.getByText(/and copy your App ID and App Secret from Settings → Basic\./)
     ).toBeTruthy();
 
-    expect(screen.getByText('Add them here')).toBeTruthy();
+    expect(screen.getByText('Add your app details here')).toBeTruthy();
     const appIdInput = screen.getByTestId('fb-app-id-input') as HTMLInputElement;
     expect(appIdInput.getAttribute('placeholder')).toBe('e.g. 123456789012345');
     expect(
@@ -334,7 +334,7 @@ describe('FacebookSettingsView — not connected', () => {
 
     expect(screen.getByTestId('fb-connect-btn').textContent).toContain('Connect Facebook');
     expect(
-      screen.getByText('We check everything works the moment you connect.')
+      screen.getByText('Your details are checked as soon as you connect.')
     ).toBeTruthy();
 
     // Privacy Policy URL row: workspace-subdomain address, both states.
@@ -382,7 +382,7 @@ describe('FacebookSettingsView — not connected', () => {
     renderView(NOT_CONNECTED);
     const notice = screen.getByTestId('byoc-reconnect-notice');
     expect(notice.textContent).toContain(
-      'Facebook requires an app to reconnect accounts. Add your App ID and App Secret below, then reconnect.'
+      'To reconnect accounts, add your App ID and App Secret below, then reconnect.'
     );
   });
 
@@ -479,7 +479,7 @@ describe('FacebookSettingsView — connect submit', () => {
     const summary = await findErrorSummary();
     expect(summary.textContent).toContain('That App ID could not be checked. Try again.');
     expect(appIdInput.value).toBe('123456789012345');
-    expect(screen.queryByText('Network error while connecting Facebook.')).toBeNull();
+    expect(screen.queryByText('Could not connect Facebook. Check your connection and try again.')).toBeNull();
   }, INTERACTION_TIMEOUT);
 
   it('network failure toasts the fixed §5.2 sentence, exactly', async () => {
@@ -494,7 +494,7 @@ describe('FacebookSettingsView — connect submit', () => {
     await user.click(screen.getByTestId('fb-connect-btn'));
 
     expect(
-      await screen.findByText('Network error while connecting Facebook.')
+      await screen.findByText('Could not connect Facebook. Check your connection and try again.')
     ).toBeTruthy();
     expect(screen.queryByTestId('fb-saved-app-id')).toBeNull();
   }, INTERACTION_TIMEOUT);
@@ -510,7 +510,7 @@ describe('FacebookSettingsView — connected state', () => {
     ).toBe('connected');
     expect(document.querySelector('[data-slot="status-dot"]')).toBeNull();
     expect(
-      screen.getByText('Your Facebook app is linked and publishing is ready to go.')
+      screen.getByText('Your Facebook app is connected and ready to publish.')
     ).toBeTruthy();
 
     expect(screen.getByTestId('fb-saved-app-id').textContent).toBe(SAVED_APP_ID);
@@ -591,8 +591,8 @@ describe('FacebookSettingsView — edit mode', () => {
 
     await user.click(screen.getByTestId('fb-edit-details-btn'));
 
-    expect(screen.getByText('Get your app details')).toBeTruthy();
-    expect(screen.getByText('Add them here')).toBeTruthy();
+    expect(screen.getByText('Find your app details')).toBeTruthy();
+    expect(screen.getByText('Add your app details here')).toBeTruthy();
     // While editing, the app is still connected: tick, not a cross.
     expect(
       screen.getByTestId('facebook-status-mark').getAttribute('data-status')
@@ -652,7 +652,7 @@ describe('FacebookSettingsView — disconnect dialog (OD-135-2a)', () => {
     );
     expect(
       screen.getByText(
-        /We'll remove your App ID and App Secret from this workspace\. Your connected accounts and posting will keep working as normal — but you won't be able to reconnect or connect new accounts until you add new details\./
+        /We'll remove your App ID and App Secret from this workspace\. Your connected accounts and posting will keep working, but you won't be able to reconnect or add new accounts until you add new details\./
       )
     ).toBeTruthy();
     expect(screen.getByTestId('fb-disconnect-keep-btn').textContent).toBe(
@@ -730,7 +730,7 @@ describe('FacebookSettingsView — disconnect dialog (OD-135-2a)', () => {
     await user.click(screen.getByTestId('fb-disconnect-confirm-btn'));
 
     expect(
-      await screen.findByText('Network error while disconnecting Facebook.')
+      await screen.findByText('Could not disconnect Facebook. Try again.')
     ).toBeTruthy();
     expect(screen.getByTestId('fb-disconnect-modal')).toBeTruthy();
   }, INTERACTION_TIMEOUT);

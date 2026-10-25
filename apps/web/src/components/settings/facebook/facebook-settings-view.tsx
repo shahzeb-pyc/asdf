@@ -66,8 +66,8 @@ import { FacebookSetupCard } from './facebook-setup-card';
 
 const SAVE_FAILURE_MESSAGE = "Couldn't save your Facebook app details. Please try again.";
 const DISCONNECT_FAILURE_MESSAGE = "Couldn't disconnect Facebook. Please try again.";
-const CONNECT_NETWORK_MESSAGE = 'Network error while connecting Facebook.';
-const DISCONNECT_NETWORK_MESSAGE = 'Network error while disconnecting Facebook.';
+const CONNECT_NETWORK_MESSAGE = 'Could not connect Facebook. Check your connection and try again.';
+const DISCONNECT_NETWORK_MESSAGE = 'Could not disconnect Facebook. Try again.';
 
 export interface FacebookSettingsViewProps {
   subdomain: string;
@@ -229,7 +229,7 @@ export function FacebookSettingsView({ subdomain }: Readonly<FacebookSettingsVie
   const headerDescription = isEditMode
     ? 'Edit your saved Facebook app details.'
     : isConnectedState
-      ? 'Your Facebook app is linked and publishing is ready to go.'
+      ? 'Your Facebook app is connected and ready to publish.'
       : 'Link your Facebook app to start publishing from this workspace.';
 
   return (
@@ -238,7 +238,7 @@ export function FacebookSettingsView({ subdomain }: Readonly<FacebookSettingsVie
         <Banner
           variant="warning"
           data-testid="byoc-reconnect-notice"
-          title="Facebook requires an app to reconnect accounts. Add your App ID and App Secret below, then reconnect."
+          title="To reconnect accounts, add your App ID and App Secret below, then reconnect."
         />
       )}
 

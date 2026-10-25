@@ -147,8 +147,8 @@ export function PlatformCredentialsView({
 
   const saveFailureMessage = `Couldn't save your ${displayName} app details. Please try again.`;
   const disconnectFailureMessage = `Couldn't disconnect ${displayName}. Please try again.`;
-  const connectNetworkMessage = `Network error while connecting ${displayName}.`;
-  const disconnectNetworkMessage = `Network error while disconnecting ${displayName}.`;
+  const connectNetworkMessage = `Could not connect ${displayName}. Check your connection and try again.`;
+  const disconnectNetworkMessage = `Could not disconnect ${displayName}. Try again.`;
 
   const searchParams = useSearchParams();
   const showReconnectNotice = searchParams.get('notice') === 'reconnect';
@@ -276,7 +276,7 @@ export function PlatformCredentialsView({
     const headerDescription = isEditMode
       ? `Edit your saved ${displayName} app details.`
       : isConnectedState
-        ? `Your ${displayName} app is linked and publishing is ready to go.`
+        ? `Your ${displayName} app is connected and ready to publish.`
         : `Link your ${displayName} app to start publishing from this workspace.`;
 
     const headerBlock = (
@@ -356,7 +356,7 @@ export function PlatformCredentialsView({
           <Banner
             variant="warning"
             data-testid={`${testIdPrefix}-reconnect-notice`}
-            title={`${displayName} requires an app to reconnect accounts. Add your ${appIdLabel} and ${appSecretLabel} below, then reconnect.`}
+            title={`To reconnect accounts, add your ${appIdLabel} and ${appSecretLabel} below, then reconnect.`}
           />
         )}
 
@@ -396,7 +396,7 @@ export function PlatformCredentialsView({
   const leftDescription = isEditMode
     ? `Edit your saved ${displayName} app details.`
     : isConnectedState
-      ? `Your ${displayName} app is linked and publishing is ready to go.`
+      ? `Your ${displayName} app is connected and ready to publish.`
       : `Link your ${displayName} app to start publishing from this workspace.`;
   // "One more step" is folded into the panel (bare variant) instead of
   // a separate floating card, matching the Facebook App tab.
@@ -411,7 +411,7 @@ export function PlatformCredentialsView({
         <Banner
           variant="warning"
           data-testid={`${testIdPrefix}-reconnect-notice`}
-          title={`${displayName} requires an app to reconnect accounts. Add your ${appIdLabel} and ${appSecretLabel} below, then reconnect.`}
+          title={`To reconnect accounts, add your ${appIdLabel} and ${appSecretLabel} below, then reconnect.`}
         />
       )}
 

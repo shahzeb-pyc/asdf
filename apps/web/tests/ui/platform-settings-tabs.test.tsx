@@ -378,7 +378,7 @@ for (const c of PLATFORM_CASES) {
 
       // Both guides are removed in the 2026-10-25 redesign.
       expect(screen.queryByTestId(`${p}-setup-guide`)).toBeNull();
-      expect(screen.getByText('Add them here')).toBeTruthy();
+      expect(screen.getByText('Add your app details here')).toBeTruthy();
       expect(screen.getByText(c.appIdLabel)).toBeTruthy();
       expect(screen.getByText(c.appSecretLabel)).toBeTruthy();
       const appIdInput = screen.getByTestId(`${p}-app-id-input`) as HTMLInputElement;
@@ -398,7 +398,7 @@ for (const c of PLATFORM_CASES) {
       ).toContain('/privacy');
       expect(screen.getByTestId(`${p}-copy-privacy-url-btn`)).toBeTruthy();
       expect(
-        screen.getByText('We check everything works the moment you connect.')
+        screen.getByText('Your details are checked as soon as you connect.')
       ).toBeTruthy();
     });
 
@@ -426,7 +426,7 @@ for (const c of PLATFORM_CASES) {
       renderView(c, notConnectedPayload(p));
       const notice = screen.getByTestId(`${p}-reconnect-notice`);
       expect(notice.textContent).toContain(
-        `${c.displayName} requires an app to reconnect accounts. Add your ${c.appIdLabel} and ${c.appSecretLabel} below, then reconnect.`
+        `To reconnect accounts, add your ${c.appIdLabel} and ${c.appSecretLabel} below, then reconnect.`
       );
     });
 
@@ -526,7 +526,7 @@ for (const c of PLATFORM_CASES) {
       expect(summary.textContent).toContain('That App ID could not be checked. Try again.');
       expect(appIdInput.value).toBe('123456789012345');
       expect(
-        screen.queryByText(`Network error while connecting ${c.displayName}.`)
+        screen.queryByText(`Could not connect ${c.displayName}. Check your connection and try again.`)
       ).toBeNull();
     }, INTERACTION_TIMEOUT);
 
@@ -542,7 +542,7 @@ for (const c of PLATFORM_CASES) {
       await user.click(screen.getByTestId(`${p}-connect-btn`));
 
       expect(
-        await screen.findByText(`Network error while connecting ${c.displayName}.`)
+        await screen.findByText(`Could not connect ${c.displayName}. Check your connection and try again.`)
       ).toBeTruthy();
       expect(screen.queryByTestId(`${p}-saved-app-id`)).toBeNull();
     }, INTERACTION_TIMEOUT);
@@ -555,7 +555,7 @@ for (const c of PLATFORM_CASES) {
       expect(screen.getByTestId(`${p}-status-badge`).textContent).toContain('Connected');
       expect(
         screen.getByText(
-          `Your ${c.displayName} app is linked and publishing is ready to go.`
+          `Your ${c.displayName} app is connected and ready to publish.`
         )
       ).toBeTruthy();
       expect(screen.getByTestId(`${p}-saved-app-id`).textContent).toBe(c.savedAppId);
@@ -627,7 +627,7 @@ for (const c of PLATFORM_CASES) {
 
       await user.click(screen.getByTestId(`${p}-edit-details-btn`));
 
-      expect(screen.getByText('Add them here')).toBeTruthy();
+      expect(screen.getByText('Add your app details here')).toBeTruthy();
       expect((screen.getByTestId(`${p}-app-id-input`) as HTMLInputElement).value).toBe(
         c.savedAppId
       );
@@ -680,7 +680,7 @@ for (const c of PLATFORM_CASES) {
       expect(
         screen.getByText(
           new RegExp(
-            `We'll remove your ${c.appIdLabel} and ${c.appSecretLabel} from this workspace\\. Your connected accounts and posting will keep working as normal — but you won't be able to reconnect or connect new accounts until you add new details\\.`
+            `We'll remove your ${c.appIdLabel} and ${c.appSecretLabel} from this workspace\\. Your connected accounts and posting will keep working, but you won't be able to reconnect or add new accounts until you add new details\\.`
           )
         )
       ).toBeTruthy();
@@ -759,7 +759,7 @@ for (const c of PLATFORM_CASES) {
       await user.click(screen.getByTestId(`${p}-disconnect-confirm-btn`));
 
       expect(
-        await screen.findByText(`Network error while disconnecting ${c.displayName}.`)
+        await screen.findByText(`Could not disconnect ${c.displayName}. Try again.`)
       ).toBeTruthy();
       expect(screen.getByTestId(`${p}-disconnect-modal`)).toBeTruthy();
     }, INTERACTION_TIMEOUT);
@@ -778,7 +778,7 @@ describe('Instagram redesign (2026-10-25)', () => {
     expect(screen.queryByText('Add the sign-in address we show')).toBeNull();
     expect(screen.queryByTestId('instagram-meta-dashboard-link')).toBeNull();
     // The form itself (and its helper) is still there.
-    expect(screen.getByText('Add them here')).toBeTruthy();
+    expect(screen.getByText('Add your app details here')).toBeTruthy();
     expect(
       screen.getByText("You'll find this in your Meta app under Settings → Basic.")
     ).toBeTruthy();
@@ -896,13 +896,13 @@ describe('Threads guide removed (2026-10-25 redesign)', () => {
       )
     ).toBeTruthy();
 
-    expect(screen.getByText('Sign-in callback address')).toBeTruthy();
+    expect(screen.getByText('Sign-in address')).toBeTruthy();
     expect(
       screen.getByTestId('threads-setup-address-signin').textContent ?? ''
     ).toContain('/api/connect/threads/callback');
     expect(
       screen.getByText(
-        'Paste this into the sign-in callback field in the Threads settings of your app.'
+          'Paste this into the sign-in callback field in your Meta app\'s Threads settings.'
       )
     ).toBeTruthy();
     expect(screen.getByTestId('threads-copy-signin-btn')).toBeTruthy();

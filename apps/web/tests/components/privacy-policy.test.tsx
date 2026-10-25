@@ -29,6 +29,6 @@ describe('PrivacyPolicyContent', () => {
     render(<PrivacyPolicyContent lastUpdated="25 October 2026" />);
     expect(screen.getByText(/Your platform passwords are never stored by us/)).toBeInTheDocument();
     expect(screen.getByText(/We do not sell your data/)).toBeInTheDocument();
-    expect(screen.getByText(/This page is public and does not require sign-in/)).toBeInTheDocument();
+    expect(screen.getByText(/This page is public — no sign-in needed/)).toBeInTheDocument();
   });
 });

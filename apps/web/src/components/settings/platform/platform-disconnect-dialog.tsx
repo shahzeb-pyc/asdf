@@ -75,7 +75,7 @@ export function PlatformDisconnectDialog({
             {`Disconnect ${displayName}?`}
           </AlertDialogTitle>
           <AlertDialogDescription>
-            {`We'll remove your ${appIdLabel} and ${appSecretLabel} from this workspace. Your connected accounts and posting will keep working as normal — but you won't be able to reconnect or connect new accounts until you add new details.`}
+            {`We'll remove your ${appIdLabel} and ${appSecretLabel} from this workspace. Your connected accounts and posting will keep working, but you won't be able to reconnect or add new accounts until you add new details.`}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

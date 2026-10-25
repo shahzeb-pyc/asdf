@@ -52,7 +52,7 @@ export function PrivacyPolicyContent({ lastUpdated }: PrivacyPolicyContentProps)
         </li>
         <li>
           <span className="font-medium text-ink">Basic usage data:</span> publish success
-          or failure, so we can show you what went live and what needs attention.
+          or failure, so we can show you what published and what failed.
         </li>
       </ul>
 
@@ -66,34 +66,30 @@ export function PrivacyPolicyContent({ lastUpdated }: PrivacyPolicyContentProps)
 
       <h2 className="mt-8 text-lg font-semibold text-ink">Who else sees it</h2>
       <p className="mt-2 text-body leading-relaxed text-ink-sub">
-        Only the platforms you connect to, when you publish to them, and the service
-        providers that run the infrastructure behind FBUploadPro (hosting, database,
-        and storage). No other third party receives your data.
+        Only the platforms you publish to, and the providers that host FBUploadPro (hosting, database, and storage). No other third party receives your data.
       </p>
 
       <h2 className="mt-8 text-lg font-semibold text-ink">How long we keep it</h2>
       <p className="mt-2 text-body leading-relaxed text-ink-sub">
         We keep your posts and connected accounts for as long as your workspace exists.
-        When you disconnect an account, its token is removed. When you delete your
+        When you disconnect an account, its connection is removed. When you delete your
         workspace, your posts and account connections are deleted with it.
       </p>
 
       <h2 className="mt-8 text-lg font-semibold text-ink">Your choices</h2>
       <p className="mt-2 text-body leading-relaxed text-ink-sub">
-        You can disconnect any connected account at any time from Accounts, and you can
+        You can disconnect any connected account at any time from the Accounts section, and you can
         delete scheduled posts before they publish. To delete your workspace and all its
-        data, contact support from inside the app.
+        data, contact support in the app.
       </p>
 
       <h2 className="mt-8 text-lg font-semibold text-ink">Contact</h2>
       <p className="mt-2 text-body leading-relaxed text-ink-sub">
-        Questions about this policy: use the support button inside FBUploadPro, or write
-        to us through the WhatsApp support link in the app.
+        Questions about this policy? Contact support inside the app, or message us on WhatsApp.
       </p>
 
       <p className="mt-10 border-t border-line pt-4 text-body text-ink-dim">
-        This page is public and does not require sign-in. It is available at{' '}
-        https://<span className="italic">your-workspace</span>.fbuploadpro.com/privacy.
+        This page is public — no sign-in needed — and is available on every workspace address, at /privacy.
       </p>
     </article>
   );

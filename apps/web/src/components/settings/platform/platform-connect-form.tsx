@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Platform credentials — shared "Add them here" connect form
+ * Platform credentials — shared "Add your app details here" connect form
  * (spec 135 PR-135-3, spec §5.3/§5.4 / §6.3 / §8.2).
  *
  * One config-driven form for Instagram and Threads (UI Rule 11 — the
@@ -98,7 +98,7 @@ export interface PlatformConnectFormProps {
   serverError: string | null;
   onConnect: (payload: PlatformConnectPayload) => Promise<void>;
   onCancelEdit: () => void;
-  /** The platform's setup guide, shown above the "Add them here" step. */
+  /** The platform's setup guide, shown above the "Add your app details here" step. */
   children?: React.ReactNode;
 }
 
@@ -172,7 +172,7 @@ export function PlatformConnectForm({
       <div className="flex flex-col gap-4">
         <div className="flex items-center gap-2">
 
-          <h3 className="text-body font-semibold text-ink">Add them here</h3>
+          <h3 className="text-body font-semibold text-ink">Add your app details here</h3>
         </div>
 
         <Form {...form}>
@@ -268,7 +268,7 @@ export function PlatformConnectForm({
                 )}
               </div>
               <span className="text-metadata text-ink-dim">
-                We check everything works the moment you connect.
+                Your details are checked as soon as you connect.
               </span>
             </div>
           </form>

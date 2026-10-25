@@ -66,10 +66,10 @@ export function ThreadsSettingsView({ subdomain }: Readonly<ThreadsSettingsViewP
           addresses={[
             {
               key: 'signin',
-              label: 'Sign-in callback address',
+              label: 'Sign-in address',
               url: urls.signInCallback,
               helper:
-                'Paste this into the sign-in callback field in the Threads settings of your app.',
+                "Paste this into the sign-in callback field in your Meta app's Threads settings.",
             },
           ]}
         />
