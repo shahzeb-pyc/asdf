@@ -364,7 +364,7 @@ for (const c of PLATFORM_CASES) {
       renderView(c, notConnectedPayload(p));
 
       expect(
-        screen.getByRole('heading', { name: `Connect ${c.displayName}` })
+        screen.getByRole('heading', { name: `${c.displayName} App` })
       ).toBeTruthy();
       expect(screen.getByTestId(`${p}-settings-card`)).toBeTruthy();
       expect(screen.getByTestId(`${p}-status-badge`).textContent).toContain('Not connected');
@@ -374,7 +374,13 @@ for (const c of PLATFORM_CASES) {
         )
       ).toBeTruthy();
 
-      expect(screen.getByTestId(`${p}-setup-guide`)).toBeTruthy();
+      // Threads' guide is removed (2026-10-25 redesign); Instagram's
+      // guide still renders in this branch (its own redesign piece).
+      if (p === 'threads') {
+        expect(screen.queryByTestId(`${p}-setup-guide`)).toBeNull();
+      } else {
+        expect(screen.getByTestId(`${p}-setup-guide`)).toBeTruthy();
+      }
       expect(screen.getByText('Add them here')).toBeTruthy();
       expect(screen.getByText(c.appIdLabel)).toBeTruthy();
       expect(screen.getByText(c.appSecretLabel)).toBeTruthy();
@@ -390,6 +396,10 @@ for (const c of PLATFORM_CASES) {
       expect(screen.getByTestId(`${p}-connect-btn`).textContent).toContain(
         `Connect ${c.displayName}`
       );
+      expect(
+        screen.getByTestId(`${p}-privacy-url`).textContent ?? ''
+      ).toContain('/privacy');
+      expect(screen.getByTestId(`${p}-copy-privacy-url-btn`)).toBeTruthy();
       expect(
         screen.getByText('We check everything works the moment you connect.')
       ).toBeTruthy();
@@ -562,6 +572,10 @@ for (const c of PLATFORM_CASES) {
       );
       expect(screen.queryByTestId(`${p}-one-more-step-card`)).toBeNull();
       expect(screen.queryByTestId(`${p}-setup-guide`)).toBeNull();
+      expect(
+        screen.getByTestId(`${p}-privacy-url`).textContent ?? ''
+      ).toContain('/privacy');
+      expect(screen.getByTestId(`${p}-copy-privacy-url-btn`)).toBeTruthy();
     });
 
     it('Copy App ID writes to the clipboard and shows the "App ID copied" feedback', async () => {
@@ -801,28 +815,18 @@ describe('Instagram guide (§5.3 verbatim)', () => {
   });
 });
 
-describe('Threads guide (§5.4 verbatim)', () => {
-  it('renders all five guide steps, with the pair warning at full strength', () => {
+describe('Threads guide removed (2026-10-25 redesign)', () => {
+  it('renders no setup guide, but keeps the Threads pair warning as the App ID helper', () => {
     const c = PLATFORM_CASES[1] as PlatformCase;
     renderView(c, notConnectedPayload('threads'));
 
-    expect(screen.getByText('Create your Meta app')).toBeTruthy();
-    expect(screen.getByText(/choose the option for connecting a Threads account/)).toBeTruthy();
-    expect(screen.getByText('Add Threads to your app')).toBeTruthy();
-    expect(screen.getByText('Use the Threads pair, not the main pair')).toBeTruthy();
-    expect(screen.getByText(/Threads has its own App ID and App Secret/)).toBeTruthy();
-    expect(
-      screen.getByText(
-        /You will find the Threads pair in the Threads settings of your app — not under Settings → Basic\./
-      )
-    ).toBeTruthy();
-    expect(
-      screen.getByText(/Using the main pair is the most common reason connecting/)
-    ).toBeTruthy();
-    expect(screen.getByText('Add the three addresses we show')).toBeTruthy();
-    expect(
-      screen.getByText('Copy your Threads App ID and Threads App Secret')
-    ).toBeTruthy();
+    expect(screen.queryByTestId('threads-setup-guide')).toBeNull();
+    expect(screen.queryByText('Create your Meta app')).toBeNull();
+    expect(screen.queryByText('Add Threads to your app')).toBeNull();
+    expect(screen.queryByText('Use the Threads pair, not the main pair')).toBeNull();
+    expect(screen.queryByText('Add the three addresses we show')).toBeNull();
+    expect(screen.queryByText('Copy your Threads App ID and Threads App Secret')).toBeNull();
+    // The pair warning survives verbatim as the App ID helper.
     expect(
       screen.getByText(
         "You'll find this in the Threads settings of your Meta app — not under Settings → Basic."
@@ -830,13 +834,13 @@ describe('Threads guide (§5.4 verbatim)', () => {
     ).toBeTruthy();
   });
 
-  it('shows all three callback addresses with their labels and helpers', () => {
+  it('shows ONLY the sign-in callback address in "One more step", plus the privacy URL', () => {
     const c = PLATFORM_CASES[1] as PlatformCase;
     renderView(c, notConnectedPayload('threads'));
 
     expect(
       screen.getByText(
-        'Add these three addresses to the Threads settings in your Meta app. Threads needs all three before it will save your sign-in address.'
+        'Add this address to the Threads settings in your Meta app so Threads can bring you back here after you sign in.'
       )
     ).toBeTruthy();
 
@@ -849,30 +853,21 @@ describe('Threads guide (§5.4 verbatim)', () => {
         'Paste this into the sign-in callback field in the Threads settings of your app.'
       )
     ).toBeTruthy();
-
-    expect(screen.getByText('Deauthorize callback address')).toBeTruthy();
-    expect(
-      screen.getByTestId('threads-setup-address-deauthorize').textContent ?? ''
-    ).toContain('/api/connect/threads/deauthorize');
-    expect(
-      screen.getByText(
-        'Paste this into the deauthorize callback field in the Threads settings of your app. Threads uses this address if someone removes your app.'
-      )
-    ).toBeTruthy();
-
-    expect(screen.getByText('Data deletion callback address')).toBeTruthy();
-    expect(
-      screen.getByTestId('threads-setup-address-data-deletion').textContent ?? ''
-    ).toContain('/api/connect/threads/data-deletion');
-    expect(
-      screen.getByText(
-        'Paste this into the data deletion callback field in the Threads settings of your app. Threads uses this address if someone asks for their information to be deleted.'
-      )
-    ).toBeTruthy();
-
     expect(screen.getByTestId('threads-copy-signin-btn')).toBeTruthy();
-    expect(screen.getByTestId('threads-copy-deauthorize-btn')).toBeTruthy();
-    expect(screen.getByTestId('threads-copy-data-deletion-btn')).toBeTruthy();
+
+    // Deauthorize / data deletion are removed from the UI only — their
+    // backend endpoints are untouched, but nothing here may show them.
+    expect(screen.queryByText('Deauthorize callback address')).toBeNull();
+    expect(screen.queryByTestId('threads-setup-address-deauthorize')).toBeNull();
+    expect(screen.queryByTestId('threads-copy-deauthorize-btn')).toBeNull();
+    expect(screen.queryByText('Data deletion callback address')).toBeNull();
+    expect(screen.queryByTestId('threads-setup-address-data-deletion')).toBeNull();
+    expect(screen.queryByTestId('threads-copy-data-deletion-btn')).toBeNull();
+
+    expect(
+      screen.getByTestId('threads-privacy-url').textContent ?? ''
+    ).toContain('/privacy');
+    expect(screen.getByTestId('threads-copy-privacy-url-btn')).toBeTruthy();
   });
 });
 

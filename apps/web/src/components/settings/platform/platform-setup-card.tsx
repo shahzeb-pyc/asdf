@@ -84,7 +84,18 @@ export function PlatformSetupCard({
   testIdPrefix,
   description,
   addresses,
-}: Readonly<{ testIdPrefix: string; description: string; addresses: SetupAddress[] }>) {
+  bare = false,
+}: Readonly<{
+  testIdPrefix: string;
+  description: string;
+  addresses: SetupAddress[];
+  /**
+   * When true, render as a plain section inside the panel instead of a
+   * separate floating card — the 2026-10-25 redesign folds "One more
+   * step" into the panel. Default false preserves the old card.
+   */
+  bare?: boolean;
+}>) {
   const [copiedKey, setCopiedKey] = React.useState<string | null>(null);
   const feedbackTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -114,7 +125,11 @@ export function PlatformSetupCard({
     <section
       data-testid={`${testIdPrefix}-one-more-step-card`}
       aria-labelledby={`${testIdPrefix}-one-more-step-heading`}
-      className="flex flex-col gap-6 rounded-md border border-line bg-panel p-6 shadow-card"
+      className={
+        bare
+          ? 'flex flex-col gap-6'
+          : 'flex flex-col gap-6 rounded-md border border-line bg-panel p-6 shadow-card'
+      }
     >
       <div>
         <h3

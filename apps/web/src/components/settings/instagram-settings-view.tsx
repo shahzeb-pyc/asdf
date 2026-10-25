@@ -29,7 +29,6 @@ export const INSTAGRAM_CREDENTIALS_CONFIG = {
   appSecretLabel: 'Instagram App Secret',
   testIdPrefix: 'instagram',
   appIdHelper: "You'll find this in your Meta app under Settings → Basic.",
-  formStepNumber: 5,
 } as const;
 
 export interface InstagramSettingsViewProps {

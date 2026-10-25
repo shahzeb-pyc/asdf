@@ -27,8 +27,6 @@ export interface PlatformCredentialsConfig {
   testIdPrefix: string;
   /** Helper text under the ID field saying where the user finds it. */
   appIdHelper: string;
-  /** Number shown on the "Add them here" step, after the guide steps. */
-  formStepNumber: number;
 }
 
 /** Format the "Connected on" date the way these tabs have always shown it. */

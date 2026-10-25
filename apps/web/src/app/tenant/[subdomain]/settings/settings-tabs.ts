@@ -28,7 +28,7 @@ export const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTab; label: string }> = 
   { id: 'general', label: 'General' },
   { id: 'facebook', label: 'Facebook App' },
   { id: 'instagram', label: 'Instagram' },
-  { id: 'threads', label: 'Threads' },
+  { id: 'threads', label: 'Threads App' },
 ];
 
 const SETTINGS_TAB_IDS: readonly string[] = SETTINGS_TABS.map((tab) => tab.id);

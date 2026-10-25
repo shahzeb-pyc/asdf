@@ -116,7 +116,7 @@ export function PlatformConnectForm({
   onCancelEdit,
   children,
 }: Readonly<PlatformConnectFormProps>) {
-  const { displayName, appIdLabel, appSecretLabel, testIdPrefix, appIdHelper, formStepNumber } =
+  const { displayName, appIdLabel, appSecretLabel, testIdPrefix, appIdHelper } =
     config;
   const appIdFieldId = `${testIdPrefix}-app-id-input`;
   const appSecretFieldId = `${testIdPrefix}-app-secret-input`;
@@ -171,12 +171,6 @@ export function PlatformConnectForm({
 
       <div className="flex flex-col gap-4">
         <div className="flex items-center gap-2">
-          <span
-            aria-hidden="true"
-            className="flex size-6 shrink-0 items-center justify-center rounded-full border border-line bg-canvas text-metadata font-semibold text-ink-sub"
-          >
-            {formStepNumber}
-          </span>
           <h3 className="text-body font-semibold text-ink">Add them here</h3>
         </div>
 
