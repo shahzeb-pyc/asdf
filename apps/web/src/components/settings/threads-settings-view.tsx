@@ -56,7 +56,6 @@ export function ThreadsSettingsView({ subdomain }: Readonly<ThreadsSettingsViewP
     <PlatformCredentialsView
       subdomain={subdomain}
       config={THREADS_CREDENTIALS_CONFIG}
-      variant="singleColumn"
       privacyUrl={buildPrivacyPolicyUrl(subdomain)}
       setupCard={
         <PlatformSetupCard

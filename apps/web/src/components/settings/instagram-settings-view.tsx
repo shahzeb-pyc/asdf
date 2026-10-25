@@ -44,7 +44,6 @@ export function InstagramSettingsView({ subdomain }: Readonly<InstagramSettingsV
     <PlatformCredentialsView
       subdomain={subdomain}
       config={INSTAGRAM_CREDENTIALS_CONFIG}
-      variant="singleColumn"
       privacyUrl={buildPrivacyPolicyUrl(subdomain)}
       setupCard={
         <PlatformSetupCard
