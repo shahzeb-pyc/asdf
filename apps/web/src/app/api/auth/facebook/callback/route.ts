@@ -63,6 +63,10 @@ export function buildMagicConnectUrl(
   if (isLocalHost || isLocalRoot || isVercelPreview) {
     return new URL(pathname, requestOrigin.origin);
   }
+  // Parse failure is recorded explicitly as "no app origin", not
+  // swallowed: the fallback below then derives app.<root> (or, with
+  // no root at all, keeps the request origin) via an explicit branch.
+  let appOrigin: string | null = null;
   try {
     const app = new URL(appUrl);
     const appHost = app.hostname.toLowerCase();
@@ -71,10 +75,13 @@ export function buildMagicConnectUrl(
       appHost === '127.0.0.1' ||
       appHost.endsWith('.localhost');
     if (!appIsLocal) {
-      return new URL(pathname, app.origin);
+      appOrigin = app.origin;
     }
   } catch {
-    // Fall through to the app.<root> derivation below.
+    appOrigin = null;
+  }
+  if (appOrigin) {
+    return new URL(pathname, appOrigin);
   }
   if (cleanRoot) {
     return new URL(pathname, `https://app.${cleanRoot}`);
