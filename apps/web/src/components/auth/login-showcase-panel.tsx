@@ -6,14 +6,20 @@
  * redesigned on login-fixes as the approved Option 1 — typographic
  * only (mockup: login-showcase-options.html, Option 1 section),
  * revised per login-showcase-option1-v2.html (which supersedes the
- * first mockup for the showcase): the content is a centred block
- * (max-w-100, i.e. 400px on the numeric spacing scale) vertically
- * centred in the panel, so brand, headline, features, and trust
+ * first mockup for the showcase), then re-centred after Shahzeb
+ * viewed the real page: the content is a centred block
+ * (max-w-lg, i.e. 512px — wider than the left form card's 448px,
+ * deliberately: at 448px the third feature description still
+ * ended with 'them.' alone on a line, at 512px all three
+ * descriptions sit on one full line) that the layout wrapper
+ * centres in the panel, so brand, headline, features, and trust
  * line all share one left edge inside that block; feature rows
- * have no divider lines (spacing alone separates them); icons are
- * the real Lucide icons at 18px (size-4.5), gold, no circle
- * backgrounds, aligned to the first line of the feature title,
- * with title and description in one column under each other.
+ * have no divider lines (spacing
+ * alone separates them); icons are the real Lucide icons at 18px
+ * (size-4.5), gold, no circle backgrounds, aligned to the first
+ * line of the feature title, with title and description in one
+ * column under each other. Subhead and feature descriptions use
+ * ink-sub, not ink-dim, so they do not read washed out.
  *
  * No visual, no cards, no dashboard preview, no timeline: hierarchy
  * and whitespace only. The panel content is centred in the panel
@@ -69,10 +75,10 @@ const FEATURES: readonly FeatureItem[] = [
 
 export function AuthShowcasePanel() {
   return (
-    <div className="flex h-full flex-1 items-center justify-center">
-      {/* Centred block: brand, headline, features, and trust line share
-          one left edge inside this 400px block, vertically centred. */}
-      <div className="w-full max-w-100">
+    <div className="w-full max-w-lg">
+      {/* Centred block (centred by the layout wrapper): brand,
+          headline, features, and trust line share one left edge
+          inside this 512px block. */}
       {/* Brand row — mark + name only; the tagline repeated the headline. */}
       <Link href="/login" className="inline-flex items-center gap-3 self-start no-underline">
         <div className="flex size-9 shrink-0 items-center justify-center rounded-sm border border-line bg-subtle">
@@ -100,7 +106,7 @@ export function AuthShowcasePanel() {
         </h1>
 
         {/* Subhead */}
-        <p className="mb-6 text-body leading-body text-ink-dim">
+        <p className="mb-6 text-body leading-body text-ink-sub">
           Schedule reels and posts across Facebook, Instagram, TikTok, YouTube, Threads, and X —
           they go live while you sleep, even when your laptop is closed.
         </p>
@@ -116,7 +122,7 @@ export function AuthShowcasePanel() {
                 <div className="text-body leading-heading-loose font-semibold text-ink">
                   {item.title}
                 </div>
-                <div className="mt-1 text-metadata leading-body text-ink-dim">{item.desc}</div>
+                <div className="mt-1 text-metadata leading-body text-ink-sub">{item.desc}</div>
               </div>
             </div>
           ))}
@@ -126,7 +132,6 @@ export function AuthShowcasePanel() {
         <p className="mt-6 text-xs text-ink-dim">
           Official platform logins · Encrypted end-to-end
         </p>
-      </div>
       </div>
     </div>
   );

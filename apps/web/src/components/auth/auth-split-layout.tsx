@@ -54,7 +54,11 @@ export function AuthSplitLayout({
         isFormLeft ? 'border-l' : 'border-r'
       )}
     >
-      <div className="relative flex h-full flex-col justify-between px-14 py-12">
+      {/* The wrapper simply centres the showcase panel: no
+          justify-between, no wide side padding fighting the panel's
+          own centring (that combination left the old 400px block
+          reading as a narrow, left-biased column in a wide panel). */}
+      <div className="relative flex h-full items-center justify-center px-6 py-12">
         {showcase ?? <AuthShowcasePanel />}
       </div>
     </section>
