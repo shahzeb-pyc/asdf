@@ -70,6 +70,50 @@ export interface LoginPageProps {
 
 type LoginFieldName = 'email' | 'password';
 
+/**
+ * The return address this page may send to POST /api/auth/login.
+ *
+ * Why this exists: the page's `returnUrl` state comes from
+ * `sanitizeAuthRedirectUrl`, which is a *post-login navigation* helper
+ * and may legitimately return an ABSOLUTE URL (e.g. the workspace
+ * subdomain the user arrived from). The login API's
+ * `LoginRequestSchema` only accepts a RELATIVE path (`SafeReturnUrlSchema`:
+ * starts with '/', never '//', no backslash, never /dashboard), so
+ * sending the absolute URL made the API answer 400
+ * `{ error: 'Validation failed' }` — and since the page only maps
+ * field errors for email/password, that surfaced as the bare line
+ * above the Sign In button with no explanation.
+ *
+ * This converts to a relative path before sending: an absolute URL
+ * keeps only its pathname + search + hash; an already-relative path
+ * passes through; anything else the API would reject (/dashboard,
+ * protocol-relative, backslashed, non-path garbage) is omitted so the
+ * server falls back to its default instead of rejecting the login.
+ * The server still rebuilds the correct workspace address from the
+ * relative path (loginTenantUser → sanitizeAuthRedirectUrl with the
+ * user's subdomain), so the user still lands where they came from.
+ * The server schema is deliberately NOT loosened.
+ */
+export function toApiReturnUrl(returnUrl: string | undefined): string | undefined {
+  if (!returnUrl) return undefined;
+  const trimmed = returnUrl.trim();
+  if (!trimmed || trimmed.startsWith('//') || trimmed.includes('\\')) return undefined;
+  let relative: string;
+  try {
+    // Absolute URL (has a scheme) — keep only the in-app path.
+    const parsed = new URL(trimmed);
+    relative = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  } catch {
+    // Not an absolute URL: only a relative path is sendable.
+    if (!trimmed.startsWith('/')) return undefined;
+    relative = trimmed;
+  }
+  if (relative.startsWith('//')) return undefined;
+  const pathOnly = relative.split(/[?#]/, 1)[0];
+  if (pathOnly === '/dashboard' || pathOnly.startsWith('/dashboard/')) return undefined;
+  return relative;
+}
+
 const FIELD_IDS: Record<LoginFieldName, string> = {
   email: 'login-email',
   password: 'login-password',
@@ -136,12 +180,16 @@ export default function LoginPage({ initialResetSuccess = false }: LoginPageProp
   const onSubmit = async (values: LoginFormValues) => {
     setServerError(null);
     try {
+      // Send only a relative returnUrl: the API schema rejects absolute
+      // URLs, and sanitizeAuthRedirectUrl may have produced one (see
+      // toApiReturnUrl). Omitting it lets the server default sensibly.
+      const apiReturnUrl = toApiReturnUrl(returnUrl);
       const data = await api.post(
         '/api/auth/login',
         {
           email: values.email.trim(),
           password: values.password,
-          ...(returnUrl ? { returnUrl } : {}),
+          ...(apiReturnUrl ? { returnUrl: apiReturnUrl } : {}),
         },
         { schema: LoginSuccessResponseSchema }
       );
