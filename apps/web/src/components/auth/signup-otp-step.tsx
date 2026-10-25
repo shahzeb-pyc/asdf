@@ -6,7 +6,7 @@
  * whole, `autoComplete="one-time-code"` for OS / password-manager
  * autofill; resend carries the server cooldown as a live countdown and
  * is disabled with the countdown as its visible reason; an expired-code
- * error reveals `Send fresh code` in place. Verify + resend go through
+ * error reveals `Resend code` in place. Verify + resend go through
  * the typed API client; the form is on the §3.8 standard (RHF + zod +
  * errors inline only).
  */
@@ -151,7 +151,7 @@ export function SignupOtpStep({
         { email: email.trim() },
         { schema: ResendOtpSuccessResponseSchema }
       );
-      setSuccessNotice('A fresh 6-digit verification code has been dispatched to your email.');
+      setSuccessNotice('A new 6-digit code has been sent to your email.');
       setResendCooldown(60);
     } catch (error) {
       if (!isApiError(error)) {
@@ -259,7 +259,7 @@ export function SignupOtpStep({
               disabled={isResending || resendCooldown > 0}
               className="px-2 py-2 text-metadata font-medium text-link underline disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Send fresh code
+              Resend code
             </button>
           </div>
         )}

@@ -107,11 +107,11 @@ export default function LoginPage({ initialResetSuccess = false }: LoginPageProp
       setIsResetSuccess(true);
     }
     if (params.get('logout') === 'success') {
-      setInfoBanner('You have been signed out successfully.');
+      setInfoBanner('You have been signed out.');
     }
     if (params.get('reason') === 'password_changed') {
       setInfoBanner(
-        'Your session was terminated because your password was recently updated. Please sign in again.'
+        'You were signed out because your password was changed. Sign in again.'
       );
     }
     if (params.get('reason') === 'session-expired') {
@@ -186,7 +186,7 @@ export default function LoginPage({ initialResetSuccess = false }: LoginPageProp
   return (
     <AuthSplitLayout
       title="Sign In"
-      description="Welcome back! Sign in to keep your content flowing across every platform."
+      description="Welcome back. Sign in to your workspace."
       showcase={<LoginShowcasePanel />}
       footer={
         <span className="text-metadata text-ink-sub">
@@ -218,7 +218,7 @@ export default function LoginPage({ initialResetSuccess = false }: LoginPageProp
               <div className="flex flex-col gap-1">
                 <AlertTitle>Password Updated</AlertTitle>
                 <AlertDescription>
-                  Your password has been successfully reset. Please sign in with your new credentials.
+                  Your password has been reset. Sign in with your new password.
                 </AlertDescription>
               </div>
             </Alert>
@@ -247,7 +247,7 @@ export default function LoginPage({ initialResetSuccess = false }: LoginPageProp
                     {...field}
                   />
                 </FormControl>
-                <FormDescription>Only @gmail.com accounts are supported</FormDescription>
+                <FormDescription>Only @gmail.com (or @googlemail.com) accounts are supported.</FormDescription>
                 <FormMessage />
               </FormItem>
             )}

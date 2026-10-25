@@ -11,17 +11,17 @@ export function getSignupLayoutMeta(
   if (isPaused) {
     return {
       title: 'Registration Paused',
-      description: 'We are currently not accepting new account registrations.',
+      description: 'New registrations are paused for now.',
     };
   }
   if (step === 'details') {
     return {
       title: 'Create Account',
-      description: 'Start scheduling and auto-publishing Facebook Reels in minutes.',
+      description: 'Create your account to schedule and publish across your platforms.',
     };
   }
   return {
     title: 'Verify Your Email',
-    description: `We've sent a 6-digit confirmation code to ${email}. Enter the code below to activate your account.`,
+    description: `We've sent a 6-digit verification code to ${email}. Enter the code below to activate your account.`,
   };
 }

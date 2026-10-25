@@ -25,12 +25,12 @@ import { LoginShowcasePanel } from "@/components/auth/login-showcase-panel";
 import LoginPage from "@/app/login/page";
 
 const SUBHEAD =
-  "Schedule reels and posts across Facebook, Instagram, TikTok, YouTube, Threads, and X — they go live while you sleep, even when your laptop is closed.";
+  "Schedule reels and posts across Facebook, Instagram, TikTok, YouTube, Threads, and X — they publish on time, even when your device is off.";
 
 const FEATURES: ReadonlyArray<{ title: string; desc: string }> = [
   {
     title: "Post from anywhere",
-    desc: "Schedule from your phone or laptop — your posts publish from the cloud.",
+    desc: "Schedule from your phone or laptop; publishing runs in the cloud.",
   },
   {
     title: "Every platform, one dashboard",
@@ -38,7 +38,7 @@ const FEATURES: ReadonlyArray<{ title: string; desc: string }> = [
   },
   {
     title: "Your accounts stay yours",
-    desc: "You sign in through each platform directly — your passwords never leave them.",
+    desc: "You sign in on each platform itself, so we never see your passwords.",
   },
 ];
 
@@ -112,7 +112,7 @@ describe("Login Showcase Panel (Spec 061 copy, spec 136 token rebuild)", () => {
     // approved — the platforms live in the subhead instead.
     expect(screen.queryByText("Facebook · Instagram · TikTok · YouTube · Threads · X")).toBeNull();
     expect(screen.getByText(SUBHEAD)).toBeTruthy();
-    expect(screen.getByText("Official platform logins · Encrypted end-to-end")).toBeTruthy();
+    expect(screen.getByText("Sign in on the platforms themselves · Your data is encrypted")).toBeTruthy();
 
     // Strictly forbidden by the approved record (§3.1 absent list).
     expect(screen.queryByText("See how it works")).toBeNull();
@@ -127,7 +127,7 @@ describe("Login Showcase Panel (Spec 061 copy, spec 136 token rebuild)", () => {
 
     // Left card subtext (approved welcome-back copy).
     expect(
-      screen.getByText("Welcome back! Sign in to keep your content flowing across every platform.")
+      screen.getByText("Welcome back. Sign in to your workspace.")
     ).toBeTruthy();
 
     // The showcase panel within the login page, still the sole h1.

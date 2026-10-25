@@ -105,7 +105,7 @@ describe("signup details form (form standard)", () => {
     expect(screen.getByLabelText("Email Address")).toBeTruthy();
     expect(screen.getByLabelText("Password", { exact: true })).toBeTruthy();
     expect(screen.getByLabelText("Confirm Password")).toBeTruthy();
-    expect(screen.getByText("Only @gmail.com accounts are supported")).toBeTruthy();
+    expect(screen.getByText("Only @gmail.com (or @googlemail.com) accounts are supported.")).toBeTruthy();
     expect(screen.getByText("Minimum 8 characters")).toBeTruthy();
     const password = screen.getByLabelText("Password", { exact: true }) as HTMLInputElement;
     expect(password.getAttribute("autocomplete")).toBe("new-password");
@@ -152,7 +152,7 @@ describe("signup details form (form standard)", () => {
 
     expect(await screen.findAllByText("Password must be at least 8 characters long.")).toHaveLength(1);
     expect(
-      screen.getAllByText("Passwords do not match. Please verify both password fields.")
+      screen.getAllByText("Passwords do not match. Enter the same password in both fields.")
     ).toHaveLength(1);
     expect((screen.getByLabelText("Email Address") as HTMLInputElement).value).toBe(VALID.email);
     expect((screen.getByLabelText("Password", { exact: true }) as HTMLInputElement).value).toBe("short");
@@ -212,7 +212,7 @@ describe("signup details form (form standard)", () => {
         "Too many registration attempts. Please wait 45 seconds before trying again."
       )
     ).toBeTruthy();
-    const button = screen.getByRole("button", { name: /Please wait \(45s\)/ });
+    const button = screen.getByRole("button", { name: /Please wait 45s/ });
     expect(button.hasAttribute("disabled")).toBe(true);
   });
 
@@ -294,7 +294,7 @@ describe("signup OTP step (§5.4 pattern)", () => {
     await user.click(screen.getByRole("button", { name: "Verify & Activate Account" }));
 
     expect(
-      await screen.findAllByText("Please enter the complete 6-digit verification code.")
+      await screen.findAllByText("Enter the full 6-digit code.")
     ).toHaveLength(1);
     const verifyCalls = fetchMock.mock.calls.filter((call) =>
       String(call[0]).includes("verify-otp")
@@ -302,7 +302,7 @@ describe("signup OTP step (§5.4 pattern)", () => {
     expect(verifyCalls).toHaveLength(0);
   });
 
-  it("expired-code error reveals Send fresh code in place", async () => {
+  it("expired-code error reveals Resend code in place", async () => {
     const user = userEvent.setup();
     const otpField = await gotoOtpStep(user);
     fetchMock.mockResolvedValueOnce(
@@ -315,7 +315,7 @@ describe("signup OTP step (§5.4 pattern)", () => {
     expect(
       await screen.findAllByText("Verification code has expired. Please request a new one.")
     ).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "Send fresh code" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Resend code" })).toBeTruthy();
   });
 
   it("direct OTP entry via ?step=otp resends on demand and confirms with the Code Sent callout", async () => {
@@ -330,7 +330,7 @@ describe("signup OTP step (§5.4 pattern)", () => {
 
     expect(
       await screen.findByText(
-        "A fresh 6-digit verification code has been dispatched to your email."
+        "A new 6-digit code has been sent to your email."
       )
     ).toBeTruthy();
     expect(screen.getByText("Code Sent")).toBeTruthy();
@@ -342,12 +342,12 @@ describe("signup OTP step (§5.4 pattern)", () => {
     render(
       <SignupFlow
         initialEmail={VALID.email}
-        initialSuccessNotice="We sent a fresh 6-digit verification code. Please confirm your email to complete registration."
+        initialSuccessNotice="We sent a 6-digit code to your email. Enter it below to finish signing up."
       />
     );
     expect(
       await screen.findByText(
-        "We sent a fresh 6-digit verification code. Please confirm your email to complete registration."
+        "We sent a 6-digit code to your email. Enter it below to finish signing up."
       )
     ).toBeTruthy();
     expect((screen.getByLabelText("Email Address") as HTMLInputElement).value).toBe(VALID.email);
@@ -359,7 +359,7 @@ describe("signup paused gate — server-side (§4.2.4)", () => {
     render(await SignupPage({ searchParams: Promise.resolve({}) }));
     expect(screen.getByRole("heading", { name: "Create Account" })).toBeTruthy();
     expect(screen.getByLabelText("Full Name")).toBeTruthy();
-    expect(screen.queryByText("New registrations are currently closed")).toBeNull();
+    expect(screen.queryByText("New registrations are paused for now")).toBeNull();
   });
 
   it("replaces the details step with the paused card only, no form, when signups are disabled", async () => {
@@ -369,10 +369,12 @@ describe("signup paused gate — server-side (§4.2.4)", () => {
     // into and no 403 can follow a form the user should never see.
     render(await SignupPage({ searchParams: Promise.resolve({}) }));
     expect(screen.getByRole("heading", { name: "Registration Paused" })).toBeTruthy();
-    expect(screen.getByText("New registrations are currently closed")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Sign in to workspace" }).getAttribute("href")).toBe(
-      "/login"
-    );
+    expect(screen.getByText("New registrations are paused for now")).toBeTruthy();
+    // Card button + layout footer now share the "Sign in" label (copy
+    // unification); both point at /login.
+    expect(
+      screen.getAllByRole("link", { name: "Sign in" }).map((l) => l.getAttribute("href"))
+    ).toEqual(["/login", "/login"]);
     expect(screen.queryByLabelText("Full Name")).toBeNull();
     expect(screen.queryByRole("button", { name: "Create Account" })).toBeNull();
   });
@@ -385,20 +387,20 @@ describe("signup paused gate — server-side (§4.2.4)", () => {
       })
     );
     expect(await screen.findByLabelText("6-Digit Verification Code")).toBeTruthy();
-    expect(screen.queryByText("New registrations are currently closed")).toBeNull();
+    expect(screen.queryByText("New registrations are paused for now")).toBeNull();
   });
 
-  it("paused OTP step: Return to form lands on the paused card, never the details form", async () => {
+  it("paused OTP step: Edit your details lands on the paused card, never the details form", async () => {
     const user = userEvent.setup();
     render(
       <SignupFlow initialStep="otp" initialEmail={VALID.email} initialIsPaused />
     );
     expect(await screen.findByLabelText("6-Digit Verification Code")).toBeTruthy();
     await user.click(
-      screen.getByRole("button", { name: "Need to change your details? Return to form" })
+      screen.getByRole("button", { name: "Need to change your details? Edit your details" })
     );
     expect(screen.getByRole("heading", { name: "Registration Paused" })).toBeTruthy();
-    expect(screen.getByText("New registrations are currently closed")).toBeTruthy();
+    expect(screen.getByText("New registrations are paused for now")).toBeTruthy();
     expect(screen.queryByLabelText("Full Name")).toBeNull();
     expect(screen.queryByRole("button", { name: "Create Account" })).toBeNull();
   });
@@ -411,11 +413,11 @@ describe("signup paused gate — server-side (§4.2.4)", () => {
     expect(await screen.findByLabelText("6-Digit Verification Code")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Wrong email? Edit" }));
     expect(screen.getByRole("heading", { name: "Registration Paused" })).toBeTruthy();
-    expect(screen.getByText("New registrations are currently closed")).toBeTruthy();
+    expect(screen.getByText("New registrations are paused for now")).toBeTruthy();
     expect(screen.queryByLabelText("Full Name")).toBeNull();
   });
 
-  it("paused OTP step via the server page: Return to form lands on the paused card", async () => {
+  it("paused OTP step via the server page: Edit your details lands on the paused card", async () => {
     const user = userEvent.setup();
     process.env.NEXT_PUBLIC_SIGNUPS_ENABLED = "false";
     render(
@@ -425,7 +427,7 @@ describe("signup paused gate — server-side (§4.2.4)", () => {
     );
     expect(await screen.findByLabelText("6-Digit Verification Code")).toBeTruthy();
     await user.click(
-      screen.getByRole("button", { name: "Need to change your details? Return to form" })
+      screen.getByRole("button", { name: "Need to change your details? Edit your details" })
     );
     expect(screen.getByRole("heading", { name: "Registration Paused" })).toBeTruthy();
     expect(screen.queryByLabelText("Full Name")).toBeNull();
@@ -449,7 +451,7 @@ describe("validateSignupDetails (schema-backed parity helper)", () => {
     );
     expect(errors.password).toBe("Password must be at least 8 characters long.");
     expect(errors.confirmPassword).toBe(
-      "Passwords do not match. Please verify both password fields."
+      "Passwords do not match. Enter the same password in both fields."
     );
   });
 });

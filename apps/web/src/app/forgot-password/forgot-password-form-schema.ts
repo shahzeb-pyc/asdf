@@ -39,11 +39,11 @@ export const resetPasswordFormSchema = z
       .string()
       .min(1, 'New password is required.')
       .min(8, 'Password must be at least 8 characters long.')
-      .max(128, 'Password cannot exceed 128 characters.'),
+      .max(128, 'Password must be 128 characters or fewer.'),
     confirmPassword: z.string().min(1, 'Please confirm your new password.'),
   })
   .refine((values) => values.password === values.confirmPassword, {
-    message: 'Passwords do not match. Please verify both password fields.',
+    message: 'Passwords do not match. Enter the same password in both fields.',
     path: ['confirmPassword'],
   });
 

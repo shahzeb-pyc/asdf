@@ -3,7 +3,7 @@
 /**
  * SignupPausedCard (spec 136 §5.2) — the paused-registration state,
  * rebuilt on shared/ui primitives + tokens. Behaviour and copy are
- * preserved verbatim: the paused notice, the `Sign in to workspace`
+ * preserved verbatim: the paused notice, the `Sign in`
  * primary action, and the WhatsApp early-access support action with its
  * prefilled message.
  */
@@ -31,17 +31,17 @@ export const SignupPausedCard: React.FC<SignupPausedCardProps> = ({ className })
     >
       <div className="rounded-md border border-line border-l-4 border-l-primary bg-subtle px-5 py-4">
         <h3 className="mb-1 text-lg font-semibold leading-heading text-ink">
-          New registrations are currently closed
+          New registrations are paused for now
         </h3>
         <p className="text-body leading-body text-ink-sub">
-          We&apos;re temporarily pausing new signups while we scale up. Existing users can
+          Existing users can
           keep using their workspaces as usual.
         </p>
       </div>
 
       <div className="flex flex-col gap-3">
         <Button asChild size="lg" className="w-full">
-          <Link href="/login">Sign in to workspace</Link>
+          <Link href="/login">Sign in</Link>
         </Button>
 
         {whatsAppUrl && (
@@ -51,7 +51,7 @@ export const SignupPausedCard: React.FC<SignupPausedCardProps> = ({ className })
             rel="noopener noreferrer"
             className="flex min-h-11 items-center justify-center px-3 py-2 text-center text-metadata text-ink-sub no-underline transition-colors hover:text-ink"
           >
-            Need early access? Contact customer support on WhatsApp
+            Need early access? Contact support on WhatsApp
           </a>
         )}
       </div>

@@ -40,7 +40,7 @@ describe('Password Recovery - Forgot Password (US1 & Spec 018 US3)', () => {
 
       expect(hasText('Reset Password')).toBe(true);
       expect(hasText('Email Address')).toBe(true);
-      expect(hasText('We will send a 6-digit verification code')).toBe(true);
+      expect(hasText('Enter your registered Gmail address to receive a 6-digit verification code.')).toBe(true);
       expect(hasText('Send Verification Code')).toBe(true);
       expect(hasAttribute('type', 'email')).toBe(true);
       expect(html).toContain('href="/login"');

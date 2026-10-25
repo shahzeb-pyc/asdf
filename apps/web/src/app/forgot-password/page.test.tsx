@@ -85,10 +85,10 @@ describe("forgot-password step 1 (email)", () => {
     expect(email.getAttribute("type")).toBe("email");
     expect(email.getAttribute("autocomplete")).toBe("email");
     expect(
-      screen.getByText(
+      screen.queryByText(
         "We will send a 6-digit verification code to your registered Gmail address."
       )
-    ).toBeTruthy();
+    ).toBeNull();
     expect(screen.getByRole("link", { name: "Sign in" }).getAttribute("href")).toBe("/login");
   });
 
@@ -171,7 +171,7 @@ describe("forgot-password step 2 (code + new password)", () => {
     ).toBeTruthy();
     expect(otp.getAttribute("autocomplete")).toBe("one-time-code");
     expect(otp.getAttribute("inputmode")).toBe("numeric");
-    expect(screen.getByText("Enter the 6-digit numeric code sent to your email.")).toBeTruthy();
+    expect(screen.getByText("Enter the 6-digit code sent to your email.")).toBeTruthy();
     expect(screen.getByText("Minimum 8 characters")).toBeTruthy();
     // Resend starts disabled with the countdown as its label (§4.3.2).
     const resend = screen.getByRole("button", { name: "Resend code (60s)" });
@@ -201,7 +201,7 @@ describe("forgot-password step 2 (code + new password)", () => {
 
     expect(await screen.findByText("Password Updated")).toBeTruthy();
     expect(
-      screen.getByText("Your password has been successfully reset. Redirecting you to sign in...")
+      screen.getByText("Your password has been reset. Taking you to sign in…")
     ).toBeTruthy();
     expect(screen.getByRole("link", { name: "Proceed to Sign In" }).getAttribute("href")).toBe(
       "/login?reset=success"
@@ -243,7 +243,7 @@ describe("forgot-password step 2 (code + new password)", () => {
     expect(await screen.findAllByText("Verification code must be exactly 6 digits.")).toHaveLength(1);
     expect(screen.getAllByText("Password must be at least 8 characters long.")).toHaveLength(1);
     expect(
-      screen.getAllByText("Passwords do not match. Please verify both password fields.")
+      screen.getAllByText("Passwords do not match. Enter the same password in both fields.")
     ).toHaveLength(1);
   });
 

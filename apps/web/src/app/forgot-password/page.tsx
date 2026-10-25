@@ -153,9 +153,6 @@ function ForgotEmailForm({
                   }}
                 />
               </FormControl>
-              <FormDescription>
-                We will send a 6-digit verification code to your registered Gmail address.
-              </FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -334,7 +331,7 @@ function ResetPasswordForm({
                   }}
                 />
               </FormControl>
-              <FormDescription>Enter the 6-digit numeric code sent to your email.</FormDescription>
+              <FormDescription>Enter the 6-digit code sent to your email.</FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -461,7 +458,7 @@ export default function ForgotPasswordPage({ initialSuccess = false }: ForgotPas
           <div className="flex flex-col gap-1">
             <AlertTitle>Password Updated</AlertTitle>
             <AlertDescription>
-              Your password has been successfully reset. Redirecting you to sign in...
+              Your password has been reset. Taking you to sign in…
             </AlertDescription>
           </div>
         </Alert>

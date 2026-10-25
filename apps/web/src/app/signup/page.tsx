@@ -86,7 +86,7 @@ export function parseInitialQueryParams(search: string) {
     email: emailParam || undefined,
     successNotice:
       noticeParam === 'pending_verification'
-        ? 'We sent a fresh 6-digit verification code. Please confirm your email to complete registration.'
+        ? 'We sent a 6-digit code to your email. Enter it below to finish signing up.'
         : undefined,
   };
 }

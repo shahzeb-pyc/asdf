@@ -21,10 +21,10 @@ describe('Signup Paused Notice UI (Spec 064)', () => {
     it('renders the paused notice banner with the token primary accent border and explanatory message', () => {
       const { hasText, html } = render(<SignupPausedCard />);
 
-      expect(hasText('New registrations are currently closed')).toBe(true);
+      expect(hasText('New registrations are paused for now')).toBe(true);
       expect(
         hasText(
-          "We're temporarily pausing new signups while we scale up. Existing users can keep using their workspaces as usual."
+          "Existing users can keep using their workspaces as usual."
         )
       ).toBe(true);
       // Spec 136 PR-136B: the card is rebuilt on tokens — the accent is
@@ -36,14 +36,14 @@ describe('Signup Paused Notice UI (Spec 064)', () => {
     it('renders primary CTA button routing to /login', () => {
       const { hasText, html } = render(<SignupPausedCard />);
 
-      expect(hasText('Sign in to workspace')).toBe(true);
+      expect(hasText('Sign in')).toBe(true);
       expect(html).toContain('href="/login"');
     });
 
     it('renders WhatsApp support link when support number is configured', () => {
       const { hasText, html } = render(<SignupPausedCard />);
 
-      expect(hasText('Contact customer support')).toBe(true);
+      expect(hasText('Contact support')).toBe(true);
       expect(html).toContain('https://wa.me/15551234567');
       expect(html).toContain('target="_blank"');
       expect(html).toContain('rel="noopener noreferrer"');
@@ -53,7 +53,7 @@ describe('Signup Paused Notice UI (Spec 064)', () => {
       delete process.env.NEXT_PUBLIC_WHATSAPP_SUPPORT_NUMBER;
       const { hasText, html } = render(<SignupPausedCard />);
 
-      expect(hasText('Contact customer support')).toBe(false);
+      expect(hasText('Contact support')).toBe(false);
       expect(html).not.toContain('https://wa.me');
     });
   });
@@ -70,7 +70,7 @@ describe('Signup Paused Notice UI (Spec 064)', () => {
       expect(hasText('Full Name')).toBe(true);
       expect(hasText('Email Address')).toBe(true);
       expect(hasAttribute('type', 'email')).toBe(true);
-      expect(hasText('New registrations are currently closed')).toBe(false);
+      expect(hasText('New registrations are paused for now')).toBe(false);
     });
 
     it('renders SignupPausedCard and paused header when NEXT_PUBLIC_SIGNUPS_ENABLED="false"', async () => {
@@ -78,9 +78,9 @@ describe('Signup Paused Notice UI (Spec 064)', () => {
       const { hasText, html } = render(await SignupPage({}));
 
       expect(hasText('Registration Paused')).toBe(true);
-      expect(hasText('We are currently not accepting new account registrations.')).toBe(true);
-      expect(hasText('New registrations are currently closed')).toBe(true);
-      expect(hasText('Sign in to workspace')).toBe(true);
+      expect(hasText('Existing users can keep using their workspaces as usual.')).toBe(true);
+      expect(hasText('New registrations are paused for now')).toBe(true);
+      expect(hasText('Sign in')).toBe(true);
       expect(html).toContain('href="/login"');
 
       // Regular form inputs must NOT be rendered when signups are paused
@@ -93,7 +93,7 @@ describe('Signup Paused Notice UI (Spec 064)', () => {
         process.env.NEXT_PUBLIC_SIGNUPS_ENABLED = val;
         const { hasText } = render(await SignupPage({}));
         expect(hasText('Registration Paused')).toBe(true);
-        expect(hasText('New registrations are currently closed')).toBe(true);
+        expect(hasText('New registrations are paused for now')).toBe(true);
       }
     });
   });

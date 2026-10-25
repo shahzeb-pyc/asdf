@@ -58,7 +58,7 @@ describe('Auth Pages UI (Spec 009 & Spec 010)', () => {
       // as approved — the platforms now live in the subhead, with
       // commas, not middle dots.
       expect(hasText('Facebook, Instagram, TikTok, YouTube, Threads, and X')).toBe(true);
-      expect(hasText('Official platform logins · Encrypted end-to-end')).toBe(true);
+      expect(hasText('Sign in on the platforms themselves · Your data is encrypted')).toBe(true);
     });
   });
 
@@ -67,7 +67,7 @@ describe('Auth Pages UI (Spec 009 & Spec 010)', () => {
       const { hasText, hasAttribute, html } = render(<LoginPage />);
 
       expect(hasText('Sign In')).toBe(true);
-      expect(hasText('Welcome back! Sign in to keep your content flowing across every platform.')).toBe(true);
+      expect(hasText('Welcome back. Sign in to your workspace.')).toBe(true);
       expect(hasText('Email Address')).toBe(true);
       expect(hasText('Password')).toBe(true);
       expect(hasAttribute('type', 'email')).toBe(true);
@@ -97,7 +97,7 @@ describe('Auth Pages UI (Spec 009 & Spec 010)', () => {
       const { hasText } = render(<LoginPage initialResetSuccess={true} />);
       expect(hasText('Password Updated')).toBe(true);
       expect(
-        hasText('Your password has been successfully reset. Please sign in with your new credentials.')
+        hasText('Your password has been reset. Sign in with your new password.')
       ).toBe(true);
     });
   });

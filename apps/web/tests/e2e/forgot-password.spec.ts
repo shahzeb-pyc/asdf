@@ -98,13 +98,13 @@ test.describe('forgot → reset', () => {
     // closes the loop on the login page's reset-success banner.
     await expect(page.getByText('Password Updated')).toBeVisible();
     await expect(
-      page.getByText('Your password has been successfully reset. Redirecting you to sign in...')
+      page.getByText('Your password has been reset. Taking you to sign in…')
     ).toBeVisible();
     await expect(page).toHaveURL(/\/login\?reset=success$/, { timeout: 10_000 });
     await expect(page.getByText('Password Updated')).toBeVisible();
     await expect(
       page.getByText(
-        'Your password has been successfully reset. Please sign in with your new credentials.'
+        'Your password has been reset. Sign in with your new password.'
       )
     ).toBeVisible();
   });
@@ -154,15 +154,16 @@ test.describe('forgot → reset', () => {
     page,
   }) => {
     await page.goto('/reset-password');
-    await expect(page.getByRole('heading', { name: 'Password Recovery' })).toBeVisible();
-    await expect(page.getByText('Redirecting to Password Recovery')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Reset password' })).toBeVisible();
+    await expect(page.getByText('Redirecting to Reset password')).toBeVisible();
     await expect(
-      page.getByText(
-        'Password recovery is now handled directly using a 6-digit code. Redirecting you to the recovery page...'
-      )
+      page.getByText('Password reset uses a 6-digit code sent to your email.')
     ).toBeVisible();
     await expect(
-      page.getByRole('link', { name: 'Go to Password Recovery' })
+      page.getByText('Taking you to the reset page…')
+    ).toBeVisible();
+    await expect(
+      page.getByRole('link', { name: 'Go to Reset password' })
     ).toHaveAttribute('href', '/forgot-password');
     // The 1,500 ms timed redirect (OD-136-5) lands on the recovery page.
     await expect(page).toHaveURL(/\/forgot-password$/, { timeout: 10_000 });
