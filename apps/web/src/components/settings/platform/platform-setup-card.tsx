@@ -95,6 +95,12 @@ export function PlatformSetupCard({
   testIdPrefix: string;
   description: string;
   addresses: SetupAddress[];
+  /**
+   * When true, render as a plain section inside the panel instead of a
+   * separate floating card — the 2026-10-25 redesign folds "One more
+   * step" into the panel. Default false preserves the old card.
+   */
+
   bare?: boolean;
 }>) {
   const [copiedKey, setCopiedKey] = React.useState<string | null>(null);
@@ -128,7 +134,7 @@ export function PlatformSetupCard({
       aria-labelledby={`${testIdPrefix}-one-more-step-heading`}
       className={
         bare
-          ? 'flex flex-col gap-4'
+          ? 'flex flex-col gap-6'
           : 'flex flex-col gap-6 rounded-md border border-line bg-panel p-6 shadow-card'
       }
     >

@@ -59,7 +59,7 @@ import { queryKeys } from '@/lib/data/query-keys';
 import { Banner } from '@/components/shared/ui/banner';
 import { Button } from '@/components/shared/ui/button';
 import { Skeleton } from '@/components/shared/ui/skeleton';
-import { StatusDot } from '@/components/shared/ui/status-dot';
+import { buildPrivacyPolicyUrl } from '@/lib/privacy-url';
 import { toast } from '@/components/shared/ui/toast';
 
 import {
@@ -325,7 +325,6 @@ export function PlatformCredentialsView({
             isConnecting={connectMutation.isPending}
             serverError={serverError}
             onConnect={handleConnect}
-            showStepBadge={false}
             onCancelEdit={() => {
               setServerError(null);
               setIsEditMode(false);
@@ -384,8 +383,30 @@ export function PlatformCredentialsView({
     );
   }
 
+  // Classic fallback (no variant passed): the pre-redesign
+  // two-column structure, kept so a tab that omits `variant` still
+  // renders. Neither Instagram nor Threads (both singleColumn)
+  // uses this path.
+  // The left column mirrors the approved two-column layout of the
+  // General tab and the Facebook App tab: section title + description
+  // + status. The status mark reflects the saved credentials, not the
+  // edit mode — while editing, the app is still connected, even though
+  // the form is showing. The description follows the per-state pattern
+  // of the Facebook App tab; every other sentence stays verbatim.
+  const leftDescription = isEditMode
+    ? `Edit your saved ${displayName} app details.`
+    : isConnectedState
+      ? `Your ${displayName} app is linked and publishing is ready to go.`
+      : `Link your ${displayName} app to start publishing from this workspace.`;
+  // "One more step" is folded into the panel (bare variant) instead of
+  // a separate floating card, matching the Facebook App tab.
+  const foldedSetupCard =
+    setupCard && React.isValidElement<{ bare?: boolean }>(setupCard)
+      ? React.cloneElement(setupCard, { bare: true })
+      : setupCard;
+
   return (
-    <div className="flex w-full max-w-3xl flex-col gap-6">
+    <div className="flex w-full max-w-4xl flex-col gap-6">
       {showReconnectNotice && (
         <Banner
           variant="warning"
@@ -394,67 +415,74 @@ export function PlatformCredentialsView({
         />
       )}
 
-      <section
-        data-testid={`${testIdPrefix}-settings-card`}
-        aria-labelledby={`${testIdPrefix}-settings-heading`}
-        className="flex flex-col gap-6 rounded-md border border-line bg-panel p-6 shadow-card"
-      >
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h2
-              id={`${testIdPrefix}-settings-heading`}
-              className="text-lg font-semibold text-ink"
-            >
-              {`Connect ${displayName}`}
-            </h2>
-            <p className="mt-1 text-body text-ink-sub">
-              {isConnectedState
-                ? `Your ${displayName} app is linked and publishing is ready to go.`
-                : `Link your ${displayName} app to start publishing from this workspace.`}
-            </p>
-          </div>
-          <div data-testid={`${testIdPrefix}-status-badge`} className="shrink-0">
-            <StatusDot
-              status={isConnectedState ? 'operational' : 'idle'}
-              label={isConnectedState ? 'Connected' : 'Not connected'}
+      <div className="grid w-full gap-7 md:grid-cols-[220px_minmax(0,1fr)]">
+        <div>
+          <h2
+            id={`${testIdPrefix}-settings-heading`}
+            className="text-lg font-semibold text-ink"
+          >
+            {`${displayName} App`}
+          </h2>
+          <p className="mt-1 text-body text-ink-sub">{leftDescription}</p>
+          <div data-testid={`${testIdPrefix}-status-badge`} className="mt-3">
+            <PlatformStatusMark
+              connected={hasSavedCredentials}
+              testIdPrefix={testIdPrefix}
             />
           </div>
         </div>
 
-        {isConnectedState ? (
-          <PlatformConnectedView
-            config={config}
-            appId={credentials.appId}
-            connectedAt={credentials.connectedAt}
-            onRevealSecret={handleRevealSecret}
-            onEditDetails={() => {
-              setServerError(null);
-              setIsEditMode(true);
-            }}
-            onDisconnectClick={() => setDisconnectOpen(true)}
-          />
-        ) : (
-          <PlatformConnectForm
-            key={isEditMode ? 'edit' : 'connect'}
-            config={config}
-            initialAppId={credentials.appId}
-            hasExistingSecret={credentials.hasSecret}
-            isEditMode={isEditMode}
-            isConnecting={connectMutation.isPending}
-            serverError={serverError}
-            onConnect={handleConnect}
-            onCancelEdit={() => {
-              setServerError(null);
-              setIsEditMode(false);
-            }}
-          >
-            {children}
-          </PlatformConnectForm>
-        )}
-      </section>
+        <section
+          data-testid={`${testIdPrefix}-settings-card`}
+          aria-labelledby={`${testIdPrefix}-settings-heading`}
+          className="flex flex-col gap-6 rounded-md border border-line bg-panel p-6 shadow-card"
+        >
+          {isConnectedState ? (
+            <PlatformConnectedView
+              config={config}
+              appId={credentials.appId}
+              connectedAt={credentials.connectedAt}
+              onRevealSecret={handleRevealSecret}
+              onEditDetails={() => {
+                setServerError(null);
+                setIsEditMode(true);
+              }}
+              onDisconnectClick={() => setDisconnectOpen(true)}
+            />
+          ) : (
+            <PlatformConnectForm
+              key={isEditMode ? 'edit' : 'connect'}
+              config={config}
+              initialAppId={credentials.appId}
+              hasExistingSecret={credentials.hasSecret}
+              isEditMode={isEditMode}
+              isConnecting={connectMutation.isPending}
+              serverError={serverError}
+              onConnect={handleConnect}
+              onCancelEdit={() => {
+                setServerError(null);
+                setIsEditMode(false);
+              }}
+            >
+              {children}
+            </PlatformConnectForm>
+          )}
 
-      {/* "One more step" — add/edit only, never in the connected state (§5.3/§5.4). */}
-      {(!hasSavedCredentials || isEditMode) && setupCard}
+          {/* Privacy Policy URL — both states: Meta needs this address
+              regardless of connection state. */}
+          <PlatformPrivacyUrlRow
+            privacyUrl={buildPrivacyPolicyUrl(subdomain)}
+            testIdPrefix={testIdPrefix}
+          />
+
+          {/* "One more step" — folded into this panel as a step below
+              the main content, add/edit only, never in the connected
+              state (§5.3/§5.4). It is no longer a separate floating card. */}
+          {(!hasSavedCredentials || isEditMode) && (
+            <div className="border-t border-line pt-6">{foldedSetupCard}</div>
+          )}
+        </section>
+      </div>
 
       <PlatformDisconnectDialog
         config={config}

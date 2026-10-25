@@ -31,10 +31,6 @@ export const INSTAGRAM_CREDENTIALS_CONFIG = {
   appSecretLabel: 'Instagram App Secret',
   testIdPrefix: 'instagram',
   appIdHelper: "You'll find this in your Meta app under Settings → Basic.",
-  // The step badge is hidden in the redesign variants (the container
-  // passes showStepBadge={false}), since the guide steps it counted
-  // from no longer exist; the number is kept for classic consumers.
-  formStepNumber: 5,
 } as const;
 
 export interface InstagramSettingsViewProps {
