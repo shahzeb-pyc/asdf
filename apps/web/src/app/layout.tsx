@@ -12,11 +12,11 @@ export const metadata: Metadata = {
   description: 'publishing automation platform',
   icons: {
     icon: [
-      { url: '/icon.svg?v=2', type: 'image/svg+xml' },
-      { url: '/favicon.ico?v=2', sizes: 'any' },
+      { url: '/icon.svg?v=3', type: 'image/svg+xml' },
+      { url: '/favicon.ico?v=3', sizes: 'any' },
     ],
-    shortcut: '/favicon.ico?v=2',
-    apple: '/icon.svg?v=2',
+    shortcut: '/favicon.ico?v=3',
+    apple: '/icon.svg?v=3',
   },
 };
 
