@@ -9,7 +9,14 @@
  * the page's sole top-level heading — but they are asserted on the
  * rendered DOM (text, structure, token classes), not on style
  * strings. Accent/structure checks target the token utilities
- * (text-primary, hairline borders) that replaced the inline styles.
+ * (text-primary) that replaced the inline styles.
+ *
+ * login-fixes migration: the approved Option 1 / v3 redesign
+ * dropped the brand tagline and the separate platform line, made
+ * the headline two lines (first phrase on one line), and removed
+ * the hairline dividers between feature rows (spacing alone
+ * separates them). Those expectations are updated here; the
+ * approved copy itself is unchanged.
  */
 import * as React from "react";
 import { describe, it, expect } from "vitest";
@@ -36,11 +43,13 @@ const FEATURES: ReadonlyArray<{ title: string; desc: string }> = [
 ];
 
 describe("Login Showcase Panel (Spec 061 copy, spec 136 token rebuild)", () => {
-  it("renders brand row with logo mark, bold title, and muted tagline", () => {
+  it("renders brand row with logo mark and bold title, and no tagline", () => {
     const { container } = render(<LoginShowcasePanel />);
 
     expect(screen.getByText("FBUploadPro")).toBeTruthy();
-    expect(screen.getByText("Content automation for creators")).toBeTruthy();
+    // Option 1 redesign: the tagline repeated the headline, so it
+    // was dropped as approved — it must not come back.
+    expect(screen.queryByText("Content automation for creators")).toBeNull();
     // BrandMark presence via its SVG aria-label
     expect(container.innerHTML).toContain('aria-label="FBUploadPro"');
   });
@@ -50,20 +59,20 @@ describe("Login Showcase Panel (Spec 061 copy, spec 136 token rebuild)", () => {
 
     const eyebrow = screen.getByText("CREATE · SCHEDULE · GROW");
     expect(eyebrow.className).toContain("uppercase");
-    expect(eyebrow.className).toContain("tracking-caption");
+    expect(eyebrow.className).toContain("tracking-widest");
     expect(eyebrow.className).toContain("text-primary");
   });
 
-  it("renders the three-line headline as the sole h1, final segment in the accent colour", () => {
+  it("renders the two-line headline as the sole h1, final segment in the accent colour", () => {
     const { container } = render(<LoginShowcasePanel />);
 
     const headings = container.querySelectorAll("h1");
     expect(headings).toHaveLength(1);
     const headline = headings[0]!;
-    // The approved line structure: two line breaks, three segments.
-    expect(headline.querySelectorAll("br")).toHaveLength(2);
-    expect(headline.textContent).toContain("Your pages,");
-    expect(headline.textContent).toContain("posting themselves —");
+    // The approved v3 line structure: one line break, two lines —
+    // the first phrase on one line, the gold segment on the second.
+    expect(headline.querySelectorAll("br")).toHaveLength(1);
+    expect(headline.textContent).toContain("Your pages, posting themselves —");
     const accent = within(headline).getByText("100% on the cloud.");
     expect(accent.className).toContain("text-primary");
   });
@@ -73,7 +82,7 @@ describe("Login Showcase Panel (Spec 061 copy, spec 136 token rebuild)", () => {
     expect(screen.getByText(SUBHEAD)).toBeTruthy();
   });
 
-  it("renders all three feature rows with hairline dividers and accent icons", () => {
+  it("renders all three feature rows with accent icons and no divider lines", () => {
     const { container } = render(<LoginShowcasePanel />);
 
     for (const feature of FEATURES) {
@@ -88,18 +97,21 @@ describe("Login Showcase Panel (Spec 061 copy, spec 136 token rebuild)", () => {
       expect(icon.getAttribute("class")).toContain("text-primary");
     }
 
-    // Hairline dividers between rows: the first two rows carry a
-    // bottom border, the last does not.
+    // Option 1 redesign: no divider lines — spacing alone
+    // separates the rows, so no row carries a bottom border.
     const rows = FEATURES.map((feature) => screen.getByText(feature.title).parentElement!.parentElement!);
-    expect(rows[0]!.className).toContain("border-b");
-    expect(rows[1]!.className).toContain("border-b");
-    expect(rows[2]!.className).not.toContain("border-b");
+    for (const row of rows) {
+      expect(row!.className).not.toContain("border-b");
+    }
   });
 
-  it("renders platform line and trust footer with zero forbidden links or emojis", () => {
+  it("renders trust footer with zero forbidden links or emojis, and no separate platform line", () => {
     const { container } = render(<LoginShowcasePanel />);
 
-    expect(screen.getByText("Facebook · Instagram · TikTok · YouTube · Threads · X")).toBeTruthy();
+    // Option 1 redesign: the separate platform line was dropped as
+    // approved — the platforms live in the subhead instead.
+    expect(screen.queryByText("Facebook · Instagram · TikTok · YouTube · Threads · X")).toBeNull();
+    expect(screen.getByText(SUBHEAD)).toBeTruthy();
     expect(screen.getByText("Official platform logins · Encrypted end-to-end")).toBeTruthy();
 
     // Strictly forbidden by the approved record (§3.1 absent list).

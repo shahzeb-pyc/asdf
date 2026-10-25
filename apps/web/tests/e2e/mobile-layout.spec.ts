@@ -11,7 +11,9 @@
  *
  * Each project gives both hermetic routes below evidence at its own
  * width (12 tests across the matrix):
- * - `/login`, including the failed-sign-in error summary.
+ * - `/login`, including the failed-sign-in error line (PR #5 removed the
+ *   error-summary box from auth pages; the server error is a plain rose
+ *   line now).
  * - The fixture workspace home (`/tenant/<subdomain>` on the tenant
  *   subdomain).
  *
@@ -54,7 +56,7 @@ function expectProjectViewport(page: Page, testInfo: TestInfo): void {
 }
 
 test.describe('mobile layout', () => {
-  test('login fits the viewport; the error summary stays inside it', async (
+  test('login fits the viewport; the error line stays inside it', async (
     { page },
     testInfo
   ) => {
@@ -81,10 +83,18 @@ test.describe('mobile layout', () => {
     await password.fill(TENANT.wrongPassword);
     await signIn.click();
 
-    const summary = page.locator('[data-slot="form-error-summary"]');
-    await expect(summary).toBeVisible();
-    await expect(summary).toContainText('Invalid email or password');
-    await expectWithinViewport(summary, page);
+    // PR #5 removed the FormErrorSummary box from auth pages: the server
+    // error is a plain rose line (role="alert"), and the viewport
+    // assertion now applies to that line. Note the selector: the line is
+    // a <p role="alert"> whose text is NOT its accessible name, so
+    // getByRole('alert', { name }) does not match it — match the <p>
+    // itself and filter by its text instead.
+    await expect(page.locator('[data-slot="form-error-summary"]')).toHaveCount(0);
+    const errorLine = page.locator('p[role="alert"]', {
+      hasText: 'Invalid email or password',
+    });
+    await expect(errorLine).toBeVisible();
+    await expectWithinViewport(errorLine, page);
     await expectNoDocumentOverflow(page);
   });
 

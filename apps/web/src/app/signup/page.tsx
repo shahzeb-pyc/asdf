@@ -1,24 +1,30 @@
-'use client';
-
 /**
- * Signup (spec 136 §5.2) — page-level orchestration only: the two-step
- * flow (details → email OTP), the entry parameters (`?step=otp&email=…`,
- * `?notice=pending_verification`, `?returnUrl=`), and the paused-state
- * gate. The forms themselves live in `components/auth/`
- * (`SignupDetailsForm`, `SignupOtpStep`) on the §3.8 form standard; the
- * hand-rolled field-error machinery that used to live here is deleted.
+ * Signup (spec 136 §5.2) — server page, page-level orchestration only.
+ *
+ * The paused gate lives HERE, on the server, and is evaluated at
+ * request time from the current runtime env (the same env the signup
+ * API reads). It must not live in a client component: NEXT_PUBLIC_*
+ * values are inlined into the client bundle at BUILD time, so a
+ * client-side gate shows the form based on the flag at the last
+ * build, then the API correctly 403s — and the server-rendered paused
+ * card flashes into the form on hydration. With the gate here, a
+ * paused render contains no form at all, so there is nothing to flash
+ * into, and no 'Check the form' 403 can follow a form the user
+ * should never have seen.
  *
  * Preserved behaviours (§4.2): direct entry at the OTP step (login's
  * OTP-pending redirect depends on it), the OTP step staying completable
- * while signups are paused, and the layout titles/descriptions per state.
+ * while signups are paused, and the layout titles/descriptions per
+ * state. The forms themselves live in `components/auth/`
+ * (`SignupDetailsForm`, `SignupOtpStep`, via `SignupFlow`) on the
+ * §3.8 form standard.
  */
 
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import Link from 'next/link';
 
 import { AuthSplitLayout } from '@/components/auth/auth-split-layout';
-import { SignupDetailsForm } from '@/components/auth/signup-details-form';
-import { SignupOtpStep } from '@/components/auth/signup-otp-step';
+import { SignupFlow } from '@/components/auth/signup-flow';
 import { SignupPausedCard } from '@/components/auth/signup-paused-card';
 import { sanitizeAuthRedirectUrl } from '@/lib/auth-redirect';
 import { isSignupEnabled } from '@fbuploadpro/contracts';
@@ -26,6 +32,9 @@ import {
   signupFormSchema,
   type SignupFormValues,
 } from './signup-form-schema';
+import { getSignupLayoutMeta } from './signup-layout-meta';
+
+export { getSignupLayoutMeta } from './signup-layout-meta';
 
 export interface FieldErrors {
   name?: string | undefined;
@@ -52,29 +61,6 @@ export function validateSignupDetails(input: SignupFormValues): FieldErrors {
     }
   }
   return errors;
-}
-
-export function getSignupLayoutMeta(
-  isPaused: boolean,
-  step: 'details' | 'otp',
-  email: string
-): { title: string; description: string } {
-  if (isPaused) {
-    return {
-      title: 'Registration Paused',
-      description: 'We are currently not accepting new account registrations.',
-    };
-  }
-  if (step === 'details') {
-    return {
-      title: 'Create Account',
-      description: 'Start scheduling and auto-publishing Facebook Reels in minutes.',
-    };
-  }
-  return {
-    title: 'Verify Your Email',
-    description: `We've sent a 6-digit confirmation code to ${email}. Enter the code below to activate your account.`,
-  };
 }
 
 export function mapApiFieldErrors(details: unknown): FieldErrors {
@@ -105,91 +91,62 @@ export function parseInitialQueryParams(search: string) {
   };
 }
 
-export default function SignupPage() {
-  const [step, setStep] = useState<'details' | 'otp'>('details');
-  const [email, setEmail] = useState('');
-  const [returnUrl, setReturnUrl] = useState<string | undefined>(undefined);
-  const [otpCooldown, setOtpCooldown] = useState(0);
-  const [successNotice, setSuccessNotice] = useState<string | null>(null);
+export default async function SignupPage({
+  searchParams,
+}: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const resolved = (await searchParams) ?? {};
+  const first = (v: string | string[] | undefined) =>
+    Array.isArray(v) ? v[0] : v;
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(resolved)) {
+    const v = first(value);
+    if (v !== undefined) query.set(key, v);
+  }
+  const initial = parseInitialQueryParams(query.toString() ? `?${query.toString()}` : '');
 
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const initial = parseInitialQueryParams(window.location.search);
-    if (initial.returnUrl) setReturnUrl(initial.returnUrl);
-    if (initial.email) setEmail(initial.email);
-    if (initial.step) setStep(initial.step);
-    if (initial.successNotice) setSuccessNotice(initial.successNotice);
-  }, []);
-
-  const signupsAllowed = isSignupEnabled();
-  const isPaused = !signupsAllowed && step !== 'otp';
-  const layoutMeta = getSignupLayoutMeta(isPaused, step, email);
-
-  const signInFooter = (
-    <span className="text-metadata text-ink-sub">
-      Already have an account?{' '}
-      <Link
-        href={returnUrl ? `/login?returnUrl=${encodeURIComponent(returnUrl)}` : '/login'}
-        className="font-semibold text-link no-underline hover:underline"
-      >
-        Sign in
-      </Link>
-    </span>
-  );
+  // Server-side gate, request time — never the build-time client value.
+  const isPaused = !isSignupEnabled() && initial.step !== 'otp';
 
   if (isPaused) {
+    const layoutMeta = getSignupLayoutMeta(true, 'details', initial.email ?? '');
     return (
       <AuthSplitLayout
         title={layoutMeta.title}
         description={layoutMeta.description}
-        footer={signInFooter}
+        footer={
+          <span className="text-metadata text-ink-sub">
+            Already have an account?{' '}
+            <Link
+              href={
+                initial.returnUrl
+                  ? `/login?returnUrl=${encodeURIComponent(initial.returnUrl)}`
+                  : '/login'
+              }
+              className="font-semibold text-link no-underline hover:underline"
+            >
+              Sign in
+            </Link>
+          </span>
+        }
       >
         <SignupPausedCard />
       </AuthSplitLayout>
     );
   }
 
-  if (step === 'otp') {
-    return (
-      <AuthSplitLayout
-        title={layoutMeta.title}
-        description={layoutMeta.description}
-        footer={
-          <button
-            type="button"
-            onClick={() => setStep('details')}
-            className="inline-flex min-h-11 items-center px-3 py-2.5 text-metadata text-ink-sub underline"
-          >
-            Need to change your details? Return to form
-          </button>
-        }
-      >
-        <SignupOtpStep
-          email={email}
-          returnUrl={returnUrl}
-          initialCooldown={otpCooldown}
-          onBack={() => setStep('details')}
-        />
-      </AuthSplitLayout>
-    );
-  }
-
+  // When paused, the flow only ever renders for the OTP step (the
+  // details branch above already returned the paused card). Pass
+  // the paused state in so a back-navigation from the OTP step
+  // lands on the paused card, never on the details form.
   return (
-    <AuthSplitLayout
-      title={layoutMeta.title}
-      description={layoutMeta.description}
-      footer={signInFooter}
-    >
-      <SignupDetailsForm
-        initialEmail={email || undefined}
-        successNotice={successNotice}
-        onDismissSuccessNotice={() => setSuccessNotice(null)}
-        onRequiresOtp={(submittedEmail, cooldownSecondsRemaining) => {
-          setEmail(submittedEmail);
-          setOtpCooldown(cooldownSecondsRemaining);
-          setStep('otp');
-        }}
-      />
-    </AuthSplitLayout>
+    <SignupFlow
+      initialStep={initial.step ?? 'details'}
+      initialEmail={initial.email ?? ''}
+      initialReturnUrl={initial.returnUrl}
+      initialSuccessNotice={initial.successNotice ?? null}
+      initialIsPaused={!isSignupEnabled()}
+    />
   );
 }

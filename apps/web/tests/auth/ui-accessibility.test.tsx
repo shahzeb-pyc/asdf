@@ -28,17 +28,20 @@ describe('WCAG 2.2 AA Accessibility & Usability (AUTH-08 to AUTH-15 / Spec 017 U
     });
   });
 
+  // login-fixes migration: SignupPage is now an async server component,
+  // so it is awaited before the synchronous static-markup render.
+  // Assertions are unchanged — only the rendering harness adapted.
   describe('SignupPage Accessibility & Form Preservation (AUTH-10, AUTH-11)', () => {
-    it('renders Terms and Privacy links opening in new tab with noopener noreferrer', () => {
-      const { html } = render(<SignupPage />);
+    it('renders Terms and Privacy links opening in new tab with noopener noreferrer', async () => {
+      const { html } = render(await SignupPage({}));
       expect(html).toContain('href="/terms"');
       expect(html).toContain('href="/privacy"');
       expect(html).toContain('target="_blank"');
       expect(html).toContain('rel="noopener noreferrer"');
     });
 
-    it('contains no generic or broken links', () => {
-      const { html } = render(<SignupPage />);
+    it('contains no generic or broken links', async () => {
+      const { html } = render(await SignupPage({}));
       expect(html).not.toContain('href="#"');
     });
   });

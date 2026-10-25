@@ -92,15 +92,13 @@ describe("forgot-password step 1 (email)", () => {
     expect(screen.getByRole("link", { name: "Sign in" }).getAttribute("href")).toBe("/login");
   });
 
-  it("empty submit shows the Gmail error inline and in the summary, with no request", async () => {
+  it("empty submit shows the Gmail error inline only, with no request", async () => {
     const user = userEvent.setup();
     render(<ForgotPasswordPage />);
     await user.click(screen.getByRole("button", { name: "Send Verification Code" }));
 
-    expect(await screen.findAllByText("Please enter a valid Gmail address.")).toHaveLength(2);
-    expect(
-      screen.getByRole("link", { name: "Please enter a valid Gmail address." }).getAttribute("href")
-    ).toBe("#forgot-email");
+    expect(await screen.findAllByText("Please enter a valid Gmail address.")).toHaveLength(1);
+    expect(document.querySelector('[data-slot="form-error-summary"]')).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -114,7 +112,7 @@ describe("forgot-password step 1 (email)", () => {
       await screen.findAllByText(
         "Password recovery is available for @gmail.com (or @googlemail.com) accounts."
       )
-    ).toHaveLength(2);
+    ).toHaveLength(1);
     // Input is never cleared on a failed submit.
     expect((screen.getByLabelText("Email Address") as HTMLInputElement).value).toBe(
       "operator@example.com"
@@ -135,10 +133,10 @@ describe("forgot-password step 1 (email)", () => {
       await screen.findAllByText(
         "Only @gmail.com (or @googlemail.com) email addresses are permitted."
       )
-    ).toHaveLength(2);
+    ).toHaveLength(1);
   });
 
-  it("network failure surfaces in the summary, never silently", async () => {
+  it("network failure surfaces as a plain inline line, never silently", async () => {
     const user = userEvent.setup();
     fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
     render(<ForgotPasswordPage />);
@@ -218,7 +216,7 @@ describe("forgot-password step 2 (code + new password)", () => {
     });
   });
 
-  it("empty submit shows every step-2 error inline and in the summary, with no request", async () => {
+  it("empty submit shows every step-2 error inline only, with no request", async () => {
     const user = userEvent.setup();
     fetchMock.mockResolvedValue(jsonResponse(200, FORGOT_SUCCESS));
     render(<ForgotPasswordPage />);
@@ -226,9 +224,9 @@ describe("forgot-password step 2 (code + new password)", () => {
     fetchMock.mockClear();
 
     await user.click(screen.getByRole("button", { name: "Update Password" }));
-    expect(await screen.findAllByText("Verification code is required.")).toHaveLength(2);
-    expect(screen.getAllByText("New password is required.")).toHaveLength(2);
-    expect(screen.getAllByText("Please confirm your new password.")).toHaveLength(2);
+    expect(await screen.findAllByText("Verification code is required.")).toHaveLength(1);
+    expect(screen.getAllByText("New password is required.")).toHaveLength(1);
+    expect(screen.getAllByText("Please confirm your new password.")).toHaveLength(1);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -242,11 +240,11 @@ describe("forgot-password step 2 (code + new password)", () => {
     await user.type(screen.getByLabelText("Confirm New Password"), "different-password");
     await user.click(screen.getByRole("button", { name: "Update Password" }));
 
-    expect(await screen.findAllByText("Verification code must be exactly 6 digits.")).toHaveLength(2);
-    expect(screen.getAllByText("Password must be at least 8 characters long.")).toHaveLength(2);
+    expect(await screen.findAllByText("Verification code must be exactly 6 digits.")).toHaveLength(1);
+    expect(screen.getAllByText("Password must be at least 8 characters long.")).toHaveLength(1);
     expect(
       screen.getAllByText("Passwords do not match. Please verify both password fields.")
-    ).toHaveLength(2);
+    ).toHaveLength(1);
   });
 
   it("server code failure maps onto the code field", async () => {
@@ -263,7 +261,7 @@ describe("forgot-password step 2 (code + new password)", () => {
     await user.type(screen.getByLabelText("Confirm New Password"), NEW_PASSWORD);
     await user.click(screen.getByRole("button", { name: "Update Password" }));
 
-    expect(await screen.findAllByText("Invalid or expired verification code.")).toHaveLength(2);
+    expect(await screen.findAllByText("Invalid or expired verification code.")).toHaveLength(1);
     // Entered values survive the failed submit.
     expect((screen.getByLabelText("Verification Code") as HTMLInputElement).value).toBe("123456");
   });

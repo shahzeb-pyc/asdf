@@ -4,11 +4,12 @@
  * - Success: valid credentials → the app navigates to the workspace home,
  *   which renders for real (middleware + tenant layout verify the session
  *   cookie the login response sets).
- * - Wrong password: PR-A6 converted the form to the §3.8 form standard —
- *   the server error now lands in the FormErrorSummary (`role="alert"`,
- *   focused on submit failure) and the typed input is preserved.
- * - Client validation: a non-Gmail address errors inline AND in the
- *   summary (identical wording, summary entry links to the field),
+ * - Wrong password: the server error now renders once as a plain rose
+ *   line (`role="alert"`) — PR #5 removed the FormErrorSummary box from
+ *   auth pages, so there is no summary to focus — and the typed input
+ *   is preserved.
+ * - Client validation: a non-Gmail address errors inline only (the
+ *   summary entry that used to link to the field is gone with the box),
  *   without any login request.
  * - Session-expired notice (§3.1 contract, landed by PR-A6): arriving
  *   with `?reason=session-expired` renders the plain-language notice —
@@ -65,7 +66,7 @@ test.describe('login', () => {
     await expect(page.getByText('Welcome to your FBUploadPro workspace.')).toBeVisible();
   });
 
-  test('wrong password shows the error in the focused summary and keeps the input', async ({
+  test('wrong password shows the error as a plain rose line and keeps the input', async ({
     page,
   }) => {
     // The real route's wrong-credentials response (lib/auth-errors.ts):
@@ -83,17 +84,23 @@ test.describe('login', () => {
     await page.getByLabel('Password', { exact: true }).fill(TENANT.wrongPassword);
     await page.getByRole('button', { name: 'Sign In' }).click();
 
-    const summary = page.locator('[data-slot="form-error-summary"]');
-    await expect(summary).toBeVisible();
-    await expect(summary).toContainText('Invalid email or password');
-    await expect(summary).toBeFocused();
+    // PR #5 removed the FormErrorSummary box from auth pages: the server
+    // error renders once as a plain rose line (role="alert", not focused),
+    // and no summary box exists at all. Note the selector: the line is a
+    // <p role="alert"> whose text is NOT its accessible name, so
+    // getByRole('alert', { name }) does not match it — match the <p>
+    // itself and filter by its text instead.
+    await expect(page.locator('[data-slot="form-error-summary"]')).toHaveCount(0);
+    await expect(
+      page.locator('p[role="alert"]', { hasText: 'Invalid email or password' })
+    ).toBeVisible();
     await expect(page).toHaveURL(/\/login$/);
     // A failed submit never clears what the user typed.
     await expect(page.getByLabel('Email Address')).toHaveValue(TENANT.email);
     await expect(page.getByLabel('Password', { exact: true })).toHaveValue(TENANT.wrongPassword);
   });
 
-  test('client-side validation marks a non-Gmail address inline and in the summary without a request', async ({
+  test('client-side validation marks a non-Gmail address inline only without a request', async ({
     page,
   }) => {
     let loginRequests = 0;
@@ -107,18 +114,14 @@ test.describe('login', () => {
     await page.getByLabel('Password', { exact: true }).fill(TENANT.password);
     await page.getByRole('button', { name: 'Sign In' }).click();
 
-    // Inline message under the field…
+    // Inline message under the field — and nowhere else. PR #5 removed
+    // the summary box, so the identical wording must NOT appear as a
+    // summary entry linking to the field.
     const inline = page.locator('#login-email-message');
     await expect(inline).toHaveText(
       'Only @gmail.com (or @googlemail.com) accounts are supported.'
     );
-    // …and the identical wording as a summary entry linking to the field.
-    const summary = page.locator('[data-slot="form-error-summary"]');
-    const link = summary.getByRole('link', {
-      name: 'Only @gmail.com (or @googlemail.com) accounts are supported.',
-    });
-    await expect(link).toHaveAttribute('href', '#login-email');
-    await expect(summary).toBeFocused();
+    await expect(page.locator('[data-slot="form-error-summary"]')).toHaveCount(0);
     await expect(page.getByLabel('Email Address')).toHaveAttribute('aria-invalid', 'true');
     expect(loginRequests).toBe(0);
   });

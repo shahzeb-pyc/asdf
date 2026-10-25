@@ -96,24 +96,18 @@ describe("login form (form standard reference conversion)", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("failed submit: summary focuses, its link matches the inline error, input is preserved, no request", async () => {
+  it("failed submit: shows the error inline only, once, input preserved, no request", async () => {
     const user = userEvent.setup();
     render(<LoginPage />);
     await fillAndSubmit(user, "owner@example.com", "some-password-1");
 
-    const summary = await waitFor(() => {
-      const el = document.querySelector('[data-slot="form-error-summary"]');
-      expect(el).not.toBeNull();
-      return el as HTMLElement;
-    });
-    expect(document.activeElement).toBe(summary);
-    const link = screen.getByRole("link", {
-      name: "Only @gmail.com (or @googlemail.com) accounts are supported.",
-    });
-    expect(link.getAttribute("href")).toBe("#login-email");
+    expect(
+      await screen.findByText("Only @gmail.com (or @googlemail.com) accounts are supported.")
+    ).toBeTruthy();
     expect(
       screen.getAllByText("Only @gmail.com (or @googlemail.com) accounts are supported.")
-    ).toHaveLength(2);
+    ).toHaveLength(1);
+    expect(document.querySelector('[data-slot="form-error-summary"]')).toBeNull();
     expect((screen.getByLabelText("Email Address") as HTMLInputElement).value).toBe(
       "owner@example.com"
     );
@@ -123,34 +117,27 @@ describe("login form (form standard reference conversion)", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("empty submit shows both field errors inline and in the summary", async () => {
+  it("empty submit shows both field errors inline only, once each", async () => {
     const user = userEvent.setup();
     render(<LoginPage />);
     await user.click(screen.getByRole("button", { name: "Sign In" }));
 
-    // Each message appears twice by design: inline under its field and
-    // as the summary entry with identical wording (§3.8).
-    expect(await screen.findAllByText("Please enter your password.")).toHaveLength(2);
-    expect(screen.getAllByText("Please enter a valid Gmail address.")).toHaveLength(2);
-    expect(screen.getByRole("link", { name: "Please enter your password." }).getAttribute("href")).toBe(
-      "#login-password"
-    );
+    // Inline only: no summary box duplicating the messages.
+    expect(await screen.findAllByText("Please enter your password.")).toHaveLength(1);
+    expect(screen.getAllByText("Please enter a valid Gmail address.")).toHaveLength(1);
+    expect(document.querySelector('[data-slot="form-error-summary"]')).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("wrong password: the server message lands in the summary and the input is preserved", async () => {
+  it("wrong password: the server message appears once as a plain inline line, no summary box", async () => {
     const user = userEvent.setup();
     fetchMock.mockResolvedValue(jsonResponse(401, { error: "Invalid email or password" }));
     render(<LoginPage />);
     await fillAndSubmit(user, "owner@gmail.com", "wrong-password");
 
-    const summary = await waitFor(() => {
-      const el = document.querySelector('[data-slot="form-error-summary"]');
-      expect(el).not.toBeNull();
-      return el as HTMLElement;
-    });
-    expect(summary.textContent).toContain("Invalid email or password");
-    expect(document.activeElement).toBe(summary);
+    expect(await screen.findByText("Invalid email or password")).toBeTruthy();
+    expect(screen.getAllByText("Invalid email or password")).toHaveLength(1);
+    expect(document.querySelector('[data-slot="form-error-summary"]')).toBeNull();
     expect((screen.getByLabelText("Email Address") as HTMLInputElement).value).toBe("owner@gmail.com");
     expect((screen.getByLabelText("Password", { exact: true }) as HTMLInputElement).value).toBe(
       "wrong-password"
@@ -158,7 +145,7 @@ describe("login form (form standard reference conversion)", () => {
     expect(completeAuthRedirect).not.toHaveBeenCalled();
   });
 
-  it("server 400 field errors map back onto the fields inline and in the summary", async () => {
+  it("server 400 field errors map back onto the fields inline only", async () => {
     const user = userEvent.setup();
     fetchMock.mockResolvedValue(
       jsonResponse(400, {
@@ -169,14 +156,11 @@ describe("login form (form standard reference conversion)", () => {
     render(<LoginPage />);
     await fillAndSubmit(user, "owner@gmail.com", "some-password-1");
 
-    expect(await screen.findAllByText("This email address cannot be used.")).toHaveLength(2);
-    expect(
-      screen.getByRole("link", { name: "This email address cannot be used." }).getAttribute("href")
-    ).toBe("#login-email");
+    expect(await screen.findAllByText("This email address cannot be used.")).toHaveLength(1);
     expect(screen.getByLabelText("Email Address").getAttribute("aria-invalid")).toBe("true");
   });
 
-  it("network failure surfaces the connection message in the summary, never silently", async () => {
+  it("network failure surfaces the connection message as a plain inline line, never silently", async () => {
     const user = userEvent.setup();
     fetchMock.mockRejectedValue(new TypeError("fetch failed"));
     render(<LoginPage />);
@@ -185,6 +169,7 @@ describe("login form (form standard reference conversion)", () => {
     expect(
       await screen.findByText("Couldn't sign you in. Please check your connection and try again.")
     ).toBeTruthy();
+    expect(document.querySelector('[data-slot="form-error-summary"]')).toBeNull();
   });
 
   it("successful sign-in posts the payload and hands the redirect to completeAuthRedirect", async () => {

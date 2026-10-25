@@ -50,26 +50,22 @@ export function AuthSplitLayout({
     <section
       aria-label="FBUploadPro Showcase"
       className={cn(
-        'relative hidden w-1/2 overflow-hidden border-line bg-neutral-black lg:block',
+        'relative hidden w-9/20 overflow-hidden border-line bg-canvas lg:block',
         isFormLeft ? 'border-l' : 'border-r'
       )}
     >
-      {/* Gold halo glow at the panel's outer top corner (token alpha). */}
-      <div
-        aria-hidden="true"
-        className={cn(
-          'pointer-events-none absolute top-10 size-72 rounded-full bg-alpha-gold-halo blur-3xl',
-          isFormLeft ? 'right-16' : 'left-16'
-        )}
-      />
-      <div className="relative flex h-full flex-col justify-between px-14 py-12">
+      {/* The wrapper simply centres the showcase panel: no
+          justify-between, no wide side padding fighting the panel's
+          own centring (that combination left the old 400px block
+          reading as a narrow, left-biased column in a wide panel). */}
+      <div className="relative flex h-full items-center justify-center px-6 py-12">
         {showcase ?? <AuthShowcasePanel />}
       </div>
     </section>
   );
 
   const formNode = (
-    <main className="flex min-h-screen w-full items-center justify-center bg-canvas px-4 py-8 lg:w-1/2 lg:px-6">
+    <main className="flex min-h-screen w-full items-center justify-center bg-canvas px-4 py-8 lg:w-11/20 lg:px-6">
       <div className="flex w-full max-w-md flex-col">
         {/* Mobile brand header (rendered when the showcase is hidden). */}
         <div className="mb-6 flex items-center justify-center gap-2.5 lg:hidden">

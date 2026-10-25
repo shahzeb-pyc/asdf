@@ -103,7 +103,7 @@ test.describe('signup → OTP', () => {
     await expect(page.getByRole('heading', { name: 'Sign In' })).toBeVisible();
   });
 
-  test('empty submit shows the summary with every field error and makes no signup request', async ({
+  test('empty submit shows every field error inline and makes no signup request', async ({
     page,
   }) => {
     let signupRequests = 0;
@@ -115,11 +115,13 @@ test.describe('signup → OTP', () => {
     await page.goto('/signup');
     await page.getByRole('button', { name: 'Create Account' }).click();
 
-    const summary = page.locator('[data-slot="form-error-summary"]');
-    await expect(summary).toBeVisible();
-    await expect(summary).toContainText('Full name is required.');
-    await expect(summary).toContainText('Password is required.');
-    await expect(summary).toBeFocused();
+    // PR #5 removed the FormErrorSummary box from auth pages: every field
+    // error renders inline under its own field, and no summary box exists
+    // at all. The messages are the schema messages, now asserted at their
+    // inline locations instead of in the box.
+    await expect(page.locator('[data-slot="form-error-summary"]')).toHaveCount(0);
+    await expect(page.locator('#signup-name-message')).toHaveText('Full name is required.');
+    await expect(page.locator('#signup-password-message')).toHaveText('Password is required.');
     await expect(page.locator('#signup-email-message')).toHaveText(
       'A valid email address is required.'
     );

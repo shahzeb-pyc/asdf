@@ -58,10 +58,13 @@ describe('Signup Paused Notice UI (Spec 064)', () => {
     });
   });
 
+  // login-fixes migration: SignupPage is now an async server component,
+  // so it is awaited before the synchronous static-markup render.
+  // Assertions are unchanged — only the rendering harness adapted.
   describe('SignupPage Integration with Guard', () => {
-    it('renders regular registration inputs when signups are enabled (default or "true")', () => {
+    it('renders regular registration inputs when signups are enabled (default or "true")', async () => {
       process.env.NEXT_PUBLIC_SIGNUPS_ENABLED = 'true';
-      const { hasText, hasAttribute } = render(<SignupPage />);
+      const { hasText, hasAttribute } = render(await SignupPage({}));
 
       expect(hasText('Create Account')).toBe(true);
       expect(hasText('Full Name')).toBe(true);
@@ -70,9 +73,9 @@ describe('Signup Paused Notice UI (Spec 064)', () => {
       expect(hasText('New registrations are currently closed')).toBe(false);
     });
 
-    it('renders SignupPausedCard and paused header when NEXT_PUBLIC_SIGNUPS_ENABLED="false"', () => {
+    it('renders SignupPausedCard and paused header when NEXT_PUBLIC_SIGNUPS_ENABLED="false"', async () => {
       process.env.NEXT_PUBLIC_SIGNUPS_ENABLED = 'false';
-      const { hasText, html } = render(<SignupPage />);
+      const { hasText, html } = render(await SignupPage({}));
 
       expect(hasText('Registration Paused')).toBe(true);
       expect(hasText('We are currently not accepting new account registrations.')).toBe(true);
@@ -85,10 +88,10 @@ describe('Signup Paused Notice UI (Spec 064)', () => {
       expect(hasText('Confirm Password')).toBe(false);
     });
 
-    it('treats "0", "off", and "disabled" as disabled states', () => {
+    it('treats "0", "off", and "disabled" as disabled states', async () => {
       for (const val of ['0', 'off', 'disabled']) {
         process.env.NEXT_PUBLIC_SIGNUPS_ENABLED = val;
-        const { hasText } = render(<SignupPage />);
+        const { hasText } = render(await SignupPage({}));
         expect(hasText('Registration Paused')).toBe(true);
         expect(hasText('New registrations are currently closed')).toBe(true);
       }

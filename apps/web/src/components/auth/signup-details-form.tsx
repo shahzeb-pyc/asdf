@@ -4,8 +4,9 @@
  * Signup details form (spec 136 §5.2) — the registration details step,
  * extracted from the signup page and converted to the form standard
  * (spec 137 §3.8): react-hook-form + zod on the shared/ui Form
- * primitives, `onTouched` validation, `FormErrorSummary` on submit
- * failure, input never cleared, submit through the typed API client.
+ * primitives, `onTouched` validation, errors inline only (under each
+ * field, plus one plain inline line for server errors), input never
+ * cleared, submit through the typed API client.
  *
  * Preserved behaviours (§4.2): the Gmail rule and phone validation with
  * §3.3's wording, server 400 field errors mapped inline, the 429
@@ -24,12 +25,10 @@ import {
   Form,
   FormControl,
   FormDescription,
-  FormErrorSummary,
   FormField,
   FormItem,
   FormLabel,
   FormMessage,
-  type FormErrorSummaryEntry,
 } from '@/components/shared/ui/form';
 import { Input } from '@/components/shared/ui/input';
 import { Button } from '@/components/shared/ui/button';
@@ -73,7 +72,6 @@ export function SignupDetailsForm({
   onDismissSuccessNotice,
   onRequiresOtp,
 }: Readonly<SignupDetailsFormProps>) {
-  const [submitAttempted, setSubmitAttempted] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const [isEmailConflict, setIsEmailConflict] = useState(false);
   const [cooldown, setCooldown] = useState(0);
@@ -128,7 +126,6 @@ export function SignupDetailsForm({
   };
 
   const onSubmit = async (values: SignupFormValues) => {
-    setSubmitAttempted(true);
     setServerError(null);
     setIsEmailConflict(false);
     try {
@@ -196,20 +193,12 @@ export function SignupDetailsForm({
     }
   };
 
-  const summaryErrors: FormErrorSummaryEntry[] = [
-    ...FIELD_ORDER.flatMap((name) => {
-      const message = formState.errors[name]?.message;
-      return message ? [{ fieldId: FIELD_IDS[name], message: String(message) }] : [];
-    }),
-    ...(serverError ? [{ message: serverError }] : []),
-  ];
-
   return (
     <Form {...form}>
       <form
         noValidate
         className="flex flex-col gap-4"
-        onSubmit={form.handleSubmit(onSubmit, () => setSubmitAttempted(true))}
+        onSubmit={form.handleSubmit(onSubmit)}
       >
         {successNotice && (
           <Alert variant="success">
@@ -359,7 +348,11 @@ export function SignupDetailsForm({
           )}
         />
 
-        {submitAttempted && <FormErrorSummary errors={summaryErrors} />}
+        {serverError && (
+          <p role="alert" className="text-metadata font-medium text-brand-rose">
+            {serverError}
+          </p>
+        )}
 
         <Button
           type="submit"
@@ -376,7 +369,7 @@ export function SignupDetailsForm({
           {cooldown > 0 ? `Please wait (${cooldown}s)` : 'Create Account'}
         </Button>
 
-        <p className="mt-1 text-center text-metadata leading-body text-ink-dim">
+        <p className="mt-1 text-center text-metadata leading-body text-ink-sub">
           By creating an account, you agree to our{' '}
           <a
             href="/terms"

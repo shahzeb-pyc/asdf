@@ -3,9 +3,9 @@
 /**
  * Login — the form standard's reference implementation (spec 137 §3.8,
  * PR-A6). react-hook-form + zod resolver on the shared/ui Form
- * primitives: `onTouched` validation, inline errors under each field,
- * the FormErrorSummary on submit failure (focus moves to it, entries
- * link to their fields, wording matches the inline messages), input
+ * primitives: `onTouched` validation, errors inline only — under
+ * each field via FormMessage, and a single plain inline line above
+ * the submit button for server/general errors; no summary box, input
  * never cleared by a failed submit, submit through the typed API
  * client (§3.1).
  *
@@ -44,12 +44,10 @@ import {
   Form,
   FormControl,
   FormDescription,
-  FormErrorSummary,
   FormField,
   FormItem,
   FormLabel,
   FormMessage,
-  type FormErrorSummaryEntry,
 } from '@/components/shared/ui/form';
 import { Input } from '@/components/shared/ui/input';
 import { Button } from '@/components/shared/ui/button';
@@ -82,7 +80,6 @@ export default function LoginPage({ initialResetSuccess = false }: LoginPageProp
   const [isResetSuccess, setIsResetSuccess] = useState(initialResetSuccess);
   const [infoBanner, setInfoBanner] = useState<string | null>(null);
   const [sessionExpired, setSessionExpired] = useState(false);
-  const [submitAttempted, setSubmitAttempted] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
 
   const form = useForm<LoginFormValues>({
@@ -137,7 +134,6 @@ export default function LoginPage({ initialResetSuccess = false }: LoginPageProp
   };
 
   const onSubmit = async (values: LoginFormValues) => {
-    setSubmitAttempted(true);
     setServerError(null);
     try {
       const data = await api.post(
@@ -187,14 +183,6 @@ export default function LoginPage({ initialResetSuccess = false }: LoginPageProp
     }
   };
 
-  const summaryErrors: FormErrorSummaryEntry[] = [
-    ...(Object.keys(FIELD_IDS) as LoginFieldName[]).flatMap((name) => {
-      const message = formState.errors[name]?.message;
-      return message ? [{ fieldId: FIELD_IDS[name], message: String(message) }] : [];
-    }),
-    ...(serverError ? [{ message: serverError }] : []),
-  ];
-
   return (
     <AuthSplitLayout
       title="Sign In"
@@ -216,7 +204,7 @@ export default function LoginPage({ initialResetSuccess = false }: LoginPageProp
         <form
           noValidate
           className="flex flex-col gap-4"
-          onSubmit={form.handleSubmit(onSubmit, () => setSubmitAttempted(true))}
+          onSubmit={form.handleSubmit(onSubmit)}
         >
           {sessionExpired && (
             <Alert variant="warning">
@@ -293,7 +281,11 @@ export default function LoginPage({ initialResetSuccess = false }: LoginPageProp
             )}
           />
 
-          {submitAttempted && <FormErrorSummary errors={summaryErrors} />}
+          {serverError && (
+            <p role="alert" className="text-metadata font-medium text-brand-rose">
+              {serverError}
+            </p>
+          )}
 
           <Button type="submit" size="lg" loading={isSubmitting} className="mt-1 w-full">
             Sign In
