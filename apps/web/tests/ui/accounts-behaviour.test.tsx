@@ -38,6 +38,27 @@ const expiredAccount: FacebookAccountItem = {
   createdAt: '2026-09-15T10:00:00Z',
 };
 
+const connectedAccount: FacebookAccountItem = {
+  id: 'acc-con',
+  fbAccountId: 'fb-con',
+  displayName: 'Connected Carl',
+  profilePictureUrl: null,
+  status: 'active',
+  connectedPagesCount: 1,
+  createdAt: '2026-09-15T10:00:00Z',
+};
+
+const expiringSoonAccount: FacebookAccountItem = {
+  id: 'acc-soon',
+  fbAccountId: 'fb-soon',
+  displayName: 'Expiring Emma',
+  profilePictureUrl: null,
+  status: 'active',
+  tokenExpiresAt: new Date(Date.now() + 3 * 86400000).toISOString(),
+  connectedPagesCount: 1,
+  createdAt: '2026-09-15T10:00:00Z',
+};
+
 describe('AccountsFilterBar behaviour', () => {
   it('typing updates the search, Escape clears it, and the clear button clears it', () => {
     const onSearchChange = vi.fn();
@@ -147,7 +168,25 @@ describe('AccountsEmptyState behaviour', () => {
 });
 
 describe('AccountCard behaviour', () => {
-  it('expired card shows colour + icon + text status and fires reconnect/disconnect', () => {
+  it('connected card shows a tick and no status dot', () => {
+    render(<AccountCard account={connectedAccount} />);
+
+    const mark = screen.getByTestId('account-health-mark');
+    expect(mark.textContent).toContain('Connected');
+    expect(mark.querySelector('[data-icon="check"]')).toBeTruthy();
+    expect(mark.querySelector('.rounded-full')).toBeNull();
+  });
+
+  it('expiring-soon card keeps the clock icon and no status dot', () => {
+    render(<AccountCard account={expiringSoonAccount} />);
+
+    const mark = screen.getByTestId('account-health-mark');
+    expect(mark.textContent).toContain('Connected');
+    expect(mark.querySelector('[data-icon="clock"]')).toBeTruthy();
+    expect(mark.querySelector('.rounded-full')).toBeNull();
+  });
+
+  it('expired card shows a cross and no status dot, and fires reconnect/disconnect', () => {
     const onReconnect = vi.fn();
     const onDisconnect = vi.fn();
     render(
@@ -160,6 +199,9 @@ describe('AccountCard behaviour', () => {
 
     const status = screen.getByTestId('account-health-label');
     expect(status.textContent).toContain('Session expired');
+    const mark = screen.getByTestId('account-health-mark');
+    expect(mark.querySelector('[data-icon="cross"]')).toBeTruthy();
+    expect(mark.querySelector('.rounded-full')).toBeNull();
     expect(screen.getByTestId('account-expired-alert')).toBeTruthy();
 
     fireEvent.click(screen.getByTestId('account-reconnect-button'));
