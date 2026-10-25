@@ -11,7 +11,7 @@ import * as React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import LoginPage, { SESSION_EXPIRED_NOTICE } from "./page";
+import LoginPage, { SESSION_EXPIRED_NOTICE, toApiReturnUrl } from "./page";
 import { resetSessionExpiredGuard } from "@/lib/api/session-expired";
 
 const completeAuthRedirect = vi.fn();
@@ -260,5 +260,71 @@ describe("login session-expired contract (§3.1)", () => {
     await waitFor(() => expect(completeAuthRedirect).toHaveBeenCalled());
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(JSON.parse(String(init.body)).returnUrl).toBe("/tenant/e2e/media");
+  });
+});
+
+describe("login returnUrl sent to the API (absolute-URL Validation failed fix)", () => {
+  it("toApiReturnUrl strips an absolute workspace URL to its relative path", () => {
+    expect(toApiReturnUrl("https://shahzebpyc.fbuploadpro.com/tenant/e2e/pages")).toBe(
+      "/tenant/e2e/pages"
+    );
+    expect(
+      toApiReturnUrl("https://shahzebpyc.fbuploadpro.com/tenant/e2e/pages?tab=media#top")
+    ).toBe("/tenant/e2e/pages?tab=media#top");
+    expect(toApiReturnUrl("https://shahzebpyc.fbuploadpro.com/")).toBe("/");
+  });
+
+  it("toApiReturnUrl passes an already-relative path through unchanged", () => {
+    expect(toApiReturnUrl("/tenant/e2e/pages")).toBe("/tenant/e2e/pages");
+    expect(toApiReturnUrl("/tenant/e2e/pages?tab=media")).toBe("/tenant/e2e/pages?tab=media");
+  });
+
+  it("toApiReturnUrl omits /dashboard, protocol-relative, backslashed, and garbage values", () => {
+    expect(toApiReturnUrl("/dashboard")).toBeUndefined();
+    expect(toApiReturnUrl("/dashboard/settings")).toBeUndefined();
+    expect(toApiReturnUrl("https://shahzebpyc.fbuploadpro.com/dashboard")).toBeUndefined();
+    expect(toApiReturnUrl("//evil.example/phish")).toBeUndefined();
+    expect(toApiReturnUrl("/tenant\\e2e")).toBeUndefined();
+    expect(toApiReturnUrl("not-a-path")).toBeUndefined();
+    expect(toApiReturnUrl("")).toBeUndefined();
+    expect(toApiReturnUrl(undefined)).toBeUndefined();
+  });
+
+  it("an absolute workspace entry URL results in a RELATIVE returnUrl in the login request", async () => {
+    const user = userEvent.setup();
+    // Make the workspace host an allowed host for sanitizeAuthRedirectUrl,
+    // as it is in production (NEXT_PUBLIC_ROOT_DOMAIN=fbuploadpro.com),
+    // so the page state holds the absolute URL — the exact case that
+    // used to reach the API and fail with bare "Validation failed".
+    vi.stubEnv("NEXT_PUBLIC_ROOT_DOMAIN", "fbuploadpro.com");
+    try {
+      setUrl(
+        "/login?returnUrl=https%3A%2F%2Fshahzebpyc.fbuploadpro.com%2Ftenant%2Fe2e%2Fpages"
+      );
+      fetchMock.mockResolvedValue(jsonResponse(200, SUCCESS_BODY));
+      render(<LoginPage />);
+      await fillAndSubmit(user, "owner@gmail.com", "correct-password");
+
+      await waitFor(() => expect(completeAuthRedirect).toHaveBeenCalled());
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      const body = JSON.parse(String(init.body)) as { returnUrl?: string };
+      expect(body.returnUrl).toBe("/tenant/e2e/pages");
+      expect(body.returnUrl).not.toContain("://");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("a /dashboard entry URL is omitted from the login request, never sent", async () => {
+    const user = userEvent.setup();
+    setUrl("/login?returnUrl=%2Fdashboard");
+    fetchMock.mockResolvedValue(jsonResponse(200, SUCCESS_BODY));
+    render(<LoginPage />);
+    await fillAndSubmit(user, "owner@gmail.com", "correct-password");
+
+    await waitFor(() => expect(completeAuthRedirect).toHaveBeenCalled());
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(String(init.body)) as { returnUrl?: string };
+    expect(body.returnUrl).toBeUndefined();
   });
 });
