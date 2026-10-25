@@ -958,20 +958,22 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
       expect(hasAttribute('data-testid', 'pages-reconnect-btn')).toBe(true);
     });
 
-    it('validates light mode canvas contrast token is #f6f8fa and panel is #ffffff (Spec 050)', () => {
-      expect(LIGHT_THEME.surfaces.canvas).toBe('#f6f8fa');
+    it('validates light mode canvas contrast token is #ffffff and panel is #ffffff (Binance light)', () => {
+      expect(LIGHT_THEME.surfaces.canvas).toBe('#ffffff');
       expect(LIGHT_THEME.surfaces.panel).toBe('#ffffff');
-      expect(LIGHT_THEME.surfaces.canvas).not.toBe(LIGHT_THEME.surfaces.panel);
+      // Binance light: cards sit on the white canvas separated by hairlines,
+      // so canvas and panel are deliberately the same value.
+      expect(LIGHT_THEME.surfaces.canvas).toBe(LIGHT_THEME.surfaces.panel);
     });
 
-    it('validates dark mode canvas and surface calibration tokens for Pure Pitch Black (Spec 055)', () => {
-      expect(DARK_THEME.surfaces.canvas).toBe('#000000');
-      expect(DARK_THEME.surfaces.panel).toBe('#0c0d10');
-      expect(DARK_THEME.surfaces.subtle).toBe('#121419');
-      expect(DARK_THEME.surfaces.hover).toBe('#1f242d');
-      expect(DARK_THEME.surfaces.active).toBe('#262c37');
-      expect(DARK_THEME.borders.hairline).toBe('#1f242d');
-      expect(DARK_THEME.borders.strong).toBe('#2b323c');
+    it('validates dark mode canvas and surface calibration tokens for Binance dark (Spec 055)', () => {
+      expect(DARK_THEME.surfaces.canvas).toBe('#0b0e11');
+      expect(DARK_THEME.surfaces.panel).toBe('#1e2329');
+      expect(DARK_THEME.surfaces.subtle).toBe('#14181d');
+      expect(DARK_THEME.surfaces.hover).toBe('#252b33');
+      expect(DARK_THEME.surfaces.active).toBe('#2b3139');
+      expect(DARK_THEME.borders.hairline).toBe('#2b3139');
+      expect(DARK_THEME.borders.strong).toBe('#474d57');
       expect(DARK_THEME.surfaces.panel).not.toBe(DARK_THEME.surfaces.canvas);
     });
   });
