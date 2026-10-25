@@ -166,6 +166,20 @@ describe('GeneralSettingsView — display state', () => {
 
     expect(screen.queryByTestId('workspace-created-row')).toBeNull();
   });
+
+  it('stacks heading above panel in a single column (no two-column split)', () => {
+    render(<GeneralSettingsView subdomain={SUBDOMAIN} workspaceName="Acme Studio" />);
+
+    const card = screen.getByTestId('workspace-about-card');
+    const wrapper = card.parentElement as HTMLElement;
+    // Single column: flex-col, and no grid two-column split class.
+    expect(wrapper.className).toContain('flex-col');
+    expect(wrapper.className).not.toContain('grid-cols');
+    expect(wrapper.className).not.toContain('grid');
+    // Heading block is the first child, panel second — stacked, not side by side.
+    expect(wrapper.children[0].textContent).toContain('About this workspace');
+    expect(wrapper.children[1]).toBe(card);
+  });
 });
 
 describe('formatWorkspaceCreatedAt', () => {

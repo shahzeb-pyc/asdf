@@ -209,7 +209,7 @@ function WorkspaceNameForm({
   ) : null;
 
   return (
-    <div className="grid w-full max-w-4xl gap-7 md:grid-cols-[220px_minmax(0,1fr)]">
+    <div className="flex w-full flex-col gap-4">
       <div>
         <h2 id="workspace-about-heading" className="text-lg font-semibold text-ink">
           About this workspace
