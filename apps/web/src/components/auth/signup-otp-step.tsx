@@ -8,7 +8,7 @@
  * is disabled with the countdown as its visible reason; an expired-code
  * error reveals `Send fresh code` in place. Verify + resend go through
  * the typed API client; the form is on the §3.8 standard (RHF + zod +
- * FormErrorSummary).
+ * errors inline only).
  */
 
 import React, { useEffect, useState } from 'react';
@@ -19,12 +19,10 @@ import {
   Form,
   FormControl,
   FormDescription,
-  FormErrorSummary,
   FormField,
   FormItem,
   FormLabel,
   FormMessage,
-  type FormErrorSummaryEntry,
 } from '@/components/shared/ui/form';
 import { Input } from '@/components/shared/ui/input';
 import { Button } from '@/components/shared/ui/button';
@@ -70,7 +68,6 @@ export function SignupOtpStep({
   initialCooldown = 60,
   onBack,
 }: Readonly<SignupOtpStepProps>) {
-  const [submitAttempted, setSubmitAttempted] = useState(false);
   const [generalError, setGeneralError] = useState<string | null>(null);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
   const [isResending, setIsResending] = useState(false);
@@ -98,7 +95,6 @@ export function SignupOtpStep({
   }, [resendCooldown]);
 
   const onSubmit = async (values: SignupOtpFormValues) => {
-    setSubmitAttempted(true);
     setGeneralError(null);
     setSuccessNotice(null);
     const cleanOtp = values.otp.replace(/\D/g, '').trim();
@@ -185,17 +181,12 @@ export function SignupOtpStep({
     }
   };
 
-  const summaryErrors: FormErrorSummaryEntry[] = [
-    ...(otpError ? [{ fieldId: OTP_FIELD_ID, message: otpError }] : []),
-    ...(generalError ? [{ message: generalError }] : []),
-  ];
-
   return (
     <Form {...form}>
       <form
         noValidate
         className="flex flex-col gap-4"
-        onSubmit={form.handleSubmit(onSubmit, () => setSubmitAttempted(true))}
+        onSubmit={form.handleSubmit(onSubmit)}
       >
         {successNotice && (
           <Alert variant="success">
@@ -252,7 +243,7 @@ export function SignupOtpStep({
                   }}
                 />
               </FormControl>
-              <FormDescription>
+              <FormDescription className="text-xs text-ink-dim">
                 Check your spam folder if you do not see the email in your inbox.
               </FormDescription>
               <FormMessage />
@@ -273,7 +264,11 @@ export function SignupOtpStep({
           </div>
         )}
 
-        {submitAttempted && <FormErrorSummary errors={summaryErrors} />}
+        {generalError && (
+          <p role="alert" className="text-metadata font-medium text-brand-rose">
+            {generalError}
+          </p>
+        )}
 
         <Button type="submit" size="lg" loading={isSubmitting} className="w-full">
           Verify &amp; Activate Account

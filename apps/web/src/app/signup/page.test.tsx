@@ -17,6 +17,7 @@ vi.setConfig({ testTimeout: 60_000 });
 configure({ asyncUtilTimeout: 15_000 });
 import userEvent from "@testing-library/user-event";
 import SignupPage, { validateSignupDetails } from "./page";
+import { SignupFlow } from "@/components/auth/signup-flow";
 import { resetSessionExpiredGuard } from "@/lib/api/session-expired";
 
 const completeAuthRedirect = vi.fn();
@@ -97,7 +98,7 @@ afterEach(() => {
 
 describe("signup details form (form standard)", () => {
   it("renders the create-account copy, fields and credential attributes", () => {
-    render(<SignupPage />);
+    render(<SignupFlow />);
     expect(screen.getByRole("heading", { name: "Create Account" })).toBeTruthy();
     expect(screen.getByLabelText("Full Name")).toBeTruthy();
     expect(screen.getByLabelText("Phone Number")).toBeTruthy();
@@ -113,25 +114,23 @@ describe("signup details form (form standard)", () => {
     expect(screen.getAllByRole("button", { name: "Show password" })).toHaveLength(2);
   });
 
-  it("empty submit shows every field error inline and in the summary, with no request", async () => {
+  it("empty submit shows every field error inline only, once each, with no request", async () => {
     const user = userEvent.setup();
-    render(<SignupPage />);
+    render(<SignupFlow />);
     await submitDetails(user);
 
-    expect(await screen.findAllByText("Full name is required.")).toHaveLength(2);
-    expect(screen.getAllByText("Phone number is required.")).toHaveLength(2);
-    expect(screen.getAllByText("A valid email address is required.")).toHaveLength(2);
-    expect(screen.getAllByText("Password is required.")).toHaveLength(2);
-    expect(screen.getAllByText("Please confirm your password.")).toHaveLength(2);
-    expect(
-      screen.getByRole("link", { name: "Full name is required." }).getAttribute("href")
-    ).toBe("#signup-name");
+    expect(await screen.findAllByText("Full name is required.")).toHaveLength(1);
+    expect(screen.getAllByText("Phone number is required.")).toHaveLength(1);
+    expect(screen.getAllByText("A valid email address is required.")).toHaveLength(1);
+    expect(screen.getAllByText("Password is required.")).toHaveLength(1);
+    expect(screen.getAllByText("Please confirm your password.")).toHaveLength(1);
+    expect(document.querySelector('[data-slot="form-error-summary"]')).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("validates on blur: a non-Gmail address errors inline without a summary or a request", async () => {
     const user = userEvent.setup();
-    render(<SignupPage />);
+    render(<SignupFlow />);
     const email = screen.getByLabelText("Email Address");
     await user.click(email);
     await user.type(email, "jane@example.com");
@@ -147,20 +146,20 @@ describe("signup details form (form standard)", () => {
 
   it("partially wrong submit: short password and mismatched confirmation surface with §3.3 wording, input preserved", async () => {
     const user = userEvent.setup();
-    render(<SignupPage />);
+    render(<SignupFlow />);
     await fillDetails(user, { password: "short", confirmPassword: "different-1" });
     await submitDetails(user);
 
-    expect(await screen.findAllByText("Password must be at least 8 characters long.")).toHaveLength(2);
+    expect(await screen.findAllByText("Password must be at least 8 characters long.")).toHaveLength(1);
     expect(
       screen.getAllByText("Passwords do not match. Please verify both password fields.")
-    ).toHaveLength(2);
+    ).toHaveLength(1);
     expect((screen.getByLabelText("Email Address") as HTMLInputElement).value).toBe(VALID.email);
     expect((screen.getByLabelText("Password", { exact: true }) as HTMLInputElement).value).toBe("short");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("server 400 field errors map back onto the fields inline and in the summary", async () => {
+  it("server 400 field errors map back onto the fields inline only", async () => {
     const user = userEvent.setup();
     fetchMock.mockResolvedValue(
       jsonResponse(400, {
@@ -168,11 +167,11 @@ describe("signup details form (form standard)", () => {
         details: { email: ["This email address cannot be used."] },
       })
     );
-    render(<SignupPage />);
+    render(<SignupFlow />);
     await fillDetails(user);
     await submitDetails(user);
 
-    expect(await screen.findAllByText("This email address cannot be used.")).toHaveLength(2);
+    expect(await screen.findAllByText("This email address cannot be used.")).toHaveLength(1);
     expect(screen.getByLabelText("Email Address").getAttribute("aria-invalid")).toBe("true");
   });
 
@@ -181,11 +180,11 @@ describe("signup details form (form standard)", () => {
     fetchMock.mockResolvedValue(
       jsonResponse(409, { error: "This email is already registered." })
     );
-    render(<SignupPage />);
+    render(<SignupFlow />);
     await fillDetails(user);
     await submitDetails(user);
 
-    expect(await screen.findAllByText("This email is already registered.")).toHaveLength(2);
+    expect(await screen.findAllByText("This email is already registered.")).toHaveLength(1);
     const signIn = screen.getByRole("link", { name: "Sign in instead" });
     expect(signIn.getAttribute("href")).toBe(
       `/login?email=${encodeURIComponent(VALID.email)}`
@@ -204,7 +203,7 @@ describe("signup details form (form standard)", () => {
         retryAfterSeconds: 45,
       })
     );
-    render(<SignupPage />);
+    render(<SignupFlow />);
     await fillDetails(user);
     await submitDetails(user);
 
@@ -217,10 +216,10 @@ describe("signup details form (form standard)", () => {
     expect(button.hasAttribute("disabled")).toBe(true);
   });
 
-  it("network failure surfaces the connection message in the summary, never silently", async () => {
+  it("network failure surfaces the connection message as a plain inline line, never silently", async () => {
     const user = userEvent.setup();
     fetchMock.mockRejectedValue(new TypeError("fetch failed"));
-    render(<SignupPage />);
+    render(<SignupFlow />);
     await fillDetails(user);
     await submitDetails(user);
 
@@ -234,7 +233,7 @@ describe("signup details form (form standard)", () => {
   it("successful details submit moves to the OTP step naming the email, with the resend cooling down", async () => {
     const user = userEvent.setup();
     fetchMock.mockResolvedValue(jsonResponse(200, SIGNUP_SUCCESS));
-    render(<SignupPage />);
+    render(<SignupFlow />);
     await fillDetails(user);
     await submitDetails(user);
 
@@ -250,7 +249,7 @@ describe("signup details form (form standard)", () => {
 describe("signup OTP step (§5.4 pattern)", () => {
   async function gotoOtpStep(user: ReturnType<typeof userEvent.setup>) {
     fetchMock.mockResolvedValueOnce(jsonResponse(200, SIGNUP_SUCCESS));
-    render(<SignupPage />);
+    render(<SignupFlow />);
     await fillDetails(user);
     await submitDetails(user);
     return screen.findByLabelText("6-Digit Verification Code");
@@ -296,7 +295,7 @@ describe("signup OTP step (§5.4 pattern)", () => {
 
     expect(
       await screen.findAllByText("Please enter the complete 6-digit verification code.")
-    ).toHaveLength(2);
+    ).toHaveLength(1);
     const verifyCalls = fetchMock.mock.calls.filter((call) =>
       String(call[0]).includes("verify-otp")
     );
@@ -312,18 +311,18 @@ describe("signup OTP step (§5.4 pattern)", () => {
     await user.type(otpField, "123456");
     await user.click(screen.getByRole("button", { name: "Verify & Activate Account" }));
 
-    // Inline under the field and as the summary entry — identical wording.
+    // Inline under the field only — no summary box duplicating it.
     expect(
       await screen.findAllByText("Verification code has expired. Please request a new one.")
-    ).toHaveLength(2);
+    ).toHaveLength(1);
     expect(screen.getByRole("button", { name: "Send fresh code" })).toBeTruthy();
   });
 
   it("direct OTP entry via ?step=otp resends on demand and confirms with the Code Sent callout", async () => {
     const user = userEvent.setup();
-    setUrl(`/signup?step=otp&email=${encodeURIComponent(VALID.email)}`);
     fetchMock.mockResolvedValue(jsonResponse(200, { success: true, message: "sent" }));
-    render(<SignupPage />);
+    // Entry params now arrive as server-page props, not window.location.
+    render(<SignupFlow initialStep="otp" initialEmail={VALID.email} />);
 
     const resend = await screen.findByRole("button", { name: "Did not receive code? Resend" });
     expect(resend.hasAttribute("disabled")).toBe(false);
@@ -340,8 +339,12 @@ describe("signup OTP step (§5.4 pattern)", () => {
   });
 
   it("pending-verification entry shows the fresh-code notice on the details step", async () => {
-    setUrl(`/signup?email=${encodeURIComponent(VALID.email)}&notice=pending_verification`);
-    render(<SignupPage />);
+    render(
+      <SignupFlow
+        initialEmail={VALID.email}
+        initialSuccessNotice="We sent a fresh 6-digit verification code. Please confirm your email to complete registration."
+      />
+    );
     expect(
       await screen.findByText(
         "We sent a fresh 6-digit verification code. Please confirm your email to complete registration."
@@ -351,22 +354,36 @@ describe("signup OTP step (§5.4 pattern)", () => {
   });
 });
 
-describe("signup paused state (§4.2.4)", () => {
-  it("replaces the details step with the paused card when signups are disabled", () => {
+describe("signup paused gate — server-side (§4.2.4)", () => {
+  it("renders the form when signups are enabled", async () => {
+    render(await SignupPage({ searchParams: Promise.resolve({}) }));
+    expect(screen.getByRole("heading", { name: "Create Account" })).toBeTruthy();
+    expect(screen.getByLabelText("Full Name")).toBeTruthy();
+    expect(screen.queryByText("New registrations are currently closed")).toBeNull();
+  });
+
+  it("replaces the details step with the paused card only, no form, when signups are disabled", async () => {
     process.env.NEXT_PUBLIC_SIGNUPS_ENABLED = "false";
-    render(<SignupPage />);
+    // The gate is server-side: the paused render must contain no form
+    // at all — no fields, no submit — so there is nothing to flash
+    // into and no 403 can follow a form the user should never see.
+    render(await SignupPage({ searchParams: Promise.resolve({}) }));
     expect(screen.getByRole("heading", { name: "Registration Paused" })).toBeTruthy();
     expect(screen.getByText("New registrations are currently closed")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Sign in to workspace" }).getAttribute("href")).toBe(
       "/login"
     );
     expect(screen.queryByLabelText("Full Name")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Create Account" })).toBeNull();
   });
 
   it("keeps the OTP step completable while signups are paused", async () => {
     process.env.NEXT_PUBLIC_SIGNUPS_ENABLED = "false";
-    setUrl(`/signup?step=otp&email=${encodeURIComponent(VALID.email)}`);
-    render(<SignupPage />);
+    render(
+      await SignupPage({
+        searchParams: Promise.resolve({ step: "otp", email: VALID.email }),
+      })
+    );
     expect(await screen.findByLabelText("6-Digit Verification Code")).toBeTruthy();
     expect(screen.queryByText("New registrations are currently closed")).toBeNull();
   });

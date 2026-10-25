@@ -50,18 +50,10 @@ export function AuthSplitLayout({
     <section
       aria-label="FBUploadPro Showcase"
       className={cn(
-        'relative hidden w-1/2 overflow-hidden border-line bg-neutral-black lg:block',
+        'relative hidden w-1/2 overflow-hidden border-line bg-canvas lg:block',
         isFormLeft ? 'border-l' : 'border-r'
       )}
     >
-      {/* Gold halo glow at the panel's outer top corner (token alpha). */}
-      <div
-        aria-hidden="true"
-        className={cn(
-          'pointer-events-none absolute top-10 size-72 rounded-full bg-alpha-gold-halo blur-3xl',
-          isFormLeft ? 'right-16' : 'left-16'
-        )}
-      />
       <div className="relative flex h-full flex-col justify-between px-14 py-12">
         {showcase ?? <AuthShowcasePanel />}
       </div>

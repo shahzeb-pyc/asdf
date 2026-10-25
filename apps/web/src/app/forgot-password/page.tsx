@@ -4,8 +4,8 @@
  * Password recovery (spec 136 §5.3) — one route, two steps (spec 018's
  * unified flow): email step → combined code + new-password step. Both
  * forms are on the §3.8 form standard (react-hook-form + zod on the
- * shared/ui Form primitives, `onTouched` validation, `FormErrorSummary`
- * on submit failure, input never cleared) and talk to the API through
+ * shared/ui Form primitives, `onTouched` validation, errors inline
+ * only, input never cleared) and talk to the API through
  * the typed client — the three raw `fetch` calls that used to live
  * here are gone, and with them the local `FormErrorCallout` pattern
  * (deleted in this PR; UI Rule 11).
@@ -28,12 +28,10 @@ import {
   Form,
   FormControl,
   FormDescription,
-  FormErrorSummary,
   FormField,
   FormItem,
   FormLabel,
   FormMessage,
-  type FormErrorSummaryEntry,
 } from '@/components/shared/ui/form';
 import { Input } from '@/components/shared/ui/input';
 import { Button } from '@/components/shared/ui/button';
@@ -76,7 +74,6 @@ function ForgotEmailForm({
   initialEmail: string;
   onCodeSent: (email: string) => void;
 }>) {
-  const [submitAttempted, setSubmitAttempted] = useState(false);
   const [generalError, setGeneralError] = useState<string | null>(null);
 
   const form = useForm<ForgotPasswordEmailFormValues>({
@@ -89,7 +86,6 @@ function ForgotEmailForm({
   const isSubmitting = formState.isSubmitting;
 
   const onSubmit = async (values: ForgotPasswordEmailFormValues) => {
-    setSubmitAttempted(true);
     setGeneralError(null);
     const cleanEmail = values.email.trim().toLowerCase();
     try {
@@ -130,20 +126,12 @@ function ForgotEmailForm({
     }
   };
 
-  const emailError = formState.errors.email?.message
-    ? String(formState.errors.email.message)
-    : null;
-  const summaryErrors: FormErrorSummaryEntry[] = [
-    ...(emailError ? [{ fieldId: EMAIL_FIELD_ID, message: emailError }] : []),
-    ...(generalError ? [{ message: generalError }] : []),
-  ];
-
   return (
     <Form {...form}>
       <form
         noValidate
         className="flex flex-col gap-4"
-        onSubmit={form.handleSubmit(onSubmit, () => setSubmitAttempted(true))}
+        onSubmit={form.handleSubmit(onSubmit)}
       >
         <FormField
           control={form.control}
@@ -165,7 +153,7 @@ function ForgotEmailForm({
                   }}
                 />
               </FormControl>
-              <FormDescription>
+              <FormDescription className="text-xs text-ink-dim">
                 We will send a 6-digit verification code to your registered Gmail address.
               </FormDescription>
               <FormMessage />
@@ -173,7 +161,11 @@ function ForgotEmailForm({
           )}
         />
 
-        {submitAttempted && <FormErrorSummary errors={summaryErrors} />}
+        {generalError && (
+          <p role="alert" className="text-metadata font-medium text-brand-rose">
+            {generalError}
+          </p>
+        )}
 
         <Button type="submit" size="lg" loading={isSubmitting} className="mt-1 w-full">
           Send Verification Code
@@ -196,7 +188,6 @@ function ResetPasswordForm({
   onBack: () => void;
   onSuccess: () => void;
 }>) {
-  const [submitAttempted, setSubmitAttempted] = useState(false);
   const [generalError, setGeneralError] = useState<string | null>(null);
   const [resendSuccessMessage, setResendSuccessMessage] = useState<string | null>(null);
   const [isResending, setIsResending] = useState(false);
@@ -268,7 +259,6 @@ function ResetPasswordForm({
   }
 
   const onSubmit = async (values: ResetPasswordFormValues) => {
-    setSubmitAttempted(true);
     setGeneralError(null);
     setResendSuccessMessage(null);
     const cleanOtp = values.otp.replace(/\D/g, '').trim();
@@ -315,26 +305,12 @@ function ResetPasswordForm({
     }
   };
 
-  const summaryErrors: FormErrorSummaryEntry[] = [
-    ...(
-      [
-        ['otp', OTP_FIELD_ID],
-        ['password', PASSWORD_FIELD_ID],
-        ['confirmPassword', CONFIRM_FIELD_ID],
-      ] as const
-    ).flatMap(([name, fieldId]) => {
-      const message = formState.errors[name]?.message;
-      return message ? [{ fieldId, message: String(message) }] : [];
-    }),
-    ...(generalError ? [{ message: generalError }] : []),
-  ];
-
   return (
     <Form {...form}>
       <form
         noValidate
         className="flex flex-col gap-4"
-        onSubmit={form.handleSubmit(onSubmit, () => setSubmitAttempted(true))}
+        onSubmit={form.handleSubmit(onSubmit)}
       >
         <FormField
           control={form.control}
@@ -358,7 +334,7 @@ function ResetPasswordForm({
                   }}
                 />
               </FormControl>
-              <FormDescription>Enter the 6-digit numeric code sent to your email.</FormDescription>
+              <FormDescription className="text-xs text-ink-dim">Enter the 6-digit numeric code sent to your email.</FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -383,7 +359,7 @@ function ResetPasswordForm({
                   }}
                 />
               </FormControl>
-              <FormDescription>Minimum 8 characters</FormDescription>
+              <FormDescription className="text-xs text-ink-dim">Minimum 8 characters</FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -419,7 +395,11 @@ function ResetPasswordForm({
           </output>
         )}
 
-        {submitAttempted && <FormErrorSummary errors={summaryErrors} />}
+        {generalError && (
+          <p role="alert" className="text-metadata font-medium text-brand-rose">
+            {generalError}
+          </p>
+        )}
 
         <Button type="submit" size="lg" loading={isSubmitting} className="mt-1 w-full">
           Update Password
