@@ -17,12 +17,12 @@
  * secret — Show drives the reveal endpoint (stubbed below) and only
  * then does the value reach the screen.
  *
- * The YouTube/X/TikTok explanation-tab portions were migrated to
- * behavioural tests in spec 135 PR-135-4, completing this file's
- * migration: every tab is now rendered into jsdom and asserted on
- * its rendered output (no static harness remains in this file). The
- * page-level tab cases live in tests/ui/settings-shell.test.tsx
- * (PR-135-1). The plain-language (no-jargon) lint covers every tab.
+ * The page-level tab cases live in tests/ui/settings-shell.test.tsx
+ * (PR-135-1). The plain-language (no-jargon) lint covers every
+ * remaining tab. The YouTube/X/TikTok explanation tabs were removed
+ * from Settings on 2026-10-25 (their views and this file's cases
+ * for them were deleted with them); connecting still happens in
+ * Accounts, which is what those cards pointed to.
  */
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -32,18 +32,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { InstagramSettingsView } from '@/components/settings/instagram-settings-view';
 import { ThreadsSettingsView } from '@/components/settings/threads-settings-view';
-import {
-  YouTubeSettingsView,
-  YOUTUBE_CONNECT_INFO_CONFIG,
-} from '@/components/settings/youtube-settings-view';
-import {
-  XSettingsView,
-  X_CONNECT_INFO_CONFIG,
-} from '@/components/settings/x-settings-view';
-import {
-  TikTokSettingsView,
-  TIKTOK_CONNECT_INFO_CONFIG,
-} from '@/components/settings/tiktok-settings-view';
 import { createPlatformConnectFormSchema } from '@/components/settings/platform/platform-connect-form';
 import { formatPlatformConnectedDate } from '@/components/settings/platform/platform-credentials-helpers';
 import {
@@ -375,8 +363,10 @@ for (const c of PLATFORM_CASES) {
     it('renders the header, status, and form verbatim (§5.3/§5.4)', () => {
       renderView(c, notConnectedPayload(p));
 
+      // 2026-10-25 redesign: both tabs are renamed "* App" and both
+      // guides are removed.
       expect(
-        screen.getByRole('heading', { name: `Connect ${c.displayName}` })
+        screen.getByRole('heading', { name: `${c.displayName} App` })
       ).toBeTruthy();
       expect(screen.getByTestId(`${p}-settings-card`)).toBeTruthy();
       expect(screen.getByTestId(`${p}-status-badge`).textContent).toContain('Not connected');
@@ -386,8 +376,9 @@ for (const c of PLATFORM_CASES) {
         )
       ).toBeTruthy();
 
-      expect(screen.getByTestId(`${p}-setup-guide`)).toBeTruthy();
-      expect(screen.getByText('Add them here')).toBeTruthy();
+      // Both guides are removed in the 2026-10-25 redesign.
+      expect(screen.queryByTestId(`${p}-setup-guide`)).toBeNull();
+      expect(screen.getByText('Add your app details here')).toBeTruthy();
       expect(screen.getByText(c.appIdLabel)).toBeTruthy();
       expect(screen.getByText(c.appSecretLabel)).toBeTruthy();
       const appIdInput = screen.getByTestId(`${p}-app-id-input`) as HTMLInputElement;
@@ -403,7 +394,11 @@ for (const c of PLATFORM_CASES) {
         `Connect ${c.displayName}`
       );
       expect(
-        screen.getByText('We check everything works the moment you connect.')
+        screen.getByTestId(`${p}-privacy-url`).textContent ?? ''
+      ).toContain('/privacy');
+      expect(screen.getByTestId(`${p}-copy-privacy-url-btn`)).toBeTruthy();
+      expect(
+        screen.getByText('Your details are checked as soon as you connect.')
       ).toBeTruthy();
     });
 
@@ -431,7 +426,7 @@ for (const c of PLATFORM_CASES) {
       renderView(c, notConnectedPayload(p));
       const notice = screen.getByTestId(`${p}-reconnect-notice`);
       expect(notice.textContent).toContain(
-        `${c.displayName} requires an app to reconnect accounts. Add your ${c.appIdLabel} and ${c.appSecretLabel} below, then reconnect.`
+        `To reconnect accounts, add your ${c.appIdLabel} and ${c.appSecretLabel} below, then reconnect.`
       );
     });
 
@@ -531,7 +526,7 @@ for (const c of PLATFORM_CASES) {
       expect(summary.textContent).toContain('That App ID could not be checked. Try again.');
       expect(appIdInput.value).toBe('123456789012345');
       expect(
-        screen.queryByText(`Network error while connecting ${c.displayName}.`)
+        screen.queryByText(`Could not connect ${c.displayName}. Check your connection and try again.`)
       ).toBeNull();
     }, INTERACTION_TIMEOUT);
 
@@ -547,7 +542,7 @@ for (const c of PLATFORM_CASES) {
       await user.click(screen.getByTestId(`${p}-connect-btn`));
 
       expect(
-        await screen.findByText(`Network error while connecting ${c.displayName}.`)
+        await screen.findByText(`Could not connect ${c.displayName}. Check your connection and try again.`)
       ).toBeTruthy();
       expect(screen.queryByTestId(`${p}-saved-app-id`)).toBeNull();
     }, INTERACTION_TIMEOUT);
@@ -560,7 +555,7 @@ for (const c of PLATFORM_CASES) {
       expect(screen.getByTestId(`${p}-status-badge`).textContent).toContain('Connected');
       expect(
         screen.getByText(
-          `Your ${c.displayName} app is linked and publishing is ready to go.`
+          `Your ${c.displayName} app is connected and ready to publish.`
         )
       ).toBeTruthy();
       expect(screen.getByTestId(`${p}-saved-app-id`).textContent).toBe(c.savedAppId);
@@ -574,6 +569,10 @@ for (const c of PLATFORM_CASES) {
       );
       expect(screen.queryByTestId(`${p}-one-more-step-card`)).toBeNull();
       expect(screen.queryByTestId(`${p}-setup-guide`)).toBeNull();
+      expect(
+        screen.getByTestId(`${p}-privacy-url`).textContent ?? ''
+      ).toContain('/privacy');
+      expect(screen.getByTestId(`${p}-copy-privacy-url-btn`)).toBeTruthy();
     });
 
     it('Copy App ID writes to the clipboard and shows the "App ID copied" feedback', async () => {
@@ -628,7 +627,7 @@ for (const c of PLATFORM_CASES) {
 
       await user.click(screen.getByTestId(`${p}-edit-details-btn`));
 
-      expect(screen.getByText('Add them here')).toBeTruthy();
+      expect(screen.getByText('Add your app details here')).toBeTruthy();
       expect((screen.getByTestId(`${p}-app-id-input`) as HTMLInputElement).value).toBe(
         c.savedAppId
       );
@@ -681,7 +680,7 @@ for (const c of PLATFORM_CASES) {
       expect(
         screen.getByText(
           new RegExp(
-            `We'll remove your ${c.appIdLabel} and ${c.appSecretLabel} from this workspace\\. Your connected accounts and posting will keep working as normal — but you won't be able to reconnect or connect new accounts until you add new details\\.`
+            `We'll remove your ${c.appIdLabel} and ${c.appSecretLabel} from this workspace\\. Your connected accounts and posting will keep working, but you won't be able to reconnect or add new accounts until you add new details\\.`
           )
         )
       ).toBeTruthy();
@@ -760,41 +759,32 @@ for (const c of PLATFORM_CASES) {
       await user.click(screen.getByTestId(`${p}-disconnect-confirm-btn`));
 
       expect(
-        await screen.findByText(`Network error while disconnecting ${c.displayName}.`)
+        await screen.findByText(`Could not disconnect ${c.displayName}. Try again.`)
       ).toBeTruthy();
       expect(screen.getByTestId(`${p}-disconnect-modal`)).toBeTruthy();
     }, INTERACTION_TIMEOUT);
   });
 }
 
-describe('Instagram guide (§5.3 verbatim)', () => {
-  it('renders all four guide steps with the approved copy', () => {
+describe('Instagram redesign (2026-10-25)', () => {
+  it('shows NO setup guide in the not-connected state — the guide is removed', () => {
     const c = PLATFORM_CASES[0] as PlatformCase;
     renderView(c, notConnectedPayload('instagram'));
 
-    expect(screen.getByText('Create your Meta app')).toBeTruthy();
-    expect(screen.getByText(/choose the option for connecting an Instagram account/)).toBeTruthy();
-    expect(screen.getByText('Add Instagram to your app')).toBeTruthy();
-    expect(
-      screen.getByText(/find Instagram in the list of things you can add, and/)
-    ).toBeTruthy();
-    expect(screen.getByText('Finish the Instagram sign-in setup')).toBeTruthy();
-    expect(screen.getByText(/Complete the sign-in setup there/)).toBeTruthy();
-    expect(screen.getByText('Add the sign-in address we show')).toBeTruthy();
-    expect(
-      screen.getByText(/in the field for addresses that can bring people back after they sign/)
-    ).toBeTruthy();
-
-    const dashboardLink = screen.getByTestId('instagram-meta-dashboard-link');
-    expect(dashboardLink.getAttribute('href')).toBe('https://developers.facebook.com');
-    expect(dashboardLink.textContent).toBe('Meta App Dashboard →');
-
+    expect(screen.queryByTestId('instagram-setup-guide')).toBeNull();
+    expect(screen.queryByText('Create your Meta app')).toBeNull();
+    expect(screen.queryByText('Add Instagram to your app')).toBeNull();
+    expect(screen.queryByText('Finish the Instagram sign-in setup')).toBeNull();
+    expect(screen.queryByText('Add the sign-in address we show')).toBeNull();
+    expect(screen.queryByTestId('instagram-meta-dashboard-link')).toBeNull();
+    // The form itself (and its helper) is still there.
+    expect(screen.getByText('Add your app details here')).toBeTruthy();
     expect(
       screen.getByText("You'll find this in your Meta app under Settings → Basic.")
     ).toBeTruthy();
   });
 
-  it('shows the sign-in address card with the §5.3 description, label, and helper', () => {
+  it('shows the sign-in address step with the §5.3 description, label, and helper', () => {
     const c = PLATFORM_CASES[0] as PlatformCase;
     renderView(c, notConnectedPayload('instagram'));
 
@@ -810,31 +800,85 @@ describe('Instagram guide (§5.3 verbatim)', () => {
       )
     ).toBeTruthy();
     expect(screen.getByTestId('instagram-copy-signin-btn')).toBeTruthy();
+    // Callback address uses the connect path (never the old /api/auth
+    // path); its origin is window.location.origin in production, i.e.
+    // the workspace subdomain when the user is in their workspace —
+    // jsdom's origin is localhost here, so only the path is asserted.
+    const address = screen.getByTestId('instagram-setup-address-signin').textContent ?? '';
+    expect(address.endsWith('/api/connect/instagram/callback')).toBe(true);
+    expect(address).not.toContain('/api/auth/');
   });
+
+  it('renders single-column: header stacked above the panel, never split side by side', () => {
+    const c = PLATFORM_CASES[0] as PlatformCase;
+    renderView(c, notConnectedPayload('instagram'));
+
+    // No two-column grid anywhere in the Instagram tab: the header
+    // (title + description + status) sits above the full-width
+    // panel, on desktop and mobile alike.
+    expect(document.querySelector('[class*="grid-cols"]')).toBeNull();
+    const heading = screen.getByRole('heading', { name: 'Instagram App' });
+    const card = screen.getByTestId('instagram-settings-card');
+    expect(
+      Boolean(heading.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING)
+    ).toBe(true);
+    // Status still travels with the header, not the panel.
+    expect(screen.getByTestId('instagram-status-badge').textContent).toContain(
+      'Not connected'
+    );
+  });
+
+  it('shows the tick/cross status mark (never a dot) in both states', () => {
+    const c = PLATFORM_CASES[0] as PlatformCase;
+    renderView(c, notConnectedPayload('instagram'));
+    expect(screen.getByTestId('instagram-status-mark').getAttribute('data-status')).toBe(
+      'not-connected'
+    );
+    expect(screen.getByTestId('instagram-status-badge').textContent).toContain('Not connected');
+
+    cleanup();
+    renderView(c, connectedPayload(c));
+    expect(screen.getByTestId('instagram-status-mark').getAttribute('data-status')).toBe(
+      'connected'
+    );
+    expect(screen.getByTestId('instagram-status-badge').textContent).toContain('Connected');
+  });
+
+  it('shows the Privacy Policy URL row in both states, with Copy feedback', async () => {
+    const c = PLATFORM_CASES[0] as PlatformCase;
+    renderView(c, notConnectedPayload('instagram'));
+    expect(screen.getByTestId('instagram-privacy-url').textContent).toBe(
+      'https://acme.fbuploadpro.com/privacy'
+    );
+
+    cleanup();
+    renderView(c, connectedPayload(c));
+    expect(screen.getByTestId('instagram-privacy-url').textContent).toBe(
+      'https://acme.fbuploadpro.com/privacy'
+    );
+
+    const user = userEvent.setup();
+    installClipboardMock();
+    await user.click(screen.getByTestId('instagram-copy-privacy-url-btn'));
+    expect(clipboardWriteText).toHaveBeenCalledWith('https://acme.fbuploadpro.com/privacy');
+    await waitFor(() =>
+      expect(screen.getByTestId('instagram-copy-privacy-url-btn').textContent).toBe('Copied')
+    );
+  }, INTERACTION_TIMEOUT);
 });
 
-describe('Threads guide (§5.4 verbatim)', () => {
-  it('renders all five guide steps, with the pair warning at full strength', () => {
+describe('Threads guide removed (2026-10-25 redesign)', () => {
+  it('renders no setup guide, but keeps the Threads pair warning as the App ID helper', () => {
     const c = PLATFORM_CASES[1] as PlatformCase;
     renderView(c, notConnectedPayload('threads'));
 
-    expect(screen.getByText('Create your Meta app')).toBeTruthy();
-    expect(screen.getByText(/choose the option for connecting a Threads account/)).toBeTruthy();
-    expect(screen.getByText('Add Threads to your app')).toBeTruthy();
-    expect(screen.getByText('Use the Threads pair, not the main pair')).toBeTruthy();
-    expect(screen.getByText(/Threads has its own App ID and App Secret/)).toBeTruthy();
-    expect(
-      screen.getByText(
-        /You will find the Threads pair in the Threads settings of your app — not under Settings → Basic\./
-      )
-    ).toBeTruthy();
-    expect(
-      screen.getByText(/Using the main pair is the most common reason connecting/)
-    ).toBeTruthy();
-    expect(screen.getByText('Add the three addresses we show')).toBeTruthy();
-    expect(
-      screen.getByText('Copy your Threads App ID and Threads App Secret')
-    ).toBeTruthy();
+    expect(screen.queryByTestId('threads-setup-guide')).toBeNull();
+    expect(screen.queryByText('Create your Meta app')).toBeNull();
+    expect(screen.queryByText('Add Threads to your app')).toBeNull();
+    expect(screen.queryByText('Use the Threads pair, not the main pair')).toBeNull();
+    expect(screen.queryByText('Add the three addresses we show')).toBeNull();
+    expect(screen.queryByText('Copy your Threads App ID and Threads App Secret')).toBeNull();
+    // The pair warning survives verbatim as the App ID helper.
     expect(
       screen.getByText(
         "You'll find this in the Threads settings of your Meta app — not under Settings → Basic."
@@ -842,127 +886,59 @@ describe('Threads guide (§5.4 verbatim)', () => {
     ).toBeTruthy();
   });
 
-  it('shows all three callback addresses with their labels and helpers', () => {
+  it('shows ONLY the sign-in callback address in "One more step", plus the privacy URL', () => {
     const c = PLATFORM_CASES[1] as PlatformCase;
     renderView(c, notConnectedPayload('threads'));
 
     expect(
       screen.getByText(
-        'Add these three addresses to the Threads settings in your Meta app. Threads needs all three before it will save your sign-in address.'
+        'Add this address to the Threads settings in your Meta app so Threads can bring you back here after you sign in.'
       )
     ).toBeTruthy();
 
-    expect(screen.getByText('Sign-in callback address')).toBeTruthy();
+    expect(screen.getByText('Sign-in address')).toBeTruthy();
     expect(
       screen.getByTestId('threads-setup-address-signin').textContent ?? ''
     ).toContain('/api/connect/threads/callback');
     expect(
       screen.getByText(
-        'Paste this into the sign-in callback field in the Threads settings of your app.'
+          'Paste this into the sign-in callback field in your Meta app\'s Threads settings.'
       )
     ).toBeTruthy();
-
-    expect(screen.getByText('Deauthorize callback address')).toBeTruthy();
-    expect(
-      screen.getByTestId('threads-setup-address-deauthorize').textContent ?? ''
-    ).toContain('/api/connect/threads/deauthorize');
-    expect(
-      screen.getByText(
-        'Paste this into the deauthorize callback field in the Threads settings of your app. Threads uses this address if someone removes your app.'
-      )
-    ).toBeTruthy();
-
-    expect(screen.getByText('Data deletion callback address')).toBeTruthy();
-    expect(
-      screen.getByTestId('threads-setup-address-data-deletion').textContent ?? ''
-    ).toContain('/api/connect/threads/data-deletion');
-    expect(
-      screen.getByText(
-        'Paste this into the data deletion callback field in the Threads settings of your app. Threads uses this address if someone asks for their information to be deleted.'
-      )
-    ).toBeTruthy();
-
     expect(screen.getByTestId('threads-copy-signin-btn')).toBeTruthy();
-    expect(screen.getByTestId('threads-copy-deauthorize-btn')).toBeTruthy();
-    expect(screen.getByTestId('threads-copy-data-deletion-btn')).toBeTruthy();
+
+    // Deauthorize / data deletion are removed from the UI only — their
+    // backend endpoints are untouched, but nothing here may show them.
+    expect(screen.queryByText('Deauthorize callback address')).toBeNull();
+    expect(screen.queryByTestId('threads-setup-address-deauthorize')).toBeNull();
+    expect(screen.queryByTestId('threads-copy-deauthorize-btn')).toBeNull();
+    expect(screen.queryByText('Data deletion callback address')).toBeNull();
+    expect(screen.queryByTestId('threads-setup-address-data-deletion')).toBeNull();
+    expect(screen.queryByTestId('threads-copy-data-deletion-btn')).toBeNull();
+
+    expect(
+      screen.getByTestId('threads-privacy-url').textContent ?? ''
+    ).toContain('/privacy');
+    expect(screen.getByTestId('threads-copy-privacy-url-btn')).toBeTruthy();
   });
-});
 
-describe('Spec 123 Part B: YouTube, X and TikTok explanation tabs (§5.5, PR-135-4)', () => {
-  const cases = [
-    {
-      name: 'YouTube',
-      view: YouTubeSettingsView,
-      card: 'youtube-connect-info-card',
-      link: 'youtube-accounts-link',
-      paragraphs: [
-        'You connect your YouTube channel through our publishing partner, so there is nothing to set up or paste here.',
-        'When you are ready, go to Accounts and choose Connect. You will choose your channel and approve the connection there, and then you can schedule and publish videos from here as normal.',
-      ],
-    },
-    {
-      name: 'X',
-      view: XSettingsView,
-      card: 'x-connect-info-card',
-      link: 'x-accounts-link',
-      paragraphs: [
-        'You simply sign in with X and approve the connection. There are no keys to create or paste here.',
-        'When you are ready, go to Accounts and choose Connect. X will ask you to confirm that you want to connect your account, and when you are done you will be back in your Accounts list.',
-      ],
-    },
-    {
-      name: 'TikTok',
-      view: TikTokSettingsView,
-      card: 'tiktok-connect-info-card',
-      link: 'tiktok-accounts-link',
-      paragraphs: [
-        'You connect your TikTok account through our publishing partner, so there is nothing to set up or paste here.',
-        'When you are ready, go to Accounts and choose Connect. You will sign in with TikTok and approve the connection there, and then you can schedule and publish videos from here as normal.',
-      ],
-    },
-  ] as const;
+  it('renders single-column: no two-column split grid on desktop', () => {
+    const c = PLATFORM_CASES[1] as PlatformCase;
+    renderView(c, notConnectedPayload('threads'));
 
-  for (const c of cases) {
-    it(`${c.name} tab renders both paragraphs verbatim, has no form controls, and links to Accounts`, () => {
-      const View = c.view;
-      const { container } = render(<View subdomain="acme" />);
-
-      expect(
-        screen.getByRole('heading', { name: `Connect ${c.name}` })
-      ).toBeTruthy();
-      expect(screen.getByTestId(c.card)).toBeTruthy();
-      for (const paragraph of c.paragraphs) {
-        expect(screen.getByText(paragraph)).toBeTruthy();
-      }
-
-      // Explanation-only (spec 123 D1/D3/D4): no form, no input, no
-      // paste field of any kind is rendered on these tabs.
-      expect(
-        container.querySelectorAll('form, input, textarea, select')
-      ).toHaveLength(0);
-
-      const link = screen.getByTestId(c.link);
-      expect(link.tagName).toBe('A');
-      expect(link.textContent).toBe('Go to Accounts');
-      expect(link.getAttribute('href')).toBe('/tenant/acme/accounts');
-    });
-  }
-
-  it('X tab copy is byte-identical to the shipped strings (OD-135-3a)', () => {
-    expect(X_CONNECT_INFO_CONFIG.platform).toBe('x');
-    expect(X_CONNECT_INFO_CONFIG.displayName).toBe('X');
-    expect([...X_CONNECT_INFO_CONFIG.paragraphs]).toEqual([
-      'You simply sign in with X and approve the connection. There are no keys to create or paste here.',
-      'When you are ready, go to Accounts and choose Connect. X will ask you to confirm that you want to connect your account, and when you are done you will be back in your Accounts list.',
-    ]);
-    expect([...YOUTUBE_CONNECT_INFO_CONFIG.paragraphs]).toEqual([
-      'You connect your YouTube channel through our publishing partner, so there is nothing to set up or paste here.',
-      'When you are ready, go to Accounts and choose Connect. You will choose your channel and approve the connection there, and then you can schedule and publish videos from here as normal.',
-    ]);
-    expect([...TIKTOK_CONNECT_INFO_CONFIG.paragraphs]).toEqual([
-      'You connect your TikTok account through our publishing partner, so there is nothing to set up or paste here.',
-      'When you are ready, go to Accounts and choose Connect. You will sign in with TikTok and approve the connection there, and then you can schedule and publish videos from here as normal.',
-    ]);
+    // The split layout put the heading in a left grid column and the
+    // panel in a right one (md:grid-cols-[220px_minmax(0,1fr)]). The
+    // single-column layout must not contain that grid anywhere.
+    expect(
+      document.querySelector('.md\\:grid-cols-\\[220px_minmax\\(0\\,1fr\\)\\]')
+    ).toBeNull();
+    // Heading, description and status sit above the panel: the
+    // panel's previous sibling chain contains the heading block.
+    const card = screen.getByTestId('threads-settings-card');
+    expect(card.previousElementSibling).not.toBeNull();
+    expect(
+      screen.getByRole('heading', { name: 'Threads App' })
+    ).toBeTruthy();
   });
 });
 
@@ -1007,7 +983,7 @@ function stripToVisibleText(html: string): string {
     .toLowerCase();
 }
 
-describe('plain-language lint over user-facing copy (§5.3/§5.4/§5.5)', () => {
+describe('plain-language lint over user-facing copy (§5.3/§5.4)', () => {
   const BANNED = ['oauth', 'scope', 'endpoint', 'api key', 'token'];
 
   it('no banned terms appear in any tab copy', () => {
@@ -1022,16 +998,6 @@ describe('plain-language lint over user-facing copy (§5.3/§5.4/§5.5)', () => 
       cleanup();
       void notConnected;
     }
-
-    render(<YouTubeSettingsView subdomain="acme" />);
-    htmls.push(document.body.innerHTML);
-    cleanup();
-    render(<XSettingsView subdomain="acme" />);
-    htmls.push(document.body.innerHTML);
-    cleanup();
-    render(<TikTokSettingsView subdomain="acme" />);
-    htmls.push(document.body.innerHTML);
-    cleanup();
 
     for (const html of htmls) {
       const text = stripToVisibleText(html);

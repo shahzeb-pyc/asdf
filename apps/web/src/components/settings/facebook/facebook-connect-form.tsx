@@ -165,7 +165,7 @@ export function FacebookConnectForm({
       <div className="flex flex-col gap-2">
         <div className="flex items-center gap-2">
           <StepBadge>1</StepBadge>
-          <h3 className="text-body font-semibold text-ink">Get your app details</h3>
+          <h3 className="text-body font-semibold text-ink">Find your app details</h3>
         </div>
         <p className="pl-8 text-body text-ink-sub">
           Open your{' '}
@@ -176,7 +176,7 @@ export function FacebookConnectForm({
             data-testid="fb-meta-dashboard-link"
             className="font-semibold text-link hover:underline"
           >
-            Meta App Dashboard →
+            Meta developer dashboard →
           </a>{' '}
           and copy your App ID and App Secret from Settings → Basic.
         </p>
@@ -188,7 +188,7 @@ export function FacebookConnectForm({
       <div className="flex flex-col gap-4">
         <div className="flex items-center gap-2">
           <StepBadge>2</StepBadge>
-          <h3 className="text-body font-semibold text-ink">Add them here</h3>
+          <h3 className="text-body font-semibold text-ink">Add your app details here</h3>
         </div>
 
         <Form {...form}>
@@ -284,7 +284,7 @@ export function FacebookConnectForm({
                 )}
               </div>
               <span className="text-metadata text-ink-dim">
-                We check everything works the moment you connect.
+                Your details are checked as soon as you connect.
               </span>
             </div>
           </form>

@@ -4,7 +4,8 @@
  * Tabs — shadcn base on Radix Tabs: the ARIA tabs pattern is Radix's
  * (roving tabindex, arrow-key movement, Home/End, activation semantics —
  * matrix §30). Two list variants: `default` (segmented panel) and `line`
- * (gold underline on the active tab — the Binance active-underline accent).
+ * (single hairline under the row; the active tab is marked by the
+ * line trigger variant: bold ink text with a thick 3px ink underline).
  * Tabs are for 2–9 peer sections; they are never a pseudo-wizard (matrix §6).
  * Geometry (spec 142 F07): the list is viewport-bounded (`max-w-full`)
  * and scrolls horizontally when its tabs overflow, and triggers are
@@ -60,14 +61,37 @@ function TabsList({
   );
 }
 
-function TabsTrigger({ className, ...props }: React.ComponentProps<typeof TabsPrimitive.Trigger>) {
+const tabsTriggerVariants = cva(
+  "inline-flex h-9 grow basis-0 shrink-0 items-center justify-center gap-1.5 rounded-sm border-transparent px-3 text-body font-medium whitespace-nowrap text-ink-sub transition-colors duration-fast outline-none hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold disabled:pointer-events-none disabled:opacity-50",
+  {
+    variants: {
+      variant: {
+        // Segmented / default: active tab is a raised panel.
+        default:
+          "border-b-2 data-[state=active]:bg-panel data-[state=active]:text-ink data-[state=active]:shadow-card",
+        // Line: active tab is bold ink text with a thick 3px ink
+        // underline that overlaps the list hairline (-mb-px), so the
+        // row shows one clean hairline and one strong active mark.
+        // No background or shadow on active, and no faint underline
+        // under inactive tabs. Ink is a theme token, so this works
+        // in both light and dark themes.
+        line: "-mb-px border-b-3 data-[state=active]:border-ink data-[state=active]:font-bold data-[state=active]:text-ink",
+      },
+    },
+    defaultVariants: { variant: "default" },
+  }
+);
+
+function TabsTrigger({
+  className,
+  variant = "default",
+  ...props
+}: React.ComponentProps<typeof TabsPrimitive.Trigger> & VariantProps<typeof tabsTriggerVariants>) {
   return (
     <TabsPrimitive.Trigger
       data-slot="tabs-trigger"
-      className={cn(
-        "inline-flex h-9 grow basis-0 shrink-0 items-center justify-center gap-1.5 rounded-sm border-b-2 border-transparent px-3 text-body font-medium whitespace-nowrap text-ink-sub transition-colors duration-fast outline-none hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-panel data-[state=active]:text-ink data-[state=active]:shadow-card",
-        className
-      )}
+      data-variant={variant}
+      className={cn(tabsTriggerVariants({ variant }), className)}
       {...props}
     />
   );
@@ -79,4 +103,4 @@ function TabsContent({ className, ...props }: React.ComponentProps<typeof TabsPr
   );
 }
 
-export { Tabs, TabsList, TabsTrigger, TabsContent, tabsListVariants };
+export { Tabs, TabsList, TabsTrigger, TabsContent, tabsListVariants, tabsTriggerVariants };

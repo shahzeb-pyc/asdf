@@ -117,8 +117,26 @@ function notifyWorkspaceUpdated(subdomain: string, name: string) {
 /* Form — one presentation for both data adapters below                */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Format a workspace createdAt value as a readable date, e.g.
+ * "24 October 2026". Returns null for a missing or unparseable
+ * value, so the Created row is simply hidden rather than showing
+ * a placeholder or invented date.
+ */
+export function formatWorkspaceCreatedAt(value: string | undefined): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Intl.DateTimeFormat('en-GB', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  }).format(date);
+}
+
 interface WorkspaceNameFormProps {
   currentName: string;
+  createdAt?: string | undefined;
   isSaving: boolean;
   serverError: string | null;
   onSave: (name: string) => Promise<void>;
@@ -127,6 +145,7 @@ interface WorkspaceNameFormProps {
 
 function WorkspaceNameForm({
   currentName,
+  createdAt,
   isSaving,
   serverError,
   onSave,
@@ -178,27 +197,40 @@ function WorkspaceNameForm({
     summaryEntries.push({ message: serverError });
   }
 
+  const formattedCreated = formatWorkspaceCreatedAt(createdAt);
+  const createdRow = formattedCreated ? (
+    <div
+      data-testid="workspace-created-row"
+      className="flex items-center justify-between gap-4 border-t border-line pt-4"
+    >
+      <span className="text-metadata text-ink-sub">Created</span>
+      <span className="text-body font-medium text-ink">{formattedCreated}</span>
+    </div>
+  ) : null;
+
   return (
-    <div className="flex w-full max-w-2xl flex-col gap-4">
+    <div className="flex w-full flex-col gap-4">
+      <div>
+        <h2 id="workspace-about-heading" className="text-lg font-semibold text-ink">
+          About this workspace
+        </h2>
+        <p className="mt-1 text-metadata text-ink-sub">
+          The name of this workspace.
+        </p>
+      </div>
+
       <section
         data-testid="workspace-about-card"
         aria-labelledby="workspace-about-heading"
-        className="flex flex-col gap-6 rounded-md border border-line bg-panel p-6"
+        className="flex flex-col gap-4 rounded-md border border-line bg-panel p-6 shadow-card"
       >
-        <div>
-          <h2 id="workspace-about-heading" className="text-lg font-semibold text-ink">
-            About this workspace
-          </h2>
-          <p className="mt-1 text-metadata text-ink-sub">Name your workspace.</p>
-        </div>
-
         <div className="flex flex-col gap-1">
           {!isEditing ? (
             <>
               <span className="text-metadata font-medium tracking-caption text-ink-dim uppercase">
-                Workspace name
+                Workspace
               </span>
-              <div className="flex items-center justify-between gap-4 rounded-sm border border-line bg-canvas px-3.5 py-2.5 max-sm:flex-col max-sm:items-stretch max-sm:gap-3">
+              <div className="flex items-center justify-between gap-4 max-sm:flex-col max-sm:items-stretch max-sm:gap-3">
                 <div
                   data-testid="workspace-name-display"
                   className="text-body font-medium break-words text-ink"
@@ -215,6 +247,7 @@ function WorkspaceNameForm({
                   Edit
                 </Button>
               </div>
+              {createdRow}
             </>
           ) : (
             <Form {...form}>
@@ -279,10 +312,7 @@ function WorkspaceNameForm({
               </form>
             </Form>
           )}
-
-          <p data-testid="workspace-name-helper" className="mt-1 text-metadata text-ink-sub">
-            Rename it any time — the new name shows up everywhere.
-          </p>
+          {isEditing ? createdRow : null}
         </div>
       </section>
     </div>
@@ -301,11 +331,17 @@ export interface GeneralSettingsViewProps {
    * workspace-list query, hydrated server-first by the settings route.
    */
   workspaceName?: string | undefined;
+  /**
+   * Fallback created date for standalone renders without a query
+   * provider; inside the app it comes from the workspace-list query.
+   */
+  workspaceCreatedAt?: string | undefined;
 }
 
 function GeneralSettingsWithQuery({
   subdomain,
   workspaceName,
+  workspaceCreatedAt,
 }: Readonly<GeneralSettingsViewProps>) {
   const queryClient = useQueryClient();
   const tenant = queryKeys.tenant(subdomain);
@@ -363,6 +399,7 @@ function GeneralSettingsWithQuery({
   return (
     <WorkspaceNameForm
       currentName={currentName}
+      createdAt={workspace?.createdAt ?? workspaceCreatedAt}
       isSaving={renameMutation.isPending}
       serverError={serverError}
       onClearServerError={() => setServerError(null)}
@@ -391,6 +428,7 @@ type ListWorkspacesResponse = z.infer<typeof ListWorkspacesResponseSchema>;
 function GeneralSettingsStandalone({
   subdomain,
   workspaceName,
+  workspaceCreatedAt,
 }: Readonly<GeneralSettingsViewProps>) {
   const [currentName, setCurrentName] = React.useState(workspaceName ?? subdomain);
   const [isSaving, setIsSaving] = React.useState(false);
@@ -399,6 +437,7 @@ function GeneralSettingsStandalone({
   return (
     <WorkspaceNameForm
       currentName={currentName}
+      createdAt={workspaceCreatedAt}
       isSaving={isSaving}
       serverError={serverError}
       onClearServerError={() => setServerError(null)}

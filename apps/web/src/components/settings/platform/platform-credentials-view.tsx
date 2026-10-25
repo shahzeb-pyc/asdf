@@ -59,7 +59,6 @@ import { queryKeys } from '@/lib/data/query-keys';
 import { Banner } from '@/components/shared/ui/banner';
 import { Button } from '@/components/shared/ui/button';
 import { Skeleton } from '@/components/shared/ui/skeleton';
-import { StatusDot } from '@/components/shared/ui/status-dot';
 import { toast } from '@/components/shared/ui/toast';
 
 import {
@@ -68,6 +67,8 @@ import {
 } from './platform-connect-form';
 import { PlatformConnectedView } from './platform-connected-view';
 import { PlatformDisconnectDialog } from './platform-disconnect-dialog';
+import { PlatformPrivacyUrlRow } from './platform-privacy-url-row';
+import { PlatformStatusMark } from './platform-status-mark';
 import type { PlatformCredentialsConfig } from './platform-credentials-helpers';
 
 export interface PlatformCredentialsViewProps {
@@ -77,6 +78,8 @@ export interface PlatformCredentialsViewProps {
   children?: React.ReactNode;
   /** Extra card shown under the main card in the form and edit states. */
   setupCard?: React.ReactNode;
+  /** Privacy Policy URL shown in the panel in both states. */
+  privacyUrl?: string;
 }
 
 function isNetworkFailure(error: unknown): boolean {
@@ -117,6 +120,7 @@ export function PlatformCredentialsView({
   config,
   children,
   setupCard,
+  privacyUrl,
 }: Readonly<PlatformCredentialsViewProps>) {
   const { platform, displayName, appIdLabel, appSecretLabel, testIdPrefix } = config;
   const queryClient = useQueryClient();
@@ -129,8 +133,8 @@ export function PlatformCredentialsView({
 
   const saveFailureMessage = `Couldn't save your ${displayName} app details. Please try again.`;
   const disconnectFailureMessage = `Couldn't disconnect ${displayName}. Please try again.`;
-  const connectNetworkMessage = `Network error while connecting ${displayName}.`;
-  const disconnectNetworkMessage = `Network error while disconnecting ${displayName}.`;
+  const connectNetworkMessage = `Could not connect ${displayName}. Check your connection and try again.`;
+  const disconnectNetworkMessage = `Could not disconnect ${displayName}. Try again.`;
 
   const searchParams = useSearchParams();
   const showReconnectNotice = searchParams.get('notice') === 'reconnect';
@@ -243,77 +247,102 @@ export function PlatformCredentialsView({
   const hasSavedCredentials = Boolean(credentials.appId && credentials.hasSecret);
   const isConnectedState = hasSavedCredentials && !isEditMode;
 
+  // Single-column layout: the header (title + description +
+  // tick/cross status) stacked above the full-width panel at every
+  // width, never split. The status mark reflects the saved
+  // credentials, not the edit mode — while editing, the app is
+  // still connected, even though the form is showing. The
+  // description follows the classic sentences verbatim, with an
+  // edit-mode line of its own.
+  const headerDescription = isEditMode
+    ? `Edit your saved ${displayName} app details.`
+    : isConnectedState
+      ? `Your ${displayName} app is connected and ready to publish.`
+      : `Link your ${displayName} app to start publishing from this workspace.`;
+
+  const headerBlock = (
+    <div>
+      <h2
+        id={`${testIdPrefix}-settings-heading`}
+        className="text-lg font-semibold text-ink"
+      >
+        {`${displayName} App`}
+      </h2>
+      <p className="mt-1 text-body text-ink-sub">{headerDescription}</p>
+      <div data-testid={`${testIdPrefix}-status-badge`} className="mt-3">
+        <PlatformStatusMark
+          testIdPrefix={testIdPrefix}
+          connected={hasSavedCredentials}
+        />
+      </div>
+    </div>
+  );
+
+  const mainPanel = (
+    <section
+      data-testid={`${testIdPrefix}-settings-card`}
+      aria-labelledby={`${testIdPrefix}-settings-heading`}
+      className="flex flex-col gap-6 rounded-md border border-line bg-panel p-6 shadow-card"
+    >
+      {isConnectedState ? (
+        <PlatformConnectedView
+          config={config}
+          appId={credentials.appId}
+          connectedAt={credentials.connectedAt}
+          onRevealSecret={handleRevealSecret}
+          onEditDetails={() => {
+            setServerError(null);
+            setIsEditMode(true);
+          }}
+          onDisconnectClick={() => setDisconnectOpen(true)}
+        />
+      ) : (
+        <PlatformConnectForm
+          key={isEditMode ? 'edit' : 'connect'}
+          config={config}
+          initialAppId={credentials.appId}
+          hasExistingSecret={credentials.hasSecret}
+          isEditMode={isEditMode}
+          isConnecting={connectMutation.isPending}
+          serverError={serverError}
+          onConnect={handleConnect}
+          onCancelEdit={() => {
+            setServerError(null);
+            setIsEditMode(false);
+          }}
+        >
+          {children}
+        </PlatformConnectForm>
+      )}
+
+      {/* Privacy Policy URL — both states: Meta needs this
+          address regardless of connection state. */}
+      {privacyUrl && (
+        <PlatformPrivacyUrlRow testIdPrefix={testIdPrefix} privacyUrl={privacyUrl} />
+      )}
+
+      {/* "One more step" — folded into this panel as a step
+          below the main content, add/edit only, never in the
+          connected state. It is no longer a separate floating
+          card in this layout. */}
+      {(!hasSavedCredentials || isEditMode) && (
+        <div className="border-t border-line pt-6">{setupCard}</div>
+      )}
+    </section>
+  );
+
   return (
-    <div className="flex w-full max-w-3xl flex-col gap-6">
+    <div className="flex w-full max-w-4xl flex-col gap-6">
       {showReconnectNotice && (
         <Banner
           variant="warning"
           data-testid={`${testIdPrefix}-reconnect-notice`}
-          title={`${displayName} requires an app to reconnect accounts. Add your ${appIdLabel} and ${appSecretLabel} below, then reconnect.`}
+          title={`To reconnect accounts, add your ${appIdLabel} and ${appSecretLabel} below, then reconnect.`}
         />
       )}
 
-      <section
-        data-testid={`${testIdPrefix}-settings-card`}
-        aria-labelledby={`${testIdPrefix}-settings-heading`}
-        className="flex flex-col gap-6 rounded-md border border-line bg-panel p-6 shadow-card"
-      >
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h2
-              id={`${testIdPrefix}-settings-heading`}
-              className="text-lg font-semibold text-ink"
-            >
-              {`Connect ${displayName}`}
-            </h2>
-            <p className="mt-1 text-body text-ink-sub">
-              {isConnectedState
-                ? `Your ${displayName} app is linked and publishing is ready to go.`
-                : `Link your ${displayName} app to start publishing from this workspace.`}
-            </p>
-          </div>
-          <div data-testid={`${testIdPrefix}-status-badge`} className="shrink-0">
-            <StatusDot
-              status={isConnectedState ? 'operational' : 'idle'}
-              label={isConnectedState ? 'Connected' : 'Not connected'}
-            />
-          </div>
-        </div>
-
-        {isConnectedState ? (
-          <PlatformConnectedView
-            config={config}
-            appId={credentials.appId}
-            connectedAt={credentials.connectedAt}
-            onRevealSecret={handleRevealSecret}
-            onEditDetails={() => {
-              setServerError(null);
-              setIsEditMode(true);
-            }}
-            onDisconnectClick={() => setDisconnectOpen(true)}
-          />
-        ) : (
-          <PlatformConnectForm
-            key={isEditMode ? 'edit' : 'connect'}
-            config={config}
-            initialAppId={credentials.appId}
-            hasExistingSecret={credentials.hasSecret}
-            isEditMode={isEditMode}
-            isConnecting={connectMutation.isPending}
-            serverError={serverError}
-            onConnect={handleConnect}
-            onCancelEdit={() => {
-              setServerError(null);
-              setIsEditMode(false);
-            }}
-          >
-            {children}
-          </PlatformConnectForm>
-        )}
-      </section>
-
-      {/* "One more step" — add/edit only, never in the connected state (§5.3/§5.4). */}
-      {(!hasSavedCredentials || isEditMode) && setupCard}
+      {headerBlock}
+      {mainPanel}
 
       <PlatformDisconnectDialog
         config={config}
@@ -324,4 +353,5 @@ export function PlatformCredentialsView({
       />
     </div>
   );
+
 }

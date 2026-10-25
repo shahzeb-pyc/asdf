@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Platform credentials — shared "Add them here" connect form
+ * Platform credentials — shared "Add your app details here" connect form
  * (spec 135 PR-135-3, spec §5.3/§5.4 / §6.3 / §8.2).
  *
  * One config-driven form for Instagram and Threads (UI Rule 11 — the
@@ -98,7 +98,7 @@ export interface PlatformConnectFormProps {
   serverError: string | null;
   onConnect: (payload: PlatformConnectPayload) => Promise<void>;
   onCancelEdit: () => void;
-  /** The platform's setup guide, shown above the "Add them here" step. */
+  /** The platform's setup guide, shown above the "Add your app details here" step. */
   children?: React.ReactNode;
 }
 
@@ -116,7 +116,7 @@ export function PlatformConnectForm({
   onCancelEdit,
   children,
 }: Readonly<PlatformConnectFormProps>) {
-  const { displayName, appIdLabel, appSecretLabel, testIdPrefix, appIdHelper, formStepNumber } =
+  const { displayName, appIdLabel, appSecretLabel, testIdPrefix, appIdHelper } =
     config;
   const appIdFieldId = `${testIdPrefix}-app-id-input`;
   const appSecretFieldId = `${testIdPrefix}-app-secret-input`;
@@ -171,13 +171,8 @@ export function PlatformConnectForm({
 
       <div className="flex flex-col gap-4">
         <div className="flex items-center gap-2">
-          <span
-            aria-hidden="true"
-            className="flex size-6 shrink-0 items-center justify-center rounded-full border border-line bg-canvas text-metadata font-semibold text-ink-sub"
-          >
-            {formStepNumber}
-          </span>
-          <h3 className="text-body font-semibold text-ink">Add them here</h3>
+
+          <h3 className="text-body font-semibold text-ink">Add your app details here</h3>
         </div>
 
         <Form {...form}>
@@ -187,7 +182,9 @@ export function PlatformConnectForm({
               setSubmitAttempted(true);
               void form.handleSubmit(handleValidSubmit)(event);
             }}
-            className="flex flex-col gap-4 pl-8 max-sm:pl-0"
+            className={
+              'flex flex-col gap-4'
+            }
           >
             <FormErrorSummary errors={summaryEntries} />
 
@@ -271,7 +268,7 @@ export function PlatformConnectForm({
                 )}
               </div>
               <span className="text-metadata text-ink-dim">
-                We check everything works the moment you connect.
+                Your details are checked as soon as you connect.
               </span>
             </div>
           </form>

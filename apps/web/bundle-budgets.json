@@ -166,6 +166,12 @@
         "firstLoadRawBytes": 472136,
         "routeSpecificGzipBytes": 8374,
         "routeSpecificRawBytes": 21184
+      },
+      "/privacy": {
+        "firstLoadGzipBytes": 141694,
+        "firstLoadRawBytes": 470654,
+        "routeSpecificGzipBytes": 7864,
+        "routeSpecificRawBytes": 19799
       }
     },
     "totalClientJs": {
@@ -227,6 +233,12 @@
         "firstLoadRawBytes": 505010,
         "routeSpecificGzipBytes": 12710,
         "routeSpecificRawBytes": 31510
+      },
+      "/privacy": {
+        "firstLoadGzipBytes": 148779,
+        "firstLoadRawBytes": 494187,
+        "routeSpecificGzipBytes": 8258,
+        "routeSpecificRawBytes": 20789
       },
       "/reset-password": {
         "firstLoadGzipBytes": 151286,

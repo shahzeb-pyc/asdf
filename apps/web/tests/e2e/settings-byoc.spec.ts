@@ -10,11 +10,12 @@
  * card hidden) → Edit details (card reappears) → Disconnect via
  * the alert-dialog → not-connected form returns. A second case
  * forces the save route to fail at the network layer and asserts
- * the exact fixed-sentence toast "Network error while connecting
- * Facebook." (§5.2). A third case carries the spec 142 mobile gate
- * for the info tabs (YouTube/X/TikTok): at 320/390/768 CSS px the
- * card and its "Go to Accounts" action fit the viewport with no
- * document overflow and a compact 36px touch target.
+ * the exact fixed-sentence toast "Could not connect Facebook. Check
+ * your connection and try again." (§5.2). A third case, added when the YouTube/X/TikTok
+ * explanation tabs were removed from Settings on 2026-10-25,
+ * asserts those deep links now land on General at mobile widths,
+ * with the General panel (including its Created row) fitting the
+ * viewport with no document overflow.
  *
  * Fixture discipline (A3): the BYOC route is intercepted at the
  * browser boundary with a stateful handler registered after the
@@ -26,11 +27,7 @@
 
 import { test, expect, type Page, type Route } from '@playwright/test';
 import { createFixtureState, installApiFixtures } from './fixtures/api';
-import {
-  expectMinTouchHeight,
-  expectNoDocumentOverflow,
-  expectWithinViewport,
-} from './fixtures/mobile';
+import { expectNoDocumentOverflow } from './fixtures/mobile';
 import { SESSION_COOKIE, TENANT } from './fixtures/tenant';
 
 const CONNECTED_AT = '2026-10-16T12:00:00.000Z';
@@ -150,7 +147,7 @@ test.describe('settings — BYOC save/test flow (spec 135 §9)', () => {
     // Not-connected form with the guide and the "One more step" card.
     await expect(page.getByTestId('fb-connect-btn')).toBeVisible();
     await expect(
-      page.getByRole('heading', { name: 'Connect Facebook' })
+      page.getByRole('heading', { name: 'Facebook App' })
     ).toBeVisible();
     await expect(page.getByTestId('fb-one-more-step-card')).toBeVisible();
 
@@ -220,7 +217,7 @@ test.describe('settings — BYOC save/test flow (spec 135 §9)', () => {
     await page.getByTestId('fb-connect-btn').click();
 
     await expect(
-      page.getByText('Network error while connecting Facebook.', { exact: true })
+      page.getByText('Could not connect Facebook. Check your connection and try again.', { exact: true })
     ).toBeVisible();
     // The tab stays on the form with the input preserved.
     await expect(page.getByTestId('fb-app-id-input')).toHaveValue('123456789012345');
@@ -228,15 +225,9 @@ test.describe('settings — BYOC save/test flow (spec 135 §9)', () => {
   });
 });
 
-test.describe('settings — info tabs at mobile widths (spec 142 gate, PR-135-4)', () => {
-  const INFO_TABS = [
-    { tab: 'youtube', prefix: 'youtube', name: 'YouTube' },
-    { tab: 'x', prefix: 'x', name: 'X' },
-    { tab: 'tiktok', prefix: 'tiktok', name: 'TikTok' },
-  ] as const;
-
+test.describe('settings — removed tabs resolve to General at mobile widths', () => {
   for (const width of [320, 390, 768]) {
-    test(`info tabs fit ${width}px: no overflow, card + Accounts action inside the viewport, compact 36px target`, async ({
+    test(`?tab=youtube/x/tiktok lands on General at ${width}px, Created row visible, no overflow`, async ({
       page,
       context,
     }) => {
@@ -244,28 +235,26 @@ test.describe('settings — info tabs at mobile widths (spec 142 gate, PR-135-4)
       await installSettingsFixtures(page);
       await page.setViewportSize({ width, height: 844 });
 
-      for (const info of INFO_TABS) {
+      for (const removed of ['youtube', 'x', 'tiktok']) {
         await page.goto(
-          `/tenant/${TENANT.subdomain}/settings?tab=${info.tab}`
+          `/tenant/${TENANT.subdomain}/settings?tab=${removed}`
         );
-        const card = page.getByTestId(`${info.prefix}-connect-info-card`);
-        await expect(card).toBeVisible();
+        // General is the active tab; the removed tab does not exist.
         await expect(
-          page.getByRole('heading', { name: `Connect ${info.name}` })
-        ).toBeVisible();
-        // Explanation-only: no form controls inside the card.
-        await expect(card.locator('form, input, textarea, select')).toHaveCount(0);
-
-        const link = page.getByTestId(`${info.prefix}-accounts-link`);
-        await expect(link).toBeVisible();
-        await expect(link).toHaveAttribute(
-          'href',
-          `/tenant/${TENANT.subdomain}/accounts`
+          page.getByTestId('settings-tab-general')
+        ).toHaveAttribute('aria-selected', 'true');
+        await expect(
+          page.getByTestId(`settings-tab-${removed}`)
+        ).toHaveCount(0);
+        // General panel: workspace name and the Created row from
+        // the fixture workspace (createdAt 2026-10-01).
+        await expect(page.getByTestId('workspace-name-display')).toHaveText(
+          'E2E Workspace'
+        );
+        await expect(page.getByTestId('workspace-created-row')).toContainText(
+          '1 October 2026'
         );
         await expectNoDocumentOverflow(page);
-        await expectWithinViewport(card, page);
-        await expectWithinViewport(link, page);
-        await expectMinTouchHeight(link, 36);
       }
     });
   }

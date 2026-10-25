@@ -80,6 +80,31 @@ describe("Tabs (ARIA tabs pattern)", () => {
     expect(screen.getByRole("tabpanel")).toHaveTextContent("History panel");
   });
 
+  it("line trigger variant: active tab is bold with a 3px ink underline, no panel background", () => {
+    render(
+      <Tabs defaultValue="queue">
+        <TabsList variant="line" aria-label="Sections">
+          <TabsTrigger value="queue" variant="line">
+            Queue
+          </TabsTrigger>
+          <TabsTrigger value="history" variant="line">
+            History
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="queue">Queue panel</TabsContent>
+        <TabsContent value="history">History panel</TabsContent>
+      </Tabs>
+    );
+    const active = screen.getByRole("tab", { name: "Queue" });
+    expect(active.className).toContain("border-b-3");
+    expect(active.className).toContain("data-[state=active]:border-ink");
+    expect(active.className).toContain("data-[state=active]:font-bold");
+    expect(active.className).not.toContain("data-[state=active]:bg-panel");
+    expect(active.className).not.toContain("data-[state=active]:shadow-card");
+    // Inactive tab stays muted, with no underline of its own.
+    expect(screen.getByRole("tab", { name: "History" }).className).toContain("text-ink-sub");
+  });
+
   it("a disabled tab cannot be selected by click or arrow keys", async () => {
     const user = userEvent.setup();
     render(<TestTabs withDisabled />);

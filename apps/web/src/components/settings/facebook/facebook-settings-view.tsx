@@ -51,7 +51,9 @@ import { queryKeys } from '@/lib/data/query-keys';
 import { Banner } from '@/components/shared/ui/banner';
 import { Button } from '@/components/shared/ui/button';
 import { Skeleton } from '@/components/shared/ui/skeleton';
-import { StatusDot } from '@/components/shared/ui/status-dot';
+import { FacebookStatusMark } from './facebook-status-mark';
+import { FacebookPrivacyUrlRow } from './facebook-privacy-url-row';
+import { buildPrivacyPolicyUrl } from '@/lib/privacy-url';
 import { toast } from '@/components/shared/ui/toast';
 
 import {
@@ -64,8 +66,8 @@ import { FacebookSetupCard } from './facebook-setup-card';
 
 const SAVE_FAILURE_MESSAGE = "Couldn't save your Facebook app details. Please try again.";
 const DISCONNECT_FAILURE_MESSAGE = "Couldn't disconnect Facebook. Please try again.";
-const CONNECT_NETWORK_MESSAGE = 'Network error while connecting Facebook.';
-const DISCONNECT_NETWORK_MESSAGE = 'Network error while disconnecting Facebook.';
+const CONNECT_NETWORK_MESSAGE = 'Could not connect Facebook. Check your connection and try again.';
+const DISCONNECT_NETWORK_MESSAGE = 'Could not disconnect Facebook. Try again.';
 
 export interface FacebookSettingsViewProps {
   subdomain: string;
@@ -216,40 +218,45 @@ export function FacebookSettingsView({ subdomain }: Readonly<FacebookSettingsVie
   const hasSavedCredentials = Boolean(credentials.fbAppId && credentials.hasSecret);
   const isConnectedState = hasSavedCredentials && !isEditMode;
 
+  // Single-column layout (2026-10-25 correction to the two-column
+  // redesign): heading + description + status stacked on TOP, panels
+  // below at full content width — no left column with cards on the
+  // right at any width. The status mark reflects the saved
+  // credentials, not the edit mode — while editing, the app is still
+  // connected (mockup screen 3), even though the form is showing. The
+  // description follows the mockup per state: edit mode gets its own
+  // line; every other state keeps the §5.2 sentences verbatim.
+  const headerDescription = isEditMode
+    ? 'Edit your saved Facebook app details.'
+    : isConnectedState
+      ? 'Your Facebook app is connected and ready to publish.'
+      : 'Link your Facebook app to start publishing from this workspace.';
+
   return (
-    <div className="flex w-full max-w-3xl flex-col gap-6">
+    <div className="flex w-full max-w-4xl flex-col gap-6">
       {showReconnectNotice && (
         <Banner
           variant="warning"
           data-testid="byoc-reconnect-notice"
-          title="Facebook requires an app to reconnect accounts. Add your App ID and App Secret below, then reconnect."
+          title="To reconnect accounts, add your App ID and App Secret below, then reconnect."
         />
       )}
+
+      <div>
+        <h2 id="facebook-settings-heading" className="text-lg font-semibold text-ink">
+          Facebook App
+        </h2>
+        <p className="mt-1 text-body text-ink-sub">{headerDescription}</p>
+        <div data-testid="facebook-status-badge" className="mt-3">
+          <FacebookStatusMark connected={hasSavedCredentials} />
+        </div>
+      </div>
 
       <section
         data-testid="facebook-settings-card"
         aria-labelledby="facebook-settings-heading"
         className="flex flex-col gap-6 rounded-md border border-line bg-panel p-6 shadow-card"
       >
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h2 id="facebook-settings-heading" className="text-lg font-semibold text-ink">
-              Connect Facebook
-            </h2>
-            <p className="mt-1 text-body text-ink-sub">
-              {isConnectedState
-                ? 'Your Facebook app is linked and publishing is ready to go.'
-                : 'Link your Facebook app to start publishing from this workspace.'}
-            </p>
-          </div>
-          <div data-testid="facebook-status-badge" className="shrink-0">
-            <StatusDot
-              status={isConnectedState ? 'operational' : 'idle'}
-              label={isConnectedState ? 'Connected' : 'Not connected'}
-            />
-          </div>
-        </div>
-
         {isConnectedState ? (
           <FacebookConnectedView
             fbAppId={credentials.fbAppId}
@@ -278,8 +285,19 @@ export function FacebookSettingsView({ subdomain }: Readonly<FacebookSettingsVie
         )}
       </section>
 
-      {/* "One more step" — add/edit only, never in the connected state (§5.2). */}
-      {(!hasSavedCredentials || isEditMode) && <FacebookSetupCard />}
+      {/* "One more step" — its own panel below the main panel,
+          add/edit only, never in the connected state (§5.2). */}
+      {(!hasSavedCredentials || isEditMode) && (
+        <section className="flex flex-col gap-6 rounded-md border border-line bg-panel p-6 shadow-card">
+          <FacebookSetupCard subdomain={subdomain} />
+        </section>
+      )}
+
+      {/* Privacy Policy URL — its own panel, both states: Facebook
+          needs this address regardless of connection state. */}
+      <section className="flex flex-col gap-6 rounded-md border border-line bg-panel p-6 shadow-card">
+        <FacebookPrivacyUrlRow privacyUrl={buildPrivacyPolicyUrl(subdomain)} />
+      </section>
 
       <FacebookDisconnectDialog
         open={disconnectOpen}

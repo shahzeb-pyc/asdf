@@ -70,8 +70,8 @@ export function FacebookDisconnectDialog({
           </AlertDialogTitle>
           <AlertDialogDescription>
             We&apos;ll remove your App ID and App Secret from this workspace. Your
-            connected accounts and posting will keep working as normal — but you
-            won&apos;t be able to reconnect or connect new accounts until you add new
+            connected accounts and posting will keep working, but you
+            won&apos;t be able to reconnect or add new accounts until you add new
             details.
           </AlertDialogDescription>
         </AlertDialogHeader>
