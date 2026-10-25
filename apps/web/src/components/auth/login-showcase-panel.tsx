@@ -8,18 +8,20 @@
  * revised per login-showcase-option1-v2.html (which supersedes the
  * first mockup for the showcase), then re-centred after Shahzeb
  * viewed the real page: the content is a centred block
- * (max-w-lg, i.e. 512px — wider than the left form card's 448px,
- * deliberately: at 448px the third feature description still
- * ended with 'them.' alone on a line, at 512px all three
- * descriptions sit on one full line) that the layout wrapper
- * centres in the panel, so brand, headline, features, and trust
- * line all share one left edge inside that block; feature rows
- * have no divider lines (spacing
- * alone separates them); icons are the real Lucide icons at 18px
- * (size-4.5), gold, no circle backgrounds, aligned to the first
+ * (max-w-160, i.e. 640px — about two-thirds of the panel at
+ * 1920px, scaled up again after Shahzeb said the 512px block
+ * still read as a small column in an empty panel) that the
+ * layout wrapper centres in the panel, so brand, headline,
+ * features, and trust line all share one left edge inside that
+ * block; feature rows have no divider lines (spacing alone
+ * separates them); icons are the real Lucide icons at 20px
+ * (size-5), gold, no circle backgrounds, aligned to the first
  * line of the feature title, with title and description in one
- * column under each other. Subhead and feature descriptions use
- * ink-sub, not ink-dim, so they do not read washed out.
+ * column under each other. Type is scaled up one step from the
+ * 512px version: headline text-xxxl, subhead and feature titles
+ * text-lg, feature descriptions text-body. Subhead and feature
+ * descriptions use ink-sub, not ink-dim, so they do not read
+ * washed out.
  *
  * No visual, no cards, no dashboard preview, no timeline: hierarchy
  * and whitespace only. The panel content is centred in the panel
@@ -57,17 +59,17 @@ interface FeatureItem {
 
 const FEATURES: readonly FeatureItem[] = [
   {
-    icon: <ClockIcon className="mt-px size-4.5 shrink-0 text-primary" aria-hidden="true" />,
+    icon: <ClockIcon className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" />,
     title: 'Post from anywhere',
     desc: 'Schedule from your phone or laptop — your posts publish from the cloud.',
   },
   {
-    icon: <LayoutGridIcon className="mt-px size-4.5 shrink-0 text-primary" aria-hidden="true" />,
+    icon: <LayoutGridIcon className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" />,
     title: 'Every platform, one dashboard',
     desc: 'Connect each account once, then run everything from a single place.',
   },
   {
-    icon: <LockIcon className="mt-px size-4.5 shrink-0 text-primary" aria-hidden="true" />,
+    icon: <LockIcon className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" />,
     title: 'Your accounts stay yours',
     desc: 'You sign in through each platform directly — your passwords never leave them.',
   },
@@ -75,29 +77,29 @@ const FEATURES: readonly FeatureItem[] = [
 
 export function AuthShowcasePanel() {
   return (
-    <div className="w-full max-w-lg">
+    <div className="w-full max-w-160">
       {/* Centred block (centred by the layout wrapper): brand,
           headline, features, and trust line share one left edge
-          inside this 512px block. */}
+          inside this 640px block (max-w-160). */}
       {/* Brand row — mark + name only; the tagline repeated the headline. */}
       <Link href="/login" className="inline-flex items-center gap-3 self-start no-underline">
-        <div className="flex size-9 shrink-0 items-center justify-center rounded-sm border border-line bg-subtle">
-          <BrandMark size={24} />
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-sm border border-line bg-subtle">
+          <BrandMark size={28} />
         </div>
-        <span className="text-lg leading-heading font-bold tracking-h3 text-ink">
+        <span className="text-xl leading-heading font-bold tracking-h3 text-ink">
           FBUploadPro
         </span>
       </Link>
 
       {/* Showcase content */}
-      <div className="mt-10">
+      <div className="mt-14">
         {/* Eyebrow */}
-        <div className="mb-3 text-xs font-semibold tracking-caption text-primary uppercase">
+        <div className="mb-4 text-metadata font-semibold tracking-caption text-primary uppercase">
           CREATE · SCHEDULE · GROW
         </div>
 
         {/* Headline — three lines, final segment in the accent gold. */}
-        <h1 className="mb-4 text-xxl leading-heading font-bold tracking-h1 text-ink">
+        <h1 className="mb-6 text-xxxl leading-heading font-bold tracking-h1 text-ink">
           Your pages,
           <br />
           posting themselves —
@@ -106,7 +108,7 @@ export function AuthShowcasePanel() {
         </h1>
 
         {/* Subhead */}
-        <p className="mb-6 text-body leading-body text-ink-sub">
+        <p className="mb-8 text-lg leading-body text-ink-sub">
           Schedule reels and posts across Facebook, Instagram, TikTok, YouTube, Threads, and X —
           they go live while you sleep, even when your laptop is closed.
         </p>
@@ -114,22 +116,22 @@ export function AuthShowcasePanel() {
         {/* Feature list — three rows, spacing alone separates them:
             no divider lines. Icon + one text column per row, so the
             description aligns under its title, not under the icon. */}
-        <div className="flex w-full flex-col gap-5">
+        <div className="flex w-full flex-col gap-7">
           {FEATURES.map((item) => (
             <div key={item.title} className="flex items-start gap-3">
               {item.icon}
               <div className="flex-1">
-                <div className="text-body leading-heading-loose font-semibold text-ink">
+                <div className="text-lg leading-heading-loose font-semibold text-ink">
                   {item.title}
                 </div>
-                <div className="mt-1 text-metadata leading-body text-ink-sub">{item.desc}</div>
+                <div className="mt-1 text-body leading-body text-ink-sub">{item.desc}</div>
               </div>
             </div>
           ))}
         </div>
 
         {/* Trust line — a quiet line under the content, not a bordered footer. */}
-        <p className="mt-6 text-xs text-ink-dim">
+        <p className="mt-8 text-metadata text-ink-dim">
           Official platform logins · Encrypted end-to-end
         </p>
       </div>

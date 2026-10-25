@@ -243,7 +243,7 @@ export function SignupOtpStep({
                   }}
                 />
               </FormControl>
-              <FormDescription className="text-xs text-ink-dim">
+              <FormDescription>
                 Check your spam folder if you do not see the email in your inbox.
               </FormDescription>
               <FormMessage />
@@ -257,7 +257,7 @@ export function SignupOtpStep({
               type="button"
               onClick={handleResendOtp}
               disabled={isResending || resendCooldown > 0}
-              className="px-2 py-2 text-metadata font-semibold text-link underline disabled:cursor-not-allowed disabled:opacity-50"
+              className="px-2 py-2 text-metadata font-medium text-link underline disabled:cursor-not-allowed disabled:opacity-50"
             >
               Send fresh code
             </button>

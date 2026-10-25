@@ -153,7 +153,7 @@ function ForgotEmailForm({
                   }}
                 />
               </FormControl>
-              <FormDescription className="text-xs text-ink-dim">
+              <FormDescription>
                 We will send a 6-digit verification code to your registered Gmail address.
               </FormDescription>
               <FormMessage />
@@ -334,7 +334,7 @@ function ResetPasswordForm({
                   }}
                 />
               </FormControl>
-              <FormDescription className="text-xs text-ink-dim">Enter the 6-digit numeric code sent to your email.</FormDescription>
+              <FormDescription>Enter the 6-digit numeric code sent to your email.</FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -359,7 +359,7 @@ function ResetPasswordForm({
                   }}
                 />
               </FormControl>
-              <FormDescription className="text-xs text-ink-dim">Minimum 8 characters</FormDescription>
+              <FormDescription>Minimum 8 characters</FormDescription>
               <FormMessage />
             </FormItem>
           )}

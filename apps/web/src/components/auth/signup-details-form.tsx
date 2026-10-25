@@ -255,7 +255,7 @@ export function SignupDetailsForm({
                   {...field}
                 />
               </FormControl>
-              <FormDescription className="text-xs text-ink-dim">
+              <FormDescription>
                 Include country code starting with + (e.g. +1... or +92...)
               </FormDescription>
               <FormMessage />
@@ -283,7 +283,7 @@ export function SignupDetailsForm({
                   }}
                 />
               </FormControl>
-              <FormDescription className="text-xs text-ink-dim">Only @gmail.com accounts are supported</FormDescription>
+              <FormDescription>Only @gmail.com accounts are supported</FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -322,7 +322,7 @@ export function SignupDetailsForm({
                   {...field}
                 />
               </FormControl>
-              <FormDescription className="text-xs text-ink-dim">Minimum 8 characters</FormDescription>
+              <FormDescription>Minimum 8 characters</FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -369,7 +369,7 @@ export function SignupDetailsForm({
           {cooldown > 0 ? `Please wait (${cooldown}s)` : 'Create Account'}
         </Button>
 
-        <p className="mt-1 text-center text-metadata leading-body text-ink-dim">
+        <p className="mt-1 text-center text-metadata leading-body text-ink-sub">
           By creating an account, you agree to our{' '}
           <a
             href="/terms"

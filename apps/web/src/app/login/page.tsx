@@ -247,7 +247,7 @@ export default function LoginPage({ initialResetSuccess = false }: LoginPageProp
                     {...field}
                   />
                 </FormControl>
-                <FormDescription className="text-xs text-ink-dim">Only @gmail.com accounts are supported</FormDescription>
+                <FormDescription>Only @gmail.com accounts are supported</FormDescription>
                 <FormMessage />
               </FormItem>
             )}
