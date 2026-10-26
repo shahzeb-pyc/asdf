@@ -17,12 +17,18 @@
  *
  * Behaviour parity (spec §6): attention-first ordering, the
  * all/active/needs-attention/paused status filters, text search,
- * the account filter, the situational subtitle, the expired-
- * connection banner with its Reconnect routing (Settings → Facebook
- * when the workspace app details are not configured, direct OAuth
- * when they are), and the Add Page finish summary banner — computed
- * by the same helpers the parity suites pin
- * (`components/pages/pages-helpers`).
+ * the account filter, and the situational subtitle — computed by the
+ * same helpers the parity suites pin (`components/pages/pages-helpers`).
+ * The Add Page finish confirmation is a top-right toast + gold card
+ * highlight (see handlePagesImported), never a banner.
+ *
+ * Pages list redesign: the toolbar renders at any page count (no
+ * >4 gate), cards use the Accounts-style tick/cross mark with no
+ * dot, and there is NO expired-connection banner here — expired
+ * accounts belong in the Accounts section, not Pages. The
+ * Reconnect routing below survives only for the Add Page modal's
+ * expired-account rows (Settings → Facebook when the workspace app
+ * details are not configured, direct OAuth when they are).
  *
  * ?account= contract (Accounts card "pages linked" link): the shell
  * initialises its account filter from the `account` URL param on
@@ -43,7 +49,7 @@ import { ListFacebookAccountsResponseSchema } from '@/lib/api/schemas/accounts';
 import { ListFacebookPagesResponseSchema } from '@/lib/api/schemas/pages';
 import { ByocSettingsResponseSchema } from '@/lib/api/schemas/settings';
 import { queryKeys } from '@/lib/data/query-keys';
-import { Banner } from '@/components/shared/ui/banner';
+import { Toast, toast } from '@/components/shared/ui/toast';
 import { Button } from '@/components/shared/ui/button';
 import { EmptyState } from '@/components/shared/ui/empty-state';
 import { Skeleton } from '@/components/shared/ui/skeleton';
@@ -61,15 +67,15 @@ import {
   type PageStatusFilter,
 } from '@/components/pages/pages-helpers';
 import { AddPageModal } from '@/components/pages/add-page-modal';
-import {
-  getAccountHealth,
-} from '@/components/accounts/account-health';
 import type { FacebookAccountItem } from '@/components/accounts/account-card';
 import { buildDirectConnectUrl } from '@/components/accounts/connect-account-modal';
 
 export interface PagesShellProps {
   subdomain: string;
 }
+
+/** Id of the Pages-only toaster: top-right, used solely by Add Page confirmations. */
+const PAGES_IMPORT_TOASTER_ID = 'pages-import-toaster';
 
 function PagesLoadingSkeleton() {
   return (
@@ -137,7 +143,29 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
     : undefined;
 
   const [isAddModalOpen, setIsAddModalOpen] = React.useState(false);
-  const [bannerMessage, setBannerMessage] = React.useState<string | null>(null);
+
+  // Add Page confirmation (approved redesign): a briefly gold-highlighted
+  // card for each just-imported page, shown while its top-right toast is
+  // up — the same language as the Accounts connected dialogue. The
+  // highlight clears after the toast duration (5s); no banner ever
+  // pushes the grid down.
+  const [highlightedPageIds, setHighlightedPageIds] = React.useState<string[]>([]);
+  const highlightTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flashHighlight = React.useCallback((pageIds: string[]) => {
+    if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
+    setHighlightedPageIds(pageIds);
+    if (pageIds.length > 0) {
+      highlightTimeoutRef.current = setTimeout(() => {
+        setHighlightedPageIds([]);
+      }, 5000);
+    }
+  }, []);
+  React.useEffect(
+    () => () => {
+      if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
+    },
+    []
+  );
   const [searchQuery, setSearchQuery] = React.useState('');
   const [statusFilter, setStatusFilter] = React.useState<PageStatusFilter>('all');
   const [accountFilter, setAccountFilter] = React.useState('all');
@@ -199,11 +227,6 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
       );
     },
     [router, searchParams, subdomain]
-  );
-
-  const expiredAccount = React.useMemo(
-    () => accounts.find((a) => getAccountHealth(a) === 'expired') ?? null,
-    [accounts]
   );
 
   const handleReconnect = React.useCallback(
@@ -272,12 +295,20 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
     router.push(`/tenant/${subdomain}/pages/${page.id}`);
   };
 
-  const handlePagesImported = (importedCount: number) => {
-    setBannerMessage(
-      `${importedCount} ${
-        importedCount === 1 ? 'Facebook Page' : 'Facebook Pages'
-      } added to your workspace.`
+  const handlePagesImported = (result: {
+    importedCount: number;
+    importedPageIds: string[];
+  }) => {
+    // Sonner toasts carry role="status" / aria-live, so no extra live
+    // region is needed; the toast text names the count, so the
+    // highlight never relies on colour alone.
+    toast.success(
+      result.importedCount === 1
+        ? '1 Facebook Page added'
+        : `${result.importedCount} Facebook Pages added`,
+      { toasterId: PAGES_IMPORT_TOASTER_ID }
     );
+    flashHighlight(result.importedPageIds);
     void queryClient.invalidateQueries({ queryKey: tenant.pages.list });
     void queryClient.invalidateQueries({ queryKey: tenant.accounts.list });
   };
@@ -366,6 +397,7 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
             page={page}
             subdomain={subdomain}
             onSelectPage={handleSelectPage}
+            highlighted={highlightedPageIds.includes(page.id)}
           />
         ))}
       </div>
@@ -401,39 +433,40 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
         </Button>
       </div>
 
-      {/* Expired connection banner */}
-      {expiredAccount && (
-        <Banner
-          data-testid="pages-expired-connection-banner"
-          variant="critical"
-          title="Your Facebook connection expired. Reconnect to resume publishing."
-          className="mb-6 border border-line"
-          action={
-            <Button
-              type="button"
-              data-testid="pages-reconnect-btn"
-              disabled={byocQuery.isPending}
-              onClick={() => handleReconnect(expiredAccount)}
-            >
-              {byocQuery.isPending ? 'Checking…' : 'Reconnect'}
-            </Button>
-          }
-        />
-      )}
+      {/* Flow-scoped toaster for Add Page confirmations only: TOP-RIGHT
+          (the shared tenant Toaster stays bottom-right everywhere else).
+          Toasts reach it via toasterId, never via the shared default.
+          NOTE: passing toastOptions here replaces the shared Toast's
+          defaults wholesale (its {...props} spread comes last), so the
+          base slots below are copied verbatim from shared/ui/toast.tsx
+          and only `success` is changed: the import toast is visibly
+          GREEN (green-tinted background + green border, green tick
+          icon via text-brand-emerald). Sonner joins the slots with
+          tailwind-merge, so the success slot wins over the base
+          border-line / bg-panel. Only this flow's success toast goes
+          green — the shared tenant Toaster is untouched. */}
+      <Toast
+        id={PAGES_IMPORT_TOASTER_ID}
+        position="top-right"
+        toastOptions={{
+          classNames: {
+            toast:
+              'group toast group flex items-start gap-2 rounded-md border border-line bg-panel p-4 text-body text-ink shadow-elevated',
+            title: 'font-medium',
+            description: 'text-ink-sub',
+            actionButton: 'bg-primary text-on-primary rounded-sm px-3 h-9 font-medium',
+            cancelButton: 'bg-subtle text-ink rounded-sm px-3 h-9 font-medium',
+            closeButton: 'text-ink-sub hover:text-ink',
+            success: 'border-brand-emerald bg-brand-emerald/15 text-brand-emerald',
+            error: 'text-brand-rose',
+            warning: 'text-brand-gold',
+            info: 'text-ink',
+          },
+        }}
+      />
 
-      {/* Confirmation Banner (the Add Page finish summary, UI Rule 26) */}
-      {bannerMessage && (
-        <Banner
-          data-testid="pages-feedback-banner"
-          variant="success"
-          title={bannerMessage}
-          onDismiss={() => setBannerMessage(null)}
-          className="mb-6 border border-line"
-        />
-      )}
-
-      {/* Scale Toolbar when > 4 Pages exist */}
-      {!isLoading && pages.length > 4 && (
+      {/* Scale Toolbar — always visible, at any page count */}
+      {!isLoading && (
         <PagesScaleToolbar
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}

@@ -186,7 +186,7 @@ describe('PagesShell behaviour', () => {
     makePage({ id: 'p-5', pageName: 'Epsilon Page', status: 'active', fbPageId: 'fb_page_5', createdAt: '2026-10-05T10:00:00.000Z' }),
   ];
 
-  it('expired banner Reconnect routes to Settings → Facebook when app credentials are missing (Spec 102)', () => {
+  it('renders no expired-connection banner on the Pages list, even when an account is expired (expired accounts belong in Accounts)', () => {
     render(
       shellWrapper({
         pages: fivePages,
@@ -195,11 +195,8 @@ describe('PagesShell behaviour', () => {
       })
     );
 
-    expect(screen.getByTestId('pages-expired-connection-banner')).toBeTruthy();
-    fireEvent.click(screen.getByTestId('pages-reconnect-btn'));
-    expect(mockPush).toHaveBeenCalledWith(
-      '/tenant/acme/settings?tab=byoc&notice=reconnect'
-    );
+    expect(screen.queryByTestId('pages-expired-connection-banner')).toBeNull();
+    expect(screen.queryByTestId('pages-reconnect-btn')).toBeNull();
   });
 
   it('filtering to zero shows the typed no-results state and Clear filters restores the grid (UI Rule 23)', () => {
@@ -233,6 +230,178 @@ describe('PagesShell behaviour', () => {
     const subtitle = screen.getByTestId('pages-page-subtitle');
     expect(subtitle.textContent).toContain('5 connected pages');
     expect(subtitle.textContent).toContain('1 requires reconnecting');
+  });
+});
+
+describe('Add Page confirmation redesign (toast + gold highlight, no banner)', () => {
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    global.fetch = fetchMock as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const existingView = {
+    id: '77777777-7777-4777-8777-777777777777',
+    facebookAccountId: activeAccount.id,
+    accountDisplayName: 'Sarah Connor',
+    fbPageId: 'fb_page_1',
+    pageName: 'Alpha Page',
+    profilePictureUrl: null,
+    category: 'Tech',
+    timezone: 'Asia/Karachi',
+    startingFollowers: 100,
+    currentFollowers: 120,
+    followersGained: 20,
+    followersCount: 120,
+    status: 'active',
+    tasks: [],
+    createdAt: '2026-10-01T10:00:00.000Z',
+    updatedAt: '2026-10-01T10:00:00.000Z',
+    rateLimitedAt: null,
+  };
+
+  function mockImportFlow(newPages: Array<{ id: string; fbPageId: string; pageName: string }>) {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes('/pages/discover')) {
+        return jsonResponse({
+          accountId: activeAccount.id,
+          accountDisplayName: activeAccount.displayName,
+          pages: newPages.map((p) => ({
+            fbPageId: p.fbPageId,
+            pageName: p.pageName,
+            profilePictureUrl: null,
+            category: 'Tech',
+            currentFollowers: 100,
+            followersCount: 100,
+            tasks: [],
+            isImported: false,
+          })),
+          total: newPages.length,
+        });
+      }
+      if (url.endsWith('/pages/import')) {
+        return jsonResponse({
+          success: true,
+          importedCount: newPages.length,
+          pages: newPages,
+        });
+      }
+      if (url.includes('/pages') && !url.includes('/accounts')) {
+        return jsonResponse({
+          pages: [
+            existingView,
+            ...newPages.map((p, i) => ({
+              ...existingView,
+              id: p.id,
+              fbPageId: p.fbPageId,
+              pageName: p.pageName,
+              createdAt: '2026-10-06T10:00:00.000Z',
+              updatedAt: '2026-10-06T10:00:00.000Z',
+              followersGained: 0,
+              currentFollowers: 100,
+              followersCount: 100,
+              startingFollowers: 100,
+              category: 'Tech',
+              status: 'active',
+              tasks: [],
+              accountDisplayName: 'Sarah Connor',
+              profilePictureUrl: null,
+              rateLimitedAt: null,
+              timezone: 'Asia/Karachi',
+            })),
+          ],
+          total: 1 + newPages.length,
+        });
+      }
+      if (url.includes('/accounts')) {
+        return jsonResponse({ accounts: [], total: 0 });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+  }
+
+  async function runImport(newPages: Array<{ id: string; fbPageId: string; pageName: string }>) {
+    mockImportFlow(newPages);
+    render(
+      shellWrapper({
+        pages: [
+          makePage({
+            id: existingView.id,
+            pageName: 'Alpha Page',
+            status: 'active',
+            fbPageId: 'fb_page_1',
+          }),
+        ],
+        accounts: [activeAccount],
+        byocConfigured: true,
+      })
+    );
+    fireEvent.click(screen.getByTestId('header-add-page-btn'));
+    await screen.findByTestId('add-page-modal');
+    fireEvent.click(screen.getByTestId(`select-account-${activeAccount.id}`));
+    await screen.findByTestId('discovered-pages-list');
+    for (const p of newPages) {
+      fireEvent.click(screen.getByTestId(`discovered-page-checkbox-${p.fbPageId}`));
+    }
+    const confirm = screen.getByTestId('confirm-add-pages-btn');
+    await waitFor(() => expect((confirm as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(confirm);
+  }
+
+  it('one import: toast says "1 Facebook Page added", exactly the new card is gold, no banner, highlight clears', async () => {
+    const newPage = {
+      id: '66666666-6666-4666-8666-666666666666',
+      fbPageId: 'fb_page_201',
+      pageName: 'Skynet AI Daily',
+    };
+    await runImport([newPage]);
+
+    const toastText = await screen.findByText('1 Facebook Page added');
+    // Import success toast is visibly green: green-tinted background +
+    // green border on the toast element itself (flow-scoped success slot).
+    const toastEl = toastText.closest('[data-sonner-toast]');
+    expect(toastEl).not.toBeNull();
+    expect(toastEl!.className).toContain('border-brand-emerald');
+    expect(toastEl!.className).toContain('bg-brand-emerald/15');
+    expect(screen.queryByTestId('pages-feedback-banner')).toBeNull();
+    expect(screen.getByTestId('pages-grid')).toBeTruthy();
+
+    const newCard = await screen.findByTestId(`page-card-${newPage.id}`);
+    expect(newCard.getAttribute('data-highlighted')).toBe('true');
+    expect(
+      screen.getByTestId(`page-card-${existingView.id}`).getAttribute('data-highlighted')
+    ).toBeNull();
+
+    // Highlight lasts while the toast shows (5s), then clears.
+    await waitFor(
+      () => expect(newCard.getAttribute('data-highlighted')).toBeNull(),
+      { timeout: 8000 }
+    );
+  }, 15000);
+
+  it('three imports: toast says "3 Facebook Pages added" and all three new cards are gold', async () => {
+    const newPages = [
+      { id: '66666666-6666-4666-8666-666666666666', fbPageId: 'fb_page_201', pageName: 'Page One' },
+      { id: '55555555-5555-4555-8555-555555555555', fbPageId: 'fb_page_202', pageName: 'Page Two' },
+      { id: '44444444-4444-4444-8444-444444444444', fbPageId: 'fb_page_203', pageName: 'Page Three' },
+    ];
+    await runImport(newPages);
+
+    await screen.findByText('3 Facebook Pages added');
+    expect(screen.queryByTestId('pages-feedback-banner')).toBeNull();
+    for (const p of newPages) {
+      expect(
+        (await screen.findByTestId(`page-card-${p.id}`)).getAttribute('data-highlighted')
+      ).toBe('true');
+    }
+    expect(
+      screen.getByTestId(`page-card-${existingView.id}`).getAttribute('data-highlighted')
+    ).toBeNull();
   });
 });
 
@@ -321,7 +490,12 @@ describe('AddPageModal flow behaviour', () => {
     await waitFor(() => expect((confirm as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(confirm);
 
-    await waitFor(() => expect(onSuccess).toHaveBeenCalledWith(1));
+    await waitFor(() =>
+      expect(onSuccess).toHaveBeenCalledWith({
+        importedCount: 1,
+        importedPageIds: ['44444444-4444-4444-8444-444444444444'],
+      })
+    );
     expect(onOpenChange).toHaveBeenCalledWith(false);
     const importCall = fetchMock.mock.calls.find(([url]) =>
       String(url).endsWith('/pages/import')

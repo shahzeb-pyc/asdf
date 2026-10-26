@@ -133,13 +133,14 @@ test.describe('pages list + add page (spec 131 PR-131-2)', () => {
     await expect(firstCard).toContainText('Gamma Expired');
   });
 
-  test('empty state renders with its one primary action', async ({ page }) => {
+  test('empty state renders with its one primary action and the always-visible toolbar', async ({ page }) => {
     await installPagesFixtures(page, []);
     await page.goto(`/tenant/${SUB}/pages`);
 
     await expect(page.getByTestId('pages-empty-state')).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId('empty-state-add-page-btn')).toBeVisible();
-    await expect(page.getByTestId('pages-scale-toolbar')).toHaveCount(0);
+    // Pages list redesign: the scale toolbar is no longer gated on page count.
+    await expect(page.getByTestId('pages-scale-toolbar')).toBeVisible();
   });
 
   test('filtered-to-zero echoes filters and Clear filters restores the list', async ({ page }) => {
@@ -153,7 +154,7 @@ test.describe('pages list + add page (spec 131 PR-131-2)', () => {
     await expect(page.getByTestId('pages-grid')).toBeVisible({ timeout: 15_000 });
   });
 
-  test('add page flow: pick account, discover, select, import, finish summary', async ({ page }) => {
+  test('add page flow: pick account, discover, select, import, toast confirmation', async ({ page }) => {
     await installPagesFixtures(page, FIVE_PAGES);
     await page.goto(`/tenant/${SUB}/pages`);
 
@@ -165,8 +166,11 @@ test.describe('pages list + add page (spec 131 PR-131-2)', () => {
     await page.getByTestId('discovered-page-checkbox-100000000000099').click();
     await page.getByTestId('confirm-add-pages-btn').click();
 
-    await expect(page.getByTestId('pages-feedback-banner')).toContainText(
-      '1 Facebook Page added to your workspace.'
+    // Approved redesign: no persistent confirmation banner — a top-right
+    // toast names the import, and the grid is not pushed down by a banner.
+    await expect(page.getByTestId('pages-feedback-banner')).toHaveCount(0);
+    await expect(page.locator('[data-sonner-toast]')).toContainText(
+      '1 Facebook Page added'
     );
     await expect(page.getByTestId('add-page-modal')).toHaveCount(0);
   });

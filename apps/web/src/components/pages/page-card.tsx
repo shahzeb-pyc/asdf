@@ -4,25 +4,25 @@
  * Page card (spec 131 PR-131-2) — rebuilt on the design system:
  * token-backed Tailwind utilities only (zero inline styles), the
  * avatar on `next/image` (the file's raw img element is deleted),
- * and status as colour + icon + text via the shared/ui `StatusDot`
- * (spec §6.4.1 / OD-3 — the one named deviation from the previous
- * bare-text status). Layout, copy, testids, and the click / Enter /
+ * and status as icon + text via the Accounts-style `PageStatusMark`
+ * (no status dot). Layout, copy, testids, and the click / Enter /
  * Space activation behaviours are preserved (spec §6 parity).
  *
  * The exported `FacebookPageItem` type is a cross-PR contract
  * (consumed by the dedicated section route, PR-131-3) — its shape
- * is frozen in this PR. The status colour/ring helper functions keep
- * returning the theme values the parity suites pin; the card's own
- * rendering maps the same statuses onto token classes.
+ * is frozen in this PR.
  */
 import * as React from 'react';
 import Image from 'next/image';
-import { MoveUpRightIcon, TriangleAlertIcon } from 'lucide-react';
+import {
+  CheckIcon,
+  ClockIcon,
+  MoveUpRightIcon,
+  XIcon,
+} from 'lucide-react';
 
-import { PALETTE, THEME } from '@/lib/theme';
 import { getUserInitials } from '@/lib/user-initials';
 import { cn } from '@/lib/utils';
-import { StatusDot, type Status } from '@/components/shared/ui/status-dot';
 
 export type FacebookPageStatus =
   | 'active'
@@ -55,6 +55,8 @@ export interface PageCardProps {
   subdomain?: string | undefined;
   onSelectPage?: ((page: FacebookPageItem) => void) | undefined;
   forceAvatarError?: boolean | undefined;
+  /** Gold highlight for just-imported cards, shown while the import toast is up. */
+  highlighted?: boolean | undefined;
 }
 
 export function isPageNeedsAttention(status: FacebookPageStatus): boolean {
@@ -84,60 +86,73 @@ export function getPageStatusLabel(status: FacebookPageStatus): string {
   }
 }
 
-export function getPageAttentionMessage(
+/**
+ * Added date for the card, from the page's import date (`createdAt`),
+ * formatted like "12 Oct 2026". Returns '' for an unparseable date so
+ * the card simply omits the line instead of rendering garbage.
+ */
+export function formatAddedDate(createdAt: string): string {
+  const date = new Date(createdAt);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  }).format(date);
+}
+
+/**
+ * Page status mark — the Accounts-style mark (icon + text, NO dot),
+ * mirroring `AccountHealthMark` in account-card.tsx. That component
+ * could not be reused directly here: account-card.tsx is owned by
+ * the parallel dialogue branch, so this mark duplicates its
+ * icon/text mapping until the two can be consolidated into one
+ * shared component. Do not reintroduce StatusDot here.
+ */
+export type PageStatusMarkKind = 'operational' | 'queued' | 'critical';
+
+export function getPageStatusMarkKind(
   status: FacebookPageStatus
-): string | null {
-  switch (status) {
-    case 'invalid_token':
-      return 'Token Expired — Reconnect the parent Facebook account to resume publishing.';
-    case 'page_checkpoint':
-      return 'Identity Checkpoint — Confirm page identity on Facebook mobile to resume.';
-    case 'fb_rate_limited':
-      return 'Rate Limited — Facebook temporarily restricted posting (auto-resumes after 3 days).';
-    default:
-      return null;
-  }
-}
-
-export function getPageStatusColor(status: FacebookPageStatus): string {
-  if (isPageNeedsAttention(status)) {
-    return PALETTE.accent3;
-  }
-  if (status === 'paused') {
-    return PALETTE.primary;
-  }
-  if (status === 'active') {
-    return PALETTE.accent4;
-  }
-  return `var(--text-dim, ${THEME.default.text.muted})`;
-}
-
-export function getPageStatusRingBorder(status: FacebookPageStatus): string {
-  if (isPageNeedsAttention(status)) {
-    return `1.5px solid ${PALETTE.accent3}`;
-  }
-  if (status === 'paused') {
-    return `1.5px solid ${PALETTE.primary}`;
-  }
-  if (status === 'active') {
-    return `1.5px solid ${PALETTE.accent4}`;
-  }
-  return `1px solid var(--border-subtle, ${THEME.default.borders.hairline})`;
-}
-
-/** Token signal for a page status — the StatusDot presentation (§6.4.1). */
-export function getPageStatusSignal(status: FacebookPageStatus): Status {
-  if (isPageNeedsAttention(status)) return 'critical';
-  if (status === 'paused') return 'queued';
+): PageStatusMarkKind {
   if (status === 'active') return 'operational';
-  return 'idle';
+  if (status === 'paused') return 'queued';
+  return 'critical';
 }
 
-const RING_CLASSES: Record<Status, string> = {
+const MARK_META = {
+  operational: { Icon: CheckIcon, iconName: 'check', textClass: 'text-signal-operational' },
+  queued: { Icon: ClockIcon, iconName: 'clock', textClass: 'text-signal-queued' },
+  critical: { Icon: XIcon, iconName: 'cross', textClass: 'text-signal-critical' },
+} as const;
+
+export function PageStatusMark({
+  status,
+  label,
+}: Readonly<{ status: FacebookPageStatus; label: string }>) {
+  const kind = getPageStatusMarkKind(status);
+  const meta = MARK_META[kind];
+  const { Icon } = meta;
+  return (
+    <span
+      data-testid="page-status"
+      data-status={kind}
+      role="status"
+      aria-label={label}
+      className={cn(
+        'inline-flex min-w-0 items-center gap-1.5 font-semibold tracking-wide text-metadata',
+        meta.textClass
+      )}
+    >
+      <Icon aria-hidden data-icon={meta.iconName} className="size-3.5 shrink-0" />
+      <span className="truncate">{label}</span>
+    </span>
+  );
+}
+
+const RING_CLASSES: Record<PageStatusMarkKind, string> = {
   operational: 'border-2 border-signal-operational',
   queued: 'border-2 border-signal-queued',
   critical: 'border-2 border-signal-critical',
-  idle: 'border border-line',
 };
 
 /**
@@ -179,16 +194,17 @@ export function PageCard({
   subdomain,
   onSelectPage,
   forceAvatarError = false,
+  highlighted = false,
 }: Readonly<PageCardProps>) {
   const [failedAvatarUrl, setFailedAvatarUrl] = React.useState<string | null>(
     forceAvatarError ? (page.profilePictureUrl ?? '__forced__') : null
   );
 
   const needsAttention = isPageNeedsAttention(page.status);
-  const attentionMessage = getPageAttentionMessage(page.status);
   const statusLabel = getPageStatusLabel(page.status);
-  const statusSignal = getPageStatusSignal(page.status);
-  const ringClass = RING_CLASSES[statusSignal];
+  const addedDate = formatAddedDate(page.createdAt);
+  const facebookUrl = `https://facebook.com/${page.fbPageId}`;
+  const ringClass = RING_CLASSES[getPageStatusMarkKind(page.status)];
 
   const currentFollowers = page.currentFollowers ?? 0;
   const gained = computeFollowersGained(page);
@@ -212,7 +228,17 @@ export function PageCard({
     ? `/tenant/${subdomain}/pages/${page.id}`
     : `/pages/${page.id}`;
 
-  const handleActivate = () => {
+  // The Facebook link inside the card must never trigger the card's own
+  // navigation: clicks stopPropagation on the link itself, and keyboard
+  // activation is ignored here when the event target is (or is inside) a
+  // link, so the link stays independently tab-focusable and activatable.
+  const isLinkEventTarget = (e: React.SyntheticEvent): boolean => {
+    const target = e.target as HTMLElement | null;
+    return Boolean(target && typeof target.closest === 'function' && target.closest('a'));
+  };
+
+  const handleActivate = (e?: React.SyntheticEvent) => {
+    if (e && isLinkEventTarget(e)) return;
     if (onSelectPage) {
       onSelectPage(page);
     } else if (typeof window !== 'undefined') {
@@ -221,6 +247,7 @@ export function PageCard({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (isLinkEventTarget(e)) return;
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
       handleActivate();
@@ -233,125 +260,129 @@ export function PageCard({
       tabIndex={0}
       data-testid={`page-card-${page.id}`}
       data-href={targetHref}
+      data-highlighted={highlighted ? 'true' : undefined}
       aria-label={`Open ${page.pageName} page details`}
       onClick={handleActivate}
       onKeyDown={handleKeyDown}
       className={cn(
-        'group flex min-h-38 min-w-0 cursor-pointer flex-col justify-between rounded-md border bg-panel p-6 shadow-card transition outline-none hover:-translate-y-0.5 hover:shadow-elevated focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold',
-        needsAttention
-          ? 'border-brand-rose hover:border-brand-rose'
-          : 'border-line hover:border-brand-emerald/40'
+        'group flex min-h-38 min-w-0 cursor-pointer flex-col rounded-md border bg-panel p-6 shadow-card transition outline-none hover:-translate-y-0.5 hover:shadow-elevated focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold',
+        highlighted
+          ? 'border-brand-gold ring-2 ring-brand-gold/40'
+          : needsAttention
+            ? 'border-brand-rose hover:border-brand-rose'
+            : 'border-line hover:border-brand-emerald/40'
       )}
     >
-      {/* Top Section: Avatar with Dynamic Status Ring + Identity + Affordance */}
-      <div>
-        <div className="mb-4 flex items-center justify-between gap-4">
-          <div className="flex min-w-0 flex-1 items-center gap-4">
-            {showAvatarImg ? (
-              <Image
-                src={page.profilePictureUrl!}
-                alt={page.pageName}
-                width={42}
-                height={42}
-                data-testid="page-avatar-img"
-                onError={() =>
-                  setFailedAvatarUrl(page.profilePictureUrl ?? '__error__')
-                }
-                className={cn('size-10.5 shrink-0 rounded-full object-cover', ringClass)}
-              />
-            ) : (
-              <div
-                data-testid="page-avatar-initials"
-                className={cn(
-                  'flex size-10.5 shrink-0 items-center justify-center rounded-full bg-subtle text-body font-bold text-ink',
-                  ringClass
-                )}
-              >
-                {initials}
-              </div>
-            )}
-
-            <div className="min-w-0 flex-1">
-              <h3
-                data-testid="page-name"
-                className="m-0 truncate text-body font-semibold text-ink"
-              >
-                {page.pageName}
-              </h3>
-              <span
-                data-testid="page-followers-line"
-                className="mt-0.5 block truncate text-metadata text-ink-sub"
-              >
-                <span
-                  data-testid="page-current-followers"
-                  className="font-semibold text-ink tabular-nums"
-                >
-                  {currentFollowers.toLocaleString('en-US')}
-                </span>{' '}
-                followers
-                <span data-testid="page-category">
-                  {' '}
-                  · {page.category || 'Facebook Page'}
-                </span>
-              </span>
-              {formatPageIdSuffix(page.fbPageId) && (
-                <span
-                  data-testid="page-id-line"
-                  className="mt-0.5 block truncate text-metadata text-ink-dim"
-                >
-                  Page ID {formatPageIdSuffix(page.fbPageId)}
-                </span>
-              )}
-            </div>
-          </div>
-
-          <MoveUpRightIcon
-            aria-hidden
-            className="size-4 shrink-0 text-ink-dim transition group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-ink"
+      {/* Top Section: Avatar with Dynamic Status Ring + Identity + Affordance.
+          Identity lines, in order: name, Added date, followers + category,
+          then the Facebook link row (link left, gained right). The text
+          column stretches full width (flex-1/min-w-0) so the link row's
+          space-between truly separates link-left from gained-right. */}
+      <div className="mb-4 flex items-start gap-4">
+        {showAvatarImg ? (
+          <Image
+            src={page.profilePictureUrl!}
+            alt={page.pageName}
+            width={42}
+            height={42}
+            data-testid="page-avatar-img"
+            onError={() =>
+              setFailedAvatarUrl(page.profilePictureUrl ?? '__error__')
+            }
+            className={cn('size-10.5 shrink-0 rounded-full object-cover', ringClass)}
           />
-        </div>
-
-        {/* Rose Attention Standout Banner (if needs attention) */}
-        {needsAttention && attentionMessage && (
+        ) : (
           <div
-            data-testid="page-attention-banner"
-            className="mb-2 flex items-start gap-1 rounded-sm border border-brand-rose/25 bg-brand-rose/10 px-2.5 py-2 text-metadata leading-body font-medium text-brand-rose"
+            data-testid="page-avatar-initials"
+            className={cn(
+              'flex size-10.5 shrink-0 items-center justify-center rounded-full bg-subtle text-body font-bold text-ink',
+              ringClass
+            )}
           >
-            <TriangleAlertIcon className="mt-px size-3.5 shrink-0" aria-hidden />
-            <span>{attentionMessage}</span>
+            {initials}
           </div>
         )}
-      </div>
 
-      {/* Symmetrical Two-Column Data Row (Precision Editorial) */}
-      <div className="mt-4 flex items-end justify-between gap-4 pt-1">
-        {/* Left Column: Followers Gain (rendered only when non-zero) */}
-        <div className="min-w-0">
-          {gained !== 0 && (
-            <div
-              data-testid="page-followers-gained"
-              className={cn('mt-0.5 text-metadata tabular-nums', gainedClass)}
+        <div className="min-w-0 flex-1">
+          <h3
+            data-testid="page-name"
+            className="m-0 truncate text-body font-semibold text-ink"
+          >
+            {page.pageName}
+          </h3>
+          {addedDate && (
+            <span
+              data-testid="page-added-line"
+              className="mt-0.5 block truncate text-metadata text-ink-dim"
             >
-              {formattedGained}
-            </div>
+              Added {addedDate}
+            </span>
           )}
+          <span
+            data-testid="page-followers-line"
+            className="mt-0.5 block truncate text-metadata text-ink-sub"
+          >
+            <span
+              data-testid="page-current-followers"
+              className="font-semibold text-ink tabular-nums"
+            >
+              {currentFollowers.toLocaleString('en-US')}
+            </span>{' '}
+            followers
+            <span data-testid="page-category">
+              {' '}
+              · {page.category || 'Facebook Page'}
+            </span>
+          </span>
+          <div
+            data-testid="page-facebook-link-row"
+            className="mt-0.5 flex items-center justify-between gap-4"
+          >
+            <a
+              data-testid="page-facebook-link"
+              href={facebookUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="min-w-0 flex-1 truncate text-metadata text-brand-facebook hover:underline"
+            >
+              View on Facebook{' '}
+              <MoveUpRightIcon aria-hidden className="inline size-3 shrink-0" />
+            </a>
+            {gained !== 0 && (
+              <span
+                data-testid="page-followers-gained"
+                className={cn('shrink-0 text-metadata tabular-nums', gainedClass)}
+              >
+                {formattedGained} gained
+              </span>
+            )}
+          </div>
         </div>
 
-        {/* Right Column: Status (colour + icon + text) & Parent Account */}
-        <div className="min-w-0 shrink-0 text-right">
-          <StatusDot
-            data-testid="page-status"
-            status={statusSignal}
-            label={statusLabel}
-            className="font-semibold tracking-wide"
-          />
+        {/* Professional circled arrow affordance (muted, gold on hover) */}
+        <span
+          data-testid="page-card-arrow"
+          aria-hidden
+          className="flex size-7 shrink-0 items-center justify-center rounded-full border border-line text-ink-sub transition group-hover:border-brand-gold group-hover:text-brand-gold"
+        >
+          <MoveUpRightIcon className="size-4" />
+        </span>
+      </div>
 
-          <div
-            data-testid="page-parent-account"
-            className="mt-0.5 max-w-45 truncate text-metadata text-ink-sub"
-          >
-            Account: {page.accountDisplayName || 'Connected Account'}
-          </div>
+      {/* Divider + footer, pinned to the bottom (mt-auto) so they sit at the
+          same place on every card in a row, regardless of content above. */}
+      <div aria-hidden className="mt-auto pt-4">
+        <div className="border-t border-line" />
+      </div>
+      <div className="mt-3 flex items-center justify-between gap-4">
+        <PageStatusMark status={page.status} label={statusLabel} />
+
+        <div
+          data-testid="page-parent-account"
+          className="min-w-0 max-w-45 shrink-0 truncate text-right text-metadata text-ink-sub"
+        >
+          Account: {page.accountDisplayName || 'Connected Account'}
         </div>
       </div>
     </div>

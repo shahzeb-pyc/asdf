@@ -70,7 +70,9 @@ export interface AddPageModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   accounts?: FacebookAccountItem[] | undefined;
-  onSuccess?: ((importedCount: number) => void) | undefined;
+  onSuccess?:
+    | ((result: { importedCount: number; importedPageIds: string[] }) => void)
+    | undefined;
   onNavigateToAccounts?: (() => void) | undefined;
   /**
    * Whether the workspace's Facebook App ID and Secret are configured.
@@ -121,12 +123,18 @@ async function executeImportPages(
       { accountId, selectedPageIds },
       { schema: ImportPagesResponseSchema }
     );
-    return { success: true as const, importedCount: data.importedCount, error: null };
+    return {
+      success: true as const,
+      importedCount: data.importedCount,
+      importedPageIds: data.pages.map((p) => p.id),
+      error: null,
+    };
   } catch (error) {
     reportError(error, { source: 'add-page-import' });
     return {
       success: false as const,
       importedCount: 0,
+      importedPageIds: [] as string[],
       error:
         isApiError(error) && error.kind === 'http'
           ? "Couldn't add the selected pages. Please try again."
@@ -263,7 +271,10 @@ export function AddPageModal({
     if (!result.success) {
       setErrorMessage(result.error);
     } else {
-      onSuccess?.(result.importedCount);
+      onSuccess?.({
+        importedCount: result.importedCount,
+        importedPageIds: result.importedPageIds,
+      });
       handleDialogOpenChange(false);
     }
     setIsSubmitting(false);
