@@ -1,9 +1,10 @@
 /**
  * @file command-palette.test.tsx
  * @description Behavioural tests for the ⌘K command palette
- * (spec 130 §5.6, PR-130-4): the decided-minimum pool (destinations,
- * actions, workspaces, accounts/pages/destinations from the data
- * layer's cache), recents first, shortcut hints, no-results typed
+ * (spec 130 §5.6, PR-130-4): the decided-minimum pool (actions,
+ * workspaces, accounts/pages from the data layer's cache —
+ * Destinations entries removed with the Destinations pages),
+ * recents first, shortcut hints, no-results typed
  * state, Esc focus return through the host, workspace switch naming
  * its target, and ⌘K / Ctrl+K opening from the header host button.
  * Data is stubbed at the typed client's fetch seam, exactly like the
@@ -176,7 +177,7 @@ describe('Command palette (spec 130 §5.6)', () => {
     vi.unstubAllGlobals();
   });
 
-  it('renders the decided pool: destinations, accounts/pages/destinations, workspaces, actions', async () => {
+  it('renders the decided pool: accounts/pages, workspaces, actions (no Destinations entries — Destinations pages removed)', async () => {
     renderPalette();
     expect(await screen.findByTestId('palette-item-go-media')).toBeInTheDocument();
     expect(screen.getByTestId('palette-item-go-accounts')).toBeInTheDocument();
@@ -184,7 +185,9 @@ describe('Command palette (spec 130 §5.6)', () => {
     expect(await screen.findByTestId('palette-item-fb-page-55555555-5555-4555-8555-555555555555')).toHaveTextContent('Baby Boss Diaries');
     expect(screen.getByTestId('palette-item-fb-account-44444444-4444-4444-8444-444444444444')).toHaveTextContent('Jamie Owner');
     expect(screen.getByTestId('palette-item-social-account-social-1')).toHaveTextContent('Acme Instagram');
-    expect(screen.getByTestId('palette-item-destination-dest-1')).toHaveTextContent('Acme Main Feed');
+    // Destinations pages were removed: their palette entries must not render,
+    // even though the social endpoint still returns destination data.
+    expect(screen.queryByTestId('palette-item-destination-dest-1')).not.toBeInTheDocument();
     // Workspace switch rows restate their target (UX Rule 2).
     expect(screen.getByTestId('palette-item-workspace-beta')).toHaveTextContent('Switch to Beta');
     expect(screen.getByTestId('palette-item-workspace-acme')).toHaveTextContent('Acme (current workspace)');
@@ -217,7 +220,7 @@ describe('Command palette (spec 130 §5.6)', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
-  it('selecting a page navigates to its page section; a destination to its destination section', async () => {
+  it('selecting a page navigates to its page section', async () => {
     const user = userEvent.setup();
     renderPalette();
     const pageRow = await screen.findByTestId('palette-item-fb-page-55555555-5555-4555-8555-555555555555');
