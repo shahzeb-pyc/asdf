@@ -219,9 +219,6 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
     },
     []
   );
-  const [searchQuery, setSearchQuery] = React.useState('');
-  const [statusFilter, setStatusFilter] = React.useState<PageStatusFilter>('all');
-  const [accountFilter, setAccountFilter] = React.useState('all');
 
   // The API returns the filtered, attention-first page slice, so the
   // grid renders it directly — no client-side filter anymore.
