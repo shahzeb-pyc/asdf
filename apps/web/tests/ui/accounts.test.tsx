@@ -19,7 +19,6 @@ import { AccountsEmptyState } from '@/components/accounts/accounts-empty-state';
 import { DisconnectAccountDialog } from '@/components/accounts/disconnect-account-dialog';
 import {
   ConnectAccountModal,
-  ConnectionResultView,
   MagicLinkView,
   evaluateAccountConnectionPoll,
 } from '@/components/accounts/connect-account-modal';
@@ -39,6 +38,10 @@ import {
   ConnectErrorView,
   getConnectErrorCopy,
 } from '@/app/connect/facebook/error/page';
+import {
+  ConnectSuccessView,
+  getConnectSuccessCopy,
+} from '@/app/connect/facebook/success/page';
 import { render } from '../components/setup';
 import {
   render as renderBehavioural,
@@ -451,7 +454,7 @@ describe('Facebook Accounts UI Components (Spec 027, Spec 029 & Spec 031)', () =
     });
 
 
-    it('detects wrong-account mismatch and already-connected refresh across polling, ConnectionResultView, and resolveOAuthRedirectNotice (Spec 031)', () => {
+    it('detects wrong-account mismatch and already-connected refresh across polling, the magic success page, and resolveOAuthRedirectNotice (Spec 031)', () => {
       const initialIds = new Set(['acc-john']);
       const initialStates = new Map([
         ['acc-john', { status: 'expired', updatedAt: '2026-09-15T10:00:00Z' }],
@@ -489,22 +492,33 @@ describe('Facebook Accounts UI Components (Spec 027, Spec 029 & Spec 031)', () =
       expect(mismatchOutcome).toEqual({
         matched: true,
         kind: 'reconnected_mismatch',
+        accountId: 'acc-jane',
         newAccountName: 'Jane Smith',
         expectedAccountName: 'John Doe',
       });
 
       const mismatchMessage =
         'You signed into Jane Smith instead of John Doe. John Doe still needs to be reconnected.';
+      // The magic success page now reads its params: mismatch renders
+      // the cross variant with the approved message, never a success.
+      const mismatchCopy = getConnectSuccessCopy({
+        reconnectedMismatch: true,
+        newAccountName: 'Jane Smith',
+        expectedAccountName: 'John Doe',
+      });
+      expect(mismatchCopy.variant).toBe('error');
+      expect(`${mismatchCopy.title} ${mismatchCopy.description}`).toBe(mismatchMessage);
       const mismatchView = render(
-        <ConnectionResultView
-          completionNotice={{
-            kind: 'reconnected_mismatch',
-            message: mismatchMessage,
+        <ConnectSuccessView
+          params={{
+            reconnectedMismatch: true,
+            newAccountName: 'Jane Smith',
+            expectedAccountName: 'John Doe',
           }}
         />
       );
-      expect(mismatchView.hasAttribute('data-testid', 'magic-mismatch-notice')).toBe(true);
-      expect(mismatchView.hasText(mismatchMessage)).toBe(true);
+      expect(mismatchView.hasText('You signed into Jane Smith instead of John Doe.')).toBe(true);
+      expect(mismatchView.hasText('John Doe still needs to be reconnected.')).toBe(true);
 
       const directMismatchNotice = resolveOAuthRedirectNotice(
         new URLSearchParams({
@@ -537,18 +551,20 @@ describe('Facebook Accounts UI Components (Spec 027, Spec 029 & Spec 031)', () =
       expect(alreadyConnectedOutcome).toEqual({
         matched: true,
         kind: 'already_connected',
+        accountId: 'acc-john',
         accountName: 'John Doe',
       });
 
-      const alreadyMessage =
-        'This Facebook account (John Doe) is already connected — its session was refreshed.';
+      // Option B dialogue: name + connected only, no pages text.
+      const alreadyMessage = 'John Doe already connected — session refreshed';
+      const alreadyCopy = getConnectSuccessCopy({
+        alreadyConnected: true,
+        accountName: 'John Doe',
+      });
+      expect(alreadyCopy.variant).toBe('success');
+      expect(alreadyCopy.title).toBe(alreadyMessage);
       const alreadyView = render(
-        <ConnectionResultView
-          completionNotice={{
-            kind: 'already_connected',
-            message: alreadyMessage,
-          }}
-        />
+        <ConnectSuccessView params={{ alreadyConnected: true, accountName: 'John Doe' }} />
       );
       expect(alreadyView.hasText(alreadyMessage)).toBe(true);
 
@@ -562,6 +578,41 @@ describe('Facebook Accounts UI Components (Spec 027, Spec 029 & Spec 031)', () =
         type: 'success',
         message: alreadyMessage,
       });
+      expect(directAlreadyNotice?.accountName).toBe('John Doe');
+
+      // Fresh connects carry the account id for the card highlight and
+      // the name for the toast — never a generic fallback.
+      const freshOutcome = evaluateAccountConnectionPoll(
+        [
+          {
+            id: 'acc-jane',
+            fbAccountId: 'fb-jane',
+            displayName: 'Jane Smith',
+            status: 'active',
+            updatedAt: '2026-10-11T08:00:00Z',
+          },
+        ],
+        new Set(['acc-john']),
+        new Map([['acc-john', { status: 'expired', updatedAt: '2026-09-15T10:00:00Z' }]]),
+        null
+      );
+      expect(freshOutcome).toEqual({
+        matched: true,
+        kind: 'connected',
+        accountId: 'acc-jane',
+        accountName: 'Jane Smith',
+      });
+      expect(getConnectSuccessCopy({ accountName: 'Jane Smith' }).title).toBe(
+        'Jane Smith connected'
+      );
+      const freshNotice = resolveOAuthRedirectNotice(
+        new URLSearchParams({ connected: '1', accountName: 'Jane Smith' })
+      );
+      expect(freshNotice?.notice).toEqual({
+        type: 'success',
+        message: 'Jane Smith connected',
+      });
+      expect(freshNotice?.accountName).toBe('Jane Smith');
     });
   });
 

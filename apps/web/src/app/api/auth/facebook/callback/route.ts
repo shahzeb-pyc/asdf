@@ -339,6 +339,10 @@ function buildPostConnectRedirect(
     } else if (isAlreadyConnected) {
       magicSuccessUrl.searchParams.set('already_connected', '1');
       magicSuccessUrl.searchParams.set('accountName', meProfile.name);
+    } else {
+      // Fresh magic connect: carry the name so the success page can
+      // confirm "[Name] connected" instead of a generic line.
+      magicSuccessUrl.searchParams.set('accountName', meProfile.name);
     }
     return NextResponse.redirect(magicSuccessUrl);
   }
@@ -355,6 +359,7 @@ function buildPostConnectRedirect(
     destinationUrl.searchParams.set('accountName', meProfile.name);
   } else {
     destinationUrl.searchParams.set('connected', '1');
+    destinationUrl.searchParams.set('accountName', meProfile.name);
   }
 
   return NextResponse.redirect(destinationUrl);

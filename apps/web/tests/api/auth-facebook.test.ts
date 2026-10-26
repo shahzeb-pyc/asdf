@@ -294,8 +294,10 @@ describe('Facebook OAuth Initiation & Callback Handlers (User Story 1 - T058)', 
 
     const res = await handleFacebookCallback(req, mockDb);
     expect(res.status).toBe(307);
+    // Option B dialogue: the fresh direct redirect also carries the
+    // account name for the "[Name] connected" toast.
     expect(res.headers.get('location')).toBe(
-      'https://acme.vinsmokemedia.online/accounts?connected=1'
+      'https://acme.vinsmokemedia.online/accounts?connected=1&accountName=Acme+Operator'
     );
   });
 

@@ -41,6 +41,7 @@ import { reportError } from '@/lib/report-error';
 import { Button } from '@/components/shared/ui/button';
 import { EmptyState } from '@/components/shared/ui/empty-state';
 import { Skeleton } from '@/components/shared/ui/skeleton';
+import { Toast, toast } from '@/components/shared/ui/toast';
 import { AccountCard, type FacebookAccountItem } from '@/components/accounts/account-card';
 import { AccountsEmptyState } from '@/components/accounts/accounts-empty-state';
 import { AccountsFilterBar } from '@/components/accounts/accounts-filter-bar';
@@ -60,6 +61,9 @@ import {
 } from '@/components/accounts/accounts-helpers';
 import { ConnectAccountModal } from '@/components/accounts/connect-account-modal';
 import { DisconnectAccountDialog } from '@/components/accounts/disconnect-account-dialog';
+
+/** Id of the Accounts-only toaster: top-right, used solely by connect confirmations. */
+const ACCOUNTS_CONNECT_TOASTER_ID = 'accounts-connect-toaster';
 
 export interface AccountsShellProps {
   subdomain: string;
@@ -108,6 +112,48 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
     type: 'success' | 'error';
     message: string;
   } | null>(null);
+
+  // Option B dialogue: a briefly gold-highlighted card for the account
+  // that was just connected/refreshed, shown while its toast is up.
+  const [highlightedAccountId, setHighlightedAccountId] = React.useState<string | null>(null);
+  const highlightTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flashHighlight = React.useCallback((accountId: string | null) => {
+    if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
+    setHighlightedAccountId(accountId);
+    if (accountId) {
+      highlightTimeoutRef.current = setTimeout(() => {
+        setHighlightedAccountId(null);
+      }, 5000);
+    }
+  }, []);
+  React.useEffect(
+    () => () => {
+      if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
+    },
+    []
+  );
+
+  // Option B dialogue routing: success confirmations go to the
+  // TOP-RIGHT toast (flow-scoped toaster below — the shared Toaster
+  // default stays bottom-right for every other surface), while a
+  // mismatch stays as a persistent, dismissible banner. Sonner toasts
+  // carry role="status" / aria-live, so no extra live region is needed.
+  const handleConnectionNotice = React.useCallback(
+    (notice: {
+      type: 'success' | 'error';
+      message: string;
+      accountId?: string | undefined;
+    }) => {
+      if (notice.type === 'success') {
+        toast.success(notice.message, { toasterId: ACCOUNTS_CONNECT_TOASTER_ID });
+        flashHighlight(notice.accountId ?? null);
+      } else {
+        setBannerNotice({ type: 'error', message: notice.message });
+        flashHighlight(notice.accountId ?? null);
+      }
+    },
+    [flashHighlight]
+  );
 
   // BYOC credentials status & advisory modal. Derived from the shared
   // BYOC query with the previous implementation's exact semantics:
@@ -188,12 +234,30 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
     void queryClient.invalidateQueries({ queryKey: tenant.accounts.list });
   }, [queryClient, tenant.accounts.list]);
 
-  // Handle URL query parameters from OAuth returns
+  // Handle URL query parameters from OAuth returns (direct flow):
+  // success confirmations become the same top-right toast as the
+  // modal flow; only errors (including mismatch) become a banner.
+  // The direct redirect carries no account id, so the highlight (when
+  // any) is matched by the account name it does carry. Guarded to run
+  // once per return: the keys are stripped via replaceState (no
+  // re-render), so without this guard a later accounts refetch would
+  // re-fire the toast.
+  const oauthNoticeHandledRef = React.useRef(false);
   React.useEffect(() => {
+    if (oauthNoticeHandledRef.current) return;
     const resolved = resolveOAuthRedirectNotice(searchParams);
     if (!resolved) return;
+    oauthNoticeHandledRef.current = true;
 
-    setBannerNotice(resolved.notice);
+    if (resolved.notice.type === 'success') {
+      toast.success(resolved.notice.message, { toasterId: ACCOUNTS_CONNECT_TOASTER_ID });
+      const match = resolved.accountName
+        ? accounts.find((a) => a.displayName === resolved.accountName)
+        : undefined;
+      flashHighlight(match?.id ?? null);
+    } else {
+      setBannerNotice(resolved.notice);
+    }
     if (typeof window !== 'undefined') {
       const url = new URL(window.location.href);
       for (const key of resolved.keysToRemove) {
@@ -201,7 +265,7 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
       }
       window.history.replaceState({}, '', url.pathname);
     }
-  }, [searchParams]);
+  }, [searchParams, accounts, flashHighlight]);
 
   const handleOpenNewConnect = () => {
     if (byocStatus.isLoading) return;
@@ -331,6 +395,7 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
           <AccountCard
             key={account.id}
             account={account}
+            highlighted={account.id === highlightedAccountId}
             onReconnect={handleReconnect}
             onDisconnect={(acc) => setDisconnectingAccount(acc)}
           />
@@ -344,6 +409,10 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
       data-testid="facebook-accounts-page"
       className="mx-auto box-border w-full max-w-300 px-6 py-6"
     >
+      {/* Flow-scoped toaster for connect confirmations only: TOP-RIGHT
+          (the shared tenant Toaster stays bottom-right everywhere else).
+          Toasts reach it via toasterId, never via the shared default. */}
+      <Toast id={ACCOUNTS_CONNECT_TOASTER_ID} position="top-right" />
       {/* Page Header */}
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -435,7 +504,7 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
         open={isConnectOpen}
         onOpenChange={handleConnectOpenChange}
         onAccountConnected={refetchAccounts}
-        onConnectionNotice={setBannerNotice}
+        onConnectionNotice={handleConnectionNotice}
         existingAccountIds={existingAccountIds}
         reconnectingAccount={reconnectingAccount}
         initialAccounts={accounts}
