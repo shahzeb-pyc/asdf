@@ -370,9 +370,25 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
       });
       expect(selectedPaths).toHaveLength(0);
 
-      // Footer pinned: divider uses mt-auto, circled arrow present
+      // Corner fix: no forced card height, no pinned footer — the divider
+      // follows the content directly, so no dead space opens up.
       expect(html).toContain('page-card-arrow');
-      expect(html).toContain('mt-auto');
+      expect(html).not.toContain('min-h-38');
+      expect(html).not.toContain('mt-auto');
+      // Link row is a full-width sibling of the top section (not nested
+      // in the identity column), so gained sits flush right at the card
+      // edge: the row's class carries justify-between and the link still
+      // carries flex-1 (shrink-safe at narrow widths).
+      const linkRowEl = findElementByTestId(tree, 'page-facebook-link-row');
+      expect(linkRowEl).not.toBeNull();
+      expect(linkRowEl?.props.className).toContain('justify-between');
+      const followersEl = findElementByTestId(tree, 'page-current-followers');
+      expect(followersEl).not.toBeNull();
+      // Followers number is page-name size (text-body) and bold; the rest
+      // of the followers line stays muted at metadata size.
+      expect(followersEl?.props.className).toContain('text-body');
+      expect(followersEl?.props.className).toContain('font-bold');
+      expect(followersEl?.props.className).not.toContain('text-brand-gold');
     });
 
     it('falls back to monogram initials when profilePictureUrl is missing or image errors (forceAvatarError)', () => {
