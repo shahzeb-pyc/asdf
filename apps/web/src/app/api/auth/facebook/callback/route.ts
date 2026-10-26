@@ -24,11 +24,79 @@ import {
   fetchWithTimeout,
 } from '@/lib/http/fetch-with-timeout';
 
+/**
+ * Magic-link connect pages live on the app host only
+ * (`app.<root>/connect/facebook/{success,error}`) — there is no
+ * tenant-subdomain copy of them. The Facebook callback, however, runs
+ * on the workspace-subdomain host, so building these URLs from
+ * `request.url` inherits the tenant host: on that host the login gate
+ * fires (the magic-link browser deliberately holds no `fbup_session`)
+ * and the user lands on /login even though the account just
+ * connected. This helper builds them on the app host instead.
+ *
+ * Local / preview behaviour is preserved, mirroring
+ * `buildSubdomainOAuthRedirectUri` / `buildTenantUrl`: on localhost
+ * (or with no/local root domain) and on Vercel preview hosts the
+ * request origin already is the app host, so it is used as-is and
+ * existing localhost expectations stay green. In production the app
+ * host comes from `NEXT_PUBLIC_APP_URL` when it is a non-local host,
+ * else `app.<rootDomain>` — never hardcoded, never the tenant host.
+ */
+export function buildMagicConnectUrl(
+  pathname: '/connect/facebook/success' | '/connect/facebook/error',
+  requestUrl: string,
+  rootDomain: string,
+  appUrl: string
+): URL {
+  const requestOrigin = new URL(requestUrl);
+  const cleanRoot = (rootDomain || '').trim().toLowerCase().split(':')[0] || '';
+  const host = requestOrigin.hostname.toLowerCase();
+  const isLocalHost =
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host.endsWith('.localhost');
+  const isLocalRoot =
+    !cleanRoot ||
+    cleanRoot.includes('localhost') ||
+    cleanRoot.includes('127.0.0.1');
+  const isVercelPreview = host.endsWith('.vercel.app');
+  if (isLocalHost || isLocalRoot || isVercelPreview) {
+    return new URL(pathname, requestOrigin.origin);
+  }
+  // Parse failure is recorded explicitly as "no app origin", not
+  // swallowed: the fallback below then derives app.<root> (or, with
+  // no root at all, keeps the request origin) via an explicit branch.
+  let appOrigin: string | null = null;
+  try {
+    const app = new URL(appUrl);
+    const appHost = app.hostname.toLowerCase();
+    const appIsLocal =
+      appHost === 'localhost' ||
+      appHost === '127.0.0.1' ||
+      appHost.endsWith('.localhost');
+    if (!appIsLocal) {
+      appOrigin = app.origin;
+    }
+  } catch {
+    appOrigin = null;
+  }
+  if (appOrigin) {
+    return new URL(pathname, appOrigin);
+  }
+  if (cleanRoot) {
+    return new URL(pathname, `https://app.${cleanRoot}`);
+  }
+  // No app host derivable at all: keep the previous behaviour rather
+  // than inventing a host.
+  return new URL(pathname, requestOrigin.origin);
+}
+
 async function resolveOAuthErrorTarget(
   requestUrl: string,
   state: string | null,
   sessionSecret: string,
   rootDomain: string,
+  appUrl: string,
   error: string,
   errorDescription: string | null
 ): Promise<URL> {
@@ -37,7 +105,12 @@ async function resolveOAuthErrorTarget(
     try {
       const statePayload = await verifyOAuthState(state, sessionSecret);
       if (statePayload.isMagic) {
-        const magicErrorUrl = new URL('/connect/facebook/error', requestUrl);
+        const magicErrorUrl = buildMagicConnectUrl(
+          '/connect/facebook/error',
+          requestUrl,
+          rootDomain,
+          appUrl
+        );
         const isCancelled =
           error === 'access_denied' || error === 'user_cancelled';
         magicErrorUrl.searchParams.set(
@@ -71,10 +144,17 @@ function buildOAuthStepErrorRedirect(
   requestUrl: string,
   destinationUrl: URL,
   isMagic: boolean | undefined,
-  errorCode: string
+  errorCode: string,
+  rootDomain?: string,
+  appUrl?: string
 ): NextResponse {
   if (isMagic) {
-    const magicErrorUrl = new URL('/connect/facebook/error', requestUrl);
+    const magicErrorUrl = buildMagicConnectUrl(
+      '/connect/facebook/error',
+      requestUrl,
+      rootDomain ?? '',
+      appUrl ?? ''
+    );
     magicErrorUrl.searchParams.set('reason', 'oauth_failed');
     return NextResponse.redirect(magicErrorUrl);
   }
@@ -230,7 +310,9 @@ function buildPostConnectRedirect(
   destinationUrl: URL,
   statePayload: OAuthStatePayload,
   meProfile: { id: string; name: string },
-  alreadyExisted: boolean
+  alreadyExisted: boolean,
+  rootDomain?: string,
+  appUrl?: string
 ): NextResponse {
   const isReconnectMismatch = Boolean(
     statePayload.expectedFbAccountId &&
@@ -241,7 +323,12 @@ function buildPostConnectRedirect(
   );
 
   if (statePayload.isMagic) {
-    const magicSuccessUrl = new URL('/connect/facebook/success', requestUrl);
+    const magicSuccessUrl = buildMagicConnectUrl(
+      '/connect/facebook/success',
+      requestUrl,
+      rootDomain ?? '',
+      appUrl ?? ''
+    );
     if (isReconnectMismatch) {
       magicSuccessUrl.searchParams.set('reconnected_mismatch', '1');
       magicSuccessUrl.searchParams.set('newAccountName', meProfile.name);
@@ -283,6 +370,7 @@ function getCallbackEnvConfig() {
   return {
     sessionSecret,
     encryptionKey,
+    appUrl,
     rootDomain,
     redirectUri,
   };
@@ -406,6 +494,7 @@ export async function handleFacebookCallback(
   const {
     sessionSecret,
     encryptionKey,
+    appUrl,
     rootDomain,
     redirectUri,
   } = getCallbackEnvConfig();
@@ -423,6 +512,7 @@ export async function handleFacebookCallback(
       state,
       sessionSecret,
       rootDomain,
+      appUrl,
       error,
       errorDescription
     );
@@ -482,7 +572,12 @@ export async function handleFacebookCallback(
 
     if (!byocResult.ok) {
       if (statePayload.isMagic) {
-        const magicErrorUrl = new URL('/connect/facebook/error', request.url);
+        const magicErrorUrl = buildMagicConnectUrl(
+          '/connect/facebook/error',
+          request.url,
+          rootDomain,
+          appUrl
+        );
         magicErrorUrl.searchParams.set('reason', 'credentials_required');
         return NextResponse.redirect(magicErrorUrl);
       }
@@ -520,7 +615,9 @@ export async function handleFacebookCallback(
         request.url,
         destinationUrl,
         statePayload.isMagic,
-        'token_exchange_failed'
+        'token_exchange_failed',
+        rootDomain,
+        appUrl
       );
     }
     const shortTokenJson = await shortTokenRes.json();
@@ -549,7 +646,9 @@ export async function handleFacebookCallback(
         request.url,
         destinationUrl,
         statePayload.isMagic,
-        'long_token_exchange_failed'
+        'long_token_exchange_failed',
+        rootDomain,
+        appUrl
       );
     }
     const longTokenJson = await longTokenRes.json();
@@ -573,7 +672,9 @@ export async function handleFacebookCallback(
         request.url,
         destinationUrl,
         statePayload.isMagic,
-        'profile_fetch_failed'
+        'profile_fetch_failed',
+        rootDomain,
+        appUrl
       );
     }
     const meJson = await meRes.json();
@@ -619,13 +720,20 @@ export async function handleFacebookCallback(
       destinationUrl,
       statePayload,
       meProfile,
-      alreadyExisted
+      alreadyExisted,
+      rootDomain,
+      appUrl
     );
   } catch (err) {
     // Redirect to destination with safe generic error parameter rather than leaking internal details
     console.warn('[FacebookOAuth] Callback exchange error:', err instanceof Error ? err.message : String(err));
     if (statePayload?.isMagic) {
-      const magicErrorUrl = new URL('/connect/facebook/error', request.url);
+      const magicErrorUrl = buildMagicConnectUrl(
+        '/connect/facebook/error',
+        request.url,
+        rootDomain,
+        appUrl
+      );
       magicErrorUrl.searchParams.set('reason', 'internal_oauth_error');
       return NextResponse.redirect(magicErrorUrl);
     }
