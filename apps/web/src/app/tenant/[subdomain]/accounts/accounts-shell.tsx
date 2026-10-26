@@ -55,6 +55,7 @@ import {
 import { ByocConfigPromptModal } from '@/components/accounts/byoc-config-prompt-modal';
 import {
   computeAccountsSubtitle,
+  computeAccountsSubtitleFromCounts,
   isConnectGatedByMissingCredentials,
   resolveOAuthRedirectNotice,
   sortAccountsExpiredFirst,
@@ -423,14 +424,21 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
   const isConnectDisabled = byocStatus.isLoading || isConnectGated;
   const settingsFacebookHref = `/tenant/${subdomain}/settings?tab=byoc`;
 
+  // Page-slice expired count: only a fallback for payloads that
+  // predate the healthCounts field. The subtitle and the filter-bar
+  // badge must count the FULL filtered set — counting the slice
+  // made page 1 of 65 accounts read "30 connected" while the
+  // pagination line below read "Showing 1–30 of 65".
   const attentionCount = React.useMemo(
     () => accounts.filter((a) => a.status === 'expired').length,
     [accounts]
   );
+  const healthCounts = accountsQuery.data?.healthCounts;
+  const expiredTotal = healthCounts?.expired ?? attentionCount;
   const isFiltered = searchQuery.trim().length > 0 || statusFilter !== 'all';
-  // The subtitle counts from the API total. As in the pages shell, the
-  // health breakdown now reflects the current page only when paginated;
-  // the pagination line below ("Showing X–Y of Z") is authoritative.
+  // The subtitle counts from the API total and the full-set health
+  // counts; when healthCounts is absent (old payload) it falls back
+  // to the previous page-slice computation.
   const situationalSubtitle = React.useMemo(() => {
     if (total === 0 && !isFiltered) {
       return computeAccountsSubtitle([], 0, false);
@@ -438,8 +446,11 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
     if (isFiltered) {
       return `${total} matching ${total === 1 ? 'account' : 'accounts'}`;
     }
+    if (healthCounts) {
+      return computeAccountsSubtitleFromCounts(total, healthCounts);
+    }
     return computeAccountsSubtitle(accounts, accounts.length, false);
-  }, [total, accounts, isFiltered]);
+  }, [total, accounts, healthCounts, isFiltered]);
 
   let contentNode: React.ReactNode;
   if (isLoading) {
@@ -611,7 +622,7 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
           onSearchChange={handleSearchChange}
           statusFilter={statusFilter}
           onStatusFilterChange={handleStatusFilterChange}
-          attentionCount={attentionCount}
+          attentionCount={expiredTotal}
         />
       )}
 

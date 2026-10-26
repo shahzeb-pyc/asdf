@@ -47,6 +47,13 @@ export const ListFacebookAccountsResponseSchema = z.object({
   page: z.number().int().positive().optional(),
   limit: z.number().int().positive().optional(),
   totalPages: z.number().int().nonnegative().optional(),
+  healthCounts: z
+    .object({
+      connected: z.number().int().nonnegative(),
+      expired: z.number().int().nonnegative(),
+      error: z.number().int().nonnegative(),
+    })
+    .optional(),
 });
 export type ListFacebookAccountsResponse = z.infer<
   typeof ListFacebookAccountsResponseSchema

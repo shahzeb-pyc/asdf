@@ -52,6 +52,7 @@ export const ListFacebookPagesResponseSchema = z.object({
   page: z.number().int().positive().optional(),
   limit: z.number().int().positive().optional(),
   totalPages: z.number().int().nonnegative().optional(),
+  attentionTotal: z.number().int().nonnegative().optional(),
 });
 export type ListFacebookPagesResponse = z.infer<typeof ListFacebookPagesResponseSchema>;
 

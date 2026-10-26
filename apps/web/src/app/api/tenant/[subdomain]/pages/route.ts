@@ -124,6 +124,15 @@ END`;
 const PAGE_FRESH_RATE_LIMITED_SQL = `(${DESTINATION_STATUS_TO_WIRE_SQL}) = 'fb_rate_limited'
   AND COALESCE((d.metadata->>'rate_limited_at')::timestamptz, d.updated_at) > now() - interval '3 days'`;
 
+/**
+ * The needs-attention predicate on the wire status: invalid token,
+ * identity checkpoint, or a still-fresh rate limit (a stale rate
+ * limit has already flipped back to active via evaluatePageHealth).
+ * Shared by the status filter and the full-set attention count so
+ * the two can never disagree about what counts as attention.
+ */
+const PAGE_NEEDS_ATTENTION_SQL = `((${DESTINATION_STATUS_TO_WIRE_SQL}) IN ('invalid_token', 'page_checkpoint') OR ${PAGE_FRESH_RATE_LIMITED_SQL})`;
+
 function buildPageWhere(
   workspaceId: string,
   filters: PageListFilters
@@ -146,9 +155,7 @@ function buildPageWhere(
     conditions.push(`(d.name ILIKE ${p} OR d.metadata->>'category' ILIKE ${p})`);
   }
   if (filters.status === 'needs_attention') {
-    conditions.push(
-      `((${DESTINATION_STATUS_TO_WIRE_SQL}) IN ('invalid_token', 'page_checkpoint') OR ${PAGE_FRESH_RATE_LIMITED_SQL})`
-    );
+    conditions.push(PAGE_NEEDS_ATTENTION_SQL);
   } else if (filters.status === 'active') {
     conditions.push(
       `((${DESTINATION_STATUS_TO_WIRE_SQL}) = 'active' OR ((${DESTINATION_STATUS_TO_WIRE_SQL}) = 'fb_rate_limited' AND NOT (${PAGE_FRESH_RATE_LIMITED_SQL})))`
@@ -178,16 +185,24 @@ async function fetchSqlPagesPage(
   filters: PageListFilters,
   page: number,
   limit: number
-): Promise<{ rows: PageListRow[]; total: number; page: number }> {
+): Promise<{ rows: PageListRow[]; total: number; page: number; attentionTotal?: number | undefined }> {
   const { where, params } = buildPageWhere(workspaceId, filters);
-  const countRows = await dbClient.query<{ total?: unknown }>(
-    `SELECT COUNT(*)::int AS total
+  const countRows = await dbClient.query<{ total?: unknown; attention_total?: unknown }>(
+    `SELECT COUNT(*)::int AS total,
+      COUNT(*) FILTER (WHERE ${PAGE_NEEDS_ATTENTION_SQL})::int AS attention_total
     FROM destinations d
     LEFT JOIN social_accounts a ON a.id = d.account_id
     WHERE ${where}`,
     params
   );
   const rawTotal = (countRows[0] as { total?: unknown } | undefined)?.total;
+  const rawAttentionTotal = (countRows[0] as { attention_total?: unknown } | undefined)?.attention_total;
+  // A source that answers the count without the attention aggregate
+  // (e.g. a test double) leaves attentionTotal undefined and the
+  // field is omitted from the response; the shell then falls back to
+  // its page-slice count. Production always answers the aggregate.
+  const attentionTotal =
+    typeof rawAttentionTotal === 'number' ? rawAttentionTotal : undefined;
   const dataParams = [...params];
   const limitParam = `$${dataParams.length + 1}`;
   const offsetParam = `$${dataParams.length + 2}`;
@@ -226,7 +241,7 @@ async function fetchSqlPagesPage(
     [...dataParams, limit, (clampedPage - 1) * limit]
   );
   if (numericTotal !== null) {
-    return { rows, total: numericTotal, page: clampedPage };
+    return { rows, total: numericTotal, page: clampedPage, attentionTotal };
   }
   const total = rows.length;
   const finalPage = paginateMeta(total, page, limit).page;
@@ -234,6 +249,7 @@ async function fetchSqlPagesPage(
     rows: rows.slice((finalPage - 1) * limit, finalPage * limit),
     total,
     page: finalPage,
+    attentionTotal,
   };
 }
 
@@ -362,6 +378,7 @@ export async function handleListPages(
 
   let pages: ReturnType<typeof mapPageRows>;
   let meta: PaginationMeta;
+  let attentionTotal: number | undefined;
 
   if (dbClient && 'query' in dbClient && typeof dbClient.query === 'function') {
     // Exact server-side pagination: the SQL path filters, ranks, counts
@@ -374,6 +391,7 @@ export async function handleListPages(
       limit
     );
     pages = mapPageRows(result.rows);
+    attentionTotal = result.attentionTotal;
     // Stable re-sort of the page slice into the documented
     // attention-first order (same guard as the accounts route: the
     // database ORDER BY already produces this order; a source that
@@ -414,6 +432,13 @@ export async function handleListPages(
     // database round-trip is not a range query on this path.
     const mapped = mapPageRows(res.rows || []);
     const filtered = filterAndSortPages(mapped, filters);
+    // Full-set attention count, counted BEFORE slicing: the mapped
+    // statuses are already effective (evaluatePageHealth ran in
+    // mapPageRows), so a stale rate limit already reads as active
+    // and is not counted here.
+    attentionTotal = filtered.filter((p) =>
+      isAttentionPageStatus(p.status)
+    ).length;
     const sliced = paginateItems(filtered, requestedPage, limit);
     pages = sliced.items;
     meta = sliced.meta;
@@ -425,6 +450,7 @@ export async function handleListPages(
     page: meta.page,
     limit: meta.limit,
     totalPages: meta.totalPages,
+    attentionTotal,
   });
 
   return NextResponse.json(responsePayload);
@@ -440,15 +466,25 @@ export async function handleListPages(
  */
 type MappedPage = ReturnType<typeof mapPageRows>[number];
 
+/**
+ * The shell's attention predicate (isPageNeedsAttention) on a mapped
+ * page's effective status. Used by both the Supabase mirror and the
+ * full-set attention count, so they can never disagree.
+ */
+function isAttentionPageStatus(status: string): boolean {
+  return (
+    status === 'invalid_token' ||
+    status === 'page_checkpoint' ||
+    status === 'fb_rate_limited'
+  );
+}
+
 function filterAndSortPages(
   pages: MappedPage[],
   filters: PageListFilters
 ): MappedPage[] {
   const query = filters.search.trim().toLowerCase();
-  const isAttention = (status: string) =>
-    status === 'invalid_token' ||
-    status === 'page_checkpoint' ||
-    status === 'fb_rate_limited';
+  const isAttention = isAttentionPageStatus;
   const rank = (status: string) =>
     isAttention(status) ? 0 : status === 'paused' ? 1 : status === 'active' ? 2 : 3;
   return pages

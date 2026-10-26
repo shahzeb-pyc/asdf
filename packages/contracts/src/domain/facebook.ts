@@ -61,6 +61,18 @@ export const ListFacebookAccountsResponseSchema = z.object({
   page: z.number().int().positive().optional(),
   limit: z.number().int().positive().optional(),
   totalPages: z.number().int().nonnegative().optional(),
+  /**
+   * Health counts over the FULL filtered set (not the page slice), so
+   * the subtitle can report workspace totals while paginated.
+   * Optional so pre-pagination payloads still parse.
+   */
+  healthCounts: z
+    .object({
+      connected: z.number().int().nonnegative(),
+      expired: z.number().int().nonnegative(),
+      error: z.number().int().nonnegative(),
+    })
+    .optional(),
 });
 
 export type ListFacebookAccountsResponse = z.infer<
@@ -130,6 +142,13 @@ export const ListFacebookPagesResponseSchema = z.object({
   page: z.number().int().positive().optional(),
   limit: z.number().int().positive().optional(),
   totalPages: z.number().int().nonnegative().optional(),
+  /**
+   * Needs-attention count over the FULL filtered set (not the page
+   * slice), so the subtitle's "requires reconnecting" fragment stays
+   * truthful while paginated. Optional so pre-pagination payloads
+   * still parse.
+   */
+  attentionTotal: z.number().int().nonnegative().optional(),
 });
 
 export type ListFacebookPagesResponse = z.infer<

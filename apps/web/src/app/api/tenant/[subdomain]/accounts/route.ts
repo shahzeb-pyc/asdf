@@ -124,6 +124,24 @@ export interface AccountListFilters {
 /** Computed-expired predicate (mirrors evaluateAccountHealth). */
 const ACCOUNT_EXPIRED_SQL = `(sa.status = 'expired' OR (sa.status = 'active' AND sa.token_expires_at < now()))`;
 
+/**
+ * Full-set health buckets, mirroring the shell's getAccountHealth
+ * model over the wire status + token expiry (see account-health.ts):
+ * an expired wire status or a past token is expired regardless of
+ * the other field; disconnected with a live-or-absent token is an
+ * error; active with a live-or-absent token is connected. The three
+ * buckets partition the filtered set exactly.
+ */
+const ACCOUNT_CONNECTED_SQL = `((${ACCOUNT_STATUS_TO_WIRE_SQL}) = 'active' AND (sa.token_expires_at IS NULL OR sa.token_expires_at >= now()))`;
+const ACCOUNT_HEALTH_EXPIRED_SQL = `((${ACCOUNT_STATUS_TO_WIRE_SQL}) = 'expired' OR sa.token_expires_at < now())`;
+const ACCOUNT_ERROR_SQL = `((${ACCOUNT_STATUS_TO_WIRE_SQL}) = 'disconnected' AND (sa.token_expires_at IS NULL OR sa.token_expires_at >= now()))`;
+
+export interface AccountHealthCounts {
+  connected: number;
+  expired: number;
+  error: number;
+}
+
 function buildAccountWhere(
   workspaceId: string,
   filters: AccountListFilters
@@ -155,13 +173,42 @@ async function fetchSqlAccountsPage(
   filters: AccountListFilters,
   page: number,
   limit: number
-): Promise<{ rows: AccountRow[]; total: number; page: number }> {
+): Promise<{ rows: AccountRow[]; total: number; page: number; healthCounts?: AccountHealthCounts | undefined }> {
   const { where, params } = buildAccountWhere(workspaceId, filters);
-  const countRows = await dbClient.query<{ total?: unknown }>(
-    `SELECT COUNT(*)::int AS total FROM social_accounts sa WHERE ${where}`,
+  const countRows = await dbClient.query<{
+    total?: unknown;
+    connected_count?: unknown;
+    expired_count?: unknown;
+    error_count?: unknown;
+  }>(
+    `SELECT COUNT(*)::int AS total,
+      COUNT(*) FILTER (WHERE ${ACCOUNT_CONNECTED_SQL})::int AS connected_count,
+      COUNT(*) FILTER (WHERE ${ACCOUNT_HEALTH_EXPIRED_SQL})::int AS expired_count,
+      COUNT(*) FILTER (WHERE ${ACCOUNT_ERROR_SQL})::int AS error_count
+    FROM social_accounts sa WHERE ${where}`,
     params
   );
   const rawTotal = (countRows[0] as { total?: unknown } | undefined)?.total;
+  const countRow = countRows[0] as
+    | {
+        connected_count?: unknown;
+        expired_count?: unknown;
+        error_count?: unknown;
+      }
+    | undefined;
+  // As in the pages route: a source that answers the count without
+  // the health aggregates (e.g. a test double) leaves healthCounts
+  // undefined and the field is omitted; production always answers it.
+  const healthCounts =
+    typeof countRow?.connected_count === 'number' &&
+    typeof countRow.expired_count === 'number' &&
+    typeof countRow.error_count === 'number'
+      ? {
+          connected: countRow.connected_count,
+          expired: countRow.expired_count,
+          error: countRow.error_count,
+        }
+      : undefined;
   const numericTotal = typeof rawTotal === 'number' ? rawTotal : null;
   const clampedPage =
     numericTotal === null ? page : paginateMeta(numericTotal, page, limit).page;
@@ -204,7 +251,7 @@ async function fetchSqlAccountsPage(
     [...dataParams, limit, (clampedPage - 1) * limit]
   );
   if (numericTotal !== null) {
-    return { rows, total: numericTotal, page: clampedPage };
+    return { rows, total: numericTotal, page: clampedPage, healthCounts };
   }
   // Test doubles that answer every query with the full row set: recover
   // the page from the full set, as in the pages route.
@@ -214,6 +261,7 @@ async function fetchSqlAccountsPage(
     rows: rows.slice((finalPage - 1) * limit, finalPage * limit),
     total,
     page: finalPage,
+    healthCounts,
   };
 }
 
@@ -350,6 +398,7 @@ export async function handleListAccounts(
 
   let accounts: ReturnType<typeof mapAccountRowToView>[];
   let meta: PaginationMeta;
+  let healthCounts: AccountHealthCounts | undefined;
 
   if (dbClient && 'query' in dbClient && typeof dbClient.query === 'function') {
     // Exact server-side pagination: the SQL path filters, ranks,
@@ -368,6 +417,7 @@ export async function handleListAccounts(
       }
       return view;
     });
+    healthCounts = result.healthCounts;
     // Stable re-sort of the page slice into the documented
     // expired-first order. The database ORDER BY already produces
     // this order; the re-sort only guards against a data source that
@@ -405,6 +455,25 @@ export async function handleListAccounts(
       return view;
     });
     const filtered = filterAndSortAccounts(mapped, filters);
+    // Full-set health counts, counted BEFORE slicing, using the
+    // same health model as the shell subtitle (getAccountHealth):
+    // expired wire status or a past token is expired, disconnected
+    // with a live-or-absent token is an error, otherwise connected.
+    healthCounts = { connected: 0, expired: 0, error: 0 };
+    for (const account of filtered) {
+      if (account.status === 'expired') {
+        healthCounts.expired += 1;
+      } else if (
+        account.tokenExpiresAt &&
+        new Date(account.tokenExpiresAt).getTime() <= Date.now()
+      ) {
+        healthCounts.expired += 1;
+      } else if (account.status === 'disconnected') {
+        healthCounts.error += 1;
+      } else {
+        healthCounts.connected += 1;
+      }
+    }
     const sliced = paginateItems(filtered, requestedPage, limit);
     accounts = sliced.items;
     meta = sliced.meta;
@@ -416,6 +485,7 @@ export async function handleListAccounts(
     page: meta.page,
     limit: meta.limit,
     totalPages: meta.totalPages,
+    healthCounts,
   });
   if (!parsed.success) {
     console.error('[handleListAccounts] Schema validation error:', parsed.error);

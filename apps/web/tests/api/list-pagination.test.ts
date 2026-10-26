@@ -256,6 +256,37 @@ describe('list pagination (pages + accounts, 30 per page)', () => {
       expect(dataSql).toContain('OFFSET');
       expect(dataSql).toContain('created_at DESC');
     });
+
+    it('reports the full-set attention total, not the page-slice count', async () => {
+      // Regression pin for the subtitle send-back: the attention
+      // pages live beyond the returned slice, yet attentionTotal
+      // must still report them. The COUNT aggregate answers 3 while
+      // the page-2 slice below contains only active pages.
+      const rows = Array.from({ length: 65 }, (_, i) => makePageRow(i));
+      const db = {
+        query: vi.fn().mockImplementation((sql: string, params: unknown[] = []) => {
+          if (sql.includes('FROM workspaces')) {
+            return Promise.resolve([{ id: 'ws_123' }]);
+          }
+          if (sql.includes('COUNT(')) {
+            return Promise.resolve([{ total: 65, attention_total: 3 }]);
+          }
+          const limit = Number(params[params.length - 2] ?? 30);
+          const offset = Number(params[params.length - 1] ?? 0);
+          return Promise.resolve(rows.slice(offset, offset + limit));
+        }),
+      } as unknown as DatabaseClient;
+      const res = await handleListPages(
+        req('http://localhost:3000/api/tenant/acme/pages?page=2'),
+        'acme',
+        db
+      );
+      const json = await res.json();
+      expect(json.total).toBe(65);
+      expect(json.pages).toHaveLength(30);
+      expect(json.pages.every((p: { status: string }) => p.status === 'active')).toBe(true);
+      expect(json.attentionTotal).toBe(3);
+    });
   });
 
   describe('GET accounts (SQL path)', () => {
@@ -310,6 +341,47 @@ describe('list pagination (pages + accounts, 30 per page)', () => {
       const json = await res.json();
       expect(json.page).toBe(1);
       expect(json.totalPages).toBe(1);
+    });
+
+    it('reports full-set health counts, not page-slice counts', async () => {
+      // Regression pin for the subtitle send-back: page 1 of 65
+      // accounts must not subtitle itself as "30 connected". The
+      // aggregate answers the workspace totals while the slice below
+      // holds only 30 rows.
+      const rows = Array.from({ length: 65 }, (_, i) => makeAccountRow(i));
+      const db = {
+        query: vi.fn().mockImplementation((sql: string, params: unknown[] = []) => {
+          if (sql.includes('FROM workspaces')) {
+            return Promise.resolve([{ id: 'ws_123' }]);
+          }
+          if (sql.includes('SELECT COUNT(*)')) {
+            return Promise.resolve([
+              {
+                total: 65,
+                connected_count: 60,
+                expired_count: 4,
+                error_count: 1,
+              },
+            ]);
+          }
+          const limit = Number(params[params.length - 2] ?? 30);
+          const offset = Number(params[params.length - 1] ?? 0);
+          return Promise.resolve(rows.slice(offset, offset + limit));
+        }),
+      } as unknown as DatabaseClient;
+      const res = await handleListAccounts(
+        req('http://localhost:3000/api/tenant/acme/accounts?page=1'),
+        'acme',
+        db
+      );
+      const json = await res.json();
+      expect(json.total).toBe(65);
+      expect(json.accounts).toHaveLength(30);
+      expect(json.healthCounts).toEqual({
+        connected: 60,
+        expired: 4,
+        error: 1,
+      });
     });
   });
 
@@ -398,6 +470,93 @@ describe('list pagination (pages + accounts, 30 per page)', () => {
       expect(json.page).toBe(2);
       expect(json.totalPages).toBe(2);
       expect(json.pages).toHaveLength(5);
+    });
+
+    it('counts attention over the full filtered set before slicing', async () => {
+      // All 35 rows need attention, so the page-1 slice holds only
+      // 30 of them — attentionTotal must still be 35, not 30.
+      const rows = Array.from({ length: 35 }, (_, i) => ({
+        id: `55555555-5555-4555-8555-${i.toString(16).padStart(12, '0')}`,
+        account_id: '22222222-2222-4222-a222-222222222222',
+        external_destination_id: `page_${i}`,
+        name: `Page ${i}`,
+        avatar_url: null,
+        metadata: {
+          category: 'Digital Creator',
+          starting_followers: 100,
+          current_followers: 100,
+          tasks: [],
+        },
+        status: 'error',
+        created_at: new Date(Date.UTC(2026, 0, 1 + i)).toISOString(),
+        updated_at: new Date(Date.UTC(2026, 0, 1 + i)).toISOString(),
+        social_accounts: { display_name: 'Alex Marketing' },
+      }));
+      const res = await handleListPages(
+        req('http://localhost:3000/api/tenant/acme/pages?page=1'),
+        'acme',
+        supabaseDb(rows) as never
+      );
+      const json = await res.json();
+      expect(json.total).toBe(35);
+      expect(json.pages).toHaveLength(30);
+      expect(json.attentionTotal).toBe(35);
+    });
+  });
+
+  describe('GET accounts (Supabase path)', () => {
+    function supabaseAccountsDb(rows: unknown[]) {
+      return {
+        from: vi.fn((table: string) => {
+          if (table === 'workspaces') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnThis(),
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { id: 'ws_123' },
+                error: null,
+              }),
+            };
+          }
+          const chain: Record<string, unknown> = {};
+          chain.select = vi.fn(() => chain);
+          chain.eq = vi.fn(() => chain);
+          chain.order = vi.fn(() => Promise.resolve({ data: rows, error: null }));
+          return chain;
+        }),
+      };
+    }
+
+    it('counts health over the full filtered set before slicing', async () => {
+      // All 35 accounts are expired, so the page-1 slice holds only
+      // 30 of them — healthCounts.expired must still be 35, and the
+      // total must stay 35, so the subtitle can never read "30".
+      const rows = Array.from({ length: 35 }, (_, i) => ({
+        id: `66666666-6666-4666-8666-${i.toString(16).padStart(12, '0')}`,
+        external_account_id: `fb_act_${i}`,
+        display_name: `Account ${i}`,
+        avatar_url: null,
+        metadata: {},
+        status: 'expired',
+        token_expires_at: null,
+        created_at: new Date(Date.UTC(2026, 0, 1 + i)).toISOString(),
+        updated_at: new Date(Date.UTC(2026, 0, 1 + i)).toISOString(),
+        destinations: [],
+      }));
+      const res = await handleListAccounts(
+        req('http://localhost:3000/api/tenant/acme/accounts?page=1'),
+        'acme',
+        supabaseAccountsDb(rows) as never
+      );
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.total).toBe(35);
+      expect(json.accounts).toHaveLength(30);
+      expect(json.healthCounts).toEqual({
+        connected: 0,
+        expired: 35,
+        error: 0,
+      });
     });
   });
 });

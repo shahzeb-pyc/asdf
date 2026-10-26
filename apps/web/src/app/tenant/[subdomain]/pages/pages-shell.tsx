@@ -364,19 +364,23 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
     return Array.from(names);
   }, [pages, accounts]);
 
+  // Page-slice attention count: only a fallback for payloads that
+  // predate the attentionTotal field. The subtitle and the toolbar
+  // badge must count the FULL filtered set, not the visible page —
+  // counting the slice made the "requires reconnecting" fragment
+  // vanish on pages whose attention items sit beyond page 1.
   const attentionCount = React.useMemo(
     () => pages.filter((p) => isPageNeedsAttention(p.status)).length,
     [pages]
   );
+  const attentionTotal = pagesQuery.data?.attentionTotal ?? attentionCount;
 
   const isFiltered =
     searchQuery.trim().length > 0 || statusFilter !== 'all' || accountFilter !== 'all';
 
-  // The subtitle counts from the API total. Note: the "requires
-  // reconnecting" fragment now counts attention pages on the current
-  // page only — the unfiltered attention total is not part of the
-  // paginated response, and the pagination line below ("Showing X–Y
-  // of Z") is the authoritative count.
+  // The subtitle counts from the API total and the full-set
+  // attention total; the pagination line below ("Showing X–Y of Z")
+  // is the authoritative window, not a substitute for the count.
   const situationalSubtitle = React.useMemo(() => {
     if (total === 0 && !isFiltered) {
       return computeSituationalSubtitle(0, 0, 0, false);
@@ -384,8 +388,8 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
     if (isFiltered) {
       return `${total} matching ${total === 1 ? 'page' : 'pages'}`;
     }
-    return computeSituationalSubtitle(total, total, attentionCount, false);
-  }, [total, attentionCount, isFiltered]);
+    return computeSituationalSubtitle(total, total, attentionTotal, false);
+  }, [total, attentionTotal, isFiltered]);
 
   const handleSelectPage = (page: FacebookPageItem) => {
     router.push(`/tenant/${subdomain}/pages/${page.id}`);
@@ -581,7 +585,7 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
           accountFilter={accountFilter}
           onAccountFilterChange={handleAccountFilterChange}
           accountOptions={accountOptions}
-          attentionCount={attentionCount}
+          attentionCount={attentionTotal}
         />
       )}
 
