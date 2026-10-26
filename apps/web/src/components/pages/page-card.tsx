@@ -139,12 +139,12 @@ export function PageStatusMark({
       role="status"
       aria-label={label}
       className={cn(
-        'inline-flex items-center gap-1.5 font-semibold tracking-wide text-metadata',
+        'inline-flex min-w-0 items-center gap-1.5 font-semibold tracking-wide text-metadata',
         meta.textClass
       )}
     >
       <Icon aria-hidden data-icon={meta.iconName} className="size-3.5 shrink-0" />
-      <span>{label}</span>
+      <span className="truncate">{label}</span>
     </span>
   );
 }
@@ -344,7 +344,7 @@ export function PageCard({
               target="_blank"
               rel="noopener noreferrer"
               onClick={(e) => e.stopPropagation()}
-              className="truncate text-metadata text-[#1877f2] hover:underline"
+              className="min-w-0 flex-1 truncate text-metadata text-brand-facebook hover:underline"
             >
               View on Facebook{' '}
               <MoveUpRightIcon aria-hidden className="inline size-3 shrink-0" />
