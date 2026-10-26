@@ -265,7 +265,7 @@ export function PageCard({
       onClick={handleActivate}
       onKeyDown={handleKeyDown}
       className={cn(
-        'group flex min-h-38 min-w-0 cursor-pointer flex-col rounded-md border bg-panel p-6 shadow-card transition outline-none hover:-translate-y-0.5 hover:shadow-elevated focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold',
+        'group flex min-w-0 cursor-pointer flex-col rounded-md border bg-panel p-6 shadow-card transition outline-none hover:-translate-y-0.5 hover:shadow-elevated focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold',
         highlighted
           ? 'border-brand-gold ring-2 ring-brand-gold/40'
           : needsAttention
@@ -274,10 +274,9 @@ export function PageCard({
       )}
     >
       {/* Top Section: Avatar with Dynamic Status Ring + Identity + Affordance.
-          Identity lines, in order: name, Added date, followers + category,
-          then the Facebook link row (link left, gained right). The text
-          column stretches full width (flex-1/min-w-0) so the link row's
-          space-between truly separates link-left from gained-right. */}
+          Identity lines, in order: name, Added date, followers + category.
+          The followers NUMBER is page-name size (text-body) and bold; the
+          rest of the followers line stays muted at metadata size. */}
       <div className="mb-4 flex items-start gap-4">
         {showAvatarImg ? (
           <Image
@@ -324,7 +323,7 @@ export function PageCard({
           >
             <span
               data-testid="page-current-followers"
-              className="font-semibold text-ink tabular-nums"
+              className="text-body font-bold text-ink tabular-nums"
             >
               {currentFollowers.toLocaleString('en-US')}
             </span>{' '}
@@ -334,30 +333,6 @@ export function PageCard({
               · {page.category || 'Facebook Page'}
             </span>
           </span>
-          <div
-            data-testid="page-facebook-link-row"
-            className="mt-0.5 flex items-center justify-between gap-4"
-          >
-            <a
-              data-testid="page-facebook-link"
-              href={facebookUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
-              className="min-w-0 flex-1 truncate text-metadata text-brand-facebook hover:underline"
-            >
-              View on Facebook{' '}
-              <MoveUpRightIcon aria-hidden className="inline size-3 shrink-0" />
-            </a>
-            {gained !== 0 && (
-              <span
-                data-testid="page-followers-gained"
-                className={cn('shrink-0 text-metadata tabular-nums', gainedClass)}
-              >
-                {formattedGained} gained
-              </span>
-            )}
-          </div>
         </div>
 
         {/* Professional circled arrow affordance (muted, gold on hover) */}
@@ -370,9 +345,39 @@ export function PageCard({
         </span>
       </div>
 
-      {/* Divider + footer, pinned to the bottom (mt-auto) so they sit at the
-          same place on every card in a row, regardless of content above. */}
-      <div aria-hidden className="mt-auto pt-4">
+      {/* Facebook link row, full card width (not inside the identity
+          column, where the avatar/arrow columns indented it): link flush
+          left, gained flush right against the card edge, lined up with
+          the Account text in the footer. No forced card height and no
+          pinned footer, so the divider follows the content directly. */}
+      <div
+        data-testid="page-facebook-link-row"
+        className="mt-4 flex items-center justify-between gap-4"
+      >
+        <a
+          data-testid="page-facebook-link"
+          href={facebookUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="min-w-0 flex-1 truncate text-metadata text-brand-facebook hover:underline"
+        >
+          View on Facebook{' '}
+          <MoveUpRightIcon aria-hidden className="inline size-3 shrink-0" />
+        </a>
+        {gained !== 0 && (
+          <span
+            data-testid="page-followers-gained"
+            className={cn('shrink-0 text-metadata tabular-nums', gainedClass)}
+          >
+            {formattedGained} gained
+          </span>
+        )}
+      </div>
+
+      {/* Divider + footer, directly under the content (no min height,
+          no mt-auto pinning) so no dead space opens up on short cards. */}
+      <div aria-hidden className="pt-4">
         <div className="border-t border-line" />
       </div>
       <div className="mt-3 flex items-center justify-between gap-4">
