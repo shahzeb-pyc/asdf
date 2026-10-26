@@ -19,6 +19,7 @@ import {
   ConnectSuccessView,
 } from '@/app/connect/facebook/success/page';
 import { resolveOAuthRedirectNotice } from '@/components/accounts/accounts-helpers';
+import { ACCOUNTS_CONNECT_TOAST_OPTIONS } from '@/app/tenant/[subdomain]/accounts/accounts-shell';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
@@ -135,5 +136,21 @@ describe('Option B connected dialogue', () => {
       message:
         'You signed into Daily Grind instead of Shahzeb Malik. Shahzeb Malik still needs to be reconnected.',
     });
+  });
+
+  it('connect success toast is visibly green: green tint + green border, green tick text', () => {
+    const classNames = ACCOUNTS_CONNECT_TOAST_OPTIONS.classNames;
+    expect(classNames).toBeDefined();
+    const success = classNames?.success ?? '';
+    const toast = classNames?.toast ?? '';
+    expect(success).toContain('bg-brand-emerald');
+    expect(success).toContain('border-brand-emerald');
+    expect(success).toContain('text-brand-emerald');
+    // Sonner joins classes without deduping, so the base toast slot must
+    // not carry a conflicting panel bg / line border.
+    expect(toast).toContain('bg-brand-emerald');
+    expect(toast).toContain('border-brand-emerald');
+    expect(toast).not.toContain('bg-panel');
+    expect(toast).not.toContain('border-line');
   });
 });

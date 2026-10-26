@@ -41,7 +41,7 @@ import { reportError } from '@/lib/report-error';
 import { Button } from '@/components/shared/ui/button';
 import { EmptyState } from '@/components/shared/ui/empty-state';
 import { Skeleton } from '@/components/shared/ui/skeleton';
-import { Toast, toast } from '@/components/shared/ui/toast';
+import { Toast, toast, type ToasterProps } from '@/components/shared/ui/toast';
 import { AccountCard, type FacebookAccountItem } from '@/components/accounts/account-card';
 import { AccountsEmptyState } from '@/components/accounts/accounts-empty-state';
 import { AccountsFilterBar } from '@/components/accounts/accounts-filter-bar';
@@ -64,6 +64,32 @@ import { DisconnectAccountDialog } from '@/components/accounts/disconnect-accoun
 
 /** Id of the Accounts-only toaster: top-right, used solely by connect confirmations. */
 const ACCOUNTS_CONNECT_TOASTER_ID = 'accounts-connect-toaster';
+
+/**
+ * Green styling for the Accounts connect success toast, scoped to this
+ * flow's toaster only — the shared tenant Toaster keeps its default.
+ * Sonner joins classNames without deduping, so the base `toast` slot
+ * must not carry a conflicting bg/border: this toaster only ever
+ * receives success toasts (both call sites use toast.success), and
+ * the green tint/border live on both the `toast` and `success` slots
+ * so the green wins regardless of stylesheet order. All other slots
+ * mirror the shared Toast defaults exactly.
+ */
+export const ACCOUNTS_CONNECT_TOAST_OPTIONS: NonNullable<ToasterProps['toastOptions']> = {
+  classNames: {
+    toast:
+      'group toast group flex items-start gap-2 rounded-md border border-brand-emerald bg-brand-emerald/15 p-4 text-body text-ink shadow-elevated',
+    title: 'font-medium',
+    description: 'text-ink-sub',
+    actionButton: 'bg-primary text-on-primary rounded-sm px-3 h-9 font-medium',
+    cancelButton: 'bg-subtle text-ink rounded-sm px-3 h-9 font-medium',
+    closeButton: 'text-ink-sub hover:text-ink',
+    success: 'text-brand-emerald border-brand-emerald bg-brand-emerald/15',
+    error: 'text-brand-rose',
+    warning: 'text-brand-gold',
+    info: 'text-ink',
+  },
+};
 
 export interface AccountsShellProps {
   subdomain: string;
@@ -412,7 +438,11 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
       {/* Flow-scoped toaster for connect confirmations only: TOP-RIGHT
           (the shared tenant Toaster stays bottom-right everywhere else).
           Toasts reach it via toasterId, never via the shared default. */}
-      <Toast id={ACCOUNTS_CONNECT_TOASTER_ID} position="top-right" />
+      <Toast
+        id={ACCOUNTS_CONNECT_TOASTER_ID}
+        position="top-right"
+        toastOptions={ACCOUNTS_CONNECT_TOAST_OPTIONS}
+      />
       {/* Page Header */}
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
