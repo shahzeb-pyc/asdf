@@ -69,15 +69,20 @@ export function ConnectSuccessView({
 }
 
 function ConnectSuccessQueryReader() {
-  const searchParams = useSearchParams();
+  // useSearchParams() is typed non-null but returns null at runtime
+  // when rendered outside the Suspense boundary (tests) or during
+  // prerendering — never crash on it; a missing param simply means
+  // the plain success variant.
+  const searchParams = useSearchParams() as ReadonlyURLSearchParams | null;
+  const get = (key: string): string | null => searchParams?.get(key) ?? null;
   return (
     <ConnectSuccessView
       params={{
-        alreadyConnected: searchParams.get('already_connected') === '1',
-        accountName: searchParams.get('accountName') ?? undefined,
-        reconnectedMismatch: searchParams.get('reconnected_mismatch') === '1',
-        newAccountName: searchParams.get('newAccountName') ?? undefined,
-        expectedAccountName: searchParams.get('expectedAccountName') ?? undefined,
+        alreadyConnected: get('already_connected') === '1',
+        accountName: get('accountName') ?? undefined,
+        reconnectedMismatch: get('reconnected_mismatch') === '1',
+        newAccountName: get('newAccountName') ?? undefined,
+        expectedAccountName: get('expectedAccountName') ?? undefined,
       }}
     />
   );

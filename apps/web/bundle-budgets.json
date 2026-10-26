@@ -146,8 +146,8 @@
       "/connect/facebook/success": {
         "firstLoadGzipBytes": 143151,
         "firstLoadRawBytes": 474182,
-        "routeSpecificGzipBytes": 9303,
-        "routeSpecificRawBytes": 23230
+        "routeSpecificGzipBytes": 10560,
+        "routeSpecificRawBytes": 26761
       },
       "/_not-found": {
         "firstLoadGzipBytes": 142222,
@@ -219,8 +219,8 @@
       "/connect/facebook/success": {
         "firstLoadGzipBytes": 150309,
         "firstLoadRawBytes": 497892,
-        "routeSpecificGzipBytes": 9769,
-        "routeSpecificRawBytes": 24392
+        "routeSpecificGzipBytes": 11088,
+        "routeSpecificRawBytes": 28099
       },
       "/forgot-password": {
         "firstLoadGzipBytes": 152720,

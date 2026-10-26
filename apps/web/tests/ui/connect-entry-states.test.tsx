@@ -18,18 +18,21 @@ import AccountSuspendedPage from '@/app/account-suspended/page';
 
 describe('connect success page (spec 136 §3.4)', () => {
   it('renders the verbatim success copy inside the success status layout', () => {
+    // No params: the param-aware success page falls back to the generic
+    // named-less success copy (Option B dialogue); the param variants
+    // are pinned in accounts-connect-dialogue.test.tsx.
     render(<FacebookConnectSuccessPage />);
     const region = screen.getByTestId('magic-connect-success');
     expect(region.getAttribute('data-variant')).toBe('success');
     expect(
       screen.getByRole('heading', {
         level: 1,
-        name: 'Facebook Account Connected Successfully',
+        name: 'Facebook account connected',
       })
     ).toBeTruthy();
     expect(
       screen.getByText(
-        "You're all set! You can close this tab and return to your FbUploadPro dashboard."
+        "You're all set! You can close this tab and return to your FBUploadPro dashboard."
       )
     ).toBeTruthy();
     expect(screen.getByText('Linked to FBUploadPro via Facebook.')).toBeTruthy();
