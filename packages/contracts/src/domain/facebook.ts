@@ -57,6 +57,10 @@ export const FacebookAccountSummarySchema = FacebookAccountViewSchema;
 export const ListFacebookAccountsResponseSchema = z.object({
   accounts: z.array(FacebookAccountViewSchema),
   total: z.number().int().nonnegative(),
+  /** Paginated response meta; optional so pre-pagination payloads still parse. */
+  page: z.number().int().positive().optional(),
+  limit: z.number().int().positive().optional(),
+  totalPages: z.number().int().nonnegative().optional(),
 });
 
 export type ListFacebookAccountsResponse = z.infer<
@@ -122,6 +126,10 @@ export type FacebookPageView = z.infer<typeof FacebookPageViewSchema>;
 export const ListFacebookPagesResponseSchema = z.object({
   pages: z.array(FacebookPageViewSchema),
   total: z.number().int().nonnegative(),
+  /** Paginated response meta; optional so pre-pagination payloads still parse. */
+  page: z.number().int().positive().optional(),
+  limit: z.number().int().positive().optional(),
+  totalPages: z.number().int().nonnegative().optional(),
 });
 
 export type ListFacebookPagesResponse = z.infer<

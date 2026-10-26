@@ -44,14 +44,16 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { PlusIcon } from 'lucide-react';
 
-import { api, buildTenantApiPath } from '@/lib/api';
+import { api, buildTenantApiPath, buildUrl } from '@/lib/api';
 import { ListFacebookAccountsResponseSchema } from '@/lib/api/schemas/accounts';
 import { ListFacebookPagesResponseSchema } from '@/lib/api/schemas/pages';
 import { ByocSettingsResponseSchema } from '@/lib/api/schemas/settings';
 import { queryKeys } from '@/lib/data/query-keys';
 import { Toast, toast } from '@/components/shared/ui/toast';
+import { DEFAULT_PAGE_SIZE } from '@/lib/server/pagination';
 import { Button } from '@/components/shared/ui/button';
 import { EmptyState } from '@/components/shared/ui/empty-state';
+import { ListPagination } from '@/components/shared/ui/list-pagination';
 import { Skeleton } from '@/components/shared/ui/skeleton';
 import {
   PageCard,
@@ -62,7 +64,6 @@ import { PagesEmptyState } from '@/components/pages/pages-empty-state';
 import { PagesScaleToolbar } from '@/components/pages/pages-toolbar';
 import {
   computeSituationalSubtitle,
-  filterPagesList,
   sortPagesAttentionFirst,
   type PageStatusFilter,
 } from '@/components/pages/pages-helpers';
@@ -98,21 +99,67 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
   const queryClient = useQueryClient();
   const tenant = queryKeys.tenant(subdomain);
 
+  // Pagination state lives in the URL (?page=) so refresh and a shared
+  // link land on the same page; an unparseable value falls back to 1.
+  const initialPage = React.useMemo(() => {
+    const raw = Number.parseInt(searchParams.get('page') ?? '', 10);
+    return Number.isFinite(raw) && raw >= 1 ? raw : 1;
+    // Deliberately read once at mount: later URL changes flow
+    // through the sync effect, not through this initializer.
+  }, []);
+  const [page, setPage] = React.useState(initialPage);
+
+  // Filter/search state lives here; changing any of them resets to
+  // page 1 (the filtered result's first page).
+  const [searchQuery, setSearchQuery] = React.useState('');
+  const [statusFilter, setStatusFilter] =
+    React.useState<PageStatusFilter>('all');
+  const [accountFilter, setAccountFilter] = React.useState('all');
+
   const pagesQuery = useQuery({
-    queryKey: tenant.pages.list,
+    queryKey: tenant.pages.listPage({
+      page,
+      limit: DEFAULT_PAGE_SIZE,
+      search: searchQuery.trim(),
+      status: statusFilter,
+      account: accountFilter,
+    }),
     queryFn: ({ signal }) =>
-      api.get(buildTenantApiPath(subdomain, '/pages'), {
-        schema: ListFacebookPagesResponseSchema,
-        signal,
-      }),
+      api.get(
+        buildUrl(buildTenantApiPath(subdomain, '/pages'), {
+          page,
+          limit: DEFAULT_PAGE_SIZE,
+          ...(searchQuery.trim() ? { search: searchQuery.trim() } : {}),
+          ...(statusFilter !== 'all' ? { status: statusFilter } : {}),
+          ...(accountFilter !== 'all' ? { account: accountFilter } : {}),
+        }),
+        {
+          schema: ListFacebookPagesResponseSchema,
+          signal,
+        }
+      ),
   });
+  // The accounts read here only feeds the account-filter options and
+  // the expired banner, so it takes the largest page (50) rather than
+  // the paginated accounts view.
   const accountsQuery = useQuery({
-    queryKey: tenant.accounts.list,
+    queryKey: tenant.accounts.listPage({
+      page: 1,
+      limit: 50,
+      search: '',
+      status: 'all',
+    }),
     queryFn: ({ signal }) =>
-      api.get(buildTenantApiPath(subdomain, '/accounts'), {
-        schema: ListFacebookAccountsResponseSchema,
-        signal,
-      }),
+      api.get(
+        buildUrl(buildTenantApiPath(subdomain, '/accounts'), {
+          page: 1,
+          limit: 50,
+        }),
+        {
+          schema: ListFacebookAccountsResponseSchema,
+          signal,
+        }
+      ),
   });
   const byocQuery = useQuery({
     queryKey: tenant.settings.byoc,
@@ -123,8 +170,14 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
       }),
   });
 
+  // The API already returns the slice attention-first; the sort here
+  // is a stable no-op on real data and keeps the documented order
+  // for any cache seeded out of order.
   const pages = React.useMemo<FacebookPageItem[]>(
-    () => (pagesQuery.data?.pages ?? []) as FacebookPageItem[],
+    () =>
+      sortPagesAttentionFirst(
+        (pagesQuery.data?.pages ?? []) as FacebookPageItem[]
+      ),
     [pagesQuery.data]
   );
   const accounts = React.useMemo<FacebookAccountItem[]>(
@@ -170,6 +223,72 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
   const [statusFilter, setStatusFilter] = React.useState<PageStatusFilter>('all');
   const [accountFilter, setAccountFilter] = React.useState('all');
 
+  // The API returns the filtered, attention-first page slice, so the
+  // grid renders it directly — no client-side filter anymore.
+  // total/totalPages come from the API's filtered total.
+  const total = pagesQuery.data?.total ?? 0;
+  const totalPages = pagesQuery.data?.totalPages ?? 0;
+
+  // An out-of-range ?page= is clamped by the API; sync the state (and
+  // the URL, via the effect below) to the page that actually came back.
+  React.useEffect(() => {
+    if (pagesQuery.data && pagesQuery.data.page !== undefined && pagesQuery.data.page !== page) {
+      setPage(pagesQuery.data.page);
+    }
+  }, [pagesQuery.data, page]);
+
+  // Keep ?page= in the URL in step with state (page 1 omits the param).
+  // A query-only replace resolves against the current pathname, so no
+  // usePathname dependency is needed. Other params (e.g. ?account=)
+  // are preserved because the effect builds from current searchParams.
+  React.useEffect(() => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (page <= 1) params.delete('page');
+    else params.set('page', String(page));
+    const next = params.toString();
+    if (next !== searchParams.toString()) {
+      router.replace(next ? `?${next}` : '?', { scroll: false });
+    }
+  }, [page, router, searchParams]);
+
+  // Any filter/search change restarts at page 1.
+  const handleSearchChange = React.useCallback((value: string) => {
+    setSearchQuery(value);
+    setPage(1);
+  }, []);
+  const handleStatusFilterChange = React.useCallback((value: PageStatusFilter) => {
+    setStatusFilter(value);
+    setPage(1);
+  }, []);
+  // Toolbar account changes sync back to the URL so the filtered view
+  // is shareable and refresh-stable; choosing 'all' removes the param.
+  // Other existing params are preserved, and any account change also
+  // restarts at page 1 (the page effect then drops ?page= from the URL).
+  // This is the single handler for toolbar account changes, so the URL
+  // sync and the page reset cannot drift apart.
+  const handleAccountFilterChange = React.useCallback(
+    (value: string) => {
+      setAccountFilter(value);
+      setPage(1);
+      const params = new URLSearchParams(searchParams.toString());
+      if (value === 'all') {
+        params.delete('account');
+      } else {
+        params.set('account', value);
+      }
+      const query = params.toString();
+      router.replace(
+        query ? `/tenant/${subdomain}/pages?${query}` : `/tenant/${subdomain}/pages`
+      );
+    },
+    [router, searchParams, subdomain]
+  );
+  const handleClearFilters = React.useCallback(() => {
+    setSearchQuery('');
+    setStatusFilter('all');
+    handleAccountFilterChange('all');
+  }, [handleAccountFilterChange]);
+
   // ?account= initialisation (see the file header): applied once,
   // after the initial pages/accounts data is known, so an unknown
   // param can fall back to 'all' instead of an empty list. The raw
@@ -209,26 +328,6 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
     searchParams,
   ]);
 
-  // Toolbar (and Clear filters) changes sync back to the URL so the
-  // filtered view is shareable and refresh-stable; choosing 'all'
-  // removes the param. Other existing params are preserved.
-  const handleAccountFilterChange = React.useCallback(
-    (value: string) => {
-      setAccountFilter(value);
-      const params = new URLSearchParams(searchParams.toString());
-      if (value === 'all') {
-        params.delete('account');
-      } else {
-        params.set('account', value);
-      }
-      const query = params.toString();
-      router.replace(
-        query ? `/tenant/${subdomain}/pages?${query}` : `/tenant/${subdomain}/pages`
-      );
-    },
-    [router, searchParams, subdomain]
-  );
-
   const handleReconnect = React.useCallback(
     (account: FacebookAccountItem) => {
       if (byocQuery.isPending) return;
@@ -250,8 +349,6 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
     [byocQuery.isPending, facebookAppConfigured, router, subdomain]
   );
 
-  const sortedPages = React.useMemo(() => sortPagesAttentionFirst(pages), [pages]);
-
   const accountOptions = React.useMemo(() => {
     const names = new Set<string>();
     for (const p of pages) {
@@ -267,11 +364,6 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
     return Array.from(names);
   }, [pages, accounts]);
 
-  const filteredPages = React.useMemo(
-    () => filterPagesList(sortedPages, searchQuery, statusFilter, accountFilter),
-    [sortedPages, searchQuery, statusFilter, accountFilter]
-  );
-
   const attentionCount = React.useMemo(
     () => pages.filter((p) => isPageNeedsAttention(p.status)).length,
     [pages]
@@ -280,16 +372,20 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
   const isFiltered =
     searchQuery.trim().length > 0 || statusFilter !== 'all' || accountFilter !== 'all';
 
-  const situationalSubtitle = React.useMemo(
-    () =>
-      computeSituationalSubtitle(
-        pages.length,
-        filteredPages.length,
-        attentionCount,
-        isFiltered
-      ),
-    [pages.length, filteredPages.length, attentionCount, isFiltered]
-  );
+  // The subtitle counts from the API total. Note: the "requires
+  // reconnecting" fragment now counts attention pages on the current
+  // page only — the unfiltered attention total is not part of the
+  // paginated response, and the pagination line below ("Showing X–Y
+  // of Z") is the authoritative count.
+  const situationalSubtitle = React.useMemo(() => {
+    if (total === 0 && !isFiltered) {
+      return computeSituationalSubtitle(0, 0, 0, false);
+    }
+    if (isFiltered) {
+      return `${total} matching ${total === 1 ? 'page' : 'pages'}`;
+    }
+    return computeSituationalSubtitle(total, total, attentionCount, false);
+  }, [total, attentionCount, isFiltered]);
 
   const handleSelectPage = (page: FacebookPageItem) => {
     router.push(`/tenant/${subdomain}/pages/${page.id}`);
@@ -350,7 +446,7 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
         }
       />
     );
-  } else if (pages.length === 0) {
+  } else if (pages.length === 0 && !isFiltered) {
     contentNode = (
       <PagesEmptyState
         onAddPage={() => setIsAddModalOpen(true)}
@@ -358,7 +454,7 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
         facebookAppConfigured={facebookAppConfigured}
       />
     );
-  } else if (filteredPages.length === 0) {
+  } else if (pages.length === 0 && isFiltered) {
     contentNode = (
       <div
         data-testid="pages-filter-empty"
@@ -373,11 +469,7 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
               type="button"
               variant="outline"
               data-testid="pages-clear-filters-btn"
-              onClick={() => {
-                setSearchQuery('');
-                setStatusFilter('all');
-                handleAccountFilterChange('all');
-              }}
+              onClick={handleClearFilters}
             >
               Clear filters
             </Button>
@@ -387,20 +479,29 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
     );
   } else {
     contentNode = (
-      <div
-        data-testid="pages-grid"
-        className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3"
-      >
-        {filteredPages.map((page) => (
-          <PageCard
-            key={page.id}
-            page={page}
-            subdomain={subdomain}
-            onSelectPage={handleSelectPage}
-            highlighted={highlightedPageIds.includes(page.id)}
-          />
-        ))}
-      </div>
+      <>
+        <div
+          data-testid="pages-grid"
+          className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3"
+        >
+          {pages.map((page) => (
+            <PageCard
+              key={page.id}
+              page={page}
+              subdomain={subdomain}
+              onSelectPage={handleSelectPage}
+              highlighted={highlightedPageIds.includes(page.id)}
+            />
+          ))}
+        </div>
+        <ListPagination
+          page={page}
+          totalPages={totalPages}
+          total={total}
+          limit={DEFAULT_PAGE_SIZE}
+          onPageChange={setPage}
+        />
+      </>
     );
   }
 
@@ -465,13 +566,18 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
         }}
       />
 
-      {/* Scale Toolbar — always visible, at any page count */}
+      {/* Scale Toolbar — always visible, at any page count. The old >4
+          gate cannot survive pagination — its input was the unfiltered
+          client-side list length, which no longer exists — and
+          search/filters are what drive the paginated query, so hiding
+          them would strand the user on a filtered page with no way
+          back. */}
       {!isLoading && (
         <PagesScaleToolbar
           searchQuery={searchQuery}
-          onSearchChange={setSearchQuery}
+          onSearchChange={handleSearchChange}
           statusFilter={statusFilter}
-          onStatusFilterChange={setStatusFilter}
+          onStatusFilterChange={handleStatusFilterChange}
           accountFilter={accountFilter}
           onAccountFilterChange={handleAccountFilterChange}
           accountOptions={accountOptions}

@@ -25,11 +25,11 @@
  */
 import * as React from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PlusIcon } from 'lucide-react';
 
-import { api, buildTenantApiPath, isApiError } from '@/lib/api';
+import { api, buildTenantApiPath, buildUrl, isApiError } from '@/lib/api';
 import {
   DisconnectAccountResponseSchema,
   ListFacebookAccountsResponseSchema,
@@ -37,9 +37,11 @@ import {
 } from '@/lib/api/schemas/accounts';
 import { ByocSettingsResponseSchema } from '@/lib/api/schemas/settings';
 import { queryKeys } from '@/lib/data/query-keys';
+import { DEFAULT_PAGE_SIZE } from '@/lib/server/pagination';
 import { reportError } from '@/lib/report-error';
 import { Button } from '@/components/shared/ui/button';
 import { EmptyState } from '@/components/shared/ui/empty-state';
+import { ListPagination } from '@/components/shared/ui/list-pagination';
 import { Skeleton } from '@/components/shared/ui/skeleton';
 import { Toast, toast, type ToasterProps } from '@/components/shared/ui/toast';
 import { AccountCard, type FacebookAccountItem } from '@/components/accounts/account-card';
@@ -53,7 +55,6 @@ import {
 import { ByocConfigPromptModal } from '@/components/accounts/byoc-config-prompt-modal';
 import {
   computeAccountsSubtitle,
-  filterAccountsList,
   isConnectGatedByMissingCredentials,
   resolveOAuthRedirectNotice,
   sortAccountsExpiredFirst,
@@ -112,15 +113,44 @@ function AccountsLoadingSkeleton() {
 
 export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const queryClient = useQueryClient();
   const tenant = queryKeys.tenant(subdomain);
   const accountsPath = buildTenantApiPath(subdomain, '/accounts');
   const byocPath = buildTenantApiPath(subdomain, '/settings/byoc');
 
+  // Pagination state lives in the URL (?page=) so refresh and a shared
+  // link land on the same page; an unparseable value falls back to 1.
+  const initialPage = React.useMemo(() => {
+    const raw = Number.parseInt(searchParams.get('page') ?? '', 10);
+    return Number.isFinite(raw) && raw >= 1 ? raw : 1;
+    // Deliberately read once at mount: later URL changes flow
+    // through the sync effect, not through this initializer.
+  }, []);
+  const [page, setPage] = React.useState(initialPage);
+
+  // Filter/search state lives here; changing any of them resets to
+  // page 1 (the filtered result's first page).
+  const [searchQuery, setSearchQuery] = React.useState('');
+  const [statusFilter, setStatusFilter] = React.useState<AccountStatusFilter>('all');
+
   const accountsQuery = useQuery({
-    queryKey: tenant.accounts.list,
+    queryKey: tenant.accounts.listPage({
+      page,
+      limit: DEFAULT_PAGE_SIZE,
+      search: searchQuery.trim(),
+      status: statusFilter,
+    }),
     queryFn: ({ signal }) =>
-      api.get(accountsPath, { schema: ListFacebookAccountsResponseSchema, signal }),
+      api.get(
+        buildUrl(accountsPath, {
+          page,
+          limit: DEFAULT_PAGE_SIZE,
+          ...(searchQuery.trim() ? { search: searchQuery.trim() } : {}),
+          ...(statusFilter !== 'all' ? { status: statusFilter } : {}),
+        }),
+        { schema: ListFacebookAccountsResponseSchema, signal }
+      ),
   });
   const byocQuery = useQuery({
     queryKey: tenant.settings.byoc,
@@ -128,8 +158,14 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
       api.get(byocPath, { schema: ByocSettingsResponseSchema, signal }),
   });
 
+  // The API already returns the slice expired-first; the sort here
+  // is a stable no-op on real data and keeps the documented order
+  // for any cache seeded out of order.
   const accounts = React.useMemo<FacebookAccountItem[]>(
-    () => (accountsQuery.data?.accounts ?? []) as FacebookAccountItem[],
+    () =>
+      sortAccountsExpiredFirst(
+        (accountsQuery.data?.accounts ?? []) as FacebookAccountItem[]
+      ),
     [accountsQuery.data]
   );
   const isLoading = accountsQuery.isPending;
@@ -218,8 +254,49 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
     React.useState<FacebookAccountItem | null>(null);
   const [disconnectingAccount, setDisconnectingAccount] =
     React.useState<FacebookAccountItem | null>(null);
-  const [searchQuery, setSearchQuery] = React.useState('');
-  const [statusFilter, setStatusFilter] = React.useState<AccountStatusFilter>('all');
+
+  // The API returns the filtered, expired-first page slice, so the
+  // grid renders it directly — no client-side sort or filter anymore.
+  const total = accountsQuery.data?.total ?? 0;
+  const totalPages = accountsQuery.data?.totalPages ?? 0;
+
+  // An out-of-range ?page= is clamped by the API; sync state (and the
+  // URL, via the effect below) to the page that actually came back.
+  React.useEffect(() => {
+    if (accountsQuery.data && accountsQuery.data.page !== undefined && accountsQuery.data.page !== page) {
+      setPage(accountsQuery.data.page);
+    }
+  }, [accountsQuery.data, page]);
+
+  // Keep ?page= in the URL in step with state (page 1 omits the param).
+  // A query-only replace resolves against the current pathname. This
+  // coexists with the OAuth-return effect below: that effect only
+  // strips OAuth params on a return, after which this effect re-adds
+  // ?page= if the state is past page 1, and settles.
+  React.useEffect(() => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (page <= 1) params.delete('page');
+    else params.set('page', String(page));
+    const next = params.toString();
+    if (next !== searchParams.toString()) {
+      router.replace(next ? `?${next}` : '?', { scroll: false });
+    }
+  }, [page, router, searchParams]);
+
+  // Any filter/search change restarts at page 1.
+  const handleSearchChange = React.useCallback((value: string) => {
+    setSearchQuery(value);
+    setPage(1);
+  }, []);
+  const handleStatusFilterChange = React.useCallback((value: AccountStatusFilter) => {
+    setStatusFilter(value);
+    setPage(1);
+  }, []);
+  const handleClearFilters = React.useCallback(() => {
+    setSearchQuery('');
+    setStatusFilter('all');
+    setPage(1);
+  }, []);
 
   const disconnectMutation = useMutation({
     mutationFn: (accountId: string) =>
@@ -332,11 +409,11 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
     }
   };
 
-  const sortedAccounts = React.useMemo(() => sortAccountsExpiredFirst(accounts), [accounts]);
-  const filteredAccounts = React.useMemo(
-    () => filterAccountsList(sortedAccounts, searchQuery, statusFilter),
-    [sortedAccounts, searchQuery, statusFilter]
-  );
+  // Note: with pagination this covers the current page only. The
+  // connect modal uses it to flag already-connected accounts, and the
+  // backend still resolves a re-connect as already-connected, so an
+  // account on another page degrades to the normal reconnect flow
+  // rather than a duplicate.
   const existingAccountIds = React.useMemo(() => accounts.map((a) => a.id), [accounts]);
 
   // Connect is gated while the App ID and Secret are known to be missing:
@@ -351,11 +428,18 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
     [accounts]
   );
   const isFiltered = searchQuery.trim().length > 0 || statusFilter !== 'all';
-  const situationalSubtitle = React.useMemo(
-    () =>
-      computeAccountsSubtitle(accounts, filteredAccounts.length, isFiltered),
-    [accounts, filteredAccounts.length, isFiltered]
-  );
+  // The subtitle counts from the API total. As in the pages shell, the
+  // health breakdown now reflects the current page only when paginated;
+  // the pagination line below ("Showing X–Y of Z") is authoritative.
+  const situationalSubtitle = React.useMemo(() => {
+    if (total === 0 && !isFiltered) {
+      return computeAccountsSubtitle([], 0, false);
+    }
+    if (isFiltered) {
+      return `${total} matching ${total === 1 ? 'account' : 'accounts'}`;
+    }
+    return computeAccountsSubtitle(accounts, accounts.length, false);
+  }, [total, accounts, isFiltered]);
 
   let contentNode: React.ReactNode;
   if (isLoading) {
@@ -380,7 +464,7 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
         }
       />
     );
-  } else if (accounts.length === 0) {
+  } else if (accounts.length === 0 && !isFiltered) {
     contentNode = (
       <AccountsEmptyState
         onConnect={handleOpenNewConnect}
@@ -389,7 +473,7 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
         settingsHref={settingsFacebookHref}
       />
     );
-  } else if (filteredAccounts.length === 0) {
+  } else if (accounts.length === 0 && isFiltered) {
     contentNode = (
       <div
         data-testid="accounts-filter-empty"
@@ -402,10 +486,7 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
           type="button"
           variant="outline"
           data-testid="accounts-clear-filters-btn"
-          onClick={() => {
-            setSearchQuery('');
-            setStatusFilter('all');
-          }}
+          onClick={handleClearFilters}
         >
           Clear filters
         </Button>
@@ -413,20 +494,29 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
     );
   } else {
     contentNode = (
-      <div
-        data-testid="accounts-grid"
-        className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3"
-      >
-        {filteredAccounts.map((account) => (
-          <AccountCard
-            key={account.id}
-            account={account}
-            highlighted={account.id === highlightedAccountId}
-            onReconnect={handleReconnect}
-            onDisconnect={(acc) => setDisconnectingAccount(acc)}
-          />
-        ))}
-      </div>
+      <>
+        <div
+          data-testid="accounts-grid"
+          className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3"
+        >
+          {accounts.map((account) => (
+            <AccountCard
+              key={account.id}
+              account={account}
+              highlighted={account.id === highlightedAccountId}
+              onReconnect={handleReconnect}
+              onDisconnect={(acc) => setDisconnectingAccount(acc)}
+            />
+          ))}
+        </div>
+        <ListPagination
+          page={page}
+          totalPages={totalPages}
+          total={total}
+          limit={DEFAULT_PAGE_SIZE}
+          onPageChange={setPage}
+        />
+      </>
     );
   }
 
@@ -457,7 +547,7 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
           </p>
         </div>
 
-        {accounts.length > 0 && (
+        {total > 0 && (
           <div className="flex flex-col items-end gap-1">
             <Button
               type="button"
@@ -515,12 +605,12 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
       )}
 
       {/* Search & Status Filter Bar */}
-      {!isLoading && accounts.length > 0 && (
+      {!isLoading && total > 0 && (
         <AccountsFilterBar
           searchQuery={searchQuery}
-          onSearchChange={setSearchQuery}
+          onSearchChange={handleSearchChange}
           statusFilter={statusFilter}
-          onStatusFilterChange={setStatusFilter}
+          onStatusFilterChange={handleStatusFilterChange}
           attentionCount={attentionCount}
         />
       )}

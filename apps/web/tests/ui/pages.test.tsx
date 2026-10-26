@@ -78,6 +78,7 @@ vi.mock('next/navigation', () => ({
   }),
   // PagesShell reads ?account= via useSearchParams; these suites
   // render without a URL, so the param is empty by default.
+  // The shell also reads the initial ?page= from the URL (pagination).
   useSearchParams: () => new URLSearchParams(),
 }));
 
@@ -152,14 +153,36 @@ function renderPagesShell({
     defaultOptions: { queries: { retry: false } },
   });
   const tenant = queryKeys.tenant('acme');
-  queryClient.setQueryData(tenant.pages.list, {
-    pages,
-    total: pages.length,
-  });
-  queryClient.setQueryData(tenant.accounts.list, {
-    accounts,
-    total: accounts.length,
-  });
+  // The shell queries the paginated keys (page 1, default filters);
+  // seeding the bare list keys no longer reaches it.
+  queryClient.setQueryData(
+    tenant.pages.listPage({
+      page: 1,
+      limit: 30,
+      search: '',
+      status: 'all',
+      account: 'all',
+    }),
+    {
+      pages,
+      total: pages.length,
+      page: 1,
+      limit: 30,
+      totalPages: pages.length === 0 ? 0 : 1,
+    }
+  );
+  // The pages shell reads accounts at limit 50 (filter options +
+  // expired banner), not the paginated 30.
+  queryClient.setQueryData(
+    tenant.accounts.listPage({ page: 1, limit: 50, search: '', status: 'all' }),
+    {
+      accounts,
+      total: accounts.length,
+      page: 1,
+      limit: 50,
+      totalPages: accounts.length === 0 ? 0 : 1,
+    }
+  );
   return render(
     <QueryClientProvider client={queryClient}>
       <PagesShell subdomain="acme" />
@@ -845,6 +868,7 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
       expect(hasAttribute('data-testid', 'pages-empty-state')).toBe(true);
       expect(hasText('No Facebook Pages added yet')).toBe(true);
       expect(hasAttribute('data-testid', 'empty-state-add-page-btn')).toBe(true);
+      // Toolbar is always visible once loaded now (the >4 gate is gone).
       expect(hasAttribute('data-testid', 'pages-scale-toolbar')).toBe(true);
       // Empty-state copy must not assume reels-only publishing
       expect(html).not.toContain('publish reels to');
@@ -866,7 +890,9 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
         'p-active-1',
       ]);
 
-      // With 4 pages, the scale toolbar is visible (no >4 gate) and attention cards render first in the DOM
+      // The old >4 gate is gone: the toolbar is always visible once
+      // loaded (approved list-redesign behaviour, carried by
+      // pagination). Attention cards still render first in the DOM.
       const { html, hasAttribute } = renderPagesShell({ pages: inputPages, accounts: [sampleActiveAccount] });
 
       expect(hasAttribute('data-testid', 'pages-scale-toolbar')).toBe(true);

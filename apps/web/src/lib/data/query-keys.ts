@@ -21,6 +21,13 @@ export const queryKeys = {
       accounts: {
         all: [...tenantRoot, 'accounts'] as const,
         list: [...tenantRoot, 'accounts', 'list'] as const,
+        /** Paginated list key: page + limit + filters, so each page caches separately. */
+        listPage: (params: {
+          page: number;
+          limit: number;
+          search: string;
+          status: string;
+        }) => [...tenantRoot, 'accounts', 'list', params] as const,
         socialList: [...tenantRoot, 'accounts', 'social'] as const,
         detail: (accountId: string) =>
           [...tenantRoot, 'accounts', accountId] as const,
@@ -29,6 +36,14 @@ export const queryKeys = {
       pages: {
         all: [...tenantRoot, 'pages'] as const,
         list: [...tenantRoot, 'pages', 'list'] as const,
+        /** Paginated list key: page + limit + filters, so each page caches separately. */
+        listPage: (params: {
+          page: number;
+          limit: number;
+          search: string;
+          status: string;
+          account: string;
+        }) => [...tenantRoot, 'pages', 'list', params] as const,
         detail: (pageId: string) =>
           [...tenantRoot, 'pages', pageId] as const,
         slots: (pageId: string) =>

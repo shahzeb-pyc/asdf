@@ -25,7 +25,7 @@
 
 import * as React from 'react';
 
-import { buildTenantApiPath } from '@/lib/api/client';
+import { buildTenantApiPath, buildUrl } from '@/lib/api/client';
 import { ListFacebookAccountsResponseSchema } from '@/lib/api/schemas/accounts';
 import { ListFacebookPagesResponseSchema } from '@/lib/api/schemas/pages';
 import { ByocSettingsResponseSchema } from '@/lib/api/schemas/settings';
@@ -41,29 +41,56 @@ import { PagesShell } from './pages-shell';
 
 interface TenantPagesPageProps {
   params: Promise<{ subdomain: string }>;
+  searchParams?: Promise<{ page?: string }>;
 }
 
 export default async function TenantPagesPage({
   params,
+  searchParams,
 }: Readonly<TenantPagesPageProps>) {
   const { subdomain } = await params;
   const tenant = queryKeys.tenant(subdomain);
+  const rawPage = Number.parseInt((await searchParams)?.page ?? '', 10);
+  const initialPage = Number.isFinite(rawPage) && rawPage >= 1 ? rawPage : 1;
 
   const queryClient = createServerQueryClient(subdomain);
   const state = await prefetchServerQueries(queryClient, [
     {
-      queryKey: tenant.pages.list,
+      queryKey: tenant.pages.listPage({
+        page: initialPage,
+        limit: 30,
+        search: '',
+        status: 'all',
+        account: 'all',
+      }),
       queryFn: () =>
-        serverApiFetch(buildTenantApiPath(subdomain, '/pages'), {
-          schema: ListFacebookPagesResponseSchema,
-        }),
+        serverApiFetch(
+          buildUrl(buildTenantApiPath(subdomain, '/pages'), {
+            page: initialPage,
+            limit: 30,
+          }),
+          {
+            schema: ListFacebookPagesResponseSchema,
+          }
+        ),
     },
     {
-      queryKey: tenant.accounts.list,
+      queryKey: tenant.accounts.listPage({
+        page: 1,
+        limit: 50,
+        search: '',
+        status: 'all',
+      }),
       queryFn: () =>
-        serverApiFetch(buildTenantApiPath(subdomain, '/accounts'), {
-          schema: ListFacebookAccountsResponseSchema,
-        }),
+        serverApiFetch(
+          buildUrl(buildTenantApiPath(subdomain, '/accounts'), {
+            page: 1,
+            limit: 50,
+          }),
+          {
+            schema: ListFacebookAccountsResponseSchema,
+          }
+        ),
     },
     {
       queryKey: tenant.settings.byoc,

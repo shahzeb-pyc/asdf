@@ -597,26 +597,43 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
       const json = await res.json();
       expect(json.total).toBe(3);
 
-      // Page 1: Positive growth (+2000)
-      expect(json.pages[0].pageName).toBe('Brand Flagship Page');
-      expect(json.pages[0].startingFollowers).toBe(50000);
-      expect(json.pages[0].currentFollowers).toBe(52000);
-      expect(json.pages[0].followersGained).toBe(2000);
-      expect(json.pages[0].profilePictureUrl).toBe(
+      // Looked up by name: the route returns the documented
+      // attention-first order (paused before active), not fixture
+      // order, now that the SQL path re-sorts the page slice.
+      type PageFollowers = {
+        startingFollowers: number;
+        currentFollowers: number;
+        followersGained: number;
+        profilePictureUrl: string | null;
+      };
+      const byName = new Map<string, PageFollowers>(
+        json.pages.map((p: any) => [p.pageName, p] as [string, PageFollowers])
+      );
+      const must = (v: PageFollowers | undefined): PageFollowers => {
+        if (!v) throw new Error('expected page missing from response');
+        return v;
+      };
+
+      // Positive growth (+2000)
+      const flagship = must(byName.get('Brand Flagship Page'));
+      expect(flagship.startingFollowers).toBe(50000);
+      expect(flagship.currentFollowers).toBe(52000);
+      expect(flagship.followersGained).toBe(2000);
+      expect(flagship.profilePictureUrl).toBe(
         'https://platform-lookaside.fbsbx.com/platform/profilepic/page_1001.jpg'
       );
 
-      // Page 2: Zero growth (0)
-      expect(json.pages[1].pageName).toBe('Steady Community Page');
-      expect(json.pages[1].startingFollowers).toBe(10000);
-      expect(json.pages[1].currentFollowers).toBe(10000);
-      expect(json.pages[1].followersGained).toBe(0);
+      // Zero growth (0)
+      const steady = must(byName.get('Steady Community Page'));
+      expect(steady.startingFollowers).toBe(10000);
+      expect(steady.currentFollowers).toBe(10000);
+      expect(steady.followersGained).toBe(0);
 
-      // Page 3: Negative growth (-250)
-      expect(json.pages[2].pageName).toBe('Churned Followers Page');
-      expect(json.pages[2].startingFollowers).toBe(5000);
-      expect(json.pages[2].currentFollowers).toBe(4750);
-      expect(json.pages[2].followersGained).toBe(-250);
+      // Negative growth (-250)
+      const churned = must(byName.get('Churned Followers Page'));
+      expect(churned.startingFollowers).toBe(5000);
+      expect(churned.currentFollowers).toBe(4750);
+      expect(churned.followersGained).toBe(-250);
 
       // Never leak tokens
       const str = JSON.stringify(json);
