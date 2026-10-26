@@ -441,8 +441,10 @@ describe('Multi-Account Facebook OAuth Connection (User Story 1 - T059 & Spec 03
     const res = await handleFacebookCallback(req, mockSupabase);
 
     expect(res.status).toBe(307);
+    // The direct-flow redirect now carries accountName so the Accounts
+    // page can toast the connected account by name (Option B dialogue).
     expect(res.headers.get('location')).toBe(
-      'http://localhost:3000/tenant/acme/accounts?connected=1'
+      'http://localhost:3000/tenant/acme/accounts?connected=1&accountName=John+Doe'
     );
 
     // Verify all 3 linked pages had their tokens encrypted and updated

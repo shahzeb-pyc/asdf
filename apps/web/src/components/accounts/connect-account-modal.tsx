@@ -11,7 +11,7 @@
  */
 import * as React from 'react';
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { CheckIcon, LinkIcon, MonitorIcon } from 'lucide-react';
+import { LinkIcon, MonitorIcon } from 'lucide-react';
 
 import {
   Dialog,
@@ -49,7 +49,12 @@ export interface ConnectAccountModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onAccountConnected: () => void;
-  onConnectionNotice?: (notice: { type: 'success' | 'error'; message: string }) => void;
+  onConnectionNotice?: (notice: {
+    type: 'success' | 'error';
+    message: string;
+    /** Id of the account that was connected/refreshed, when known — used to highlight its card. */
+    accountId?: string | undefined;
+  }) => void;
   existingAccountIds?: string[];
   reconnectingAccount?: {
     id: string;
@@ -63,11 +68,22 @@ export interface ConnectAccountModalProps {
 
 export type PollOutcome =
   | { matched: false }
-  | { matched: true; kind: 'connected'; accountName?: string | undefined }
-  | { matched: true; kind: 'already_connected'; accountName: string }
+  | {
+      matched: true;
+      kind: 'connected';
+      accountId: string;
+      accountName?: string | undefined;
+    }
+  | {
+      matched: true;
+      kind: 'already_connected';
+      accountId: string;
+      accountName: string;
+    }
   | {
       matched: true;
       kind: 'reconnected_mismatch';
+      accountId: string;
       newAccountName: string;
       expectedAccountName: string;
     };
@@ -127,7 +143,12 @@ export function evaluateAccountConnectionPoll(
       isTargetReconnected(acc, reconnectingAccount, initialStates)
     );
     if (targetAcc) {
-      return { matched: true, kind: 'connected', accountName: targetAcc.displayName };
+      return {
+        matched: true,
+        kind: 'connected',
+        accountId: targetAcc.id,
+        accountName: targetAcc.displayName,
+      };
     }
     const differentAcc = accounts.find(
       (acc) =>
@@ -138,6 +159,7 @@ export function evaluateAccountConnectionPoll(
       return {
         matched: true,
         kind: 'reconnected_mismatch',
+        accountId: differentAcc.id,
         newAccountName: differentAcc.displayName || 'another account',
         expectedAccountName: reconnectingAccount.displayName,
       };
@@ -147,7 +169,12 @@ export function evaluateAccountConnectionPoll(
 
   const newAcc = accounts.find((acc) => !initialIds.has(acc.id));
   if (newAcc) {
-    return { matched: true, kind: 'connected', accountName: newAcc.displayName };
+    return {
+      matched: true,
+      kind: 'connected',
+      accountId: newAcc.id,
+      accountName: newAcc.displayName,
+    };
   }
 
   const refreshedAcc = accounts.find((acc) =>
@@ -157,6 +184,7 @@ export function evaluateAccountConnectionPoll(
     return {
       matched: true,
       kind: 'already_connected',
+      accountId: refreshedAcc.id,
       accountName: refreshedAcc.displayName || 'Account',
     };
   }
@@ -287,63 +315,13 @@ export function MagicLinkView({
         </div>
       )}
 
-      {/* Countdown & Status */}
+      {/* Countdown & Status — text only, no status dot (no-dots rule). */}
       <div className="flex items-center justify-between rounded-sm bg-subtle px-3.5 py-2.5 text-metadata text-ink-dim">
-        <div className="flex items-center gap-1.5">
-          <span
-            data-testid="magic-pulse-indicator"
-            className={cn(
-              'inline-block size-1.5 rounded-full',
-              isExpired ? 'bg-brand-rose' : 'bg-primary'
-            )}
-          />
-          <span>{isExpired ? 'Magic link expired' : 'Waiting for Facebook approval...'}</span>
-        </div>
+        <span>{isExpired ? 'Magic link expired' : 'Waiting for Facebook approval...'}</span>
 
         <span data-testid="magic-countdown" className="font-medium">
           {isExpired ? 'Link expired' : `Link expires in ${formatTimer(remainingSeconds)}`}
         </span>
-      </div>
-    </div>
-  );
-}
-
-interface ConnectionResultViewProps {
-  completionNotice: {
-    kind: 'connected' | 'already_connected' | 'reconnected_mismatch';
-    message: string;
-  } | null;
-}
-
-export function ConnectionResultView({
-  completionNotice,
-}: Readonly<ConnectionResultViewProps>) {
-  const isMismatch = completionNotice?.kind === 'reconnected_mismatch';
-  const heading = isMismatch ? 'Different account connected' : 'Account connected';
-  const subtext =
-    completionNotice?.message ?? 'your facebook account is successfully connected';
-
-  return (
-    <div
-      data-testid="magic-success-animation"
-      className="flex flex-col items-center justify-center py-6 text-center"
-    >
-      <div
-        className={cn(
-          'mb-2 flex size-12 items-center justify-center rounded-full border',
-          isMismatch
-            ? 'border-brand-rose/35 bg-brand-rose/15 text-brand-rose'
-            : 'border-brand-emerald/35 bg-brand-emerald/15 text-brand-emerald'
-        )}
-      >
-        <CheckIcon className="size-6" strokeWidth={2.5} aria-hidden />
-      </div>
-      <div className="text-lg font-semibold text-ink">{heading}</div>
-      <div
-        data-testid={isMismatch ? 'magic-mismatch-notice' : 'magic-success-message'}
-        className="mt-1 text-body text-ink-sub"
-      >
-        {subtext}
       </div>
     </div>
   );
@@ -354,8 +332,6 @@ const EMPTY_ACCOUNTS: AccountSnapshot[] = [];
 
 /** How long the "copied" feedback stays visible on copy buttons. */
 const COPY_FEEDBACK_DURATION_MS = 2000;
-/** Delay before auto-closing the modal after a successful connection. */
-const SUCCESS_AUTO_CLOSE_DELAY_MS = 1500;
 /** How often to poll for magic-link connection status. */
 const MAGIC_LINK_POLL_INTERVAL_MS = 3000;
 
@@ -369,17 +345,13 @@ export function ConnectAccountModal({
   reconnectingAccount = null,
   initialAccounts = EMPTY_ACCOUNTS,
 }: Readonly<ConnectAccountModalProps>) {
-  const [view, setView] = useState<'choose' | 'magic' | 'success'>('choose');
+  const [view, setView] = useState<'choose' | 'magic'>('choose');
   const [isDirectConnecting, setIsDirectConnecting] = useState(false);
   const [magicUrl, setMagicUrl] = useState<string | null>(null);
   const [isGeneratingMagic, setIsGeneratingMagic] = useState(false);
   const [copySuccess, setCopySuccess] = useState(false);
   const [remainingSeconds, setRemainingSeconds] = useState(900); // 15 minutes
   const [magicError, setMagicError] = useState<string | null>(null);
-  const [completionNotice, setCompletionNotice] = useState<{
-    kind: 'connected' | 'already_connected' | 'reconnected_mismatch';
-    message: string;
-  } | null>(null);
 
   const wasOpenRef = useRef(false);
   const initialAccountIdsRef = useRef<Set<string>>(new Set(existingAccountIds));
@@ -396,7 +368,6 @@ export function ConnectAccountModal({
       setCopySuccess(false);
       setRemainingSeconds(900);
       setMagicError(null);
-      setCompletionNotice(null);
 
       const ids = new Set<string>(existingAccountIds);
       const stateMap = new Map<string, AccountStateRecord>();
@@ -497,23 +468,34 @@ export function ConnectAccountModal({
       );
 
       if (outcome.matched) {
+        // Option B dialogue: no success view and no auto-close timer —
+        // the modal closes at once and the shell confirms via toast
+        // (success) or a persistent banner (mismatch), with the account
+        // name in every message. The mismatched account IS connected
+        // (it was upserted by the callback); only the expected account
+        // still needs reconnecting.
         if (outcome.kind === 'reconnected_mismatch') {
-          const message = `You signed into ${outcome.newAccountName} instead of ${outcome.expectedAccountName}. ${outcome.expectedAccountName} still needs to be reconnected.`;
-          setCompletionNotice({ kind: 'reconnected_mismatch', message });
-          onConnectionNotice?.({ type: 'error', message });
+          onConnectionNotice?.({
+            type: 'error',
+            message: `You signed into ${outcome.newAccountName} instead of ${outcome.expectedAccountName}. ${outcome.expectedAccountName} still needs to be reconnected.`,
+            accountId: outcome.accountId,
+          });
         } else if (outcome.kind === 'already_connected') {
-          const message = `This Facebook account (${outcome.accountName}) is already connected — its session was refreshed.`;
-          setCompletionNotice({ kind: 'already_connected', message });
-          onConnectionNotice?.({ type: 'success', message });
+          onConnectionNotice?.({
+            type: 'success',
+            message: `${outcome.accountName} already connected — session refreshed`,
+            accountId: outcome.accountId,
+          });
         } else {
-          setCompletionNotice(null);
+          onConnectionNotice?.({
+            type: 'success',
+            message: `${outcome.accountName ?? 'Facebook account'} connected`,
+            accountId: outcome.accountId,
+          });
         }
 
-        setView('success');
         onAccountConnected();
-        setTimeout(() => {
-          onOpenChange(false);
-        }, SUCCESS_AUTO_CLOSE_DELAY_MS);
+        onOpenChange(false);
       }
     } catch (error) {
       // Polling failures are reported and retried on the next cycle.
@@ -544,7 +526,6 @@ export function ConnectAccountModal({
           <DialogDescription>
             {view === 'choose' && 'Choose where your Facebook account is currently logged in:'}
             {view === 'magic' && 'Open this link in the browser or mobile device where you are logged into Facebook.'}
-            {view === 'success' && 'Account connected successfully!'}
           </DialogDescription>
         </DialogHeader>
 
@@ -596,9 +577,6 @@ export function ConnectAccountModal({
             />
           )}
 
-          {view === 'success' && (
-            <ConnectionResultView completionNotice={completionNotice} />
-          )}
         </div>
 
         <DialogFooter>
@@ -619,7 +597,7 @@ export function ConnectAccountModal({
             data-testid="connect-close-btn"
             onClick={() => onOpenChange(false)}
           >
-            {view === 'success' ? 'Done' : 'Cancel'}
+            Cancel
           </Button>
         </DialogFooter>
       </DialogContent>

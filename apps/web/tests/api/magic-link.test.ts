@@ -364,8 +364,10 @@ describe('Magic Link Facebook Connection Endpoints (Spec 027)', () => {
       const res = await handleFacebookCallback(req, mockDb);
 
       expect(res.status).toBe(307);
+      // Option B dialogue: the fresh magic redirect now carries the
+      // account name so the success page can confirm "[Name] connected".
       expect(res.headers.get('location')).toBe(
-        'http://localhost:3000/connect/facebook/success'
+        'http://localhost:3000/connect/facebook/success?accountName=Magic+User'
       );
     });
   });
@@ -469,8 +471,10 @@ describe('Magic Link Facebook Connection Endpoints (Spec 027)', () => {
       const res = await handleFacebookCallback(req, mockDbFor(false));
 
       expect(res.status).toBe(307);
+      // Option B dialogue: fresh magic redirect also carries the name
+      // for the "[Name] connected" success page.
       expect(res.headers.get('location')).toBe(
-        'https://app.fbuploadpro.com/connect/facebook/success'
+        'https://app.fbuploadpro.com/connect/facebook/success?accountName=Magic+User'
       );
     });
 

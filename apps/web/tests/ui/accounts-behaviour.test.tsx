@@ -107,13 +107,13 @@ describe('Accounts banners behaviour', () => {
     const onDismiss = vi.fn();
     render(
       <FeedbackBanner
-        notice={{ type: 'success', message: 'Facebook account connected successfully.' }}
+        notice={{ type: 'success', message: 'Jane Smith connected' }}
         onDismiss={onDismiss}
       />
     );
 
     expect(screen.getByTestId('oauth-feedback-banner')).toBeTruthy();
-    expect(screen.getByText('Facebook account connected successfully.')).toBeTruthy();
+    expect(screen.getByText('Jane Smith connected')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss banner' }));
     expect(onDismiss).toHaveBeenCalledTimes(1);
   });

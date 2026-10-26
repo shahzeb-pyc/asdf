@@ -55,6 +55,8 @@ export interface AccountCardProps {
   onViewPages?: ((account: FacebookAccountItem) => void) | undefined;
   defaultPagesExpanded?: boolean | undefined;
   forceAvatarError?: boolean | undefined;
+  /** Briefly true right after this account connects — gold highlight while its toast shows. */
+  highlighted?: boolean | undefined;
 }
 
 /**
@@ -236,6 +238,7 @@ export function AccountCard({
   onViewPages,
   defaultPagesExpanded = false,
   forceAvatarError = false,
+  highlighted = false,
 }: Readonly<AccountCardProps>) {
   const router = useRouter();
   const params = useParams();
@@ -295,9 +298,14 @@ export function AccountCard({
   return (
     <div
       data-testid={`account-card-${account.id}`}
+      data-highlighted={highlighted ? 'true' : undefined}
       className={cn(
         'flex min-h-40 flex-col justify-between rounded-md border bg-panel p-6 shadow-card transition hover:-translate-y-0.5 hover:shadow-elevated',
-        isExpired ? 'border-brand-rose' : 'border-line'
+        highlighted
+          ? 'border-brand-gold ring-2 ring-brand-gold/40'
+          : isExpired
+            ? 'border-brand-rose'
+            : 'border-line'
       )}
     >
       {/* Profile Header */}

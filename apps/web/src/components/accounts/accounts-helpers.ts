@@ -123,6 +123,8 @@ export function resolveOAuthRedirectNotice(searchParams: {
   get: (key: string) => string | null;
 }): {
   notice: { type: 'success' | 'error'; message: string };
+  /** Account name carried by the redirect, when present — used to highlight its card. */
+  accountName?: string | undefined;
   keysToRemove: string[];
 } | null {
   const reconnectedMismatch = searchParams.get('reconnected_mismatch');
@@ -144,19 +146,25 @@ export function resolveOAuthRedirectNotice(searchParams: {
     return {
       notice: {
         type: 'success',
-        message: `This Facebook account (${accountName}) is already connected — its session was refreshed.`,
+        message: `${accountName} already connected — session refreshed`,
       },
+      accountName,
       keysToRemove: ['connected', 'accountName'],
     };
   }
 
   if (connected === '1') {
+    // Option B dialogue: name + connected only, never pages, never the
+    // old "successfully" banner wording. The callback sets accountName
+    // on fresh directs; the fallback covers only legacy URLs without it.
+    const accountName = searchParams.get('accountName') || undefined;
     return {
       notice: {
         type: 'success',
-        message: 'Facebook account connected successfully.',
+        message: accountName ? `${accountName} connected` : 'Facebook account connected',
       },
-      keysToRemove: ['connected'],
+      accountName,
+      keysToRemove: ['connected', 'accountName'],
     };
   }
 
