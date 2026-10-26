@@ -23,9 +23,18 @@
  * when they are), and the Add Page finish summary banner — computed
  * by the same helpers the parity suites pin
  * (`components/pages/pages-helpers`).
+ *
+ * ?account= contract (Accounts card "pages linked" link): the shell
+ * initialises its account filter from the `account` URL param on
+ * arrival — a display name (what the card link sends) or an account
+ * id — and syncs toolbar changes back to the URL with
+ * router.replace, so the filtered view is shareable and
+ * refresh-stable. An unknown param falls back to 'all'. The shell
+ * already renders inside the route's Suspense boundary (page.tsx),
+ * so useSearchParams needs no new boundary here.
  */
 import * as React from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { PlusIcon } from 'lucide-react';
 
@@ -79,6 +88,7 @@ function PagesLoadingSkeleton() {
 
 export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const tenant = queryKeys.tenant(subdomain);
 
@@ -131,6 +141,65 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
   const [searchQuery, setSearchQuery] = React.useState('');
   const [statusFilter, setStatusFilter] = React.useState<PageStatusFilter>('all');
   const [accountFilter, setAccountFilter] = React.useState('all');
+
+  // ?account= initialisation (see the file header): applied once,
+  // after the initial pages/accounts data is known, so an unknown
+  // param can fall back to 'all' instead of an empty list. The raw
+  // param is kept as the filter value (not resolved to a display
+  // name) so an id filter stays exact when two accounts share a
+  // display name; filterPagesList matches both forms. The applied
+  // flag means later user changes are never clobbered by this effect.
+  const accountParamAppliedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (accountParamAppliedRef.current) return;
+    if (pagesQuery.isPending || accountsQuery.isPending) return;
+    if (!pagesQuery.data && !accountsQuery.data) return;
+    accountParamAppliedRef.current = true;
+    const param = searchParams.get('account');
+    if (!param || param === 'all') return;
+    // Only values filterPagesList can match count as known: a page's
+    // display name or facebookAccountId, or an account's display name
+    // or internal id (which is what pages carry as facebookAccountId).
+    // The account's Facebook user id (fbAccountId) is deliberately NOT
+    // accepted — the helper cannot match it, so accepting it would
+    // produce an empty list instead of the 'all' fallback.
+    const known =
+      pages.some(
+        (p) => p.accountDisplayName === param || p.facebookAccountId === param
+      ) ||
+      accounts.some((a) => a.displayName === param || a.id === param);
+    if (known) {
+      setAccountFilter(param);
+    }
+  }, [
+    pagesQuery.isPending,
+    accountsQuery.isPending,
+    pagesQuery.data,
+    accountsQuery.data,
+    pages,
+    accounts,
+    searchParams,
+  ]);
+
+  // Toolbar (and Clear filters) changes sync back to the URL so the
+  // filtered view is shareable and refresh-stable; choosing 'all'
+  // removes the param. Other existing params are preserved.
+  const handleAccountFilterChange = React.useCallback(
+    (value: string) => {
+      setAccountFilter(value);
+      const params = new URLSearchParams(searchParams.toString());
+      if (value === 'all') {
+        params.delete('account');
+      } else {
+        params.set('account', value);
+      }
+      const query = params.toString();
+      router.replace(
+        query ? `/tenant/${subdomain}/pages?${query}` : `/tenant/${subdomain}/pages`
+      );
+    },
+    [router, searchParams, subdomain]
+  );
 
   const expiredAccount = React.useMemo(
     () => accounts.find((a) => getAccountHealth(a) === 'expired') ?? null,
@@ -276,7 +345,7 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
               onClick={() => {
                 setSearchQuery('');
                 setStatusFilter('all');
-                setAccountFilter('all');
+                handleAccountFilterChange('all');
               }}
             >
               Clear filters
@@ -371,7 +440,7 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
           statusFilter={statusFilter}
           onStatusFilterChange={setStatusFilter}
           accountFilter={accountFilter}
-          onAccountFilterChange={setAccountFilter}
+          onAccountFilterChange={handleAccountFilterChange}
           accountOptions={accountOptions}
           attentionCount={attentionCount}
         />

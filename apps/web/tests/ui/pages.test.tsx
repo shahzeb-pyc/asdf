@@ -77,6 +77,9 @@ vi.mock('next/navigation', () => ({
     subdomain: 'acme',
     pageId: 'page-uuid-1',
   }),
+  // PagesShell reads ?account= via useSearchParams; these suites
+  // render without a URL, so the param is empty by default.
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 /**
