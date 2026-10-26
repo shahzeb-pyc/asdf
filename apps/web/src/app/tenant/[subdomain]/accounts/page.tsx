@@ -31,7 +31,7 @@
 
 import * as React from 'react';
 
-import { buildTenantApiPath } from '@/lib/api/client';
+import { buildTenantApiPath, buildUrl } from '@/lib/api/client';
 import {
   ListFacebookAccountsResponseSchema,
 } from '@/lib/api/schemas/accounts';
@@ -48,22 +48,37 @@ import { AccountsShell } from './accounts-shell';
 
 interface TenantAccountsPageProps {
   params: Promise<{ subdomain: string }>;
+  searchParams?: Promise<{ page?: string }>;
 }
 
 export default async function TenantAccountsPage({
   params,
+  searchParams,
 }: Readonly<TenantAccountsPageProps>) {
   const { subdomain } = await params;
   const tenant = queryKeys.tenant(subdomain);
+  const rawPage = Number.parseInt((await searchParams)?.page ?? '', 10);
+  const initialPage = Number.isFinite(rawPage) && rawPage >= 1 ? rawPage : 1;
 
   const queryClient = createServerQueryClient(subdomain);
   const state = await prefetchServerQueries(queryClient, [
     {
-      queryKey: tenant.accounts.list,
+      queryKey: tenant.accounts.listPage({
+        page: initialPage,
+        limit: 30,
+        search: '',
+        status: 'all',
+      }),
       queryFn: () =>
-        serverApiFetch(buildTenantApiPath(subdomain, '/accounts'), {
-          schema: ListFacebookAccountsResponseSchema,
-        }),
+        serverApiFetch(
+          buildUrl(buildTenantApiPath(subdomain, '/accounts'), {
+            page: initialPage,
+            limit: 30,
+          }),
+          {
+            schema: ListFacebookAccountsResponseSchema,
+          }
+        ),
     },
     {
       queryKey: tenant.settings.byoc,

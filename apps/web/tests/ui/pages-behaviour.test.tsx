@@ -17,6 +17,8 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { queryKeys } from '@/lib/data/query-keys';
+import { sortPagesAttentionFirst } from '@/components/pages/pages-helpers';
+import { sortAccountsExpiredFirst } from '@/components/accounts/accounts-helpers';
 import { PagesShell } from '@/app/tenant/[subdomain]/pages/pages-shell';
 import { PagesScaleToolbar } from '@/components/pages/pages-toolbar';
 import {
@@ -76,6 +78,12 @@ function makePage(overrides: Partial<FacebookPageItem>): FacebookPageItem {
   };
 }
 
+// The fake list server below answers refetches (filter changes hit a
+// new query key, so the shell fetches instead of filtering seeded
+// cache). shellWrapper records the dataset the fake serves.
+let fakeServerPages: FacebookPageItem[] = [];
+let fakeServerAccounts: FacebookAccountItem[] = [];
+
 function shellWrapper({
   pages,
   accounts,
@@ -85,15 +93,42 @@ function shellWrapper({
   accounts: FacebookAccountItem[];
   byocConfigured: boolean;
 }) {
+  fakeServerPages = pages;
+  fakeServerAccounts = accounts;
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   });
   const tenant = queryKeys.tenant('acme');
-  queryClient.setQueryData(tenant.pages.list, { pages, total: pages.length });
-  queryClient.setQueryData(tenant.accounts.list, {
-    accounts,
-    total: accounts.length,
-  });
+  // The shell queries the paginated keys (page 1, default filters);
+  // seeding the bare list keys no longer reaches it.
+  queryClient.setQueryData(
+    tenant.pages.listPage({
+      page: 1,
+      limit: 30,
+      search: '',
+      status: 'all',
+      account: 'all',
+    }),
+    {
+      pages,
+      total: pages.length,
+      page: 1,
+      limit: 30,
+      totalPages: pages.length === 0 ? 0 : 1,
+    }
+  );
+  // The pages shell reads accounts at limit 50 (filter options +
+  // expired banner), not the paginated 30.
+  queryClient.setQueryData(
+    tenant.accounts.listPage({ page: 1, limit: 50, search: '', status: 'all' }),
+    {
+      accounts,
+      total: accounts.length,
+      page: 1,
+      limit: 50,
+      totalPages: accounts.length === 0 ? 0 : 1,
+    }
+  );
   queryClient.setQueryData(tenant.settings.byoc, {
     workspaceId: '33333333-3333-4333-8333-333333333333',
     subdomain: 'acme',
@@ -174,8 +209,93 @@ describe('PageCard behaviour', () => {
 });
 
 describe('PagesShell behaviour', () => {
+  const originalFetch = global.fetch;
   beforeEach(() => {
     mockPush.mockReset();
+    // Fake paginated list server: mirrors the real routes' contract
+    // (filter before paginate, attention/expired-first order, meta).
+    global.fetch = (async (input: unknown) => {
+      const url = new URL(String(input), 'http://localhost');
+      const page = Math.max(
+        1,
+        Number.parseInt(url.searchParams.get('page') ?? '1', 10) || 1
+      );
+      const limit = Math.max(
+        1,
+        Number.parseInt(url.searchParams.get('limit') ?? '30', 10) || 30
+      );
+      if (url.pathname.endsWith('/pages')) {
+        const search = (url.searchParams.get('search') ?? '')
+          .trim()
+          .toLowerCase();
+        const status = url.searchParams.get('status') ?? 'all';
+        const account = url.searchParams.get('account') ?? 'all';
+        const filtered = sortPagesAttentionFirst(
+          fakeServerPages.filter((p) => {
+            const matchesSearch =
+              search.length === 0 ||
+              p.pageName.toLowerCase().includes(search) ||
+              (p.category ?? '').toLowerCase().includes(search);
+            let matchesStatus = true;
+            if (status === 'active') matchesStatus = p.status === 'active';
+            else if (status === 'needs_attention')
+              matchesStatus =
+                p.status === 'invalid_token' ||
+                p.status === 'page_checkpoint' ||
+                p.status === 'fb_rate_limited';
+            else if (status === 'paused')
+              matchesStatus = p.status === 'paused';
+            const matchesAccount =
+              account === 'all' ||
+              p.facebookAccountId === account ||
+              p.accountDisplayName === account;
+            return matchesSearch && matchesStatus && matchesAccount;
+          })
+        );
+        const totalPages =
+          filtered.length === 0 ? 0 : Math.ceil(filtered.length / limit);
+        const clamped = totalPages === 0 ? 1 : Math.min(page, totalPages);
+        return jsonResponse({
+          pages: filtered.slice((clamped - 1) * limit, clamped * limit),
+          total: filtered.length,
+          page: clamped,
+          limit,
+          totalPages,
+        });
+      }
+      if (url.pathname.endsWith('/accounts')) {
+        const search = (url.searchParams.get('search') ?? '')
+          .trim()
+          .toLowerCase();
+        const status = url.searchParams.get('status') ?? 'all';
+        const filtered = sortAccountsExpiredFirst(
+          fakeServerAccounts.filter((a) => {
+            const matchesSearch =
+              search.length === 0 ||
+              a.displayName.toLowerCase().includes(search);
+            let matchesStatus = true;
+            if (status === 'active') matchesStatus = a.status === 'active';
+            else if (status === 'expired')
+              matchesStatus = a.status === 'expired';
+            return matchesSearch && matchesStatus;
+          })
+        );
+        const totalPages =
+          filtered.length === 0 ? 0 : Math.ceil(filtered.length / limit);
+        const clamped = totalPages === 0 ? 1 : Math.min(page, totalPages);
+        return jsonResponse({
+          accounts: filtered.slice((clamped - 1) * limit, clamped * limit),
+          total: filtered.length,
+          page: clamped,
+          limit,
+          totalPages,
+        });
+      }
+      return jsonResponse({ error: 'not found' }, 404);
+    }) as unknown as typeof fetch;
+  });
+  afterEach(() => {
+    global.fetch = originalFetch;
   });
 
   const fivePages = [
@@ -199,7 +319,7 @@ describe('PagesShell behaviour', () => {
     expect(screen.queryByTestId('pages-reconnect-btn')).toBeNull();
   });
 
-  it('filtering to zero shows the typed no-results state and Clear filters restores the grid (UI Rule 23)', () => {
+  it('filtering to zero shows the typed no-results state and Clear filters restores the grid (UI Rule 23)', async () => {
     render(
       shellWrapper({
         pages: fivePages,
@@ -212,11 +332,17 @@ describe('PagesShell behaviour', () => {
     fireEvent.change(screen.getByTestId('pages-search-input'), {
       target: { value: 'no-such-page' },
     });
-    expect(screen.getByTestId('pages-filter-empty')).toBeTruthy();
+    // Filtering is server-side now: the new page key refetches from
+    // the fake server, so the empty state arrives asynchronously.
+    await waitFor(() =>
+      expect(screen.getByTestId('pages-filter-empty')).toBeTruthy()
+    );
     expect(screen.getByText(/Active filters:/)).toBeTruthy();
 
     fireEvent.click(screen.getByTestId('pages-clear-filters-btn'));
-    expect(screen.getByTestId('pages-grid')).toBeTruthy();
+    await waitFor(() =>
+      expect(screen.getByTestId('pages-grid')).toBeTruthy()
+    );
   });
 
   it('subtitle counts attention pages truthfully', () => {

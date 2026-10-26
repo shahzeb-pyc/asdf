@@ -55,6 +55,91 @@ function json(route: Route, body: unknown, status = 200) {
   });
 }
 
+/**
+ * Paginated fixture list, mirroring the production list contract
+ * (page/limit/totalPages alongside total). The client now sends
+ * ?page=&limit= (plus search/status/account filters) on every list
+ * read, so fixtures must answer on the exact pathname — a bare glob
+ * for the list path does NOT match a URL carrying a query string,
+ * and the request would fall through to the catch-all empty object.
+ * The filter mirrors the production list semantics: search matches
+ * the display name, status matches exactly (or the needs_attention
+ * group for pages), account matches display name or account id.
+ */
+export function paginateFixtureList<T extends Record<string, unknown>>(
+  route: Route,
+  items: T[],
+  filter: (item: T, params: URLSearchParams) => boolean
+): { items: T[]; total: number; page: number; limit: number; totalPages: number } {
+  const params = new URL(route.request().url()).searchParams;
+  const filtered = items.filter((item) => filter(item, params));
+  const limitRaw = Number.parseInt(params.get('limit') ?? '', 10);
+  const limit = Number.isFinite(limitRaw) && limitRaw >= 1 ? limitRaw : 30;
+  const pageRaw = Number.parseInt(params.get('page') ?? '', 10);
+  const page = Number.isFinite(pageRaw) && pageRaw >= 1 ? pageRaw : 1;
+  const totalPages = Math.max(1, Math.ceil(filtered.length / limit));
+  const clamped = Math.min(page, totalPages);
+  return {
+    items: filtered.slice((clamped - 1) * limit, clamped * limit),
+    total: filtered.length,
+    page: clamped,
+    limit,
+    totalPages,
+  };
+}
+
+function filterFixturePages(
+  page: Record<string, unknown>,
+  params: URLSearchParams
+): boolean {
+  const search = params.get('search')?.trim().toLowerCase();
+  if (search && !String(page.pageName ?? '').toLowerCase().includes(search)) {
+    return false;
+  }
+  const status = params.get('status');
+  if (status && status !== 'all') {
+    if (status === 'needs_attention') {
+      if (
+        !['invalid_token', 'page_checkpoint', 'fb_rate_limited'].includes(
+          String(page.status ?? '')
+        )
+      ) {
+        return false;
+      }
+    } else if (page.status !== status) {
+      return false;
+    }
+  }
+  const account = params.get('account');
+  if (account && account !== 'all') {
+    if (
+      page.accountDisplayName !== account &&
+      page.facebookAccountId !== account
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function filterFixtureAccounts(
+  account: Record<string, unknown>,
+  params: URLSearchParams
+): boolean {
+  const search = params.get('search')?.trim().toLowerCase();
+  if (
+    search &&
+    !String(account.displayName ?? '').toLowerCase().includes(search)
+  ) {
+    return false;
+  }
+  const status = params.get('status');
+  if (status && status !== 'all' && account.status !== status) {
+    return false;
+  }
+  return true;
+}
+
 const SUB = TENANT.subdomain;
 
 export async function installApiFixtures(
@@ -85,8 +170,19 @@ export async function installApiFixtures(
   );
 
   // Accounts list (connect flow reads its post-connect state from here).
-  await page.route(`**/api/tenant/${SUB}/accounts`, (route) =>
-    json(route, { accounts: state.accounts, total: state.accounts.length })
+  // Exact-pathname predicate: the client sends ?page=&limit=, which a
+  // bare glob would not match (see paginateFixtureList).
+  await page.route(
+    (url) => url.pathname === `/api/tenant/${SUB}/accounts`,
+    (route) => {
+      const { items, total, page, limit, totalPages } =
+        paginateFixtureList(
+          route,
+          state.accounts as Array<Record<string, unknown>>,
+          filterFixtureAccounts
+        );
+      return json(route, { accounts: items, total, page, limit, totalPages });
+    }
   );
   await page.route(`**/api/tenant/${SUB}/accounts/magic-link`, (route) =>
     json(route, { magicUrl: 'https://connect.e2e.invalid/magic' })
@@ -129,21 +225,27 @@ export async function installApiFixtures(
       queueCounts: { queued: 0, publishing: 0, published: 0, failed: 0 },
     })
   );
-  await page.route(`**/api/tenant/${SUB}/pages`, (route) =>
-    // Schema-complete for the typed client (spec 131 PR-131-2): the
-    // list response carries `total`, and the page view carries the
-    // fields ListFacebookPagesResponseSchema requires.
-    json(route, {
-      pages: [
-        {
-          ...FACEBOOK_PAGE,
-          followersCount: FACEBOOK_PAGE.currentFollowers,
-          tasks: [],
-          updatedAt: FACEBOOK_PAGE.createdAt,
-        },
-      ],
-      total: 1,
-    })
+  await page.route(
+    (url) => url.pathname === `/api/tenant/${SUB}/pages`,
+    (route) => {
+      // Schema-complete for the typed client (spec 131 PR-131-2): the
+      // list response carries `total`, and the page view carries the
+      // fields ListFacebookPagesResponseSchema requires.
+      const { items, total, page, limit, totalPages } =
+        paginateFixtureList(
+          route,
+          [
+            {
+              ...FACEBOOK_PAGE,
+              followersCount: FACEBOOK_PAGE.currentFollowers,
+              tasks: [],
+              updatedAt: FACEBOOK_PAGE.createdAt,
+            } as Record<string, unknown>,
+          ],
+          filterFixturePages
+        );
+      return json(route, { pages: items, total, page, limit, totalPages });
+    }
   );
 
   // Page insights (spec 131 PR-131-3): schema-complete response in the

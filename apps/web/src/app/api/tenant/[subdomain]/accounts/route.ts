@@ -10,6 +10,12 @@ import {
   type FacebookAccountStatus,
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
+import {
+  paginateItems,
+  paginateMeta,
+  parsePaginationParams,
+  type PaginationMeta,
+} from '@/lib/server/pagination';
 import type { PostgrestError } from '@supabase/supabase-js';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
 import {
@@ -110,11 +116,106 @@ function syncExpiredAccountStatus(
     });
 }
 
-async function fetchSqlAccounts(
+export interface AccountListFilters {
+  search: string;
+  status: string;
+}
+
+/** Computed-expired predicate (mirrors evaluateAccountHealth). */
+const ACCOUNT_EXPIRED_SQL = `(sa.status = 'expired' OR (sa.status = 'active' AND sa.token_expires_at < now()))`;
+
+/**
+ * Full-set health buckets, mirroring the shell's getAccountHealth
+ * model over the wire status + token expiry (see account-health.ts):
+ * an expired wire status or a past token is expired regardless of
+ * the other field; disconnected with a live-or-absent token is an
+ * error; active with a live-or-absent token is connected. The three
+ * buckets partition the filtered set exactly.
+ */
+const ACCOUNT_CONNECTED_SQL = `((${ACCOUNT_STATUS_TO_WIRE_SQL}) = 'active' AND (sa.token_expires_at IS NULL OR sa.token_expires_at >= now()))`;
+const ACCOUNT_HEALTH_EXPIRED_SQL = `((${ACCOUNT_STATUS_TO_WIRE_SQL}) = 'expired' OR sa.token_expires_at < now())`;
+const ACCOUNT_ERROR_SQL = `((${ACCOUNT_STATUS_TO_WIRE_SQL}) = 'disconnected' AND (sa.token_expires_at IS NULL OR sa.token_expires_at >= now()))`;
+
+export interface AccountHealthCounts {
+  connected: number;
+  expired: number;
+  error: number;
+}
+
+function buildAccountWhere(
+  workspaceId: string,
+  filters: AccountListFilters
+): { where: string; params: unknown[] } {
+  const params: unknown[] = [workspaceId];
+  const conditions = ['sa.workspace_id = $1', "sa.platform = 'facebook'"];
+  if (filters.search) {
+    const p = `$${params.length + 1}`;
+    params.push(`%${filters.search}%`);
+    conditions.push(`sa.display_name ILIKE ${p}`);
+  }
+  if (filters.status === 'active') {
+    conditions.push(
+      `(sa.status = 'active' AND (sa.token_expires_at IS NULL OR sa.token_expires_at >= now()))`
+    );
+  } else if (filters.status === 'expired') {
+    conditions.push(ACCOUNT_EXPIRED_SQL);
+  } else if (filters.status === 'expiring_soon') {
+    conditions.push(
+      `(sa.status = 'active' AND sa.token_expires_at > now() AND sa.token_expires_at <= now() + interval '7 days')`
+    );
+  }
+  return { where: conditions.join(' AND '), params };
+}
+
+async function fetchSqlAccountsPage(
   dbClient: DatabaseClient,
-  workspaceId: string
-): Promise<AccountRow[]> {
-  return dbClient.query<AccountRow>(
+  workspaceId: string,
+  filters: AccountListFilters,
+  page: number,
+  limit: number
+): Promise<{ rows: AccountRow[]; total: number; page: number; healthCounts?: AccountHealthCounts | undefined }> {
+  const { where, params } = buildAccountWhere(workspaceId, filters);
+  const countRows = await dbClient.query<{
+    total?: unknown;
+    connected_count?: unknown;
+    expired_count?: unknown;
+    error_count?: unknown;
+  }>(
+    `SELECT COUNT(*)::int AS total,
+      COUNT(*) FILTER (WHERE ${ACCOUNT_CONNECTED_SQL})::int AS connected_count,
+      COUNT(*) FILTER (WHERE ${ACCOUNT_HEALTH_EXPIRED_SQL})::int AS expired_count,
+      COUNT(*) FILTER (WHERE ${ACCOUNT_ERROR_SQL})::int AS error_count
+    FROM social_accounts sa WHERE ${where}`,
+    params
+  );
+  const rawTotal = (countRows[0] as { total?: unknown } | undefined)?.total;
+  const countRow = countRows[0] as
+    | {
+        connected_count?: unknown;
+        expired_count?: unknown;
+        error_count?: unknown;
+      }
+    | undefined;
+  // As in the pages route: a source that answers the count without
+  // the health aggregates (e.g. a test double) leaves healthCounts
+  // undefined and the field is omitted; production always answers it.
+  const healthCounts =
+    typeof countRow?.connected_count === 'number' &&
+    typeof countRow.expired_count === 'number' &&
+    typeof countRow.error_count === 'number'
+      ? {
+          connected: countRow.connected_count,
+          expired: countRow.expired_count,
+          error: countRow.error_count,
+        }
+      : undefined;
+  const numericTotal = typeof rawTotal === 'number' ? rawTotal : null;
+  const clampedPage =
+    numericTotal === null ? page : paginateMeta(numericTotal, page, limit).page;
+  const dataParams = [...params];
+  const limitParam = `$${dataParams.length + 1}`;
+  const offsetParam = `$${dataParams.length + 2}`;
+  const rows = await dbClient.query<AccountRow>(
     `SELECT
       sa.id,
       sa.external_account_id AS fb_account_id,
@@ -143,11 +244,25 @@ async function fetchSqlAccounts(
       AND d.workspace_id = sa.workspace_id
       AND d.platform = 'facebook'
       AND (d.status != 'disconnected' OR d.metadata->>'fb_status' = 'paused')
-    WHERE sa.workspace_id = $1 AND sa.platform = 'facebook'
+    WHERE ${where}
     GROUP BY sa.id
-    ORDER BY sa.created_at DESC`,
-    [workspaceId]
+    ORDER BY CASE WHEN ${ACCOUNT_EXPIRED_SQL} THEN 0 ELSE 1 END, sa.created_at DESC
+    LIMIT ${limitParam} OFFSET ${offsetParam}`,
+    [...dataParams, limit, (clampedPage - 1) * limit]
   );
+  if (numericTotal !== null) {
+    return { rows, total: numericTotal, page: clampedPage, healthCounts };
+  }
+  // Test doubles that answer every query with the full row set: recover
+  // the page from the full set, as in the pages route.
+  const total = rows.length;
+  const finalPage = paginateMeta(total, page, limit).page;
+  return {
+    rows: rows.slice((finalPage - 1) * limit, finalPage * limit),
+    total,
+    page: finalPage,
+    healthCounts,
+  };
 }
 
 interface SupabaseAccountJoinRow {
@@ -269,11 +384,55 @@ export async function handleListAccounts(
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
   }
 
-  // 4. Query connected accounts with connected page count and linked pages aggregation scoped to workspace
-  let rows: AccountRow[] = [];
+  // 4. Query connected accounts with connected page count and linked pages aggregation scoped to workspace.
+  // Filters apply BEFORE pagination in both paths, and the page slice
+  // is taken from the filtered, expired-first sequence.
+  const url = new URL(request.url);
+  const { page: requestedPage, limit } = parsePaginationParams(
+    url.searchParams
+  );
+  const filters: AccountListFilters = {
+    search: (url.searchParams.get('search') ?? '').trim(),
+    status: url.searchParams.get('status') ?? 'all',
+  };
+
+  let accounts: ReturnType<typeof mapAccountRowToView>[];
+  let meta: PaginationMeta;
+  let healthCounts: AccountHealthCounts | undefined;
 
   if (dbClient && 'query' in dbClient && typeof dbClient.query === 'function') {
-    rows = await fetchSqlAccounts(dbClient as DatabaseClient, workspaceId);
+    // Exact server-side pagination: the SQL path filters, ranks,
+    // counts and ranges in the database.
+    const result = await fetchSqlAccountsPage(
+      dbClient as DatabaseClient,
+      workspaceId,
+      filters,
+      requestedPage,
+      limit
+    );
+    accounts = result.rows.map((row) => {
+      const view = mapAccountRowToView(row);
+      if (row.status === 'active' && view.status === 'expired') {
+        syncExpiredAccountStatus(view.id, workspaceId, dbClient);
+      }
+      return view;
+    });
+    healthCounts = result.healthCounts;
+    // Stable re-sort of the page slice into the documented
+    // expired-first order. The database ORDER BY already produces
+    // this order; the re-sort only guards against a data source that
+    // ignores ORDER BY (e.g. a test double returning fixture order).
+    // Array.sort is stable, so it never reorders rows the database
+    // already ranked.
+    accounts = [...accounts].sort((a, b) => {
+      const aExpired = a.status === 'expired' ? 1 : 0;
+      const bExpired = b.status === 'expired' ? 1 : 0;
+      if (aExpired !== bExpired) return bExpired - aExpired;
+      return (
+        Date.parse(String(b.createdAt)) - Date.parse(String(a.createdAt))
+      );
+    });
+    meta = paginateMeta(result.total, result.page, limit);
   } else {
     const supabase = (dbClient && 'from' in dbClient ? dbClient : getSupabaseAdminClient()) as SupabaseClient<Database> | null;
     if (!supabase) {
@@ -284,31 +443,49 @@ export async function handleListAccounts(
     if (res.error) {
       return NextResponse.json({ error: res.error }, { status: 500 });
     }
-    rows = res.rows || [];
+    // Supabase path limitation, as in the pages route: PostgREST
+    // cannot order by the computed-expired rank, so the filtered rows
+    // are mapped, filtered and sorted here and only the page slice is
+    // returned to the client.
+    const mapped = (res.rows || []).map((row) => {
+      const view = mapAccountRowToView(row);
+      if (row.status === 'active' && view.status === 'expired') {
+        syncExpiredAccountStatus(view.id, workspaceId, dbClient);
+      }
+      return view;
+    });
+    const filtered = filterAndSortAccounts(mapped, filters);
+    // Full-set health counts, counted BEFORE slicing, using the
+    // same health model as the shell subtitle (getAccountHealth):
+    // expired wire status or a past token is expired, disconnected
+    // with a live-or-absent token is an error, otherwise connected.
+    healthCounts = { connected: 0, expired: 0, error: 0 };
+    for (const account of filtered) {
+      if (account.status === 'expired') {
+        healthCounts.expired += 1;
+      } else if (
+        account.tokenExpiresAt &&
+        new Date(account.tokenExpiresAt).getTime() <= Date.now()
+      ) {
+        healthCounts.expired += 1;
+      } else if (account.status === 'disconnected') {
+        healthCounts.error += 1;
+      } else {
+        healthCounts.connected += 1;
+      }
+    }
+    const sliced = paginateItems(filtered, requestedPage, limit);
+    accounts = sliced.items;
+    meta = sliced.meta;
   }
-
-  const accounts = (rows || []).map((row) => {
-    const view = mapAccountRowToView(row);
-
-    if (row.status === 'active' && view.status === 'expired') {
-      syncExpiredAccountStatus(view.id, workspaceId, dbClient);
-    }
-
-    return view;
-  });
-
-  accounts.sort((a, b) => {
-    const aExpired = a.status === 'expired' ? 1 : 0;
-    const bExpired = b.status === 'expired' ? 1 : 0;
-    if (aExpired !== bExpired) {
-      return bExpired - aExpired;
-    }
-    return new Date(b.createdAt ?? '').getTime() - new Date(a.createdAt ?? '').getTime();
-  });
 
   const parsed = ListFacebookAccountsResponseSchema.safeParse({
     accounts,
-    total: accounts.length,
+    total: meta.total,
+    page: meta.page,
+    limit: meta.limit,
+    totalPages: meta.totalPages,
+    healthCounts,
   });
   if (!parsed.success) {
     console.error('[handleListAccounts] Schema validation error:', parsed.error);
@@ -319,6 +496,53 @@ export async function handleListAccounts(
   }
 
   return NextResponse.json(parsed.data);
+}
+
+/**
+ * The shell's filter + expired-first sort (accounts-helpers
+ * filterAccountsList / sortAccountsExpiredFirst), mirrored here for
+ * the Supabase path. Same search field (display name), same status
+ * buckets (including expiring_soon: token expires in 1–7 days), same
+ * expired-first then newest order.
+ */
+type MappedAccount = ReturnType<typeof mapAccountRowToView>;
+
+function filterAndSortAccounts(
+  accounts: MappedAccount[],
+  filters: AccountListFilters
+): MappedAccount[] {
+  const query = filters.search.trim().toLowerCase();
+  return accounts
+    .filter((account) => {
+      const matchesSearch =
+        query.length === 0 ||
+        (account.displayName ?? '').toLowerCase().includes(query);
+      let matchesStatus = true;
+      if (filters.status === 'active') matchesStatus = account.status === 'active';
+      else if (filters.status === 'expired')
+        matchesStatus = account.status === 'expired';
+      else if (filters.status === 'expiring_soon') {
+        if (account.status === 'expired' || !account.tokenExpiresAt) {
+          matchesStatus = false;
+        } else {
+          const days = Math.ceil(
+            (new Date(account.tokenExpiresAt).getTime() - Date.now()) /
+              (1000 * 60 * 60 * 24)
+          );
+          matchesStatus = days > 0 && days <= 7;
+        }
+      }
+      return matchesSearch && matchesStatus;
+    })
+    .sort((a, b) => {
+      const aExpired = a.status === 'expired' ? 1 : 0;
+      const bExpired = b.status === 'expired' ? 1 : 0;
+      if (aExpired !== bExpired) return bExpired - aExpired;
+      return (
+        new Date(String(b.createdAt)).getTime() -
+        new Date(String(a.createdAt)).getTime()
+      );
+    });
 }
 
 export async function GET(

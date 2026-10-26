@@ -66,6 +66,38 @@ export function filterAccountsList(
  * (Spec 102: `getAccountHealth`). Never a blanket "All operational" —
  * the subtitle reflects the real per-account state.
  */
+/**
+ * Unfiltered accounts subtitle from full-set health counts (the
+ * paginated API's `healthCounts`), without needing the full account
+ * list in memory. This is the single copy source; see
+ * computeAccountsSubtitle below, which derives the same counts from
+ * an array and delegates here.
+ */
+export function computeAccountsSubtitleFromCounts(
+  totalCount: number,
+  healthCounts: { connected: number; expired: number; error: number }
+): string {
+  if (totalCount === 0) {
+    return 'Connect your first Facebook account to manage pages and publish reels.';
+  }
+  const parts: string[] = [`${healthCounts.connected} connected`];
+  if (healthCounts.expired > 0) {
+    parts.push(
+      `${healthCounts.expired} ${
+        healthCounts.expired === 1 ? 'session expired' : 'sessions expired'
+      }`
+    );
+  }
+  if (healthCounts.error > 0) {
+    parts.push(
+      `${healthCounts.error} ${
+        healthCounts.error === 1 ? 'connection error' : 'connection errors'
+      }`
+    );
+  }
+  return parts.join(' · ');
+}
+
 export function computeAccountsSubtitle(
   accounts: FacebookAccountItem[],
   filteredCount: number,
@@ -88,22 +120,7 @@ export function computeAccountsSubtitle(
   for (const account of accounts) {
     healthCounts[getAccountHealth(account)] += 1;
   }
-  const parts: string[] = [`${healthCounts.connected} connected`];
-  if (healthCounts.expired > 0) {
-    parts.push(
-      `${healthCounts.expired} ${
-        healthCounts.expired === 1 ? 'session expired' : 'sessions expired'
-      }`
-    );
-  }
-  if (healthCounts.error > 0) {
-    parts.push(
-      `${healthCounts.error} ${
-        healthCounts.error === 1 ? 'connection error' : 'connection errors'
-      }`
-    );
-  }
-  return parts.join(' · ');
+  return computeAccountsSubtitleFromCounts(totalCount, healthCounts);
 }
 
 /**

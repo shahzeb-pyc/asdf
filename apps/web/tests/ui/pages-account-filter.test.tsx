@@ -110,14 +110,48 @@ function renderShell(search: string) {
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   });
   const tenant = queryKeys.tenant('acme');
-  queryClient.setQueryData(tenant.pages.list, {
-    pages: sixPages,
-    total: sixPages.length,
-  });
-  queryClient.setQueryData(tenant.accounts.list, {
-    accounts: [sarahAccount, johnAccount],
-    total: 2,
-  });
+  // The shell is paginated now: it queries listPage keys, not the old
+  // list keys, and filtering happens server-side — so each account
+  // value the filter can take needs its own seeded page, or the shell
+  // would refetch (unmocked) instead of rendering the filtered list.
+  const sarahPages = sixPages.filter(
+    (p) => p.accountDisplayName === 'Sarah Connor'
+  );
+  const johnPages = sixPages.filter(
+    (p) => p.accountDisplayName === 'John Doe'
+  );
+  const seedPages = (
+    account: string,
+    pages: FacebookPageItem[],
+    total: number
+  ) => {
+    queryClient.setQueryData(
+      tenant.pages.listPage({
+        page: 1,
+        limit: 30,
+        search: '',
+        status: 'all',
+        account,
+      }),
+      { pages, total, page: 1, limit: 30, totalPages: 1, attentionTotal: 0 }
+    );
+  };
+  seedPages('all', sixPages, sixPages.length);
+  seedPages('Sarah Connor', sarahPages, sarahPages.length);
+  seedPages('John Doe', johnPages, johnPages.length);
+  // The ?account= value is kept raw (not resolved to a display name),
+  // so the id form gets its own key too.
+  seedPages('acc-john', johnPages, johnPages.length);
+  queryClient.setQueryData(
+    tenant.accounts.listPage({ page: 1, limit: 50, search: '', status: 'all' }),
+    {
+      accounts: [sarahAccount, johnAccount],
+      total: 2,
+      page: 1,
+      limit: 50,
+      totalPages: 1,
+    }
+  );
   queryClient.setQueryData(tenant.settings.byoc, {
     workspaceId: '33333333-3333-4333-8333-333333333333',
     subdomain: 'acme',

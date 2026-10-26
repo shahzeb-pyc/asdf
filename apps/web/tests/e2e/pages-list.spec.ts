@@ -21,6 +21,7 @@ import {
   CONNECTED_ACCOUNT,
   createFixtureState,
   installApiFixtures,
+  paginateFixtureList,
 } from './fixtures/api';
 import { expectNoDocumentOverflow } from './fixtures/mobile';
 import { SESSION_COOKIE, TENANT } from './fixtures/tenant';
@@ -72,8 +73,48 @@ async function installPagesFixtures(
   const state = createFixtureState({ accounts: [CONNECTED_ACCOUNT] });
   await installApiFixtures(page, state);
   // Registered after the shared fixtures so these take precedence.
-  await page.route(`**/api/tenant/${SUB}/pages`, (route) =>
-    json(route, { pages, total: pages.length })
+  // Exact-pathname predicate + server-side filtering/slicing: the
+  // client now sends ?page=&limit=&search=&status=&account=, and a
+  // bare glob would not match a URL carrying a query string.
+  await page.route(
+    (url) => url.pathname === `/api/tenant/${SUB}/pages`,
+    (route) => {
+      const { items, total, page, limit, totalPages } =
+        paginateFixtureList(route, pages, (p, params) => {
+          const search = params.get('search')?.trim().toLowerCase();
+          if (
+            search &&
+            !String(p.pageName ?? '').toLowerCase().includes(search)
+          ) {
+            return false;
+          }
+          const status = params.get('status');
+          if (status && status !== 'all') {
+            if (status === 'needs_attention') {
+              if (
+                !['invalid_token', 'page_checkpoint', 'fb_rate_limited'].includes(
+                  String(p.status ?? '')
+                )
+              ) {
+                return false;
+              }
+            } else if (p.status !== status) {
+              return false;
+            }
+          }
+          const account = params.get('account');
+          if (account && account !== 'all') {
+            if (
+              p.accountDisplayName !== account &&
+              p.facebookAccountId !== account
+            ) {
+              return false;
+            }
+          }
+          return true;
+        });
+      return json(route, { pages: items, total, page, limit, totalPages });
+    }
   );
   await page.route(
     `**/api/tenant/${SUB}/accounts/${CONNECTED_ACCOUNT.id}/pages/discover`,
@@ -139,7 +180,9 @@ test.describe('pages list + add page (spec 131 PR-131-2)', () => {
 
     await expect(page.getByTestId('pages-empty-state')).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId('empty-state-add-page-btn')).toBeVisible();
-    // Pages list redesign: the scale toolbar is no longer gated on page count.
+    // Pages list redesign + pagination: the scale toolbar is no longer
+    // gated on page count — always visible once loaded, including the
+    // empty state, so a filtered-to-zero view always offers a way back.
     await expect(page.getByTestId('pages-scale-toolbar')).toBeVisible();
   });
 

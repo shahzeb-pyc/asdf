@@ -103,6 +103,52 @@ describe('destination redirect', () => {
     expect(await runRedirect()).toBe('/tenant/acme/pages');
   });
 
+  it('finds a page beyond page 1 instead of falling back to the list', async () => {
+    // Page 1 is full (50 non-matching rows, 2 pages total); the match
+    // sits on page 2. A redirector that only fetched page 1 would
+    // wrongly land on the list.
+    const page1 = {
+      pages: Array.from({ length: 50 }, (_, i) => ({
+        id: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+        fbPageId: `fb-other-${i}`,
+      })),
+      total: 51,
+      page: 1,
+      limit: 50,
+      totalPages: 2,
+    };
+    const page2 = {
+      pages: [
+        {
+          id: '11111111-1111-4111-8111-111111111111',
+          fbPageId: 'fb-page-100',
+        },
+      ],
+      total: 51,
+      page: 2,
+      limit: 50,
+      totalPages: 2,
+    };
+    serverApiFetchMock.mockImplementation((path: string) => {
+      if (path.includes('/accounts/social/')) {
+        return Promise.resolve(FB_DESTINATION);
+      }
+      const pageParam = new URLSearchParams(path.split('?')[1] ?? '').get('page');
+      return Promise.resolve(pageParam === '2' ? page2 : page1);
+    });
+    expect(await runRedirect()).toBe(
+      '/tenant/acme/pages/11111111-1111-4111-8111-111111111111'
+    );
+    expect(
+      serverApiFetchMock.mock.calls.some(
+        (call) =>
+          typeof call[0] === 'string' &&
+          call[0].includes('/pages') &&
+          call[0].includes('page=2')
+      )
+    ).toBe(true);
+  });
+
   it('redirects to the Pages list when no page matches the destination', async () => {
     serverApiFetchMock.mockImplementation((path: string) =>
       path.includes('/accounts/social/')

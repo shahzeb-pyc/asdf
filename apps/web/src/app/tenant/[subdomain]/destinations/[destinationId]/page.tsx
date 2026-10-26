@@ -12,7 +12,7 @@
  */
 import { redirect } from 'next/navigation';
 
-import { buildTenantApiPath } from '@/lib/api/client';
+import { buildTenantApiPath, buildUrl } from '@/lib/api/client';
 import { DestinationDetailResponseSchema } from '@/lib/api/schemas/connect';
 import { ListFacebookPagesResponseSchema } from '@/lib/api/schemas/pages';
 import { serverApiFetch } from '@/lib/data/server';
@@ -33,15 +33,34 @@ export default async function DestinationRedirectPage({
       { schema: DestinationDetailResponseSchema }
     );
     if (detail.destination.platform === 'facebook') {
-      const pages = await serverApiFetch(
-        buildTenantApiPath(subdomain, '/pages'),
-        { schema: ListFacebookPagesResponseSchema }
-      );
-      const page = pages.pages.find(
-        (candidate) => candidate.fbPageId === detail.destination.externalDestinationId
-      );
-      if (page) {
-        target = `/tenant/${subdomain}/pages/${page.id}`;
+      // The pages list is paginated (30/page, max 50), so a single
+      // unparameterised fetch only sees page 1 — a destination mapping
+      // to a page beyond page 1 would miss and wrongly fall back to
+      // the list. Walk pages at max size until the match is found or
+      // the list runs out. Old-link hits are rare and server-side, so
+      // the extra fetches cost nothing in the browser; the 200-page
+      // guard (10,000 pages) bounds the walk even if a payload ever
+      // omits totalPages.
+      const wantedFbPageId = detail.destination.externalDestinationId;
+      for (let page = 1, guard = 0; guard < 200; page += 1, guard += 1) {
+        const res = await serverApiFetch(
+          buildUrl(buildTenantApiPath(subdomain, '/pages'), { page, limit: 50 }),
+          { schema: ListFacebookPagesResponseSchema }
+        );
+        const match = res.pages.find(
+          (candidate) => candidate.fbPageId === wantedFbPageId
+        );
+        if (match) {
+          target = `/tenant/${subdomain}/pages/${match.id}`;
+          break;
+        }
+        if (res.totalPages !== undefined && res.totalPages > 0) {
+          if (page >= res.totalPages) break;
+        } else if (res.pages.length < 50) {
+          // Pre-pagination payload shape (no totalPages): a short page
+          // is the last page.
+          break;
+        }
       }
     }
   } catch {
