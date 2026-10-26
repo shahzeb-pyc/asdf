@@ -17,9 +17,10 @@
  *
  * Behaviour parity (spec §6): attention-first ordering, the
  * all/active/needs-attention/paused status filters, text search,
- * the account filter, the situational subtitle, and the Add Page
- * finish summary banner — computed by the same helpers the parity
- * suites pin (`components/pages/pages-helpers`).
+ * the account filter, and the situational subtitle — computed by the
+ * same helpers the parity suites pin (`components/pages/pages-helpers`).
+ * The Add Page finish confirmation is a top-right toast + gold card
+ * highlight (see handlePagesImported), never a banner.
  *
  * Pages list redesign: the toolbar renders at any page count (no
  * >4 gate), cards use the Accounts-style tick/cross mark with no
@@ -48,7 +49,7 @@ import { ListFacebookAccountsResponseSchema } from '@/lib/api/schemas/accounts';
 import { ListFacebookPagesResponseSchema } from '@/lib/api/schemas/pages';
 import { ByocSettingsResponseSchema } from '@/lib/api/schemas/settings';
 import { queryKeys } from '@/lib/data/query-keys';
-import { Banner } from '@/components/shared/ui/banner';
+import { Toast, toast } from '@/components/shared/ui/toast';
 import { Button } from '@/components/shared/ui/button';
 import { EmptyState } from '@/components/shared/ui/empty-state';
 import { Skeleton } from '@/components/shared/ui/skeleton';
@@ -72,6 +73,9 @@ import { buildDirectConnectUrl } from '@/components/accounts/connect-account-mod
 export interface PagesShellProps {
   subdomain: string;
 }
+
+/** Id of the Pages-only toaster: top-right, used solely by Add Page confirmations. */
+const PAGES_IMPORT_TOASTER_ID = 'pages-import-toaster';
 
 function PagesLoadingSkeleton() {
   return (
@@ -139,7 +143,29 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
     : undefined;
 
   const [isAddModalOpen, setIsAddModalOpen] = React.useState(false);
-  const [bannerMessage, setBannerMessage] = React.useState<string | null>(null);
+
+  // Add Page confirmation (approved redesign): a briefly gold-highlighted
+  // card for each just-imported page, shown while its top-right toast is
+  // up — the same language as the Accounts connected dialogue. The
+  // highlight clears after the toast duration (5s); no banner ever
+  // pushes the grid down.
+  const [highlightedPageIds, setHighlightedPageIds] = React.useState<string[]>([]);
+  const highlightTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flashHighlight = React.useCallback((pageIds: string[]) => {
+    if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
+    setHighlightedPageIds(pageIds);
+    if (pageIds.length > 0) {
+      highlightTimeoutRef.current = setTimeout(() => {
+        setHighlightedPageIds([]);
+      }, 5000);
+    }
+  }, []);
+  React.useEffect(
+    () => () => {
+      if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
+    },
+    []
+  );
   const [searchQuery, setSearchQuery] = React.useState('');
   const [statusFilter, setStatusFilter] = React.useState<PageStatusFilter>('all');
   const [accountFilter, setAccountFilter] = React.useState('all');
@@ -269,12 +295,20 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
     router.push(`/tenant/${subdomain}/pages/${page.id}`);
   };
 
-  const handlePagesImported = (importedCount: number) => {
-    setBannerMessage(
-      `${importedCount} ${
-        importedCount === 1 ? 'Facebook Page' : 'Facebook Pages'
-      } added to your workspace.`
+  const handlePagesImported = (result: {
+    importedCount: number;
+    importedPageIds: string[];
+  }) => {
+    // Sonner toasts carry role="status" / aria-live, so no extra live
+    // region is needed; the toast text names the count, so the
+    // highlight never relies on colour alone.
+    toast.success(
+      result.importedCount === 1
+        ? '1 Facebook Page added'
+        : `${result.importedCount} Facebook Pages added`,
+      { toasterId: PAGES_IMPORT_TOASTER_ID }
     );
+    flashHighlight(result.importedPageIds);
     void queryClient.invalidateQueries({ queryKey: tenant.pages.list });
     void queryClient.invalidateQueries({ queryKey: tenant.accounts.list });
   };
@@ -363,6 +397,7 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
             page={page}
             subdomain={subdomain}
             onSelectPage={handleSelectPage}
+            highlighted={highlightedPageIds.includes(page.id)}
           />
         ))}
       </div>
@@ -398,16 +433,10 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
         </Button>
       </div>
 
-      {/* Confirmation Banner (the Add Page finish summary, UI Rule 26) */}
-      {bannerMessage && (
-        <Banner
-          data-testid="pages-feedback-banner"
-          variant="success"
-          title={bannerMessage}
-          onDismiss={() => setBannerMessage(null)}
-          className="mb-6 border border-line"
-        />
-      )}
+      {/* Flow-scoped toaster for Add Page confirmations only: TOP-RIGHT
+          (the shared tenant Toaster stays bottom-right everywhere else).
+          Toasts reach it via toasterId, never via the shared default. */}
+      <Toast id={PAGES_IMPORT_TOASTER_ID} position="top-right" />
 
       {/* Scale Toolbar — always visible, at any page count */}
       {!isLoading && (

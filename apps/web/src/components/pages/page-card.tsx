@@ -55,6 +55,8 @@ export interface PageCardProps {
   subdomain?: string | undefined;
   onSelectPage?: ((page: FacebookPageItem) => void) | undefined;
   forceAvatarError?: boolean | undefined;
+  /** Gold highlight for just-imported cards, shown while the import toast is up. */
+  highlighted?: boolean | undefined;
 }
 
 export function isPageNeedsAttention(status: FacebookPageStatus): boolean {
@@ -192,6 +194,7 @@ export function PageCard({
   subdomain,
   onSelectPage,
   forceAvatarError = false,
+  highlighted = false,
 }: Readonly<PageCardProps>) {
   const [failedAvatarUrl, setFailedAvatarUrl] = React.useState<string | null>(
     forceAvatarError ? (page.profilePictureUrl ?? '__forced__') : null
@@ -257,14 +260,17 @@ export function PageCard({
       tabIndex={0}
       data-testid={`page-card-${page.id}`}
       data-href={targetHref}
+      data-highlighted={highlighted ? 'true' : undefined}
       aria-label={`Open ${page.pageName} page details`}
       onClick={handleActivate}
       onKeyDown={handleKeyDown}
       className={cn(
         'group flex min-h-38 min-w-0 cursor-pointer flex-col rounded-md border bg-panel p-6 shadow-card transition outline-none hover:-translate-y-0.5 hover:shadow-elevated focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold',
-        needsAttention
-          ? 'border-brand-rose hover:border-brand-rose'
-          : 'border-line hover:border-brand-emerald/40'
+        highlighted
+          ? 'border-brand-gold ring-2 ring-brand-gold/40'
+          : needsAttention
+            ? 'border-brand-rose hover:border-brand-rose'
+            : 'border-line hover:border-brand-emerald/40'
       )}
     >
       {/* Top Section: Avatar with Dynamic Status Ring + Identity + Affordance.
