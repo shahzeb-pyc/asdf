@@ -11,7 +11,7 @@
  * - "Go to" — every sidebar destination (incl. each platform's
  *   Accounts page and Settings).
  * - "Accounts & Pages" — the current workspace's Facebook accounts,
- *   Facebook pages, cross-platform accounts and their destinations,
+ *   Facebook pages, and cross-platform accounts,
  *   read from the React Query cache and refreshed through it (the
  *   queries below are keyed via the queryKeys factory and enabled
  *   only while the palette is open — never a per-keystroke server
@@ -273,16 +273,10 @@ export function CommandPalette({
         keywords: `${account.platform} account ${account.displayName}`,
         run: navigate('/accounts'),
       });
-      for (const destination of account.destinations) {
-        pool.push({
-          id: `destination-${destination.id}`,
-          group: 'Accounts & Pages',
-          label: destination.name,
-          detail: `${account.platform} destination`,
-          keywords: `${account.platform} destination ${destination.name} ${destination.handle ?? ''}`,
-          run: navigate(`/destinations/${destination.id}`),
-        });
-      }
+      // Destinations pages were removed: no palette entry points at a
+      // destination view anymore. Facebook Pages stay reachable through
+      // their own entries above; other platforms' destinations are
+      // managed from their Accounts pages.
     }
 
     for (const workspace of workspacesQuery.data?.workspaces ?? []) {

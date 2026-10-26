@@ -1,9 +1,9 @@
 /**
  * @file connect-pages.test.tsx
  * @description Spec 123 Part C: the picker landing page (server component,
- * fed by the signed pending cookie) and the dedicated-section destination
- * landing page (server-first route + frame shell — spec 131 PR-131-4
- * mounts the four spec 128 slots in the frame).
+ * fed by the signed pending cookie). The destination dedicated-section
+ * landing page and its frame were removed with the Destinations pages;
+ * the old /destinations/<id> route now redirects to the Pages section.
  */
 import React from 'react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
@@ -28,19 +28,7 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: () => undefined }),
 }));
 
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { httpError } from '@/lib/api/errors';
 import ConnectPickerPage from '@/app/tenant/[subdomain]/connect/[platform]/page';
-import { DestinationSummary } from '@/app/tenant/[subdomain]/destinations/[destinationId]/page';
-import {
-  DestinationFrame,
-  DestinationSlots,
-  destinationLoadErrorMessage,
-} from '@/app/tenant/[subdomain]/destinations/[destinationId]/destination-frame';
-import {
-  SocialAccountsList,
-  SocialAccountsListView,
-} from '@/components/accounts/social-accounts-list';
 import InstagramAccountsPage from '@/app/tenant/[subdomain]/instagram/accounts/page';
 import ThreadsAccountsPage from '@/app/tenant/[subdomain]/threads/accounts/page';
 import YouTubeAccountsPage from '@/app/tenant/[subdomain]/youtube/accounts/page';
@@ -105,103 +93,6 @@ describe('Connect picker page', () => {
   });
 });
 
-describe('Destination dedicated-section landing page', () => {
-  it('renders the back link and loading state before data arrives', () => {
-    const queryClient = new QueryClient();
-    const { html, hasText } = render(
-      <QueryClientProvider client={queryClient}>
-        <DestinationFrame subdomain="acme" destinationId="dest-row-1" />
-      </QueryClientProvider>
-    );
-    expect(html).toContain('data-testid="destination-section-page"');
-    expect(hasText('Back to Accounts')).toBe(true);
-    expect(html).toContain('/tenant/acme/accounts');
-  });
-
-  it('renders the destination summary with its real data', () => {
-    const { html, hasText } = render(
-      <DestinationSummary
-        destination={{
-          id: 'dest-row-1',
-          externalDestinationId: 'dest-1001',
-          name: 'My Brand',
-          handle: 'mybrand',
-          avatarUrl: null,
-          timezone: 'UTC',
-          status: 'active',
-          accountType: null,
-          platform: 'instagram',
-          account: {
-            id: 'acct-1',
-            displayName: 'Fixture Creator',
-            platform: 'instagram',
-            status: 'active',
-          },
-        }}
-      />
-    );
-    expect(html).toContain('data-testid="destination-name"');
-    expect(hasText('My Brand')).toBe(true);
-    expect(hasText('Instagram')).toBe(true);
-    expect(hasText('Fixture Creator')).toBe(true);
-    expect(hasText('@mybrand')).toBe(true);
-    expect(hasText('Posting timezone:')).toBe(true);
-    expect(hasText('Connected')).toBe(true);
-  });
-});
-
-describe('destination load errors (server-first conversion, spec 131 §8.1)', () => {
-  // The client-side loadDestinationDetail helper is deleted in PR-131-4;
-  // its two error strings survive verbatim in the frame's error path.
-  it('reports not found for a 404', () => {
-    expect(destinationLoadErrorMessage(httpError(404, 'missing'))).toBe(
-      "We couldn't find this destination."
-    );
-  });
-
-  it('reports a plain retry message for other failures', () => {
-    expect(destinationLoadErrorMessage(httpError(500, 'boom'))).toContain(
-      'try again'
-    );
-    expect(destinationLoadErrorMessage(new Error('offline'))).toBe(
-      "Couldn't load this destination. Please try again."
-    );
-  });
-});
-
-describe('Destination frame slots (spec 128 §9.4 wiring)', () => {
-  it('mounts all four slots with the destination identity, and no tabs', () => {
-    const { html } = render(
-      <DestinationSlots
-        subdomain="main"
-        destination={{
-          id: 'dest-row-1',
-          externalDestinationId: 'dest-1001',
-          name: 'My Brand',
-          handle: 'mybrand',
-          avatarUrl: null,
-          timezone: 'UTC',
-          status: 'active',
-          accountType: null,
-          platform: 'instagram',
-          account: {
-            id: 'acct-1',
-            displayName: 'Fixture Creator',
-            platform: 'instagram',
-            status: 'active',
-          },
-        }}
-      />
-    );
-    expect(html).toContain('data-testid="destination-slot-queue"');
-    expect(html).toContain('data-testid="destination-slot-composer"');
-    expect(html).toContain('data-testid="destination-slot-posting-times"');
-    expect(html).toContain('data-testid="destination-slot-history"');
-    expect(html).toContain('data-destination-id="dest-row-1"');
-    expect(html).not.toContain('role="tab"');
-  });
-});
-
 describe('Per-platform accounts pages', () => {
   it('renders the gated Instagram connect action', () => {
     const { html, hasText } = render(<InstagramAccountsPage />);
@@ -236,59 +127,4 @@ describe('Per-platform accounts pages', () => {
     expect(hasText('no keys to create or paste')).toBe(true);
   });
 
-  it('the unified list container renders nothing before data loads', () => {
-    const { html } = render(<SocialAccountsList subdomain="acme" />);
-    expect(html).toBe('');
-  });
-});
-
-describe('Unified social accounts list view', () => {
-  it('lists accounts across platforms with platform labels and destination links', () => {
-    const { html, hasText } = render(
-      <SocialAccountsListView
-        subdomain="acme"
-        accounts={[
-          {
-            id: 'acct-1',
-            platform: 'instagram',
-            externalAccountId: 'ext-1',
-            displayName: 'Fixture Creator',
-            avatarUrl: null,
-            status: 'active',
-            tokenExpiresAt: null,
-            destinations: [
-              {
-                id: 'dest-row-1',
-                externalDestinationId: 'dest-1001',
-                name: 'My Brand',
-                handle: 'mybrand',
-                avatarUrl: null,
-                timezone: 'UTC',
-                status: 'active',
-              },
-            ],
-          },
-          {
-            id: 'acct-2',
-            platform: 'youtube',
-            externalAccountId: 'ext-2',
-            displayName: 'Channel Owner',
-            avatarUrl: null,
-            status: 'expired',
-            tokenExpiresAt: null,
-            destinations: [],
-          },
-        ]}
-      />
-    );
-    expect(html).toContain('data-testid="social-accounts-list"');
-    expect(hasText('Fixture Creator')).toBe(true);
-    expect(hasText('Instagram')).toBe(true);
-    expect(hasText('YouTube')).toBe(true);
-    expect(hasText('My Brand')).toBe(true);
-    expect(hasText('@mybrand')).toBe(true);
-    expect(html).toContain('/tenant/acme/destinations/dest-row-1');
-    expect(hasText('No destinations added yet.')).toBe(true);
-    expect(hasText('Session expired')).toBe(true);
-  });
 });

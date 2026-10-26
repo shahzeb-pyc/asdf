@@ -25,7 +25,6 @@ import TenantLoading from "@/app/tenant/[subdomain]/loading";
 import AccountsLoading from "@/app/tenant/[subdomain]/accounts/loading";
 import PagesLoading from "@/app/tenant/[subdomain]/pages/loading";
 import PageDetailLoading from "@/app/tenant/[subdomain]/pages/[pageId]/loading";
-import DestinationLoading from "@/app/tenant/[subdomain]/destinations/[destinationId]/loading";
 import MediaLoading from "@/app/tenant/[subdomain]/media/loading";
 import SettingsLoading from "@/app/tenant/[subdomain]/settings/loading";
 import { tenantHomeHrefFromPathname } from "@/app/_boundaries/route-boundary";
@@ -137,7 +136,6 @@ describe("loading boundaries", () => {
     ["accounts", AccountsLoading],
     ["pages list", PagesLoading],
     ["page detail", PageDetailLoading],
-    ["destination", DestinationLoading],
     ["media", MediaLoading],
     ["settings", SettingsLoading],
   ];

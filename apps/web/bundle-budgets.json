@@ -14,7 +14,7 @@
       "/tenant/[subdomain]/pages/[pageId]": {
         "firstLoadGzipBytes": 200630,
         "firstLoadRawBytes": 702652,
-        "routeSpecificGzipBytes": 66782,
+        "routeSpecificGzipBytes": 71748,
         "routeSpecificRawBytes": 251700
       },
       "/tenant/[subdomain]/downloader": {
@@ -68,8 +68,8 @@
       "/tenant/[subdomain]/prompts": {
         "firstLoadGzipBytes": 159582,
         "firstLoadRawBytes": 529526,
-        "routeSpecificGzipBytes": 25703,
-        "routeSpecificRawBytes": 78603
+        "routeSpecificGzipBytes": 27353,
+        "routeSpecificRawBytes": 84964
       },
       "/tenant/[subdomain]/tiktok/accounts": {
         "firstLoadGzipBytes": 159403,
@@ -309,14 +309,14 @@
       "/tenant/[subdomain]/pages/[pageId]": {
         "firstLoadGzipBytes": 210662,
         "firstLoadRawBytes": 737785,
-        "routeSpecificGzipBytes": 70122,
+        "routeSpecificGzipBytes": 75336,
         "routeSpecificRawBytes": 264285
       },
       "/tenant/[subdomain]/prompts": {
         "firstLoadGzipBytes": 167561,
         "firstLoadRawBytes": 556002,
-        "routeSpecificGzipBytes": 26988,
-        "routeSpecificRawBytes": 82533
+        "routeSpecificGzipBytes": 28721,
+        "routeSpecificRawBytes": 89213
       },
       "/tenant/[subdomain]/settings": {
         "firstLoadGzipBytes": 170245,
