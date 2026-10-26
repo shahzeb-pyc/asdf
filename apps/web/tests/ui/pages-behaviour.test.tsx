@@ -361,7 +361,13 @@ describe('Add Page confirmation redesign (toast + gold highlight, no banner)', (
     };
     await runImport([newPage]);
 
-    await screen.findByText('1 Facebook Page added');
+    const toastText = await screen.findByText('1 Facebook Page added');
+    // Import success toast is visibly green: green-tinted background +
+    // green border on the toast element itself (flow-scoped success slot).
+    const toastEl = toastText.closest('[data-sonner-toast]');
+    expect(toastEl).not.toBeNull();
+    expect(toastEl!.className).toContain('border-brand-emerald');
+    expect(toastEl!.className).toContain('bg-brand-emerald/15');
     expect(screen.queryByTestId('pages-feedback-banner')).toBeNull();
     expect(screen.getByTestId('pages-grid')).toBeTruthy();
 

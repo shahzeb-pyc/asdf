@@ -435,8 +435,35 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
 
       {/* Flow-scoped toaster for Add Page confirmations only: TOP-RIGHT
           (the shared tenant Toaster stays bottom-right everywhere else).
-          Toasts reach it via toasterId, never via the shared default. */}
-      <Toast id={PAGES_IMPORT_TOASTER_ID} position="top-right" />
+          Toasts reach it via toasterId, never via the shared default.
+          NOTE: passing toastOptions here replaces the shared Toast's
+          defaults wholesale (its {...props} spread comes last), so the
+          base slots below are copied verbatim from shared/ui/toast.tsx
+          and only `success` is changed: the import toast is visibly
+          GREEN (green-tinted background + green border, green tick
+          icon via text-brand-emerald). Sonner joins the slots with
+          tailwind-merge, so the success slot wins over the base
+          border-line / bg-panel. Only this flow's success toast goes
+          green — the shared tenant Toaster is untouched. */}
+      <Toast
+        id={PAGES_IMPORT_TOASTER_ID}
+        position="top-right"
+        toastOptions={{
+          classNames: {
+            toast:
+              'group toast group flex items-start gap-2 rounded-md border border-line bg-panel p-4 text-body text-ink shadow-elevated',
+            title: 'font-medium',
+            description: 'text-ink-sub',
+            actionButton: 'bg-primary text-on-primary rounded-sm px-3 h-9 font-medium',
+            cancelButton: 'bg-subtle text-ink rounded-sm px-3 h-9 font-medium',
+            closeButton: 'text-ink-sub hover:text-ink',
+            success: 'border-brand-emerald bg-brand-emerald/15 text-brand-emerald',
+            error: 'text-brand-rose',
+            warning: 'text-brand-gold',
+            info: 'text-ink',
+          },
+        }}
+      />
 
       {/* Scale Toolbar — always visible, at any page count */}
       {!isLoading && (
