@@ -1,7 +1,7 @@
 'use client';
 
 import React, { Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, type ReadonlyURLSearchParams } from 'next/navigation';
 
 import { ConnectStatusLayout } from '@/components/accounts/connect-status-layout';
 
