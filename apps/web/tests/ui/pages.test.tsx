@@ -22,7 +22,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { THEME, DARK_THEME, LIGHT_THEME, PALETTE } from '@/lib/theme';
+import { THEME, DARK_THEME, LIGHT_THEME } from '@/lib/theme';
 import {
   PageCard,
   computeFollowersGained,
@@ -30,8 +30,7 @@ import {
   formatPageIdSuffix,
   getPageAttentionMessage,
   getPageStatusLabel,
-  getPageStatusColor,
-  getPageStatusRingBorder,
+  getPageStatusMarkKind,
   isPageNeedsAttention,
   type FacebookPageItem,
 } from '@/components/pages/page-card';
@@ -252,7 +251,10 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
       expect(hasText('Account: Sarah Connor')).toBe(true);
       expect(hasAttribute('data-testid', 'page-status')).toBe(true);
       expect(hasText('Active')).toBe(true);
-      expect(html).toContain('bg-signal-operational');
+      // Accounts-style mark: tick icon + signal text, no dot (no bg-signal dot span)
+      expect(html).toContain('text-signal-operational');
+      expect(html).toContain('data-icon="check"');
+      expect(html).not.toContain('bg-signal-operational');
       expect(hasAttribute('data-testid', 'page-attention-banner')).toBe(false);
     });
 
@@ -388,69 +390,37 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
       }
     });
 
-    it('renders status as colour + icon + text (spec 131 §6.4.1, no bullet dot) and applies dynamic status ring to avatar across all statuses', () => {
+    it('renders status as Accounts-style icon + text with no dot, and applies the status ring to the avatar, across all statuses', () => {
       const allStatuses: Array<{
         status: FacebookPageItem['status'];
-        expectedColor: string;
-        expectedRing: string;
+        expectedKind: 'operational' | 'queued' | 'critical';
+        expectedIcon: 'check' | 'clock' | 'cross';
         expectedRingClass: string;
       }> = [
-        {
-          status: 'active',
-          expectedColor: PALETTE.accent4,
-          expectedRing: `1.5px solid ${PALETTE.accent4}`,
-          expectedRingClass: 'border-signal-operational',
-        },
-        {
-          status: 'paused',
-          expectedColor: PALETTE.primary,
-          expectedRing: `1.5px solid ${PALETTE.primary}`,
-          expectedRingClass: 'border-signal-queued',
-        },
-        {
-          status: 'invalid_token',
-          expectedColor: PALETTE.accent3,
-          expectedRing: `1.5px solid ${PALETTE.accent3}`,
-          expectedRingClass: 'border-signal-critical',
-        },
-        {
-          status: 'page_checkpoint',
-          expectedColor: PALETTE.accent3,
-          expectedRing: `1.5px solid ${PALETTE.accent3}`,
-          expectedRingClass: 'border-signal-critical',
-        },
-        {
-          status: 'fb_rate_limited',
-          expectedColor: PALETTE.accent3,
-          expectedRing: `1.5px solid ${PALETTE.accent3}`,
-          expectedRingClass: 'border-signal-critical',
-        },
-        {
-          status: 'disconnected',
-          expectedColor: `var(--text-dim, ${THEME.default.text.muted})`,
-          expectedRing: `1px solid var(--border-subtle, ${THEME.default.borders.hairline})`,
-          expectedRingClass: 'border-line',
-        },
+        { status: 'active', expectedKind: 'operational', expectedIcon: 'check', expectedRingClass: 'border-signal-operational' },
+        { status: 'paused', expectedKind: 'queued', expectedIcon: 'clock', expectedRingClass: 'border-signal-queued' },
+        { status: 'invalid_token', expectedKind: 'critical', expectedIcon: 'cross', expectedRingClass: 'border-signal-critical' },
+        { status: 'page_checkpoint', expectedKind: 'critical', expectedIcon: 'cross', expectedRingClass: 'border-signal-critical' },
+        { status: 'fb_rate_limited', expectedKind: 'critical', expectedIcon: 'cross', expectedRingClass: 'border-signal-critical' },
+        { status: 'disconnected', expectedKind: 'critical', expectedIcon: 'cross', expectedRingClass: 'border-signal-critical' },
       ];
 
       for (const item of allStatuses) {
-        expect(getPageStatusColor(item.status)).toBe(item.expectedColor);
-        expect(getPageStatusRingBorder(item.status)).toBe(item.expectedRing);
+        expect(getPageStatusMarkKind(item.status)).toBe(item.expectedKind);
 
-        const { html, hasText } = render(
+        const { html, hasText, hasAttribute } = render(
           <PageCard
             page={{ ...baseActivePage, status: item.status }}
             subdomain="acme"
           />
         );
 
-        // Verify pure typographic status without any bullet/dot character
+        // No dot anywhere in the card's status mark
         expect(html).not.toContain('●');
         expect(html).not.toContain('•');
         expect(hasText(getPageStatusLabel(item.status))).toBe(true);
-
-        // Verify the avatar border ring's token class is rendered
-        // (the helper's ring value itself is pinned above).
+        expect(hasAttribute('data-testid', 'page-status')).toBe(true);
+        expect(html).toContain(`data-icon="${item.expectedIcon}"`);
         expect(html).toContain(item.expectedRingClass);
       }
     });
@@ -832,13 +802,16 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
       createdAt: '2026-10-05T10:00:00.000Z',
     };
 
-    it('renders PagesEmptyState when 0 pages exist', () => {
-      const { hasAttribute, hasText } = renderPagesShell({ pages: [], accounts: [sampleActiveAccount] });
+    it('renders PagesEmptyState when 0 pages exist, with non-reels-only copy and the toolbar still visible', () => {
+      const { hasAttribute, hasText, html } = renderPagesShell({ pages: [], accounts: [sampleActiveAccount] });
 
       expect(hasAttribute('data-testid', 'pages-empty-state')).toBe(true);
       expect(hasText('No Facebook Pages added yet')).toBe(true);
       expect(hasAttribute('data-testid', 'empty-state-add-page-btn')).toBe(true);
-      expect(hasAttribute('data-testid', 'pages-scale-toolbar')).toBe(false);
+      expect(hasAttribute('data-testid', 'pages-scale-toolbar')).toBe(true);
+      // Empty-state copy must not assume reels-only publishing
+      expect(html).not.toContain('publish reels to');
+      expect(hasText('publish posts to')).toBe(true);
     });
 
     it('pins attention-needed pages (invalid_token, page_checkpoint, fb_rate_limited) above paused and active pages', () => {
@@ -856,10 +829,10 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
         'p-active-1',
       ]);
 
-      // With 4 pages (<= 4), scale toolbar is hidden and attention cards render first in the DOM
+      // With 4 pages, the scale toolbar is visible (no >4 gate) and attention cards render first in the DOM
       const { html, hasAttribute } = renderPagesShell({ pages: inputPages, accounts: [sampleActiveAccount] });
 
-      expect(hasAttribute('data-testid', 'pages-scale-toolbar')).toBe(false);
+      expect(hasAttribute('data-testid', 'pages-scale-toolbar')).toBe(true);
       const checkpointIdx = html.indexOf('Delta Checkpoint Page');
       const invalidIdx = html.indexOf('Gamma Expired Page');
       const pausedIdx = html.indexOf('Beta Paused Page');
@@ -871,7 +844,7 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
       expect(activeIdx).toBeGreaterThan(pausedIdx);
     });
 
-    it('renders scale toolbar (pages-scale-toolbar, search input, status filter tabs, and account filter) when pages.length > 4', () => {
+    it('renders scale toolbar (pages-scale-toolbar, search input, status filter tabs, and account filter) with 5 pages', () => {
       const fivePages = [
         pageActive1,
         pagePaused,
@@ -937,28 +910,32 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
       expect(healthyRender.hasText('All operational')).toBe(false);
     });
 
-    it('shows the expired-connection banner with Reconnect when an account is expired (Spec 102)', () => {
-      const { hasAttribute, hasText } = renderPagesShell({ pages: [pageActive1], accounts: [sampleActiveAccount, sampleExpiredAccount] });
+    it('renders scale toolbar with a single page (no >4 gate)', () => {
+      const { hasAttribute } = renderPagesShell({ pages: [pageActive1], accounts: [sampleActiveAccount] });
 
-      expect(hasAttribute('data-testid', 'pages-expired-connection-banner')).toBe(true);
-      expect(
-        hasText('Your Facebook connection expired. Reconnect to resume publishing.')
-      ).toBe(true);
-      expect(hasAttribute('data-testid', 'pages-reconnect-btn')).toBe(true);
+      expect(hasAttribute('data-testid', 'pages-scale-toolbar')).toBe(true);
+      expect(hasAttribute('data-testid', 'pages-search-input')).toBe(true);
+      expect(hasAttribute('data-testid', 'pages-filter-all')).toBe(true);
     });
 
-    it('hides the expired-connection banner when all accounts are connected (Spec 102)', () => {
+    it('renders scale toolbar with zero pages (empty state still shows, toolbar is not gated)', () => {
+      const { hasAttribute } = renderPagesShell({ pages: [], accounts: [sampleActiveAccount] });
+
+      expect(hasAttribute('data-testid', 'pages-scale-toolbar')).toBe(true);
+      expect(hasAttribute('data-testid', 'pages-search-input')).toBe(true);
+    });
+
+    it('never renders an expired-connection banner on the Pages list, even when an account is expired (expired accounts belong in Accounts)', () => {
+      const { hasAttribute } = renderPagesShell({ pages: [pageActive1], accounts: [sampleActiveAccount, sampleExpiredAccount] });
+
+      expect(hasAttribute('data-testid', 'pages-expired-connection-banner')).toBe(false);
+      expect(hasAttribute('data-testid', 'pages-reconnect-btn')).toBe(false);
+    });
+
+    it('renders no expired-connection banner when all accounts are connected', () => {
       const { hasAttribute } = renderPagesShell({ pages: [pageActive1], accounts: [sampleActiveAccount] });
 
       expect(hasAttribute('data-testid', 'pages-expired-connection-banner')).toBe(false);
-    });
-
-    it('Reconnect routing (Settings when credentials are missing, OAuth when configured) is covered live in pages-behaviour.test.tsx (PR-131-2 named modification 3)', () => {
-      const { hasAttribute } = renderPagesShell({
-        pages: [pageActive1],
-        accounts: [sampleActiveAccount, sampleExpiredAccount],
-      });
-      expect(hasAttribute('data-testid', 'pages-reconnect-btn')).toBe(true);
     });
 
     it('validates light mode canvas contrast token is #ffffff and panel is #ffffff (Binance light)', () => {

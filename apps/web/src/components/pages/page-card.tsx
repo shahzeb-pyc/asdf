@@ -4,25 +4,26 @@
  * Page card (spec 131 PR-131-2) — rebuilt on the design system:
  * token-backed Tailwind utilities only (zero inline styles), the
  * avatar on `next/image` (the file's raw img element is deleted),
- * and status as colour + icon + text via the shared/ui `StatusDot`
- * (spec §6.4.1 / OD-3 — the one named deviation from the previous
- * bare-text status). Layout, copy, testids, and the click / Enter /
+ * and status as icon + text via the Accounts-style `PageStatusMark`
+ * (no status dot). Layout, copy, testids, and the click / Enter /
  * Space activation behaviours are preserved (spec §6 parity).
  *
  * The exported `FacebookPageItem` type is a cross-PR contract
  * (consumed by the dedicated section route, PR-131-3) — its shape
- * is frozen in this PR. The status colour/ring helper functions keep
- * returning the theme values the parity suites pin; the card's own
- * rendering maps the same statuses onto token classes.
+ * is frozen in this PR.
  */
 import * as React from 'react';
 import Image from 'next/image';
-import { MoveUpRightIcon, TriangleAlertIcon } from 'lucide-react';
+import {
+  CheckIcon,
+  ClockIcon,
+  MoveUpRightIcon,
+  TriangleAlertIcon,
+  XIcon,
+} from 'lucide-react';
 
-import { PALETTE, THEME } from '@/lib/theme';
 import { getUserInitials } from '@/lib/user-initials';
 import { cn } from '@/lib/utils';
-import { StatusDot, type Status } from '@/components/shared/ui/status-dot';
 
 export type FacebookPageStatus =
   | 'active'
@@ -99,45 +100,58 @@ export function getPageAttentionMessage(
   }
 }
 
-export function getPageStatusColor(status: FacebookPageStatus): string {
-  if (isPageNeedsAttention(status)) {
-    return PALETTE.accent3;
-  }
-  if (status === 'paused') {
-    return PALETTE.primary;
-  }
-  if (status === 'active') {
-    return PALETTE.accent4;
-  }
-  return `var(--text-dim, ${THEME.default.text.muted})`;
-}
+/**
+ * Page status mark — the Accounts-style mark (icon + text, NO dot),
+ * mirroring `AccountHealthMark` in account-card.tsx. That component
+ * could not be reused directly here: account-card.tsx is owned by
+ * the parallel dialogue branch, so this mark duplicates its
+ * icon/text mapping until the two can be consolidated into one
+ * shared component. Do not reintroduce StatusDot here.
+ */
+export type PageStatusMarkKind = 'operational' | 'queued' | 'critical';
 
-export function getPageStatusRingBorder(status: FacebookPageStatus): string {
-  if (isPageNeedsAttention(status)) {
-    return `1.5px solid ${PALETTE.accent3}`;
-  }
-  if (status === 'paused') {
-    return `1.5px solid ${PALETTE.primary}`;
-  }
-  if (status === 'active') {
-    return `1.5px solid ${PALETTE.accent4}`;
-  }
-  return `1px solid var(--border-subtle, ${THEME.default.borders.hairline})`;
-}
-
-/** Token signal for a page status — the StatusDot presentation (§6.4.1). */
-export function getPageStatusSignal(status: FacebookPageStatus): Status {
-  if (isPageNeedsAttention(status)) return 'critical';
-  if (status === 'paused') return 'queued';
+export function getPageStatusMarkKind(
+  status: FacebookPageStatus
+): PageStatusMarkKind {
   if (status === 'active') return 'operational';
-  return 'idle';
+  if (status === 'paused') return 'queued';
+  return 'critical';
 }
 
-const RING_CLASSES: Record<Status, string> = {
+const MARK_META = {
+  operational: { Icon: CheckIcon, iconName: 'check', textClass: 'text-signal-operational' },
+  queued: { Icon: ClockIcon, iconName: 'clock', textClass: 'text-signal-queued' },
+  critical: { Icon: XIcon, iconName: 'cross', textClass: 'text-signal-critical' },
+} as const;
+
+export function PageStatusMark({
+  status,
+  label,
+}: Readonly<{ status: FacebookPageStatus; label: string }>) {
+  const kind = getPageStatusMarkKind(status);
+  const meta = MARK_META[kind];
+  const { Icon } = meta;
+  return (
+    <span
+      data-testid="page-status"
+      data-status={kind}
+      role="status"
+      aria-label={label}
+      className={cn(
+        'inline-flex items-center gap-1.5 font-semibold tracking-wide text-metadata',
+        meta.textClass
+      )}
+    >
+      <Icon aria-hidden data-icon={meta.iconName} className="size-3.5 shrink-0" />
+      <span>{label}</span>
+    </span>
+  );
+}
+
+const RING_CLASSES: Record<PageStatusMarkKind, string> = {
   operational: 'border-2 border-signal-operational',
   queued: 'border-2 border-signal-queued',
   critical: 'border-2 border-signal-critical',
-  idle: 'border border-line',
 };
 
 /**
@@ -187,8 +201,7 @@ export function PageCard({
   const needsAttention = isPageNeedsAttention(page.status);
   const attentionMessage = getPageAttentionMessage(page.status);
   const statusLabel = getPageStatusLabel(page.status);
-  const statusSignal = getPageStatusSignal(page.status);
-  const ringClass = RING_CLASSES[statusSignal];
+  const ringClass = RING_CLASSES[getPageStatusMarkKind(page.status)];
 
   const currentFollowers = page.currentFollowers ?? 0;
   const gained = computeFollowersGained(page);
@@ -339,12 +352,7 @@ export function PageCard({
 
         {/* Right Column: Status (colour + icon + text) & Parent Account */}
         <div className="min-w-0 shrink-0 text-right">
-          <StatusDot
-            data-testid="page-status"
-            status={statusSignal}
-            label={statusLabel}
-            className="font-semibold tracking-wide"
-          />
+          <PageStatusMark status={page.status} label={statusLabel} />
 
           <div
             data-testid="page-parent-account"

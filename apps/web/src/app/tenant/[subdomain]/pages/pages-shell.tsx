@@ -17,12 +17,17 @@
  *
  * Behaviour parity (spec §6): attention-first ordering, the
  * all/active/needs-attention/paused status filters, text search,
- * the account filter, the situational subtitle, the expired-
- * connection banner with its Reconnect routing (Settings → Facebook
- * when the workspace app details are not configured, direct OAuth
- * when they are), and the Add Page finish summary banner — computed
- * by the same helpers the parity suites pin
- * (`components/pages/pages-helpers`).
+ * the account filter, the situational subtitle, and the Add Page
+ * finish summary banner — computed by the same helpers the parity
+ * suites pin (`components/pages/pages-helpers`).
+ *
+ * Pages list redesign: the toolbar renders at any page count (no
+ * >4 gate), cards use the Accounts-style tick/cross mark with no
+ * dot, and there is NO expired-connection banner here — expired
+ * accounts belong in the Accounts section, not Pages. The
+ * Reconnect routing below survives only for the Add Page modal's
+ * expired-account rows (Settings → Facebook when the workspace app
+ * details are not configured, direct OAuth when they are).
  *
  * ?account= contract (Accounts card "pages linked" link): the shell
  * initialises its account filter from the `account` URL param on
@@ -61,9 +66,6 @@ import {
   type PageStatusFilter,
 } from '@/components/pages/pages-helpers';
 import { AddPageModal } from '@/components/pages/add-page-modal';
-import {
-  getAccountHealth,
-} from '@/components/accounts/account-health';
 import type { FacebookAccountItem } from '@/components/accounts/account-card';
 import { buildDirectConnectUrl } from '@/components/accounts/connect-account-modal';
 
@@ -199,11 +201,6 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
       );
     },
     [router, searchParams, subdomain]
-  );
-
-  const expiredAccount = React.useMemo(
-    () => accounts.find((a) => getAccountHealth(a) === 'expired') ?? null,
-    [accounts]
   );
 
   const handleReconnect = React.useCallback(
@@ -401,26 +398,6 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
         </Button>
       </div>
 
-      {/* Expired connection banner */}
-      {expiredAccount && (
-        <Banner
-          data-testid="pages-expired-connection-banner"
-          variant="critical"
-          title="Your Facebook connection expired. Reconnect to resume publishing."
-          className="mb-6 border border-line"
-          action={
-            <Button
-              type="button"
-              data-testid="pages-reconnect-btn"
-              disabled={byocQuery.isPending}
-              onClick={() => handleReconnect(expiredAccount)}
-            >
-              {byocQuery.isPending ? 'Checking…' : 'Reconnect'}
-            </Button>
-          }
-        />
-      )}
-
       {/* Confirmation Banner (the Add Page finish summary, UI Rule 26) */}
       {bannerMessage && (
         <Banner
@@ -432,8 +409,8 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
         />
       )}
 
-      {/* Scale Toolbar when > 4 Pages exist */}
-      {!isLoading && pages.length > 4 && (
+      {/* Scale Toolbar — always visible, at any page count */}
+      {!isLoading && (
         <PagesScaleToolbar
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}

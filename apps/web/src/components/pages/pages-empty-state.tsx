@@ -48,7 +48,7 @@ export function PagesEmptyState({
           </div>
         }
         title="No Facebook Pages added yet"
-        description="Choose one of your connected Facebook accounts and select the pages you want to manage and publish reels to."
+        description="Choose one of your connected Facebook accounts and select the pages you want to manage and publish posts to — text, photos, videos, reels, and stories."
       />
       <div className="flex flex-col items-center px-6 pb-16">
         {showMissingAppGuidance && (

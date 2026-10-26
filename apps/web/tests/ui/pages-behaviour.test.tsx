@@ -186,7 +186,7 @@ describe('PagesShell behaviour', () => {
     makePage({ id: 'p-5', pageName: 'Epsilon Page', status: 'active', fbPageId: 'fb_page_5', createdAt: '2026-10-05T10:00:00.000Z' }),
   ];
 
-  it('expired banner Reconnect routes to Settings → Facebook when app credentials are missing (Spec 102)', () => {
+  it('renders no expired-connection banner on the Pages list, even when an account is expired (expired accounts belong in Accounts)', () => {
     render(
       shellWrapper({
         pages: fivePages,
@@ -195,11 +195,8 @@ describe('PagesShell behaviour', () => {
       })
     );
 
-    expect(screen.getByTestId('pages-expired-connection-banner')).toBeTruthy();
-    fireEvent.click(screen.getByTestId('pages-reconnect-btn'));
-    expect(mockPush).toHaveBeenCalledWith(
-      '/tenant/acme/settings?tab=byoc&notice=reconnect'
-    );
+    expect(screen.queryByTestId('pages-expired-connection-banner')).toBeNull();
+    expect(screen.queryByTestId('pages-reconnect-btn')).toBeNull();
   });
 
   it('filtering to zero shows the typed no-results state and Clear filters restores the grid (UI Rule 23)', () => {

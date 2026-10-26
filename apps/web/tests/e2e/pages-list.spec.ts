@@ -133,13 +133,14 @@ test.describe('pages list + add page (spec 131 PR-131-2)', () => {
     await expect(firstCard).toContainText('Gamma Expired');
   });
 
-  test('empty state renders with its one primary action', async ({ page }) => {
+  test('empty state renders with its one primary action and the always-visible toolbar', async ({ page }) => {
     await installPagesFixtures(page, []);
     await page.goto(`/tenant/${SUB}/pages`);
 
     await expect(page.getByTestId('pages-empty-state')).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId('empty-state-add-page-btn')).toBeVisible();
-    await expect(page.getByTestId('pages-scale-toolbar')).toHaveCount(0);
+    // Pages list redesign: the scale toolbar is no longer gated on page count.
+    await expect(page.getByTestId('pages-scale-toolbar')).toBeVisible();
   });
 
   test('filtered-to-zero echoes filters and Clear filters restores the list', async ({ page }) => {
