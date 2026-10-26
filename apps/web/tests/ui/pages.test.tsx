@@ -27,8 +27,8 @@ import {
   PageCard,
   computeFollowersGained,
   formatFollowersGained,
+  formatAddedDate,
   formatPageIdSuffix,
-  getPageAttentionMessage,
   getPageStatusLabel,
   getPageStatusMarkKind,
   isPageNeedsAttention,
@@ -246,7 +246,7 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
       expect(hasAttribute('data-testid', 'page-current-followers')).toBe(true);
       expect(hasText('11,200')).toBe(true);
       expect(hasAttribute('data-testid', 'page-followers-gained')).toBe(true);
-      expect(hasText('+1,200')).toBe(true);
+      expect(hasText('+1,200 gained')).toBe(true);
       expect(hasAttribute('data-testid', 'page-parent-account')).toBe(true);
       expect(hasText('Account: Sarah Connor')).toBe(true);
       expect(hasAttribute('data-testid', 'page-status')).toBe(true);
@@ -256,9 +256,14 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
       expect(html).toContain('data-icon="check"');
       expect(html).not.toContain('bg-signal-operational');
       expect(hasAttribute('data-testid', 'page-attention-banner')).toBe(false);
+      // Final card spec: Added date from createdAt, no Page ID line
+      expect(hasAttribute('data-testid', 'page-added-line')).toBe(true);
+      expect(hasText('Added 5 Oct 2026')).toBe(true);
+      expect(formatAddedDate('2026-10-05T12:00:00.000Z')).toBe('5 Oct 2026');
+      expect(hasAttribute('data-testid', 'page-id-line')).toBe(false);
     });
 
-    it('distinguishes duplicate page names with the Page ID suffix line (Spec 109)', () => {
+    it('does NOT render a Page ID line on the card (final card spec) — the helper survives for other surfaces only', () => {
       expect(formatPageIdSuffix('61594571856866')).toBe('…856866');
       expect(formatPageIdSuffix('123')).toBe('123');
       expect(formatPageIdSuffix('')).toBe('');
@@ -292,10 +297,59 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
         />
       );
 
-      expect(first.hasAttribute('data-testid', 'page-id-line')).toBe(true);
-      expect(first.hasText('Page ID …222222')).toBe(true);
-      expect(second.hasText('Page ID …333333')).toBe(true);
-      expect(first.hasText('Page ID …333333')).toBe(false);
+      expect(first.hasAttribute('data-testid', 'page-id-line')).toBe(false);
+      expect(first.hasText('Page ID')).toBe(false);
+      expect(second.hasText('Page ID')).toBe(false);
+    });
+
+    it('renders identity lines in order (name → Added → followers/category → Facebook link row) with link left and gained right', () => {
+      const { html } = render(
+        <PageCard page={baseActivePage} subdomain="acme" />
+      );
+      const nameIdx = html.indexOf('Cyberdyne Reels');
+      const addedIdx = html.indexOf('Added 5 Oct 2026');
+      const followersIdx = html.indexOf('11,200');
+      const linkIdx = html.indexOf('View on Facebook');
+      const gainedIdx = html.indexOf('+1,200 gained');
+      expect(nameIdx).toBeGreaterThan(-1);
+      expect(addedIdx).toBeGreaterThan(nameIdx);
+      expect(followersIdx).toBeGreaterThan(addedIdx);
+      expect(linkIdx).toBeGreaterThan(followersIdx);
+      expect(gainedIdx).toBeGreaterThan(linkIdx);
+
+      const tree = renderAndCaptureTree(() =>
+        PageCard({ page: baseActivePage, subdomain: 'acme' })
+      );
+      const linkEl = findElementByTestId(tree, 'page-facebook-link');
+      expect(linkEl).not.toBeNull();
+      expect(linkEl?.props.href).toBe('https://facebook.com/fb_page_101');
+      expect(linkEl?.props.target).toBe('_blank');
+      expect(linkEl?.props.rel).toBe('noopener noreferrer');
+      // Clicking the link stops propagation so the card does not navigate
+      const stopPropagation = vi.fn();
+      linkEl?.props.onClick({ stopPropagation });
+      expect(stopPropagation).toHaveBeenCalledTimes(1);
+      // Keyboard activation from the link is ignored by the card handler
+      const selectedPaths: string[] = [];
+      const cardTree = renderAndCaptureTree(() =>
+        PageCard({
+          page: baseActivePage,
+          subdomain: 'acme',
+          onSelectPage: (p) => selectedPaths.push(p.id),
+        })
+      );
+      const cardEl = findElementByTestId(cardTree, 'page-card-page-uuid-1');
+      const linkTarget = { closest: () => ({}) };
+      cardEl?.props.onKeyDown({
+        key: 'Enter',
+        preventDefault: vi.fn(),
+        target: linkTarget,
+      });
+      expect(selectedPaths).toHaveLength(0);
+
+      // Footer pinned: divider uses mt-auto, circled arrow present
+      expect(html).toContain('page-card-arrow');
+      expect(html).toContain('mt-auto');
     });
 
     it('falls back to monogram initials when profilePictureUrl is missing or image errors (forceAvatarError)', () => {
@@ -339,42 +393,23 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
         <PageCard page={computedNegativePage} subdomain="acme" />
       );
       expect(negRender.hasText('7,650')).toBe(true);
-      expect(negRender.hasText('-350')).toBe(true);
+      expect(negRender.hasText('-350 gained')).toBe(true);
       expect(negRender.html).toContain('text-brand-rose');
     });
 
-    it('highlights attention-needed statuses (invalid_token, page_checkpoint, fb_rate_limited) with red/rose border and page-attention-banner', () => {
+    it('highlights attention-needed statuses (invalid_token, page_checkpoint, fb_rate_limited) with red/rose border and cross status but NO attention banner (final card spec)', () => {
       const attentionStatuses: Array<{
         status: FacebookPageItem['status'];
         expectedLabel: string;
-        expectedBannerSnippet: string;
       }> = [
-        {
-          status: 'invalid_token',
-          expectedLabel: 'Token Expired',
-          expectedBannerSnippet:
-            'Token Expired — Reconnect the parent Facebook account to resume publishing.',
-        },
-        {
-          status: 'page_checkpoint',
-          expectedLabel: 'Identity Checkpoint',
-          expectedBannerSnippet:
-            'Identity Checkpoint — Confirm page identity on Facebook mobile to resume.',
-        },
-        {
-          status: 'fb_rate_limited',
-          expectedLabel: 'Rate Limited',
-          expectedBannerSnippet:
-            'Rate Limited — Facebook temporarily restricted posting',
-        },
+        { status: 'invalid_token', expectedLabel: 'Token Expired' },
+        { status: 'page_checkpoint', expectedLabel: 'Identity Checkpoint' },
+        { status: 'fb_rate_limited', expectedLabel: 'Rate Limited' },
       ];
 
       for (const item of attentionStatuses) {
         expect(isPageNeedsAttention(item.status)).toBe(true);
         expect(getPageStatusLabel(item.status)).toBe(item.expectedLabel);
-        expect(getPageAttentionMessage(item.status)).toContain(
-          item.expectedBannerSnippet
-        );
 
         const { hasAttribute, hasText, html } = render(
           <PageCard
@@ -383,9 +418,11 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
           />
         );
 
-        expect(hasAttribute('data-testid', 'page-attention-banner')).toBe(true);
+        expect(hasAttribute('data-testid', 'page-attention-banner')).toBe(false);
         expect(hasText(item.expectedLabel)).toBe(true);
-        expect(hasText(item.expectedBannerSnippet)).toBe(true);
+        expect(hasText('Reconnect the parent Facebook account')).toBe(false);
+        expect(hasText('Confirm page identity on Facebook mobile')).toBe(false);
+        expect(hasText('temporarily restricted posting')).toBe(false);
         expect(html).toContain('border-brand-rose');
       }
     });
