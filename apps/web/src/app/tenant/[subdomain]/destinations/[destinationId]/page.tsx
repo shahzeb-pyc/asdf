@@ -1,87 +1,53 @@
 /**
- * Dedicated-section landing for a destination (Spec 123, Part C) —
- * rebuilt as the unified destination frame (spec 131 PR-131-4, §1.3).
- *
- * Routing contract: /tenant/[subdomain]/destinations/[destinationId]
- * loads the destination + its owning account from
- *   GET /api/tenant/[subdomain]/accounts/social/[destinationId]
- *
- * Server-first (spec §8.1): the destination is prefetched here in the
- * server component through the cookie-forwarding typed client and
- * dehydrated into the React Query cache the frame shell reads — the
- * former client fetch-on-mount and its `loadDestinationDetail` helper
- * are deleted; the helper's two error strings live on in the frame's
- * error path, verbatim (spec §6.3). `prefetchServerQueries` never
- * throws — a failed prefetch leaves the key out and the shell's query
- * fetches on mount, where its error state renders.
+ * Destinations pages were removed: the dedicated Pages section is the only
+ * home for a Facebook Page, and there is no longer a separate
+ * destination view. This route survives ONLY as a redirector so previously
+ * reachable links never land on a bare 404:
+ * - a destination that maps to a Facebook Page (its external id matches a
+ *   page's Facebook page id) redirects to that page's dedicated view;
+ * - anything else (unknown destination, non-Facebook destination, any
+ *   lookup failure) redirects to the Pages list.
+ * The destination data model, its APIs, queue links, slots, and the shared
+ * composer are untouched — only the user-facing destination views went.
  */
-import * as React from 'react';
+import { redirect } from 'next/navigation';
 
-import { ListDestinationPostingSlotsResponseSchema } from '@fbuploadpro/contracts';
 import { buildTenantApiPath } from '@/lib/api/client';
 import { DestinationDetailResponseSchema } from '@/lib/api/schemas/connect';
-import { ListDestinationQueueResponseSchema } from '@/lib/api/schemas/unified-queue';
-import { DataHydration, queryKeys } from '@/lib/data';
-import {
-  createServerQueryClient,
-  prefetchServerQueries,
-  serverApiFetch,
-} from '@/lib/data/server';
+import { ListFacebookPagesResponseSchema } from '@/lib/api/schemas/pages';
+import { serverApiFetch } from '@/lib/data/server';
 
-import DestinationLoading from './loading';
-import { DestinationFrame } from './destination-frame';
-
-export { DestinationSummary } from './destination-frame';
-
-interface DestinationSectionPageProps {
+interface DestinationRedirectPageProps {
   params: Promise<{ subdomain: string; destinationId: string }>;
 }
 
-export default async function DestinationSectionPage({
+export default async function DestinationRedirectPage({
   params,
-}: Readonly<DestinationSectionPageProps>) {
+}: Readonly<DestinationRedirectPageProps>) {
   const { subdomain, destinationId } = await params;
-  const tenant = queryKeys.tenant(subdomain);
-
-  const queryClient = createServerQueryClient(subdomain);
-  const state = await prefetchServerQueries(queryClient, [
-    {
-      queryKey: tenant.destinations.detail(destinationId),
-      queryFn: () =>
-        serverApiFetch(
-          buildTenantApiPath(subdomain, `/accounts/social/${destinationId}`),
-          { schema: DestinationDetailResponseSchema }
-        ),
-    },
-    // Spec 134 PR-134-3: the queue + posting-times panels' first reads,
-    // prefetched on the same server-first discipline — the panels read
-    // these cache entries on mount instead of fetching cold.
-    {
-      queryKey: tenant.destinations.queue(destinationId),
-      queryFn: () =>
-        serverApiFetch(
-          buildTenantApiPath(subdomain, `/destinations/${destinationId}/queue`),
-          { schema: ListDestinationQueueResponseSchema }
-        ),
-    },
-    {
-      queryKey: tenant.destinations.slots(destinationId),
-      queryFn: () =>
-        serverApiFetch(
-          buildTenantApiPath(
-            subdomain,
-            `/destinations/${destinationId}/posting-slots`
-          ),
-          { schema: ListDestinationPostingSlotsResponseSchema }
-        ),
-    },
-  ]);
-
-  return (
-    <DataHydration state={state}>
-      <React.Suspense fallback={<DestinationLoading />}>
-        <DestinationFrame subdomain={subdomain} destinationId={destinationId} />
-      </React.Suspense>
-    </DataHydration>
-  );
+  const pagesList = `/tenant/${subdomain}/pages`;
+  let target = pagesList;
+  try {
+    const detail = await serverApiFetch(
+      buildTenantApiPath(subdomain, `/accounts/social/${destinationId}`),
+      { schema: DestinationDetailResponseSchema }
+    );
+    if (detail.destination.platform === 'facebook') {
+      const pages = await serverApiFetch(
+        buildTenantApiPath(subdomain, '/pages'),
+        { schema: ListFacebookPagesResponseSchema }
+      );
+      const page = pages.pages.find(
+        (candidate) => candidate.fbPageId === detail.destination.externalDestinationId
+      );
+      if (page) {
+        target = `/tenant/${subdomain}/pages/${page.id}`;
+      }
+    }
+  } catch {
+    // Any lookup failure falls through to the Pages list — never a 404
+    // and never an error page for a previously reachable link.
+    target = pagesList;
+  }
+  redirect(target);
 }
