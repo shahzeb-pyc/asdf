@@ -277,7 +277,7 @@ export function PageCard({
           Identity lines, in order: name, Added date, followers + category.
           The followers NUMBER is page-name size (text-body) and bold; the
           rest of the followers line stays muted at metadata size. */}
-      <div className="mb-4 flex items-start gap-4">
+      <div className="flex items-start gap-4">
         {showAvatarImg ? (
           <Image
             src={page.profilePictureUrl!}
@@ -352,7 +352,7 @@ export function PageCard({
           pinned footer, so the divider follows the content directly. */}
       <div
         data-testid="page-facebook-link-row"
-        className="mt-4 flex items-center justify-between gap-4"
+        className="mt-3 flex items-center justify-between gap-4"
       >
         <a
           data-testid="page-facebook-link"
@@ -377,7 +377,7 @@ export function PageCard({
 
       {/* Divider + footer, directly under the content (no min height,
           no mt-auto pinning) so no dead space opens up on short cards. */}
-      <div aria-hidden className="pt-4">
+      <div aria-hidden className="pt-3">
         <div className="border-t border-line" />
       </div>
       <div className="mt-3 flex items-center justify-between gap-4">
