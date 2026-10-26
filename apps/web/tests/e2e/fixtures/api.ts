@@ -28,8 +28,6 @@ export interface FixtureState {
   accounts: Array<Record<string, unknown>>;
   queue: Array<Record<string, unknown>>;
   media: Array<Record<string, unknown>>;
-  /** Personal prompts for the Prompt Library fixture (spec 144). */
-  prompts: Array<Record<string, unknown>>;
   /** Paths of API requests no fixture handled (for debugging failures). */
   unhandled: string[];
 }
@@ -41,7 +39,6 @@ export function createFixtureState(
     accounts: [],
     queue: [],
     media: [],
-    prompts: [],
     unhandled: [],
     ...initial,
   };
@@ -483,64 +480,6 @@ export async function installApiFixtures(
   await page.route('https://storage.e2e.invalid/**', (route) =>
     route.fulfill({ status: 200, body: '' })
   );
-
-  // Prompt Library (spec 144): the list carries a small curated set plus
-  // the mutable personal prompts; creates/updates/deletes mutate the
-  // fixture state so the surface's invalidation refetch shows the change.
-  const curatedPrompts = [
-    {
-      id: 'hooks-01',
-      title: 'E2E hook prompt',
-      body: 'Write a hook about [topic].',
-      category: 'hooks',
-    },
-    {
-      id: 'captions-01',
-      title: 'E2E caption prompt',
-      body: 'Write a caption for [photo].',
-      category: 'captions',
-    },
-  ];
-  await page.route(`**/api/tenant/${SUB}/prompts`, (route) => {
-    const req = route.request();
-    if (req.method() === 'POST') {
-      const body = (req.postDataJSON() ?? {}) as Record<string, unknown>;
-      const now = '2026-10-24T00:00:00.000Z';
-      const item = {
-        id: `aaaaaaaa-aaaa-4aaa-aaaa-${String(state.prompts.length + 1).padStart(12, '0')}`,
-        userId: TENANT.userId,
-        title: typeof body.title === 'string' ? body.title : '',
-        body: typeof body.body === 'string' ? body.body : '',
-        category: typeof body.category === 'string' ? body.category : 'hooks',
-        createdAt: now,
-        updatedAt: now,
-      };
-      state.prompts = [item, ...state.prompts];
-      return json(route, item, 201);
-    }
-    return json(route, { curated: curatedPrompts, personal: state.prompts });
-  });
-  await page.route(`**/api/tenant/${SUB}/prompts/*`, (route) => {
-    const req = route.request();
-    const url = new URL(req.url());
-    const promptId = url.pathname.split('/prompts/')[1] ?? '';
-    if (req.method() === 'PATCH') {
-      const body = (req.postDataJSON() ?? {}) as Record<string, unknown>;
-      const idx = state.prompts.findIndex((p) => p.id === promptId);
-      if (idx === -1) return json(route, { error: 'PROMPT_NOT_FOUND' }, 404);
-      state.prompts[idx] = {
-        ...state.prompts[idx],
-        ...body,
-        updatedAt: '2026-10-24T00:00:01.000Z',
-      };
-      return json(route, state.prompts[idx]);
-    }
-    if (req.method() === 'DELETE') {
-      state.prompts = state.prompts.filter((p) => p.id !== promptId);
-      return json(route, { success: true, deletedPromptId: promptId });
-    }
-    return json(route, {});
-  });
 }
 
 export { CONNECTED_ACCOUNT };

@@ -19,7 +19,6 @@ export * from './domain/auth.js';
 export * from './domain/desktop.js';
 export * from './domain/desktop-bridge.js';
 export * from './domain/workspace.js';
-export * from './domain/prompts.js';
 export * from './domain/database.js';
 export * from './publishing/bulk.js';
 export * from './publishing/publisher.js';
