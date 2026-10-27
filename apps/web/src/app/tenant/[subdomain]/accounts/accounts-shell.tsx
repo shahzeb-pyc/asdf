@@ -197,8 +197,8 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
   );
 
   // Option B dialogue routing: success confirmations go to the
-  // TOP-RIGHT toast (flow-scoped toaster below — the shared Toaster
-  // default stays bottom-right for every other surface), while a
+  // TOP-RIGHT toast (flow-scoped toaster below — the shared tenant
+  // Toaster is top-right too, see the tenant layout mount), while a
   // mismatch stays as a persistent, dismissible banner. Sonner toasts
   // carry role="status" / aria-live, so no extra live region is needed.
   const handleConnectionNotice = React.useCallback(
@@ -537,7 +537,8 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
       className="mx-auto box-border w-full max-w-300 px-6 py-6"
     >
       {/* Flow-scoped toaster for connect confirmations only: TOP-RIGHT
-          (the shared tenant Toaster stays bottom-right everywhere else).
+          (the shared tenant Toaster is top-right too, see the tenant
+          layout mount).
           Toasts reach it via toasterId, never via the shared default. */}
       <Toast
         id={ACCOUNTS_CONNECT_TOASTER_ID}
