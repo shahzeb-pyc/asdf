@@ -67,6 +67,9 @@ import {
   PageTabPostingTimes,
   type PageSlotSummary,
 } from '@/components/pages/dedicated';
+// Direct path, not the dedicated barrel: the composer dialogue is
+// new work and the barrel is owned by parallel branch work.
+import { CreatePostsDialog } from '@/components/pages/dedicated/create-posts/create-posts-dialog';
 
 export type DedicatedPageTab =
   | 'dashboard'
@@ -157,6 +160,10 @@ export default function TenantDedicatedPageView({
   const [visitedTabs, setVisitedTabs] = React.useState<ReadonlySet<DedicatedPageTab>>(
     () => new Set([resolveTabFromUrl(searchParams.get('tab'), initialTab)])
   );
+  // Create Posts dialogue: opened by the header's Create Posts
+  // button (previously a rendered-only no-op). The dialogue owns
+  // its own state; the shell only opens it.
+  const [isCreatePostsOpen, setIsCreatePostsOpen] = React.useState(false);
   // Ref mirror of the current tab: the trigger's onClick and the
   // Tabs root's onValueChange both fire for one click, and state
   // updates are async, so the ref — not the stale state closure —
@@ -728,6 +735,13 @@ export default function TenantDedicatedPageView({
             subdomain={subdomain}
             onStatusToggle={handleStatusToggle}
             onDisconnectRequest={handleDisconnectPage}
+            onCreatePosts={() => setIsCreatePostsOpen(true)}
+          />
+          <CreatePostsDialog
+            open={isCreatePostsOpen}
+            onOpenChange={setIsCreatePostsOpen}
+            subdomain={subdomain}
+            page={page}
           />
 
           <Tabs
