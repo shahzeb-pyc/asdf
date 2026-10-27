@@ -360,7 +360,7 @@ export function PageCard({
           target="_blank"
           rel="noopener noreferrer"
           onClick={(e) => e.stopPropagation()}
-          className="min-w-0 flex-1 truncate text-metadata text-brand-facebook hover:underline"
+          className="min-w-0 shrink-0 truncate text-metadata text-brand-facebook hover:underline"
         >
           View on Facebook{' '}
           <MoveUpRightIcon aria-hidden className="inline size-3 shrink-0" />

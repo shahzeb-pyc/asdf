@@ -377,11 +377,14 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
       expect(html).not.toContain('mt-auto');
       // Link row is a full-width sibling of the top section (not nested
       // in the identity column), so gained sits flush right at the card
-      // edge: the row's class carries justify-between and the link still
-      // carries flex-1 (shrink-safe at narrow widths).
+      // edge: the row's class carries justify-between. The link itself
+      // must NOT stretch (no flex-1) — it is only as wide as its visible
+      // text, so only the text itself is clickable as the Facebook link.
       const linkRowEl = findElementByTestId(tree, 'page-facebook-link-row');
       expect(linkRowEl).not.toBeNull();
       expect(linkRowEl?.props.className).toContain('justify-between');
+      expect(linkEl?.props.className).not.toContain('flex-1');
+      expect(linkEl?.props.className).toContain('shrink-0');
       const followersEl = findElementByTestId(tree, 'page-current-followers');
       expect(followersEl).not.toBeNull();
       // Followers number is page-name size (text-body) and bold; the rest
