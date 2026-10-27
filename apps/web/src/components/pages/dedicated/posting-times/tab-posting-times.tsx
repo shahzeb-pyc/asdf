@@ -106,17 +106,18 @@ export function PageTabPostingTimes({
     }
   };
 
-  const handleToggle = async (slot: PageSlotSummary) => {
+  const handleToggle = (slot: PageSlotSummary) => {
     setTogglingId(slot.id);
-    try {
-      await onToggleSlot(slot.id, !slot.isActive);
-    } catch (_e) {
-      // The switch is controlled by server data, so a failed toggle
-      // reverts on its own; the caller (shell mutation) surfaces the
-      // error. Never leak an unhandled rejection from the row.
-    } finally {
-      setTogglingId(null);
-    }
+    // Fire-and-forget (the row calls this from onCheckedChange and
+    // never awaits it). A rejecting handler must not leak an
+    // unhandled rejection, so both outcomes reset the toggling state
+    // here; failure presentation belongs to the caller — in production
+    // the shell mutation rolls back the optimistic switch and shows
+    // the error toast.
+    void onToggleSlot(slot.id, !slot.isActive).then(
+      () => setTogglingId(null),
+      () => setTogglingId(null),
+    );
   };
 
   const handleOpenAdd = () => {

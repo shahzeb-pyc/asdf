@@ -235,7 +235,7 @@ export function PostingTimeForm({
                           className={cn(
                             'inline-flex min-h-9 items-center rounded-full px-3 text-body font-medium outline-none transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold',
                             isSelected
-                              ? 'bg-transparent text-brand-gold ring-[1.5px] ring-brand-gold ring-inset'
+                              ? 'bg-transparent text-brand-gold ring-2 ring-brand-gold ring-inset'
                               : 'bg-subtle text-ink-sub hover:text-ink'
                           )}
                         >

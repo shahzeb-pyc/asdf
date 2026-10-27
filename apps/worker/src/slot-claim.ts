@@ -1,5 +1,6 @@
 import {
   findDueSlots,
+  InternalError,
   PublishQueueMessageSchema,
   PUBLISH_LANE_FAST,
   routePublishLaneForItem,
@@ -169,7 +170,7 @@ export async function runSlotClaimTick(
         });
         if (error) throw error instanceof Error ? error : new Error(String(error));
         if (!Array.isArray(data)) {
-          throw new Error(
+          throw new InternalError(
             `claim_posting_slot_item returned a non-array payload for destination "${destinationId}" slot "${slot.id}"`
           );
         }
@@ -219,7 +220,7 @@ export async function runSlotClaimTick(
   for (const [lane, messages] of pendingByLane) {
     const queue = lane === PUBLISH_LANE_FAST ? deps.queues.fast : deps.queues.heavy;
     if (!queue) {
-      throw new Error(`Queue producer binding for lane "${lane}" is not configured`);
+      throw new InternalError(`Queue producer binding for lane "${lane}" is not configured`);
     }
     for (let i = 0; i < messages.length; i += SEND_BATCH_CHUNK_SIZE) {
       const chunk = messages.slice(i, i + SEND_BATCH_CHUNK_SIZE);
