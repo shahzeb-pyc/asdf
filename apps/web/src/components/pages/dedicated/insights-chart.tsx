@@ -51,11 +51,11 @@ function TrendTooltip(props: {
         {typeof props.label === 'string' ? shortDate(props.label) : props.label}
       </p>
       <p className="mt-1 text-body text-ink">
-        <span className="text-brand-gold">●</span> Views{' '}
+        <span className="text-brand-gold">●</span> Media views{' '}
         <strong>{typeof views === 'number' ? views.toLocaleString() : '—'}</strong>
       </p>
       <p className="text-body text-ink">
-        <span className="text-brand-emerald">●</span> Viewers{' '}
+        <span className="text-brand-emerald">●</span> Unique viewers{' '}
         <strong>{typeof viewers === 'number' ? viewers.toLocaleString() : '—'}</strong>
       </p>
     </div>
@@ -65,6 +65,11 @@ function TrendTooltip(props: {
 export function InsightsChart({
   trend,
 }: Readonly<{ trend: InsightsTrendPoint[] }>): React.ReactElement {
+  // Data-driven ceiling: the largest daily value, with a little headroom.
+  // All-zero data gets a floor of 1 so the baseline still renders — never
+  // an invented ceiling like 0–4 from the chart library's auto domain.
+  const peak = trend.reduce((max, p) => Math.max(max, p.views, p.viewers), 0);
+  const domainMax = peak === 0 ? 1 : Math.ceil(peak * 1.1);
   return (
     <div className="h-[280px] w-full" data-testid="insights-trend-chart">
       <ResponsiveContainer width="100%" height="100%">
@@ -94,6 +99,8 @@ export function InsightsChart({
             axisLine={false}
             tick={{ fontSize: 11 }}
             width={44}
+            domain={[0, domainMax]}
+            allowDecimals={false}
           />
           <Tooltip content={<TrendTooltip />} />
           <Area

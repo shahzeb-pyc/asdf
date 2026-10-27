@@ -106,4 +106,89 @@ describe('rebuilt insights panel (local 1-hour cache + Sync)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(screen.getByText('4,242')).toBeInTheDocument());
   });
+
+  it('empty state says honestly that no data came back, with Sync as its only action and no link or duplicate Insights heading', async () => {
+    localStorage.setItem(
+      insightsCacheKey('page-1', '28d'),
+      JSON.stringify({
+        success: true,
+        pageId: 'page-1',
+        range: '28d',
+        fetchedAt: new Date().toISOString(),
+        kpis: {
+          followers: 0,
+          mediaViews: 0,
+          uniqueViewersDailySum: 0,
+          engagements: 0,
+          engagementRatePct: null,
+          netFollowerGrowth: 0,
+          videoWatchTimeMinutes: 0,
+        },
+        trend: [{ date: '2026-10-27', views: 0, viewers: 0 }],
+        reactions: [{ kind: 'like', count: 0, sharePct: 0 }],
+        topCountries: [],
+        topCities: [],
+      }),
+    );
+    vi.stubGlobal('fetch', vi.fn());
+    renderPanel();
+    expect(await screen.findByText('No insights yet')).toBeInTheDocument();
+    expect(screen.getByText(/No insight data returned/)).toBeInTheDocument();
+    expect(screen.queryByText('just now')).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Insights' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+    expect(screen.getByTestId('insights-sync-btn')).toBeInTheDocument();
+    expect(screen.getByTestId('insights-empty-sync-btn')).toBeInTheDocument();
+  });
+
+  it('explains a null engagement rate, flags all-zero activity, and keeps the audience panel message', async () => {
+    const kinds = ['like', 'love', 'wow', 'haha', 'sad', 'angry'] as const;
+    localStorage.setItem(
+      insightsCacheKey('page-1', '28d'),
+      JSON.stringify({
+        success: true,
+        pageId: 'page-1',
+        range: '28d',
+        fetchedAt: new Date().toISOString(),
+        kpis: {
+          followers: 120,
+          mediaViews: 0,
+          uniqueViewersDailySum: 0,
+          engagements: 0,
+          engagementRatePct: null,
+          netFollowerGrowth: 0,
+          videoWatchTimeMinutes: 0,
+        },
+        trend: [{ date: '2026-10-27', views: 0, viewers: 0 }],
+        reactions: kinds.map((kind) => ({ kind, count: 0, sharePct: 0 })),
+        topCountries: [],
+        topCities: [],
+      }),
+    );
+    vi.stubGlobal('fetch', vi.fn());
+    renderPanel();
+    expect(await screen.findByTestId('insights-kpi-grid')).toBeInTheDocument();
+    expect(screen.getByText('N/A')).toBeInTheDocument();
+    expect(screen.getByText(/No media views yet in this range/)).toBeInTheDocument();
+    expect(screen.getAllByText('No activity recorded in this range.')).toHaveLength(2);
+    expect(screen.getByText(/Audience data appears once the page has enough followers/)).toBeInTheDocument();
+    for (const emoji of ['👍', '❤️', '😮', '😂', '😢', '😡']) {
+      expect(screen.getByText(emoji)).toBeInTheDocument();
+    }
+    expect(screen.getByText(/Updated \d{1,2} [A-Z][a-z]{2} \d{4}, \d{2}:\d{2}/)).toBeInTheDocument();
+    expect(screen.getByText(/Followers is the live total/)).toBeInTheDocument();
+  });
+
+  it('uses the same metric names in the cards and the chart legend, with totals', async () => {
+    localStorage.setItem(
+      insightsCacheKey('page-1', '28d'),
+      JSON.stringify(livePayload(new Date().toISOString(), 500)),
+    );
+    vi.stubGlobal('fetch', vi.fn());
+    renderPanel();
+    expect(await screen.findByTestId('insights-kpi-grid')).toBeInTheDocument();
+    expect(screen.getByText('Media views 500')).toBeInTheDocument();
+    expect(screen.getByText('Unique viewers 300')).toBeInTheDocument();
+    expect(screen.queryByText('Views 500')).not.toBeInTheDocument();
+  });
 });

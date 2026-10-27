@@ -93,6 +93,21 @@ describe('page insights Graph mapping (research-based, range-consistent)', () =>
     expect(w.dates).toHaveLength(7);
   });
 
+  it('generates exactly one daily point per day for every range (28d is 28 points, not 27)', () => {
+    for (const [range, days] of [
+      ['7d', 7],
+      ['14d', 14],
+      ['28d', 28],
+      ['90d', 90],
+    ] as const) {
+      const w = insightsWindow(range, NOW);
+      expect(w.days).toBe(days);
+      expect(w.dates).toHaveLength(days);
+      expect(w.since).toBe(w.dates[0]);
+      expect(w.until).toBe(w.dates[days - 1]);
+    }
+  });
+
   it('sums the daily series, fills missing days with zero, and derives rate + growth + watch time', () => {
     const out = mapGraphToInsights({
       pageId: 'page-1',
