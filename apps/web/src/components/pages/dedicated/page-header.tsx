@@ -6,10 +6,10 @@
  * Contains ONLY the items Shahzeb listed for the top section: back link,
  * page name + live link, icon+text status mark (never a dot), connected
  * account (with account picture when available), Added date, follower
- * count + gained + category, Pause/Resume posting, Create Posts button,
- * Disconnect Page button, and Mark Verified & Reactivate Page in the
- * checkpoint state only. The Queue Post button, Copy Page ID, and the
- * settings menu were removed with this redesign.
+ * count + gained + category, Create Posts button, a three-dots menu
+ * holding Pause/Resume posting and Disconnect Page, and Mark Verified &
+ * Reactivate Page in the checkpoint state only. The Queue Post button
+ * and Copy Page ID were removed with this redesign.
  *
  * Data notes:
  * - Added date and followers gained reuse the list card's helpers
@@ -34,6 +34,7 @@ import { useRouter } from 'next/navigation';
 import {
   ChevronLeftIcon,
   ExternalLinkIcon,
+  MoreVerticalIcon,
   PauseIcon,
   PlayIcon,
   PlusIcon,
@@ -42,6 +43,13 @@ import {
 
 import { Banner } from '@/components/shared/ui/banner';
 import { Button } from '@/components/shared/ui/button';
+import {
+  Menu,
+  MenuContent,
+  MenuItem,
+  MenuSeparator,
+  MenuTrigger,
+} from '@/components/shared/ui/menu';
 import { cn } from '@/lib/utils';
 import { getUserInitials } from '@/lib/user-initials';
 import type { FacebookPageItem } from '../page-card';
@@ -103,26 +111,6 @@ function resolvePageStatus(status: FacebookPageItem['status']): PageStatusDetail
     statusLabel: 'Active',
     ringClass: 'ring-line',
   };
-}
-
-/** Facebook glyph in the platform-nav-config icon style (lucide ships
- * no brand icons) — same local glyph as the previous header. */
-function FacebookPlatformIcon() {
-  return (
-    <svg
-      width={20}
-      height={20}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z" />
-    </svg>
-  );
 }
 
 function DedicatedAvatar({
@@ -245,9 +233,6 @@ export function DedicatedPageHeader({
       {/* Main header: identity left, actions right */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex min-w-0 flex-1 items-center gap-3">
-          <span aria-hidden className="flex size-6 shrink-0 items-center justify-center text-ink-sub">
-            <FacebookPlatformIcon />
-          </span>
           <DedicatedAvatar page={page} ringClass={statusInfo.ringClass} monogram={monogram} />
 
           <div className="min-w-0 flex-1">
@@ -336,29 +321,9 @@ export function DedicatedPageHeader({
           </div>
         </div>
 
-        {/* Actions cluster: pause/resume, Create Posts, Disconnect */}
+        {/* Actions cluster: Create Posts first, then a three-dots menu
+            holding Pause/Resume posting and Disconnect Page. */}
         <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            variant="secondary"
-            data-testid="header-pause-resume-btn"
-            disabled={isUpdatingStatus}
-            onClick={() => void handleStatusAction()}
-          >
-            {statusInfo.isPaused ? (
-              <PlayIcon aria-hidden />
-            ) : (
-              <PauseIcon aria-hidden />
-            )}
-            <span>
-              {isUpdatingStatus
-                ? 'Updating...'
-                : statusInfo.isPaused
-                  ? 'Resume posting'
-                  : 'Pause posting'}
-            </span>
-          </Button>
-
           <Button
             type="button"
             data-testid="header-create-posts-btn"
@@ -368,15 +333,48 @@ export function DedicatedPageHeader({
             <span>Create Posts</span>
           </Button>
 
-          <Button
-            type="button"
-            variant="destructive"
-            data-testid="header-disconnect-btn"
-            onClick={onDisconnectRequest}
-          >
-            <PowerIcon aria-hidden />
-            <span>Disconnect Page</span>
-          </Button>
+          <Menu>
+            <MenuTrigger asChild>
+              <Button
+                type="button"
+                variant="secondary"
+                size="icon"
+                data-testid="header-settings-dropdown-btn"
+                aria-label="Page actions menu"
+              >
+                <MoreVerticalIcon aria-hidden />
+              </Button>
+            </MenuTrigger>
+            <MenuContent align="end">
+              <MenuItem
+                data-testid="header-menu-pause-resume-btn"
+                disabled={isUpdatingStatus}
+                onSelect={() => void handleStatusAction()}
+              >
+                {statusInfo.isPaused ? (
+                  <PlayIcon aria-hidden />
+                ) : (
+                  <PauseIcon aria-hidden />
+                )}
+                <span>
+                  {isUpdatingStatus
+                    ? 'Updating...'
+                    : statusInfo.isPaused
+                      ? 'Resume posting'
+                      : 'Pause posting'}
+                </span>
+              </MenuItem>
+              <MenuSeparator />
+              <MenuItem
+                variant="destructive"
+                data-testid="header-menu-disconnect-btn"
+                onSelect={onDisconnectRequest}
+              >
+                <PowerIcon aria-hidden />
+                <span>Disconnect Page</span>
+              </MenuItem>
+            </MenuContent>
+          </Menu>
         </div>
       </div>
     </div>

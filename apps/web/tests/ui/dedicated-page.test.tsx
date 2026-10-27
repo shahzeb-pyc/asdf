@@ -25,6 +25,7 @@ import {
 import TenantDedicatedPageView from '@/app/tenant/[subdomain]/pages/[pageId]/page-section-shell';
 import { queryKeys } from '@/lib/data/query-keys';
 import { render as rtlRender, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import type { FacebookPageItem } from '@/components/pages/page-card';
 
 const mockPush = vi.fn();
@@ -204,12 +205,14 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
       expect(hasText('Added 1 Oct 2026')).toBe(true);
       expect(hasAttribute('data-testid', 'dedicated-page-followers-gained')).toBe(true);
       expect(hasText('+4,200 gained')).toBe(true);
-      expect(hasAttribute('data-testid', 'header-pause-resume-btn')).toBe(true);
-      expect(hasText('Pause posting')).toBe(true);
+      // Actions cluster: Create Posts first, then the three-dots menu.
+      // Pause/Resume and Disconnect live ONLY inside the menu (closed in
+      // static markup), so no standalone pause/disconnect buttons exist.
       expect(hasAttribute('data-testid', 'header-create-posts-btn')).toBe(true);
-      expect(hasAttribute('data-testid', 'header-disconnect-btn')).toBe(true);
+      expect(hasAttribute('data-testid', 'header-settings-dropdown-btn')).toBe(true);
+      expect(hasAttribute('data-testid', 'header-pause-resume-btn')).toBe(false);
+      expect(hasAttribute('data-testid', 'header-disconnect-btn')).toBe(false);
       expect(hasAttribute('data-testid', 'header-add-queue-btn')).toBe(false);
-      expect(hasAttribute('data-testid', 'header-settings-dropdown-btn')).toBe(false);
     });
 
     it('renders monogram avatar fallback when no profile picture URL exists', () => {
@@ -261,7 +264,8 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
       ).not.toBeNull();
     });
 
-    it('pauses and resumes posting through onStatusToggle', async () => {
+    it('pauses and resumes posting through onStatusToggle via the menu', async () => {
+      const user = userEvent.setup();
       const onStatusToggle = vi.fn().mockResolvedValue(undefined);
 
       const { container } = rtlRender(
@@ -273,13 +277,19 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
         />
       );
 
-      const pauseBtn = container.querySelector('[data-testid="header-pause-resume-btn"]');
-      expect(pauseBtn?.textContent).toContain('Pause posting');
-      fireEvent.click(pauseBtn as Element);
+      // Pause/Resume lives ONLY inside the three-dots menu now.
+      expect(container.querySelector('[data-testid="header-pause-resume-btn"]')).toBeNull();
+      await user.click(
+        container.querySelector('[data-testid="header-settings-dropdown-btn"]') as Element
+      );
+      const pauseItem = document.querySelector('[data-testid="header-menu-pause-resume-btn"]');
+      expect(pauseItem?.textContent).toContain('Pause posting');
+      await user.click(pauseItem as Element);
       expect(onStatusToggle).toHaveBeenCalledWith('paused');
     });
 
-    it('shows Resume posting on a paused page and resumes through onStatusToggle', async () => {
+    it('shows Resume posting on a paused page and resumes through onStatusToggle via the menu', async () => {
+      const user = userEvent.setup();
       const onStatusToggle = vi.fn().mockResolvedValue(undefined);
 
       const { container } = rtlRender(
@@ -291,9 +301,12 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
         />
       );
 
-      const resumeBtn = container.querySelector('[data-testid="header-pause-resume-btn"]');
-      expect(resumeBtn?.textContent).toContain('Resume posting');
-      fireEvent.click(resumeBtn as Element);
+      await user.click(
+        container.querySelector('[data-testid="header-settings-dropdown-btn"]') as Element
+      );
+      const resumeItem = document.querySelector('[data-testid="header-menu-pause-resume-btn"]');
+      expect(resumeItem?.textContent).toContain('Resume posting');
+      await user.click(resumeItem as Element);
       expect(onStatusToggle).toHaveBeenCalledWith('active');
     });
 
@@ -350,32 +363,41 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
       expect(html).toContain('rounded-full');
       expect(html).toContain('size-14');
       expect(html).toContain('ring-signal-operational');
-      expect(html).toContain('data-testid="header-pause-resume-btn"');
+      // Actions cluster: Create Posts first, then the three-dots menu
+      // trigger. Pause/Resume and Disconnect live only inside the closed
+      // menu, so no standalone pause/disconnect buttons exist.
       expect(html).toContain('data-testid="header-create-posts-btn"');
-      expect(html).toContain('data-testid="header-disconnect-btn"');
+      expect(html).toContain('data-testid="header-settings-dropdown-btn"');
+      expect(html).not.toContain('header-pause-resume-btn');
+      expect(html).not.toContain('header-disconnect-btn');
       expect(html).not.toContain('header-add-queue-btn');
-      expect(html).not.toContain('header-settings-dropdown-btn');
       expect(html).not.toContain('header-menu-copy-id-btn');
 
       // Render does not contain bullet dots
       expect(html).not.toContain('•');
     });
 
-    it('calls onDisconnectRequest when the Disconnect Page button is clicked', () => {
+    it('calls onDisconnectRequest when the Disconnect Page menu item is clicked', async () => {
+      const user = userEvent.setup();
       const onDisconnectRequest = vi.fn();
 
-      const tree = renderAndCaptureTree(() =>
-        DedicatedPageHeader({
-          page: samplePage,
-          subdomain: 'cyberdyne',
-          onStatusToggle: vi.fn(),
-          onDisconnectRequest,
-        })
+      const { container } = rtlRender(
+        <DedicatedPageHeader
+          page={samplePage}
+          subdomain="cyberdyne"
+          onStatusToggle={vi.fn()}
+          onDisconnectRequest={onDisconnectRequest}
+        />
       );
 
-      const disconnectBtn = findElementByTestId(tree, 'header-disconnect-btn');
-      expect(disconnectBtn).not.toBeNull();
-      disconnectBtn?.props.onClick();
+      // Disconnect lives ONLY inside the three-dots menu now.
+      expect(container.querySelector('[data-testid="header-disconnect-btn"]')).toBeNull();
+      await user.click(
+        container.querySelector('[data-testid="header-settings-dropdown-btn"]') as Element
+      );
+      const disconnectItem = document.querySelector('[data-testid="header-menu-disconnect-btn"]');
+      expect(disconnectItem).not.toBeNull();
+      await user.click(disconnectItem as Element);
       expect(onDisconnectRequest).toHaveBeenCalledTimes(1);
     });
   });
