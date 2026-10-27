@@ -39,7 +39,9 @@ export function PostingTimesHeader({
         {/* Timezone line, kept small: metadata size with tight internal
             spacing, so it reads as secondary info next to the Add
             action rather than competing with it. Structure, testid,
-            and the gold underlined Change treatment are unchanged. */}
+            and the gold underlined Change treatment are unchanged.
+            The Change button keeps py-2.5 so its box stays a 36px+
+            tap target (mobile gate) despite the small text. */}
         <span className="flex items-center gap-1 text-metadata">
           <span className="text-ink-sub">Timezone:</span>
           <span className="font-semibold">{activeTimezone}</span>
@@ -47,7 +49,7 @@ export function PostingTimesHeader({
             type="button"
             data-testid="schedule-timezone-trigger"
             onClick={onOpenTimezoneModal}
-            className="text-link underline"
+            className="text-link underline py-2.5"
           >
             Change
           </button>
