@@ -14,6 +14,7 @@ import {
   handleUpdatePage,
 } from '../../src/app/api/tenant/[subdomain]/pages/[pageId]/route';
 import type { DatabaseClient } from '@fbuploadpro/contracts';
+import { createMockSupabasePages } from '../helpers/mock-supabase-pages';
 
 const TEST_SECRET = 'super-secret-session-signing-key-minimum-32-chars-long';
 const TEST_ENCRYPTION_KEY =
@@ -698,72 +699,31 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
 
     it('evaluates active status dynamically via Supabase client without write amplification when a page cooldown has expired (Spec 045 / Issue 9)', async () => {
       const pastDate = new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString();
-      let supabaseUpdated = false;
 
-      const mockSupabase = {
-        from: vi.fn((table: string) => {
-          if (table === 'workspaces') {
-            return {
-              select: vi.fn().mockReturnThis(),
-              eq: vi.fn().mockReturnThis(),
-              maybeSingle: vi.fn().mockResolvedValue({
-                data: { id: 'ws_123' },
-                error: null,
-              }),
-            };
-          }
-          if (table === 'destinations') {
-            const pageQuery: any = {
-              eq: vi.fn().mockImplementation(() => pageQuery),
-              neq: vi.fn().mockImplementation(() => pageQuery),
-              order: vi.fn().mockResolvedValue({
-                data: [
-                  {
-                    id: pageId,
-                    account_id: accountId,
-                    external_destination_id: 'page_rate_limited_sb',
-                    name: 'Supabase Cooldown Page',
-                    avatar_url: null,
-                    status: 'rate_limited',
-                    metadata: {
-                      category: 'Retail Company',
-                      tasks: ['CREATE_CONTENT'],
-                      starting_followers: 1000,
-                      current_followers: 1050,
-                      rate_limited_at: pastDate,
-                    },
-                    updated_at: pastDate,
-                    created_at: pastDate,
-                    social_accounts: {
-                      display_name: 'Alex Supabase',
-                      avatar_url:
-                        'https://platform-lookaside.fbsbx.com/platform/profilepic/account_sup.jpg',
-                    },
-                  },
-                ],
-                error: null,
-              }),
-            };
-            return {
-              select: vi.fn().mockReturnValue(pageQuery),
-              update: vi.fn((payload: any) => {
-                if (payload.status === 'active') {
-                  supabaseUpdated = true;
-                }
-                const result: any = {
-                  error: null,
-                  eq: vi.fn().mockImplementation(() => result),
-                  then: (resolve: any) => Promise.resolve({ error: null }).then(resolve),
-                };
-                return {
-                  eq: vi.fn().mockImplementation(() => result),
-                };
-              }),
-            };
-          }
-          return {};
-        }),
-      };
+      const mockSupabase = createMockSupabasePages([
+        {
+          id: pageId,
+          account_id: accountId,
+          external_destination_id: 'page_rate_limited_sb',
+          name: 'Supabase Cooldown Page',
+          avatar_url: null,
+          status: 'rate_limited',
+          metadata: {
+            category: 'Retail Company',
+            tasks: ['CREATE_CONTENT'],
+            starting_followers: 1000,
+            current_followers: 1050,
+            rate_limited_at: pastDate,
+          },
+          updated_at: pastDate,
+          created_at: pastDate,
+          social_accounts: {
+            display_name: 'Alex Supabase',
+            avatar_url:
+              'https://platform-lookaside.fbsbx.com/platform/profilepic/account_sup.jpg',
+          },
+        },
+      ]);
 
       const req = new NextRequest('http://localhost:3000/api/tenant/acme/pages', {
         headers: { cookie: validSessionCookie },
@@ -774,10 +734,10 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
 
       const json = await res.json();
       expect(json.pages[0].status).toBe('active');
+      expect(mockSupabase.updates).toHaveLength(0);
       expect(json.pages[0].accountPictureUrl).toBe(
         'https://platform-lookaside.fbsbx.com/platform/profilepic/account_sup.jpg'
       );
-      expect(supabaseUpdated).toBe(false);
     });
   });
 

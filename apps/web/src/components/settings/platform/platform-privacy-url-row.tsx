@@ -9,9 +9,8 @@
  * app. Copy follows the same 2-second feedback pattern as the Copy App
  * ID and Copy callback buttons elsewhere in these tabs. The URL itself
  * is built from the workspace subdomain plus the root domain (by the
- * caller in the two-column variant, by the container via
- * `buildPrivacyPolicyUrl` in the single-column variant) — never
- * hard-coded to one workspace.
+ * container via `buildPrivacyPolicyUrl`) — never hard-coded to one
+ * workspace.
  */
 
 import * as React from 'react';

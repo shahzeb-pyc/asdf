@@ -279,6 +279,13 @@ describe("login returnUrl sent to the API (absolute-URL Validation failed fix)",
     expect(toApiReturnUrl("/tenant/e2e/pages?tab=media")).toBe("/tenant/e2e/pages?tab=media");
   });
 
+  it("toApiReturnUrl omits a relative result that does not start with '/'", () => {
+    // Opaque absolute URLs (non-special scheme) parse to a bare path
+    // segment, not an in-app path.
+    expect(toApiReturnUrl("custom:evil.example/phish")).toBeUndefined();
+    expect(toApiReturnUrl("custom:tenant")).toBeUndefined();
+  });
+
   it("toApiReturnUrl omits /dashboard, protocol-relative, backslashed, and garbage values", () => {
     expect(toApiReturnUrl("/dashboard")).toBeUndefined();
     expect(toApiReturnUrl("/dashboard/settings")).toBeUndefined();

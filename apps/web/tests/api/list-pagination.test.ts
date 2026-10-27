@@ -12,6 +12,10 @@ import {
 } from '../../src/lib/server/pagination';
 import { getPageNumbers } from '../../src/components/shared/ui/list-pagination';
 import type { DatabaseClient } from '@fbuploadpro/contracts';
+import {
+  createMockSupabasePages,
+  type MockDestinationRow,
+} from '../helpers/mock-supabase-pages';
 
 const TEST_SECRET = 'test-session-secret-that-is-long-enough-123456';
 const TEST_ENCRYPTION_KEY =
@@ -386,26 +390,113 @@ describe('list pagination (pages + accounts, 30 per page)', () => {
   });
 
   describe('GET pages (Supabase path)', () => {
-    function supabaseDb(rows: unknown[]) {
+    // The old naive chain mock (select/eq/order returning the whole
+    // list) cannot answer the Supabase path's count + range queries,
+    // so these tests use the in-memory PostgREST double instead.
+    function supabaseDb(rows: MockDestinationRow[]) {
+      return createMockSupabasePages(rows);
+    }
+
+    const ACCOUNT_ID = '22222222-2222-4222-a222-222222222222';
+
+    function makeSupabaseRow(
+      i: number,
+      overrides: Partial<MockDestinationRow> & { status: string }
+    ): MockDestinationRow {
       return {
-        from: vi.fn((table: string) => {
-          if (table === 'workspaces') {
-            return {
-              select: vi.fn().mockReturnThis(),
-              eq: vi.fn().mockReturnThis(),
-              maybeSingle: vi.fn().mockResolvedValue({
-                data: { id: 'ws_123' },
-                error: null,
-              }),
-            };
-          }
-          const chain: Record<string, unknown> = {};
-          chain.select = vi.fn(() => chain);
-          chain.eq = vi.fn(() => chain);
-          chain.order = vi.fn(() => Promise.resolve({ data: rows, error: null }));
-          return chain;
-        }),
+        id: `55555555-5555-4555-8555-${i.toString(16).padStart(12, '0')}`,
+        account_id: ACCOUNT_ID,
+        external_destination_id: `page_${i}`,
+        name: `Page ${i}`,
+        avatar_url: null,
+        metadata: {
+          category: 'Digital Creator',
+          starting_followers: 100,
+          current_followers: 100,
+          tasks: [],
+        },
+        created_at: new Date(Date.UTC(2026, 0, 1 + i)).toISOString(),
+        updated_at: new Date(Date.UTC(2026, 0, 1 + i)).toISOString(),
+        social_accounts: { display_name: 'Alex Marketing' },
+        ...overrides,
       };
+    }
+
+    // 65 rows across every rank group: 6 attention (5 error + 1 fresh
+    // rate limit), 5 paused, 54 active (1 stale rate limit + 53
+    // plain active). Attention group newest-first: fresh limit
+    // (2026-02-06) then errors (2026-02-05..01); paused newest-first
+    // (2026-01-05..01); active newest-first: stale limit (2026-03-01)
+    // then plain actives (2026-02-27..2026-01-06).
+    function mixedSupabaseRows(): MockDestinationRow[] {
+      const rows: MockDestinationRow[] = [];
+      for (let i = 0; i < 5; i++) {
+        rows.push(
+          makeSupabaseRow(i, {
+            status: 'error',
+            name: `Attention Page ${i}`,
+            created_at: new Date(Date.UTC(2026, 1, 1 + i)).toISOString(),
+            updated_at: new Date(Date.UTC(2026, 1, 1 + i)).toISOString(),
+          })
+        );
+      }
+      rows.push(
+        makeSupabaseRow(100, {
+          status: 'rate_limited',
+          name: 'Fresh Limited Page',
+          metadata: {
+            category: 'Digital Creator',
+            starting_followers: 100,
+            current_followers: 100,
+            tasks: [],
+            rate_limited_at: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+          },
+          created_at: new Date(Date.UTC(2026, 1, 6)).toISOString(),
+          updated_at: new Date(Date.UTC(2026, 1, 6)).toISOString(),
+        })
+      );
+      for (let i = 0; i < 5; i++) {
+        rows.push(
+          makeSupabaseRow(200 + i, {
+            status: 'disconnected',
+            name: `Paused Page ${i}`,
+            metadata: {
+              category: 'Digital Creator',
+              starting_followers: 100,
+              current_followers: 100,
+              tasks: [],
+              fb_status: 'paused',
+            },
+            created_at: new Date(Date.UTC(2026, 0, 1 + i)).toISOString(),
+            updated_at: new Date(Date.UTC(2026, 0, 1 + i)).toISOString(),
+          })
+        );
+      }
+      rows.push(
+        makeSupabaseRow(300, {
+          status: 'rate_limited',
+          name: 'Stale Limited Page',
+          metadata: {
+            category: 'Digital Creator',
+            starting_followers: 100,
+            current_followers: 100,
+            tasks: [],
+            rate_limited_at: new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString(),
+          },
+          created_at: new Date(Date.UTC(2026, 2, 1)).toISOString(),
+          updated_at: new Date(Date.UTC(2026, 2, 1)).toISOString(),
+        })
+      );
+      for (let i = 0; i < 53; i++) {
+        rows.push(
+          makeSupabaseRow(400 + i, {
+            status: 'active',
+            created_at: new Date(Date.UTC(2026, 0, 6 + i)).toISOString(),
+            updated_at: new Date(Date.UTC(2026, 0, 6 + i)).toISOString(),
+          })
+        );
+      }
+      return rows;
     }
 
     it('filters before paginating and slices the filtered result', async () => {
@@ -501,6 +592,101 @@ describe('list pagination (pages + accounts, 30 per page)', () => {
       expect(json.total).toBe(35);
       expect(json.pages).toHaveLength(30);
       expect(json.attentionTotal).toBe(35);
+    });
+
+    it('serves attention pages first on page 1, in rank-group order', async () => {
+      const db = supabaseDb(mixedSupabaseRows());
+      const res = await handleListPages(
+        req('http://localhost:3000/api/tenant/acme/pages?page=1'),
+        'acme',
+        db as never
+      );
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.total).toBe(65);
+      expect(json.attentionTotal).toBe(6);
+      expect(json.pages).toHaveLength(30);
+      // Attention group newest-first: fresh limit, then errors.
+      expect(json.pages[0].pageName).toBe('Fresh Limited Page');
+      expect(json.pages[0].status).toBe('fb_rate_limited');
+      expect(json.pages[1].pageName).toBe('Attention Page 4');
+      expect(json.pages[5].pageName).toBe('Attention Page 0');
+      // Then paused newest-first, then active (stale limit healed).
+      expect(json.pages[6].pageName).toBe('Paused Page 4');
+      expect(json.pages[10].pageName).toBe('Paused Page 0');
+      expect(json.pages[11].pageName).toBe('Stale Limited Page');
+      expect(json.pages[11].status).toBe('active');
+    });
+
+    it('fetches only the requested page from the database (range query)', async () => {
+      const db = supabaseDb(mixedSupabaseRows());
+      const res = await handleListPages(
+        req('http://localhost:3000/api/tenant/acme/pages?page=2'),
+        'acme',
+        db as never
+      );
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.total).toBe(65);
+      expect(json.page).toBe(2);
+      expect(json.totalPages).toBe(3);
+      expect(json.pages).toHaveLength(30);
+      expect(json.attentionTotal).toBe(6);
+      // The pin: the data queries handed out exactly the 30 rows of
+      // page 2 — no whole-list fetch hiding behind the slice.
+      expect(db.returnedRowIds).toHaveLength(30);
+      expect(db.returnedRowIds).toEqual(json.pages.map((p: { id: string }) => p.id));
+    });
+
+    it('clamps an out-of-range page to the last page on the Supabase path', async () => {
+      const db = supabaseDb(mixedSupabaseRows());
+      const res = await handleListPages(
+        req('http://localhost:3000/api/tenant/acme/pages?page=99'),
+        'acme',
+        db as never
+      );
+      const json = await res.json();
+      expect(json.page).toBe(3);
+      expect(json.pages).toHaveLength(5);
+      expect(db.returnedRowIds).toHaveLength(5);
+    });
+
+    it('applies a display-name account filter in the database', async () => {
+      const rows = mixedSupabaseRows();
+      const other = makeSupabaseRow(900, {
+        status: 'active',
+        name: 'Other Account Page',
+        social_accounts: { display_name: 'Other Name' },
+      });
+      const db = supabaseDb([...rows, other]);
+      const res = await handleListPages(
+        req('http://localhost:3000/api/tenant/acme/pages?account=Other%20Name'),
+        'acme',
+        db as never
+      );
+      const json = await res.json();
+      expect(json.total).toBe(1);
+      expect(json.pages).toHaveLength(1);
+      expect(json.pages[0].pageName).toBe('Other Account Page');
+    });
+
+    it('falls back to the full fetch for search terms PostgREST cannot express, with correct results', async () => {
+      const rows = [
+        makeSupabaseRow(1, { status: 'active', name: 'Brand,Page Special' }),
+        makeSupabaseRow(2, { status: 'active', name: 'Plain Page' }),
+      ];
+      const db = supabaseDb(rows);
+      const res = await handleListPages(
+        req('http://localhost:3000/api/tenant/acme/pages?search=Brand%2CPage'),
+        'acme',
+        db as never
+      );
+      const json = await res.json();
+      expect(json.total).toBe(1);
+      expect(json.pages).toHaveLength(1);
+      expect(json.pages[0].pageName).toBe('Brand,Page Special');
+      // The fallback is honest about fetching everything.
+      expect(db.returnedRowIds).toHaveLength(2);
     });
   });
 
