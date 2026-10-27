@@ -46,8 +46,9 @@ export interface InsertedQueueItemRow {
   kind: string;
   platform_format: string | null;
   status: string;
-  scheduled_time: string;
+  scheduled_time: string | null;
   slot_id: string | null;
+  queue_seq?: number | null;
   created_at: string;
 }
 
@@ -65,7 +66,8 @@ export interface NewDestinationQueueItem {
   mediaStorageKey: string | null;
   linkUrl: string | null;
   platformOptions: Record<string, unknown>;
-  scheduledTime: string;
+  /** Null for publisher-driven (Facebook) queue items: no stored time. */
+  scheduledTime: string | null;
   slotId: string | null;
 }
 
@@ -202,9 +204,14 @@ export async function fetchDestinationQueuedTimes(
 }
 
 const RETURNING_COLUMNS =
-  'id, workspace_id, destination_id, platform, kind, platform_format, status, scheduled_time, slot_id, created_at';
+  'id, workspace_id, destination_id, platform, kind, platform_format, status, scheduled_time, slot_id, queue_seq, created_at';
 
-/** Inserts one unified queue item in the claimable 'queued' state. */
+/**
+ * Inserts one unified queue item in the claimable 'queued' state.
+ * queue_seq is the ONE queue ordering: the next sequence number for
+ * the destination (ties, only possible under concurrent Supabase
+ * inserts, break on created_at in every ordering query).
+ */
 export async function insertDestinationQueueItem(
   client: ConnectDbClient,
   item: NewDestinationQueueItem
@@ -215,8 +222,10 @@ export async function insertDestinationQueueItem(
          workspace_id, destination_id, platform, kind, platform_format,
          caption, title, first_comment, media_item_id, media_url,
          media_storage_key, link_url, platform_options, scheduled_time,
-         slot_id, status, retry_count, max_retries
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'queued', 0, 3)
+         slot_id, queue_seq, status, retry_count, max_retries
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+         (SELECT COALESCE(MAX(queue_seq), 0) + 1 FROM queue_items WHERE destination_id = $2),
+         'queued', 0, 3)
        RETURNING ${RETURNING_COLUMNS}`,
       [
         item.workspaceId,
@@ -241,6 +250,16 @@ export async function insertDestinationQueueItem(
 
   const supabase = getRouteSupabase(client as SupabaseClient);
   if (!supabase) return null;
+  const { data: seqRows } = await supabase
+    .from('queue_items')
+    .select('queue_seq')
+    .eq('destination_id', item.destinationId)
+    .order('queue_seq', { ascending: false, nullsFirst: false })
+    .limit(1);
+  const nextSeq =
+    (seqRows as Array<{ queue_seq?: number | null }> | null)?.[0]?.queue_seq != null
+      ? Number((seqRows as Array<{ queue_seq?: number | null }>)[0]!.queue_seq) + 1
+      : 1;
   const { data, error } = await supabase
     .from('queue_items')
     .insert({
@@ -259,6 +278,7 @@ export async function insertDestinationQueueItem(
       platform_options: item.platformOptions,
       scheduled_time: item.scheduledTime,
       slot_id: item.slotId,
+      queue_seq: nextSeq,
       status: 'queued',
       retry_count: 0,
       max_retries: 3,

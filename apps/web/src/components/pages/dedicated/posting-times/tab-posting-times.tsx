@@ -53,11 +53,12 @@ export interface PageTabPostingTimesProps {
   slots: PageSlotSummary[];
   isLoading?: boolean;
   /**
-   * Queued posts linked to a slot — the only ones a timezone change
-   * can realign. The shell computes this (slot-linked + status queued);
-   * the old prop value (all queued posts) overstated the review count.
+   * All queued posts. Under publisher-driven scheduling there are no
+   * slot links and no stored times to realign — the timezone review
+   * shows this count with copy saying estimates update, not that
+   * posts are realigned.
    */
-  pendingQueueCount?: number;
+  queuedCount?: number;
   onAddSlot: (data: {
     slotTime: string;
     timezone: string;
@@ -81,7 +82,7 @@ export function PageTabPostingTimes({
   page,
   slots,
   isLoading = false,
-  pendingQueueCount = 0,
+  queuedCount = 0,
   onAddSlot,
   onUpdateSlot,
   onUpdateTimezone,
@@ -217,12 +218,11 @@ export function PageTabPostingTimes({
       <ScheduleTimezoneModal
         isOpen={isTimezoneModalOpen}
         activeTimezone={activeTimezone}
-        // Review metrics must count what will actually realign:
-        // active slots only (inactive slots schedule nothing), and
-        // the shell passes pendingQueueCount as slot-linked queued
-        // posts only (see page-section-shell).
+        // Review metrics: active slots only (inactive slots schedule
+        // nothing), and all queued posts (no slot links exist under
+        // publisher-driven scheduling — nothing is realigned).
         slotsCount={slots.filter((slot) => slot.isActive).length}
-        pendingQueueCount={pendingQueueCount}
+        queuedCount={queuedCount}
         onClose={() => setIsTimezoneModalOpen(false)}
         onConfirmTimezone={handleTimezoneChange}
       />

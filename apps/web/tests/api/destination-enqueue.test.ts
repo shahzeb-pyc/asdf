@@ -58,8 +58,9 @@ interface QueueItemRow {
   media_url: string | null;
   media_storage_key: string | null;
   platform_options: string;
-  scheduled_time: string;
+  scheduled_time: string | null;
   slot_id: string | null;
+  queue_seq: number;
   status: string;
   created_at: string;
 }
@@ -115,8 +116,10 @@ class FakeDb {
       media_url: (params[9] as string | null) ?? null,
       media_storage_key: (params[10] as string | null) ?? null,
       platform_options: String(params[12]),
-      scheduled_time: String(params[13]),
+      scheduled_time: params[13] == null ? null : String(params[13]),
       slot_id: (params[14] as string | null) ?? null,
+      queue_seq:
+        Math.max(0, ...this.queueItems.filter((q) => q.destination_id === String(params[1])).map((q) => q.queue_seq)) + 1,
       status: 'queued',
       created_at: new Date().toISOString(),
     };
@@ -459,5 +462,74 @@ describe('destination enqueue — per-platform validation', () => {
     expect(res.status).toBe(400);
     const payload = (await res.json()) as { error: string };
     expect(payload.error).toBe('INVALID_FORMAT');
+  });
+});
+
+describe('destination enqueue — facebook publisher-driven intents', () => {
+  const fbDestinationId = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
+
+  function seedFacebook() {
+    db.destinations.set(fbDestinationId, {
+      id: fbDestinationId,
+      workspace_id: workspaceId,
+      platform: 'facebook',
+      timezone: 'UTC',
+      status: 'active',
+    });
+  }
+
+  it('rejects a fixed-date scheduled intent (one-offs do not exist)', async () => {
+    seedFacebook();
+    const res = await enqueue({
+      platform: 'facebook',
+      destinationId: fbDestinationId,
+      kind: 'text',
+      caption: 'Hello',
+      intent: 'scheduled',
+      scheduledAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    });
+    expect(res.status).toBe(400);
+    const payload = (await res.json()) as { error: string };
+    expect(payload.error).toBe('ONE_OFF_NOT_SUPPORTED');
+    expect(db.queueItems).toHaveLength(0);
+  });
+
+  it('queues with no stored time and no slot link, even with zero active times', async () => {
+    seedFacebook();
+    const res = await enqueue({
+      platform: 'facebook',
+      destinationId: fbDestinationId,
+      kind: 'text',
+      caption: 'Hello',
+      intent: 'queue',
+      slotId,
+    });
+    expect(res.status).toBe(201);
+    const payload = (await res.json()) as {
+      scheduledTime: string | null;
+      slotId: string | null;
+    };
+    // The pinned slotId is ignored: Facebook posts carry no slot link.
+    expect(payload.scheduledTime).toBeNull();
+    expect(payload.slotId).toBeNull();
+    const row = db.queueItems[0]!;
+    expect(row.scheduled_time).toBeNull();
+    expect(row.slot_id).toBeNull();
+    expect(row.queue_seq).toBe(1);
+  });
+
+  it('keeps immediate posts working (now is not a one-off date)', async () => {
+    seedFacebook();
+    const before = Date.now();
+    const res = await enqueue({
+      platform: 'facebook',
+      destinationId: fbDestinationId,
+      kind: 'text',
+      caption: 'Hello now',
+      intent: 'now',
+    });
+    expect(res.status).toBe(201);
+    const payload = (await res.json()) as { scheduledTime: string };
+    expect(new Date(payload.scheduledTime).getTime()).toBeGreaterThanOrEqual(before - 1000);
   });
 });

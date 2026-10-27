@@ -8,6 +8,7 @@ import {
   UpdateDestinationQueueItemRequestSchema,
 } from '@/lib/api/schemas/unified-queue';
 import { fetchDestinationSlots } from '@/lib/publishing/destination-enqueue';
+import { refreshDestinationUnmatchedFlag } from '@/lib/server/unmatched-flag';
 import {
   deleteDestinationQueueItem,
   fetchDestinationQueueContext,
@@ -137,6 +138,25 @@ export async function handleUpdateDestinationQueueItem(
     newPlatformOptions = optionsResult.options;
   }
 
+  // Facebook is publisher-driven: fixed times and slot pins do not
+  // exist for its queued posts — a reschedule to a fixed time, or a
+  // pin to one slot, is refused rather than stored. (Other platforms
+  // keep the previous behaviour.)
+  if (
+    destination.platform === 'facebook' &&
+    (data.scheduledTime !== undefined ||
+      (data.slotId !== undefined && data.slotId !== null))
+  ) {
+    return NextResponse.json(
+      {
+        error: 'ONE_OFF_NOT_SUPPORTED',
+        message:
+          'Facebook posts go out through your posting times, in queue order — not at a fixed time.',
+      },
+      { status: 400 }
+    );
+  }
+
   // A pinned slot must belong to this destination (the enqueue's rule).
   if (data.slotId) {
     const slots = await fetchDestinationSlots(client, destination.id);
@@ -165,7 +185,9 @@ export async function handleUpdateDestinationQueueItem(
       scheduledTime:
         data.scheduledTime !== undefined
           ? new Date(data.scheduledTime).toISOString()
-          : new Date(existing.scheduled_time).toISOString(),
+          : existing.scheduled_time
+            ? new Date(existing.scheduled_time).toISOString()
+            : null,
       slotId: data.slotId !== undefined ? data.slotId : existing.slot_id,
       status: newStatus,
       // Requeueing clears the claim marker; any other edit preserves it.
@@ -175,6 +197,11 @@ export async function handleUpdateDestinationQueueItem(
 
   if (!updated) {
     return NextResponse.json({ error: 'Failed to update queue item' }, { status: 500 });
+  }
+
+  if (destination.platform === 'facebook') {
+    // A format edit or requeue can cover or uncover queued formats.
+    await refreshDestinationUnmatchedFlag(client, destination.id);
   }
 
   return NextResponse.json(
@@ -233,6 +260,12 @@ export async function handleDeleteDestinationQueueItem(
   );
   if (!deleted) {
     return NextResponse.json({ error: 'Failed to delete queue item' }, { status: 500 });
+  }
+
+  if (destination.platform === 'facebook') {
+    // Deleting a queued post can clear the unmatched flag (e.g. the
+    // only unmatched post is gone).
+    await refreshDestinationUnmatchedFlag(client, destination.id);
   }
 
   return NextResponse.json({ success: true, itemId }, { status: 200 });

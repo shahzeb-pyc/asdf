@@ -225,7 +225,8 @@ export interface DestinationQueueItemState {
   kind: string;
   platformFormat: string | null;
   platformOptions: Record<string, unknown>;
-  scheduledTime: string;
+  /** Null for publisher-driven (Facebook) items: no stored time. */
+  scheduledTime: string | null;
   slotId: string | null;
   status: string;
   /** Null clears a stale claim marker when an item is requeued. */
@@ -373,7 +374,7 @@ export function toUnifiedQueueItemView(
     media,
     platformOptions:
       typeof row.platform_options === 'object' ? row.platform_options : {},
-    scheduledTime: new Date(row.scheduled_time).toISOString(),
+    scheduledTime: row.scheduled_time ? new Date(row.scheduled_time).toISOString() : null,
     slotId: row.slot_id ?? null,
     status: row.status as UnifiedQueueItem['status'],
     retryCount: Number(row.retry_count ?? 0),

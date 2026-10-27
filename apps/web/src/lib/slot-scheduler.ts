@@ -207,56 +207,6 @@ export function calculateNextVacantSlot(
 }
 
 
-/**
- * Recomputes a queued item's scheduled timestamp when changing to a new timezone.
- *
- * 1. Resolves the calendar date in the target timezone (or original scheduled time).
- * 2. Parses the recurring slot time (HH:MM:SS).
- * 3. Builds the target timestamp for that date in the new timezone.
- * 4. Past-time protection: If the resulting timestamp is <= `now`, advances by 1 day
- *    until it is strictly in the future.
- * 5. Collision avoidance: Skips any timestamps already present in `occupiedTimes`.
- */
-export function recomputeSlotScheduledTime(params: {
-  originalScheduledTime: Date;
-  slotTime: string;
-  newTimezone: string;
-  now?: Date;
-  occupiedTimes?: Set<number>;
-}): Date {
-  const safeTimezone = resolveValidTimezone(params.newTimezone);
-  const parsedTime = parseSlotTime(params.slotTime);
-  if (!parsedTime) {
-    return params.originalScheduledTime;
-  }
-
-  const effectiveNow =
-    params.now instanceof Date && !Number.isNaN(params.now.getTime())
-      ? params.now
-      : new Date();
-
-  // Extract year, month, day of the scheduled post in the target timezone
-  const parts = getZonedDateParts(params.originalScheduledTime, safeTimezone);
-
-  // Try candidate dates starting from current day
-  for (let dayOffset = 0; dayOffset <= 365; dayOffset++) {
-    const candidate = makeZonedDate(
-      parts.year,
-      parts.month,
-      parts.day + dayOffset,
-      parsedTime.hour,
-      parsedTime.minute,
-      parsedTime.second,
-      safeTimezone
-    );
-
-    if (candidate.getTime() > effectiveNow.getTime()) {
-      if (params.occupiedTimes && params.occupiedTimes.has(candidate.getTime())) {
-        continue;
-      }
-      return candidate;
-    }
-  }
-
-  return params.originalScheduledTime;
-}
+// NOTE: the old recomputeSlotScheduledTime (timezone realignment of
+// stored post times) was deleted with publisher-driven scheduling:
+// queued posts store no times, so there is nothing to realign.

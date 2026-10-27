@@ -708,7 +708,7 @@ describe('Page Queue Slots CRUD (T121, T122, T123)', () => {
       expect(data.error).toBe('Page not found');
     });
 
-    it('returns 200 with { success: true, timezone, updatedCount, realignedQueueCount } when updating timezone on destinations', async () => {
+    it('returns 200 with { success: true, timezone, updatedCount } and no realigned count when updating timezone', async () => {
       const mockDb: Partial<DatabaseClient> = {
         query: vi.fn().mockImplementation((sql: string) => {
           if (sql.includes('FROM workspaces')) {
@@ -743,13 +743,16 @@ describe('Page Queue Slots CRUD (T121, T122, T123)', () => {
       expect(data.success).toBe(true);
       expect(data.timezone).toBe('Asia/Karachi');
       expect(data.updatedCount).toBe(3);
-      expect(data.realignedQueueCount).toBe(0);
+      // Publisher-driven: no realignment exists anymore, so the
+      // response carries no realigned count at all.
+      expect(data).not.toHaveProperty('realignedQueueCount');
     });
 
-    it('realigns pending queued items to match the new timezone and returns realignedQueueCount', async () => {
-      const updateQueries: { sql: string; params: any[] }[] = [];
+    it('touches no queue_items rows on a timezone change (nothing is realigned)', async () => {
+      const seenSql: string[] = [];
       const mockDb: Partial<DatabaseClient> = {
-        query: vi.fn().mockImplementation((sql: string, params: any[]) => {
+        query: vi.fn().mockImplementation((sql: string) => {
+          seenSql.push(sql);
           if (sql.includes('FROM workspaces')) {
             return Promise.resolve([{ id: 'ws_123' }]);
           }
@@ -758,24 +761,6 @@ describe('Page Queue Slots CRUD (T121, T122, T123)', () => {
           }
           if (sql.includes('SELECT count(*)::int as count FROM posting_slots')) {
             return Promise.resolve([{ count: 2 }]);
-          }
-          if (sql.includes('FROM queue_items qi')) {
-            return Promise.resolve([
-              {
-                id: 'queue-item-1',
-                scheduled_time: '2026-10-25T05:00:00.000Z',
-                slot_time: '10:00:00',
-              },
-              {
-                id: 'queue-item-2',
-                scheduled_time: '2026-10-26T07:00:00.000Z',
-                slot_time: '12:00:00',
-              },
-            ]);
-          }
-          if (sql.includes('UPDATE queue_items')) {
-            updateQueries.push({ sql, params });
-            return Promise.resolve([]);
           }
           return Promise.resolve([]);
         }),
@@ -800,51 +785,9 @@ describe('Page Queue Slots CRUD (T121, T122, T123)', () => {
       expect(data.success).toBe(true);
       expect(data.timezone).toBe('America/New_York');
       expect(data.updatedCount).toBe(2);
-      expect(data.realignedQueueCount).toBe(2);
-      expect(updateQueries.length).toBe(2);
-      expect(updateQueries[0].params[1]).toBe('queue-item-1');
-      expect(updateQueries[1].params[1]).toBe('queue-item-2');
-    });
-
-    it('preserves custom scheduled items by omitting them from realignment (slot_id is null)', async () => {
-      let queriedQueueItemsSql = '';
-      const mockDb: Partial<DatabaseClient> = {
-        query: vi.fn().mockImplementation((sql: string) => {
-          if (sql.includes('FROM workspaces')) {
-            return Promise.resolve([{ id: 'ws_123' }]);
-          }
-          if (sql.includes('UPDATE destinations')) {
-            return Promise.resolve([{ id: pageId }]);
-          }
-          if (sql.includes('SELECT count(*)::int as count FROM posting_slots')) {
-            return Promise.resolve([{ count: 1 }]);
-          }
-          if (sql.includes('FROM queue_items qi')) {
-            queriedQueueItemsSql = sql;
-            return Promise.resolve([]);
-          }
-          return Promise.resolve([]);
-        }),
-      };
-
-      const req = new NextRequest(
-        `http://localhost:3000/api/tenant/acme/pages/${pageId}/slots`,
-        {
-          method: 'PATCH',
-          headers: { cookie: validSessionCookie },
-          body: JSON.stringify({ timezone: 'Europe/London' }),
-        }
-      );
-      const res = await handleUpdateQueueScheduleTimezone(
-        req,
-        'acme',
-        pageId,
-        mockDb as DatabaseClient
-      );
-      expect(res.status).toBe(200);
-      const data = await res.json();
-      expect(data.realignedQueueCount).toBe(0);
-      expect(queriedQueueItemsSql).toContain('JOIN posting_slots s ON s.id = qi.slot_id');
+      // Queued posts store no times, so a timezone change must not
+      // read or write queue_items at all.
+      expect(seenSql.some((sql) => sql.includes('queue_items'))).toBe(false);
     });
   });
 });

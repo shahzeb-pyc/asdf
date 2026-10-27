@@ -39,6 +39,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
 
 import { api, buildTenantApiPath, isApiError } from '@/lib/api';
+import { assignQueueEstimates } from '@fbuploadpro/contracts';
 import {
   DisconnectPageResponseSchema,
   ListFacebookPagesResponseSchema,
@@ -208,44 +209,8 @@ export default function TenantDedicatedPageView({
   const isLoadingPage = !page && !pageError;
 
   // --- frame-level summaries: queue items + slots (shared cache) -------
-  const queueQuery = useQuery({
-    queryKey: tenant.queue.items(pageId),
-    queryFn: ({ signal }) =>
-      api.get(queuePath, {
-        schema: ListQueueItemsResponseSchema,
-        query: { pageId },
-        signal,
-      }),
-    enabled: Boolean(subdomain && pageId),
-  });
-  const queueItems = React.useMemo(
-    () => queueQuery.data?.items ?? [],
-    [queueQuery.data]
-  );
-  const dashboardQueueItems = React.useMemo(
-    () =>
-      queueItems.map((item) => ({
-        id: item.id,
-        mediaId: item.mediaId,
-        postFormat: item.postFormat,
-        linkUrl: item.linkUrl ?? null,
-        caption: item.caption ?? null,
-        firstComment: item.firstComment ?? null,
-        scheduledTime: item.scheduledTime,
-        status: item.status,
-        ...(item.media ? { mediaType: item.media.mediaType } : {}),
-        thumbnailUrl: item.media?.thumbnailUrl ?? null,
-      })),
-    [queueItems]
-  );
-  // Only slot-linked queued posts can move on a timezone change
-  // (one-off posts carry slotId null and are never realigned), so
-  // the timezone review counts these — not all queued posts.
-  const slotLinkedQueuedCount = React.useMemo(
-    () => queueItems.filter((i) => i.status === 'queued' && i.slotId).length,
-    [queueItems]
-  );
-
+  // Slots resolve BEFORE the dashboard estimates below: the estimate
+  // computation reads slots, so the declaration order matters (TDZ).
   const slotsQuery = useQuery({
     queryKey: tenant.pages.slots(pageId),
     queryFn: ({ signal }) =>
@@ -262,6 +227,69 @@ export default function TenantDedicatedPageView({
         allowedFormats: slot.allowedFormats,
       })),
     [slotsQuery.data]
+  );
+
+  const queueQuery = useQuery({
+    queryKey: tenant.queue.items(pageId),
+    queryFn: ({ signal }) =>
+      api.get(queuePath, {
+        schema: ListQueueItemsResponseSchema,
+        query: { pageId },
+        signal,
+      }),
+    enabled: Boolean(subdomain && pageId),
+  });
+  const queueItems = React.useMemo(
+    () => queueQuery.data?.items ?? [],
+    [queueQuery.data]
+  );
+  const pageTimezone = page?.timezone ?? 'UTC';
+  // Queue times are DERIVED estimates, never stored times: the
+  // estimate for each queued post is computed from its queue
+  // position + the current active posting times (format-aware,
+  // skip-ahead). Estimates move when times change — that is the
+  // system working, not a bug. Items arrive from the list route in
+  // queue order (queue_seq), which is the order the estimator takes.
+  const dashboardQueueItems = React.useMemo(
+    () => {
+      const queued = queueItems.filter((item) => item.status === 'queued');
+      const estimates = assignQueueEstimates({
+        slots: slots.map((slot) => ({
+          id: slot.id,
+          timeOfDay: slot.slotTime,
+          isActive: slot.isActive,
+          allowedFormats: slot.allowedFormats ?? null,
+        })),
+        timezone: pageTimezone,
+        posts: queued.map((item) => ({ id: item.id, format: item.postFormat })),
+        now: new Date(),
+      });
+      return queueItems.map((item) => ({
+        id: item.id,
+        mediaId: item.mediaId,
+        postFormat: item.postFormat,
+        linkUrl: item.linkUrl ?? null,
+        caption: item.caption ?? null,
+        firstComment: item.firstComment ?? null,
+        scheduledTime: item.scheduledTime,
+        estimatedTime:
+          item.status === 'queued'
+            ? (estimates.get(item.id)?.toISOString() ?? null)
+            : null,
+        status: item.status,
+        ...(item.media ? { mediaType: item.media.mediaType } : {}),
+        thumbnailUrl: item.media?.thumbnailUrl ?? null,
+      }));
+    },
+    [queueItems, slots, pageTimezone]
+  );
+  // The timezone review counts all queued posts: under
+  // publisher-driven scheduling there are no slot links and no
+  // stored times to realign — the review says times fire in the new
+  // zone and estimates update.
+  const queuedCount = React.useMemo(
+    () => queueItems.filter((i) => i.status === 'queued').length,
+    [queueItems]
   );
 
   // --- mutations (named invalidation per mutation, §8.1) ---------------
@@ -338,6 +366,8 @@ export default function TenantDedicatedPageView({
       ),
     onSuccess: () => {
       invalidateSlots();
+      // Slot changes can move the unmatched-posts flag on the page.
+      invalidatePage();
       toast.success('Recurring publishing slot added.');
     },
     onError: (error) => {
@@ -354,10 +384,12 @@ export default function TenantDedicatedPageView({
   );
 
   // Single-slot PATCH update — the production edit path. Editing
-  // through this route preserves the slot id (and therefore queued
-  // posts' slot links); the old delete + re-add fallback lost the
-  // link and could lose the slot entirely on a 409, so the shell
-  // must always pass onUpdateSlot and never rely on the fallback.
+  // through this route preserves the slot id; the old delete +
+  // re-add fallback could lose the slot entirely on a 409, so the
+  // shell must always pass onUpdateSlot and never rely on the
+  // fallback. (Queued posts carry no slot link under
+  // publisher-driven scheduling — the id matters to the slot
+  // itself, e.g. its once-per-day claim row.)
   const updateSlotMutation = useMutation({
     mutationFn: ({
       slotId,
@@ -382,6 +414,7 @@ export default function TenantDedicatedPageView({
       ),
     onSuccess: () => {
       invalidateSlots();
+      invalidatePage();
       toast.success('Publishing slot updated.');
     },
     onError: (error) => {
@@ -412,17 +445,14 @@ export default function TenantDedicatedPageView({
         { timezone: newTimezone },
         { schema: UpdateScheduleTimezoneResponseSchema }
       ),
-    onSuccess: (data, newTimezone) => {
+    onSuccess: (_data, newTimezone) => {
       invalidateSlots();
       invalidateQueue();
       invalidatePage();
-      const realignedCount = Number(data?.realignedQueueCount ?? 0);
-      const pluralSuffix = realignedCount > 1 ? 's' : '';
-      const realignedMsg =
-        realignedCount > 0
-          ? ` (${realignedCount} pending post${pluralSuffix} realigned)`
-          : '';
-      toast.success(`Schedule timezone updated to ${newTimezone}${realignedMsg}.`);
+      // No realigned count anymore: queued posts store no times, so
+      // a timezone change rewrites nothing — times simply fire in
+      // the new zone and queue estimates update.
+      toast.success(`Schedule timezone updated to ${newTimezone}.`);
     },
     onError: (error) => {
       toast.error(
@@ -446,6 +476,7 @@ export default function TenantDedicatedPageView({
       ),
     onSuccess: () => {
       invalidateSlots();
+      invalidatePage();
     },
     onError: (error) => {
       toast.error(errorMessage(error, "Couldn't update the slot. Please try again."));
@@ -465,6 +496,7 @@ export default function TenantDedicatedPageView({
       }),
     onSuccess: () => {
       invalidateSlots();
+      invalidatePage();
       toast.success('Publishing slot deleted.');
     },
     onError: (error) => {
@@ -723,7 +755,7 @@ export default function TenantDedicatedPageView({
                   page={page}
                   slots={slots}
                   isLoading={slotsQuery.isPending}
-                  pendingQueueCount={slotLinkedQueuedCount}
+                  queuedCount={queuedCount}
                   onAddSlot={handleAddSlot}
                   onUpdateSlot={handleUpdateSlot}
                   onUpdateTimezone={handleUpdateTimezone}

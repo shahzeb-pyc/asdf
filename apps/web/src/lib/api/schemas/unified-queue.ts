@@ -72,7 +72,9 @@ export const UnifiedQueueItemSchema = z.object({
   mediaUrl: z.string().nullable(),
   media: UnifiedQueueItemMediaSchema.nullable(),
   platformOptions: z.record(z.string(), z.unknown()),
-  scheduledTime: z.string().datetime({ offset: true }),
+  // Nullable under publisher-driven scheduling: Facebook queued
+  // posts store no time (the posting times are the schedule).
+  scheduledTime: z.string().datetime({ offset: true }).nullable(),
   slotId: z.string().uuid().nullable(),
   status: UnifiedQueueItemStatusSchema,
   retryCount: z.number().int().nonnegative(),

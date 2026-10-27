@@ -13,7 +13,7 @@ import {
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import { logServerError } from '@/lib/server-analytics';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
-import { recomputeSlotScheduledTime } from '@/lib/slot-scheduler';
+import { refreshDestinationUnmatchedFlag } from '@/lib/server/unmatched-flag';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 /**
@@ -264,6 +264,10 @@ export async function handleCreateQueueSlot(
         updatedAt: new Date(row.updated_at as string).toISOString(),
       });
 
+      // A new time can cover previously unmatched queued posts (or,
+      // if it allows nothing they need, leave them unmatched).
+      await refreshDestinationUnmatchedFlag(dbClient, pageId);
+
       return NextResponse.json(responsePayload, { status: 201 });
     } catch (err: unknown) {
       if (
@@ -348,134 +352,25 @@ export async function handleCreateQueueSlot(
       updatedAt: new Date(inserted.updated_at).toISOString(),
     });
 
+    await refreshDestinationUnmatchedFlag(supabase, pageId);
+
     return NextResponse.json(responsePayload, { status: 201 });
   }
 }
 
-async function realignPendingQueueItemsPostgres(
-  dbClient: DatabaseClient,
-  pageId: string,
-  newTimezone: string
-): Promise<number> {
-  const pendingRows = (await dbClient.query(
-    `SELECT qi.id, qi.scheduled_time, s.time_of_day AS slot_time
-     FROM queue_items qi
-     JOIN posting_slots s ON s.id = qi.slot_id
-     WHERE qi.destination_id = $1 AND qi.status = 'queued'
-     ORDER BY qi.scheduled_time ASC`,
-    [pageId]
-  )) as Record<string, unknown>[];
-
-  if (!pendingRows || pendingRows.length === 0) {
-    return 0;
-  }
-
-  const occupiedTimes = new Set<number>();
-  const now = new Date();
-  let realignedCount = 0;
-
-  for (const row of pendingRows) {
-    const originalTime = new Date(row.scheduled_time as string);
-    const slotTimeStr = typeof row.slot_time === 'string' ? row.slot_time : String(row.slot_time);
-    const newScheduledTime = recomputeSlotScheduledTime({
-      originalScheduledTime: originalTime,
-      slotTime: slotTimeStr,
-      newTimezone,
-      now,
-      occupiedTimes,
-    });
-    occupiedTimes.add(newScheduledTime.getTime());
-
-    // Count only items whose time actually moved: rows whose
-    // recomputed time equals the original (e.g. an unparseable slot
-    // time falling back to the original) are not "realigned".
-    if (newScheduledTime.getTime() !== originalTime.getTime()) {
-      await dbClient.query(
-        `UPDATE queue_items
-         SET scheduled_time = $1, updated_at = now()
-         WHERE id = $2`,
-        [newScheduledTime.toISOString(), row.id]
-      );
-      realignedCount++;
-    }
-  }
-
-  return realignedCount;
-}
-
-async function realignPendingQueueItemsSupabase(
-  supabase: SupabaseClient,
-  pageId: string,
-  newTimezone: string
-): Promise<number> {
-  const { data: queueData, error: queueErr } = await supabase
-    .from('queue_items')
-    .select('id, scheduled_time, slot_id')
-    .eq('destination_id', pageId)
-    .eq('status', 'queued')
-    .not('slot_id', 'is', null)
-    .order('scheduled_time', { ascending: true });
-
-  if (queueErr || !queueData || queueData.length === 0) {
-    return 0;
-  }
-
-  const slotIds = [...new Set(queueData.map((item) => item.slot_id).filter(Boolean))];
-  const { data: slotsData, error: slotsErr } = await supabase
-    .from('posting_slots')
-    .select('id, time_of_day')
-    .in('id', slotIds as string[]);
-
-  if (slotsErr || !slotsData || slotsData.length === 0) {
-    return 0;
-  }
-
-  const slotMap = new Map<string, string>();
-  for (const s of slotsData) {
-    slotMap.set(s.id, typeof s.time_of_day === 'string' ? s.time_of_day : String(s.time_of_day));
-  }
-
-  const occupiedTimes = new Set<number>();
-  const now = new Date();
-  let realignedCount = 0;
-
-  for (const item of queueData) {
-    const slotTime = item.slot_id ? slotMap.get(item.slot_id) : undefined;
-    if (!slotTime) continue;
-
-    const originalTime = new Date(item.scheduled_time);
-    const newScheduledTime = recomputeSlotScheduledTime({
-      originalScheduledTime: originalTime,
-      slotTime,
-      newTimezone,
-      now,
-      occupiedTimes,
-    });
-    occupiedTimes.add(newScheduledTime.getTime());
-
-    // Count only items whose time actually moved (see the Postgres
-    // path above): an unchanged recomputation is not a realignment.
-    if (newScheduledTime.getTime() !== originalTime.getTime()) {
-      await supabase
-        .from('queue_items')
-        .update({
-          scheduled_time: newScheduledTime.toISOString(),
-          updated_at: now.toISOString(),
-        })
-        .eq('id', item.id);
-      realignedCount++;
-    }
-  }
-
-  return realignedCount;
-}
-
+/**
+ * Timezone change under publisher-driven scheduling: it updates the
+ * page timezone ONLY. Queued posts store no times, so nothing is
+ * realigned, rewritten, or counted — the posting times simply fire
+ * in the new zone, and queue estimates update with it. (The old
+ * realign functions were deleted with this change, not left behind.)
+ */
 async function updateScheduleTimezonePostgres(
   dbClient: DatabaseClient,
   pageId: string,
   workspaceId: string,
   newTimezone: string
-): Promise<{ notFound?: boolean; updatedCount?: number; realignedQueueCount?: number }> {
+): Promise<{ notFound?: boolean; updatedCount?: number }> {
   const updatedPages = (await dbClient.query(
     `UPDATE destinations
      SET timezone = $1, updated_at = now()
@@ -493,15 +388,8 @@ async function updateScheduleTimezonePostgres(
     [pageId]
   );
 
-  const realignedQueueCount = await realignPendingQueueItemsPostgres(
-    dbClient,
-    pageId,
-    newTimezone
-  );
-
   return {
     updatedCount: Number(slotRows[0]?.count ?? 0),
-    realignedQueueCount,
   };
 }
 
@@ -510,7 +398,7 @@ async function updateScheduleTimezoneSupabase(
   pageId: string,
   workspaceId: string,
   newTimezone: string
-): Promise<{ notFound?: boolean; error?: string; updatedCount?: number; realignedQueueCount?: number }> {
+): Promise<{ notFound?: boolean; error?: string; updatedCount?: number }> {
   const { data: updatedPage, error: updateErr } = await supabase
     .from('destinations')
     .update({
@@ -536,15 +424,8 @@ async function updateScheduleTimezoneSupabase(
     .select('id', { count: 'exact', head: true })
     .eq('destination_id', pageId);
 
-  const realignedQueueCount = await realignPendingQueueItemsSupabase(
-    supabase,
-    pageId,
-    newTimezone
-  );
-
   return {
     updatedCount: count ?? 0,
-    realignedQueueCount,
   };
 }
 
@@ -614,7 +495,6 @@ export async function handleUpdateQueueScheduleTimezone(
       success: true,
       timezone: newTimezone,
       updatedCount: result.updatedCount ?? 0,
-      realignedQueueCount: result.realignedQueueCount ?? 0,
     });
     return NextResponse.json(responsePayload);
   }
@@ -642,7 +522,6 @@ export async function handleUpdateQueueScheduleTimezone(
     success: true,
     timezone: newTimezone,
     updatedCount: result.updatedCount ?? 0,
-    realignedQueueCount: result.realignedQueueCount ?? 0,
   });
   return NextResponse.json(responsePayload);
 }

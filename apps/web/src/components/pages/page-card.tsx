@@ -45,6 +45,14 @@ export interface FacebookPageItem {
   followersGained: number;
   status: FacebookPageStatus;
   tasks?: string[] | undefined;
+  /**
+   * Queued post formats no active posting time allows (from
+   * destinations.metadata.unmatched_post_types). The card keeps
+   * showing 'Active' and adds a needs-attention mark from this flag
+   * — shown only while status is active, never when paused or
+   * otherwise non-active (the status itself explains those).
+   */
+  unmatchedPostTypes?: string[] | undefined;
   createdAt: string;
   updatedAt?: string | undefined;
 }
@@ -182,6 +190,14 @@ export function PageCard({
   );
 
   const needsAttention = isPageNeedsAttention(page.status);
+  // The unmatched-posts mark shows ONLY on active pages: pausing or
+  // any other state change never clears the stored flag, but the
+  // mark itself is an active-state notice (waiting posts are only
+  // actionable while automation runs).
+  const showUnmatchedMark =
+    page.status === 'active' &&
+    Array.isArray(page.unmatchedPostTypes) &&
+    page.unmatchedPostTypes.length > 0;
   const statusLabel = getPageStatusLabel(page.status);
   const addedDate = formatAddedDate(page.createdAt);
   const facebookUrl = `https://facebook.com/${page.fbPageId}`;
@@ -371,6 +387,23 @@ export function PageCard({
           Account: {page.accountDisplayName || 'Connected Account'}
         </div>
       </div>
+
+      {/* Needs-attention mark (no dot — clock icon + text, like the
+          status marks): queued posts wait for a posting time that
+          allows their type. The page stays Active; this is the
+          notice that keeps waiting posts from going unnoticed. */}
+      {showUnmatchedMark && (
+        <div
+          data-testid="page-needs-attention-unmatched"
+          role="status"
+          className="mt-3 flex items-center gap-1.5 text-metadata font-semibold text-signal-queued"
+        >
+          <ClockIcon aria-hidden className="size-3.5 shrink-0" />
+          <span>
+            Needs attention — some queued posts have no matching posting time
+          </span>
+        </div>
+      )}
     </div>
   );
 }

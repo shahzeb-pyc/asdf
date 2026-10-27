@@ -46,27 +46,8 @@ export {
   parseDateTimeLocalValue,
   hasRealCaption,
 } from './composer/queue-slot-utils';
-export { BulkAddModal, type BulkAddModalProps } from './bulk/bulk-add-modal';
-export { BulkStepMedia, type BulkStepMediaProps } from './bulk/bulk-step-media';
-export {
-  BulkStepDetails,
-  type BulkStepDetailsProps,
-  getBulkDetailsValidity,
-} from './bulk/bulk-step-details';
-export {
-  BulkStepReview,
-  type BulkStepReviewProps,
-  type BulkReviewRow,
-  type BulkReviewResult,
-} from './bulk/bulk-step-review';
-export {
-  partitionAssets,
-  computeBulkQueueTimes,
-  describeQueueRange,
-  suggestFormatForExcluded,
-  formatLabel,
-  pluralize,
-  type BulkDestination,
-  type BulkAssignedTime,
-  type PartitionedAssets,
-} from './bulk/bulk-utils';
+// Bulk-add is deleted entirely (product-owner decision): it was
+// AI-made, not his, and its "schedule" destination was the one-off
+// fixed-date path that publisher-driven scheduling removes. No
+// bulk-* export remains here; the grep check in the publisher-driven
+// tests pins that no live code imports bulk-* anymore.

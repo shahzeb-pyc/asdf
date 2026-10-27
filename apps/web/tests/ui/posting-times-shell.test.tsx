@@ -1,13 +1,13 @@
 /**
  * Posting-times shell wiring tests: the production edit path must use
  * the single-slot PATCH route (preserving the slot id), the timezone
- * review must count only what a timezone change can actually realign
- * (active slots, slot-linked queued posts), and a failed toggle must
- * leave the switch in its server state.
+ * review counts active slots and all queued posts (publisher-driven
+ * scheduling has no slot links and nothing to realign), and a failed
+ * toggle must leave the switch in its server state.
  *
  * These tests fail on the old shell: it never passed onUpdateSlot
- * (edits fell back to delete + re-add), passed all queued posts as
- * the review count, and passed all slots as the review slots count.
+ * (edits fell back to delete + re-add), and the pre-publisher-driven
+ * shell counted slot-linked queued posts only.
  */
 import React from 'react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
@@ -66,8 +66,8 @@ const SLOTS = [
   { id: 'slot-2', slotTime: '15:00', timezone: 'UTC', isActive: false, allowedFormats: ['image'] },
 ];
 
-// q1, q2: queued + slot-linked (can realign). q3: queued, no slot
-// (one-off — never realigns). q4: published, slot-linked (not queued).
+// q1, q2, q3: queued (slot links are vestigial under
+// publisher-driven scheduling). q4: published (not queued).
 const QUEUE_ITEMS = [
   { id: 'q1', status: 'queued', slotId: 'slot-1', scheduledTime: '2026-10-02T09:00:00.000Z', mediaId: null, postFormat: 'text', linkUrl: null, caption: null, firstComment: null, media: null },
   { id: 'q2', status: 'queued', slotId: 'slot-1', scheduledTime: '2026-10-03T09:00:00.000Z', mediaId: null, postFormat: 'text', linkUrl: null, caption: null, firstComment: null, media: null },
@@ -142,7 +142,7 @@ describe('Posting-times shell wiring', () => {
     expect(screen.getByTestId('posting-time-row-slot-1')).toBeInTheDocument();
   });
 
-  it('counts only active slots and slot-linked queued posts in the timezone review', async () => {
+  it('counts active slots and all queued posts in the timezone review (nothing is realigned)', async () => {
     const user = userEvent.setup();
     renderShell();
     await screen.findByTestId('posting-time-row-slot-1');
@@ -150,11 +150,13 @@ describe('Posting-times shell wiring', () => {
     expect(await screen.findByTestId('schedule-timezone-modal')).toBeInTheDocument();
     await user.click(screen.getByTestId('timezone-option-Asia/Karachi'));
     await user.click(screen.getByTestId('proceed-to-step2-button'));
-    await screen.findByTestId('timezone-impact-metrics');
-    // 1 active slot (slot-2 is paused), 2 slot-linked queued posts
-    // (q3 has no slot, q4 is not queued) — the old shell showed 2 and 3.
+    const metrics = await screen.findByTestId('timezone-impact-metrics');
+    // 1 active slot (slot-2 is paused), 3 queued posts (q1, q2, q3;
+    // q4 is published). No realignment copy anywhere.
     expect(screen.getByTestId('timezone-metric-slots')).toHaveTextContent('1');
-    expect(screen.getByTestId('timezone-metric-queued')).toHaveTextContent('2');
+    expect(screen.getByTestId('timezone-metric-queued')).toHaveTextContent('3');
+    expect(metrics).toHaveTextContent('Estimates update with the new timezone');
+    expect(metrics).not.toHaveTextContent('realigned');
   });
 
   it('keeps the switch in its server state when toggling fails', async () => {

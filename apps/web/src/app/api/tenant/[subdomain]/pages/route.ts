@@ -55,6 +55,8 @@ interface PageListRow {
   followersCount?: unknown;
   status?: FacebookPageStatus | null;
   tasks?: unknown;
+  unmatched_post_types?: unknown;
+  unmatchedPostTypes?: unknown;
   rate_limited_at?: string | Date | null;
   rateLimitedAt?: string | Date | null;
   created_at?: string | Date | null;
@@ -240,6 +242,7 @@ async function fetchSqlPagesPage(
       (d.metadata->>'current_followers')::int AS current_followers,
       ${DESTINATION_STATUS_TO_WIRE_SQL} AS status,
       d.metadata->'tasks' AS tasks,
+      d.metadata->'unmatched_post_types' AS unmatched_post_types,
       d.metadata->>'rate_limited_at' AS rate_limited_at,
       d.created_at,
       d.updated_at
@@ -438,6 +441,9 @@ function mapSupabaseDestinationRows(
         : null,
     status: unifiedDestinationStatusToWire(p.status, p.metadata),
     tasks: p.metadata?.tasks ?? [],
+    unmatched_post_types: Array.isArray(p.metadata?.unmatched_post_types)
+      ? (p.metadata.unmatched_post_types as unknown[])
+      : [],
     rate_limited_at:
       typeof p.metadata?.rate_limited_at === 'string'
         ? p.metadata.rate_limited_at
@@ -787,6 +793,9 @@ function mapPageRows(rows: PageListRow[]) {
       followersCount: currentFollowers,
       status: effectiveStatus,
       tasks: parsePageTasks(row.tasks),
+      unmatchedPostTypes: parsePageTasks(
+        row.unmatched_post_types ?? row.unmatchedPostTypes
+      ),
       rateLimitedAt: rateLimitedAt ? new Date(rateLimitedAt) : null,
       createdAt: row.created_at || row.createdAt,
       updatedAt: row.updated_at || row.updatedAt,

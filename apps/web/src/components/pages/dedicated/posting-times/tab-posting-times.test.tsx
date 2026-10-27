@@ -38,7 +38,7 @@ function renderTab(overrides: Partial<React.ComponentProps<typeof PageTabPosting
   const props: React.ComponentProps<typeof PageTabPostingTimes> = {
     page: PAGE,
     slots: SLOTS,
-    pendingQueueCount: 2,
+    queuedCount: 2,
     onAddSlot: vi.fn().mockResolvedValue(undefined),
     onUpdateSlot: vi.fn().mockResolvedValue(undefined),
     onUpdateTimezone: vi.fn().mockResolvedValue(undefined),
@@ -105,16 +105,18 @@ describe('PageTabPostingTimes (rebuilt, spec 134)', () => {
     const dialog = await screen.findByTestId('delete-posting-time-modal');
     expect(dialog).toHaveTextContent('Remove Posting Time?');
     expect(dialog).toHaveTextContent('09:00 AM');
-    // NOTE: dialog copy is HELD — the product owner is changing
-    // deletion to actually redistribute queued posts, and the copy
-    // will be rewritten to describe that behaviour once confirmed.
+    // Publisher-driven copy: nothing is cancelled, nothing keeps
+    // the deleted time — posts flow through the remaining times.
+    expect(dialog).toHaveTextContent('Nothing queued is cancelled');
+    expect(dialog).toHaveTextContent('remaining posting times, in queue order');
+    expect(dialog).not.toHaveTextContent('automatically roll');
     await user.click(screen.getByTestId('confirm-delete-slot-btn'));
     await waitFor(() => expect(props.onDeleteSlot).toHaveBeenCalledWith('slot-1'));
   });
 
   it('shows only active slots in the timezone review metrics', async () => {
     const user = userEvent.setup();
-    // Fixture: slot-1 active, slot-2 inactive; pendingQueueCount 2.
+    // Fixture: slot-1 active, slot-2 inactive; queuedCount 2.
     renderTab();
     await user.click(screen.getByTestId('schedule-timezone-trigger'));
     expect(await screen.findByTestId('schedule-timezone-modal')).toBeInTheDocument();
@@ -124,6 +126,10 @@ describe('PageTabPostingTimes (rebuilt, spec 134)', () => {
     expect(screen.getByTestId('timezone-metric-slots')).toHaveTextContent('1');
     expect(screen.getByTestId('timezone-metric-queued')).toHaveTextContent('2');
     expect(metrics).toBeInTheDocument();
+    // Publisher-driven copy: no realignment claims anywhere.
+    expect(metrics).toHaveTextContent('Estimates update with the new timezone');
+    expect(metrics).not.toHaveTextContent('realigned');
+    expect(screen.getByText(/No post times are rewritten/)).toBeInTheDocument();
   });
 
   it('keeps the switch state when toggling fails', async () => {

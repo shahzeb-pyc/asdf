@@ -70,6 +70,7 @@ import {
 import { cn } from '@/lib/utils';
 import { getUserInitials } from '@/lib/user-initials';
 import type { FacebookPageItem } from '../page-card';
+import { resolveFormatLabel } from './posting-times/posting-time-utils';
 import {
   computeFollowersGained,
   formatAddedDate,
@@ -304,6 +305,26 @@ export function DedicatedPageHeader({
           />
         </div>
       )}
+
+      {/* Unmatched-posts banner — active pages only. The stored flag
+          survives pausing and every other state change, but the
+          banner itself shows only while status is active: while
+          paused (or rate-limited, or expired) the status banner
+          above is the explanation, and waiting posts resume with
+          the page. Adding a matching posting time clears the flag
+          and the waiting posts join the flow automatically. */}
+      {page.status === 'active' &&
+        Array.isArray(page.unmatchedPostTypes) &&
+        page.unmatchedPostTypes.length > 0 && (
+          <div className="mb-4 overflow-hidden rounded-md border border-line">
+            <Banner
+              variant="warning"
+              data-testid="unmatched-post-types-banner"
+              title="Some queued posts have no posting time"
+              description={`You have queued ${page.unmatchedPostTypes.map((format) => resolveFormatLabel(format)).join(', ')} posts, but no active posting time allows them. They will wait in the queue until you add a posting time that allows them.`}
+            />
+          </div>
+        )}
 
       {/* Token-expired attention banner — invalid-token state only. Its
           action links to the Facebook Accounts section for this

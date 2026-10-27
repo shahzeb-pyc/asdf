@@ -129,6 +129,14 @@ export const FacebookPageViewSchema = z.object({
   followersCount: z.number().int().nonnegative().default(0),
   status: FacebookPageStatusSchema,
   tasks: z.array(z.string()).default([]),
+  /**
+   * Queued post formats no active posting time allows (from
+   * destinations.metadata.unmatched_post_types). The page status
+   * itself stays 'active'; the UI shows a needs-attention mark from
+   * this flag only while status is active. Empty when everything
+   * queued is covered, or when nothing is queued.
+   */
+  unmatchedPostTypes: z.array(z.string()).default([]),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
   rateLimitedAt: z.coerce.date().nullable().optional(),

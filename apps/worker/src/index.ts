@@ -6,6 +6,7 @@ import {
   type ClaimerQueues,
   type PublishQueueMessage,
 } from './claimer.js';
+import { runSlotClaimTick } from './slot-claim.js';
 import { handleQueueBatch, type ConsumerDbClient } from './consumers.js';
 import {
   isTokenEncryptionKeyWellFormed,
@@ -228,6 +229,33 @@ export async function handleScheduled(
       now: options?.now ?? new Date(controller.scheduledTime),
       waitUntil,
     });
+
+    // Publisher-driven posting times (Facebook): due-slot claims run
+    // on the same tick, isolated from the due-based claim above.
+    // Per-slot failures are captured inside runSlotClaimTick; a
+    // tick-level failure (list RPC, missing queue binding) is
+    // captured here and must not fail the tick or its heartbeat —
+    // slot claims simply retry next tick (a slot whose window has
+    // passed by then is lost, exactly like a publisher outage).
+    // The heartbeat still reports the due-based claim counts only;
+    // slot claims report through their own log line (slot-claim.ts).
+    try {
+      await runSlotClaimTick({
+        db,
+        queues: queuesFromEnv(env, options?.queues),
+        env,
+        now: options?.now ?? new Date(controller.scheduledTime),
+        waitUntil,
+      });
+    } catch (slotErr) {
+      captureWorkerError(
+        env,
+        slotErr,
+        { site: 'handleScheduled', kind: 'slot_claim_tick_failed' },
+        waitUntil
+      );
+      console.error('[handleScheduled] slot claim tick failed; continuing:', slotErr);
+    }
 
     await recordHeartbeat(db, {
       success: true,

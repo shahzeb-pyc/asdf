@@ -32,7 +32,7 @@ export interface ScheduleTimezoneModalProps {
   isOpen: boolean;
   activeTimezone: string;
   slotsCount: number;
-  pendingQueueCount: number;
+  queuedCount: number;
   onClose: () => void;
   onConfirmTimezone: (newTimezone: string) => Promise<void>;
 }
@@ -41,7 +41,7 @@ export function ScheduleTimezoneModal({
   isOpen,
   activeTimezone,
   slotsCount,
-  pendingQueueCount,
+  queuedCount,
   onClose,
   onConfirmTimezone,
 }: Readonly<ScheduleTimezoneModalProps>) {
@@ -58,7 +58,7 @@ export function ScheduleTimezoneModal({
         <ScheduleTimezoneFlow
           activeTimezone={activeTimezone}
           slotsCount={slotsCount}
-          pendingQueueCount={pendingQueueCount}
+          queuedCount={queuedCount}
           onClose={onClose}
           onConfirmTimezone={onConfirmTimezone}
         />
@@ -70,7 +70,7 @@ export function ScheduleTimezoneModal({
 function ScheduleTimezoneFlow({
   activeTimezone,
   slotsCount,
-  pendingQueueCount,
+  queuedCount,
   onClose,
   onConfirmTimezone,
 }: Readonly<Omit<ScheduleTimezoneModalProps, 'isOpen'>>) {
@@ -125,7 +125,7 @@ function ScheduleTimezoneFlow({
           activeTimezone={activeTimezone}
           selectedTimezone={selectedTimezone}
           slotsCount={slotsCount}
-          pendingQueueCount={pendingQueueCount}
+          queuedCount={queuedCount}
           isSubmitting={isSubmitting}
           errorMessage={errorMessage}
           onBack={() => setStep(1)}

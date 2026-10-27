@@ -1,11 +1,12 @@
 'use client';
 
 /**
- * Timezone-change flow, step 2 (spec 134 §3.3): review the impact
- * before applying — current vs new zone, the preserved clock-time
- * behaviour, automatic queue realignment, and the real counts of
- * posting times and queued posts that realign (spec 106 behaviour,
- * preserved verbatim). Rebuilt clean-room on shared/ui + tokens.
+ * Timezone-change flow, step 2: review the impact before applying —
+ * current vs new zone, the preserved clock-time behaviour, and the
+ * counts of active posting times and queued posts. Under
+ * publisher-driven scheduling nothing is realigned: queued posts
+ * store no times, so the times simply fire in the new zone and the
+ * queue estimates update with it.
  */
 import * as React from 'react';
 import { ArrowRightIcon, CheckIcon, InfoIcon } from 'lucide-react';
@@ -21,7 +22,7 @@ export interface TimezoneReviewStepProps {
   activeTimezone: string;
   selectedTimezone: string;
   slotsCount: number;
-  pendingQueueCount: number;
+  queuedCount: number;
   isSubmitting: boolean;
   errorMessage: string | null;
   onBack: () => void;
@@ -32,7 +33,7 @@ export function TimezoneReviewStep({
   activeTimezone,
   selectedTimezone,
   slotsCount,
-  pendingQueueCount,
+  queuedCount,
   isSubmitting,
   errorMessage,
   onBack,
@@ -96,16 +97,18 @@ export function TimezoneReviewStep({
         <div className="flex items-start gap-2">
           <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-brand-gold" />
           <p>
-            <strong className="text-ink">Automatic queue realignment:</strong> Pending queued
-            items linked to slots will automatically shift forward to avoid publishing in the
-            past.
+            <strong className="text-ink">No post times are rewritten:</strong> Queued posts
+            carry no fixed time — they go out at your posting times, in queue order. Changing
+            the timezone only moves when those times fire, and the queue&apos;s estimated
+            dates update with it.
           </p>
         </div>
       </div>
 
-      {/* Impact numbers. Callers pass corrected counts: active
-          slots only, and slot-linked queued posts only — the only
-          rows a timezone change can actually realign. */}
+      {/* Impact numbers. Callers pass active slots only (inactive
+          slots schedule nothing) and all queued posts — nothing is
+          realigned, so the queued number is context, not a
+          realignment count. */}
       <div data-testid="timezone-impact-metrics" className="grid grid-cols-2 gap-2">
         <div className="rounded-sm border border-line bg-subtle p-2">
           <div className="text-metadata font-semibold tracking-wide text-ink-dim uppercase">
@@ -121,9 +124,9 @@ export function TimezoneReviewStep({
             Queued posts
           </div>
           <div data-testid="timezone-metric-queued" className="mt-0.5 text-lg font-bold text-ink">
-            {pendingQueueCount}
+            {queuedCount}
           </div>
-          <div className="text-metadata text-ink-sub">Posts realigned automatically</div>
+          <div className="text-metadata text-ink-sub">Estimates update with the new timezone</div>
         </div>
       </div>
 

@@ -38,6 +38,7 @@ export const FacebookPageViewSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   rateLimitedAt: z.string().nullable().optional(),
+  unmatchedPostTypes: z.array(z.string()).optional(),
 });
 export type FacebookPageView = z.infer<typeof FacebookPageViewSchema>;
 

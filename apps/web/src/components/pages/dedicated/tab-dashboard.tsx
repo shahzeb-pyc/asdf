@@ -31,7 +31,15 @@ export interface PageQueueItemSummary {
   linkUrl?: string | null;
   caption?: string | null;
   firstComment?: string | null;
-  scheduledTime: string;
+  /** Legacy stored time, if any (published rows, other platforms). */
+  scheduledTime: string | null;
+  /**
+   * Derived estimate for queued posts: queue position + current
+   * active posting times. Null when no active time allows the post's
+   * format — it waits (with the unmatched warning) until one does.
+   * Estimates move when times change; that is intended.
+   */
+  estimatedTime?: string | null;
   status: 'queued' | 'publishing' | 'published' | 'failed' | 'skipped' | 'cancelled';
   thumbnailUrl?: string | null;
 }
@@ -71,7 +79,10 @@ export function PageTabDashboard({
   const [publishingId, setPublishingId] = React.useState<string | null>(null);
 
   const activeQueuedItems = queueItems.filter((i) => i.status === 'queued');
-  const nextItem = activeQueuedItems[0];
+  // Next publication = the first queued post that actually has an
+  // estimated time (an unmatched post at the head of the queue waits
+  // and must not mask the post behind it that does have a time).
+  const nextItem = activeQueuedItems.find((i) => i.estimatedTime) ?? null;
   const upcomingSlice = activeQueuedItems.slice(0, 3);
   const activeSlots = slots.filter((s) => s.isActive);
 
@@ -118,7 +129,7 @@ export function PageTabDashboard({
           <span className={metricLabelClass}>Queued Content</span>
           <div className="mt-1">
             <span className={metricValueClass}>{activeQueuedItems.length}</span>
-            <span className="ml-1.5 text-body text-ink-dim">posts scheduled</span>
+            <span className="ml-1.5 text-body text-ink-dim">posts in queue</span>
           </div>
         </div>
 
@@ -126,13 +137,15 @@ export function PageTabDashboard({
           <span className={metricLabelClass}>Next Publication</span>
           <div className="mt-1">
             <span className={nextItem ? 'text-lg font-semibold text-ink' : 'text-body font-semibold text-ink'}>
-              {nextItem
-                ? new Date(nextItem.scheduledTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                : 'No posts in queue'}
+              {nextItem?.estimatedTime
+                ? new Date(nextItem.estimatedTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                : activeQueuedItems.length > 0
+                  ? 'Waiting for a posting time'
+                  : 'No posts in queue'}
             </span>
-            {nextItem && (
+            {nextItem?.estimatedTime && (
               <span className="block text-xs text-ink-dim">
-                {new Date(nextItem.scheduledTime).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                {new Date(nextItem.estimatedTime).toLocaleDateString([], { month: 'short', day: 'numeric' })}
               </span>
             )}
           </div>
@@ -193,7 +206,9 @@ export function PageTabDashboard({
                       </p>
                     </div>
                     <span className="text-xs text-ink-dim">
-                      Scheduled for {new Date(item.scheduledTime).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
+                      {item.estimatedTime
+                        ? `Expected ${new Date(item.estimatedTime).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}`
+                        : 'Waiting for a matching posting time'}
                     </span>
                   </div>
 
