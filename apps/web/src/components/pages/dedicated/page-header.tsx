@@ -9,7 +9,9 @@
  * count + gained + category, Create Posts button, a three-dots menu
  * holding Pause/Resume posting and Disconnect Page, and Mark Verified &
  * Reactivate Page in the checkpoint state only. The Queue Post button
- * and Copy Page ID were removed with this redesign.
+ * and Copy Page ID were removed with this redesign. Disconnect Page in
+ * the menu opens a confirmation dialogue (the Settings tab's
+ * AlertDialog pattern) — it never disconnects at once.
  *
  * Data notes:
  * - Added date and followers gained reuse the list card's helpers
@@ -41,6 +43,16 @@ import {
   PowerIcon,
 } from 'lucide-react';
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/shared/ui/alert-dialog';
 import { Banner } from '@/components/shared/ui/banner';
 import { Button } from '@/components/shared/ui/button';
 import {
@@ -64,7 +76,7 @@ export interface DedicatedPageHeaderProps {
   page: FacebookPageItem;
   subdomain: string;
   onStatusToggle: (nextStatus: 'active' | 'paused') => Promise<void>;
-  onDisconnectRequest: () => void;
+  onDisconnectRequest: () => void | Promise<void>;
   /** Optional for now: the shell leaves this unhandled, so the Create
    * Posts button intentionally does nothing until the dialogue work
    * lands. */
@@ -156,6 +168,8 @@ export function DedicatedPageHeader({
 }: Readonly<DedicatedPageHeaderProps>) {
   const router = useRouter();
   const [isUpdatingStatus, setIsUpdatingStatus] = React.useState(false);
+  const [isDisconnectDialogOpen, setIsDisconnectDialogOpen] = React.useState(false);
+  const [isDisconnecting, setIsDisconnecting] = React.useState(false);
 
   const statusInfo = resolvePageStatus(page.status);
   const monogram = (page.pageName || 'P').slice(0, 2).toUpperCase();
@@ -190,6 +204,20 @@ export function DedicatedPageHeader({
       await onStatusToggle('active');
     } finally {
       setIsUpdatingStatus(false);
+    }
+  };
+
+  // Disconnect confirmation — the Settings tab's AlertDialog pattern.
+  // The menu item only opens the dialogue; only the confirm click calls
+  // onDisconnectRequest, and the shell owns the disconnect semantics
+  // (page → disconnected, queued items cancelled, redirect on success).
+  const handleConfirmDisconnect = async () => {
+    setIsDisconnecting(true);
+    try {
+      await onDisconnectRequest();
+      setIsDisconnectDialogOpen(false);
+    } finally {
+      setIsDisconnecting(false);
     }
   };
 
@@ -230,9 +258,13 @@ export function DedicatedPageHeader({
         </div>
       )}
 
-      {/* Main header: identity left, actions right */}
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex min-w-0 flex-1 items-center gap-3">
+      {/* Main header: identity on top, actions below on narrow
+          screens (the old flex-wrap row let identity + actions squash
+          side-by-side at ~320px instead of stacking); side-by-side
+          again from sm up. The 56px round picture is kept at all
+          widths — stacking removes the squeeze that threatened it. */}
+      <div data-testid="header-main-row" className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex w-full min-w-0 items-center gap-3 sm:flex-1">
           <DedicatedAvatar page={page} ringClass={statusInfo.ringClass} monogram={monogram} />
 
           <div className="min-w-0 flex-1">
@@ -250,7 +282,7 @@ export function DedicatedPageHeader({
                 data-testid="page-live-link"
                 title="View live Page on Facebook"
                 aria-label={`View ${page.pageName} live on Facebook`}
-                className="inline-flex size-11 items-center justify-center text-ink-dim transition-colors hover:text-ink"
+                className="inline-flex size-11 shrink-0 items-center justify-center text-ink-dim transition-colors hover:text-ink"
               >
                 <ExternalLinkIcon className="size-4" aria-hidden />
               </a>
@@ -322,11 +354,16 @@ export function DedicatedPageHeader({
         </div>
 
         {/* Actions cluster: Create Posts first, then a three-dots menu
-            holding Pause/Resume posting and Disconnect Page. */}
-        <div className="flex flex-wrap items-center gap-2">
+            holding Pause/Resume posting and Disconnect Page. Full
+            width on narrow screens (Create Posts stretches, the menu
+            button keeps its fixed size); compact row from sm up.
+            Buttons keep the default h-control 44px touch height and
+            never wrap mid-label (Button base: whitespace-nowrap). */}
+        <div data-testid="header-actions" className="flex w-full items-center gap-2 sm:w-auto">
           <Button
             type="button"
             data-testid="header-create-posts-btn"
+            className="flex-1 sm:flex-none"
             onClick={() => onCreatePosts?.()}
           >
             <PlusIcon aria-hidden />
@@ -368,7 +405,7 @@ export function DedicatedPageHeader({
               <MenuItem
                 variant="destructive"
                 data-testid="header-menu-disconnect-btn"
-                onSelect={onDisconnectRequest}
+                onSelect={() => setIsDisconnectDialogOpen(true)}
               >
                 <PowerIcon aria-hidden />
                 <span>Disconnect Page</span>
@@ -377,6 +414,40 @@ export function DedicatedPageHeader({
           </Menu>
         </div>
       </div>
+
+      {/* Disconnect confirmation — alert-dialog pattern (UI Rule 3).
+          Testids are header-scoped: the Settings tab renders its own
+          disconnect dialogue with the unscoped testids, and both can
+          mount on the same dedicated page. */}
+      <AlertDialog open={isDisconnectDialogOpen} onOpenChange={setIsDisconnectDialogOpen}>
+        <AlertDialogContent data-testid="header-disconnect-modal">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Disconnect {page.pageName}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will disconnect the Facebook Page from your workspace. Any queued posts will be cancelled.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="header-cancel-disconnect-btn" disabled={isDisconnecting}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="header-confirm-disconnect-btn"
+              disabled={isDisconnecting}
+              onClick={(event) => {
+                // Keep the dialogue open until the disconnect settles
+                // (facebook-disconnect-dialog pattern): without this,
+                // Radix closes the dialogue at once and the
+                // Disconnecting state is never visible.
+                event.preventDefault();
+                void handleConfirmDisconnect();
+              }}
+            >
+              {isDisconnecting ? 'Disconnecting...' : 'Yes, Disconnect Page'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

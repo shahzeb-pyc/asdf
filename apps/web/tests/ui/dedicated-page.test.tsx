@@ -24,7 +24,7 @@ import {
 // with the same default-export props contract this suite always used.
 import TenantDedicatedPageView from '@/app/tenant/[subdomain]/pages/[pageId]/page-section-shell';
 import { queryKeys } from '@/lib/data/query-keys';
-import { render as rtlRender, fireEvent } from '@testing-library/react';
+import { render as rtlRender, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { FacebookPageItem } from '@/components/pages/page-card';
 
@@ -377,7 +377,41 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
       expect(html).not.toContain('•');
     });
 
-    it('calls onDisconnectRequest when the Disconnect Page menu item is clicked', async () => {
+    it('stacks identity above actions on narrow screens (mobile layout classes)', () => {
+      const { container } = rtlRender(
+        <DedicatedPageHeader
+          page={samplePage}
+          subdomain="cyberdyne"
+          onStatusToggle={vi.fn()}
+          onDisconnectRequest={vi.fn()}
+        />
+      );
+
+      // Main header row: column (stacked) by default, row from sm up —
+      // never squashed side-by-side at ~320px.
+      const mainRow = container.querySelector('[data-testid="header-main-row"]');
+      expect(mainRow).not.toBeNull();
+      expect(mainRow?.className).toContain('flex-col');
+      expect(mainRow?.className).toContain('sm:flex-row');
+      const actions = container.querySelector('[data-testid="header-actions"]');
+      expect(actions).not.toBeNull();
+      expect(actions?.className).toContain('w-full');
+      expect(actions?.className).toContain('sm:w-auto');
+      // Create Posts stretches across the mobile row; the menu button
+      // keeps its fixed icon size (Button base is shrink-0).
+      const createBtn = container.querySelector('[data-testid="header-create-posts-btn"]');
+      expect(createBtn?.className).toContain('flex-1');
+      expect(createBtn?.className).toContain('sm:flex-none');
+      // Page picture keeps its 56px circle on mobile too.
+      const avatar = container.querySelector('[data-testid="dedicated-page-avatar"]');
+      const fallback = container.querySelector('[data-testid="dedicated-page-avatar-fallback"]');
+      const picture = avatar ?? fallback;
+      expect(picture).not.toBeNull();
+      expect(picture?.className).toContain('size-14');
+      expect(picture?.className).toContain('rounded-full');
+    });
+
+    it('opens a disconnect confirmation dialogue from the menu WITHOUT disconnecting', async () => {
       const user = userEvent.setup();
       const onDisconnectRequest = vi.fn();
 
@@ -398,7 +432,95 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
       const disconnectItem = document.querySelector('[data-testid="header-menu-disconnect-btn"]');
       expect(disconnectItem).not.toBeNull();
       await user.click(disconnectItem as Element);
+      // Dialogue opens, but nothing disconnects yet.
+      expect(onDisconnectRequest).toHaveBeenCalledTimes(0);
+      const modal = document.querySelector('[data-testid="header-disconnect-modal"]');
+      expect(modal).not.toBeNull();
+      expect(modal?.textContent).toContain(`Disconnect ${samplePage.pageName}?`);
+      expect(modal?.textContent).toContain(
+        'This will disconnect the Facebook Page from your workspace. Any queued posts will be cancelled.'
+      );
+      expect(
+        document.querySelector('[data-testid="header-cancel-disconnect-btn"]')
+      ).not.toBeNull();
+      expect(
+        document.querySelector('[data-testid="header-confirm-disconnect-btn"]')
+      ).not.toBeNull();
+    });
+
+    it('Cancel closes the disconnect dialogue without disconnecting', async () => {
+      const user = userEvent.setup();
+      const onDisconnectRequest = vi.fn();
+
+      const { container } = rtlRender(
+        <DedicatedPageHeader
+          page={samplePage}
+          subdomain="cyberdyne"
+          onStatusToggle={vi.fn()}
+          onDisconnectRequest={onDisconnectRequest}
+        />
+      );
+
+      await user.click(
+        container.querySelector('[data-testid="header-settings-dropdown-btn"]') as Element
+      );
+      await user.click(
+        document.querySelector('[data-testid="header-menu-disconnect-btn"]') as Element
+      );
+      expect(
+        document.querySelector('[data-testid="header-disconnect-modal"]')
+      ).not.toBeNull();
+      await user.click(
+        document.querySelector('[data-testid="header-cancel-disconnect-btn"]') as Element
+      );
+      await waitFor(() =>
+        expect(
+          document.querySelector('[data-testid="header-disconnect-modal"]')
+        ).toBeNull()
+      );
+      expect(onDisconnectRequest).toHaveBeenCalledTimes(0);
+    });
+
+    it('Confirm calls onDisconnectRequest and shows the Disconnecting state', async () => {
+      const user = userEvent.setup();
+      const deferred: { resolve?: () => void } = {};
+      const onDisconnectRequest = vi.fn(
+        () => new Promise<void>((resolve) => { deferred.resolve = resolve; })
+      );
+
+      const { container } = rtlRender(
+        <DedicatedPageHeader
+          page={samplePage}
+          subdomain="cyberdyne"
+          onStatusToggle={vi.fn()}
+          onDisconnectRequest={onDisconnectRequest}
+        />
+      );
+
+      await user.click(
+        container.querySelector('[data-testid="header-settings-dropdown-btn"]') as Element
+      );
+      await user.click(
+        document.querySelector('[data-testid="header-menu-disconnect-btn"]') as Element
+      );
+      const confirmBtn = document.querySelector(
+        '[data-testid="header-confirm-disconnect-btn"]'
+      ) as Element;
+      await user.click(confirmBtn);
       expect(onDisconnectRequest).toHaveBeenCalledTimes(1);
+      // While the request runs, the confirm button shows the running
+      // state and is disabled (Cancel is disabled too).
+      await waitFor(() => expect(confirmBtn.textContent).toContain('Disconnecting...'));
+      expect(confirmBtn.hasAttribute('disabled')).toBe(true);
+      expect(
+        document.querySelector('[data-testid="header-cancel-disconnect-btn"]')
+      ).toHaveAttribute('disabled');
+      deferred.resolve?.();
+      await waitFor(() =>
+        expect(
+          document.querySelector('[data-testid="header-disconnect-modal"]')
+        ).toBeNull()
+      );
     });
   });
 
