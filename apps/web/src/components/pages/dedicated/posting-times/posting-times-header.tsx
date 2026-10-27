@@ -31,7 +31,7 @@ export function PostingTimesHeader({
       <div className="flex flex-col gap-1">
         <h2 className="text-xl leading-heading font-bold text-ink">Posting Times</h2>
         <p className="text-body text-ink-sub">
-          Your daily posting times, and the post types that can go out at each one.
+          The times your posts go out each day, and which post types go out at each time.
         </p>
       </div>
 
