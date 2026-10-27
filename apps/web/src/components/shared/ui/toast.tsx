@@ -23,14 +23,75 @@
  *   family).
  * - Contract-only for now: this Toaster is mounted NOWHERE yet — spec
  *   130 mounts the single shell-level Toaster (audit H-130 / R26).
- * - Styling is token classes via Sonner's classNames slots — no inline
- *   style variables, no second toast implementation anywhere.
+ * - Styling is token classes via Sonner's classNames slots, plus a
+ *   Sonner CSS-variable mapping (the `style` prop below) — no second
+ *   toast implementation anywhere. The mapping is load-bearing, not
+ *   decoration: Sonner injects its own stylesheet unlayered, which
+ *   outranks Tailwind v4's layered utilities, so its `--normal-bg`
+ *   (white under Sonner's default light theme) beat the `bg-panel`
+ *   class and rendered WHITE toasts in dark mode. Mapping Sonner's
+ *   variables to the app's semantic tokens makes the toast surface
+ *   follow the app theme in both modes.
+ * - Theme: Sonner defaults to `theme="light"` and its `system` option
+ *   follows the OS media query — neither follows the app's own theme
+ *   (the `data-theme` attribute on documentElement, set before first
+ *   paint by the init script in layout.tsx and toggled by the theme
+ *   switchers). The Toaster therefore reads `data-theme` and watches
+ *   it with a MutationObserver, so a toast always renders in the mode
+ *   the app is actually in, including after a mid-session toggle.
  */
 import * as React from "react";
 import { CircleCheckIcon, InfoIcon, Loader2Icon, OctagonXIcon, TriangleAlertIcon } from "lucide-react";
 import { Toaster as Sonner, toast, type ToasterProps } from "sonner";
 
-function Toast({ ...props }: ToasterProps) {
+/**
+ * Sonner's own CSS variables, mapped to the app's semantic tokens.
+ * The tokens themselves swap per [data-theme] (see the generated
+ * token file), so this single mapping is correct in both modes:
+ * dark renders on the dark panel, light on the white panel, with
+ * brand accents for success/error/warning. The 15% tints mirror the
+ * flow-scoped toasters' 15% brand-tinted success styling. Callers may
+ * extend (never replace wholesale) via the `style` prop.
+ */
+const SONNER_THEME_VARS = {
+  "--normal-bg": "var(--bg-panel)",
+  "--normal-text": "var(--text-main)",
+  "--normal-border": "var(--border-subtle)",
+  "--normal-bg-hover": "var(--bg-hover)",
+  "--normal-border-hover": "var(--border-strong)",
+  "--success-bg": "color-mix(in srgb, var(--color-brand-emerald) 15%, transparent)",
+  "--success-border": "var(--color-brand-emerald)",
+  "--success-text": "var(--color-brand-emerald)",
+  "--error-bg": "color-mix(in srgb, var(--color-brand-rose) 15%, transparent)",
+  "--error-border": "var(--color-brand-rose)",
+  "--error-text": "var(--color-brand-rose)",
+  "--warning-bg": "color-mix(in srgb, var(--color-brand-gold) 15%, transparent)",
+  "--warning-border": "var(--color-brand-gold)",
+  "--warning-text": "var(--color-brand-gold)",
+  "--info-bg": "var(--bg-subtle)",
+  "--info-border": "var(--border-subtle)",
+  "--info-text": "var(--text-main)",
+} as const;
+
+/** The app's theme as written by layout.tsx's init script. Dark is the default. */
+function readAppTheme(): "light" | "dark" {
+  if (typeof document === "undefined") return "dark";
+  return document.documentElement.dataset.theme === "light" ? "light" : "dark";
+}
+
+function Toast({ theme, style, ...props }: ToasterProps) {
+  const [appTheme, setAppTheme] = React.useState<"light" | "dark">(readAppTheme);
+
+  React.useEffect(() => {
+    setAppTheme(readAppTheme());
+    const observer = new MutationObserver(() => setAppTheme(readAppTheme()));
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+    return () => observer.disconnect();
+  }, []);
+
   return (
     <Sonner
       data-slot="toast"
@@ -64,6 +125,8 @@ function Toast({ ...props }: ToasterProps) {
         },
       }}
       {...props}
+      theme={theme ?? appTheme}
+      style={{ ...SONNER_THEME_VARS, ...style } as React.CSSProperties}
     />
   );
 }
