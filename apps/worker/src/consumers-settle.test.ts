@@ -10,6 +10,7 @@
  * any publisher — so the refresh branches are exercised in isolation.
  */
 import { describe, expect, it, vi, afterEach } from 'vitest';
+import { InternalError } from '@fbuploadpro/contracts';
 import { handlePublishBatch } from './consumers.js';
 
 const ITEM_ID = '11111111-1111-4111-a111-111111111111';
@@ -107,7 +108,7 @@ describe('settle unmatched-flag refresh failures', () => {
   it('settles and acks when the refresh RPC throws', async () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const db = makeDb(async () => {
-      throw new Error('refresh threw');
+      throw new InternalError('refresh threw');
     });
     const { batch, ack } = makeBatch();
 
