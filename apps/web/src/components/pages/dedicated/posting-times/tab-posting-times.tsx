@@ -179,7 +179,7 @@ export function PageTabPostingTimes({
       )}
 
       {!isLoading && slots.length > 0 && (
-        <div data-testid="slots-grid" className="flex flex-col rounded-md border border-line">
+        <div data-testid="slots-grid" className="flex flex-col">
           {slots.map((slot) => (
             <PostingTimeRow
               key={slot.id}

@@ -56,7 +56,7 @@ export function TimezoneReviewStep({
       {/* Transition preview */}
       <div
         data-testid="timezone-transition-card"
-        className="flex items-center gap-2 rounded-md border border-line bg-subtle p-4"
+        className="flex items-center gap-2 border-b border-line pb-4"
       >
         <div className="flex flex-1 flex-col">
           <span className="text-metadata font-semibold tracking-wide text-ink-dim uppercase">
@@ -85,7 +85,7 @@ export function TimezoneReviewStep({
       </div>
 
       {/* Impact explanation */}
-      <div className="flex flex-col gap-2 rounded-md border border-line p-4 text-body leading-relaxed text-ink-sub">
+      <div className="flex flex-col gap-2 py-2 text-body leading-relaxed text-ink-sub">
         <div className="flex items-start gap-2">
           <InfoIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-brand-gold" />
           <p>
@@ -109,8 +109,8 @@ export function TimezoneReviewStep({
           slots schedule nothing) and all queued posts — nothing is
           realigned, so the queued number is context, not a
           realignment count. */}
-      <div data-testid="timezone-impact-metrics" className="grid grid-cols-2 gap-2">
-        <div className="rounded-sm border border-line bg-subtle p-2">
+      <div data-testid="timezone-impact-metrics" className="grid grid-cols-2 gap-4">
+        <div className="flex flex-col py-1">
           <div className="text-metadata font-semibold tracking-wide text-ink-dim uppercase">
             Posting times
           </div>
@@ -119,7 +119,7 @@ export function TimezoneReviewStep({
           </div>
           <div className="text-metadata text-ink-sub">Active publishing times</div>
         </div>
-        <div className="rounded-sm border border-line bg-subtle p-2">
+        <div className="flex flex-col py-1">
           <div className="text-metadata font-semibold tracking-wide text-ink-dim uppercase">
             Queued posts
           </div>

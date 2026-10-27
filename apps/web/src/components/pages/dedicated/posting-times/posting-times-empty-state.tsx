@@ -17,7 +17,7 @@ export interface PostingTimesEmptyStateProps {
 
 export function PostingTimesEmptyState({ onOpenAddModal }: Readonly<PostingTimesEmptyStateProps>) {
   return (
-    <div data-testid="calendar-empty-state" className="rounded-md border border-dashed border-line">
+    <div data-testid="calendar-empty-state">
       <EmptyState
         type="first-use"
         icon={<ClockIcon aria-hidden className="size-8 text-brand-gold" />}
