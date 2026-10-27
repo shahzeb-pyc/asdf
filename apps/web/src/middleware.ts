@@ -248,15 +248,16 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   const sessionSecret = getSessionSecret();
 
   // System API routes and public static bypass tenant rewriting.
-  // /privacy is public on EVERY host (app, apex, and every tenant
-  // subdomain as https://<workspace>.fbuploadpro.com/privacy): it must
-  // never hit the tenant session/access checks below, which would
-  // redirect an unauthenticated visitor to the app login. Passing it
-  // through here serves the root /privacy route unchanged, with no
-  // tenant rewrite and no user headers.
+  // /privacy and /terms are public on EVERY host (app, apex, and every
+  // tenant subdomain as https://<workspace>.fbuploadpro.com/privacy and
+  // /terms): they must never hit the tenant session/access checks below,
+  // which would redirect an unauthenticated visitor to the app login.
+  // Passing them through here serves the root /privacy and /terms routes
+  // unchanged, with no tenant rewrite and no user headers.
   if (
     pathname.startsWith('/api') ||
     pathname === '/privacy' ||
+    pathname === '/terms' ||
     pathname === '/account-suspended' ||
     pathname === '/icon' ||
     pathname === '/apple-icon' ||
