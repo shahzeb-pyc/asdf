@@ -1,20 +1,31 @@
 'use client';
 
 /**
- * Dedicated Page identity header (spec 131 PR-131-3) — clean-room
- * rebuild on shared/ui primitives + tokens, adopting the canonical
- * §1.3 identity-header pattern landed by PR-131-4 in the destinations
- * frame: platform icon + avatar + full name in a fixed position
- * (UX Rule 1), status as colour + icon + text (OD-3 / UX Rule 27 —
- * never colour alone). Legacy file was read for behavioural facts and
- * copy only.
+ * Dedicated Page identity header — redesigned top section.
  *
- * Data: the header holds NO fetch of its own — the former checkpoint
- * banner's raw PATCH is deleted; reactivation goes through the frame's
- * status mutation via `onStatusToggle` (the typed data layer), exactly
- * as the Settings tab's copy of the banner already did in effect.
- * The actions menu is the shared/ui Menu (Radix) — the hand-rolled
- * dropdown and its document listeners are deleted with it.
+ * Contains ONLY the items Shahzeb listed for the top section: back link,
+ * page name + live link, icon+text status mark (never a dot), connected
+ * account (with account picture when available), Added date, follower
+ * count + gained + category, Pause/Resume posting, Create Posts button,
+ * Disconnect Page button, and Mark Verified & Reactivate Page in the
+ * checkpoint state only. The Queue Post button, Copy Page ID, and the
+ * settings menu were removed with this redesign.
+ *
+ * Data notes:
+ * - Added date and followers gained reuse the list card's helpers
+ *   (`formatAddedDate`, `computeFollowersGained`,
+ *   `formatFollowersGained`) so the header can never disagree with the
+ *   card about the same page.
+ * - The header holds NO fetch of its own; reactivation and pause/resume
+ *   go through the frame's status mutation via `onStatusToggle`.
+ * - Account picture: `FacebookPageItem` carries no account picture field
+ *   (only `accountDisplayName`), so the connected account renders an
+ *   initials avatar. Surfacing a real account picture is a follow-up
+ *   that needs an API/contract field — it is NOT expanded here.
+ * - Create Posts is rendered only: `onCreatePosts` is optional and the
+ *   shell leaves it unhandled, so clicking the button does nothing yet.
+ *   The Create Posts dialogue is separate later work, by Shahzeb's
+ *   scoping — the no-op is intentional, not a bug.
  */
 
 import * as React from 'react';
@@ -22,38 +33,38 @@ import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import {
   ChevronLeftIcon,
-  CopyIcon,
   ExternalLinkIcon,
-  MoreVerticalIcon,
+  PauseIcon,
+  PlayIcon,
   PlusIcon,
   PowerIcon,
 } from 'lucide-react';
 
-import { reportError } from '@/lib/report-error';
 import { Banner } from '@/components/shared/ui/banner';
 import { Button } from '@/components/shared/ui/button';
-import {
-  Menu,
-  MenuContent,
-  MenuItem,
-  MenuSeparator,
-  MenuTrigger,
-} from '@/components/shared/ui/menu';
-import { StatusDot, type Status } from '@/components/shared/ui/status-dot';
 import { cn } from '@/lib/utils';
+import { getUserInitials } from '@/lib/user-initials';
 import type { FacebookPageItem } from '../page-card';
+import {
+  computeFollowersGained,
+  formatAddedDate,
+  formatFollowersGained,
+  PageStatusMark,
+} from '../page-card';
 
 export interface DedicatedPageHeaderProps {
   page: FacebookPageItem;
   subdomain: string;
   onStatusToggle: (nextStatus: 'active' | 'paused') => Promise<void>;
-  onOpenAddQueue: () => void;
   onDisconnectRequest: () => void;
+  /** Optional for now: the shell leaves this unhandled, so the Create
+   * Posts button intentionally does nothing until the dialogue work
+   * lands. */
+  onCreatePosts?: (() => void) | undefined;
 }
 
 interface PageStatusDetails {
   isPaused: boolean;
-  status: Status;
   statusLabel: string;
   ringClass: string;
 }
@@ -66,7 +77,6 @@ function resolvePageStatus(status: FacebookPageItem['status']): PageStatusDetail
   ) {
     return {
       isPaused: false,
-      status: 'critical',
       statusLabel: 'Needs Attention',
       ringClass: 'ring-signal-critical',
     };
@@ -75,7 +85,6 @@ function resolvePageStatus(status: FacebookPageItem['status']): PageStatusDetail
   if (status === 'paused') {
     return {
       isPaused: true,
-      status: 'queued',
       statusLabel: 'Paused',
       ringClass: 'ring-signal-queued',
     };
@@ -84,7 +93,6 @@ function resolvePageStatus(status: FacebookPageItem['status']): PageStatusDetail
   if (status === 'active') {
     return {
       isPaused: false,
-      status: 'operational',
       statusLabel: 'Active',
       ringClass: 'ring-signal-operational',
     };
@@ -92,14 +100,13 @@ function resolvePageStatus(status: FacebookPageItem['status']): PageStatusDetail
 
   return {
     isPaused: false,
-    status: 'idle',
     statusLabel: 'Active',
     ringClass: 'ring-line',
   };
 }
 
 /** Facebook glyph in the platform-nav-config icon style (lucide ships
- * no brand icons) — same local glyph as PR-131-4's destination frame. */
+ * no brand icons) — same local glyph as the previous header. */
 function FacebookPlatformIcon() {
   return (
     <svg
@@ -156,12 +163,11 @@ export function DedicatedPageHeader({
   page,
   subdomain,
   onStatusToggle,
-  onOpenAddQueue,
   onDisconnectRequest,
+  onCreatePosts,
 }: Readonly<DedicatedPageHeaderProps>) {
   const router = useRouter();
   const [isUpdatingStatus, setIsUpdatingStatus] = React.useState(false);
-  const [hasCopiedId, setHasCopiedId] = React.useState(false);
 
   const statusInfo = resolvePageStatus(page.status);
   const monogram = (page.pageName || 'P').slice(0, 2).toUpperCase();
@@ -171,13 +177,22 @@ export function DedicatedPageHeader({
     page.status === 'page_checkpoint' ||
     (page.status as string) === 'checkpoint_required';
 
-  const handleCopyId = async () => {
+  const addedDate = formatAddedDate(page.createdAt);
+  const gained = computeFollowersGained(page);
+  const formattedGained = formatFollowersGained(gained);
+  const gainedClass =
+    gained > 0
+      ? 'text-brand-emerald'
+      : gained < 0
+        ? 'text-brand-rose'
+        : 'text-ink-sub';
+
+  const handleStatusAction = async () => {
+    setIsUpdatingStatus(true);
     try {
-      await navigator.clipboard.writeText(page.fbPageId);
-      setHasCopiedId(true);
-      setTimeout(() => setHasCopiedId(false), 2000);
-    } catch (error) {
-      reportError(error, { source: 'page-header-copy-id' });
+      await onStatusToggle(statusInfo.isPaused ? 'active' : 'paused');
+    } finally {
+      setIsUpdatingStatus(false);
     }
   };
 
@@ -205,7 +220,7 @@ export function DedicatedPageHeader({
         </button>
       </div>
 
-      {/* Checkpoint reactivation banner */}
+      {/* Checkpoint reactivation banner — checkpoint state only */}
       {isCheckpoint && (
         <div className="mb-4 overflow-hidden rounded-md border border-line">
           <Banner
@@ -256,23 +271,58 @@ export function DedicatedPageHeader({
               </a>
             </div>
 
-            {/* Sub-row: status (colour + icon + text) + account + followers + category */}
+            {/* Sub-row: status mark + account + Added date + followers + gained + category */}
             <div className="mt-1 flex flex-wrap items-center gap-2 text-body text-ink-sub">
               <span data-testid="dedicated-page-status" className="inline-flex items-center">
-                <StatusDot status={statusInfo.status} label={statusInfo.statusLabel} />
+                <PageStatusMark
+                  status={page.status}
+                  label={statusInfo.statusLabel}
+                />
               </span>
 
               {page.accountDisplayName && (
                 <>
                   <span aria-hidden className="h-3 w-px shrink-0 bg-line" />
-                  <span>Connected via {page.accountDisplayName}</span>
+                  <span
+                    data-testid="dedicated-account"
+                    className="inline-flex items-center gap-1.5"
+                  >
+                    <span
+                      data-testid="dedicated-account-avatar"
+                      aria-hidden
+                      className="flex size-5 shrink-0 items-center justify-center rounded-full bg-subtle text-xs font-bold text-brand-gold"
+                    >
+                      {getUserInitials(page.accountDisplayName)}
+                    </span>
+                    <span>Connected via {page.accountDisplayName}</span>
+                  </span>
                 </>
               )}
 
-              {typeof page.currentFollowers === 'number' && (
+              {addedDate && (
                 <>
                   <span aria-hidden className="h-3 w-px shrink-0 bg-line" />
-                  <span>{page.currentFollowers.toLocaleString('en-US')} followers</span>
+                  <span data-testid="dedicated-page-added">Added {addedDate}</span>
+                </>
+              )}
+
+              <span aria-hidden className="h-3 w-px shrink-0 bg-line" />
+              <span data-testid="dedicated-page-followers">
+                <span className="font-semibold text-ink">
+                  {page.currentFollowers.toLocaleString('en-US')}
+                </span>{' '}
+                followers
+              </span>
+
+              {gained !== 0 && (
+                <>
+                  <span aria-hidden className="h-3 w-px shrink-0 bg-line" />
+                  <span
+                    data-testid="dedicated-page-followers-gained"
+                    className={cn('shrink-0 tabular-nums', gainedClass)}
+                  >
+                    {formattedGained} gained
+                  </span>
                 </>
               )}
 
@@ -286,54 +336,47 @@ export function DedicatedPageHeader({
           </div>
         </div>
 
-        {/* Actions cluster */}
+        {/* Actions cluster: pause/resume, Create Posts, Disconnect */}
         <div className="flex flex-wrap items-center gap-2">
-          <span
-            data-testid="header-automation-status"
-            className="inline-flex h-11 items-center text-body font-medium text-ink-sub"
+          <Button
+            type="button"
+            variant="secondary"
+            data-testid="header-pause-resume-btn"
+            disabled={isUpdatingStatus}
+            onClick={() => void handleStatusAction()}
           >
-            {statusInfo.isPaused ? 'Automation off' : 'Automation on'}
-          </span>
-
-          <Button type="button" data-testid="header-add-queue-btn" onClick={onOpenAddQueue}>
-            <PlusIcon aria-hidden />
-            <span>Queue Post</span>
+            {statusInfo.isPaused ? (
+              <PlayIcon aria-hidden />
+            ) : (
+              <PauseIcon aria-hidden />
+            )}
+            <span>
+              {isUpdatingStatus
+                ? 'Updating...'
+                : statusInfo.isPaused
+                  ? 'Resume posting'
+                  : 'Pause posting'}
+            </span>
           </Button>
 
-          <Menu>
-            <MenuTrigger asChild>
-              <Button
-                type="button"
-                variant="secondary"
-                size="icon"
-                data-testid="header-settings-dropdown-btn"
-                aria-label="Page actions menu"
-              >
-                <MoreVerticalIcon aria-hidden />
-              </Button>
-            </MenuTrigger>
-            <MenuContent align="end">
-              <MenuItem data-testid="header-menu-copy-id-btn" onSelect={() => void handleCopyId()}>
-                <CopyIcon aria-hidden />
-                <span>{hasCopiedId ? 'Page ID Copied' : 'Copy Page ID'}</span>
-              </MenuItem>
-              <MenuItem asChild>
-                <a href={fbPageUrl} target="_blank" rel="noopener noreferrer">
-                  <ExternalLinkIcon aria-hidden />
-                  <span>Open on Facebook</span>
-                </a>
-              </MenuItem>
-              <MenuSeparator />
-              <MenuItem
-                variant="destructive"
-                data-testid="header-menu-disconnect-btn"
-                onSelect={onDisconnectRequest}
-              >
-                <PowerIcon aria-hidden />
-                <span>Disconnect Page</span>
-              </MenuItem>
-            </MenuContent>
-          </Menu>
+          <Button
+            type="button"
+            data-testid="header-create-posts-btn"
+            onClick={() => onCreatePosts?.()}
+          >
+            <PlusIcon aria-hidden />
+            <span>Create Posts</span>
+          </Button>
+
+          <Button
+            type="button"
+            variant="destructive"
+            data-testid="header-disconnect-btn"
+            onClick={onDisconnectRequest}
+          >
+            <PowerIcon aria-hidden />
+            <span>Disconnect Page</span>
+          </Button>
         </div>
       </div>
     </div>

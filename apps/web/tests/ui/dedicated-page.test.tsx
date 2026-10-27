@@ -183,7 +183,6 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
   describe('DedicatedPageHeader Component', () => {
     it('renders page identity, avatar, account name, category, and unboxed status signal', () => {
       const onStatusToggle = vi.fn();
-      const onOpenAddQueue = vi.fn();
       const onDisconnectRequest = vi.fn();
 
       const { hasText, hasAttribute } = render(
@@ -191,7 +190,6 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
           page={samplePage}
           subdomain="cyberdyne"
           onStatusToggle={onStatusToggle}
-          onOpenAddQueue={onOpenAddQueue}
           onDisconnectRequest={onDisconnectRequest}
         />
       );
@@ -202,9 +200,16 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
       expect(hasText('Active')).toBe(true);
       expect(hasAttribute('data-testid', 'dedicated-page-status')).toBe(true);
       expect(hasAttribute('data-testid', 'page-live-link')).toBe(true);
-      expect(hasAttribute('data-testid', 'header-automation-status')).toBe(true);
-      expect(hasText('Automation on')).toBe(true);
-      expect(hasAttribute('data-testid', 'header-add-queue-btn')).toBe(true);
+      expect(hasAttribute('data-testid', 'dedicated-account')).toBe(true);
+      expect(hasText('Added 1 Oct 2026')).toBe(true);
+      expect(hasAttribute('data-testid', 'dedicated-page-followers-gained')).toBe(true);
+      expect(hasText('+4,200 gained')).toBe(true);
+      expect(hasAttribute('data-testid', 'header-pause-resume-btn')).toBe(true);
+      expect(hasText('Pause posting')).toBe(true);
+      expect(hasAttribute('data-testid', 'header-create-posts-btn')).toBe(true);
+      expect(hasAttribute('data-testid', 'header-disconnect-btn')).toBe(true);
+      expect(hasAttribute('data-testid', 'header-add-queue-btn')).toBe(false);
+      expect(hasAttribute('data-testid', 'header-settings-dropdown-btn')).toBe(false);
     });
 
     it('renders monogram avatar fallback when no profile picture URL exists', () => {
@@ -219,7 +224,6 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
           page={pageWithoutPic}
           subdomain="cyberdyne"
           onStatusToggle={vi.fn()}
-          onOpenAddQueue={vi.fn()}
           onDisconnectRequest={vi.fn()}
         />
       );
@@ -242,7 +246,6 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
           page={pageWithPic}
           subdomain="cyberdyne"
           onStatusToggle={vi.fn()}
-          onOpenAddQueue={vi.fn()}
           onDisconnectRequest={vi.fn()}
         />
       );
@@ -258,51 +261,71 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
       ).not.toBeNull();
     });
 
-    it('shows automation status text only — no toggle in the header', async () => {
+    it('pauses and resumes posting through onStatusToggle', async () => {
       const onStatusToggle = vi.fn().mockResolvedValue(undefined);
 
-      const { hasText, hasAttribute } = render(
+      const { container } = rtlRender(
         <DedicatedPageHeader
           page={samplePage}
           subdomain="cyberdyne"
           onStatusToggle={onStatusToggle}
-          onOpenAddQueue={vi.fn()}
           onDisconnectRequest={vi.fn()}
         />
       );
 
-      expect(hasAttribute('data-testid', 'header-automation-status')).toBe(true);
-      expect(hasText('Automation on')).toBe(true);
-      expect(hasAttribute('data-testid', 'header-status-toggle-btn')).toBe(false);
+      const pauseBtn = container.querySelector('[data-testid="header-pause-resume-btn"]');
+      expect(pauseBtn?.textContent).toContain('Pause posting');
+      fireEvent.click(pauseBtn as Element);
+      expect(onStatusToggle).toHaveBeenCalledWith('paused');
+    });
 
-      const { hasText: hasPausedText } = render(
+    it('shows Resume posting on a paused page and resumes through onStatusToggle', async () => {
+      const onStatusToggle = vi.fn().mockResolvedValue(undefined);
+
+      const { container } = rtlRender(
         <DedicatedPageHeader
           page={{ ...samplePage, status: 'paused' }}
           subdomain="cyberdyne"
           onStatusToggle={onStatusToggle}
-          onOpenAddQueue={vi.fn()}
           onDisconnectRequest={vi.fn()}
         />
       );
-      expect(hasPausedText('Automation off')).toBe(true);
+
+      const resumeBtn = container.querySelector('[data-testid="header-pause-resume-btn"]');
+      expect(resumeBtn?.textContent).toContain('Resume posting');
+      fireEvent.click(resumeBtn as Element);
+      expect(onStatusToggle).toHaveBeenCalledWith('active');
     });
 
-    it('opens add to queue modal on button click', () => {
-      const onOpenAddQueue = vi.fn();
+    it('renders Create Posts button that calls onCreatePosts when provided and does nothing when absent', () => {
+      const onCreatePosts = vi.fn();
 
-      const tree = renderAndCaptureTree(() =>
-        DedicatedPageHeader({
-          page: samplePage,
-          subdomain: 'cyberdyne',
-          onStatusToggle: vi.fn(),
-          onOpenAddQueue,
-          onDisconnectRequest: vi.fn(),
-        })
+      const { container } = rtlRender(
+        <DedicatedPageHeader
+          page={samplePage}
+          subdomain="cyberdyne"
+          onStatusToggle={vi.fn()}
+          onDisconnectRequest={vi.fn()}
+          onCreatePosts={onCreatePosts}
+        />
       );
 
-      const addBtn = findElementByTestId(tree, 'header-add-queue-btn');
-      addBtn?.props.onClick();
-      expect(onOpenAddQueue).toHaveBeenCalledTimes(1);
+      const createBtn = container.querySelector('[data-testid="header-create-posts-btn"]');
+      expect(createBtn).not.toBeNull();
+      fireEvent.click(createBtn as Element);
+      expect(onCreatePosts).toHaveBeenCalledTimes(1);
+
+      // Without the prop, clicking must not throw (dialogue is separate work).
+      const { container: plainContainer } = rtlRender(
+        <DedicatedPageHeader
+          page={samplePage}
+          subdomain="cyberdyne"
+          onStatusToggle={vi.fn()}
+          onDisconnectRequest={vi.fn()}
+        />
+      );
+      const plainBtn = plainContainer.querySelector('[data-testid="header-create-posts-btn"]');
+      expect(() => fireEvent.click(plainBtn as Element)).not.toThrow();
     });
 
     it('enforces Option A standards: no bullet dots, status-ring avatar, uniform actions', () => {
@@ -317,7 +340,6 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
           page={samplePage}
           subdomain="cyberdyne"
           onStatusToggle={vi.fn()}
-          onOpenAddQueue={vi.fn()}
           onDisconnectRequest={vi.fn()}
         />
       );
@@ -326,28 +348,33 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
       expect(html).toContain('width="44"');
       expect(html).toContain('height="44"');
       expect(html).toContain('ring-signal-operational');
-      expect(html).toContain('data-testid="header-automation-status"');
-      expect(html).toContain('data-testid="header-add-queue-btn"');
-      expect(html).toContain('data-testid="header-settings-dropdown-btn"');
+      expect(html).toContain('data-testid="header-pause-resume-btn"');
+      expect(html).toContain('data-testid="header-create-posts-btn"');
+      expect(html).toContain('data-testid="header-disconnect-btn"');
+      expect(html).not.toContain('header-add-queue-btn');
+      expect(html).not.toContain('header-settings-dropdown-btn');
+      expect(html).not.toContain('header-menu-copy-id-btn');
 
       // Render does not contain bullet dots
       expect(html).not.toContain('•');
     });
 
-    it('provides page actions menu toggle button with proper accessibility attributes', () => {
+    it('calls onDisconnectRequest when the Disconnect Page button is clicked', () => {
+      const onDisconnectRequest = vi.fn();
+
       const tree = renderAndCaptureTree(() =>
         DedicatedPageHeader({
           page: samplePage,
           subdomain: 'cyberdyne',
           onStatusToggle: vi.fn(),
-          onOpenAddQueue: vi.fn(),
-          onDisconnectRequest: vi.fn(),
+          onDisconnectRequest,
         })
       );
 
-      const dropdownBtn = findElementByTestId(tree, 'header-settings-dropdown-btn');
-      expect(dropdownBtn).not.toBeNull();
-      expect(dropdownBtn?.props['aria-label']).toBe('Page actions menu');
+      const disconnectBtn = findElementByTestId(tree, 'header-disconnect-btn');
+      expect(disconnectBtn).not.toBeNull();
+      disconnectBtn?.props.onClick();
+      expect(onDisconnectRequest).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -1038,7 +1065,6 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
           page={checkpointPage}
           subdomain="cyberdyne"
           onStatusToggle={vi.fn()}
-          onOpenAddQueue={vi.fn()}
           onDisconnectRequest={vi.fn()}
         />
       );

@@ -499,7 +499,6 @@ export default function TenantDedicatedPageView({
             page={page}
             subdomain={subdomain}
             onStatusToggle={handleStatusToggle}
-            onOpenAddQueue={openComposer}
             onDisconnectRequest={handleDisconnectPage}
           />
 
