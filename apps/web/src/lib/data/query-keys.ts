@@ -85,12 +85,6 @@ export const queryKeys = {
           [...tenantRoot, 'downloader', 'jobs', jobId] as const,
       },
 
-      /** Prompt Library (spec 144): curated set + the user's own prompts. */
-      prompts: {
-        all: [...tenantRoot, 'prompts'] as const,
-        list: [...tenantRoot, 'prompts', 'list'] as const,
-      },
-
       settings: {
         all: [...tenantRoot, 'settings'] as const,
         byoc: [...tenantRoot, 'settings', 'byoc'] as const,
