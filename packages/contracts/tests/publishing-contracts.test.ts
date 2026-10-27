@@ -118,7 +118,19 @@ describe('Publishing Engine Domain Contracts', () => {
     });
 
     describe('UpdateQueueScheduleTimezoneResponseSchema', () => {
-      it('validates successful response with realignedQueueCount', () => {
+      it('validates successful response without a realigned count', () => {
+        const res = UpdateQueueScheduleTimezoneResponseSchema.safeParse({
+          success: true,
+          timezone: 'America/New_York',
+          updatedCount: 3,
+        });
+        expect(res.success).toBe(true);
+      });
+
+      it('drops the removed realignedQueueCount field instead of validating it', () => {
+        // Publisher-driven scheduling removed realignment: a timezone
+        // change rewrites nothing, so the field is no longer part of
+        // the response contract and must not survive parsing.
         const res = UpdateQueueScheduleTimezoneResponseSchema.safeParse({
           success: true,
           timezone: 'America/New_York',
@@ -126,14 +138,16 @@ describe('Publishing Engine Domain Contracts', () => {
           realignedQueueCount: 5,
         });
         expect(res.success).toBe(true);
+        if (res.success) {
+          expect('realignedQueueCount' in res.data).toBe(false);
+        }
       });
 
-      it('rejects negative realignedQueueCount', () => {
+      it('rejects negative updatedCount', () => {
         const res = UpdateQueueScheduleTimezoneResponseSchema.safeParse({
           success: true,
           timezone: 'America/New_York',
-          updatedCount: 3,
-          realignedQueueCount: -1,
+          updatedCount: -1,
         });
         expect(res.success).toBe(false);
       });
