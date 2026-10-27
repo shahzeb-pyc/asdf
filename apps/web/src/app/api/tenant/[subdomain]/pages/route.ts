@@ -299,6 +299,41 @@ const SUPABASE_PAGE_GROUPS: SupabasePageGroup[] = [
 ];
 
 /**
+ * Minimal structural type for the PostgREST destinations query
+ * builder, covering only the filter/ordering methods this file
+ * chains, plus the awaited result shape. The contracts Database type
+ * carries no Relationships metadata, so the generated builder type
+ * degrades at the select boundary; this interface keeps the boundary
+ * typed, with the row shape asserted once at each result site below.
+ */
+interface SupabaseDestinationsQuery {
+  eq(column: string, value: unknown): SupabaseDestinationsQuery;
+  or(filters: string): SupabaseDestinationsQuery;
+  not(column: string, operator: string, value: unknown): SupabaseDestinationsQuery;
+  order(
+    column: string,
+    options?: { ascending?: boolean }
+  ): SupabaseDestinationsQuery;
+  range(from: number, to: number): SupabaseDestinationsQuery;
+  then<TResult1 = SupabaseDestinationsQueryResult, TResult2 = never>(
+    onfulfilled?:
+      | ((
+          value: SupabaseDestinationsQueryResult
+        ) => TResult1 | PromiseLike<TResult1>)
+      | null,
+    onrejected?:
+      | ((reason: unknown) => TResult2 | PromiseLike<TResult2>)
+      | null
+  ): PromiseLike<TResult1 | TResult2>;
+}
+
+interface SupabaseDestinationsQueryResult {
+  data: unknown;
+  error: { message: string } | null;
+  count: number | null;
+}
+
+/**
  * Applies one rank group's predicate to a destinations query. The
  * wire status is a pure function of the status column plus the paused
  * marker (see unifiedDestinationStatusToWire), and the fresh/stale
@@ -307,14 +342,11 @@ const SUPABASE_PAGE_GROUPS: SupabasePageGroup[] = [
  * both-null case, which stays rate-limited (fresh) because
  * evaluatePageHealth has no timestamp to expire against.
  */
-// The query builder is typed as any here on purpose: the contracts
-// Database type carries no Relationships metadata, so the typed
-// PostgREST builder already degrades at the select boundary below.
 function applySupabasePageGroup(
-  query: any,
+  query: SupabaseDestinationsQuery,
   group: SupabasePageGroup,
   freshThresholdIso: string
-): any {
+): SupabaseDestinationsQuery {
   switch (group) {
     case 'attention':
       return query.or(
@@ -344,7 +376,7 @@ function buildSupabasePageQuery(
   group: SupabasePageGroup,
   freshThresholdIso: string,
   forCount: boolean
-): any {
+): SupabaseDestinationsQuery {
   // A display-name account filter joins on the account row, so it
   // needs the inner join; every other case keeps the left join so
   // destinations without an account row still list (display name '').
@@ -355,9 +387,11 @@ function buildSupabasePageQuery(
   const columns = isDisplayNameFilter
     ? SUPABASE_PAGE_COLUMNS_INNER
     : SUPABASE_PAGE_COLUMNS;
-  let query: any = forCount
-    ? supabase.from('destinations').select('*', { count: 'exact', head: true })
-    : supabase.from('destinations').select(columns);
+  let query: SupabaseDestinationsQuery = (
+    forCount
+      ? supabase.from('destinations').select('*', { count: 'exact', head: true })
+      : supabase.from('destinations').select(columns)
+  ) as unknown as SupabaseDestinationsQuery;
   query = query
     .eq('workspace_id', workspaceId)
     .eq('platform', 'facebook');

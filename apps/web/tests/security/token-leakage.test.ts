@@ -131,7 +131,7 @@ describe('Security Audit: Zero Token & Credential Leakage (T075)', () => {
         }
         if (table === 'destinations') {
           const builder: any = {
-            order: vi.fn().mockResolvedValue({
+            order: vi.fn(() => builder),
               data: [
                 {
                   id: pageId,
@@ -156,10 +156,21 @@ describe('Security Audit: Zero Token & Credential Leakage (T075)', () => {
                 },
               ],
               error: null,
-            }),
           };
           builder.eq = vi.fn(() => builder);
           builder.neq = vi.fn(() => builder);
+          builder.or = vi.fn(() => builder);
+          builder.not = vi.fn(() => builder);
+          builder.range = vi.fn(() =>
+            Promise.resolve({ data: builder.data, error: null })
+          );
+          builder.then = vi.fn((resolve: (value: unknown) => void) =>
+            resolve({
+              count: (builder.data as unknown[]).length,
+              data: builder.data,
+              error: null,
+            })
+          );
           return {
             select: vi.fn().mockReturnValue(builder),
           };
