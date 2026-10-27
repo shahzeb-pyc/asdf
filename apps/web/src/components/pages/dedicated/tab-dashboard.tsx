@@ -49,7 +49,7 @@ export interface PageTabDashboardProps {
   queueItems: PageQueueItemSummary[];
   slots: PageSlotSummary[];
   onPublishNow: (itemId: string) => Promise<void>;
-  onSwitchTab: (tab: 'queue' | 'calendar' | 'insights' | 'settings') => void;
+  onSwitchTab: (tab: 'queue' | 'calendar' | 'insights') => void;
 }
 
 function formatItemBadge(item: PageQueueItemSummary): string {

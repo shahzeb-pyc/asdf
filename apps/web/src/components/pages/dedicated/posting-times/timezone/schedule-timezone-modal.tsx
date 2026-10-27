@@ -9,12 +9,12 @@
  *
  * Second-replacer note (plan §8 / OD131-6): the legacy
  * `schedule-timezone-modal.tsx` at the dedicated/ root is ALSO consumed
- * by tab-settings.tsx (spec 131's surface), which still imports it on
+ * by posting-times tab.tsx (spec 131's surface), which still imports it on
  * current main. That file therefore stays for its one remaining
  * consumer; this posting-times copy is the rebuilt flow for this
  * surface, and the settings surface's own rebuild is the named deleter
  * of the legacy file. Remaining legacy consumer count: 1
- * (tab-settings.tsx).
+ * (posting-times tab.tsx).
  */
 import * as React from 'react';
 

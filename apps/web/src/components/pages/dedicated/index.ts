@@ -1,9 +1,7 @@
 export { DedicatedPageHeader, type DedicatedPageHeaderProps } from './page-header';
 export { PageTabDashboard, type PageTabDashboardProps, type PageQueueItemSummary, type PageSlotSummary } from './tab-dashboard';
-export { PageTabQueue, type PageTabQueueProps, type DedicatedQueueItem } from './tab-queue';
 export { PageTabPostingTimes, type PageTabPostingTimesProps } from './posting-times/tab-posting-times';
 export { PageTabInsights, type PageTabInsightsProps } from './tab-insights';
-export { PageTabSettings, type PageTabSettingsProps } from './tab-settings';
 export { MODAL_BACKDROP_STYLE, MODAL_CONTAINER_STYLE } from './modal-styles';
 export { IntentSelector, type IntentSelectorProps, type ComposerIntent } from './composer/intent-selector';
 export { FormatSelector, type FormatSelectorProps } from './composer/format-selector';

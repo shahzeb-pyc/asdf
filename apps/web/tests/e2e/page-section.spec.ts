@@ -69,22 +69,21 @@ test.describe('dedicated page section — click-through (spec 131 §8.7)', () =>
       FACEBOOK_PAGE.pageName
     );
     await expect(page.getByTestId('dedicated-page-status')).toContainText('Active');
-    for (const tab of ['dashboard', 'queue', 'calendar', 'insights', 'settings']) {
+    for (const tab of ['dashboard', 'insights', 'queue', 'calendar']) {
       await expect(page.getByTestId(`tab-${tab}-btn`)).toBeVisible();
     }
     await expect(page.getByTestId('tab-dashboard-btn')).toHaveText('Dashboard');
     await expect(page.getByTestId('tab-queue-btn')).toContainText('Queue');
     await expect(page.getByTestId('tab-calendar-btn')).toHaveText('Posting Times');
     await expect(page.getByTestId('tab-insights-btn')).toHaveText('Insights');
-    await expect(page.getByTestId('tab-settings-btn')).toHaveText('Settings');
 
     // Dashboard (131-owned) renders first.
     await expect(page.getByTestId('page-tab-dashboard')).toBeVisible();
     await expect(page.getByTestId('metric-followers')).toBeVisible();
 
-    // Queue tab (134's panel through the slot — no props bridge).
+    // Queue tab is an empty placeholder while it is rebuilt.
     await page.getByTestId('tab-queue-btn').click();
-    await expect(page.getByTestId('content-tab')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId('page-tab-queue-placeholder')).toBeVisible({ timeout: 15_000 });
 
     // Posting Times tab (134's panel through the slot).
     await page.getByTestId('tab-calendar-btn').click();
@@ -94,19 +93,15 @@ test.describe('dedicated page section — click-through (spec 131 §8.7)', () =>
     await page.getByTestId('tab-insights-btn').click();
     await expect(page.getByTestId('insights-kpi-grid')).toBeVisible({ timeout: 15_000 });
 
-    // Settings tab (131-owned).
-    await page.getByTestId('tab-settings-btn').click();
-    await expect(page.getByTestId('page-tab-settings')).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByTestId('settings-timezone-line')).toContainText('UTC');
 
-    // State preservation (§9.3): the visited queue panel stays mounted
-    // (hidden) while another tab is active — switching never destroys
-    // slotted components' state.
+    // State preservation (§9.3): the visited queue placeholder stays
+    // mounted (hidden) while another tab is active — switching never
+    // destroys visited panels' state.
     await page.getByTestId('tab-dashboard-btn').click();
     await expect(page.getByTestId('page-tab-dashboard')).toBeVisible();
-    await expect(page.getByTestId('content-tab')).toBeAttached();
+    await expect(page.getByTestId('page-tab-queue-placeholder')).toBeAttached();
     await page.getByTestId('tab-queue-btn').click();
-    await expect(page.getByTestId('content-tab')).toBeVisible();
+    await expect(page.getByTestId('page-tab-queue-placeholder')).toBeVisible();
 
   });
 });
@@ -130,11 +125,11 @@ test.describe('dedicated page section — mobile gate (spec 142)', () => {
 
       // Tab bar usable: every tab is reachable (scrollable strip) and
       // switching works at this width.
-      await page.getByTestId('tab-settings-btn').click();
-      await expect(page.getByTestId('page-tab-settings')).toBeVisible({
+      await page.getByTestId('tab-calendar-btn').click();
+      await expect(page.getByTestId('page-tab-calendar')).toBeVisible({
         timeout: 15_000,
       });
-      const settingsTabBox = await page.getByTestId('tab-settings-btn').boundingBox();
+      const settingsTabBox = await page.getByTestId('tab-calendar-btn').boundingBox();
       expect(settingsTabBox?.height ?? 0).toBeGreaterThanOrEqual(36);
 
       await expectNoHorizontalOverflow(page);

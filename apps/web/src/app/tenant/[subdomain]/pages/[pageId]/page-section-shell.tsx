@@ -21,7 +21,6 @@
  * this frame — it reads `queryKeys.queue.items` directly and its
  * mutations invalidate the shared keys, which is also what keeps this
  * frame's Queue count and the dashboard tab in sync. Grep proof in the
- * PR: no `queueItems` prop is passed to PageTabQueue from here.
  *
  * SLOT DISCIPLINE (§9.3): the queue panel, the posting-times panel and
  * the composer are 134/132's components, mounted exactly as before
@@ -63,17 +62,14 @@ import {
   PageTabDashboard,
   PageTabInsights,
   PageTabPostingTimes,
-  PageTabQueue,
-  PageTabSettings,
   type PageSlotSummary,
 } from '@/components/pages/dedicated';
 
 export type DedicatedPageTab =
   | 'dashboard'
-  | 'queue'
-  | 'calendar'
   | 'insights'
-  | 'settings';
+  | 'queue'
+  | 'calendar';
 
 export interface TenantDedicatedPageViewProps {
   subdomainProp?: string | undefined;
@@ -88,12 +84,14 @@ export interface TenantDedicatedPageViewProps {
  *  taxonomy still applies in full — failures throw, never vanish. */
 const AckSchema = z.object({}).passthrough();
 
+// Final tab scope (Shahzeb, 2026-10-27): Dashboard, Insights, Queue,
+// Posting Times — no Settings tab. Queue is an empty placeholder
+// panel only; it will be rebuilt later, more professionally.
 const TAB_ITEMS: ReadonlyArray<{ id: DedicatedPageTab; label: string }> = [
   { id: 'dashboard', label: 'Dashboard' },
+  { id: 'insights', label: 'Insights' },
   { id: 'queue', label: 'Queue' },
   { id: 'calendar', label: 'Posting Times' },
-  { id: 'insights', label: 'Insights' },
-  { id: 'settings', label: 'Settings' },
 ];
 
 const TAB_IDS: ReadonlySet<string> = new Set(TAB_ITEMS.map((tab) => tab.id));
@@ -501,7 +499,7 @@ export default function TenantDedicatedPageView({
   );
 
   const switchTab = React.useCallback(
-    (tab: 'queue' | 'calendar' | 'insights' | 'settings') => {
+    (tab: 'queue' | 'calendar' | 'insights') => {
       handleTabChange(tab);
     },
     [handleTabChange]
@@ -607,11 +605,6 @@ export default function TenantDedicatedPageView({
                       className="min-h-11 shrink-0"
                     >
                       <span>{tab.label}</span>
-                      {tab.id === 'queue' && (
-                        <span className="rounded-xs border border-line bg-subtle px-1.5 py-0.5 text-xs font-medium text-ink-sub">
-                          {queuedCount}
-                        </span>
-                      )}
                     </TabsTrigger>
                   ))}
                 </TabsList>
@@ -654,9 +647,17 @@ export default function TenantDedicatedPageView({
 
             {visitedTabs.has('queue') && (
               <TabsContent value="queue" forceMount className="data-[state=inactive]:hidden">
-                <PageTabQueue
-                  page={page}
-                />
+                {/*
+                  Queue placeholder only: no list, no buttons, no
+                  composer entry points. The Queue section will be
+                  built later, more professionally.
+                */}
+                <div data-testid="page-tab-queue-placeholder" className="rounded-md border border-line bg-panel p-6 shadow-card">
+                  <h2 className="m-0 text-lg font-bold text-ink">Queue</h2>
+                  <p className="mt-1 text-body text-ink-sub">
+                    This section is being rebuilt.
+                  </p>
+                </div>
               </TabsContent>
             )}
 
@@ -681,17 +682,6 @@ export default function TenantDedicatedPageView({
               </TabsContent>
             )}
 
-            {visitedTabs.has('settings') && (
-              <TabsContent value="settings" forceMount className="data-[state=inactive]:hidden">
-                <PageTabSettings
-                  page={page}
-                  subdomain={subdomain}
-                  onStatusToggle={handleStatusToggle}
-                  onDisconnectPage={handleDisconnectPage}
-                  onUpdateTimezone={handleUpdateTimezone}
-                />
-              </TabsContent>
-            )}
           </Tabs>
         </>
       )}

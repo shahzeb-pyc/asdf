@@ -245,7 +245,7 @@ describe('Dedicated tab row — sticky row, scroll fade, gold active state', () 
 
   it('dedicated triggers use the gold variant; the shared line variant stays ink', () => {
     const { container } = renderShell();
-    for (const id of ['dashboard', 'queue', 'calendar', 'insights', 'settings']) {
+    for (const id of ['dashboard', 'insights', 'queue', 'calendar']) {
       const btn = container.querySelector(`[data-testid="tab-${id}-btn"]`);
       expect(btn?.getAttribute('data-variant')).toBe('line-gold');
     }
@@ -259,5 +259,55 @@ describe('Dedicated tab row — sticky row, scroll fade, gold active state', () 
     expect(line).not.toContain('data-[state=active]:text-brand-gold');
     expect(line).not.toContain('data-[state=active]:border-brand-gold');
     expect(line).toContain('data-[state=active]:text-ink');
+  });
+});
+
+describe('Dedicated tab row — final scope (Dashboard, Insights, Queue, Posting Times)', () => {
+  beforeEach(() => {
+    mockQuery = '';
+    mockPush.mockReset();
+  });
+
+  it('renders tabs in order Dashboard, Insights, Queue, Posting Times — and no Settings tab', () => {
+    const { container } = renderShell();
+    const nav = container.querySelector('[data-testid="dedicated-tabs-nav"]');
+    expect(nav).not.toBeNull();
+    const order = Array.from(nav!.querySelectorAll('[data-testid]'))
+      .map((el) => el.getAttribute('data-testid'))
+      .filter((id) => id?.startsWith('tab-') && id.endsWith('-btn'));
+    expect(order).toEqual([
+      'tab-dashboard-btn',
+      'tab-insights-btn',
+      'tab-queue-btn',
+      'tab-calendar-btn',
+    ]);
+    expect(container.querySelector('[data-testid="tab-settings-btn"]')).toBeNull();
+  });
+
+  it('Queue tab renders an empty placeholder with no queue functionality', async () => {
+    const user = userEvent.setup();
+    const { container } = renderShell();
+    await user.click(screen.getByTestId('tab-queue-btn'));
+    const placeholder = container.querySelector('[data-testid="page-tab-queue-placeholder"]');
+    expect(placeholder).not.toBeNull();
+    expect(placeholder?.textContent).toContain('This section is being rebuilt.');
+    // No list, no buttons, no composer entry points in the placeholder.
+    expect(placeholder?.querySelector('button')).toBeNull();
+    expect(container.querySelector('[data-testid="content-tab"]')).toBeNull();
+    expect(container.querySelector('[data-testid="queue-create-post-btn"]')).toBeNull();
+  });
+
+  it('?tab=settings is no longer valid and falls back to Dashboard', () => {
+    mockQuery = 'tab=settings';
+    renderShell();
+    expect(screen.getByTestId('tab-dashboard-btn').getAttribute('data-state')).toBe('active');
+    expect(screen.getByTestId('tab-queue-btn').getAttribute('data-state')).toBe('inactive');
+  });
+
+  it('?tab=queue still selects the Queue placeholder', () => {
+    mockQuery = 'tab=queue';
+    const { container } = renderShell();
+    expect(screen.getByTestId('tab-queue-btn').getAttribute('data-state')).toBe('active');
+    expect(container.querySelector('[data-testid="page-tab-queue-placeholder"]')).not.toBeNull();
   });
 });

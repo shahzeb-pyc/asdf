@@ -6,7 +6,7 @@
  * server-first entry only; the frame composition (identity header, tab
  * bar, slot mounts) lives in `page-section-shell.tsx`, the 131-owned tab
  * content in `components/pages/dedicated/{page-header,tab-dashboard,
- * tab-insights,tab-settings}.tsx`, and all data in the spec 137 data
+ * tab-insights}.tsx`, and all data in the spec 137 data
  * layer.
  *
  * Server-first pattern (spec 137 §3.2.4): page detail, the pages list

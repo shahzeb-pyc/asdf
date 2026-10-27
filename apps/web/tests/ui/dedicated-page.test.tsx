@@ -11,12 +11,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   DedicatedPageHeader,
   PageTabDashboard,
-  PageTabQueue,
   PageTabPostingTimes,
-  PageTabSettings,
   getMediaCapNotice,
   type PageSlotSummary,
-  type DedicatedQueueItem,
+  type PageQueueItemSummary,
 } from '@/components/pages/dedicated';
 // Spec 131 PR-131-3 (named update, §8.1 server-first): the route file is
 // now a server component; the client frame lives in page-section-shell
@@ -124,41 +122,26 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
     createdAt: '2026-10-01T00:00:00.000Z',
   };
 
-  const sampleQueueItems: DedicatedQueueItem[] = [
+  const sampleQueueItems: PageQueueItemSummary[] = [
     {
       id: 'q-item-1',
       mediaId: 'med-1',
+      mediaType: 'video',
       caption: 'Cutting-edge autonomous manufacturing video teaser.',
       firstComment: 'Read the full blueprint at https://skynet.tech',
       scheduledTime: '2026-10-15T09:00:00.000Z',
       status: 'queued',
-      createdAt: '2026-10-12T10:00:00.000Z',
-      media: {
-        name: 'teaser.mp4',
-        mediaType: 'video',
-        url: 'https://r2.example.com/teaser.mp4',
-        thumbnailUrl: 'https://r2.example.com/teaser-thumb.jpg',
-        aspectRatio: '16:9',
-        durationSeconds: 45,
-      },
+      thumbnailUrl: 'https://r2.example.com/teaser-thumb.jpg',
     },
     {
       id: 'q-item-2',
       mediaId: 'med-2',
+      mediaType: 'image',
       caption: 'Infographic of weekly neural network updates.',
       firstComment: null,
       scheduledTime: '2026-10-15T15:00:00.000Z',
       status: 'published',
-      publishedAt: '2026-10-15T15:00:05.000Z',
-      createdAt: '2026-10-12T11:00:00.000Z',
-      media: {
-        name: 'neural.png',
-        mediaType: 'image',
-        url: 'https://r2.example.com/neural.png',
-        thumbnailUrl: 'https://r2.example.com/neural.png',
-        aspectRatio: '1:1',
-        durationSeconds: null,
-      },
+      thumbnailUrl: 'https://r2.example.com/neural.png',
     },
   ];
 
@@ -734,109 +717,6 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
   });
 
   /* ====================================================================
-   * Phase 3: PageTabQueue (T004)
-   * ==================================================================== */
-  describe('PageTabQueue Component (Spec 105)', () => {
-  // Spec 134: the rebuilt queue panel reads through React Query, so its
-  // renders need a QueryClient ancestor (the tenant layout provides one in
-  // the app) — same pattern as the composer renders below.
-  // Spec 131 PR-131-3 (named update — props bridge deleted): the panel no
-  // longer takes queueItems/onMutated/callback props; each render seeds
-  // the shared queue cache key the panel reads, which is exactly what
-  // the route's server prefetch does in the app.
-  const renderQueueTab = (
-    element: React.ReactNode,
-    items: DedicatedQueueItem[] = sampleQueueItems
-  ) => {
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-    client.setQueryData(queryKeys.tenant('cyberdyne').queue.items(samplePage.id), {
-      items,
-      total: items.length,
-      limit: items.length,
-      offset: 0,
-    });
-    return render(<QueryClientProvider client={client}>{element}</QueryClientProvider>);
-  };
-
-    it('renders queue rows with caption, format, status, and row actions', () => {
-      const { hasText, hasAttribute } = renderQueueTab(
-        <PageTabQueue page={samplePage} />
-      );
-
-      expect(hasAttribute('data-testid', 'content-tab')).toBe(true);
-      expect(hasAttribute('data-testid', 'queue-row-q-item-1')).toBe(true);
-      expect(hasText('Cutting-edge autonomous manufacturing video teaser.')).toBe(true);
-      expect(hasText('Video')).toBe(true);
-      expect(hasText('Queued')).toBe(true);
-      expect(hasText('Reschedule')).toBe(true);
-      expect(hasText('Delete')).toBe(true);
-      expect(hasText('1 post queued')).toBe(true);
-      expect(hasAttribute('data-testid', 'queue-summary')).toBe(true);
-    });
-
-    it('labels queue row times with the page timezone (QA #11)', () => {
-      const { hasText } = renderQueueTab(
-        <PageTabQueue page={samplePage} />
-      );
-
-      expect(hasText('Thu 9:00 AM UTC')).toBe(true);
-      expect(hasText('Published Thu, Oct 15 at 3:00 PM UTC')).toBe(true);
-    });
-
-    it('renders all five filter tabs with counts', () => {
-      const { hasText, hasAttribute } = renderQueueTab(
-        <PageTabQueue page={samplePage} />
-      );
-
-      for (const filter of ['all', 'queued', 'scheduled', 'published', 'failed']) {
-        expect(hasAttribute('data-testid', `queue-filter-${filter}`)).toBe(true);
-      }
-      expect(hasText('All')).toBe(true);
-      expect(hasText('Queued')).toBe(true);
-      expect(hasText('Scheduled')).toBe(true);
-      expect(hasText('Published')).toBe(true);
-      expect(hasText('Failed')).toBe(true);
-    });
-
-    it('renders empty state with checklist and entry buttons when queue has no items', () => {
-      const { hasText, hasAttribute } = renderQueueTab(
-        <PageTabQueue page={samplePage} />,
-        []
-      );
-
-      expect(hasAttribute('data-testid', 'queue-empty-state')).toBe(true);
-      expect(hasText('Get your queue running')).toBe(true);
-      expect(hasText('Set posting times')).toBe(true);
-      expect(hasText('Add media')).toBe(true);
-      expect(hasText('Nothing here yet.')).toBe(true);
-      expect(hasText('Bulk add')).toBe(true);
-    });
-
-    it('shows the failed banner, plain-language reason, and Retry on failed posts', () => {
-      const failedItem: DedicatedQueueItem = {
-        ...sampleQueueItems[0],
-        id: 'q-item-3',
-        status: 'failed',
-        retryCount: 3,
-        maxRetries: 3,
-      };
-      const { hasText, hasAttribute } = renderQueueTab(
-        <PageTabQueue page={samplePage} />,
-        [...sampleQueueItems, failedItem]
-      );
-
-      expect(hasAttribute('data-testid', 'queue-failed-banner')).toBe(true);
-      expect(hasText('1 post failed to publish.')).toBe(true);
-      expect(hasText('Review')).toBe(true);
-      expect(hasText('Failed')).toBe(true);
-      expect(hasText("Tried 3 times and still couldn't publish.")).toBe(true);
-      expect(hasText('Retry')).toBe(true);
-    });
-  });
-
-  /* ====================================================================
    * Phase 4: PageTabPostingTimes (Spec 058)
    * ==================================================================== */
   describe('PageTabPostingTimes Component', () => {
@@ -966,65 +846,6 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
   });
 
   /* ====================================================================
-   * Phase 4: PageTabSettings (T007)
-   * ==================================================================== */
-  describe('PageTabSettings Component', () => {
-    it('renders master automation switch, page credentials, and danger zone', () => {
-      const { hasText, hasAttribute } = render(
-        <PageTabSettings
-          page={samplePage}
-          subdomain="cyberdyne"
-          onStatusToggle={vi.fn()}
-          onDisconnectPage={vi.fn()}
-        />
-      );
-
-      expect(hasAttribute('data-testid', 'page-tab-settings')).toBe(true);
-      expect(hasAttribute('data-testid', 'settings-automation-card')).toBe(true);
-      expect(hasText('Automation')).toBe(true);
-      expect(hasAttribute('data-testid', 'settings-token-card')).toBe(true);
-      expect(hasText('fb_101202303')).toBe(true);
-      expect(hasAttribute('data-testid', 'settings-danger-zone')).toBe(true);
-      expect(hasAttribute('data-testid', 'disconnect-page-btn')).toBe(true);
-    });
-
-    it('calls onStatusToggle when clicking toggle automation button in settings', async () => {
-      const onStatusToggle = vi.fn().mockResolvedValue(undefined);
-
-      const tree = renderAndCaptureTree(() =>
-        PageTabSettings({
-          page: samplePage,
-          subdomain: 'cyberdyne',
-          onStatusToggle,
-          onDisconnectPage: vi.fn(),
-        })
-      );
-
-      const toggleBtn = findElementByTestId(tree, 'toggle-automation-btn');
-      await toggleBtn?.props.onClick();
-
-      expect(onStatusToggle).toHaveBeenCalledWith('paused');
-    });
-
-    it('renders the automation control as a single switch with a timezone line above it', () => {
-      const { hasText, hasAttribute, html } = render(
-        <PageTabSettings
-          page={samplePage}
-          subdomain="cyberdyne"
-          onStatusToggle={vi.fn()}
-          onDisconnectPage={vi.fn()}
-        />
-      );
-
-      expect(hasAttribute('data-testid', 'settings-timezone-line')).toBe(true);
-      expect(hasText('Times shown in')).toBe(true);
-      expect(hasText('Change')).toBe(true);
-      expect(html).toContain('role="switch"');
-      expect(html).toContain('>On<');
-    });
-  });
-
-  /* ====================================================================
    * Phase 5: Integrated TenantDedicatedPageView (T008)
    * ==================================================================== */
   describe('TenantDedicatedPageView Integrated Component', () => {
@@ -1047,7 +868,6 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
       expect(hasAttribute('data-testid', 'tab-queue-btn')).toBe(true);
       expect(hasAttribute('data-testid', 'tab-calendar-btn')).toBe(true);
       expect(hasAttribute('data-testid', 'tab-insights-btn')).toBe(true);
-      expect(hasAttribute('data-testid', 'tab-settings-btn')).toBe(true);
       expect(hasText('Skynet Automation Central')).toBe(true);
     });
 
