@@ -138,10 +138,10 @@ function DedicatedAvatar({
         src={page.profilePictureUrl}
         alt={page.pageName}
         data-testid="dedicated-page-avatar"
-        width={44}
-        height={44}
+        width={56}
+        height={56}
         onError={() => setFailedAvatarUrl(page.profilePictureUrl ?? '__error__')}
-        className={cn('size-11 shrink-0 rounded-md object-cover ring-2', ringClass)}
+        className={cn('size-14 shrink-0 rounded-full object-cover ring-2', ringClass)}
       />
     );
   }
@@ -150,7 +150,7 @@ function DedicatedAvatar({
     <div
       data-testid="dedicated-page-avatar-fallback"
       className={cn(
-        'flex size-11 shrink-0 items-center justify-center rounded-md bg-subtle text-body font-bold text-brand-gold ring-2',
+        'flex size-14 shrink-0 items-center justify-center rounded-full bg-subtle text-body font-bold text-brand-gold ring-2',
         ringClass
       )}
     >

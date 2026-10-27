@@ -333,7 +333,7 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
       // inline styles (avatar ring border, 34px heights). The rebuild
       // deletes every inline style in this file (ratchet debit), so the
       // same geometry is asserted on the design-system output instead:
-      // a 44px next/image avatar carrying the operational status ring,
+      // a 56px round next/image avatar carrying the operational status ring,
       // and the uniform action cluster present at token sizes.
       const { html } = render(
         <DedicatedPageHeader
@@ -345,8 +345,10 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
       );
 
       expect(html).toContain('data-testid="dedicated-page-avatar"');
-      expect(html).toContain('width="44"');
-      expect(html).toContain('height="44"');
+      expect(html).toContain('width="56"');
+      expect(html).toContain('height="56"');
+      expect(html).toContain('rounded-full');
+      expect(html).toContain('size-14');
       expect(html).toContain('ring-signal-operational');
       expect(html).toContain('data-testid="header-pause-resume-btn"');
       expect(html).toContain('data-testid="header-create-posts-btn"');
