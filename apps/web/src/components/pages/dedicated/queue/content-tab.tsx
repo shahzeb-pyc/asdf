@@ -57,7 +57,6 @@ import { Skeleton } from '@/components/shared/ui/skeleton';
 import { TableBatchBar, TableToolbar } from '@/components/shared/ui/table';
 import { toast } from '@/components/shared/ui/toast';
 
-import { PostComposer, type ComposerInitialPost } from '../composer/post-composer';
 import { BulkAddModal } from '../bulk/bulk-add-modal';
 import { formatSlotShort } from '../composer/queue-slot-utils';
 import { formatLabel } from '../bulk/bulk-utils';
@@ -158,29 +157,9 @@ function fromQueueItem(item: QueueItem): DedicatedQueueItem {
   };
 }
 
-function toInitialPost(item: DedicatedQueueItem): ComposerInitialPost {
-  return {
-    id: item.id,
-    mediaId: item.mediaId ?? null,
-    postFormat: resolveFormat(item),
-    linkUrl: item.linkUrl ?? null,
-    caption: item.caption ?? null,
-    scheduledTime: item.scheduledTime,
-    status: item.status,
-    media: item.media
-      ? {
-          name: item.media.name,
-          mediaType: item.media.mediaType,
-          thumbnailUrl: item.media.thumbnailUrl ?? null,
-          url: item.media.url,
-          durationSeconds: item.media.durationSeconds ?? null,
-        }
-      : null,
-  };
-}
 
 export function PageTabQueue(props: Readonly<PageTabQueueProps>) {
-  const { page, isLoading = false, onOpenAddQueue } = props;
+  const { page, isLoading = false } = props;
   const params = useParams();
   const subdomain = (params.subdomain as string) || '';
   const pageId = page.id;
@@ -254,7 +233,6 @@ export function PageTabQueue(props: Readonly<PageTabQueueProps>) {
   const [selection, setSelection] = React.useState<ReadonlySet<string>>(new Set());
   const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = React.useState(false);
   const [rescheduleItem, setRescheduleItem] = React.useState<DedicatedQueueItem | null>(null);
-  const [editItem, setEditItem] = React.useState<DedicatedQueueItem | null>(null);
   const [bulkOpen, setBulkOpen] = React.useState(false);
   const [dragId, setDragId] = React.useState<string | null>(null);
   const [dragOverId, setDragOverId] = React.useState<string | null>(null);
@@ -698,9 +676,6 @@ export function PageTabQueue(props: Readonly<PageTabQueueProps>) {
               >
                 Bulk add
               </Button>
-              <Button size="sm" data-testid="queue-create-post-btn" onClick={onOpenAddQueue}>
-                Create post
-              </Button>
             </div>
           </TableToolbar>
           <QueueFilterTabs counts={counts} active={filter} onChange={setFilter} />
@@ -737,7 +712,6 @@ export function PageTabQueue(props: Readonly<PageTabQueueProps>) {
           subdomain={subdomain}
           slots={slots}
           onSlotsChanged={handleSlotsChanged}
-          onCreatePost={onOpenAddQueue}
           onBulkAdd={() => setBulkOpen(true)}
           checklistDismissed={checklistDismissed}
           onDismissChecklist={dismissChecklist}
@@ -748,7 +722,6 @@ export function PageTabQueue(props: Readonly<PageTabQueueProps>) {
           subdomain={subdomain}
           slots={slots}
           onSlotsChanged={handleSlotsChanged}
-          onCreatePost={onOpenAddQueue}
           onBulkAdd={() => setBulkOpen(true)}
           checklistDismissed={checklistDismissed}
           onDismissChecklist={dismissChecklist}
@@ -786,7 +759,6 @@ export function PageTabQueue(props: Readonly<PageTabQueueProps>) {
                     setDragOverId(null);
                   }}
                   onMove={handleMove}
-                  onEdit={setEditItem}
                   onReschedule={setRescheduleItem}
                   onDelete={(target) => void handleDelete(target)}
                   onRetry={(target) => void handleRetry(target)}
@@ -839,21 +811,6 @@ export function PageTabQueue(props: Readonly<PageTabQueueProps>) {
           deleting={bulkDeleting}
           onCancel={() => setShowBulkDeleteConfirm(false)}
           onConfirm={() => void handleBulkDelete()}
-        />
-      )}
-
-      {editItem && (
-        <PostComposer
-          pageId={pageId}
-          subdomain={subdomain}
-          slots={slots}
-          initialPost={toInitialPost(editItem)}
-          onClose={() => setEditItem(null)}
-          onSubmitted={(message) => {
-            setEditItem(null);
-            toast.success(message);
-            invalidateQueue();
-          }}
         />
       )}
 

@@ -14,7 +14,6 @@ import {
   PageTabQueue,
   PageTabPostingTimes,
   PageTabSettings,
-  PostComposer,
   getMediaCapNotice,
   type PageSlotSummary,
   type DedicatedQueueItem,
@@ -660,7 +659,6 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
           slots={sampleSlots}
           onPublishNow={vi.fn()}
           onSwitchTab={vi.fn()}
-          onOpenAddQueue={vi.fn()}
         />
       );
 
@@ -688,7 +686,6 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
           slots={slotsWithSeconds}
           onPublishNow={vi.fn()}
           onSwitchTab={vi.fn()}
-          onOpenAddQueue={vi.fn()}
         />
       );
 
@@ -707,7 +704,6 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
           slots: sampleSlots,
           onPublishNow,
           onSwitchTab: vi.fn(),
-          onOpenAddQueue: vi.fn(),
         })
       );
 
@@ -728,7 +724,6 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
           slots: sampleSlots,
           onPublishNow: vi.fn(),
           onSwitchTab,
-          onOpenAddQueue: vi.fn(),
         })
       );
 
@@ -767,7 +762,7 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
 
     it('renders queue rows with caption, format, status, and row actions', () => {
       const { hasText, hasAttribute } = renderQueueTab(
-        <PageTabQueue page={samplePage} onOpenAddQueue={vi.fn()} />
+        <PageTabQueue page={samplePage} />
       );
 
       expect(hasAttribute('data-testid', 'content-tab')).toBe(true);
@@ -775,7 +770,6 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
       expect(hasText('Cutting-edge autonomous manufacturing video teaser.')).toBe(true);
       expect(hasText('Video')).toBe(true);
       expect(hasText('Queued')).toBe(true);
-      expect(hasText('Edit')).toBe(true);
       expect(hasText('Reschedule')).toBe(true);
       expect(hasText('Delete')).toBe(true);
       expect(hasText('1 post queued')).toBe(true);
@@ -784,7 +778,7 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
 
     it('labels queue row times with the page timezone (QA #11)', () => {
       const { hasText } = renderQueueTab(
-        <PageTabQueue page={samplePage} onOpenAddQueue={vi.fn()} />
+        <PageTabQueue page={samplePage} />
       );
 
       expect(hasText('Thu 9:00 AM UTC')).toBe(true);
@@ -793,7 +787,7 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
 
     it('renders all five filter tabs with counts', () => {
       const { hasText, hasAttribute } = renderQueueTab(
-        <PageTabQueue page={samplePage} onOpenAddQueue={vi.fn()} />
+        <PageTabQueue page={samplePage} />
       );
 
       for (const filter of ['all', 'queued', 'scheduled', 'published', 'failed']) {
@@ -807,9 +801,8 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
     });
 
     it('renders empty state with checklist and entry buttons when queue has no items', () => {
-      const onOpenAddQueue = vi.fn();
       const { hasText, hasAttribute } = renderQueueTab(
-        <PageTabQueue page={samplePage} onOpenAddQueue={onOpenAddQueue} />,
+        <PageTabQueue page={samplePage} />,
         []
       );
 
@@ -817,9 +810,7 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
       expect(hasText('Get your queue running')).toBe(true);
       expect(hasText('Set posting times')).toBe(true);
       expect(hasText('Add media')).toBe(true);
-      expect(hasText('Create your first posts')).toBe(true);
       expect(hasText('Nothing here yet.')).toBe(true);
-      expect(hasText('Create post')).toBe(true);
       expect(hasText('Bulk add')).toBe(true);
     });
 
@@ -832,7 +823,7 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
         maxRetries: 3,
       };
       const { hasText, hasAttribute } = renderQueueTab(
-        <PageTabQueue page={samplePage} onOpenAddQueue={vi.fn()} />,
+        <PageTabQueue page={samplePage} />,
         [...sampleQueueItems, failedItem]
       );
 
@@ -1133,193 +1124,6 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
       expect(hasText('Unwrapped Acme Page')).toBe(true);
       expect(hasText('Acme Media')).toBe(true);
       expect(hasText('Media Company')).toBe(true);
-    });
-  });
-
-  /* ====================================================================
-   * Composer: PostComposer (spec 103 — replaces EnqueueModal)
-   * ==================================================================== */
-  // Spec 132 PR-C1: the rebuilt composer reads through React Query, so
-  // its renders need a QueryClient ancestor (the tenant layout provides
-  // one in the app). Static markup never runs effects, so no fetch fires.
-  const composerQueryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  function ComposerUnderTest(props: React.ComponentProps<typeof PostComposer>) {
-    return (
-      <QueryClientProvider client={composerQueryClient}>
-        <PostComposer {...props} />
-      </QueryClientProvider>
-    );
-  }
-
-  describe('PostComposer Component', () => {
-    const composerProps = {
-      pageId: 'page-101',
-      subdomain: 'cyberdyne',
-      slots: sampleSlots,
-      onClose: vi.fn(),
-      onSubmitted: vi.fn(),
-    };
-
-    it('renders the composer dialog with title and intent selector', () => {
-      const { hasAttribute, hasText } = render(<ComposerUnderTest {...composerProps} />);
-
-      expect(hasAttribute('data-testid', 'post-composer')).toBe(true);
-      expect(hasText('Create post')).toBe(true);
-      expect(hasAttribute('data-testid', 'composer-intent-selector')).toBe(true);
-      expect(hasAttribute('data-testid', 'composer-intent-now')).toBe(true);
-      expect(hasAttribute('data-testid', 'composer-intent-schedule')).toBe(true);
-      expect(hasAttribute('data-testid', 'composer-intent-queue')).toBe(true);
-    });
-
-    it('renders 5 format selector buttons', () => {
-      const { hasAttribute } = render(<ComposerUnderTest {...composerProps} />);
-
-      expect(hasAttribute('data-testid', 'composer-format-selector')).toBe(true);
-      expect(hasAttribute('data-testid', 'composer-format-text')).toBe(true);
-      expect(hasAttribute('data-testid', 'composer-format-image')).toBe(true);
-      expect(hasAttribute('data-testid', 'composer-format-video')).toBe(true);
-      expect(hasAttribute('data-testid', 'composer-format-reel')).toBe(true);
-      expect(hasAttribute('data-testid', 'composer-format-story')).toBe(true);
-    });
-
-    it('opens with an empty media area and no pre-selected assets', () => {
-      const { hasAttribute, hasText } = render(<ComposerUnderTest {...composerProps} />);
-
-      expect(hasAttribute('data-testid', 'composer-media-area')).toBe(true);
-      expect(hasText('No media selected yet.')).toBe(true);
-      expect(hasAttribute('data-testid', 'composer-choose-library-btn')).toBe(true);
-      expect(hasAttribute('data-testid', 'composer-upload-new-btn')).toBe(true);
-      expect(hasAttribute('data-testid', 'composer-selected-media')).toBe(false);
-    });
-
-    it('shows the computed queue line when a slot covers the format', () => {
-      const { hasAttribute, hasText } = render(<ComposerUnderTest {...composerProps} />);
-
-      expect(hasAttribute('data-testid', 'composer-queue-goes-out')).toBe(true);
-      expect(hasText('Goes out at the next posting time for Reels:')).toBe(true);
-    });
-
-    it('disables the queue intent and offers quick-add when no posting times exist', () => {
-      const { hasAttribute, hasText } = render(
-        <ComposerUnderTest {...composerProps} slots={[]} />
-      );
-
-      expect(hasText('Set posting times first')).toBe(true);
-      expect(hasAttribute('data-testid', 'posting-time-quick-add')).toBe(true);
-    });
-
-    it('shows an inline notice and quick-add when no slot covers the format', () => {
-      const photoOnly = [
-        { id: 'slot-1', slotTime: '09:00', timezone: 'UTC', isActive: true, allowedFormats: ['image'] },
-      ];
-      const { hasAttribute, hasText } = render(
-        <ComposerUnderTest {...composerProps} slots={photoOnly} initialIntent="queue" />
-      );
-
-      expect(hasAttribute('data-testid', 'composer-no-covering-slot-notice')).toBe(true);
-      expect(hasText('No posting time covers Reels yet.')).toBe(true);
-      expect(hasAttribute('data-testid', 'posting-time-quick-add')).toBe(true);
-    });
-
-    it('hides media and link fields appropriately for reel format', () => {
-      const { hasAttribute } = render(<ComposerUnderTest {...composerProps} />);
-
-      // Reel: media shown, link hidden, portrait hint visible
-      expect(hasAttribute('data-testid', 'composer-media-area')).toBe(true);
-      expect(hasAttribute('data-testid', 'composer-link')).toBe(false);
-      expect(hasAttribute('data-testid', 'composer-reel-hint')).toBe(true);
-    });
-
-    it('pre-fills for edit and locks media in edit mode', () => {
-      const { hasAttribute, hasText } = render(
-        <ComposerUnderTest
-          {...composerProps}
-          initialPost={{
-            id: 'item-1',
-            postFormat: 'image',
-            caption: 'Existing caption',
-            scheduledTime: new Date(Date.now() + 3600000).toISOString(),
-            status: 'queued',
-            media: {
-              name: 'photo.jpg',
-              mediaType: 'image',
-              url: 'https://example.com/photo.jpg',
-              thumbnailUrl: null,
-            },
-          }}
-        />
-      );
-
-      expect(hasText('Edit post')).toBe(true);
-      expect(hasAttribute('data-testid', 'composer-selected-media')).toBe(true);
-      expect(hasText('Existing caption')).toBe(true);
-    });
-
-    it('renders a disabled submit until the post is valid', () => {
-      const { html } = render(<ComposerUnderTest {...composerProps} />);
-      // Spec 132 PR-C1 test migration (same behaviour asserted): the
-      // shared/ui Button renders `disabled` earlier in the same tag than
-      // the legacy fixed 200-char window reached, so assert on the whole
-      // submit button tag instead of a character window.
-      const btnMatch = /<button\b[^>]*data-testid="submit-post-composer-btn"[^>]*>/.exec(html);
-      expect(btnMatch).not.toBeNull();
-      expect(btnMatch![0]).toContain('disabled');
-    });
-
-    it('caps every format at one media item with plain-language notices', () => {
-      // Empty: adds are allowed for every format.
-      expect(getMediaCapNotice('image', 0)).toBeNull();
-      expect(getMediaCapNotice('video', 0)).toBeNull();
-      expect(getMediaCapNotice('reel', 0)).toBeNull();
-      expect(getMediaCapNotice('story', 0)).toBeNull();
-      // One already selected: second adds are blocked with format-specific copy.
-      expect(getMediaCapNotice('image', 1)).toBe(
-        'Photo posts take 1 image. Remove the current one to pick another.'
-      );
-      expect(getMediaCapNotice('video', 1)).toBe(
-        'Video posts take 1 video. Remove the current one to pick another.'
-      );
-      expect(getMediaCapNotice('reel', 1)).toBe(
-        'Reels take 1 video. Remove the current one to pick another.'
-      );
-      expect(getMediaCapNotice('story', 1)).toBe(
-        'Stories take 1 file. Remove the current one to pick another.'
-      );
-      expect(getMediaCapNotice('text', 2)).toBeNull();
-    });
-
-    it('never allows multi-file selection on the upload input', () => {
-      const { html } = render(<ComposerUnderTest {...composerProps} />);
-      const inputMatch = /<input\b[^>]*data-testid="composer-file-input"[^>]*>/.exec(html);
-      expect(inputMatch).not.toBeNull();
-      expect(inputMatch![0]).not.toContain('multiple');
-    });
-
-    it('locks the format selector in edit mode', () => {
-      const { html, hasText } = render(
-        <ComposerUnderTest
-          {...composerProps}
-          initialPost={{
-            id: 'item-1',
-            postFormat: 'image',
-            caption: 'Existing caption',
-            scheduledTime: new Date(Date.now() + 3600000).toISOString(),
-            status: 'queued',
-            media: {
-              name: 'photo.jpg',
-              mediaType: 'image',
-              url: 'https://example.com/photo.jpg',
-              thumbnailUrl: null,
-            },
-          }}
-        />
-      );
-      const btnMatch = /<button\b[^>]*data-testid="composer-format-image"[^>]*>/.exec(html);
-      expect(btnMatch).not.toBeNull();
-      expect(btnMatch![0]).toContain(' disabled=""');
-      expect(hasText("Format can't be changed when editing.")).toBe(true);
     });
   });
 

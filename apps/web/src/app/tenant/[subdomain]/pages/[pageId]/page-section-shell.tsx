@@ -65,7 +65,6 @@ import {
   PageTabPostingTimes,
   PageTabQueue,
   PageTabSettings,
-  PostComposer,
   type PageSlotSummary,
 } from '@/components/pages/dedicated';
 
@@ -166,7 +165,6 @@ export default function TenantDedicatedPageView({
   const tabListRef = React.useRef<HTMLDivElement | null>(null);
   const [canScrollLeft, setCanScrollLeft] = React.useState(false);
   const [canScrollRight, setCanScrollRight] = React.useState(false);
-  const [isComposerOpen, setIsComposerOpen] = React.useState(false);
 
   const tenant = queryKeys.tenant(subdomain);
   const pagePath = buildTenantApiPath(subdomain, `/pages/${pageId}`);
@@ -509,7 +507,6 @@ export default function TenantDedicatedPageView({
     [handleTabChange]
   );
 
-  const openComposer = React.useCallback(() => setIsComposerOpen(true), []);
 
   return (
     <div
@@ -651,7 +648,6 @@ export default function TenantDedicatedPageView({
                   slots={slots}
                   onPublishNow={handlePublishNow}
                   onSwitchTab={switchTab}
-                  onOpenAddQueue={openComposer}
                 />
               </TabsContent>
             )}
@@ -660,7 +656,6 @@ export default function TenantDedicatedPageView({
               <TabsContent value="queue" forceMount className="data-[state=inactive]:hidden">
                 <PageTabQueue
                   page={page}
-                  onOpenAddQueue={openComposer}
                 />
               </TabsContent>
             )}
@@ -698,21 +693,6 @@ export default function TenantDedicatedPageView({
               </TabsContent>
             )}
           </Tabs>
-
-          {/* Post composer (132's component, mounted exactly as before) */}
-          {isComposerOpen && (
-            <PostComposer
-              pageId={page.id}
-              subdomain={subdomain}
-              slots={slots}
-              onClose={() => setIsComposerOpen(false)}
-              onSubmitted={(message) => {
-                invalidateQueue();
-                setIsComposerOpen(false);
-                toast.success(message);
-              }}
-            />
-          )}
         </>
       )}
     </div>

@@ -108,9 +108,6 @@ test.describe('dedicated page section — click-through (spec 131 §8.7)', () =>
     await page.getByTestId('tab-queue-btn').click();
     await expect(page.getByTestId('content-tab')).toBeVisible();
 
-    // Composer slot (132's composer mounts from the header action).
-    await page.getByTestId('header-add-queue-btn').click();
-    await expect(page.getByTestId('post-composer')).toBeVisible({ timeout: 15_000 });
   });
 });
 
@@ -125,8 +122,10 @@ test.describe('dedicated page section — mobile gate (spec 142)', () => {
       await openSection(page);
 
       // Header intact: identity + primary action reachable by tap.
-      await expect(page.getByTestId('header-add-queue-btn')).toBeVisible();
-      const queueBtnBox = await page.getByTestId('header-add-queue-btn').boundingBox();
+      // (The old header-add-queue-btn was removed with the composer:
+      // Create Posts is now the header's primary action.)
+      await expect(page.getByTestId('header-create-posts-btn')).toBeVisible();
+      const queueBtnBox = await page.getByTestId('header-create-posts-btn').boundingBox();
       expect(queueBtnBox?.height ?? 0).toBeGreaterThanOrEqual(36);
 
       // Tab bar usable: every tab is reachable (scrollable strip) and

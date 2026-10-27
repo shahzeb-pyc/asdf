@@ -5,11 +5,6 @@ export { PageTabPostingTimes, type PageTabPostingTimesProps } from './posting-ti
 export { PageTabInsights, type PageTabInsightsProps } from './tab-insights';
 export { PageTabSettings, type PageTabSettingsProps } from './tab-settings';
 export { MODAL_BACKDROP_STYLE, MODAL_CONTAINER_STYLE } from './modal-styles';
-export {
-  PostComposer,
-  type PostComposerProps,
-  type ComposerInitialPost,
-} from './composer/post-composer';
 export { IntentSelector, type IntentSelectorProps, type ComposerIntent } from './composer/intent-selector';
 export { FormatSelector, type FormatSelectorProps } from './composer/format-selector';
 export {
@@ -19,7 +14,6 @@ export {
   getMediaItemError,
   getMediaCapNotice,
 } from './composer/composer-media-area';
-export { ComposerCaption, type ComposerCaptionProps, CAPTION_CHAR_LIMIT } from './composer/composer-caption';
 export { ComposerLink, type ComposerLinkProps, isValidLink } from './composer/composer-link';
 export { ComposerPreview, type ComposerPreviewProps } from './composer/composer-preview';
 export {

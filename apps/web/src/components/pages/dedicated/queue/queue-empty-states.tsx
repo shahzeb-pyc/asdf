@@ -12,7 +12,6 @@ export interface QueueEmptyStatesProps {
   subdomain: string;
   slots: PageSlotSummary[];
   onSlotsChanged: (slots: PageSlotSummary[]) => void;
-  onCreatePost: () => void;
   onBulkAdd: () => void;
   checklistDismissed: boolean;
   onDismissChecklist: () => void;
@@ -28,9 +27,9 @@ const checklistLinkClass =
 
 /**
  * Queue empty states, typed by cause (spec 134 §3.1 / UI Rule 23):
- * - first-use: the dismissible 3-step getting-started checklist
+ * - first-use: the dismissible getting-started checklist
  *   (spec 105 §11.1, preserved — dismissal is the panel's typed device
- *   preference) above "Nothing here yet." with Create post / Bulk add.
+ *   preference) above "Nothing here yet." with Bulk add.
  *   With no posting slots loaded yet the checklist's first step is the
  *   setup path: it explains slots and offers Add posting time inline.
  * - no-results: echoes the active filter with one Clear filters action.
@@ -40,7 +39,6 @@ export function QueueEmptyStates({
   subdomain,
   slots,
   onSlotsChanged,
-  onCreatePost,
   onBulkAdd,
   checklistDismissed,
   onDismissChecklist,
@@ -116,12 +114,6 @@ export function QueueEmptyStates({
                 Add media
               </Link>
             </li>
-            <li className="flex items-center gap-2">
-              <span className="text-body text-ink-sub">3.</span>
-              <button type="button" onClick={onCreatePost} className={checklistLinkClass}>
-                Create your first posts
-              </button>
-            </li>
           </ol>
         </div>
       )}
@@ -129,10 +121,9 @@ export function QueueEmptyStates({
       <EmptyState
         type="first-use"
         title="Nothing here yet."
-        description="Create a post or bulk-add media to fill your queue."
+        description="Bulk-add media to fill your queue."
         action={
           <div className="flex flex-wrap justify-center gap-2">
-            <Button onClick={onCreatePost}>Create post</Button>
             <Button variant="secondary" onClick={onBulkAdd}>
               Bulk add
             </Button>

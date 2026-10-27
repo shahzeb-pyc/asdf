@@ -26,14 +26,6 @@ vi.mock('@/components/shared/ui/toast', () => ({
   Toaster: () => null,
 }));
 
-vi.mock('../composer/post-composer', () => ({
-  PostComposer: (props: { initialPost?: { id: string; caption?: string | null } }) => (
-    <div data-testid="composer-stub">
-      Editing {props.initialPost?.id} — {props.initialPost?.caption}
-    </div>
-  ),
-}));
-
 vi.mock('../bulk/bulk-add-modal', () => ({
   BulkAddModal: () => <div data-testid="bulk-add-stub" />,
 }));
@@ -172,7 +164,6 @@ function renderPanel(items: Array<Record<string, unknown>>, accountStatus = 'act
   const props = {
     page: PAGE,
     isLoading: false,
-    onOpenAddQueue: vi.fn(),
   };
   const utils = render(
     <QueryClientProvider client={queryClient}>
@@ -357,17 +348,6 @@ describe('PageTabQueue — rebuilt panel (spec 134 PR-134-1)', () => {
     expect(screen.getByText(/Active filters: Failed/)).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Clear filters' }));
     expect(await screen.findByText('First post')).toBeVisible();
-  });
-
-  it('Edit mounts the composer pre-filled with the item (Q4 host contract preserved)', async () => {
-    const user = userEvent.setup();
-    renderPanel([itemA(), itemB()]);
-    await screen.findByText('First post');
-    const rowA = screen.getByTestId(`queue-row-${ID_A}`);
-    await user.click(within(rowA).getByRole('button', { name: /Edit post for Acme Page/ }));
-    const stub = await screen.findByTestId('composer-stub');
-    expect(stub.textContent).toContain(ID_A);
-    expect(stub.textContent).toContain('First post');
   });
 
   it('Reschedule saves a new time through the typed client', async () => {

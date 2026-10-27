@@ -27,7 +27,6 @@ export interface QueueRowProps {
   onDropOnRow: (id: string) => void;
   onDragEnd: () => void;
   onMove: (id: string, direction: -1 | 1) => void;
-  onEdit: (item: DedicatedQueueItem) => void;
   onReschedule: (item: DedicatedQueueItem) => void;
   onDelete: (item: DedicatedQueueItem) => void;
   onRetry: (item: DedicatedQueueItem) => void;
@@ -36,9 +35,6 @@ export interface QueueRowProps {
    *  platform-named shape). Defaults to the Facebook wording this row
    *  shipped with; the unified destination panel passes its platform's. */
   retryBlockedReason?: string;
-  /** When set, Edit renders disabled-with-reason instead of firing
-   *  `onEdit` — the unified panel's per-platform edit gate (T27). */
-  editDisabledReason?: string | null;
   failedReason: string | null;
   busyAction: 'retry' | 'delete' | null;
   /** Position within the reorderable list (0-based) — drives edge states. */
@@ -117,13 +113,11 @@ export function QueueRow({
   onDropOnRow,
   onDragEnd,
   onMove,
-  onEdit,
   onReschedule,
   onDelete,
   onRetry,
   retryBlocked,
   retryBlockedReason = 'Reconnect your Facebook account to retry.',
-  editDisabledReason = null,
   failedReason,
   busyAction,
   reorderIndex,
@@ -279,21 +273,6 @@ export function QueueRow({
               )}
             </span>
           )}
-          <span className="inline-flex flex-col gap-0.5">
-            <Button
-              variant="link"
-              size="sm"
-              {...(editDisabledReason ? { disabledReason: editDisabledReason } : {})}
-              disabled={actionsDisabled && !editDisabledReason}
-              aria-label={`Edit post for ${context}, due ${timeText}`}
-              onClick={() => onEdit(item)}
-            >
-              Edit
-            </Button>
-            {editDisabledReason && (
-              <span className="text-metadata text-ink-sub">{editDisabledReason}</span>
-            )}
-          </span>
           {(bucket === 'queued' || bucket === 'scheduled') && (
             <Button
               variant="link"

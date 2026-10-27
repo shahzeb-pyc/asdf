@@ -32,7 +32,6 @@ export interface DedicatedQueueItem {
 export interface PageTabQueueProps {
   page: FacebookPageItem;
   isLoading?: boolean;
-  onOpenAddQueue: () => void;
   /**
    * PROPS BRIDGE DELETED (spec 131 PR-131-3, PR-134-1's named deleter
    * duty): the panel previously received `queueItems` + `onMutated` +
