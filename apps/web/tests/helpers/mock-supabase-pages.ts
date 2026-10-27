@@ -115,7 +115,30 @@ function evalCondition(row: MockDestinationRow, cond: Condition): boolean {
   }
 }
 
-class MockQuery {
+interface MockQueryResult {
+  data: MockDestinationRow[];
+  count: number | null;
+  error: null;
+}
+
+/**
+ * In-memory PostgREST double for the Pages list Supabase path, as a
+ * genuine Promise: the route awaits the builder directly after an
+ * arbitrary chain (select/eq/or/order/range), so the builder itself
+ * must be awaitable. It extends Promise instead of defining a custom
+ * thenable method, and resolves on a later microtask so the route's
+ * synchronous chain finishes first — the await continuation runs
+ * after that microtask, so it observes the final chain state.
+ * Promise reactions are not faked by timer mocks.
+ */
+class MockQuery extends Promise<MockQueryResult> {
+  // Derived promises from .then() must be plain Promises, otherwise
+  // species construction would re-run this constructor with the
+  // wrong arguments.
+  static get [Symbol.species](): PromiseConstructor {
+    return Promise;
+  }
+
   private filters: Condition[] = [];
   private orderKey: string | null = null;
   private orderAsc = true;
@@ -126,7 +149,21 @@ class MockQuery {
   constructor(
     private readonly rows: MockDestinationRow[],
     private readonly tracker: { returnedRowIds: string[] }
-  ) {}
+  ) {
+    let resolveResult!: (value: MockQueryResult) => void;
+    let rejectResult!: (reason: unknown) => void;
+    super((resolve, reject) => {
+      resolveResult = resolve;
+      rejectResult = reject;
+    });
+    void Promise.resolve().then(() => {
+      try {
+        resolveResult(this.execute());
+      } catch (error) {
+        rejectResult(error);
+      }
+    });
+  }
 
   select(_columns: string, options?: { count?: string; head?: boolean }): this {
     this.head = options?.head === true;
@@ -183,43 +220,37 @@ class MockQuery {
     return Promise.resolve({ data: { id: 'ws_123' }, error: null });
   }
 
-  then<TResult1 = unknown, TResult2 = never>(
-    resolve?: ((value: { data: unknown; count: number | null; error: null }) => TResult1 | PromiseLike<TResult1>) | null,
-    reject?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
-  ): Promise<TResult1 | TResult2> {
-    return Promise.resolve().then(() => {
-      let out = this.rows.filter((row) =>
-        this.filters.every((cond) => {
-          if (cond.kind === 'cmp' && cond.column.startsWith('__not_')) {
-            const inner: Condition = {
-              kind: 'cmp',
-              column: cond.column.slice('__not_'.length),
-              op: cond.op,
-              value: cond.value,
-            };
-            return !evalCondition(row, inner);
-          }
-          return evalCondition(row, cond);
-        })
-      );
-      const count = out.length;
-      if (this.orderKey) {
-        const key = this.orderKey;
-        out = [...out].sort((a, b) => {
-          const av = String((a as unknown as Record<string, unknown>)[key] ?? '');
-          const bv = String((b as unknown as Record<string, unknown>)[key] ?? '');
-          return this.orderAsc ? av.localeCompare(bv) : bv.localeCompare(av);
-        });
-      }
-      if (this.rangeFrom !== null && this.rangeTo !== null) {
-        out = out.slice(this.rangeFrom, this.rangeTo + 1);
-      }
-      if (!this.head) {
-        this.tracker.returnedRowIds.push(...out.map((r) => r.id));
-      }
-      const result = { data: this.head ? [] : out, count, error: null };
-      return resolve ? resolve(result as never) : (result as never);
-    }, reject);
+  private execute(): MockQueryResult {
+    let out = this.rows.filter((row) =>
+      this.filters.every((cond) => {
+        if (cond.kind === 'cmp' && cond.column.startsWith('__not_')) {
+          const inner: Condition = {
+            kind: 'cmp',
+            column: cond.column.slice('__not_'.length),
+            op: cond.op,
+            value: cond.value,
+          };
+          return !evalCondition(row, inner);
+        }
+        return evalCondition(row, cond);
+      })
+    );
+    const count = out.length;
+    if (this.orderKey) {
+      const key = this.orderKey;
+      out = [...out].sort((a, b) => {
+        const av = String((a as unknown as Record<string, unknown>)[key] ?? '');
+        const bv = String((b as unknown as Record<string, unknown>)[key] ?? '');
+        return this.orderAsc ? av.localeCompare(bv) : bv.localeCompare(av);
+      });
+    }
+    if (this.rangeFrom !== null && this.rangeTo !== null) {
+      out = out.slice(this.rangeFrom, this.rangeTo + 1);
+    }
+    if (!this.head) {
+      this.tracker.returnedRowIds.push(...out.map((r) => r.id));
+    }
+    return { data: this.head ? [] : out, count, error: null };
   }
 }
 
@@ -267,12 +298,35 @@ export function createMockSupabasePages(
             query.select(columns, options),
           update: (payload: unknown) => {
             updates.push(payload);
-            return {
-              eq: () => ({
-                then: (resolve: (v: { error: null }) => unknown) =>
-                  Promise.resolve({ error: null }).then(resolve),
-              }),
+            // Chainable like the real PostgREST builder: production
+            // chains several eq() calls, then either awaits the
+            // builder (result ignored) or calls select(), which
+            // returns a genuine Promise. No thenable anywhere.
+            const eqFilters: Array<{ column: string; value: unknown }> = [];
+            const builder = {
+              eq: (column: string, value: unknown) => {
+                eqFilters.push({ column, value });
+                return builder;
+              },
+              select: () => {
+                const idFilter = eqFilters.find((f) => f.column === 'id');
+                const row = idFilter
+                  ? rows.find((r) => r.id === String(idFilter.value))
+                  : undefined;
+                return Promise.resolve({
+                  data: row
+                    ? [
+                        {
+                          id: row.id,
+                          external_destination_id: row.external_destination_id,
+                        },
+                      ]
+                    : [],
+                  error: null,
+                });
+              },
             };
+            return builder;
           },
         };
       }
