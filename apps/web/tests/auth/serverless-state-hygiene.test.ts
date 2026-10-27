@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { validateOtpServiceConfig, createPendingSignup, getPendingSignup } from '../../src/lib/otp-service';
-import { handleGetInsights } from '../../src/app/api/tenant/[subdomain]/pages/[pageId]/insights/route';
+import { handleGetPageInsights } from '../../src/app/api/tenant/[subdomain]/pages/[pageId]/insights/route';
+import type { GraphFetchFn } from '../../src/lib/insights/page-insights';
 import { signSessionToken, encryptToken, type DatabaseClient } from '@fbuploadpro/contracts';
 
 const TEST_SECRET = 'super-secret-session-signing-key-minimum-32-chars-long';
@@ -96,28 +97,39 @@ describe('[ISSUE-25] Serverless State Hygiene & Distributed Cache Enforcement', 
         TEST_ENCRYPTION_KEY
       );
 
+      // Rebuilt 2026-10-27: the new proxy reads the destination row via a
+      // Supabase-style client and fetches live Graph data (no server cache).
+      const chainable = (result: unknown) => {
+        const chain: Record<string, unknown> = {};
+        chain.select = vi.fn(() => chain);
+        chain.eq = vi.fn(() => chain);
+        chain.maybeSingle = vi.fn(() => Promise.resolve(result));
+        return chain;
+      };
       const mockDb = {
-        query: vi.fn().mockResolvedValue([
-          {
-            id: pageId,
-            user_id: userId,
-            fb_page_id: fbPageId,
-            page_name: 'Viral Cooking Daily',
-            encrypted_access_token: sampleEncryptedPageToken,
-            status: 'active',
-          },
-        ]),
+        from: vi.fn((table: string) => {
+          if (table === 'workspaces') return chainable({ data: { id: 'ws-1' }, error: null });
+          return chainable({
+            data: {
+              id: pageId,
+              external_destination_id: fbPageId,
+              encrypted_destination_token: sampleEncryptedPageToken,
+            },
+            error: null,
+          });
+        }),
       } as unknown as DatabaseClient;
 
-      const mockFetch = vi.fn().mockResolvedValue({
+      const mockFetch = vi.fn(async (url: string) => ({
         ok: true,
-        json: () =>
-          Promise.resolve({
-            name: 'Viral Cooking Daily',
-            fan_count: 24500,
-            followers_count: 28900,
-          }),
-      });
+        status: 200,
+        json: async () =>
+          url.includes('/insights?metric=page_follows_country')
+            ? { data: [] }
+            : url.includes('/insights?metric=page_media_view')
+              ? { data: [] }
+              : { followers_count: 28900 },
+      }));
 
       const request = new NextRequest(
         `https://acme.fbuploadpro.com/api/tenant/acme/pages/${pageId}/insights?range=28d`,
@@ -128,10 +140,13 @@ describe('[ISSUE-25] Serverless State Hygiene & Distributed Cache Enforcement', 
         }
       );
 
-      const res = await handleGetInsights(request, 'acme', pageId, {
-        dbClient: mockDb,
-        fetchImpl: mockFetch as unknown as typeof fetch,
-      });
+      const res = await handleGetPageInsights(
+        request,
+        'acme',
+        pageId,
+        mockDb as never,
+        mockFetch as unknown as GraphFetchFn,
+      );
 
       expect(res.status).toBe(200);
       const cacheControl = res.headers.get('Cache-Control');

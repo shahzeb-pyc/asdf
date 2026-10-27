@@ -22,3 +22,9 @@
 # Cleared by spec 131 PR-131-3: the tab-insights.tsx row (the last
 # non-allowlist entry) was removed when its browser-storage insights
 # cache was deleted (§8.6). No non-allowlist usages remain.
+#
+# Rebuilt Insights cache (PR #23): the tab's only cache, browser-local
+# by product order (1-hour TTL, Sync refetch, no DB storage). Count
+# frozen here so any future increase fails; the surface that owns this
+# file deletes or migrates it in its rebuild.
+apps/web/src/lib/insights/insights-local-cache.ts 6

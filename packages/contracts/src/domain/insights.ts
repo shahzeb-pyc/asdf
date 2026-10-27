@@ -1,82 +1,83 @@
 import { z } from 'zod';
 
+/**
+ * Page Insights response contract — rebuilt 2026-10-27 from live Facebook
+ * research (Graph API v26.0, Media Views / Media Viewers framework).
+ *
+ * Design notes (research-driven, not inherited from the deleted tab):
+ * - Legacy Reach / Impressions metrics retired by Meta on 2026-06-15 are
+ *   NOT in this contract. Headline distribution is Media Views
+ *   (`page_media_view`) and Unique Viewers (`page_total_media_view_unique`).
+ * - Every range-dependent figure is computed from the SAME selected window
+ *   (daily series summed over since/until). The single exception is the
+ *   audience breakdown, which Facebook only supplies as a lifetime
+ *   distribution — the UI must label it "All-time" and never present it
+ *   as a range figure.
+ * - Daily unique viewers summed over a window are NOT de-duplicated
+ *   unique people. The contract therefore names the field
+ *   `uniqueViewersDailySum`, and the engagement rate is defined against
+ *   media views (engagements / views), never against that sum.
+ * - Age/gender breakdowns are NOT offered: Meta removed those dimensions
+ *   from the Page Insights API in 2024.
+ * - Nothing in this contract is stored server-side. The server returns it
+ *   fresh from Facebook; the client may cache it locally for one hour.
+ */
+
 export const PageInsightsRangeSchema = z.enum(['7d', '14d', '28d', '90d']);
 export type PageInsightsRange = z.infer<typeof PageInsightsRangeSchema>;
 
-export const PageInsightsOverviewSchema = z.object({
-  pageName: z.string().nullable().default(null),
-  pageImage: z.string().nullable().default(null),
-  fanCount: z.number().int().nonnegative().default(0),
-  followersCount: z.number().int().nonnegative().default(0),
-  totalMediaViews: z.number().int().nonnegative().default(0),
-  totalVideoViews: z.number().int().nonnegative().default(0),
-  totalPostEngagements: z.number().int().nonnegative().default(0),
-});
-export type PageInsightsOverview = z.infer<typeof PageInsightsOverviewSchema>;
-
-export const PageInsightsTimeSeriesPointSchema = z.object({
+export const InsightsTrendPointSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  pageFollows: z.number().int().default(0),
-  dailyFollowsUnique: z.number().int().default(0),
-  dailyUnfollowsUnique: z.number().int().default(0),
-  mediaViews: z.number().int().default(0),
-  videoViews: z.number().int().default(0),
-  videoCompleteViews30s: z.number().int().default(0),
-  videoViewTimeMinutes: z.number().default(0),
+  views: z.number().int().nonnegative(),
+  viewers: z.number().int().nonnegative(),
 });
-export type PageInsightsTimeSeriesPoint = z.infer<typeof PageInsightsTimeSeriesPointSchema>;
+export type InsightsTrendPoint = z.infer<typeof InsightsTrendPointSchema>;
 
-export const PageInsightsReactionsSchema = z.object({
-  like: z.number().int().nonnegative().default(0),
-  love: z.number().int().nonnegative().default(0),
-  wow: z.number().int().nonnegative().default(0),
-  haha: z.number().int().nonnegative().default(0),
-  sorry: z.number().int().nonnegative().default(0),
-  anger: z.number().int().nonnegative().default(0),
-  total: z.number().int().nonnegative().default(0),
+export const InsightsReactionSchema = z.object({
+  kind: z.enum(['like', 'love', 'wow', 'haha', 'sad', 'angry']),
+  count: z.number().int().nonnegative(),
+  sharePct: z.number().min(0).max(100),
 });
-export type PageInsightsReactions = z.infer<typeof PageInsightsReactionsSchema>;
+export type InsightsReaction = z.infer<typeof InsightsReactionSchema>;
 
-export const DemographicItemSchema = z.object({
+export const InsightsAudienceItemSchema = z.object({
   name: z.string(),
   count: z.number().int().nonnegative(),
-  percentage: z.number().min(0).max(100),
+  sharePct: z.number().min(0).max(100),
 });
-export type DemographicItem = z.infer<typeof DemographicItemSchema>;
+export type InsightsAudienceItem = z.infer<typeof InsightsAudienceItemSchema>;
 
-export const PageInsightsDemographicsSchema = z.object({
-  topCountries: z.array(DemographicItemSchema).default([]),
-  topCities: z.array(DemographicItemSchema).default([]),
+export const InsightsKpisSchema = z.object({
+  followers: z.number().int().nonnegative(),
+  mediaViews: z.number().int().nonnegative(),
+  uniqueViewersDailySum: z.number().int().nonnegative(),
+  engagements: z.number().int().nonnegative(),
+  /** Engagements per media view, percent, 1 decimal — null when views are 0. */
+  engagementRatePct: z.number().nullable(),
+  /** New follows minus unfollows over the selected window (may be negative). */
+  netFollowerGrowth: z.number().int(),
+  /** Total video watch time over the window, whole minutes. */
+  videoWatchTimeMinutes: z.number().int().nonnegative(),
 });
-export type PageInsightsDemographics = z.infer<typeof PageInsightsDemographicsSchema>;
-
-export const PageInsightsHealthStatusSchema = z.enum([
-  'active',
-  'invalid_token',
-  '2fa_required_on_BM',
-  'fb_verification_required',
-  'rate_limited',
-  'account_suspended',
-]);
-export type PageInsightsHealthStatus = z.infer<typeof PageInsightsHealthStatusSchema>;
+export type InsightsKpis = z.infer<typeof InsightsKpisSchema>;
 
 export const PageInsightsResponseSchema = z.object({
   success: z.literal(true),
-  fbPageId: z.string(),
-  dateRange: PageInsightsRangeSchema,
-  cachedAt: z.string(),
-  cacheHit: z.boolean().default(false),
-  overview: PageInsightsOverviewSchema,
-  timeSeries: z.array(PageInsightsTimeSeriesPointSchema).default([]),
-  reactions: PageInsightsReactionsSchema,
-  demographics: PageInsightsDemographicsSchema,
-  healthStatus: PageInsightsHealthStatusSchema.default('active'),
+  pageId: z.string(),
+  range: PageInsightsRangeSchema,
+  /** ISO timestamp of the live fetch this payload came from. */
+  fetchedAt: z.string(),
+  kpis: InsightsKpisSchema,
+  trend: z.array(InsightsTrendPointSchema),
+  reactions: z.array(InsightsReactionSchema),
+  /** Lifetime distribution — NOT limited to `range`. UI must label it so. */
+  topCountries: z.array(InsightsAudienceItemSchema),
+  /** Lifetime distribution — NOT limited to `range`. UI must label it so. */
+  topCities: z.array(InsightsAudienceItemSchema),
 });
 export type PageInsightsResponse = z.infer<typeof PageInsightsResponseSchema>;
 
 export const PageInsightsQuerySchema = z.object({
   range: PageInsightsRangeSchema.default('28d'),
-  refresh: z.enum(['true', 'false']).optional().transform((val) => val === 'true'),
 });
 export type PageInsightsQuery = z.infer<typeof PageInsightsQuerySchema>;
-

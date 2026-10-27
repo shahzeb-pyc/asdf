@@ -17,7 +17,6 @@ import {
   MagicLinkResponseSchema,
   MediaListResponseSchema,
   PageDetailResponseSchema,
-  PageInsightsResponseSchema,
   PlatformCredentialsResponseSchema,
   RevealByocSecretResponseSchema,
   RevealPlatformSecretResponseSchema,
@@ -154,45 +153,6 @@ describe('pages schemas', () => {
   it('rejects an unknown page status', () => {
     const bad = { pages: [{ ...page, status: 'mystery' }], total: 1 };
     expect(ListFacebookPagesResponseSchema.safeParse(bad).success).toBe(false);
-  });
-
-  it('parses a full insights response', () => {
-    const result = PageInsightsResponseSchema.parse({
-      success: true,
-      fbPageId: '999',
-      dateRange: '28d',
-      cachedAt: ISO,
-      cacheHit: false,
-      overview: {
-        pageName: 'My Page',
-        pageImage: null,
-        fanCount: 25,
-        followersCount: 25,
-        totalMediaViews: 100,
-        totalVideoViews: 40,
-        totalPostEngagements: 12,
-      },
-      timeSeries: [
-        {
-          date: '2026-10-22',
-          pageFollows: 1,
-          dailyFollowsUnique: 1,
-          dailyUnfollowsUnique: 0,
-          mediaViews: 10,
-          videoViews: 4,
-          videoCompleteViews30s: 2,
-          videoViewTimeMinutes: 3.5,
-        },
-      ],
-      reactions: { like: 5, love: 2, wow: 0, haha: 1, sorry: 0, anger: 0, total: 8 },
-      demographics: {
-        topCountries: [{ name: 'US', count: 10, percentage: 40 }],
-        topCities: [],
-      },
-      healthStatus: 'active',
-    });
-    expect(result.overview.fanCount).toBe(25);
-    expect(result.demographics.topCountries[0]?.name).toBe('US');
   });
 });
 
