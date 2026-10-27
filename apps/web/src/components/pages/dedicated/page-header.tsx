@@ -95,14 +95,26 @@ interface PageStatusDetails {
 }
 
 function resolvePageStatus(status: FacebookPageItem['status']): PageStatusDetails {
-  if (
-    status === 'invalid_token' ||
-    status === 'page_checkpoint' ||
-    status === 'fb_rate_limited'
-  ) {
+  if (status === 'invalid_token') {
     return {
       isPaused: false,
-      statusLabel: 'Needs Attention',
+      statusLabel: 'Token Expired',
+      ringClass: 'ring-signal-critical',
+    };
+  }
+
+  if (status === 'page_checkpoint') {
+    return {
+      isPaused: false,
+      statusLabel: 'Identity Checkpoint',
+      ringClass: 'ring-signal-critical',
+    };
+  }
+
+  if (status === 'fb_rate_limited') {
+    return {
+      isPaused: false,
+      statusLabel: 'Rate Limited',
       ringClass: 'ring-signal-critical',
     };
   }

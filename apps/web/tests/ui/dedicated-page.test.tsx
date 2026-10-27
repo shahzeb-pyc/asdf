@@ -948,6 +948,32 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
   });
 
   describe('DedicatedPageHeader Checkpoint Verification Banner', () => {
+    it.each([
+      ['invalid_token', 'Token Expired'],
+      ['page_checkpoint', 'Identity Checkpoint'],
+      ['fb_rate_limited', 'Rate Limited'],
+    ] as const)(
+      'shows the specific %s label in the status line, not the generic Needs Attention',
+      (status, label) => {
+        const { html } = render(
+          <DedicatedPageHeader
+            page={{ ...samplePage, status }}
+            subdomain="cyberdyne"
+            onStatusToggle={vi.fn()}
+            onDisconnectRequest={vi.fn()}
+          />
+        );
+
+        const match = html.match(
+          /data-testid="dedicated-page-status"[^>]*>([\s\S]*?)<\/span>/
+        );
+        expect(match).not.toBeNull();
+        const statusText = (match?.[1] ?? '').replace(/<[^>]*>/g, '');
+        expect(statusText).toContain(label);
+        expect(statusText).not.toContain('Needs Attention');
+      }
+    );
+
     it('renders checkpoint-reactivation-banner when page status is page_checkpoint', () => {
       const checkpointPage: FacebookPageItem = {
         ...samplePage,
