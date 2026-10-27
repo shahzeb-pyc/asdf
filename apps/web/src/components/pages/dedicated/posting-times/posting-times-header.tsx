@@ -31,7 +31,7 @@ export function PostingTimesHeader({
       <div className="flex flex-col gap-1">
         <h2 className="text-xl leading-heading font-bold text-ink">Posting Times</h2>
         <p className="text-body text-ink-sub">
-          Daily posting windows and the post types that can go out in each.
+          Your daily posting times, and the post types that can go out at each one.
         </p>
         <p className="text-metadata text-ink-sub">
           Times shown in <span className="font-semibold text-ink">{activeTimezone}</span>
@@ -39,17 +39,18 @@ export function PostingTimesHeader({
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button
+        <span>
+          <span className="text-ink-sub">Timezone:</span>{' '}
+          <span className="font-semibold">{activeTimezone}</span>
+        </span>
+        <button
           type="button"
-          variant="outline"
           data-testid="schedule-timezone-trigger"
           onClick={onOpenTimezoneModal}
-          className="gap-2"
+          className="text-link underline"
         >
-          <span className="text-ink-sub">Timezone:</span>
-          <span className="font-semibold">{activeTimezone}</span>
-          <span className="text-link underline">Change</span>
-        </Button>
+          Change
+        </button>
 
         <Button type="button" data-testid="add-slot-button" onClick={onOpenAddModal}>
           <PlusIcon aria-hidden />
