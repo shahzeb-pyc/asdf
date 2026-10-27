@@ -168,6 +168,7 @@ export function DedicatedPageHeader({
 }: Readonly<DedicatedPageHeaderProps>) {
   const router = useRouter();
   const [isUpdatingStatus, setIsUpdatingStatus] = React.useState(false);
+  const [isMenuOpen, setIsMenuOpen] = React.useState(false);
   const [isDisconnectDialogOpen, setIsDisconnectDialogOpen] = React.useState(false);
   const [isDisconnecting, setIsDisconnecting] = React.useState(false);
 
@@ -189,13 +190,26 @@ export function DedicatedPageHeader({
         ? 'text-brand-rose'
         : 'text-ink-sub';
 
+  // Pause/resume feedback: the menu is controlled and stays open while
+  // the mutation runs (Radix would otherwise close it the instant the
+  // item is clicked, hiding the "Updating..." state), and closes once
+  // the mutation settles. The shell's success/error toasts remain the
+  // completion feedback — no extra toasts are added here.
   const handleStatusAction = async () => {
     setIsUpdatingStatus(true);
     try {
       await onStatusToggle(statusInfo.isPaused ? 'active' : 'paused');
     } finally {
       setIsUpdatingStatus(false);
+      setIsMenuOpen(false);
     }
+  };
+
+  const handleMenuOpenChange = (open: boolean) => {
+    // Never let the menu close while the status mutation is running —
+    // that would hide the in-menu "Updating..." state again.
+    if (!open && isUpdatingStatus) return;
+    setIsMenuOpen(open);
   };
 
   const handleReactivate = async () => {
@@ -297,6 +311,18 @@ export function DedicatedPageHeader({
                 />
               </span>
 
+              {/* Backup feedback that survives any menu behaviour: while a
+                  status mutation runs, the header itself says so. */}
+              {isUpdatingStatus && (
+                <span
+                  data-testid="header-status-updating"
+                  aria-live="polite"
+                  className="text-body text-ink-sub"
+                >
+                  Updating...
+                </span>
+              )}
+
               {page.accountDisplayName && (
                 <>
                   <span aria-hidden className="h-3 w-px shrink-0 bg-line" />
@@ -370,7 +396,7 @@ export function DedicatedPageHeader({
             <span>Create Posts</span>
           </Button>
 
-          <Menu>
+          <Menu open={isMenuOpen} onOpenChange={handleMenuOpenChange}>
             <MenuTrigger asChild>
               <Button
                 type="button"
@@ -386,7 +412,13 @@ export function DedicatedPageHeader({
               <MenuItem
                 data-testid="header-menu-pause-resume-btn"
                 disabled={isUpdatingStatus}
-                onSelect={() => void handleStatusAction()}
+                onSelect={(event) => {
+                  // Prevent Radix closing the menu on select so the
+                  // "Updating..." state stays visible until the
+                  // mutation settles (handleStatusAction closes it).
+                  event.preventDefault();
+                  void handleStatusAction();
+                }}
               >
                 {statusInfo.isPaused ? (
                   <PlayIcon aria-hidden />

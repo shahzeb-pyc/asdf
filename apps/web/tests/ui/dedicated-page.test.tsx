@@ -310,6 +310,58 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
       expect(onStatusToggle).toHaveBeenCalledWith('active');
     });
 
+    it('keeps the menu open showing Updating... while pause/resume runs, then closes it', async () => {
+      const user = userEvent.setup();
+      let resolveToggle!: (value: undefined) => void;
+      const togglePromise = new Promise<undefined>((resolve) => {
+        resolveToggle = resolve;
+      });
+      const onStatusToggle = vi.fn().mockImplementation(() => togglePromise);
+
+      const { container } = rtlRender(
+        <DedicatedPageHeader
+          page={samplePage}
+          subdomain="cyberdyne"
+          onStatusToggle={onStatusToggle}
+          onDisconnectRequest={vi.fn()}
+        />
+      );
+
+      await user.click(
+        container.querySelector('[data-testid="header-settings-dropdown-btn"]') as Element
+      );
+      const pauseItem = document.querySelector(
+        '[data-testid="header-menu-pause-resume-btn"]'
+      ) as Element;
+      await user.click(pauseItem);
+      expect(onStatusToggle).toHaveBeenCalledWith('paused');
+
+      // Feedback while pending: the menu must NOT have closed, the item
+      // shows Updating..., and the header itself shows Updating... too.
+      const pendingItem = document.querySelector(
+        '[data-testid="header-menu-pause-resume-btn"]'
+      );
+      expect(pendingItem).not.toBeNull();
+      expect(pendingItem?.textContent).toContain('Updating...');
+      expect(
+        container.querySelector('[data-testid="header-status-updating"]')
+      ).not.toBeNull();
+      expect(
+        container.querySelector('[data-testid="header-status-updating"]')?.textContent
+      ).toContain('Updating...');
+
+      // Settle: the menu closes and the header indicator clears.
+      resolveToggle(undefined);
+      await waitFor(() => {
+        expect(
+          document.querySelector('[data-testid="header-menu-pause-resume-btn"]')
+        ).toBeNull();
+      });
+      expect(
+        container.querySelector('[data-testid="header-status-updating"]')
+      ).toBeNull();
+    });
+
     it('renders Create Posts button that calls onCreatePosts when provided and does nothing when absent', () => {
       const onCreatePosts = vi.fn();
 
