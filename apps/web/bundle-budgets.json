@@ -51,7 +51,7 @@
         "firstLoadGzipBytes": 160057,
         "firstLoadRawBytes": 531438,
         "routeSpecificGzipBytes": 27670,
-        "routeSpecificRawBytes": 80486
+        "routeSpecificRawBytes": 86500
       },
       "/tenant/[subdomain]/instagram/accounts": {
         "firstLoadGzipBytes": 159784,
@@ -98,8 +98,8 @@
       "/tenant/[subdomain]/x/accounts": {
         "firstLoadGzipBytes": 158447,
         "firstLoadRawBytes": 527373,
-        "routeSpecificGzipBytes": 24599,
-        "routeSpecificRawBytes": 76421
+        "routeSpecificGzipBytes": 25741,
+        "routeSpecificRawBytes": 80495
       },
       "/tenant/[subdomain]": {
         "firstLoadGzipBytes": 158328,
@@ -268,7 +268,7 @@
         "firstLoadGzipBytes": 168060,
         "firstLoadRawBytes": 558010,
         "routeSpecificGzipBytes": 29054,
-        "routeSpecificRawBytes": 84511
+        "routeSpecificRawBytes": 90825
       },
       "/tenant/[subdomain]/destinations/[destinationId]": {
         "firstLoadGzipBytes": 172108,
@@ -339,8 +339,8 @@
       "/tenant/[subdomain]/x/accounts": {
         "firstLoadGzipBytes": 166370,
         "firstLoadRawBytes": 553742,
-        "routeSpecificGzipBytes": 25829,
-        "routeSpecificRawBytes": 80243
+        "routeSpecificGzipBytes": 27029,
+        "routeSpecificRawBytes": 84520
       },
       "/tenant/[subdomain]/youtube/accounts": {
         "firstLoadGzipBytes": 167373,
