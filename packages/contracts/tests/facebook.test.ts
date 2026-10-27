@@ -173,6 +173,33 @@ describe('Facebook Account & Page Domain Schemas', () => {
       expect(parsedDiscovered.profilePictureUrl).toBe(picUrl);
     });
 
+    it('accepts accountPictureUrl on FacebookPageViewSchema and defaults it to null', () => {
+      const picUrl = 'https://platform-lookaside.fbsbx.com/platform/profilepic/account.jpg';
+      const withPic = FacebookPageViewSchema.parse({
+        id: pageId,
+        facebookAccountId: accountId,
+        accountDisplayName: 'Alex Marketing',
+        accountPictureUrl: picUrl,
+        fbPageId: 'page_987654321',
+        pageName: 'Tech Deals Daily',
+        status: 'active',
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+        updatedAt: new Date('2026-01-01T00:00:00Z'),
+      });
+      expect(withPic.accountPictureUrl).toBe(picUrl);
+
+      const withoutPic = FacebookPageViewSchema.parse({
+        id: pageId,
+        facebookAccountId: accountId,
+        fbPageId: 'page_987654321',
+        pageName: 'Tech Deals Daily',
+        status: 'active',
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+        updatedAt: new Date('2026-01-01T00:00:00Z'),
+      });
+      expect(withoutPic.accountPictureUrl).toBeNull();
+    });
+
     it('defaults followersCount, startingFollowers, and currentFollowers to 0 and status to active', () => {
       const minimalPage = {
         id: pageId,

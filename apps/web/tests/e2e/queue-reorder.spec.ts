@@ -1,16 +1,18 @@
 /**
- * Spec 134 PR-134-1 (§7.5 / 137 §4.6): queue reorder with
- * time-consequence display.
+ * Queue tab placeholder — dedicated Page section redesign.
  *
- * Two queued posts sit on the fixture page's 09:00 and 10:00 slots.
- * Reordering the first post down by keyboard (Space lift, ArrowDown,
- * Space drop — the non-drag twin, UI Rule 21) must visibly reassign the
- * slot times: times stay with positions, posts move through them. The
- * affected rows' displayed times swap, the live region announces the
- * new position and time, and the spec-112 success feedback appears.
- * A second test exercises the panel at the spec 142 mobile widths
- * (320/390/768): no horizontal overflow, rows and reorder controls
- * reachable. All API traffic stays inside the fixture boundary.
+ * The old queue list (rows, drag handles, keyboard reorder, Bulk add)
+ * was deliberately removed with the dedicated redesign: the Queue tab
+ * is an empty placeholder ("This section is being rebuilt") until the
+ * Queue section is rebuilt later, more professionally. The previous
+ * spec 134 reorder tests and the spec 132 bulk-flow tests asserted
+ * that removed UI, so they cannot pass on this branch — this spec
+ * replaces them as the guard for the placeholder state: even with
+ * queued items in the fixture, the Queue tab shows only the
+ * placeholder, with no rows, no reorder controls, and no Bulk add
+ * entry point. Reorder and bulk E2E coverage returns with the
+ * professional queue rebuild, when these tests must be rewritten
+ * again for the new UI.
  */
 
 import { test, expect } from '@playwright/test';
@@ -37,69 +39,45 @@ function seedQueue() {
   });
 }
 
-test.describe('queue reorder (spec 134)', () => {
-  test('keyboard reorder reassigns slot times visibly and announces them', async ({
+test.describe('queue tab placeholder (dedicated redesign)', () => {
+  test('Queue tab shows only the placeholder, even with queued items', async ({
     page,
     context,
   }) => {
     await context.addCookies([SESSION_COOKIE]);
-    const state = seedQueue();
-    await installApiFixtures(page, state);
+    await installApiFixtures(page, seedQueue());
 
     await page.goto(`/tenant/${TENANT.subdomain}/pages/${FACEBOOK_PAGE.id}`);
     await page.getByTestId('tab-queue-btn').click();
 
-    const rowA = page.getByTestId(`queue-row-${ID_A}`);
-    const rowB = page.getByTestId(`queue-row-${ID_B}`);
-    await expect(rowA).toBeVisible();
-    await expect(rowA).toContainText('9:00 AM UTC');
-    await expect(rowB).toContainText('10:00 AM UTC');
+    const placeholder = page.getByTestId('page-tab-queue-placeholder');
+    await expect(placeholder).toBeVisible();
+    await expect(placeholder).toContainText('This section is being rebuilt.');
 
-    // Keyboard reorder: lift the first post, move it down, drop it.
-    const handle = page.getByTestId(`queue-drag-handle-${ID_A}`);
-    await handle.focus();
-    await page.keyboard.press(' ');
-    await page.keyboard.press('ArrowDown');
-
-    // Time-consequence display: the two posts exchange slot times.
-    await expect(rowA).toContainText('10:00 AM UTC');
-    await expect(rowB).toContainText('9:00 AM UTC');
-    await page.keyboard.press(' ');
-
-    // The live region announced the new position and time, and the
-    // spec-112 success feedback appeared (shared Toast system).
-    await expect(page.getByTestId('queue-reorder-announcer')).toContainText('position 2 of 2');
-    await expect(page.getByText('Queue reordered — posting times updated.')).toBeVisible();
-
-    // The fixture state recorded both items' new times.
-    const a = state.queue.find((q) => q.id === ID_A);
-    const b = state.queue.find((q) => q.id === ID_B);
-    expect(a?.scheduledTime).toBe('2026-12-01T10:00:00.000Z');
-    expect(b?.scheduledTime).toBe('2026-12-01T09:00:00.000Z');
+    // The removed UI must not be reachable from this tab.
+    await expect(page.getByTestId(`queue-row-${ID_A}`)).toHaveCount(0);
+    await expect(page.getByTestId(`queue-row-${ID_B}`)).toHaveCount(0);
+    await expect(page.getByTestId(`queue-drag-handle-${ID_A}`)).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Bulk add' })).toHaveCount(0);
   });
 
-  test('panel is usable at mobile widths with no horizontal overflow (spec 142 gate)', async ({
+  test('placeholder tab is usable at mobile widths with no horizontal overflow (spec 142 gate)', async ({
     page,
     context,
   }) => {
     await context.addCookies([SESSION_COOKIE]);
-    const state = seedQueue();
-    await installApiFixtures(page, state);
+    await installApiFixtures(page, seedQueue());
 
     for (const width of [320, 390, 768]) {
       await page.setViewportSize({ width, height: 844 });
       await page.goto(`/tenant/${TENANT.subdomain}/pages/${FACEBOOK_PAGE.id}`);
       await page.getByTestId('tab-queue-btn').click();
-      const rowA = page.getByTestId(`queue-row-${ID_A}`);
-      await expect(rowA).toBeVisible();
-      // Zero unintended horizontal overflow at this width.
+      await expect(page.getByTestId('page-tab-queue-placeholder')).toBeVisible();
       const overflow = await page.evaluate(() => {
         const el = document.scrollingElement;
         return el ? el.scrollWidth - el.clientWidth : 0;
       });
       expect(overflow, `horizontal overflow at ${width}px`).toBeLessThanOrEqual(0);
-      // Reorder controls are tap-reachable (not hover-only).
-      await expect(page.getByTestId(`queue-drag-handle-${ID_A}`)).toBeVisible();
     }
   });
 });

@@ -536,7 +536,8 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
       </div>
 
       {/* Flow-scoped toaster for Add Page confirmations only: TOP-RIGHT
-          (the shared tenant Toaster stays bottom-right everywhere else).
+          (the shared tenant Toaster is top-right too, see the tenant
+          layout mount).
           Toasts reach it via toasterId, never via the shared default.
           NOTE: passing toastOptions here replaces the shared Toast's
           defaults wholesale (its {...props} spread comes last), so the

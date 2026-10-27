@@ -139,7 +139,20 @@ export default async function TenantLayout({ params, children }: Readonly<Tenant
             <div id="tenant-banner-slot" data-slot="tenant-banner-slot" />
             {children}
         </SidebarInset>
-        <Toaster />
+        {/*
+          Tenant toasts sit top-right (not the shared default
+          bottom-right): the flow-scoped Accounts/Pages toasters already
+          use top-right, and dedicated-page feedback (automation
+          paused/resumed, publishing, slots, timezone) must be visible
+          at once, not below the fold. Top offset mirrors the shared
+          bottom offset (24px desktop / 16px mobile) against the top
+          safe-area inset, so toasts never hug the very edge.
+        */}
+        <Toaster
+          position="top-right"
+          offset={{ top: 'max(24px, env(safe-area-inset-top))' }}
+          mobileOffset={{ top: 'max(16px, env(safe-area-inset-top))' }}
+        />
       </SidebarProvider>
     </DataProvider>
   );

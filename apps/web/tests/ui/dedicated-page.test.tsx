@@ -11,20 +11,18 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   DedicatedPageHeader,
   PageTabDashboard,
-  PageTabQueue,
   PageTabPostingTimes,
-  PageTabSettings,
-  PostComposer,
   getMediaCapNotice,
   type PageSlotSummary,
-  type DedicatedQueueItem,
+  type PageQueueItemSummary,
 } from '@/components/pages/dedicated';
 // Spec 131 PR-131-3 (named update, §8.1 server-first): the route file is
 // now a server component; the client frame lives in page-section-shell
 // with the same default-export props contract this suite always used.
 import TenantDedicatedPageView from '@/app/tenant/[subdomain]/pages/[pageId]/page-section-shell';
 import { queryKeys } from '@/lib/data/query-keys';
-import { render as rtlRender, fireEvent } from '@testing-library/react';
+import { render as rtlRender, fireEvent, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import type { FacebookPageItem } from '@/components/pages/page-card';
 
 const mockPush = vi.fn();
@@ -37,6 +35,12 @@ vi.mock('next/navigation', () => ({
   useParams: () => ({
     subdomain: 'cyberdyne',
     pageId: 'page-101',
+  }),
+  // Dedicated tab row reads ?tab= from the URL; this suite's renders
+  // carry no query string, so the row falls back to initialTab.
+  useSearchParams: () => ({
+    get: () => null,
+    toString: () => '',
   }),
 }));
 
@@ -118,41 +122,26 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
     createdAt: '2026-10-01T00:00:00.000Z',
   };
 
-  const sampleQueueItems: DedicatedQueueItem[] = [
+  const sampleQueueItems: PageQueueItemSummary[] = [
     {
       id: 'q-item-1',
       mediaId: 'med-1',
+      mediaType: 'video',
       caption: 'Cutting-edge autonomous manufacturing video teaser.',
       firstComment: 'Read the full blueprint at https://skynet.tech',
       scheduledTime: '2026-10-15T09:00:00.000Z',
       status: 'queued',
-      createdAt: '2026-10-12T10:00:00.000Z',
-      media: {
-        name: 'teaser.mp4',
-        mediaType: 'video',
-        url: 'https://r2.example.com/teaser.mp4',
-        thumbnailUrl: 'https://r2.example.com/teaser-thumb.jpg',
-        aspectRatio: '16:9',
-        durationSeconds: 45,
-      },
+      thumbnailUrl: 'https://r2.example.com/teaser-thumb.jpg',
     },
     {
       id: 'q-item-2',
       mediaId: 'med-2',
+      mediaType: 'image',
       caption: 'Infographic of weekly neural network updates.',
       firstComment: null,
       scheduledTime: '2026-10-15T15:00:00.000Z',
       status: 'published',
-      publishedAt: '2026-10-15T15:00:05.000Z',
-      createdAt: '2026-10-12T11:00:00.000Z',
-      media: {
-        name: 'neural.png',
-        mediaType: 'image',
-        url: 'https://r2.example.com/neural.png',
-        thumbnailUrl: 'https://r2.example.com/neural.png',
-        aspectRatio: '1:1',
-        durationSeconds: null,
-      },
+      thumbnailUrl: 'https://r2.example.com/neural.png',
     },
   ];
 
@@ -183,7 +172,6 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
   describe('DedicatedPageHeader Component', () => {
     it('renders page identity, avatar, account name, category, and unboxed status signal', () => {
       const onStatusToggle = vi.fn();
-      const onOpenAddQueue = vi.fn();
       const onDisconnectRequest = vi.fn();
 
       const { hasText, hasAttribute } = render(
@@ -191,7 +179,6 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
           page={samplePage}
           subdomain="cyberdyne"
           onStatusToggle={onStatusToggle}
-          onOpenAddQueue={onOpenAddQueue}
           onDisconnectRequest={onDisconnectRequest}
         />
       );
@@ -202,9 +189,18 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
       expect(hasText('Active')).toBe(true);
       expect(hasAttribute('data-testid', 'dedicated-page-status')).toBe(true);
       expect(hasAttribute('data-testid', 'page-live-link')).toBe(true);
-      expect(hasAttribute('data-testid', 'header-automation-status')).toBe(true);
-      expect(hasText('Automation on')).toBe(true);
-      expect(hasAttribute('data-testid', 'header-add-queue-btn')).toBe(true);
+      expect(hasAttribute('data-testid', 'dedicated-account')).toBe(true);
+      expect(hasText('Added 1 Oct 2026')).toBe(true);
+      expect(hasAttribute('data-testid', 'dedicated-page-followers-gained')).toBe(true);
+      expect(hasText('+4,200 gained')).toBe(true);
+      // Actions cluster: Create Posts first, then the three-dots menu.
+      // Pause/Resume and Disconnect live ONLY inside the menu (closed in
+      // static markup), so no standalone pause/disconnect buttons exist.
+      expect(hasAttribute('data-testid', 'header-create-posts-btn')).toBe(true);
+      expect(hasAttribute('data-testid', 'header-settings-dropdown-btn')).toBe(true);
+      expect(hasAttribute('data-testid', 'header-pause-resume-btn')).toBe(false);
+      expect(hasAttribute('data-testid', 'header-disconnect-btn')).toBe(false);
+      expect(hasAttribute('data-testid', 'header-add-queue-btn')).toBe(false);
     });
 
     it('renders monogram avatar fallback when no profile picture URL exists', () => {
@@ -219,12 +215,77 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
           page={pageWithoutPic}
           subdomain="cyberdyne"
           onStatusToggle={vi.fn()}
-          onOpenAddQueue={vi.fn()}
           onDisconnectRequest={vi.fn()}
         />
       );
 
       expect(hasText('SK')).toBe(true);
+    });
+
+    it('renders the real connected-account picture when accountPictureUrl is present', () => {
+      const { container } = rtlRender(
+        <DedicatedPageHeader
+          page={{
+            ...samplePage,
+            accountPictureUrl: 'https://images.example.com/account.jpg',
+          }}
+          subdomain="cyberdyne"
+          onStatusToggle={vi.fn()}
+          onDisconnectRequest={vi.fn()}
+        />
+      );
+
+      const avatar = container.querySelector(
+        '[data-testid="dedicated-account-avatar"]'
+      );
+      expect(avatar).not.toBeNull();
+      expect(avatar?.querySelector('img')?.getAttribute('src')).toContain(
+        'account.jpg'
+      );
+      expect(avatar?.textContent).not.toContain('JC');
+    });
+
+    it('renders account initials when accountPictureUrl is absent', () => {
+      const { container } = rtlRender(
+        <DedicatedPageHeader
+          page={samplePage}
+          subdomain="cyberdyne"
+          onStatusToggle={vi.fn()}
+          onDisconnectRequest={vi.fn()}
+        />
+      );
+
+      const avatar = container.querySelector(
+        '[data-testid="dedicated-account-avatar"]'
+      );
+      expect(avatar).not.toBeNull();
+      expect(avatar?.querySelector('img')).toBeNull();
+      expect(avatar?.textContent).toContain('JC');
+    });
+
+    it('falls back to account initials when the account picture fails to load', () => {
+      const { container } = rtlRender(
+        <DedicatedPageHeader
+          page={{
+            ...samplePage,
+            accountPictureUrl: 'https://images.example.com/broken-account.jpg',
+          }}
+          subdomain="cyberdyne"
+          onStatusToggle={vi.fn()}
+          onDisconnectRequest={vi.fn()}
+        />
+      );
+
+      const avatar = container.querySelector(
+        '[data-testid="dedicated-account-avatar"]'
+      );
+      const img = avatar?.querySelector('img');
+      expect(img).not.toBeNull();
+      fireEvent.error(img as Element);
+      expect(
+        container.querySelector('[data-testid="dedicated-account-avatar"]')
+          ?.textContent
+      ).toContain('JC');
     });
 
     it('resets avatar error state when profilePictureUrl changes on navigation (Audit Issue 26)', () => {
@@ -242,7 +303,6 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
           page={pageWithPic}
           subdomain="cyberdyne"
           onStatusToggle={vi.fn()}
-          onOpenAddQueue={vi.fn()}
           onDisconnectRequest={vi.fn()}
         />
       );
@@ -258,51 +318,133 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
       ).not.toBeNull();
     });
 
-    it('shows automation status text only — no toggle in the header', async () => {
+    it('pauses and resumes posting through onStatusToggle via the menu', async () => {
+      const user = userEvent.setup();
       const onStatusToggle = vi.fn().mockResolvedValue(undefined);
 
-      const { hasText, hasAttribute } = render(
+      const { container } = rtlRender(
         <DedicatedPageHeader
           page={samplePage}
           subdomain="cyberdyne"
           onStatusToggle={onStatusToggle}
-          onOpenAddQueue={vi.fn()}
           onDisconnectRequest={vi.fn()}
         />
       );
 
-      expect(hasAttribute('data-testid', 'header-automation-status')).toBe(true);
-      expect(hasText('Automation on')).toBe(true);
-      expect(hasAttribute('data-testid', 'header-status-toggle-btn')).toBe(false);
+      // Pause/Resume lives ONLY inside the three-dots menu now.
+      expect(container.querySelector('[data-testid="header-pause-resume-btn"]')).toBeNull();
+      await user.click(
+        container.querySelector('[data-testid="header-settings-dropdown-btn"]') as Element
+      );
+      const pauseItem = document.querySelector('[data-testid="header-menu-pause-resume-btn"]');
+      expect(pauseItem?.textContent).toContain('Pause posting');
+      await user.click(pauseItem as Element);
+      expect(onStatusToggle).toHaveBeenCalledWith('paused');
+    });
 
-      const { hasText: hasPausedText } = render(
+    it('shows Resume posting on a paused page and resumes through onStatusToggle via the menu', async () => {
+      const user = userEvent.setup();
+      const onStatusToggle = vi.fn().mockResolvedValue(undefined);
+
+      const { container } = rtlRender(
         <DedicatedPageHeader
           page={{ ...samplePage, status: 'paused' }}
           subdomain="cyberdyne"
           onStatusToggle={onStatusToggle}
-          onOpenAddQueue={vi.fn()}
           onDisconnectRequest={vi.fn()}
         />
       );
-      expect(hasPausedText('Automation off')).toBe(true);
+
+      await user.click(
+        container.querySelector('[data-testid="header-settings-dropdown-btn"]') as Element
+      );
+      const resumeItem = document.querySelector('[data-testid="header-menu-pause-resume-btn"]');
+      expect(resumeItem?.textContent).toContain('Resume posting');
+      await user.click(resumeItem as Element);
+      expect(onStatusToggle).toHaveBeenCalledWith('active');
     });
 
-    it('opens add to queue modal on button click', () => {
-      const onOpenAddQueue = vi.fn();
+    it('keeps the menu open showing Updating... while pause/resume runs, then closes it', async () => {
+      const user = userEvent.setup();
+      let resolveToggle!: (value: undefined) => void;
+      const togglePromise = new Promise<undefined>((resolve) => {
+        resolveToggle = resolve;
+      });
+      const onStatusToggle = vi.fn().mockImplementation(() => togglePromise);
 
-      const tree = renderAndCaptureTree(() =>
-        DedicatedPageHeader({
-          page: samplePage,
-          subdomain: 'cyberdyne',
-          onStatusToggle: vi.fn(),
-          onOpenAddQueue,
-          onDisconnectRequest: vi.fn(),
-        })
+      const { container } = rtlRender(
+        <DedicatedPageHeader
+          page={samplePage}
+          subdomain="cyberdyne"
+          onStatusToggle={onStatusToggle}
+          onDisconnectRequest={vi.fn()}
+        />
       );
 
-      const addBtn = findElementByTestId(tree, 'header-add-queue-btn');
-      addBtn?.props.onClick();
-      expect(onOpenAddQueue).toHaveBeenCalledTimes(1);
+      await user.click(
+        container.querySelector('[data-testid="header-settings-dropdown-btn"]') as Element
+      );
+      const pauseItem = document.querySelector(
+        '[data-testid="header-menu-pause-resume-btn"]'
+      ) as Element;
+      await user.click(pauseItem);
+      expect(onStatusToggle).toHaveBeenCalledWith('paused');
+
+      // Feedback while pending: the menu must NOT have closed, the item
+      // shows Updating..., and the header itself shows Updating... too.
+      const pendingItem = document.querySelector(
+        '[data-testid="header-menu-pause-resume-btn"]'
+      );
+      expect(pendingItem).not.toBeNull();
+      expect(pendingItem?.textContent).toContain('Updating...');
+      expect(
+        container.querySelector('[data-testid="header-status-updating"]')
+      ).not.toBeNull();
+      expect(
+        container.querySelector('[data-testid="header-status-updating"]')?.textContent
+      ).toContain('Updating...');
+
+      // Settle: the menu closes and the header indicator clears.
+      resolveToggle(undefined);
+      await waitFor(() => {
+        expect(
+          document.querySelector('[data-testid="header-menu-pause-resume-btn"]')
+        ).toBeNull();
+      });
+      expect(
+        container.querySelector('[data-testid="header-status-updating"]')
+      ).toBeNull();
+    });
+
+    it('renders Create Posts button that calls onCreatePosts when provided and does nothing when absent', () => {
+      const onCreatePosts = vi.fn();
+
+      const { container } = rtlRender(
+        <DedicatedPageHeader
+          page={samplePage}
+          subdomain="cyberdyne"
+          onStatusToggle={vi.fn()}
+          onDisconnectRequest={vi.fn()}
+          onCreatePosts={onCreatePosts}
+        />
+      );
+
+      const createBtn = container.querySelector('[data-testid="header-create-posts-btn"]');
+      expect(createBtn).not.toBeNull();
+      fireEvent.click(createBtn as Element);
+      expect(onCreatePosts).toHaveBeenCalledTimes(1);
+
+      // Without the prop, clicking must not throw (dialogue is separate work).
+      const { container: plainContainer } = rtlRender(
+        <DedicatedPageHeader
+          page={samplePage}
+          subdomain="cyberdyne"
+          onStatusToggle={vi.fn()}
+          onDisconnectRequest={vi.fn()}
+        />
+      );
+      const plainBtn = plainContainer.querySelector('[data-testid="header-create-posts-btn"]');
+      expect(() => fireEvent.click(plainBtn as Element)).not.toThrow();
     });
 
     it('enforces Option A standards: no bullet dots, status-ring avatar, uniform actions', () => {
@@ -310,44 +452,181 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
       // inline styles (avatar ring border, 34px heights). The rebuild
       // deletes every inline style in this file (ratchet debit), so the
       // same geometry is asserted on the design-system output instead:
-      // a 44px next/image avatar carrying the operational status ring,
+      // a 56px round next/image avatar carrying the operational status ring,
       // and the uniform action cluster present at token sizes.
       const { html } = render(
         <DedicatedPageHeader
           page={samplePage}
           subdomain="cyberdyne"
           onStatusToggle={vi.fn()}
-          onOpenAddQueue={vi.fn()}
           onDisconnectRequest={vi.fn()}
         />
       );
 
       expect(html).toContain('data-testid="dedicated-page-avatar"');
-      expect(html).toContain('width="44"');
-      expect(html).toContain('height="44"');
+      expect(html).toContain('width="56"');
+      expect(html).toContain('height="56"');
+      expect(html).toContain('rounded-full');
+      expect(html).toContain('size-14');
       expect(html).toContain('ring-signal-operational');
-      expect(html).toContain('data-testid="header-automation-status"');
-      expect(html).toContain('data-testid="header-add-queue-btn"');
+      // Actions cluster: Create Posts first, then the three-dots menu
+      // trigger. Pause/Resume and Disconnect live only inside the closed
+      // menu, so no standalone pause/disconnect buttons exist.
+      expect(html).toContain('data-testid="header-create-posts-btn"');
       expect(html).toContain('data-testid="header-settings-dropdown-btn"');
+      expect(html).not.toContain('header-pause-resume-btn');
+      expect(html).not.toContain('header-disconnect-btn');
+      expect(html).not.toContain('header-add-queue-btn');
+      expect(html).not.toContain('header-menu-copy-id-btn');
 
       // Render does not contain bullet dots
       expect(html).not.toContain('•');
     });
 
-    it('provides page actions menu toggle button with proper accessibility attributes', () => {
-      const tree = renderAndCaptureTree(() =>
-        DedicatedPageHeader({
-          page: samplePage,
-          subdomain: 'cyberdyne',
-          onStatusToggle: vi.fn(),
-          onOpenAddQueue: vi.fn(),
-          onDisconnectRequest: vi.fn(),
-        })
+    it('stacks identity above actions on narrow screens (mobile layout classes)', () => {
+      const { container } = rtlRender(
+        <DedicatedPageHeader
+          page={samplePage}
+          subdomain="cyberdyne"
+          onStatusToggle={vi.fn()}
+          onDisconnectRequest={vi.fn()}
+        />
       );
 
-      const dropdownBtn = findElementByTestId(tree, 'header-settings-dropdown-btn');
-      expect(dropdownBtn).not.toBeNull();
-      expect(dropdownBtn?.props['aria-label']).toBe('Page actions menu');
+      // Main header row: column (stacked) by default, row from sm up —
+      // never squashed side-by-side at ~320px.
+      const mainRow = container.querySelector('[data-testid="header-main-row"]');
+      expect(mainRow).not.toBeNull();
+      expect(mainRow?.className).toContain('flex-col');
+      expect(mainRow?.className).toContain('sm:flex-row');
+      const actions = container.querySelector('[data-testid="header-actions"]');
+      expect(actions).not.toBeNull();
+      expect(actions?.className).toContain('w-full');
+      expect(actions?.className).toContain('sm:w-auto');
+      // Create Posts stretches across the mobile row; the menu button
+      // keeps its fixed icon size (Button base is shrink-0).
+      const createBtn = container.querySelector('[data-testid="header-create-posts-btn"]');
+      expect(createBtn?.className).toContain('flex-1');
+      expect(createBtn?.className).toContain('sm:flex-none');
+      // Page picture keeps its 56px circle on mobile too.
+      const avatar = container.querySelector('[data-testid="dedicated-page-avatar"]');
+      const fallback = container.querySelector('[data-testid="dedicated-page-avatar-fallback"]');
+      const picture = avatar ?? fallback;
+      expect(picture).not.toBeNull();
+      expect(picture?.className).toContain('size-14');
+      expect(picture?.className).toContain('rounded-full');
+    });
+
+    it('opens a disconnect confirmation dialogue from the menu WITHOUT disconnecting', async () => {
+      const user = userEvent.setup();
+      const onDisconnectRequest = vi.fn();
+
+      const { container } = rtlRender(
+        <DedicatedPageHeader
+          page={samplePage}
+          subdomain="cyberdyne"
+          onStatusToggle={vi.fn()}
+          onDisconnectRequest={onDisconnectRequest}
+        />
+      );
+
+      // Disconnect lives ONLY inside the three-dots menu now.
+      expect(container.querySelector('[data-testid="header-disconnect-btn"]')).toBeNull();
+      await user.click(
+        container.querySelector('[data-testid="header-settings-dropdown-btn"]') as Element
+      );
+      const disconnectItem = document.querySelector('[data-testid="header-menu-disconnect-btn"]');
+      expect(disconnectItem).not.toBeNull();
+      await user.click(disconnectItem as Element);
+      // Dialogue opens, but nothing disconnects yet.
+      expect(onDisconnectRequest).toHaveBeenCalledTimes(0);
+      const modal = document.querySelector('[data-testid="header-disconnect-modal"]');
+      expect(modal).not.toBeNull();
+      expect(modal?.textContent).toContain(`Disconnect ${samplePage.pageName}?`);
+      expect(modal?.textContent).toContain(
+        'This will disconnect the Facebook Page from your workspace. Any queued posts will be cancelled.'
+      );
+      expect(
+        document.querySelector('[data-testid="header-cancel-disconnect-btn"]')
+      ).not.toBeNull();
+      expect(
+        document.querySelector('[data-testid="header-confirm-disconnect-btn"]')
+      ).not.toBeNull();
+    });
+
+    it('Cancel closes the disconnect dialogue without disconnecting', async () => {
+      const user = userEvent.setup();
+      const onDisconnectRequest = vi.fn();
+
+      const { container } = rtlRender(
+        <DedicatedPageHeader
+          page={samplePage}
+          subdomain="cyberdyne"
+          onStatusToggle={vi.fn()}
+          onDisconnectRequest={onDisconnectRequest}
+        />
+      );
+
+      await user.click(
+        container.querySelector('[data-testid="header-settings-dropdown-btn"]') as Element
+      );
+      await user.click(
+        document.querySelector('[data-testid="header-menu-disconnect-btn"]') as Element
+      );
+      expect(
+        document.querySelector('[data-testid="header-disconnect-modal"]')
+      ).not.toBeNull();
+      await user.click(
+        document.querySelector('[data-testid="header-cancel-disconnect-btn"]') as Element
+      );
+      await waitFor(() =>
+        expect(
+          document.querySelector('[data-testid="header-disconnect-modal"]')
+        ).toBeNull()
+      );
+      expect(onDisconnectRequest).toHaveBeenCalledTimes(0);
+    });
+
+    it('Confirm calls onDisconnectRequest and shows the Disconnecting state', async () => {
+      const user = userEvent.setup();
+      const deferred: { resolve?: () => void } = {};
+      const onDisconnectRequest = vi.fn(
+        () => new Promise<void>((resolve) => { deferred.resolve = resolve; })
+      );
+
+      const { container } = rtlRender(
+        <DedicatedPageHeader
+          page={samplePage}
+          subdomain="cyberdyne"
+          onStatusToggle={vi.fn()}
+          onDisconnectRequest={onDisconnectRequest}
+        />
+      );
+
+      await user.click(
+        container.querySelector('[data-testid="header-settings-dropdown-btn"]') as Element
+      );
+      await user.click(
+        document.querySelector('[data-testid="header-menu-disconnect-btn"]') as Element
+      );
+      const confirmBtn = document.querySelector(
+        '[data-testid="header-confirm-disconnect-btn"]'
+      ) as Element;
+      await user.click(confirmBtn);
+      expect(onDisconnectRequest).toHaveBeenCalledTimes(1);
+      // While the request runs, the confirm button shows the running
+      // state and is disabled (Cancel is disabled too).
+      await waitFor(() => expect(confirmBtn.textContent).toContain('Disconnecting...'));
+      expect(confirmBtn.hasAttribute('disabled')).toBe(true);
+      expect(
+        document.querySelector('[data-testid="header-cancel-disconnect-btn"]')
+      ).toHaveAttribute('disabled');
+      deferred.resolve?.();
+      await waitFor(() =>
+        expect(
+          document.querySelector('[data-testid="header-disconnect-modal"]')
+        ).toBeNull()
+      );
     });
   });
 
@@ -363,7 +642,6 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
           slots={sampleSlots}
           onPublishNow={vi.fn()}
           onSwitchTab={vi.fn()}
-          onOpenAddQueue={vi.fn()}
         />
       );
 
@@ -391,7 +669,6 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
           slots={slotsWithSeconds}
           onPublishNow={vi.fn()}
           onSwitchTab={vi.fn()}
-          onOpenAddQueue={vi.fn()}
         />
       );
 
@@ -410,7 +687,6 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
           slots: sampleSlots,
           onPublishNow,
           onSwitchTab: vi.fn(),
-          onOpenAddQueue: vi.fn(),
         })
       );
 
@@ -431,120 +707,12 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
           slots: sampleSlots,
           onPublishNow: vi.fn(),
           onSwitchTab,
-          onOpenAddQueue: vi.fn(),
         })
       );
 
       const viewAllBtn = findElementByTestId(tree, 'view-full-queue-btn');
       viewAllBtn?.props.onClick();
       expect(onSwitchTab).toHaveBeenCalledWith('queue');
-    });
-  });
-
-  /* ====================================================================
-   * Phase 3: PageTabQueue (T004)
-   * ==================================================================== */
-  describe('PageTabQueue Component (Spec 105)', () => {
-  // Spec 134: the rebuilt queue panel reads through React Query, so its
-  // renders need a QueryClient ancestor (the tenant layout provides one in
-  // the app) — same pattern as the composer renders below.
-  // Spec 131 PR-131-3 (named update — props bridge deleted): the panel no
-  // longer takes queueItems/onMutated/callback props; each render seeds
-  // the shared queue cache key the panel reads, which is exactly what
-  // the route's server prefetch does in the app.
-  const renderQueueTab = (
-    element: React.ReactNode,
-    items: DedicatedQueueItem[] = sampleQueueItems
-  ) => {
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-    client.setQueryData(queryKeys.tenant('cyberdyne').queue.items(samplePage.id), {
-      items,
-      total: items.length,
-      limit: items.length,
-      offset: 0,
-    });
-    return render(<QueryClientProvider client={client}>{element}</QueryClientProvider>);
-  };
-
-    it('renders queue rows with caption, format, status, and row actions', () => {
-      const { hasText, hasAttribute } = renderQueueTab(
-        <PageTabQueue page={samplePage} onOpenAddQueue={vi.fn()} />
-      );
-
-      expect(hasAttribute('data-testid', 'content-tab')).toBe(true);
-      expect(hasAttribute('data-testid', 'queue-row-q-item-1')).toBe(true);
-      expect(hasText('Cutting-edge autonomous manufacturing video teaser.')).toBe(true);
-      expect(hasText('Video')).toBe(true);
-      expect(hasText('Queued')).toBe(true);
-      expect(hasText('Edit')).toBe(true);
-      expect(hasText('Reschedule')).toBe(true);
-      expect(hasText('Delete')).toBe(true);
-      expect(hasText('1 post queued')).toBe(true);
-      expect(hasAttribute('data-testid', 'queue-summary')).toBe(true);
-    });
-
-    it('labels queue row times with the page timezone (QA #11)', () => {
-      const { hasText } = renderQueueTab(
-        <PageTabQueue page={samplePage} onOpenAddQueue={vi.fn()} />
-      );
-
-      expect(hasText('Thu 9:00 AM UTC')).toBe(true);
-      expect(hasText('Published Thu, Oct 15 at 3:00 PM UTC')).toBe(true);
-    });
-
-    it('renders all five filter tabs with counts', () => {
-      const { hasText, hasAttribute } = renderQueueTab(
-        <PageTabQueue page={samplePage} onOpenAddQueue={vi.fn()} />
-      );
-
-      for (const filter of ['all', 'queued', 'scheduled', 'published', 'failed']) {
-        expect(hasAttribute('data-testid', `queue-filter-${filter}`)).toBe(true);
-      }
-      expect(hasText('All')).toBe(true);
-      expect(hasText('Queued')).toBe(true);
-      expect(hasText('Scheduled')).toBe(true);
-      expect(hasText('Published')).toBe(true);
-      expect(hasText('Failed')).toBe(true);
-    });
-
-    it('renders empty state with checklist and entry buttons when queue has no items', () => {
-      const onOpenAddQueue = vi.fn();
-      const { hasText, hasAttribute } = renderQueueTab(
-        <PageTabQueue page={samplePage} onOpenAddQueue={onOpenAddQueue} />,
-        []
-      );
-
-      expect(hasAttribute('data-testid', 'queue-empty-state')).toBe(true);
-      expect(hasText('Get your queue running')).toBe(true);
-      expect(hasText('Set posting times')).toBe(true);
-      expect(hasText('Add media')).toBe(true);
-      expect(hasText('Create your first posts')).toBe(true);
-      expect(hasText('Nothing here yet.')).toBe(true);
-      expect(hasText('Create post')).toBe(true);
-      expect(hasText('Bulk add')).toBe(true);
-    });
-
-    it('shows the failed banner, plain-language reason, and Retry on failed posts', () => {
-      const failedItem: DedicatedQueueItem = {
-        ...sampleQueueItems[0],
-        id: 'q-item-3',
-        status: 'failed',
-        retryCount: 3,
-        maxRetries: 3,
-      };
-      const { hasText, hasAttribute } = renderQueueTab(
-        <PageTabQueue page={samplePage} onOpenAddQueue={vi.fn()} />,
-        [...sampleQueueItems, failedItem]
-      );
-
-      expect(hasAttribute('data-testid', 'queue-failed-banner')).toBe(true);
-      expect(hasText('1 post failed to publish.')).toBe(true);
-      expect(hasText('Review')).toBe(true);
-      expect(hasText('Failed')).toBe(true);
-      expect(hasText("Tried 3 times and still couldn't publish.")).toBe(true);
-      expect(hasText('Retry')).toBe(true);
     });
   });
 
@@ -678,65 +846,6 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
   });
 
   /* ====================================================================
-   * Phase 4: PageTabSettings (T007)
-   * ==================================================================== */
-  describe('PageTabSettings Component', () => {
-    it('renders master automation switch, page credentials, and danger zone', () => {
-      const { hasText, hasAttribute } = render(
-        <PageTabSettings
-          page={samplePage}
-          subdomain="cyberdyne"
-          onStatusToggle={vi.fn()}
-          onDisconnectPage={vi.fn()}
-        />
-      );
-
-      expect(hasAttribute('data-testid', 'page-tab-settings')).toBe(true);
-      expect(hasAttribute('data-testid', 'settings-automation-card')).toBe(true);
-      expect(hasText('Automation')).toBe(true);
-      expect(hasAttribute('data-testid', 'settings-token-card')).toBe(true);
-      expect(hasText('fb_101202303')).toBe(true);
-      expect(hasAttribute('data-testid', 'settings-danger-zone')).toBe(true);
-      expect(hasAttribute('data-testid', 'disconnect-page-btn')).toBe(true);
-    });
-
-    it('calls onStatusToggle when clicking toggle automation button in settings', async () => {
-      const onStatusToggle = vi.fn().mockResolvedValue(undefined);
-
-      const tree = renderAndCaptureTree(() =>
-        PageTabSettings({
-          page: samplePage,
-          subdomain: 'cyberdyne',
-          onStatusToggle,
-          onDisconnectPage: vi.fn(),
-        })
-      );
-
-      const toggleBtn = findElementByTestId(tree, 'toggle-automation-btn');
-      await toggleBtn?.props.onClick();
-
-      expect(onStatusToggle).toHaveBeenCalledWith('paused');
-    });
-
-    it('renders the automation control as a single switch with a timezone line above it', () => {
-      const { hasText, hasAttribute, html } = render(
-        <PageTabSettings
-          page={samplePage}
-          subdomain="cyberdyne"
-          onStatusToggle={vi.fn()}
-          onDisconnectPage={vi.fn()}
-        />
-      );
-
-      expect(hasAttribute('data-testid', 'settings-timezone-line')).toBe(true);
-      expect(hasText('Times shown in')).toBe(true);
-      expect(hasText('Change')).toBe(true);
-      expect(html).toContain('role="switch"');
-      expect(html).toContain('>On<');
-    });
-  });
-
-  /* ====================================================================
    * Phase 5: Integrated TenantDedicatedPageView (T008)
    * ==================================================================== */
   describe('TenantDedicatedPageView Integrated Component', () => {
@@ -759,7 +868,6 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
       expect(hasAttribute('data-testid', 'tab-queue-btn')).toBe(true);
       expect(hasAttribute('data-testid', 'tab-calendar-btn')).toBe(true);
       expect(hasAttribute('data-testid', 'tab-insights-btn')).toBe(true);
-      expect(hasAttribute('data-testid', 'tab-settings-btn')).toBe(true);
       expect(hasText('Skynet Automation Central')).toBe(true);
     });
 
@@ -839,194 +947,33 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
     });
   });
 
-  /* ====================================================================
-   * Composer: PostComposer (spec 103 — replaces EnqueueModal)
-   * ==================================================================== */
-  // Spec 132 PR-C1: the rebuilt composer reads through React Query, so
-  // its renders need a QueryClient ancestor (the tenant layout provides
-  // one in the app). Static markup never runs effects, so no fetch fires.
-  const composerQueryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  function ComposerUnderTest(props: React.ComponentProps<typeof PostComposer>) {
-    return (
-      <QueryClientProvider client={composerQueryClient}>
-        <PostComposer {...props} />
-      </QueryClientProvider>
-    );
-  }
-
-  describe('PostComposer Component', () => {
-    const composerProps = {
-      pageId: 'page-101',
-      subdomain: 'cyberdyne',
-      slots: sampleSlots,
-      onClose: vi.fn(),
-      onSubmitted: vi.fn(),
-    };
-
-    it('renders the composer dialog with title and intent selector', () => {
-      const { hasAttribute, hasText } = render(<ComposerUnderTest {...composerProps} />);
-
-      expect(hasAttribute('data-testid', 'post-composer')).toBe(true);
-      expect(hasText('Create post')).toBe(true);
-      expect(hasAttribute('data-testid', 'composer-intent-selector')).toBe(true);
-      expect(hasAttribute('data-testid', 'composer-intent-now')).toBe(true);
-      expect(hasAttribute('data-testid', 'composer-intent-schedule')).toBe(true);
-      expect(hasAttribute('data-testid', 'composer-intent-queue')).toBe(true);
-    });
-
-    it('renders 5 format selector buttons', () => {
-      const { hasAttribute } = render(<ComposerUnderTest {...composerProps} />);
-
-      expect(hasAttribute('data-testid', 'composer-format-selector')).toBe(true);
-      expect(hasAttribute('data-testid', 'composer-format-text')).toBe(true);
-      expect(hasAttribute('data-testid', 'composer-format-image')).toBe(true);
-      expect(hasAttribute('data-testid', 'composer-format-video')).toBe(true);
-      expect(hasAttribute('data-testid', 'composer-format-reel')).toBe(true);
-      expect(hasAttribute('data-testid', 'composer-format-story')).toBe(true);
-    });
-
-    it('opens with an empty media area and no pre-selected assets', () => {
-      const { hasAttribute, hasText } = render(<ComposerUnderTest {...composerProps} />);
-
-      expect(hasAttribute('data-testid', 'composer-media-area')).toBe(true);
-      expect(hasText('No media selected yet.')).toBe(true);
-      expect(hasAttribute('data-testid', 'composer-choose-library-btn')).toBe(true);
-      expect(hasAttribute('data-testid', 'composer-upload-new-btn')).toBe(true);
-      expect(hasAttribute('data-testid', 'composer-selected-media')).toBe(false);
-    });
-
-    it('shows the computed queue line when a slot covers the format', () => {
-      const { hasAttribute, hasText } = render(<ComposerUnderTest {...composerProps} />);
-
-      expect(hasAttribute('data-testid', 'composer-queue-goes-out')).toBe(true);
-      expect(hasText('Goes out at the next posting time for Reels:')).toBe(true);
-    });
-
-    it('disables the queue intent and offers quick-add when no posting times exist', () => {
-      const { hasAttribute, hasText } = render(
-        <ComposerUnderTest {...composerProps} slots={[]} />
-      );
-
-      expect(hasText('Set posting times first')).toBe(true);
-      expect(hasAttribute('data-testid', 'posting-time-quick-add')).toBe(true);
-    });
-
-    it('shows an inline notice and quick-add when no slot covers the format', () => {
-      const photoOnly = [
-        { id: 'slot-1', slotTime: '09:00', timezone: 'UTC', isActive: true, allowedFormats: ['image'] },
-      ];
-      const { hasAttribute, hasText } = render(
-        <ComposerUnderTest {...composerProps} slots={photoOnly} initialIntent="queue" />
-      );
-
-      expect(hasAttribute('data-testid', 'composer-no-covering-slot-notice')).toBe(true);
-      expect(hasText('No posting time covers Reels yet.')).toBe(true);
-      expect(hasAttribute('data-testid', 'posting-time-quick-add')).toBe(true);
-    });
-
-    it('hides media and link fields appropriately for reel format', () => {
-      const { hasAttribute } = render(<ComposerUnderTest {...composerProps} />);
-
-      // Reel: media shown, link hidden, portrait hint visible
-      expect(hasAttribute('data-testid', 'composer-media-area')).toBe(true);
-      expect(hasAttribute('data-testid', 'composer-link')).toBe(false);
-      expect(hasAttribute('data-testid', 'composer-reel-hint')).toBe(true);
-    });
-
-    it('pre-fills for edit and locks media in edit mode', () => {
-      const { hasAttribute, hasText } = render(
-        <ComposerUnderTest
-          {...composerProps}
-          initialPost={{
-            id: 'item-1',
-            postFormat: 'image',
-            caption: 'Existing caption',
-            scheduledTime: new Date(Date.now() + 3600000).toISOString(),
-            status: 'queued',
-            media: {
-              name: 'photo.jpg',
-              mediaType: 'image',
-              url: 'https://example.com/photo.jpg',
-              thumbnailUrl: null,
-            },
-          }}
-        />
-      );
-
-      expect(hasText('Edit post')).toBe(true);
-      expect(hasAttribute('data-testid', 'composer-selected-media')).toBe(true);
-      expect(hasText('Existing caption')).toBe(true);
-    });
-
-    it('renders a disabled submit until the post is valid', () => {
-      const { html } = render(<ComposerUnderTest {...composerProps} />);
-      // Spec 132 PR-C1 test migration (same behaviour asserted): the
-      // shared/ui Button renders `disabled` earlier in the same tag than
-      // the legacy fixed 200-char window reached, so assert on the whole
-      // submit button tag instead of a character window.
-      const btnMatch = /<button\b[^>]*data-testid="submit-post-composer-btn"[^>]*>/.exec(html);
-      expect(btnMatch).not.toBeNull();
-      expect(btnMatch![0]).toContain('disabled');
-    });
-
-    it('caps every format at one media item with plain-language notices', () => {
-      // Empty: adds are allowed for every format.
-      expect(getMediaCapNotice('image', 0)).toBeNull();
-      expect(getMediaCapNotice('video', 0)).toBeNull();
-      expect(getMediaCapNotice('reel', 0)).toBeNull();
-      expect(getMediaCapNotice('story', 0)).toBeNull();
-      // One already selected: second adds are blocked with format-specific copy.
-      expect(getMediaCapNotice('image', 1)).toBe(
-        'Photo posts take 1 image. Remove the current one to pick another.'
-      );
-      expect(getMediaCapNotice('video', 1)).toBe(
-        'Video posts take 1 video. Remove the current one to pick another.'
-      );
-      expect(getMediaCapNotice('reel', 1)).toBe(
-        'Reels take 1 video. Remove the current one to pick another.'
-      );
-      expect(getMediaCapNotice('story', 1)).toBe(
-        'Stories take 1 file. Remove the current one to pick another.'
-      );
-      expect(getMediaCapNotice('text', 2)).toBeNull();
-    });
-
-    it('never allows multi-file selection on the upload input', () => {
-      const { html } = render(<ComposerUnderTest {...composerProps} />);
-      const inputMatch = /<input\b[^>]*data-testid="composer-file-input"[^>]*>/.exec(html);
-      expect(inputMatch).not.toBeNull();
-      expect(inputMatch![0]).not.toContain('multiple');
-    });
-
-    it('locks the format selector in edit mode', () => {
-      const { html, hasText } = render(
-        <ComposerUnderTest
-          {...composerProps}
-          initialPost={{
-            id: 'item-1',
-            postFormat: 'image',
-            caption: 'Existing caption',
-            scheduledTime: new Date(Date.now() + 3600000).toISOString(),
-            status: 'queued',
-            media: {
-              name: 'photo.jpg',
-              mediaType: 'image',
-              url: 'https://example.com/photo.jpg',
-              thumbnailUrl: null,
-            },
-          }}
-        />
-      );
-      const btnMatch = /<button\b[^>]*data-testid="composer-format-image"[^>]*>/.exec(html);
-      expect(btnMatch).not.toBeNull();
-      expect(btnMatch![0]).toContain(' disabled=""');
-      expect(hasText("Format can't be changed when editing.")).toBe(true);
-    });
-  });
-
   describe('DedicatedPageHeader Checkpoint Verification Banner', () => {
+    it.each([
+      ['invalid_token', 'Token Expired'],
+      ['page_checkpoint', 'Identity Checkpoint'],
+      ['fb_rate_limited', 'Rate Limited'],
+    ] as const)(
+      'shows the specific %s label in the status line, not the generic Needs Attention',
+      (status, label) => {
+        const { html } = render(
+          <DedicatedPageHeader
+            page={{ ...samplePage, status }}
+            subdomain="cyberdyne"
+            onStatusToggle={vi.fn()}
+            onDisconnectRequest={vi.fn()}
+          />
+        );
+
+        const match = html.match(
+          /data-testid="dedicated-page-status"[^>]*>([\s\S]*?)<\/span>/
+        );
+        expect(match).not.toBeNull();
+        const statusText = (match?.[1] ?? '').replace(/<[^>]*>/g, '');
+        expect(statusText).toContain(label);
+        expect(statusText).not.toContain('Needs Attention');
+      }
+    );
+
     it('renders checkpoint-reactivation-banner when page status is page_checkpoint', () => {
       const checkpointPage: FacebookPageItem = {
         ...samplePage,
@@ -1038,7 +985,6 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
           page={checkpointPage}
           subdomain="cyberdyne"
           onStatusToggle={vi.fn()}
-          onOpenAddQueue={vi.fn()}
           onDisconnectRequest={vi.fn()}
         />
       );
@@ -1049,5 +995,99 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
       expect(hasText('Mark Verified')).toBe(true);
       expect(hasText('Reactivate Page')).toBe(true);
     });
+  });
+
+  describe('DedicatedPageHeader Attention Banners', () => {
+    it('renders the Rate Limited banner with its description and no action on a rate-limited page', () => {
+      const { hasAttribute, hasText } = render(
+        <DedicatedPageHeader
+          page={{ ...samplePage, status: 'fb_rate_limited' }}
+          subdomain="cyberdyne"
+          onStatusToggle={vi.fn()}
+          onDisconnectRequest={vi.fn()}
+        />
+      );
+
+      expect(hasAttribute('data-testid', 'rate-limited-banner')).toBe(true);
+      expect(hasText('Rate Limited')).toBe(true);
+      expect(
+        hasText('Facebook temporarily restricted posting (auto-resumes after 3 days).')
+      ).toBe(true);
+      // It auto-resumes: no action button, and no other attention banner.
+      expect(hasAttribute('data-testid', 'reconnect-account-btn')).toBe(false);
+      expect(hasAttribute('data-testid', 'reactivate-page-btn')).toBe(false);
+      expect(hasAttribute('data-testid', 'checkpoint-reactivation-banner')).toBe(false);
+      expect(hasAttribute('data-testid', 'token-expired-banner')).toBe(false);
+    });
+
+    it('renders the Token Expired banner with its description and the Accounts link on a token-expired page', () => {
+      const { hasAttribute, hasText } = render(
+        <DedicatedPageHeader
+          page={{ ...samplePage, status: 'invalid_token' }}
+          subdomain="cyberdyne"
+          onStatusToggle={vi.fn()}
+          onDisconnectRequest={vi.fn()}
+        />
+      );
+
+      expect(hasAttribute('data-testid', 'token-expired-banner')).toBe(true);
+      expect(hasText('Token Expired')).toBe(true);
+      expect(hasText('Reconnect the parent Facebook account to resume publishing.')).toBe(true);
+      expect(hasAttribute('data-testid', 'reconnect-account-btn')).toBe(true);
+      expect(hasText('Open Facebook Accounts')).toBe(true);
+      expect(hasAttribute('data-testid', 'rate-limited-banner')).toBe(false);
+      expect(hasAttribute('data-testid', 'checkpoint-reactivation-banner')).toBe(false);
+    });
+
+    it('navigates to the workspace Facebook Accounts section from the Token Expired banner action', async () => {
+      const user = userEvent.setup();
+
+      const { container } = rtlRender(
+        <DedicatedPageHeader
+          page={{ ...samplePage, status: 'invalid_token' }}
+          subdomain="cyberdyne"
+          onStatusToggle={vi.fn()}
+          onDisconnectRequest={vi.fn()}
+        />
+      );
+
+      await user.click(
+        container.querySelector('[data-testid="reconnect-account-btn"]') as Element
+      );
+      expect(mockPush).toHaveBeenCalledWith('/tenant/cyberdyne/accounts');
+    });
+
+    it('renders only the existing checkpoint banner on a checkpoint page', () => {
+      const { hasAttribute } = render(
+        <DedicatedPageHeader
+          page={{ ...samplePage, status: 'page_checkpoint' }}
+          subdomain="cyberdyne"
+          onStatusToggle={vi.fn()}
+          onDisconnectRequest={vi.fn()}
+        />
+      );
+
+      expect(hasAttribute('data-testid', 'checkpoint-reactivation-banner')).toBe(true);
+      expect(hasAttribute('data-testid', 'rate-limited-banner')).toBe(false);
+      expect(hasAttribute('data-testid', 'token-expired-banner')).toBe(false);
+    });
+
+    it.each(['active', 'paused', 'disconnected'] as const)(
+      'renders no attention banner on a %s page',
+      (status) => {
+        const { hasAttribute } = render(
+          <DedicatedPageHeader
+            page={{ ...samplePage, status }}
+            subdomain="cyberdyne"
+            onStatusToggle={vi.fn()}
+            onDisconnectRequest={vi.fn()}
+          />
+        );
+
+        expect(hasAttribute('data-testid', 'checkpoint-reactivation-banner')).toBe(false);
+        expect(hasAttribute('data-testid', 'rate-limited-banner')).toBe(false);
+        expect(hasAttribute('data-testid', 'token-expired-banner')).toBe(false);
+      }
+    );
   });
 });

@@ -6,6 +6,10 @@
  * matrix §30). Two list variants: `default` (segmented panel) and `line`
  * (single hairline under the row; the active tab is marked by the
  * line trigger variant: bold ink text with a thick 3px ink underline).
+ * A third trigger-only variant, `line-gold`, is identical to `line`
+ * except the active tab uses brand gold for label text and underline —
+ * it exists for the dedicated page tab row only; the Settings row and
+ * every other `line` consumer keep the ink active state.
  * Tabs are for 2–9 peer sections; they are never a pseudo-wizard (matrix §6).
  * Geometry (spec 142 F07): the list is viewport-bounded (`max-w-full`)
  * and scrolls horizontally when its tabs overflow, and triggers are
@@ -76,6 +80,11 @@ const tabsTriggerVariants = cva(
         // under inactive tabs. Ink is a theme token, so this works
         // in both light and dark themes.
         line: "-mb-px border-b-3 data-[state=active]:border-ink data-[state=active]:font-bold data-[state=active]:text-ink",
+        // Line-gold: line geometry with a brand-gold active mark
+        // (gold label text + gold underline). Dedicated page tab
+        // row only; inactive tabs stay muted, hover unchanged.
+        "line-gold":
+          "-mb-px border-b-3 data-[state=active]:border-brand-gold data-[state=active]:font-bold data-[state=active]:text-brand-gold",
       },
     },
     defaultVariants: { variant: "default" },

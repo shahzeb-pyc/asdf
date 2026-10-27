@@ -2,7 +2,7 @@
  * Schedule-timezone flow — behavioural tests (spec 134 PR-134-2, §7.5)
  * for the rebuilt flow under posting-times/timezone/. The legacy
  * suite (tests/unit/schedule-timezone-modal.test.tsx) keeps covering
- * the legacy file for its remaining tab-settings consumer.
+ * the legacy file for its remaining posting-times tab consumer.
  *
  * Behaviour preserved from spec 106/062: two steps (select → review
  * impact), proceed disabled while the selection equals the active

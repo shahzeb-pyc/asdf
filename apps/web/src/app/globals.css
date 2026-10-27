@@ -397,3 +397,44 @@
     }
   }
 }
+
+/* ============================================================================
+ * SONNER TOAST VARIABLE MAPPING — UNLAYERED ON PURPOSE, DO NOT MOVE INTO A
+ * LAYER. Sonner injects its own stylesheet at runtime, unlayered, and
+ * unlayered author styles outrank every layered rule — so this mapping
+ * must stay unlayered or Sonner's theme defaults win again and toasts
+ * render white in dark mode. It also outranks Sonner's defaults on
+ * specificity: Sonner declares its variables on
+ * `[data-sonner-toaster][data-sonner-theme='…']` (0,2,0); these selectors
+ * add the `.toaster` class the shared Toast passes (0,3,0), so the mapping
+ * wins regardless of whether Sonner's runtime style tag lands before or
+ * after this sheet. The values reference the app's semantic tokens, which
+ * themselves swap per [data-theme] (see the generated token file), so
+ * this single mapping is correct in both modes: dark renders on the dark
+ * panel, light on the white panel, with brand accents for
+ * success/error/warning. The 15% tints mirror the flow-scoped toasters'
+ * 15% brand-tinted success styling. Callers may still extend via the
+ * Toaster `style` prop (inline style beats this sheet, as before).
+ * BEGIN SONNER TOAST VARIABLE MAPPING
+ * ========================================================================== */
+[data-sonner-toaster][data-sonner-theme='light'].toaster,
+[data-sonner-toaster][data-sonner-theme='dark'].toaster {
+  --normal-bg: var(--bg-panel);
+  --normal-text: var(--text-main);
+  --normal-border: var(--border-subtle);
+  --normal-bg-hover: var(--bg-hover);
+  --normal-border-hover: var(--border-strong);
+  --success-bg: color-mix(in srgb, var(--color-brand-emerald) 15%, transparent);
+  --success-border: var(--color-brand-emerald);
+  --success-text: var(--color-brand-emerald);
+  --error-bg: color-mix(in srgb, var(--color-brand-rose) 15%, transparent);
+  --error-border: var(--color-brand-rose);
+  --error-text: var(--color-brand-rose);
+  --warning-bg: color-mix(in srgb, var(--color-brand-gold) 15%, transparent);
+  --warning-border: var(--color-brand-gold);
+  --warning-text: var(--color-brand-gold);
+  --info-bg: var(--bg-subtle);
+  --info-border: var(--border-subtle);
+  --info-text: var(--text-main);
+}
+/* END SONNER TOAST VARIABLE MAPPING */

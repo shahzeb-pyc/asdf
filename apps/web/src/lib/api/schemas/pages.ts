@@ -29,6 +29,7 @@ export const FacebookPageViewSchema = z.object({
   id: z.string().uuid(),
   facebookAccountId: z.string().uuid(),
   accountDisplayName: z.string().optional(),
+  accountPictureUrl: z.string().nullable().optional(),
   fbPageId: z.string().min(1),
   pageName: z.string().min(1),
   profilePictureUrl: z.string().nullable().optional(),

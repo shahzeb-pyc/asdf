@@ -1,20 +1,38 @@
 'use client';
 
 /**
- * Dedicated Page identity header (spec 131 PR-131-3) — clean-room
- * rebuild on shared/ui primitives + tokens, adopting the canonical
- * §1.3 identity-header pattern landed by PR-131-4 in the destinations
- * frame: platform icon + avatar + full name in a fixed position
- * (UX Rule 1), status as colour + icon + text (OD-3 / UX Rule 27 —
- * never colour alone). Legacy file was read for behavioural facts and
- * copy only.
+ * Dedicated Page identity header — redesigned top section.
  *
- * Data: the header holds NO fetch of its own — the former checkpoint
- * banner's raw PATCH is deleted; reactivation goes through the frame's
- * status mutation via `onStatusToggle` (the typed data layer), exactly
- * as the Settings tab's copy of the banner already did in effect.
- * The actions menu is the shared/ui Menu (Radix) — the hand-rolled
- * dropdown and its document listeners are deleted with it.
+ * Contains ONLY the items Shahzeb listed for the top section: back link,
+ * page name + live link, icon+text status mark (never a dot), connected
+ * account (with account picture when available), Added date, follower
+ * count + gained + category, Create Posts button, a three-dots menu
+ * holding Pause/Resume posting and Disconnect Page, and Mark Verified &
+ * Reactivate Page in the checkpoint state only. The Queue Post button
+ * and Copy Page ID were removed with this redesign. Disconnect Page in
+ * the menu opens a confirmation dialogue (the Settings tab's
+ * AlertDialog pattern) — it never disconnects at once. Attention
+ * states explain themselves with a banner above the header: the
+ * checkpoint banner (explanation + reactivate action), a Rate Limited
+ * banner (no action — it auto-resumes), and a Token Expired banner
+ * (action links to the workspace's Facebook Accounts section).
+ * Active, paused, and disconnected pages show no banner.
+ *
+ * Data notes:
+ * - Added date and followers gained reuse the list card's helpers
+ *   (`formatAddedDate`, `computeFollowersGained`,
+ *   `formatFollowersGained`) so the header can never disagree with the
+ *   card about the same page.
+ * - The header holds NO fetch of its own; reactivation and pause/resume
+ *   go through the frame's status mutation via `onStatusToggle`.
+ * - Account picture: `FacebookPageItem` carries no account picture field
+ *   (only `accountDisplayName`), so the connected account renders an
+ *   initials avatar. Surfacing a real account picture is a follow-up
+ *   that needs an API/contract field — it is NOT expanded here.
+ * - Create Posts is rendered only: `onCreatePosts` is optional and the
+ *   shell leaves it unhandled, so clicking the button does nothing yet.
+ *   The Create Posts dialogue is separate later work, by Shahzeb's
+ *   scoping — the no-op is intentional, not a bug.
  */
 
 import * as React from 'react';
@@ -22,14 +40,24 @@ import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import {
   ChevronLeftIcon,
-  CopyIcon,
   ExternalLinkIcon,
   MoreVerticalIcon,
+  PauseIcon,
+  PlayIcon,
   PlusIcon,
   PowerIcon,
 } from 'lucide-react';
 
-import { reportError } from '@/lib/report-error';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/shared/ui/alert-dialog';
 import { Banner } from '@/components/shared/ui/banner';
 import { Button } from '@/components/shared/ui/button';
 import {
@@ -39,35 +67,54 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from '@/components/shared/ui/menu';
-import { StatusDot, type Status } from '@/components/shared/ui/status-dot';
 import { cn } from '@/lib/utils';
+import { getUserInitials } from '@/lib/user-initials';
 import type { FacebookPageItem } from '../page-card';
+import {
+  computeFollowersGained,
+  formatAddedDate,
+  formatFollowersGained,
+  PageStatusMark,
+} from '../page-card';
 
 export interface DedicatedPageHeaderProps {
   page: FacebookPageItem;
   subdomain: string;
   onStatusToggle: (nextStatus: 'active' | 'paused') => Promise<void>;
-  onOpenAddQueue: () => void;
-  onDisconnectRequest: () => void;
+  onDisconnectRequest: () => void | Promise<void>;
+  /** Optional for now: the shell leaves this unhandled, so the Create
+   * Posts button intentionally does nothing until the dialogue work
+   * lands. */
+  onCreatePosts?: (() => void) | undefined;
 }
 
 interface PageStatusDetails {
   isPaused: boolean;
-  status: Status;
   statusLabel: string;
   ringClass: string;
 }
 
 function resolvePageStatus(status: FacebookPageItem['status']): PageStatusDetails {
-  if (
-    status === 'invalid_token' ||
-    status === 'page_checkpoint' ||
-    status === 'fb_rate_limited'
-  ) {
+  if (status === 'invalid_token') {
     return {
       isPaused: false,
-      status: 'critical',
-      statusLabel: 'Needs Attention',
+      statusLabel: 'Token Expired',
+      ringClass: 'ring-signal-critical',
+    };
+  }
+
+  if (status === 'page_checkpoint') {
+    return {
+      isPaused: false,
+      statusLabel: 'Identity Checkpoint',
+      ringClass: 'ring-signal-critical',
+    };
+  }
+
+  if (status === 'fb_rate_limited') {
+    return {
+      isPaused: false,
+      statusLabel: 'Rate Limited',
       ringClass: 'ring-signal-critical',
     };
   }
@@ -75,7 +122,6 @@ function resolvePageStatus(status: FacebookPageItem['status']): PageStatusDetail
   if (status === 'paused') {
     return {
       isPaused: true,
-      status: 'queued',
       statusLabel: 'Paused',
       ringClass: 'ring-signal-queued',
     };
@@ -84,7 +130,6 @@ function resolvePageStatus(status: FacebookPageItem['status']): PageStatusDetail
   if (status === 'active') {
     return {
       isPaused: false,
-      status: 'operational',
       statusLabel: 'Active',
       ringClass: 'ring-signal-operational',
     };
@@ -92,30 +137,9 @@ function resolvePageStatus(status: FacebookPageItem['status']): PageStatusDetail
 
   return {
     isPaused: false,
-    status: 'idle',
     statusLabel: 'Active',
     ringClass: 'ring-line',
   };
-}
-
-/** Facebook glyph in the platform-nav-config icon style (lucide ships
- * no brand icons) — same local glyph as PR-131-4's destination frame. */
-function FacebookPlatformIcon() {
-  return (
-    <svg
-      width={20}
-      height={20}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z" />
-    </svg>
-  );
 }
 
 function DedicatedAvatar({
@@ -131,10 +155,10 @@ function DedicatedAvatar({
         src={page.profilePictureUrl}
         alt={page.pageName}
         data-testid="dedicated-page-avatar"
-        width={44}
-        height={44}
+        width={56}
+        height={56}
         onError={() => setFailedAvatarUrl(page.profilePictureUrl ?? '__error__')}
-        className={cn('size-11 shrink-0 rounded-md object-cover ring-2', ringClass)}
+        className={cn('size-14 shrink-0 rounded-full object-cover ring-2', ringClass)}
       />
     );
   }
@@ -143,7 +167,7 @@ function DedicatedAvatar({
     <div
       data-testid="dedicated-page-avatar-fallback"
       className={cn(
-        'flex size-11 shrink-0 items-center justify-center rounded-md bg-subtle text-body font-bold text-brand-gold ring-2',
+        'flex size-14 shrink-0 items-center justify-center rounded-full bg-subtle text-body font-bold text-brand-gold ring-2',
         ringClass
       )}
     >
@@ -156,12 +180,16 @@ export function DedicatedPageHeader({
   page,
   subdomain,
   onStatusToggle,
-  onOpenAddQueue,
   onDisconnectRequest,
+  onCreatePosts,
 }: Readonly<DedicatedPageHeaderProps>) {
   const router = useRouter();
   const [isUpdatingStatus, setIsUpdatingStatus] = React.useState(false);
-  const [hasCopiedId, setHasCopiedId] = React.useState(false);
+  const [isMenuOpen, setIsMenuOpen] = React.useState(false);
+  const [isDisconnectDialogOpen, setIsDisconnectDialogOpen] = React.useState(false);
+  const [isDisconnecting, setIsDisconnecting] = React.useState(false);
+  const [failedAccountAvatarUrl, setFailedAccountAvatarUrl] =
+    React.useState<string | null>(null);
 
   const statusInfo = resolvePageStatus(page.status);
   const monogram = (page.pageName || 'P').slice(0, 2).toUpperCase();
@@ -171,14 +199,36 @@ export function DedicatedPageHeader({
     page.status === 'page_checkpoint' ||
     (page.status as string) === 'checkpoint_required';
 
-  const handleCopyId = async () => {
+  const addedDate = formatAddedDate(page.createdAt);
+  const gained = computeFollowersGained(page);
+  const formattedGained = formatFollowersGained(gained);
+  const gainedClass =
+    gained > 0
+      ? 'text-brand-emerald'
+      : gained < 0
+        ? 'text-brand-rose'
+        : 'text-ink-sub';
+
+  // Pause/resume feedback: the menu is controlled and stays open while
+  // the mutation runs (Radix would otherwise close it the instant the
+  // item is clicked, hiding the "Updating..." state), and closes once
+  // the mutation settles. The shell's success/error toasts remain the
+  // completion feedback — no extra toasts are added here.
+  const handleStatusAction = async () => {
+    setIsUpdatingStatus(true);
     try {
-      await navigator.clipboard.writeText(page.fbPageId);
-      setHasCopiedId(true);
-      setTimeout(() => setHasCopiedId(false), 2000);
-    } catch (error) {
-      reportError(error, { source: 'page-header-copy-id' });
+      await onStatusToggle(statusInfo.isPaused ? 'active' : 'paused');
+    } finally {
+      setIsUpdatingStatus(false);
+      setIsMenuOpen(false);
     }
+  };
+
+  const handleMenuOpenChange = (open: boolean) => {
+    // Never let the menu close while the status mutation is running —
+    // that would hide the in-menu "Updating..." state again.
+    if (!open && isUpdatingStatus) return;
+    setIsMenuOpen(open);
   };
 
   const handleReactivate = async () => {
@@ -187,6 +237,20 @@ export function DedicatedPageHeader({
       await onStatusToggle('active');
     } finally {
       setIsUpdatingStatus(false);
+    }
+  };
+
+  // Disconnect confirmation — the Settings tab's AlertDialog pattern.
+  // The menu item only opens the dialogue; only the confirm click calls
+  // onDisconnectRequest, and the shell owns the disconnect semantics
+  // (page → disconnected, queued items cancelled, redirect on success).
+  const handleConfirmDisconnect = async () => {
+    setIsDisconnecting(true);
+    try {
+      await onDisconnectRequest();
+      setIsDisconnectDialogOpen(false);
+    } finally {
+      setIsDisconnecting(false);
     }
   };
 
@@ -205,7 +269,7 @@ export function DedicatedPageHeader({
         </button>
       </div>
 
-      {/* Checkpoint reactivation banner */}
+      {/* Checkpoint reactivation banner — checkpoint state only */}
       {isCheckpoint && (
         <div className="mb-4 overflow-hidden rounded-md border border-line">
           <Banner
@@ -227,12 +291,50 @@ export function DedicatedPageHeader({
         </div>
       )}
 
-      {/* Main header: identity left, actions right */}
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex min-w-0 flex-1 items-center gap-3">
-          <span aria-hidden className="flex size-6 shrink-0 items-center justify-center text-ink-sub">
-            <FacebookPlatformIcon />
-          </span>
+      {/* Rate-limited attention banner — rate-limited state only. No
+          action: Facebook lifts the restriction on its own (the
+          description says so), so there is nothing to click. */}
+      {page.status === 'fb_rate_limited' && (
+        <div className="mb-4 overflow-hidden rounded-md border border-line">
+          <Banner
+            variant="warning"
+            data-testid="rate-limited-banner"
+            title="Rate Limited"
+            description="Facebook temporarily restricted posting (auto-resumes after 3 days)."
+          />
+        </div>
+      )}
+
+      {/* Token-expired attention banner — invalid-token state only. Its
+          action links to the Facebook Accounts section for this
+          workspace, where the parent account is reconnected. */}
+      {page.status === 'invalid_token' && (
+        <div className="mb-4 overflow-hidden rounded-md border border-line">
+          <Banner
+            variant="critical"
+            data-testid="token-expired-banner"
+            title="Token Expired"
+            description="Reconnect the parent Facebook account to resume publishing."
+            action={
+              <Button
+                type="button"
+                data-testid="reconnect-account-btn"
+                onClick={() => router.push(`/tenant/${subdomain}/accounts`)}
+              >
+                Open Facebook Accounts
+              </Button>
+            }
+          />
+        </div>
+      )}
+
+      {/* Main header: identity on top, actions below on narrow
+          screens (the old flex-wrap row let identity + actions squash
+          side-by-side at ~320px instead of stacking); side-by-side
+          again from sm up. The 56px round picture is kept at all
+          widths — stacking removes the squeeze that threatened it. */}
+      <div data-testid="header-main-row" className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex w-full min-w-0 items-center gap-3 sm:flex-1">
           <DedicatedAvatar page={page} ringClass={statusInfo.ringClass} monogram={monogram} />
 
           <div className="min-w-0 flex-1">
@@ -250,29 +352,92 @@ export function DedicatedPageHeader({
                 data-testid="page-live-link"
                 title="View live Page on Facebook"
                 aria-label={`View ${page.pageName} live on Facebook`}
-                className="inline-flex size-11 items-center justify-center text-ink-dim transition-colors hover:text-ink"
+                className="inline-flex size-11 shrink-0 items-center justify-center text-ink-dim transition-colors hover:text-ink"
               >
                 <ExternalLinkIcon className="size-4" aria-hidden />
               </a>
             </div>
 
-            {/* Sub-row: status (colour + icon + text) + account + followers + category */}
+            {/* Sub-row: status mark + account + Added date + followers + gained + category */}
             <div className="mt-1 flex flex-wrap items-center gap-2 text-body text-ink-sub">
               <span data-testid="dedicated-page-status" className="inline-flex items-center">
-                <StatusDot status={statusInfo.status} label={statusInfo.statusLabel} />
+                <PageStatusMark
+                  status={page.status}
+                  label={statusInfo.statusLabel}
+                />
               </span>
+
+              {/* Backup feedback that survives any menu behaviour: while a
+                  status mutation runs, the header itself says so. */}
+              {isUpdatingStatus && (
+                <span
+                  data-testid="header-status-updating"
+                  aria-live="polite"
+                  className="text-body text-ink-sub"
+                >
+                  Updating...
+                </span>
+              )}
 
               {page.accountDisplayName && (
                 <>
                   <span aria-hidden className="h-3 w-px shrink-0 bg-line" />
-                  <span>Connected via {page.accountDisplayName}</span>
+                  <span
+                    data-testid="dedicated-account"
+                    className="inline-flex items-center gap-1.5"
+                  >
+                    <span
+                      data-testid="dedicated-account-avatar"
+                      aria-hidden
+                      className="flex size-5 shrink-0 items-center justify-center overflow-hidden rounded-full bg-subtle text-xs font-bold text-brand-gold"
+                    >
+                      {page.accountPictureUrl &&
+                      failedAccountAvatarUrl !== page.accountPictureUrl ? (
+                        <Image
+                          src={page.accountPictureUrl}
+                          alt=""
+                          width={20}
+                          height={20}
+                          onError={() =>
+                            setFailedAccountAvatarUrl(
+                              page.accountPictureUrl ?? '__error__'
+                            )
+                          }
+                          className="size-5 shrink-0 rounded-full object-cover"
+                        />
+                      ) : (
+                        getUserInitials(page.accountDisplayName)
+                      )}
+                    </span>
+                    <span>Connected via {page.accountDisplayName}</span>
+                  </span>
                 </>
               )}
 
-              {typeof page.currentFollowers === 'number' && (
+              {addedDate && (
                 <>
                   <span aria-hidden className="h-3 w-px shrink-0 bg-line" />
-                  <span>{page.currentFollowers.toLocaleString('en-US')} followers</span>
+                  <span data-testid="dedicated-page-added">Added {addedDate}</span>
+                </>
+              )}
+
+              <span aria-hidden className="h-3 w-px shrink-0 bg-line" />
+              <span data-testid="dedicated-page-followers">
+                <span className="font-semibold text-ink">
+                  {page.currentFollowers.toLocaleString('en-US')}
+                </span>{' '}
+                followers
+              </span>
+
+              {gained !== 0 && (
+                <>
+                  <span aria-hidden className="h-3 w-px shrink-0 bg-line" />
+                  <span
+                    data-testid="dedicated-page-followers-gained"
+                    className={cn('shrink-0 tabular-nums', gainedClass)}
+                  >
+                    {formattedGained} gained
+                  </span>
                 </>
               )}
 
@@ -286,21 +451,24 @@ export function DedicatedPageHeader({
           </div>
         </div>
 
-        {/* Actions cluster */}
-        <div className="flex flex-wrap items-center gap-2">
-          <span
-            data-testid="header-automation-status"
-            className="inline-flex h-11 items-center text-body font-medium text-ink-sub"
+        {/* Actions cluster: Create Posts first, then a three-dots menu
+            holding Pause/Resume posting and Disconnect Page. Full
+            width on narrow screens (Create Posts stretches, the menu
+            button keeps its fixed size); compact row from sm up.
+            Buttons keep the default h-control 44px touch height and
+            never wrap mid-label (Button base: whitespace-nowrap). */}
+        <div data-testid="header-actions" className="flex w-full items-center gap-2 sm:w-auto">
+          <Button
+            type="button"
+            data-testid="header-create-posts-btn"
+            className="flex-1 sm:flex-none"
+            onClick={() => onCreatePosts?.()}
           >
-            {statusInfo.isPaused ? 'Automation off' : 'Automation on'}
-          </span>
-
-          <Button type="button" data-testid="header-add-queue-btn" onClick={onOpenAddQueue}>
             <PlusIcon aria-hidden />
-            <span>Queue Post</span>
+            <span>Create Posts</span>
           </Button>
 
-          <Menu>
+          <Menu open={isMenuOpen} onOpenChange={handleMenuOpenChange}>
             <MenuTrigger asChild>
               <Button
                 type="button"
@@ -313,21 +481,35 @@ export function DedicatedPageHeader({
               </Button>
             </MenuTrigger>
             <MenuContent align="end">
-              <MenuItem data-testid="header-menu-copy-id-btn" onSelect={() => void handleCopyId()}>
-                <CopyIcon aria-hidden />
-                <span>{hasCopiedId ? 'Page ID Copied' : 'Copy Page ID'}</span>
-              </MenuItem>
-              <MenuItem asChild>
-                <a href={fbPageUrl} target="_blank" rel="noopener noreferrer">
-                  <ExternalLinkIcon aria-hidden />
-                  <span>Open on Facebook</span>
-                </a>
+              <MenuItem
+                data-testid="header-menu-pause-resume-btn"
+                disabled={isUpdatingStatus}
+                onSelect={(event) => {
+                  // Prevent Radix closing the menu on select so the
+                  // "Updating..." state stays visible until the
+                  // mutation settles (handleStatusAction closes it).
+                  event.preventDefault();
+                  void handleStatusAction();
+                }}
+              >
+                {statusInfo.isPaused ? (
+                  <PlayIcon aria-hidden />
+                ) : (
+                  <PauseIcon aria-hidden />
+                )}
+                <span>
+                  {isUpdatingStatus
+                    ? 'Updating...'
+                    : statusInfo.isPaused
+                      ? 'Resume posting'
+                      : 'Pause posting'}
+                </span>
               </MenuItem>
               <MenuSeparator />
               <MenuItem
                 variant="destructive"
                 data-testid="header-menu-disconnect-btn"
-                onSelect={onDisconnectRequest}
+                onSelect={() => setIsDisconnectDialogOpen(true)}
               >
                 <PowerIcon aria-hidden />
                 <span>Disconnect Page</span>
@@ -336,6 +518,40 @@ export function DedicatedPageHeader({
           </Menu>
         </div>
       </div>
+
+      {/* Disconnect confirmation — alert-dialog pattern (UI Rule 3).
+          Testids are header-scoped: the Settings tab renders its own
+          disconnect dialogue with the unscoped testids, and both can
+          mount on the same dedicated page. */}
+      <AlertDialog open={isDisconnectDialogOpen} onOpenChange={setIsDisconnectDialogOpen}>
+        <AlertDialogContent data-testid="header-disconnect-modal">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Disconnect {page.pageName}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will disconnect the Facebook Page from your workspace. Any queued posts will be cancelled.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="header-cancel-disconnect-btn" disabled={isDisconnecting}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="header-confirm-disconnect-btn"
+              disabled={isDisconnecting}
+              onClick={(event) => {
+                // Keep the dialogue open until the disconnect settles
+                // (facebook-disconnect-dialog pattern): without this,
+                // Radix closes the dialogue at once and the
+                // Disconnecting state is never visible.
+                event.preventDefault();
+                void handleConfirmDisconnect();
+              }}
+            >
+              {isDisconnecting ? 'Disconnecting...' : 'Yes, Disconnect Page'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

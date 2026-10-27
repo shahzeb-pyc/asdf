@@ -21,7 +21,6 @@
  * this frame — it reads `queryKeys.queue.items` directly and its
  * mutations invalidate the shared keys, which is also what keeps this
  * frame's Queue count and the dashboard tab in sync. Grep proof in the
- * PR: no `queueItems` prop is passed to PageTabQueue from here.
  *
  * SLOT DISCIPLINE (§9.3): the queue panel, the posting-times panel and
  * the composer are 134/132's components, mounted exactly as before
@@ -35,7 +34,7 @@
  */
 
 import * as React from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
 
@@ -63,18 +62,14 @@ import {
   PageTabDashboard,
   PageTabInsights,
   PageTabPostingTimes,
-  PageTabQueue,
-  PageTabSettings,
-  PostComposer,
   type PageSlotSummary,
 } from '@/components/pages/dedicated';
 
 export type DedicatedPageTab =
   | 'dashboard'
-  | 'queue'
-  | 'calendar'
   | 'insights'
-  | 'settings';
+  | 'queue'
+  | 'calendar';
 
 export interface TenantDedicatedPageViewProps {
   subdomainProp?: string | undefined;
@@ -89,13 +84,27 @@ export interface TenantDedicatedPageViewProps {
  *  taxonomy still applies in full — failures throw, never vanish. */
 const AckSchema = z.object({}).passthrough();
 
+// Final tab scope (Shahzeb, 2026-10-27): Dashboard, Insights, Queue,
+// Posting Times — no Settings tab. Queue is an empty placeholder
+// panel only; it will be rebuilt later, more professionally.
 const TAB_ITEMS: ReadonlyArray<{ id: DedicatedPageTab; label: string }> = [
   { id: 'dashboard', label: 'Dashboard' },
+  { id: 'insights', label: 'Insights' },
   { id: 'queue', label: 'Queue' },
   { id: 'calendar', label: 'Posting Times' },
-  { id: 'insights', label: 'Insights' },
-  { id: 'settings', label: 'Settings' },
 ];
+
+const TAB_IDS: ReadonlySet<string> = new Set(TAB_ITEMS.map((tab) => tab.id));
+
+/**
+ * Tab state lives in the URL (?tab=) so refresh, a shared link, and
+ * the browser back button all land on the right tab. An unknown or
+ * missing value falls back to the shell's initial tab (Dashboard by
+ * default) — never a 404, never a blank tab row.
+ */
+function resolveTabFromUrl(raw: string | null, fallback: DedicatedPageTab): DedicatedPageTab {
+  return raw !== null && TAB_IDS.has(raw) ? (raw as DedicatedPageTab) : fallback;
+}
 
 /** The settled display fallback for a page known only by name (tests /
  *  preloaded renders) — same shape the legacy controller synthesised. */
@@ -131,15 +140,29 @@ export default function TenantDedicatedPageView({
 }: Readonly<TenantDedicatedPageViewProps> = {}) {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const subdomain = subdomainProp ?? ((params?.subdomain as string) || '');
   const pageId = pageIdProp ?? ((params?.pageId as string) || '');
 
-  const [activeTab, setActiveTab] = React.useState<DedicatedPageTab>(initialTab);
-  const [visitedTabs, setVisitedTabs] = React.useState<ReadonlySet<DedicatedPageTab>>(
-    () => new Set([initialTab])
+  // Initial tab: a valid ?tab= wins over the initialTab prop (the
+  // route itself never passes initialTab, so the URL is the sole
+  // source in production); anything else falls back to initialTab.
+  const [activeTab, setActiveTab] = React.useState<DedicatedPageTab>(() =>
+    resolveTabFromUrl(searchParams.get('tab'), initialTab)
   );
-  const [isComposerOpen, setIsComposerOpen] = React.useState(false);
+  const [visitedTabs, setVisitedTabs] = React.useState<ReadonlySet<DedicatedPageTab>>(
+    () => new Set([resolveTabFromUrl(searchParams.get('tab'), initialTab)])
+  );
+  // Ref mirror of the current tab: the trigger's onClick and the
+  // Tabs root's onValueChange both fire for one click, and state
+  // updates are async, so the ref — not the stale state closure —
+  // is what stops a single click pushing two history entries.
+  const activeTabRef = React.useRef<DedicatedPageTab>(activeTab);
+  // Scroll edges of the tab row, for the mobile scroll-fade hint.
+  const tabListRef = React.useRef<HTMLDivElement | null>(null);
+  const [canScrollLeft, setCanScrollLeft] = React.useState(false);
+  const [canScrollRight, setCanScrollRight] = React.useState(false);
 
   const tenant = queryKeys.tenant(subdomain);
   const pagePath = buildTenantApiPath(subdomain, `/pages/${pageId}`);
@@ -417,8 +440,14 @@ export default function TenantDedicatedPageView({
 
   const pagesListHref = `/tenant/${subdomain}/pages`;
 
-  const handleTabChange = React.useCallback((value: string) => {
-    const next = value as DedicatedPageTab;
+  // Back/forward navigation: when the URL's ?tab= changes without
+  // a click (popstate), adopt it — including its visited mount —
+  // so the back button returns to the previously viewed tab.
+  const urlTab = searchParams.get('tab');
+  React.useEffect(() => {
+    const next = resolveTabFromUrl(urlTab, activeTabRef.current);
+    if (next === activeTabRef.current) return;
+    activeTabRef.current = next;
     setActiveTab(next);
     setVisitedTabs((prev) => {
       if (prev.has(next)) return prev;
@@ -426,16 +455,56 @@ export default function TenantDedicatedPageView({
       copy.add(next);
       return copy;
     });
+  }, [urlTab]);
+
+  const updateTabScrollEdges = React.useCallback(() => {
+    const el = tabListRef.current;
+    if (!el) return;
+    setCanScrollLeft(el.scrollLeft > 0);
+    setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
   }, []);
 
+  React.useEffect(() => {
+    updateTabScrollEdges();
+    window.addEventListener('resize', updateTabScrollEdges);
+    return () => window.removeEventListener('resize', updateTabScrollEdges);
+  }, [updateTabScrollEdges]);
+
+  const handleTabChange = React.useCallback(
+    (value: string) => {
+      const next = value as DedicatedPageTab;
+      if (!TAB_IDS.has(next)) return;
+      const changed = next !== activeTabRef.current;
+      activeTabRef.current = next;
+      setActiveTab(next);
+      setVisitedTabs((prev) => {
+        if (prev.has(next)) return prev;
+        const copy = new Set(prev);
+        copy.add(next);
+        return copy;
+      });
+      // Push (never replace): each tab switch is a history entry,
+      // so the back button walks back through viewed tabs. Other
+      // query params are preserved; scroll:false keeps the page
+      // position instead of jumping to the top on every switch.
+      if (changed && subdomain && pageId) {
+        const nextParams = new URLSearchParams(searchParams.toString());
+        nextParams.set('tab', next);
+        router.push(`/tenant/${subdomain}/pages/${pageId}?${nextParams.toString()}`, {
+          scroll: false,
+        });
+      }
+    },
+    [router, searchParams, subdomain, pageId]
+  );
+
   const switchTab = React.useCallback(
-    (tab: 'queue' | 'calendar' | 'insights' | 'settings') => {
+    (tab: 'queue' | 'calendar' | 'insights') => {
       handleTabChange(tab);
     },
     [handleTabChange]
   );
 
-  const openComposer = React.useCallback(() => setIsComposerOpen(true), []);
 
   return (
     <div
@@ -499,7 +568,6 @@ export default function TenantDedicatedPageView({
             page={page}
             subdomain={subdomain}
             onStatusToggle={handleStatusToggle}
-            onOpenAddQueue={openComposer}
             onDisconnectRequest={handleDisconnectPage}
           />
 
@@ -509,29 +577,61 @@ export default function TenantDedicatedPageView({
             data-testid="dedicated-tab-content"
             className="gap-6"
           >
-            <TabsList
-              variant="line"
-              aria-label="Page sections"
-              data-testid="dedicated-tabs-nav"
-              className="w-full justify-start overflow-x-auto"
-            >
-              {TAB_ITEMS.map((tab) => (
-                <TabsTrigger
-                  key={tab.id}
-                  value={tab.id}
-                  data-testid={`tab-${tab.id}-btn`}
-                  onClick={() => handleTabChange(tab.id)}
-                  className="min-h-11 shrink-0"
+            {/*
+              Sticky tab row: the tenant topbar is NOT sticky, so
+              top-0 pins the row to the viewport top once the topbar
+              has scrolled away — directly beneath nothing, overlapping
+              nothing. z-sticky is the app's sticky-layer token and the
+              solid canvas background keeps scrolled panel content
+              passing underneath, never over, the row.
+            */}
+            <div className="sticky top-0 z-sticky bg-canvas">
+              <div className="relative">
+                <TabsList
+                  ref={tabListRef}
+                  onScroll={updateTabScrollEdges}
+                  variant="line"
+                  aria-label="Page sections"
+                  data-testid="dedicated-tabs-nav"
+                  className="w-full justify-start overflow-x-auto"
                 >
-                  <span>{tab.label}</span>
-                  {tab.id === 'queue' && (
-                    <span className="rounded-xs border border-line bg-subtle px-1.5 py-0.5 text-xs font-medium text-ink-sub">
-                      {queuedCount}
-                    </span>
-                  )}
-                </TabsTrigger>
-              ))}
-            </TabsList>
+                  {TAB_ITEMS.map((tab) => (
+                    <TabsTrigger
+                      key={tab.id}
+                      value={tab.id}
+                      variant="line-gold"
+                      data-testid={`tab-${tab.id}-btn`}
+                      onClick={() => handleTabChange(tab.id)}
+                      className="min-h-11 shrink-0"
+                    >
+                      <span>{tab.label}</span>
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+                {/*
+                  Mobile scroll affordance: a subtle canvas fade at
+                  each scrollable edge (right at rest, left once
+                  scrolled). pointer-events-none so taps always reach
+                  the tabs, and bottom-1 so the fades stop above the
+                  active tab's 3px underline and the row hairline —
+                  neither is ever covered.
+                */}
+                {canScrollLeft && (
+                  <div
+                    aria-hidden
+                    data-testid="dedicated-tabs-fade-left"
+                    className="pointer-events-none absolute top-0 bottom-1 left-0 w-8 bg-gradient-to-r from-canvas to-transparent"
+                  />
+                )}
+                {canScrollRight && (
+                  <div
+                    aria-hidden
+                    data-testid="dedicated-tabs-fade-right"
+                    className="pointer-events-none absolute top-0 bottom-1 right-0 w-8 bg-gradient-to-l from-canvas to-transparent"
+                  />
+                )}
+              </div>
+            </div>
 
             {visitedTabs.has('dashboard') && (
               <TabsContent value="dashboard" forceMount className="data-[state=inactive]:hidden">
@@ -541,17 +641,23 @@ export default function TenantDedicatedPageView({
                   slots={slots}
                   onPublishNow={handlePublishNow}
                   onSwitchTab={switchTab}
-                  onOpenAddQueue={openComposer}
                 />
               </TabsContent>
             )}
 
             {visitedTabs.has('queue') && (
               <TabsContent value="queue" forceMount className="data-[state=inactive]:hidden">
-                <PageTabQueue
-                  page={page}
-                  onOpenAddQueue={openComposer}
-                />
+                {/*
+                  Queue placeholder only: no list, no buttons, no
+                  composer entry points. The Queue section will be
+                  built later, more professionally.
+                */}
+                <div data-testid="page-tab-queue-placeholder" className="rounded-md border border-line bg-panel p-6 shadow-card">
+                  <h2 className="m-0 text-lg font-bold text-ink">Queue</h2>
+                  <p className="mt-1 text-body text-ink-sub">
+                    This section is being rebuilt.
+                  </p>
+                </div>
               </TabsContent>
             )}
 
@@ -576,33 +682,7 @@ export default function TenantDedicatedPageView({
               </TabsContent>
             )}
 
-            {visitedTabs.has('settings') && (
-              <TabsContent value="settings" forceMount className="data-[state=inactive]:hidden">
-                <PageTabSettings
-                  page={page}
-                  subdomain={subdomain}
-                  onStatusToggle={handleStatusToggle}
-                  onDisconnectPage={handleDisconnectPage}
-                  onUpdateTimezone={handleUpdateTimezone}
-                />
-              </TabsContent>
-            )}
           </Tabs>
-
-          {/* Post composer (132's component, mounted exactly as before) */}
-          {isComposerOpen && (
-            <PostComposer
-              pageId={page.id}
-              subdomain={subdomain}
-              slots={slots}
-              onClose={() => setIsComposerOpen(false)}
-              onSubmitted={(message) => {
-                invalidateQueue();
-                setIsComposerOpen(false);
-                toast.success(message);
-              }}
-            />
-          )}
         </>
       )}
     </div>

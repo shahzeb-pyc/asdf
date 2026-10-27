@@ -37,6 +37,8 @@ interface PageListRow {
   facebookAccountId?: string | null;
   account_display_name?: string | null;
   accountDisplayName?: string | null;
+  account_avatar_url?: string | null;
+  accountAvatarUrl?: string | null;
   fb_page_id?: string | null;
   fbPageId?: string | null;
   page_name?: string | null;
@@ -77,6 +79,12 @@ function extractStartingFollowers(row: PageListRow, currentFollowers: number): n
 function extractPagePictureUrl(row: PageListRow): string | null {
   if (typeof row.profile_picture_url === 'string') return row.profile_picture_url;
   if (typeof row.profilePictureUrl === 'string') return row.profilePictureUrl;
+  return null;
+}
+
+function extractAccountPictureUrl(row: PageListRow): string | null {
+  if (typeof row.account_avatar_url === 'string') return row.account_avatar_url;
+  if (typeof row.accountAvatarUrl === 'string') return row.accountAvatarUrl;
   return null;
 }
 
@@ -222,6 +230,7 @@ async function fetchSqlPagesPage(
       d.id,
       d.account_id AS facebook_account_id,
       a.display_name AS account_display_name,
+      a.avatar_url AS account_avatar_url,
       d.external_destination_id AS fb_page_id,
       d.name AS page_name,
       d.avatar_url AS profile_picture_url,
@@ -263,7 +272,7 @@ interface SupabaseDestinationJoinRow {
   status: string;
   created_at: string;
   updated_at: string;
-  social_accounts: { display_name: string } | null;
+  social_accounts: { display_name: string; avatar_url: string | null } | null;
 }
 
 async function fetchSupabasePages(
@@ -274,7 +283,7 @@ async function fetchSupabasePages(
   let query = supabase
     .from('destinations')
     .select(
-      'id, account_id, external_destination_id, name, avatar_url, metadata, status, created_at, updated_at, social_accounts(display_name)'
+      'id, account_id, external_destination_id, name, avatar_url, metadata, status, created_at, updated_at, social_accounts(display_name, avatar_url)'
     )
     .eq('workspace_id', workspaceId)
     .eq('platform', 'facebook');
@@ -305,6 +314,7 @@ async function fetchSupabasePages(
     id: p.id,
     facebook_account_id: p.account_id,
     account_display_name: p.social_accounts?.display_name || '',
+    account_avatar_url: p.social_accounts?.avatar_url ?? null,
     fb_page_id: p.external_destination_id,
     page_name: p.name,
     profile_picture_url: p.avatar_url,
@@ -534,6 +544,7 @@ function mapPageRows(rows: PageListRow[]) {
       facebookAccountId: row.facebook_account_id || row.facebookAccountId,
       accountDisplayName:
         row.account_display_name || row.accountDisplayName || '',
+      accountPictureUrl: extractAccountPictureUrl(row),
       fbPageId: row.fb_page_id || row.fbPageId,
       pageName: row.page_name || row.pageName,
       profilePictureUrl: extractPagePictureUrl(row),

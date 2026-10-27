@@ -18,8 +18,11 @@ import type {
  * backfill CASE maps; the reverse direction is its inverse where one
  * exists and the documented lossy choice where it does not:
  *
- * - destinations.status 'error' reads back as 'invalid_token'
- *   (page_checkpoint is indistinguishable after the backfill).
+ * - destinations.status 'error' reads back as 'invalid_token',
+ *   unless the row carries the checkpoint marker below, in which
+ *   case it reads back as 'page_checkpoint'. Rows backfilled from
+ *   pre-unification checkpoint pages carry no marker and still read
+ *   as 'invalid_token' — spec 120 §7c's accepted lossy direction.
  * - destinations.status 'rate_limited' reads back as 'fb_rate_limited'.
  * - social_accounts.status 'revoked' and 'error' read back as
  *   'disconnected' (the wire account vocabulary has no other bucket).
@@ -45,6 +48,14 @@ export type UnifiedQueueItemStatus =
 
 export const PAUSED_MARKER_KEY = 'fb_status';
 export const PAUSED_MARKER_VALUE = 'paused';
+/**
+ * Checkpoint marker, same pattern as the paused marker: a checkpoint
+ * page is stored as status 'error' (the destinations vocabulary has
+ * no checkpoint value) with `metadata.fb_status = 'checkpoint'`,
+ * and the marker is what reads back as 'page_checkpoint'. Without
+ * the marker, 'error' still reads as 'invalid_token'.
+ */
+export const CHECKPOINT_MARKER_VALUE = 'checkpoint';
 
 export function unifiedAccountStatusToWire(
   status: string | null | undefined
@@ -82,6 +93,12 @@ export function unifiedDestinationStatusToWire(
     metadata?.[PAUSED_MARKER_KEY] === PAUSED_MARKER_VALUE
   ) {
     return 'paused';
+  }
+  if (
+    status === 'error' &&
+    metadata?.[PAUSED_MARKER_KEY] === CHECKPOINT_MARKER_VALUE
+  ) {
+    return 'page_checkpoint';
   }
   switch (status) {
     case 'active':
@@ -123,6 +140,7 @@ export function wirePageStatusToUnified(status: FacebookPageStatus): {
 /** SQL CASE fragment mapping destinations.status to the wire page status. */
 export const DESTINATION_STATUS_TO_WIRE_SQL = `CASE
   WHEN d.status = 'disconnected' AND d.metadata->>'fb_status' = 'paused' THEN 'paused'
+  WHEN d.status = 'error' AND d.metadata->>'fb_status' = 'checkpoint' THEN 'page_checkpoint'
   WHEN d.status = 'active' THEN 'active'
   WHEN d.status = 'rate_limited' THEN 'fb_rate_limited'
   WHEN d.status = 'error' THEN 'invalid_token'

@@ -49,8 +49,7 @@ export interface PageTabDashboardProps {
   queueItems: PageQueueItemSummary[];
   slots: PageSlotSummary[];
   onPublishNow: (itemId: string) => Promise<void>;
-  onSwitchTab: (tab: 'queue' | 'calendar' | 'insights' | 'settings') => void;
-  onOpenAddQueue: () => void;
+  onSwitchTab: (tab: 'queue' | 'calendar' | 'insights') => void;
 }
 
 function formatItemBadge(item: PageQueueItemSummary): string {
@@ -68,7 +67,6 @@ export function PageTabDashboard({
   slots,
   onPublishNow,
   onSwitchTab,
-  onOpenAddQueue,
 }: Readonly<PageTabDashboardProps>) {
   const [publishingId, setPublishingId] = React.useState<string | null>(null);
 
@@ -174,13 +172,8 @@ export function PageTabDashboard({
             <EmptyState
               type="first-use"
               data-testid="dashboard-queue-empty"
-              title="Nothing scheduled yet. Queue your first post to get this page publishing."
+              title="Nothing scheduled yet."
               icon={<CalendarClockIcon aria-hidden />}
-              action={
-                <Button type="button" data-testid="dashboard-empty-queue-add-btn" onClick={onOpenAddQueue}>
-                  Add Content to Queue
-                </Button>
-              }
             />
           ) : (
             <div className="flex flex-col gap-2">

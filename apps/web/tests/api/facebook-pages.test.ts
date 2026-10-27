@@ -537,6 +537,8 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
               id: '33333333-3333-4333-a333-333333333331',
               facebook_account_id: accountId,
               account_display_name: 'Alex Marketing',
+              account_avatar_url:
+                'https://platform-lookaside.fbsbx.com/platform/profilepic/account_9.jpg',
               fb_page_id: 'page_pos',
               page_name: 'Brand Flagship Page',
               profile_picture_url:
@@ -593,6 +595,7 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
       expect(capturedSql).toContain("d.status != 'disconnected'");
       expect(capturedSql).toContain('starting_followers');
       expect(capturedSql).toContain('current_followers');
+      expect(capturedSql).toContain('account_avatar_url');
 
       const json = await res.json();
       expect(json.total).toBe(3);
@@ -605,6 +608,7 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
         currentFollowers: number;
         followersGained: number;
         profilePictureUrl: string | null;
+        accountPictureUrl: string | null;
       };
       const byName = new Map<string, PageFollowers>(
         json.pages.map((p: any) => [p.pageName, p] as [string, PageFollowers])
@@ -621,6 +625,9 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
       expect(flagship.followersGained).toBe(2000);
       expect(flagship.profilePictureUrl).toBe(
         'https://platform-lookaside.fbsbx.com/platform/profilepic/page_1001.jpg'
+      );
+      expect(flagship.accountPictureUrl).toBe(
+        'https://platform-lookaside.fbsbx.com/platform/profilepic/account_9.jpg'
       );
 
       // Zero growth (0)
@@ -727,7 +734,11 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
                     },
                     updated_at: pastDate,
                     created_at: pastDate,
-                    social_accounts: { display_name: 'Alex Supabase' },
+                    social_accounts: {
+                      display_name: 'Alex Supabase',
+                      avatar_url:
+                        'https://platform-lookaside.fbsbx.com/platform/profilepic/account_sup.jpg',
+                    },
                   },
                 ],
                 error: null,
@@ -763,6 +774,9 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
 
       const json = await res.json();
       expect(json.pages[0].status).toBe('active');
+      expect(json.pages[0].accountPictureUrl).toBe(
+        'https://platform-lookaside.fbsbx.com/platform/profilepic/account_sup.jpg'
+      );
       expect(supabaseUpdated).toBe(false);
     });
   });
@@ -972,6 +986,65 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
       const json = await res.json();
       expect(json.success).toBe(true);
       expect(json.page.status).toBe('paused');
+    });
+
+    it('reactivates a checkpoint page to active and clears the fb_status marker', async () => {
+      const mockPageRow = {
+        id: pageId,
+        facebook_account_id: accountId,
+        account_display_name: 'Alex Acme Account',
+        fb_page_id: 'fb_page_999',
+        page_name: 'Acme Brand',
+        profile_picture_url: null,
+        category: 'Brand',
+        starting_followers: 100,
+        current_followers: 150,
+        status: 'active',
+        tasks: ['CREATE_CONTENT'],
+        created_at: new Date('2026-10-01T12:00:00Z').toISOString(),
+        updated_at: new Date('2026-10-01T12:00:00Z').toISOString(),
+      };
+
+      const queryMock = vi.fn().mockImplementation((sql: string) => {
+        if (sql.includes('FROM workspaces')) {
+          return Promise.resolve([{ id: 'ws_123' }]);
+        }
+        if (sql.includes('UPDATE destinations')) {
+          return Promise.resolve([]);
+        }
+        if (sql.includes('FROM destinations')) {
+          return Promise.resolve([mockPageRow]);
+        }
+        return Promise.resolve([]);
+      });
+      const mockDb = {
+        query: queryMock,
+      } as unknown as DatabaseClient;
+
+      const req = new NextRequest(`http://localhost:3000/api/tenant/acme/pages/${pageId}`, {
+        method: 'PATCH',
+        headers: { cookie: validSessionCookie, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'active' }),
+      });
+
+      const res = await handleUpdatePage(req, 'acme', pageId, mockDb);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.success).toBe(true);
+      expect(json.page.status).toBe('active');
+
+      // The UPDATE must write status 'active' with the marker flag
+      // false, which the SQL path turns into metadata - 'fb_status':
+      // a checkpoint page's marker is cleared on reactivation, so the
+      // read-back after reactivation is 'active', never 'invalid_token'
+      // via a leftover marker.
+      const updateCall = queryMock.mock.calls.find(
+        (call) =>
+          typeof call[0] === 'string' &&
+          call[0].includes('UPDATE destinations')
+      );
+      expect(updateCall).toBeDefined();
+      expect(updateCall?.[1]).toEqual(['active', null, pageId, false, 'ws_123']);
     });
   });
 });

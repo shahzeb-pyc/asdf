@@ -109,6 +109,25 @@ describe('Tenant frame (spec 130 PR-130-1)', () => {
     expect(document.querySelectorAll('[data-sonner-toaster]')).toHaveLength(1);
   });
 
+  it('tenant Toaster sits top-right, not bottom-right', async () => {
+    const { container } = await renderFrame(<p>Workspace Content</p>);
+
+    act(() => {
+      toast('Workspace saved');
+    });
+    expect(await screen.findByText('Workspace saved')).toBeInTheDocument();
+    const toaster = container.querySelector('[data-sonner-toaster]');
+    expect(toaster).not.toBeNull();
+    // Sonner splits the position into x/y attributes: top-right must
+    // read right + top. A bottom-right mount would read bottom here
+    // and fail this test.
+    expect(toaster).toHaveAttribute('data-x-position', 'right');
+    expect(toaster).toHaveAttribute('data-y-position', 'top');
+    expect((toaster as HTMLElement).style.getPropertyValue('--offset-top')).toContain(
+      'safe-area-inset-top'
+    );
+  });
+
   it('frame survives a content-area error render (chrome stays mounted)', async () => {
     await renderFrame(
       <div role="alert">
