@@ -154,6 +154,37 @@ function isAllZeroActivity(data: PageInsightsResponse): boolean {
   );
 }
 
+/**
+ * Share-bar widths in 5% steps. Inline styles are banned by the
+ * regression guardrails (inline-style ratchet), so the bar width comes
+ * from token-backed fraction utilities (Tailwind v4 resolves any
+ * fraction dynamically); the exact percentage is still shown as text
+ * next to the bar, so quantizing the bar itself loses no information.
+ */
+const SHARE_BAR_WIDTHS = [
+  'w-0',
+  'w-1/20',
+  'w-1/10',
+  'w-3/20',
+  'w-1/5',
+  'w-1/4',
+  'w-3/10',
+  'w-7/20',
+  'w-2/5',
+  'w-9/20',
+  'w-1/2',
+  'w-11/20',
+  'w-3/5',
+  'w-13/20',
+  'w-7/10',
+  'w-3/4',
+  'w-4/5',
+  'w-17/20',
+  'w-9/10',
+  'w-19/20',
+  'w-full',
+] as const;
+
 function ShareBar({
   sharePct,
   tone,
@@ -173,9 +204,11 @@ function ShareBar({
             : tone === 'critical'
               ? 'bg-signal-critical'
               : 'bg-brand-gold';
+  const widthClass =
+    SHARE_BAR_WIDTHS[Math.min(20, Math.max(0, Math.round(sharePct / 5)))] ?? 'w-0';
   return (
     <span className="h-2 min-w-0 flex-1 rounded-full bg-subtle">
-      <span className={`block h-2 rounded-full ${barClass}`} style={{ width: `${sharePct}%` }} />
+      <span className={`block h-2 rounded-full ${barClass} ${widthClass}`} />
     </span>
   );
 }
@@ -304,7 +337,7 @@ export function PageTabInsights({ page, subdomain }: Readonly<PageTabInsightsPro
               <Skeleton key={i} className="h-24" />
             ))}
           </div>
-          <Skeleton className="h-[280px]" />
+          <Skeleton className="h-70" />
         </div>
       )}
 

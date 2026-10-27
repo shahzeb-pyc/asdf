@@ -55,8 +55,9 @@ function defaultStore(): InsightsCacheStore {
       localStorage.removeItem(probe);
       return localStorage;
     }
-  } catch {
-    // Private mode / disabled storage: fall through to memory.
+  } catch (error) {
+    // Private mode / disabled storage: surfaced, then fall through to memory.
+    console.warn('[insights-cache] browser storage unavailable, using in-memory fallback', error);
   }
   return memoryStore;
 }
@@ -71,14 +72,16 @@ export function readCachedInsights(
   let raw: string | null;
   try {
     raw = store.getItem(insightsCacheKey(pageId, range));
-  } catch {
+  } catch (error) {
+    console.warn('[insights-cache] cache read failed, treating as a miss', error);
     return null;
   }
   if (!raw) return null;
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
-  } catch {
+  } catch (error) {
+    console.warn('[insights-cache] corrupt cached entry ignored, refetching live', error);
     return null;
   }
   const checked = PageInsightsResponseSchema.safeParse(parsed);
@@ -98,8 +101,9 @@ export function writeCachedInsights(
   } catch {
     try {
       memoryStore.setItem(insightsCacheKey(data.pageId, data.range), JSON.stringify(data));
-    } catch {
+    } catch (error) {
       // Cache is best-effort only; a failed write must never break the tab.
+      console.warn('[insights-cache] cache write failed in both stores, continuing without cache', error);
     }
   }
 }

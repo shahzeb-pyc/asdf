@@ -27,7 +27,7 @@ import {
  *   Age/gender breakdowns were removed by Meta in 2024 and are not used.
  * - Page node field `followers_count` for the live follower total.
  *
- * Failure policy: any Graph call failing fails the whole fetch (fail
+ * Failure policy: if a Graph call fails, the whole fetch fails (fail
  * loud). The caller surfaces one error banner with Retry; there are no
  * zero-filled fallbacks and no partial 200s.
  */

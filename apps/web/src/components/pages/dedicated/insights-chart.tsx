@@ -71,7 +71,7 @@ export function InsightsChart({
   const peak = trend.reduce((max, p) => Math.max(max, p.views, p.viewers), 0);
   const domainMax = peak === 0 ? 1 : Math.ceil(peak * 1.1);
   return (
-    <div className="h-[280px] w-full" data-testid="insights-trend-chart">
+    <div className="h-70 w-full" data-testid="insights-trend-chart">
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={trend} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
           <defs>
