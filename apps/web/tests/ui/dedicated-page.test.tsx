@@ -970,4 +970,98 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
       expect(hasText('Reactivate Page')).toBe(true);
     });
   });
+
+  describe('DedicatedPageHeader Attention Banners', () => {
+    it('renders the Rate Limited banner with its description and no action on a rate-limited page', () => {
+      const { hasAttribute, hasText } = render(
+        <DedicatedPageHeader
+          page={{ ...samplePage, status: 'fb_rate_limited' }}
+          subdomain="cyberdyne"
+          onStatusToggle={vi.fn()}
+          onDisconnectRequest={vi.fn()}
+        />
+      );
+
+      expect(hasAttribute('data-testid', 'rate-limited-banner')).toBe(true);
+      expect(hasText('Rate Limited')).toBe(true);
+      expect(
+        hasText('Facebook temporarily restricted posting (auto-resumes after 3 days).')
+      ).toBe(true);
+      // It auto-resumes: no action button, and no other attention banner.
+      expect(hasAttribute('data-testid', 'reconnect-account-btn')).toBe(false);
+      expect(hasAttribute('data-testid', 'reactivate-page-btn')).toBe(false);
+      expect(hasAttribute('data-testid', 'checkpoint-reactivation-banner')).toBe(false);
+      expect(hasAttribute('data-testid', 'token-expired-banner')).toBe(false);
+    });
+
+    it('renders the Token Expired banner with its description and the Accounts link on a token-expired page', () => {
+      const { hasAttribute, hasText } = render(
+        <DedicatedPageHeader
+          page={{ ...samplePage, status: 'invalid_token' }}
+          subdomain="cyberdyne"
+          onStatusToggle={vi.fn()}
+          onDisconnectRequest={vi.fn()}
+        />
+      );
+
+      expect(hasAttribute('data-testid', 'token-expired-banner')).toBe(true);
+      expect(hasText('Token Expired')).toBe(true);
+      expect(hasText('Reconnect the parent Facebook account to resume publishing.')).toBe(true);
+      expect(hasAttribute('data-testid', 'reconnect-account-btn')).toBe(true);
+      expect(hasText('Open Facebook Accounts')).toBe(true);
+      expect(hasAttribute('data-testid', 'rate-limited-banner')).toBe(false);
+      expect(hasAttribute('data-testid', 'checkpoint-reactivation-banner')).toBe(false);
+    });
+
+    it('navigates to the workspace Facebook Accounts section from the Token Expired banner action', async () => {
+      const user = userEvent.setup();
+
+      const { container } = rtlRender(
+        <DedicatedPageHeader
+          page={{ ...samplePage, status: 'invalid_token' }}
+          subdomain="cyberdyne"
+          onStatusToggle={vi.fn()}
+          onDisconnectRequest={vi.fn()}
+        />
+      );
+
+      await user.click(
+        container.querySelector('[data-testid="reconnect-account-btn"]') as Element
+      );
+      expect(mockPush).toHaveBeenCalledWith('/tenant/cyberdyne/accounts');
+    });
+
+    it('renders only the existing checkpoint banner on a checkpoint page', () => {
+      const { hasAttribute } = render(
+        <DedicatedPageHeader
+          page={{ ...samplePage, status: 'page_checkpoint' }}
+          subdomain="cyberdyne"
+          onStatusToggle={vi.fn()}
+          onDisconnectRequest={vi.fn()}
+        />
+      );
+
+      expect(hasAttribute('data-testid', 'checkpoint-reactivation-banner')).toBe(true);
+      expect(hasAttribute('data-testid', 'rate-limited-banner')).toBe(false);
+      expect(hasAttribute('data-testid', 'token-expired-banner')).toBe(false);
+    });
+
+    it.each(['active', 'paused', 'disconnected'] as const)(
+      'renders no attention banner on a %s page',
+      (status) => {
+        const { hasAttribute } = render(
+          <DedicatedPageHeader
+            page={{ ...samplePage, status }}
+            subdomain="cyberdyne"
+            onStatusToggle={vi.fn()}
+            onDisconnectRequest={vi.fn()}
+          />
+        );
+
+        expect(hasAttribute('data-testid', 'checkpoint-reactivation-banner')).toBe(false);
+        expect(hasAttribute('data-testid', 'rate-limited-banner')).toBe(false);
+        expect(hasAttribute('data-testid', 'token-expired-banner')).toBe(false);
+      }
+    );
+  });
 });

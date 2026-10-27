@@ -11,7 +11,12 @@
  * Reactivate Page in the checkpoint state only. The Queue Post button
  * and Copy Page ID were removed with this redesign. Disconnect Page in
  * the menu opens a confirmation dialogue (the Settings tab's
- * AlertDialog pattern) — it never disconnects at once.
+ * AlertDialog pattern) — it never disconnects at once. Attention
+ * states explain themselves with a banner above the header: the
+ * checkpoint banner (explanation + reactivate action), a Rate Limited
+ * banner (no action — it auto-resumes), and a Token Expired banner
+ * (action links to the workspace's Facebook Accounts section).
+ * Active, paused, and disconnected pages show no banner.
  *
  * Data notes:
  * - Added date and followers gained reuse the list card's helpers
@@ -268,6 +273,43 @@ export function DedicatedPageHeader({
                 onClick={() => void handleReactivate()}
               >
                 {isUpdatingStatus ? 'Reactivating...' : 'Mark Verified & Reactivate Page'}
+              </Button>
+            }
+          />
+        </div>
+      )}
+
+      {/* Rate-limited attention banner — rate-limited state only. No
+          action: Facebook lifts the restriction on its own (the
+          description says so), so there is nothing to click. */}
+      {page.status === 'fb_rate_limited' && (
+        <div className="mb-4 overflow-hidden rounded-md border border-line">
+          <Banner
+            variant="warning"
+            data-testid="rate-limited-banner"
+            title="Rate Limited"
+            description="Facebook temporarily restricted posting (auto-resumes after 3 days)."
+          />
+        </div>
+      )}
+
+      {/* Token-expired attention banner — invalid-token state only. Its
+          action links to the Facebook Accounts section for this
+          workspace, where the parent account is reconnected. */}
+      {page.status === 'invalid_token' && (
+        <div className="mb-4 overflow-hidden rounded-md border border-line">
+          <Banner
+            variant="critical"
+            data-testid="token-expired-banner"
+            title="Token Expired"
+            description="Reconnect the parent Facebook account to resume publishing."
+            action={
+              <Button
+                type="button"
+                data-testid="reconnect-account-btn"
+                onClick={() => router.push(`/tenant/${subdomain}/accounts`)}
+              >
+                Open Facebook Accounts
               </Button>
             }
           />
