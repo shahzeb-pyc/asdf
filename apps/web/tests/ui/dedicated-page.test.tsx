@@ -39,6 +39,12 @@ vi.mock('next/navigation', () => ({
     subdomain: 'cyberdyne',
     pageId: 'page-101',
   }),
+  // Dedicated tab row reads ?tab= from the URL; this suite's renders
+  // carry no query string, so the row falls back to initialTab.
+  useSearchParams: () => ({
+    get: () => null,
+    toString: () => '',
+  }),
 }));
 
 function findElementByTestId(
