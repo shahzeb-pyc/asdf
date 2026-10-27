@@ -19,11 +19,6 @@ import { handleCheckDuplicates } from '../../src/app/api/tenant/[subdomain]/medi
 import { handleGetDownloadJobs } from '../../src/app/api/tenant/[subdomain]/downloader/route';
 import { handleListQueueItems } from '../../src/app/api/tenant/[subdomain]/publishing/queue/route';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
-import {
-  getPageOverview,
-  getPageReactionsAndDemographics,
-  getPageTimeSeriesInsights,
-} from '@/lib/insights/facebook-insights-client';
 import { logServerError } from '@/lib/server-analytics';
 
 const mockLogServerError = vi.mocked(logServerError);
@@ -174,50 +169,6 @@ describe('B19 — workspace resolver: DB failure still resolves null, but logs',
       expect.stringContaining('workspace-resolver'),
       expect.objectContaining({ message: 'db down' }),
       expect.objectContaining({ source: 'workspace-resolver' })
-    );
-  });
-});
-
-describe('B19 — insights client fallbacks: zero-filled data, but logged', () => {
-  const rejectingFetch = vi
-    .fn()
-    .mockRejectedValue(new Error('graph unreachable')) as unknown as typeof fetch;
-
-  it('getPageOverview keeps the zero-filled fallback and logs', async () => {
-    const result = await getPageOverview('123456', 'token', rejectingFetch);
-    expect(result.healthStatus).toBe('active');
-    expect(result.overview.fanCount).toBe(0);
-    expect(mockLogServerError).toHaveBeenCalledWith(
-      expect.stringContaining('overview'),
-      expect.any(Error),
-      expect.objectContaining({ source: 'facebook-insights-client' })
-    );
-  });
-
-  it('getPageTimeSeriesInsights keeps the zero-filled series and logs', async () => {
-    const result = await getPageTimeSeriesInsights('123456', 'token', '28d', rejectingFetch);
-    expect(result.timeSeries).toHaveLength(28);
-    expect(result.totalMediaViews).toBe(0);
-    expect(mockLogServerError).toHaveBeenCalledWith(
-      expect.stringContaining('time-series'),
-      expect.any(Error),
-      expect.objectContaining({ source: 'facebook-insights-client' })
-    );
-  });
-
-  it('getPageReactionsAndDemographics logs a non-ok Graph response', async () => {
-    const failingFetch = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 500,
-      json: () => Promise.resolve({ error: { message: 'Graph said no' } }),
-    }) as unknown as typeof fetch;
-
-    const result = await getPageReactionsAndDemographics('123456', 'token', failingFetch);
-    expect(result.reactions.total).toBe(0);
-    expect(mockLogServerError).toHaveBeenCalledWith(
-      expect.stringContaining('reactions'),
-      expect.any(Error),
-      expect.objectContaining({ source: 'facebook-insights-client' })
     );
   });
 });

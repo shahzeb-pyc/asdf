@@ -245,45 +245,37 @@ export async function installApiFixtures(
     }
   );
 
-  // Page insights (spec 131 PR-131-3): schema-complete response in the
-  // PageInsightsResponseSchema shape so the insights tab renders its
+  // Page insights (rebuilt 2026-10-27): schema-complete response in the
+  // new PageInsightsResponseSchema shape so the insights tab renders its
   // content state in the click-through flow.
   await page.route(
     `**/api/tenant/${SUB}/pages/${FACEBOOK_PAGE.id}/insights**`,
     (route) =>
       json(route, {
         success: true,
-        fbPageId: FACEBOOK_PAGE.fbPageId,
-        dateRange: '28d',
-        cachedAt: '2026-10-23T00:00:00.000Z',
-        cacheHit: false,
-        overview: {
-          pageName: FACEBOOK_PAGE.pageName,
-          pageImage: null,
-          fanCount: 132,
-          followersCount: 132,
-          totalMediaViews: 540,
-          totalVideoViews: 420,
-          totalPostEngagements: 38,
+        pageId: FACEBOOK_PAGE.id,
+        range: '28d',
+        fetchedAt: new Date().toISOString(),
+        kpis: {
+          followers: 132,
+          mediaViews: 540,
+          uniqueViewersDailySum: 420,
+          engagements: 38,
+          engagementRatePct: 7,
+          netFollowerGrowth: 3,
+          videoWatchTimeMinutes: 90,
         },
-        timeSeries: [
-          {
-            date: '2026-10-22',
-            pageFollows: 3,
-            dailyFollowsUnique: 3,
-            dailyUnfollowsUnique: 0,
-            mediaViews: 120,
-            videoViews: 90,
-            videoCompleteViews30s: 40,
-            videoViewTimeMinutes: 12.5,
-          },
+        trend: [{ date: '2026-10-22', views: 120, viewers: 90 }],
+        reactions: [
+          { kind: 'like', count: 25, sharePct: 69.4 },
+          { kind: 'love', count: 8, sharePct: 22.2 },
+          { kind: 'wow', count: 2, sharePct: 5.6 },
+          { kind: 'haha', count: 1, sharePct: 2.8 },
+          { kind: 'sad', count: 0, sharePct: 0 },
+          { kind: 'angry', count: 0, sharePct: 0 },
         ],
-        reactions: { like: 25, love: 8, wow: 2, haha: 1, sorry: 0, anger: 0, total: 36 },
-        demographics: {
-          topCountries: [{ name: 'United States', count: 60, percentage: 45 }],
-          topCities: [{ name: 'New York, NY', count: 20, percentage: 15 }],
-        },
-        healthStatus: 'active',
+        topCountries: [{ name: 'United States', count: 60, sharePct: 45 }],
+        topCities: [{ name: 'New York, NY', count: 20, sharePct: 15 }],
       })
   );
   // One active daily 09:00 UTC slot: the composer's default intent is

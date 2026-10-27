@@ -6,292 +6,125 @@ import {
   getTokenEncryptionKey,
   PageInsightsQuerySchema,
   verifySessionToken,
+  type Database,
   type DatabaseClient,
-  type PageInsightsResponse,
 } from '@fbuploadpro/contracts';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
+import {
+  fetchPageInsights,
+  type GraphFetchFn,
+} from '@/lib/insights/page-insights';
 import { logServerError } from '@/lib/server-analytics';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
-import type { SupabaseClient } from '@supabase/supabase-js';
-import {
-  getPageOverview,
-  getPageTimeSeriesInsights,
-  getPageReactionsAndDemographics,
-} from '@/lib/insights/facebook-insights-client';
 
-export interface HandleGetInsightsOptions {
-  dbClient?: DatabaseClient | SupabaseClient;
-  fetchImpl?: typeof fetch;
+/**
+ * Fresh Page Insights proxy — written 2026-10-27 for the Insights rebuild.
+ *
+ * The route is a thin server-side proxy and NOT a cache: it decrypts the
+ * page's Facebook token in memory, calls Facebook live, and returns the
+ * result with `no-cache` headers. It performs NO database writes of any
+ * kind (the only query is a scoped SELECT for the destination row). The
+ * one-hour cache lives in the browser only (see
+ * `lib/insights/insights-local-cache.ts`). The token never appears in the
+ * response, logs, or error text.
+ */
+
+interface DestinationRow {
+  id: string;
+  external_destination_id: string;
+  encrypted_destination_token: string | null;
 }
 
-export async function handleGetInsights(
+export async function handleGetPageInsights(
   request: NextRequest,
   subdomain: string,
   pageId: string,
-  options?: HandleGetInsightsOptions
+  dbClient?: DatabaseClient | SupabaseClient<Database> | null,
+  graphFetch?: GraphFetchFn,
 ): Promise<NextResponse> {
-  const sessionSecret = getSessionSecret();
-  const encryptionKey = getTokenEncryptionKey();
-
   const sessionCookie = request.cookies.get('fbup_session')?.value;
   if (!sessionCookie) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-
   let session;
   try {
-    session = await verifySessionToken(sessionCookie, sessionSecret);
-  } catch (_e) {
+    session = await verifySessionToken(sessionCookie, getSessionSecret());
+  } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-
   const access = canAccessTenant(session, subdomain);
   if (!access.allowed) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
-
-  // Parse query parameters
-  const { searchParams } = new URL(request.url);
-  const parsedQuery = PageInsightsQuerySchema.safeParse({
-    range: searchParams.get('range') || undefined,
-    refresh: searchParams.get('refresh') || undefined,
-  });
-
-  const query = parsedQuery.success ? parsedQuery.data : { range: '28d' as const, refresh: false };
-
-  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(pageId);
-  const isNumericFbId = /^[0-9]+$/.test(pageId);
-
-  if (!isUuid && !isNumericFbId) {
-    return NextResponse.json({ error: 'Page not found' }, { status: 404 });
-  }
-
-  const client = options?.dbClient;
-  const workspaceId = await resolveTenantWorkspaceId(client, subdomain, session.userId, session.role);
+  const workspaceId = await resolveTenantWorkspaceId(
+    dbClient,
+    subdomain,
+    session.userId,
+    session.role,
+  );
   if (!workspaceId) {
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
   }
-
-  let page: {
-    id: string;
-    fb_page_id: string;
-    page_name: string;
-    encrypted_access_token: string;
-    status: string;
-  } | null = null;
-
-  if (client && 'query' in client && typeof client.query === 'function') {
-    const whereClause = isUuid ? 'd.id = $1' : 'd.external_destination_id = $1';
-    const pageRows = (await client.query(
-      `SELECT d.id, d.external_destination_id AS fb_page_id, d.name AS page_name,
-              d.encrypted_destination_token AS encrypted_access_token,
-              d.status
-       FROM destinations d
-       WHERE ${whereClause} AND d.workspace_id = $2 AND d.platform = 'facebook'`,
-      [pageId, workspaceId]
-    )) as Array<{
-      id: string;
-      fb_page_id: string;
-      page_name: string;
-      encrypted_access_token: string | null;
-      status: string;
-    }>;
-
-    if (!pageRows || pageRows.length === 0) {
-      return NextResponse.json({ error: 'Page not found' }, { status: 404 });
-    }
-    const found = pageRows[0] as Record<string, unknown>;
-    page = {
-      id: found.id as string,
-      fb_page_id: found.fb_page_id as string,
-      page_name: found.page_name as string,
-      // A null destination token fails decryption below with the same
-      // 500 shape a corrupt stored token produced before.
-      encrypted_access_token: (found.encrypted_access_token as string | null) ?? '',
-      status: found.status as string,
-    };
-  } else {
-    const supabase = (client && 'from' in client ? client : getSupabaseAdminClient()) as SupabaseClient | null;
-    if (!supabase) {
-      return NextResponse.json({ error: 'Database service unavailable' }, { status: 500 });
-    }
-
-    let queryBuilder = supabase
-      .from('destinations')
-      .select('id, external_destination_id, name, encrypted_destination_token, status')
-      .eq('workspace_id', workspaceId)
-      .eq('platform', 'facebook');
-
-    if (isUuid) {
-      queryBuilder = queryBuilder.eq('id', pageId);
-    } else {
-      queryBuilder = queryBuilder.eq('external_destination_id', pageId);
-    }
-
-    const { data: pageData, error } = await queryBuilder.maybeSingle();
-
-    if (error || !pageData) {
-      return NextResponse.json({ error: 'Page not found' }, { status: 404 });
-    }
-
-    page = {
-      id: pageData.id,
-      fb_page_id: pageData.external_destination_id,
-      page_name: pageData.name,
-      encrypted_access_token: pageData.encrypted_destination_token ?? '',
-      status: pageData.status,
-    };
+  const parsedQuery = PageInsightsQuerySchema.safeParse({
+    range: request.nextUrl.searchParams.get('range') ?? undefined,
+  });
+  if (!parsedQuery.success) {
+    return NextResponse.json({ error: 'Invalid range' }, { status: 400 });
   }
 
-  // Decrypt Facebook access token server-side (zero token exposure to client)
-  let decryptedToken: string;
+  const supabase =
+    dbClient && 'from' in dbClient
+      ? (dbClient as SupabaseClient<Database>)
+      : getSupabaseAdminClient();
+  if (!supabase) {
+    return NextResponse.json({ error: 'Insights unavailable' }, { status: 503 });
+  }
+  const { data: row, error: rowError } = await supabase
+    .from('destinations')
+    .select('id, external_destination_id, encrypted_destination_token')
+    .eq('id', pageId)
+    .eq('workspace_id', workspaceId)
+    .eq('platform', 'facebook')
+    .maybeSingle();
+  const destination = row as DestinationRow | null;
+  if (rowError || !destination) {
+    return NextResponse.json({ error: 'Page not found' }, { status: 404 });
+  }
+  if (!destination.encrypted_destination_token) {
+    logServerError('page-insights: destination has no token', undefined, {
+      source: 'page-insights-route',
+    });
+    return NextResponse.json({ error: 'Insights unavailable' }, { status: 502 });
+  }
+
   try {
-    decryptedToken = await decryptToken(page.encrypted_access_token, encryptionKey);
+    const token = await decryptToken(
+      destination.encrypted_destination_token,
+      getTokenEncryptionKey(),
+    );
+    const payload = await fetchPageInsights({
+      fbPageId: destination.external_destination_id,
+      pageId,
+      token,
+      range: parsedQuery.data.range,
+      ...(graphFetch ? { graphFetch } : {}),
+    });
+    return NextResponse.json(payload, {
+      headers: { 'Cache-Control': 'private, no-cache, no-store' },
+    });
   } catch (err) {
-    logServerError('[pages/insights] Failed to decrypt Facebook access credentials', err, {
-      source: 'page-insights',
-      subdomain,
-      pageId,
+    logServerError('page-insights: live fetch failed', err, {
+      source: 'page-insights-route',
     });
-    return NextResponse.json(
-      { error: 'Failed to decrypt Facebook access credentials' },
-      { status: 500 }
-    );
-  }
-
-  // Fetch Overview, Time-Series, and Reactions/Demographics live from Facebook Graph API v26.0
-  const fetchImpl = options?.fetchImpl ?? fetch;
-  try {
-    const overviewResult = await getPageOverview(page.fb_page_id, decryptedToken, fetchImpl);
-    if (overviewResult.healthStatus !== 'active' && overviewResult.healthStatus !== 'rate_limited') {
-      const responsePayload: PageInsightsResponse = {
-        success: true,
-        fbPageId: page.fb_page_id,
-        dateRange: query.range,
-        cachedAt: new Date().toISOString(),
-        cacheHit: false,
-        overview: {
-          ...overviewResult.overview,
-          pageName: overviewResult.overview.pageName || page.page_name || null,
-          totalMediaViews: 0,
-          totalVideoViews: 0,
-          totalPostEngagements: 0,
-        },
-        timeSeries: [],
-        reactions: {
-          like: 0,
-          love: 0,
-          wow: 0,
-          haha: 0,
-          sorry: 0,
-          anger: 0,
-          total: 0,
-        },
-        demographics: {
-          topCountries: [],
-          topCities: [],
-        },
-        healthStatus: overviewResult.healthStatus,
-      };
-      return NextResponse.json(responsePayload, {
-        headers: {
-          'Cache-Control': 'private, no-cache, no-store, must-revalidate',
-        },
-      });
-    }
-
-    if (overviewResult.rawError) {
-      const graphError = new Error(overviewResult.rawError) as Error & { code?: number };
-      if (overviewResult.healthStatus === 'rate_limited') {
-        graphError.code = 80001;
-      }
-      throw graphError;
-    }
-
-    // Dependency analysis (spec 139): getPageOverview above must stay
-    // sequential — its healthStatus gates this whole branch (a degraded
-    // status returns early without calling the other two, and a rawError
-    // throws before they run). The two calls below are independent of
-    // each other: each takes only fb_page_id / token / (range) / fetchImpl,
-    // neither consumes the other's result, and they are only merged into
-    // the payload after both settle. So they run concurrently.
-    //
-    // Failure semantics: Promise.all preserves today's net behaviour.
-    // The client library never rejects for Graph failures (it returns
-    // zero-filled/degraded results), but if a call ever did reject,
-    // sequential code would also have failed the whole request via the
-    // outer catch (discarding any sibling result). Promise.all does the
-    // same: the first rejection propagates to the outer catch and the
-    // sibling result is discarded. Promise.allSettled + degraded
-    // fallbacks was deliberately NOT used — it would turn a hard failure
-    // that returns 429/502 today into a 200 with partial data.
-    const [timeSeriesResult, reactionsDemoResult] = await Promise.all([
-      getPageTimeSeriesInsights(page.fb_page_id, decryptedToken, query.range, fetchImpl),
-      getPageReactionsAndDemographics(page.fb_page_id, decryptedToken, fetchImpl),
-    ]);
-
-    // Preserve stored page_name if Graph API didn't return one
-    const finalOverview = {
-      ...overviewResult.overview,
-      pageName: overviewResult.overview.pageName || page.page_name || null,
-      totalMediaViews: timeSeriesResult.totalMediaViews,
-      totalVideoViews: timeSeriesResult.totalVideoViews,
-      totalPostEngagements: reactionsDemoResult.reactions.total,
-    };
-
-    const responsePayload: PageInsightsResponse = {
-      success: true,
-      fbPageId: page.fb_page_id,
-      dateRange: query.range,
-      cachedAt: new Date().toISOString(),
-      cacheHit: false,
-      overview: finalOverview,
-      timeSeries: timeSeriesResult.timeSeries,
-      reactions: reactionsDemoResult.reactions,
-      demographics: reactionsDemoResult.demographics,
-      healthStatus: overviewResult.healthStatus,
-    };
-
-    return NextResponse.json(responsePayload, {
-      headers: {
-        'Cache-Control': 'private, no-cache, no-store, must-revalidate',
-      },
-    });
-  } catch (err: unknown) {
-    const errCode =
-      err !== null && typeof err === 'object' && 'code' in err
-        ? err.code
-        : undefined;
-    const isRateLimited =
-      errCode === 4 ||
-      errCode === 17 ||
-      errCode === 32 ||
-      errCode === 613 ||
-      errCode === 80001;
-
-    // Spec 139 B3/C1 pattern: the provider detail is logged server-side
-    // only; the client gets the route family's generic message (the raw
-    // Graph error message used to be returned in this body).
-    logServerError('[pages/insights] Facebook Graph request failed', err, {
-      source: 'page-insights',
-      subdomain,
-      pageId,
-      rateLimited: isRateLimited,
-    });
-    return NextResponse.json(
-      {
-        error: isRateLimited ? 'FB_RATE_LIMITED' : 'UPSTREAM_GRAPH_ERROR',
-        message: 'Facebook Graph API failed to return page insights.',
-      },
-      { status: isRateLimited ? 429 : 502 }
-    );
+    return NextResponse.json({ error: 'Insights unavailable' }, { status: 502 });
   }
 }
 
 export async function GET(
   request: NextRequest,
-  context: { params: Promise<{ subdomain: string; pageId: string }> }
+  context: { params: Promise<{ subdomain: string; pageId: string }> },
 ): Promise<NextResponse> {
   const { subdomain, pageId } = await context.params;
-  return handleGetInsights(request, subdomain, pageId);
+  return handleGetPageInsights(request, subdomain, pageId);
 }
