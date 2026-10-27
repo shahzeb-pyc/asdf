@@ -186,6 +186,7 @@ export function PostingTimeForm({
                       data-testid="posting-time-input"
                       type="time"
                       required
+                      className="w-44"
                       {...field}
                     />
                   </FormControl>
@@ -232,13 +233,12 @@ export function PostingTimeForm({
                           aria-pressed={isSelected}
                           onClick={() => toggleFormat(format.id)}
                           className={cn(
-                            'inline-flex min-h-11 items-center gap-1.5 rounded-sm border px-3 text-body font-medium outline-none transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold',
+                            'inline-flex min-h-9 items-center rounded-full px-3 text-body font-medium outline-none transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold',
                             isSelected
-                              ? 'border-brand-gold bg-subtle text-ink'
-                              : 'border-line bg-subtle text-ink-sub hover:text-ink'
+                              ? 'bg-brand-gold/10 text-ink'
+                              : 'bg-subtle text-ink-sub hover:text-ink'
                           )}
                         >
-                          <span aria-hidden>{isSelected ? '✓' : '+'}</span>
                           <span>{format.label}</span>
                         </button>
                       );

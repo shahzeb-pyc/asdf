@@ -106,6 +106,31 @@ describe('PostingTimeForm', () => {
     expect(props.onClose).toHaveBeenCalled();
   });
 
+  it('keeps the time field compact, not full width', () => {
+    renderForm();
+    const input = screen.getByTestId('posting-time-input');
+    expect(input).toHaveClass('w-44');
+    expect(input).not.toHaveClass('w-full');
+  });
+
+  it('renders post-type chips as soft pills, selected in gold tint', async () => {
+    const user = userEvent.setup();
+    renderForm();
+    const reel = screen.getByTestId('modal-format-toggle-reel');
+    const image = screen.getByTestId('modal-format-toggle-image');
+    // Unselected: muted surface, pill shape, no hard border.
+    expect(image).toHaveClass('rounded-full');
+    expect(image).toHaveClass('bg-subtle');
+    expect(image).not.toHaveClass('border');
+    await user.click(reel);
+    // Selected: soft gold-tinted pill, still no border, no tick mark.
+    expect(reel).toHaveClass('rounded-full');
+    expect(reel).toHaveClass('bg-brand-gold/10');
+    expect(reel).not.toHaveClass('border');
+    expect(reel).not.toHaveTextContent('✓');
+    expect(reel).toHaveAttribute('aria-pressed', 'true');
+  });
+
   it('surfaces a save failure in the summary and keeps the dialog open', async () => {
     const user = userEvent.setup();
     const { props } = renderForm({

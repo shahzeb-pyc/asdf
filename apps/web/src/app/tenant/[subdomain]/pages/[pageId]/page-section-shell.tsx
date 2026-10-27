@@ -52,6 +52,7 @@ import {
   ListQueueSlotsResponseSchema,
   PageQueueSlotSchema,
   UpdateScheduleTimezoneResponseSchema,
+  type ListQueueSlotsResponse,
 } from '@/lib/api/schemas/queue';
 import { queryKeys } from '@/lib/data/query-keys';
 import { Button } from '@/components/shared/ui/button';
@@ -467,6 +468,16 @@ export default function TenantDedicatedPageView({
     [timezoneMutation]
   );
 
+  // Toggle/delete are optimistic: the switch flips (or the row leaves)
+  // the instant the user acts, from the slots cache — the user never
+  // waits on the PATCH round trip plus refetch to see their action.
+  // The server round trip then only reconciles: onSettled refetches
+  // the slots (and the page, whose unmatched-posts flag a toggle or
+  // delete can move). On failure the cache rolls back to the exact
+  // previous state and the error toast fires — the UI never disagrees
+  // with the server. The queue is deliberately NOT invalidated here:
+  // queue estimates derive from the slots cache, so they update with
+  // the optimistic write itself.
   const toggleSlotMutation = useMutation({
     mutationFn: ({ slotId, isActive }: { slotId: string; isActive: boolean }) =>
       api.patch(
@@ -474,12 +485,44 @@ export default function TenantDedicatedPageView({
         { isActive },
         { schema: AckSchema }
       ),
-    onSuccess: () => {
+    onMutate: async ({ slotId, isActive }) => {
+      const slotsKey = tenant.pages.slots(pageId);
+      await queryClient.cancelQueries({ queryKey: slotsKey });
+      const previous = queryClient.getQueryData<ListQueueSlotsResponse>(slotsKey);
+      const previousSlot = previous?.slots.find((slot) => slot.id === slotId);
+      queryClient.setQueryData<ListQueueSlotsResponse>(slotsKey, (old) =>
+        old
+          ? {
+              ...old,
+              slots: old.slots.map((slot) =>
+                slot.id === slotId ? { ...slot, isActive } : slot
+              ),
+            }
+          : old
+      );
+      return { slotId, previousIsActive: previousSlot?.isActive };
+    },
+    onError: (error, _variables, context) => {
+      if (context && context.previousIsActive !== undefined) {
+        const slotsKey = tenant.pages.slots(pageId);
+        queryClient.setQueryData<ListQueueSlotsResponse>(slotsKey, (old) =>
+          old
+            ? {
+                ...old,
+                slots: old.slots.map((slot) =>
+                  slot.id === context.slotId
+                    ? { ...slot, isActive: context.previousIsActive as boolean }
+                    : slot
+                ),
+              }
+            : old
+        );
+      }
+      toast.error(errorMessage(error, "Couldn't update the posting time. Please try again."));
+    },
+    onSettled: () => {
       invalidateSlots();
       invalidatePage();
-    },
-    onError: (error) => {
-      toast.error(errorMessage(error, "Couldn't update the posting time. Please try again."));
     },
   });
   const handleToggleSlot = React.useCallback(
@@ -494,13 +537,41 @@ export default function TenantDedicatedPageView({
       api.delete(buildTenantApiPath(subdomain, `/pages/${pageId}/slots/${slotId}`), {
         schema: AckSchema,
       }),
+    onMutate: async (slotId) => {
+      const slotsKey = tenant.pages.slots(pageId);
+      await queryClient.cancelQueries({ queryKey: slotsKey });
+      const previous = queryClient.getQueryData<ListQueueSlotsResponse>(slotsKey);
+      const index = previous?.slots.findIndex((slot) => slot.id === slotId) ?? -1;
+      const deletedSlot = index >= 0 ? previous?.slots[index] : undefined;
+      queryClient.setQueryData<ListQueueSlotsResponse>(slotsKey, (old) =>
+        old
+          ? { ...old, slots: old.slots.filter((slot) => slot.id !== slotId) }
+          : old
+      );
+      return { slotId, deletedSlot, index };
+    },
+    onError: (error, _variables, context) => {
+      const deletedSlot = context?.deletedSlot;
+      const index = context?.index ?? -1;
+      if (deletedSlot && index >= 0) {
+        const slotsKey = tenant.pages.slots(pageId);
+        queryClient.setQueryData<ListQueueSlotsResponse>(slotsKey, (old) => {
+          if (!old) return old;
+          const slots = [...old.slots];
+          slots.splice(index, 0, deletedSlot);
+          return { ...old, slots };
+        });
+      }
+      toast.error(errorMessage(error, "Couldn't remove the posting time. Please try again."));
+    },
     onSuccess: () => {
-      invalidateSlots();
-      invalidatePage();
+      // The success toast fires only after the server confirms —
+      // the optimistic removal above is what the user sees instantly.
       toast.success('Posting time removed.');
     },
-    onError: (error) => {
-      toast.error(errorMessage(error, "Couldn't remove the posting time. Please try again."));
+    onSettled: () => {
+      invalidateSlots();
+      invalidatePage();
     },
   });
   const handleDeleteSlot = React.useCallback(

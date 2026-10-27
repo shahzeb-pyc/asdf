@@ -33,24 +33,25 @@ export function PostingTimesHeader({
         <p className="text-body text-ink-sub">
           Your daily posting times, and the post types that can go out at each one.
         </p>
-        <p className="text-metadata text-ink-sub">
-          Times shown in <span className="font-semibold text-ink">{activeTimezone}</span>
-        </p>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <span>
-          <span className="text-ink-sub">Timezone:</span>{' '}
+        {/* Timezone line, kept small: metadata size with tight internal
+            spacing, so it reads as secondary info next to the Add
+            action rather than competing with it. Structure, testid,
+            and the gold underlined Change treatment are unchanged. */}
+        <span className="flex items-center gap-1 text-metadata">
+          <span className="text-ink-sub">Timezone:</span>
           <span className="font-semibold">{activeTimezone}</span>
+          <button
+            type="button"
+            data-testid="schedule-timezone-trigger"
+            onClick={onOpenTimezoneModal}
+            className="text-link underline"
+          >
+            Change
+          </button>
         </span>
-        <button
-          type="button"
-          data-testid="schedule-timezone-trigger"
-          onClick={onOpenTimezoneModal}
-          className="text-link underline"
-        >
-          Change
-        </button>
 
         <Button type="button" data-testid="add-slot-button" onClick={onOpenAddModal}>
           <PlusIcon aria-hidden />

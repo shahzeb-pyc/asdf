@@ -33,6 +33,17 @@ const apiGet = vi.fn();
 const apiPatch = vi.fn();
 const apiPost = vi.fn();
 const apiDelete = vi.fn();
+const toastSuccess = vi.fn();
+const toastError = vi.fn();
+
+vi.mock('@/components/shared/ui/toast', () => ({
+  toast: {
+    success: (...args: unknown[]) => toastSuccess(...args),
+    error: (...args: unknown[]) => toastError(...args),
+  },
+  Toast: () => null,
+  Toaster: () => null,
+}));
 
 vi.mock('@/lib/api', () => ({
   api: {
@@ -172,4 +183,137 @@ describe('Posting-times shell wiring', () => {
       'checked'
     );
   });
+
+  it('flips the switch instantly on toggle, before the mutation resolves', async () => {
+    const user = userEvent.setup();
+    const patch = deferred<unknown>();
+    apiPatch.mockImplementationOnce(() => patch.promise);
+    renderShell();
+    const toggle = await screen.findByTestId('toggle-slot-btn-slot-1');
+    expect(toggle).toHaveAttribute('data-state', 'checked');
+    const queueGetsBefore = apiGet.mock.calls.filter(([url]) =>
+      String(url).includes('/publishing/queue')
+    ).length;
+    await user.click(toggle);
+    // Instant: the switch flips from the optimistic cache write while
+    // the PATCH is still in flight — the old code showed nothing
+    // until the round trip plus refetch finished.
+    await waitFor(() =>
+      expect(screen.getByTestId('toggle-slot-btn-slot-1')).toHaveAttribute(
+        'data-state',
+        'unchecked'
+      )
+    );
+    expect(apiPatch).toHaveBeenCalledWith(
+      expect.stringContaining('/slots/slot-1'),
+      expect.objectContaining({ isActive: false }),
+      expect.anything()
+    );
+    // The server now agrees with the optimistic state before the
+    // settled refetch runs, so the flip survives reconciliation.
+    apiGet.mockImplementation((url: string) => {
+      if (url.includes('/slots')) return Promise.resolve({ slots: TOGGLED_SLOTS });
+      if (url.includes('/publishing/queue')) return Promise.resolve({ items: QUEUE_ITEMS });
+      return Promise.resolve({});
+    });
+    patch.resolve({ id: 'slot-1' });
+    await waitFor(() =>
+      expect(screen.getByTestId('toggle-slot-btn-slot-1')).toHaveAttribute(
+        'data-state',
+        'unchecked'
+      )
+    );
+    // The toggle reconciles slots (and the page) only — the queue is
+    // never refetched: its estimates derive from the slots cache.
+    const queueGetsAfter = apiGet.mock.calls.filter(([url]) =>
+      String(url).includes('/publishing/queue')
+    ).length;
+    expect(queueGetsAfter).toBe(queueGetsBefore);
+  });
+
+  it('reverts the switch and shows an error when toggling fails', async () => {
+    const user = userEvent.setup();
+    apiPatch.mockRejectedValueOnce('network down');
+    renderShell();
+    const toggle = await screen.findByTestId('toggle-slot-btn-slot-1');
+    await user.click(toggle);
+    await waitFor(() => expect(apiPatch).toHaveBeenCalled());
+    // Optimistic flip first, then rollback to the server state.
+    await waitFor(() =>
+      expect(screen.getByTestId('toggle-slot-btn-slot-1')).toHaveAttribute(
+        'data-state',
+        'checked'
+      )
+    );
+    expect(toastError).toHaveBeenCalledWith(
+      "Couldn't update the posting time. Please try again."
+    );
+  });
+
+  it('removes the row instantly on delete confirm, before the mutation resolves', async () => {
+    const user = userEvent.setup();
+    const deletion = deferred<unknown>();
+    apiDelete.mockImplementationOnce(() => deletion.promise);
+    renderShell();
+    await screen.findByTestId('posting-time-row-slot-1');
+    await user.click(screen.getByTestId('delete-slot-btn-slot-1'));
+    await screen.findByTestId('delete-posting-time-modal');
+    await user.click(screen.getByTestId('confirm-delete-slot-btn'));
+    // Instant: the row leaves the list from the optimistic cache
+    // write while the DELETE is still in flight — the old code kept
+    // it until the round trip plus refetch finished.
+    await waitFor(() =>
+      expect(screen.queryByTestId('posting-time-row-slot-1')).not.toBeInTheDocument()
+    );
+    // The success toast fires only after the server confirms.
+    expect(toastSuccess).not.toHaveBeenCalled();
+    apiGet.mockImplementation((url: string) => {
+      if (url.includes('/slots')) return Promise.resolve({ slots: SLOTS_WITHOUT_SLOT_1 });
+      if (url.includes('/publishing/queue')) return Promise.resolve({ items: QUEUE_ITEMS });
+      return Promise.resolve({});
+    });
+    deletion.resolve({ success: true });
+    await waitFor(() =>
+      expect(toastSuccess).toHaveBeenCalledWith('Posting time removed.')
+    );
+    expect(screen.queryByTestId('posting-time-row-slot-1')).not.toBeInTheDocument();
+  });
+
+  it('restores the row and shows an error when deleting fails', async () => {
+    const user = userEvent.setup();
+    apiDelete.mockRejectedValueOnce('network down');
+    renderShell();
+    await screen.findByTestId('posting-time-row-slot-1');
+    await user.click(screen.getByTestId('delete-slot-btn-slot-1'));
+    await screen.findByTestId('delete-posting-time-modal');
+    await user.click(screen.getByTestId('confirm-delete-slot-btn'));
+    await waitFor(() => expect(apiDelete).toHaveBeenCalled());
+    // Rollback restores the row and the failure is surfaced — never
+    // silent, never lost. The dialog closes here because the shell
+    // converts the failure to a resolved mutation (its catch pattern)
+    // and the tab then clears the pending delete; the user retries
+    // with Remove again.
+    await waitFor(() =>
+      expect(screen.getByTestId('posting-time-row-slot-1')).toBeInTheDocument()
+    );
+    expect(toastError).toHaveBeenCalledWith(
+      "Couldn't remove the posting time. Please try again."
+    );
+    expect(screen.queryByTestId('delete-posting-time-modal')).not.toBeInTheDocument();
+  });
 });
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+const TOGGLED_SLOTS = [
+  { id: 'slot-1', slotTime: '09:00', timezone: 'UTC', isActive: false, allowedFormats: null },
+  { id: 'slot-2', slotTime: '15:00', timezone: 'UTC', isActive: false, allowedFormats: ['image'] },
+];
+
+const SLOTS_WITHOUT_SLOT_1 = [SLOTS[1]];
