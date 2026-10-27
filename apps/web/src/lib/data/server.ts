@@ -51,10 +51,14 @@ export interface ServerApiFetchOptions<S extends z.ZodTypeAny = z.ZodTypeAny> {
 
 /** Origin the server variant calls back into our own API on. */
 export function getServerBaseUrl(): string {
+  // The current deployment's own URL must win: on Vercel previews
+  // NEXT_PUBLIC_APP_URL is the production URL, so preferring it would
+  // send every server-side prefetch to production instead of this
+  // deployment's own API.
+  const vercelUrl = process.env.VERCEL_URL;
+  if (vercelUrl) return `https://${vercelUrl}`.replace(/\/+$/, '');
   const appUrl = process.env.NEXT_PUBLIC_APP_URL;
   if (appUrl) return appUrl.replace(/\/+$/, '');
-  const vercelUrl = process.env.VERCEL_URL;
-  if (vercelUrl) return `https://${vercelUrl}`;
   return 'http://localhost:3000';
 }
 
