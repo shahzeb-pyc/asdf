@@ -35,12 +35,19 @@ function renderForm(overrides: Partial<React.ComponentProps<typeof PostingTimeFo
 }
 
 describe('PostingTimeForm', () => {
-  it('defaults Add to 09:00 with every post type selected', () => {
+  it('defaults Add to 09:00 with no post type selected (the user must pick one)', () => {
     renderForm();
     expect(screen.getByTestId('add-posting-time-modal')).toBeInTheDocument();
     expect(screen.getByText('Add Daily Posting Time')).toBeInTheDocument();
     expect((screen.getByTestId('posting-time-input') as HTMLInputElement).value).toBe('09:00');
-    expect(screen.getByTestId('modal-format-toggle-reel')).toHaveAttribute('aria-pressed', 'true');
+    // Publisher-driven rule: a posting time must have at least one
+    // format picked by the user — Add pre-selects nothing.
+    for (const format of ['reel', 'image', 'video', 'story', 'text']) {
+      expect(screen.getByTestId(`modal-format-toggle-${format}`)).toHaveAttribute(
+        'aria-pressed',
+        'false'
+      );
+    }
     expect(screen.getByTestId('modal-schedule-timezone-note')).toHaveTextContent('UTC');
   });
 
@@ -85,16 +92,46 @@ describe('PostingTimeForm', () => {
     const user = userEvent.setup();
     const { props } = renderForm();
     fireEvent.change(screen.getByTestId('posting-time-input'), { target: { value: '17:30' } });
+    // Add starts with nothing selected; pick one format to save.
+    await user.click(screen.getByTestId('modal-format-toggle-reel'));
     await user.click(screen.getByTestId('save-slot-btn'));
 
     await waitFor(() =>
       expect(props.onSave).toHaveBeenCalledWith({
         slotTime: '17:30',
         timezone: 'UTC',
-        allowedFormats: ['reel', 'image', 'video', 'story', 'text'],
+        allowedFormats: ['reel'],
       })
     );
     expect(props.onClose).toHaveBeenCalled();
+  });
+
+  it('keeps the time field compact, not full width', () => {
+    renderForm();
+    const input = screen.getByTestId('posting-time-input');
+    expect(input).toHaveClass('w-44');
+    expect(input).not.toHaveClass('w-full');
+  });
+
+  it('renders post-type chips as soft pills, selected with gold outline only', async () => {
+    const user = userEvent.setup();
+    renderForm();
+    const reel = screen.getByTestId('modal-format-toggle-reel');
+    const image = screen.getByTestId('modal-format-toggle-image');
+    // Unselected: muted surface, pill shape, no hard border.
+    expect(image).toHaveClass('rounded-full');
+    expect(image).toHaveClass('bg-subtle');
+    expect(image).not.toHaveClass('border');
+    await user.click(reel);
+    // Selected: transparent background, gold text, gold outline only — no tinted fill, no tick mark.
+    expect(reel).toHaveClass('rounded-full');
+    expect(reel).toHaveClass('bg-transparent');
+    expect(reel).toHaveClass('text-brand-gold');
+    expect(reel).toHaveClass('ring-brand-gold');
+    expect(reel).not.toHaveClass('bg-brand-gold/10');
+    expect(reel).not.toHaveClass('border');
+    expect(reel).not.toHaveTextContent('✓');
+    expect(reel).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('surfaces a save failure in the summary and keeps the dialog open', async () => {
@@ -102,6 +139,7 @@ describe('PostingTimeForm', () => {
     const { props } = renderForm({
       onSave: vi.fn().mockRejectedValue(new Error('Slot already exists at this time.')),
     });
+    await user.click(screen.getByTestId('modal-format-toggle-reel'));
     await user.click(screen.getByTestId('save-slot-btn'));
 
     expect(await screen.findByText('Slot already exists at this time.')).toBeInTheDocument();

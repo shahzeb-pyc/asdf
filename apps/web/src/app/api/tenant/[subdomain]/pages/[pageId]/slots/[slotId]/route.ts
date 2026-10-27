@@ -10,6 +10,7 @@ import {
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import { logServerError } from '@/lib/server-analytics';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { refreshDestinationUnmatchedFlag } from '@/lib/server/unmatched-flag';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 /**
@@ -157,6 +158,8 @@ export async function handleUpdateQueueSlot(
       }
 
       const row = updateRows[0] as unknown as SlotWireRow;
+      // Toggle/edit can cover or uncover queued formats.
+      await refreshDestinationUnmatchedFlag(dbClient, pageId);
       return NextResponse.json(
         toSlotResponse(row, ownerId, pageTimezone, DEFAULT_ALLOWED_FORMATS),
         { status: 200 }
@@ -251,6 +254,8 @@ export async function handleUpdateQueueSlot(
       return NextResponse.json({ error: 'Slot not found' }, { status: 404 });
     }
 
+    await refreshDestinationUnmatchedFlag(supabase, pageId);
+
     return NextResponse.json(
       toSlotResponse(
         {
@@ -313,6 +318,9 @@ export async function handleDeleteQueueSlot(
       return NextResponse.json({ error: 'Slot not found' }, { status: 404 });
     }
 
+    // Deleting a time can leave queued posts with no covering time.
+    await refreshDestinationUnmatchedFlag(dbClient, pageId);
+
     return NextResponse.json({ success: true, slotId });
   } else {
     const supabase = (dbClient && 'from' in dbClient ? dbClient : getSupabaseAdminClient()) as SupabaseClient | null;
@@ -342,6 +350,8 @@ export async function handleDeleteQueueSlot(
     if (delErr || !deleted || deleted.length === 0) {
       return NextResponse.json({ error: 'Slot not found' }, { status: 404 });
     }
+
+    await refreshDestinationUnmatchedFlag(supabase, pageId);
 
     return NextResponse.json({ success: true, slotId });
   }

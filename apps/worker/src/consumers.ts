@@ -240,6 +240,28 @@ async function callSettleRpc(
   if (error) {
     throw error instanceof Error ? error : new Error(String(error));
   }
+  // Publish-path flag maintenance (publisher-driven scheduling):
+  // every settle changes the queued set for the destination
+  // (published, deferred back to queued, retried, failed), so the
+  // unmatched-posts flag is recomputed here. Best-effort: a refresh
+  // failure is logged, never allowed to fail the settle — the next
+  // slot/enqueue/publish event refreshes the flag again.
+  try {
+    const { error: refreshError } = await db.rpc('refresh_destination_unmatched_flag', {
+      p_destination_id: args.p_destination_id,
+    });
+    if (refreshError) {
+      console.error(
+        `[settle] unmatched-flag refresh failed for destination ${args.p_destination_id}:`,
+        refreshError
+      );
+    }
+  } catch (err) {
+    console.error(
+      `[settle] unmatched-flag refresh threw for destination ${args.p_destination_id}:`,
+      err
+    );
+  }
 }
 
 /**

@@ -37,9 +37,16 @@ describe('formatSlotDisplay (shared 12h formatter)', () => {
 });
 
 describe('getPostingTimeFormInitialState', () => {
-  it('defaults the Add dialog to 09:00 with every post type selected', () => {
+  it('defaults the Add dialog to 09:00 with no post type selected', () => {
     const state = getPostingTimeFormInitialState(null);
     expect(state.timeInput).toBe('09:00');
+    expect(state.selectedFormats).toEqual([]);
+  });
+
+  it('normalises a legacy null format list on Edit to every post type', () => {
+    const state = getPostingTimeFormInitialState(
+      makeSlot({ slotTime: '09:00', allowedFormats: null })
+    );
     expect(state.selectedFormats).toEqual(['reel', 'image', 'video', 'story', 'text']);
   });
 

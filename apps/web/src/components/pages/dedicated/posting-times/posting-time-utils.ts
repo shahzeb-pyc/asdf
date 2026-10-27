@@ -51,19 +51,36 @@ export interface PostingTimeFormInitialState {
 
 /**
  * Initial form state for the Add/Edit posting-time dialog, always derived
- * from the slot being edited (or the defaults for Add). The dialog is only
- * mounted while open and is keyed per slot, so this runs fresh on every
- * open — an Edit can never inherit the value typed into a previous Add
- * (spec 112 #19, regression-tested beside the form).
+ * from the slot being edited. The dialog is only mounted while open and
+ * is keyed per slot, so this runs fresh on every open — an Edit can
+ * never inherit the value typed into a previous Add (spec 112 #19,
+ * regression-tested beside the form).
+ *
+ * Add starts with NO format selected: a posting time must have at
+ * least one format picked by the user (the form schema enforces
+ * min(1) with an error otherwise) — pre-selecting everything would
+ * let a time be saved without the user picking anything.
+ *
+ * Edit keeps the slot's own formats. A null format list on an
+ * existing slot is the legacy shape the slots route normalises to
+ * "all formats", so Edit pre-selects all for that shape (matching
+ * the route); an explicitly empty list stays empty, so the user
+ * must pick before saving.
  */
 export function getPostingTimeFormInitialState(
   slotToEdit?: { slotTime: string; allowedFormats?: string[] | null } | null
 ): PostingTimeFormInitialState {
+  if (!slotToEdit) {
+    return { timeInput: '09:00', selectedFormats: [] };
+  }
+  if (slotToEdit.allowedFormats === null || slotToEdit.allowedFormats === undefined) {
+    return {
+      timeInput: slotToEdit.slotTime.slice(0, 5) || '09:00',
+      selectedFormats: [...ALL_POST_FORMATS.map((format) => format.id)],
+    };
+  }
   return {
-    timeInput: slotToEdit?.slotTime.slice(0, 5) || '09:00',
-    selectedFormats:
-      slotToEdit?.allowedFormats && slotToEdit.allowedFormats.length > 0
-        ? [...slotToEdit.allowedFormats]
-        : [...ALL_POST_FORMATS.map((format) => format.id)],
+    timeInput: slotToEdit.slotTime.slice(0, 5) || '09:00',
+    selectedFormats: [...slotToEdit.allowedFormats],
   };
 }

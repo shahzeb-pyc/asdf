@@ -12,8 +12,8 @@
  */
 import * as React from 'react';
 import { Button } from '@/components/shared/ui/button';
-import { StatusDot } from '@/components/shared/ui/status-dot';
 import { Switch } from '@/components/shared/ui/switch';
+import { PageStatusMark } from '../../page-card';
 import type { PageSlotSummary } from '../tab-dashboard';
 import {
   ALL_POST_FORMATS,
@@ -48,11 +48,14 @@ export function PostingTimeRow({
       data-testid={`posting-time-row-${slot.id}`}
       className="flex flex-wrap items-center justify-between gap-4 border-b border-line px-2 py-4 last:border-b-0 sm:px-4"
     >
-      {/* Time + status + timezone label */}
+      {/* Time + status + timezone label. The mark is the shared
+          header mark (tick/clock, never a dot); an inactive slot only
+          stops future scheduling — already-queued posts still go out
+          at their scheduled time, so the label says so. */}
       <div className="flex min-w-44 flex-wrap items-center gap-3">
-        <StatusDot
-          status={slot.isActive ? 'operational' : 'idle'}
-          label={slot.isActive ? 'Active' : 'Paused'}
+        <PageStatusMark
+          status={slot.isActive ? 'active' : 'paused'}
+          label={slot.isActive ? 'Active' : 'Paused for new posts'}
         />
         <div className="flex items-baseline gap-1">
           <span

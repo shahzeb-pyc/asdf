@@ -27,6 +27,7 @@ const otherWorkspaceId = '55555555-5555-4555-a555-555555555555';
 const subdomain = 'acme';
 
 const igDestinationId = '33333333-3333-4333-a333-333333333333';
+const fbDestinationId = '66666666-6666-4666-a666-666666666666';
 const foreignDestinationId = '88888888-8888-4888-a888-888888888888';
 const slotId = '56565656-5656-4565-a656-565656565656';
 const imageMediaId = '44444444-4444-4444-a444-444444444444';
@@ -65,7 +66,7 @@ interface QueueItemRow {
   media_storage_key: string | null;
   link_url: string | null;
   platform_options: Record<string, unknown>;
-  scheduled_time: string;
+  scheduled_time: string | null;
   slot_id: string | null;
   status: string;
   claimed_at: string | null;
@@ -110,7 +111,7 @@ class FakeDb {
     if (sql.includes('FROM queue_items') && sql.includes('ORDER BY scheduled_time')) {
       return this.queueItems
         .filter((q) => q.workspace_id === params[0] && q.destination_id === params[1])
-        .sort((a, b) => a.scheduled_time.localeCompare(b.scheduled_time));
+        .sort((a, b) => (a.scheduled_time ?? '').localeCompare(b.scheduled_time ?? ''));
     }
     if (sql.includes('FROM queue_items') && sql.includes('LIMIT 1')) {
       const row = this.queueItems.find(
@@ -136,7 +137,9 @@ class FakeDb {
       row.kind = String(params[4]);
       row.platform_format = (params[5] as string | null) ?? null;
       row.platform_options = JSON.parse(String(params[6])) as Record<string, unknown>;
-      row.scheduled_time = String(params[7]);
+      // A nulled time stays null (publisher-driven posts carry no
+      // stored time); the old String(null) stored the literal 'null'.
+      row.scheduled_time = (params[7] as string | null) ?? null;
       row.slot_id = (params[8] as string | null) ?? null;
       row.status = String(params[9]);
       row.claimed_at = (params[10] as string | null) ?? null;
@@ -218,6 +221,16 @@ function seed() {
     id: foreignDestinationId,
     workspace_id: otherWorkspaceId,
     platform: 'instagram',
+    timezone: 'UTC',
+    status: 'active',
+    rate_usage_pct: 0,
+    next_allowed_publish_at: null,
+    metadata: null,
+  });
+  db.destinations.set(fbDestinationId, {
+    id: fbDestinationId,
+    workspace_id: workspaceId,
+    platform: 'facebook',
     timezone: 'UTC',
     status: 'active',
     rate_usage_pct: 0,
@@ -415,6 +428,40 @@ describe('destination queue item PATCH (edit-save)', () => {
     );
     expect(res.status).toBe(404);
   });
+
+  it('refuses a fixed time for a Facebook post (publisher-driven, no one-offs)', async () => {
+    const item = makeItem({ destination_id: fbDestinationId, platform: 'facebook' });
+    db.queueItems.push(item);
+    const res = await handleUpdateDestinationQueueItem(
+      request('PATCH', { scheduledTime: '2999-06-01T09:00:00.000Z' }),
+      subdomain,
+      fbDestinationId,
+      item.id,
+      dbClient
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('ONE_OFF_NOT_SUPPORTED');
+  });
+
+  it('edits a Facebook post and refreshes the unmatched flag', async () => {
+    const item = makeItem({ destination_id: fbDestinationId, platform: 'facebook' });
+    db.queueItems.push(item);
+    const res = await handleUpdateDestinationQueueItem(
+      request('PATCH', { caption: 'FB edited' }),
+      subdomain,
+      fbDestinationId,
+      item.id,
+      dbClient
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { caption: string };
+    expect(body.caption).toBe('FB edited');
+    expect(db.query).toHaveBeenCalledWith(
+      expect.stringContaining('refresh_destination_unmatched_flag'),
+      [fbDestinationId]
+    );
+  });
 });
 
 describe('destination queue item DELETE', () => {
@@ -446,6 +493,24 @@ describe('destination queue item DELETE', () => {
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe('CANNOT_DELETE_PUBLISHED_ITEM');
     expect(db.queueItems).toHaveLength(1);
+  });
+
+  it('deletes a Facebook post and refreshes the unmatched flag', async () => {
+    const item = makeItem({ destination_id: fbDestinationId, platform: 'facebook' });
+    db.queueItems.push(item);
+    const res = await handleDeleteDestinationQueueItem(
+      request('DELETE'),
+      subdomain,
+      fbDestinationId,
+      item.id,
+      dbClient
+    );
+    expect(res.status).toBe(200);
+    expect(db.queueItems).toHaveLength(0);
+    expect(db.query).toHaveBeenCalledWith(
+      expect.stringContaining('refresh_destination_unmatched_flag'),
+      [fbDestinationId]
+    );
   });
 });
 
@@ -558,5 +623,40 @@ describe('destination queue retry', () => {
     expect(body.error).toBe('NO_COVERING_SLOT');
     expect(body.message).toBe('No posting time covers this post yet.');
     expect(db.queueItems[0]?.status).toBe('failed');
+  });
+
+  it('retries a Facebook post with no stored time and no slot link', async () => {
+    const item = makeItem({
+      destination_id: fbDestinationId,
+      platform: 'facebook',
+      status: 'failed',
+      scheduled_time: '2000-01-01T09:00:00.000Z',
+      slot_id: slotId,
+      claimed_at: '2000-01-01T09:00:00.000Z',
+    });
+    db.queueItems.push(item);
+    const res = await handleDestinationRetry(
+      request('POST'),
+      subdomain,
+      fbDestinationId,
+      item.id,
+      dbClient
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      status: string;
+      scheduledTime: string | null;
+      slotId: string | null;
+    };
+    expect(body.status).toBe('queued');
+    // Publisher-driven: the retried post carries no time and no slot
+    // link — it goes out at the next fitting posting time.
+    expect(body.scheduledTime).toBeNull();
+    expect(body.slotId).toBeNull();
+    expect(db.queueItems[0]?.claimed_at).toBeNull();
+    expect(db.query).toHaveBeenCalledWith(
+      expect.stringContaining('refresh_destination_unmatched_flag'),
+      [fbDestinationId]
+    );
   });
 });

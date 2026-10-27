@@ -348,7 +348,9 @@ export const DestinationEnqueueResponseSchema = z.object({
   kind: DestinationEnqueueKindSchema,
   platformFormat: z.string().nullable(),
   status: z.enum(['queued', 'publishing', 'published', 'failed', 'cancelled']),
-  scheduledTime: z.string().datetime({ offset: true }),
+  // Nullable under publisher-driven scheduling: Facebook queued
+  // posts store no time (the posting times are the schedule).
+  scheduledTime: z.string().datetime({ offset: true }).nullable(),
   slotId: z.string().uuid().nullable(),
   createdAt: z.string().datetime({ offset: true }),
 });

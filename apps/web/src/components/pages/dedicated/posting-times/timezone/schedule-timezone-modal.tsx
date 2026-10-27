@@ -32,7 +32,7 @@ export interface ScheduleTimezoneModalProps {
   isOpen: boolean;
   activeTimezone: string;
   slotsCount: number;
-  pendingQueueCount: number;
+  queuedCount: number;
   onClose: () => void;
   onConfirmTimezone: (newTimezone: string) => Promise<void>;
 }
@@ -41,7 +41,7 @@ export function ScheduleTimezoneModal({
   isOpen,
   activeTimezone,
   slotsCount,
-  pendingQueueCount,
+  queuedCount,
   onClose,
   onConfirmTimezone,
 }: Readonly<ScheduleTimezoneModalProps>) {
@@ -58,7 +58,7 @@ export function ScheduleTimezoneModal({
         <ScheduleTimezoneFlow
           activeTimezone={activeTimezone}
           slotsCount={slotsCount}
-          pendingQueueCount={pendingQueueCount}
+          queuedCount={queuedCount}
           onClose={onClose}
           onConfirmTimezone={onConfirmTimezone}
         />
@@ -70,7 +70,7 @@ export function ScheduleTimezoneModal({
 function ScheduleTimezoneFlow({
   activeTimezone,
   slotsCount,
-  pendingQueueCount,
+  queuedCount,
   onClose,
   onConfirmTimezone,
 }: Readonly<Omit<ScheduleTimezoneModalProps, 'isOpen'>>) {
@@ -90,7 +90,7 @@ function ScheduleTimezoneFlow({
       setErrorMessage(
         err instanceof Error
           ? err.message
-          : "Couldn't update the schedule timezone. Please try again."
+          : "Couldn't update the timezone. Please try again."
       );
     } finally {
       setIsSubmitting(false);
@@ -105,8 +105,8 @@ function ScheduleTimezoneFlow({
         </DialogTitle>
         <DialogDescription>
           {step === 1
-            ? "Choose the timezone this page's posting times and queue use."
-            : 'Verify how this change affects your recurring posting times and pending posts.'}
+            ? "Choose the timezone for this page's posting times and queue."
+            : 'Check how this change affects your posting times and queued posts.'}
         </DialogDescription>
       </DialogHeader>
 
@@ -125,7 +125,7 @@ function ScheduleTimezoneFlow({
           activeTimezone={activeTimezone}
           selectedTimezone={selectedTimezone}
           slotsCount={slotsCount}
-          pendingQueueCount={pendingQueueCount}
+          queuedCount={queuedCount}
           isSubmitting={isSubmitting}
           errorMessage={errorMessage}
           onBack={() => setStep(1)}

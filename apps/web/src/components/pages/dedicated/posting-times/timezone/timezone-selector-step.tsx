@@ -60,10 +60,9 @@ export function TimezoneSelectorStep({
       {/* Current timezone banner */}
       <div
         data-testid="current-timezone-banner"
-        className="flex items-center justify-between gap-3 rounded-md border border-line bg-subtle px-4 py-3"
+        className="flex items-center justify-between gap-3 border-b border-line pb-3"
       >
         <div className="flex items-center gap-2">
-          <span aria-hidden className="size-2 shrink-0 rounded-full bg-signal-operational" />
           <div className="flex flex-col">
             <span className="text-metadata font-semibold tracking-wide text-ink-dim uppercase">
               Current timezone
@@ -96,10 +95,7 @@ export function TimezoneSelectorStep({
       </div>
 
       {/* Grouped directory */}
-      <div
-        data-testid="timezone-list-container"
-        className="max-h-72 overflow-y-auto rounded-md border border-line bg-canvas p-1"
-      >
+      <div data-testid="timezone-list-container" className="max-h-72 overflow-y-auto">
         {!hasMatches ? (
           <div
             data-testid="timezone-no-matches"
@@ -126,10 +122,7 @@ export function TimezoneSelectorStep({
                       data-testid={`timezone-option-${entry.iana}`}
                       aria-pressed={isSelected}
                       onClick={() => onSelectTimezone(entry.iana)}
-                      className={cn(
-                        'mb-0.5 flex min-h-11 w-full items-center justify-between gap-2 rounded-sm border px-2 py-1.5 text-left outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold',
-                        isSelected ? 'border-brand-gold bg-subtle' : 'border-transparent'
-                      )}
+                      className="flex min-h-11 w-full items-center justify-between gap-2 border-b border-line px-2 py-2 text-left outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold"
                     >
                       <span className="flex items-center gap-2">
                         <span

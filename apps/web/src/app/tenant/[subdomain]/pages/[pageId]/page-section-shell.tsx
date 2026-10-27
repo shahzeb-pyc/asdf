@@ -39,6 +39,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
 
 import { api, buildTenantApiPath, isApiError } from '@/lib/api';
+import { assignQueueEstimates } from '@fbuploadpro/contracts';
 import {
   DisconnectPageResponseSchema,
   ListFacebookPagesResponseSchema,
@@ -49,7 +50,9 @@ import {
 import {
   ListQueueItemsResponseSchema,
   ListQueueSlotsResponseSchema,
+  PageQueueSlotSchema,
   UpdateScheduleTimezoneResponseSchema,
+  type ListQueueSlotsResponse,
 } from '@/lib/api/schemas/queue';
 import { queryKeys } from '@/lib/data/query-keys';
 import { Button } from '@/components/shared/ui/button';
@@ -207,41 +210,8 @@ export default function TenantDedicatedPageView({
   const isLoadingPage = !page && !pageError;
 
   // --- frame-level summaries: queue items + slots (shared cache) -------
-  const queueQuery = useQuery({
-    queryKey: tenant.queue.items(pageId),
-    queryFn: ({ signal }) =>
-      api.get(queuePath, {
-        schema: ListQueueItemsResponseSchema,
-        query: { pageId },
-        signal,
-      }),
-    enabled: Boolean(subdomain && pageId),
-  });
-  const queueItems = React.useMemo(
-    () => queueQuery.data?.items ?? [],
-    [queueQuery.data]
-  );
-  const dashboardQueueItems = React.useMemo(
-    () =>
-      queueItems.map((item) => ({
-        id: item.id,
-        mediaId: item.mediaId,
-        postFormat: item.postFormat,
-        linkUrl: item.linkUrl ?? null,
-        caption: item.caption ?? null,
-        firstComment: item.firstComment ?? null,
-        scheduledTime: item.scheduledTime,
-        status: item.status,
-        ...(item.media ? { mediaType: item.media.mediaType } : {}),
-        thumbnailUrl: item.media?.thumbnailUrl ?? null,
-      })),
-    [queueItems]
-  );
-  const queuedCount = React.useMemo(
-    () => queueItems.filter((i) => i.status === 'queued').length,
-    [queueItems]
-  );
-
+  // Slots resolve BEFORE the dashboard estimates below: the estimate
+  // computation reads slots, so the declaration order matters (TDZ).
   const slotsQuery = useQuery({
     queryKey: tenant.pages.slots(pageId),
     queryFn: ({ signal }) =>
@@ -258,6 +228,69 @@ export default function TenantDedicatedPageView({
         allowedFormats: slot.allowedFormats,
       })),
     [slotsQuery.data]
+  );
+
+  const queueQuery = useQuery({
+    queryKey: tenant.queue.items(pageId),
+    queryFn: ({ signal }) =>
+      api.get(queuePath, {
+        schema: ListQueueItemsResponseSchema,
+        query: { pageId },
+        signal,
+      }),
+    enabled: Boolean(subdomain && pageId),
+  });
+  const queueItems = React.useMemo(
+    () => queueQuery.data?.items ?? [],
+    [queueQuery.data]
+  );
+  const pageTimezone = page?.timezone ?? 'UTC';
+  // Queue times are DERIVED estimates, never stored times: the
+  // estimate for each queued post is computed from its queue
+  // position + the current active posting times (format-aware,
+  // skip-ahead). Estimates move when times change — that is the
+  // system working, not a bug. Items arrive from the list route in
+  // queue order (queue_seq), which is the order the estimator takes.
+  const dashboardQueueItems = React.useMemo(
+    () => {
+      const queued = queueItems.filter((item) => item.status === 'queued');
+      const estimates = assignQueueEstimates({
+        slots: slots.map((slot) => ({
+          id: slot.id,
+          timeOfDay: slot.slotTime,
+          isActive: slot.isActive,
+          allowedFormats: slot.allowedFormats ?? null,
+        })),
+        timezone: pageTimezone,
+        posts: queued.map((item) => ({ id: item.id, format: item.postFormat })),
+        now: new Date(),
+      });
+      return queueItems.map((item) => ({
+        id: item.id,
+        mediaId: item.mediaId,
+        postFormat: item.postFormat,
+        linkUrl: item.linkUrl ?? null,
+        caption: item.caption ?? null,
+        firstComment: item.firstComment ?? null,
+        scheduledTime: item.scheduledTime,
+        estimatedTime:
+          item.status === 'queued'
+            ? (estimates.get(item.id)?.toISOString() ?? null)
+            : null,
+        status: item.status,
+        ...(item.media ? { mediaType: item.media.mediaType } : {}),
+        thumbnailUrl: item.media?.thumbnailUrl ?? null,
+      }));
+    },
+    [queueItems, slots, pageTimezone]
+  );
+  // The timezone review counts all queued posts: under
+  // publisher-driven scheduling there are no slot links and no
+  // stored times to realign — the review says times fire in the new
+  // zone and estimates update.
+  const queuedCount = React.useMemo(
+    () => queueItems.filter((i) => i.status === 'queued').length,
+    [queueItems]
   );
 
   // --- mutations (named invalidation per mutation, §8.1) ---------------
@@ -334,11 +367,13 @@ export default function TenantDedicatedPageView({
       ),
     onSuccess: () => {
       invalidateSlots();
-      toast.success('Recurring publishing slot added.');
+      // Slot changes can move the unmatched-posts flag on the page.
+      invalidatePage();
+      toast.success('Posting time added.');
     },
     onError: (error) => {
       toast.error(
-        errorMessage(error, "Couldn't create the publishing slot. Please try again.")
+        errorMessage(error, "Couldn't add the posting time. Please try again.")
       );
     },
   });
@@ -349,6 +384,61 @@ export default function TenantDedicatedPageView({
     [addSlotMutation]
   );
 
+  // Single-slot PATCH update — the production edit path. Editing
+  // through this route preserves the slot id; the old delete +
+  // re-add fallback could lose the slot entirely on a 409, so the
+  // shell must always pass onUpdateSlot and never rely on the
+  // fallback. (Queued posts carry no slot link under
+  // publisher-driven scheduling — the id matters to the slot
+  // itself, e.g. its once-per-day claim row.)
+  const updateSlotMutation = useMutation({
+    mutationFn: ({
+      slotId,
+      data,
+    }: {
+      slotId: string;
+      data: {
+        slotTime?: string;
+        timezone?: string;
+        isActive?: boolean;
+        allowedFormats?: string[];
+      };
+    }) =>
+      api.patch(
+        buildTenantApiPath(subdomain, `/pages/${pageId}/slots/${slotId}`),
+        {
+          slotTime: data.slotTime,
+          isActive: data.isActive,
+          allowedFormats: data.allowedFormats,
+        },
+        { schema: PageQueueSlotSchema }
+      ),
+    onSuccess: () => {
+      invalidateSlots();
+      invalidatePage();
+      toast.success('Posting time updated.');
+    },
+    onError: (error) => {
+      toast.error(
+        errorMessage(error, "Couldn't update the posting time. Please try again.")
+      );
+    },
+  });
+  const handleUpdateSlot = React.useCallback(
+    async (
+      slotId: string,
+      data: {
+        slotTime?: string;
+        timezone?: string;
+        isActive?: boolean;
+        allowedFormats?: string[];
+      }
+    ) => {
+      await updateSlotMutation.mutateAsync({ slotId, data });
+    },
+    [updateSlotMutation]
+  );
+
   const timezoneMutation = useMutation({
     mutationFn: (newTimezone: string) =>
       api.patch(
@@ -356,21 +446,18 @@ export default function TenantDedicatedPageView({
         { timezone: newTimezone },
         { schema: UpdateScheduleTimezoneResponseSchema }
       ),
-    onSuccess: (data, newTimezone) => {
+    onSuccess: (_data, newTimezone) => {
       invalidateSlots();
       invalidateQueue();
       invalidatePage();
-      const realignedCount = Number(data?.realignedQueueCount ?? 0);
-      const pluralSuffix = realignedCount > 1 ? 's' : '';
-      const realignedMsg =
-        realignedCount > 0
-          ? ` (${realignedCount} pending post${pluralSuffix} realigned)`
-          : '';
-      toast.success(`Schedule timezone updated to ${newTimezone}${realignedMsg}.`);
+      // No realigned count anymore: queued posts store no times, so
+      // a timezone change rewrites nothing — times simply fire in
+      // the new zone and queue estimates update.
+      toast.success(`Timezone updated to ${newTimezone}.`);
     },
     onError: (error) => {
       toast.error(
-        errorMessage(error, "Couldn't update the schedule timezone. Please try again.")
+        errorMessage(error, "Couldn't update the timezone. Please try again.")
       );
     },
   });
@@ -381,6 +468,16 @@ export default function TenantDedicatedPageView({
     [timezoneMutation]
   );
 
+  // Toggle/delete are optimistic: the switch flips (or the row leaves)
+  // the instant the user acts, from the slots cache — the user never
+  // waits on the PATCH round trip plus refetch to see their action.
+  // The server round trip then only reconciles: onSettled refetches
+  // the slots (and the page, whose unmatched-posts flag a toggle or
+  // delete can move). On failure the cache rolls back to the exact
+  // previous state and the error toast fires — the UI never disagrees
+  // with the server. The queue is deliberately NOT invalidated here:
+  // queue estimates derive from the slots cache, so they update with
+  // the optimistic write itself.
   const toggleSlotMutation = useMutation({
     mutationFn: ({ slotId, isActive }: { slotId: string; isActive: boolean }) =>
       api.patch(
@@ -388,11 +485,44 @@ export default function TenantDedicatedPageView({
         { isActive },
         { schema: AckSchema }
       ),
-    onSuccess: () => {
-      invalidateSlots();
+    onMutate: async ({ slotId, isActive }) => {
+      const slotsKey = tenant.pages.slots(pageId);
+      await queryClient.cancelQueries({ queryKey: slotsKey });
+      const previous = queryClient.getQueryData<ListQueueSlotsResponse>(slotsKey);
+      const previousSlot = previous?.slots.find((slot) => slot.id === slotId);
+      queryClient.setQueryData<ListQueueSlotsResponse>(slotsKey, (old) =>
+        old
+          ? {
+              ...old,
+              slots: old.slots.map((slot) =>
+                slot.id === slotId ? { ...slot, isActive } : slot
+              ),
+            }
+          : old
+      );
+      return { slotId, previousIsActive: previousSlot?.isActive };
     },
-    onError: (error) => {
-      toast.error(errorMessage(error, "Couldn't update the slot. Please try again."));
+    onError: (error, _variables, context) => {
+      if (context && context.previousIsActive !== undefined) {
+        const slotsKey = tenant.pages.slots(pageId);
+        queryClient.setQueryData<ListQueueSlotsResponse>(slotsKey, (old) =>
+          old
+            ? {
+                ...old,
+                slots: old.slots.map((slot) =>
+                  slot.id === context.slotId
+                    ? { ...slot, isActive: context.previousIsActive as boolean }
+                    : slot
+                ),
+              }
+            : old
+        );
+      }
+      toast.error(errorMessage(error, "Couldn't update the posting time. Please try again."));
+    },
+    onSettled: () => {
+      invalidateSlots();
+      invalidatePage();
     },
   });
   const handleToggleSlot = React.useCallback(
@@ -407,12 +537,41 @@ export default function TenantDedicatedPageView({
       api.delete(buildTenantApiPath(subdomain, `/pages/${pageId}/slots/${slotId}`), {
         schema: AckSchema,
       }),
-    onSuccess: () => {
-      invalidateSlots();
-      toast.success('Publishing slot deleted.');
+    onMutate: async (slotId) => {
+      const slotsKey = tenant.pages.slots(pageId);
+      await queryClient.cancelQueries({ queryKey: slotsKey });
+      const previous = queryClient.getQueryData<ListQueueSlotsResponse>(slotsKey);
+      const index = previous?.slots.findIndex((slot) => slot.id === slotId) ?? -1;
+      const deletedSlot = index >= 0 ? previous?.slots[index] : undefined;
+      queryClient.setQueryData<ListQueueSlotsResponse>(slotsKey, (old) =>
+        old
+          ? { ...old, slots: old.slots.filter((slot) => slot.id !== slotId) }
+          : old
+      );
+      return { slotId, deletedSlot, index };
     },
-    onError: (error) => {
-      toast.error(errorMessage(error, "Couldn't delete the slot. Please try again."));
+    onError: (error, _variables, context) => {
+      const deletedSlot = context?.deletedSlot;
+      const index = context?.index ?? -1;
+      if (deletedSlot && index >= 0) {
+        const slotsKey = tenant.pages.slots(pageId);
+        queryClient.setQueryData<ListQueueSlotsResponse>(slotsKey, (old) => {
+          if (!old) return old;
+          const slots = [...old.slots];
+          slots.splice(index, 0, deletedSlot);
+          return { ...old, slots };
+        });
+      }
+      toast.error(errorMessage(error, "Couldn't remove the posting time. Please try again."));
+    },
+    onSuccess: () => {
+      // The success toast fires only after the server confirms —
+      // the optimistic removal above is what the user sees instantly.
+      toast.success('Posting time removed.');
+    },
+    onSettled: () => {
+      invalidateSlots();
+      invalidatePage();
     },
   });
   const handleDeleteSlot = React.useCallback(
@@ -667,8 +826,9 @@ export default function TenantDedicatedPageView({
                   page={page}
                   slots={slots}
                   isLoading={slotsQuery.isPending}
-                  pendingQueueCount={queuedCount}
+                  queuedCount={queuedCount}
                   onAddSlot={handleAddSlot}
+                  onUpdateSlot={handleUpdateSlot}
                   onUpdateTimezone={handleUpdateTimezone}
                   onToggleSlot={handleToggleSlot}
                   onDeleteSlot={handleDeleteSlot}

@@ -532,6 +532,7 @@ describe('Publishing Queue Actions Route Handlers (T128, T129)', () => {
                 id: itemId,
                 user_id: userId,
                 status: 'cancelled', // unified form of a previously skipped item
+                destination_id: pageId,
               },
             ]);
           }
@@ -555,6 +556,45 @@ describe('Publishing Queue Actions Route Handlers (T128, T129)', () => {
       expect(json).toEqual({
         success: true,
         message: 'Item dispatched for immediate publishing',
+      });
+    });
+
+    it('returns 200 via the Supabase path and refreshes the unmatched flag', async () => {
+      const rpc = vi.fn().mockResolvedValue({ error: null });
+      const builderFor = (table: string) => {
+        const b: Record<string, unknown> = {};
+        b.select = () => b;
+        b.eq = () => b;
+        b.update = () => b;
+        b.maybeSingle = () =>
+          Promise.resolve(
+            table === 'workspaces'
+              ? { data: { id: 'ws_123' }, error: null }
+              : {
+                  data: { id: itemId, status: 'queued', destination_id: pageId },
+                  error: null,
+                }
+          );
+        b.then = (onOk: (v: unknown) => unknown, onErr?: (e: unknown) => unknown) =>
+          Promise.resolve({ error: null }).then(onOk, onErr);
+        return b;
+      };
+      const fake = { from: builderFor, rpc };
+
+      const req = new NextRequest(`http://localhost:3000/api/tenant/acme/publishing/queue/${itemId}/publish-now`, {
+        method: 'POST',
+        headers: { cookie: validSessionCookie },
+      });
+
+      const res = await handlePublishNow(req, 'acme', itemId, fake as never);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json).toEqual({
+        success: true,
+        message: 'Item dispatched for immediate publishing',
+      });
+      expect(rpc).toHaveBeenCalledWith('refresh_destination_unmatched_flag', {
+        p_destination_id: pageId,
       });
     });
   });

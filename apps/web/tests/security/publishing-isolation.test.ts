@@ -382,11 +382,27 @@ describe('Multi-Tenant Publishing Security & Isolation Audit (T144)', () => {
           if (sql.includes('FROM posting_slots')) {
             return Promise.resolve(slots.filter((s) => s.destination_id === params[0]));
           }
+          // NOTE: the INSERT branch must precede FROM queue_items:
+          // the insert carries a queue_seq subquery that itself
+          // reads FROM queue_items.
+          if (sql.includes('INSERT INTO queue_items')) {
+            return Promise.resolve([
+              {
+                id: userB.queueItemId,
+                workspace_id: '22222222-2222-4222-a222-222222222222',
+                destination_id: userB.pageId,
+                platform: 'facebook',
+                kind: 'video',
+                platform_format: null,
+                status: 'queued',
+                scheduled_time: null,
+                slot_id: null,
+                created_at: new Date().toISOString(),
+              },
+            ]);
+          }
           if (sql.includes('FROM queue_items')) {
             return Promise.resolve([]);
-          }
-          if (sql.includes('INSERT INTO queue_items')) {
-            return Promise.resolve([{ id: userB.queueItemId }]);
           }
           return Promise.resolve([]);
         }),
@@ -441,7 +457,13 @@ describe('Multi-Tenant Publishing Security & Isolation Audit (T144)', () => {
       expect(body.error).toBe('Media not found');
     });
 
-    it('blocks User B from enqueuing media into User A queue slot with 404 Not Found', async () => {
+    it('ignores a foreign slotId on enqueue: no cross-tenant slot pinning exists anymore', async () => {
+      // Publisher-driven scheduling removed slot pinning for
+      // Facebook entirely: a pinned slotId is ignored, so passing
+      // another tenant's slot id confers nothing — the post lands
+      // in the caller's own destination queue with no slot link.
+      // The guards that still apply are the neighbouring ones:
+      // foreign destinations and foreign media stay 404.
       const mockDb = createEnqueueDb();
 
       const req = new NextRequest(
@@ -461,9 +483,11 @@ describe('Multi-Tenant Publishing Security & Isolation Audit (T144)', () => {
         }
       );
       const res = await handleDestinationEnqueue(req, 'tenant-b', mockDb as never);
-      expect(res.status).toBe(404);
+      expect(res.status).toBe(201);
       const body = await res.json();
-      expect(body.error).toBe('Queue slot not found');
+      expect(body.destinationId).toBe(userB.pageId);
+      expect(body.slotId).toBeNull();
+      expect(body.scheduledTime).toBeNull();
     });
   });
 

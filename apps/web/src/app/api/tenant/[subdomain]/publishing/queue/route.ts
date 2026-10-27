@@ -40,7 +40,8 @@ interface QueueListRow {
   kind: string | null;
   platform_format: string | null;
   link_url: string | null;
-  scheduled_time: string;
+  // Null for publisher-driven (Facebook) queued posts: no stored time.
+  scheduled_time: string | null;
   caption: string | null;
   first_comment: string | null;
   status: string;
@@ -92,7 +93,7 @@ function mapQueueRow(
     mediaId: row.media_item_id ?? null,
     postFormat: unifiedQueueRowToPostFormat(row.kind, row.platform_format),
     linkUrl: row.link_url ?? null,
-    scheduledTime: new Date(row.scheduled_time).toISOString(),
+    scheduledTime: row.scheduled_time ? new Date(row.scheduled_time).toISOString() : null,
     caption: row.caption ?? '',
     firstComment: row.first_comment ?? null,
     status: unifiedQueueStatusToWire(row.status),
@@ -248,7 +249,7 @@ export async function handleListQueueItems(
       FROM queue_items qi
       LEFT JOIN media_items m ON qi.media_item_id = m.id AND m.user_id = $${params.length + 3}
       WHERE ${whereClause}
-      ORDER BY qi.scheduled_time ASC, qi.created_at ASC
+      ORDER BY qi.queue_seq ASC NULLS LAST, qi.created_at ASC
       LIMIT $${params.length + 1} OFFSET $${params.length + 2}
     `;
 
@@ -339,8 +340,10 @@ export async function handleListQueueItems(
     queryBuilder = queryBuilder.eq('status', unifiedStatusFilter);
   }
 
+  // Queue order is queue_seq — the one ordering. (Legacy rows
+  // without a sequence fall back to creation order.)
   queryBuilder = queryBuilder
-    .order('scheduled_time', { ascending: true })
+    .order('queue_seq', { ascending: true, nullsFirst: false })
     .order('created_at', { ascending: true })
     .range(offset, offset + limit - 1);
 

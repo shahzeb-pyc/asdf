@@ -8,6 +8,7 @@ import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
 import type { DatabaseClient } from '@fbuploadpro/contracts';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { enforceIpRateLimit } from '@/lib/request-body';
+import { refreshDestinationUnmatchedFlag } from '@/lib/server/unmatched-flag';
 
 /**
  * Publish-now for the Facebook Page section, on the unified
@@ -61,6 +62,17 @@ export async function handlePublishNow(
       [itemId, workspaceId]
     );
 
+    // A failed item re-entering the queue can set the unmatched
+    // flag; the RPC itself is Facebook-gated, so this is a no-op
+    // for other platforms.
+    const destRows = (await dbClient.query(
+      `SELECT destination_id FROM queue_items WHERE id = $1 AND workspace_id = $2`,
+      [itemId, workspaceId]
+    )) as Array<{ destination_id: string }>;
+    if (destRows[0]?.destination_id) {
+      await refreshDestinationUnmatchedFlag(dbClient, destRows[0].destination_id);
+    }
+
     return NextResponse.json(
       {
         success: true,
@@ -77,7 +89,7 @@ export async function handlePublishNow(
 
   const { data: existing, error: existErr } = await supabase
     .from('queue_items')
-    .select('id, status')
+    .select('id, status, destination_id')
     .eq('id', itemId)
     .eq('workspace_id', workspaceId)
     .maybeSingle();
@@ -106,6 +118,11 @@ export async function handlePublishNow(
 
   if (updateErr) {
     return NextResponse.json({ error: 'Failed to dispatch item' }, { status: 500 });
+  }
+
+  // See the pg branch above: re-queueing can set the unmatched flag.
+  if (existing.destination_id) {
+    await refreshDestinationUnmatchedFlag(supabase, existing.destination_id);
   }
 
   return NextResponse.json(

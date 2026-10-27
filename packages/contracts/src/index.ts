@@ -12,6 +12,7 @@ export * from './domain/folder.js';
 export * from './domain/storage.js';
 export * from './domain/downloader.js';
 export * from './domain/queue.js';
+export * from './scheduling.js';
 export * from './domain/dispatcher.js';
 export * from './domain/publishing.js';
 export * from './domain/insights.js';

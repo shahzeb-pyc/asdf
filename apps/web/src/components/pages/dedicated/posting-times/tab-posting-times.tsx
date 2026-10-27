@@ -52,7 +52,13 @@ export interface PageTabPostingTimesProps {
   page: Pick<FacebookPageItem, 'timezone'>;
   slots: PageSlotSummary[];
   isLoading?: boolean;
-  pendingQueueCount?: number;
+  /**
+   * All queued posts. Under publisher-driven scheduling there are no
+   * slot links and no stored times to realign — the timezone review
+   * shows this count with copy saying estimates update, not that
+   * posts are realigned.
+   */
+  queuedCount?: number;
   onAddSlot: (data: {
     slotTime: string;
     timezone: string;
@@ -76,7 +82,7 @@ export function PageTabPostingTimes({
   page,
   slots,
   isLoading = false,
-  pendingQueueCount = 0,
+  queuedCount = 0,
   onAddSlot,
   onUpdateSlot,
   onUpdateTimezone,
@@ -100,13 +106,18 @@ export function PageTabPostingTimes({
     }
   };
 
-  const handleToggle = async (slot: PageSlotSummary) => {
+  const handleToggle = (slot: PageSlotSummary) => {
     setTogglingId(slot.id);
-    try {
-      await onToggleSlot(slot.id, !slot.isActive);
-    } finally {
-      setTogglingId(null);
-    }
+    // Fire-and-forget (the row calls this from onCheckedChange and
+    // never awaits it). A rejecting handler must not leak an
+    // unhandled rejection, so both outcomes reset the toggling state
+    // here; failure presentation belongs to the caller — in production
+    // the shell mutation rolls back the optimistic switch and shows
+    // the error toast.
+    void onToggleSlot(slot.id, !slot.isActive).then(
+      () => setTogglingId(null),
+      () => setTogglingId(null),
+    );
   };
 
   const handleOpenAdd = () => {
@@ -157,7 +168,7 @@ export function PageTabPostingTimes({
 
       {isLoading && (
         <div data-testid="calendar-loading" aria-busy="true" className="flex flex-col gap-2">
-          <span className="sr-only">Loading posting schedule...</span>
+          <span className="sr-only">Loading posting times...</span>
           <Skeleton className="h-16 w-full" />
           <Skeleton className="h-16 w-full" />
           <Skeleton className="h-16 w-full" />
@@ -169,7 +180,7 @@ export function PageTabPostingTimes({
       )}
 
       {!isLoading && slots.length > 0 && (
-        <div data-testid="slots-grid" className="flex flex-col rounded-md border border-line">
+        <div data-testid="slots-grid" className="flex flex-col">
           {slots.map((slot) => (
             <PostingTimeRow
               key={slot.id}
@@ -208,8 +219,11 @@ export function PageTabPostingTimes({
       <ScheduleTimezoneModal
         isOpen={isTimezoneModalOpen}
         activeTimezone={activeTimezone}
-        slotsCount={slots.length}
-        pendingQueueCount={pendingQueueCount}
+        // Review metrics: active slots only (inactive slots schedule
+        // nothing), and all queued posts (no slot links exist under
+        // publisher-driven scheduling — nothing is realigned).
+        slotsCount={slots.filter((slot) => slot.isActive).length}
+        queuedCount={queuedCount}
         onClose={() => setIsTimezoneModalOpen(false)}
         onConfirmTimezone={handleTimezoneChange}
       />

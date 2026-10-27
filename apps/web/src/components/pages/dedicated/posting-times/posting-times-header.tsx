@@ -31,26 +31,29 @@ export function PostingTimesHeader({
       <div className="flex flex-col gap-1">
         <h2 className="text-xl leading-heading font-bold text-ink">Posting Times</h2>
         <p className="text-body text-ink-sub">
-          Daily posting windows and the post types that can go out in each.
-        </p>
-        <p className="text-metadata text-ink-sub">
-          Times shown in <span className="font-semibold text-ink">{activeTimezone}</span>
+          The times your posts go out each day, and which post types go out at each time.
         </p>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          data-testid="schedule-timezone-trigger"
-          onClick={onOpenTimezoneModal}
-          className="gap-2"
-        >
-          <span aria-hidden className="size-2 shrink-0 rounded-full bg-signal-operational" />
+        {/* Timezone line, kept small: metadata size with tight internal
+            spacing, so it reads as secondary info next to the Add
+            action rather than competing with it. Structure, testid,
+            and the gold underlined Change treatment are unchanged.
+            The Change button keeps py-2.5 so its box stays a 36px+
+            tap target (mobile gate) despite the small text. */}
+        <span className="flex items-center gap-1 text-metadata">
           <span className="text-ink-sub">Timezone:</span>
           <span className="font-semibold">{activeTimezone}</span>
-          <span className="text-link underline">Change</span>
-        </Button>
+          <button
+            type="button"
+            data-testid="schedule-timezone-trigger"
+            onClick={onOpenTimezoneModal}
+            className="text-link underline py-2.5"
+          >
+            Change
+          </button>
+        </span>
 
         <Button type="button" data-testid="add-slot-button" onClick={onOpenAddModal}>
           <PlusIcon aria-hidden />

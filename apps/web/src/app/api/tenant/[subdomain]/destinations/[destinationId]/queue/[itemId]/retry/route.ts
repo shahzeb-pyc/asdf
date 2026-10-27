@@ -15,6 +15,7 @@ import {
   toUnifiedQueueItemView,
   updateDestinationQueueItem,
 } from '@/lib/publishing/destination-queue';
+import { refreshDestinationUnmatchedFlag } from '@/lib/server/unmatched-flag';
 
 /**
  * POST /api/tenant/[subdomain]/destinations/[destinationId]/queue/[itemId]/retry
@@ -73,47 +74,58 @@ export async function handleDestinationRetry(
     );
   }
 
-  const now = new Date();
-  const slots = await fetchDestinationSlots(client, destination.id);
-
-  let scheduledTime: string;
-  let slotId: string | null = existing.slot_id;
-
-  const itemTime = new Date(existing.scheduled_time);
-  const slotGoverned = slots.some(
-    (slot) =>
-      normalizeTimeOfDay(slot.time_of_day) ===
-      localTimeOfDay(itemTime, destination.timezone)
-  );
-
-  if (!slotGoverned && itemTime.getTime() > now.getTime()) {
-    // Custom-scheduled and still ahead: keep the original time.
-    scheduledTime = itemTime.toISOString();
+  // Facebook is publisher-driven: a retried post goes back to
+  // `queued` with NO stored time and NO slot link, keeping its
+  // queue position — it goes out at the next fitting posting time,
+  // or waits (with the unmatched warning) when no time covers it.
+  // There is no NO_COVERING_SLOT refusal for Facebook anymore.
+  let scheduledTime: string | null;
+  let slotId: string | null;
+  if (destination.platform === 'facebook') {
+    scheduledTime = null;
+    slotId = null;
   } else {
-    const existingQueued = await fetchDestinationQueuedTimes(client, destination.id);
-    const computed = calculateNextVacantSlot({
-      slots: slots.map((slot) => ({
-        id: slot.id,
-        slotTime: slot.time_of_day,
-        timezone: destination.timezone,
-        isActive: Boolean(slot.is_active),
-        allowedFormats: slot.kind ?? null,
-      })),
-      existingScheduledTimes: existingQueued,
-      now,
-      postFormat: existing.platform_format ?? existing.kind,
-    });
-    if (!computed) {
-      return NextResponse.json(
-        {
-          error: 'NO_COVERING_SLOT',
-          message: 'No posting time covers this post yet.',
-        },
-        { status: 400 }
-      );
+    const now = new Date();
+    const slots = await fetchDestinationSlots(client, destination.id);
+
+    slotId = existing.slot_id;
+
+    const itemTime = new Date(existing.scheduled_time as string);
+    const slotGoverned = slots.some(
+      (slot) =>
+        normalizeTimeOfDay(slot.time_of_day) ===
+        localTimeOfDay(itemTime, destination.timezone)
+    );
+
+    if (!slotGoverned && itemTime.getTime() > now.getTime()) {
+      // Custom-scheduled and still ahead: keep the original time.
+      scheduledTime = itemTime.toISOString();
+    } else {
+      const existingQueued = await fetchDestinationQueuedTimes(client, destination.id);
+      const computed = calculateNextVacantSlot({
+        slots: slots.map((slot) => ({
+          id: slot.id,
+          slotTime: slot.time_of_day,
+          timezone: destination.timezone,
+          isActive: Boolean(slot.is_active),
+          allowedFormats: slot.kind ?? null,
+        })),
+        existingScheduledTimes: existingQueued,
+        now,
+        postFormat: existing.platform_format ?? existing.kind,
+      });
+      if (!computed) {
+        return NextResponse.json(
+          {
+            error: 'NO_COVERING_SLOT',
+            message: 'No posting time covers this post yet.',
+          },
+          { status: 400 }
+        );
+      }
+      scheduledTime = computed.scheduledTime.toISOString();
+      slotId = computed.slotId;
     }
-    scheduledTime = computed.scheduledTime.toISOString();
-    slotId = computed.slotId;
   }
 
   const updated = await updateDestinationQueueItem(
@@ -138,6 +150,10 @@ export async function handleDestinationRetry(
 
   if (!updated) {
     return NextResponse.json({ error: 'Failed to retry queue item' }, { status: 500 });
+  }
+
+  if (destination.platform === 'facebook') {
+    await refreshDestinationUnmatchedFlag(client, destination.id);
   }
 
   const mediaRows = updated.media_item_id

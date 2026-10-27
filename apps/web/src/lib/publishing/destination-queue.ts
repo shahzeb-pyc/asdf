@@ -225,7 +225,8 @@ export interface DestinationQueueItemState {
   kind: string;
   platformFormat: string | null;
   platformOptions: Record<string, unknown>;
-  scheduledTime: string;
+  /** Null for publisher-driven (Facebook) items: no stored time. */
+  scheduledTime: string | null;
   slotId: string | null;
   status: string;
   /** Null clears a stale claim marker when an item is requeued. */
@@ -373,7 +374,7 @@ export function toUnifiedQueueItemView(
     media,
     platformOptions:
       typeof row.platform_options === 'object' ? row.platform_options : {},
-    scheduledTime: new Date(row.scheduled_time).toISOString(),
+    scheduledTime: row.scheduled_time ? new Date(row.scheduled_time).toISOString() : null,
     slotId: row.slot_id ?? null,
     status: row.status as UnifiedQueueItem['status'],
     retryCount: Number(row.retry_count ?? 0),
@@ -426,171 +427,4 @@ export async function fetchDestinationQueueMedia(
     .in('id', mediaIds);
   if (error || !data) return [];
   return data as DestinationQueueMediaRow[];
-}
-
-// ---------------------------------------------------------------------------
-// Posting slots (writes; the read lives in destination-enqueue.ts)
-// ---------------------------------------------------------------------------
-
-export interface DestinationSlotWriteRow {
-  id: string;
-  kind: string[];
-  time_of_day: string;
-  is_active: boolean;
-}
-
-export type SlotWriteResult =
-  | { ok: true; slot: DestinationSlotWriteRow }
-  | { ok: false; reason: 'duplicate' | 'not-found' | 'error' };
-
-function isUniqueViolation(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    (error as { code?: unknown }).code === '23505'
-  );
-}
-
-export async function insertDestinationSlot(
-  client: ConnectDbClient,
-  destinationId: string,
-  slot: { kind: string[]; timeOfDay: string; isActive: boolean }
-): Promise<SlotWriteResult> {
-  if (isLegacyClient(client)) {
-    try {
-      const rows = (await (client as DatabaseClient).query(
-        `INSERT INTO posting_slots (destination_id, kind, time_of_day, is_active)
-         VALUES ($1, $2, $3, $4)
-         RETURNING id, kind, time_of_day, is_active`,
-        [destinationId, slot.kind, slot.timeOfDay, slot.isActive]
-      )) as DestinationSlotWriteRow[];
-      return rows?.[0]
-        ? { ok: true, slot: rows[0] }
-        : { ok: false, reason: 'error' };
-    } catch (error) {
-      return { ok: false, reason: isUniqueViolation(error) ? 'duplicate' : 'error' };
-    }
-  }
-
-  const supabase = getRouteSupabase(client as SupabaseClient);
-  if (!supabase) return { ok: false, reason: 'error' };
-  const { data, error } = await supabase
-    .from('posting_slots')
-    .insert({
-      destination_id: destinationId,
-      kind: slot.kind,
-      time_of_day: slot.timeOfDay,
-      is_active: slot.isActive,
-    })
-    .select('id, kind, time_of_day, is_active')
-    .single();
-  if (error) {
-    return { ok: false, reason: isUniqueViolation(error) ? 'duplicate' : 'error' };
-  }
-  return data
-    ? { ok: true, slot: data as DestinationSlotWriteRow }
-    : { ok: false, reason: 'error' };
-}
-
-export async function updateDestinationSlot(
-  client: ConnectDbClient,
-  destinationId: string,
-  slotId: string,
-  slot: { kind: string[]; timeOfDay: string; isActive: boolean }
-): Promise<SlotWriteResult> {
-  if (isLegacyClient(client)) {
-    try {
-      const rows = (await (client as DatabaseClient).query(
-        `UPDATE posting_slots
-         SET kind = $1, time_of_day = $2, is_active = $3
-         WHERE id = $4 AND destination_id = $5
-         RETURNING id, kind, time_of_day, is_active`,
-        [slot.kind, slot.timeOfDay, slot.isActive, slotId, destinationId]
-      )) as DestinationSlotWriteRow[];
-      return rows?.[0]
-        ? { ok: true, slot: rows[0] }
-        : { ok: false, reason: 'not-found' };
-    } catch (error) {
-      return { ok: false, reason: isUniqueViolation(error) ? 'duplicate' : 'error' };
-    }
-  }
-
-  const supabase = getRouteSupabase(client as SupabaseClient);
-  if (!supabase) return { ok: false, reason: 'error' };
-  const { data, error } = await supabase
-    .from('posting_slots')
-    .update({
-      kind: slot.kind,
-      time_of_day: slot.timeOfDay,
-      is_active: slot.isActive,
-    })
-    .eq('id', slotId)
-    .eq('destination_id', destinationId)
-    .select('id, kind, time_of_day, is_active')
-    .maybeSingle();
-  if (error) {
-    return { ok: false, reason: isUniqueViolation(error) ? 'duplicate' : 'error' };
-  }
-  return data
-    ? { ok: true, slot: data as DestinationSlotWriteRow }
-    : { ok: false, reason: 'not-found' };
-}
-
-export async function deleteDestinationSlot(
-  client: ConnectDbClient,
-  destinationId: string,
-  slotId: string
-): Promise<boolean> {
-  if (isLegacyClient(client)) {
-    const rows = (await (client as DatabaseClient).query(
-      `DELETE FROM posting_slots
-       WHERE id = $1 AND destination_id = $2
-       RETURNING id`,
-      [slotId, destinationId]
-    )) as Array<{ id: string }>;
-    return Boolean(rows?.[0]);
-  }
-
-  const supabase = getRouteSupabase(client as SupabaseClient);
-  if (!supabase) return false;
-  const { data, error } = await supabase
-    .from('posting_slots')
-    .delete()
-    .eq('id', slotId)
-    .eq('destination_id', destinationId)
-    .select('id');
-  if (error) return false;
-  return Boolean(data && data.length > 0);
-}
-
-/** The destination timezone write: slot times are local times, so a
- *  timezone change re-bases the existing slots rather than moving them. */
-export async function updateDestinationTimezone(
-  client: ConnectDbClient,
-  workspaceId: string,
-  destinationId: string,
-  timezone: string
-): Promise<boolean> {
-  if (isLegacyClient(client)) {
-    const rows = (await (client as DatabaseClient).query(
-      `UPDATE destinations
-       SET timezone = $1
-       WHERE id = $2 AND workspace_id = $3
-       RETURNING id`,
-      [timezone, destinationId, workspaceId]
-    )) as Array<{ id: string }>;
-    return Boolean(rows?.[0]);
-  }
-
-  const supabase = getRouteSupabase(client as SupabaseClient);
-  if (!supabase) return false;
-  const { data, error } = await supabase
-    .from('destinations')
-    .update({ timezone })
-    .eq('id', destinationId)
-    .eq('workspace_id', workspaceId)
-    .select('id');
-  if (error) return false;
-  return Boolean(data && data.length > 0);
 }

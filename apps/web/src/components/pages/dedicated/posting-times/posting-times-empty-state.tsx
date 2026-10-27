@@ -17,12 +17,12 @@ export interface PostingTimesEmptyStateProps {
 
 export function PostingTimesEmptyState({ onOpenAddModal }: Readonly<PostingTimesEmptyStateProps>) {
   return (
-    <div data-testid="calendar-empty-state" className="rounded-md border border-dashed border-line">
+    <div data-testid="calendar-empty-state">
       <EmptyState
         type="first-use"
         icon={<ClockIcon aria-hidden className="size-8 text-brand-gold" />}
         title="No daily posting times set yet"
-        description="Set up your daily posting times and choose which post types go out in each. Posts added to your queue go out automatically at these times."
+        description="Choose your daily posting times and the post types for each one. Posts added to your queue go out automatically at those times."
         action={
           <Button type="button" data-testid="empty-add-slot-button" onClick={onOpenAddModal}>
             Add First Posting Time

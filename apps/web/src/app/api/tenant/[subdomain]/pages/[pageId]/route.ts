@@ -50,6 +50,7 @@ interface PageDetailRow {
   current_followers?: number | string | null;
   status: FacebookPageStatus;
   tasks?: unknown;
+  unmatched_post_types?: unknown;
   created_at: string;
   updated_at: string;
 }
@@ -65,6 +66,11 @@ function formatPageRow(row: PageDetailRow) {
       parsedTasks = [];
     }
   }
+  const unmatchedPostTypes = Array.isArray(row.unmatched_post_types)
+    ? (row.unmatched_post_types as unknown[]).filter(
+        (t): t is string => typeof t === 'string'
+      )
+    : [];
 
   const startingFollowers = Number(row.starting_followers ?? 0);
   const currentFollowers = Number(row.current_followers ?? 0);
@@ -85,6 +91,7 @@ function formatPageRow(row: PageDetailRow) {
     followersGained,
     status: row.status,
     tasks: parsedTasks,
+    unmatchedPostTypes,
     createdAt: new Date(row.created_at as string).toISOString(),
     updatedAt: new Date(row.updated_at as string).toISOString(),
   });
@@ -133,6 +140,7 @@ async function fetchActivePageById(
         (d.metadata->>'current_followers')::int AS current_followers,
         ${DESTINATION_STATUS_TO_WIRE_SQL} AS status,
         d.metadata->'tasks' AS tasks,
+        d.metadata->'unmatched_post_types' AS unmatched_post_types,
         d.created_at,
         d.updated_at
       FROM destinations d
@@ -206,6 +214,9 @@ async function fetchActivePageById(
         : null,
     status: unifiedDestinationStatusToWire(row.status, row.metadata),
     tasks: row.metadata?.tasks ?? [],
+    unmatched_post_types: Array.isArray(row.metadata?.unmatched_post_types)
+      ? row.metadata.unmatched_post_types
+      : [],
     created_at: row.created_at,
     updated_at: row.updated_at,
   });

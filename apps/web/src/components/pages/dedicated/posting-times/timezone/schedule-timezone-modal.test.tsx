@@ -21,7 +21,7 @@ function renderModal(overrides: Partial<React.ComponentProps<typeof ScheduleTime
     isOpen: true,
     activeTimezone: 'UTC',
     slotsCount: 3,
-    pendingQueueCount: 2,
+    queuedCount: 2,
     onClose: vi.fn(),
     onConfirmTimezone: vi.fn().mockResolvedValue(undefined),
     ...overrides,

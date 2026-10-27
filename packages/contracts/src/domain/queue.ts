@@ -49,7 +49,9 @@ export const UpdateQueueScheduleTimezoneResponseSchema = z.object({
   success: z.boolean(),
   timezone: TimezoneSchema,
   updatedCount: z.number().int().nonnegative(),
-  realignedQueueCount: z.number().int().nonnegative(),
+  // No realigned count: under publisher-driven scheduling, queued
+  // posts store no times, so a timezone change rewrites nothing.
+  // Queue estimates simply update with the new zone.
 });
 
 export type UpdateQueueScheduleTimezoneResponse = z.infer<typeof UpdateQueueScheduleTimezoneResponseSchema>;
@@ -168,7 +170,10 @@ export const QueueItemSchema = z.object({
   mediaId: z.string().uuid().nullable(),
   postFormat: PostFormatSchema.default('reel'),
   linkUrl: z.string().nullable().optional(),
-  scheduledTime: z.string().datetime(),
+  // Nullable under publisher-driven scheduling: Facebook queued
+  // posts store no time (the posting times are the schedule).
+  // Other platforms and already-published rows still carry one.
+  scheduledTime: z.string().datetime().nullable(),
   caption: z.string(),
   firstComment: z.string().nullable(),
   status: QueueItemStatusSchema,

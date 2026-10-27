@@ -21,6 +21,7 @@ import {
   insertDestinationQueueItem,
   type OwnedMediaRow,
 } from '@/lib/publishing/destination-enqueue';
+import { refreshDestinationUnmatchedFlag } from '@/lib/server/unmatched-flag';
 
 /**
  * POST /api/tenant/[subdomain]/publishing/destination-queue
@@ -132,7 +133,28 @@ export async function handleDestinationEnqueue(
   }
 
   // Intent → row state.
-  let scheduledTime: string;
+  //
+  // Facebook destinations are publisher-driven: queued posts store
+  // NO time and NO slot link — the posting times are the schedule,
+  // and the publisher takes the first fitting queued post when a
+  // time comes. Fixed-date ("scheduled") posts do not exist for
+  // Facebook at all, and enqueueing with zero active times succeeds:
+  // the post waits (with the unmatched warning) until a time exists.
+  // Other platforms keep the previous stored-time behaviour; their
+  // one-off paths are owned by the pending composer decision, not
+  // removed here.
+  if (destination.platform === 'facebook' && data.intent === 'scheduled') {
+    return NextResponse.json(
+      {
+        error: 'ONE_OFF_NOT_SUPPORTED',
+        message:
+          'Facebook posts go out through your posting times, in queue order. Pick a posting time instead of a fixed date.',
+      },
+      { status: 400 }
+    );
+  }
+
+  let scheduledTime: string | null;
   let slotId: string | null = null;
 
   if (data.intent === 'now') {
@@ -141,6 +163,12 @@ export async function handleDestinationEnqueue(
     // Presence + futurity are schema-enforced; the cast-free read is
     // via the refined field.
     scheduledTime = new Date(data.scheduledAt as string).toISOString();
+  } else if (destination.platform === 'facebook') {
+    // Publisher-driven: no stored time, no slot link (a pinned
+    // slotId, if supplied, is ignored — posts are not slot-linked).
+    // Zero active times is not an error: the post waits.
+    scheduledTime = null;
+    slotId = null;
   } else {
     const allSlots = await fetchDestinationSlots(client, destination.id);
 
@@ -215,6 +243,11 @@ export async function handleDestinationEnqueue(
     return NextResponse.json({ error: 'Failed to enqueue post' }, { status: 500 });
   }
 
+  if (destination.platform === 'facebook') {
+    // A new queued post can introduce an unmatched format.
+    await refreshDestinationUnmatchedFlag(client, destination.id);
+  }
+
   const response = DestinationEnqueueResponseSchema.parse({
     id: created.id,
     workspaceId: created.workspace_id,
@@ -223,7 +256,9 @@ export async function handleDestinationEnqueue(
     kind: created.kind,
     platformFormat: created.platform_format ?? null,
     status: created.status,
-    scheduledTime: new Date(created.scheduled_time).toISOString(),
+    scheduledTime: created.scheduled_time
+      ? new Date(created.scheduled_time).toISOString()
+      : null,
     slotId: created.slot_id ?? null,
     createdAt: new Date(created.created_at).toISOString(),
   });
