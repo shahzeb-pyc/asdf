@@ -113,7 +113,7 @@ describe('PostingTimeForm', () => {
     expect(input).not.toHaveClass('w-full');
   });
 
-  it('renders post-type chips as soft pills, selected in gold tint', async () => {
+  it('renders post-type chips as soft pills, selected with gold outline only', async () => {
     const user = userEvent.setup();
     renderForm();
     const reel = screen.getByTestId('modal-format-toggle-reel');
@@ -123,9 +123,12 @@ describe('PostingTimeForm', () => {
     expect(image).toHaveClass('bg-subtle');
     expect(image).not.toHaveClass('border');
     await user.click(reel);
-    // Selected: soft gold-tinted pill, still no border, no tick mark.
+    // Selected: transparent background, gold text, gold outline only — no tinted fill, no tick mark.
     expect(reel).toHaveClass('rounded-full');
-    expect(reel).toHaveClass('bg-brand-gold/10');
+    expect(reel).toHaveClass('bg-transparent');
+    expect(reel).toHaveClass('text-brand-gold');
+    expect(reel).toHaveClass('ring-brand-gold');
+    expect(reel).not.toHaveClass('bg-brand-gold/10');
     expect(reel).not.toHaveClass('border');
     expect(reel).not.toHaveTextContent('✓');
     expect(reel).toHaveAttribute('aria-pressed', 'true');
