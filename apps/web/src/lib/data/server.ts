@@ -49,6 +49,16 @@ export interface ServerApiFetchOptions<S extends z.ZodTypeAny = z.ZodTypeAny> {
   fetchFn?: typeof fetch;
 }
 
+/** Strip trailing slashes with a plain scan, not a regex: Sonar's
+ * super-linear-backtracking rule flags the `/\/+$/` pattern. */
+function stripTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charAt(end - 1) === '/') {
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
+
 /** Origin the server variant calls back into our own API on. */
 export function getServerBaseUrl(): string {
   // The current deployment's own URL must win: on Vercel previews
@@ -56,9 +66,9 @@ export function getServerBaseUrl(): string {
   // send every server-side prefetch to production instead of this
   // deployment's own API.
   const vercelUrl = process.env.VERCEL_URL;
-  if (vercelUrl) return `https://${vercelUrl}`.replace(/\/+$/, '');
+  if (vercelUrl) return stripTrailingSlashes(`https://${vercelUrl}`);
   const appUrl = process.env.NEXT_PUBLIC_APP_URL;
-  if (appUrl) return appUrl.replace(/\/+$/, '');
+  if (appUrl) return stripTrailingSlashes(appUrl);
   return 'http://localhost:3000';
 }
 
