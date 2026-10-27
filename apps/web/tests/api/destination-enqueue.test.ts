@@ -2,7 +2,6 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { signSessionToken, type DatabaseClient } from '@fbuploadpro/contracts';
 import { handleDestinationEnqueue } from '@/app/api/tenant/[subdomain]/publishing/destination-queue/route';
-import { handleListDestinationPostingSlots } from '@/app/api/tenant/[subdomain]/destinations/[destinationId]/posting-slots/route';
 
 const TEST_SECRET = ['destination', 'enqueue', 'test', 'secret', 'value'].join('-');
 
@@ -460,67 +459,5 @@ describe('destination enqueue — per-platform validation', () => {
     expect(res.status).toBe(400);
     const payload = (await res.json()) as { error: string };
     expect(payload.error).toBe('INVALID_FORMAT');
-  });
-});
-
-describe('destination posting-slots read', () => {
-  async function listSlots(destinationId: string) {
-    const req = new NextRequest(
-      `http://localhost:3000/api/tenant/acme/destinations/${destinationId}/posting-slots`,
-      { headers: { cookie: sessionCookie } }
-    );
-    return handleListDestinationPostingSlots(req, subdomain, destinationId, dbClient);
-  }
-
-  it('returns the destination slots with its timezone', async () => {
-    db.slots.push(
-      {
-        id: slotId,
-        destination_id: igDestinationId,
-        kind: ['image', 'video'],
-        time_of_day: '09:30:00',
-        is_active: true,
-      },
-      {
-        id: '78787878-7878-4787-a878-787878787878',
-        destination_id: igDestinationId,
-        kind: ['text'],
-        time_of_day: '18:00:00',
-        is_active: false,
-      }
-    );
-    const res = await listSlots(igDestinationId);
-    expect(res.status).toBe(200);
-    const payload = (await res.json()) as {
-      timezone: string;
-      slots: Array<{ id: string; timeOfDay: string; isActive: boolean; kind: string[] }>;
-    };
-    expect(payload.timezone).toBe('UTC');
-    expect(payload.slots).toHaveLength(2);
-    expect(payload.slots[0]).toMatchObject({
-      id: slotId,
-      timeOfDay: '09:30:00',
-      isActive: true,
-      kind: ['image', 'video'],
-    });
-    expect(payload.slots[1]!.isActive).toBe(false);
-  });
-
-  it('hides another workspace’s destination', async () => {
-    const res = await listSlots(foreignDestinationId);
-    expect(res.status).toBe(404);
-  });
-
-  it('rejects an unauthenticated read', async () => {
-    const req = new NextRequest(
-      `http://localhost:3000/api/tenant/acme/destinations/${igDestinationId}/posting-slots`
-    );
-    const res = await handleListDestinationPostingSlots(
-      req,
-      subdomain,
-      igDestinationId,
-      dbClient
-    );
-    expect(res.status).toBe(401);
   });
 });

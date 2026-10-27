@@ -46,7 +46,6 @@ export function PostingTimesHeader({
           onClick={onOpenTimezoneModal}
           className="gap-2"
         >
-          <span aria-hidden className="size-2 shrink-0 rounded-full bg-signal-operational" />
           <span className="text-ink-sub">Timezone:</span>
           <span className="font-semibold">{activeTimezone}</span>
           <span className="text-link underline">Change</span>

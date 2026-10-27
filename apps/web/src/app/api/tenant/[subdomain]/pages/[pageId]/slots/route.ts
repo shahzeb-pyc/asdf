@@ -386,13 +386,18 @@ async function realignPendingQueueItemsPostgres(
     });
     occupiedTimes.add(newScheduledTime.getTime());
 
-    await dbClient.query(
-      `UPDATE queue_items
-       SET scheduled_time = $1, updated_at = now()
-       WHERE id = $2`,
-      [newScheduledTime.toISOString(), row.id]
-    );
-    realignedCount++;
+    // Count only items whose time actually moved: rows whose
+    // recomputed time equals the original (e.g. an unparseable slot
+    // time falling back to the original) are not "realigned".
+    if (newScheduledTime.getTime() !== originalTime.getTime()) {
+      await dbClient.query(
+        `UPDATE queue_items
+         SET scheduled_time = $1, updated_at = now()
+         WHERE id = $2`,
+        [newScheduledTime.toISOString(), row.id]
+      );
+      realignedCount++;
+    }
   }
 
   return realignedCount;
@@ -448,14 +453,18 @@ async function realignPendingQueueItemsSupabase(
     });
     occupiedTimes.add(newScheduledTime.getTime());
 
-    await supabase
-      .from('queue_items')
-      .update({
-        scheduled_time: newScheduledTime.toISOString(),
-        updated_at: now.toISOString(),
-      })
-      .eq('id', item.id);
-    realignedCount++;
+    // Count only items whose time actually moved (see the Postgres
+    // path above): an unchanged recomputation is not a realignment.
+    if (newScheduledTime.getTime() !== originalTime.getTime()) {
+      await supabase
+        .from('queue_items')
+        .update({
+          scheduled_time: newScheduledTime.toISOString(),
+          updated_at: now.toISOString(),
+        })
+        .eq('id', item.id);
+      realignedCount++;
+    }
   }
 
   return realignedCount;

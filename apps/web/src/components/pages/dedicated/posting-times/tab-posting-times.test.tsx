@@ -58,7 +58,9 @@ describe('PageTabPostingTimes (rebuilt, spec 134)', () => {
     expect(screen.getByText('09:00')).toBeInTheDocument();
     expect(screen.getByText('03:00')).toBeInTheDocument();
     expect(screen.getByText('Active')).toBeInTheDocument();
-    expect(screen.getByText('Paused')).toBeInTheDocument();
+    // Inactive means future scheduling only — already-queued posts
+    // still go out, so the label says so (no dot, shared header mark).
+    expect(screen.getByText('Paused for new posts')).toBeInTheDocument();
     expect(screen.getByTestId('slot-format-badge-all-slot-1')).toHaveTextContent('All post types');
     expect(screen.getByTestId('slot-format-badge-slot-2-image')).toHaveTextContent('Photos');
     expect(screen.getAllByText('UTC').length).toBeGreaterThan(0);
@@ -103,8 +105,42 @@ describe('PageTabPostingTimes (rebuilt, spec 134)', () => {
     const dialog = await screen.findByTestId('delete-posting-time-modal');
     expect(dialog).toHaveTextContent('Remove Posting Time?');
     expect(dialog).toHaveTextContent('09:00 AM');
+    // NOTE: dialog copy is HELD — the product owner is changing
+    // deletion to actually redistribute queued posts, and the copy
+    // will be rewritten to describe that behaviour once confirmed.
     await user.click(screen.getByTestId('confirm-delete-slot-btn'));
     await waitFor(() => expect(props.onDeleteSlot).toHaveBeenCalledWith('slot-1'));
+  });
+
+  it('shows only active slots in the timezone review metrics', async () => {
+    const user = userEvent.setup();
+    // Fixture: slot-1 active, slot-2 inactive; pendingQueueCount 2.
+    renderTab();
+    await user.click(screen.getByTestId('schedule-timezone-trigger'));
+    expect(await screen.findByTestId('schedule-timezone-modal')).toBeInTheDocument();
+    await user.click(screen.getByTestId('timezone-option-Asia/Karachi'));
+    await user.click(screen.getByTestId('proceed-to-step2-button'));
+    const metrics = await screen.findByTestId('timezone-impact-metrics');
+    expect(screen.getByTestId('timezone-metric-slots')).toHaveTextContent('1');
+    expect(screen.getByTestId('timezone-metric-queued')).toHaveTextContent('2');
+    expect(metrics).toBeInTheDocument();
+  });
+
+  it('keeps the switch state when toggling fails', async () => {
+    const user = userEvent.setup();
+    const { props } = renderTab({
+      onToggleSlot: vi.fn().mockRejectedValue(new Error('boom')),
+    });
+    const toggle = screen.getByTestId('toggle-slot-btn-slot-1');
+    expect(toggle).toHaveAttribute('data-state', 'checked');
+    // The switch is controlled by server data, so a failed toggle
+    // reverts on its own instead of flipping optimistically.
+    await user.click(toggle);
+    await waitFor(() => expect(props.onToggleSlot).toHaveBeenCalledWith('slot-1', false));
+    expect(screen.getByTestId('toggle-slot-btn-slot-1')).toHaveAttribute(
+      'data-state',
+      'checked'
+    );
   });
 
   it('opens the timezone flow from the header trigger', async () => {

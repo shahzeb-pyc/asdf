@@ -17,7 +17,7 @@
  * Strict on rendered fields; no passthrough.
  */
 import { z } from 'zod';
-import { PlatformSchema, TimezoneSchema } from '@fbuploadpro/contracts';
+import { PlatformSchema } from '@fbuploadpro/contracts';
 
 /** Unified queue kinds (`queue_items.kind`), the enqueue vocabulary. */
 export const UnifiedQueueKindSchema = z.enum([
@@ -159,62 +159,7 @@ export type DestinationQueueActionResponse = z.infer<
   typeof DestinationQueueActionResponseSchema
 >;
 
-// ---------------------------------------------------------------------------
-// Destination posting-slots writes (the reads live in contracts:
-// DestinationPostingSlotSchema / ListDestinationPostingSlotsResponseSchema).
-// Field vocabulary follows the contracts slot shape (`timeOfDay`, `kind`).
-// ---------------------------------------------------------------------------
-
-const SlotTimeOfDaySchema = z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/);
-
-/** POST …/destinations/[destinationId]/posting-slots */
-export const CreateDestinationSlotRequestSchema = z.object({
-  timeOfDay: SlotTimeOfDaySchema,
-  /** Format coverage in queue-kind vocabulary; defaults to all kinds. */
-  kind: z.array(z.string()).min(1).optional(),
-  isActive: z.boolean().optional(),
-});
-export type CreateDestinationSlotRequest = z.infer<
-  typeof CreateDestinationSlotRequestSchema
->;
-
-/** PATCH …/destinations/[destinationId]/posting-slots/[slotId] */
-export const UpdateDestinationSlotRequestSchema = z.object({
-  timeOfDay: SlotTimeOfDaySchema.optional(),
-  kind: z.array(z.string()).min(1).optional(),
-  isActive: z.boolean().optional(),
-});
-export type UpdateDestinationSlotRequest = z.infer<
-  typeof UpdateDestinationSlotRequestSchema
->;
-
-/**
- * PATCH …/destinations/[destinationId]/posting-slots — the destination
- * timezone write (mirrors the legacy slots route, whose collection
- * PATCH is the schedule-timezone update). Changing the timezone
- * re-bases the destination's posting slots to the new zone — the slot
- * times themselves are local times and do not move.
- */
-export const UpdateDestinationTimezoneRequestSchema = z.object({
-  timezone: TimezoneSchema,
-});
-export type UpdateDestinationTimezoneRequest = z.infer<
-  typeof UpdateDestinationTimezoneRequestSchema
->;
-
-export const DestinationTimezoneResponseSchema = z.object({
-  success: z.literal(true),
-  timezone: z.string(),
-});
-export type DestinationTimezoneResponse = z.infer<
-  typeof DestinationTimezoneResponseSchema
->;
-
-/** Ack for slot delete. */
-export const DestinationSlotActionResponseSchema = z.object({
-  success: z.literal(true),
-  slotId: z.string().uuid().optional(),
-});
-export type DestinationSlotActionResponse = z.infer<
-  typeof DestinationSlotActionResponseSchema
->;
+// NOTE: the destinations posting-slots write schemas lived here until
+// the destinations slot surface was deleted (no live UI called it
+// after PR #16 removed destinations pages). The pages slots routes
+// under pages/[pageId]/slots are the single slot surface now.

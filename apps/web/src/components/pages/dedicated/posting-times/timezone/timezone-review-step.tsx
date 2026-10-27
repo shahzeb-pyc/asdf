@@ -103,20 +103,26 @@ export function TimezoneReviewStep({
         </div>
       </div>
 
-      {/* Impact numbers */}
+      {/* Impact numbers. Callers pass corrected counts: active
+          slots only, and slot-linked queued posts only — the only
+          rows a timezone change can actually realign. */}
       <div data-testid="timezone-impact-metrics" className="grid grid-cols-2 gap-2">
         <div className="rounded-sm border border-line bg-subtle p-2">
           <div className="text-metadata font-semibold tracking-wide text-ink-dim uppercase">
             Posting times
           </div>
-          <div className="mt-0.5 text-lg font-bold text-ink">{slotsCount}</div>
+          <div data-testid="timezone-metric-slots" className="mt-0.5 text-lg font-bold text-ink">
+            {slotsCount}
+          </div>
           <div className="text-metadata text-ink-sub">Active publishing times</div>
         </div>
         <div className="rounded-sm border border-line bg-subtle p-2">
           <div className="text-metadata font-semibold tracking-wide text-ink-dim uppercase">
             Queued posts
           </div>
-          <div className="mt-0.5 text-lg font-bold text-ink">{pendingQueueCount}</div>
+          <div data-testid="timezone-metric-queued" className="mt-0.5 text-lg font-bold text-ink">
+            {pendingQueueCount}
+          </div>
           <div className="text-metadata text-ink-sub">Posts realigned automatically</div>
         </div>
       </div>

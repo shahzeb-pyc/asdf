@@ -52,6 +52,11 @@ export interface PageTabPostingTimesProps {
   page: Pick<FacebookPageItem, 'timezone'>;
   slots: PageSlotSummary[];
   isLoading?: boolean;
+  /**
+   * Queued posts linked to a slot — the only ones a timezone change
+   * can realign. The shell computes this (slot-linked + status queued);
+   * the old prop value (all queued posts) overstated the review count.
+   */
   pendingQueueCount?: number;
   onAddSlot: (data: {
     slotTime: string;
@@ -104,6 +109,10 @@ export function PageTabPostingTimes({
     setTogglingId(slot.id);
     try {
       await onToggleSlot(slot.id, !slot.isActive);
+    } catch (_e) {
+      // The switch is controlled by server data, so a failed toggle
+      // reverts on its own; the caller (shell mutation) surfaces the
+      // error. Never leak an unhandled rejection from the row.
     } finally {
       setTogglingId(null);
     }
@@ -208,7 +217,11 @@ export function PageTabPostingTimes({
       <ScheduleTimezoneModal
         isOpen={isTimezoneModalOpen}
         activeTimezone={activeTimezone}
-        slotsCount={slots.length}
+        // Review metrics must count what will actually realign:
+        // active slots only (inactive slots schedule nothing), and
+        // the shell passes pendingQueueCount as slot-linked queued
+        // posts only (see page-section-shell).
+        slotsCount={slots.filter((slot) => slot.isActive).length}
         pendingQueueCount={pendingQueueCount}
         onClose={() => setIsTimezoneModalOpen(false)}
         onConfirmTimezone={handleTimezoneChange}

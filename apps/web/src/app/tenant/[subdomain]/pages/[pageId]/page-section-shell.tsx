@@ -49,6 +49,7 @@ import {
 import {
   ListQueueItemsResponseSchema,
   ListQueueSlotsResponseSchema,
+  PageQueueSlotSchema,
   UpdateScheduleTimezoneResponseSchema,
 } from '@/lib/api/schemas/queue';
 import { queryKeys } from '@/lib/data/query-keys';
@@ -237,8 +238,11 @@ export default function TenantDedicatedPageView({
       })),
     [queueItems]
   );
-  const queuedCount = React.useMemo(
-    () => queueItems.filter((i) => i.status === 'queued').length,
+  // Only slot-linked queued posts can move on a timezone change
+  // (one-off posts carry slotId null and are never realigned), so
+  // the timezone review counts these — not all queued posts.
+  const slotLinkedQueuedCount = React.useMemo(
+    () => queueItems.filter((i) => i.status === 'queued' && i.slotId).length,
     [queueItems]
   );
 
@@ -347,6 +351,58 @@ export default function TenantDedicatedPageView({
       await addSlotMutation.mutateAsync(slotData);
     },
     [addSlotMutation]
+  );
+
+  // Single-slot PATCH update — the production edit path. Editing
+  // through this route preserves the slot id (and therefore queued
+  // posts' slot links); the old delete + re-add fallback lost the
+  // link and could lose the slot entirely on a 409, so the shell
+  // must always pass onUpdateSlot and never rely on the fallback.
+  const updateSlotMutation = useMutation({
+    mutationFn: ({
+      slotId,
+      data,
+    }: {
+      slotId: string;
+      data: {
+        slotTime?: string;
+        timezone?: string;
+        isActive?: boolean;
+        allowedFormats?: string[];
+      };
+    }) =>
+      api.patch(
+        buildTenantApiPath(subdomain, `/pages/${pageId}/slots/${slotId}`),
+        {
+          slotTime: data.slotTime,
+          isActive: data.isActive,
+          allowedFormats: data.allowedFormats,
+        },
+        { schema: PageQueueSlotSchema }
+      ),
+    onSuccess: () => {
+      invalidateSlots();
+      toast.success('Publishing slot updated.');
+    },
+    onError: (error) => {
+      toast.error(
+        errorMessage(error, "Couldn't update the publishing slot. Please try again.")
+      );
+    },
+  });
+  const handleUpdateSlot = React.useCallback(
+    async (
+      slotId: string,
+      data: {
+        slotTime?: string;
+        timezone?: string;
+        isActive?: boolean;
+        allowedFormats?: string[];
+      }
+    ) => {
+      await updateSlotMutation.mutateAsync({ slotId, data });
+    },
+    [updateSlotMutation]
   );
 
   const timezoneMutation = useMutation({
@@ -667,8 +723,9 @@ export default function TenantDedicatedPageView({
                   page={page}
                   slots={slots}
                   isLoading={slotsQuery.isPending}
-                  pendingQueueCount={queuedCount}
+                  pendingQueueCount={slotLinkedQueuedCount}
                   onAddSlot={handleAddSlot}
+                  onUpdateSlot={handleUpdateSlot}
                   onUpdateTimezone={handleUpdateTimezone}
                   onToggleSlot={handleToggleSlot}
                   onDeleteSlot={handleDeleteSlot}
