@@ -126,10 +126,12 @@ interface MockQueryResult {
  * genuine Promise: the route awaits the builder directly after an
  * arbitrary chain (select/eq/or/order/range), so the builder itself
  * must be awaitable. It extends Promise instead of defining a custom
- * thenable method, and resolves on a later microtask so the route's
- * synchronous chain finishes first — the await continuation runs
- * after that microtask, so it observes the final chain state.
- * Promise reactions are not faked by timer mocks.
+ * thenable method. Resolution is scheduled from select() — never from
+ * the constructor, so no asynchronous operation runs inside it — on a
+ * later microtask so the route's synchronous chain finishes first:
+ * the await continuation runs after that microtask, so it observes
+ * the final chain state. Promise reactions are not faked by timer
+ * mocks.
  */
 class MockQuery extends Promise<MockQueryResult> {
   // Derived promises from .then() must be plain Promises, otherwise
@@ -138,6 +140,10 @@ class MockQuery extends Promise<MockQueryResult> {
   static get [Symbol.species](): PromiseConstructor {
     return Promise;
   }
+
+  private resolveResult!: (value: MockQueryResult) => void;
+  private rejectResult!: (reason: unknown) => void;
+  private scheduled = false;
 
   private filters: Condition[] = [];
   private orderKey: string | null = null;
@@ -156,17 +162,34 @@ class MockQuery extends Promise<MockQueryResult> {
       resolveResult = resolve;
       rejectResult = reject;
     });
+    this.resolveResult = resolveResult;
+    this.rejectResult = rejectResult;
+  }
+
+  /**
+   * Defers resolution to a later microtask. Called from select(),
+   * the only entry point (from() exposes the builder through select
+   * alone), so the route's synchronous chain finishes before the
+   * await continuation observes the final chain state. Guarded so
+   * the query resolves exactly once.
+   */
+  private schedule(): void {
+    if (this.scheduled) {
+      return;
+    }
+    this.scheduled = true;
     void Promise.resolve().then(() => {
       try {
-        resolveResult(this.execute());
+        this.resolveResult(this.execute());
       } catch (error) {
-        rejectResult(error);
+        this.rejectResult(error);
       }
     });
   }
 
   select(_columns: string, options?: { count?: string; head?: boolean }): this {
     this.head = options?.head === true;
+    this.schedule();
     return this;
   }
 
