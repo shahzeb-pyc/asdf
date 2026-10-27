@@ -50,7 +50,7 @@ export function TimezoneReviewStep({
   return (
     <div className="flex flex-col gap-4">
       <p className="text-metadata font-semibold tracking-wide text-brand-gold uppercase">
-        Step 2 of 2: Review impact
+        Step 2 of 2: Review this change
       </p>
 
       {/* Transition preview */}
@@ -89,17 +89,17 @@ export function TimezoneReviewStep({
         <div className="flex items-start gap-2">
           <InfoIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-brand-gold" />
           <p>
-            <strong className="text-ink">Clock times are preserved:</strong> Your posting slots
-            will publish at their exact clock times in the new timezone. For example, a 10:00 AM
-            slot will now publish at 10:00 AM {newEntry.city} time.
+            <strong className="text-ink">Clock times stay the same:</strong> Your posting times
+            will still go out at their exact clock times in the new timezone. For example, a
+            10:00 AM posting time will now go out at 10:00 AM {newEntry.city} time.
           </p>
         </div>
         <div className="flex items-start gap-2">
           <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-brand-gold" />
           <p>
-            <strong className="text-ink">No post times are rewritten:</strong> Queued posts
-            carry no fixed time — they go out at your posting times, in queue order. Changing
-            the timezone only moves when those times fire, and the queue&apos;s estimated
+            <strong className="text-ink">No post times change:</strong> Queued posts
+            have no fixed time — they go out at your posting times, in queue order. Changing
+            the timezone only changes when those times happen, and the queue&apos;s estimated
             dates update with it.
           </p>
         </div>
@@ -117,7 +117,7 @@ export function TimezoneReviewStep({
           <div data-testid="timezone-metric-slots" className="mt-0.5 text-lg font-bold text-ink">
             {slotsCount}
           </div>
-          <div className="text-metadata text-ink-sub">Active publishing times</div>
+          <div className="text-metadata text-ink-sub">Active posting times</div>
         </div>
         <div className="flex flex-col py-1">
           <div className="text-metadata font-semibold tracking-wide text-ink-dim uppercase">

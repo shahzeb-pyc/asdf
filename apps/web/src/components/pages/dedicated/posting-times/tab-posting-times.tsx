@@ -167,7 +167,7 @@ export function PageTabPostingTimes({
 
       {isLoading && (
         <div data-testid="calendar-loading" aria-busy="true" className="flex flex-col gap-2">
-          <span className="sr-only">Loading posting schedule...</span>
+          <span className="sr-only">Loading posting times...</span>
           <Skeleton className="h-16 w-full" />
           <Skeleton className="h-16 w-full" />
           <Skeleton className="h-16 w-full" />

@@ -107,7 +107,7 @@ describe('PageTabPostingTimes (rebuilt, spec 134)', () => {
     expect(dialog).toHaveTextContent('09:00 AM');
     // Publisher-driven copy: nothing is cancelled, nothing keeps
     // the deleted time — posts flow through the remaining times.
-    expect(dialog).toHaveTextContent('Nothing queued is cancelled');
+    expect(dialog).toHaveTextContent('Nothing in the queue is cancelled');
     expect(dialog).toHaveTextContent('remaining posting times, in queue order');
     expect(dialog).not.toHaveTextContent('automatically roll');
     await user.click(screen.getByTestId('confirm-delete-slot-btn'));
@@ -129,7 +129,7 @@ describe('PageTabPostingTimes (rebuilt, spec 134)', () => {
     // Publisher-driven copy: no realignment claims anywhere.
     expect(metrics).toHaveTextContent('Estimates update with the new timezone');
     expect(metrics).not.toHaveTextContent('realigned');
-    expect(screen.getByText(/No post times are rewritten/)).toBeInTheDocument();
+    expect(screen.getByText(/No post times change/)).toBeInTheDocument();
   });
 
   it('keeps the switch state when toggling fails', async () => {

@@ -22,7 +22,7 @@ export function PostingTimesEmptyState({ onOpenAddModal }: Readonly<PostingTimes
         type="first-use"
         icon={<ClockIcon aria-hidden className="size-8 text-brand-gold" />}
         title="No daily posting times set yet"
-        description="Set up your daily posting times and choose which post types go out in each. Posts added to your queue go out automatically at these times."
+        description="Set up your daily posting times and choose which post types go out at each one. Posts added to your queue go out automatically at those times."
         action={
           <Button type="button" data-testid="empty-add-slot-button" onClick={onOpenAddModal}>
             Add First Posting Time

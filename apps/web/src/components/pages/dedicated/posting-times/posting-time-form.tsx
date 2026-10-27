@@ -190,7 +190,7 @@ export function PostingTimeForm({
                     />
                   </FormControl>
                   <FormDescription>
-                    Posts at {preview.time12} {preview.ampm}.
+                    Posts will go out at {preview.time12} {preview.ampm}.
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
@@ -201,7 +201,7 @@ export function PostingTimeForm({
               data-testid="modal-schedule-timezone-note"
               className="flex items-center gap-1.5 text-metadata text-ink-sub"
             >
-              <span>Active schedule timezone:</span>
+              <span>Timezone for these posting times:</span>
               <span className="font-semibold text-ink">{activeTimezone}</span>
             </div>
 
@@ -245,7 +245,7 @@ export function PostingTimeForm({
                     })}
                   </div>
                   <FormDescription>
-                    Only queued posts matching the selected post types go out during this window.
+                    Only queued posts of the selected post types go out at this time.
                   </FormDescription>
                   <FormMessage />
                 </FormItem>

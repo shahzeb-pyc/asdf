@@ -90,7 +90,7 @@ function ScheduleTimezoneFlow({
       setErrorMessage(
         err instanceof Error
           ? err.message
-          : "Couldn't update the schedule timezone. Please try again."
+          : "Couldn't update the timezone. Please try again."
       );
     } finally {
       setIsSubmitting(false);
@@ -105,8 +105,8 @@ function ScheduleTimezoneFlow({
         </DialogTitle>
         <DialogDescription>
           {step === 1
-            ? "Choose the timezone this page's posting times and queue use."
-            : 'Verify how this change affects your recurring posting times and pending posts.'}
+            ? "Choose the timezone for this page's posting times and queue."
+            : 'Check how this change affects your posting times and queued posts.'}
         </DialogDescription>
       </DialogHeader>
 

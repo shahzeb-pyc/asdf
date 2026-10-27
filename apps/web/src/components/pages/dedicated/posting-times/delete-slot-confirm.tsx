@@ -49,8 +49,8 @@ export function DeleteSlotConfirm({
           <AlertDialogTitle>Remove Posting Time?</AlertDialogTitle>
           <AlertDialogDescription>
             Are you sure you want to remove the daily {formatted.time12} {formatted.ampm} posting
-            window? Nothing queued is cancelled, and no post keeps this time: queued posts flow
-            through your remaining posting times, in queue order. If no posting time remains,
+            time? Nothing in the queue is cancelled, and no post keeps this time: queued posts
+            move to your remaining posting times, in queue order. If no posting time remains,
             they wait in the queue until you add one — and adding a time later speeds the queue
             up again.
           </AlertDialogDescription>

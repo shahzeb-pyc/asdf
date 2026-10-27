@@ -368,11 +368,11 @@ export default function TenantDedicatedPageView({
       invalidateSlots();
       // Slot changes can move the unmatched-posts flag on the page.
       invalidatePage();
-      toast.success('Recurring publishing slot added.');
+      toast.success('Posting time added.');
     },
     onError: (error) => {
       toast.error(
-        errorMessage(error, "Couldn't create the publishing slot. Please try again.")
+        errorMessage(error, "Couldn't add the posting time. Please try again.")
       );
     },
   });
@@ -415,11 +415,11 @@ export default function TenantDedicatedPageView({
     onSuccess: () => {
       invalidateSlots();
       invalidatePage();
-      toast.success('Publishing slot updated.');
+      toast.success('Posting time updated.');
     },
     onError: (error) => {
       toast.error(
-        errorMessage(error, "Couldn't update the publishing slot. Please try again.")
+        errorMessage(error, "Couldn't update the posting time. Please try again.")
       );
     },
   });
@@ -452,11 +452,11 @@ export default function TenantDedicatedPageView({
       // No realigned count anymore: queued posts store no times, so
       // a timezone change rewrites nothing — times simply fire in
       // the new zone and queue estimates update.
-      toast.success(`Schedule timezone updated to ${newTimezone}.`);
+      toast.success(`Timezone updated to ${newTimezone}.`);
     },
     onError: (error) => {
       toast.error(
-        errorMessage(error, "Couldn't update the schedule timezone. Please try again.")
+        errorMessage(error, "Couldn't update the timezone. Please try again.")
       );
     },
   });
@@ -479,7 +479,7 @@ export default function TenantDedicatedPageView({
       invalidatePage();
     },
     onError: (error) => {
-      toast.error(errorMessage(error, "Couldn't update the slot. Please try again."));
+      toast.error(errorMessage(error, "Couldn't update the posting time. Please try again."));
     },
   });
   const handleToggleSlot = React.useCallback(
@@ -497,10 +497,10 @@ export default function TenantDedicatedPageView({
     onSuccess: () => {
       invalidateSlots();
       invalidatePage();
-      toast.success('Publishing slot deleted.');
+      toast.success('Posting time removed.');
     },
     onError: (error) => {
-      toast.error(errorMessage(error, "Couldn't delete the slot. Please try again."));
+      toast.error(errorMessage(error, "Couldn't remove the posting time. Please try again."));
     },
   });
   const handleDeleteSlot = React.useCallback(
