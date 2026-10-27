@@ -136,6 +136,110 @@ describe('runSlotClaimTick', () => {
     expect(heavy.sent.flat()).toHaveLength(0);
   });
 
+  it('skips malformed slot rows and still claims the valid due slot', async () => {
+    const fast = fakeQueue();
+    const heavy = fakeQueue();
+    const rows = [
+      // destination_id must be a string; this row is skipped.
+      {
+        destination_id: 42,
+        slot_id: 'slot-bad',
+        time_of_day: '08:00:00',
+        timezone: 'UTC',
+        kind: ['text'],
+      },
+      {
+        destination_id: 'dest-1',
+        slot_id: 'slot-8am',
+        time_of_day: '08:00:00',
+        timezone: 'UTC',
+        kind: ['text'],
+      },
+    ];
+    const db = {
+      rpc: vi.fn(async (fn: string) => {
+        if (fn === 'list_active_facebook_posting_slots') {
+          return { data: rows, error: null };
+        }
+        return {
+          data: [{ id: '33333333-3333-4333-a333-333333333333', kind: 'text', platform_format: 'text', destination_id: 'dest-1' }],
+          error: null,
+        };
+      }),
+    };
+
+    const result = await runSlotClaimTick({
+      db: db as never,
+      queues: { fast: fast as never, heavy: heavy as never },
+      now: NOW,
+    });
+
+    expect(result.claimed).toBe(1);
+    expect(fast.sent.flat()).toHaveLength(1);
+  });
+
+  it('throws when the slot-list RPC errors', async () => {
+    const db = {
+      rpc: vi.fn(async () => ({ data: null, error: new Error('list boom') })),
+    };
+
+    await expect(
+      runSlotClaimTick({
+        db: db as never,
+        queues: { fast: fakeQueue() as never, heavy: fakeQueue() as never },
+        now: NOW,
+      }),
+    ).rejects.toThrow('list boom');
+  });
+
+  it('isolates a slot whose claim RPC returns a non-array payload', async () => {
+    const fast = fakeQueue();
+    const heavy = fakeQueue();
+    const db = {
+      rpc: vi.fn(async (fn: string) => {
+        if (fn === 'list_active_facebook_posting_slots') {
+          return { data: SLOT_ROWS, error: null };
+        }
+        return { data: { not: 'an array' }, error: null };
+      }),
+    };
+
+    // The non-array throw is caught by per-slot isolation: the tick
+    // resolves, claims nothing, and enqueues nothing.
+    const result = await runSlotClaimTick({
+      db: db as never,
+      queues: { fast: fast as never, heavy: heavy as never },
+      now: NOW,
+    });
+
+    expect(result.claimed).toBe(0);
+    expect(fast.sent.flat()).toHaveLength(0);
+    expect(heavy.sent.flat()).toHaveLength(0);
+  });
+
+  it('throws when the claimed lane has no queue binding', async () => {
+    const db = {
+      rpc: vi.fn(async (fn: string) => {
+        if (fn === 'list_active_facebook_posting_slots') {
+          return { data: SLOT_ROWS, error: null };
+        }
+        return {
+          data: [{ id: '44444444-4444-4444-a444-444444444444', kind: 'text', platform_format: 'text', destination_id: 'dest-1' }],
+          error: null,
+        };
+      }),
+    };
+
+    // Text routes to the fast lane, which is deliberately unbound.
+    await expect(
+      runSlotClaimTick({
+        db: db as never,
+        queues: { fast: undefined as never, heavy: fakeQueue() as never },
+        now: NOW,
+      }),
+    ).rejects.toThrow('not configured');
+  });
+
   it('isolates a failing slot: the other due slot still claims', async () => {
     const fast = fakeQueue();
     const heavy = fakeQueue();

@@ -279,6 +279,43 @@ describe('Posting-times shell wiring', () => {
     expect(screen.queryByTestId('posting-time-row-slot-1')).not.toBeInTheDocument();
   });
 
+  it('shows a success toast when a posting time is added', async () => {
+    const user = userEvent.setup();
+    renderShell();
+    await screen.findByTestId('posting-time-row-slot-1');
+    await user.click(screen.getByTestId('add-slot-button'));
+    await screen.findByTestId('add-posting-time-modal');
+    fireEvent.change(screen.getByTestId('posting-time-input'), { target: { value: '10:00' } });
+    // Add starts with zero formats picked; at least one is required.
+    await user.click(screen.getByTestId('modal-format-toggle-text'));
+    await user.click(screen.getByTestId('save-slot-btn'));
+    await waitFor(() => expect(apiPost).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(toastSuccess).toHaveBeenCalledWith('Posting time added.')
+    );
+  });
+
+  it('shows a success toast when the timezone is updated', async () => {
+    const user = userEvent.setup();
+    renderShell();
+    await screen.findByTestId('posting-time-row-slot-1');
+    await user.click(screen.getByTestId('schedule-timezone-trigger'));
+    expect(await screen.findByTestId('schedule-timezone-modal')).toBeInTheDocument();
+    await user.click(screen.getByTestId('timezone-option-Asia/Karachi'));
+    await user.click(screen.getByTestId('proceed-to-step2-button'));
+    await user.click(screen.getByTestId('confirm-timezone-update-button'));
+    await waitFor(() =>
+      expect(apiPatch).toHaveBeenCalledWith(
+        expect.stringContaining('/slots'),
+        expect.objectContaining({ timezone: 'Asia/Karachi' }),
+        expect.anything()
+      )
+    );
+    await waitFor(() =>
+      expect(toastSuccess).toHaveBeenCalledWith('Timezone updated to Asia/Karachi.')
+    );
+  });
+
   it('restores the row and shows an error when deleting fails', async () => {
     const user = userEvent.setup();
     apiDelete.mockRejectedValueOnce('network down');

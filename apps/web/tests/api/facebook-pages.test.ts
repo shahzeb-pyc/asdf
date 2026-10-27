@@ -900,6 +900,46 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
       expect(json.page.pageName).toBe('Acme Brand');
       expect(json.page.followersGained).toBe(50);
     });
+
+    it('keeps only string entries from unmatched_post_types', async () => {
+      const mockPageRow = {
+        id: pageId,
+        facebook_account_id: accountId,
+        account_display_name: 'Alex Acme Account',
+        fb_page_id: 'fb_page_999',
+        page_name: 'Acme Brand',
+        profile_picture_url: null,
+        category: 'Brand',
+        starting_followers: 100,
+        current_followers: 150,
+        status: 'active',
+        tasks: ['CREATE_CONTENT'],
+        unmatched_post_types: ['video', 42, 'reel'],
+        created_at: new Date('2026-10-01T12:00:00Z').toISOString(),
+        updated_at: new Date('2026-10-01T12:00:00Z').toISOString(),
+      };
+
+      const mockDb = {
+        query: vi.fn().mockImplementation((sql: string) => {
+          if (sql.includes('FROM workspaces')) {
+            return Promise.resolve([{ id: 'ws_123' }]);
+          }
+          if (sql.includes('FROM destinations')) {
+            return Promise.resolve([mockPageRow]);
+          }
+          return Promise.resolve([]);
+        }),
+      } as unknown as DatabaseClient;
+
+      const req = new NextRequest(`http://localhost:3000/api/tenant/acme/pages/${pageId}`, {
+        headers: { cookie: validSessionCookie },
+      });
+
+      const res = await handleGetPage(req, 'acme', pageId, mockDb);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.page.unmatchedPostTypes).toEqual(['video', 'reel']);
+    });
   });
 
   describe('Update Page (PATCH /api/tenant/[subdomain]/pages/[pageId])', () => {

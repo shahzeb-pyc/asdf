@@ -790,5 +790,178 @@ describe('Page Queue Slots CRUD (T121, T122, T123)', () => {
       expect(seenSql.some((sql) => sql.includes('queue_items'))).toBe(false);
     });
   });
+
+  describe('Supabase path (production client shape)', () => {
+    /**
+     * Minimal chainable PostgREST double: every mutator returns the
+     * builder, maybeSingle/single resolve per table + selected
+     * columns, and the builder itself is thenable for chains awaited
+     * directly (the slot DELETE's `.delete().eq().select('id')`).
+     */
+    function makeSupabaseFake(
+      resolve: (
+        table: string,
+        op: 'maybeSingle' | 'single' | 'select',
+        columns?: string
+      ) => { data: unknown; error: unknown },
+    ) {
+      const rpc = vi.fn().mockResolvedValue({ error: null });
+      const builderFor = (table: string) => {
+        const b: Record<string, unknown> = {};
+        let columns: string | undefined;
+        b.select = (cols?: string) => {
+          columns = cols;
+          return b;
+        };
+        b.eq = () => b;
+        b.insert = () => b;
+        b.update = () => b;
+        b.delete = () => b;
+        b.single = () => Promise.resolve(resolve(table, 'single', columns));
+        b.maybeSingle = () => Promise.resolve(resolve(table, 'maybeSingle', columns));
+        b.then = (onOk: (v: unknown) => unknown, onErr?: (e: unknown) => unknown) =>
+          Promise.resolve(resolve(table, 'select', columns)).then(onOk, onErr);
+        return b;
+      };
+      return {
+        from: (table: string) => builderFor(table),
+        rpc,
+      };
+    }
+
+    function workspaceAndOwner(pageTimezone = 'UTC') {
+      return (
+        table: string,
+        op: 'maybeSingle' | 'single' | 'select',
+        columns?: string
+      ) => {
+        if (table === 'workspaces') {
+          if (columns === 'owner_id') {
+            return { data: { owner_id: userId }, error: null };
+          }
+          return { data: { id: 'ws_123' }, error: null };
+        }
+        if (table === 'destinations') {
+          return { data: { id: pageId, timezone: pageTimezone }, error: null };
+        }
+        return { data: null, error: null };
+      };
+    }
+
+    it('POST creates a slot and refreshes the unmatched flag', async () => {
+      const fake = makeSupabaseFake((table, op, columns) => {
+        if (table === 'posting_slots' && op === 'single') {
+          return {
+            data: {
+              id: slotId,
+              destination_id: pageId,
+              time_of_day: '14:00',
+              is_active: true,
+              kind: ['text'],
+              created_at: new Date('2026-10-07T12:00:00Z').toISOString(),
+              updated_at: new Date('2026-10-07T12:00:00Z').toISOString(),
+            },
+            error: null,
+          };
+        }
+        return workspaceAndOwner()(table, op, columns);
+      });
+
+      const req = new NextRequest(
+        `http://localhost:3000/api/tenant/acme/pages/${pageId}/slots`,
+        {
+          method: 'POST',
+          headers: { cookie: validSessionCookie },
+          body: JSON.stringify({ slotTime: '14:00', timezone: 'UTC' }),
+        }
+      );
+      const res = await handleCreateQueueSlot(
+        req,
+        'acme',
+        pageId,
+        fake as never
+      );
+      expect(res.status).toBe(201);
+      const data = (await res.json()) as { id: string; slotTime: string };
+      expect(data.id).toBe(slotId);
+      expect(data.slotTime).toBe('14:00');
+      expect(fake.rpc).toHaveBeenCalledWith('refresh_destination_unmatched_flag', {
+        p_destination_id: pageId,
+      });
+    });
+
+    it('PATCH updates a slot and refreshes the unmatched flag', async () => {
+      const fake = makeSupabaseFake((table, op, columns) => {
+        if (table === 'posting_slots' && op === 'maybeSingle') {
+          return {
+            data: {
+              id: slotId,
+              destination_id: pageId,
+              time_of_day: '18:00:00',
+              is_active: false,
+              kind: ['text'],
+              created_at: new Date('2026-10-07T10:00:00Z').toISOString(),
+              updated_at: new Date('2026-10-07T13:00:00Z').toISOString(),
+            },
+            error: null,
+          };
+        }
+        return workspaceAndOwner()(table, op, columns);
+      });
+
+      const req = new NextRequest(
+        `http://localhost:3000/api/tenant/acme/pages/${pageId}/slots/${slotId}`,
+        {
+          method: 'PATCH',
+          headers: { cookie: validSessionCookie },
+          body: JSON.stringify({ isActive: false }),
+        }
+      );
+      const res = await handleUpdateQueueSlot(
+        req,
+        'acme',
+        pageId,
+        slotId,
+        fake as never
+      );
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as { isActive: boolean };
+      expect(data.isActive).toBe(false);
+      expect(fake.rpc).toHaveBeenCalledWith('refresh_destination_unmatched_flag', {
+        p_destination_id: pageId,
+      });
+    });
+
+    it('DELETE removes a slot and refreshes the unmatched flag', async () => {
+      const fake = makeSupabaseFake((table, op, columns) => {
+        if (table === 'posting_slots' && op === 'select') {
+          return { data: [{ id: slotId }], error: null };
+        }
+        return workspaceAndOwner()(table, op, columns);
+      });
+
+      const req = new NextRequest(
+        `http://localhost:3000/api/tenant/acme/pages/${pageId}/slots/${slotId}`,
+        {
+          method: 'DELETE',
+          headers: { cookie: validSessionCookie },
+        }
+      );
+      const res = await handleDeleteQueueSlot(
+        req,
+        'acme',
+        pageId,
+        slotId,
+        fake as never
+      );
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as { success: boolean; slotId: string };
+      expect(data.success).toBe(true);
+      expect(data.slotId).toBe(slotId);
+      expect(fake.rpc).toHaveBeenCalledWith('refresh_destination_unmatched_flag', {
+        p_destination_id: pageId,
+      });
+    });
+  });
 });
 
