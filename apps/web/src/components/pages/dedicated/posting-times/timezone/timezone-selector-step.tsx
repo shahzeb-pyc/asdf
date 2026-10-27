@@ -63,7 +63,6 @@ export function TimezoneSelectorStep({
         className="flex items-center justify-between gap-3 border-b border-line pb-3"
       >
         <div className="flex items-center gap-2">
-          <span aria-hidden className="size-2 shrink-0 rounded-full bg-signal-operational" />
           <div className="flex flex-col">
             <span className="text-metadata font-semibold tracking-wide text-ink-dim uppercase">
               Current timezone
@@ -123,10 +122,7 @@ export function TimezoneSelectorStep({
                       data-testid={`timezone-option-${entry.iana}`}
                       aria-pressed={isSelected}
                       onClick={() => onSelectTimezone(entry.iana)}
-                      className={cn(
-                        'flex min-h-11 w-full items-center justify-between gap-2 border-b px-2 py-2 text-left outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold',
-                        isSelected ? 'border-brand-gold' : 'border-line'
-                      )}
+                      className="flex min-h-11 w-full items-center justify-between gap-2 border-b border-line px-2 py-2 text-left outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold"
                     >
                       <span className="flex items-center gap-2">
                         <span
