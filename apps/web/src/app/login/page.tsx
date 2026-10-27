@@ -92,7 +92,9 @@ type LoginFieldName = 'email' | 'password';
  * The server still rebuilds the correct workspace address from the
  * relative path (loginTenantUser → sanitizeAuthRedirectUrl with the
  * user's subdomain), so the user still lands where they came from.
- * The server schema is deliberately NOT loosened.
+ * The server schema is deliberately NOT loosened. A relative result
+ * that does not start with '/' is also omitted (opaque absolute URLs
+ * parse to a bare path segment, which is not a sendable in-app path).
  */
 export function toApiReturnUrl(returnUrl: string | undefined): string | undefined {
   if (!returnUrl) return undefined;
@@ -109,6 +111,9 @@ export function toApiReturnUrl(returnUrl: string | undefined): string | undefine
     relative = trimmed;
   }
   if (relative.startsWith('//')) return undefined;
+  // Hardening: only a path starting with '/' may be sent — an opaque
+  // absolute URL (e.g. `https:foo`) parses to a bare path segment.
+  if (!relative.startsWith('/')) return undefined;
   const pathOnly = relative.split(/[?#]/, 1)[0];
   if (pathOnly === '/dashboard' || pathOnly.startsWith('/dashboard/')) return undefined;
   return relative;

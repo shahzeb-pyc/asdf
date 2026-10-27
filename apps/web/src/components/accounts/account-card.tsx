@@ -4,7 +4,8 @@
  * Account card (spec 131 PR-131-1) — rebuilt on the design system:
  * token-backed Tailwind utilities only (zero inline styles), avatars
  * on `next/image` (the file's 2 raw img elements are deleted), and status
- * as icon + text via the local `AccountHealthMark` below (no status dot:
+ * as icon + text via `AccountHealthMark` below (a thin wrapper over the
+ * shared `StatusMark`, no status dot:
  * connected is the tick, expired/error is the cross, expiring-soon is
  * the clock) fed by the single account-health model in `account-health.ts`
  * (logic carried over untouched). Layout, copy, testids, and the
@@ -14,9 +15,10 @@
 import * as React from 'react';
 import Image from 'next/image';
 import { useRouter, useParams } from 'next/navigation';
-import { CheckIcon, CircleIcon, ClockIcon, ExternalLinkIcon, TriangleAlertIcon, XIcon } from 'lucide-react';
+import { ExternalLinkIcon, TriangleAlertIcon } from 'lucide-react';
 
 import { Button } from '@/components/shared/ui/button';
+import { StatusMark, type StatusMarkKind } from '@/components/shared/ui/status-mark';
 import { getUserInitials } from '@/lib/user-initials';
 import { cn } from '@/lib/utils';
 import {
@@ -85,33 +87,20 @@ const RING_CLASSES = {
  * operational, expired/error to critical, expiring-soon to queued) and
  * keeps the shared component's circle icon only for exhaustiveness.
  */
-const HEALTH_MARK_META = {
-  operational: { Icon: CheckIcon, iconName: 'check', textClass: 'text-signal-operational' },
-  queued: { Icon: ClockIcon, iconName: 'clock', textClass: 'text-signal-queued' },
-  critical: { Icon: XIcon, iconName: 'cross', textClass: 'text-signal-critical' },
-  idle: { Icon: CircleIcon, iconName: 'circle', textClass: 'text-signal-idle' },
-} as const;
-
 function AccountHealthMark({
   status,
   label,
 }: Readonly<{
-  status: keyof typeof HEALTH_MARK_META;
+  status: StatusMarkKind;
   label: string;
 }>) {
-  const meta = HEALTH_MARK_META[status];
-  const { Icon } = meta;
   return (
-    <span
-      data-testid="account-health-mark"
-      data-status={status}
-      role="status"
-      aria-label={label}
-      className={cn('inline-flex items-center gap-1.5 text-metadata font-medium', meta.textClass)}
-    >
-      <Icon aria-hidden data-icon={meta.iconName} className="size-3.5 shrink-0" />
-      <span>{label}</span>
-    </span>
+    <StatusMark
+      kind={status}
+      label={label}
+      testId="account-health-mark"
+      className="font-medium"
+    />
   );
 }
 

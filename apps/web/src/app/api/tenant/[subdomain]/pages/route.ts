@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from 'next/server';
 import {
   getSessionSecret,
   ListFacebookPagesResponseSchema,
+  FB_RATE_LIMITED_COOLDOWN_MS,
   evaluatePageHealth,
   verifySessionToken,
   canAccessTenant,
@@ -275,42 +276,116 @@ interface SupabaseDestinationJoinRow {
   social_accounts: { display_name: string; avatar_url: string | null } | null;
 }
 
-async function fetchSupabasePages(
+const SUPABASE_PAGE_COLUMNS =
+  'id, account_id, external_destination_id, name, avatar_url, metadata, status, created_at, updated_at, social_accounts(display_name, avatar_url)';
+const SUPABASE_PAGE_COLUMNS_INNER =
+  'id, account_id, external_destination_id, name, avatar_url, metadata, status, created_at, updated_at, social_accounts!inner(display_name, avatar_url)';
+
+/**
+ * The attention-first rank groups, in order. PostgREST cannot ORDER BY
+ * the rank CASE the SQL path uses, so the Supabase path queries one
+ * rank group at a time — each group newest-first with an exact count
+ * — and walks the groups to serve the requested page slice. The
+ * groups partition the visible rows exactly (see the predicates
+ * below), so the concatenated slices are the same attention-first
+ * sequence the shell sorts by, without ever fetching the whole list.
+ */
+type SupabasePageGroup = 'attention' | 'paused' | 'active' | 'other';
+const SUPABASE_PAGE_GROUPS: SupabasePageGroup[] = [
+  'attention',
+  'paused',
+  'active',
+  'other',
+];
+
+/**
+ * Applies one rank group's predicate to a destinations query. The
+ * wire status is a pure function of the status column plus the paused
+ * marker (see unifiedDestinationStatusToWire), and the fresh/stale
+ * rate-limit split mirrors evaluatePageHealth's 3-day cooldown with
+ * the same rate_limited_at ?? updated_at fallback — including the
+ * both-null case, which stays rate-limited (fresh) because
+ * evaluatePageHealth has no timestamp to expire against.
+ */
+// The query builder is typed as any here on purpose: the contracts
+// Database type carries no Relationships metadata, so the typed
+// PostgREST builder already degrades at the select boundary below.
+function applySupabasePageGroup(
+  query: any,
+  group: SupabasePageGroup,
+  freshThresholdIso: string
+): any {
+  switch (group) {
+    case 'attention':
+      return query.or(
+        `status.eq.error,and(status.eq.rate_limited,or(metadata->>rate_limited_at.gt.${freshThresholdIso},and(metadata->>rate_limited_at.is.null,updated_at.gt.${freshThresholdIso}),and(metadata->>rate_limited_at.is.null,updated_at.is.null)))`
+      );
+    case 'paused':
+      return query
+        .eq('status', 'disconnected')
+        .eq('metadata->>fb_status', 'paused');
+    case 'active':
+      return query.or(
+        `status.eq.active,and(status.eq.rate_limited,or(metadata->>rate_limited_at.lte.${freshThresholdIso},and(metadata->>rate_limited_at.is.null,updated_at.lte.${freshThresholdIso})))`
+      );
+    case 'other':
+      return query.not(
+        'status',
+        'in',
+        '(active,error,rate_limited,disconnected)'
+      );
+  }
+}
+
+function buildSupabasePageQuery(
   supabase: SupabaseClient<Database>,
   workspaceId: string,
-  accountFilter = 'all'
-): Promise<{ rows?: PageListRow[]; error?: string }> {
-  let query = supabase
-    .from('destinations')
-    .select(
-      'id, account_id, external_destination_id, name, avatar_url, metadata, status, created_at, updated_at, social_accounts(display_name, avatar_url)'
-    )
+  filters: PageListFilters,
+  group: SupabasePageGroup,
+  freshThresholdIso: string,
+  forCount: boolean
+): any {
+  // A display-name account filter joins on the account row, so it
+  // needs the inner join; every other case keeps the left join so
+  // destinations without an account row still list (display name '').
+  const isDisplayNameFilter =
+    filters.account &&
+    filters.account !== 'all' &&
+    !UUID_RE.test(filters.account);
+  const columns = isDisplayNameFilter
+    ? SUPABASE_PAGE_COLUMNS_INNER
+    : SUPABASE_PAGE_COLUMNS;
+  let query: any = forCount
+    ? supabase.from('destinations').select('*', { count: 'exact', head: true })
+    : supabase.from('destinations').select(columns);
+  query = query
     .eq('workspace_id', workspaceId)
     .eq('platform', 'facebook');
-  // An account id pre-filters exactly; a display-name filter cannot,
-  // so it is applied after mapping below instead.
-  if (accountFilter !== 'all' && UUID_RE.test(accountFilter)) {
-    query = query.eq('account_id', accountFilter);
+  query = applySupabasePageGroup(query, group, freshThresholdIso);
+  if (filters.search) {
+    query = query.or(
+      `name.ilike.%${filters.search}%,metadata->>category.ilike.%${filters.search}%`
+    );
   }
-  const { data: pageData, error } = await query.order('created_at', {
-    ascending: false,
-  });
-
-  if (error) {
-    return { error: error.message };
+  if (filters.account && filters.account !== 'all') {
+    if (UUID_RE.test(filters.account)) {
+      query = query.eq('account_id', filters.account);
+    } else {
+      query = query.eq('social_accounts.display_name', filters.account);
+    }
   }
+  return query;
+}
 
-  // The contracts Database type resolves this joined select to never[]
-  // (no Relationships metadata for supabase-js), so the result is
-  // asserted once, here at the boundary, to the shape the select
-  // actually returns.
-  const pageRows = (pageData || []) as unknown as SupabaseDestinationJoinRow[];
+function mapSupabaseDestinationRows(
+  pageRows: SupabaseDestinationJoinRow[]
+): PageListRow[] {
   // Disconnected destinations are excluded (a paused page — stored as
   // disconnected + the fb_status marker — stays listed, as before).
   const visibleRows = pageRows.filter(
     (p) => p.status !== 'disconnected' || p.metadata?.fb_status === 'paused'
   );
-  const rows: PageListRow[] = visibleRows.map((p) => ({
+  return visibleRows.map((p) => ({
     id: p.id,
     facebook_account_id: p.account_id,
     account_display_name: p.social_accounts?.display_name || '',
@@ -336,8 +411,133 @@ async function fetchSupabasePages(
     created_at: p.created_at,
     updated_at: p.updated_at,
   }));
+}
 
-  return { rows };
+/**
+ * Supabase path list, as a real DB range query: an exact count per
+ * rank group, then ranged row fetches only for the groups the
+ * requested page slice touches. Response shape matches the SQL path
+ * (total, clamped page, full-set attentionTotal); the shell's
+ * page-slice fallback (attentionTotal omitted) never triggers here
+ * because the counts always answer.
+ */
+async function fetchSupabasePagesPage(
+  supabase: SupabaseClient<Database>,
+  workspaceId: string,
+  filters: PageListFilters,
+  page: number,
+  limit: number
+): Promise<{
+  pages: ReturnType<typeof mapPageRows>;
+  total: number;
+  page: number;
+  attentionTotal: number;
+  error?: string;
+}> {
+  // Search terms containing PostgREST or() metacharacters cannot be
+  // expressed as a single or() filter — keep the previous full-fetch
+  // behaviour for those requests instead of returning wrong results.
+  if (/[,()"]/.test(filters.search)) {
+    const { data: pageData, error } = await supabase
+      .from('destinations')
+      .select(SUPABASE_PAGE_COLUMNS)
+      .eq('workspace_id', workspaceId)
+      .eq('platform', 'facebook')
+      .order('created_at', { ascending: false });
+    if (error) {
+      return { pages: [], total: 0, page, attentionTotal: 0, error: error.message };
+    }
+    // The contracts Database type resolves this joined select to never[]
+    // (no Relationships metadata for supabase-js), so the result is
+    // asserted once, here at the boundary, to the shape the select
+    // actually returns.
+    const pageRows = (pageData || []) as unknown as SupabaseDestinationJoinRow[];
+    const mapped = mapPageRows(mapSupabaseDestinationRows(pageRows));
+    const filtered = filterAndSortPages(mapped, filters);
+    const attentionTotal = filtered.filter((p) =>
+      isAttentionPageStatus(p.status)
+    ).length;
+    const sliced = paginateItems(filtered, page, limit);
+    return {
+      pages: sliced.items,
+      total: sliced.meta.total,
+      page: sliced.meta.page,
+      attentionTotal,
+    };
+  }
+
+  const freshThresholdIso = new Date(
+    Date.now() - FB_RATE_LIMITED_COOLDOWN_MS
+  ).toISOString();
+  const groups: SupabasePageGroup[] =
+    filters.status === 'needs_attention'
+      ? ['attention']
+      : filters.status === 'active'
+        ? ['active']
+        : filters.status === 'paused'
+          ? ['paused']
+          : SUPABASE_PAGE_GROUPS;
+  const counts = await Promise.all(
+    groups.map(async (group) => {
+      const { count, error } = await buildSupabasePageQuery(
+        supabase,
+        workspaceId,
+        filters,
+        group,
+        freshThresholdIso,
+        true
+      );
+      if (error) return { group, count: null as number | null, error: error.message };
+      return { group, count: typeof count === 'number' ? count : 0, error: undefined as string | undefined };
+    })
+  );
+  const firstError = counts.find((c) => c.error);
+  if (firstError?.error) {
+    return { pages: [], total: 0, page, attentionTotal: 0, error: firstError.error };
+  }
+  const total = counts.reduce((sum, c) => sum + (c.count ?? 0), 0);
+  // Clamp before the range queries: an out-of-range ?page= must return
+  // the last page's rows, never an empty page.
+  const clampedPage = paginateMeta(total, page, limit).page;
+  const sliceStart = (clampedPage - 1) * limit;
+  const sliceEnd = sliceStart + limit;
+  const pages: ReturnType<typeof mapPageRows> = [];
+  let groupOffset = 0;
+  for (let i = 0; i < groups.length; i++) {
+    const groupCount = counts[i]?.count ?? 0;
+    const groupStart = groupOffset;
+    const groupEnd = groupOffset + groupCount;
+    const takeStart = Math.max(sliceStart, groupStart);
+    const takeEnd = Math.min(sliceEnd, groupEnd);
+    if (takeStart < takeEnd) {
+      const { data: pageData, error } = await buildSupabasePageQuery(
+        supabase,
+        workspaceId,
+        filters,
+        groups[i] as SupabasePageGroup,
+        freshThresholdIso,
+        false
+      )
+        .order('created_at', { ascending: false })
+        .range(takeStart - groupStart, takeEnd - groupStart - 1);
+      if (error) {
+        return { pages: [], total: 0, page, attentionTotal: 0, error: error.message };
+      }
+      // Same boundary assertion as the legacy path above.
+      const pageRows = (pageData || []) as unknown as SupabaseDestinationJoinRow[];
+      pages.push(...mapPageRows(mapSupabaseDestinationRows(pageRows)));
+    }
+    groupOffset = groupEnd;
+  }
+  // Full-set attention count, counted BEFORE slicing — matching the
+  // legacy path and the SQL path's aggregate. With an active/paused
+  // status filter the filtered set contains no attention pages, so
+  // the count is 0 rather than the attention group's count.
+  const attentionTotal =
+    filters.status === 'active' || filters.status === 'paused'
+      ? 0
+      : (counts[groups.indexOf('attention')]?.count ?? 0);
+  return { pages, total, page: clampedPage, attentionTotal };
 }
 
 export async function handleListPages(
@@ -431,27 +631,25 @@ export async function handleListPages(
       return NextResponse.json({ error: 'Database service unavailable' }, { status: 500 });
     }
 
-    const res = await fetchSupabasePages(supabase, workspaceId, filters.account);
+    const res = await fetchSupabasePagesPage(
+      supabase,
+      workspaceId,
+      filters,
+      requestedPage,
+      limit
+    );
     if (res.error) {
       return NextResponse.json({ error: res.error }, { status: 500 });
     }
-    // Supabase path limitation, stated honestly: PostgREST cannot order
-    // by the attention-rank CASE, so the filtered rows are mapped,
-    // filtered and sorted here and only the page slice is returned to
-    // the client — the browser never downloads the whole list, but the
-    // database round-trip is not a range query on this path.
-    const mapped = mapPageRows(res.rows || []);
-    const filtered = filterAndSortPages(mapped, filters);
-    // Full-set attention count, counted BEFORE slicing: the mapped
-    // statuses are already effective (evaluatePageHealth ran in
-    // mapPageRows), so a stale rate limit already reads as active
-    // and is not counted here.
-    attentionTotal = filtered.filter((p) =>
-      isAttentionPageStatus(p.status)
-    ).length;
-    const sliced = paginateItems(filtered, requestedPage, limit);
-    pages = sliced.items;
-    meta = sliced.meta;
+    // Supabase path is now a real DB range query too (see
+    // fetchSupabasePagesPage): exact counts plus ranged slices per
+    // attention rank group, so the returned page is exact and the
+    // database round-trip never fetches the whole list — except the
+    // documented search fallback inside that function, which keeps
+    // the old full-fetch behaviour for or()-inexpressible terms.
+    pages = res.pages;
+    attentionTotal = res.attentionTotal;
+    meta = paginateMeta(res.total, res.page, limit);
   }
 
   const responsePayload = ListFacebookPagesResponseSchema.parse({

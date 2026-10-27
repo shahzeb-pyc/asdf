@@ -15,14 +15,12 @@
 import * as React from 'react';
 import Image from 'next/image';
 import {
-  CheckIcon,
-  ClockIcon,
   MoveUpRightIcon,
-  XIcon,
 } from 'lucide-react';
 
 import { getUserInitials } from '@/lib/user-initials';
 import { cn } from '@/lib/utils';
+import { StatusMark } from '@/components/shared/ui/status-mark';
 
 export type FacebookPageStatus =
   | 'active'
@@ -103,12 +101,9 @@ export function formatAddedDate(createdAt: string): string {
 }
 
 /**
- * Page status mark — the Accounts-style mark (icon + text, NO dot),
- * mirroring `AccountHealthMark` in account-card.tsx. That component
- * could not be reused directly here: account-card.tsx is owned by
- * the parallel dialogue branch, so this mark duplicates its
- * icon/text mapping until the two can be consolidated into one
- * shared component. Do not reintroduce StatusDot here.
+ * Page status mark — the shared `StatusMark` (icon + text, NO dot)
+ * with this card's testid and type tweaks, so the rendered output is
+ * identical to the old local mark. Do not reintroduce StatusDot here.
  */
 export type PageStatusMarkKind = 'operational' | 'queued' | 'critical';
 
@@ -120,33 +115,18 @@ export function getPageStatusMarkKind(
   return 'critical';
 }
 
-const MARK_META = {
-  operational: { Icon: CheckIcon, iconName: 'check', textClass: 'text-signal-operational' },
-  queued: { Icon: ClockIcon, iconName: 'clock', textClass: 'text-signal-queued' },
-  critical: { Icon: XIcon, iconName: 'cross', textClass: 'text-signal-critical' },
-} as const;
-
 export function PageStatusMark({
   status,
   label,
 }: Readonly<{ status: FacebookPageStatus; label: string }>) {
-  const kind = getPageStatusMarkKind(status);
-  const meta = MARK_META[kind];
-  const { Icon } = meta;
   return (
-    <span
-      data-testid="page-status"
-      data-status={kind}
-      role="status"
-      aria-label={label}
-      className={cn(
-        'inline-flex min-w-0 items-center gap-1.5 font-semibold tracking-wide text-metadata',
-        meta.textClass
-      )}
-    >
-      <Icon aria-hidden data-icon={meta.iconName} className="size-3.5 shrink-0" />
-      <span className="truncate">{label}</span>
-    </span>
+    <StatusMark
+      kind={getPageStatusMarkKind(status)}
+      label={label}
+      testId="page-status"
+      className="min-w-0 font-semibold tracking-wide"
+      labelClassName="truncate"
+    />
   );
 }
 

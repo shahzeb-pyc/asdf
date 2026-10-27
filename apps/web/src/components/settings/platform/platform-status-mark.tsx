@@ -11,9 +11,7 @@
  * presentation. Colours come from the design-system signal tokens, so
  * the mark works in light and dark themes; the icon colour is the
  * neutral white used for icons on coloured fills elsewhere in the app.
- * The container renders this mark only for tabs that opt into the
- * two-column or single-column variants; classic tabs keep `StatusDot`
- * unchanged. Mirrors the Facebook tab's local status mark.
+ * Mirrors the Facebook tab's local status mark.
  */
 
 import * as React from 'react';
