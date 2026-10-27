@@ -234,6 +234,72 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
       expect(hasText('SK')).toBe(true);
     });
 
+    it('renders the real connected-account picture when accountPictureUrl is present', () => {
+      const { container } = rtlRender(
+        <DedicatedPageHeader
+          page={{
+            ...samplePage,
+            accountPictureUrl: 'https://images.example.com/account.jpg',
+          }}
+          subdomain="cyberdyne"
+          onStatusToggle={vi.fn()}
+          onDisconnectRequest={vi.fn()}
+        />
+      );
+
+      const avatar = container.querySelector(
+        '[data-testid="dedicated-account-avatar"]'
+      );
+      expect(avatar).not.toBeNull();
+      expect(avatar?.querySelector('img')?.getAttribute('src')).toContain(
+        'account.jpg'
+      );
+      expect(avatar?.textContent).not.toContain('JC');
+    });
+
+    it('renders account initials when accountPictureUrl is absent', () => {
+      const { container } = rtlRender(
+        <DedicatedPageHeader
+          page={samplePage}
+          subdomain="cyberdyne"
+          onStatusToggle={vi.fn()}
+          onDisconnectRequest={vi.fn()}
+        />
+      );
+
+      const avatar = container.querySelector(
+        '[data-testid="dedicated-account-avatar"]'
+      );
+      expect(avatar).not.toBeNull();
+      expect(avatar?.querySelector('img')).toBeNull();
+      expect(avatar?.textContent).toContain('JC');
+    });
+
+    it('falls back to account initials when the account picture fails to load', () => {
+      const { container } = rtlRender(
+        <DedicatedPageHeader
+          page={{
+            ...samplePage,
+            accountPictureUrl: 'https://images.example.com/broken-account.jpg',
+          }}
+          subdomain="cyberdyne"
+          onStatusToggle={vi.fn()}
+          onDisconnectRequest={vi.fn()}
+        />
+      );
+
+      const avatar = container.querySelector(
+        '[data-testid="dedicated-account-avatar"]'
+      );
+      const img = avatar?.querySelector('img');
+      expect(img).not.toBeNull();
+      fireEvent.error(img as Element);
+      expect(
+        container.querySelector('[data-testid="dedicated-account-avatar"]')
+          ?.textContent
+      ).toContain('JC');
+    });
+
     it('resets avatar error state when profilePictureUrl changes on navigation (Audit Issue 26)', () => {
       // Behavioural (spec 131 PR-131-3 named update): the avatar is now
       // next/image on the design system, so the error fallback is

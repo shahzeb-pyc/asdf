@@ -537,6 +537,8 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
               id: '33333333-3333-4333-a333-333333333331',
               facebook_account_id: accountId,
               account_display_name: 'Alex Marketing',
+              account_avatar_url:
+                'https://platform-lookaside.fbsbx.com/platform/profilepic/account_9.jpg',
               fb_page_id: 'page_pos',
               page_name: 'Brand Flagship Page',
               profile_picture_url:
@@ -593,6 +595,7 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
       expect(capturedSql).toContain("d.status != 'disconnected'");
       expect(capturedSql).toContain('starting_followers');
       expect(capturedSql).toContain('current_followers');
+      expect(capturedSql).toContain('account_avatar_url');
 
       const json = await res.json();
       expect(json.total).toBe(3);
@@ -605,6 +608,7 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
         currentFollowers: number;
         followersGained: number;
         profilePictureUrl: string | null;
+        accountPictureUrl: string | null;
       };
       const byName = new Map<string, PageFollowers>(
         json.pages.map((p: any) => [p.pageName, p] as [string, PageFollowers])
@@ -621,6 +625,9 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
       expect(flagship.followersGained).toBe(2000);
       expect(flagship.profilePictureUrl).toBe(
         'https://platform-lookaside.fbsbx.com/platform/profilepic/page_1001.jpg'
+      );
+      expect(flagship.accountPictureUrl).toBe(
+        'https://platform-lookaside.fbsbx.com/platform/profilepic/account_9.jpg'
       );
 
       // Zero growth (0)
@@ -727,7 +734,11 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
                     },
                     updated_at: pastDate,
                     created_at: pastDate,
-                    social_accounts: { display_name: 'Alex Supabase' },
+                    social_accounts: {
+                      display_name: 'Alex Supabase',
+                      avatar_url:
+                        'https://platform-lookaside.fbsbx.com/platform/profilepic/account_sup.jpg',
+                    },
                   },
                 ],
                 error: null,
@@ -763,6 +774,9 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
 
       const json = await res.json();
       expect(json.pages[0].status).toBe('active');
+      expect(json.pages[0].accountPictureUrl).toBe(
+        'https://platform-lookaside.fbsbx.com/platform/profilepic/account_sup.jpg'
+      );
       expect(supabaseUpdated).toBe(false);
     });
   });

@@ -38,6 +38,7 @@ interface PageDetailRow {
   facebook_account_id?: string | null;
   facebookAccountId?: string | null;
   account_display_name?: string | null;
+  account_avatar_url?: string | null;
   fb_page_id?: string | null;
   fbPageId?: string | null;
   page_name?: string | null;
@@ -73,6 +74,7 @@ function formatPageRow(row: PageDetailRow) {
     id: row.id,
     facebookAccountId: row.facebook_account_id || row.facebookAccountId,
     accountDisplayName: row.account_display_name ?? null,
+    accountPictureUrl: row.account_avatar_url ?? null,
     fbPageId: row.fb_page_id || row.fbPageId,
     pageName: row.page_name || row.pageName,
     profilePictureUrl: row.profile_picture_url ?? null,
@@ -121,6 +123,7 @@ async function fetchActivePageById(
         d.id,
         d.account_id AS facebook_account_id,
         a.display_name AS account_display_name,
+        a.avatar_url AS account_avatar_url,
         d.external_destination_id AS fb_page_id,
         d.name AS page_name,
         d.avatar_url AS profile_picture_url,
@@ -151,7 +154,7 @@ async function fetchActivePageById(
   const { data, error } = await supabase
     .from('destinations')
     .select(
-      'id, account_id, external_destination_id, name, avatar_url, timezone, metadata, status, created_at, updated_at, social_accounts(display_name)'
+      'id, account_id, external_destination_id, name, avatar_url, timezone, metadata, status, created_at, updated_at, social_accounts(display_name, avatar_url)'
     )
     .eq('id', pageId)
     .eq('workspace_id', workspaceId)
@@ -171,7 +174,7 @@ async function fetchActivePageById(
     status: string;
     created_at: string;
     updated_at: string;
-    social_accounts: { display_name: string } | null;
+    social_accounts: { display_name: string; avatar_url: string | null } | null;
   };
 
   // Disconnected destinations are not fetchable here; a paused page
@@ -187,6 +190,7 @@ async function fetchActivePageById(
     id: row.id,
     facebook_account_id: row.account_id,
     account_display_name: row.social_accounts?.display_name ?? null,
+    account_avatar_url: row.social_accounts?.avatar_url ?? null,
     fb_page_id: row.external_destination_id,
     page_name: row.name,
     profile_picture_url: row.avatar_url,

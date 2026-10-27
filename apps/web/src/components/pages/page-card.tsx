@@ -36,6 +36,7 @@ export interface FacebookPageItem {
   id: string;
   facebookAccountId: string;
   accountDisplayName?: string | undefined;
+  accountPictureUrl?: string | null | undefined;
   fbPageId: string;
   pageName: string;
   profilePictureUrl?: string | null | undefined;

@@ -171,6 +171,8 @@ export function DedicatedPageHeader({
   const [isMenuOpen, setIsMenuOpen] = React.useState(false);
   const [isDisconnectDialogOpen, setIsDisconnectDialogOpen] = React.useState(false);
   const [isDisconnecting, setIsDisconnecting] = React.useState(false);
+  const [failedAccountAvatarUrl, setFailedAccountAvatarUrl] =
+    React.useState<string | null>(null);
 
   const statusInfo = resolvePageStatus(page.status);
   const monogram = (page.pageName || 'P').slice(0, 2).toUpperCase();
@@ -333,9 +335,25 @@ export function DedicatedPageHeader({
                     <span
                       data-testid="dedicated-account-avatar"
                       aria-hidden
-                      className="flex size-5 shrink-0 items-center justify-center rounded-full bg-subtle text-xs font-bold text-brand-gold"
+                      className="flex size-5 shrink-0 items-center justify-center overflow-hidden rounded-full bg-subtle text-xs font-bold text-brand-gold"
                     >
-                      {getUserInitials(page.accountDisplayName)}
+                      {page.accountPictureUrl &&
+                      failedAccountAvatarUrl !== page.accountPictureUrl ? (
+                        <Image
+                          src={page.accountPictureUrl}
+                          alt=""
+                          width={20}
+                          height={20}
+                          onError={() =>
+                            setFailedAccountAvatarUrl(
+                              page.accountPictureUrl ?? '__error__'
+                            )
+                          }
+                          className="size-5 shrink-0 rounded-full object-cover"
+                        />
+                      ) : (
+                        getUserInitials(page.accountDisplayName)
+                      )}
                     </span>
                     <span>Connected via {page.accountDisplayName}</span>
                   </span>
