@@ -13,7 +13,33 @@
 import React from 'react';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { render, screen, act, waitFor } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { Toaster, toast } from '@/components/shared/ui/toast';
+
+/**
+ * The Sonner variable mapping lives in globals.css (unlayered block),
+ * not in an inline style — so these tests load the real block from the
+ * real file and apply it, then assert what the browser would compute.
+ * If the block is removed or a variable is dropped from it, these fail.
+ */
+function injectSonnerMappingBlock(): HTMLStyleElement {
+  const cssPath = join(process.cwd(), 'src/app/globals.css');
+  const css = readFileSync(cssPath, 'utf8');
+  const begin = css.indexOf('BEGIN SONNER TOAST VARIABLE MAPPING');
+  const end = css.indexOf('END SONNER TOAST VARIABLE MAPPING');
+  expect(begin).toBeGreaterThan(-1);
+  expect(end).toBeGreaterThan(begin);
+  const ruleStart = css.indexOf('[data-sonner-toaster]', begin);
+  const ruleEnd = css.indexOf('}', ruleStart);
+  expect(ruleStart).toBeGreaterThan(-1);
+  expect(ruleEnd).toBeGreaterThan(ruleStart);
+  const block = css.slice(ruleStart, ruleEnd + 1);
+  const styleEl = document.createElement('style');
+  styleEl.textContent = block;
+  document.head.appendChild(styleEl);
+  return styleEl;
+}
 
 function setAppTheme(theme: 'light' | 'dark') {
   document.documentElement.dataset.theme = theme;
@@ -82,31 +108,43 @@ describe('Shared Toast theme', () => {
   });
 
   it('maps Sonner surface variables to the app panel tokens', async () => {
-    setAppTheme('dark');
-    render(<Toaster />);
-    await showSuccessToast();
-    const toasterStyle = getToasterElement().style;
-    expect(toasterStyle.getPropertyValue('--normal-bg').trim()).toBe('var(--bg-panel)');
-    expect(toasterStyle.getPropertyValue('--normal-text').trim()).toBe('var(--text-main)');
-    expect(toasterStyle.getPropertyValue('--normal-border').trim()).toBe(
-      'var(--border-subtle)',
-    );
+    const styleEl = injectSonnerMappingBlock();
+    try {
+      setAppTheme('dark');
+      render(<Toaster />);
+      await showSuccessToast();
+      const toaster = getToasterElement();
+      expect(toaster.className).toContain('toaster');
+      const computed = getComputedStyle(toaster);
+      expect(computed.getPropertyValue('--normal-bg').trim()).toBe('var(--bg-panel)');
+      expect(computed.getPropertyValue('--normal-text').trim()).toBe('var(--text-main)');
+      expect(computed.getPropertyValue('--normal-border').trim()).toBe(
+        'var(--border-subtle)',
+      );
+    } finally {
+      styleEl.remove();
+    }
   });
 
   it('maps Sonner accent variables to the brand tokens', async () => {
-    setAppTheme('dark');
-    render(<Toaster />);
-    await showSuccessToast();
-    const toasterStyle = getToasterElement().style;
-    expect(toasterStyle.getPropertyValue('--success-text').trim()).toBe(
-      'var(--color-brand-emerald)',
-    );
-    expect(toasterStyle.getPropertyValue('--error-text').trim()).toBe(
-      'var(--color-brand-rose)',
-    );
-    expect(toasterStyle.getPropertyValue('--warning-text').trim()).toBe(
-      'var(--color-brand-gold)',
-    );
+    const styleEl = injectSonnerMappingBlock();
+    try {
+      setAppTheme('dark');
+      render(<Toaster />);
+      await showSuccessToast();
+      const computed = getComputedStyle(getToasterElement());
+      expect(computed.getPropertyValue('--success-text').trim()).toBe(
+        'var(--color-brand-emerald)',
+      );
+      expect(computed.getPropertyValue('--error-text').trim()).toBe(
+        'var(--color-brand-rose)',
+      );
+      expect(computed.getPropertyValue('--warning-text').trim()).toBe(
+        'var(--color-brand-gold)',
+      );
+    } finally {
+      styleEl.remove();
+    }
   });
 
   it('keeps the success accent slot classes on a success toast', async () => {
