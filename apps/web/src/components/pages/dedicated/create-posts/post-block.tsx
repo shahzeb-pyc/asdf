@@ -13,7 +13,6 @@
  * adding posts never costs a click per post.
  */
 
-import * as React from 'react';
 import Image from 'next/image';
 import { XIcon } from 'lucide-react';
 
