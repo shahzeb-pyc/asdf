@@ -987,6 +987,65 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
       expect(json.success).toBe(true);
       expect(json.page.status).toBe('paused');
     });
+
+    it('reactivates a checkpoint page to active and clears the fb_status marker', async () => {
+      const mockPageRow = {
+        id: pageId,
+        facebook_account_id: accountId,
+        account_display_name: 'Alex Acme Account',
+        fb_page_id: 'fb_page_999',
+        page_name: 'Acme Brand',
+        profile_picture_url: null,
+        category: 'Brand',
+        starting_followers: 100,
+        current_followers: 150,
+        status: 'active',
+        tasks: ['CREATE_CONTENT'],
+        created_at: new Date('2026-10-01T12:00:00Z').toISOString(),
+        updated_at: new Date('2026-10-01T12:00:00Z').toISOString(),
+      };
+
+      const queryMock = vi.fn().mockImplementation((sql: string) => {
+        if (sql.includes('FROM workspaces')) {
+          return Promise.resolve([{ id: 'ws_123' }]);
+        }
+        if (sql.includes('UPDATE destinations')) {
+          return Promise.resolve([]);
+        }
+        if (sql.includes('FROM destinations')) {
+          return Promise.resolve([mockPageRow]);
+        }
+        return Promise.resolve([]);
+      });
+      const mockDb = {
+        query: queryMock,
+      } as unknown as DatabaseClient;
+
+      const req = new NextRequest(`http://localhost:3000/api/tenant/acme/pages/${pageId}`, {
+        method: 'PATCH',
+        headers: { cookie: validSessionCookie, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'active' }),
+      });
+
+      const res = await handleUpdatePage(req, 'acme', pageId, mockDb);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.success).toBe(true);
+      expect(json.page.status).toBe('active');
+
+      // The UPDATE must write status 'active' with the marker flag
+      // false, which the SQL path turns into metadata - 'fb_status':
+      // a checkpoint page's marker is cleared on reactivation, so the
+      // read-back after reactivation is 'active', never 'invalid_token'
+      // via a leftover marker.
+      const updateCall = queryMock.mock.calls.find(
+        (call) =>
+          typeof call[0] === 'string' &&
+          call[0].includes('UPDATE destinations')
+      );
+      expect(updateCall).toBeDefined();
+      expect(updateCall?.[1]).toEqual(['active', null, pageId, false, 'ws_123']);
+    });
   });
 });
 
