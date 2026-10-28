@@ -507,6 +507,24 @@ describe("PromptLibraryClient (real API wiring)", () => {
     );
     const copyButton = screen.getByTestId("prompt-detail-copy");
     expect(field.contains(copyButton)).toBe(true);
+    // Revised layout (2026-10-28): narrow centred column, detail
+    // only; main preview uses contain, never cover; meta renders
+    // as pills; prompt field is readable (larger text, loose
+    // leading, generous padding). Layout classes are structural
+    // claims — jsdom cannot measure pixels, that limit is stated.
+    const detailSection = screen.getByTestId("prompt-detail");
+    const column = detailSection.firstElementChild as HTMLElement;
+    expect(column.className).toContain("max-w-[720px]");
+    expect(column.className).toContain("mx-auto");
+    expect(preview.className).toContain("object-contain");
+    expect(preview.className).not.toContain("object-cover");
+    const meta = screen.getByTestId("prompt-detail-meta");
+    expect(meta.querySelectorAll('[data-slot="tag"]').length).toBe(5);
+    expect(text.className).toContain("text-base");
+    expect(text.className).toContain("leading-loose");
+    expect(
+      screen.getByText(/Copy takes the entire prompt/),
+    ).toBeTruthy();
     // How-to steps are not rendered even though detail.steps has one.
     expect(screen.queryByText("Open your video tool.")).toBeNull();
     expect(screen.queryByText("How to make the video with it")).toBeNull();

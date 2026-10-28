@@ -5,6 +5,8 @@ import Image from "next/image";
 import { DownloadIcon, HeartIcon, TriangleAlertIcon } from "lucide-react";
 
 import { Alert } from "@/components/shared/ui/alert";
+import { Button } from "@/components/shared/ui/button";
+import { Tag } from "@/components/shared/ui/tag";
 
 import {
   PromptFormatLabels,
@@ -17,13 +19,16 @@ import {
 } from "@fbuploadpro/contracts";
 
 /**
- * Dedicated section for one prompt — approved design, Option A
- * (2026-10-28): preview on top, master prompt in a scrollable
- * field with Copy top-right in the field header, no per-prompt
- * how-to section. The single "How to use a master prompt" guide
- * replaces per-prompt how-to and is linked from here; how-to
- * steps still exist in the API/database but are deliberately
- * NOT rendered here (UI-only removal, backend untouched).
+ * Dedicated section for one prompt — revised layout, approved
+ * 2026-10-28 ("yes build"): narrow centred column (detail only,
+ * ~720px), preview in full with contain (never cover/crop),
+ * meta as pills, guide link as a card, readable scrollable
+ * prompt field with Copy top-right in the field header
+ * (Option A), no per-prompt how-to section. The single
+ * "How to use a master prompt" guide replaces per-prompt
+ * how-to and is linked from here; how-to steps still exist
+ * in the API/database but are deliberately NOT rendered here
+ * (UI-only removal, backend untouched).
  *
  * Preview media are the prompt's reference: each media item
  * shown (the large preview and every gallery thumbnail) carries
@@ -144,7 +149,10 @@ export function PromptDetailSection({
       aria-label={`Details for ${detail.title}`}
       className="bg-canvas px-4 pb-12 sm:px-6 sm:pb-16"
     >
-      <div className="mx-auto w-full">
+      {/* Narrow centred column, detail only — the library list page
+          keeps its own width. Clear vertical spacing between every
+          section below; nothing here stretches edge to edge. */}
+      <div className="mx-auto w-full max-w-[720px]">
         <div className="flex items-center justify-between gap-3">
           <button
             type="button"
@@ -154,8 +162,10 @@ export function PromptDetailSection({
           >
             ← Back to prompts
           </button>
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
             data-testid="prompt-detail-favourite"
             aria-label={
               detail.isFavourite
@@ -166,19 +176,27 @@ export function PromptDetailSection({
             onClick={() =>
               onToggleFavourite(detail.slug, detail.isFavourite)
             }
-            className="flex size-9 items-center justify-center rounded-full border border-line bg-panel text-ink"
+            className="rounded-full"
           >
             <HeartIcon
               aria-hidden
               className={
-                detail.isFavourite ? "size-5 text-brand-gold" : "size-5"
+                detail.isFavourite ? "text-brand-gold" : undefined
               }
               fill={detail.isFavourite ? "currentColor" : "none"}
             />
-          </button>
+            {detail.isFavourite ? "Saved" : "Save"}
+          </Button>
         </div>
-        {selectedMedia.mediaType === "video" ? (
-          <div className="relative mt-6">
+        {/* Preview card: the main media is shown in FULL with
+            object-contain — never object-cover, never cropped into
+            a banner. The capped frame + neutral background letterbox
+            the media instead of slicing it; this is the reference
+            image, so seeing all of it matters. Download sits below
+            the preview in the card footer, clearly visible, not as
+            a tiny overlay lost in a corner of the image. */}
+        <div className="mt-6 rounded-2xl border border-line bg-panel p-3 sm:p-4">
+          {selectedMedia.mediaType === "video" ? (
             <video
               key={selectedMedia.id}
               data-testid="prompt-detail-preview"
@@ -188,50 +206,44 @@ export function PromptDetailSection({
               controls
               muted
               playsInline
-              className="h-60 w-full rounded-2xl border border-line bg-panel object-cover object-center"
+              className="max-h-[480px] w-full rounded-xl bg-subtle object-contain"
             />
-            <button
+          ) : (
+            <div className="relative h-80 overflow-hidden rounded-xl bg-subtle sm:h-[420px]">
+              <Image
+                key={selectedMedia.id}
+                data-testid="prompt-detail-preview"
+                data-media-id={selectedMedia.id}
+                src={selectedMedia.url}
+                alt=""
+                fill
+                unoptimized
+                sizes="(max-width: 720px) 100vw, 720px"
+                className="object-contain"
+              />
+            </div>
+          )}
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <span className="text-xs text-ink-sub">
+              Reference image · download it to use in ChatGPT
+            </span>
+            <Button
               type="button"
+              size="sm"
               data-testid="prompt-detail-download"
               data-media-id={selectedMedia.id}
               aria-label={`Download ${selectedMedia.mediaType} ${selectedMedia.position}`}
               onClick={() => void downloadMedia(selectedMedia)}
-              className="absolute bottom-2 right-2 flex items-center gap-1 rounded-lg bg-neutral-black/75 px-3 py-2 text-xs font-semibold text-neutral-white"
             >
-              <DownloadIcon aria-hidden className="size-4" />
+              <DownloadIcon aria-hidden />
               Download
-            </button>
+            </Button>
           </div>
-        ) : (
-          <div className="relative mt-6 h-60 w-full overflow-hidden rounded-2xl border border-line bg-panel">
-            <Image
-              key={selectedMedia.id}
-              data-testid="prompt-detail-preview"
-              data-media-id={selectedMedia.id}
-              src={selectedMedia.url}
-              alt=""
-              fill
-              unoptimized
-              sizes="100vw"
-              className="object-cover object-center"
-            />
-            <button
-              type="button"
-              data-testid="prompt-detail-download"
-              data-media-id={selectedMedia.id}
-              aria-label={`Download ${selectedMedia.mediaType} ${selectedMedia.position}`}
-              onClick={() => void downloadMedia(selectedMedia)}
-              className="absolute bottom-2 right-2 flex items-center gap-1 rounded-lg bg-neutral-black/75 px-3 py-2 text-xs font-semibold text-neutral-white"
-            >
-              <DownloadIcon aria-hidden className="size-4" />
-              Download
-            </button>
-          </div>
-        )}
+        </div>
         {detail.media.length > 1 ? (
           <div
             data-testid="prompt-detail-gallery"
-            className="mt-3 flex flex-wrap gap-3"
+            className="mt-4 flex flex-wrap gap-3"
           >
             {detail.media.map((item) => {
               const selected = item.id === selectedMedia.id;
@@ -278,49 +290,81 @@ export function PromptDetailSection({
             })}
           </div>
         ) : null}
-        <h2 className="mt-6 text-3xl font-bold leading-tight text-ink">
+        <h2 className="mt-8 text-2xl font-bold leading-snug text-ink sm:text-3xl">
           {detail.title}
         </h2>
-        <p className="mt-2 text-sm text-ink-sub">
-          <span className="font-semibold text-ink">
-            {promptToolLabel(detail.tool)}
-          </span>
-          {` · ${promptCategoryLabel(detail.category)} · ${promptLanguageLabel(detail.language)} · ${promptLengthDisplay(detail.exactDurationSeconds, detail.length)} · ${PromptFormatLabels[detail.format]}`}
-        </p>
-        <p className="mt-3 text-sm text-ink-sub">
+        {/* Meta as pills, not a grey dot-separated line: each value
+            is readable at a glance. Length uses the existing
+            promptLengthDisplay helper (exact when present, bucket
+            fallback) — length logic is untouched. */}
+        <div
+          data-testid="prompt-detail-meta"
+          className="mt-4 flex flex-wrap gap-2"
+        >
+          <Tag variant="outline">{promptToolLabel(detail.tool)}</Tag>
+          <Tag variant="outline">
+            {promptCategoryLabel(detail.category)}
+          </Tag>
+          <Tag variant="outline">
+            {promptLanguageLabel(detail.language)}
+          </Tag>
+          <Tag
+            variant="outline"
+            className="border-brand-gold text-brand-gold"
+          >
+            {promptLengthDisplay(
+              detail.exactDurationSeconds,
+              detail.length,
+            )}
+          </Tag>
+          <Tag variant="outline">
+            {PromptFormatLabels[detail.format]}
+          </Tag>
+        </div>
+        <p className="mt-4 text-sm text-ink-sub">
           <span>{`Copied ${detail.copiedCount} times`}</span>
           {` · Added ${formatDateAdded(detail.createdAt)}`}
         </p>
-        <p className="mt-3 text-sm">
-          <a
-            data-testid="prompt-detail-guide-link"
-            href={`/tenant/${subdomain}/prompts/guide`}
-            className="font-semibold text-brand-gold"
-          >
-            How to use a master prompt →
-          </a>
-        </p>
+        <a
+          data-testid="prompt-detail-guide-link"
+          href={`/tenant/${subdomain}/prompts/guide`}
+          className="mt-6 flex items-center justify-between gap-3 rounded-2xl border border-line bg-panel px-4 py-3"
+        >
+          <span className="text-sm text-ink">
+            New here?{" "}
+            <span className="font-semibold">
+              How to use a master prompt
+            </span>
+          </span>
+          <span aria-hidden className="font-semibold text-brand-gold">
+            →
+          </span>
+        </a>
         <div
           data-testid="prompt-detail-master-prompt-field"
-          className="mt-8 rounded-2xl border border-line bg-panel p-4"
+          className="mt-8 overflow-hidden rounded-2xl border border-line bg-panel"
         >
-          <div className="flex items-center justify-between gap-3">
-            <h3 className="text-xl font-bold text-ink">Master prompt</h3>
-            <button
+          <div className="flex items-center justify-between gap-3 border-b border-line px-5 py-4">
+            <h3 className="text-lg font-bold text-ink">Master prompt</h3>
+            <Button
               type="button"
+              size="sm"
               data-testid="prompt-detail-copy"
               onClick={() => void handleCopy()}
-              className="shrink-0 rounded-xl border border-brand-gold px-4 py-2 text-sm font-semibold text-brand-gold"
             >
               {copyState === "copied" ? "Copied ✓" : "Copy prompt"}
-            </button>
+            </Button>
           </div>
           <div
             data-testid="prompt-detail-master-prompt-text"
-            className="mt-3 max-h-80 overflow-y-auto whitespace-pre-wrap text-sm leading-relaxed text-ink"
+            className="max-h-80 overflow-y-auto whitespace-pre-wrap px-5 py-5 text-base leading-loose text-ink"
           >
             {detail.masterPrompt}
           </div>
+          <p className="border-t border-line px-5 py-3 text-xs text-ink-sub">
+            Scroll for the full prompt · Copy takes the entire prompt,
+            not just what is visible
+          </p>
         </div>
         {copyState === "error" ? (
           // Inline, as before (under the prompt field, where the
