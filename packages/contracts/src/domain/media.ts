@@ -77,12 +77,19 @@ export type ConfirmMediaUploadRequest = z.infer<typeof ConfirmMediaUploadRequest
 // Multipart (resumable) upload — single source of truth for the
 // media/multipart routes and the import engine. The initiate
 // request enforces the same bounds as the single-PUT upload-url
-// route: trimmed filename (max 255) and allowlisted MIMEs.
-// fileSize is deliberately NOT part of the initiate request: the
-// route never used it (part sizing is client-side), so carrying
-// it would be a validated-but-ignored field.
+// route: trimmed filename (max 255), allowlisted MIMEs, and the
+// 500 MB server-side size cap (524288000 bytes). The declared
+// fileSize is the initiate-time gate: anything over the cap is
+// rejected before any part URL is issued. It is NOT the only
+// gate — the complete route sums the actual uploaded part bytes
+// and rejects oversized uploads there too, so a client that
+// declares a smaller size than it uploads still cannot land an
+// over-cap file. The cap must match MULTIPART_MAX_FILE_SIZE_BYTES
+// in the multipart routes' multipart-lib.ts and the single-PUT
+// UploadUrlRequestSchema max above.
 export const MultipartInitiateRequestSchema = z.object({
   fileName: z.string().trim().min(1).max(255),
+  fileSize: z.number().int().positive().max(524288000), // Max 500 MB
   mimeType: z.enum(AllowedMediaMimeTypes),
   thumbnailMimeType: z.enum(AllowedThumbnailMimeTypes).default('image/webp'),
 });
