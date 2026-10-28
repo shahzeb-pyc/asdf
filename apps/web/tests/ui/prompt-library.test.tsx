@@ -3,9 +3,11 @@
  * @description Behavioural tests for the Prompt Library wired to the
  * real API (no mock cards, no mock data): list from the API, search
  * + filter query params, empty state, loud error + retry, click →
- * dedicated section with master prompt + steps, copy prompt (clipboard
- * then copy endpoint, count updated), and favourite toggle that
- * persists via the API and reverts on failure.
+ * dedicated section with preview on top, master prompt in a
+ * scrollable field (Copy in its header), a guide link, and NO
+ * per-prompt how-to steps; copy prompt (clipboard then copy
+ * endpoint, count updated), and favourite toggle that persists
+ * via the API and reverts on failure.
  *
  * fetch is mocked at the test boundary; the API routes themselves
  * are not exercised here (no live database in unit tests) — the
@@ -407,7 +409,10 @@ describe("PromptLibraryClient (real API wiring)", () => {
     expect(
       screen.getByText("A golden puppy sits in a tiny bathtub."),
     ).toBeTruthy();
-    expect(screen.getByText("Open your video tool.")).toBeTruthy();
+    // Per-prompt how-to steps are NOT rendered in the detail
+    // section any more, even though the API still returns them.
+    expect(screen.queryByText("Open your video tool.")).toBeNull();
+    expect(screen.queryByText("How to make the video with it")).toBeNull();
     fireEvent.click(screen.getByTestId("prompt-detail-copy"));
     expect(await screen.findByText("Copied ✓")).toBeTruthy();
     expect(screen.getByText("Copied 13 times")).toBeTruthy();
@@ -437,6 +442,74 @@ describe("PromptLibraryClient (real API wiring)", () => {
     expect(screen.getByTestId("prompt-detail-preview").getAttribute("src")).toBe(
       "https://media.example.com/prompts/abc/shot-2.jpg",
     );
+  });
+
+  it("dedicated section: preview on top with Download per media, scrollable prompt field with Copy in its header, guide link, no how-to", async () => {
+    const fetchMock = mockFetch((url) => {
+      if (url.includes("media.example.com")) {
+        return {
+          ok: true,
+          status: 200,
+          blob: async () => new Blob(["preview"]),
+        } as Response;
+      }
+      if (url.includes("/prompts/puppy-first-bath")) {
+        return okJson(detail);
+      }
+      if (url.includes("/prompts?")) {
+        return okJson({ items: [listItem], total: 1, page: 1, pageSize: 50 });
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response;
+    });
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:test-download");
+    vi.spyOn(URL, "revokeObjectURL").mockReturnValue(undefined);
+    render(<PromptLibraryClient subdomain="test" />);
+    fireEvent.click(await screen.findByTestId("prompt-card"));
+    expect(await screen.findByTestId("prompt-detail")).toBeTruthy();
+    // Preview comes before the title in the DOM (preview on top).
+    const preview = screen.getByTestId("prompt-detail-preview");
+    const title = screen.getByRole("heading", { name: "Puppy first bath" });
+    expect(
+      preview.compareDocumentPosition(title) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // One Download button on the large preview, one per gallery item.
+    expect(screen.getByTestId("prompt-detail-download")).toBeTruthy();
+    expect(
+      screen.getAllByTestId("prompt-detail-gallery-download").length,
+    ).toBe(2);
+    fireEvent.click(screen.getByTestId("prompt-detail-download"));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://media.example.com/prompts/abc/preview.mp4",
+      ),
+    );
+    // Meta kept: copied count (real) + date added + favourite heart.
+    expect(screen.getByText("Copied 12 times")).toBeTruthy();
+    expect(screen.getByText(/Added 28 Oct 2026/)).toBeTruthy();
+    expect(screen.getByTestId("prompt-detail-favourite")).toBeTruthy();
+    // Guide link present, pointing at the single guide page.
+    const guideLink = screen.getByTestId("prompt-detail-guide-link");
+    expect(guideLink.textContent).toContain("How to use a master prompt");
+    expect(guideLink.getAttribute("href")).toBe(
+      "/tenant/test/prompts/guide",
+    );
+    // Scrollable field: bounded height + internal scroll is a
+    // structural claim (jsdom cannot measure pixels — that limit
+    // is stated, not hidden). Copy sits inside the field header
+    // (Option A), not below the field.
+    const field = screen.getByTestId("prompt-detail-master-prompt-field");
+    const text = screen.getByTestId("prompt-detail-master-prompt-text");
+    expect(text.className).toContain("max-h-80");
+    expect(text.className).toContain("overflow-y-auto");
+    expect(text.textContent).toBe(
+      "A golden puppy sits in a tiny bathtub.",
+    );
+    const copyButton = screen.getByTestId("prompt-detail-copy");
+    expect(field.contains(copyButton)).toBe(true);
+    // How-to steps are not rendered even though detail.steps has one.
+    expect(screen.queryByText("Open your video tool.")).toBeNull();
+    expect(screen.queryByText("How to make the video with it")).toBeNull();
   });
 
   it("favorites toggle passes favorites_only to the API, and toggling off removes it", async () => {

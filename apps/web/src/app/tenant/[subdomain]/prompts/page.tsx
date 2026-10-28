@@ -14,8 +14,11 @@ export const metadata: Metadata = { title: "Prompt Library" };
  * cards using the decided B design (uniform size, fixed preview
  * height, cleaner final-card layout). Search and filters refetch
  * the list from the prompt API; clicking a card opens the
- * dedicated section for that prompt (master prompt + how-to
- * steps, fetched by slug); the favourite heart persists via the
+ * dedicated section for that prompt (preview on top, master
+ * prompt in a scrollable field with Copy in its header, and a
+ * link to the single "How to use a master prompt" guide —
+ * per-prompt how-to steps are no longer rendered there —
+ * fetched by slug); the favourite heart persists via the
  * API; the copy button copies the master prompt and increments
  * the real copied count via the copy RPC.
  *

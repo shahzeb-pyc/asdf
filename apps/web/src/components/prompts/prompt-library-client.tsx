@@ -365,6 +365,7 @@ export function PromptLibraryClient({
     // the grid immediately — otherwise the last unfavourited card
     // would sit there stale instead of showing the empty state.
     const previousItems = items;
+    const previousDetail = detail;
     setItems((previous) =>
       favoritesOnly && currentlyFavourite
         ? previous.filter((item) => item.slug !== slug)
@@ -373,6 +374,13 @@ export function PromptLibraryClient({
               ? { ...item, isFavourite: !currentlyFavourite }
               : item,
           ),
+    );
+    // The detail section's heart mirrors the same state (it reads
+    // detail.isFavourite), so it updates and reverts together.
+    setDetail((previous) =>
+      previous && previous.slug === slug
+        ? { ...previous, isFavourite: !currentlyFavourite }
+        : previous,
     );
     try {
       const response = await fetch(
@@ -385,6 +393,7 @@ export function PromptLibraryClient({
       // mounts the shared Toaster, so this reaches the user as a
       // visible error toast (it auto-dismisses after 5s).
       setItems(previousItems);
+      setDetail(previousDetail);
       toast.error("Couldn't save this change. Please try again.");
     }
   };
@@ -532,6 +541,7 @@ export function PromptLibraryClient({
             subdomain={subdomain}
             onBack={handleBack}
             onCopied={handleCopied}
+            onToggleFavourite={handleToggleFavourite}
           />
         )
       ) : loading ? (

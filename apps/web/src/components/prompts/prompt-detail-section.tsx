@@ -2,7 +2,7 @@
 
 import React from "react";
 import Image from "next/image";
-import { TriangleAlertIcon } from "lucide-react";
+import { DownloadIcon, HeartIcon, TriangleAlertIcon } from "lucide-react";
 
 import { Alert } from "@/components/shared/ui/alert";
 
@@ -13,11 +13,30 @@ import {
   promptLengthDisplay,
   promptToolLabel,
   type PromptDetail,
+  type PromptMedia,
 } from "@fbuploadpro/contracts";
 
 /**
- * Dedicated section for one prompt — the only place the master
- * prompt and how-to steps appear. The card itself never shows them.
+ * Dedicated section for one prompt — approved design, Option A
+ * (2026-10-28): preview on top, master prompt in a scrollable
+ * field with Copy top-right in the field header, no per-prompt
+ * how-to section. The single "How to use a master prompt" guide
+ * replaces per-prompt how-to and is linked from here; how-to
+ * steps still exist in the API/database but are deliberately
+ * NOT rendered here (UI-only removal, backend untouched).
+ *
+ * Preview media are the prompt's reference: each media item
+ * shown (the large preview and every gallery thumbnail) carries
+ * a Download button, so a user can download the reference and
+ * upload it to ChatGPT when asked, or reply USE YOUR DESIGN.
+ *
+ * Download: a plain `download` attribute is ignored for
+ * cross-origin R2 public URLs (media.vinsmokemedia.online), so
+ * the button first tries fetch-to-blob (which saves the file
+ * under its real name) and falls back to opening the URL in a
+ * new tab if the fetch is blocked (e.g. CORS) — the user can
+ * still save the file from there. No silent failure: the
+ * fallback always gives the user the file itself.
  *
  * Media gallery (detail only, never on the card): the main media
  * shows large, and the OTHER media appear as thumbnails below it.
@@ -29,20 +48,58 @@ import {
  * only then calls the copy endpoint, which increments the real
  * copied count via the server RPC. If either step fails, the count
  * is not updated and the failure is shown plainly — no silent
- * success, no made-up count.
+ * success, no made-up count. The prompt text is rendered verbatim
+ * and in full — never truncated, shortened, or paraphrased.
  */
 export type PromptDetailSectionProps = {
   detail: PromptDetail;
   subdomain: string;
   onBack: () => void;
   onCopied: (slug: string, copiedCount: number) => void;
+  onToggleFavourite: (slug: string, currentlyFavourite: boolean) => void;
 };
+
+function formatDateAdded(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function downloadFileName(item: PromptMedia): string {
+  const last = item.storageKey.split("/").filter(Boolean).pop();
+  return last ?? `prompt-media-${item.position}`;
+}
+
+async function downloadMedia(item: PromptMedia): Promise<void> {
+  try {
+    const response = await fetch(item.url);
+    if (!response.ok) throw new Error("Download failed");
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = downloadFileName(item);
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(objectUrl);
+  } catch {
+    // Cross-origin fetch blocked (e.g. CORS): open the file itself
+    // in a new tab so the user can still save it from there.
+    window.open(item.url, "_blank", "noopener");
+  }
+}
 
 export function PromptDetailSection({
   detail,
   subdomain,
   onBack,
   onCopied,
+  onToggleFavourite,
 }: PromptDetailSectionProps) {
   const [copyState, setCopyState] = React.useState<
     "idle" | "copied" | "error"
@@ -88,35 +145,63 @@ export function PromptDetailSection({
       className="bg-canvas px-4 pb-12 sm:px-6 sm:pb-16"
     >
       <div className="mx-auto w-full">
-        <button
-          type="button"
-          data-testid="prompt-detail-back"
-          onClick={onBack}
-          className="text-sm font-semibold text-brand-gold"
-        >
-          ← Back to prompts
-        </button>
-        <h2 className="mt-4 text-3xl font-bold leading-tight text-ink">
-          {detail.title}
-        </h2>
-        <p className="mt-2 text-sm text-ink-sub">
-          <span className="font-semibold text-ink">
-            {promptToolLabel(detail.tool)}
-          </span>
-          {` · ${promptCategoryLabel(detail.category)} · ${promptLanguageLabel(detail.language)} · ${promptLengthDisplay(detail.exactDurationSeconds, detail.length)} · ${PromptFormatLabels[detail.format]}`}
-        </p>
+        <div className="flex items-center justify-between gap-3">
+          <button
+            type="button"
+            data-testid="prompt-detail-back"
+            onClick={onBack}
+            className="text-sm font-semibold text-brand-gold"
+          >
+            ← Back to prompts
+          </button>
+          <button
+            type="button"
+            data-testid="prompt-detail-favourite"
+            aria-label={
+              detail.isFavourite
+                ? `Saved ${detail.title}`
+                : `Save ${detail.title}`
+            }
+            aria-pressed={detail.isFavourite}
+            onClick={() =>
+              onToggleFavourite(detail.slug, detail.isFavourite)
+            }
+            className="flex size-9 items-center justify-center rounded-full border border-line bg-panel text-ink"
+          >
+            <HeartIcon
+              aria-hidden
+              className={
+                detail.isFavourite ? "size-5 text-brand-gold" : "size-5"
+              }
+              fill={detail.isFavourite ? "currentColor" : "none"}
+            />
+          </button>
+        </div>
         {selectedMedia.mediaType === "video" ? (
-          <video
-            key={selectedMedia.id}
-            data-testid="prompt-detail-preview"
-            data-media-id={selectedMedia.id}
-            src={selectedMedia.url}
-            poster={selectedMedia.posterUrl ?? undefined}
-            controls
-            muted
-            playsInline
-            className="mt-6 h-60 w-full rounded-2xl border border-line bg-panel object-cover object-center"
-          />
+          <div className="relative mt-6">
+            <video
+              key={selectedMedia.id}
+              data-testid="prompt-detail-preview"
+              data-media-id={selectedMedia.id}
+              src={selectedMedia.url}
+              poster={selectedMedia.posterUrl ?? undefined}
+              controls
+              muted
+              playsInline
+              className="h-60 w-full rounded-2xl border border-line bg-panel object-cover object-center"
+            />
+            <button
+              type="button"
+              data-testid="prompt-detail-download"
+              data-media-id={selectedMedia.id}
+              aria-label={`Download ${selectedMedia.mediaType} ${selectedMedia.position}`}
+              onClick={() => void downloadMedia(selectedMedia)}
+              className="absolute bottom-2 right-2 flex items-center gap-1 rounded-lg bg-neutral-black/75 px-3 py-2 text-xs font-semibold text-neutral-white"
+            >
+              <DownloadIcon aria-hidden className="size-4" />
+              Download
+            </button>
+          </div>
         ) : (
           <div className="relative mt-6 h-60 w-full overflow-hidden rounded-2xl border border-line bg-panel">
             <Image
@@ -130,6 +215,17 @@ export function PromptDetailSection({
               sizes="100vw"
               className="object-cover object-center"
             />
+            <button
+              type="button"
+              data-testid="prompt-detail-download"
+              data-media-id={selectedMedia.id}
+              aria-label={`Download ${selectedMedia.mediaType} ${selectedMedia.position}`}
+              onClick={() => void downloadMedia(selectedMedia)}
+              className="absolute bottom-2 right-2 flex items-center gap-1 rounded-lg bg-neutral-black/75 px-3 py-2 text-xs font-semibold text-neutral-white"
+            >
+              <DownloadIcon aria-hidden className="size-4" />
+              Download
+            </button>
           </div>
         )}
         {detail.media.length > 1 ? (
@@ -141,47 +237,93 @@ export function PromptDetailSection({
               const selected = item.id === selectedMedia.id;
               const thumb = item.posterUrl ?? item.url;
               return (
-                <button
-                  key={item.id}
-                  type="button"
-                  data-testid="prompt-detail-gallery-item"
-                  data-media-id={item.id}
-                  aria-pressed={selected}
-                  aria-label={`Show ${item.mediaType} ${item.position}`}
-                  onClick={() => setSelectedMediaId(item.id)}
-                  className={
-                    selected
-                      ? "relative h-20 w-28 overflow-hidden rounded-xl border-2 border-brand-gold bg-panel"
-                      : "relative h-20 w-28 overflow-hidden rounded-xl border border-line bg-panel"
-                  }
-                >
-                  <Image
-                    src={thumb}
-                    alt=""
-                    fill
-                    unoptimized
-                    sizes="112px"
-                    className="object-cover object-center"
-                  />
-                </button>
+                <div key={item.id} className="relative">
+                  <button
+                    type="button"
+                    data-testid="prompt-detail-gallery-item"
+                    data-media-id={item.id}
+                    aria-pressed={selected}
+                    aria-label={`Show ${item.mediaType} ${item.position}`}
+                    onClick={() => setSelectedMediaId(item.id)}
+                    className={
+                      selected
+                        ? "relative block h-20 w-28 overflow-hidden rounded-xl border-2 border-brand-gold bg-panel"
+                        : "relative block h-20 w-28 overflow-hidden rounded-xl border border-line bg-panel"
+                    }
+                  >
+                    <Image
+                      src={thumb}
+                      alt=""
+                      fill
+                      unoptimized
+                      sizes="112px"
+                      className="object-cover object-center"
+                    />
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="prompt-detail-gallery-download"
+                    data-media-id={item.id}
+                    aria-label={`Download ${item.mediaType} ${item.position}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void downloadMedia(item);
+                    }}
+                    className="absolute bottom-1 right-1 flex size-7 items-center justify-center rounded-md bg-neutral-black/75 text-neutral-white"
+                  >
+                    <DownloadIcon aria-hidden className="size-4" />
+                  </button>
+                </div>
               );
             })}
           </div>
         ) : null}
-        <h3 className="mt-8 text-xl font-bold text-ink">Master prompt</h3>
-        <p className="mt-3 rounded-2xl border border-line bg-panel p-4 text-sm leading-relaxed text-ink">
-          {detail.masterPrompt}
+        <h2 className="mt-6 text-3xl font-bold leading-tight text-ink">
+          {detail.title}
+        </h2>
+        <p className="mt-2 text-sm text-ink-sub">
+          <span className="font-semibold text-ink">
+            {promptToolLabel(detail.tool)}
+          </span>
+          {` · ${promptCategoryLabel(detail.category)} · ${promptLanguageLabel(detail.language)} · ${promptLengthDisplay(detail.exactDurationSeconds, detail.length)} · ${PromptFormatLabels[detail.format]}`}
         </p>
-        <button
-          type="button"
-          data-testid="prompt-detail-copy"
-          onClick={() => void handleCopy()}
-          className="mt-4 rounded-xl border border-brand-gold px-4 py-2 text-sm font-semibold text-brand-gold"
+        <p className="mt-3 text-sm text-ink-sub">
+          <span>{`Copied ${detail.copiedCount} times`}</span>
+          {` · Added ${formatDateAdded(detail.createdAt)}`}
+        </p>
+        <p className="mt-3 text-sm">
+          <a
+            data-testid="prompt-detail-guide-link"
+            href={`/tenant/${subdomain}/prompts/guide`}
+            className="font-semibold text-brand-gold"
+          >
+            How to use a master prompt →
+          </a>
+        </p>
+        <div
+          data-testid="prompt-detail-master-prompt-field"
+          className="mt-8 rounded-2xl border border-line bg-panel p-4"
         >
-          {copyState === "copied" ? "Copied ✓" : "Copy prompt"}
-        </button>
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-xl font-bold text-ink">Master prompt</h3>
+            <button
+              type="button"
+              data-testid="prompt-detail-copy"
+              onClick={() => void handleCopy()}
+              className="shrink-0 rounded-xl border border-brand-gold px-4 py-2 text-sm font-semibold text-brand-gold"
+            >
+              {copyState === "copied" ? "Copied ✓" : "Copy prompt"}
+            </button>
+          </div>
+          <div
+            data-testid="prompt-detail-master-prompt-text"
+            className="mt-3 max-h-80 overflow-y-auto whitespace-pre-wrap text-sm leading-relaxed text-ink"
+          >
+            {detail.masterPrompt}
+          </div>
+        </div>
         {copyState === "error" ? (
-          // Inline, as before (under the Copy button, where the
+          // Inline, as before (under the prompt field, where the
           // failure belongs) — but now a proper design-system error
           // note (destructive Alert: rose border + icon + text),
           // not plain grey text. Wording unchanged.
@@ -196,24 +338,10 @@ export function PromptDetailSection({
             </span>
           </Alert>
         ) : null}
-        <p className="mt-3 text-sm text-ink-sub">
-          {`Copied ${detail.copiedCount} times`}
-        </p>
-        <h3 className="mt-8 text-xl font-bold text-ink">
-          How to make the video with it
-        </h3>
-        <ol className="mt-3 list-decimal space-y-2 pl-6 text-sm leading-relaxed text-ink-sub">
-          {detail.steps.map((step) => (
-            <li key={step.id}>
-              {step.title ? (
-                <span className="font-semibold text-ink">
-                  {step.title}:{" "}
-                </span>
-              ) : null}
-              {step.body}
-            </li>
-          ))}
-        </ol>
+        {/* No per-prompt how-to section here, by design (Option A):
+            the single guide linked above replaces it. detail.steps
+            is still returned by the API and stored in the database;
+            it is simply not rendered in this section. */}
       </div>
     </section>
   );

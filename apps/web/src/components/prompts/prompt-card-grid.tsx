@@ -28,8 +28,10 @@ import {
  * favourite heart) opens the dedicated section for that prompt.
  * The heart persists through the API (the page owns the toggle and
  * reverts on failure); a tap never opens the detail section.
- * Cards carry NO master prompt text and NO how-to steps — those
- * live only in the dedicated section. Copied counts are real
+ * Cards carry NO master prompt text — that lives only in the
+ * dedicated section. Per-prompt how-to steps are not rendered
+ * anywhere in the UI; the single guide page replaces them.
+ * Copied counts are real
  * counts from the API, incremented only by the copy endpoint.
  */
 export type PromptCardGridProps = {
