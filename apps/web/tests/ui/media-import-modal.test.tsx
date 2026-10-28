@@ -46,6 +46,18 @@ vi.mock('@/components/media/media-import-utils', async (importOriginal) => {
       height: 100,
       duration: null,
     })),
+    // Same seam as the thumbnail stub above: jsdom has no media
+    // decoders, so the P4 metadata probe's <video> element never
+    // fires loadedmetadata and would otherwise pend its full
+    // 15-second budget, gating confirm and completion. The probe
+    // is a platform capability, not import behaviour — stub it
+    // with plausible dimensions so the probe-wins confirm path
+    // still runs for real.
+    probeVideoMetadata: vi.fn(async () => ({
+      width: 100,
+      height: 100,
+      duration: null,
+    })),
   };
 });
 
