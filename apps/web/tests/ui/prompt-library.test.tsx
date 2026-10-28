@@ -188,11 +188,12 @@ describe("PromptLibraryClient (real API wiring)", () => {
     expect(
       screen.getByRole("heading", { name: "No prompts yet." }),
     ).toBeTruthy();
+    // Catalogue-empty state is heading-only: no description line.
     expect(
-      screen.getByText(
+      screen.queryByText(
         "New prompts are added here by the team through the backend — check back soon.",
       ),
-    ).toBeTruthy();
+    ).toBeNull();
     // No button that pretends to add a prompt: catalogue prompts
     // are added by admin via the backend only.
     expect(screen.queryByRole("button", { name: /add/i })).toBeNull();

@@ -125,7 +125,7 @@ function CentredEmptyState({
   testId: string;
   icon: React.ReactNode;
   title: string;
-  description: string;
+  description?: string;
   action?: React.ReactNode;
 }) {
   return (
@@ -630,7 +630,6 @@ export function PromptLibraryClient({
               </EmptyStateIcon>
             }
             title="No prompts yet."
-            description="New prompts are added here by the team through the backend — check back soon."
           />
         )
       ) : (
