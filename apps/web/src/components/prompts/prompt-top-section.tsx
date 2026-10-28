@@ -56,15 +56,17 @@ import { Input } from "@/components/shared/ui/input";
  * on one row instead of dropping Clear all onto a new line. The
  * filter row itself is no-wrap with every control shrink-0 and
  * whitespace-nowrap, so nothing wraps to a second line on
- * desktop/tablet. Only on narrow phone widths, where the content
- * can still exceed the full page width, does the filter row scroll
- * horizontally inside the card (overflow-x-auto below sm) — that
- * is the last resort, and wrapping is never allowed. Note the
- * phone tradeoff, stated honestly: a horizontally scrolling row
- * is a scroll container, so on phones an open dropdown lives
- * inside that scroll area rather than overflowing freely; on
- * desktop/tablet the row is overflow-visible, so dropdowns open
- * freely below the card as before.
+ * desktop/tablet (sm:flex-nowrap, overflow-visible, so dropdowns
+ * open freely below the card). Below sm the row WRAPS instead:
+ * flex-wrap with no scroll container anywhere (no overflow-x-auto
+ * at any width), so every filter is visible on the page without
+ * any horizontal scrolling. This replaced the earlier phone
+ * tradeoff — a horizontally scrolling row below sm hid filters
+ * past the viewport edge until the user scrolled sideways, which
+ * Shahzeb rejected. My favorites and Clear all sit in one small
+ * group inside the row, so on a wrapped phone row they wrap as a
+ * unit: Clear all can never strand alone on a row of its own
+ * while favorites sits on the row above it.
  *
  * The hero section must NOT carry overflow-hidden: the filter
  * dropdowns are absolutely positioned below the search card at the
@@ -290,49 +292,20 @@ export function PromptTopSection(props: PromptTopSectionProps = {}) {
         card is now w-fit on sm+ (full-width below sm) capped only
         by max-w-full, i.e. the page width minus the section's
         padding, so it grows with its content instead of wrapping
-        Clear all onto a new line. The filter row is no-wrap and
-        scrolls horizontally only below sm, where the content can
-        still exceed the page width. This is asserted in code
-        terms only: jsdom cannot measure pixel widths, so the live
-        preview eyeball (all filters selected, as in Shahzeb's
-        screenshot) is the final proof.
+        Clear all onto a new line on desktop/tablet. Below sm the
+        filter row wraps (flex-wrap, gap-y-2) and has NO scroll
+        container: every filter is visible without horizontal
+        scrolling. This is asserted in code terms only: jsdom
+        cannot measure pixel widths, so the live phone eyeball is
+        the final proof.
       */}
       <div
         data-testid="prompt-top-section-filter-row"
-        className="flex flex-nowrap items-center gap-x-3 overflow-x-auto sm:overflow-visible"
+        className="flex flex-wrap items-center gap-x-3 gap-y-2 sm:flex-nowrap sm:overflow-visible"
       >
         {FILTER_KEYS.map((key) => {
           const changed = values[key] !== FILTER_DEFAULTS[key];
           const open = openFilter === key;
-          // "My favorites" (variant A) sits in the same row, after
-          // Sort and before Clear all — plain text like the other
-          // filters, gold + underlined when active, no pill, no
-          // border, no button background. Tapping it toggles: on
-          // shows only the user's favourited prompts, off shows all.
-          // It is rendered AFTER the Sort control (not before it),
-          // so the row order is Category, Tool, Language, Length,
-          // Sort, My favorites, Clear all. Sort is not pushed right.
-          const favoritesToggle =
-            key === "sort" ? (
-              <button
-                type="button"
-                data-testid="prompt-top-section-filter-favorites"
-                aria-pressed={favoritesOnly}
-                onClick={toggleFavorites}
-                className={
-                  favoritesOnly
-                    ? "flex shrink-0 items-center gap-1 whitespace-nowrap text-sm font-semibold text-brand-gold underline underline-offset-4"
-                    : "flex shrink-0 items-center gap-1 whitespace-nowrap text-sm font-semibold text-ink"
-                }
-              >
-                <HeartIcon
-                  aria-hidden
-                  className="size-4 shrink-0"
-                  fill={favoritesOnly ? "currentColor" : "none"}
-                />
-                My favorites
-              </button>
-            ) : null;
           return (
             <React.Fragment key={key}>
             <div
@@ -386,21 +359,55 @@ export function PromptTopSection(props: PromptTopSectionProps = {}) {
                 </div>
               ) : null}
             </div>
-              {favoritesToggle}
             </React.Fragment>
           );
         })}
 
-        {isActive ? (
+        {/*
+          "My favorites" (variant A) + Clear all, as one group, after
+          Sort and last in the row — plain text like the other
+          filters, gold + underlined when active, no pill, no
+          border, no button background. Tapping favorites toggles:
+          on shows only the user's favourited prompts, off shows
+          all. The group matters on wrapped phone rows: it wraps
+          as a unit, so Clear all can never strand alone on a row
+          of its own while favorites sits on the row above it.
+          Row order is unchanged: Category, Tool, Language, Length,
+          Sort, My favorites, Clear all. Sort is not pushed right.
+        */}
+        <div
+          data-testid="prompt-top-section-filter-favorites-group"
+          className="flex shrink-0 items-center gap-x-3"
+        >
           <button
             type="button"
-            data-testid="prompt-top-section-clear-all"
-            onClick={resetAll}
-            className="shrink-0 whitespace-nowrap text-sm font-semibold text-brand-gold"
+            data-testid="prompt-top-section-filter-favorites"
+            aria-pressed={favoritesOnly}
+            onClick={toggleFavorites}
+            className={
+              favoritesOnly
+                ? "flex shrink-0 items-center gap-1 whitespace-nowrap text-sm font-semibold text-brand-gold underline underline-offset-4"
+                : "flex shrink-0 items-center gap-1 whitespace-nowrap text-sm font-semibold text-ink"
+            }
           >
-            Clear all
+            <HeartIcon
+              aria-hidden
+              className="size-4 shrink-0"
+              fill={favoritesOnly ? "currentColor" : "none"}
+            />
+            My favorites
           </button>
-        ) : null}
+          {isActive ? (
+            <button
+              type="button"
+              data-testid="prompt-top-section-clear-all"
+              onClick={resetAll}
+              className="shrink-0 whitespace-nowrap text-sm font-semibold text-brand-gold"
+            >
+              Clear all
+            </button>
+          ) : null}
+        </div>
       </div>
       </div>
     </section>
