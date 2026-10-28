@@ -115,7 +115,7 @@ export function PromptTopSection() {
       data-testid="prompt-top-section"
       className="overflow-hidden bg-canvas px-4 py-12 sm:px-6 sm:py-16"
     >
-      <div className="mx-auto flex max-w-3xl flex-col items-center text-center">
+      <div className="mx-auto flex w-full flex-col items-center text-center">
         <h1 className="text-5xl font-bold leading-[1.05] tracking-tight text-ink sm:text-6xl">
           Master Prompts Library
         </h1>
@@ -126,7 +126,7 @@ export function PromptTopSection() {
 
       <div
         data-testid="prompt-top-section-search-card"
-        className="mx-auto mt-10 w-full max-w-5xl rounded-2xl border border-line bg-panel p-3 shadow-card sm:p-4"
+        className="mx-auto mt-10 w-full rounded-2xl border border-line bg-panel p-3 shadow-card sm:p-4"
       >
       <div
         data-testid="prompt-top-section-filter-row"

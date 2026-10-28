@@ -127,6 +127,17 @@ describe("PromptMockCardGrid (mock data, B design, dedicated section)", () => {
     ).toBeTruthy();
   });
 
+  it("uses the full content width for the grid, not a narrow centred container", () => {
+    const { container } = render(<PromptMockCardGrid />);
+    const grid = container.querySelector(
+      "[data-testid='prompt-mock-card-grid'] > div",
+    );
+    expect(grid).toBeTruthy();
+    expect(grid?.className).not.toContain("max-w-5xl");
+    expect(grid?.className).toContain("w-full");
+    expect(grid?.className).toContain("lg:grid-cols-4");
+  });
+
   it("play control and heart clicks do NOT open the dedicated section, and the heart toggles", () => {
     render(<PromptMockCardGrid />);
     const firstCard = screen.getAllByTestId("prompt-mock-card")[0];

@@ -100,7 +100,7 @@ export function PromptMockCardGrid() {
         aria-label={`Details for ${selected.title}`}
         className="bg-canvas px-4 pb-12 sm:px-6 sm:pb-16"
       >
-        <div className="mx-auto w-full max-w-5xl">
+        <div className="mx-auto w-full">
           <button
             type="button"
             data-testid="prompt-detail-back"
@@ -152,7 +152,7 @@ export function PromptMockCardGrid() {
       aria-label="Prompt cards"
       className="bg-canvas px-4 pb-12 sm:px-6 sm:pb-16"
     >
-      <div className="mx-auto grid w-full max-w-5xl grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mx-auto grid w-full grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {MOCK_PROMPT_CARDS.map((card) => {
           const isFavourite = favourites.has(card.title);
           const isPlaying = playing.has(card.title);

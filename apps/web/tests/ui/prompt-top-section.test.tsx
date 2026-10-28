@@ -175,6 +175,17 @@ describe("PromptTopSection (step 1, filter row)", () => {
     expect(screen.getByRole("button", { name: /Length: 1 min\+/ })).toBeTruthy();
   });
 
+  it("uses the full content width, not a narrow centred container", () => {
+    render(<PromptTopSection />);
+    const section = screen.getByTestId("prompt-top-section");
+    const hero = section.firstElementChild as HTMLElement;
+    expect(hero.className).not.toContain("max-w-3xl");
+    expect(hero.className).toContain("w-full");
+    const card = screen.getByTestId("prompt-top-section-search-card");
+    expect(card.className).not.toContain("max-w-5xl");
+    expect(card.className).toContain("w-full");
+  });
+
   it("shows Clear all only when something is chosen, and Clear all resets everything", () => {
     render(<PromptTopSection />);
     expect(screen.queryByRole("button", { name: "Clear all" })).toBeNull();
