@@ -210,6 +210,58 @@ describe("PromptTopSection (step 1, filter row)", () => {
     expect(card.className).toContain("max-w-3xl");
   });
 
+  it("lays out variant A: search on its own row, then a divider, then all six filter controls with Sort right-aligned", () => {
+    render(<PromptTopSection />);
+    const card = screen.getByTestId("prompt-top-section-search-card");
+    expect(card.className).toContain("max-w-3xl");
+    // Card children, in order: search row, divider, filter row.
+    expect(card.children.length).toBe(3);
+    const searchRow = screen.getByTestId("prompt-top-section-search-row");
+    expect(card.children[0]).toBe(searchRow);
+    expect(searchRow.contains(screen.getByPlaceholderText("Search prompts…"))).toBe(true);
+    expect(searchRow.querySelector("button")).toBeNull();
+    const divider = card.children[1] as HTMLElement;
+    expect(divider.className).toContain("border-t");
+    const filterRow = screen.getByTestId("prompt-top-section-filter-row");
+    expect(card.children[2]).toBe(filterRow);
+    // All six controls live in the filter row, not the search row.
+    for (const name of [
+      /Category: All/,
+      /Tool: All/,
+      /Language: All/,
+      /Length: All/,
+      /Sort: Newest/,
+    ]) {
+      expect(filterRow.contains(screen.getByRole("button", { name }))).toBe(true);
+    }
+    expect(
+      filterRow.contains(screen.getByTestId("prompt-top-section-filter-favorites")),
+    ).toBe(true);
+    // Sort is pushed right: its wrapper carries ml-auto.
+    const sortButton = screen.getByRole("button", { name: /Sort: Newest/ });
+    expect((sortButton.parentElement as HTMLElement).className).toContain("ml-auto");
+    // Order inside the filter row: Category, Tool, Language, Length,
+    // My favorites, Sort.
+    const buttons = Array.from(filterRow.querySelectorAll("button")).map(
+      (button) => button.textContent ?? "",
+    );
+    let lastIndex = -1;
+    for (const label of [
+      "Category",
+      "Tool",
+      "Language",
+      "Length",
+      "My favorites",
+      "Sort",
+    ]) {
+      const index = buttons.findIndex(
+        (text, i) => i > lastIndex && text.includes(label),
+      );
+      expect(index).toBeGreaterThan(lastIndex);
+      lastIndex = index;
+    }
+  });
+
   it("shows Clear all only when something is chosen, and Clear all resets everything", () => {
     render(<PromptTopSection />);
     expect(screen.queryByRole("button", { name: "Clear all" })).toBeNull();

@@ -21,11 +21,18 @@ import { Input } from "@/components/shared/ui/input";
  * pill, primary button, and category pill row were removed entirely
  * at Shahzeb's direction (no replacements).
  *
- * This section is the hero + search/filter row. The page wires its
- * search and filters to the real prompt API (see
- * prompt-library-client.tsx): selecting a filter changes its
- * trigger label and active state AND refetches the grid. When
- * used standalone (no controlled props), it keeps its own state.
+ * This section is the hero + search/filter rows, laid out as
+ * variant A (Shahzeb's choice): row 1 is the search input on its
+ * own full-width row; a subtle divider follows; row 2 is all six
+ * filter controls on one row — Category, Tool, Language, Length,
+ * My favorites, then Sort pushed to the right (ml-auto). The split
+ * is the design, not flex-wrap running out of room: the previous
+ * single wrapping row orphaned Length + favorites + Sort on a
+ * second row by accident. The page wires its search and filters to
+ * the real prompt API (see prompt-library-client.tsx): selecting
+ * a filter changes its trigger label and active state AND
+ * refetches the grid. When used standalone (no controlled props),
+ * it keeps its own state.
  * The dropdown option lists render only
  * when open (null when closed) and Clear all renders only when
  * active.
@@ -185,10 +192,10 @@ export function PromptTopSection(props: PromptTopSectionProps = {}) {
         className="mx-auto mt-10 w-full max-w-3xl rounded-2xl border border-line bg-panel p-3 shadow-card sm:p-4"
       >
       <div
-        data-testid="prompt-top-section-filter-row"
-        className="flex flex-wrap items-center gap-x-5 gap-y-3"
+        data-testid="prompt-top-section-search-row"
+        className="flex items-center"
       >
-        <label className="flex w-full shrink-0 items-center gap-2 rounded-xl border border-line bg-panel px-3 py-1 sm:w-80">
+        <label className="flex w-full items-center gap-2 rounded-xl border border-line bg-panel px-3 py-1">
           <SearchIcon aria-hidden className="size-5 shrink-0 text-ink-sub" />
           <Input
             data-testid="prompt-top-section-search"
@@ -200,7 +207,12 @@ export function PromptTopSection(props: PromptTopSectionProps = {}) {
             className="border-0 bg-transparent shadow-none focus-visible:border-transparent"
           />
         </label>
-
+      </div>
+      <div aria-hidden="true" className="my-3 border-t border-line" />
+      <div
+        data-testid="prompt-top-section-filter-row"
+        className="flex flex-wrap items-center gap-x-3 gap-y-3"
+      >
         {(Object.keys(FILTER_OPTIONS) as FilterKey[]).map((key) => {
           const changed = values[key] !== FILTER_DEFAULTS[key];
           const open = openFilter === key;
@@ -234,7 +246,7 @@ export function PromptTopSection(props: PromptTopSectionProps = {}) {
             <React.Fragment key={key}>
               {favoritesToggle}
             <div
-              className="relative"
+              className={key === "sort" ? "relative ml-auto" : "relative"}
               ref={(element) => {
                 filterWrappers.current[key] = element;
               }}
