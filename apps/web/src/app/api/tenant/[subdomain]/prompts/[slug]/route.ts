@@ -8,9 +8,11 @@ import {
   logPromptError,
   requirePromptAdmin,
   toPromptDetail,
+  toPromptMediaInsertRows,
   toPromptUpdateRow,
   validateMergedPrompt,
   type PromptDbRow,
+  type PromptMediaDbRow,
   type PromptStepDbRow,
 } from '@/lib/server/prompt-library';
 
@@ -55,6 +57,19 @@ async function loadSteps(
   return (data ?? []) as PromptStepDbRow[];
 }
 
+async function loadMedia(
+  client: NonNullable<ReturnType<typeof getPromptAdminClient>>,
+  promptId: string,
+) {
+  const { data, error } = await client
+    .from('prompt_library_media')
+    .select('*')
+    .eq('prompt_id', promptId)
+    .order('position', { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as PromptMediaDbRow[];
+}
+
 export async function GET(
   request: NextRequest,
   context: RouteParams,
@@ -82,6 +97,7 @@ export async function GET(
       return NextResponse.json({ error: 'NOT_FOUND' }, { status: 404 });
     }
     const steps = await loadSteps(client, prompt.id);
+    const media = await loadMedia(client, prompt.id);
     const { data: fav } = await client
       .from('prompt_library_favourites')
       .select('prompt_id')
@@ -89,7 +105,7 @@ export async function GET(
       .eq('prompt_id', prompt.id)
       .maybeSingle();
     return NextResponse.json(
-      toPromptDetail(prompt, steps, publicUrl, Boolean(fav)),
+      toPromptDetail(prompt, steps, media, publicUrl, Boolean(fav)),
     );
   } catch (error) {
     logPromptError('[prompt-library] Get prompt failed', error);
@@ -136,17 +152,11 @@ export async function PATCH(
     }
 
     // Cross-field invariants on the MERGED row, not just the patch.
+    // Media rules (exactly one main, video poster, prompts/ prefix)
+    // are enforced by the contracts media schema on input.media.
     const mergedError = validateMergedPrompt({
       format: input.format ?? prompt.format,
       aspectRatio: input.aspectRatio ?? prompt.aspect_ratio,
-      previewMediaType:
-        input.previewMediaType ?? prompt.preview_media_type,
-      previewPosterKey:
-        input.previewPosterKey !== undefined
-          ? (input.previewPosterKey ?? null)
-          : prompt.preview_poster_key,
-      previewStorageKey:
-        input.previewStorageKey ?? prompt.preview_storage_key,
     });
     if (mergedError) {
       return NextResponse.json({ error: mergedError }, { status: 400 });
@@ -173,6 +183,34 @@ export async function PATCH(
         .update(row)
         .eq('id', prompt.id);
       if (error) throw error;
+    }
+
+    if (input.media) {
+      // Replace the whole gallery, restoring the previous one if
+      // the replacement fails — same pattern as the steps below.
+      const previousMedia = await loadMedia(client, prompt.id);
+      const { error: deleteMediaError } = await client
+        .from('prompt_library_media')
+        .delete()
+        .eq('prompt_id', prompt.id);
+      if (deleteMediaError) throw deleteMediaError;
+      const { error: insertMediaError } = await client
+        .from('prompt_library_media')
+        .insert(toPromptMediaInsertRows(input.media, prompt.id));
+      if (insertMediaError) {
+        await client.from('prompt_library_media').insert(
+          previousMedia.map((mediaRow) => ({
+            prompt_id: prompt.id,
+            position: mediaRow.position,
+            media_type: mediaRow.media_type,
+            storage_key: mediaRow.storage_key,
+            poster_key: mediaRow.poster_key,
+            duration_seconds: mediaRow.duration_seconds,
+            is_main: mediaRow.is_main,
+          })),
+        );
+        throw insertMediaError;
+      }
     }
 
     if (input.steps) {
@@ -235,7 +273,7 @@ export async function DELETE(
     if (!prompt) {
       return NextResponse.json({ error: 'NOT_FOUND' }, { status: 404 });
     }
-    // Steps, favourites, and copy events cascade-delete in the DB.
+    // Steps, media, favourites, and copy events cascade-delete in the DB.
     const { error } = await client
       .from('prompt_library_prompts')
       .delete()

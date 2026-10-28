@@ -146,38 +146,72 @@ const promptCoreFields = {
   length: PromptLengthSchema,
   format: PromptFormatSchema,
   aspectRatio: PromptAspectRatioSchema,
-  previewMediaType: PromptPreviewMediaTypeSchema,
-  previewStorageKey: PromptLibraryStorageKeySchema,
-  previewPosterKey: PromptLibraryStorageKeySchema.nullable().optional(),
-  durationSeconds: z.number().nonnegative().nullable().optional(),
   status: PromptStatusSchema,
 };
 
 function withPromptInvariants<T extends z.ZodRawShape>(shape: T) {
+  return z.object(shape).superRefine((value, ctx) => {
+    if (
+      value.format !== undefined &&
+      value.aspectRatio !== undefined &&
+      !promptFormatMatchesAspectRatio(value.format, value.aspectRatio)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['aspectRatio'],
+        message: 'Aspect ratio must match the format (vertical 9:16, horizontal 16:9)',
+      });
+    }
+  });
+}
+
+/**
+ * One media item of a prompt. A prompt has MULTIPLE videos/images,
+ * not one preview: the list is the whole gallery. Exactly one item
+ * must be the main (isMain) — the card preview uses it, and the
+ * detail section shows it large first. A video item requires a
+ * poster key; every key must live under prompts/ in R2.
+ */
+export const PromptMediaItemInputSchema = z
+  .object({
+    position: z.number().int().min(1).max(50),
+    mediaType: PromptPreviewMediaTypeSchema,
+    storageKey: PromptLibraryStorageKeySchema,
+    posterKey: PromptLibraryStorageKeySchema.nullable().optional(),
+    durationSeconds: z.number().nonnegative().nullable().optional(),
+    isMain: z.boolean(),
+  })
+  .superRefine((value, ctx) => {
+    if (
+      value.mediaType === 'video' &&
+      (value.posterKey === undefined || value.posterKey === null)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['posterKey'],
+        message: 'A video media item requires a poster key',
+      });
+    }
+  });
+export type PromptMediaItemInput = z.infer<typeof PromptMediaItemInputSchema>;
+
+function validPromptMediaList(
+  media: readonly PromptMediaItemInput[],
+): boolean {
+  const positions = media.map((item) => item.position);
+  if (new Set(positions).size !== positions.length) return false;
+  return media.filter((item) => item.isMain).length === 1;
+}
+
+/** Shared media-array rules: unique positions, exactly one main. */
+function promptMediaArraySchema() {
   return z
-    .object(shape)
-    .superRefine((value, ctx) => {
-      if (
-        value.format !== undefined &&
-        value.aspectRatio !== undefined &&
-        !promptFormatMatchesAspectRatio(value.format, value.aspectRatio)
-      ) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['aspectRatio'],
-          message: 'Aspect ratio must match the format (vertical 9:16, horizontal 16:9)',
-        });
-      }
-      if (
-        value.previewMediaType === 'video' &&
-        (value.previewPosterKey === undefined || value.previewPosterKey === null)
-      ) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['previewPosterKey'],
-          message: 'A video preview requires a poster key',
-        });
-      }
+    .array(PromptMediaItemInputSchema)
+    .min(1)
+    .max(50)
+    .refine(validPromptMediaList, {
+      message:
+        'Media must have unique positions and exactly one main item',
     });
 }
 
@@ -197,6 +231,7 @@ function uniqueStepPositions(
 export const PromptCreateSchema = withPromptInvariants({
   ...promptCoreFields,
   slug: PromptSlugSchema.optional(),
+  media: promptMediaArraySchema(),
   steps: z
     .array(PromptHowToStepInputSchema)
     .min(1)
@@ -217,12 +252,9 @@ export const PromptUpdateSchema = withPromptInvariants({
   length: promptCoreFields.length.optional(),
   format: promptCoreFields.format.optional(),
   aspectRatio: promptCoreFields.aspectRatio.optional(),
-  previewMediaType: promptCoreFields.previewMediaType.optional(),
-  previewStorageKey: promptCoreFields.previewStorageKey.optional(),
-  previewPosterKey: promptCoreFields.previewPosterKey.optional(),
-  durationSeconds: promptCoreFields.durationSeconds.optional(),
   status: promptCoreFields.status.optional(),
   slug: PromptSlugSchema.optional(),
+  media: promptMediaArraySchema().optional(),
   steps: z
     .array(PromptHowToStepInputSchema)
     .min(1)
@@ -234,30 +266,53 @@ export const PromptUpdateSchema = withPromptInvariants({
 });
 export type PromptUpdateInput = z.infer<typeof PromptUpdateSchema>;
 
-/** Full DB row, as the API returns it for the dedicated section. */
-export const PromptDetailSchema = z.object({
+/** One media item as returned by the API, with derived public URLs. */
+export const PromptMediaSchema = z.object({
+  id: z.string().uuid(),
+  position: z.number().int(),
+  mediaType: PromptPreviewMediaTypeSchema,
+  storageKey: z.string(),
+  posterKey: z.string().nullable(),
+  url: z.string().url(),
+  posterUrl: z.string().url().nullable(),
+  durationSeconds: z.number().nullable(),
+  isMain: z.boolean(),
+});
+export type PromptMedia = z.infer<typeof PromptMediaSchema>;
+
+/**
+ * Shared output fields. previewUrl/previewPosterUrl are derived from
+ * the MAIN media item only, so cards keep working unchanged.
+ */
+const promptOutputBase = {
   id: z.string().uuid(),
   slug: PromptSlugSchema,
   title: z.string(),
   shortDescription: z.string(),
-  masterPrompt: z.string(),
   tool: PromptToolSchema,
   category: PromptCategorySchema,
   language: PromptLanguageSchema,
   length: PromptLengthSchema,
   format: PromptFormatSchema,
   aspectRatio: PromptAspectRatioSchema,
+  /** Main media only: its type (card needs it to choose video vs
+   * image), its URL, and its poster URL. */
   previewMediaType: PromptPreviewMediaTypeSchema,
-  previewStorageKey: z.string(),
-  previewPosterKey: z.string().nullable(),
   previewUrl: z.string().url(),
   previewPosterUrl: z.string().url().nullable(),
-  durationSeconds: z.number().nullable(),
   copiedCount: z.number().int().nonnegative(),
   status: PromptStatusSchema,
   createdAt: z.string(),
   updatedAt: z.string(),
   isFavourite: z.boolean(),
+};
+
+/** Full prompt, as the API returns it for the dedicated section. */
+export const PromptDetailSchema = z.object({
+  ...promptOutputBase,
+  masterPrompt: z.string(),
+  /** Full gallery, main first, then by position. */
+  media: z.array(PromptMediaSchema).min(1),
   steps: z.array(
     z.object({
       id: z.string().uuid(),
@@ -269,12 +324,10 @@ export const PromptDetailSchema = z.object({
 });
 export type PromptDetail = z.infer<typeof PromptDetailSchema>;
 
-/** List item: the master prompt and steps are NOT returned here — they
- * belong only to the dedicated section. */
-export const PromptListItemSchema = PromptDetailSchema.omit({
-  masterPrompt: true,
-  steps: true,
-});
+/** List item: ONLY the main media (via previewUrl/previewPosterUrl).
+ * The master prompt, steps, and full media list are NOT returned
+ * here — they belong only to the dedicated section. */
+export const PromptListItemSchema = z.object(promptOutputBase);
 export type PromptListItem = z.infer<typeof PromptListItemSchema>;
 
 export const PromptListResponseSchema = z.object({

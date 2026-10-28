@@ -24,10 +24,24 @@ const validCreate = {
   length: '1min_plus',
   format: 'vertical_reel',
   aspectRatio: '9:16',
-  previewMediaType: 'video',
-  previewStorageKey: 'prompts/abc/preview.mp4',
-  previewPosterKey: 'prompts/abc/poster.jpg',
-  durationSeconds: 30,
+  media: [
+    {
+      position: 1,
+      mediaType: 'video',
+      storageKey: 'prompts/abc/preview.mp4',
+      posterKey: 'prompts/abc/poster.jpg',
+      durationSeconds: 30,
+      isMain: true,
+    },
+    {
+      position: 2,
+      mediaType: 'image',
+      storageKey: 'prompts/abc/shot-2.jpg',
+      posterKey: null,
+      durationSeconds: null,
+      isMain: false,
+    },
+  ],
   status: 'draft',
 } as const;
 
@@ -63,11 +77,41 @@ describe('prompt library contracts', () => {
     );
   });
 
-  it('requires a poster key for a video preview', () => {
+  it('requires a poster key for a video media item', () => {
     expect(
       PromptCreateSchema.safeParse({
         ...validCreate,
-        previewPosterKey: null,
+        media: [
+          {
+            position: 1,
+            mediaType: 'video',
+            storageKey: 'prompts/abc/preview.mp4',
+            posterKey: null,
+            durationSeconds: 30,
+            isMain: true,
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects zero mains, two mains, and duplicate media positions', () => {
+    const single = validCreate.media[0];
+    const noMain = { ...single, isMain: false };
+    expect(
+      PromptCreateSchema.safeParse({ ...validCreate, media: [noMain] })
+        .success,
+    ).toBe(false);
+    expect(
+      PromptCreateSchema.safeParse({
+        ...validCreate,
+        media: [single, { ...validCreate.media[1], isMain: true }],
+      }).success,
+    ).toBe(false);
+    expect(
+      PromptCreateSchema.safeParse({
+        ...validCreate,
+        media: [single, { ...validCreate.media[1], position: 1 }],
       }).success,
     ).toBe(false);
   });
@@ -92,7 +136,16 @@ describe('prompt library contracts', () => {
     expect(
       PromptCreateSchema.safeParse({
         ...validCreate,
-        previewStorageKey: 'users/x/preview.mp4',
+        media: [
+          {
+            position: 1,
+            mediaType: 'video',
+            storageKey: 'users/x/preview.mp4',
+            posterKey: 'prompts/abc/poster.jpg',
+            durationSeconds: 30,
+            isMain: true,
+          },
+        ],
       }).success,
     ).toBe(false);
   });
@@ -139,7 +192,7 @@ describe('prompt library contracts', () => {
     ).toBe(false);
   });
 
-  it('list items never carry the master prompt or steps', () => {
+  it('list items never carry the master prompt, steps, or full media list', () => {
     const detail = {
       id: '00000000-0000-4000-8000-000000000001',
       slug: 'puppy-first-bath',
@@ -153,16 +206,26 @@ describe('prompt library contracts', () => {
       format: 'vertical_reel',
       aspectRatio: '9:16',
       previewMediaType: 'video',
-      previewStorageKey: 'prompts/abc/preview.mp4',
-      previewPosterKey: 'prompts/abc/poster.jpg',
       previewUrl: 'https://media.example.com/prompts/abc/preview.mp4',
       previewPosterUrl: 'https://media.example.com/prompts/abc/poster.jpg',
-      durationSeconds: 30,
       copiedCount: 0,
       status: 'published',
       createdAt: '2026-10-28T00:00:00.000Z',
       updatedAt: '2026-10-28T00:00:00.000Z',
       isFavourite: false,
+      media: [
+        {
+          id: '00000000-0000-4000-8000-000000000003',
+          position: 1,
+          mediaType: 'video',
+          storageKey: 'prompts/abc/preview.mp4',
+          posterKey: 'prompts/abc/poster.jpg',
+          url: 'https://media.example.com/prompts/abc/preview.mp4',
+          posterUrl: 'https://media.example.com/prompts/abc/poster.jpg',
+          durationSeconds: 30,
+          isMain: true,
+        },
+      ],
       steps: [
         {
           id: '00000000-0000-4000-8000-000000000002',
@@ -176,5 +239,9 @@ describe('prompt library contracts', () => {
     const listItem = PromptListItemSchema.parse(detail);
     expect('masterPrompt' in listItem).toBe(false);
     expect('steps' in listItem).toBe(false);
+    expect('media' in listItem).toBe(false);
+    expect(listItem.previewUrl).toBe(
+      'https://media.example.com/prompts/abc/preview.mp4',
+    );
   });
 });

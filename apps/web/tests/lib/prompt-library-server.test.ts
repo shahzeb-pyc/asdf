@@ -12,8 +12,10 @@ import { describe, it, expect } from "vitest";
 
 import {
   isPromptAdmin,
+  mainPromptMedia,
   requirePromptAdmin,
   slugifyPromptTitle,
+  sortPromptMediaForDetail,
   validateMergedPrompt,
 } from "@/lib/server/prompt-library";
 import { isPromptLibraryStorageKey } from "@fbuploadpro/contracts";
@@ -33,30 +35,57 @@ describe("prompt library server rules", () => {
     expect(isPromptLibraryStorageKey("users/abc/preview.mp4")).toBe(false);
   });
 
-  it("rejects a merged PATCH that breaks format/aspect or drops a video poster", () => {
+  it("rejects a merged PATCH that breaks format/aspect", () => {
     expect(
       validateMergedPrompt({
         format: "vertical_reel",
         aspectRatio: "16:9",
-      }),
-    ).not.toBeNull();
-    expect(
-      validateMergedPrompt({
-        format: "vertical_reel",
-        aspectRatio: "9:16",
-        previewMediaType: "video",
-        previewPosterKey: null,
       }),
     ).not.toBeNull();
     expect(
       validateMergedPrompt({
         format: "horizontal_video",
         aspectRatio: "16:9",
-        previewMediaType: "video",
-        previewPosterKey: "prompts/abc/poster.jpg",
-        previewStorageKey: "prompts/abc/preview.mp4",
       }),
     ).toBeNull();
+  });
+
+  it("picks the main media for a card and orders the detail gallery main-first", () => {
+    const media = [
+      {
+        id: "00000000-0000-4000-8000-000000000010",
+        prompt_id: "00000000-0000-4000-8000-000000000001",
+        position: 2,
+        media_type: "image" as const,
+        storage_key: "prompts/abc/shot-2.jpg",
+        poster_key: null,
+        duration_seconds: null,
+        is_main: false,
+        created_at: "2026-10-28T00:00:00.000Z",
+      },
+      {
+        id: "00000000-0000-4000-8000-000000000011",
+        prompt_id: "00000000-0000-4000-8000-000000000001",
+        position: 1,
+        media_type: "video" as const,
+        storage_key: "prompts/abc/preview.mp4",
+        poster_key: "prompts/abc/poster.jpg",
+        duration_seconds: 30,
+        is_main: true,
+        created_at: "2026-10-28T00:00:00.000Z",
+      },
+    ];
+    expect(mainPromptMedia(media)?.id).toBe(
+      "00000000-0000-4000-8000-000000000011",
+    );
+    expect(sortPromptMediaForDetail(media).map((row) => row.position)).toEqual([
+      1, 2,
+    ]);
+    // Main first even when it is not position 1.
+    const mainLast = media.map((row) =>
+      row.position === 2 ? { ...row, is_main: true } : { ...row, is_main: false },
+    );
+    expect(sortPromptMediaForDetail(mainLast)[0].position).toBe(2);
   });
 
   it("derives a clean slug from a title", () => {

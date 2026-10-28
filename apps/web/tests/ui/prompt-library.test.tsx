@@ -30,12 +30,10 @@ const listItem = {
   length: "1min_plus",
   format: "vertical_reel",
   aspectRatio: "9:16",
+  // List items carry ONLY the main media: its type + URLs.
   previewMediaType: "video",
-  previewStorageKey: "prompts/abc/preview.mp4",
-  previewPosterKey: "prompts/abc/poster.jpg",
   previewUrl: "https://media.example.com/prompts/abc/preview.mp4",
   previewPosterUrl: "https://media.example.com/prompts/abc/poster.jpg",
-  durationSeconds: 30,
   copiedCount: 12,
   status: "published",
   createdAt: "2026-10-28T00:00:00.000Z",
@@ -46,6 +44,30 @@ const listItem = {
 const detail = {
   ...listItem,
   masterPrompt: "A golden puppy sits in a tiny bathtub.",
+  media: [
+    {
+      id: "00000000-0000-4000-8000-000000000003",
+      position: 1,
+      mediaType: "video",
+      storageKey: "prompts/abc/preview.mp4",
+      posterKey: "prompts/abc/poster.jpg",
+      url: "https://media.example.com/prompts/abc/preview.mp4",
+      posterUrl: "https://media.example.com/prompts/abc/poster.jpg",
+      durationSeconds: 30,
+      isMain: true,
+    },
+    {
+      id: "00000000-0000-4000-8000-000000000004",
+      position: 2,
+      mediaType: "image",
+      storageKey: "prompts/abc/shot-2.jpg",
+      posterKey: null,
+      url: "https://media.example.com/prompts/abc/shot-2.jpg",
+      posterUrl: null,
+      durationSeconds: null,
+      isMain: false,
+    },
+  ],
   steps: [
     {
       id: "00000000-0000-4000-8000-000000000002",
@@ -166,6 +188,32 @@ describe("PromptLibraryClient (real API wiring)", () => {
     fireEvent.click(screen.getByTestId("prompt-detail-copy"));
     expect(await screen.findByText("Copied ✓")).toBeTruthy();
     expect(screen.getByText("Copied 13 times")).toBeTruthy();
+  });
+
+  it("detail gallery shows the main media large and swaps on thumbnail tap", async () => {
+    mockFetch((url) => {
+      if (url.includes("/prompts/puppy-first-bath")) {
+        return okJson(detail);
+      }
+      if (url.includes("/prompts?")) {
+        return okJson({ items: [listItem], total: 1, page: 1, pageSize: 50 });
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response;
+    });
+    render(<PromptLibraryClient subdomain="test" />);
+    fireEvent.click(await screen.findByTestId("prompt-card"));
+    expect(await screen.findByTestId("prompt-detail")).toBeTruthy();
+    const gallery = screen.getByTestId("prompt-detail-gallery");
+    expect(gallery.querySelectorAll('[data-testid="prompt-detail-gallery-item"]').length).toBe(2);
+    const preview = screen.getByTestId("prompt-detail-preview");
+    expect(preview.getAttribute("src")).toBe(
+      "https://media.example.com/prompts/abc/preview.mp4",
+    );
+    const thumbnails = screen.getAllByTestId("prompt-detail-gallery-item");
+    fireEvent.click(thumbnails[1]);
+    expect(screen.getByTestId("prompt-detail-preview").getAttribute("src")).toBe(
+      "https://media.example.com/prompts/abc/shot-2.jpg",
+    );
   });
 
   it("favorites toggle passes favorites_only to the API, and toggling off removes it", async () => {

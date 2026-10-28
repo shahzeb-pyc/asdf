@@ -16,6 +16,12 @@ import {
  * Dedicated section for one prompt — the only place the master
  * prompt and how-to steps appear. The card itself never shows them.
  *
+ * Media gallery (detail only, never on the card): the main media
+ * shows large, and the OTHER media appear as thumbnails below it.
+ * Tapping a thumbnail swaps it into the large preview (video plays
+ * with controls, image shows full). The API returns media main
+ * first, then by position, so the first item is always the main.
+ *
  * Copy prompt: copies the master prompt to the clipboard first;
  * only then calls the copy endpoint, which increments the real
  * copied count via the server RPC. If either step fails, the count
@@ -38,6 +44,14 @@ export function PromptDetailSection({
   const [copyState, setCopyState] = React.useState<
     "idle" | "copied" | "error"
   >("idle");
+  const [selectedMediaId, setSelectedMediaId] = React.useState<string | null>(
+    null,
+  );
+  // The selected item, falling back to the main (first) item whenever
+  // the detail changes to a prompt that has no such media id.
+  const selectedMedia =
+    detail.media.find((item) => item.id === selectedMediaId) ??
+    detail.media[0];
 
   const handleCopy = async () => {
     setCopyState("idle");
@@ -88,11 +102,13 @@ export function PromptDetailSection({
           </span>
           {` · ${PromptCategoryLabels[detail.category]} · ${PromptLanguageLabels[detail.language]} · ${PromptLengthLabels[detail.length]} · ${PromptFormatLabels[detail.format]}`}
         </p>
-        {detail.previewMediaType === "video" ? (
+        {selectedMedia.mediaType === "video" ? (
           <video
+            key={selectedMedia.id}
             data-testid="prompt-detail-preview"
-            src={detail.previewUrl}
-            poster={detail.previewPosterUrl ?? undefined}
+            data-media-id={selectedMedia.id}
+            src={selectedMedia.url}
+            poster={selectedMedia.posterUrl ?? undefined}
             controls
             muted
             playsInline
@@ -101,8 +117,10 @@ export function PromptDetailSection({
         ) : (
           <div className="relative mt-6 h-60 w-full overflow-hidden rounded-2xl border border-line bg-panel">
             <Image
+              key={selectedMedia.id}
               data-testid="prompt-detail-preview"
-              src={detail.previewUrl}
+              data-media-id={selectedMedia.id}
+              src={selectedMedia.url}
               alt=""
               fill
               unoptimized
@@ -111,6 +129,42 @@ export function PromptDetailSection({
             />
           </div>
         )}
+        {detail.media.length > 1 ? (
+          <div
+            data-testid="prompt-detail-gallery"
+            className="mt-3 flex flex-wrap gap-3"
+          >
+            {detail.media.map((item) => {
+              const selected = item.id === selectedMedia.id;
+              const thumb = item.posterUrl ?? item.url;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  data-testid="prompt-detail-gallery-item"
+                  data-media-id={item.id}
+                  aria-pressed={selected}
+                  aria-label={`Show ${item.mediaType} ${item.position}`}
+                  onClick={() => setSelectedMediaId(item.id)}
+                  className={
+                    selected
+                      ? "relative h-20 w-28 overflow-hidden rounded-xl border-2 border-brand-gold bg-panel"
+                      : "relative h-20 w-28 overflow-hidden rounded-xl border border-line bg-panel"
+                  }
+                >
+                  <Image
+                    src={thumb}
+                    alt=""
+                    fill
+                    unoptimized
+                    sizes="112px"
+                    className="object-cover object-center"
+                  />
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
         <h3 className="mt-8 text-xl font-bold text-ink">Master prompt</h3>
         <p className="mt-3 rounded-2xl border border-line bg-panel p-4 text-sm leading-relaxed text-ink">
           {detail.masterPrompt}

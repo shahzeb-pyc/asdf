@@ -34,15 +34,25 @@ function row(id: string, slug: string, title: string) {
     video_length_bucket: "1min_plus",
     format: "vertical_reel",
     aspect_ratio: "9:16",
-    preview_media_type: "video",
-    preview_storage_key: `prompts/${id}/preview.mp4`,
-    preview_poster_key: `prompts/${id}/poster.jpg`,
-    duration_seconds: 30,
     copied_count: 0,
     status: "published",
     created_by: null,
     created_at: "2026-10-28T00:00:00.000Z",
     updated_at: "2026-10-28T00:00:00.000Z",
+  };
+}
+
+function mainMediaRow(promptId: string) {
+  return {
+    id: `00000000-0000-4000-8000-0000000000${promptId.slice(-2)}`,
+    prompt_id: promptId,
+    position: 1,
+    media_type: "video",
+    storage_key: `prompts/${promptId}/preview.mp4`,
+    poster_key: `prompts/${promptId}/poster.jpg`,
+    duration_seconds: 30,
+    is_main: true,
+    created_at: "2026-10-28T00:00:00.000Z",
   };
 }
 
@@ -82,6 +92,21 @@ function makeClient() {
       if (table === "prompt_library_prompts") {
         return {
           select: vi.fn(() => promptsBuilder),
+        };
+      }
+      if (table === "prompt_library_media") {
+        // List route media query: .select('*').in('prompt_id', ids)
+        // .order('position') — returns the main media per prompt.
+        const mediaBuilder: Record<string, unknown> = {};
+        Object.assign(mediaBuilder, {
+          in: vi.fn(() => mediaBuilder),
+          order: vi.fn(async () => ({
+            data: ALL_ROWS.map((r) => mainMediaRow(r.id)),
+            error: null,
+          })),
+        });
+        return {
+          select: vi.fn(() => mediaBuilder),
         };
       }
       if (table === "prompt_library_favourites") {

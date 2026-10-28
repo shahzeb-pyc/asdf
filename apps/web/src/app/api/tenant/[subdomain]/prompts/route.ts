@@ -14,7 +14,9 @@ import {
   slugifyPromptTitle,
   toPromptCreateRow,
   toPromptListItem,
+  toPromptMediaInsertRows,
   type PromptDbRow as Row,
+  type PromptMediaDbRow as MediaRow,
 } from '@/lib/server/prompt-library';
 
 /**
@@ -116,6 +118,25 @@ export async function GET(
     if (error) throw error;
 
     const rows = (data ?? []) as Row[];
+    // Media for the page, in one query: the list carries ONLY the
+    // main media per prompt (derived in toPromptListItem).
+    const mediaByPrompt = new Map<string, MediaRow[]>();
+    if (rows.length > 0) {
+      const { data: mediaRows, error: mediaError } = await client
+        .from('prompt_library_media')
+        .select('*')
+        .in(
+          'prompt_id',
+          rows.map((row) => row.id),
+        )
+        .order('position', { ascending: true });
+      if (mediaError) throw mediaError;
+      for (const mediaRow of (mediaRows ?? []) as MediaRow[]) {
+        const list = mediaByPrompt.get(mediaRow.prompt_id) ?? [];
+        list.push(mediaRow);
+        mediaByPrompt.set(mediaRow.prompt_id, list);
+      }
+    }
     const favouriteIds = new Set<string>();
     if (rows.length > 0) {
       const { data: favs, error: favError } = await client
@@ -134,7 +155,12 @@ export async function GET(
 
     const response = PromptListResponseSchema.parse({
       items: rows.map((row) =>
-        toPromptListItem(row, publicUrl, favouriteIds.has(row.id)),
+        toPromptListItem(
+          row,
+          mediaByPrompt.get(row.id) ?? [],
+          publicUrl,
+          favouriteIds.has(row.id),
+        ),
       ),
       total: count ?? rows.length,
       page: query.page,
@@ -201,6 +227,18 @@ export async function POST(
       .single();
     if (insertError) throw insertError;
     const prompt = inserted as Row;
+
+    const { error: mediaError } = await client
+      .from('prompt_library_media')
+      .insert(toPromptMediaInsertRows(input.media, prompt.id));
+    if (mediaError) {
+      // Roll back the prompt rather than leaving a media-less prompt.
+      await client
+        .from('prompt_library_prompts')
+        .delete()
+        .eq('id', prompt.id);
+      throw mediaError;
+    }
 
     const steps = input.steps.map((step) => ({
       prompt_id: prompt.id,

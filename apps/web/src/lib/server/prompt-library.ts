@@ -17,7 +17,6 @@ import {
   type PromptPreviewMediaType,
   type PromptStatus,
   promptFormatMatchesAspectRatio,
-  isPromptLibraryStorageKey,
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import { logServerError } from '@/lib/server-analytics';
@@ -52,15 +51,25 @@ export type PromptDbRow = {
   video_length_bucket: PromptLength;
   format: PromptFormat;
   aspect_ratio: PromptAspectRatio;
-  preview_media_type: PromptPreviewMediaType;
-  preview_storage_key: string;
-  preview_poster_key: string | null;
-  duration_seconds: number | null;
   copied_count: number;
   status: PromptStatus;
   created_by: string | null;
   created_at: string;
   updated_at: string;
+};
+
+/** One row of prompt_library_media. A prompt has many media items;
+ * exactly one is the main (partial unique index in the migration). */
+export type PromptMediaDbRow = {
+  id: string;
+  prompt_id: string;
+  position: number;
+  media_type: PromptPreviewMediaType;
+  storage_key: string;
+  poster_key: string | null;
+  duration_seconds: number | null;
+  is_main: boolean;
+  created_at: string;
 };
 
 export type PromptStepDbRow = {
@@ -124,23 +133,69 @@ export function getPromptPublicUrl(): string | null {
   return url && url.length > 0 ? url : null;
 }
 
-function previewUrls(
-  row: PromptDbRow,
+function mediaUrls(
+  row: PromptMediaDbRow,
   publicUrl: string,
-): { previewUrl: string; previewPosterUrl: string | null } {
-  const previewUrl = `${publicUrl.replace(/\/+$/, '')}/${row.preview_storage_key}`;
-  const previewPosterUrl = row.preview_poster_key
-    ? `${publicUrl.replace(/\/+$/, '')}/${row.preview_poster_key}`
-    : null;
-  return { previewUrl, previewPosterUrl };
+): { url: string; posterUrl: string | null } {
+  const base = publicUrl.replace(/\/+$/, '');
+  return {
+    url: `${base}/${row.storage_key}`,
+    posterUrl: row.poster_key ? `${base}/${row.poster_key}` : null,
+  };
 }
 
-export function toPromptListItem(
+export function toPromptMedia(
+  row: PromptMediaDbRow,
+  publicUrl: string,
+): import('@fbuploadpro/contracts').PromptMedia {
+  const { url, posterUrl } = mediaUrls(row, publicUrl);
+  return {
+    id: row.id,
+    position: row.position,
+    mediaType: row.media_type,
+    storageKey: row.storage_key,
+    posterKey: row.poster_key,
+    url,
+    posterUrl,
+    durationSeconds: row.duration_seconds,
+    isMain: row.is_main,
+  };
+}
+
+/** The main media item: the is_main row, else the first by position
+ * (defensive — the DB guarantees exactly one main). */
+export function mainPromptMedia(
+  mediaRows: readonly PromptMediaDbRow[],
+): PromptMediaDbRow | null {
+  if (mediaRows.length === 0) return null;
+  return (
+    mediaRows.find((row) => row.is_main) ??
+    [...mediaRows].sort((a, b) => a.position - b.position)[0]
+  );
+}
+
+/** Gallery order for the detail section: main first, then position. */
+export function sortPromptMediaForDetail(
+  mediaRows: readonly PromptMediaDbRow[],
+): PromptMediaDbRow[] {
+  return [...mediaRows].sort(
+    (a, b) =>
+      Number(b.is_main) - Number(a.is_main) || a.position - b.position,
+  );
+}
+
+function promptListFields(
   row: PromptDbRow,
+  main: PromptMediaDbRow | null,
   publicUrl: string,
   isFavourite: boolean,
 ): PromptListItem {
-  const { previewUrl, previewPosterUrl } = previewUrls(row, publicUrl);
+  // Fail loud, never a fake preview URL: the DB guarantees one main
+  // per prompt, so a missing main is corrupt data, not an empty card.
+  if (!main) {
+    throw new Error(`Prompt ${row.slug} has no main media`);
+  }
+  const preview = mediaUrls(main, publicUrl);
   return {
     id: row.id,
     slug: row.slug,
@@ -152,12 +207,10 @@ export function toPromptListItem(
     length: row.video_length_bucket,
     format: row.format,
     aspectRatio: row.aspect_ratio,
-    previewMediaType: row.preview_media_type,
-    previewStorageKey: row.preview_storage_key,
-    previewPosterKey: row.preview_poster_key,
-    previewUrl,
-    previewPosterUrl,
-    durationSeconds: row.duration_seconds,
+    // List items carry ONLY the main media: its type + URLs.
+    previewMediaType: main.media_type,
+    previewUrl: preview.url,
+    previewPosterUrl: preview.posterUrl,
     copiedCount: row.copied_count,
     status: row.status,
     createdAt: row.created_at,
@@ -166,16 +219,34 @@ export function toPromptListItem(
   };
 }
 
+export function toPromptListItem(
+  row: PromptDbRow,
+  mediaRows: readonly PromptMediaDbRow[],
+  publicUrl: string,
+  isFavourite: boolean,
+): PromptListItem {
+  return promptListFields(
+    row,
+    mainPromptMedia(mediaRows),
+    publicUrl,
+    isFavourite,
+  );
+}
+
 export function toPromptDetail(
   row: PromptDbRow,
   steps: readonly PromptStepDbRow[],
+  mediaRows: readonly PromptMediaDbRow[],
   publicUrl: string,
   isFavourite: boolean,
 ): PromptDetail {
-  const listItem = toPromptListItem(row, publicUrl, isFavourite);
+  const listItem = toPromptListItem(row, mediaRows, publicUrl, isFavourite);
   return {
     ...listItem,
     masterPrompt: row.master_prompt,
+    media: sortPromptMediaForDetail(mediaRows).map((mediaRow) =>
+      toPromptMedia(mediaRow, publicUrl),
+    ),
     steps: [...steps]
       .sort((a, b) => a.position - b.position)
       .map((step) => ({
@@ -197,13 +268,12 @@ export function escapeIlikePattern(input: string): string {
 
 /** Validates a merged prompt (existing row + patch) against the
  * cross-field invariants, so a PATCH cannot break them one field
- * at a time (e.g. format alone, without its aspect ratio). */
+ * at a time (e.g. format alone, without its aspect ratio). Media
+ * rules (exactly one main, video poster, prompts/ prefix) are
+ * enforced by the contracts media schema, not here. */
 export function validateMergedPrompt(input: {
   format?: PromptFormat;
   aspectRatio?: PromptAspectRatio;
-  previewMediaType?: PromptPreviewMediaType;
-  previewPosterKey?: string | null;
-  previewStorageKey?: string;
 }): string | null {
   if (
     input.format !== undefined &&
@@ -211,25 +281,6 @@ export function validateMergedPrompt(input: {
     !promptFormatMatchesAspectRatio(input.format, input.aspectRatio)
   ) {
     return 'Aspect ratio must match the format (vertical 9:16, horizontal 16:9)';
-  }
-  if (
-    input.previewMediaType === 'video' &&
-    (input.previewPosterKey === undefined || input.previewPosterKey === null)
-  ) {
-    return 'A video preview requires a poster key';
-  }
-  if (
-    input.previewStorageKey !== undefined &&
-    !isPromptLibraryStorageKey(input.previewStorageKey)
-  ) {
-    return 'Storage key must live under the prompts/ prefix in R2';
-  }
-  if (
-    input.previewPosterKey !== undefined &&
-    input.previewPosterKey !== null &&
-    !isPromptLibraryStorageKey(input.previewPosterKey)
-  ) {
-    return 'Poster key must live under the prompts/ prefix in R2';
   }
   return null;
 }
@@ -248,10 +299,6 @@ export type PromptCreateRow = {
   video_length_bucket: PromptLength;
   format: PromptFormat;
   aspect_ratio: PromptAspectRatio;
-  preview_media_type: PromptPreviewMediaType;
-  preview_storage_key: string;
-  preview_poster_key: string | null;
-  duration_seconds: number | null;
   status: PromptStatus;
 };
 
@@ -271,13 +318,25 @@ export function toPromptCreateRow(
     video_length_bucket: input.length,
     format: input.format,
     aspect_ratio: input.aspectRatio,
-    preview_media_type: input.previewMediaType,
-    preview_storage_key: input.previewStorageKey,
-    preview_poster_key: input.previewPosterKey ?? null,
-    duration_seconds: input.durationSeconds ?? null,
     status: input.status,
     created_by: createdBy,
   };
+}
+
+/** Media insert rows for a prompt (contracts input → snake_case). */
+export function toPromptMediaInsertRows(
+  media: readonly import('@fbuploadpro/contracts').PromptMediaItemInput[],
+  promptId: string,
+) {
+  return media.map((item) => ({
+    prompt_id: promptId,
+    position: item.position,
+    media_type: item.mediaType,
+    storage_key: item.storageKey,
+    poster_key: item.posterKey ?? null,
+    duration_seconds: item.durationSeconds ?? null,
+    is_main: item.isMain,
+  }));
 }
 
 export type PromptUpdateRow = Partial<
@@ -298,14 +357,6 @@ export function toPromptUpdateRow(
   if (input.length !== undefined) row.video_length_bucket = input.length;
   if (input.format !== undefined) row.format = input.format;
   if (input.aspectRatio !== undefined) row.aspect_ratio = input.aspectRatio;
-  if (input.previewMediaType !== undefined)
-    row.preview_media_type = input.previewMediaType;
-  if (input.previewStorageKey !== undefined)
-    row.preview_storage_key = input.previewStorageKey;
-  if (input.previewPosterKey !== undefined)
-    row.preview_poster_key = input.previewPosterKey ?? null;
-  if (input.durationSeconds !== undefined)
-    row.duration_seconds = input.durationSeconds ?? null;
   if (input.status !== undefined) row.status = input.status;
   if (input.slug !== undefined) row.slug = input.slug;
   return row;
