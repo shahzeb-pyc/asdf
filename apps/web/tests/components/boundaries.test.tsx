@@ -132,7 +132,7 @@ describe("not-found boundaries", () => {
 describe("loading boundaries", () => {
   const cases: Array<[string, React.ComponentType]> = [
     ["root", RootLoading],
-    ["tenant/home", TenantLoading],
+    ["tenant (shared neutral fallback)", TenantLoading],
     ["accounts", AccountsLoading],
     ["pages list", PagesLoading],
     ["page detail", PageDetailLoading],
@@ -151,6 +151,13 @@ describe("loading boundaries", () => {
     const { container } = render(<MediaLoading />);
     expect(skeletonCount(container)).toBeGreaterThanOrEqual(12);
     expect(container.querySelector(".aspect-video")).not.toBeNull();
+  });
+
+  it("root loading renders no card-like panel (it paints above child layouts)", () => {
+    const { container } = render(<RootLoading />);
+    // The old bordered bg-panel container read as a card on every tenant
+    // hard reload, while the tenant layout was still resolving above it.
+    expect(container.querySelector('[class*="bg-panel"]')).toBeNull();
   });
 });
 

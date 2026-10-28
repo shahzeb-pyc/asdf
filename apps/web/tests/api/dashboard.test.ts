@@ -12,8 +12,9 @@
  * PR-130-3 extends the home-page coverage to rendered content
  * (spec 130 §5.5 / T34): the §4.2 welcome copy verbatim, the
  * display-name → subdomain-slug fallback, the Card-primitive/token
- * construction with zero inline styles, and the loading geometry
- * matching the shipped home. No assertion below replaces or weakens
+ * construction with zero inline styles, and the shared loading fallback
+ * staying neutral (it must never mirror the home card, so no route
+ * shows another page's skeleton). No assertion below replaces or weakens
  * the PR-130-1 suite above it.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -226,30 +227,25 @@ describe('Tenant workspace home — preservation rebuild (spec 130 §5.5, PR-130
     expect(homeMetadata.title).toBe('Home');
   });
 
-  it('loading geometry matches the shipped home — same measure, same Card, skeleton rows at final geometry', async () => {
+  it('shared tenant loading is neutral — never the home card, so no route shows another page\'s skeleton', async () => {
     const pageJsx = await renderHome();
     const pageElements = collectElements(pageJsx);
     const loadingJsx = TenantLoading();
     const loadingElements = collectElements(loadingJsx);
-
-    // Same outer measure/padding: the skeleton stands where the card lands.
-    const pageOuter = pageJsx as AnyElement;
     const loadingOuter = loadingJsx as AnyElement;
-    expect(loadingOuter.props.className).toBe(pageOuter.props.className);
+
+    // The home page itself still ships its welcome Card unchanged.
+    expect(pageElements.some((el) => el.type === Card)).toBe(true);
+
+    // The shared fallback must NOT render that Card (or any page's cards):
+    // it previously mirrored the home card, so every route without its own
+    // loading.tsx showed the home card on reload.
+    expect(loadingElements.some((el) => el.type === Card)).toBe(false);
+    expect(String(loadingOuter.props.className)).not.toContain('max-w-3xl');
     expect(loadingOuter.props['aria-busy']).toBe('true');
 
-    // Same Card with the same geometry overrides.
-    const pageCard = pageElements.find((el) => el.type === Card);
-    const loadingCard = loadingElements.find((el) => el.type === Card);
-    expect(loadingCard).toBeDefined();
-    expect(loadingCard?.props.className).toBe(pageCard?.props.className);
-
-    // Rows mirror the home's content (heading line + welcome line and
-    // its wrapped second line); the heading skeleton is width-capped so
-    // it cannot overflow the card at 320px.
+    // Still a skeleton composition (the boundaries contract).
     const skeletons = loadingElements.filter((el) => el.type === Skeleton);
-    expect(skeletons).toHaveLength(3);
-    expect(skeletons[0]?.props.className).toContain('max-w-full');
-    expect(skeletons[1]?.props.className).toContain('w-full');
+    expect(skeletons.length).toBeGreaterThan(2);
   });
 });
