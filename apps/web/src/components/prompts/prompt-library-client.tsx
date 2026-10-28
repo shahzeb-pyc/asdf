@@ -11,6 +11,7 @@ import type {
 
 import { Button } from "@/components/shared/ui/button";
 import { EmptyState } from "@/components/shared/ui/empty-state";
+import { Skeleton } from "@/components/shared/ui/skeleton";
 
 import { PromptCardGrid } from "@/components/prompts/prompt-card-grid";
 import { PromptDetailSection } from "@/components/prompts/prompt-detail-section";
@@ -375,12 +376,35 @@ export function PromptLibraryClient({
           />
         )
       ) : loading ? (
-        <p
+        <section
           data-testid="prompt-library-loading"
-          className="bg-canvas px-4 pb-12 text-sm text-ink-sub sm:px-6"
+          aria-busy="true"
+          aria-live="polite"
+          aria-label="Loading prompts"
+          className="bg-canvas px-4 pb-12 sm:px-6 sm:pb-16"
         >
-          Loading prompts…
-        </p>
+          <span className="sr-only">Loading prompts</span>
+          <div className="mx-auto grid w-full grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {[0, 1, 2, 3].map((index) => (
+              <article
+                key={index}
+                data-testid="prompt-card-skeleton"
+                className="overflow-hidden rounded-2xl border border-line bg-panel shadow-card"
+              >
+                <Skeleton className="h-60 w-full rounded-none" />
+                <div className="p-4">
+                  <Skeleton className="h-5 w-3/4" />
+                  <Skeleton className="mt-2 h-4 w-full" />
+                  <Skeleton className="mt-2 h-4 w-5/6" />
+                  <Skeleton className="mt-3 h-4 w-2/3" />
+                  <div className="mt-3 border-t border-line pt-3">
+                    <Skeleton className="h-4 w-1/2" />
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
       ) : error ? (
         <div
           data-testid="prompt-library-error"

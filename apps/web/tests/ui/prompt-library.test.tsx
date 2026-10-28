@@ -227,6 +227,20 @@ describe("PromptLibraryClient (real API wiring)", () => {
     ).toBeTruthy();
   });
 
+  it("loading state shows 4 skeleton cards matching the B grid, no real card content", async () => {
+    mockFetch(() => new Promise(() => {}));
+    render(<PromptLibraryClient subdomain="test" />);
+    const loading = screen.getByTestId("prompt-library-loading");
+    expect(loading.getAttribute("aria-busy")).toBe("true");
+    expect(screen.getAllByTestId("prompt-card-skeleton")).toHaveLength(4);
+    expect(screen.queryByTestId("prompt-card")).toBeNull();
+    expect(loading.querySelector(".sm\\:grid-cols-2")).not.toBeNull();
+    expect(loading.querySelector(".lg\\:grid-cols-4")).not.toBeNull();
+    // Skeletons are muted blocks only: no fake title, count, or prompt text.
+    expect(loading.textContent ?? "").not.toContain("Puppy first bath");
+    expect(loading.textContent ?? "").not.toContain("Copied");
+  });
+
   it("shows a loud error and retries on API failure", async () => {
     let calls = 0;
     mockFetch(() => {
