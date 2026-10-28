@@ -3,6 +3,12 @@ import { resolveSocialRouteContext } from '@/lib/connect/session';
 import type { ConnectDbClient } from '@/lib/connect/persist';
 import { enforceIpRateLimit } from '@/lib/request-body';
 import {
+  lookupIdempotencyResult,
+  parseIdempotencyKeyHeader,
+  storeIdempotencyResult,
+  type IdempotencyScope,
+} from '@/lib/publishing/idempotency';
+import {
   fetchDestinationQueueContext,
   fetchDestinationQueueItem,
   updateDestinationQueueItem,
@@ -30,7 +36,45 @@ export async function handleDestinationPublishNow(
   if (context.errorResponse) {
     return context.errorResponse;
   }
-  const { client, workspaceId } = context;
+  const { session, client, workspaceId } = context;
+
+  // Idempotency: same contract as the enqueue route — a retry with
+  // a known key returns the stored acknowledgement without
+  // re-dispatching (see lib/publishing/idempotency.ts).
+  const idempotency = parseIdempotencyKeyHeader(request.headers);
+  if (idempotency.invalid) {
+    return NextResponse.json(
+      { error: 'INVALID_REQUEST', message: 'Idempotency-Key must be a UUID' },
+      { status: 400 }
+    );
+  }
+  const idempotencyScope: IdempotencyScope | null = idempotency.key
+    ? {
+        workspaceId,
+        userId: session.userId,
+        action: 'destination-publish-now',
+        key: idempotency.key,
+      }
+    : null;
+  if (idempotencyScope) {
+    try {
+      const replay = await lookupIdempotencyResult(client, idempotencyScope);
+      if (replay) {
+        return NextResponse.json(replay.body, {
+          status: replay.status,
+          headers: { 'Idempotency-Replayed': 'true' },
+        });
+      }
+    } catch {
+      return NextResponse.json(
+        {
+          error: 'IDEMPOTENCY_STORE_UNAVAILABLE',
+          message: 'Idempotency store unavailable',
+        },
+        { status: 500 }
+      );
+    }
+  }
 
   const destination = await fetchDestinationQueueContext(
     client,
@@ -82,6 +126,15 @@ export async function handleDestinationPublishNow(
     return NextResponse.json({ error: 'Failed to publish queue item' }, { status: 500 });
   }
 
+  if (idempotencyScope) {
+    await storeIdempotencyResult(client, idempotencyScope, {
+      status: 200,
+      body: {
+        success: true,
+        message: 'Item dispatched for immediate publishing',
+      },
+    });
+  }
   return NextResponse.json(
     { success: true, message: 'Item dispatched for immediate publishing' },
     { status: 200 }
