@@ -18,8 +18,19 @@ import { ImageIcon, XIcon } from 'lucide-react';
 
 import { Button } from '@/components/shared/ui/button';
 import { Textarea } from '@/components/shared/ui/textarea';
-import type { ComposerDraftBlock } from '@fbuploadpro/contracts';
+import {
+  composerTextLimitForType,
+  deriveComposerPostType,
+  type ComposerDraftBlock,
+} from '@fbuploadpro/contracts';
 import { blockTypeLabel } from './create-posts-types';
+
+const TYPE_NOUNS = {
+  text: 'text post',
+  image: 'image post',
+  reel: 'reel',
+  video: 'video post',
+} as const;
 
 export interface PostBlockProps {
   block: ComposerDraftBlock;
@@ -44,6 +55,20 @@ export function PostBlock({
   onRemove,
 }: Readonly<PostBlockProps>) {
   const typeLabel = blockTypeLabel(block.text, block.media);
+  // The limit follows the block's CURRENT derived type: attaching
+  // or removing media flips the type (and the limit with it). Text
+  // is never truncated here — over-limit input stays fully visible
+  // and is flagged, so the user trims it deliberately.
+  const derived = deriveComposerPostType({
+    text: block.text,
+    mediaType: block.media?.mediaType ?? null,
+    aspectRatio: block.media?.aspectRatio ?? null,
+    width: block.media?.width ?? null,
+    height: block.media?.height ?? null,
+  });
+  const limit = composerTextLimitForType(derived);
+  const count = block.text.length;
+  const over = count - limit;
 
   return (
     <div
@@ -83,6 +108,27 @@ export function PostBlock({
         onChange={(event) => onTextChange(event.target.value)}
         className="min-h-16 border-0 bg-transparent px-0 py-0 focus-visible:border-0"
       />
+
+      <div className="mt-1 flex items-center justify-between gap-2">
+        <span
+          data-testid="create-posts-block-char-count"
+          className={
+            over > 0 ? 'text-metadata text-brand-rose' : 'text-metadata text-ink-dim'
+          }
+        >
+          {count.toLocaleString('en-US')} / {limit.toLocaleString('en-US')}
+        </span>
+        {over > 0 ? (
+          <span
+            data-testid="create-posts-block-over-limit"
+            className="text-metadata text-brand-rose"
+          >
+            Over the {limit.toLocaleString('en-US')}-character{' '}
+            {TYPE_NOUNS[derived]} limit by {over.toLocaleString('en-US')}{' '}
+            characters.
+          </span>
+        ) : null}
+      </div>
 
       {block.media ? (
         <div className="mt-2 flex items-center gap-3 rounded-md border border-line bg-panel p-2">

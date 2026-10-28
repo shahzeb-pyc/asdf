@@ -36,6 +36,8 @@ import Image from 'next/image';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   ComposerDraftBlockSchema,
+  composerTextLimitForBlock,
+  deriveComposerPostType,
   DestinationEnqueueResponseSchema,
   toComposerEnqueueItem,
   type ComposerDraftBlock,
@@ -220,6 +222,39 @@ export function CreatePostsDialog({
 
   const handleAddAllToQueue = React.useCallback(async () => {
     if (readyBlocks.length === 0 || isQueueing) return;
+    // Over-limit blocks refuse with a message naming the block and
+    // its limit — never silently truncated, never silently dropped.
+    // Labels match what the block shows ("Post N", never the
+    // filtered ready-list position).
+    const typeNouns = {
+      text: 'text post',
+      image: 'image post',
+      reel: 'reel',
+      video: 'video post',
+    } as const;
+    const overLimit = blocks
+      .map((block, index) => {
+        const isLast = index === blocks.length - 1;
+        const label = isLast && isBlockEmpty(block) ? 'New post' : `Post ${index + 1}`;
+        const limit = composerTextLimitForBlock(block);
+        const over = block.text.length - limit;
+        return { block, label, limit, over };
+      })
+      .filter((entry) => !isBlockEmpty(entry.block) && entry.over > 0);
+    if (overLimit.length > 0) {
+      const first = overLimit[0];
+      const derived = deriveComposerPostType({
+        text: first.block.text,
+        mediaType: first.block.media?.mediaType ?? null,
+        aspectRatio: first.block.media?.aspectRatio ?? null,
+        width: first.block.media?.width ?? null,
+        height: first.block.media?.height ?? null,
+      });
+      toast.error(
+        `${first.label} is over the ${first.limit.toLocaleString('en-US')}-character ${typeNouns[derived]} limit by ${first.over.toLocaleString('en-US')} characters. Shorten it and try again.`
+      );
+      return;
+    }
     const parsed = ComposerDraftBlockSchema.array().safeParse(readyBlocks);
     if (!parsed.success) {
       toast.error('One of the posts is too long. Shorten it and try again.');
@@ -265,7 +300,7 @@ export function CreatePostsDialog({
     } finally {
       setIsQueueing(false);
     }
-  }, [readyBlocks, isQueueing, subdomain, page.id, queryClient, onOpenChange]);
+  }, [blocks, readyBlocks, isQueueing, subdomain, page.id, queryClient, onOpenChange]);
 
   const monogram = (page.pageName || 'P').slice(0, 2).toUpperCase();
 

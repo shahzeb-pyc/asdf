@@ -50,6 +50,61 @@ export function deriveComposerPostType(input: {
   return isVerticalVideo(input) ? 'reel' : 'video';
 }
 
+// ==========================================
+// Facebook text limits, per derived type
+// ==========================================
+// Sourcing note (2026-10-28): no official Meta documentation stating
+// these numbers as hard API caps could be reached — Meta's docs do
+// not publish a feed-post maximum, and the Reels figure below is
+// documented by third parties only. The numbers rest on broad
+// third-party consensus (63,206 for feed posts/photo captions,
+// stable for over a decade; 2,200 for Reels captions), NOT on a
+// Meta doc, and the worker's Facebook publish path validates no
+// length at all — so a limit change by Meta would surface at
+// publish time, not here. Lengths are counted with JS string
+// length (UTF-16 code units), the same measure the codebase
+// already uses for caption caps elsewhere.
+//
+//   - text / image / video posts → the feed-post limit, 63,206.
+//     Video posts share it: no separate video-post limit could be
+//     sourced, and the feed-post limit is the documented figure
+//     for feed publishing generally.
+//   - reels → the Reels caption limit, 2,200. Reels are a separate
+//     publishing API from plain video posts, so they get their own,
+//     much smaller cap — attaching a vertical video to a long
+//     caption drops that block's limit the moment its type flips.
+
+/** Facebook feed posts, photo captions, and video posts. */
+export const FACEBOOK_POST_TEXT_LIMIT = 63206;
+
+/** Facebook Reels captions. */
+export const FACEBOOK_REEL_CAPTION_LIMIT = 2200;
+
+/** The text limit for one derived post type. */
+export function composerTextLimitForType(type: ComposerDerivedType): number {
+  return type === 'reel' ? FACEBOOK_REEL_CAPTION_LIMIT : FACEBOOK_POST_TEXT_LIMIT;
+}
+
+/** The text limit for one draft block, from its CURRENT derived type. */
+export function composerTextLimitForBlock(block: {
+  text: string;
+  media: {
+    mediaType: 'image' | 'video' | null | undefined;
+    aspectRatio: string | null | undefined;
+    width?: number | null | undefined;
+    height?: number | null | undefined;
+  } | null;
+}): number {
+  const derived = deriveComposerPostType({
+    text: block.text,
+    mediaType: block.media?.mediaType ?? null,
+    aspectRatio: block.media?.aspectRatio ?? null,
+    width: block.media?.width ?? null,
+    height: block.media?.height ?? null,
+  });
+  return composerTextLimitForType(derived);
+}
+
 /**
  * One library item attached to a composer block. `captionText` is the
  * item's saved caption in the Media Library (null when it has none):
@@ -70,12 +125,31 @@ export const ComposerMediaSchema = z.object({
 });
 export type ComposerMedia = z.infer<typeof ComposerMediaSchema>;
 
-/** One post block in the composer dialogue. */
-export const ComposerDraftBlockSchema = z.object({
-  id: z.string().min(1),
-  text: z.string().max(5000),
-  media: ComposerMediaSchema.nullable(),
-});
+/**
+ * One post block in the composer dialogue. The text limit is NOT a
+ * flat cap: it follows the block's CURRENT derived type (see the
+ * limits above), so attaching or removing media — which flips the
+ * type between text/image/video/reel — moves the limit with it.
+ * Over-limit text is a validation failure, never a silent
+ * truncation: the UI keeps the full text and flags the block, and
+ * the queue path refuses it.
+ */
+export const ComposerDraftBlockSchema = z
+  .object({
+    id: z.string().min(1),
+    text: z.string(),
+    media: ComposerMediaSchema.nullable(),
+  })
+  .superRefine((block, ctx) => {
+    const limit = composerTextLimitForBlock(block);
+    if (block.text.length > limit) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Text exceeds the ${limit.toLocaleString('en-US')}-character limit`,
+        path: ['text'],
+      });
+    }
+  });
 export type ComposerDraftBlock = z.infer<typeof ComposerDraftBlockSchema>;
 
 /** The destination-enqueue fields one ready block maps to. */

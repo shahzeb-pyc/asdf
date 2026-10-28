@@ -10,6 +10,7 @@ import type { ConnectDbClient } from '@/lib/connect/persist';
 import {
   bodyTooLargeResponse,
   enforceIpRateLimit,
+  LARGE_JSON_BODY_LIMIT_BYTES,
   readJsonBody,
 } from '@/lib/request-body';
 import { calculateNextVacantSlot } from '@/lib/slot-scheduler';
@@ -55,7 +56,10 @@ export async function handleDestinationEnqueue(
   }
   const { session, client, workspaceId } = context;
 
-  const bodyResult = await readJsonBody(request);
+  // Large-body cap, not the 64 KiB default: a Facebook composer
+  // caption alone may legitimately approach 63,206 characters, so a
+  // max-length post would otherwise 413 before validation runs.
+  const bodyResult = await readJsonBody(request, LARGE_JSON_BODY_LIMIT_BYTES);
   if (!bodyResult.ok) {
     if (bodyResult.reason === 'too-large') return bodyTooLargeResponse();
     return NextResponse.json(
