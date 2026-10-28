@@ -16,18 +16,15 @@ import { Input } from "@/components/shared/ui/input";
  * pill, primary button, and category pill row were removed entirely
  * at Shahzeb's direction (no replacements).
  *
- * This is the whole page for this step: hero + search/filter row,
- * and nothing below it. No grid, no cards, no detail view, no copy
- * action, no demo media, no backend — those are later steps, decided
- * by Shahzeb. Audited 2026-10-28: no hidden or extra page content
- * exists below the search card — the dropdown option lists render
- * only when open (null when closed) and Clear all renders only when
- * active, so the blank area below the card on the live page is just
- * the empty page background after this section ends, not invisible
- * content. This section ends at the search card: there is no spacer,
- * empty wrapper, footer, or strip after it. The filters below are UI state only: selecting one
- * changes its trigger label and active state, and filters nothing
- * yet, because there is no content below to filter.
+ * This section is the hero + search/filter row. A mock cards grid
+ * now follows it on the page (see prompt-mock-card-grid.tsx), but
+ * no detail view, no copy action, no demo media, and no backend
+ * exist yet — those are later steps, decided by Shahzeb. The
+ * filters here are UI state only: selecting one changes its
+ * trigger label and active state, and filters nothing yet (not
+ * even the mock cards). The dropdown option lists render only
+ * when open (null when closed) and Clear all renders only when
+ * active.
  *
  * Design-system primitives + tokens only: no literal colours, no
  * inline styles. Filter triggers are plain text (no pill shape, no
@@ -40,18 +37,20 @@ import { Input } from "@/components/shared/ui/input";
  * Escape; it previously only toggled on its own trigger, with no
  * outside-click listener, so it stayed open.
  */
-type FilterKey = "category" | "tool" | "length" | "sort";
+type FilterKey = "category" | "tool" | "language" | "length" | "sort";
 
 const FILTER_OPTIONS: Record<FilterKey, readonly string[]> = {
   category: ["All", "Animals", "Comedy", "Cinematic", "UGC", "Tutorial", "Unboxing"],
   tool: ["All", "Dola AI", "Veo 3", "Google Flow"],
-  length: ["All", "Under 15s", "15-30s", "30s+"],
+  language: ["All", "English", "Urdu", "Hindi"],
+  length: ["All", "Under 15s", "15-30s", "30s+", "1 min+"],
   sort: ["Newest", "Most copied", "A to Z"],
 };
 
 const FILTER_LABELS: Record<FilterKey, string> = {
   category: "Category",
   tool: "Tool",
+  language: "Language",
   length: "Length",
   sort: "Sort",
 };
@@ -59,6 +58,7 @@ const FILTER_LABELS: Record<FilterKey, string> = {
 const FILTER_DEFAULTS: Record<FilterKey, string> = {
   category: "All",
   tool: "All",
+  language: "All",
   length: "All",
   sort: "Newest",
 };

@@ -20,7 +20,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { PromptTopSection } from "@/components/prompts/prompt-top-section";
 
 describe("PromptTopSection (step 1, filter row)", () => {
-  it("renders the new heading, subtitle, smaller search, and all four filter triggers", () => {
+  it("renders the new heading, subtitle, smaller search, and all five filter triggers", () => {
     render(<PromptTopSection />);
     expect(screen.getByRole("heading", { name: "Master Prompts Library" })).toBeTruthy();
     expect(
@@ -32,14 +32,16 @@ describe("PromptTopSection (step 1, filter row)", () => {
     expect(screen.getByTestId("prompt-top-section-filter-row")).toBeTruthy();
     expect(screen.getByRole("button", { name: /Category: All/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Tool: All/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Language: All/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Length: All/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Sort: Newest/ })).toBeTruthy();
-    // The search input and all four filter triggers live INSIDE the
+    // The search input and all five filter triggers live INSIDE the
     // styled search card, not as a bare row on the page.
     const card = screen.getByTestId("prompt-top-section-search-card");
     expect(card.contains(screen.getByPlaceholderText("Search prompts…"))).toBe(true);
     expect(card.contains(screen.getByRole("button", { name: /Category: All/ }))).toBe(true);
     expect(card.contains(screen.getByRole("button", { name: /Tool: All/ }))).toBe(true);
+    expect(card.contains(screen.getByRole("button", { name: /Language: All/ }))).toBe(true);
     expect(card.contains(screen.getByRole("button", { name: /Length: All/ }))).toBe(true);
     expect(card.contains(screen.getByRole("button", { name: /Sort: Newest/ }))).toBe(true);
     // Replica copy and the removed elements must be gone.
@@ -105,6 +107,9 @@ describe("PromptTopSection (step 1, filter row)", () => {
       screen.queryByTestId("prompt-top-section-filter-tool-options"),
     ).toBeNull();
     expect(
+      screen.queryByTestId("prompt-top-section-filter-language-options"),
+    ).toBeNull();
+    expect(
       screen.queryByTestId("prompt-top-section-filter-length-options"),
     ).toBeNull();
     expect(
@@ -156,6 +161,20 @@ describe("PromptTopSection (step 1, filter row)", () => {
     ).toBeTruthy();
   });
 
+  it("offers a Language filter and a 1 min+ length option", () => {
+    render(<PromptTopSection />);
+    fireEvent.click(screen.getByRole("button", { name: /Language: All/ }));
+    expect(screen.getByRole("option", { name: "English" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Urdu" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Hindi" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("option", { name: "Urdu" }));
+    expect(screen.getByRole("button", { name: /Language: Urdu/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Length: All/ }));
+    expect(screen.getByRole("option", { name: "1 min+" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("option", { name: "1 min+" }));
+    expect(screen.getByRole("button", { name: /Length: 1 min\+/ })).toBeTruthy();
+  });
+
   it("shows Clear all only when something is chosen, and Clear all resets everything", () => {
     render(<PromptTopSection />);
     expect(screen.queryByRole("button", { name: "Clear all" })).toBeNull();
@@ -168,6 +187,7 @@ describe("PromptTopSection (step 1, filter row)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Clear all" }));
     expect(screen.getByRole("button", { name: /Tool: All/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Category: All/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Language: All/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Sort: Newest/ })).toBeTruthy();
     expect(
       (screen.getByPlaceholderText("Search prompts…") as HTMLInputElement).value,
