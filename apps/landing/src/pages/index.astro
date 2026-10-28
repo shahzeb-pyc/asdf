@@ -1,0 +1,123 @@
+---
+import Layout from '../layouts/Layout.astro';
+
+const platforms = ['Facebook', 'Instagram', 'TikTok', 'YouTube', 'Threads', 'X'];
+
+const steps = [
+  { title: 'Create', text: 'Create your posts.' },
+  { title: 'Schedule', text: 'Schedule them to publish.' },
+  { title: 'Grow', text: 'Keep your pages posting.' },
+];
+
+const features = [
+  {
+    title: 'Post from anywhere',
+    text: 'Schedule from your phone or laptop; publishing runs in the cloud.',
+  },
+  {
+    title: 'Every platform, one dashboard',
+    text: 'Connect each account once, then run everything from a single place.',
+  },
+  {
+    title: 'Your accounts stay yours',
+    text: 'You sign in on each platform itself, so we never see your passwords.',
+  },
+];
+---
+
+<Layout
+  title="FBUploadPro — Your pages, posting themselves, 100% on the cloud"
+  description="Schedule reels and posts across Facebook, Instagram, TikTok, YouTube, Threads, and X — they go live while you sleep, even when your laptop is closed."
+>
+  <div class="mx-auto max-w-3xl px-5 pb-12">
+    <header class="flex items-center justify-between border-b border-line py-5">
+      <div class="text-lg font-bold tracking-tight">
+        FB<span class="text-gold">Upload</span>Pro
+      </div>
+      <a
+        href="https://app.fbuploadpro.com/login"
+        class="inline-flex min-h-11 items-center rounded-md border border-gold px-4 text-base font-semibold no-underline"
+      >
+        Sign in
+      </a>
+    </header>
+
+    <main>
+      <div class="py-14 text-center sm:py-14">
+        <p class="mb-6 text-base font-bold tracking-[0.18em] text-gold uppercase">
+          CREATE · SCHEDULE · GROW
+        </p>
+        <h1 class="mb-4 text-[29px] leading-tight font-bold tracking-tight sm:text-4xl">
+          Your pages, posting themselves —<br />
+          <span class="text-gold">100% on the cloud.</span>
+        </h1>
+        <p class="mx-auto mb-7 max-w-[620px] text-base text-ink-sub">
+          Schedule reels and posts across Facebook, Instagram, TikTok, YouTube, Threads, and X —
+          they go live while you sleep, even when your laptop is closed.
+        </p>
+        <div class="flex flex-wrap justify-center gap-3">
+          <a
+            href="https://app.fbuploadpro.com/signup"
+            class="inline-flex min-h-11 w-full items-center justify-center rounded-md border border-gold bg-gold px-5 text-base font-semibold text-night no-underline sm:w-auto"
+          >
+            Get started
+          </a>
+          <a
+            href="https://app.fbuploadpro.com/login"
+            class="inline-flex min-h-11 w-full items-center justify-center rounded-md border border-gold px-5 text-base font-semibold no-underline sm:w-auto"
+          >
+            Sign in
+          </a>
+        </div>
+      </div>
+
+      <ul class="m-0 flex flex-wrap justify-center gap-2.5 py-5 pl-0" aria-label="Platforms">
+        {
+          platforms.map((platform) => (
+            <li class="rounded-full border border-line bg-panel px-3.5 py-1.5 text-base text-ink-sub">
+              {platform}
+            </li>
+          ))
+        }
+      </ul>
+
+      <section class="pt-8" aria-labelledby="how-it-works">
+        <h2 id="how-it-works" class="mb-5 text-[22px] font-bold tracking-tight">How it works</h2>
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          {
+            steps.map((step) => (
+              <div class="rounded-lg border border-line bg-panel p-[18px]">
+                <h3 class="mb-1.5 text-base font-semibold">{step.title}</h3>
+                <p class="m-0 text-base text-ink-sub">{step.text}</p>
+              </div>
+            ))
+          }
+        </div>
+      </section>
+
+      <section class="pt-8" aria-labelledby="features">
+        <h2 id="features" class="mb-5 text-[22px] font-bold tracking-tight">Features</h2>
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          {
+            features.map((feature) => (
+              <div class="rounded-lg border border-line bg-panel p-[18px]">
+                <h3 class="mb-1.5 text-base font-semibold">{feature.title}</h3>
+                <p class="m-0 text-base text-ink-sub">{feature.text}</p>
+              </div>
+            ))
+          }
+        </div>
+      </section>
+    </main>
+
+    <footer
+      class="mt-10 flex flex-wrap items-center justify-between gap-5 border-t border-line pt-5 text-base text-ink-dim"
+    >
+      <span>FBUploadPro</span>
+      <nav class="flex gap-4" aria-label="Footer">
+        <a href="#" class="text-ink-sub no-underline hover:underline">Privacy</a>
+        <a href="#" class="text-ink-sub no-underline hover:underline">Terms</a>
+      </nav>
+    </footer>
+  </div>
+</Layout>
