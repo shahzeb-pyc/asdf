@@ -116,6 +116,46 @@ describe("PromptTopSection (step 1, filter row)", () => {
     expect(screen.queryAllByRole("heading").length).toBe(1);
   });
 
+  it("closes an open dropdown when clicking outside it, including on the search input", () => {
+    render(<PromptTopSection />);
+    fireEvent.click(screen.getByRole("button", { name: /Category: All/ }));
+    expect(
+      screen.getByTestId("prompt-top-section-filter-category-options"),
+    ).toBeTruthy();
+    // Clicking the heading — outside the open filter's trigger + dropdown.
+    fireEvent.mouseDown(screen.getByRole("heading", { name: "Master Prompts Library" }));
+    expect(
+      screen.queryByTestId("prompt-top-section-filter-category-options"),
+    ).toBeNull();
+    // Same for the search input, which is also outside the filter.
+    fireEvent.click(screen.getByRole("button", { name: /Tool: All/ }));
+    expect(
+      screen.getByTestId("prompt-top-section-filter-tool-options"),
+    ).toBeTruthy();
+    fireEvent.mouseDown(screen.getByPlaceholderText("Search prompts…"));
+    expect(
+      screen.queryByTestId("prompt-top-section-filter-tool-options"),
+    ).toBeNull();
+  });
+
+  it("closes an open dropdown on Escape, and switching filters still works", () => {
+    render(<PromptTopSection />);
+    fireEvent.click(screen.getByRole("button", { name: /Category: All/ }));
+    expect(
+      screen.getByTestId("prompt-top-section-filter-category-options"),
+    ).toBeTruthy();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(
+      screen.queryByTestId("prompt-top-section-filter-category-options"),
+    ).toBeNull();
+    // Switching to another filter still opens it after an outside close.
+    fireEvent.click(screen.getByRole("button", { name: /Category: All/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Tool: All/ }));
+    expect(
+      screen.getByTestId("prompt-top-section-filter-tool-options"),
+    ).toBeTruthy();
+  });
+
   it("shows Clear all only when something is chosen, and Clear all resets everything", () => {
     render(<PromptTopSection />);
     expect(screen.queryByRole("button", { name: "Clear all" })).toBeNull();

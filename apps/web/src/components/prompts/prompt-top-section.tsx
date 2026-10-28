@@ -35,7 +35,10 @@ import { Input } from "@/components/shared/ui/input";
  * an underline. Dropdowns are a simple accessible list in this
  * component rather than the shared Radix Menu primitive, so the
  * one-open-at-a-time behaviour and mobile overflow stay explicit
- * and testable without a portal.
+ * and testable without a portal. An open dropdown closes on a
+ * click/tap outside it (including on the search input) and on
+ * Escape; it previously only toggled on its own trigger, with no
+ * outside-click listener, so it stayed open.
  */
 type FilterKey = "category" | "tool" | "length" | "sort";
 
@@ -64,6 +67,36 @@ export function PromptTopSection() {
   const [query, setQuery] = React.useState("");
   const [values, setValues] = React.useState<Record<FilterKey, string>>(FILTER_DEFAULTS);
   const [openFilter, setOpenFilter] = React.useState<FilterKey | null>(null);
+  const filterWrappers = React.useRef<Partial<Record<FilterKey, HTMLDivElement | null>>>(
+    {},
+  );
+
+  // Close an open dropdown on a click/tap outside that filter's trigger
+  // + dropdown, or on Escape. Only the open filter's wrapper is checked,
+  // so clicking another filter's trigger still switches to it (the
+  // mousedown closes the old one, the trigger click then opens the new
+  // one), clicking the same trigger still toggles it, and clicking an
+  // option inside the open dropdown still selects it.
+  React.useEffect(() => {
+    if (openFilter === null) return undefined;
+    const handleOutside = (event: MouseEvent | TouchEvent) => {
+      const wrapper = filterWrappers.current[openFilter];
+      if (wrapper && !wrapper.contains(event.target as Node)) {
+        setOpenFilter(null);
+      }
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpenFilter(null);
+    };
+    document.addEventListener("mousedown", handleOutside);
+    document.addEventListener("touchstart", handleOutside);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handleOutside);
+      document.removeEventListener("touchstart", handleOutside);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [openFilter]);
 
   const isActive =
     query !== "" ||
@@ -116,7 +149,13 @@ export function PromptTopSection() {
           const changed = values[key] !== FILTER_DEFAULTS[key];
           const open = openFilter === key;
           return (
-            <div key={key} className="relative">
+            <div
+              key={key}
+              className="relative"
+              ref={(element) => {
+                filterWrappers.current[key] = element;
+              }}
+            >
               <button
                 type="button"
                 data-testid={`prompt-top-section-filter-${key}`}
