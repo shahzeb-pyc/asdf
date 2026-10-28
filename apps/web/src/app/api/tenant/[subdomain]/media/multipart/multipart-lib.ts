@@ -23,6 +23,16 @@ export interface MultipartSession {
   userId: string;
 }
 
+/**
+ * Server-side size cap for multipart uploads: 500 MB, identical to
+ * the single-PUT upload-url cap and the client-side staging bound.
+ * Must match the MultipartInitiateRequestSchema fileSize max in
+ * packages/contracts/src/domain/media.ts — the schema enforces the
+ * declared size at initiate, this constant enforces the actual
+ * uploaded bytes at complete.
+ */
+export const MULTIPART_MAX_FILE_SIZE_BYTES = 524288000;
+
 /** Session auth + tenant isolation, mirroring the upload-url route. */
 export async function authenticateMultipartRequest(
   request: NextRequest,

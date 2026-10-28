@@ -394,6 +394,7 @@ async function initiateMultipartUpload(
       buildTenantApiPath(subdomain, '/media/multipart/initiate'),
       {
         fileName: item.name,
+        fileSize: item.size,
         mimeType: item.mimeType,
         thumbnailMimeType: 'image/webp',
       },

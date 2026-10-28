@@ -1,12 +1,18 @@
 import { type NextRequest, NextResponse } from 'next/server';
-import { CompleteMultipartUploadCommand, ListPartsCommand } from '@aws-sdk/client-s3';
+import {
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
+  ListPartsCommand,
+} from '@aws-sdk/client-s3';
 import { readJsonBody, enforceIpRateLimit, bodyTooLargeResponse } from '@/lib/request-body';
+import { logServerError } from '@/lib/server-analytics';
 import { MultipartCompleteRequestSchema } from '@fbuploadpro/contracts';
 import {
   authenticateMultipartRequest,
   assertKeyOwnedBySession,
   getMultipartClient,
   isNoSuchUploadError,
+  MULTIPART_MAX_FILE_SIZE_BYTES,
   noSuchUploadResponse,
 } from '../multipart-lib';
 
@@ -68,6 +74,34 @@ export async function POST(
         {
           error: `Multipart upload incomplete: expected ${body.expectedPartCount} parts, found ${parts.length}`,
         },
+        { status: 400 }
+      );
+    }
+    // Backstop for the initiate-time cap: sum the ACTUAL uploaded
+    // bytes from ListParts (never the client-declared size). A client
+    // that declared a smaller size than it uploaded is rejected here
+    // and the upload is aborted, so no over-cap object is assembled.
+    const totalBytes = parts.reduce((sum, part) => sum + (part.Size ?? 0), 0);
+    if (totalBytes > MULTIPART_MAX_FILE_SIZE_BYTES) {
+      try {
+        await client.send(
+          new AbortMultipartUploadCommand({
+            Bucket: config.bucketName,
+            Key: body.key,
+            UploadId: body.uploadId,
+          })
+        );
+      } catch (abortError) {
+        // Best-effort cleanup only: the rejection below is the loud
+        // signal, and nothing is assembled either way. An orphaned
+        // upload left behind by a failed abort never becomes a file.
+        logServerError('[media/multipart/complete] Failed to abort over-cap upload', abortError, {
+          source: 'media-multipart-complete',
+          subdomain,
+        });
+      }
+      return NextResponse.json(
+        { error: 'Multipart upload exceeds the 500 MB limit' },
         { status: 400 }
       );
     }
