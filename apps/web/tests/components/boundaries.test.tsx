@@ -132,7 +132,7 @@ describe("not-found boundaries", () => {
 describe("loading boundaries", () => {
   const cases: Array<[string, React.ComponentType]> = [
     ["root", RootLoading],
-    ["tenant/home", TenantLoading],
+    ["tenant (shared neutral fallback)", TenantLoading],
     ["accounts", AccountsLoading],
     ["pages list", PagesLoading],
     ["page detail", PageDetailLoading],
