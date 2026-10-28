@@ -232,22 +232,61 @@ describe('QueuePanel', () => {
     expect(row.getAllByText(/Published/).length).toBeGreaterThan(0);
   });
 
-  it('renders flat rows with a type pill and no thumbnail box for text posts', async () => {
+  it('renders content-first rows: body-size caption, muted pill in the meta, attachment preview for media', async () => {
     renderPanel();
     await waitFor(() => expect(screen.getByTestId(`queue-row-${ID_A}`)).toBeTruthy());
     const rowA = within(screen.getByTestId(`queue-row-${ID_A}`));
-    // The pill carries the type; text posts get no thumbnail box.
-    expect(rowA.getByText('Text')).toBeTruthy();
+    // Text posts: the caption IS the row — body size, clamped to a few
+    // lines, no preview box, no thumbnail.
+    const captionA = rowA.getByText('First queued post');
+    expect(captionA.className).toContain('text-body');
+    expect(captionA.className).toContain('line-clamp-4');
+    expect(rowA.queryByTestId('queue-row-media-preview')).toBeNull();
     expect(rowA.queryByRole('img')).toBeNull();
-    // Meta no longer repeats the type: status + time only (the status
-    // lives in its own span, so the two halves assert separately).
+    // The type pill is small and muted in the meta line, not next to
+    // the caption competing with it; meta is status + time only.
+    expect(rowA.getByText('Text')).toBeTruthy();
     expect(rowA.getByText('Queued')).toBeTruthy();
     expect(rowA.getByText(/Est\./)).toBeTruthy();
-    // Media rows keep their real thumbnail.
+    // Media rows show a proper attachment preview below the caption.
     const rowB = within(screen.getByTestId(`queue-row-${ID_B}`));
-    expect(rowB.getByRole('img')).toBeTruthy();
+    expect(rowB.getByTestId('queue-row-media-preview')).toBeTruthy();
+    const previewImg = rowB.getByRole('img');
+    expect(previewImg.className).toContain('max-h-80');
+    expect(previewImg.className).toContain('object-contain');
     // Flat row, not a card panel.
     expect(screen.getByTestId(`queue-row-${ID_A}`).className).not.toContain('bg-panel');
+  });
+
+  it('renders a video attachment preview with the thumbnail as poster', async () => {
+    seed = [
+      item({
+        id: ID_A,
+        caption: '',
+        postFormat: 'reel',
+        status: 'queued',
+        media: {
+          id: 'media-2',
+          name: 'clip.mp4',
+          mediaType: 'video',
+          url: 'https://images.example.com/clip.mp4',
+          thumbnailUrl: 'https://images.example.com/clip-poster.jpg',
+          aspectRatio: '9:16',
+          durationSeconds: 30,
+        },
+      }),
+    ];
+    renderPanel();
+    await waitFor(() => expect(screen.getByTestId(`queue-row-${ID_A}`)).toBeTruthy());
+    const rowA = within(screen.getByTestId(`queue-row-${ID_A}`));
+    const preview = rowA.getByTestId('queue-row-media-preview');
+    const video = preview.querySelector('video');
+    expect(video).toBeTruthy();
+    expect(video?.getAttribute('src')).toBe('https://images.example.com/clip.mp4');
+    expect(video?.getAttribute('poster')).toBe('https://images.example.com/clip-poster.jpg');
+    expect(video?.className).toContain('max-h-80');
+    // No caption: the preview leads the row.
+    expect(rowA.queryByText('First queued post')).toBeNull();
   });
 
   it('opens the row menu to reach Edit and Delete', async () => {
