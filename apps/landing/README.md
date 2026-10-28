@@ -4,6 +4,12 @@ Standalone static marketing site for Cloudflare Pages. No backend, no
 database, no sign-in code, no pricing, no forms. It only links out to
 the separate web app for signup and login.
 
+Design: light theme, ChronoTask-style layout and feel only (no copy,
+logo, colour, image, or artwork copied from ChronoTask). Gold is the
+primary accent, used as a background with dark text so contrast passes.
+The hero dashboard is a CSS-built illustration, not a screenshot and
+not an AI or stock image; a real app screenshot can replace it later.
+
 ## Stack
 
 TypeScript + Astro, static output, Tailwind CSS. No Cloudflare adapter,

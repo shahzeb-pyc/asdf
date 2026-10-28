@@ -3,24 +3,36 @@ import Layout from '../layouts/Layout.astro';
 
 const platforms = ['Facebook', 'Instagram', 'TikTok', 'YouTube', 'Threads', 'X'];
 
+const queueRows = [
+  { platform: 'Facebook', type: 'Reel' },
+  { platform: 'Instagram', type: 'Post' },
+  { platform: 'YouTube', type: 'Video' },
+];
+
+const calendarDays = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
+const scheduledDays = [3, 9, 12];
+
 const steps = [
-  { title: 'Create', text: 'Create your posts.' },
-  { title: 'Schedule', text: 'Schedule them to publish.' },
-  { title: 'Grow', text: 'Keep your pages posting.' },
+  { number: '1', title: 'Create', text: 'Create your posts.' },
+  { number: '2', title: 'Schedule', text: 'Schedule them to publish.' },
+  { number: '3', title: 'Grow', text: 'Keep your pages posting.' },
 ];
 
 const features = [
   {
     title: 'Post from anywhere',
     text: 'Schedule from your phone or laptop; publishing runs in the cloud.',
+    icon: 'clock',
   },
   {
     title: 'Every platform, one dashboard',
     text: 'Connect each account once, then run everything from a single place.',
+    icon: 'grid',
   },
   {
     title: 'Your accounts stay yours',
     text: 'You sign in on each platform itself, so we never see your passwords.',
+    icon: 'lock',
   },
 ];
 ---
@@ -29,80 +41,190 @@ const features = [
   title="FBUploadPro — Your pages, posting themselves, 100% on the cloud"
   description="Schedule reels and posts across Facebook, Instagram, TikTok, YouTube, Threads, and X — they go live while you sleep, even when your laptop is closed."
 >
-  <div class="mx-auto max-w-3xl px-5 pb-12">
-    <header class="flex items-center justify-between border-b border-line py-5">
+  <div class="mx-auto max-w-6xl px-5 pb-12">
+    <header class="flex items-center justify-between gap-4 py-5">
       <div class="text-lg font-bold tracking-tight">
-        FB<span class="text-gold">Upload</span>Pro
+        FB<span class="text-gold-dark">Upload</span>Pro
       </div>
-      <a
-        href="https://app.fbuploadpro.com/login"
-        class="inline-flex min-h-11 items-center rounded-md border border-gold px-4 text-base font-semibold no-underline"
-      >
-        Sign in
-      </a>
+      <nav class="hidden items-center gap-6 sm:flex" aria-label="Main">
+        <a href="#features" class="min-h-11 inline-flex items-center text-base font-medium no-underline">
+          Features
+        </a>
+        <a href="#how-it-works" class="min-h-11 inline-flex items-center text-base font-medium no-underline">
+          How it works
+        </a>
+      </nav>
+      <div class="flex items-center gap-3">
+        <a
+          href="https://app.fbuploadpro.com/login"
+          class="hidden min-h-11 items-center rounded-md border border-line px-4 text-base font-semibold no-underline sm:inline-flex"
+        >
+          Sign in
+        </a>
+        <a
+          href="https://app.fbuploadpro.com/signup"
+          class="inline-flex min-h-11 items-center rounded-md bg-gold px-5 text-base font-semibold text-ink no-underline"
+        >
+          Get started
+        </a>
+      </div>
     </header>
 
     <main>
-      <div class="py-14 text-center sm:py-14">
-        <p class="mb-6 text-base font-bold tracking-[0.18em] text-gold uppercase">
+      <div class="mx-auto max-w-3xl py-14 text-center sm:py-20">
+        <p
+          class="mb-6 inline-flex min-h-11 items-center rounded-full bg-gold px-4 text-base font-bold tracking-wide text-ink uppercase"
+        >
           CREATE · SCHEDULE · GROW
         </p>
-        <h1 class="mb-4 text-[29px] leading-tight font-bold tracking-tight sm:text-4xl">
+        <h1 class="mb-5 text-4xl leading-tight font-bold tracking-tight sm:text-5xl lg:text-6xl">
           Your pages, posting themselves —<br />
-          <span class="text-gold">100% on the cloud.</span>
+          <span class="bg-gold px-2 text-ink">100% on the cloud.</span>
         </h1>
-        <p class="mx-auto mb-7 max-w-[620px] text-base text-ink-sub">
+        <p class="mx-auto mb-8 max-w-2xl text-lg text-ink-sub">
           Schedule reels and posts across Facebook, Instagram, TikTok, YouTube, Threads, and X —
           they go live while you sleep, even when your laptop is closed.
         </p>
         <div class="flex flex-wrap justify-center gap-3">
           <a
             href="https://app.fbuploadpro.com/signup"
-            class="inline-flex min-h-11 w-full items-center justify-center rounded-md border border-gold bg-gold px-5 text-base font-semibold text-night no-underline sm:w-auto"
+            class="inline-flex min-h-11 w-full items-center justify-center rounded-md bg-gold px-6 text-base font-semibold text-ink no-underline sm:w-auto"
           >
             Get started
           </a>
           <a
             href="https://app.fbuploadpro.com/login"
-            class="inline-flex min-h-11 w-full items-center justify-center rounded-md border border-gold px-5 text-base font-semibold no-underline sm:w-auto"
+            class="inline-flex min-h-11 w-full items-center justify-center rounded-md border border-line bg-white px-6 text-base font-semibold no-underline sm:w-auto"
           >
             Sign in
           </a>
         </div>
       </div>
 
-      <ul class="m-0 flex flex-wrap justify-center gap-2.5 py-5 pl-0" aria-label="Platforms">
+      <section aria-label="Product illustration" class="relative mx-auto max-w-4xl pb-8">
+        <p class="sr-only">
+          Designed illustration of a queue and calendar, not a screenshot.
+        </p>
+        <div class="rounded-2xl border border-line bg-white p-5 shadow-md sm:p-6">
+          <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
+            <p class="m-0 text-base font-semibold">Queue</p>
+            <p class="m-0 inline-flex min-h-11 items-center rounded-full bg-gold px-4 text-base font-semibold text-ink">
+              Scheduled
+            </p>
+          </div>
+          <div class="grid grid-cols-1 gap-6 sm:grid-cols-5">
+            <div class="sm:col-span-3">
+              <ul class="m-0 list-none p-0">
+                {
+                  queueRows.map((row) => (
+                    <li class="mb-3 flex min-h-11 flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-panel-sub px-4 py-2">
+                      <span class="text-base font-medium">{row.platform}</span>
+                      <span class="text-base text-ink-sub">{row.type}</span>
+                      <span class="text-base font-medium">Scheduled</span>
+                    </li>
+                  ))
+                }
+              </ul>
+            </div>
+            <div class="sm:col-span-2">
+              <p class="m-0 mb-3 text-base font-semibold">Calendar</p>
+              <div class="grid grid-cols-7 gap-1 text-center" aria-hidden="true">
+                {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day) => (
+                  <span class="py-2 text-sm font-medium text-ink-sub">{day}</span>
+                ))}
+                {
+                  calendarDays.map((day) => (
+                    <span
+                      class={
+                        scheduledDays.includes(day)
+                          ? 'flex min-h-11 items-center justify-center rounded-md bg-gold text-base font-semibold text-ink'
+                          : 'flex min-h-11 items-center justify-center rounded-md bg-panel-sub text-base text-ink-sub'
+                      }
+                    >
+                      {day}
+                    </span>
+                  ))
+                }
+              </div>
+            </div>
+          </div>
+        </div>
+        <div
+          class="absolute -top-4 right-4 hidden rounded-xl border border-line bg-white px-4 py-3 shadow-md sm:block"
+          aria-hidden="true"
+        >
+          <p class="m-0 text-base font-semibold">Scheduled</p>
+          <p class="m-0 text-base text-ink-sub">Ready to publish</p>
+        </div>
+        <div
+          class="absolute -bottom-4 left-4 hidden rounded-xl border border-line bg-white px-4 py-3 shadow-md sm:block"
+          aria-hidden="true"
+        >
+          <p class="m-0 text-base font-semibold">Calendar</p>
+          <p class="m-0 text-base text-ink-sub">Plan the week</p>
+        </div>
+        <p class="mt-8 text-center text-base text-ink-sub">
+          Illustration of the queue and calendar — not a screenshot.
+        </p>
+      </section>
+
+      <ul class="m-0 flex flex-wrap justify-center gap-2.5 py-8 pl-0" aria-label="Platforms">
         {
           platforms.map((platform) => (
-            <li class="rounded-full border border-line bg-panel px-3.5 py-1.5 text-base text-ink-sub">
+            <li class="rounded-full border border-line bg-panel-sub px-4 py-2 text-base text-ink-sub">
               {platform}
             </li>
           ))
         }
       </ul>
 
-      <section class="pt-8" aria-labelledby="how-it-works">
-        <h2 id="how-it-works" class="mb-5 text-[22px] font-bold tracking-tight">How it works</h2>
+      <section class="py-10 sm:py-14" aria-labelledby="features">
+        <h2 id="features" class="mb-8 text-2xl font-bold tracking-tight sm:text-3xl">Features</h2>
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
           {
-            steps.map((step) => (
-              <div class="rounded-lg border border-line bg-panel p-[18px]">
-                <h3 class="mb-1.5 text-base font-semibold">{step.title}</h3>
-                <p class="m-0 text-base text-ink-sub">{step.text}</p>
+            features.map((feature) => (
+              <div class="rounded-2xl border border-line bg-white p-6 shadow-sm">
+                <span class="mb-4 inline-flex h-11 w-11 items-center justify-center rounded-lg bg-gold-soft text-gold-dark" aria-hidden="true">
+                  {feature.icon === 'clock' && (
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                      <circle cx="12" cy="12" r="9" />
+                      <path d="M12 7v5l3 2" />
+                    </svg>
+                  )}
+                  {feature.icon === 'grid' && (
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                      <rect x="4" y="4" width="7" height="7" rx="1" />
+                      <rect x="13" y="4" width="7" height="7" rx="1" />
+                      <rect x="4" y="13" width="7" height="7" rx="1" />
+                      <rect x="13" y="13" width="7" height="7" rx="1" />
+                    </svg>
+                  )}
+                  {feature.icon === 'lock' && (
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                      <rect x="5" y="11" width="14" height="9" rx="1" />
+                      <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+                    </svg>
+                  )}
+                </span>
+                <h3 class="mb-2 text-lg font-semibold">{feature.title}</h3>
+                <p class="m-0 text-base text-ink-sub">{feature.text}</p>
               </div>
             ))
           }
         </div>
       </section>
 
-      <section class="pt-8" aria-labelledby="features">
-        <h2 id="features" class="mb-5 text-[22px] font-bold tracking-tight">Features</h2>
+      <section class="py-10 sm:py-14" aria-labelledby="how-it-works">
+        <h2 id="how-it-works" class="mb-8 text-2xl font-bold tracking-tight sm:text-3xl">How it works</h2>
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
           {
-            features.map((feature) => (
-              <div class="rounded-lg border border-line bg-panel p-[18px]">
-                <h3 class="mb-1.5 text-base font-semibold">{feature.title}</h3>
-                <p class="m-0 text-base text-ink-sub">{feature.text}</p>
+            steps.map((step) => (
+              <div class="rounded-2xl border border-line bg-white p-6 shadow-sm">
+                <span class="mb-4 inline-flex h-11 w-11 items-center justify-center rounded-full bg-gold text-base font-bold text-ink" aria-hidden="true">
+                  {step.number}
+                </span>
+                <h3 class="mb-2 text-lg font-semibold">{step.title}</h3>
+                <p class="m-0 text-base text-ink-sub">{step.text}</p>
               </div>
             ))
           }
@@ -110,13 +232,11 @@ const features = [
       </section>
     </main>
 
-    <footer
-      class="mt-10 flex flex-wrap items-center justify-between gap-5 border-t border-line pt-5 text-base text-ink-dim"
-    >
+    <footer class="mt-10 flex flex-wrap items-center justify-between gap-5 border-t border-line py-8 text-base text-ink-sub">
       <span>FBUploadPro</span>
       <nav class="flex gap-4" aria-label="Footer">
-        <a href="#" class="text-ink-sub no-underline hover:underline">Privacy</a>
-        <a href="#" class="text-ink-sub no-underline hover:underline">Terms</a>
+        <a href="#" class="min-h-11 inline-flex items-center no-underline hover:underline">Privacy</a>
+        <a href="#" class="min-h-11 inline-flex items-center no-underline hover:underline">Terms</a>
       </nav>
     </footer>
   </div>
