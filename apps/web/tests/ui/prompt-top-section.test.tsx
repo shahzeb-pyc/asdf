@@ -207,13 +207,13 @@ describe("PromptTopSection (step 1, filter row)", () => {
     const card = screen.getByTestId("prompt-top-section-search-card");
     expect(card.className).toContain("w-full");
     expect(card.className).toContain("mx-auto");
-    expect(card.className).toContain("max-w-3xl");
+    expect(card.className).toContain("max-w-4xl");
   });
 
-  it("lays out variant A: search on its own row, then a divider, then all six filter controls with Sort right-aligned", () => {
+  it("lays out variant A: search on its own row, then a divider, then all six filter controls in order Sort, My favorites, Clear all last", () => {
     render(<PromptTopSection />);
     const card = screen.getByTestId("prompt-top-section-search-card");
-    expect(card.className).toContain("max-w-3xl");
+    expect(card.className).toContain("max-w-4xl");
     // Card children, in order: search row, divider, filter row.
     expect(card.children.length).toBe(3);
     const searchRow = screen.getByTestId("prompt-top-section-search-row");
@@ -237,11 +237,12 @@ describe("PromptTopSection (step 1, filter row)", () => {
     expect(
       filterRow.contains(screen.getByTestId("prompt-top-section-filter-favorites")),
     ).toBe(true);
-    // Sort is pushed right: its wrapper carries ml-auto.
+    // Sort is NOT pushed right: its wrapper carries no ml-auto, and
+    // it sits after Length, with My favorites after it.
     const sortButton = screen.getByRole("button", { name: /Sort: Newest/ });
-    expect((sortButton.parentElement as HTMLElement).className).toContain("ml-auto");
+    expect((sortButton.parentElement as HTMLElement).className).not.toContain("ml-auto");
     // Order inside the filter row: Category, Tool, Language, Length,
-    // My favorites, Sort.
+    // Sort, My favorites.
     const buttons = Array.from(filterRow.querySelectorAll("button")).map(
       (button) => button.textContent ?? "",
     );
@@ -251,8 +252,8 @@ describe("PromptTopSection (step 1, filter row)", () => {
       "Tool",
       "Language",
       "Length",
-      "My favorites",
       "Sort",
+      "My favorites",
     ]) {
       const index = buttons.findIndex(
         (text, i) => i > lastIndex && text.includes(label),
@@ -260,6 +261,37 @@ describe("PromptTopSection (step 1, filter row)", () => {
       expect(index).toBeGreaterThan(lastIndex);
       lastIndex = index;
     }
+  });
+
+  it("keeps Clear all on the same filter row, last, in the reported case: Sort Most copied + My favorites active", () => {
+    render(<PromptTopSection />);
+    // Reproduce the reported case exactly: the longest Sort value,
+    // favorites on, other filters at "All" — the case where Clear all
+    // used to drop alone onto a new line.
+    fireEvent.click(screen.getByRole("button", { name: /Sort: Newest/ }));
+    fireEvent.click(screen.getByRole("option", { name: "Most copied" }));
+    expect(screen.getByRole("button", { name: /Sort: Most copied/ })).toBeTruthy();
+    fireEvent.click(screen.getByTestId("prompt-top-section-filter-favorites"));
+    const filterRow = screen.getByTestId("prompt-top-section-filter-row");
+    const clearAll = screen.getByRole("button", { name: "Clear all" });
+    // Clear all is inside the filter row (not a separate row) and is
+    // the last control in it, after Sort and My favorites.
+    expect(filterRow.contains(clearAll)).toBe(true);
+    const buttons = Array.from(filterRow.querySelectorAll("button"));
+    expect(buttons[buttons.length - 1]).toBe(clearAll);
+    const texts = buttons.map((button) => button.textContent ?? "");
+    const sortIndex = texts.findIndex((text) => text.includes("Sort: Most copied"));
+    const favoritesIndex = texts.findIndex((text) => text.includes("My favorites"));
+    const clearIndex = texts.findIndex((text) => text.includes("Clear all"));
+    expect(sortIndex).toBeGreaterThan(-1);
+    expect(favoritesIndex).toBeGreaterThan(sortIndex);
+    expect(clearIndex).toBeGreaterThan(favoritesIndex);
+    // NOTE (honest jsdom limit): jsdom cannot measure pixel widths,
+    // so this test asserts order and same-row membership, not that
+    // the row fits on one line in a browser. The one-line fit for
+    // this case comes from the card widening to max-w-4xl (see the
+    // width note in prompt-top-section.tsx) and must be confirmed
+    // by the live preview eyeball.
   });
 
   it("shows Clear all only when something is chosen, and Clear all resets everything", () => {

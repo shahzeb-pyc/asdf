@@ -25,7 +25,9 @@ import { Input } from "@/components/shared/ui/input";
  * variant A (Shahzeb's choice): row 1 is the search input on its
  * own full-width row; a subtle divider follows; row 2 is all six
  * filter controls on one row — Category, Tool, Language, Length,
- * My favorites, then Sort pushed to the right (ml-auto). The split
+ * Sort, then My favorites, then Clear all last when active. Sort
+ * is NOT pushed right: the previous ml-auto order (favorites, then
+ * Sort at the far right) is gone. The split
  * is the design, not flex-wrap running out of room: the previous
  * single wrapping row orphaned Length + favorites + Sort on a
  * second row by accident. The page wires its search and filters to
@@ -189,7 +191,7 @@ export function PromptTopSection(props: PromptTopSectionProps = {}) {
 
       <div
         data-testid="prompt-top-section-search-card"
-        className="mx-auto mt-10 w-full max-w-3xl rounded-2xl border border-line bg-panel p-3 shadow-card sm:p-4"
+        className="mx-auto mt-10 w-full max-w-4xl rounded-2xl border border-line bg-panel p-3 shadow-card sm:p-4"
       >
       <div
         data-testid="prompt-top-section-search-row"
@@ -209,6 +211,19 @@ export function PromptTopSection(props: PromptTopSectionProps = {}) {
         </label>
       </div>
       <div aria-hidden="true" className="my-3 border-t border-line" />
+      {/*
+        Card width: max-w-4xl (896px), not max-w-3xl. At 3xl the
+        worst case — Sort "Most copied" (the longest Sort value) +
+        My favorites active + Clear all visible, other filters at
+        "All" — measured in the user's screenshots to wrap Clear all
+        onto its own line: the controls+gaps total roughly 740px
+        against only 736px of content width at 3xl, so it missed by
+        a hair. At 4xl the content width is 864px, leaving roughly
+        120px of margin for that same case, so Clear all stays at
+        the end of the row. This is an ESTIMATE from label lengths,
+        not a pixel measurement: jsdom cannot measure layout, so
+        the live preview eyeball is the final proof.
+      */}
       <div
         data-testid="prompt-top-section-filter-row"
         className="flex flex-wrap items-center gap-x-3 gap-y-3"
@@ -217,10 +232,13 @@ export function PromptTopSection(props: PromptTopSectionProps = {}) {
           const changed = values[key] !== FILTER_DEFAULTS[key];
           const open = openFilter === key;
           // "My favorites" (variant A) sits in the same row, after
-          // Length and before Sort — plain text like the other
+          // Sort and before Clear all — plain text like the other
           // filters, gold + underlined when active, no pill, no
           // border, no button background. Tapping it toggles: on
           // shows only the user's favourited prompts, off shows all.
+          // It is rendered AFTER the Sort control (not before it),
+          // so the row order is Category, Tool, Language, Length,
+          // Sort, My favorites, Clear all. Sort is not pushed right.
           const favoritesToggle =
             key === "sort" ? (
               <button
@@ -244,9 +262,8 @@ export function PromptTopSection(props: PromptTopSectionProps = {}) {
             ) : null;
           return (
             <React.Fragment key={key}>
-              {favoritesToggle}
             <div
-              className={key === "sort" ? "relative ml-auto" : "relative"}
+              className="relative"
               ref={(element) => {
                 filterWrappers.current[key] = element;
               }}
@@ -296,6 +313,7 @@ export function PromptTopSection(props: PromptTopSectionProps = {}) {
                 </div>
               ) : null}
             </div>
+              {favoritesToggle}
             </React.Fragment>
           );
         })}
