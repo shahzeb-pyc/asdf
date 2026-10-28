@@ -8,7 +8,13 @@ import {
 import { handleDestinationEnqueue } from '@/app/api/tenant/[subdomain]/publishing/destination-queue/route';
 import { handlePublishNow } from '@/app/api/tenant/[subdomain]/publishing/queue/[itemId]/publish-now/route';
 import { handleDestinationPublishNow } from '@/app/api/tenant/[subdomain]/destinations/[destinationId]/queue/[itemId]/publish-now/route';
-import { parseIdempotencyKeyHeader } from '@/lib/publishing/idempotency';
+import { handleDestinationRetry } from '@/app/api/tenant/[subdomain]/destinations/[destinationId]/queue/[itemId]/retry/route';
+import {
+  IdempotencyStoreError,
+  lookupIdempotencyResult,
+  parseIdempotencyKeyHeader,
+  storeIdempotencyResult,
+} from '@/lib/publishing/idempotency';
 
 /**
  * Publishing idempotency keys: a retry with a known key returns
@@ -354,6 +360,147 @@ beforeEach(async () => {
   sessionCookie = `fbup_session=${token}`;
 });
 
+const failedItemId = '88888888-8888-4888-a888-888888888888';
+
+async function retryItem(itemId: string, key?: string) {
+  const req = new NextRequest(
+    `http://localhost:3000/api/tenant/acme/destinations/${fbDestinationId}/queue/${itemId}/retry`,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        cookie: sessionCookie,
+        ...(key ? { [IDEMPOTENCY_KEY_HEADER]: key } : {}),
+      },
+    }
+  );
+  return handleDestinationRetry(req, subdomain, fbDestinationId, itemId, dbClient);
+}
+
+/**
+ * Minimal chainable stand-in for the Supabase client, over the same
+ * in-memory rows, so the helper's Supabase branches (not just the
+ * legacy SQL branches) are exercised: lookup hit/miss/error, store,
+ * store error swallowed, prune hit/error.
+ */
+type SupabaseFailMode = 'none' | 'select-error' | 'upsert-error' | 'delete-error';
+
+class FakeSupabaseQuery {
+  private filters: Array<(r: IdempotencyRow) => boolean> = [];
+
+  constructor(
+    private store: { rows: IdempotencyRow[] },
+    private failMode: SupabaseFailMode
+  ) {}
+
+  select() {
+    return this;
+  }
+
+  delete() {
+    return this;
+  }
+
+  eq(column: string, value: unknown) {
+    this.filters.push((r) => (r as unknown as Record<string, unknown>)[column] === value);
+    return this;
+  }
+
+  gt(column: string, value: unknown) {
+    this.filters.push(
+      (r) =>
+        String((r as unknown as Record<string, unknown>)[column]) >
+        String(value)
+    );
+    return this;
+  }
+
+  lt(column: string, value: unknown) {
+    this.filters.push(
+      (r) =>
+        String((r as unknown as Record<string, unknown>)[column]) <
+        String(value)
+    );
+    return this;
+  }
+
+  async maybeSingle() {
+    if (this.failMode === 'select-error') {
+      return { data: null, error: new Error('boom') };
+    }
+    const row = this.store.rows.find((r) => this.filters.every((f) => f(r)));
+    return {
+      data: row
+        ? {
+            response_status: row.response_status,
+            response_body: row.response_body,
+          }
+        : null,
+      error: null,
+    };
+  }
+
+  async upsert(
+    row: Record<string, unknown>,
+    opts: { onConflict: string; ignoreDuplicates: boolean }
+  ) {
+    if (this.failMode === 'upsert-error') {
+      return { error: new Error('boom') };
+    }
+    const tuple = [
+      row['workspace_id'],
+      row['user_id'],
+      row['action'],
+      row['idempotency_key'],
+    ];
+    const exists = this.store.rows.some(
+      (r) =>
+        r.workspace_id === tuple[0] &&
+        r.user_id === tuple[1] &&
+        r.action === tuple[2] &&
+        r.idempotency_key === tuple[3]
+    );
+    if (!exists || !opts.ignoreDuplicates) {
+      this.store.rows.push({
+        workspace_id: String(row['workspace_id']),
+        user_id: String(row['user_id']),
+        action: String(row['action']),
+        idempotency_key: String(row['idempotency_key']),
+        response_status: Number(row['response_status']),
+        response_body: row['response_body'],
+        expires_at: String(row['expires_at']),
+      });
+    }
+    return { error: null };
+  }
+
+  // Thenable so `await` on the delete chain applies the delete.
+  then(
+    resolve: (value: { error: null }) => void,
+    reject: (reason: unknown) => void
+  ) {
+    if (this.failMode === 'delete-error') {
+      reject(new Error('boom'));
+      return;
+    }
+    this.store.rows = this.store.rows.filter(
+      (r) => !this.filters.every((f) => f(r))
+    );
+    resolve({ error: null });
+  }
+}
+
+class FakeSupabase {
+  constructor(
+    private store: { rows: IdempotencyRow[] },
+    private failMode: SupabaseFailMode = 'none'
+  ) {}
+
+  from() {
+    return new FakeSupabaseQuery(this.store, this.failMode);
+  }
+}
+
 const facebookTextPost = {
   platform: 'facebook',
   destinationId: fbDestinationId,
@@ -524,6 +671,142 @@ describe('publish-now idempotency', () => {
     expect(retry.status).toBe(200);
     expect(retry.headers.get('Idempotency-Replayed')).toBe('true');
     expect(await retry.json()).toEqual(firstBody);
+    expect(updateCallCount()).toBe(1);
+  });
+});
+
+describe('idempotency helper — Supabase client path', () => {
+  const scope = {
+    workspaceId,
+    userId,
+    action: 'destination-queue' as const,
+    key: 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+  };
+
+  it('replays a stored result and prunes expired rows on lookup', async () => {
+    const store = {
+      rows: [
+        {
+          workspace_id: workspaceId,
+          user_id: userId,
+          action: 'destination-queue',
+          idempotency_key: scope.key,
+          response_status: 201,
+          response_body: { ok: true },
+          expires_at: new Date(Date.now() + 3600_000).toISOString(),
+        },
+        {
+          workspace_id: workspaceId,
+          user_id: userId,
+          action: 'destination-queue',
+          idempotency_key: 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb',
+          response_status: 201,
+          response_body: {},
+          expires_at: new Date(Date.now() - 1000).toISOString(),
+        },
+      ] as IdempotencyRow[],
+    };
+    const client = new FakeSupabase(store);
+    const hit = await lookupIdempotencyResult(
+      client as unknown as Parameters<typeof lookupIdempotencyResult>[0],
+      scope
+    );
+    expect(hit).toEqual({ status: 201, body: { ok: true } });
+    // The prune on lookup removed the expired row but kept the live one.
+    expect(store.rows).toHaveLength(1);
+    expect(store.rows[0].idempotency_key).toBe(scope.key);
+  });
+
+  it('returns null on a Supabase miss', async () => {
+    const store = { rows: [] as IdempotencyRow[] };
+    const client = new FakeSupabase(store);
+    await expect(
+      lookupIdempotencyResult(
+        client as unknown as Parameters<typeof lookupIdempotencyResult>[0],
+        scope
+      )
+    ).resolves.toBeNull();
+  });
+
+  it('stores via Supabase and replays on a second lookup', async () => {
+    const store = { rows: [] as IdempotencyRow[] };
+    const client = new FakeSupabase(store);
+    const asClient = client as unknown as Parameters<
+      typeof lookupIdempotencyResult
+    >[0];
+    await storeIdempotencyResult(asClient, scope, { status: 201, body: { id: 'x' } });
+    await expect(lookupIdempotencyResult(asClient, scope)).resolves.toEqual({
+      status: 201,
+      body: { id: 'x' },
+    });
+  });
+
+  it('throws IdempotencyStoreError when the Supabase lookup fails', async () => {
+    const store = { rows: [] as IdempotencyRow[] };
+    const client = new FakeSupabase(store, 'select-error');
+    await expect(
+      lookupIdempotencyResult(
+        client as unknown as Parameters<typeof lookupIdempotencyResult>[0],
+        scope
+      )
+    ).rejects.toBeInstanceOf(IdempotencyStoreError);
+  });
+
+  it('swallows a Supabase store failure after success (never fails the response)', async () => {
+    const store = { rows: [] as IdempotencyRow[] };
+    const client = new FakeSupabase(store, 'upsert-error');
+    await expect(
+      storeIdempotencyResult(
+        client as unknown as Parameters<typeof storeIdempotencyResult>[0],
+        scope,
+        { status: 201, body: {} }
+      )
+    ).resolves.toBeUndefined();
+  });
+
+  it('fails loud when no store client is available at all', async () => {
+    // A bare object is neither a legacy client nor a Supabase client,
+    // and the test env has no admin client — so every store path must
+    // degrade explicitly: lookup throws, store resolves without storing.
+    const bare = {} as unknown as Parameters<typeof lookupIdempotencyResult>[0];
+    await expect(lookupIdempotencyResult(bare, scope)).rejects.toBeInstanceOf(
+      IdempotencyStoreError
+    );
+    await expect(
+      storeIdempotencyResult(
+        bare as unknown as Parameters<typeof storeIdempotencyResult>[0],
+        scope,
+        { status: 201, body: {} }
+      )
+    ).resolves.toBeUndefined();
+  });
+
+  it('survives a prune failure and still performs the lookup', async () => {
+    const store = { rows: [] as IdempotencyRow[] };
+    const client = new FakeSupabase(store, 'delete-error');
+    await expect(
+      lookupIdempotencyResult(
+        client as unknown as Parameters<typeof lookupIdempotencyResult>[0],
+        scope
+      )
+    ).resolves.toBeNull();
+  });
+});
+
+describe('destinations retry route — idempotency', () => {
+  it('replays the original retry result with no second state change', async () => {
+    db.queueItems.push(fullQueueItemRow({ id: failedItemId, status: 'failed' }));
+    const key = 'cccccccc-cccc-4ccc-cccc-cccccccccccc';
+    const first = await retryItem(failedItemId, key);
+    expect(first.status).toBe(200);
+    const firstBody = await first.json();
+    const updatesAfterFirst = updateCallCount();
+    expect(updatesAfterFirst).toBe(1);
+
+    const replay = await retryItem(failedItemId, key);
+    expect(replay.status).toBe(200);
+    expect(replay.headers.get('Idempotency-Replayed')).toBe('true');
+    expect(await replay.json()).toEqual(firstBody);
     expect(updateCallCount()).toBe(1);
   });
 });
