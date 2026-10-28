@@ -25,9 +25,56 @@ function getClient(): PostHog | null {
   return client;
 }
 
-function toErrorInfo(error: unknown): { message: string; stack?: string | undefined } {
+interface ErrorInfo {
+  message: string;
+  stack?: string | undefined;
+  /** Facebook Graph error code, when the thrown value carries one. */
+  code?: number | undefined;
+  subcode?: number | undefined;
+  /** Publish-flow step the failure was recorded at, when carried. */
+  step?: string | undefined;
+  httpStatus?: number | undefined;
+  fbtraceId?: string | undefined;
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+/**
+ * Structured fields a thrown value may carry. Only these named fields
+ * are picked up — never tokens, secrets, or request bodies. A plain
+ * object without a message no longer collapses to "[object Object]".
+ */
+function structuredFields(record: Record<string, unknown>): Omit<ErrorInfo, 'message' | 'stack'> {
+  return {
+    code: finiteNumber(record.code),
+    subcode: finiteNumber(record.subcode),
+    step: nonEmptyString(record.step),
+    // Discovery helpers attach `.status`; Graph calls attach `.httpStatus`.
+    httpStatus: finiteNumber(record.httpStatus) ?? finiteNumber(record.status),
+    fbtraceId: nonEmptyString(record.fbtraceId),
+  };
+}
+
+function toErrorInfo(error: unknown): ErrorInfo {
   if (error instanceof Error) {
-    return { message: error.message, stack: error.stack };
+    return {
+      message: error.message,
+      stack: error.stack,
+      ...structuredFields(error as unknown as Record<string, unknown>),
+    };
+  }
+  if (error !== null && typeof error === 'object') {
+    const record = error as Record<string, unknown>;
+    return {
+      message: nonEmptyString(record.message) ?? 'Unknown error',
+      ...structuredFields(record),
+    };
   }
   return { message: String(error) };
 }
@@ -50,6 +97,14 @@ export async function captureServerException(
       properties: {
         $exception_message: info.message,
         $exception_stack: info.stack,
+        // Structured diagnostics, when present — these survive even
+        // when the caller passes an already-converted info object,
+        // because toErrorInfo above re-extracts them from it.
+        ...(info.code !== undefined ? { graph_code: info.code } : {}),
+        ...(info.subcode !== undefined ? { graph_subcode: info.subcode } : {}),
+        ...(info.step !== undefined ? { publish_step: info.step } : {}),
+        ...(info.httpStatus !== undefined ? { http_status: info.httpStatus } : {}),
+        ...(info.fbtraceId !== undefined ? { fbtrace_id: info.fbtraceId } : {}),
         ...context,
       },
     });

@@ -68,9 +68,28 @@ export const PublishNowRequestSchema = z.object({
 });
 export type PublishNowRequest = z.infer<typeof PublishNowRequestSchema>;
 
+/** Step a Publish Now publish attempt reached, for failure diagnostics. */
+export const PublishNowStepSchema = z.enum([
+  'discover',
+  'feed',
+  'photos',
+  'videos',
+  'reel-start',
+  'reel-upload',
+  'reel-finish',
+  'media-fetch',
+  'publish',
+]);
+export type PublishNowStep = z.infer<typeof PublishNowStepSchema>;
+
 /** One per-page publish result. No public post URL is fabricated:
  * the codebase has no post-URL builder, so success carries the
- * Facebook post id only — the UI shows "Published", not a link. */
+ * Facebook post id only — the UI shows "Published", not a link.
+ *
+ * Diagnostic fields are optional + nullable so results recorded
+ * before diagnostics existed still validate. They carry only
+ * Facebook's error code/subcode, the step reached, the HTTP status,
+ * and Facebook's trace id — never any token, secret, or media URL. */
 export const PublishNowResultSchema = z.object({
   accountId: z.string().uuid(),
   fbPageId: z.string().min(1).max(100),
@@ -78,6 +97,11 @@ export const PublishNowResultSchema = z.object({
   status: z.enum(['published', 'failed']),
   postId: z.string().nullable(),
   reason: z.string().nullable(),
+  graphCode: z.number().int().optional().nullable(),
+  graphSubcode: z.number().int().optional().nullable(),
+  step: PublishNowStepSchema.optional().nullable(),
+  httpStatus: z.number().int().optional().nullable(),
+  fbtraceId: z.string().max(200).optional().nullable(),
 });
 export type PublishNowResult = z.infer<typeof PublishNowResultSchema>;
 

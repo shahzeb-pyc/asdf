@@ -51,27 +51,72 @@ const GRAPH_BASE_URL = 'https://graph.facebook.com/v26.0';
 const GRAPH_TIMEOUT_MS = 60_000;
 const MEDIA_FETCH_TIMEOUT_MS = 300_000;
 
+type PublishNowStep =
+  | 'discover'
+  | 'feed'
+  | 'photos'
+  | 'videos'
+  | 'reel-start'
+  | 'reel-upload'
+  | 'reel-finish'
+  | 'media-fetch'
+  | 'publish';
+
+const PUBLISH_NOW_STEPS: ReadonlySet<string> = new Set([
+  'discover',
+  'feed',
+  'photos',
+  'videos',
+  'reel-start',
+  'reel-upload',
+  'reel-finish',
+  'media-fetch',
+  'publish',
+]);
+
+/** Structured failure info for one publish attempt. Never carries a token. */
 interface GraphFailure {
   code?: number | undefined;
   subcode?: number | undefined;
   message: string;
+  step?: PublishNowStep | undefined;
+  httpStatus?: number | undefined;
+  fbtraceId?: string | undefined;
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
 function toGraphFailure(error: unknown): GraphFailure {
   const record = (error ?? {}) as Record<string, unknown>;
   const message =
-    typeof record.message === 'string' && record.message.length > 0
-      ? record.message
-      : 'Publishing failed. Please try again.';
-  const code =
-    typeof record.code === 'number' && Number.isFinite(record.code)
-      ? record.code
+    nonEmptyString(record.message) ?? 'Publishing failed. Please try again.';
+  const stepValue = record.step;
+  const step =
+    typeof stepValue === 'string' && PUBLISH_NOW_STEPS.has(stepValue)
+      ? (stepValue as PublishNowStep)
       : undefined;
-  const subcode =
-    typeof record.subcode === 'number' && Number.isFinite(record.subcode)
-      ? record.subcode
-      : undefined;
-  return { code, subcode, message };
+  return {
+    code: finiteNumber(record.code),
+    subcode: finiteNumber(record.subcode),
+    message,
+    step,
+    // Discovery helpers attach `.status`; Graph calls attach `.httpStatus`.
+    httpStatus: finiteNumber(record.httpStatus) ?? finiteNumber(record.status),
+    fbtraceId: nonEmptyString(record.fbtraceId),
+  };
+}
+
+/** Attach a publish step to an Error without changing its message. */
+function steppedError(message: string, step: PublishNowStep): Error {
+  const error = new Error(message);
+  (error as unknown as Record<string, unknown>).step = step;
+  return error;
 }
 
 /** Friendly, user-facing reason for a Graph failure (never a raw dump). */
@@ -87,7 +132,8 @@ function friendlyReason(error: unknown): string {
 async function graphPost(
   url: string,
   accessToken: string,
-  body: Record<string, unknown>
+  body: Record<string, unknown>,
+  step: PublishNowStep
 ): Promise<Record<string, unknown>> {
   const response = await fetch(url, {
     method: 'POST',
@@ -99,13 +145,21 @@ async function graphPost(
     signal: AbortSignal.timeout(GRAPH_TIMEOUT_MS),
   });
   const data = (await response.json().catch(() => ({}))) as {
-    error?: { message?: string; code?: number; error_subcode?: number };
+    error?: {
+      message?: string;
+      code?: number;
+      error_subcode?: number;
+      fbtrace_id?: string;
+    };
   } & Record<string, unknown>;
   if (!response.ok || data.error) {
     throw {
       message: data.error?.message ?? `Facebook returned ${response.status}.`,
       code: data.error?.code,
       subcode: data.error?.error_subcode,
+      step,
+      httpStatus: response.status,
+      fbtraceId: data.error?.fbtrace_id,
     };
   }
   return data;
@@ -120,96 +174,138 @@ async function publishToPage(params: {
 }): Promise<string> {
   const { pageId, pageToken, type, caption, mediaUrl } = params;
   const encodedPageId = encodeURIComponent(pageId);
-  if (type === 'text') {
-    const data = await graphPost(`${GRAPH_BASE_URL}/${encodedPageId}/feed`, pageToken, {
-      message: caption,
-    });
-    if (typeof data.id !== 'string' || !data.id) {
-      throw new Error('Facebook did not return a post id for the text post.');
+  // `step` tracks the phase in progress so a failure that carries no
+  // step of its own (a local throw, a fetch abort) is still reported
+  // with the phase it failed in. Graph failures already carry their
+  // step from graphPost and are left untouched.
+  let step: PublishNowStep = 'publish';
+  try {
+    if (type === 'text') {
+      step = 'feed';
+      const data = await graphPost(
+        `${GRAPH_BASE_URL}/${encodedPageId}/feed`,
+        pageToken,
+        { message: caption },
+        step
+      );
+      if (typeof data.id !== 'string' || !data.id) {
+        throw steppedError('Facebook did not return a post id for the text post.', step);
+      }
+      return data.id;
     }
-    return data.id;
-  }
-  if (type === 'image') {
-    if (!mediaUrl) throw new Error('An image is required for an image post.');
-    const data = await graphPost(
-      `${GRAPH_BASE_URL}/${encodedPageId}/photos`,
+    if (type === 'image') {
+      step = 'photos';
+      if (!mediaUrl) throw steppedError('An image is required for an image post.', step);
+      const data = await graphPost(
+        `${GRAPH_BASE_URL}/${encodedPageId}/photos`,
+        pageToken,
+        { url: mediaUrl, caption, published: true },
+        step
+      );
+      const postId = data.post_id ?? data.id;
+      if (typeof postId !== 'string' || !postId) {
+        throw steppedError('Facebook did not return a post id for the photo.', step);
+      }
+      return postId;
+    }
+    if (type === 'video') {
+      step = 'videos';
+      if (!mediaUrl) throw steppedError('A video is required for a video post.', step);
+      const data = await graphPost(
+        `${GRAPH_BASE_URL}/${encodedPageId}/videos`,
+        pageToken,
+        { file_url: mediaUrl, description: caption },
+        step
+      );
+      if (typeof data.id !== 'string' || !data.id) {
+        throw steppedError('Facebook did not return a post id for the video.', step);
+      }
+      return data.id;
+    }
+    // Reel: 3-phase upload, same shape as the worker's fb-client.
+    step = 'reel-start';
+    if (!mediaUrl) throw steppedError('A video is required for a reel.', step);
+    const start = await graphPost(
+      `${GRAPH_BASE_URL}/${encodedPageId}/video_reels`,
       pageToken,
-      { url: mediaUrl, caption, published: true }
+      { upload_phase: 'start' },
+      step
     );
-    const postId = data.post_id ?? data.id;
+    const videoId = start.video_id;
+    const uploadUrl = start.upload_url;
+    if (typeof videoId !== 'string' || !videoId || typeof uploadUrl !== 'string' || !uploadUrl) {
+      throw steppedError('Facebook did not start a reel upload session.', step);
+    }
+    step = 'media-fetch';
+    let videoRes: Response;
+    try {
+      videoRes = await fetch(mediaUrl, {
+        signal: AbortSignal.timeout(MEDIA_FETCH_TIMEOUT_MS),
+      });
+    } catch {
+      throw steppedError('The video could not be fetched for upload to Facebook.', step);
+    }
+    if (!videoRes.ok || !videoRes.body) {
+      throw steppedError('The video could not be fetched for upload to Facebook.', step);
+    }
+    step = 'reel-upload';
+    const uploadRes = await fetch(
+      uploadUrl,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${pageToken}`,
+          offset: '0',
+          'Content-Type': 'application/octet-stream',
+        },
+        body: videoRes.body,
+        duplex: 'half',
+      } as RequestInit
+    );
+    if (!uploadRes.ok) {
+      const uploadData = (await uploadRes.json().catch(() => ({}))) as {
+        error?: {
+          message?: string;
+          code?: number;
+          error_subcode?: number;
+          fbtrace_id?: string;
+        };
+      };
+      throw {
+        message: uploadData.error?.message ?? 'The reel upload to Facebook failed.',
+        code: uploadData.error?.code,
+        subcode: uploadData.error?.error_subcode,
+        step,
+        httpStatus: uploadRes.status,
+        fbtraceId: uploadData.error?.fbtrace_id,
+      };
+    }
+    step = 'reel-finish';
+    const finish = await graphPost(
+      `${GRAPH_BASE_URL}/${encodedPageId}/video_reels`,
+      pageToken,
+      {
+        upload_phase: 'finish',
+        video_state: 'PUBLISHED',
+        description: caption,
+        video_id: videoId,
+      },
+      step
+    );
+    const postId = finish.post_id ?? finish.id ?? finish.video_id ?? videoId;
     if (typeof postId !== 'string' || !postId) {
-      throw new Error('Facebook did not return a post id for the photo.');
+      throw steppedError('Facebook did not return a post id for the reel.', step);
     }
     return postId;
-  }
-  if (type === 'video') {
-    if (!mediaUrl) throw new Error('A video is required for a video post.');
-    const data = await graphPost(
-      `${GRAPH_BASE_URL}/${encodedPageId}/videos`,
-      pageToken,
-      { file_url: mediaUrl, description: caption }
-    );
-    if (typeof data.id !== 'string' || !data.id) {
-      throw new Error('Facebook did not return a post id for the video.');
+  } catch (error) {
+    // Attach the phase in progress only when the failure does not
+    // already carry a step (Graph failures from graphPost do).
+    const record = error as Record<string, unknown> | null;
+    if (record && typeof record === 'object' && typeof record.step !== 'string') {
+      (record as Record<string, unknown>).step = step;
     }
-    return data.id;
+    throw error;
   }
-  // Reel: 3-phase upload, same shape as the worker's fb-client.
-  if (!mediaUrl) throw new Error('A video is required for a reel.');
-  const start = await graphPost(
-    `${GRAPH_BASE_URL}/${encodedPageId}/video_reels`,
-    pageToken,
-    { upload_phase: 'start' }
-  );
-  const videoId = start.video_id;
-  const uploadUrl = start.upload_url;
-  if (typeof videoId !== 'string' || !videoId || typeof uploadUrl !== 'string' || !uploadUrl) {
-    throw new Error('Facebook did not start a reel upload session.');
-  }
-  const videoRes = await fetch(mediaUrl, {
-    signal: AbortSignal.timeout(MEDIA_FETCH_TIMEOUT_MS),
-  });
-  if (!videoRes.ok || !videoRes.body) {
-    throw new Error('The video could not be fetched for upload to Facebook.');
-  }
-  const uploadRes = await fetch(
-    uploadUrl,
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${pageToken}`,
-        offset: '0',
-        'Content-Type': 'application/octet-stream',
-      },
-      body: videoRes.body,
-      duplex: 'half',
-    } as RequestInit
-  );
-  if (!uploadRes.ok) {
-    const uploadData = (await uploadRes.json().catch(() => ({}))) as {
-      error?: { message?: string; code?: number; error_subcode?: number };
-    };
-    throw {
-      message: uploadData.error?.message ?? 'The reel upload to Facebook failed.',
-      code: uploadData.error?.code,
-      subcode: uploadData.error?.error_subcode,
-    };
-  }
-  const finish = await graphPost(
-    `${GRAPH_BASE_URL}/${encodedPageId}/video_reels`,
-    pageToken,
-    {
-      upload_phase: 'finish',
-      video_state: 'PUBLISHED',
-      description: caption,
-      video_id: videoId,
-    }
-  );
-  const postId = finish.post_id ?? finish.id ?? finish.video_id ?? videoId;
-  if (typeof postId !== 'string' || !postId) {
-    throw new Error('Facebook did not return a post id for the reel.');
-  }
-  return postId;
 }
 
 export async function POST(
@@ -332,6 +428,10 @@ export async function POST(
   // of parallel publish calls would invite Facebook rate limiting,
   // and a failure on one page must never block the rest.
   for (const target of targets) {
+    // Phase in progress outside publishToPage (account lookup and
+    // page discovery). publishToPage failures carry their own step
+    // and take precedence over this in the catch below.
+    let loopStep: PublishNowStep = 'publish';
     try {
       const { data: account, error: accountError } = await supabase
         .from('social_accounts')
@@ -353,6 +453,7 @@ export async function POST(
         throw new Error('Failed to decrypt account credentials.');
       }
       // Transient token: re-discovered now, used only in memory.
+      loopStep = 'discover';
       const pages = await fetchAllFacebookPages(
         accountToken,
         'id,name,category,tasks,access_token,followers_count,picture{url}'
@@ -378,11 +479,23 @@ export async function POST(
         status: 'published',
         postId,
         reason: null,
+        graphCode: null,
+        graphSubcode: null,
+        step: null,
+        httpStatus: null,
+        fbtraceId: null,
       });
     } catch (error) {
+      const failure = toGraphFailure(error);
+      const step = failure.step ?? loopStep;
       logServerError('[publish-now] Publish failed for a target', error, {
         source: 'publish-now',
         subdomain,
+        graphCode: failure.code ?? null,
+        graphSubcode: failure.subcode ?? null,
+        step,
+        httpStatus: failure.httpStatus ?? null,
+        fbtraceId: failure.fbtraceId ?? null,
       });
       results.push({
         accountId: target.accountId,
@@ -391,6 +504,11 @@ export async function POST(
         status: 'failed',
         postId: null,
         reason: friendlyReason(error),
+        graphCode: failure.code ?? null,
+        graphSubcode: failure.subcode ?? null,
+        step,
+        httpStatus: failure.httpStatus ?? null,
+        fbtraceId: failure.fbtraceId ?? null,
       });
     }
   }

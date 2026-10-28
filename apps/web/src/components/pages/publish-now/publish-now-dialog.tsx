@@ -1172,6 +1172,26 @@ export function PublishNowDialog({
                 <div className="flex max-h-85 flex-col overflow-y-auto border-t border-line">
                   {results.map((result) => {
                     const published = result.status === 'published';
+                    // Diagnostic line for failed rows only: only the
+                    // fields present are shown, never "undefined"/"null".
+                    const diagnosticParts: string[] = [];
+                    if (!published) {
+                      if (typeof result.graphCode === 'number') {
+                        diagnosticParts.push(`Facebook error #${result.graphCode}`);
+                      }
+                      if (typeof result.graphSubcode === 'number') {
+                        diagnosticParts.push(`subcode ${result.graphSubcode}`);
+                      }
+                      if (typeof result.step === 'string' && result.step.length > 0) {
+                        diagnosticParts.push(`step: ${result.step}`);
+                      }
+                      if (typeof result.httpStatus === 'number') {
+                        diagnosticParts.push(`HTTP ${result.httpStatus}`);
+                      }
+                      if (typeof result.fbtraceId === 'string' && result.fbtraceId.length > 0) {
+                        diagnosticParts.push(`trace: ${result.fbtraceId}`);
+                      }
+                    }
                     return (
                       <div
                         key={`${result.accountId}:${result.fbPageId}`}
@@ -1198,6 +1218,11 @@ export function PublishNowDialog({
                           >
                             {published ? 'Published' : (result.reason ?? 'Publishing failed.')}
                           </div>
+                          {diagnosticParts.length > 0 && (
+                            <div className="mt-0.5 break-all text-metadata text-ink-sub">
+                              {diagnosticParts.join(' · ')}
+                            </div>
+                          )}
                         </div>
                       </div>
                     );

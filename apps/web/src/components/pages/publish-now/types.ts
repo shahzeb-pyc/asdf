@@ -33,6 +33,24 @@ export interface PublishNowResultItem {
   status: 'published' | 'failed';
   postId: string | null;
   reason: string | null;
+  /** Failure diagnostics from the publish route (null/absent on success).
+   * Never carries a token or secret. */
+  graphCode?: number | null | undefined;
+  graphSubcode?: number | null | undefined;
+  step?:
+    | 'discover'
+    | 'feed'
+    | 'photos'
+    | 'videos'
+    | 'reel-start'
+    | 'reel-upload'
+    | 'reel-finish'
+    | 'media-fetch'
+    | 'publish'
+    | null
+    | undefined;
+  httpStatus?: number | null | undefined;
+  fbtraceId?: string | null | undefined;
 }
 
 /** Attached media in the single-post composer. */
