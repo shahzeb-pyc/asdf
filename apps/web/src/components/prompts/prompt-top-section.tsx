@@ -1,7 +1,12 @@
 "use client";
 
 import * as React from "react";
-import { CheckIcon, ChevronDownIcon, SearchIcon } from "lucide-react";
+import {
+  CheckIcon,
+  ChevronDownIcon,
+  HeartIcon,
+  SearchIcon,
+} from "lucide-react";
 
 import { Input } from "@/components/shared/ui/input";
 
@@ -24,6 +29,12 @@ import { Input } from "@/components/shared/ui/input";
  * The dropdown option lists render only
  * when open (null when closed) and Clear all renders only when
  * active.
+ *
+ * The hero section must NOT carry overflow-hidden: the filter
+ * dropdowns are absolutely positioned below the search card at the
+ * bottom of this section, and overflow-hidden clipped them so only
+ * ~2 options showed. No decorative element inside this section
+ * depends on clipping, so the class was removed entirely.
  *
  * Design-system primitives + tokens only: no literal colours, no
  * inline styles. Filter triggers are plain text (no pill shape, no
@@ -74,14 +85,29 @@ export type PromptTopSectionProps = {
   values?: Record<FilterKey, string>;
   onFilterChange?: (key: FilterKey, value: string) => void;
   onClearAll?: () => void;
+  /** "My favorites" toggle (variant A): plain text in the filter
+   * row, gold + underlined when active. Controlled by the page
+   * when given; standalone it keeps its own state. */
+  favoritesOnly?: boolean;
+  onFavoritesToggle?: () => void;
 };
 
 export function PromptTopSection(props: PromptTopSectionProps = {}) {
   const [internalQuery, setInternalQuery] = React.useState("");
   const [internalValues, setInternalValues] =
     React.useState<Record<FilterKey, string>>(FILTER_DEFAULTS);
+  const [internalFavoritesOnly, setInternalFavoritesOnly] =
+    React.useState(false);
   const query = props.query ?? internalQuery;
   const values = props.values ?? internalValues;
+  const favoritesOnly = props.favoritesOnly ?? internalFavoritesOnly;
+  const toggleFavorites = () => {
+    if (props.onFavoritesToggle) {
+      props.onFavoritesToggle();
+    } else {
+      setInternalFavoritesOnly((previous) => !previous);
+    }
+  };
   const setQuery = props.onQueryChange ?? setInternalQuery;
   const setFilterValue = (key: FilterKey, value: string) => {
     if (props.onFilterChange) {
@@ -124,6 +150,7 @@ export function PromptTopSection(props: PromptTopSectionProps = {}) {
 
   const isActive =
     query !== "" ||
+    favoritesOnly ||
     (Object.keys(FILTER_DEFAULTS) as FilterKey[]).some(
       (key) => values[key] !== FILTER_DEFAULTS[key],
     );
@@ -134,6 +161,7 @@ export function PromptTopSection(props: PromptTopSectionProps = {}) {
     } else {
       setQuery("");
       setInternalValues(FILTER_DEFAULTS);
+      setInternalFavoritesOnly(false);
     }
     setOpenFilter(null);
   };
@@ -141,7 +169,7 @@ export function PromptTopSection(props: PromptTopSectionProps = {}) {
   return (
     <section
       data-testid="prompt-top-section"
-      className="overflow-hidden bg-canvas px-4 py-12 sm:px-6 sm:py-16"
+      className="bg-canvas px-4 py-12 sm:px-6 sm:py-16"
     >
       <div className="mx-auto flex w-full flex-col items-center text-center">
         <h1 className="text-5xl font-bold leading-[1.05] tracking-tight text-ink sm:text-6xl">
@@ -176,9 +204,36 @@ export function PromptTopSection(props: PromptTopSectionProps = {}) {
         {(Object.keys(FILTER_OPTIONS) as FilterKey[]).map((key) => {
           const changed = values[key] !== FILTER_DEFAULTS[key];
           const open = openFilter === key;
+          // "My favorites" (variant A) sits in the same row, after
+          // Length and before Sort — plain text like the other
+          // filters, gold + underlined when active, no pill, no
+          // border, no button background. Tapping it toggles: on
+          // shows only the user's favourited prompts, off shows all.
+          const favoritesToggle =
+            key === "sort" ? (
+              <button
+                type="button"
+                data-testid="prompt-top-section-filter-favorites"
+                aria-pressed={favoritesOnly}
+                onClick={toggleFavorites}
+                className={
+                  favoritesOnly
+                    ? "flex items-center gap-1 text-sm font-semibold text-brand-gold underline underline-offset-4"
+                    : "flex items-center gap-1 text-sm font-semibold text-ink"
+                }
+              >
+                <HeartIcon
+                  aria-hidden
+                  className="size-4 shrink-0"
+                  fill={favoritesOnly ? "currentColor" : "none"}
+                />
+                My favorites
+              </button>
+            ) : null;
           return (
+            <React.Fragment key={key}>
+              {favoritesToggle}
             <div
-              key={key}
               className="relative"
               ref={(element) => {
                 filterWrappers.current[key] = element;
@@ -229,6 +284,7 @@ export function PromptTopSection(props: PromptTopSectionProps = {}) {
                 </div>
               ) : null}
             </div>
+            </React.Fragment>
           );
         })}
 

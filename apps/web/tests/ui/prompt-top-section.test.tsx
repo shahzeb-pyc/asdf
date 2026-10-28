@@ -71,6 +71,29 @@ describe("PromptTopSection (step 1, filter row)", () => {
     expect(screen.getByRole("button", { name: /Category: UGC/ })).toBeTruthy();
   });
 
+  it("does not clip filter dropdowns: the section has no overflow-hidden and all Category options render", () => {
+    render(<PromptTopSection />);
+    // Regression: the hero section used to carry overflow-hidden,
+    // which clipped the absolutely-positioned dropdowns at the
+    // section edge so only ~2 options showed. jsdom cannot measure
+    // clipping, so the test asserts the cause is gone and the full
+    // longest list (Category, 7 options) is in the DOM when open.
+    const section = screen.getByTestId("prompt-top-section");
+    expect(section.className).not.toContain("overflow-hidden");
+    fireEvent.click(screen.getByRole("button", { name: /Category: All/ }));
+    for (const option of [
+      "All",
+      "Animals",
+      "Comedy",
+      "Cinematic",
+      "UGC",
+      "Tutorial",
+      "Unboxing",
+    ]) {
+      expect(screen.getByRole("option", { name: option })).toBeTruthy();
+    }
+  });
+
   it("keeps only one dropdown open at a time", () => {
     render(<PromptTopSection />);
     fireEvent.click(screen.getByRole("button", { name: /Category: All/ }));

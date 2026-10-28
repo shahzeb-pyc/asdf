@@ -290,6 +290,20 @@ export type PromptListResponse = z.infer<typeof PromptListResponseSchema>;
  * silently truncates at 1,000 rows; this API never gets near it). */
 export const PromptListQuerySchema = z.object({
   search: z.string().trim().max(200).optional(),
+  // Query params arrive as strings, so "true"/"false" must be parsed
+  // explicitly — z.coerce.boolean would turn the string "false" into
+  // true. Anything other than true/"true"/false/"false"/absent is a 400.
+  favorites_only: z
+    .preprocess(
+      (value) =>
+        value === true || value === "true"
+          ? true
+          : value === false || value === "false" || value === undefined
+            ? false
+            : value,
+      z.boolean(),
+    )
+    .default(false),
   category: PromptCategorySchema.optional(),
   tool: PromptToolSchema.optional(),
   language: PromptLanguageSchema.optional(),

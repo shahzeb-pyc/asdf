@@ -168,6 +168,126 @@ describe("PromptLibraryClient (real API wiring)", () => {
     expect(screen.getByText("Copied 13 times")).toBeTruthy();
   });
 
+  it("favorites toggle passes favorites_only to the API, and toggling off removes it", async () => {
+    const fetchMock = mockFetch((url) =>
+      okJson({ items: [listItem], total: 1, page: 1, pageSize: 50 }),
+    );
+    render(<PromptLibraryClient subdomain="test" />);
+    await screen.findByTestId("prompt-card");
+    const toggle = screen.getByTestId("prompt-top-section-filter-favorites");
+    fireEvent.click(toggle);
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([url]) =>
+          String(url).includes("favorites_only=true"),
+        ),
+      ).toBe(true);
+    });
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    fetchMock.mockClear();
+    fireEvent.click(toggle);
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.length).toBeGreaterThan(0);
+    });
+    expect(
+      fetchMock.mock.calls.every(
+        ([url]) => !String(url).includes("favorites_only"),
+      ),
+    ).toBe(true);
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("Clear all clears the favorites toggle too", async () => {
+    const fetchMock = mockFetch((url) =>
+      okJson({ items: [listItem], total: 1, page: 1, pageSize: 50 }),
+    );
+    render(<PromptLibraryClient subdomain="test" />);
+    await screen.findByTestId("prompt-card");
+    fireEvent.click(screen.getByTestId("prompt-top-section-filter-favorites"));
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([url]) =>
+          String(url).includes("favorites_only=true"),
+        ),
+      ).toBe(true);
+    });
+    fetchMock.mockClear();
+    fireEvent.click(screen.getByTestId("prompt-top-section-clear-all"));
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.length).toBeGreaterThan(0);
+    });
+    expect(
+      fetchMock.mock.calls.every(
+        ([url]) => !String(url).includes("favorites_only"),
+      ),
+    ).toBe(true);
+  });
+
+  it("empty favorites state offers Show all prompts, which restores the full grid", async () => {
+    mockFetch((url) => {
+      if (String(url).includes("favorites_only=true")) {
+        return okJson({ items: [], total: 0, page: 1, pageSize: 50 });
+      }
+      return okJson({ items: [listItem], total: 1, page: 1, pageSize: 50 });
+    });
+    render(<PromptLibraryClient subdomain="test" />);
+    await screen.findByTestId("prompt-card");
+    fireEvent.click(screen.getByTestId("prompt-top-section-filter-favorites"));
+    expect(
+      await screen.findByTestId("prompt-library-favorites-empty"),
+    ).toBeTruthy();
+    expect(screen.getByText("No favorites yet.")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("prompt-library-show-all"));
+    expect(
+      await screen.findByRole("heading", { name: "Puppy first bath" }),
+    ).toBeTruthy();
+  });
+
+  it("signed-out favorites shows a sign-in note, never a fake favorites list", async () => {
+    mockFetch((url) => {
+      if (String(url).includes("favorites_only=true")) {
+        return { ok: false, status: 401, json: async () => ({}) } as Response;
+      }
+      return okJson({ items: [listItem], total: 1, page: 1, pageSize: 50 });
+    });
+    render(<PromptLibraryClient subdomain="test" />);
+    await screen.findByTestId("prompt-card");
+    fireEvent.click(screen.getByTestId("prompt-top-section-filter-favorites"));
+    expect(
+      await screen.findByTestId("prompt-library-favorites-signin"),
+    ).toBeTruthy();
+    expect(screen.getByText("Sign in to see your favorites.")).toBeTruthy();
+    expect(screen.queryByTestId("prompt-card")).toBeNull();
+  });
+
+  it("unfavouriting the last favorite while the filter is on shows the empty favorites state", async () => {
+    const favourited = { ...listItem, isFavourite: true };
+    mockFetch((url, init) => {
+      if (url.includes("/favourite")) {
+        return okJson({ slug: "puppy-first-bath", isFavourite: false });
+      }
+      if (String(url).includes("favorites_only=true")) {
+        return okJson({ items: [favourited], total: 1, page: 1, pageSize: 50 });
+      }
+      return okJson({ items: [listItem], total: 1, page: 1, pageSize: 50 });
+    });
+    render(<PromptLibraryClient subdomain="test" />);
+    await screen.findByTestId("prompt-card");
+    fireEvent.click(screen.getByTestId("prompt-top-section-filter-favorites"));
+    // Wait for the toggle refetch to land (favourited item, heart
+    // pressed) before clicking the heart — otherwise the pending
+    // refetch would restore the card after the local removal.
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("prompt-card-favourite").getAttribute("aria-pressed"),
+      ).toBe("true");
+    });
+    fireEvent.click(screen.getByTestId("prompt-card-favourite"));
+    expect(
+      await screen.findByTestId("prompt-library-favorites-empty"),
+    ).toBeTruthy();
+  });
+
   it("favourite toggle persists via the API and reverts on failure", async () => {
     const fetchMock = mockFetch((url, init) => {
       if (url.includes("/favourite")) {

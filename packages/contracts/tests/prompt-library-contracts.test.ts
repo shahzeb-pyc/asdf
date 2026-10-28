@@ -124,6 +124,21 @@ describe('prompt library contracts', () => {
     }
   });
 
+  it('parses favorites_only from query strings without turning "false" into true', () => {
+    const on = PromptListQuerySchema.safeParse({ favorites_only: 'true' });
+    expect(on.success).toBe(true);
+    if (on.success) expect(on.data.favorites_only).toBe(true);
+    const off = PromptListQuerySchema.safeParse({ favorites_only: 'false' });
+    expect(off.success).toBe(true);
+    if (off.success) expect(off.data.favorites_only).toBe(false);
+    const absent = PromptListQuerySchema.safeParse({});
+    expect(absent.success).toBe(true);
+    if (absent.success) expect(absent.data.favorites_only).toBe(false);
+    expect(
+      PromptListQuerySchema.safeParse({ favorites_only: 'yes' }).success,
+    ).toBe(false);
+  });
+
   it('list items never carry the master prompt or steps', () => {
     const detail = {
       id: '00000000-0000-4000-8000-000000000001',

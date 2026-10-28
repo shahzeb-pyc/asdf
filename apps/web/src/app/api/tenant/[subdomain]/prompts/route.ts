@@ -77,6 +77,31 @@ export async function GET(
       );
     }
 
+    // Favorites-only: restrict to rows the current user favourited.
+    // No new table — prompt_library_favourites is the source. An
+    // empty favourite list returns an empty page, never all prompts
+    // pretending to be favorites.
+    if (query.favorites_only) {
+      const { data: favRows, error: favListError } = await client
+        .from("prompt_library_favourites")
+        .select("prompt_id")
+        .eq("user_id", session.userId);
+      if (favListError) throw favListError;
+      const favouriteIds = (favRows ?? []).map(
+        (fav) => (fav as { prompt_id: string }).prompt_id,
+      );
+      if (favouriteIds.length === 0) {
+        const empty = PromptListResponseSchema.parse({
+          items: [],
+          total: 0,
+          page: query.page,
+          pageSize: query.pageSize,
+        });
+        return NextResponse.json(empty);
+      }
+      dbQuery = dbQuery.in("id", favouriteIds);
+    }
+
     if (query.sort === 'most_copied') {
       dbQuery = dbQuery.order('copied_count', { ascending: false });
     } else if (query.sort === 'a_to_z') {

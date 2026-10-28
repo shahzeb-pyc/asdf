@@ -78,6 +78,9 @@ export function PromptLibraryClient({
   const [query, setQuery] = React.useState("");
   const [filters, setFilters] =
     React.useState<Record<PromptFilterKey, string>>(FILTER_DEFAULTS);
+  const [favoritesOnly, setFavoritesOnly] = React.useState(false);
+  const [favoritesAuthRequired, setFavoritesAuthRequired] =
+    React.useState(false);
   const [items, setItems] = React.useState<readonly PromptListItem[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState(false);
@@ -90,9 +93,11 @@ export function PromptLibraryClient({
   const fetchList = React.useCallback(async () => {
     setLoading(true);
     setError(false);
+    setFavoritesAuthRequired(false);
     try {
       const params = new URLSearchParams();
       if (query.trim()) params.set("search", query.trim());
+      if (favoritesOnly) params.set("favorites_only", "true");
       const category = CATEGORY_MAP[filters.category];
       if (category) params.set("category", category);
       const tool = TOOL_MAP[filters.tool];
@@ -107,7 +112,17 @@ export function PromptLibraryClient({
       const response = await fetch(
         `/api/tenant/${subdomain}/prompts?${params.toString()}`,
       );
-      if (!response.ok) throw new Error(`List failed: ${response.status}`);
+      if (!response.ok) {
+        // Signed out + favorites on is not an error grid and never
+        // a fake list: show the plain sign-in note instead, with no
+        // silent fallback to all prompts.
+        if (response.status === 401 && favoritesOnly) {
+          setFavoritesAuthRequired(true);
+          setItems([]);
+          return;
+        }
+        throw new Error(`List failed: ${response.status}`);
+      }
       const body = (await response.json()) as PromptListResponse;
       setItems(body.items);
     } catch {
@@ -115,7 +130,7 @@ export function PromptLibraryClient({
     } finally {
       setLoading(false);
     }
-  }, [subdomain, query, filters, fetchNonce]);
+  }, [subdomain, query, filters, favoritesOnly, fetchNonce]);
 
   React.useEffect(() => {
     const timer = setTimeout(() => {
@@ -159,13 +174,19 @@ export function PromptLibraryClient({
     slug: string,
     currentlyFavourite: boolean,
   ) => {
-    // Optimistic update; revert loudly on failure.
+    // Optimistic update; revert loudly on failure. While the
+    // favorites filter is ON, unfavouriting removes the card from
+    // the grid immediately — otherwise the last unfavourited card
+    // would sit there stale instead of showing the empty state.
+    const previousItems = items;
     setItems((previous) =>
-      previous.map((item) =>
-        item.slug === slug
-          ? { ...item, isFavourite: !currentlyFavourite }
-          : item,
-      ),
+      favoritesOnly && currentlyFavourite
+        ? previous.filter((item) => item.slug !== slug)
+        : previous.map((item) =>
+            item.slug === slug
+              ? { ...item, isFavourite: !currentlyFavourite }
+              : item,
+          ),
     );
     try {
       const response = await fetch(
@@ -174,13 +195,7 @@ export function PromptLibraryClient({
       );
       if (!response.ok) throw new Error("Favourite failed");
     } catch {
-      setItems((previous) =>
-        previous.map((item) =>
-          item.slug === slug
-            ? { ...item, isFavourite: currentlyFavourite }
-            : item,
-        ),
-      );
+      setItems(previousItems);
     }
   };
 
@@ -200,10 +215,23 @@ export function PromptLibraryClient({
   const clearAll = () => {
     setQuery("");
     setFilters(FILTER_DEFAULTS);
+    setFavoritesOnly(false);
+    setFavoritesAuthRequired(false);
+  };
+
+  // "Show all prompts" restores the full grid: favorites off, and
+  // search + filters cleared, so no other active filter can keep
+  // the grid narrowed after leaving the favorites view.
+  const showAll = () => {
+    setFavoritesOnly(false);
+    setQuery("");
+    setFilters(FILTER_DEFAULTS);
+    setFavoritesAuthRequired(false);
   };
 
   const isActive =
     query !== "" ||
+    favoritesOnly ||
     (Object.keys(FILTER_DEFAULTS) as PromptFilterKey[]).some(
       (key) => filters[key] !== FILTER_DEFAULTS[key],
     );
@@ -218,6 +246,10 @@ export function PromptLibraryClient({
           setFilters((previous) => ({ ...previous, [key]: value }))
         }
         onClearAll={clearAll}
+        favoritesOnly={favoritesOnly}
+        onFavoritesToggle={() =>
+          setFavoritesOnly((previous) => !previous)
+        }
       />
       {selectedSlug ? (
         detailLoading ? (
@@ -275,15 +307,49 @@ export function PromptLibraryClient({
             Retry
           </button>
         </div>
-      ) : items.length === 0 ? (
-        <p
-          data-testid="prompt-library-empty"
-          className="bg-canvas px-4 pb-12 text-sm text-ink-sub sm:px-6"
+      ) : favoritesOnly && favoritesAuthRequired ? (
+        <div
+          data-testid="prompt-library-favorites-signin"
+          className="bg-canvas px-4 pb-12 sm:px-6"
         >
-          {isActive
-            ? "No prompts match your search. Try clearing the filters."
-            : "No prompts yet."}
-        </p>
+          <p className="text-sm text-ink-sub">
+            Sign in to see your favorites.
+          </p>
+          <button
+            type="button"
+            data-testid="prompt-library-show-all"
+            onClick={showAll}
+            className="mt-3 text-sm font-semibold text-brand-gold"
+          >
+            Show all prompts
+          </button>
+        </div>
+      ) : items.length === 0 ? (
+        favoritesOnly ? (
+          <div
+            data-testid="prompt-library-favorites-empty"
+            className="bg-canvas px-4 pb-12 sm:px-6"
+          >
+            <p className="text-sm text-ink-sub">No favorites yet.</p>
+            <button
+              type="button"
+              data-testid="prompt-library-show-all"
+              onClick={showAll}
+              className="mt-3 text-sm font-semibold text-brand-gold"
+            >
+              Show all prompts
+            </button>
+          </div>
+        ) : (
+          <p
+            data-testid="prompt-library-empty"
+            className="bg-canvas px-4 pb-12 text-sm text-ink-sub sm:px-6"
+          >
+            {isActive
+              ? "No prompts match your search. Try clearing the filters."
+              : "No prompts yet."}
+          </p>
+        )
       ) : (
         <PromptCardGrid
           items={items}
