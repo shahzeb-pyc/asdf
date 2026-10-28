@@ -19,7 +19,13 @@ import { Input } from "@/components/shared/ui/input";
  * This is the whole page for this step: hero + search/filter row,
  * and nothing below it. No grid, no cards, no detail view, no copy
  * action, no demo media, no backend — those are later steps, decided
- * by Shahzeb. The filters below are UI state only: selecting one
+ * by Shahzeb. Audited 2026-10-28: no hidden or extra page content
+ * exists below the search card — the dropdown option lists render
+ * only when open (null when closed) and Clear all renders only when
+ * active, so the blank area below the card on the live page is just
+ * the empty page background after this section ends, not invisible
+ * content. This section ends at the search card: there is no spacer,
+ * empty wrapper, footer, or strip after it. The filters below are UI state only: selecting one
  * changes its trigger label and active state, and filters nothing
  * yet, because there is no content below to filter.
  *

@@ -81,6 +81,41 @@ describe("PromptTopSection (step 1, filter row)", () => {
     ).toBeTruthy();
   });
 
+  it("contains exactly three things and nothing hidden below the search card", () => {
+    const { container } = render(<PromptTopSection />);
+    // One section only, with exactly two children: the hero block and
+    // the search card. Nothing — visible or hidden — follows the card.
+    const sections = container.querySelectorAll("section");
+    expect(sections.length).toBe(1);
+    const section = screen.getByTestId("prompt-top-section");
+    expect(section.children.length).toBe(2);
+    const hero = section.children[0];
+    expect(hero.children.length).toBe(2);
+    expect(hero.children[0].tagName).toBe("H1");
+    expect(hero.children[1].tagName).toBe("P");
+    const card = screen.getByTestId("prompt-top-section-search-card");
+    expect(section.children[1]).toBe(card);
+    // No hidden content waiting below: dropdowns render only when open,
+    // Clear all renders only when active, and no other section, footer,
+    // strip, or "Coming soon" text exists anywhere in the page content.
+    expect(
+      screen.queryByTestId("prompt-top-section-filter-category-options"),
+    ).toBeNull();
+    expect(
+      screen.queryByTestId("prompt-top-section-filter-tool-options"),
+    ).toBeNull();
+    expect(
+      screen.queryByTestId("prompt-top-section-filter-length-options"),
+    ).toBeNull();
+    expect(
+      screen.queryByTestId("prompt-top-section-filter-sort-options"),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Clear all" })).toBeNull();
+    expect(container.querySelector("footer")).toBeNull();
+    expect(screen.queryByText("Coming soon")).toBeNull();
+    expect(screen.queryAllByRole("heading").length).toBe(1);
+  });
+
   it("shows Clear all only when something is chosen, and Clear all resets everything", () => {
     render(<PromptTopSection />);
     expect(screen.queryByRole("button", { name: "Clear all" })).toBeNull();
