@@ -413,7 +413,7 @@ export function MediaLibraryPicker({
   }, [itemsQuery, foldersQuery]);
 
   // Selection: the library's own model (checkbox + shift-range).
-  // Single mode previews first (P7): any select/preview gesture
+  // Single mode previews first (P7): every select/preview gesture
   // opens the library preview with an "Attach this file" button
   // instead of attaching instantly.
   const handleToggleSelect = React.useCallback(
@@ -1038,10 +1038,10 @@ export function MediaLibraryPicker({
                           <TableHead className="hidden sm:table-cell">
                             Caption
                           </TableHead>
-                          <TableHead className="hidden w-[84px] text-right sm:table-cell">
+                          <TableHead className="hidden w-21 text-right sm:table-cell">
                             Size
                           </TableHead>
-                          <TableHead className="w-[120px] text-right">
+                          <TableHead className="w-30 text-right">
                             Actions
                           </TableHead>
                         </TableRow>

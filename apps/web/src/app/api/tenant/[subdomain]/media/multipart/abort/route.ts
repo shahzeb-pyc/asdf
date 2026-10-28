@@ -56,8 +56,12 @@ export async function POST(
         UploadId: body.uploadId,
       })
     );
-  } catch {
-    // Best effort: already gone is fine.
+  } catch (err) {
+    // Best effort: already gone is fine, and the answer stays ok —
+    // but the failure is logged server-side instead of swallowed,
+    // so a broken abort path is observable (same convention as the
+    // media delete routes' storage-error logging).
+    console.error('Multipart abort failed (best effort, continuing):', err);
   }
   return NextResponse.json({ ok: true });
 }

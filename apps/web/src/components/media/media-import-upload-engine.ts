@@ -569,9 +569,12 @@ export async function abortMultipartUpload(
       { key: mediaKey, uploadId },
       { schema: z.object({ ok: z.boolean() }) }
     );
-  } catch {
+  } catch (err) {
     // Best effort only — R2 aborts incomplete multipart uploads
-    // on its own lifecycle; a failed abort must never surface.
+    // on its own lifecycle; a failed abort must never surface to
+    // the user, but it is logged instead of swallowed so a broken
+    // abort path is observable in devtools.
+    console.warn('Multipart abort request failed (best effort, ignoring):', err);
   }
 }
 
