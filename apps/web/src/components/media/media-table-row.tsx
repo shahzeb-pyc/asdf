@@ -34,6 +34,15 @@ export interface MediaTableRowProps {
     | ((mediaId: string, options?: { shiftKey?: boolean | undefined } | undefined) => void)
     | undefined;
   onPreview?: ((item: MediaItemResponse) => void) | undefined;
+  /**
+   * Optional override for the thumbnail button's click action. When set,
+   * the thumbnail calls this instead of onPreview; the dedicated Preview
+   * action still calls onPreview. The Media Library picker passes its
+   * selection toggle here in multi mode so a thumbnail tap selects
+   * instead of previewing. Unset everywhere else, so the library page
+   * is unchanged.
+   */
+  onTileClick?: ((item: MediaItemResponse) => void) | undefined;
   onUpdateCaption?:
     | ((mediaId: string, captionText: string) => Promise<void> | void)
     | undefined;
@@ -64,6 +73,7 @@ export function MediaTableRow({
   onNavigateFolder,
   onToggleSelect,
   onPreview,
+  onTileClick,
   onUpdateCaption,
   onMoveRequest,
   onDeleteRequest,
@@ -131,7 +141,7 @@ export function MediaTableRow({
       <TableCell className="w-12 px-0">
         <button
           type="button"
-          onClick={() => onPreview?.(item)}
+          onClick={() => (onTileClick ?? onPreview)?.(item)}
           aria-label={`Preview ${item.name}`}
           className="flex h-10 w-11 cursor-pointer items-center justify-center overflow-hidden rounded-xs border border-line bg-subtle p-0 text-ink-dim outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold"
         >

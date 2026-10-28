@@ -32,18 +32,34 @@ function MenuTrigger({ ...props }: React.ComponentProps<typeof DropdownMenuPrimi
 
 function MenuContent({
   className,
+  layer,
   sideOffset = 4,
   collisionPadding = 8,
   ...props
-}: React.ComponentProps<typeof DropdownMenuPrimitive.Content>) {
+}: React.ComponentProps<typeof DropdownMenuPrimitive.Content> & {
+  /**
+   * Stacking layer for the portalled panel. Default (undefined) keeps the
+   * current z-popover behaviour. Pass "overlayTop" when the menu lives
+   * inside a dialog (z-dialog 9500 > z-popover 9000), otherwise the panel
+   * renders underneath the dialog and is invisible/unclickable — the same
+   * convention as the shared Popover's overlayTop variant. The layer is a
+   * mutually exclusive ternary, never two z classes at once: cn() only
+   * merges the font-size group, so appending a second z class via
+   * className would leave both on the element and let stylesheet order
+   * decide the computed z-index instead of intent.
+   */
+  layer?: "popover" | "overlayTop" | undefined;
+}) {
   return (
     <DropdownMenuPrimitive.Portal>
       <DropdownMenuPrimitive.Content
         data-slot="menu-content"
+        data-layer={layer}
         sideOffset={sideOffset}
         collisionPadding={collisionPadding}
         className={cn(
-          "z-popover max-h-(--radix-dropdown-menu-content-available-height) min-w-32 overflow-x-hidden overflow-y-auto rounded-md border border-line bg-panel p-1 text-ink shadow-elevated outline-none",
+          layer === "overlayTop" ? "z-overlay-top" : "z-popover",
+          "max-h-(--radix-dropdown-menu-content-available-height) min-w-32 overflow-x-hidden overflow-y-auto rounded-md border border-line bg-panel p-1 text-ink shadow-elevated outline-none",
           className
         )}
         {...props}

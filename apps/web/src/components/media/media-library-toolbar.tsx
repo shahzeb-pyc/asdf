@@ -124,10 +124,7 @@ export function ToolbarMenu<T extends string>({
           <ChevronDownIcon className="opacity-50" aria-hidden />
         </Button>
       </MenuTrigger>
-      <MenuContent
-        align="start"
-        className={layer === "overlayTop" ? "z-overlay-top" : undefined}
-      >
+      <MenuContent align="start" layer={layer}>
         <MenuRadioGroup value={selectedKey} onValueChange={(value) => onSelect(value as T)}>
           {options.map((opt) => (
             <MenuRadioItem

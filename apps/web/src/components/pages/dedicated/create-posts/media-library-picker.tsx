@@ -1004,6 +1004,11 @@ export function MediaLibraryPicker({
                           onNavigateFolder={navigateFolder}
                           onToggleSelect={handleToggleSelect}
                           onPreview={handlePreview}
+                          onTileClick={
+                            mode === 'multi'
+                              ? (item) => handleToggleSelect(item.id)
+                              : undefined
+                          }
                           onUpdateCaption={handleUpdateCaption}
                         />
                       </div>
@@ -1056,6 +1061,11 @@ export function MediaLibraryPicker({
                             onNavigateFolder={navigateFolder}
                             onToggleSelect={handleToggleSelect}
                             onPreview={handlePreview}
+                            onTileClick={
+                              mode === 'multi'
+                                ? (item) => handleToggleSelect(item.id)
+                                : undefined
+                            }
                             onUpdateCaption={handleUpdateCaption}
                           />
                         ))}

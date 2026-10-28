@@ -29,6 +29,15 @@ export interface MediaAssetCardProps {
     | ((mediaId: string, options?: { shiftKey?: boolean | undefined } | undefined) => void)
     | undefined;
   onPreview?: ((item: MediaItemResponse) => void) | undefined;
+  /**
+   * Optional override for the thumbnail tile's click action. When set,
+   * the tile calls this instead of onPreview; the dedicated Preview
+   * buttons still call onPreview. The Media Library picker passes its
+   * selection toggle here in multi mode so a tile tap selects instead
+   * of previewing. Unset everywhere else, so the library page is
+   * unchanged.
+   */
+  onTileClick?: ((item: MediaItemResponse) => void) | undefined;
   onUpdateCaption?:
     | ((mediaId: string, captionText: string) => Promise<void> | void)
     | undefined;
@@ -116,6 +125,7 @@ export function MediaAssetCard({
   onNavigateFolder,
   onToggleSelect,
   onPreview,
+  onTileClick,
   onMoveRequest,
   onDeleteRequest,
   onDragStartMedia,
@@ -182,7 +192,7 @@ export function MediaAssetCard({
         <button
           type="button"
           data-testid={`preview-media-${item.id}`}
-          onClick={() => onPreview?.(item)}
+          onClick={() => (onTileClick ?? onPreview)?.(item)}
           aria-label={`Preview ${item.name}`}
           className="flex h-full w-full cursor-pointer items-center justify-center border-0 bg-transparent p-0 outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold"
         >
