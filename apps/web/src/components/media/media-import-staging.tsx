@@ -235,6 +235,11 @@ export interface ImportStagingFooterProps {
   validCount: number;
   isStarting: boolean;
   onAddMore: () => void;
+  /** P1: single-attach mode hides "+ Add more" (one file only). */
+  hideAddMore?: boolean | undefined;
+  /** P6: rows that cannot be imported (too large, unsupported, empty). */
+  invalidCount?: number | undefined;
+  onRemoveInvalid?: (() => void) | undefined;
   onCancel: () => void;
   onStart: () => void;
 }
@@ -243,6 +248,9 @@ export function ImportStagingFooter({
   validCount,
   isStarting,
   onAddMore,
+  hideAddMore = false,
+  invalidCount = 0,
+  onRemoveInvalid,
   onCancel,
   onStart,
 }: Readonly<ImportStagingFooterProps>) {
@@ -252,15 +260,32 @@ export function ImportStagingFooter({
       {/* Wraps at phone widths (spec 142): "+ Add more" keeps its own
           line rather than squeezing the actions off the panel. */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Button
-          type="button"
-          variant="link"
-          data-testid="add-more-files-btn"
-          onClick={onAddMore}
-          className="h-11 px-0"
-        >
-          + Add more
-        </Button>
+        <span className="flex flex-wrap items-center gap-3">
+          {hideAddMore ? (
+            <span />
+          ) : (
+            <Button
+              type="button"
+              variant="link"
+              data-testid="add-more-files-btn"
+              onClick={onAddMore}
+              className="h-11 px-0"
+            >
+              + Add more
+            </Button>
+          )}
+          {invalidCount > 0 && (
+            <Button
+              type="button"
+              variant="link"
+              data-testid="remove-invalid-btn"
+              onClick={onRemoveInvalid}
+              className="h-11 px-0 text-brand-rose"
+            >
+              Remove invalid ({invalidCount})
+            </Button>
+          )}
+        </span>
 
         <div className="flex flex-wrap items-center gap-2">
           <Button

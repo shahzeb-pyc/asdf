@@ -159,6 +159,24 @@ export interface MediaLibraryPickerProps {
   mode: 'single' | 'multi';
   onSingleAttach: (media: ComposerMedia) => void;
   onMultiAttach: (media: ComposerMedia[]) => void;
+  /**
+   * P11: the composer dialogue's session key. Browsing state
+   * (folder, search, filters, selection, uploads) persists across
+   * picker opens within one session and resets only when this key
+   * changes — i.e. when the dialogue itself opens fresh.
+   */
+  sessionKey?: number | undefined;
+  /**
+   * P2: live upload state for the composer's leave guard — the
+   * active count plus the furthest-along file, as the import
+   * modal reports them. Called only when the values change.
+   */
+  onUploadsActiveChange?:
+    | ((
+        count: number,
+        furthestAlong: { name: string; progressPercent: number } | null
+      ) => void)
+    | undefined;
 }
 
 function errorText(error: unknown, fallback: string): string {
@@ -174,6 +192,8 @@ export function MediaLibraryPicker({
   mode,
   onSingleAttach,
   onMultiAttach,
+  sessionKey = 0,
+  onUploadsActiveChange,
 }: Readonly<MediaLibraryPickerProps>) {
   const queryClient = useQueryClient();
   const folderName = React.useMemo(
@@ -194,10 +214,26 @@ export function MediaLibraryPicker({
   const [stagedFiles, setStagedFiles] = React.useState<File[]>([]);
   const [importOpen, setImportOpen] = React.useState(false);
   const [importActiveCount, setImportActiveCount] = React.useState(0);
+  const [furthestAlongUpload, setFurthestAlongUpload] = React.useState<{
+    name: string;
+    progressPercent: number;
+  } | null>(null);
   const [uploadedItems, setUploadedItems] = React.useState<ComposerMedia[]>([]);
   const [deviceError, setDeviceError] = React.useState<string | null>(null);
   const [resolvingFolder, setResolvingFolder] = React.useState(false);
   const deviceInputRef = React.useRef<HTMLInputElement | null>(null);
+  // P8: drag-over highlight for the device-tab drop zone.
+  const [isDraggingOverDevice, setIsDraggingOverDevice] = React.useState(false);
+  // P1: a late success must never overwrite an attached file.
+  const singleAttachedRef = React.useRef(false);
+  // P12: a batch invalidates the library cache once, when it settles.
+  const pendingInvalidationRef = React.useRef(false);
+  const prevActiveCountRef = React.useRef(0);
+  const prevReportedUploadsRef = React.useRef<{
+    count: number;
+    name: string | null;
+    progressPercent: number | null;
+  }>({ count: 0, name: null, progressPercent: null });
 
   // Library browsing state — the explorer's state shape, minus
   // smart views (the library page exposes no in-page switcher for
@@ -238,16 +274,19 @@ export function MediaLibraryPicker({
 
   const updateCaptionMutation = useUpdateItemCaption(subdomain);
 
-  // Fresh state on every open; browsing starts at the library root
-  // (the same landing as the Media Library itself), never inside
-  // the page's folder.
+  // P11: fresh state only when the composer dialogue itself opens
+  // fresh (sessionKey change) — not on every picker open. Within
+  // one session the user keeps their folder, search, filters and
+  // selection across picker opens; browsing still starts at the
+  // library root, never inside the page's folder.
   React.useEffect(() => {
-    if (!open) return;
     setTab('library');
     setSelectedIds([]);
+    setPageFolderId(null);
     setStagedFiles([]);
     setImportOpen(false);
     setImportActiveCount(0);
+    setFurthestAlongUpload(null);
     setUploadedItems([]);
     setDeviceError(null);
     setCurrentFolderId(null);
@@ -259,7 +298,29 @@ export function MediaLibraryPicker({
     setSortOption('created_at:desc');
     setPreviewItem(null);
     setFiltersOpen(false);
+    singleAttachedRef.current = false;
+    pendingInvalidationRef.current = false;
+    prevActiveCountRef.current = 0;
+  }, [sessionKey]);
+
+  // P1: the single-attach guard resets on every picker open, so a
+  // new attach in the same session is never blocked by a previous
+  // one — while a late success within one open is still ignored.
+  React.useEffect(() => {
+    if (open) singleAttachedRef.current = false;
   }, [open ]);
+
+  // P12: when a batch settles (active count drops to zero after
+  // having been live) and at least one file succeeded, invalidate
+  // the library cache exactly once — not once per file.
+  React.useEffect(() => {
+    const prev = prevActiveCountRef.current;
+    prevActiveCountRef.current = importActiveCount;
+    if (prev > 0 && importActiveCount === 0 && pendingInvalidationRef.current) {
+      pendingInvalidationRef.current = false;
+      void invalidateMediaAll(queryClient, subdomain);
+    }
+  }, [importActiveCount, queryClient, subdomain]);
 
   // Search debounce, as in the explorer: 250ms, immediate on clear.
   React.useEffect(() => {
@@ -352,16 +413,14 @@ export function MediaLibraryPicker({
   }, [itemsQuery, foldersQuery]);
 
   // Selection: the library's own model (checkbox + shift-range).
-  // Single mode is choose-one: any select/preview gesture attaches
-  // at once and closes the picker.
+  // Single mode previews first (P7): any select/preview gesture
+  // opens the library preview with an "Attach this file" button
+  // instead of attaching instantly.
   const handleToggleSelect = React.useCallback(
     (mediaId: string, options?: { shiftKey?: boolean | undefined }) => {
       if (mode === 'single') {
         const item = mediaItems.find((m) => m.id === mediaId);
-        if (item) {
-          onSingleAttach(toComposerMedia(item));
-          onOpenChange(false);
-        }
+        if (item) setPreviewItem(item);
         return;
       }
       const allIds = displayedMediaItems.map((m) => m.id);
@@ -369,7 +428,7 @@ export function MediaLibraryPicker({
         computeNextSelection(prev, mediaId, allIds, options?.shiftKey)
       );
     },
-    [mode, mediaItems, displayedMediaItems, onSingleAttach, onOpenChange]
+    [mode, mediaItems, displayedMediaItems]
   );
 
   const handleSelectAll = React.useCallback(() => {
@@ -382,15 +441,31 @@ export function MediaLibraryPicker({
 
   const handlePreview = React.useCallback(
     (item: MediaItemResponse) => {
-      if (mode === 'single') {
-        onSingleAttach(toComposerMedia(item));
-        onOpenChange(false);
-        return;
-      }
       setPreviewItem(item);
     },
-    [mode, onSingleAttach, onOpenChange]
+    []
   );
+
+  // While the import modal has live uploads, the picker must not
+  // close under it — dismissal would unmount the modal and strand
+  // the in-flight successes. The modal itself blocks dismissal
+  // during progress the same way; finishing or cancelling there
+  // re-enables the picker.
+  const uploadsActive = importActiveCount > 0;
+  const handlePickerOpenChange = React.useCallback(
+    (next: boolean) => {
+      if (!next && uploadsActive) return;
+      onOpenChange(next);
+    },
+    [uploadsActive, onOpenChange]
+  );
+
+  const handleAttachFromPreview = React.useCallback(() => {
+    if (!previewItem) return;
+    onSingleAttach(toComposerMedia(previewItem));
+    setPreviewItem(null);
+    handlePickerOpenChange(false);
+  }, [previewItem, onSingleAttach, handlePickerOpenChange]);
 
   const handleUpdateCaption = React.useCallback(
     (mediaId: string, captionText: string) => {
@@ -408,11 +483,15 @@ export function MediaLibraryPicker({
   // Page-named folder, for device uploads ONLY — never a browsing
   // restriction. Lists first, creates only when missing, and on a
   // create race (409 "already exists") re-lists instead of failing.
-  // A newly created folder is seeded into the folders cache so the
-  // import modal names its destination correctly on first render.
+  // P10: the match is (parent = root, name) — a nested folder with
+  // the same name can never capture device uploads. A newly created
+  // folder is seeded into the folders cache so the import modal
+  // names its destination correctly on first render.
   const resolvePageFolder = React.useCallback(async (): Promise<string> => {
     const list = await api.get(foldersPath, { schema: FolderListResponseSchema });
-    const found = list.folders.find((folder) => folder.name === folderName);
+    const found = list.folders.find(
+      (folder) => folder.name === folderName && (folder.parentId ?? null) === null
+    );
     if (found) return found.id;
     try {
       const created = await api.post(
@@ -431,7 +510,9 @@ export function MediaLibraryPicker({
       const relist = await api.get(foldersPath, {
         schema: FolderListResponseSchema,
       });
-      const raced = relist.folders.find((folder) => folder.name === folderName);
+      const raced = relist.folders.find(
+        (folder) => folder.name === folderName && (folder.parentId ?? null) === null
+      );
       if (raced) return raced.id;
       throw new Error(`Couldn't open the "${folderName}" folder. Please try again.`);
     }
@@ -466,14 +547,27 @@ export function MediaLibraryPicker({
   const handleImportSuccess = React.useCallback(
     (item: MediaItemResponse) => {
       const media = toComposerMedia(item);
-      // The Library tab must show the new file immediately.
-      void invalidateMediaAll(queryClient, subdomain);
+      // P12: show the new file in the Library tab at once with an
+      // optimistic cache insert; the full refetch is deferred until
+      // the batch settles (see the importActiveCount effect above),
+      // instead of one refetch per file.
+      queryClient.setQueryData<MediaItemResponse[]>(
+        listDefinition.queryKey,
+        (prev) => {
+          if (!prev) return [item];
+          return prev.some((m) => m.id === item.id) ? prev : [...prev, item];
+        }
+      );
+      pendingInvalidationRef.current = true;
       if (mode === 'single') {
-        // Single mode is one file: attach at once and close. (The
-        // modal unmounts with the picker; the upload already
-        // completed, so nothing is lost.)
+        // Single mode is one file: attach at once and close through
+        // the uploads guard (P1). A second success after the close
+        // — e.g. a file staged before "+ Add more" was disabled —
+        // is ignored, so it can never overwrite the attached file.
+        if (singleAttachedRef.current) return;
+        singleAttachedRef.current = true;
         onSingleAttach(media);
-        onOpenChange(false);
+        handlePickerOpenChange(false);
         return;
       }
       // Multi mode: a freshly uploaded file is chosen by definition,
@@ -485,7 +579,7 @@ export function MediaLibraryPicker({
         prev.includes(media.id) ? prev : [...prev, media.id]
       );
     },
-    [mode, onSingleAttach, onOpenChange, queryClient, subdomain]
+    [mode, onSingleAttach, handlePickerOpenChange, queryClient, listDefinition.queryKey]
   );
 
   const handleImportClose = React.useCallback(() => {
@@ -510,22 +604,25 @@ export function MediaLibraryPicker({
   const handleMultiAdd = React.useCallback(() => {
     if (allSelected.length === 0) return;
     onMultiAttach(allSelected);
+    // Consumed: added files must not linger selected, or reopening
+    // the picker would re-add them as duplicate blocks.
+    setSelectedIds([]);
+    setUploadedItems([]);
     onOpenChange(false);
   }, [allSelected, onMultiAttach, onOpenChange]);
 
-  // While the import modal has live uploads, the picker must not
-  // close under it — dismissal would unmount the modal and strand
-  // the in-flight successes. The modal itself blocks dismissal
-  // during progress the same way; finishing or cancelling there
-  // re-enables the picker.
-  const uploadsActive = importActiveCount > 0;
-  const handlePickerOpenChange = React.useCallback(
-    (next: boolean) => {
-      if (!next && uploadsActive) return;
-      onOpenChange(next);
-    },
-    [uploadsActive, onOpenChange]
-  );
+  // P5: the device tab's one clear next step — add exactly the
+  // files this batch uploaded, without hunting through the footer.
+  // Library files the user also selected stay selected (only the
+  // uploaded ones are consumed), so nothing chosen is silently lost.
+  const handleAddUploaded = React.useCallback(() => {
+    if (uploadedItems.length === 0) return;
+    onMultiAttach(uploadedItems);
+    const uploadedIds = new Set(uploadedItems.map((u) => u.id));
+    setSelectedIds((prev) => prev.filter((id) => !uploadedIds.has(id)));
+    setUploadedItems([]);
+    onOpenChange(false);
+  }, [uploadedItems, onMultiAttach, onOpenChange]);
 
   const emptyState = getEmptyStateInfo(null, debouncedSearch);
   const totalMediaCount = mediaItems.length;
@@ -1063,10 +1160,28 @@ export function MediaLibraryPicker({
             )}
           </TabsContent>
 
-          <TabsContent value="device">
+          {/* P8: the device tab is a drop zone — dropped files take
+              the same validation + staging path as the file input. */}
+          <TabsContent
+            value="device"
+            className={cn(
+              isDraggingOverDevice && 'rounded-md ring-2 ring-brand-gold/60 ring-inset'
+            )}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setIsDraggingOverDevice(true);
+            }}
+            onDragLeave={() => setIsDraggingOverDevice(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setIsDraggingOverDevice(false);
+              void handleDeviceFiles(e.dataTransfer.files);
+            }}
+          >
             <p className="mb-3 text-body text-ink-sub">
               Uploads go to the “{folderName}” folder. The folder is created
-              automatically if it doesn’t exist yet.
+              automatically if it doesn’t exist yet. You can also drop files
+              anywhere on this tab.
             </p>
             <input
               ref={deviceInputRef}
@@ -1091,8 +1206,36 @@ export function MediaLibraryPicker({
                 ? 'Opening your page’s folder…'
                 : 'Choose files from your device'}
             </Button>
+            {isDraggingOverDevice && (
+              <p className="mt-3 text-center text-body font-medium text-brand-gold">
+                Drop files to upload them
+              </p>
+            )}
             {deviceError && (
               <p className="mt-3 text-body text-brand-rose">{deviceError}</p>
+            )}
+            {/* P5: the batch's live state on the device tab itself —
+                visible while the import modal is minimised to its
+                chip, instead of uploads running invisibly. */}
+            {uploadsActive && (
+              <p
+                data-testid="media-picker-upload-status"
+                className="mt-3 text-body text-ink-sub"
+              >
+                Uploading {importActiveCount} file{importActiveCount === 1 ? '' : 's'}…
+                {furthestAlongUpload && (
+                  <span className="tabular-nums">
+                    {' '}
+                    {furthestAlongUpload.name} · {furthestAlongUpload.progressPercent}%
+                  </span>
+                )}
+                {uploadedItems.length > 0 && (
+                  <span>
+                    {' '}
+                    · {uploadedItems.length} uploaded
+                  </span>
+                )}
+              </p>
             )}
             {uploadedItems.length > 0 && (
               <div className="mt-3 flex flex-col gap-2">
@@ -1115,6 +1258,19 @@ export function MediaLibraryPicker({
                   </p>
                 )}
               </div>
+            )}
+            {/* P5: one prominent next step after a batch finishes —
+                no auto-append on Done, and Close no longer discards
+                the finished batch's setup unnoticed. */}
+            {mode === 'multi' && uploadedItems.length > 0 && !uploadsActive && (
+              <Button
+                type="button"
+                data-testid="media-library-picker-add-uploaded-btn"
+                onClick={handleAddUploaded}
+                className="mt-3 h-11"
+              >
+                Add {uploadedItems.length} uploaded file{uploadedItems.length === 1 ? '' : 's'} as posts
+              </Button>
             )}
           </TabsContent>
         </Tabs>
@@ -1145,7 +1301,8 @@ export function MediaLibraryPicker({
         {/* The library's own import modal, nested inside the picker:
             staging, duplicate flags, the 3-concurrency engine and
             progress — with the destination locked to the page
-            folder, so device uploads can never land elsewhere. */}
+            folder, so device uploads can never land elsewhere.
+            Single mode also disables "+ Add more" (P1). */}
         <MediaImportModal
           subdomain={subdomain}
           isOpen={importOpen}
@@ -1154,20 +1311,51 @@ export function MediaLibraryPicker({
           folders={folders}
           onClose={handleImportClose}
           onUploadSuccess={handleImportSuccess}
-          onActiveUploadsChange={(count) => setImportActiveCount(count)}
+          onActiveUploadsChange={(count, furthest) => {
+            setImportActiveCount(count);
+            setFurthestAlongUpload(furthest);
+            // P2: report live upload state up to the composer
+            // dialogue's leave guard — only when it changes, so the
+            // dialogue never re-renders in a loop.
+            const prev = prevReportedUploadsRef.current;
+            if (
+              count !== prev.count ||
+              (furthest?.name ?? null) !== prev.name ||
+              (furthest?.progressPercent ?? null) !== prev.progressPercent
+            ) {
+              prevReportedUploadsRef.current = {
+                count,
+                name: furthest?.name ?? null,
+                progressPercent: furthest?.progressPercent ?? null,
+              };
+              onUploadsActiveChange?.(count, furthest);
+            }
+          }}
           lockDestination
+          singleMode={mode === 'single'}
         />
 
-        {/* View-only preview in multi mode (the library's own
-            preview, without save/delete): tile clicks preview
-            instead of selecting, exactly as in the library. */}
-        {mode === 'multi' && (
+        {/* The library's own preview: in multi mode it is view-only
+            (tile clicks preview instead of selecting, exactly as in
+            the library); in single mode it carries the "Attach this
+            file" action (P7) — tapping a tile never attaches
+            instantly anymore. */}
+        {previewItem && (
           <MediaPreviewModal
             item={previewItem}
             open={previewItem !== null}
             onOpenChange={(next) => {
               if (!next) setPreviewItem(null);
             }}
+            primaryAction={
+              mode === 'single'
+                ? {
+                    label: 'Attach this file',
+                    onClick: handleAttachFromPreview,
+                    testid: 'media-preview-attach-btn',
+                  }
+                : undefined
+            }
           />
         )}
       </DialogContent>

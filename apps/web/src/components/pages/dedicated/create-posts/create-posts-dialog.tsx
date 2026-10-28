@@ -55,6 +55,7 @@ import {
 } from '@/components/shared/ui/dialog';
 import { toast } from '@/components/shared/ui/toast';
 import type { FacebookPageItem } from '@/components/pages/page-card';
+import { LeavePageGuardDialog } from '@/components/media/leave-page-guard-dialog';
 import { BulkTextDialog } from './bulk-text-dialog';
 import { MediaLibraryPicker } from './media-library-picker';
 import { PostBlock } from './post-block';
@@ -98,6 +99,17 @@ export function CreatePostsDialog({
   const [bulkTextOpen, setBulkTextOpen] = React.useState(false);
   const [isQueueing, setIsQueueing] = React.useState(false);
   const [failedAvatarUrl, setFailedAvatarUrl] = React.useState<string | null>(null);
+  // P11: the picker's session key — bumped on every fresh dialogue
+  // open so the picker resets then, and only then.
+  const [pickerSession, setPickerSession] = React.useState(0);
+  // P2: live upload state reported by the picker, for the leave
+  // guard below. Zero whenever the picker is closed or settled.
+  const [pickerUploadCount, setPickerUploadCount] = React.useState(0);
+  const [pickerFurthestUpload, setPickerFurthestUpload] = React.useState<{
+    name: string;
+    progressPercent: number;
+  } | null>(null);
+  const [leaveGuardOpen, setLeaveGuardOpen] = React.useState(false);
 
   // Fresh dialogue on every open: a previous session's blocks never
   // leak into the next one.
@@ -106,8 +118,35 @@ export function CreatePostsDialog({
       setBlocks([newEmptyBlock()]);
       setPickerOpen(false);
       setBulkTextOpen(false);
+      setPickerSession((prev) => prev + 1);
     }
   }, [open ]);
+
+  // P2: while the picker reports live uploads, no dismissal path
+  // (Cancel, backdrop, Esc, close button) may close the dialogue
+  // unconditionally — that would unmount the picker mid-upload and
+  // lose the blocks. Instead the library's leave guard asks first.
+  const handleDialogOpenChange = React.useCallback(
+    (next: boolean) => {
+      if (!next && pickerUploadCount > 0) {
+        setLeaveGuardOpen(true);
+        return;
+      }
+      onOpenChange(next);
+    },
+    [pickerUploadCount, onOpenChange]
+  );
+
+  const handlePickerUploadsChange = React.useCallback(
+    (
+      count: number,
+      furthest: { name: string; progressPercent: number } | null
+    ) => {
+      setPickerUploadCount(count);
+      setPickerFurthestUpload(furthest);
+    },
+    []
+  );
 
   /** Applies an edit, then restores the trailing-empty invariant:
    *  whenever the last block gains content, a fresh empty block
@@ -306,7 +345,7 @@ export function CreatePostsDialog({
 
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
+      <Dialog open={open} onOpenChange={handleDialogOpenChange}>
         <DialogContent data-testid="create-posts-dialog">
           <DialogHeader>
             <DialogTitle className="sr-only">Create posts</DialogTitle>
@@ -400,7 +439,7 @@ export function CreatePostsDialog({
               variant="secondary"
               data-testid="create-posts-cancel-btn"
               disabled={isQueueing}
-              onClick={() => onOpenChange(false)}
+              onClick={() => handleDialogOpenChange(false)}
             >
               Cancel
             </Button>
@@ -431,11 +470,23 @@ export function CreatePostsDialog({
         mode={pickerMode}
         onSingleAttach={handleSingleAttach}
         onMultiAttach={handleMultiAttach}
+        sessionKey={pickerSession}
+        onUploadsActiveChange={handlePickerUploadsChange}
       />
       <BulkTextDialog
         open={bulkTextOpen}
         onOpenChange={setBulkTextOpen}
         onAdd={handleBulkTextAdd}
+      />
+      <LeavePageGuardDialog
+        isOpen={leaveGuardOpen}
+        activeUploadsCount={pickerUploadCount}
+        furthestAlongFile={pickerFurthestUpload}
+        onStay={() => setLeaveGuardOpen(false)}
+        onLeaveAnyway={() => {
+          setLeaveGuardOpen(false);
+          onOpenChange(false);
+        }}
       />
     </>
   );

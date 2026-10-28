@@ -34,16 +34,17 @@ import {
   DialogTitle,
 } from '@/components/shared/ui/dialog';
 import { Button } from '@/components/shared/ui/button';
+import { cn } from '@/lib/utils';
 import { reportError } from '@/lib/report-error';
 import { checkMediaDuplicates } from './media-data';
 import type { ImportQueueItem } from './media-types';
+import { computeOverallBytesProgress } from './media-types';
 import {
-  computeOverallProgress,
   computeFurthestAlong,
   buildImportQueueItems,
   isItemReadyToImport,
 } from './media-import-utils';
-import { useImportUpload } from './media-import-upload-engine';
+import { useImportUpload, abortMultipartUpload } from './media-import-upload-engine';
 import {
   ImportStagingHeader,
   ImportStagingRow,
@@ -75,6 +76,13 @@ export interface MediaImportModalProps {
    * off: the library page keeps its changeable destination.
    */
   lockDestination?: boolean | undefined;
+  /**
+   * Picker single-attach mode (P1): one file only. Hides "+ Add more"
+   * so a second file can never join the batch invisibly and — via
+   * the picker's guarded single-attach close — overwrite the file
+   * already attached to the block.
+   */
+  singleMode?: boolean | undefined;
 }
 
 type ImportStep = 'staging' | 'progress' | 'complete';
@@ -89,6 +97,7 @@ export function MediaImportModal({
   onUploadSuccess,
   onActiveUploadsChange,
   lockDestination = false,
+  singleMode = false,
 }: Readonly<MediaImportModalProps>) {
   const [step, setStep] = useState<ImportStep>('staging');
   const [isMinimized, setIsMinimized] = useState(false);
@@ -101,6 +110,8 @@ export function MediaImportModal({
   const [userInitiatedCancel, setUserInitiatedCancel] = useState(false);
   const [isStartingImport, setIsStartingImport] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // P8: drag-over highlight for the staging drop zone.
+  const [isDraggingOverList, setIsDraggingOverList] = useState(false);
 
   // Sync destination folder default when opening (PB-12).
   useEffect(() => {
@@ -226,6 +237,35 @@ export function MediaImportModal({
     setQueue((prev) => prev.filter((it) => !it.isDuplicate));
   };
 
+  // P6: keep every duplicate instead of skipping them one by one.
+  const handleKeepAllDuplicates = () => {
+    setQueue((prev) =>
+      prev.map((it) =>
+        it.isDuplicate ? { ...it, isDuplicate: false, duplicateResolution: 'keep' } : it
+      )
+    );
+  };
+
+  // P6: drop every row that cannot be imported (too large, unsupported,
+  // empty) in one tap instead of removing them one by one.
+  const handleRemoveInvalid = () => {
+    setQueue((prev) => prev.filter((it) => it.validationError == null));
+  };
+
+  // P6: requeue every failed row and reopen the progress loop so the
+  // engine picks them up again (from the last completed part for
+  // multipart files, from zero for small single-PUT files).
+  const handleRetryAllFailed = () => {
+    setQueue((prev) =>
+      prev.map((it) =>
+        it.status === 'failed'
+          ? { ...it, status: 'queued', retryCount: 0, validationError: null }
+          : it
+      )
+    );
+    if (step === 'complete') setStep('progress');
+  };
+
   const handlePauseUpload = (id: string) => {
     setQueue((prev) =>
       prev.map((it) => {
@@ -247,11 +287,25 @@ export function MediaImportModal({
 
   const handleCancelUpload = (id: string) => {
     setUserInitiatedCancel(true);
+    const item = queue.find((it) => it.id === id);
+    // A cancelled multipart upload is aborted server-side (best
+    // effort) so no orphaned upload lingers in R2.
+    if (item?.multipartUploadId && item.multipartMediaKey) {
+      void abortMultipartUpload(subdomain, item.multipartMediaKey, item.multipartUploadId);
+    }
     setQueue((prev) =>
       prev.map((it) => {
         if (it.id === id) {
           it.abortController?.abort();
-          return { ...it, status: 'cancelled' };
+          return {
+            ...it,
+            status: 'cancelled',
+            multipartUploadId: undefined,
+            multipartMediaId: undefined,
+            multipartMediaKey: undefined,
+            multipartCompletedParts: undefined,
+            multipartUploadedBytes: undefined,
+          };
         }
         return it;
       })
@@ -268,9 +322,32 @@ export function MediaImportModal({
 
   const handleCancelRemaining = () => {
     setUserInitiatedCancel(true);
-    // Cancels queued only, never in-flight
+    // Cancels queued only, never in-flight — but a queued row may
+    // still hold a multipart upload from a failed attempt, which is
+    // aborted server-side like any other cancel.
+    for (const item of queue) {
+      if (
+        item.status === 'queued' &&
+        item.multipartUploadId &&
+        item.multipartMediaKey
+      ) {
+        void abortMultipartUpload(subdomain, item.multipartMediaKey, item.multipartUploadId);
+      }
+    }
     setQueue((prev) =>
-      prev.map((it) => (it.status === 'queued' ? { ...it, status: 'cancelled' } : it))
+      prev.map((it) =>
+        it.status === 'queued'
+          ? {
+              ...it,
+              status: 'cancelled',
+              multipartUploadId: undefined,
+              multipartMediaId: undefined,
+              multipartMediaKey: undefined,
+              multipartCompletedParts: undefined,
+              multipartUploadedBytes: undefined,
+            }
+          : it
+      )
     );
   };
 
@@ -308,8 +385,8 @@ export function MediaImportModal({
   if (isMinimized) {
     const totalCount = nonCancelledItems.length;
     const completedCount = completedItems.length;
-    const overallPct =
-      totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
+    // P9: the dock percent is byte-weighted, like the header.
+    const overallPct = computeOverallBytesProgress(nonCancelledItems).percent;
 
     return (
       <MinimizedUploadPill
@@ -325,9 +402,14 @@ export function MediaImportModal({
     (selectedFolderId ? folders.find((f) => f.id === selectedFolderId)?.name : null) ||
     'Library';
 
-  const overallProgressPercent = computeOverallProgress(nonCancelledItems);
+  // P9: byte-weighted overall progress — "120 MB of 400 MB", not the
+  // unweighted per-file percent average.
+  const overallBytes = computeOverallBytesProgress(nonCancelledItems);
+  const overallProgressPercent = overallBytes.percent;
 
   const duplicatesCount = queue.filter((it) => it.isDuplicate).length;
+  const invalidCount = queue.filter((it) => it.validationError != null).length;
+  const failedCount = queue.filter((it) => it.status === 'failed').length;
   const isAllCancelled =
     completedItems.length === 0 &&
     (userInitiatedCancel || queue.every((it) => it.status === 'cancelled'));
@@ -383,13 +465,36 @@ export function MediaImportModal({
             totalCount={queue.length}
             isAllCancelled={isAllCancelled}
             overallProgressPercent={overallProgressPercent}
+            uploadedBytes={overallBytes.uploadedBytes}
+            totalBytes={overallBytes.totalBytes}
           />
         )}
 
-        {/* Scrollable file list */}
+        {/* Scrollable file list — a drop zone in staging (P8) */}
         <div
           data-testid="import-files-list"
-          className="flex max-h-80 flex-col divide-y divide-line overflow-y-auto sm:max-h-96"
+          className={cn(
+            'flex max-h-80 flex-col divide-y divide-line overflow-y-auto sm:max-h-96',
+            isDraggingOverList && 'ring-2 ring-brand-gold/60 ring-inset'
+          )}
+          onDragOver={(e) => {
+            if (step !== 'staging') return;
+            e.preventDefault();
+            setIsDraggingOverList(true);
+          }}
+          onDragLeave={() => setIsDraggingOverList(false)}
+          onDrop={(e) => {
+            if (step !== 'staging') return;
+            e.preventDefault();
+            setIsDraggingOverList(false);
+            if (e.dataTransfer.files.length > 0) {
+              const dropped = Array.from(e.dataTransfer.files);
+              setQueue((prev) => [
+                ...prev,
+                ...buildImportQueueItems(dropped, selectedFolderId, prev),
+              ]);
+            }
+          }}
         >
           {/* Duplicate banner (staging mode only) */}
           {step === 'staging' && duplicatesCount > 0 && (
@@ -400,15 +505,32 @@ export function MediaImportModal({
               <span>
                 {duplicatesCount} possible duplicate{duplicatesCount === 1 ? '' : 's'} found
               </span>
-              <Button
-                type="button"
-                variant="link"
-                data-testid="skip-all-duplicates-btn"
-                onClick={handleSkipAllDuplicates}
-                className="h-11 px-0 text-body font-semibold"
-              >
-                Skip all
-              </Button>
+              <span className="flex shrink-0 items-center gap-2">
+                <Button
+                  type="button"
+                  variant="link"
+                  data-testid="keep-all-duplicates-btn"
+                  onClick={handleKeepAllDuplicates}
+                  className="h-11 px-0 text-body font-semibold"
+                >
+                  Keep all
+                </Button>
+                <Button
+                  type="button"
+                  variant="link"
+                  data-testid="skip-all-duplicates-btn"
+                  onClick={handleSkipAllDuplicates}
+                  className="h-11 px-0 text-body font-semibold"
+                >
+                  Skip all
+                </Button>
+              </span>
+            </div>
+          )}
+
+          {isDraggingOverList && (
+            <div className="px-3 py-2 text-center text-body font-medium text-brand-gold">
+              Drop files to add them
             </div>
           )}
 
@@ -441,6 +563,9 @@ export function MediaImportModal({
             <ImportStagingFooter
               validCount={validStagedItems.length}
               isStarting={isStartingImport}
+              hideAddMore={singleMode}
+              invalidCount={invalidCount}
+              onRemoveInvalid={handleRemoveInvalid}
               onAddMore={() => fileInputRef.current?.click()}
               onCancel={handleDismissStaging}
               onStart={handleStartImport}
@@ -450,6 +575,8 @@ export function MediaImportModal({
               step={step}
               isUploading={activeUploadingItems.length > 0}
               canCancelRemaining={queuedItems.length > activeUploadingItems.length}
+              failedCount={failedCount}
+              onRetryAllFailed={handleRetryAllFailed}
               onCancelRemaining={handleCancelRemaining}
               onKeepWorking={() => setIsMinimized(true)}
               onDone={handleDone}

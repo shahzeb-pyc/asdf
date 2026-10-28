@@ -71,6 +71,10 @@ export interface MediaPreviewModalProps {
       ) => Promise<void> | void)
     | undefined;
   onDelete?: ((mediaId: string) => Promise<void> | void) | undefined;
+  /** P7: picker single-attach action, rendered instead of Save. */
+  primaryAction?:
+    | { label: string; onClick: () => void; testid?: string | undefined }
+    | undefined;
 }
 
 export function MediaPreviewModal({
@@ -84,6 +88,7 @@ export function MediaPreviewModal({
   onSave,
   onUpdateThumbnail,
   onDelete,
+  primaryAction,
 }: Readonly<MediaPreviewModalProps>) {
   const [nameDraft, setNameDraft] = useState(() => item?.name || '');
   const [captionDraft, setCaptionDraft] = useState(
@@ -185,6 +190,7 @@ export function MediaPreviewModal({
             onDelete={onDelete ? () => setShowDeleteConfirm(true) : undefined}
             onCancel={() => handleOpenChange(false)}
             onSave={handleSaveChanges}
+            primaryAction={primaryAction}
           />
         </DialogContent>
       </Dialog>

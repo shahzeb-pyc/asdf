@@ -28,6 +28,65 @@ export interface ImportQueueItem {
   retryCount: number;
   previewUrl?: string | null;
   uploadedItem?: MediaItemResponse;
+  /** Resumable-upload state (P3): only for files over
+   *  MULTIPART_THRESHOLD_BYTES. Survives pause and auto-retry so a
+   *  large file resumes from its last completed part instead of
+   *  restarting from zero. Cleared on cancel. (Each field carries
+   *  an explicit `| undefined`: the repo typechecks with
+   *  exactOptionalPropertyTypes, so clearing a field with
+   *  `undefined` must be assignable.) */
+  multipartUploadId?: string | undefined;
+  multipartMediaId?: string | undefined;
+  multipartMediaKey?: string | undefined;
+  multipartThumbnailUploadUrl?: string | undefined;
+  multipartThumbnailKey?: string | undefined;
+  multipartPublicThumbnailUrl?: string | undefined;
+  /** Parts the server has already accepted (part numbers only — the
+   *  complete route lists etags itself, so no etag round-trips). */
+  multipartCompletedParts?: number[] | undefined;
+  /** Bytes confirmed uploaded across completed parts. */
+  multipartUploadedBytes?: number | undefined;
+  /** Public URL of the assembled object (for the confirm step). */
+  multipartPublicMediaUrl?: string | undefined;
+  /** True once a NoSuchUpload restart has been spent for this file. */
+  multipartRestarted?: boolean | undefined;
+}
+
+/**
+ * Multipart (resumable) uploads (P3): files larger than this use
+ * R2's S3-compatible multipart API instead of a single PUT, so
+ * pause, failure, and presigned-URL expiry resume from the last
+ * completed part. Parts are 8 MiB (above S3's 5 MiB minimum for
+ * non-final parts); a file just over the threshold still splits
+ * into at least two parts.
+ */
+export const MULTIPART_THRESHOLD_BYTES = 8 * 1024 * 1024;
+export const MULTIPART_PART_SIZE_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Byte-weighted overall progress (P9): uploaded bytes are the
+ * completed files' full sizes plus each in-flight file's size
+ * scaled by its per-file percent (which the XHR already reports
+ * in bytes). This replaces the unweighted per-file percent
+ * average, where ten 1 KB files finishing outweighed one 400 MB
+ * file barely started.
+ */
+export function computeOverallBytesProgress(items: ImportQueueItem[]): {
+  uploadedBytes: number;
+  totalBytes: number;
+  percent: number;
+} {
+  const counted = items.filter((item) => item.status !== 'cancelled');
+  const totalBytes = counted.reduce((sum, item) => sum + item.size, 0);
+  const uploadedBytes = counted.reduce((sum, item) => {
+    if (item.status === 'completed') return sum + item.size;
+    return sum + Math.round((item.size * item.progressPercent) / 100);
+  }, 0);
+  return {
+    uploadedBytes,
+    totalBytes,
+    percent: totalBytes === 0 ? 0 : Math.round((uploadedBytes / totalBytes) * 100),
+  };
 }
 
 export type BatchCaptionMode = 'replace' | 'append';
