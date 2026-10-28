@@ -99,9 +99,6 @@ export function PostBlock({
             <span className="block truncate text-body text-ink">
               {block.media.name}
             </span>
-            <span className="block text-metadata text-brand-gold">
-              {typeLabel}
-            </span>
           </span>
           <Button
             type="button"
