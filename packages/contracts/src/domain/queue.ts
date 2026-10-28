@@ -258,3 +258,31 @@ export const ListQueueItemsResponseSchema = z.object({
 });
 
 export type ListQueueItemsResponse = z.infer<typeof ListQueueItemsResponseSchema>;
+
+// Queue reorder (Queue section rebuild): the client sends the full new
+// queue order for one page; the server rewrites queue_seq densely.
+// Queue management, not publishing — so no idempotency key (same
+// reasoning as the PATCH/DELETE exclusion in the idempotency design).
+export const ReorderQueueItemsRequestSchema = z
+  .object({
+    pageId: z.string().uuid(),
+    itemIds: z.array(z.string().uuid()).min(1),
+  })
+  .superRefine((val, ctx) => {
+    if (new Set(val.itemIds).size !== val.itemIds.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'itemIds must not contain duplicates',
+        path: ['itemIds'],
+      });
+    }
+  });
+
+export type ReorderQueueItemsRequest = z.infer<typeof ReorderQueueItemsRequestSchema>;
+
+export const ReorderQueueItemsResponseSchema = z.object({
+  success: z.literal(true),
+  itemIds: z.array(z.string().uuid()),
+});
+
+export type ReorderQueueItemsResponse = z.infer<typeof ReorderQueueItemsResponseSchema>;
