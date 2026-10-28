@@ -215,13 +215,60 @@ describe('QueuePanel', () => {
   });
 
   it('disables edit and delete on published rows', async () => {
+    const user = userEvent.setup();
     renderPanel();
     await waitFor(() => expect(screen.getByTestId(`queue-row-${ID_D}`)).toBeTruthy());
     const row = within(screen.getByTestId(`queue-row-${ID_D}`));
-    expect((row.getByTestId('queue-row-edit') as HTMLButtonElement).disabled).toBe(true);
-    expect((row.getByTestId('queue-row-delete') as HTMLButtonElement).disabled).toBe(true);
+    // Edit/Delete live in the row menu (portalled when open), so they
+    // are disabled items there — visible but not actionable.
+    await user.click(row.getByTestId('queue-row-menu'));
+    const edit = screen.getByTestId('queue-row-edit');
+    const del = screen.getByTestId('queue-row-delete');
+    expect(edit.getAttribute('data-disabled')).not.toBeNull();
+    expect(edit.getAttribute('aria-disabled')).toBe('true');
+    expect(del.getAttribute('data-disabled')).not.toBeNull();
+    expect(del.getAttribute('aria-disabled')).toBe('true');
     // Status and published time both say Published, so two matches is correct.
     expect(row.getAllByText(/Published/).length).toBeGreaterThan(0);
+  });
+
+  it('renders flat rows with a type pill and no thumbnail box for text posts', async () => {
+    renderPanel();
+    await waitFor(() => expect(screen.getByTestId(`queue-row-${ID_A}`)).toBeTruthy());
+    const rowA = within(screen.getByTestId(`queue-row-${ID_A}`));
+    // The pill carries the type; text posts get no thumbnail box.
+    expect(rowA.getByText('Text')).toBeTruthy();
+    expect(rowA.queryByRole('img')).toBeNull();
+    // Meta no longer repeats the type: status + time only (the status
+    // lives in its own span, so the two halves assert separately).
+    expect(rowA.getByText('Queued')).toBeTruthy();
+    expect(rowA.getByText(/Est\./)).toBeTruthy();
+    // Media rows keep their real thumbnail.
+    const rowB = within(screen.getByTestId(`queue-row-${ID_B}`));
+    expect(rowB.getByRole('img')).toBeTruthy();
+    // Flat row, not a card panel.
+    expect(screen.getByTestId(`queue-row-${ID_A}`).className).not.toContain('bg-panel');
+  });
+
+  it('opens the row menu to reach Edit and Delete', async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    await waitFor(() => expect(screen.getByTestId(`queue-row-${ID_A}`)).toBeTruthy());
+    const row = within(screen.getByTestId(`queue-row-${ID_A}`));
+    // Closed menu renders no items.
+    expect(row.queryByTestId('queue-row-edit')).toBeNull();
+    await user.click(row.getByTestId('queue-row-menu'));
+    expect(screen.getByTestId('queue-row-edit')).toBeTruthy();
+    expect(screen.getByTestId('queue-row-delete')).toBeTruthy();
+  });
+
+  it('shows Retry as the primary action on failed rows, no Publish now', async () => {
+    renderPanel();
+    await waitFor(() => expect(screen.getByTestId(`queue-row-${ID_C}`)).toBeTruthy());
+    const row = within(screen.getByTestId(`queue-row-${ID_C}`));
+    expect(row.getByTestId('queue-row-retry')).toBeTruthy();
+    expect(row.queryByTestId('queue-row-publish-now')).toBeNull();
+    expect(row.queryByTestId('queue-row-move-up')).toBeNull();
   });
 
   it('shows the retry count on failed rows and retries via the destination route', async () => {
@@ -260,7 +307,8 @@ describe('QueuePanel', () => {
     renderPanel();
     await waitFor(() => expect(screen.getByTestId(`queue-row-${ID_A}`)).toBeTruthy());
     const row = within(screen.getByTestId(`queue-row-${ID_A}`));
-    await user.click(row.getByTestId('queue-row-edit'));
+    await user.click(row.getByTestId('queue-row-menu'));
+    await user.click(screen.getByTestId('queue-row-edit'));
     const textarea = screen.getByTestId('queue-edit-caption') as HTMLTextAreaElement;
     expect(textarea.value).toBe('First queued post');
     await user.clear(textarea);
@@ -277,7 +325,8 @@ describe('QueuePanel', () => {
     renderPanel();
     await waitFor(() => expect(screen.getByTestId(`queue-row-${ID_C}`)).toBeTruthy());
     const row = within(screen.getByTestId(`queue-row-${ID_C}`));
-    await user.click(row.getByTestId('queue-row-delete'));
+    await user.click(row.getByTestId('queue-row-menu'));
+    await user.click(screen.getByTestId('queue-row-delete'));
     await user.click(screen.getByTestId('queue-delete-confirm-btn'));
     await waitFor(() => expect(apiDelete).toHaveBeenCalled());
     expect(String(apiDelete.mock.calls[0][0])).toContain(`/publishing/queue/${ID_C}`);

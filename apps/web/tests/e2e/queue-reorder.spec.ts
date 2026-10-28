@@ -105,7 +105,9 @@ test.describe('queue section (dedicated page)', () => {
     await installApiFixtures(page, seedQueue());
     await openQueueTab(page);
 
-    await page.getByTestId(`queue-row-${ID_A}`).getByTestId('queue-row-edit').click();
+    // Edit lives in the row menu (portalled, so page-scoped, not row-scoped).
+    await page.getByTestId(`queue-row-${ID_A}`).getByTestId('queue-row-menu').click();
+    await page.getByTestId('queue-row-edit').click();
     const textarea = page.getByTestId('queue-edit-caption');
     await expect(textarea).toHaveValue('Queue first post');
     await textarea.fill('Queue first post, edited');
@@ -121,7 +123,9 @@ test.describe('queue section (dedicated page)', () => {
     await installApiFixtures(page, seedQueue());
     await openQueueTab(page);
 
-    await page.getByTestId(`queue-row-${ID_C}`).getByTestId('queue-row-delete').click();
+    // Delete lives in the row menu (portalled, so page-scoped, not row-scoped).
+    await page.getByTestId(`queue-row-${ID_C}`).getByTestId('queue-row-menu').click();
+    await page.getByTestId('queue-row-delete').click();
     await page.getByTestId('queue-delete-confirm-btn').click();
     await expect(page.getByText('Post deleted.')).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId(`queue-row-${ID_C}`)).toHaveCount(0);
@@ -154,9 +158,10 @@ test.describe('queue section (dedicated page)', () => {
     await installApiFixtures(page, seedQueue());
     await openQueueTab(page);
 
-    const row = page.getByTestId(`queue-row-${ID_D}`);
-    await expect(row.getByTestId('queue-row-edit')).toBeDisabled();
-    await expect(row.getByTestId('queue-row-delete')).toBeDisabled();
+    // Edit/Delete are disabled menu items (portalled, page-scoped).
+    await page.getByTestId(`queue-row-${ID_D}`).getByTestId('queue-row-menu').click();
+    await expect(page.getByTestId('queue-row-edit')).toBeDisabled();
+    await expect(page.getByTestId('queue-row-delete')).toBeDisabled();
   });
 
   test('status filter chips narrow the list', async ({ page, context }) => {

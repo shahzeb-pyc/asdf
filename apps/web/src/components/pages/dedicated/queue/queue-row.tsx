@@ -1,18 +1,22 @@
 'use client';
 
 /**
- * One queued-post row in the Queue section: thumbnail (or a type
- * fallback for text-only posts — no invented artwork), caption clamped
- * to two lines, type + status + time meta, and the row actions.
+ * One queued-post row in the Queue section: flat row with a divider
+ * (no card per row — the list carries divide-y), a small type pill
+ * next to the caption, status + time meta with no repeated type, and
+ * a single action hierarchy. Media posts keep their REAL thumbnail;
+ * text posts get no thumbnail box at all — the pill carries the type.
  * Published rows refuse edit/delete in the UI (the server 400s
  * regardless); move + publish-now exist on queued rows only, retry on
- * failed rows only.
+ * failed rows only. Edit/Delete live in the row menu as disabled
+ * items on published rows, never removed.
  */
 import * as React from 'react';
 import Image from 'next/image';
-import { ChevronDownIcon, ChevronUpIcon } from 'lucide-react';
+import { ChevronDownIcon, ChevronUpIcon, MoreVerticalIcon } from 'lucide-react';
 
 import { Button } from '@/components/shared/ui/button';
+import { Menu, MenuContent, MenuItem, MenuTrigger } from '@/components/shared/ui/menu';
 import type { QueueItem } from '@/lib/api/schemas/queue';
 import {
   formatQueuePostType,
@@ -74,10 +78,7 @@ export function QueueRow({
   }
 
   return (
-    <li
-      data-testid={`queue-row-${item.id}`}
-      className="flex gap-3 rounded-md border border-line bg-panel p-3 shadow-card"
-    >
+    <li data-testid={`queue-row-${item.id}`} className="flex gap-3 py-3">
       {thumbnailUrl ? (
         <Image
           src={thumbnailUrl}
@@ -86,20 +87,19 @@ export function QueueRow({
           height={96}
           className="size-14 shrink-0 rounded-md object-cover"
         />
-      ) : (
-        <div
-          aria-hidden
-          className="flex size-14 shrink-0 items-center justify-center rounded-md bg-subtle px-1 text-center text-metadata text-ink-dim"
-        >
-          {typeLabel}
-        </div>
-      )}
+      ) : null}
       <div className="min-w-0 flex-1">
-        {item.caption ? (
-          <p className="m-0 line-clamp-2 text-body text-ink">{item.caption}</p>
-        ) : null}
+        <div className="flex items-start gap-2">
+          <span className="inline-flex shrink-0 items-center rounded-full border border-line bg-subtle px-2 py-0.5 text-metadata text-ink-dim">
+            {typeLabel}
+          </span>
+          {item.caption ? (
+            <p className="m-0 min-w-0 flex-1 line-clamp-2 text-body text-ink">
+              {item.caption}
+            </p>
+          ) : null}
+        </div>
         <p className="m-0 mt-1 text-metadata text-ink-sub">
-          {typeLabel} ·{' '}
           <span className={isFailed ? 'text-brand-rose' : undefined}>
             {formatQueueStatus(item.status)}
           </span>
@@ -108,36 +108,34 @@ export function QueueRow({
         {isQueued && unmatched ? (
           <p className="m-0 mt-1 text-metadata text-brand-gold">{UNMATCHED_NOTE}</p>
         ) : null}
-        <div className="mt-2 flex flex-wrap gap-1.5">
+        <div className="mt-2 flex flex-wrap items-center gap-1">
           {isQueued ? (
             <>
               <Button
                 type="button"
-                variant="outline"
-                size="sm"
+                variant="ghost"
+                size="icon"
                 data-testid="queue-row-move-up"
                 aria-label="Move up"
                 disabled={busy || !canMoveUp}
                 onClick={onMoveUp}
               >
                 <ChevronUpIcon aria-hidden />
-                Up
               </Button>
               <Button
                 type="button"
-                variant="outline"
-                size="sm"
+                variant="ghost"
+                size="icon"
                 data-testid="queue-row-move-down"
                 aria-label="Move down"
                 disabled={busy || !canMoveDown}
                 onClick={onMoveDown}
               >
                 <ChevronDownIcon aria-hidden />
-                Down
               </Button>
               <Button
                 type="button"
-                variant="outline"
+                variant="default"
                 size="sm"
                 data-testid="queue-row-publish-now"
                 disabled={busy}
@@ -150,7 +148,7 @@ export function QueueRow({
           {isFailed ? (
             <Button
               type="button"
-              variant="outline"
+              variant="default"
               size="sm"
               data-testid="queue-row-retry"
               disabled={busy}
@@ -159,26 +157,37 @@ export function QueueRow({
               Retry
             </Button>
           ) : null}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            data-testid="queue-row-edit"
-            disabled={busy || isPublished}
-            onClick={onEdit}
-          >
-            Edit
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            data-testid="queue-row-delete"
-            disabled={busy || isPublished}
-            onClick={onDelete}
-          >
-            Delete
-          </Button>
+          <Menu>
+            <MenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                data-testid="queue-row-menu"
+                aria-label="Row actions"
+                disabled={busy}
+              >
+                <MoreVerticalIcon aria-hidden />
+              </Button>
+            </MenuTrigger>
+            <MenuContent align="end">
+              <MenuItem
+                data-testid="queue-row-edit"
+                disabled={busy || isPublished}
+                onSelect={() => onEdit()}
+              >
+                Edit
+              </MenuItem>
+              <MenuItem
+                data-testid="queue-row-delete"
+                variant="destructive"
+                disabled={busy || isPublished}
+                onSelect={() => onDelete()}
+              >
+                Delete
+              </MenuItem>
+            </MenuContent>
+          </Menu>
         </div>
       </div>
     </li>
