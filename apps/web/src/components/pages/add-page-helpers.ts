@@ -10,6 +10,7 @@
  */
 import { getAccountHealth } from '@/components/accounts/account-health';
 import type { FacebookAccountItem } from '@/components/accounts/account-card';
+import { ALL_POST_FORMATS } from './dedicated/posting-times/posting-time-utils';
 
 export interface DiscoveredPageItem {
   fbPageId: string;
@@ -39,14 +40,15 @@ export interface AddPagePostingTime {
   allowedFormats: string[];
 }
 
-/** Post-type ids in the dedicated Posting Times order. */
-export const ADD_PAGE_POST_FORMAT_IDS = [
-  'reel',
-  'image',
-  'video',
-  'story',
-  'text',
-] as const;
+/**
+ * Post-type ids, derived from the dedicated Posting Times canonical
+ * list — never a second hand-maintained copy of it.
+ */
+export const ADD_PAGE_POST_FORMAT_IDS: readonly string[] =
+  ALL_POST_FORMATS.map((format) => format.id);
+
+/** At most one posting time per hour of the day, server and client. */
+export const MAX_ADD_PAGE_POSTING_TIMES = 24;
 
 const ADD_PAGE_DEFAULT_TIMES = [
   '09:00',
@@ -66,28 +68,86 @@ export function createAddPagePostingTime(
 }
 
 /**
- * The default time for a newly added row: the first default time not
- * already used, otherwise one hour after the latest used time. A
- * fresh row must never start as a duplicate — duplicates are
- * rejected by the import boundary and would leave Add disabled.
+ * Post-type ids re-sorted into the canonical
+ * Reels/Photos/Videos/Stories/Text order, so deselecting then
+ * reselecting a type never scrambles the stored order. Unknown ids
+ * (none are produced by the UI) keep their relative order at the end.
  */
-export function nextAddPagePostingTime(
+export function sortAddPageFormats(formats: string[]): string[] {
+  const order = new Map(
+    ALL_POST_FORMATS.map((format, index) => [format.id, index])
+  );
+  const seen = new Set<string>();
+  const unique = formats.filter((format) => {
+    if (seen.has(format)) return false;
+    seen.add(format);
+    return true;
+  });
+  return unique.sort((a, b) => {
+    const aOrder = order.get(a) ?? ALL_POST_FORMATS.length;
+    const bOrder = order.get(b) ?? ALL_POST_FORMATS.length;
+    return aOrder - bOrder;
+  });
+}
+
+/**
+ * The next genuinely free time for a new row, or null when none of
+ * the candidate slots is free. Candidates, in order: the four
+ * defaults, then hourly steps forward from the latest used time
+ * (wrapping past midnight, same minutes), then half-hour steps, then
+ * every remaining :00/:30 slot of the day. A fresh row must never
+ * start as a duplicate — duplicates are rejected by the import
+ * boundary and would leave Add disabled.
+ */
+export function findFreeAddPagePostingTime(
   existing: AddPagePostingTime[]
-): AddPagePostingTime {
+): AddPagePostingTime | null {
   const used = new Set(existing.map((time) => time.slotTime));
-  for (const candidate of ADD_PAGE_DEFAULT_TIMES) {
+  const candidates: string[] = [...ADD_PAGE_DEFAULT_TIMES];
+  const latest = [...used].sort().at(-1) ?? '09:00';
+  const [latestHourText, latestMinuteText] = latest.split(':');
+  const latestHour = Number.parseInt(latestHourText ?? '9', 10);
+  const latestMinute = latestMinuteText ?? '00';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  for (let step = 1; step <= 24; step += 1) {
+    candidates.push(`${pad((latestHour + step) % 24)}:${latestMinute}`);
+  }
+  for (let step = 1; step <= 24; step += 1) {
+    const minute = latestMinute === '30' ? '00' : '30';
+    candidates.push(`${pad((latestHour + step) % 24)}:${minute}`);
+  }
+  for (let hour = 0; hour < 24; hour += 1) {
+    candidates.push(`${pad(hour)}:00`, `${pad(hour)}:30`);
+  }
+  for (const candidate of candidates) {
     if (!used.has(candidate)) {
       return createAddPagePostingTime(candidate);
     }
   }
-  const latest = [...used].sort().at(-1) ?? '09:00';
-  const [hourText, minuteText] = latest.split(':');
-  if (!hourText || !minuteText) {
-    return createAddPagePostingTime('09:00');
-  }
-  const nextHour = (Number.parseInt(hourText, 10) + 1) % 24;
-  const candidate = `${String(nextHour).padStart(2, '0')}:${minuteText}`;
-  return createAddPagePostingTime(used.has(candidate) ? '09:00' : candidate);
+  return null;
+}
+
+/**
+ * The default time for a newly added row: the first free candidate
+ * from findFreeAddPagePostingTime. Callers that gate the button
+ * should use canAddAnotherPostingTime instead; this fallback only
+ * exists for callers that must produce a row unconditionally, and
+ * the Add gate will still block a duplicate row from being sent.
+ */
+export function nextAddPagePostingTime(
+  existing: AddPagePostingTime[]
+): AddPagePostingTime {
+  return findFreeAddPagePostingTime(existing) ?? createAddPagePostingTime();
+}
+
+/** Whether another row can be added: under the cap and a free slot. */
+export function canAddAnotherPostingTime(
+  existing: AddPagePostingTime[]
+): boolean {
+  return (
+    existing.length < MAX_ADD_PAGE_POSTING_TIMES &&
+    findFreeAddPagePostingTime(existing) !== null
+  );
 }
 
 export function isValidAddPagePostingTime(
@@ -108,7 +168,11 @@ export function isAddPageScheduleValid(
   timezone: string | null,
   postingTimes: AddPagePostingTime[]
 ): boolean {
-  if (!timezone || postingTimes.length === 0) {
+  if (
+    !timezone ||
+    postingTimes.length === 0 ||
+    postingTimes.length > MAX_ADD_PAGE_POSTING_TIMES
+  ) {
     return false;
   }
   if (!postingTimes.every(isValidAddPagePostingTime)) {

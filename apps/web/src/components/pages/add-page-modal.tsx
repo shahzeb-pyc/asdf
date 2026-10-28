@@ -42,13 +42,15 @@ import { buildDirectConnectUrl } from '@/components/accounts/connect-account-mod
 import type { FacebookAccountItem } from '@/components/accounts/account-card';
 
 import {
+  canAddAnotherPostingTime,
   computeConfirmButtonText,
   computeHeaderSubtitle,
   createAddPagePostingTime,
+  findFreeAddPagePostingTime,
   getActiveAccounts,
   getExpiredAccounts,
   isAddPageScheduleValid,
-  nextAddPagePostingTime,
+  sortAddPageFormats,
   toggleSelectAllPages,
   type AddPagePostingTime,
   type AddPageStep,
@@ -64,15 +66,18 @@ export type { DiscoveredPageItem } from './add-page-helpers';
 export {
   buildAccountsHref,
   buildSettingsFacebookHref,
+  canAddAnotherPostingTime,
   computeConfirmButtonText,
   computeHeaderSubtitle,
   createAddPagePostingTime,
   filterDiscoveredPages,
+  findFreeAddPagePostingTime,
   getActiveAccounts,
   getExpiredAccounts,
   getSelectablePageIds,
   isAddPageScheduleValid,
   nextAddPagePostingTime,
+  sortAddPageFormats,
   toggleSelectAllPages,
 } from './add-page-helpers';
 export type { AddPagePostingTime } from './add-page-helpers';
@@ -163,6 +168,22 @@ async function executeImportPages(
     };
   } catch (error) {
     reportError(error, { source: 'add-page-import' });
+    // A schedule failure carries its own server signal and message:
+    // the timezone and times are kept for retry, so the user must
+    // hear that, not the generic import failure. Anything else keeps
+    // the generic import message.
+    if (
+      isApiError(error) &&
+      error.kind === 'http' &&
+      error.code === 'SCHEDULE_FAILED'
+    ) {
+      return {
+        success: false as const,
+        importedCount: 0,
+        importedPageIds: [] as string[],
+        error: error.message,
+      };
+    }
     return {
       success: false as const,
       importedCount: 0,
@@ -210,9 +231,10 @@ export function AddPageModal({
   );
   // Steps 3–4 state. The timezone starts blank (no default) and the
   // posting-times list starts with one time, all post types selected.
-  // Back navigation between steps 2, 3 and 4 preserves all of this;
-  // only Cancel, a fresh account pick, or going back to accounts
-  // resets it.
+  // The schedule is account-independent, so it survives picking a
+  // new account and going back to accounts — only Cancel or closing
+  // the dialog resets it. The page selection, which is
+  // account-specific, still resets on an account change.
   const [selectedTimezone, setSelectedTimezone] = React.useState<
     string | null
   >(initialSelectedTimezone);
@@ -276,7 +298,6 @@ export function AddPageModal({
     setDiscoveredPages([]);
     setSelectedPageIds([]);
     setPageSearchQuery('');
-    resetSchedule();
     setErrorMessage(null);
     setIsDiscovering(true);
 
@@ -295,7 +316,6 @@ export function AddPageModal({
     setDiscoveredPages([]);
     setSelectedPageIds([]);
     setPageSearchQuery('');
-    resetSchedule();
     setErrorMessage(null);
   };
 
@@ -329,7 +349,10 @@ export function AddPageModal({
   );
 
   const handleAddPostingTime = () => {
-    setPostingTimes((prev) => [...prev, nextAddPagePostingTime(prev)]);
+    setPostingTimes((prev) => {
+      const next = findFreeAddPagePostingTime(prev);
+      return next ? [...prev, next] : prev;
+    });
   };
 
   const handleRemovePostingTime = (index: number) => {
@@ -350,10 +373,12 @@ export function AddPageModal({
     setPostingTimes((prev) =>
       prev.map((postingTime, i) => {
         if (i !== index) return postingTime;
-        const allowedFormats = postingTime.allowedFormats.includes(formatId)
+        const toggled = postingTime.allowedFormats.includes(formatId)
           ? postingTime.allowedFormats.filter((format) => format !== formatId)
           : [...postingTime.allowedFormats, formatId];
-        return { ...postingTime, allowedFormats };
+        // Keep the canonical order: deselect-then-reselect must not
+        // move a type to the end of the stored list.
+        return { ...postingTime, allowedFormats: sortAddPageFormats(toggled) };
       })
     );
   };
@@ -503,6 +528,7 @@ export function AddPageModal({
           {errorMessage && (
             <div
               data-testid="add-page-error"
+              role="alert"
               className="mb-4 rounded-sm border border-brand-rose/25 bg-brand-rose/10 px-3 py-2 text-body text-brand-rose"
             >
               {errorMessage}
@@ -550,6 +576,7 @@ export function AddPageModal({
             <SelectPostingTimesStep
               timezone={selectedTimezone}
               postingTimes={postingTimes}
+              canAddAnotherPostingTime={canAddAnotherPostingTime(postingTimes)}
               onChangeTimezone={handleBackToTimezone}
               onAddPostingTime={handleAddPostingTime}
               onRemovePostingTime={handleRemovePostingTime}

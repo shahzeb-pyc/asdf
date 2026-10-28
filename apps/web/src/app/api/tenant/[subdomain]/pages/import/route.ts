@@ -154,7 +154,11 @@ export async function handleImportPages(
     );
   }
 
-  const selectedSet = new Set(selectedPageIds);
+  // Duplicate ids in the request collapse to one page: the Graph
+  // result holds each page once, so the count check below compares
+  // against the deduped list, not the raw request list.
+  const dedupedSelectedPageIds = [...new Set(selectedPageIds)];
+  const selectedSet = new Set(dedupedSelectedPageIds);
   const matchedPages = rawItems.filter((item) => selectedSet.has(String(item.id)));
 
   // Query existing destinations before upserting via Supabase to
@@ -170,6 +174,56 @@ export async function handleImportPages(
       metadata: Record<string, unknown>;
     }
   >();
+  // Postgres pre-existing set, for the same "schedule only newly
+  // created pages" rule the Supabase path gets from existingPagesMap.
+  const preExistingFbPageIds = new Set<string>();
+
+  if (
+    dbClient &&
+    'query' in dbClient &&
+    typeof dbClient.query === 'function' &&
+    matchedPages.length > 0
+  ) {
+    const preExistingRows = (await dbClient.query<{
+      external_destination_id?: string;
+      externalDestinationId?: string;
+    }>(
+      `SELECT external_destination_id FROM destinations
+       WHERE account_id = $1 AND external_destination_id = ANY($2::text[])`,
+      [accountId, matchedPages.map((item) => String(item.id))]
+    )) as Array<{
+      external_destination_id?: string;
+      externalDestinationId?: string;
+    }>;
+    for (const row of preExistingRows ?? []) {
+      const fbPageId = row.external_destination_id ?? row.externalDestinationId;
+      if (fbPageId) preExistingFbPageIds.add(String(fbPageId));
+    }
+  }
+
+  // Evaluated at upsert time, after existingPagesMap is populated
+  // below for the Supabase path.
+  const isPreExistingDestination = (fbPageId: string): boolean =>
+    isSupabaseMode
+      ? existingPagesMap.has(fbPageId)
+      : preExistingFbPageIds.has(fbPageId);
+
+  // When a schedule is supplied, a Graph result that returns fewer
+  // pages than selected is an error BEFORE any destination is
+  // written — otherwise a failed schedule would leave pages behind
+  // with no schedule and no success to show for them. The legacy
+  // import (no schedule) keeps its old behaviour of importing
+  // whatever matched.
+  if (
+    timezone &&
+    postingTimes &&
+    matchedPages.length !== dedupedSelectedPageIds.length
+  ) {
+    return NextResponse.json(
+      { error: "Couldn't add the selected pages. Please try again." },
+      { status: 500 }
+    );
+  }
 
   if (isSupabaseMode && matchedPages.length > 0) {
     const supabase = (
@@ -268,6 +322,7 @@ export async function handleImportPages(
           id: row.id,
           fbPageId: row.fb_page_id || row.fbPageId,
           pageName: row.page_name || row.pageName,
+          isNew: !isPreExistingDestination(String(pageItem.id)),
         };
       }
       return null;
@@ -319,29 +374,90 @@ export async function handleImportPages(
         id: upserted.id,
         fbPageId: upserted.external_destination_id,
         pageName: upserted.name,
+        isNew: !isPreExistingDestination(String(pageItem.id)),
       };
     }
   });
 
   const resolved = await Promise.all(importPromises);
   const importedList = resolved.filter(
-    (item): item is { id: string; fbPageId: string; pageName: string } => item !== null
+    (
+      item
+    ): item is {
+      id: string;
+      fbPageId: string;
+      pageName: string;
+      isNew: boolean;
+    } => item !== null
   );
 
+  // Best-effort rollback for destinations created in this call only.
+  // Pre-existing destinations are never passed here, so they can
+  // never be deleted by a failed schedule. A rollback failure is
+  // logged, never masked over the original schedule error.
+  const rollbackCreatedDestinations = async (
+    targets: Array<{ id: string }>
+  ): Promise<void> => {
+    if (targets.length === 0) return;
+    const ids = targets.map((page) => page.id);
+    try {
+      if (
+        dbClient &&
+        'query' in dbClient &&
+        typeof dbClient.query === 'function'
+      ) {
+        await dbClient.query(
+          `DELETE FROM posting_slots WHERE destination_id = ANY($1::uuid[])`,
+          [ids]
+        );
+        await dbClient.query(
+          `DELETE FROM destinations WHERE id = ANY($1::uuid[]) AND workspace_id = $2 AND platform = 'facebook'`,
+          [ids, workspaceId]
+        );
+      } else {
+        const supabase = (
+          dbClient && 'from' in dbClient ? dbClient : getSupabaseAdminClient()
+        ) as SupabaseClient | null;
+        if (!supabase) return;
+        await supabase.from('posting_slots').delete().in('destination_id', ids);
+        await supabase
+          .from('destinations')
+          .delete()
+          .in('id', ids)
+          .eq('workspace_id', workspaceId)
+          .eq('platform', 'facebook');
+      }
+    } catch (rollbackErr) {
+      logServerError('[pages/import] Failed to roll back created pages', rollbackErr, {
+        source: 'pages-import-rollback',
+        subdomain,
+      });
+    }
+  };
+
   // Add Page steps 3–4: when a schedule was supplied, it is applied
-  // to every imported destination in this same operation, and
-  // success is returned only when all of it applied. Any failure
-  // returns 500 with no success payload, so the client dialog stays
-  // open on Step 4 ("nothing finish"). This is not a rollback: a
-  // destination upsert or slot row that already landed is
-  // idempotent on retry (destination upsert by
-  // account_id + external_destination_id; slot upsert by
-  // destination_id + time_of_day, which also refreshes the formats
-  // to the retried schedule), so a retry can never duplicate a
-  // posting time. The schedule is skipped entirely when absent, so
-  // the legacy import path is unchanged.
+  // ONLY to destinations newly created in this call, and success is
+  // returned only when all of it applied. A pre-existing destination
+  // keeps its own timezone and slots untouched — in particular a
+  // paused slot is never reactivated by a re-import. On any
+  // schedule failure the destinations created in this call are
+  // deleted again (slots first, then destinations; posting_slots
+  // also cascades from destinations), so "nothing finish" is true
+  // on the server too, not just in the dialog: failure-then-cancel
+  // leaves zero new pages, and a retry re-creates them cleanly.
+  // Slot writes are idempotent upserts keyed on destination + time,
+  // so a retry can never duplicate a posting time. The schedule is
+  // skipped entirely when absent, so the legacy import path is
+  // unchanged.
+  const SCHEDULE_FAILED_MESSAGE =
+    "Couldn't save the posting times — try again, your timezone and times are kept";
   if (timezone && postingTimes) {
-    if (importedList.length !== selectedPageIds.length) {
+    const scheduleTargets = importedList.filter((page) => page.isNew);
+    // An upsert that failed after the pre-check must not turn into a
+    // partial success either: roll back what this call created and
+    // report the generic import failure.
+    if (importedList.length !== dedupedSelectedPageIds.length) {
+      await rollbackCreatedDestinations(scheduleTargets);
       return NextResponse.json(
         { error: "Couldn't add the selected pages. Please try again." },
         { status: 500 }
@@ -353,7 +469,7 @@ export async function handleImportPages(
         'query' in dbClient &&
         typeof dbClient.query === 'function'
       ) {
-        for (const page of importedList) {
+        for (const page of scheduleTargets) {
           const updated = await dbClient.query(
             `UPDATE destinations
              SET timezone = $1, updated_at = now()
@@ -364,17 +480,28 @@ export async function handleImportPages(
           if (!updated || updated.length === 0) {
             throw new Error('Destination not found while applying schedule');
           }
-          for (const postingTime of postingTimes) {
-            await dbClient.query(
-              `INSERT INTO posting_slots (destination_id, time_of_day, is_active, kind, created_at, updated_at)
-               VALUES ($1, $2, true, $3, now(), now())
-               ON CONFLICT (destination_id, time_of_day) DO UPDATE SET
-                 kind = EXCLUDED.kind,
-                 is_active = true,
-                 updated_at = now()`,
-              [page.id, postingTime.slotTime, postingTime.allowedFormats]
+          // One multi-row insert per page, not one query per time.
+          const valuePlaceholders: string[] = [];
+          const slotParams: unknown[] = [page.id];
+          postingTimes.forEach((postingTime, index) => {
+            const base = 2 + index * 2;
+            valuePlaceholders.push(
+              `($1, $${base}, true, $${base + 1}, now(), now())`
             );
-          }
+            slotParams.push(
+              postingTime.slotTime,
+              postingTime.allowedFormats
+            );
+          });
+          await dbClient.query(
+            `INSERT INTO posting_slots (destination_id, time_of_day, is_active, kind, created_at, updated_at)
+             VALUES ${valuePlaceholders.join(', ')}
+             ON CONFLICT (destination_id, time_of_day) DO UPDATE SET
+               kind = EXCLUDED.kind,
+               is_active = true,
+               updated_at = now()`,
+            slotParams
+          );
         }
       } else {
         const supabase = (
@@ -383,7 +510,7 @@ export async function handleImportPages(
         if (!supabase) {
           throw new Error('Database service unavailable');
         }
-        for (const page of importedList) {
+        for (const page of scheduleTargets) {
           const { data: updatedPage, error: updateErr } = await supabase
             .from('destinations')
             .update({
@@ -422,8 +549,9 @@ export async function handleImportPages(
         source: 'pages-import-schedule',
         subdomain,
       });
+      await rollbackCreatedDestinations(scheduleTargets);
       return NextResponse.json(
-        { error: "Couldn't add the selected pages. Please try again." },
+        { error: SCHEDULE_FAILED_MESSAGE, code: 'SCHEDULE_FAILED' },
         { status: 500 }
       );
     }

@@ -23,6 +23,7 @@ import { Button } from '@/components/shared/ui/button';
 import { Input } from '@/components/shared/ui/input';
 import { cn } from '@/lib/utils';
 import {
+  findTimezoneEntry,
   getTimezoneCurrentTime,
   getTimezoneUtcOffset,
   REGION_LABELS,
@@ -60,6 +61,9 @@ export function SelectTimezoneStep({
     () => REGION_ORDER.some((region) => grouped[region].length > 0),
     [grouped]
   );
+  const selectedEntry = selectedTimezone
+    ? findTimezoneEntry(selectedTimezone)
+    : null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -67,8 +71,8 @@ export function SelectTimezoneStep({
         data-testid="add-page-timezone-note"
         className="text-body text-ink-sub"
       >
-        {selectedTimezone
-          ? `Selected timezone: ${selectedTimezone}`
+        {selectedEntry
+          ? `Selected timezone: ${selectedEntry.city} · ${selectedEntry.country} (${selectedTimezone})`
           : 'No timezone selected yet. Choose a timezone to continue.'}
       </div>
 
@@ -79,6 +83,7 @@ export function SelectTimezoneStep({
         />
         <Input
           type="text"
+          autoFocus
           data-testid="add-page-timezone-search-input"
           value={timezoneSearchQuery}
           onChange={(e) => onTimezoneSearchChange(e.target.value)}
@@ -176,6 +181,7 @@ export function SelectTimezoneStep({
 export interface SelectPostingTimesStepProps {
   timezone: string;
   postingTimes: AddPagePostingTime[];
+  canAddAnotherPostingTime: boolean;
   onChangeTimezone: () => void;
   onAddPostingTime: () => void;
   onRemovePostingTime: (index: number) => void;
@@ -186,6 +192,7 @@ export interface SelectPostingTimesStepProps {
 export function SelectPostingTimesStep({
   timezone,
   postingTimes,
+  canAddAnotherPostingTime,
   onChangeTimezone,
   onAddPostingTime,
   onRemovePostingTime,
@@ -232,6 +239,7 @@ export function SelectPostingTimesStep({
           variant="link"
           size="sm"
           data-testid="add-another-posting-time-btn"
+          disabled={!canAddAnotherPostingTime}
           onClick={onAddPostingTime}
         >
           Add another posting time
@@ -242,17 +250,28 @@ export function SelectPostingTimesStep({
         At least 1 posting time is required. The same posting times
         apply to every page you selected.
       </div>
+      {!canAddAnotherPostingTime && (
+        <div
+          data-testid="add-page-posting-times-cap-note"
+          className="text-metadata text-ink-sub"
+        >
+          Maximum of 24 posting times reached.
+        </div>
+      )}
 
       <div
         data-testid="add-page-posting-times-list"
         className="flex max-h-85 flex-col gap-4 overflow-y-auto"
       >
         {postingTimes.map((postingTime, index) => {
-          const preview = formatSlotDisplay(
-            /^\d{2}:\d{2}$/.test(postingTime.slotTime)
-              ? postingTime.slotTime
-              : '09:00'
+          // A cleared or invalid time previews nothing: showing
+          // 09:00 AM for an empty field would be a fake time.
+          const isValidTime = /^([01]\d|2[0-3]):[0-5]\d$/.test(
+            postingTime.slotTime
           );
+          const preview = isValidTime
+            ? formatSlotDisplay(postingTime.slotTime)
+            : null;
           const isDuplicate =
             (timeCounts.get(postingTime.slotTime) ?? 0) > 1;
           return (
@@ -282,6 +301,7 @@ export function SelectPostingTimesStep({
                 <Input
                   type="time"
                   required
+                  autoFocus={index === 0}
                   data-testid={`add-page-posting-time-input-${index}`}
                   value={postingTime.slotTime}
                   onChange={(e) =>
@@ -291,7 +311,9 @@ export function SelectPostingTimesStep({
                   className="w-44"
                 />
                 <div className="mt-1 text-metadata text-ink-sub">
-                  Posts will go out at {preview.time12} {preview.ampm}.
+                  {preview
+                    ? `Posts will go out at ${preview.time12} ${preview.ampm}.`
+                    : 'Choose a time.'}
                 </div>
                 {isDuplicate && (
                   <div className="mt-1 text-metadata text-brand-rose">

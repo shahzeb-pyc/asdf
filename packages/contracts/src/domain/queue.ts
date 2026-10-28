@@ -11,7 +11,39 @@ export const SlotTimeSchema = z
   .regex(/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/, 'Invalid time format. Expected HH:MM or HH:MM:SS');
 
 // IANA Timezone validation
+//
+// TimezoneSchema itself is deliberately left as the legacy
+// min(1).max(50) string with a UTC default: it also parses stored
+// rows back out (PageQueueSlotSchema), and stored/scheduler data
+// tolerates non-IANA values with a fallback, so tightening it would
+// turn a bad stored value into a read failure. Request boundaries
+// that WRITE a timezone use ValidatedTimezoneSchema instead, so a
+// bogus zone is rejected before it can poison any page.
 export const TimezoneSchema = z.string().min(1).max(50).default('UTC');
+
+/** True only for IANA zones Intl can actually use as a timeZone. */
+export function isValidIanaTimezone(value: string): boolean {
+  try {
+    Intl.DateTimeFormat('en-US', { timeZone: value });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A timezone for a write request: same length bounds as
+ * TimezoneSchema, plus a real-IANA check. No default — callers that
+ * need "timezone and posting times must arrive together" must be
+ * able to tell "not sent" from "sent as UTC".
+ */
+export const ValidatedTimezoneSchema = z
+  .string()
+  .min(1)
+  .max(50)
+  .refine(isValidIanaTimezone, {
+    message: 'Invalid timezone. Choose a timezone from the list.',
+  });
 
 // Create Slot Request
 export const CreateQueueSlotRequestSchema = z.object({
@@ -37,9 +69,11 @@ export const UpdateQueueSlotRequestSchema = z.object({
 
 export type UpdateQueueSlotRequest = z.infer<typeof UpdateQueueSlotRequestSchema>;
 
-// Update Schedule Timezone Request
+// Update Schedule Timezone Request — the write boundary validates
+// the zone; the response schema below keeps the legacy TimezoneSchema
+// so echoing a stored value can never fail parsing.
 export const UpdateQueueScheduleTimezoneRequestSchema = z.object({
-  timezone: TimezoneSchema,
+  timezone: ValidatedTimezoneSchema,
 });
 
 export type UpdateQueueScheduleTimezoneRequest = z.infer<typeof UpdateQueueScheduleTimezoneRequestSchema>;

@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { ValidatedTimezoneSchema } from './queue.js';
+
 export const FacebookAccountStatusSchema = z.enum([
   'active',
   'disconnected',
@@ -307,12 +309,19 @@ export type ImportPostingTime = z.infer<typeof ImportPostingTimeSchema>;
 // rejected at the boundary instead of half-applied. Duplicate times
 // are rejected for the same reason — posting_slots is unique per
 // destination + time_of_day, so a duplicate could never apply cleanly.
+// The timezone must be a real IANA zone (ValidatedTimezoneSchema,
+// shared with the dedicated timezone-change flow), and at most 24
+// posting times are accepted — one per hour of the day at most.
 export const ImportPagesRequestSchema = z
   .object({
     accountId: z.string().uuid(),
     selectedPageIds: z.array(z.string().min(1).max(100)).min(1),
-    timezone: z.string().min(1).max(50).optional(),
-    postingTimes: z.array(ImportPostingTimeSchema).min(1).optional(),
+    timezone: ValidatedTimezoneSchema.optional(),
+    postingTimes: z
+      .array(ImportPostingTimeSchema)
+      .min(1)
+      .max(24, 'At most 24 posting times can be added at once.')
+      .optional(),
   })
   .superRefine((data, ctx) => {
     const hasTimezone = data.timezone !== undefined;
