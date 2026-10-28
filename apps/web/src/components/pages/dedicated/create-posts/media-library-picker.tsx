@@ -1052,6 +1052,7 @@ export function MediaLibraryPicker({
                             key={item.id}
                             item={item}
                             compact
+                            disableCaptionEditing
                             selected={selectedIds.includes(item.id)}
                             folderPathLabel={
                               debouncedSearch
@@ -1065,6 +1066,11 @@ export function MediaLibraryPicker({
                               mode === 'multi'
                                 ? (item) => handleToggleSelect(item.id)
                                 : undefined
+                            }
+                            onNameClick={
+                              mode === 'multi'
+                                ? (item) => handleToggleSelect(item.id)
+                                : handlePreview
                             }
                             onUpdateCaption={handleUpdateCaption}
                           />

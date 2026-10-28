@@ -43,6 +43,23 @@ export interface MediaTableRowProps {
    * is unchanged.
    */
   onTileClick?: ((item: MediaItemResponse) => void) | undefined;
+  /**
+   * Optional override for the filename's click action. When set, the
+   * filename renders as a button calling this; when unset, it renders
+   * as the inert text the library page has always shown. The Media
+   * Library picker passes its tile gesture here so a filename click
+   * selects (multi mode) or previews (single mode) instead of doing
+   * nothing. Unset everywhere else, so the library page is unchanged.
+   */
+  onNameClick?: ((item: MediaItemResponse) => void) | undefined;
+  /**
+   * Picker-only: the caption is never editable and its click follows
+   * the tile gesture (onTileClick ?? onPreview) instead of opening the
+   * inline editor. The Media Library picker passes this because it is
+   * browse + select only; caption editing lives on the full library
+   * page. Default off, so the library page is unchanged.
+   */
+  disableCaptionEditing?: boolean | undefined;
   onUpdateCaption?:
     | ((mediaId: string, captionText: string) => Promise<void> | void)
     | undefined;
@@ -74,6 +91,8 @@ export function MediaTableRow({
   onToggleSelect,
   onPreview,
   onTileClick,
+  onNameClick,
+  disableCaptionEditing = false,
   onUpdateCaption,
   onMoveRequest,
   onDeleteRequest,
@@ -166,13 +185,25 @@ export function MediaTableRow({
       {/* 3. File (Name + Folder Ancestry Link) */}
       <TableCell className={compact ? 'whitespace-normal' : 'w-55 whitespace-normal'}>
         <div className="flex flex-col gap-0.5">
-          <span
-            title={item.name}
-            data-testid={`row-name-${item.id}`}
-            className="truncate text-metadata font-medium text-ink"
-          >
-            {item.name}
-          </span>
+          {onNameClick ? (
+            <button
+              type="button"
+              onClick={() => onNameClick(item)}
+              title={item.name}
+              data-testid={`row-name-${item.id}`}
+              className="block w-full cursor-pointer truncate border-0 bg-transparent p-0 text-left text-metadata font-medium text-ink outline-none focus-visible:outline-2 focus-visible:outline-brand-gold"
+            >
+              {item.name}
+            </button>
+          ) : (
+            <span
+              title={item.name}
+              data-testid={`row-name-${item.id}`}
+              className="truncate text-metadata font-medium text-ink"
+            >
+              {item.name}
+            </span>
+          )}
           {folderPathLabel && (
             <button
               type="button"
@@ -194,7 +225,7 @@ export function MediaTableRow({
             : 'w-60 whitespace-normal'
         }
       >
-        {isEditingCaption ? (
+        {isEditingCaption && !disableCaptionEditing ? (
           <Input
             type="text"
             data-testid={`table-caption-input-${item.id}`}
@@ -213,6 +244,19 @@ export function MediaTableRow({
             }}
             className="h-9 text-xs"
           />
+        ) : disableCaptionEditing ? (
+          <button
+            type="button"
+            data-testid={`table-inline-caption-${item.id}`}
+            data-fallback={hasCaption ? undefined : 'filename'}
+            onClick={() => (onTileClick ?? onPreview)?.(item)}
+            className={cn(
+              'block w-full cursor-pointer truncate border-0 bg-transparent p-0 py-0.5 text-left text-xs outline-none focus-visible:outline-2 focus-visible:outline-brand-gold',
+              hasCaption ? 'text-ink' : 'text-ink-dim italic'
+            )}
+          >
+            {isSavingCaption ? 'Saving...' : resolvedCaption}
+          </button>
         ) : (
           <button
             type="button"
