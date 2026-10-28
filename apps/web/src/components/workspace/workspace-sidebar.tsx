@@ -12,7 +12,7 @@
  * - Structure and order: branding header (logo + wordmark, a Link to
  *   Home) → primary group (Home, Media Library, Downloader, Fdola
  *   Studio) → Facebook collapsible group (default open; Accounts,
- *   Pages) → one collapsible group per upcoming platform, each with a
+ *   Pages, Publish Now) → one collapsible group per upcoming platform, each with a
  *   single Accounts item and the testing-placeholder note → footer.
  * - Spec 110 single-click model: every leaf is a Next.js <Link> that
  *   navigates on the FIRST click; the leaf click handler only paints
@@ -135,6 +135,7 @@ export function WorkspaceSidebar({
   const promptsHref = href('/prompts');
   const accountsHref = href('/accounts');
   const pagesHref = href('/pages');
+  const publishNowHref = href('/publish-now');
 
   const isHomeActive = effectivePath === normalizeTenantPath(homeHref, subdomain);
   const isMediaActive = effectivePath.startsWith(normalizeTenantPath(mediaHref, subdomain));
@@ -149,6 +150,9 @@ export function WorkspaceSidebar({
   );
   const isAccountsActive = effectivePath.startsWith(normalizeTenantPath(accountsHref, subdomain));
   const isPagesActive = effectivePath.startsWith(normalizeTenantPath(pagesHref, subdomain));
+  const isPublishNowActive = effectivePath.startsWith(
+    normalizeTenantPath(publishNowHref, subdomain)
+  );
 
   const handleNavigate = (targetHref: string) => {
     setOptimisticPathname(targetHref);
@@ -295,8 +299,8 @@ export function WorkspaceSidebar({
             <SidebarMenu>
               <SidebarMenuItem>
                 <SidebarMenuButton
-                  tooltip="Facebook — Accounts & Pages"
-                  isActive={isCollapsed && (isAccountsActive || isPagesActive)}
+                  tooltip="Facebook — Accounts, Pages & Publish Now"
+                  isActive={isCollapsed && (isAccountsActive || isPagesActive || isPublishNowActive)}
                   aria-expanded={isCollapsed ? undefined : isFacebookOpen}
                   onClick={() => {
                     if (isCollapsed) {
@@ -318,6 +322,7 @@ export function WorkspaceSidebar({
                   <SidebarMenuSub>
                     <NavSubLeaf label="Accounts" href={accountsHref} isActive={isAccountsActive} onLeafClick={handleLeafClick} />
                     <NavSubLeaf label="Pages" href={pagesHref} isActive={isPagesActive} onLeafClick={handleLeafClick} />
+                    <NavSubLeaf label="Publish Now" href={publishNowHref} isActive={isPublishNowActive} onLeafClick={handleLeafClick} />
                   </SidebarMenuSub>
                 )}
               </SidebarMenuItem>
