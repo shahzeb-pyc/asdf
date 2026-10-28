@@ -137,8 +137,12 @@ function CentredEmptyState({
         type="first-use"
         icon={icon}
         title={title}
-        description={description}
-        action={action}
+        // The shared EmptyState props are `description?: string` under
+        // exactOptionalPropertyTypes, so an explicit `undefined` does
+        // not typecheck (and Next's build-time typecheck fails the
+        // Vercel deployment for it). Pass the prop only when defined.
+        {...(description !== undefined ? { description } : {})}
+        {...(action !== undefined ? { action } : {})}
       />
     </div>
   );
