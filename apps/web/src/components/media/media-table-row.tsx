@@ -19,6 +19,13 @@ import {
 
 export interface MediaTableRowProps {
   item: MediaItemResponse;
+  /**
+   * Picker-compact rendering: hides the Details and Date columns and
+   * hides Caption/Size below the sm breakpoint, so the table fits a
+   * dialogue card with no horizontal scrolling. Default off — the
+   * full library page keeps all eight columns.
+   */
+  compact?: boolean | undefined;
   selected?: boolean | undefined;
   initialEditingCaption?: boolean | undefined;
   folderPathLabel?: string | null | undefined;
@@ -27,6 +34,32 @@ export interface MediaTableRowProps {
     | ((mediaId: string, options?: { shiftKey?: boolean | undefined } | undefined) => void)
     | undefined;
   onPreview?: ((item: MediaItemResponse) => void) | undefined;
+  /**
+   * Optional override for the thumbnail button's click action. When set,
+   * the thumbnail calls this instead of onPreview; the dedicated Preview
+   * action still calls onPreview. The Media Library picker passes its
+   * selection toggle here in multi mode so a thumbnail tap selects
+   * instead of previewing. Unset everywhere else, so the library page
+   * is unchanged.
+   */
+  onTileClick?: ((item: MediaItemResponse) => void) | undefined;
+  /**
+   * Optional override for the filename's click action. When set, the
+   * filename renders as a button calling this; when unset, it renders
+   * as the inert text the library page has always shown. The Media
+   * Library picker passes its tile gesture here so a filename click
+   * selects (multi mode) or previews (single mode) instead of doing
+   * nothing. Unset everywhere else, so the library page is unchanged.
+   */
+  onNameClick?: ((item: MediaItemResponse) => void) | undefined;
+  /**
+   * Picker-only: the caption is never editable and its click follows
+   * the tile gesture (onTileClick ?? onPreview) instead of opening the
+   * inline editor. The Media Library picker passes this because it is
+   * browse + select only; caption editing lives on the full library
+   * page. Default off, so the library page is unchanged.
+   */
+  disableCaptionEditing?: boolean | undefined;
   onUpdateCaption?:
     | ((mediaId: string, captionText: string) => Promise<void> | void)
     | undefined;
@@ -50,12 +83,16 @@ export interface MediaTableRowProps {
  */
 export function MediaTableRow({
   item,
+  compact = false,
   selected = false,
   initialEditingCaption = false,
   folderPathLabel = null,
   onNavigateFolder,
   onToggleSelect,
   onPreview,
+  onTileClick,
+  onNameClick,
+  disableCaptionEditing = false,
   onUpdateCaption,
   onMoveRequest,
   onDeleteRequest,
@@ -123,7 +160,7 @@ export function MediaTableRow({
       <TableCell className="w-12 px-0">
         <button
           type="button"
-          onClick={() => onPreview?.(item)}
+          onClick={() => (onTileClick ?? onPreview)?.(item)}
           aria-label={`Preview ${item.name}`}
           className="flex h-10 w-11 cursor-pointer items-center justify-center overflow-hidden rounded-xs border border-line bg-subtle p-0 text-ink-dim outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold"
         >
@@ -146,15 +183,27 @@ export function MediaTableRow({
       </TableCell>
 
       {/* 3. File (Name + Folder Ancestry Link) */}
-      <TableCell className="w-55 whitespace-normal">
+      <TableCell className={compact ? 'whitespace-normal' : 'w-55 whitespace-normal'}>
         <div className="flex flex-col gap-0.5">
-          <span
-            title={item.name}
-            data-testid={`row-name-${item.id}`}
-            className="truncate text-metadata font-medium text-ink"
-          >
-            {item.name}
-          </span>
+          {onNameClick ? (
+            <button
+              type="button"
+              onClick={() => onNameClick(item)}
+              title={item.name}
+              data-testid={`row-name-${item.id}`}
+              className="block w-full cursor-pointer truncate border-0 bg-transparent p-0 text-left text-metadata font-medium text-ink outline-none focus-visible:outline-2 focus-visible:outline-brand-gold"
+            >
+              {item.name}
+            </button>
+          ) : (
+            <span
+              title={item.name}
+              data-testid={`row-name-${item.id}`}
+              className="truncate text-metadata font-medium text-ink"
+            >
+              {item.name}
+            </span>
+          )}
           {folderPathLabel && (
             <button
               type="button"
@@ -169,8 +218,14 @@ export function MediaTableRow({
       </TableCell>
 
       {/* 4. Caption (Click-to-Edit) */}
-      <TableCell className="w-60 whitespace-normal">
-        {isEditingCaption ? (
+      <TableCell
+        className={
+          compact
+            ? 'hidden whitespace-normal sm:table-cell'
+            : 'w-60 whitespace-normal'
+        }
+      >
+        {isEditingCaption && !disableCaptionEditing ? (
           <Input
             type="text"
             data-testid={`table-caption-input-${item.id}`}
@@ -189,6 +244,19 @@ export function MediaTableRow({
             }}
             className="h-9 text-xs"
           />
+        ) : disableCaptionEditing ? (
+          <button
+            type="button"
+            data-testid={`table-inline-caption-${item.id}`}
+            data-fallback={hasCaption ? undefined : 'filename'}
+            onClick={() => (onTileClick ?? onPreview)?.(item)}
+            className={cn(
+              'block w-full cursor-pointer truncate border-0 bg-transparent p-0 py-0.5 text-left text-xs outline-none focus-visible:outline-2 focus-visible:outline-brand-gold',
+              hasCaption ? 'text-ink' : 'text-ink-dim italic'
+            )}
+          >
+            {isSavingCaption ? 'Saving...' : resolvedCaption}
+          </button>
         ) : (
           <button
             type="button"
@@ -206,29 +274,39 @@ export function MediaTableRow({
         )}
       </TableCell>
 
-      {/* 5. Details (Merged Ratio & Duration, e.g. "1:1 · 0:45") */}
-      <TableCell
-        data-testid={`row-details-${item.id}`}
-        className="text-xs text-ink-sub tabular-nums"
-      >
-        {detailsLabel}
-      </TableCell>
+      {/* 5. Details (Merged Ratio & Duration, e.g. "1:1 · 0:45") —
+          omitted in compact mode: the picker card has no room for it,
+          and the ratio still shows on the grid tile badge. */}
+      {!compact && (
+        <TableCell
+          data-testid={`row-details-${item.id}`}
+          className="text-xs text-ink-sub tabular-nums"
+        >
+          {detailsLabel}
+        </TableCell>
+      )}
 
       {/* 6. Size (right-aligned, tabular) */}
       <TableCell
         data-testid={`row-size-${item.id}`}
-        className="text-right text-xs text-ink-dim tabular-nums"
+        className={
+          compact
+            ? 'hidden text-right text-xs text-ink-dim tabular-nums sm:table-cell'
+            : 'text-right text-xs text-ink-dim tabular-nums'
+        }
       >
         {formatBytes(item.fileSize)}
       </TableCell>
 
-      {/* 7. Upload Date (e.g. "Oct 18, 2026") */}
-      <TableCell
-        data-testid={`row-date-${item.id}`}
-        className="text-xs text-ink-dim tabular-nums"
-      >
-        {formatUploadDate(item.createdAt)}
-      </TableCell>
+      {/* 7. Upload Date (e.g. "Oct 18, 2026") — omitted in compact mode. */}
+      {!compact && (
+        <TableCell
+          data-testid={`row-date-${item.id}`}
+          className="text-xs text-ink-dim tabular-nums"
+        >
+          {formatUploadDate(item.createdAt)}
+        </TableCell>
+      )}
 
       {/* 8. Actions (Preview, Move, Delete) — NO Schedule button (PB-9) */}
       <TableCell className="text-right">

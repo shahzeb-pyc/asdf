@@ -43,13 +43,13 @@ import {
  * apply-on-selection.
  */
 
-const TYPE_DROPDOWN_OPTIONS = [
+export const TYPE_DROPDOWN_OPTIONS = [
   { key: 'all', label: 'All' },
   { key: 'video', label: 'Videos' },
   { key: 'image', label: 'Images' },
 ] as const;
 
-const RATIO_DROPDOWN_OPTIONS = [
+export const RATIO_DROPDOWN_OPTIONS = [
   { key: 'all', label: 'All ratios' },
   { key: '9:16', label: '9:16 Vertical' },
   { key: '16:9', label: '16:9 Landscape' },
@@ -57,13 +57,13 @@ const RATIO_DROPDOWN_OPTIONS = [
   { key: '4:5', label: '4:5 Portrait' },
 ] as const;
 
-const CAPTION_DROPDOWN_OPTIONS = [
+export const CAPTION_DROPDOWN_OPTIONS = [
   { key: 'all', label: 'All captions' },
   { key: 'has_caption', label: 'Has caption' },
   { key: 'empty_caption', label: 'Missing caption' },
 ] as const;
 
-const SORT_DROPDOWN_OPTIONS = [
+export const SORT_DROPDOWN_OPTIONS = [
   { key: 'created_at:desc', label: 'Newest first' },
   { key: 'created_at:asc', label: 'Oldest first' },
   { key: 'name:asc', label: 'Name (A–Z)' },
@@ -79,9 +79,17 @@ interface ToolbarMenuProps<T extends string> {
   selectedKey: T;
   optionTestIdPrefix: string;
   onSelect: (key: T) => void;
+  /**
+   * Stacking layer for the portalled menu panel. Default (undefined) keeps
+   * the current z-popover behaviour. Pass "overlayTop" when the menu lives
+   * inside a dialog (z-dialog 9500 > z-popover 9000), otherwise the panel
+   * renders underneath the dialog and is invisible/unclickable — the same
+   * layer convention as the shared Popover's overlayTop variant.
+   */
+  layer?: "popover" | "overlayTop";
 }
 
-function ToolbarMenu<T extends string>({
+export function ToolbarMenu<T extends string>({
   testId,
   label,
   displayValue,
@@ -90,6 +98,7 @@ function ToolbarMenu<T extends string>({
   selectedKey,
   optionTestIdPrefix,
   onSelect,
+  layer,
 }: Readonly<ToolbarMenuProps<T>>) {
   return (
     <Menu>
@@ -115,7 +124,7 @@ function ToolbarMenu<T extends string>({
           <ChevronDownIcon className="opacity-50" aria-hidden />
         </Button>
       </MenuTrigger>
-      <MenuContent align="start">
+      <MenuContent align="start" layer={layer}>
         <MenuRadioGroup value={selectedKey} onValueChange={(value) => onSelect(value as T)}>
           {options.map((opt) => (
             <MenuRadioItem

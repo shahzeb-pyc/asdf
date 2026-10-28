@@ -1,7 +1,13 @@
 'use client';
 
 import { useCallback, useEffect } from 'react';
+import { z } from 'zod';
 import type { MediaItemResponse } from '@fbuploadpro/contracts';
+import {
+  MultipartCompleteResponseSchema,
+  MultipartInitiateResponseSchema,
+  MultipartPartUrlResponseSchema,
+} from '@fbuploadpro/contracts';
 import { api, buildTenantApiPath, isApiError } from '@/lib/api';
 import {
   MediaItemSchema,
@@ -9,12 +15,17 @@ import {
   type MediaItem as ApiMediaItem,
 } from '@/lib/api/schemas/media';
 import type { ImportQueueItem } from './media-types';
-import { deriveDefaultCaption } from './media-types';
+import {
+  deriveDefaultCaption,
+  MULTIPART_PART_SIZE_BYTES,
+  MULTIPART_THRESHOLD_BYTES,
+} from './media-types';
 import { toMediaItemResponse } from './media-data';
 import {
   generateThumbnailBlob,
   classifyAspectRatio,
   isBatchCompleted,
+  probeVideoMetadata,
   MAX_CONCURRENT_UPLOADS,
 } from './media-import-utils';
 
@@ -192,6 +203,8 @@ interface R2PutContext {
   xhr: XMLHttpRequest;
   userSignal: AbortSignal;
   onProgress: (pct: number) => void;
+  /** Raw bytes moved, for multipart part progress (uncapped, unlike pct). */
+  onBytes?: ((loaded: number) => void) | undefined;
   resolve: () => void;
   reject: (err: Error) => void;
   settled: boolean;
@@ -230,6 +243,7 @@ function reportR2Progress(ctx: R2PutContext, e: ProgressEvent): void {
   armR2Watchdog(ctx);
   if (e.lengthComputable) {
     ctx.onProgress(Math.min(95, Math.round((e.loaded / e.total) * 100)));
+    ctx.onBytes?.(e.loaded);
   }
 }
 
@@ -329,9 +343,320 @@ async function requestPresignedUpload(
   }
 }
 
+/** Everything the thumbnail + confirm steps need (no single-PUT URL). */
+type UploadTarget = Omit<PresignedUpload, 'mediaUploadUrl'>;
+
+interface MultipartPresigned extends UploadTarget {
+  uploadId: string;
+}
+
+
+
+/**
+ * Multipart upload (P3) — R2's S3-compatible multipart API.
+ *
+ * VERDICT: supported. The storage layer is an S3 client pointed at
+ * R2 (lib/storage.ts), and R2 implements the S3 multipart calls
+ * (CreateMultipartUpload / UploadPart / CompleteMultipartUpload),
+ * so chunked upload with byte-range resume is available without
+ * any new storage provider. The server routes below mint the
+ * presigned part URLs; the complete route lists the parts itself
+ * (ListParts) instead of trusting client-reported etags, so no
+ * CORS exposed-header dependency exists for the ETag.
+ *
+ * Files over MULTIPART_THRESHOLD_BYTES upload in
+ * MULTIPART_PART_SIZE_BYTES parts, sequentially within the file
+ * (the 3-file concurrency cap is unchanged). Pause, failure, and
+ * presigned-URL expiry resume from the last completed part:
+ * completed parts and their byte count live on the queue item and
+ * survive pause and auto-retry; a fresh presign is minted per
+ * remaining part on every attempt, so an expired URL can never
+ * strand a large file. Cancel aborts the server-side upload
+ * (best effort) and clears the resume state.
+ */
+
+/** A 503 from a multipart step means R2 is not configured here
+ *  (dev mock storage) — the caller falls back to the single PUT
+ *  instead of failing a file that used to upload fine. */
+function isStorageUnavailableError(err: unknown): boolean {
+  return isApiError(err) && err.kind === 'http' && err.status === 503;
+}
+
+/** Multipart step 1: create the upload server-side (also mints the thumbnail URL). */
+async function initiateMultipartUpload(
+  subdomain: string,
+  item: ImportQueueItem,
+  userSignal: AbortSignal
+): Promise<MultipartPresigned> {
+  const step = createStepSignal(userSignal, PRESIGN_TIMEOUT_MS);
+  try {
+    const data = await api.post(
+      buildTenantApiPath(subdomain, '/media/multipart/initiate'),
+      {
+        fileName: item.name,
+        mimeType: item.mimeType,
+        thumbnailMimeType: 'image/webp',
+      },
+      { schema: MultipartInitiateResponseSchema, signal: step.signal }
+    );
+    return {
+      mediaId: data.mediaId,
+      mediaKey: data.mediaKey,
+      uploadId: data.uploadId,
+      thumbnailUploadUrl: data.thumbnailUploadUrl,
+      thumbnailKey: data.thumbnailKey,
+      publicMediaUrl: data.publicMediaUrl,
+      publicThumbnailUrl: data.publicThumbnailUrl,
+    };
+  } catch (err) {
+    // No R2 here (dev mock) must stay recognisable so the caller
+    // can fall back to the single PUT instead of failing the file.
+    if (isStorageUnavailableError(err)) {
+      throw err;
+    }
+    throw translateStepError(
+      err,
+      userSignal,
+      step,
+      "Couldn't start the upload. Please try again."
+    );
+  } finally {
+    step.dispose();
+  }
+}
+
+/** Multipart step 2a: presign one part (fresh each attempt — expiry-proof). */
+async function presignMultipartPart(
+  subdomain: string,
+  mediaKey: string,
+  uploadId: string,
+  partNumber: number,
+  userSignal: AbortSignal
+): Promise<string> {
+  const step = createStepSignal(userSignal, PRESIGN_TIMEOUT_MS);
+  try {
+    const data = await api.post(
+      buildTenantApiPath(subdomain, '/media/multipart/part-url'),
+      { key: mediaKey, uploadId, partNumber },
+      { schema: MultipartPartUrlResponseSchema, signal: step.signal }
+    );
+    return data.uploadUrl;
+  } catch (err) {
+    // A vanished server-side upload must stay recognisable so the
+    // caller can restart it once instead of failing the file, and
+    // a 503 (no R2 here) must stay recognisable for the single-PUT
+    // fallback.
+    if (
+      (isApiError(err) && err.kind === 'http' && /NoSuchUpload/i.test(err.message)) ||
+      isStorageUnavailableError(err)
+    ) {
+      throw err;
+    }
+    throw translateStepError(
+      err,
+      userSignal,
+      step,
+      "Couldn't start the upload. Please try again."
+    );
+  } finally {
+    step.dispose();
+  }
+}
+
+/** Multipart step 2b: PUT one slice with byte progress + stall watchdog. */
+function putPartToR2(
+  uploadUrl: string,
+  part: Blob,
+  mimeType: string,
+  userSignal: AbortSignal,
+  onBytes: (loaded: number) => void
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const ctx: R2PutContext = {
+      xhr,
+      userSignal,
+      onProgress: () => {},
+      onBytes,
+      resolve,
+      reject,
+      settled: false,
+      timer: null,
+      handleUserAbort: () => {},
+    };
+    ctx.handleUserAbort = () => {
+      xhr.abort();
+      settleR2Put(ctx, () => reject(new DOMException('Upload aborted', 'AbortError')));
+    };
+
+    xhr.upload.onprogress = (e) => reportR2Progress(ctx, e);
+    xhr.onload = () => settleR2Put(ctx, () => resolveR2Put(ctx));
+    xhr.onerror = () => settleR2Put(ctx, () => reject(new Error(NETWORK_MESSAGE)));
+    xhr.onabort = () =>
+      settleR2Put(ctx, () => reject(new DOMException('Upload aborted', 'AbortError')));
+
+    xhr.open('PUT', uploadUrl, true);
+    xhr.setRequestHeader('Content-Type', mimeType);
+    userSignal.addEventListener('abort', ctx.handleUserAbort);
+    armR2Watchdog(ctx);
+    xhr.send(part);
+  });
+}
+
+/** Multipart step 3: assemble the parts server-side (server lists part etags). */
+async function completeMultipartUpload(
+  subdomain: string,
+  mediaKey: string,
+  uploadId: string,
+  expectedPartCount: number,
+  userSignal: AbortSignal
+): Promise<void> {
+  const step = createStepSignal(userSignal, CONFIRM_TIMEOUT_MS);
+  try {
+    await api.post(
+      buildTenantApiPath(subdomain, '/media/multipart/complete'),
+      { key: mediaKey, uploadId, expectedPartCount },
+      { schema: MultipartCompleteResponseSchema, signal: step.signal }
+    );
+  } catch (err) {
+    // A vanished server-side upload must stay recognisable so the
+    // caller can restart it once instead of failing the file, and
+    // a 503 (no R2 here) must stay recognisable for the single-PUT
+    // fallback.
+    if (
+      (isApiError(err) && err.kind === 'http' && /NoSuchUpload/i.test(err.message)) ||
+      isStorageUnavailableError(err)
+    ) {
+      throw err;
+    }
+    throw translateStepError(
+      err,
+      userSignal,
+      step,
+      "Upload finished but we couldn't save it to your library. Please try again."
+    );
+  } finally {
+    step.dispose();
+  }
+}
+
+/**
+ * Multipart step 4 (best effort, never throws): abort the server-side
+ * upload when the user cancels, so no orphaned multipart upload
+ * lingers in R2. Called from the modal's cancel paths.
+ */
+export async function abortMultipartUpload(
+  subdomain: string,
+  mediaKey: string,
+  uploadId: string
+): Promise<void> {
+  try {
+    await api.post(
+      buildTenantApiPath(subdomain, '/media/multipart/abort'),
+      { key: mediaKey, uploadId },
+      { schema: z.object({ ok: z.boolean() }) }
+    );
+  } catch (err) {
+    // Best effort only — R2 aborts incomplete multipart uploads
+    // on its own lifecycle; a failed abort must never surface to
+    // the user, but it is logged instead of swallowed so a broken
+    // abort path is observable in devtools.
+    console.warn('Multipart abort request failed (best effort, ignoring):', err);
+  }
+}
+
+/**
+ * Run a multipart upload for one file, resuming from the last
+ * completed part when the queue item already carries multipart
+ * state (paused or auto-retried attempt). Returns the upload
+ * target the thumbnail + confirm steps need.
+ */
+async function runMultipartUpload(
+  subdomain: string,
+  item: ImportQueueItem,
+  userSignal: AbortSignal,
+  updateProgress: (id: string, pct: number) => void,
+  patchQueue: (id: string, patch: Partial<ImportQueueItem>) => void
+): Promise<MultipartPresigned> {
+  let presigned: MultipartPresigned;
+  const completedParts = new Set<number>(item.multipartCompletedParts ?? []);
+  let uploadedBytes = item.multipartUploadedBytes ?? 0;
+
+  if (
+    item.multipartUploadId &&
+    item.multipartMediaId &&
+    item.multipartMediaKey &&
+    item.multipartPublicMediaUrl
+  ) {
+    // Resume: the server-side upload still exists; parts already
+    // accepted are never re-sent.
+    presigned = {
+      mediaId: item.multipartMediaId,
+      mediaKey: item.multipartMediaKey,
+      uploadId: item.multipartUploadId,
+      thumbnailUploadUrl: item.multipartThumbnailUploadUrl ?? null,
+      thumbnailKey: item.multipartThumbnailKey ?? null,
+      publicMediaUrl: item.multipartPublicMediaUrl,
+      publicThumbnailUrl: item.multipartPublicThumbnailUrl ?? null,
+    };
+  } else {
+    presigned = await initiateMultipartUpload(subdomain, item, userSignal);
+    patchQueue(item.id, {
+      multipartUploadId: presigned.uploadId,
+      multipartMediaId: presigned.mediaId,
+      multipartMediaKey: presigned.mediaKey,
+      multipartThumbnailUploadUrl: presigned.thumbnailUploadUrl ?? undefined,
+      multipartThumbnailKey: presigned.thumbnailKey ?? undefined,
+      multipartPublicThumbnailUrl: presigned.publicThumbnailUrl ?? undefined,
+      multipartPublicMediaUrl: presigned.publicMediaUrl,
+      multipartCompletedParts: [],
+      multipartUploadedBytes: 0,
+    });
+  }
+
+  const totalParts = Math.ceil(item.size / MULTIPART_PART_SIZE_BYTES);
+  for (let partNumber = 1; partNumber <= totalParts; partNumber++) {
+    if (completedParts.has(partNumber)) continue;
+    const start = (partNumber - 1) * MULTIPART_PART_SIZE_BYTES;
+    const end = Math.min(start + MULTIPART_PART_SIZE_BYTES, item.size);
+    const slice = item.file.slice(start, end);
+    // Fresh presign per part on every attempt: a URL that expired
+    // while the file was paused cannot strand the upload.
+    const partUrl = await presignMultipartPart(
+      subdomain,
+      presigned.mediaKey,
+      presigned.uploadId,
+      partNumber,
+      userSignal
+    );
+    await putPartToR2(partUrl, slice, item.mimeType, userSignal, (loaded) => {
+      const pct = Math.min(
+        95,
+        Math.round(((uploadedBytes + loaded) / item.size) * 100)
+      );
+      updateProgress(item.id, pct);
+    });
+    uploadedBytes += end - start;
+    completedParts.add(partNumber);
+    patchQueue(item.id, {
+      multipartCompletedParts: [...completedParts],
+      multipartUploadedBytes: uploadedBytes,
+    });
+  }
+
+  await completeMultipartUpload(
+    subdomain,
+    presigned.mediaKey,
+    presigned.uploadId,
+    totalParts,
+    userSignal
+  );
+  return presigned;
+}
+
 /** Step 3: PUT the client-generated thumbnail (best effort — falls back to the type icon). */
 async function uploadThumbnail(
-  presigned: PresignedUpload,
+  presigned: UploadTarget,
   thumbData: ThumbnailResult,
   userSignal: AbortSignal
 ): Promise<string | null> {
@@ -374,13 +699,18 @@ async function confirmMediaUpload(
   subdomain: string,
   selectedFolderId: string | null,
   item: ImportQueueItem,
-  presigned: PresignedUpload,
+  presigned: UploadTarget,
   thumbData: ThumbnailResult,
   uploadedThumbnailUrl: string | null,
-  userSignal: AbortSignal
+  userSignal: AbortSignal,
+  /** P4: metadata-probe dimensions win over thumbnail dimensions —
+   *  the probe survives the thumbnail's 3-second canvas budget. */
+  videoMeta?: { width: number; height: number; duration: number | null } | null
 ): Promise<MediaItemResponse> {
   const step = createStepSignal(userSignal, CONFIRM_TIMEOUT_MS);
   try {
+    const width = videoMeta?.width ?? thumbData.width;
+    const height = videoMeta?.height ?? thumbData.height;
     const confirmData = await api.post(
       buildTenantApiPath(subdomain, '/media/confirm'),
       {
@@ -394,10 +724,10 @@ async function confirmMediaUpload(
         url: presigned.publicMediaUrl,
         thumbnailKey: uploadedThumbnailUrl ? presigned.thumbnailKey : null,
         thumbnailUrl: uploadedThumbnailUrl,
-        durationSeconds: thumbData.duration,
-        aspectRatio: classifyAspectRatio(thumbData.width || 0, thumbData.height || 0),
-        width: thumbData.width,
-        height: thumbData.height,
+        durationSeconds: videoMeta?.duration ?? thumbData.duration,
+        aspectRatio: classifyAspectRatio(width || 0, height || 0),
+        width,
+        height,
         captionText: deriveDefaultCaption(item.name),
       },
       { schema: MediaItemSchema, signal: step.signal }
@@ -464,12 +794,29 @@ export function useImportUpload({
   updateItemProgress,
   onUploadSuccess,
 }: UseImportUploadParams) {
+const patchQueueItem = useCallback(
+  (id: string, patch: Partial<ImportQueueItem>) => {
+    setQueue((prev) =>
+      prev.map((it) => (it.id === id ? { ...it, ...patch } : it))
+    );
+  },
+  [setQueue]
+);
+
 const uploadFile = useCallback(
   async (item: ImportQueueItem) => {
     const abortCtrl = new AbortController();
     // Captured so a stale retry timer can never resurrect a paused,
     // cancelled, or already-retried attempt.
     const attemptController = abortCtrl;
+
+    // A resumed multipart file re-enters at its confirmed byte count,
+    // never back at 1% — restarting the bar from zero is exactly the
+    // silent-restart behaviour P3 forbids.
+    const resumePercent =
+      item.multipartUploadedBytes && item.multipartUploadedBytes > 0
+        ? Math.round((item.multipartUploadedBytes / item.size) * 100)
+        : 1;
 
     setQueue((prev) =>
       prev.map((it) =>
@@ -478,7 +825,7 @@ const uploadFile = useCallback(
               ...it,
               status: 'uploading',
               abortController: abortCtrl,
-              progressPercent: 1,
+              progressPercent: resumePercent,
               validationError: null,
             }
           : it
@@ -488,17 +835,83 @@ const uploadFile = useCallback(
     const userSignal = abortCtrl.signal;
 
     try {
-      // 1. Request presigned upload URL
-      const presigned = await requestPresignedUpload(subdomain, item, userSignal);
+      let presigned: UploadTarget | null = null;
+      if (item.size > MULTIPART_THRESHOLD_BYTES) {
+        // P3: large files upload in resumable parts.
+        try {
+          try {
+            presigned = await runMultipartUpload(
+              subdomain,
+              item,
+              userSignal,
+              updateItemProgress,
+              patchQueueItem
+            );
+          } catch (err) {
+            // The server-side upload vanished (aborted/expired) — start
+            // one fresh upload exactly once, then let any further
+            // failure take the normal retry path.
+            if (!item.multipartRestarted && err instanceof Error && /NoSuchUpload/i.test(err.message)) {
+              patchQueueItem(item.id, {
+                multipartUploadId: undefined,
+                multipartMediaId: undefined,
+                multipartMediaKey: undefined,
+                multipartThumbnailUploadUrl: undefined,
+                multipartThumbnailKey: undefined,
+                multipartPublicThumbnailUrl: undefined,
+                multipartPublicMediaUrl: undefined,
+                multipartCompletedParts: [],
+                multipartUploadedBytes: 0,
+                multipartRestarted: true,
+              });
+              presigned = await runMultipartUpload(
+                subdomain,
+                {
+                  ...item,
+                  multipartUploadId: undefined,
+                  multipartMediaId: undefined,
+                  multipartMediaKey: undefined,
+                  multipartCompletedParts: [],
+                  multipartUploadedBytes: 0,
+                  multipartRestarted: true,
+                },
+                userSignal,
+                updateItemProgress,
+                patchQueueItem
+              );
+            } else {
+              throw err;
+            }
+          }
+        } catch (err) {
+          // No R2 here (dev mock storage): fall through to the
+          // single PUT below instead of failing a file that used
+          // to upload fine. Any other failure propagates.
+          if (!isStorageUnavailableError(err)) throw err;
+        }
+      }
+      if (!presigned) {
+        // 1. Request presigned upload URL
+        const single = await requestPresignedUpload(subdomain, item, userSignal);
 
-      // 2. Direct R2 upload via XHR for real progress events (watchdog aborts stalls)
-      await putFileToR2(presigned.mediaUploadUrl, item.file, item.mimeType, userSignal, (pct) =>
-        updateItemProgress(item.id, pct)
-      );
-      updateItemProgress(item.id, PROGRESS_XHR_DONE);
+        // 2. Direct R2 upload via XHR for real progress events (watchdog aborts stalls)
+        await putFileToR2(single.mediaUploadUrl, item.file, item.mimeType, userSignal, (pct) =>
+          updateItemProgress(item.id, pct)
+        );
+        updateItemProgress(item.id, PROGRESS_XHR_DONE);
+        presigned = single;
+      }
 
       // 3. Client-side thumbnail generation (already self-times-out in 3s)
-      const thumbData = await generateThumbnailBlob(item.file, item.mediaType);
+      // plus the P4 metadata probe in parallel: for video, the probe's
+      // dimensions/duration survive a thumbnail timeout, so a vertical
+      // video still derives as a reel.
+      const [thumbData, videoMeta] = await Promise.all([
+        generateThumbnailBlob(item.file, item.mediaType),
+        item.mediaType === 'video'
+          ? probeVideoMetadata(item.file)
+          : Promise.resolve(null),
+      ]);
       const uploadedThumbnailUrl = await uploadThumbnail(presigned, thumbData, userSignal);
       updateItemProgress(item.id, PROGRESS_THUMBNAIL_DONE);
 
@@ -510,7 +923,8 @@ const uploadFile = useCallback(
         presigned,
         thumbData,
         uploadedThumbnailUrl,
-        userSignal
+        userSignal,
+        videoMeta
       );
 
       setQueue((prev) =>
@@ -521,6 +935,16 @@ const uploadFile = useCallback(
                 status: 'completed',
                 progressPercent: 100,
                 uploadedItem,
+                // Resume state is spent: the file is done.
+                multipartUploadId: undefined,
+                multipartMediaId: undefined,
+                multipartMediaKey: undefined,
+                multipartThumbnailUploadUrl: undefined,
+                multipartThumbnailKey: undefined,
+                multipartPublicThumbnailUrl: undefined,
+                multipartPublicMediaUrl: undefined,
+                multipartCompletedParts: undefined,
+                multipartUploadedBytes: undefined,
               }
             : it
         )
@@ -545,7 +969,7 @@ const uploadFile = useCallback(
       }
     }
   },
-  [subdomain, selectedFolderId, onUploadSuccess, updateItemProgress]
+  [subdomain, selectedFolderId, onUploadSuccess, updateItemProgress, patchQueueItem]
 );
 
 // Concurrency Engine Loop (Cap = MAX_CONCURRENT_UPLOADS)

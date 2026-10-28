@@ -114,10 +114,19 @@ const destinationEnqueueBaseFields = {
 
 function destinationEnqueueVariant<OptionsSchema extends z.ZodTypeAny>(
   platform: Platform,
-  platformOptions: OptionsSchema
+  platformOptions: OptionsSchema,
+  captionMax?: number
 ) {
   return z.object({
     ...destinationEnqueueBaseFields,
+    // A variant may raise the shared 5,000-character caption guard
+    // when its platform genuinely allows longer text. Only Facebook
+    // does so today (feed posts up to 63,206 characters; see the
+    // composer limits module for sourcing). Every other variant
+    // keeps the shared cap, so no other platform's guard weakens.
+    ...(captionMax !== undefined
+      ? { caption: z.string().max(captionMax).default('') }
+      : {}),
     platform: z.literal(platform),
     platformOptions: platformOptions.optional(),
   });
@@ -125,7 +134,11 @@ function destinationEnqueueVariant<OptionsSchema extends z.ZodTypeAny>(
 
 export const DestinationEnqueueRequestSchema = z
   .discriminatedUnion('platform', [
-    destinationEnqueueVariant('facebook', FacebookDestinationOptionsSchema),
+    destinationEnqueueVariant(
+      'facebook',
+      FacebookDestinationOptionsSchema,
+      63206
+    ),
     destinationEnqueueVariant('instagram', InstagramPlatformOptionsSchema),
     destinationEnqueueVariant('threads', ThreadsPlatformOptionsSchema),
     destinationEnqueueVariant('youtube', youtubePlatformOptionsSchema),
@@ -133,6 +146,24 @@ export const DestinationEnqueueRequestSchema = z
     destinationEnqueueVariant('tiktok', tikTokOptionsSchema),
   ])
   .superRefine((val, ctx) => {
+    // --- Facebook caption limits, per post type ---------------------
+    // Feed posts/photo/video captions run to 63,206 (the variant cap
+    // above), but Reels are a separate publishing API with their own
+    // much smaller caption limit of 2,200 — a video post whose
+    // platformFormat is 'reel' is held to it. Third-party
+    // documented only; see the composer limits module for sourcing.
+    if (
+      val.platform === 'facebook' &&
+      val.kind === 'video' &&
+      val.platformFormat === 'reel' &&
+      val.caption.length > 2200
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Reel captions are limited to 2,200 characters',
+        path: ['caption'],
+      });
+    }
     // --- Intent shape -------------------------------------------------
     if (val.intent === 'scheduled') {
       if (!val.scheduledAt) {

@@ -171,13 +171,57 @@ export function nextUniqueId(): string {
   return `${Date.now()}-${itemSeq}`;
 }
 
-export function computeOverallProgress(nonCancelledItems: ImportQueueItem[]): number {
-  if (nonCancelledItems.length === 0) return 0;
-  const total = nonCancelledItems.reduce(
-    (acc, it) => acc + (it.status === 'completed' ? 100 : it.progressPercent),
-    0
-  );
-  return Math.round(total / nonCancelledItems.length);
+/**
+ * Video metadata probe (P4) — separate from the thumbnail budget.
+ *
+ * `generateThumbnailBlob` renders a canvas frame under a 3-second
+ * timeout; when that gives up, the video's dimensions were lost
+ * and a vertical video silently derived as a plain video post
+ * instead of a reel. This probe reads only the metadata
+ * (dimensions + duration, no seek, no canvas) under its own
+ * longer 15-second budget, so the derivation rule ("a reel must
+ * be proven vertical") keeps getting real dimensions even when
+ * thumbnail rendering times out. Returns null on any failure —
+ * callers fall back to whatever the thumbnail step found.
+ */
+export async function probeVideoMetadata(file: File): Promise<{
+  width: number;
+  height: number;
+  duration: number | null;
+} | null> {
+  if (typeof document === 'undefined') return null;
+  return new Promise((resolve) => {
+    const video = document.createElement('video');
+    video.preload = 'metadata';
+    video.muted = true;
+    const objectUrl = URL.createObjectURL(file);
+    let settled = false;
+    const finish = (result: {
+      width: number;
+      height: number;
+      duration: number | null;
+    } | null) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      URL.revokeObjectURL(objectUrl);
+      resolve(result);
+    };
+    const timer = window.setTimeout(() => finish(null), 15_000);
+    video.onloadedmetadata = () => {
+      if (video.videoWidth > 0 && video.videoHeight > 0) {
+        finish({
+          width: video.videoWidth,
+          height: video.videoHeight,
+          duration: Number.isFinite(video.duration) ? video.duration : null,
+        });
+      } else {
+        finish(null);
+      }
+    };
+    video.onerror = () => finish(null);
+    video.src = objectUrl;
+  });
 }
 
 export function computeFurthestAlong(

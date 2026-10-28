@@ -50,6 +50,11 @@ const nextConfig: NextConfig = {
   //                                tests/helpers/mock-storage.ts)
   //   media.dev.fbuploadpro.com    development R2 public host
   //                                (apps/web/.env.example R2_PUBLIC_URL)
+  //   media.vinsmokemedia.online   deployed R2 public media host
+  //                                (Doppler prd R2_PUBLIC_URL; image
+  //                                previews/thumbnails broke until this
+  //                                host was allowed — videos already
+  //                                played because they bypass next/image)
   //   **.fbcdn.net                 Facebook CDN — Graph picture/media
   //                                URLs (packages/contracts downloader
   //                                domain list; profile_picture_url
@@ -72,6 +77,7 @@ const nextConfig: NextConfig = {
     remotePatterns: [
       { protocol: 'https', hostname: 'media.fbuploadpro.com' },
       { protocol: 'https', hostname: 'media.dev.fbuploadpro.com' },
+      { protocol: 'https', hostname: 'media.vinsmokemedia.online' },
       { protocol: 'https', hostname: '**.fbcdn.net' },
       { protocol: 'https', hostname: 'platform-lookaside.fbsbx.com' },
       { protocol: 'https', hostname: 'graph.facebook.com' },

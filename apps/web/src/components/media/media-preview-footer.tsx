@@ -25,6 +25,14 @@ export interface MediaPreviewFooterProps {
   onDelete?: (() => void) | undefined;
   onCancel: () => void;
   onSave: () => void;
+  /**
+   * Picker single-attach use (P7): replaces "Save changes" with one
+   * explicit action — "Attach this file" — so tapping a tile never
+   * attaches instantly; the user previews first, then attaches.
+   */
+  primaryAction?:
+    | { label: string; onClick: () => void; testid?: string | undefined }
+    | undefined;
 }
 
 export function MediaPreviewFooter({
@@ -35,6 +43,7 @@ export function MediaPreviewFooter({
   onDelete,
   onCancel,
   onSave,
+  primaryAction,
 }: Readonly<MediaPreviewFooterProps>) {
   const isBusy = isSaving || isDeleting;
 
@@ -70,14 +79,24 @@ export function MediaPreviewFooter({
           <Button variant="ghost" disabled={isBusy} onClick={onCancel}>
             Cancel
           </Button>
-          <Button
-            data-testid="modal-save-caption-btn"
-            disabled={isBusy}
-            loading={isSaving}
-            onClick={onSave}
-          >
-            {isSaving ? 'Saving...' : 'Save changes'}
-          </Button>
+          {primaryAction ? (
+            <Button
+              data-testid={primaryAction.testid ?? 'modal-primary-action-btn'}
+              disabled={isBusy}
+              onClick={primaryAction.onClick}
+            >
+              {primaryAction.label}
+            </Button>
+          ) : (
+            <Button
+              data-testid="modal-save-caption-btn"
+              disabled={isBusy}
+              loading={isSaving}
+              onClick={onSave}
+            >
+              {isSaving ? 'Saving...' : 'Save changes'}
+            </Button>
+          )}
         </div>
       </div>
     </div>

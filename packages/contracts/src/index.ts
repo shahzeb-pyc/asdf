@@ -33,3 +33,4 @@ export * from './publishing/instagram-options.js';
 export * from './publishing/threads-options.js';
 export * from './publishing/tiktok-options.js';
 export * from './publishing/destination-enqueue.js';
+export * from './publishing/create-posts-composer.js';

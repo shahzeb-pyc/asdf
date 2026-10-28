@@ -43,6 +43,8 @@ export interface ImportStagingHeaderProps {
   selectedFolderId: string | null;
   folders: MediaFolder[];
   onSelectFolder: (folderId: string | null) => void;
+  /** When true, the destination is fixed: static text, no picker. */
+  lockDestination?: boolean | undefined;
 }
 
 export function ImportStagingHeader({
@@ -51,6 +53,7 @@ export function ImportStagingHeader({
   selectedFolderId,
   folders,
   onSelectFolder,
+  lockDestination = false,
 }: Readonly<ImportStagingHeaderProps>) {
   return (
     <div className="flex flex-wrap items-start justify-between gap-3">
@@ -69,6 +72,14 @@ export function ImportStagingHeader({
 
       <div className="flex items-center gap-2">
         <FolderIcon className="size-4 shrink-0 text-brand-gold" aria-hidden />
+        {lockDestination ? (
+          <span
+            data-testid="destination-folder-locked"
+            className="text-body font-medium text-ink"
+          >
+            To:&nbsp;{destinationFolderName}
+          </span>
+        ) : (
         <Select
           value={selectedFolderId ?? ROOT_VALUE}
           onValueChange={(value) =>
@@ -99,6 +110,7 @@ export function ImportStagingHeader({
             ))}
           </SelectContent>
         </Select>
+        )}
       </div>
     </div>
   );
@@ -223,6 +235,11 @@ export interface ImportStagingFooterProps {
   validCount: number;
   isStarting: boolean;
   onAddMore: () => void;
+  /** P1: single-attach mode hides "+ Add more" (one file only). */
+  hideAddMore?: boolean | undefined;
+  /** P6: rows that cannot be imported (too large, unsupported, empty). */
+  invalidCount?: number | undefined;
+  onRemoveInvalid?: (() => void) | undefined;
   onCancel: () => void;
   onStart: () => void;
 }
@@ -231,6 +248,9 @@ export function ImportStagingFooter({
   validCount,
   isStarting,
   onAddMore,
+  hideAddMore = false,
+  invalidCount = 0,
+  onRemoveInvalid,
   onCancel,
   onStart,
 }: Readonly<ImportStagingFooterProps>) {
@@ -240,15 +260,32 @@ export function ImportStagingFooter({
       {/* Wraps at phone widths (spec 142): "+ Add more" keeps its own
           line rather than squeezing the actions off the panel. */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Button
-          type="button"
-          variant="link"
-          data-testid="add-more-files-btn"
-          onClick={onAddMore}
-          className="h-11 px-0"
-        >
-          + Add more
-        </Button>
+        <span className="flex flex-wrap items-center gap-3">
+          {hideAddMore ? (
+            <span />
+          ) : (
+            <Button
+              type="button"
+              variant="link"
+              data-testid="add-more-files-btn"
+              onClick={onAddMore}
+              className="h-11 px-0"
+            >
+              + Add more
+            </Button>
+          )}
+          {invalidCount > 0 && (
+            <Button
+              type="button"
+              variant="link"
+              data-testid="remove-invalid-btn"
+              onClick={onRemoveInvalid}
+              className="h-11 px-0 text-brand-rose"
+            >
+              Remove invalid ({invalidCount})
+            </Button>
+          )}
+        </span>
 
         <div className="flex flex-wrap items-center gap-2">
           <Button

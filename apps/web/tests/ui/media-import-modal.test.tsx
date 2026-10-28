@@ -46,6 +46,21 @@ vi.mock('@/components/media/media-import-utils', async (importOriginal) => {
       height: 100,
       duration: null,
     })),
+    // Same seam as the thumbnail stub above: jsdom has no media
+    // decoders, so the P4 metadata probe's <video> element never
+    // fires loadedmetadata and would otherwise pend its full
+    // 15-second budget, gating confirm and completion. The probe
+    // is a platform capability, not import behaviour — stub it
+    // with dimensions DELIBERATELY distinct from the thumbnail
+    // stub (vertical 1080x1920, 30s vs 100x100, null): the
+    // probe-wins confirm precedence is only observable when the
+    // two sources disagree, so a thumbnail-only regression must
+    // fail the P4 test below.
+    probeVideoMetadata: vi.fn(async () => ({
+      width: 1080,
+      height: 1920,
+      duration: 30,
+    })),
   };
 });
 
@@ -536,5 +551,43 @@ describe('ImportProgressRow — states (PB-18, UX Rule 27)', () => {
       />
     );
     expect(screen.getByText('uploaded to Campaign A')).toBeVisible();
+  });
+});
+
+describe('MediaImportModal — P4 probe precedence', () => {
+  it('confirm carries the metadata-probe dimensions for video, not the thumbnail dimensions', async () => {
+    const fetchMock = installFetchStub();
+    const user = userEvent.setup();
+    const file = new File(['a'], 'tall.mp4', { type: 'video/mp4' });
+    renderModal({ initialFiles: [file] });
+
+    await user.click(screen.getByTestId('start-import-btn'));
+
+    for (let i = 0; i < 6; i++) {
+      FakeXHR.flushAll();
+      // Let the engine advance (confirm + completion) between flushes.
+      await new Promise((r) => setTimeout(r, 10));
+      if (screen.queryByTestId('import-done-btn')) break;
+    }
+    expect(await screen.findByTestId('import-done-btn')).toBeVisible();
+
+    const confirmCalls = fetchMock.mock.calls.filter(([input]) =>
+      String(input).includes('/media/confirm')
+    );
+    expect(confirmCalls).toHaveLength(1);
+    const body = JSON.parse(String(confirmCalls[0]![1]?.body ?? '{}')) as {
+      width: number | null;
+      height: number | null;
+      aspectRatio: string;
+      durationSeconds: number | null;
+    };
+    // Probe stub is vertical 1080x1920, 30s; thumbnail stub is
+    // 100x100, null. Thumbnail-only dims would give 100/100/
+    // '1:1'/null here — so this fails if the probe-wins
+    // precedence regresses.
+    expect(body.width).toBe(1080);
+    expect(body.height).toBe(1920);
+    expect(body.aspectRatio).toBe('9:16');
+    expect(body.durationSeconds).toBe(30);
   });
 });

@@ -20,6 +20,7 @@
 import React from 'react';
 
 import { Button } from '@/components/shared/ui/button';
+import { formatBytes } from './media-types';
 
 /**
  * The modal's props live with the modal (media-import-modal.tsx);
@@ -38,6 +39,9 @@ export interface ImportProgressHeaderProps {
   totalCount: number;
   isAllCancelled: boolean;
   overallProgressPercent: number;
+  /** P9: byte-weighted totals for the "120 MB of 400 MB" line. */
+  uploadedBytes: number;
+  totalBytes: number;
 }
 
 export function ImportProgressHeader({
@@ -47,6 +51,8 @@ export function ImportProgressHeader({
   totalCount,
   isAllCancelled,
   overallProgressPercent,
+  uploadedBytes,
+  totalBytes,
 }: Readonly<ImportProgressHeaderProps>) {
   const title =
     step === 'complete'
@@ -85,6 +91,17 @@ export function ImportProgressHeader({
         </div>
       </div>
 
+      {/* P9: byte-weighted progress in bytes, not a per-file average. */}
+      {totalBytes > 0 && (
+        <p
+          data-testid="import-progress-bytes"
+          className="m-0 text-metadata text-ink-dim tabular-nums"
+        >
+          {formatBytes(uploadedBytes)} of {formatBytes(totalBytes)} ·{' '}
+          {completedCount} of {totalCount} files
+        </p>
+      )}
+
       {/* Aggregate progress track */}
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-subtle">
         {/* Dynamic overall progress width — allowlisted (§7.10). */}
@@ -105,6 +122,9 @@ export interface ImportProgressFooterProps {
   step: 'progress' | 'complete';
   isUploading: boolean;
   canCancelRemaining: boolean;
+  /** P6: failed rows available for a one-tap retry-all. */
+  failedCount?: number | undefined;
+  onRetryAllFailed?: (() => void) | undefined;
   onCancelRemaining: () => void;
   onKeepWorking: () => void;
   onDone: () => void;
@@ -114,13 +134,28 @@ export function ImportProgressFooter({
   step,
   isUploading,
   canCancelRemaining,
+  failedCount = 0,
+  onRetryAllFailed,
   onCancelRemaining,
   onKeepWorking,
   onDone,
 }: Readonly<ImportProgressFooterProps>) {
   if (step === 'complete') {
     return (
-      <div className="flex items-center justify-end">
+      <div className="flex items-center justify-between gap-3">
+        {failedCount > 0 ? (
+          <Button
+            type="button"
+            variant="link"
+            data-testid="retry-all-failed-btn"
+            onClick={onRetryAllFailed}
+            className="h-11 px-0 text-metadata text-brand-gold"
+          >
+            Retry all failed ({failedCount})
+          </Button>
+        ) : (
+          <span />
+        )}
         <Button type="button" data-testid="import-done-btn" onClick={onDone}>
           Done
         </Button>
@@ -140,6 +175,17 @@ export function ImportProgressFooter({
             className="h-11 px-0 text-metadata text-brand-rose"
           >
             Cancel remaining
+          </Button>
+        )}
+        {failedCount > 0 && (
+          <Button
+            type="button"
+            variant="link"
+            data-testid="retry-all-failed-btn"
+            onClick={onRetryAllFailed}
+            className="h-11 px-0 text-metadata text-brand-gold"
+          >
+            Retry all failed ({failedCount})
           </Button>
         )}
         {isUploading && (
