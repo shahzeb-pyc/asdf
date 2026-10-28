@@ -801,6 +801,86 @@ describe("PromptLibraryClient (real API wiring)", () => {
     expect(screen.getByRole("option", { name: "A to Z" })).toBeTruthy();
   });
 
+  it("never sends All as a filter value: All means no param, known labels reverse-map, free-text values pass through", async () => {
+    // Regression: the free-text taxonomy fallback used to send
+    // category=All / tool=All / language=All, and the API (correctly)
+    // treated those as exact filters matching no prompt — so the
+    // unfiltered list returned zero items on the live preview.
+    const freeTextFacets = {
+      category: [
+        { value: "animals", count: 1 },
+        { value: "craft", count: 1 },
+      ],
+      tool: [
+        { value: "dola_ai", count: 1 },
+        { value: "seedance 2.5", count: 1 },
+      ],
+      language: [{ value: "en", count: 2 }],
+      length: [{ value: "1min_plus", count: 2 }],
+    };
+    const fetchMock = mockFetch((url) => {
+      if (url.includes("/prompts/facets")) {
+        return okJson(freeTextFacets);
+      }
+      if (url.includes("/prompts?")) {
+        return okJson({ items: [listItem], total: 1, page: 1, pageSize: 50 });
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response;
+    });
+    render(<PromptLibraryClient subdomain="test" />);
+    await screen.findByTestId("prompt-card");
+    const listUrls = () =>
+      fetchMock.mock.calls
+        .map(([url]) => String(url))
+        .filter((url) => url.includes("/prompts?"));
+    // Default state is all "All": no category/tool/language param.
+    expect(listUrls().length).toBeGreaterThan(0);
+    expect(
+      listUrls().every(
+        (url) =>
+          !url.includes("category=") &&
+          !url.includes("tool=") &&
+          !url.includes("language="),
+      ),
+    ).toBe(true);
+    expect(listUrls().some((url) => url.includes("sort=newest"))).toBe(true);
+    // Known label reverse-maps to its API value.
+    fireEvent.click(screen.getByRole("button", { name: /Category: All/ }));
+    fireEvent.click(screen.getByRole("option", { name: "Animals" }));
+    await waitFor(() => {
+      expect(
+        listUrls().some((url) => url.includes("category=animals")),
+      ).toBe(true);
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Tool: All/ }));
+    fireEvent.click(screen.getByRole("option", { name: "Dola AI" }));
+    await waitFor(() => {
+      expect(listUrls().some((url) => url.includes("tool=dola_ai"))).toBe(
+        true,
+      );
+    });
+    // Brand-new free-text value falls back to itself (normalised
+    // by the server-side query handling), not to a wrong value.
+    fireEvent.click(screen.getByRole("button", { name: /Category: Animals/ }));
+    fireEvent.click(screen.getByRole("option", { name: "Craft" }));
+    await waitFor(() => {
+      expect(
+        listUrls().some(
+          (url) =>
+            url.includes("category=craft") || url.includes("category=Craft"),
+        ),
+      ).toBe(true);
+    });
+    // Back to All removes the param again — All is never a value.
+    fireEvent.click(screen.getByRole("button", { name: /Category: Craft/ }));
+    fireEvent.click(screen.getByRole("option", { name: "All" }));
+    await waitFor(() => {
+      expect(
+        listUrls().some((url) => !url.includes("category=")),
+      ).toBe(true);
+    });
+  });
+
   it("facets failure shows a visible filter error (not hardcoded lists) and Retry recovers", async () => {
     let facetsCalls = 0;
     mockFetch((url) => {

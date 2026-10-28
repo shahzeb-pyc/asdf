@@ -84,11 +84,17 @@ function labelToApiValue(
  * top section falls back to the raw value for unknowns), so
  * falling back to the label itself is the correct api value.
  * Length keeps the strict lookup above — it is still an enum.
+ * EXCEPTION: "All" is the no-filter sentinel, not a value — it
+ * must yield no param. Without this guard the fallback sends
+ * category=All / tool=All / language=All, and the API (correctly)
+ * treats those as exact filters matching no prompt, so every
+ * unfiltered list request returned zero items.
  */
 function taxonomyLabelToApiValue(
   labels: Record<string, string>,
   label: string,
 ): string | undefined {
+  if (label === "All") return undefined;
   return labelToApiValue(labels, label) ?? label;
 }
 const SORT_MAP: Record<string, string> = {
