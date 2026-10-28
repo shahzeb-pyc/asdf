@@ -12,7 +12,6 @@ import {
   DedicatedPageHeader,
   PageTabDashboard,
   PageTabPostingTimes,
-  getMediaCapNotice,
   type PageSlotSummary,
   type PageQueueItemSummary,
 } from '@/components/pages/dedicated';
