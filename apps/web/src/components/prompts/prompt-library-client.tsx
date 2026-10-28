@@ -450,22 +450,72 @@ export function PromptLibraryClient({
       (key) => filters[key] !== FILTER_DEFAULTS[key],
     );
 
+  // List loading, first load only: the list fetch is in flight,
+  // no items yet, no detail open. While this holds, the real top
+  // section must NOT render (it would show a real hero + search
+  // card with empty facets above a lone card skeleton) — a
+  // top-section skeleton renders instead, above the card
+  // skeleton grid. Once loading finishes, the real top section
+  // and real cards replace it. Detail loading is separate and
+  // untouched: it has its own skeleton below.
+  const listLoading = loading && items.length === 0 && !selectedSlug;
+
   return (
     <>
-      <PromptTopSection
-        query={query}
-        onQueryChange={setQuery}
-        values={filters}
-        onFilterChange={(key, value) =>
-          setFilters((previous) => ({ ...previous, [key]: value }))
-        }
-        onClearAll={clearAll}
-        favoritesOnly={favoritesOnly}
-        onFavoritesToggle={() =>
-          setFavoritesOnly((previous) => !previous)
-        }
-        facets={facets}
-      />
+      {/* Top section (heading + search card / filters) is LIST
+          only, and only once loaded: when a prompt detail is
+          open, the detail view is detail only — Back, preview,
+          title, meta, prompt field, guide card — with no library
+          heading or search above it; while the list is loading,
+          the top-section skeleton below renders instead. The
+          loaded list view keeps the top section exactly as
+          before. */}
+      {listLoading ? (
+        <section
+          data-testid="prompt-top-section-loading"
+          aria-busy="true"
+          aria-live="polite"
+          aria-label="Loading prompts"
+          className="bg-canvas px-4 py-12 sm:px-6 sm:py-16"
+        >
+          <span className="sr-only">Loading prompts…</span>
+          <div className="mx-auto flex w-full flex-col items-center text-center">
+            <Skeleton className="h-12 w-3/4 sm:h-14" />
+            <Skeleton className="mt-5 h-5 w-1/2" />
+          </div>
+          <div
+            data-testid="prompt-top-section-loading-search-card"
+            className="mx-auto mt-10 w-full rounded-2xl border border-line bg-panel p-3 shadow-card sm:w-fit sm:max-w-full sm:p-4"
+          >
+            <Skeleton className="h-10 w-full sm:w-96" />
+            <div aria-hidden="true" className="my-3 border-t border-line" />
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 sm:flex-nowrap">
+              <Skeleton className="h-5 w-20" />
+              <Skeleton className="h-5 w-16" />
+              <Skeleton className="h-5 w-20" />
+              <Skeleton className="h-5 w-16" />
+              <Skeleton className="h-5 w-16" />
+              <Skeleton className="h-5 w-24" />
+              <Skeleton className="h-5 w-16" />
+            </div>
+          </div>
+        </section>
+      ) : !selectedSlug ? (
+        <PromptTopSection
+          query={query}
+          onQueryChange={setQuery}
+          values={filters}
+          onFilterChange={(key, value) =>
+            setFilters((previous) => ({ ...previous, [key]: value }))
+          }
+          onClearAll={clearAll}
+          favoritesOnly={favoritesOnly}
+          onFavoritesToggle={() =>
+            setFavoritesOnly((previous) => !previous)
+          }
+          facets={facets}
+        />
+      ) : null}
       {selectedSlug ? (
         detailLoading ? (
           // Detail skeleton, matching the rebuilt detail layout
@@ -543,8 +593,9 @@ export function PromptLibraryClient({
                 <Skeleton className="h-4 w-64" />
                 <Skeleton className="h-4 w-4" />
               </div>
-              {/* Prompt field: header (heading + Copy, top-right),
-                  readable text lines, footer note. */}
+              {/* Prompt field: header (heading + Copy, top-right)
+                  and readable text lines — no footer note, matching
+                  the real field, which has none either. */}
               <div
                 data-testid="prompt-detail-loading-prompt-field"
                 className="mt-8 overflow-hidden rounded-2xl border border-line bg-panel"
@@ -557,9 +608,6 @@ export function PromptLibraryClient({
                   <Skeleton className="h-4 w-full" />
                   <Skeleton className="h-4 w-full" />
                   <Skeleton className="h-4 w-5/6" />
-                </div>
-                <div className="border-t border-line px-5 py-3">
-                  <Skeleton className="h-3 w-72" />
                 </div>
               </div>
             </div>

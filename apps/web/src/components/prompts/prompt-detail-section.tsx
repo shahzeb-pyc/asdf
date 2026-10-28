@@ -8,6 +8,8 @@ import { Alert } from "@/components/shared/ui/alert";
 import { Button } from "@/components/shared/ui/button";
 import { Tag } from "@/components/shared/ui/tag";
 
+import { PromptGuideDialog } from "@/components/prompts/prompt-guide-dialog";
+
 import {
   PromptFormatLabels,
   promptCategoryLabel,
@@ -225,7 +227,7 @@ export function PromptDetailSection({
           )}
           <div className="mt-3 flex items-center justify-between gap-3">
             <span className="text-xs text-ink-sub">
-              Reference image · download it to use in ChatGPT
+              Reference image
             </span>
             <Button
               type="button"
@@ -323,23 +325,11 @@ export function PromptDetailSection({
         </div>
         <p className="mt-4 text-sm text-ink-sub">
           <span>{`Copied ${detail.copiedCount} times`}</span>
-          {` · Added ${formatDateAdded(detail.createdAt)}`}
+          {` · ${formatDateAdded(detail.createdAt)}`}
         </p>
-        <a
-          data-testid="prompt-detail-guide-link"
-          href={`/tenant/${subdomain}/prompts/guide`}
-          className="mt-6 flex items-center justify-between gap-3 rounded-2xl border border-line bg-panel px-4 py-3"
-        >
-          <span className="text-sm text-ink">
-            New here?{" "}
-            <span className="font-semibold">
-              How to use a master prompt
-            </span>
-          </span>
-          <span aria-hidden className="font-semibold text-brand-gold">
-            →
-          </span>
-        </a>
+        {/* Guide opens in a popup dialog, not a page: the
+            separate /prompts/guide page was removed. */}
+        <PromptGuideDialog />
         <div
           data-testid="prompt-detail-master-prompt-field"
           className="mt-8 overflow-hidden rounded-2xl border border-line bg-panel"
@@ -361,10 +351,6 @@ export function PromptDetailSection({
           >
             {detail.masterPrompt}
           </div>
-          <p className="border-t border-line px-5 py-3 text-xs text-ink-sub">
-            Scroll for the full prompt · Copy takes the entire prompt,
-            not just what is visible
-          </p>
         </div>
         {copyState === "error" ? (
           // Inline, as before (under the prompt field, where the

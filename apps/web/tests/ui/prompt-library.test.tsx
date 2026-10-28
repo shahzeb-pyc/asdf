@@ -142,13 +142,13 @@ describe("PromptLibraryClient (real API wiring)", () => {
     expect(screen.getByTestId("prompt-card-copied").textContent).toBe(
       "Copied 12 times",
     );
-    expect(screen.getByTestId("prompt-card-added").textContent).toBe(
-      "Added 28 Oct 2026",
+    expect(screen.getByTestId("prompt-card-date").textContent).toBe(
+      "28 Oct 2026",
     );
     expect(screen.queryByText(/golden puppy sits in a tiny bathtub/)).toBeNull();
   });
 
-  it("splits the card footer: Copied left, Added right, same footer row", async () => {
+  it("splits the card footer: Copied left, date right, same footer row", async () => {
     mockFetch((url) => {
       if (url.includes("/prompts?")) {
         return okJson({ items: [listItem], total: 1, page: 1, pageSize: 50 });
@@ -158,14 +158,16 @@ describe("PromptLibraryClient (real API wiring)", () => {
     render(<PromptLibraryClient subdomain="test" />);
     const footer = await screen.findByTestId("prompt-card-footer");
     const copied = screen.getByTestId("prompt-card-copied");
-    const added = screen.getByTestId("prompt-card-added");
+    const added = screen.getByTestId("prompt-card-date");
     // Same row, spread apart: copied is the first child (left),
-    // added is the last child (right), both inside the one footer.
+    // date is the last child (right), both inside the one footer.
+    // The word "Added" is gone: only the date itself remains.
     expect(footer.children[0]).toBe(copied);
     expect(footer.children[footer.children.length - 1]).toBe(added);
     expect(footer.className).toContain("justify-between");
     expect(copied.textContent).toBe("Copied 12 times");
-    expect(added.textContent).toBe("Added 28 Oct 2026");
+    expect(added.textContent).toBe("28 Oct 2026");
+    expect(footer.textContent).not.toContain("Added");
     // No combined single-line footer string remains.
     expect(
       screen.queryByText("Copied 12 times · Added 28 Oct 2026"),
@@ -484,16 +486,42 @@ describe("PromptLibraryClient (real API wiring)", () => {
         "https://media.example.com/prompts/abc/preview.mp4",
       ),
     );
-    // Meta kept: copied count (real) + date added + favourite heart.
+    // Meta kept: copied count (real) + date + favourite heart.
+    // The word "Added" is gone: only the date itself remains.
     expect(screen.getByText("Copied 12 times")).toBeTruthy();
-    expect(screen.getByText(/Added 28 Oct 2026/)).toBeTruthy();
+    expect(screen.getByText(/28 Oct 2026/)).toBeTruthy();
     expect(screen.getByTestId("prompt-detail-favourite")).toBeTruthy();
-    // Guide link present, pointing at the single guide page.
-    const guideLink = screen.getByTestId("prompt-detail-guide-link");
-    expect(guideLink.textContent).toContain("How to use a master prompt");
-    expect(guideLink.getAttribute("href")).toBe(
-      "/tenant/test/prompts/guide",
+    expect(
+      screen.getByTestId("prompt-detail").textContent,
+    ).not.toContain("Added");
+    // Guide card opens a popup dialog, NOT a page: no href, no
+    // navigation to /prompts/guide; clicking opens the dialog
+    // with the guide content inside it.
+    const guideTrigger = screen.getByTestId("prompt-detail-guide-link");
+    expect(guideTrigger.textContent).toContain(
+      "How to use a master prompt",
     );
+    expect(guideTrigger.getAttribute("href")).toBeNull();
+    expect(screen.queryByTestId("prompt-guide-dialog")).toBeNull();
+    fireEvent.click(guideTrigger);
+    expect(
+      await screen.findByTestId("prompt-guide-dialog"),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("heading", {
+        name: "How to use a master prompt",
+      }),
+    ).toBeTruthy();
+    // Top section is NOT rendered while a detail is open:
+    // detail only — no library heading, no search card/filters.
+    expect(screen.queryByTestId("prompt-top-section")).toBeNull();
+    // Preview footer label is exactly "Reference image".
+    expect(
+      screen.getByText("Reference image").textContent,
+    ).toBe("Reference image");
+    expect(
+      screen.queryByText(/download it to use in ChatGPT/),
+    ).toBeNull();
     // Scrollable field: bounded height + internal scroll is a
     // structural claim (jsdom cannot measure pixels — that limit
     // is stated, not hidden). Copy sits inside the field header
@@ -522,9 +550,11 @@ describe("PromptLibraryClient (real API wiring)", () => {
     expect(meta.querySelectorAll('[data-slot="tag"]').length).toBe(5);
     expect(text.className).toContain("text-base");
     expect(text.className).toContain("leading-loose");
+    // Prompt-field footer note removed entirely: no replacement.
     expect(
-      screen.getByText(/Copy takes the entire prompt/),
-    ).toBeTruthy();
+      screen.queryByText(/Copy takes the entire prompt/),
+    ).toBeNull();
+    expect(screen.queryByText(/Scroll for the full prompt/)).toBeNull();
     // How-to steps are not rendered even though detail.steps has one.
     expect(screen.queryByText("Open your video tool.")).toBeNull();
     expect(screen.queryByText("How to make the video with it")).toBeNull();
@@ -705,7 +735,8 @@ describe("PromptLibraryClient (real API wiring)", () => {
     expect(loading.querySelector(".h-60")).toBeNull();
     // Exactly 5 meta pill skeletons (tool, category, language,
     // length, format), guide card skeleton, prompt field skeleton
-    // with header + footer note — and NO how-to skeleton block.
+    // with header and NO footer note (matching the real field) —
+    // and NO how-to skeleton block.
     expect(
       screen.getAllByTestId("prompt-detail-loading-meta-pill"),
     ).toHaveLength(5);
@@ -715,6 +746,70 @@ describe("PromptLibraryClient (real API wiring)", () => {
     ).toBeTruthy();
     expect(screen.queryByTestId("prompt-detail-loading-how-to")).toBeNull();
     expect(loading.textContent ?? "").not.toContain("Puppy first bath");
+  });
+
+  it("top section shows on the list, hides when a detail opens, and returns on Back", async () => {
+    mockFetch((url) => {
+      if (url.includes("/prompts/puppy-first-bath")) {
+        return okJson(detail);
+      }
+      if (url.includes("/prompts?")) {
+        return okJson({ items: [listItem], total: 1, page: 1, pageSize: 50 });
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response;
+    });
+    render(<PromptLibraryClient subdomain="test" />);
+    await screen.findByTestId("prompt-card");
+    // List view: top section (heading + search card) present.
+    expect(screen.getByTestId("prompt-top-section")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("prompt-card"));
+    await screen.findByTestId("prompt-detail");
+    // Detail view: detail only, top section gone.
+    expect(screen.queryByTestId("prompt-top-section")).toBeNull();
+    fireEvent.click(screen.getByTestId("prompt-detail-back"));
+    await screen.findByTestId("prompt-card");
+    // Back on the list: top section present again, filters intact.
+    expect(screen.getByTestId("prompt-top-section")).toBeTruthy();
+  });
+
+  it("list loading shows a top-section skeleton, not the real top section, and the real top section returns once loaded", async () => {
+    let resolveList: (value: Response) => void = () => {};
+    const listPromise = new Promise<Response>((resolve) => {
+      resolveList = resolve;
+    });
+    mockFetch((url) => {
+      if (url.includes("/prompts/facets")) {
+        return okJson(facetsBody);
+      }
+      if (url.includes("/prompts?")) {
+        return listPromise;
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response;
+    });
+    render(<PromptLibraryClient subdomain="test" />);
+    // While the list fetch is in flight: top-section skeleton
+    // (heading, subtitle, search card, filter row) above the
+    // card skeleton grid — and NO real top section with a real
+    // hero + search card and empty facets.
+    expect(
+      screen.getByTestId("prompt-top-section-loading"),
+    ).toBeTruthy();
+    expect(
+      screen.getByTestId("prompt-top-section-loading-search-card"),
+    ).toBeTruthy();
+    expect(screen.queryByTestId("prompt-top-section")).toBeNull();
+    expect(
+      screen.getAllByTestId("prompt-card-skeleton").length,
+    ).toBeGreaterThan(0);
+    // Once loaded: real top section + real cards, skeleton gone.
+    await act(async () => {
+      resolveList(
+        okJson({ items: [listItem], total: 1, page: 1, pageSize: 50 }),
+      );
+    });
+    expect(await screen.findByTestId("prompt-top-section")).toBeTruthy();
+    expect(screen.queryByTestId("prompt-top-section-loading")).toBeNull();
+    expect(await screen.findByTestId("prompt-card")).toBeTruthy();
   });
 
   it("detail error is centred with Retry refetching the same slug and Back returning to the grid", async () => {

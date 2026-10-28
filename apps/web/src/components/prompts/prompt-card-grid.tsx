@@ -30,7 +30,7 @@ import {
  * reverts on failure); a tap never opens the detail section.
  * Cards carry NO master prompt text — that lives only in the
  * dedicated section. Per-prompt how-to steps are not rendered
- * anywhere in the UI; the single guide page replaces them.
+ * anywhere in the UI; the single guide popup replaces them.
  * Copied counts are real
  * counts from the API, incremented only by the copy endpoint.
  */
@@ -222,10 +222,10 @@ export function PromptCardGrid({
                     {`Copied ${item.copiedCount} times`}
                   </span>
                   <span
-                    data-testid="prompt-card-added"
+                    data-testid="prompt-card-date"
                     className="shrink-0 whitespace-nowrap"
                   >
-                    {`Added ${formatDateAdded(item.createdAt)}`}
+                    {formatDateAdded(item.createdAt)}
                   </span>
                 </div>
               </div>
