@@ -16,13 +16,12 @@ import { Input } from "@/components/shared/ui/input";
  * pill, primary button, and category pill row were removed entirely
  * at Shahzeb's direction (no replacements).
  *
- * This section is the hero + search/filter row. A mock cards grid
- * now follows it on the page (see prompt-mock-card-grid.tsx), but
- * no detail view, no copy action, no demo media, and no backend
- * exist yet — those are later steps, decided by Shahzeb. The
- * filters here are UI state only: selecting one changes its
- * trigger label and active state, and filters nothing yet (not
- * even the mock cards). The dropdown option lists render only
+ * This section is the hero + search/filter row. The page wires its
+ * search and filters to the real prompt API (see
+ * prompt-library-client.tsx): selecting a filter changes its
+ * trigger label and active state AND refetches the grid. When
+ * used standalone (no controlled props), it keeps its own state.
+ * The dropdown option lists render only
  * when open (null when closed) and Clear all renders only when
  * active.
  *
@@ -37,7 +36,10 @@ import { Input } from "@/components/shared/ui/input";
  * Escape; it previously only toggled on its own trigger, with no
  * outside-click listener, so it stayed open.
  */
-type FilterKey = "category" | "tool" | "language" | "length" | "sort";
+export type PromptFilterKey = "category" | "tool" | "language" | "length" | "sort";
+export type PromptFilterValues = Record<PromptFilterKey, string>;
+
+type FilterKey = PromptFilterKey;
 
 const FILTER_OPTIONS: Record<FilterKey, readonly string[]> = {
   category: ["All", "Animals", "Comedy", "Cinematic", "UGC", "Tutorial", "Unboxing"],
@@ -63,9 +65,31 @@ const FILTER_DEFAULTS: Record<FilterKey, string> = {
   sort: "Newest",
 };
 
-export function PromptTopSection() {
-  const [query, setQuery] = React.useState("");
-  const [values, setValues] = React.useState<Record<FilterKey, string>>(FILTER_DEFAULTS);
+export type PromptTopSectionProps = {
+  /** Controlled search + filters (the page wires these to the real
+   * API). When omitted, the section keeps its own internal state,
+   * which is what the standalone top-section tests exercise. */
+  query?: string;
+  onQueryChange?: (query: string) => void;
+  values?: Record<FilterKey, string>;
+  onFilterChange?: (key: FilterKey, value: string) => void;
+  onClearAll?: () => void;
+};
+
+export function PromptTopSection(props: PromptTopSectionProps = {}) {
+  const [internalQuery, setInternalQuery] = React.useState("");
+  const [internalValues, setInternalValues] =
+    React.useState<Record<FilterKey, string>>(FILTER_DEFAULTS);
+  const query = props.query ?? internalQuery;
+  const values = props.values ?? internalValues;
+  const setQuery = props.onQueryChange ?? setInternalQuery;
+  const setFilterValue = (key: FilterKey, value: string) => {
+    if (props.onFilterChange) {
+      props.onFilterChange(key, value);
+    } else {
+      setInternalValues((previous) => ({ ...previous, [key]: value }));
+    }
+  };
   const [openFilter, setOpenFilter] = React.useState<FilterKey | null>(null);
   const filterWrappers = React.useRef<Partial<Record<FilterKey, HTMLDivElement | null>>>(
     {},
@@ -105,8 +129,12 @@ export function PromptTopSection() {
     );
 
   const resetAll = () => {
-    setQuery("");
-    setValues(FILTER_DEFAULTS);
+    if (props.onClearAll) {
+      props.onClearAll();
+    } else {
+      setQuery("");
+      setInternalValues(FILTER_DEFAULTS);
+    }
     setOpenFilter(null);
   };
 
@@ -185,7 +213,7 @@ export function PromptTopSection() {
                       role="option"
                       aria-selected={values[key] === option}
                       onClick={() => {
-                        setValues((previous) => ({ ...previous, [key]: option }));
+                        setFilterValue(key, option);
                         setOpenFilter(null);
                       }}
                       className="flex w-full items-center gap-2 rounded-xs px-2 py-1.5 text-left text-body text-ink hover:bg-hover"

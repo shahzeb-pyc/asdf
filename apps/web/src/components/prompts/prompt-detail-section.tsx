@@ -1,0 +1,155 @@
+"use client";
+
+import React from "react";
+import Image from "next/image";
+
+import {
+  PromptCategoryLabels,
+  PromptFormatLabels,
+  PromptLanguageLabels,
+  PromptLengthLabels,
+  PromptToolLabels,
+  type PromptDetail,
+} from "@fbuploadpro/contracts";
+
+/**
+ * Dedicated section for one prompt — the only place the master
+ * prompt and how-to steps appear. The card itself never shows them.
+ *
+ * Copy prompt: copies the master prompt to the clipboard first;
+ * only then calls the copy endpoint, which increments the real
+ * copied count via the server RPC. If either step fails, the count
+ * is not updated and the failure is shown plainly — no silent
+ * success, no made-up count.
+ */
+export type PromptDetailSectionProps = {
+  detail: PromptDetail;
+  subdomain: string;
+  onBack: () => void;
+  onCopied: (slug: string, copiedCount: number) => void;
+};
+
+export function PromptDetailSection({
+  detail,
+  subdomain,
+  onBack,
+  onCopied,
+}: PromptDetailSectionProps) {
+  const [copyState, setCopyState] = React.useState<
+    "idle" | "copied" | "error"
+  >("idle");
+
+  const handleCopy = async () => {
+    setCopyState("idle");
+    try {
+      await navigator.clipboard.writeText(detail.masterPrompt);
+    } catch {
+      setCopyState("error");
+      return;
+    }
+    try {
+      const response = await fetch(
+        `/api/tenant/${subdomain}/prompts/${detail.slug}/copy`,
+        { method: "POST" },
+      );
+      if (!response.ok) {
+        setCopyState("error");
+        return;
+      }
+      const body = (await response.json()) as { copiedCount: number };
+      onCopied(detail.slug, body.copiedCount);
+      setCopyState("copied");
+    } catch {
+      setCopyState("error");
+    }
+  };
+
+  return (
+    <section
+      data-testid="prompt-detail"
+      aria-label={`Details for ${detail.title}`}
+      className="bg-canvas px-4 pb-12 sm:px-6 sm:pb-16"
+    >
+      <div className="mx-auto w-full">
+        <button
+          type="button"
+          data-testid="prompt-detail-back"
+          onClick={onBack}
+          className="text-sm font-semibold text-brand-gold"
+        >
+          ← Back to prompts
+        </button>
+        <h2 className="mt-4 text-3xl font-bold leading-tight text-ink">
+          {detail.title}
+        </h2>
+        <p className="mt-2 text-sm text-ink-sub">
+          <span className="font-semibold text-ink">
+            {PromptToolLabels[detail.tool]}
+          </span>
+          {` · ${PromptCategoryLabels[detail.category]} · ${PromptLanguageLabels[detail.language]} · ${PromptLengthLabels[detail.length]} · ${PromptFormatLabels[detail.format]}`}
+        </p>
+        {detail.previewMediaType === "video" ? (
+          <video
+            data-testid="prompt-detail-preview"
+            src={detail.previewUrl}
+            poster={detail.previewPosterUrl ?? undefined}
+            controls
+            muted
+            playsInline
+            className="mt-6 h-60 w-full rounded-2xl border border-line bg-panel object-cover object-center"
+          />
+        ) : (
+          <div className="relative mt-6 h-60 w-full overflow-hidden rounded-2xl border border-line bg-panel">
+            <Image
+              data-testid="prompt-detail-preview"
+              src={detail.previewUrl}
+              alt=""
+              fill
+              unoptimized
+              sizes="100vw"
+              className="object-cover object-center"
+            />
+          </div>
+        )}
+        <h3 className="mt-8 text-xl font-bold text-ink">Master prompt</h3>
+        <p className="mt-3 rounded-2xl border border-line bg-panel p-4 text-sm leading-relaxed text-ink">
+          {detail.masterPrompt}
+        </p>
+        <button
+          type="button"
+          data-testid="prompt-detail-copy"
+          onClick={() => void handleCopy()}
+          className="mt-4 rounded-xl border border-brand-gold px-4 py-2 text-sm font-semibold text-brand-gold"
+        >
+          {copyState === "copied" ? "Copied ✓" : "Copy prompt"}
+        </button>
+        {copyState === "error" ? (
+          <p
+            data-testid="prompt-detail-copy-error"
+            className="mt-2 text-sm text-ink-sub"
+          >
+            Copying failed. Please try again — the count was not changed.
+          </p>
+        ) : null}
+        <p className="mt-3 text-sm text-ink-sub">
+          {`Copied ${detail.copiedCount} times`}
+        </p>
+        <h3 className="mt-8 text-xl font-bold text-ink">
+          How to make the video with it
+        </h3>
+        <ol className="mt-3 list-decimal space-y-2 pl-6 text-sm leading-relaxed text-ink-sub">
+          {detail.steps.map((step) => (
+            <li key={step.id}>
+              {step.title ? (
+                <span className="font-semibold text-ink">
+                  {step.title}:{" "}
+                </span>
+              ) : null}
+              {step.body}
+            </li>
+          ))}
+        </ol>
+      </div>
+    </section>
+  );
+}
