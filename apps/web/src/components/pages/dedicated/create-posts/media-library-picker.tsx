@@ -10,8 +10,10 @@
  * the Media Library, not a lookalike of it:
  *
  *   - The Library tab composes the library's own pieces — its
- *     toolbar (search, Type / Ratio / Captions, sort, grid/table
- *     switch), its client-side filter/sort, its breadcrumb trail,
+ *     toolbar pieces (search, Type / Ratio / Captions, sort,
+ *     grid/table switch — Style A arrangement: one search field
+ *     plus a Filters button, with the filter/sort menus behind
+ *     that button), its client-side filter/sort, its breadcrumb trail,
  *     its subfolder rows, and its grid tiles / table rows — over
  *     the library's own React Query data (same queries, same
  *     500-item list, same cache as the library page). It opens at
@@ -56,9 +58,17 @@ import { api, buildTenantApiPath } from '@/lib/api';
 import { reportError } from '@/lib/report-error';
 import { setPreference, preferences } from '@/lib/storage/preferences';
 import { cn } from '@/lib/utils';
-import { CircleAlertIcon, FolderIcon, ImageIcon } from 'lucide-react';
+import {
+  CircleAlertIcon,
+  FolderIcon,
+  ImageIcon,
+  LayoutGridIcon,
+  ListIcon,
+  SearchIcon,
+} from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/shared/ui/alert';
 import { Button } from '@/components/shared/ui/button';
+import { Input } from '@/components/shared/ui/input';
 import {
   Dialog,
   DialogContent,
@@ -97,13 +107,20 @@ import {
   ASPECT_RATIO_SHORT_VALUES,
   CAPTION_STATUS_SHORT_VALUES,
   MEDIA_TYPE_LABELS,
+  SORT_OPTION_SHORT_VALUES,
 } from '@/components/media/media-library-filters';
 import {
   computeActiveFilterCount,
   computeNextSelection,
   getInitialViewMode,
 } from '@/components/media/media-library-helpers';
-import { MediaToolbar } from '@/components/media/media-library-toolbar';
+import {
+  ToolbarMenu,
+  TYPE_DROPDOWN_OPTIONS,
+  RATIO_DROPDOWN_OPTIONS,
+  CAPTION_DROPDOWN_OPTIONS,
+  SORT_DROPDOWN_OPTIONS,
+} from '@/components/media/media-library-toolbar';
 import type {
   AspectRatioFilterKey,
   CaptionStatusFilterKey,
@@ -199,6 +216,10 @@ export function MediaLibraryPicker({
     React.useState<CaptionStatusFilterKey>('all');
   const [sortOption, setSortOption] = React.useState<SortOptionKey>('created_at:desc');
   const [previewItem, setPreviewItem] = React.useState<MediaItemResponse | null>(null);
+  // Style A top section: the filter/sort controls live behind the
+  // Filters button instead of sitting out as always-visible
+  // dropdowns. Closed by default, reset on every open.
+  const [filtersOpen, setFiltersOpen] = React.useState(false);
 
   // The library's own queries, fetched only while the picker is
   // open (same keys + cache as the library page itself).
@@ -237,6 +258,7 @@ export function MediaLibraryPicker({
     setCaptionStatusFilter('all');
     setSortOption('created_at:desc');
     setPreviewItem(null);
+    setFiltersOpen(false);
   }, [open ]);
 
   // Search debounce, as in the explorer: 250ms, immediate on clear.
@@ -515,9 +537,7 @@ export function MediaLibraryPicker({
         className="overflow-x-hidden sm:max-w-3xl lg:max-w-4xl"
       >
         <DialogHeader>
-          <DialogTitle>
-            {mode === 'single' ? 'Attach media' : 'Bulk Post — choose media'}
-          </DialogTitle>
+          <DialogTitle>Choose media</DialogTitle>
           <DialogDescription>
             {mode === 'single'
               ? 'Pick one file from your Media Library, or upload one from your device.'
@@ -530,46 +550,172 @@ export function MediaLibraryPicker({
           onValueChange={(value) => setTab(value as 'library' | 'device')}
           className="min-w-0"
         >
-          <TabsList data-testid="media-library-picker-tabs">
-            <TabsTrigger value="library">Media Library</TabsTrigger>
-            <TabsTrigger value="device">Upload from device</TabsTrigger>
-          </TabsList>
+          {/* Style A tabs: plain text links, not pills or a
+              segmented control — the active one is gold with a
+              gold underline, the inactive one muted. */}
+          <div
+            data-testid="media-library-picker-tabs"
+            className="flex items-center gap-5 border-b border-line"
+          >
+            <button
+              type="button"
+              onClick={() => setTab('library')}
+              className={cn(
+                '-mb-px border-b-2 pb-2 text-body',
+                tab === 'library'
+                  ? 'border-brand-gold font-semibold text-brand-gold'
+                  : 'border-transparent text-ink-sub'
+              )}
+            >
+              Media Library
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab('device')}
+              className={cn(
+                '-mb-px border-b-2 pb-2 text-body',
+                tab === 'device'
+                  ? 'border-brand-gold font-semibold text-brand-gold'
+                  : 'border-transparent text-ink-sub'
+              )}
+            >
+              Upload from device
+            </button>
+          </div>
 
           <TabsContent value="library" className="min-w-0">
-            <MediaToolbar
-              searchInput={searchInput}
-              onSearchChange={(value) => {
-                setSearchInput(value);
-                if (value.trim().length > 0) {
-                  setMediaTypeFilter('all');
-                  setAspectRatioFilter('all');
-                  setCaptionStatusFilter('all');
+            {/* Style A top section: one search field, a Filters
+                button, and the grid/table switch on one row. The
+                Type / Ratio / Captions / Sort controls live behind
+                the Filters button (same menu pieces as the library
+                toolbar, same testids) instead of sitting out as
+                always-visible dropdowns. Search behaviour is the
+                library's: typing a query resets the local filters. */}
+            <div className="flex min-w-0 items-center gap-2">
+              <SearchIcon className="size-4 shrink-0 text-ink-dim" aria-hidden />
+              <Input
+                type="search"
+                data-testid="media-search-input"
+                value={searchInput}
+                onChange={(e) => {
+                  setSearchInput(e.target.value);
+                  if (e.target.value.trim().length > 0) {
+                    setMediaTypeFilter('all');
+                    setAspectRatioFilter('all');
+                    setCaptionStatusFilter('all');
+                  }
+                }}
+                placeholder="Search files and captions…"
+                aria-label="Search files and captions"
+                className="h-11 min-w-0 flex-1 md:h-10"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                data-testid="media-picker-filters-btn"
+                aria-expanded={filtersOpen}
+                onClick={() => setFiltersOpen((prev) => !prev)}
+                className="h-11 shrink-0 md:h-10"
+              >
+                Filters
+                {activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
+              </Button>
+              <Tabs
+                value={viewMode}
+                onValueChange={(value) =>
+                  handleChangeViewMode(value as MediaViewMode)
                 }
-              }}
-              scopeTagLabel={getScopeTagLabel(
-                debouncedSearch,
-                null,
-                currentFolderId,
-                folders
-              )}
-              mediaTypeFilter={mediaTypeFilter}
-              onMediaTypeChange={setMediaTypeFilter}
-              aspectRatioFilter={aspectRatioFilter}
-              onAspectRatioChange={setAspectRatioFilter}
-              captionStatusFilter={captionStatusFilter}
-              onCaptionStatusChange={setCaptionStatusFilter}
-              activeFilterCount={activeFilterCount}
-              onClearFilters={handleClearFilters}
-              sortOption={sortOption}
-              onSortChange={setSortOption}
-              viewMode={viewMode}
-              onChangeViewMode={handleChangeViewMode}
-            />
+                className="shrink-0 gap-0"
+              >
+                <TabsList aria-label="View mode" className="h-11 md:h-10">
+                  <TabsTrigger
+                    value="grid"
+                    data-testid="view-mode-grid-btn"
+                    aria-label="Grid view"
+                    className="h-9 min-w-11 md:h-8"
+                  >
+                    <LayoutGridIcon aria-hidden />
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="table"
+                    data-testid="view-mode-table-btn"
+                    aria-label="Table view"
+                    className="h-9 min-w-11 md:h-8"
+                  >
+                    <ListIcon aria-hidden />
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </div>
 
-            {/* Context row, as in the library: breadcrumb trail on
-                the left, Select all on the right (multi mode only).
-                Crumbs are clickable only — the library's drag-drop
-                reparenting has no place in a picker. */}
+            {filtersOpen && (
+              <div
+                data-testid="media-picker-filters-panel"
+                className="mt-3 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-line p-2"
+              >
+                <ToolbarMenu
+                  testId="media-type-select"
+                  label="Type:"
+                  displayValue={MEDIA_TYPE_LABELS[mediaTypeFilter]}
+                  isActive={mediaTypeFilter !== 'all'}
+                  options={TYPE_DROPDOWN_OPTIONS}
+                  selectedKey={mediaTypeFilter}
+                  optionTestIdPrefix="type"
+                  onSelect={setMediaTypeFilter}
+                />
+                <ToolbarMenu
+                  testId="media-aspect-ratio-select"
+                  label="Ratio:"
+                  displayValue={ASPECT_RATIO_SHORT_VALUES[aspectRatioFilter]}
+                  isActive={aspectRatioFilter !== 'all'}
+                  options={RATIO_DROPDOWN_OPTIONS}
+                  selectedKey={aspectRatioFilter}
+                  optionTestIdPrefix="aspect-ratio"
+                  onSelect={setAspectRatioFilter}
+                />
+                <ToolbarMenu
+                  testId="media-caption-status-select"
+                  label="Captions:"
+                  displayValue={CAPTION_STATUS_SHORT_VALUES[captionStatusFilter]}
+                  isActive={captionStatusFilter !== 'all'}
+                  options={CAPTION_DROPDOWN_OPTIONS}
+                  selectedKey={captionStatusFilter}
+                  optionTestIdPrefix="caption-status"
+                  onSelect={setCaptionStatusFilter}
+                />
+                <ToolbarMenu
+                  testId="media-sort-select"
+                  label="Sort:"
+                  displayValue={SORT_OPTION_SHORT_VALUES[sortOption]}
+                  options={SORT_DROPDOWN_OPTIONS}
+                  selectedKey={sortOption}
+                  optionTestIdPrefix="sort"
+                  onSelect={setSortOption}
+                />
+                {activeFilterCount > 0 && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    data-testid="clear-filters-btn"
+                    onClick={handleClearFilters}
+                    className="h-11 px-2 text-metadata text-ink-dim hover:text-ink md:h-10"
+                  >
+                    <span>
+                      {activeFilterCount}{' '}
+                      {activeFilterCount === 1 ? 'filter' : 'filters'} · Clear
+                    </span>
+                  </Button>
+                )}
+              </div>
+            )}
+
+            {/* Slim navigation row, as in the library: breadcrumb
+                trail, the scope tag (plain truncating text, not the
+                toolbar's non-wrapping chip, so a long folder name
+                can never push the card wide), and Select all on the
+                right (multi mode only). Crumbs are clickable only
+                — the library's drag-drop reparenting has no place
+                in a picker. */}
             <div
               data-testid="context-row"
               className="flex flex-wrap items-center justify-between gap-4 py-4"
@@ -612,6 +758,18 @@ export function MediaLibraryPicker({
                   );
                 })}
               </nav>
+
+              <span
+                data-testid="media-scope-tag"
+                className="min-w-0 truncate text-metadata text-ink-dim"
+              >
+                {getScopeTagLabel(
+                  debouncedSearch,
+                  null,
+                  currentFolderId,
+                  folders
+                )}
+              </span>
 
               {mode === 'multi' && displayedMediaItems.length > 0 && (
                 <Button

@@ -43,13 +43,13 @@ import {
  * apply-on-selection.
  */
 
-const TYPE_DROPDOWN_OPTIONS = [
+export const TYPE_DROPDOWN_OPTIONS = [
   { key: 'all', label: 'All' },
   { key: 'video', label: 'Videos' },
   { key: 'image', label: 'Images' },
 ] as const;
 
-const RATIO_DROPDOWN_OPTIONS = [
+export const RATIO_DROPDOWN_OPTIONS = [
   { key: 'all', label: 'All ratios' },
   { key: '9:16', label: '9:16 Vertical' },
   { key: '16:9', label: '16:9 Landscape' },
@@ -57,13 +57,13 @@ const RATIO_DROPDOWN_OPTIONS = [
   { key: '4:5', label: '4:5 Portrait' },
 ] as const;
 
-const CAPTION_DROPDOWN_OPTIONS = [
+export const CAPTION_DROPDOWN_OPTIONS = [
   { key: 'all', label: 'All captions' },
   { key: 'has_caption', label: 'Has caption' },
   { key: 'empty_caption', label: 'Missing caption' },
 ] as const;
 
-const SORT_DROPDOWN_OPTIONS = [
+export const SORT_DROPDOWN_OPTIONS = [
   { key: 'created_at:desc', label: 'Newest first' },
   { key: 'created_at:asc', label: 'Oldest first' },
   { key: 'name:asc', label: 'Name (A–Z)' },
@@ -81,7 +81,7 @@ interface ToolbarMenuProps<T extends string> {
   onSelect: (key: T) => void;
 }
 
-function ToolbarMenu<T extends string>({
+export function ToolbarMenu<T extends string>({
   testId,
   label,
   displayValue,
