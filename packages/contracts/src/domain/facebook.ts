@@ -281,11 +281,65 @@ export const DiscoverPagesResponseSchema = z.object({
 
 export type DiscoverPagesResponse = z.infer<typeof DiscoverPagesResponseSchema>;
 
-// Request schema for selectively importing chosen pages
-export const ImportPagesRequestSchema = z.object({
-  accountId: z.string().uuid(),
-  selectedPageIds: z.array(z.string().min(1).max(100)).min(1),
+// One posting time applied by the Add Page flow, step 4. The time is
+// the narrowed HH:MM shape the native time input produces, and every
+// time must cover at least one post type (the same rule the dedicated
+// Posting Times form enforces). No new table: these land in the
+// existing posting_slots rows for each imported destination.
+export const ImportPostingTimeSchema = z.object({
+  slotTime: z
+    .string()
+    .regex(
+      /^([01]\d|2[0-3]):[0-5]\d$/,
+      'Invalid time format. Expected HH:MM'
+    ),
+  allowedFormats: z
+    .array(z.enum(['text', 'image', 'reel', 'video', 'story']))
+    .min(1),
 });
+
+export type ImportPostingTime = z.infer<typeof ImportPostingTimeSchema>;
+
+// Request schema for selectively importing chosen pages. The
+// timezone + postingTimes pair is optional (the legacy import sends
+// neither) but must arrive together: a timezone without times, or
+// times without a timezone, is an incomplete schedule and is
+// rejected at the boundary instead of half-applied. Duplicate times
+// are rejected for the same reason — posting_slots is unique per
+// destination + time_of_day, so a duplicate could never apply cleanly.
+export const ImportPagesRequestSchema = z
+  .object({
+    accountId: z.string().uuid(),
+    selectedPageIds: z.array(z.string().min(1).max(100)).min(1),
+    timezone: z.string().min(1).max(50).optional(),
+    postingTimes: z.array(ImportPostingTimeSchema).min(1).optional(),
+  })
+  .superRefine((data, ctx) => {
+    const hasTimezone = data.timezone !== undefined;
+    const hasPostingTimes = data.postingTimes !== undefined;
+    if (hasTimezone !== hasPostingTimes) {
+      ctx.addIssue({
+        code: 'custom',
+        message:
+          'Timezone and posting times must be provided together.',
+        path: hasTimezone ? ['postingTimes'] : ['timezone'],
+      });
+    }
+    if (data.postingTimes) {
+      const seen = new Set<string>();
+      for (const postingTime of data.postingTimes) {
+        if (seen.has(postingTime.slotTime)) {
+          ctx.addIssue({
+            code: 'custom',
+            message: 'Each posting time must be different.',
+            path: ['postingTimes'],
+          });
+          break;
+        }
+        seen.add(postingTime.slotTime);
+      }
+    }
+  });
 
 export type ImportPagesRequest = z.infer<typeof ImportPagesRequestSchema>;
 

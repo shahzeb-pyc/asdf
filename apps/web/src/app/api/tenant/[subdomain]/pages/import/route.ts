@@ -60,7 +60,8 @@ export async function handleImportPages(
     );
   }
 
-  const { accountId, selectedPageIds } = parseResult.data;
+  const { accountId, selectedPageIds, timezone, postingTimes } =
+    parseResult.data;
 
   // 4. Resolve workspace ID scoped to user
   const workspaceId = await resolveTenantWorkspaceId(dbClient, subdomain, session.userId, session.role);
@@ -326,6 +327,107 @@ export async function handleImportPages(
   const importedList = resolved.filter(
     (item): item is { id: string; fbPageId: string; pageName: string } => item !== null
   );
+
+  // Add Page steps 3–4: when a schedule was supplied, it is applied
+  // to every imported destination in this same operation, and
+  // success is returned only when all of it applied. Any failure
+  // returns 500 with no success payload, so the client dialog stays
+  // open on Step 4 ("nothing finish"). This is not a rollback: a
+  // destination upsert or slot row that already landed is
+  // idempotent on retry (destination upsert by
+  // account_id + external_destination_id; slot upsert by
+  // destination_id + time_of_day, which also refreshes the formats
+  // to the retried schedule), so a retry can never duplicate a
+  // posting time. The schedule is skipped entirely when absent, so
+  // the legacy import path is unchanged.
+  if (timezone && postingTimes) {
+    if (importedList.length !== selectedPageIds.length) {
+      return NextResponse.json(
+        { error: "Couldn't add the selected pages. Please try again." },
+        { status: 500 }
+      );
+    }
+    try {
+      if (
+        dbClient &&
+        'query' in dbClient &&
+        typeof dbClient.query === 'function'
+      ) {
+        for (const page of importedList) {
+          const updated = await dbClient.query(
+            `UPDATE destinations
+             SET timezone = $1, updated_at = now()
+             WHERE id = $2 AND workspace_id = $3 AND platform = 'facebook'
+             RETURNING id`,
+            [timezone, page.id, workspaceId]
+          );
+          if (!updated || updated.length === 0) {
+            throw new Error('Destination not found while applying schedule');
+          }
+          for (const postingTime of postingTimes) {
+            await dbClient.query(
+              `INSERT INTO posting_slots (destination_id, time_of_day, is_active, kind, created_at, updated_at)
+               VALUES ($1, $2, true, $3, now(), now())
+               ON CONFLICT (destination_id, time_of_day) DO UPDATE SET
+                 kind = EXCLUDED.kind,
+                 is_active = true,
+                 updated_at = now()`,
+              [page.id, postingTime.slotTime, postingTime.allowedFormats]
+            );
+          }
+        }
+      } else {
+        const supabase = (
+          dbClient && 'from' in dbClient ? dbClient : getSupabaseAdminClient()
+        ) as SupabaseClient | null;
+        if (!supabase) {
+          throw new Error('Database service unavailable');
+        }
+        for (const page of importedList) {
+          const { data: updatedPage, error: updateErr } = await supabase
+            .from('destinations')
+            .update({
+              timezone,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', page.id)
+            .eq('workspace_id', workspaceId)
+            .eq('platform', 'facebook')
+            .select('id')
+            .maybeSingle();
+          if (updateErr || !updatedPage) {
+            throw new Error(
+              updateErr?.message ??
+                'Destination not found while applying schedule'
+            );
+          }
+          const { error: slotErr } = await supabase
+            .from('posting_slots')
+            .upsert(
+              postingTimes.map((postingTime) => ({
+                destination_id: page.id,
+                time_of_day: postingTime.slotTime,
+                is_active: true,
+                kind: postingTime.allowedFormats,
+              })),
+              { onConflict: 'destination_id,time_of_day' }
+            );
+          if (slotErr) {
+            throw slotErr;
+          }
+        }
+      }
+    } catch (err) {
+      logServerError('[pages/import] Failed to apply schedule', err, {
+        source: 'pages-import-schedule',
+        subdomain,
+      });
+      return NextResponse.json(
+        { error: "Couldn't add the selected pages. Please try again." },
+        { status: 500 }
+      );
+    }
+  }
 
   const responsePayload = ImportPagesResponseSchema.parse({
     success: true,
