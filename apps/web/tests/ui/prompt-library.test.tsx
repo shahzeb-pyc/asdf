@@ -678,7 +678,7 @@ describe("PromptLibraryClient (real API wiring)", () => {
     });
   });
 
-  it("detail loading shows a skeleton matching the detail layout, with no real detail content", async () => {
+  it("detail loading shows a skeleton matching the rebuilt detail layout, with no real detail content", async () => {
     mockFetch((url) => {
       if (url.includes("/prompts/puppy-first-bath")) {
         return new Promise(() => {});
@@ -695,9 +695,25 @@ describe("PromptLibraryClient (real API wiring)", () => {
     expect(screen.queryByTestId("prompt-detail")).toBeNull();
     expect(screen.queryByText(/golden puppy sits in a tiny bathtub/)).toBeNull();
     expect(screen.queryByText("Open your video tool.")).toBeNull();
-    // Same h-60 preview block as the real detail, plus master-prompt
-    // and step skeleton lines — muted blocks only, no fake text.
-    expect(loading.querySelector(".h-60")).not.toBeNull();
+    // Rebuilt detail geometry (head b816e733): centred 720px
+    // wrapper, preview frame matching the real contain frame
+    // (h-80 / sm:h-[420px]) — never the old h-60 cover banner.
+    const wrapper = loading.querySelector(".mx-auto");
+    expect(wrapper?.className).toContain("max-w-[720px]");
+    const preview = screen.getByTestId("prompt-detail-loading-preview");
+    expect(preview.querySelector(".h-80")).not.toBeNull();
+    expect(loading.querySelector(".h-60")).toBeNull();
+    // Exactly 5 meta pill skeletons (tool, category, language,
+    // length, format), guide card skeleton, prompt field skeleton
+    // with header + footer note — and NO how-to skeleton block.
+    expect(
+      screen.getAllByTestId("prompt-detail-loading-meta-pill"),
+    ).toHaveLength(5);
+    expect(screen.getByTestId("prompt-detail-loading-guide")).toBeTruthy();
+    expect(
+      screen.getByTestId("prompt-detail-loading-prompt-field"),
+    ).toBeTruthy();
+    expect(screen.queryByTestId("prompt-detail-loading-how-to")).toBeNull();
     expect(loading.textContent ?? "").not.toContain("Puppy first bath");
   });
 

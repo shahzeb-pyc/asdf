@@ -468,10 +468,13 @@ export function PromptLibraryClient({
       />
       {selectedSlug ? (
         detailLoading ? (
-          // Detail skeleton, matching the real detail layout at its
-          // final geometry (same h-60 preview, master-prompt block,
-          // how-to step lines) via the shared Skeleton primitive —
-          // no real detail content, no fake text. Timing and
+          // Detail skeleton, matching the rebuilt detail layout
+          // (head b816e733) at its final geometry via the shared
+          // Skeleton primitive — same order, wrapper, and
+          // proportions as PromptDetailSection, no real detail
+          // content, no fake text. There is deliberately NO
+          // how-to skeleton block: the detail UI has no
+          // per-prompt how-to section anymore. Timing and
           // behaviour are unchanged: this shows only while the
           // detail fetch is in flight.
           <section
@@ -482,22 +485,83 @@ export function PromptLibraryClient({
             className="bg-canvas px-4 pb-12 sm:px-6 sm:pb-16"
           >
             <span className="sr-only">Loading prompt…</span>
-            <div className="mx-auto w-full">
-              <Skeleton className="h-9 w-1/2" />
-              <Skeleton className="mt-2 h-4 w-2/3" />
-              <Skeleton className="mt-6 h-60 w-full rounded-2xl" />
-              <Skeleton className="mt-8 h-6 w-44" />
-              <div className="mt-3 rounded-2xl border border-line bg-panel p-4">
-                <Skeleton className="h-4 w-full" />
-                <Skeleton className="mt-2 h-4 w-full" />
-                <Skeleton className="mt-2 h-4 w-5/6" />
+            <div className="mx-auto w-full max-w-[720px]">
+              {/* Header row: back link left, Save pill right. */}
+              <div className="flex items-center justify-between gap-3">
+                <Skeleton className="h-5 w-32" />
+                <Skeleton className="h-8 w-20 rounded-full" />
               </div>
-              <Skeleton className="mt-8 h-6 w-64" />
-              <ol className="mt-3 space-y-2 pl-6">
-                <Skeleton className="h-4 w-full" />
-                <Skeleton className="h-4 w-5/6" />
-                <Skeleton className="h-4 w-2/3" />
-              </ol>
+              {/* Preview card: capped contain frame (h-80 /
+                  sm:h-[420px]), never the old h-60 cover banner,
+                  plus the Reference label + Download footer. */}
+              <div
+                data-testid="prompt-detail-loading-preview"
+                className="mt-6 rounded-2xl border border-line bg-panel p-3 sm:p-4"
+              >
+                <Skeleton className="h-80 w-full rounded-xl sm:h-[420px]" />
+                <div className="mt-3 flex items-center justify-between gap-3">
+                  <Skeleton className="h-3 w-56" />
+                  <Skeleton className="h-8 w-24" />
+                </div>
+              </div>
+              {/* Title, then exactly 5 meta pill skeletons
+                  (tool, category, language, length, format). */}
+              <Skeleton className="mt-8 h-9 w-2/3" />
+              <div
+                data-testid="prompt-detail-loading-meta"
+                className="mt-4 flex flex-wrap gap-2"
+              >
+                <Skeleton
+                  data-testid="prompt-detail-loading-meta-pill"
+                  className="h-7 w-24 rounded-full"
+                />
+                <Skeleton
+                  data-testid="prompt-detail-loading-meta-pill"
+                  className="h-7 w-20 rounded-full"
+                />
+                <Skeleton
+                  data-testid="prompt-detail-loading-meta-pill"
+                  className="h-7 w-20 rounded-full"
+                />
+                <Skeleton
+                  data-testid="prompt-detail-loading-meta-pill"
+                  className="h-7 w-16 rounded-full"
+                />
+                <Skeleton
+                  data-testid="prompt-detail-loading-meta-pill"
+                  className="h-7 w-24 rounded-full"
+                />
+              </div>
+              {/* Copied/date line. */}
+              <Skeleton className="mt-4 h-4 w-56" />
+              {/* Guide card: "New here? How to use a master
+                  prompt →" link card. */}
+              <div
+                data-testid="prompt-detail-loading-guide"
+                className="mt-6 flex items-center justify-between gap-3 rounded-2xl border border-line bg-panel px-4 py-3"
+              >
+                <Skeleton className="h-4 w-64" />
+                <Skeleton className="h-4 w-4" />
+              </div>
+              {/* Prompt field: header (heading + Copy, top-right),
+                  readable text lines, footer note. */}
+              <div
+                data-testid="prompt-detail-loading-prompt-field"
+                className="mt-8 overflow-hidden rounded-2xl border border-line bg-panel"
+              >
+                <div className="flex items-center justify-between gap-3 border-b border-line px-5 py-4">
+                  <Skeleton className="h-6 w-40" />
+                  <Skeleton className="h-8 w-24" />
+                </div>
+                <div className="space-y-3 px-5 py-5">
+                  <Skeleton className="h-4 w-full" />
+                  <Skeleton className="h-4 w-full" />
+                  <Skeleton className="h-4 w-5/6" />
+                </div>
+                <div className="border-t border-line px-5 py-3">
+                  <Skeleton className="h-3 w-72" />
+                </div>
+              </div>
             </div>
           </section>
         ) : detailError || !detail ? (
