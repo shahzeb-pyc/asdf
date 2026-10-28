@@ -7,11 +7,11 @@ import { TriangleAlertIcon } from "lucide-react";
 import { Alert } from "@/components/shared/ui/alert";
 
 import {
-  PromptCategoryLabels,
   PromptFormatLabels,
-  PromptLanguageLabels,
+  promptCategoryLabel,
+  promptLanguageLabel,
+  promptToolLabel,
   PromptLengthLabels,
-  PromptToolLabels,
   type PromptDetail,
 } from "@fbuploadpro/contracts";
 
@@ -101,9 +101,9 @@ export function PromptDetailSection({
         </h2>
         <p className="mt-2 text-sm text-ink-sub">
           <span className="font-semibold text-ink">
-            {PromptToolLabels[detail.tool]}
+            {promptToolLabel(detail.tool)}
           </span>
-          {` · ${PromptCategoryLabels[detail.category]} · ${PromptLanguageLabels[detail.language]} · ${PromptLengthLabels[detail.length]} · ${PromptFormatLabels[detail.format]}`}
+          {` · ${promptCategoryLabel(detail.category)} · ${promptLanguageLabel(detail.language)} · ${PromptLengthLabels[detail.length]} · ${PromptFormatLabels[detail.format]}`}
         </p>
         {selectedMedia.mediaType === "video" ? (
           <video

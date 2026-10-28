@@ -7,27 +7,49 @@ import { z } from 'zod';
  * API only; there is no user submission endpoint and no "add
  * prompt" button in the user-facing library.
  *
- * Enums here must match the CHECK constraints in
- * supabase/migrations/20261028120000_prompt_library.sql exactly.
- * The DB is the enforcement copy; these schemas are the runtime
- * validation copy. Do not add a route-local schema shadowing this
- * file — import from here at every API boundary.
+ * TAXONOMY (tool / category / language) IS FREE TEXT, NOT AN
+ * ENUM — since migration 20261028140000_relax_prompt_library_
+ * taxonomy.sql dropped the DB CHECK enums for these three
+ * columns. A brand-new category, tool, or language needs NO
+ * migration: an admin simply uses it in an admin create call,
+ * and the dynamic facets pick it up automatically once the
+ * prompt is published. Typo risk is controlled at the admin
+ * layer (admin-only writes + the normalisation below), not by
+ * a DB enum, and no separate taxonomy table is invented.
+ * The enums that REMAIN — status, length bucket, format, aspect
+ * ratio, media type, sort — are system values, not growing
+ * taxonomies, and still match their DB CHECK constraints.
+ * Do not add a route-local schema shadowing this file — import
+ * from here at every API boundary.
  */
 
-export const PromptToolSchema = z.enum(['dola_ai', 'veo3', 'google_flow']);
+/**
+ * Normalised taxonomy text: trimmed, lowercased, single spaces.
+ * Applied identically on create, update, and list-query filters,
+ * so a stored value and a filter for it always match.
+ */
+function normalisedTaxonomyText(maxLength: number) {
+  return z
+    .string()
+    .trim()
+    .transform((value) => value.toLowerCase().replace(/\s+/g, ' '))
+    .pipe(z.string().min(1).max(maxLength));
+}
+
+export const PromptToolSchema = normalisedTaxonomyText(100);
 export type PromptTool = z.infer<typeof PromptToolSchema>;
 
-export const PromptCategorySchema = z.enum([
-  'animals',
-  'comedy',
-  'cinematic',
-  'ugc',
-  'tutorial',
-  'unboxing',
-]);
+export const PromptCategorySchema = normalisedTaxonomyText(100);
 export type PromptCategory = z.infer<typeof PromptCategorySchema>;
 
-export const PromptLanguageSchema = z.enum(['en', 'ur', 'hi']);
+/** Language: a lowercase ISO-style code of 2-5 letters. */
+export const PromptLanguageSchema = z
+  .string()
+  .trim()
+  .transform((value) => value.toLowerCase())
+  .pipe(z.string().regex(/^[a-z]{2,5}$/, {
+    message: 'Language must be a 2-5 letter code',
+  }));
 export type PromptLanguage = z.infer<typeof PromptLanguageSchema>;
 
 export const PromptLengthSchema = z.enum([
@@ -55,13 +77,19 @@ export type PromptAspectRatio = z.infer<typeof PromptAspectRatioSchema>;
 export const PromptSortSchema = z.enum(['newest', 'most_copied', 'a_to_z']);
 export type PromptSort = z.infer<typeof PromptSortSchema>;
 
-/** Display labels — the UI never hardcodes these. */
-export const PromptToolLabels: Record<PromptTool, string> = {
+/**
+ * Display labels for the values that predate free-text taxonomy.
+ * New values have no entry here — the label helpers below fall
+ * back to a title-cased display form, so a new value never
+ * renders as undefined. The UI must use the helpers, not index
+ * these maps directly, for any value that may be new.
+ */
+export const PromptToolLabels: Record<string, string> = {
   dola_ai: 'Dola AI',
   veo3: 'Veo 3',
   google_flow: 'Google Flow',
 };
-export const PromptCategoryLabels: Record<PromptCategory, string> = {
+export const PromptCategoryLabels: Record<string, string> = {
   animals: 'Animals',
   comedy: 'Comedy',
   cinematic: 'Cinematic',
@@ -69,11 +97,34 @@ export const PromptCategoryLabels: Record<PromptCategory, string> = {
   tutorial: 'Tutorial',
   unboxing: 'Unboxing',
 };
-export const PromptLanguageLabels: Record<PromptLanguage, string> = {
+export const PromptLanguageLabels: Record<string, string> = {
   en: 'English',
   ur: 'Urdu',
   hi: 'Hindi',
 };
+
+function titleCaseTaxonomy(value: string): string {
+  return value
+    .split(/[\s_-]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
+/** Display label for any tool, old or brand-new. */
+export function promptToolLabel(value: string): string {
+  return PromptToolLabels[value] ?? titleCaseTaxonomy(value);
+}
+
+/** Display label for any category, old or brand-new. */
+export function promptCategoryLabel(value: string): string {
+  return PromptCategoryLabels[value] ?? titleCaseTaxonomy(value);
+}
+
+/** Display label for any language code, old or brand-new. */
+export function promptLanguageLabel(value: string): string {
+  return PromptLanguageLabels[value] ?? value.toUpperCase();
+}
 export const PromptLengthLabels: Record<PromptLength, string> = {
   under_15s: 'Under 15s',
   '15_30s': '15-30s',
@@ -393,10 +444,10 @@ export type PromptFavouriteResponse = z.infer<
  * alphabetically on ties; the frontend preserves that order.
  * Computed from ALL published prompts, unfiltered by the current
  * search/filters, so selecting one filter never hides the other
- * options. LIMIT, stated plainly: the DB CHECK constraints still
- * gate which values an admin can insert — a brand-new value needs
- * a migration to the CHECK before any prompt can use it. Facets
- * are dynamic only within the values the DB already allows.
+ * options. Since migration 20261028140000, taxonomy values are
+ * free text: a brand-new category, tool, or language needs NO
+ * migration — once an admin uses it in a create call and the
+ * prompt is published, it appears here automatically.
  */
 const promptFacetCount = z.number().int().nonnegative();
 export const PromptFacetsSchema = z.object({

@@ -7,12 +7,38 @@ with a session whose role is `admin`. A non-admin calling the
 admin routes gets 403.
 
 The migrations for this feature
-(`supabase/migrations/20261028120000_prompt_library.sql` and
-`supabase/migrations/20261028130000_prompt_library_media.sql`)
+(`supabase/migrations/20261028120000_prompt_library.sql`,
+`supabase/migrations/20261028130000_prompt_library_media.sql`,
+and `supabase/migrations/20261028140000_relax_prompt_library_taxonomy.sql`)
 are created in the repo but must be applied by Kafka first — the
-builder does not apply migrations, and the catalogue is empty
-until then. Nothing here works against a database that has not
-had those migrations applied.
+builder does not apply migrations, and nothing here works
+against a database that has not had those migrations applied.
+
+## Adding a new category, tool, or language (no migration needed)
+
+Since migration `20261028140000`, `tool`, `category`, and
+`language` are free text, not enums. To add a brand-new value,
+just use it in an admin create (or PATCH) call — for example
+`"category": "travel"`, `"tool": "sora"`, `"language": "fr"` —
+and publish the prompt. The filter dropdowns then show it
+automatically (facets list whatever published prompts actually
+use). No migration, no code change.
+
+Normalisation (applied by the API, so a stored value and a
+filter for it always match): category and tool are lowercased
+with single spaces (`"  Travel  "` becomes `"travel"`,
+`"  Sora  "` becomes `"sora"`); language is lowercased and
+must be a 2–5 letter code (`"FR"` becomes `"fr"`).
+Empty values and category/tool over 100 characters are
+rejected; a language code outside 2–5 letters is rejected.
+
+Typo risk is controlled because ONLY admins can write: there
+is no user submission path, and no separate taxonomy table.
+Check the new value's spelling before publishing — a typo
+becomes a real filter option until the prompt is corrected.
+
+`length`, `format`, and `status` are NOT free text: they are
+system values and stay as enums, listed in the rules below.
 
 ## Step 1 — Upload the media to R2 first
 
@@ -78,9 +104,16 @@ contracts schemas in `packages/contracts/src/domain/prompt-library.ts`):
 
 Rules enforced by the API and the database:
 
-- `tool`: `dola_ai` | `veo3` | `google_flow`
-- `category`: `animals` | `comedy` | `cinematic` | `ugc` | `tutorial` | `unboxing`
-- `language`: `en` | `ur` | `hi`
+- `tool`, `category`, and `language` are FREE TEXT — no
+  migration is needed for a new value. Add a new category, tool,
+  or language by simply using it in an admin create call (see
+  "Adding a new category, tool, or language" below); once the
+  prompt is published, the filter dropdowns pick it up
+  automatically via the facets endpoint. The old values still
+  work exactly as before: `tool` `dola_ai` | `veo3` |
+  `google_flow`, `category` `animals` | `comedy` | `cinematic` |
+  `ugc` | `tutorial` | `unboxing`, `language` `en` | `ur` |
+  `hi` — they are just no longer the only allowed values.
 - `length`: `under_15s` | `15_30s` | `30s_plus` | `1min_plus`
 - `format` / `aspectRatio`: `vertical_reel` must be `9:16`,
   `horizontal_video` must be `16:9`

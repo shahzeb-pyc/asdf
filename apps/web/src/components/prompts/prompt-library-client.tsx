@@ -75,6 +75,22 @@ function labelToApiValue(
   }
   return undefined;
 }
+
+/**
+ * Reverse label lookup for TAXONOMY filters (category/tool/
+ * language), whose values are free text since migration
+ * 20261028140000: a brand-new value has no entry in the old
+ * label maps, and its display label IS its raw value (the
+ * top section falls back to the raw value for unknowns), so
+ * falling back to the label itself is the correct api value.
+ * Length keeps the strict lookup above — it is still an enum.
+ */
+function taxonomyLabelToApiValue(
+  labels: Record<string, string>,
+  label: string,
+): string | undefined {
+  return labelToApiValue(labels, label) ?? label;
+}
 const SORT_MAP: Record<string, string> = {
   Newest: "newest",
   "Most copied": "most_copied",
@@ -221,11 +237,11 @@ export function PromptLibraryClient({
         const params = new URLSearchParams();
         if (query.trim()) params.set("search", query.trim());
         if (favoritesOnly) params.set("favorites_only", "true");
-        const category = labelToApiValue(PromptCategoryLabels, filters.category);
+        const category = taxonomyLabelToApiValue(PromptCategoryLabels, filters.category);
         if (category) params.set("category", category);
-        const tool = labelToApiValue(PromptToolLabels, filters.tool);
+        const tool = taxonomyLabelToApiValue(PromptToolLabels, filters.tool);
         if (tool) params.set("tool", tool);
-        const language = labelToApiValue(PromptLanguageLabels, filters.language);
+        const language = taxonomyLabelToApiValue(PromptLanguageLabels, filters.language);
         if (language) params.set("language", language);
         const length = labelToApiValue(PromptLengthLabels, filters.length);
         if (length) params.set("length", length);

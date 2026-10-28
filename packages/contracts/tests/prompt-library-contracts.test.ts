@@ -51,11 +51,53 @@ describe('prompt library contracts', () => {
     expect(PromptCreateSchema.safeParse(validCreate).success).toBe(true);
   });
 
-  it('rejects an unknown tool, category, language, length, or format', () => {
+  it('accepts brand-new taxonomy values outside the old enums', () => {
+    // Since migration 20261028140000, tool/category/language are
+    // free text: a new value needs no migration. The old demo
+    // values still validate alongside them.
+    const parsed = PromptCreateSchema.safeParse({
+      ...validCreate,
+      tool: 'sora',
+      category: 'travel',
+      language: 'fr',
+    });
+    expect(parsed.success).toBe(true);
+    expect(PromptCreateSchema.safeParse(validCreate).success).toBe(true);
+  });
+
+  it('normalises taxonomy values: lowercased, single spaces, language codes', () => {
+    const parsed = PromptCreateSchema.safeParse({
+      ...validCreate,
+      tool: '  Sora  ',
+      category: '  Travel  ',
+      language: 'FR',
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.tool).toBe('sora');
+      expect(parsed.data.category).toBe('travel');
+      expect(parsed.data.language).toBe('fr');
+    }
+  });
+
+  it('rejects empty/overlong taxonomy values and bad language codes', () => {
     for (const [key, value] of [
-      ['tool', 'midjourney'],
-      ['category', 'sports'],
-      ['language', 'fr'],
+      ['tool', ''],
+      ['tool', 'x'.repeat(101)],
+      ['category', '   '],
+      ['category', 'x'.repeat(101)],
+      ['language', 'e'],
+      ['language', 'english'],
+      ['language', 'e1'],
+    ] as const) {
+      expect(
+        PromptCreateSchema.safeParse({ ...validCreate, [key]: value }).success,
+      ).toBe(false);
+    }
+  });
+
+  it('still rejects an unknown length or format (system enums, unchanged)', () => {
+    for (const [key, value] of [
       ['length', '2min_plus'],
       ['format', 'square'],
     ] as const) {
@@ -63,6 +105,17 @@ describe('prompt library contracts', () => {
         PromptCreateSchema.safeParse({ ...validCreate, [key]: value }).success,
       ).toBe(false);
     }
+  });
+
+  it('facets accept brand-new taxonomy values', () => {
+    expect(
+      PromptFacetsSchema.safeParse({
+        category: [{ value: 'travel', count: 1 }],
+        tool: [{ value: 'sora', count: 1 }],
+        language: [{ value: 'fr', count: 1 }],
+        length: [{ value: '1min_plus', count: 1 }],
+      }).success,
+    ).toBe(true);
   });
 
   it('rejects a vertical format with a horizontal aspect ratio', () => {
@@ -246,7 +299,7 @@ describe('prompt library contracts', () => {
     );
   });
 
-  it('accepts a valid facets payload and rejects unknown values and negative counts', () => {
+  it('accepts a valid facets payload, new taxonomy values, and rejects negative counts and unknown lengths', () => {
     const facets = {
       category: [
         { value: 'animals', count: 2 },
@@ -257,10 +310,18 @@ describe('prompt library contracts', () => {
       length: [{ value: '1min_plus', count: 3 }],
     };
     expect(PromptFacetsSchema.safeParse(facets).success).toBe(true);
+    // Taxonomy is free text now: 'sports' is a valid facet value.
     expect(
       PromptFacetsSchema.safeParse({
         ...facets,
         category: [{ value: 'sports', count: 1 }],
+      }).success,
+    ).toBe(true);
+    // Length is still a system enum, so an unknown length is rejected.
+    expect(
+      PromptFacetsSchema.safeParse({
+        ...facets,
+        length: [{ value: '2min_plus', count: 1 }],
       }).success,
     ).toBe(false);
     expect(

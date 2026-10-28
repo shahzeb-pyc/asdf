@@ -26,10 +26,12 @@ import {
  * rows), looping until a short page ends the scan. The catalogue
  * is admin-curated and small, so this loop is short in practice.
  *
- * LIMIT (not changed here): the DB CHECK constraints still gate
- * which values an admin can insert. A brand-new value needs a
- * migration to the CHECK before any prompt can use it; facets are
- * dynamic only within the values the DB already allows.
+ * Taxonomy values are free text since migration
+ * 20261028140000_relax_prompt_library_taxonomy.sql: a brand-new
+ * category, tool, or language needs no migration — once an admin
+ * uses it and the prompt is published, it appears here
+ * automatically. This route needs no change for that: it tallies
+ * whatever distinct values published prompts actually carry.
  */
 
 type RouteParams = { params: Promise<{ subdomain: string }> };

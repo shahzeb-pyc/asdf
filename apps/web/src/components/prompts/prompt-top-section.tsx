@@ -9,10 +9,10 @@ import {
 } from "lucide-react";
 
 import {
-  PromptCategoryLabels,
-  PromptLanguageLabels,
   PromptLengthLabels,
-  PromptToolLabels,
+  promptCategoryLabel,
+  promptLanguageLabel,
+  promptToolLabel,
   type PromptFacets,
 } from "@fbuploadpro/contracts";
 
@@ -106,10 +106,10 @@ type FilterKey = PromptFilterKey;
 const SORT_OPTIONS: readonly string[] = ["Newest", "Most copied", "A to Z"];
 
 const FACET_LABELS = {
-  category: PromptCategoryLabels,
-  tool: PromptToolLabels,
-  language: PromptLanguageLabels,
-  length: PromptLengthLabels,
+  category: promptCategoryLabel,
+  tool: promptToolLabel,
+  language: promptLanguageLabel,
+  length: (value: string) => PromptLengthLabels[value as keyof typeof PromptLengthLabels] ?? value,
 } as const;
 
 const FILTER_KEYS: readonly FilterKey[] = [
@@ -127,13 +127,8 @@ function filterOptions(
   if (key === "sort") return SORT_OPTIONS;
   const values = facets?.[key];
   if (!values) return ["All"];
-  const labels = FACET_LABELS[key];
-  return [
-    "All",
-    ...values.map(
-      (facet) => labels[facet.value as keyof typeof labels] ?? facet.value,
-    ),
-  ];
+  const labelFor = FACET_LABELS[key];
+  return ["All", ...values.map((facet) => labelFor(facet.value))];
 }
 
 const FILTER_LABELS: Record<FilterKey, string> = {

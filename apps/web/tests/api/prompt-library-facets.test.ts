@@ -175,4 +175,24 @@ describe("GET /api/tenant/[subdomain]/prompts/facets", () => {
     const { res } = await callFacets(ALL_ROWS, "");
     expect(res.status).toBe(401);
   });
+
+  it("picks up brand-new taxonomy values outside the old enums", async () => {
+    // Since migration 20261028140000, taxonomy is free text: a
+    // prompt with category "travel", tool "sora", language "fr"
+    // must appear in facets with no migration and no code change
+    // to the facets route — it tallies whatever published prompts
+    // actually carry, and the facets schema must accept the values.
+    const rows = [
+      row("00000000-0000-4000-8000-000000000009", {
+        category: "travel",
+        tool: "sora",
+        language: "fr",
+      }),
+    ];
+    const { res, body } = await callFacets(rows);
+    expect(res.status).toBe(200);
+    expect(body.category).toEqual([{ value: "travel", count: 1 }]);
+    expect(body.tool).toEqual([{ value: "sora", count: 1 }]);
+    expect(body.language).toEqual([{ value: "fr", count: 1 }]);
+  });
 });

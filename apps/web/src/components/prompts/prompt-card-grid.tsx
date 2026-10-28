@@ -5,11 +5,11 @@ import Image from "next/image";
 import { HeartIcon, PauseIcon, PlayIcon } from "lucide-react";
 
 import {
-  PromptCategoryLabels,
   PromptFormatLabels,
-  PromptLanguageLabels,
+  promptCategoryLabel,
+  promptLanguageLabel,
+  promptToolLabel,
   PromptLengthLabels,
-  PromptToolLabels,
   type PromptListItem,
 } from "@fbuploadpro/contracts";
 
@@ -205,9 +205,9 @@ export function PromptCardGrid({
                 </p>
                 <p className="mt-3 text-sm text-ink-sub">
                   <span className="font-semibold text-ink">
-                    {PromptToolLabels[item.tool]}
+                    {promptToolLabel(item.tool)}
                   </span>
-                  {` · ${PromptCategoryLabels[item.category]} · ${PromptLanguageLabels[item.language]} · ${PromptLengthLabels[item.length]} · ${PromptFormatLabels[item.format]}`}
+                  {` · ${promptCategoryLabel(item.category)} · ${promptLanguageLabel(item.language)} · ${PromptLengthLabels[item.length]} · ${PromptFormatLabels[item.format]}`}
                 </p>
                 <p className="mt-3 border-t border-line pt-3 text-sm text-ink-sub">
                   {`Copied ${item.copiedCount} times · Added ${formatDateAdded(item.createdAt)}`}
