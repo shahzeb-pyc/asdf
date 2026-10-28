@@ -175,15 +175,16 @@ describe("PromptTopSection (step 1, filter row)", () => {
     expect(screen.getByRole("button", { name: /Length: 1 min\+/ })).toBeTruthy();
   });
 
-  it("uses the full content width, not a narrow centred container", () => {
+  it("keeps the hero full-width but centres a compact search card", () => {
     render(<PromptTopSection />);
     const section = screen.getByTestId("prompt-top-section");
     const hero = section.firstElementChild as HTMLElement;
     expect(hero.className).not.toContain("max-w-3xl");
     expect(hero.className).toContain("w-full");
     const card = screen.getByTestId("prompt-top-section-search-card");
-    expect(card.className).not.toContain("max-w-5xl");
     expect(card.className).toContain("w-full");
+    expect(card.className).toContain("mx-auto");
+    expect(card.className).toContain("max-w-3xl");
   });
 
   it("shows Clear all only when something is chosen, and Clear all resets everything", () => {

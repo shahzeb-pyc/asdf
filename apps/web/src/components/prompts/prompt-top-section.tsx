@@ -154,7 +154,7 @@ export function PromptTopSection(props: PromptTopSectionProps = {}) {
 
       <div
         data-testid="prompt-top-section-search-card"
-        className="mx-auto mt-10 w-full rounded-2xl border border-line bg-panel p-3 shadow-card sm:p-4"
+        className="mx-auto mt-10 w-full max-w-3xl rounded-2xl border border-line bg-panel p-3 shadow-card sm:p-4"
       >
       <div
         data-testid="prompt-top-section-filter-row"
