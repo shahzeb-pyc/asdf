@@ -752,6 +752,7 @@ export function MediaLibraryPicker({
               >
                 <ToolbarMenu
                   testId="media-type-select"
+                  layer="overlayTop"
                   label="Type:"
                   displayValue={MEDIA_TYPE_LABELS[mediaTypeFilter]}
                   isActive={mediaTypeFilter !== 'all'}
@@ -762,6 +763,7 @@ export function MediaLibraryPicker({
                 />
                 <ToolbarMenu
                   testId="media-aspect-ratio-select"
+                  layer="overlayTop"
                   label="Ratio:"
                   displayValue={ASPECT_RATIO_SHORT_VALUES[aspectRatioFilter]}
                   isActive={aspectRatioFilter !== 'all'}
@@ -772,6 +774,7 @@ export function MediaLibraryPicker({
                 />
                 <ToolbarMenu
                   testId="media-caption-status-select"
+                  layer="overlayTop"
                   label="Captions:"
                   displayValue={CAPTION_STATUS_SHORT_VALUES[captionStatusFilter]}
                   isActive={captionStatusFilter !== 'all'}
@@ -782,6 +785,7 @@ export function MediaLibraryPicker({
                 />
                 <ToolbarMenu
                   testId="media-sort-select"
+                  layer="overlayTop"
                   label="Sort:"
                   displayValue={SORT_OPTION_SHORT_VALUES[sortOption]}
                   options={SORT_DROPDOWN_OPTIONS}

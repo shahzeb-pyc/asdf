@@ -79,6 +79,14 @@ interface ToolbarMenuProps<T extends string> {
   selectedKey: T;
   optionTestIdPrefix: string;
   onSelect: (key: T) => void;
+  /**
+   * Stacking layer for the portalled menu panel. Default (undefined) keeps
+   * the current z-popover behaviour. Pass "overlayTop" when the menu lives
+   * inside a dialog (z-dialog 9500 > z-popover 9000), otherwise the panel
+   * renders underneath the dialog and is invisible/unclickable — the same
+   * layer convention as the shared Popover's overlayTop variant.
+   */
+  layer?: "popover" | "overlayTop";
 }
 
 export function ToolbarMenu<T extends string>({
@@ -90,6 +98,7 @@ export function ToolbarMenu<T extends string>({
   selectedKey,
   optionTestIdPrefix,
   onSelect,
+  layer,
 }: Readonly<ToolbarMenuProps<T>>) {
   return (
     <Menu>
@@ -115,7 +124,10 @@ export function ToolbarMenu<T extends string>({
           <ChevronDownIcon className="opacity-50" aria-hidden />
         </Button>
       </MenuTrigger>
-      <MenuContent align="start">
+      <MenuContent
+        align="start"
+        className={layer === "overlayTop" ? "z-overlay-top" : undefined}
+      >
         <MenuRadioGroup value={selectedKey} onValueChange={(value) => onSelect(value as T)}>
           {options.map((opt) => (
             <MenuRadioItem
