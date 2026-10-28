@@ -512,7 +512,7 @@ export function MediaLibraryPicker({
     <Dialog open={open} onOpenChange={handlePickerOpenChange}>
       <DialogContent
         data-testid="media-library-picker"
-        className="sm:max-w-3xl lg:max-w-4xl"
+        className="overflow-x-hidden sm:max-w-3xl lg:max-w-4xl"
       >
         <DialogHeader>
           <DialogTitle>
@@ -528,13 +528,14 @@ export function MediaLibraryPicker({
         <Tabs
           value={tab}
           onValueChange={(value) => setTab(value as 'library' | 'device')}
+          className="min-w-0"
         >
           <TabsList data-testid="media-library-picker-tabs">
             <TabsTrigger value="library">Media Library</TabsTrigger>
             <TabsTrigger value="device">Upload from device</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="library">
+          <TabsContent value="library" className="min-w-0">
             <MediaToolbar
               searchInput={searchInput}
               onSearchChange={(value) => {
@@ -724,42 +725,61 @@ export function MediaLibraryPicker({
                 {viewMode === 'grid' ? (
                   <div
                     data-testid="media-assets-grid"
-                    className="mt-1 grid grid-cols-2 gap-4 md:grid-cols-3 md:gap-5 xl:grid-cols-4 2xl:grid-cols-5"
+                    className="mt-1 grid min-w-0 grid-cols-2 gap-4 md:grid-cols-3 md:gap-5 xl:grid-cols-4 2xl:grid-cols-5"
                   >
                     {displayedMediaItems.map((item) => (
-                      <MediaAssetCard
-                        key={item.id}
-                        item={item}
-                        selected={selectedIds.includes(item.id)}
-                        folderPathLabel={
-                          debouncedSearch
-                            ? `in ${formatFolderAncestryPath(item.folderId, folders)}`
-                            : null
-                        }
-                        onNavigateFolder={navigateFolder}
-                        onToggleSelect={handleToggleSelect}
-                        onPreview={handlePreview}
-                        onUpdateCaption={handleUpdateCaption}
-                      />
+                      /* min-w-0 wrapper: a grid item's automatic minimum
+                         is its content minimum, and a long nowrap
+                         filename would otherwise force its track wider
+                         than the card — the wrapper lets the tile shrink
+                         so its truncate works instead of overflowing. */
+                      <div key={item.id} className="min-w-0">
+                        <MediaAssetCard
+                          item={item}
+                          selected={selectedIds.includes(item.id)}
+                          folderPathLabel={
+                            debouncedSearch
+                              ? `in ${formatFolderAncestryPath(item.folderId, folders)}`
+                              : null
+                          }
+                          onNavigateFolder={navigateFolder}
+                          onToggleSelect={handleToggleSelect}
+                          onPreview={handlePreview}
+                          onUpdateCaption={handleUpdateCaption}
+                        />
+                      </div>
                     ))}
                   </div>
                 ) : (
                   <div data-testid="media-table-view" className="mt-1 w-full min-w-0">
-                    <Table data-testid="media-table">
+                    {/* Picker-compact table: fixed layout + the compact
+                        row variant, so columns are constrained and
+                        truncate instead of pushing the table past the
+                        card. The shared Table's overflow-x-auto
+                        container stays, but with fixed widths nothing
+                        exceeds it, so there is nothing to scroll.
+                        Details/Date are omitted; Caption/Size hide
+                        below sm. Widths are border-box (preflight),
+                        so they include the px-3 cell padding. */}
+                    <Table data-testid="media-table" className="table-fixed">
                       <TableHeader>
                         <TableRow>
-                          <TableHead className="w-10">
+                          <TableHead className="w-16">
                             <span className="sr-only">Select</span>
                           </TableHead>
                           <TableHead className="w-12 px-0">
                             <span className="sr-only">Thumbnail</span>
                           </TableHead>
                           <TableHead>File</TableHead>
-                          <TableHead>Caption</TableHead>
-                          <TableHead>Details</TableHead>
-                          <TableHead className="text-right">Size</TableHead>
-                          <TableHead>Date</TableHead>
-                          <TableHead className="text-right">Actions</TableHead>
+                          <TableHead className="hidden sm:table-cell">
+                            Caption
+                          </TableHead>
+                          <TableHead className="hidden w-[84px] text-right sm:table-cell">
+                            Size
+                          </TableHead>
+                          <TableHead className="w-[120px] text-right">
+                            Actions
+                          </TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -767,6 +787,7 @@ export function MediaLibraryPicker({
                           <MediaTableRow
                             key={item.id}
                             item={item}
+                            compact
                             selected={selectedIds.includes(item.id)}
                             folderPathLabel={
                               debouncedSearch
@@ -941,7 +962,7 @@ export function MediaLibraryPicker({
         </Tabs>
 
         {mode === 'multi' && (
-          <div className="flex justify-end gap-2">
+          <div className="flex min-w-0 justify-end gap-2">
             <Button
               type="button"
               variant="secondary"

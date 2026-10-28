@@ -14,7 +14,7 @@
  */
 
 import Image from 'next/image';
-import { XIcon } from 'lucide-react';
+import { ImageIcon, XIcon } from 'lucide-react';
 
 import { Button } from '@/components/shared/ui/button';
 import { Textarea } from '@/components/shared/ui/textarea';
@@ -85,7 +85,7 @@ export function PostBlock({
       />
 
       {block.media ? (
-        <div className="mt-2 flex items-center gap-3">
+        <div className="mt-2 flex items-center gap-3 rounded-md border border-line bg-panel p-2">
           {block.media.thumbnailUrl ? (
             <Image
               src={block.media.thumbnailUrl}
@@ -95,30 +95,39 @@ export function PostBlock({
               className="size-14 shrink-0 rounded-sm object-cover"
             />
           ) : null}
-          <span className="min-w-0 flex-1 truncate text-body text-ink-sub">
-            Attached: {block.media.name}
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-body text-ink">
+              {block.media.name}
+            </span>
+            <span className="block text-metadata text-brand-gold">
+              {typeLabel}
+            </span>
           </span>
           <Button
             type="button"
             variant="ghost"
-            size="sm"
+            size="icon-sm"
             data-testid="create-posts-block-remove-media-btn"
+            aria-label="Remove media"
             disabled={disabled}
             onClick={onRemoveMedia}
           >
-            Remove
+            <XIcon aria-hidden />
           </Button>
         </div>
       ) : (
-        <button
+        <Button
           type="button"
+          variant="outline"
+          size="sm"
           data-testid="create-posts-block-attach-btn"
           disabled={disabled}
           onClick={onAttachRequest}
-          className="mt-2 w-full rounded-sm border border-dashed border-line px-3 py-2.5 text-body text-ink-sub transition-colors hover:border-brand-gold hover:text-ink disabled:pointer-events-none disabled:opacity-50"
+          className="mt-2 rounded-full"
         >
+          <ImageIcon aria-hidden />
           Attach media
-        </button>
+        </Button>
       )}
     </div>
   );

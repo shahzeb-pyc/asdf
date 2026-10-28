@@ -19,6 +19,13 @@ import {
 
 export interface MediaTableRowProps {
   item: MediaItemResponse;
+  /**
+   * Picker-compact rendering: hides the Details and Date columns and
+   * hides Caption/Size below the sm breakpoint, so the table fits a
+   * dialogue card with no horizontal scrolling. Default off — the
+   * full library page keeps all eight columns.
+   */
+  compact?: boolean | undefined;
   selected?: boolean | undefined;
   initialEditingCaption?: boolean | undefined;
   folderPathLabel?: string | null | undefined;
@@ -50,6 +57,7 @@ export interface MediaTableRowProps {
  */
 export function MediaTableRow({
   item,
+  compact = false,
   selected = false,
   initialEditingCaption = false,
   folderPathLabel = null,
@@ -146,7 +154,7 @@ export function MediaTableRow({
       </TableCell>
 
       {/* 3. File (Name + Folder Ancestry Link) */}
-      <TableCell className="w-55 whitespace-normal">
+      <TableCell className={compact ? 'whitespace-normal' : 'w-55 whitespace-normal'}>
         <div className="flex flex-col gap-0.5">
           <span
             title={item.name}
@@ -169,7 +177,13 @@ export function MediaTableRow({
       </TableCell>
 
       {/* 4. Caption (Click-to-Edit) */}
-      <TableCell className="w-60 whitespace-normal">
+      <TableCell
+        className={
+          compact
+            ? 'hidden whitespace-normal sm:table-cell'
+            : 'w-60 whitespace-normal'
+        }
+      >
         {isEditingCaption ? (
           <Input
             type="text"
@@ -206,29 +220,39 @@ export function MediaTableRow({
         )}
       </TableCell>
 
-      {/* 5. Details (Merged Ratio & Duration, e.g. "1:1 · 0:45") */}
-      <TableCell
-        data-testid={`row-details-${item.id}`}
-        className="text-xs text-ink-sub tabular-nums"
-      >
-        {detailsLabel}
-      </TableCell>
+      {/* 5. Details (Merged Ratio & Duration, e.g. "1:1 · 0:45") —
+          omitted in compact mode: the picker card has no room for it,
+          and the ratio still shows on the grid tile badge. */}
+      {!compact && (
+        <TableCell
+          data-testid={`row-details-${item.id}`}
+          className="text-xs text-ink-sub tabular-nums"
+        >
+          {detailsLabel}
+        </TableCell>
+      )}
 
       {/* 6. Size (right-aligned, tabular) */}
       <TableCell
         data-testid={`row-size-${item.id}`}
-        className="text-right text-xs text-ink-dim tabular-nums"
+        className={
+          compact
+            ? 'hidden text-right text-xs text-ink-dim tabular-nums sm:table-cell'
+            : 'text-right text-xs text-ink-dim tabular-nums'
+        }
       >
         {formatBytes(item.fileSize)}
       </TableCell>
 
-      {/* 7. Upload Date (e.g. "Oct 18, 2026") */}
-      <TableCell
-        data-testid={`row-date-${item.id}`}
-        className="text-xs text-ink-dim tabular-nums"
-      >
-        {formatUploadDate(item.createdAt)}
-      </TableCell>
+      {/* 7. Upload Date (e.g. "Oct 18, 2026") — omitted in compact mode. */}
+      {!compact && (
+        <TableCell
+          data-testid={`row-date-${item.id}`}
+          className="text-xs text-ink-dim tabular-nums"
+        >
+          {formatUploadDate(item.createdAt)}
+        </TableCell>
+      )}
 
       {/* 8. Actions (Preview, Move, Delete) — NO Schedule button (PB-9) */}
       <TableCell className="text-right">
