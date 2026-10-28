@@ -60,6 +60,59 @@ export const PromptLengthSchema = z.enum([
 ]);
 export type PromptLength = z.infer<typeof PromptLengthSchema>;
 
+/**
+ * Exact video length in seconds, exactly as the source states it
+ * (e.g. 30 for a source that says 30s). This is SEPARATE from the
+ * length bucket above: the bucket stays for filtering, but it must
+ * never replace the exact length in display. Nullable: NULL means
+ * the exact length is unknown (e.g. prompts that only ever had a
+ * bucket) — the UI then falls back to the bucket label.
+ * Integer seconds, not free text: the codebase already stores
+ * media durations as integer seconds, and seconds are unambiguous,
+ * whereas text would invite inconsistent formats ("30s", "30 sec",
+ * "0:30"). The rendering rule is formatExactDurationSeconds below.
+ */
+export const PromptExactDurationSecondsSchema = z
+  .number()
+  .int()
+  .nonnegative();
+export type PromptExactDurationSeconds = z.infer<
+  typeof PromptExactDurationSecondsSchema
+>;
+
+/**
+ * Rendering rule for an exact length in seconds: under a minute is
+ * "{n}s" (30 -> "30s"); a whole number of minutes is "{m} min"
+ * (60 -> "1 min"); anything longer is "{m} min {s}s"
+ * (75 -> "1 min 15s"). Every surface must use this helper, so the
+ * exact length renders identically on cards and in the detail
+ * section — never re-rendered ad hoc, never bucketed.
+ */
+export function formatExactDurationSeconds(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  if (remainder === 0) return `${minutes} min`;
+  return `${minutes} min ${remainder}s`;
+}
+
+/**
+ * What a card or the detail section shows for a prompt's length:
+ * the exact length when it is known, otherwise the bucket label.
+ * The bucket is a filter, not a display substitute — a prompt whose
+ * source says 30s must show "30s", never "15-30s", once its exact
+ * length is recorded.
+ */
+export function promptLengthDisplay(
+  exactDurationSeconds: number | null | undefined,
+  bucket: PromptLength,
+): string {
+  if (exactDurationSeconds !== null && exactDurationSeconds !== undefined) {
+    return formatExactDurationSeconds(exactDurationSeconds);
+  }
+  return PromptLengthLabels[bucket];
+}
+
 export const PromptFormatSchema = z.enum(['vertical_reel', 'horizontal_video']);
 export type PromptFormat = z.infer<typeof PromptFormatSchema>;
 
@@ -195,6 +248,8 @@ const promptCoreFields = {
   category: PromptCategorySchema,
   language: PromptLanguageSchema,
   length: PromptLengthSchema,
+  /** Exact length in seconds, as the source states it; null = unknown. */
+  exactDurationSeconds: PromptExactDurationSecondsSchema.nullable().optional(),
   format: PromptFormatSchema,
   aspectRatio: PromptAspectRatioSchema,
   status: PromptStatusSchema,
@@ -301,6 +356,7 @@ export const PromptUpdateSchema = withPromptInvariants({
   category: promptCoreFields.category.optional(),
   language: promptCoreFields.language.optional(),
   length: promptCoreFields.length.optional(),
+  exactDurationSeconds: PromptExactDurationSecondsSchema.nullable().optional(),
   format: promptCoreFields.format.optional(),
   aspectRatio: promptCoreFields.aspectRatio.optional(),
   status: promptCoreFields.status.optional(),
@@ -344,6 +400,8 @@ const promptOutputBase = {
   category: PromptCategorySchema,
   language: PromptLanguageSchema,
   length: PromptLengthSchema,
+  /** Exact length in seconds, as the source states it; null = unknown. */
+  exactDurationSeconds: PromptExactDurationSecondsSchema.nullable(),
   format: PromptFormatSchema,
   aspectRatio: PromptAspectRatioSchema,
   /** Main media only: its type (card needs it to choose video vs

@@ -6,10 +6,28 @@ Every new prompt is added by US, via the backend admin API only,
 with a session whose role is `admin`. A non-admin calling the
 admin routes gets 403.
 
+## Standing import rules (Shahzeb, 2026-10-28) — never break these
+
+- **Master prompt is ALWAYS saved verbatim, never changed.**
+  Never edit, shorten, paraphrase, summarise, or "clean up" a
+  master prompt when importing it. Save it exactly as the source
+  states it, in full, even if it is long. Other catalogue
+  metadata (title, slug, category, description, steps) MAY be
+  adapted to fit the library schema — the master prompt may not.
+- **Length is recorded EXACTLY as the source states it.**
+  A source that says 30s is recorded as exactly 30 seconds
+  (`exactDurationSeconds: 30`), and the card and detail section
+  display "30s" — never the bucket label "15-30s". The bucket
+  (`length`, e.g. `15_30s`) is kept ONLY for filtering; it must
+  never replace the exact length in display. If the source gives
+  no exact length, leave `exactDurationSeconds` null and the UI
+  falls back to the bucket label exactly as before.
+
 The migrations for this feature
 (`supabase/migrations/20261028120000_prompt_library.sql`,
 `supabase/migrations/20261028130000_prompt_library_media.sql`,
-and `supabase/migrations/20261028140000_relax_prompt_library_taxonomy.sql`)
+`supabase/migrations/20261028140000_relax_prompt_library_taxonomy.sql`,
+and `supabase/migrations/20261028150000_exact_prompt_length.sql`)
 are created in the repo but must be applied by Kafka first — the
 builder does not apply migrations, and nothing here works
 against a database that has not had those migrations applied.
@@ -92,6 +110,7 @@ contracts schemas in `packages/contracts/src/domain/prompt-library.ts`):
   "category": "animals",
   "language": "en",
   "length": "1min_plus",
+  "exactDurationSeconds": null,
   "format": "vertical_reel",
   "aspectRatio": "9:16",
   "media": [
@@ -115,6 +134,13 @@ Rules enforced by the API and the database:
   `ugc` | `tutorial` | `unboxing`, `language` `en` | `ur` |
   `hi` — they are just no longer the only allowed values.
 - `length`: `under_15s` | `15_30s` | `30s_plus` | `1min_plus`
+  (the bucket, for filtering only — see the standing rules above)
+- `exactDurationSeconds`: the exact length in seconds, exactly as
+  the source states it (e.g. `30` for a 30s source; `75` renders
+  as "1 min 15s"). Optional; omit or send `null` when the source
+  gives no exact length, and the UI falls back to the bucket
+  label. Never derive it from the bucket, and never use the
+  bucket label in place of it in display.
 - `format` / `aspectRatio`: `vertical_reel` must be `9:16`,
   `horizontal_video` must be `16:9`
 - `media`: at least one item, unique `position` values, and

@@ -10,8 +10,8 @@ import {
   PromptFormatLabels,
   promptCategoryLabel,
   promptLanguageLabel,
+  promptLengthDisplay,
   promptToolLabel,
-  PromptLengthLabels,
   type PromptDetail,
 } from "@fbuploadpro/contracts";
 
@@ -103,7 +103,7 @@ export function PromptDetailSection({
           <span className="font-semibold text-ink">
             {promptToolLabel(detail.tool)}
           </span>
-          {` · ${promptCategoryLabel(detail.category)} · ${promptLanguageLabel(detail.language)} · ${PromptLengthLabels[detail.length]} · ${PromptFormatLabels[detail.format]}`}
+          {` · ${promptCategoryLabel(detail.category)} · ${promptLanguageLabel(detail.language)} · ${promptLengthDisplay(detail.exactDurationSeconds, detail.length)} · ${PromptFormatLabels[detail.format]}`}
         </p>
         {selectedMedia.mediaType === "video" ? (
           <video

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  formatExactDurationSeconds,
   isPromptLibraryStorageKey,
   PromptCreateSchema,
   PromptDetailSchema,
@@ -7,6 +8,8 @@ import {
   PromptListItemSchema,
   PromptListQuerySchema,
   promptFormatMatchesAspectRatio,
+  promptLengthDisplay,
+  PromptUpdateSchema,
 } from '../src/domain/prompt-library.js';
 
 // Note: slug derivation (slugify) lives in the web server layer,
@@ -49,6 +52,91 @@ const validCreate = {
 describe('prompt library contracts', () => {
   it('accepts a valid admin create payload', () => {
     expect(PromptCreateSchema.safeParse(validCreate).success).toBe(true);
+  });
+
+  it('accepts an exact length alongside the bucket, and rejects a bad one', () => {
+    // A source that says exactly 30s is recorded as 30, with the
+    // bucket kept only for filtering — the bucket never replaces it.
+    expect(
+      PromptCreateSchema.safeParse({
+        ...validCreate,
+        length: '15_30s',
+        exactDurationSeconds: 30,
+      }).success,
+    ).toBe(true);
+    expect(
+      PromptCreateSchema.safeParse({
+        ...validCreate,
+        exactDurationSeconds: null,
+      }).success,
+    ).toBe(true);
+    expect(
+      PromptCreateSchema.safeParse({
+        ...validCreate,
+        exactDurationSeconds: -1,
+      }).success,
+    ).toBe(false);
+    expect(
+      PromptCreateSchema.safeParse({
+        ...validCreate,
+        exactDurationSeconds: 30.5,
+      }).success,
+    ).toBe(false);
+    // PATCH can set the exact length, and can clear it back to null.
+    expect(
+      PromptUpdateSchema.safeParse({ exactDurationSeconds: 30 }).success,
+    ).toBe(true);
+    expect(
+      PromptUpdateSchema.safeParse({ exactDurationSeconds: null }).success,
+    ).toBe(true);
+  });
+
+  it('renders the exact length, never the bucket label, when known', () => {
+    expect(formatExactDurationSeconds(30)).toBe('30s');
+    expect(formatExactDurationSeconds(75)).toBe('1 min 15s');
+    expect(formatExactDurationSeconds(60)).toBe('1 min');
+    expect(formatExactDurationSeconds(0)).toBe('0s');
+    // Exact present: 30s, not the 15_30s bucket label "15-30s".
+    expect(promptLengthDisplay(30, '15_30s')).toBe('30s');
+    expect(promptLengthDisplay(75, '1min_plus')).toBe('1 min 15s');
+    // Exact absent: bucket label fallback, unchanged.
+    expect(promptLengthDisplay(null, '15_30s')).toBe('15-30s');
+    expect(promptLengthDisplay(undefined, '1min_plus')).toBe('1 min+');
+  });
+
+  it('requires the exact length field on list and detail output', () => {
+    const listItem = {
+      id: '00000000-0000-4000-8000-000000000001',
+      slug: 'puppy-first-bath',
+      title: 'Puppy first bath',
+      shortDescription: 'A golden puppy first bath.',
+      tool: 'dola_ai',
+      category: 'animals',
+      language: 'en',
+      length: '15_30s',
+      exactDurationSeconds: 30,
+      format: 'vertical_reel',
+      aspectRatio: '9:16',
+      previewMediaType: 'video',
+      previewUrl: 'https://media.example.com/prompts/abc/preview.mp4',
+      previewPosterUrl: 'https://media.example.com/prompts/abc/poster.jpg',
+      copiedCount: 0,
+      status: 'published',
+      createdAt: '2026-10-28T00:00:00.000Z',
+      updatedAt: '2026-10-28T00:00:00.000Z',
+      isFavourite: false,
+    };
+    expect(PromptListItemSchema.safeParse(listItem).success).toBe(true);
+    // Null (unknown) is valid; omitting the field entirely is not —
+    // the API must always return it explicitly so the UI can tell
+    // "unknown" from a missing field.
+    expect(
+      PromptListItemSchema.safeParse({ ...listItem, exactDurationSeconds: null })
+        .success,
+    ).toBe(true);
+    const { exactDurationSeconds, ...without } = listItem;
+    void exactDurationSeconds;
+    expect(PromptListItemSchema.safeParse(without).success).toBe(false);
   });
 
   it('accepts brand-new taxonomy values outside the old enums', () => {
@@ -257,6 +345,7 @@ describe('prompt library contracts', () => {
       category: 'animals',
       language: 'en',
       length: '1min_plus',
+      exactDurationSeconds: null,
       format: 'vertical_reel',
       aspectRatio: '9:16',
       previewMediaType: 'video',

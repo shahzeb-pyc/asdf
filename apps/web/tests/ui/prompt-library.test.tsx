@@ -170,6 +170,51 @@ describe("PromptLibraryClient (real API wiring)", () => {
     ).toBeNull();
   });
 
+  it("shows the exact length, not the bucket label, on the card and in the detail section", async () => {
+    // A source that says exactly 30s sits in the 15_30s bucket for
+    // filtering — but display must say "30s", never "15-30s".
+    const exactItem = {
+      ...listItem,
+      length: "15_30s",
+      exactDurationSeconds: 30,
+    };
+    const exactDetail = { ...detail, length: "15_30s", exactDurationSeconds: 30 };
+    mockFetch((url) => {
+      if (url.includes("/prompts/puppy-first-bath")) {
+        return okJson(exactDetail);
+      }
+      if (url.includes("/prompts?")) {
+        return okJson({ items: [exactItem], total: 1, page: 1, pageSize: 50 });
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response;
+    });
+    render(<PromptLibraryClient subdomain="test" />);
+    await screen.findByRole("heading", { name: "Puppy first bath" });
+    // Card: chip + meta line both show the exact value.
+    expect(screen.queryByText("15-30s")).toBeNull();
+    expect(screen.queryAllByText("30s").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByTestId("prompt-card"));
+    await screen.findByTestId("prompt-detail");
+    // Detail meta line: exact value, no bucket label anywhere.
+    expect(screen.queryByText(/15-30s/)).toBeNull();
+    expect(screen.queryAllByText(/30s/).length).toBeGreaterThan(0);
+  });
+
+  it("falls back to the bucket label when the exact length is unknown", async () => {
+    // The fixture listItem has no exactDurationSeconds (a prompt
+    // from before the exact-length migration): the card must still
+    // show the bucket label "1 min+", exactly as before.
+    mockFetch((url) => {
+      if (url.includes("/prompts?")) {
+        return okJson({ items: [listItem], total: 1, page: 1, pageSize: 50 });
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response;
+    });
+    render(<PromptLibraryClient subdomain="test" />);
+    await screen.findByRole("heading", { name: "Puppy first bath" });
+    expect(screen.queryAllByText("1 min+").length).toBeGreaterThan(0);
+  });
+
   it("shows 'No prompts yet' on an empty catalogue", async () => {
     mockFetch(() =>
       okJson({ items: [], total: 0, page: 1, pageSize: 50 }),

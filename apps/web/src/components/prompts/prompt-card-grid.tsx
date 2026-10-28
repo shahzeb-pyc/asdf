@@ -8,8 +8,8 @@ import {
   PromptFormatLabels,
   promptCategoryLabel,
   promptLanguageLabel,
+  promptLengthDisplay,
   promptToolLabel,
-  PromptLengthLabels,
   type PromptListItem,
 } from "@fbuploadpro/contracts";
 
@@ -193,7 +193,7 @@ export function PromptCardGrid({
                   />
                 </button>
                 <span className="absolute bottom-2 right-2 rounded-sm bg-neutral-black/75 px-2 py-1 text-xs font-medium text-neutral-white">
-                  {PromptLengthLabels[item.length]}
+                  {promptLengthDisplay(item.exactDurationSeconds, item.length)}
                 </span>
               </div>
               <div className="p-4">
@@ -207,7 +207,7 @@ export function PromptCardGrid({
                   <span className="font-semibold text-ink">
                     {promptToolLabel(item.tool)}
                   </span>
-                  {` · ${promptCategoryLabel(item.category)} · ${promptLanguageLabel(item.language)} · ${PromptLengthLabels[item.length]} · ${PromptFormatLabels[item.format]}`}
+                  {` · ${promptCategoryLabel(item.category)} · ${promptLanguageLabel(item.language)} · ${promptLengthDisplay(item.exactDurationSeconds, item.length)} · ${PromptFormatLabels[item.format]}`}
                 </p>
                 <div
                   data-testid="prompt-card-footer"

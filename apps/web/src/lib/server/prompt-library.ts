@@ -49,6 +49,8 @@ export type PromptDbRow = {
   category: PromptCategory;
   language: PromptLanguage;
   video_length_bucket: PromptLength;
+  /** Exact length in seconds, as the source states it; null = unknown. */
+  video_duration_seconds: number | null;
   format: PromptFormat;
   aspect_ratio: PromptAspectRatio;
   copied_count: number;
@@ -205,6 +207,11 @@ function promptListFields(
     category: row.category,
     language: row.language,
     length: row.video_length_bucket,
+    // ?? null: a row from before the exact-length migration (or a
+    // test double built before it) has no such column — that means
+    // "exact length unknown", which is exactly what null means, so
+    // the UI falls back to the bucket label instead of failing.
+    exactDurationSeconds: row.video_duration_seconds ?? null,
     format: row.format,
     aspectRatio: row.aspect_ratio,
     // List items carry ONLY the main media: its type + URLs.
@@ -297,6 +304,7 @@ export type PromptCreateRow = {
   category: PromptCategory;
   language: PromptLanguage;
   video_length_bucket: PromptLength;
+  video_duration_seconds: number | null;
   format: PromptFormat;
   aspect_ratio: PromptAspectRatio;
   status: PromptStatus;
@@ -316,6 +324,7 @@ export function toPromptCreateRow(
     category: input.category,
     language: input.language,
     video_length_bucket: input.length,
+    video_duration_seconds: input.exactDurationSeconds ?? null,
     format: input.format,
     aspect_ratio: input.aspectRatio,
     status: input.status,
@@ -355,6 +364,8 @@ export function toPromptUpdateRow(
   if (input.category !== undefined) row.category = input.category;
   if (input.language !== undefined) row.language = input.language;
   if (input.length !== undefined) row.video_length_bucket = input.length;
+  if (input.exactDurationSeconds !== undefined)
+    row.video_duration_seconds = input.exactDurationSeconds;
   if (input.format !== undefined) row.format = input.format;
   if (input.aspectRatio !== undefined) row.aspect_ratio = input.aspectRatio;
   if (input.status !== undefined) row.status = input.status;
