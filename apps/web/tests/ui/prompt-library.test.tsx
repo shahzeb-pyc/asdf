@@ -137,8 +137,37 @@ describe("PromptLibraryClient (real API wiring)", () => {
     expect(
       await screen.findByRole("heading", { name: "Puppy first bath" }),
     ).toBeTruthy();
-    expect(screen.getByText("Copied 12 times · Added 28 Oct 2026")).toBeTruthy();
+    expect(screen.getByTestId("prompt-card-copied").textContent).toBe(
+      "Copied 12 times",
+    );
+    expect(screen.getByTestId("prompt-card-added").textContent).toBe(
+      "Added 28 Oct 2026",
+    );
     expect(screen.queryByText(/golden puppy sits in a tiny bathtub/)).toBeNull();
+  });
+
+  it("splits the card footer: Copied left, Added right, same footer row", async () => {
+    mockFetch((url) => {
+      if (url.includes("/prompts?")) {
+        return okJson({ items: [listItem], total: 1, page: 1, pageSize: 50 });
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response;
+    });
+    render(<PromptLibraryClient subdomain="test" />);
+    const footer = await screen.findByTestId("prompt-card-footer");
+    const copied = screen.getByTestId("prompt-card-copied");
+    const added = screen.getByTestId("prompt-card-added");
+    // Same row, spread apart: copied is the first child (left),
+    // added is the last child (right), both inside the one footer.
+    expect(footer.children[0]).toBe(copied);
+    expect(footer.children[footer.children.length - 1]).toBe(added);
+    expect(footer.className).toContain("justify-between");
+    expect(copied.textContent).toBe("Copied 12 times");
+    expect(added.textContent).toBe("Added 28 Oct 2026");
+    // No combined single-line footer string remains.
+    expect(
+      screen.queryByText("Copied 12 times · Added 28 Oct 2026"),
+    ).toBeNull();
   });
 
   it("shows 'No prompts yet' on an empty catalogue", async () => {

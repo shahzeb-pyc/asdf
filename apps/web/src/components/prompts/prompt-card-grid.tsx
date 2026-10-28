@@ -209,9 +209,23 @@ export function PromptCardGrid({
                   </span>
                   {` · ${promptCategoryLabel(item.category)} · ${promptLanguageLabel(item.language)} · ${PromptLengthLabels[item.length]} · ${PromptFormatLabels[item.format]}`}
                 </p>
-                <p className="mt-3 border-t border-line pt-3 text-sm text-ink-sub">
-                  {`Copied ${item.copiedCount} times · Added ${formatDateAdded(item.createdAt)}`}
-                </p>
+                <div
+                  data-testid="prompt-card-footer"
+                  className="mt-3 flex items-center justify-between gap-2 border-t border-line pt-3 text-sm text-ink-sub"
+                >
+                  <span
+                    data-testid="prompt-card-copied"
+                    className="min-w-0 truncate"
+                  >
+                    {`Copied ${item.copiedCount} times`}
+                  </span>
+                  <span
+                    data-testid="prompt-card-added"
+                    className="shrink-0 whitespace-nowrap"
+                  >
+                    {`Added ${formatDateAdded(item.createdAt)}`}
+                  </span>
+                </div>
               </div>
             </article>
           );
