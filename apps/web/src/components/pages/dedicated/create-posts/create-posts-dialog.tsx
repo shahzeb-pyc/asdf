@@ -33,6 +33,7 @@
 
 import * as React from 'react';
 import Image from 'next/image';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   ComposerDraftBlockSchema,
@@ -44,6 +45,7 @@ import {
   type ComposerMedia,
 } from '@fbuploadpro/contracts';
 import { api, buildTenantApiPath, isApiError } from '@/lib/api';
+import { ListQueueSlotsResponseSchema } from '@/lib/api/schemas/queue';
 import { queryKeys } from '@/lib/data/query-keys';
 import { Button } from '@/components/shared/ui/button';
 import {
@@ -92,6 +94,8 @@ export function CreatePostsDialog({
   page,
 }: Readonly<CreatePostsDialogProps>) {
   const queryClient = useQueryClient();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [blocks, setBlocks] = React.useState<ComposerDraftBlock[]>([newEmptyBlock()]);
   const [pickerOpen, setPickerOpen] = React.useState(false);
   const [pickerMode, setPickerMode] = React.useState<'single' | 'multi'>('multi');
@@ -299,6 +303,41 @@ export function CreatePostsDialog({
       toast.error('One of the posts is too long. Shorten it and try again.');
       return;
     }
+    // No-posting-times pre-check: when the page has zero ACTIVE
+    // posting times, send nothing at all — show the friendly message
+    // with a button to the Posting Times tab instead of queueing
+    // and failing with a raw server error. A slots-fetch failure
+    // falls through to the queue attempt below (logged, not
+    // swallowed): the server then surfaces the real error, so
+    // queueing is never silently skipped.
+    try {
+      const slotsResponse = await api.get(
+        buildTenantApiPath(subdomain, `/pages/${page.id}/slots`),
+        { schema: ListQueueSlotsResponseSchema }
+      );
+      if (!slotsResponse.slots.some((slot) => slot.isActive)) {
+        toast.error(
+          'No posting times set yet. Add a posting time on the Posting Times tab, and your queued posts will go out automatically.',
+          {
+            action: {
+              label: 'Go to Posting Times',
+              onClick: () => {
+                onOpenChange(false);
+                const nextParams = new URLSearchParams(searchParams.toString());
+                nextParams.set('tab', 'calendar');
+                router.push(
+                  `/tenant/${subdomain}/pages/${page.id}?${nextParams.toString()}`,
+                  { scroll: false }
+                );
+              },
+            },
+          }
+        );
+        return;
+      }
+    } catch (error) {
+      console.error('Failed to check posting times before queueing', error);
+    }
     setIsQueueing(true);
     let queued = 0;
     try {
@@ -357,7 +396,7 @@ export function CreatePostsDialog({
     } finally {
       setIsQueueing(false);
     }
-  }, [blocks, readyBlocks, isQueueing, subdomain, page.id, queryClient, onOpenChange]);
+  }, [blocks, readyBlocks, isQueueing, subdomain, page.id, queryClient, onOpenChange, router, searchParams]);
 
   const monogram = (page.pageName || 'P').slice(0, 2).toUpperCase();
 
