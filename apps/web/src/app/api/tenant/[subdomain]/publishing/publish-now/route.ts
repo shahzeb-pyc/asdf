@@ -134,9 +134,28 @@ function steppedError(message: string, step: PublishNowStep): Error {
   return error;
 }
 
+/**
+ * Plain-language reason for Meta's active account restriction
+ * (Graph code 1, subcodes 2424009 / 1404078). The restriction is
+ * account-level and Meta does not return its specific reason via
+ * the API, so no specific reason is claimed here. This check runs
+ * before the generic fallback so the restriction is never reported
+ * as "An unknown error occurred".
+ */
+const ACCOUNT_RESTRICTED_MESSAGE =
+  "Facebook has restricted this account from posting. Check Account Status on Facebook for the reason and to appeal — retrying won't work until the restriction is lifted.";
+
+function isAccountRestricted(failure: GraphFailure): boolean {
+  return (
+    failure.code === 1 &&
+    (failure.subcode === 2424009 || failure.subcode === 1404078)
+  );
+}
+
 /** Friendly, user-facing reason for a Graph failure (never a raw dump). */
 function friendlyReason(error: unknown): string {
   const failure = toGraphFailure(error);
+  if (isAccountRestricted(failure)) return ACCOUNT_RESTRICTED_MESSAGE;
   if (failure.code !== undefined) {
     const evaluation = evaluateGraphApiError(failure.code, failure.subcode);
     if (evaluation?.message) return evaluation.message;

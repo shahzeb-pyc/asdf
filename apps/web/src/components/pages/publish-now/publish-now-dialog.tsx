@@ -125,6 +125,21 @@ function errorText(error: unknown, fallback: string): string {
   return fallback;
 }
 
+/**
+ * A failed result is a Meta active account restriction when Facebook
+ * returned code 1 with subcode 2424009 or 1404078. The restriction is
+ * account-level and non-retryable while it stands, so such rows are
+ * never re-attempted by "Retry failed only". Derived from the
+ * diagnostics fields the route already returns — no schema change.
+ */
+function isRestrictedResult(result: PublishNowResultItem): boolean {
+  return (
+    result.status === 'failed' &&
+    result.graphCode === 1 &&
+    (result.graphSubcode === 2424009 || result.graphSubcode === 1404078)
+  );
+}
+
 function Avatar({
   name,
   pictureUrl,
@@ -724,10 +739,13 @@ export function PublishNowDialog({
   }, [selectedPages, isPostEmpty, isOverLimit, isPublishing, publishTargets]);
 
   const handleRetryFailedOnly = React.useCallback(async () => {
+    // Restricted pages are never re-attempted: the restriction is
+    // account-level and retrying cannot succeed until it is lifted.
     const failedPages = selectedPages.filter((page) =>
       results.some(
         (result) =>
           result.status === 'failed' &&
+          !isRestrictedResult(result) &&
           result.accountId === page.accountId &&
           result.fbPageId === page.fbPageId
       )
@@ -766,6 +784,12 @@ export function PublishNowDialog({
     (result) => result.status === 'published'
   ).length;
   const failedResults = results.filter((result) => result.status === 'failed');
+  const restrictedResults = results.filter((result) =>
+    isRestrictedResult(result)
+  );
+  const retryableFailedCount = failedResults.filter(
+    (result) => !isRestrictedResult(result)
+  ).length;
 
   const headerTitle =
     step === 'accounts'
@@ -1169,9 +1193,19 @@ export function PublishNowDialog({
                   Nothing was saved in the database. Closing this screen
                   loses this result list.
                 </p>
+                {restrictedResults.length > 0 && (
+                  <div className="rounded-sm border border-brand-rose/25 bg-brand-rose/10 px-3 py-2 text-body leading-body text-ink">
+                    One or more accounts are restricted by Facebook. Those
+                    pages cannot be published to until the restriction is
+                    lifted in Facebook Account Status.
+                    {retryableFailedCount === 0 &&
+                      ' Retry is disabled — retrying will not work until the restriction is lifted.'}
+                  </div>
+                )}
                 <div className="flex max-h-85 flex-col overflow-y-auto border-t border-line">
                   {results.map((result) => {
                     const published = result.status === 'published';
+                    const restricted = isRestrictedResult(result);
                     // Diagnostic line for failed rows only: only the
                     // fields present are shown, never "undefined"/"null".
                     const diagnosticParts: string[] = [];
@@ -1212,8 +1246,12 @@ export function PublishNowDialog({
                           </div>
                           <div
                             className={cn(
-                              'mt-0.5 text-metadata',
-                              published ? 'text-brand-emerald' : 'text-brand-rose'
+                              'mt-0.5',
+                              published
+                                ? 'text-metadata text-brand-emerald'
+                                : restricted
+                                  ? 'text-body font-semibold text-brand-rose'
+                                  : 'text-metadata text-brand-rose'
                             )}
                           >
                             {published ? 'Published' : (result.reason ?? 'Publishing failed.')}
@@ -1297,10 +1335,14 @@ export function PublishNowDialog({
                 {failedResults.length > 0 && (
                   <Button
                     type="button"
-                    disabled={isRetrying}
+                    disabled={isRetrying || retryableFailedCount === 0}
                     onClick={() => void handleRetryFailedOnly()}
                   >
-                    {isRetrying ? 'Retrying...' : 'Retry failed only'}
+                    {isRetrying
+                      ? 'Retrying...'
+                      : retryableFailedCount > 0 && restrictedResults.length > 0
+                        ? 'Retry non-restricted failures'
+                        : 'Retry failed only'}
                   </Button>
                 )}
                 <Button type="button" onClick={handleDone}>
