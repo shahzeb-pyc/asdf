@@ -103,12 +103,15 @@ export function CreatePostsDialog({
   const [pickerTargetId, setPickerTargetId] = React.useState<string | null>(null);
   const [bulkTextOpen, setBulkTextOpen] = React.useState(false);
   const [isQueueing, setIsQueueing] = React.useState(false);
-  // Idempotency keys, one stable key per post block for the life of
-  // this dialogue session. A block retried after a response-lost
-  // enqueue reuses its key, so the server returns the ORIGINAL
-  // queue item instead of a second row. Keys are keyed by block id
-  // (stable across edits, which replace block objects) and die with
-  // the dialogue: a block drafted in a new session is a new post.
+  // Idempotency keys, one key per post block for the life of this
+  // dialogue session. A block retried after a response-lost enqueue
+  // reuses its key, so the server returns the ORIGINAL queue item
+  // instead of a second row — unless the block was edited since,
+  // which rotates its key (see rotateIdempotencyKey) so the retry
+  // executes fresh with the edited content. Keys are keyed by block
+  // id (stable across re-renders, which replace block objects) and
+  // die with the dialogue: a block drafted in a new session is a
+  // new post.
   const idempotencyKeysRef = React.useRef(new Map<string, string>());
   const [failedAvatarUrl, setFailedAvatarUrl] = React.useState<string | null>(null);
   // P11: the picker's session key — bumped on every fresh dialogue
@@ -175,13 +178,26 @@ export function CreatePostsDialog({
     []
   );
 
+  /**
+   * Rotates a block's idempotency key: an edited block is a new
+   * logical action, so its stored key is dropped and the next queue
+   * attempt mints a fresh one and executes fresh with the edited
+   * content. Deleting a key that was never stored is a no-op, so
+   * edits before any queue attempt cost nothing. A plain retry with
+   * no edits keeps its key and still replays (PR #29 behaviour).
+   */
+  const rotateIdempotencyKey = React.useCallback((id: string) => {
+    idempotencyKeysRef.current.delete(id);
+  }, []);
+
   const updateBlockText = React.useCallback(
     (id: string, text: string) => {
+      rotateIdempotencyKey(id);
       updateBlocks((prev) =>
         prev.map((block) => (block.id === id ? { ...block, text } : block))
       );
     },
-    [updateBlocks]
+    [updateBlocks, rotateIdempotencyKey]
   );
 
   /**
@@ -192,6 +208,7 @@ export function CreatePostsDialog({
    */
   const attachMediaToBlock = React.useCallback(
     (id: string, media: ComposerMedia) => {
+      rotateIdempotencyKey(id);
       updateBlocks((prev) =>
         prev.map((block) => {
           if (block.id !== id) return block;
@@ -206,14 +223,18 @@ export function CreatePostsDialog({
         })
       );
     },
-    [updateBlocks]
+    [updateBlocks, rotateIdempotencyKey]
   );
 
-  const removeMediaFromBlock = React.useCallback((id: string) => {
-    setBlocks((prev) =>
-      prev.map((block) => (block.id === id ? { ...block, media: null } : block))
-    );
-  }, []);
+  const removeMediaFromBlock = React.useCallback(
+    (id: string) => {
+      rotateIdempotencyKey(id);
+      setBlocks((prev) =>
+        prev.map((block) => (block.id === id ? { ...block, media: null } : block))
+      );
+    },
+    [rotateIdempotencyKey]
+  );
 
   const removeBlock = React.useCallback((id: string) => {
     setBlocks((prev) => {
