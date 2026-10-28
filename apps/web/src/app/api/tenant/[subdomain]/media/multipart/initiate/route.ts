@@ -3,8 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { CreateMultipartUploadCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { readJsonBody, enforceIpRateLimit, bodyTooLargeResponse } from '@/lib/request-body';
+import { MultipartInitiateRequestSchema } from '@fbuploadpro/contracts';
 import {
-  MultipartInitiateRequestSchema,
   authenticateMultipartRequest,
   getMultipartClient,
   getMultipartPublicUrl,

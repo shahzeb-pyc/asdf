@@ -1,5 +1,4 @@
 import { type NextRequest, NextResponse } from 'next/server';
-import { z } from 'zod';
 import {
   canAccessTenant,
   getSessionSecret,
@@ -19,30 +18,6 @@ import type { S3Client } from '@aws-sdk/client-s3';
  * session + tenant + key-ownership checks as the single-PUT
  * upload-url route.
  */
-
-export const MultipartInitiateRequestSchema = z.object({
-  fileName: z.string().min(1),
-  fileSize: z.number().int().positive(),
-  mimeType: z.string().min(1),
-  thumbnailMimeType: z.string().min(1),
-});
-
-export const MultipartPartUrlRequestSchema = z.object({
-  key: z.string().min(1),
-  uploadId: z.string().min(1),
-  partNumber: z.number().int().min(1).max(10_000),
-});
-
-export const MultipartCompleteRequestSchema = z.object({
-  key: z.string().min(1),
-  uploadId: z.string().min(1),
-  expectedPartCount: z.number().int().min(1).max(10_000),
-});
-
-export const MultipartAbortRequestSchema = z.object({
-  key: z.string().min(1),
-  uploadId: z.string().min(1),
-});
 
 export interface MultipartSession {
   userId: string;

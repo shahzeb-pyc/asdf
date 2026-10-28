@@ -224,15 +224,6 @@ export async function probeVideoMetadata(file: File): Promise<{
   });
 }
 
-export function computeOverallProgress(nonCancelledItems: ImportQueueItem[]): number {
-  if (nonCancelledItems.length === 0) return 0;
-  const total = nonCancelledItems.reduce(
-    (acc, it) => acc + (it.status === 'completed' ? 100 : it.progressPercent),
-    0
-  );
-  return Math.round(total / nonCancelledItems.length);
-}
-
 export function computeFurthestAlong(
   uploadingItems: ImportQueueItem[]
 ): { name: string; progressPercent: number } | null {

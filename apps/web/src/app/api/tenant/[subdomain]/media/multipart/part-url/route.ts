@@ -2,8 +2,8 @@ import { type NextRequest, NextResponse } from 'next/server';
 import { UploadPartCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { readJsonBody, enforceIpRateLimit, bodyTooLargeResponse } from '@/lib/request-body';
+import { MultipartPartUrlRequestSchema } from '@fbuploadpro/contracts';
 import {
-  MultipartPartUrlRequestSchema,
   authenticateMultipartRequest,
   assertKeyOwnedBySession,
   getMultipartClient,

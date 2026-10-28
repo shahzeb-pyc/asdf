@@ -74,6 +74,69 @@ export type ConfirmUploadRequest = z.infer<typeof ConfirmUploadRequestSchema>;
 export const ConfirmMediaUploadRequestSchema = ConfirmUploadRequestSchema;
 export type ConfirmMediaUploadRequest = z.infer<typeof ConfirmMediaUploadRequestSchema>;
 
+// Multipart (resumable) upload — single source of truth for the
+// media/multipart routes and the import engine. The initiate
+// request enforces the same bounds as the single-PUT upload-url
+// route: trimmed filename (max 255) and allowlisted MIMEs.
+// fileSize is deliberately NOT part of the initiate request: the
+// route never used it (part sizing is client-side), so carrying
+// it would be a validated-but-ignored field.
+export const MultipartInitiateRequestSchema = z.object({
+  fileName: z.string().trim().min(1).max(255),
+  mimeType: z.enum(AllowedMediaMimeTypes),
+  thumbnailMimeType: z.enum(AllowedThumbnailMimeTypes).default('image/webp'),
+});
+
+export type MultipartInitiateRequest = z.infer<typeof MultipartInitiateRequestSchema>;
+
+export const MultipartPartUrlRequestSchema = z.object({
+  key: z.string().min(1),
+  uploadId: z.string().min(1),
+  partNumber: z.number().int().min(1).max(10_000),
+});
+
+export type MultipartPartUrlRequest = z.infer<typeof MultipartPartUrlRequestSchema>;
+
+export const MultipartCompleteRequestSchema = z.object({
+  key: z.string().min(1),
+  uploadId: z.string().min(1),
+  expectedPartCount: z.number().int().min(1).max(10_000),
+});
+
+export type MultipartCompleteRequest = z.infer<typeof MultipartCompleteRequestSchema>;
+
+export const MultipartAbortRequestSchema = z.object({
+  key: z.string().min(1),
+  uploadId: z.string().min(1),
+});
+
+export type MultipartAbortRequest = z.infer<typeof MultipartAbortRequestSchema>;
+
+export const MultipartInitiateResponseSchema = z.object({
+  mediaId: z.string(),
+  mediaKey: z.string(),
+  uploadId: z.string(),
+  publicMediaUrl: z.string(),
+  thumbnailUploadUrl: z.string().nullable(),
+  thumbnailKey: z.string().nullable(),
+  publicThumbnailUrl: z.string().nullable(),
+});
+
+export type MultipartInitiateResponse = z.infer<typeof MultipartInitiateResponseSchema>;
+
+export const MultipartPartUrlResponseSchema = z.object({
+  uploadUrl: z.string(),
+  expiresInSeconds: z.number(),
+});
+
+export type MultipartPartUrlResponse = z.infer<typeof MultipartPartUrlResponseSchema>;
+
+export const MultipartCompleteResponseSchema = z.object({
+  key: z.string(),
+});
+
+export type MultipartCompleteResponse = z.infer<typeof MultipartCompleteResponseSchema>;
+
 export const MediaItemResponseSchema = z.object({
   id: z.string().uuid(),
   userId: z.string().uuid(),

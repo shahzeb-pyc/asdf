@@ -331,6 +331,24 @@ export function CreatePostsDialog({
       );
       onOpenChange(false);
     } catch (error) {
+      if (queued > 0) {
+        // Settle: queueing is sequential and in order, and every
+        // input is disabled while queueing, so the first `queued`
+        // ready blocks are exactly the ones already queued (a
+        // ready block is never skipped: toComposerEnqueueItem
+        // returns null only for empty blocks, which readyBlocks
+        // already excludes). Drop them, so a retry sends only the
+        // blocks still unqueued instead of duplicating the queued
+        // ones. Matched by id, not by reference — edits replace
+        // block objects. The count toast below still reports the
+        // pre-drop totals, so the user knows the dropped posts
+        // are already safely queued.
+        const queuedIds = new Set(readyBlocks.slice(0, queued).map((block) => block.id));
+        setBlocks((prev) => {
+          const next = prev.filter((block) => !queuedIds.has(block.id));
+          return next.length === 0 ? [newEmptyBlock()] : next;
+        });
+      }
       toast.error(
         queued > 0
           ? `${queued} of ${readyBlocks.length} posts queued — then queueing failed: ${errorText(error, 'Please try again.')}`

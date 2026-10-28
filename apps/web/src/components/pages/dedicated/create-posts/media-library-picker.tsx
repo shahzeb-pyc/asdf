@@ -30,8 +30,8 @@
  * What is deliberately NOT the library: folder management. The
  * picker is browse + select only — no rename / move / delete
  * folder or item actions, no batch bar, no caption editing from
- * the grid (table-view caption edit stays, wired to the library's
- * own mutation, because it is part of the row rendering). Those
+ * the grid (table-view caption editing is disabled in the picker,
+ * because it is browse + select only). Those
  * actions live on the library page. The two replicated pieces are
  * the breadcrumb row (clickable crumbs, no drag-drop reparenting)
  * and the subfolder rows (same row layout, no management

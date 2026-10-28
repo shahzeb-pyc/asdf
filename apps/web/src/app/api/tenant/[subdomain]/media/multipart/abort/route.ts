@@ -1,8 +1,8 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { AbortMultipartUploadCommand } from '@aws-sdk/client-s3';
 import { readJsonBody, enforceIpRateLimit, bodyTooLargeResponse } from '@/lib/request-body';
+import { MultipartAbortRequestSchema } from '@fbuploadpro/contracts';
 import {
-  MultipartAbortRequestSchema,
   authenticateMultipartRequest,
   assertKeyOwnedBySession,
   getMultipartClient,

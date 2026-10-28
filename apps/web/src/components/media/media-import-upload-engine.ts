@@ -3,6 +3,11 @@
 import { useCallback, useEffect } from 'react';
 import { z } from 'zod';
 import type { MediaItemResponse } from '@fbuploadpro/contracts';
+import {
+  MultipartCompleteResponseSchema,
+  MultipartInitiateResponseSchema,
+  MultipartPartUrlResponseSchema,
+} from '@fbuploadpro/contracts';
 import { api, buildTenantApiPath, isApiError } from '@/lib/api';
 import {
   MediaItemSchema,
@@ -345,24 +350,7 @@ interface MultipartPresigned extends UploadTarget {
   uploadId: string;
 }
 
-const MultipartInitiateResponseSchema = z.object({
-  mediaId: z.string(),
-  mediaKey: z.string(),
-  uploadId: z.string(),
-  publicMediaUrl: z.string(),
-  thumbnailUploadUrl: z.string().nullable(),
-  thumbnailKey: z.string().nullable(),
-  publicThumbnailUrl: z.string().nullable(),
-});
 
-const MultipartPartUrlResponseSchema = z.object({
-  uploadUrl: z.string(),
-  expiresInSeconds: z.number(),
-});
-
-const MultipartCompleteResponseSchema = z.object({
-  key: z.string(),
-});
 
 /**
  * Multipart upload (P3) — R2's S3-compatible multipart API.
@@ -406,7 +394,6 @@ async function initiateMultipartUpload(
       buildTenantApiPath(subdomain, '/media/multipart/initiate'),
       {
         fileName: item.name,
-        fileSize: item.size,
         mimeType: item.mimeType,
         thumbnailMimeType: 'image/webp',
       },
