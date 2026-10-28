@@ -1,12 +1,16 @@
 "use client";
 
 import React from "react";
+import { HeartIcon, SearchIcon, SparklesIcon } from "lucide-react";
 
 import type {
   PromptDetail,
   PromptListItem,
   PromptListResponse,
 } from "@fbuploadpro/contracts";
+
+import { Button } from "@/components/shared/ui/button";
+import { EmptyState } from "@/components/shared/ui/empty-state";
 
 import { PromptCardGrid } from "@/components/prompts/prompt-card-grid";
 import { PromptDetailSection } from "@/components/prompts/prompt-detail-section";
@@ -69,6 +73,93 @@ const SORT_MAP: Record<string, string> = {
   "Most copied": "most_copied",
   "A to Z": "a_to_z",
 };
+
+/**
+ * Centred empty state, shared by every empty case on this page
+ * (favorites empty, favorites signed-out, no-match, catalogue
+ * empty). The wrapper fills the grid area and centres the state
+ * both horizontally and vertically, so it sits in the middle of
+ * the empty page instead of hugging the search card as small
+ * left-aligned lines. Actions are real shared Buttons, never plain
+ * text links; behaviours are exactly the existing ones (showAll:
+ * favorites off, search + filters cleared, full grid restored;
+ * clearAll: same clearing, used by the no-match state). Testids
+ * are kept unchanged so existing tests keep finding the states.
+ */
+function CentredEmptyState({
+  testId,
+  icon,
+  title,
+  description,
+  action,
+}: {
+  testId: string;
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div
+      data-testid={testId}
+      className="flex min-h-[55svh] flex-col items-center justify-center bg-canvas px-4 pb-12 sm:px-6"
+    >
+      <EmptyState
+        type="first-use"
+        icon={icon}
+        title={title}
+        description={description}
+        action={action}
+      />
+    </div>
+  );
+}
+
+function EmptyStateIcon({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      aria-hidden
+      className="mb-2 flex size-14 items-center justify-center rounded-full bg-primary text-on-primary"
+    >
+      {children}
+    </div>
+  );
+}
+
+function FavoritesEmptyState({
+  testId,
+  title,
+  description,
+  onShowAll,
+}: {
+  testId: string;
+  title: string;
+  description: string;
+  onShowAll: () => void;
+}) {
+  return (
+    <CentredEmptyState
+      testId={testId}
+      icon={
+        <EmptyStateIcon>
+          <HeartIcon className="size-7" fill="currentColor" />
+        </EmptyStateIcon>
+      }
+      title={title}
+      description={description}
+      action={
+        <Button
+          type="button"
+          size="lg"
+          data-testid="prompt-library-show-all"
+          onClick={onShowAll}
+        >
+          Show all prompts
+        </Button>
+      }
+    />
+  );
+}
 
 export function PromptLibraryClient({
   subdomain,
@@ -308,47 +399,52 @@ export function PromptLibraryClient({
           </button>
         </div>
       ) : favoritesOnly && favoritesAuthRequired ? (
-        <div
-          data-testid="prompt-library-favorites-signin"
-          className="bg-canvas px-4 pb-12 sm:px-6"
-        >
-          <p className="text-sm text-ink-sub">
-            Sign in to see your favorites.
-          </p>
-          <button
-            type="button"
-            data-testid="prompt-library-show-all"
-            onClick={showAll}
-            className="mt-3 text-sm font-semibold text-brand-gold"
-          >
-            Show all prompts
-          </button>
-        </div>
+        <FavoritesEmptyState
+          testId="prompt-library-favorites-signin"
+          title="Sign in to see your favorites."
+          description="Your saved prompts will appear here once you are signed in."
+          onShowAll={showAll}
+        />
       ) : items.length === 0 ? (
         favoritesOnly ? (
-          <div
-            data-testid="prompt-library-favorites-empty"
-            className="bg-canvas px-4 pb-12 sm:px-6"
-          >
-            <p className="text-sm text-ink-sub">No favorites yet.</p>
-            <button
-              type="button"
-              data-testid="prompt-library-show-all"
-              onClick={showAll}
-              className="mt-3 text-sm font-semibold text-brand-gold"
-            >
-              Show all prompts
-            </button>
-          </div>
+          <FavoritesEmptyState
+            testId="prompt-library-favorites-empty"
+            title="No favorites yet."
+            description="Tap the heart on any prompt card to save it here."
+            onShowAll={showAll}
+          />
+        ) : isActive ? (
+          <CentredEmptyState
+            testId="prompt-library-empty"
+            icon={
+              <EmptyStateIcon>
+                <SearchIcon className="size-7" />
+              </EmptyStateIcon>
+            }
+            title="No prompts match your search."
+            description="Try different words, or clear the filters to see every prompt."
+            action={
+              <Button
+                type="button"
+                size="lg"
+                data-testid="prompt-library-clear-filters"
+                onClick={clearAll}
+              >
+                Clear filters
+              </Button>
+            }
+          />
         ) : (
-          <p
-            data-testid="prompt-library-empty"
-            className="bg-canvas px-4 pb-12 text-sm text-ink-sub sm:px-6"
-          >
-            {isActive
-              ? "No prompts match your search. Try clearing the filters."
-              : "No prompts yet."}
-          </p>
+          <CentredEmptyState
+            testId="prompt-library-empty"
+            icon={
+              <EmptyStateIcon>
+                <SparklesIcon className="size-7" />
+              </EmptyStateIcon>
+            }
+            title="No prompts yet."
+            description="New prompts are added here by the team through the backend — check back soon."
+          />
         )
       ) : (
         <PromptCardGrid

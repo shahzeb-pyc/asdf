@@ -131,6 +131,102 @@ describe("PromptLibraryClient (real API wiring)", () => {
     expect(screen.getByText("No prompts yet.")).toBeTruthy();
   });
 
+  it("centred catalogue-empty state: heading, explanation, no fake add button", async () => {
+    mockFetch(() =>
+      okJson({ items: [], total: 0, page: 1, pageSize: 50 }),
+    );
+    render(<PromptLibraryClient subdomain="test" />);
+    const state = await screen.findByTestId("prompt-library-empty");
+    expect(
+      screen.getByRole("heading", { name: "No prompts yet." }),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "New prompts are added here by the team through the backend — check back soon.",
+      ),
+    ).toBeTruthy();
+    // No button that pretends to add a prompt: catalogue prompts
+    // are added by admin via the backend only.
+    expect(screen.queryByRole("button", { name: /add/i })).toBeNull();
+    expect(state.className).toContain("items-center");
+    expect(state.className).toContain("justify-center");
+  });
+
+  it("centred no-match state: heading, explanation, Clear filters button restores the grid", async () => {
+    mockFetch((url) => {
+      if (String(url).includes("search=")) {
+        return okJson({ items: [], total: 0, page: 1, pageSize: 50 });
+      }
+      return okJson({ items: [listItem], total: 1, page: 1, pageSize: 50 });
+    });
+    render(<PromptLibraryClient subdomain="test" />);
+    await screen.findByTestId("prompt-card");
+    fireEvent.change(screen.getByPlaceholderText("Search prompts…"), {
+      target: { value: "zzz-no-match" },
+    });
+    const state = await screen.findByTestId("prompt-library-empty");
+    expect(
+      screen.getByRole("heading", { name: "No prompts match your search." }),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Try different words, or clear the filters to see every prompt.",
+      ),
+    ).toBeTruthy();
+    expect(state.className).toContain("items-center");
+    expect(state.className).toContain("justify-center");
+    fireEvent.click(screen.getByTestId("prompt-library-clear-filters"));
+    expect(
+      await screen.findByRole("heading", { name: "Puppy first bath" }),
+    ).toBeTruthy();
+  });
+
+  it("centred favorites-empty state: heading, explanation, real Show all button", async () => {
+    mockFetch((url) => {
+      if (String(url).includes("favorites_only=true")) {
+        return okJson({ items: [], total: 0, page: 1, pageSize: 50 });
+      }
+      return okJson({ items: [listItem], total: 1, page: 1, pageSize: 50 });
+    });
+    render(<PromptLibraryClient subdomain="test" />);
+    await screen.findByTestId("prompt-card");
+    fireEvent.click(screen.getByTestId("prompt-top-section-filter-favorites"));
+    const state = await screen.findByTestId("prompt-library-favorites-empty");
+    expect(
+      screen.getByRole("heading", { name: "No favorites yet." }),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("Tap the heart on any prompt card to save it here."),
+    ).toBeTruthy();
+    expect(state.className).toContain("items-center");
+    expect(state.className).toContain("justify-center");
+    // Show all is a real button, not a plain text link.
+    expect(
+      screen.getByRole("button", { name: "Show all prompts" }),
+    ).toBeTruthy();
+  });
+
+  it("centred favorites sign-in state uses the same layout", async () => {
+    mockFetch((url) => {
+      if (String(url).includes("favorites_only=true")) {
+        return { ok: false, status: 401, json: async () => ({}) } as Response;
+      }
+      return okJson({ items: [listItem], total: 1, page: 1, pageSize: 50 });
+    });
+    render(<PromptLibraryClient subdomain="test" />);
+    await screen.findByTestId("prompt-card");
+    fireEvent.click(screen.getByTestId("prompt-top-section-filter-favorites"));
+    const state = await screen.findByTestId("prompt-library-favorites-signin");
+    expect(
+      screen.getByRole("heading", { name: "Sign in to see your favorites." }),
+    ).toBeTruthy();
+    expect(state.className).toContain("items-center");
+    expect(state.className).toContain("justify-center");
+    expect(
+      screen.getByRole("button", { name: "Show all prompts" }),
+    ).toBeTruthy();
+  });
+
   it("shows a loud error and retries on API failure", async () => {
     let calls = 0;
     mockFetch(() => {
