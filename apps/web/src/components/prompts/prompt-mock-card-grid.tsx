@@ -30,7 +30,7 @@ export function PromptMockCardGrid() {
       aria-label="Prompt cards"
       className="bg-canvas px-4 pb-12 sm:px-6 sm:pb-16"
     >
-      <div className="mx-auto grid w-full max-w-5xl grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="mx-auto grid w-full max-w-5xl grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {MOCK_PROMPT_CARDS.map((card) => (
           <article
             key={card.title}

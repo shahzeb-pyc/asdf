@@ -50,6 +50,18 @@ describe("PromptMockCardGrid (mock data, B design, no detail section)", () => {
     expect(MOCK_PROMPT_CARDS.some((entry) => entry.language === "Hindi")).toBe(true);
   });
 
+  it("uses a 4-column grid on desktop, 2 on tablet, 1 on phone", () => {
+    const { container } = render(<PromptMockCardGrid />);
+    const grid = container.querySelector(
+      "[data-testid='prompt-mock-card-grid'] > div",
+    );
+    expect(grid).toBeTruthy();
+    // All 4 mock cards sit in one row at desktop width.
+    expect(grid?.className).toContain("lg:grid-cols-4");
+    expect(grid?.className).toContain("sm:grid-cols-2");
+    expect(grid?.className).toContain("grid-cols-1");
+  });
+
   it("shows no prompt text, no how-to, no Copy, and no detail section — and cards are not clickable", () => {
     const { container } = render(<PromptMockCardGrid />);
     // No element in the grid is a button or a link, so there is
