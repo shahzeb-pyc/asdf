@@ -15,9 +15,10 @@
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 
 import { PromptLibraryClient } from "@/components/prompts/prompt-library-client";
+import { Toast, toast } from "@/components/shared/ui/toast";
 
 const listItem = {
   id: "00000000-0000-4000-8000-000000000001",
@@ -39,6 +40,24 @@ const listItem = {
   createdAt: "2026-10-28T00:00:00.000Z",
   updatedAt: "2026-10-28T00:00:00.000Z",
   isFavourite: false,
+};
+
+const facetsBody = {
+  category: [
+    { value: "animals", count: 1 },
+    { value: "comedy", count: 1 },
+  ],
+  tool: [{ value: "dola_ai", count: 2 }],
+  language: [{ value: "en", count: 2 }],
+  length: [{ value: "1min_plus", count: 2 }],
+};
+
+const secondItem = {
+  ...listItem,
+  id: "00000000-0000-4000-8000-000000000005",
+  slug: "kitten-first-bath",
+  title: "Kitten first bath",
+  shortDescription: "A kitten's first bath.",
 };
 
 const detail = {
@@ -243,7 +262,12 @@ describe("PromptLibraryClient (real API wiring)", () => {
 
   it("shows a loud error and retries on API failure", async () => {
     let calls = 0;
-    mockFetch(() => {
+    mockFetch((url) => {
+      // Facets are a separate call and must not consume the
+      // list-failure count: they succeed here, the list fails once.
+      if (url.includes("/prompts/facets")) {
+        return okJson(facetsBody);
+      }
       calls += 1;
       if (calls === 1) return Promise.reject(new Error("down"));
       return okJson({ items: [listItem], total: 1, page: 1, pageSize: 50 });
@@ -486,5 +510,307 @@ describe("PromptLibraryClient (real API wiring)", () => {
     await waitFor(() => {
       expect(heart.getAttribute("aria-pressed")).toBe("false");
     });
+  });
+
+  it("detail loading shows a skeleton matching the detail layout, with no real detail content", async () => {
+    mockFetch((url) => {
+      if (url.includes("/prompts/puppy-first-bath")) {
+        return new Promise(() => {});
+      }
+      if (url.includes("/prompts?")) {
+        return okJson({ items: [listItem], total: 1, page: 1, pageSize: 50 });
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response;
+    });
+    render(<PromptLibraryClient subdomain="test" />);
+    fireEvent.click(await screen.findByTestId("prompt-card"));
+    const loading = await screen.findByTestId("prompt-detail-loading");
+    expect(loading.getAttribute("aria-busy")).toBe("true");
+    expect(screen.queryByTestId("prompt-detail")).toBeNull();
+    expect(screen.queryByText(/golden puppy sits in a tiny bathtub/)).toBeNull();
+    expect(screen.queryByText("Open your video tool.")).toBeNull();
+    // Same h-60 preview block as the real detail, plus master-prompt
+    // and step skeleton lines — muted blocks only, no fake text.
+    expect(loading.querySelector(".h-60")).not.toBeNull();
+    expect(loading.textContent ?? "").not.toContain("Puppy first bath");
+  });
+
+  it("detail error is centred with Retry refetching the same slug and Back returning to the grid", async () => {
+    let detailCalls = 0;
+    mockFetch((url) => {
+      if (url.includes("/prompts/puppy-first-bath")) {
+        detailCalls += 1;
+        if (detailCalls === 1) {
+          return { ok: false, status: 500, json: async () => ({}) } as Response;
+        }
+        return okJson(detail);
+      }
+      if (url.includes("/prompts?")) {
+        return okJson({ items: [listItem], total: 1, page: 1, pageSize: 50 });
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response;
+    });
+    render(<PromptLibraryClient subdomain="test" />);
+    fireEvent.click(await screen.findByTestId("prompt-card"));
+    const errorState = await screen.findByTestId("prompt-detail-error");
+    expect(errorState.className).toContain("items-center");
+    expect(errorState.className).toContain("justify-center");
+    expect(
+      screen.getByRole("heading", { name: "This prompt could not be loaded." }),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/Something went wrong while loading this prompt/),
+    ).toBeTruthy();
+    // No error code leaks into the user-facing copy.
+    expect(errorState.textContent ?? "").not.toContain("500");
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Back to prompts" })).toBeTruthy();
+    // Retry refetches the SAME slug and shows the detail on success.
+    fireEvent.click(screen.getByTestId("prompt-detail-retry"));
+    expect(await screen.findByTestId("prompt-detail")).toBeTruthy();
+    expect(detailCalls).toBe(2);
+    expect(
+      screen.getByText("A golden puppy sits in a tiny bathtub."),
+    ).toBeTruthy();
+  });
+
+  it("detail error Back returns to the grid", async () => {
+    mockFetch((url) => {
+      if (url.includes("/prompts/puppy-first-bath")) {
+        return { ok: false, status: 500, json: async () => ({}) } as Response;
+      }
+      if (url.includes("/prompts?")) {
+        return okJson({ items: [listItem], total: 1, page: 1, pageSize: 50 });
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response;
+    });
+    render(<PromptLibraryClient subdomain="test" />);
+    fireEvent.click(await screen.findByTestId("prompt-card"));
+    await screen.findByTestId("prompt-detail-error");
+    fireEvent.click(screen.getByTestId("prompt-detail-back"));
+    expect(await screen.findByTestId("prompt-card")).toBeTruthy();
+    expect(screen.queryByTestId("prompt-detail-error")).toBeNull();
+  });
+
+  it("copy failure shows a proper error note, keeps the wording, and does not change the count", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
+      configurable: true,
+    });
+    mockFetch((url) => {
+      if (url.includes("/prompts/puppy-first-bath")) {
+        return okJson(detail);
+      }
+      if (url.includes("/prompts?")) {
+        return okJson({ items: [listItem], total: 1, page: 1, pageSize: 50 });
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response;
+    });
+    render(<PromptLibraryClient subdomain="test" />);
+    fireEvent.click(await screen.findByTestId("prompt-card"));
+    expect(await screen.findByTestId("prompt-detail")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("prompt-detail-copy"));
+    const note = await screen.findByTestId("prompt-detail-copy-error");
+    expect(note.getAttribute("role")).toBe("alert");
+    expect(note.className).toContain("border-brand-rose");
+    expect(
+      screen.getByText(
+        "Copying failed. Please try again — the count was not changed.",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText("Copied 12 times")).toBeTruthy();
+  });
+
+  it("favourite failure shows a visible message while still reverting the heart", async () => {
+    const fetchMock = mockFetch((url) => {
+      if (url.includes("/favourite")) {
+        return Promise.reject(new Error("down"));
+      }
+      if (url.includes("/prompts?")) {
+        return okJson({ items: [listItem], total: 1, page: 1, pageSize: 50 });
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response;
+    });
+    // The tenant layout mounts the shared Toaster in production;
+    // mount it here so the toast is observable in this test.
+    // Clear any toast queued by the earlier revert-only test (it
+    // fired toast.error with no Toaster mounted, so Sonner queues
+    // it) — otherwise this test sees two copies of the message.
+    act(() => {
+      toast.dismiss();
+    });
+    render(
+      <>
+        <Toast />
+        <PromptLibraryClient subdomain="test" />
+      </>,
+    );
+    await screen.findByTestId("prompt-card");
+    const heart = screen.getByTestId("prompt-card-favourite");
+    fireEvent.click(heart);
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([url, init]) =>
+          String(url).includes("/favourite") && init?.method === "POST",
+        ),
+      ).toBe(true);
+    });
+    await waitFor(() => {
+      expect(heart.getAttribute("aria-pressed")).toBe("false");
+    });
+    // Visible failure message — never a silent revert again.
+    expect(
+      await screen.findByText("Couldn't save this change. Please try again."),
+    ).toBeTruthy();
+  });
+
+  it("Load more appends page 2 and hides when no more pages remain", async () => {
+    const fetchMock = mockFetch((url) => {
+      if (String(url).includes("page=2")) {
+        return okJson({ items: [secondItem], total: 51, page: 2, pageSize: 50 });
+      }
+      if (url.includes("/prompts?")) {
+        // Page size is 50, so a server total of 51 is the smallest
+        // total with a second page — the button must show.
+        return okJson({ items: [listItem], total: 51, page: 1, pageSize: 50 });
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response;
+    });
+    render(<PromptLibraryClient subdomain="test" />);
+    await screen.findByTestId("prompt-card");
+    const loadMore = screen.getByTestId("prompt-library-load-more");
+    expect(loadMore).toBeTruthy();
+    fireEvent.click(loadMore);
+    // Page 1 card is still there; page 2 is appended, not swapped in.
+    expect(
+      await screen.findByRole("heading", { name: "Kitten first bath" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("heading", { name: "Puppy first bath" }),
+    ).toBeTruthy();
+    expect(screen.getAllByTestId("prompt-card")).toHaveLength(2);
+    expect(
+      fetchMock.mock.calls.some(([url]) => String(url).includes("page=2")),
+    ).toBe(true);
+    // 2 × 50 covers the total of 51: no more pages, button hides.
+    await waitFor(() => {
+      expect(screen.queryByTestId("prompt-library-load-more")).toBeNull();
+    });
+  });
+
+  it("Load more resets to page 1 when the search changes", async () => {
+    const fetchMock = mockFetch((url) => {
+      if (String(url).includes("search=puppy")) {
+        return okJson({ items: [listItem], total: 1, page: 1, pageSize: 50 });
+      }
+      if (String(url).includes("page=2")) {
+        return okJson({ items: [secondItem], total: 51, page: 2, pageSize: 50 });
+      }
+      if (url.includes("/prompts?")) {
+        return okJson({ items: [listItem], total: 51, page: 1, pageSize: 50 });
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response;
+    });
+    render(<PromptLibraryClient subdomain="test" />);
+    await screen.findByTestId("prompt-card");
+    fireEvent.click(screen.getByTestId("prompt-library-load-more"));
+    await screen.findByRole("heading", { name: "Kitten first bath" });
+    expect(screen.getAllByTestId("prompt-card")).toHaveLength(2);
+    fetchMock.mockClear();
+    fireEvent.change(screen.getByPlaceholderText("Search prompts…"), {
+      target: { value: "puppy" },
+    });
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([url]) =>
+            String(url).includes("search=puppy") &&
+            String(url).includes("page=1"),
+        ),
+      ).toBe(true);
+    });
+    // Fresh page 1 replaces the appended pages: only the first card.
+    await waitFor(() => {
+      expect(screen.getAllByTestId("prompt-card")).toHaveLength(1);
+    });
+    expect(
+      screen.getByRole("heading", { name: "Puppy first bath" }),
+    ).toBeTruthy();
+    expect(screen.queryByTestId("prompt-library-load-more")).toBeNull();
+  });
+
+  it("renders filter dropdowns from facets, not hardcoded lists, with All first and Sort unchanged", async () => {
+    mockFetch((url) => {
+      if (url.includes("/prompts/facets")) {
+        return okJson(facetsBody);
+      }
+      if (url.includes("/prompts?")) {
+        return okJson({ items: [listItem], total: 1, page: 1, pageSize: 50 });
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response;
+    });
+    render(<PromptLibraryClient subdomain="test" />);
+    await screen.findByTestId("prompt-card");
+    fireEvent.click(screen.getByRole("button", { name: /Category: All/ }));
+    const categoryOptions = screen.getByTestId(
+      "prompt-top-section-filter-category-options",
+    );
+    const optionButtons = categoryOptions.querySelectorAll('[role="option"]');
+    expect(optionButtons[0].textContent).toContain("All");
+    expect(screen.getByRole("option", { name: "Animals" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Comedy" })).toBeTruthy();
+    // Unused values disappear on their own — no hardcoded list.
+    expect(screen.queryByRole("option", { name: "Unboxing" })).toBeNull();
+    expect(screen.queryByRole("option", { name: "Tutorial" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Tool: All/ }));
+    expect(screen.getByRole("option", { name: "Dola AI" })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: "Veo 3" })).toBeNull();
+    // Sort is NOT dynamic: its modes stay fixed.
+    fireEvent.click(screen.getByRole("button", { name: /Sort: Newest/ }));
+    expect(screen.getByRole("option", { name: "Newest" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Most copied" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "A to Z" })).toBeTruthy();
+  });
+
+  it("facets failure shows a visible filter error (not hardcoded lists) and Retry recovers", async () => {
+    let facetsCalls = 0;
+    mockFetch((url) => {
+      if (url.includes("/prompts/facets")) {
+        facetsCalls += 1;
+        if (facetsCalls === 1) {
+          return { ok: false, status: 500, json: async () => ({}) } as Response;
+        }
+        return okJson(facetsBody);
+      }
+      if (url.includes("/prompts?")) {
+        return okJson({ items: [listItem], total: 1, page: 1, pageSize: 50 });
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response;
+    });
+    render(<PromptLibraryClient subdomain="test" />);
+    await screen.findByTestId("prompt-card");
+    const banner = await screen.findByTestId("prompt-library-facets-error");
+    expect(banner).toBeTruthy();
+    expect(
+      screen.getByText("Filter options could not be loaded."),
+    ).toBeTruthy();
+    // No silent hardcoded fallback: only "All" is offered.
+    fireEvent.click(screen.getByRole("button", { name: /Category: All/ }));
+    const options = screen.getByTestId(
+      "prompt-top-section-filter-category-options",
+    );
+    expect(options.querySelectorAll('[role="option"]')).toHaveLength(1);
+    expect(screen.queryByRole("option", { name: "Animals" })).toBeNull();
+    // Close the dropdown first: fireEvent.click fires no mousedown,
+    // so the outside-click close would not run, and the next
+    // trigger click would toggle this dropdown shut instead of open.
+    fireEvent.keyDown(document, { key: "Escape" });
+    // Retry refetches facets: the banner clears and facets appear.
+    fireEvent.click(screen.getByTestId("prompt-library-facets-retry"));
+    await waitFor(() => {
+      expect(screen.queryByTestId("prompt-library-facets-error")).toBeNull();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Category: All/ }));
+    expect(screen.getByRole("option", { name: "Animals" })).toBeTruthy();
   });
 });

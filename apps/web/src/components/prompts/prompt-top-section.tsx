@@ -8,6 +8,14 @@ import {
   SearchIcon,
 } from "lucide-react";
 
+import {
+  PromptCategoryLabels,
+  PromptLanguageLabels,
+  PromptLengthLabels,
+  PromptToolLabels,
+  type PromptFacets,
+} from "@fbuploadpro/contracts";
+
 import { Input } from "@/components/shared/ui/input";
 
 /**
@@ -80,13 +88,53 @@ export type PromptFilterValues = Record<PromptFilterKey, string>;
 
 type FilterKey = PromptFilterKey;
 
-const FILTER_OPTIONS: Record<FilterKey, readonly string[]> = {
-  category: ["All", "Animals", "Comedy", "Cinematic", "UGC", "Tutorial", "Unboxing"],
-  tool: ["All", "Dola AI", "Veo 3", "Google Flow"],
-  language: ["All", "English", "Urdu", "Hindi"],
-  length: ["All", "Under 15s", "15-30s", "30s+", "1 min+"],
-  sort: ["Newest", "Most copied", "A to Z"],
-};
+/**
+ * Filter options are DYNAMIC, not hardcoded: Category, Tool,
+ * Language, and Length come from the facets API (the distinct
+ * values actually present in published prompts, with counts),
+ * passed in as `facets`. "All" is always first; the rest keep the
+ * facets order (count descending, then value alphabetically).
+ * Display labels come from the contracts label maps, never from
+ * hardcoded frontend strings. The ONLY fixed options left are
+ * "All" and the Sort modes — Sort modes are behaviours, not data
+ * values, so Sort stays fixed. With no facets yet (loading, or
+ * standalone use without data), a dynamic filter offers only
+ * "All": there is deliberately NO hardcoded fallback list, so a
+ * failed facets call can never silently reintroduce one (the
+ * page shows a visible filter error instead).
+ */
+const SORT_OPTIONS: readonly string[] = ["Newest", "Most copied", "A to Z"];
+
+const FACET_LABELS = {
+  category: PromptCategoryLabels,
+  tool: PromptToolLabels,
+  language: PromptLanguageLabels,
+  length: PromptLengthLabels,
+} as const;
+
+const FILTER_KEYS: readonly FilterKey[] = [
+  "category",
+  "tool",
+  "language",
+  "length",
+  "sort",
+];
+
+function filterOptions(
+  key: FilterKey,
+  facets: PromptFacets | null | undefined,
+): readonly string[] {
+  if (key === "sort") return SORT_OPTIONS;
+  const values = facets?.[key];
+  if (!values) return ["All"];
+  const labels = FACET_LABELS[key];
+  return [
+    "All",
+    ...values.map(
+      (facet) => labels[facet.value as keyof typeof labels] ?? facet.value,
+    ),
+  ];
+}
 
 const FILTER_LABELS: Record<FilterKey, string> = {
   category: "Category",
@@ -118,6 +166,14 @@ export type PromptTopSectionProps = {
    * when given; standalone it keeps its own state. */
   favoritesOnly?: boolean;
   onFavoritesToggle?: () => void;
+  /**
+   * Facets from GET /prompts/facets (distinct values actually
+   * present in published prompts). The page passes these; without
+   * them the dynamic filters offer only "All" — never a hardcoded
+   * list. Standalone tests pass facets explicitly when they need
+   * options beyond "All".
+   */
+  facets?: PromptFacets | null;
 };
 
 export function PromptTopSection(props: PromptTopSectionProps = {}) {
@@ -233,9 +289,9 @@ export function PromptTopSection(props: PromptTopSectionProps = {}) {
       {/*
         Card width: fit-content, NOT a fixed max-w. Fixed caps kept
         failing: max-w-3xl broke on Sort "Most copied", max-w-4xl
-        broke again once ALL filters carried long values (Category:
-        Comedy, Tool: Google Flow, Language: English, Length:
-        Under 15s, Sort: Most copied, My favorites active). The
+        broke again once ALL filters carried long values at once
+        (every filter selected, Sort: Most copied, My favorites
+        active). The
         card is now w-fit on sm+ (full-width below sm) capped only
         by max-w-full, i.e. the page width minus the section's
         padding, so it grows with its content instead of wrapping
@@ -250,7 +306,7 @@ export function PromptTopSection(props: PromptTopSectionProps = {}) {
         data-testid="prompt-top-section-filter-row"
         className="flex flex-nowrap items-center gap-x-3 overflow-x-auto sm:overflow-visible"
       >
-        {(Object.keys(FILTER_OPTIONS) as FilterKey[]).map((key) => {
+        {FILTER_KEYS.map((key) => {
           const changed = values[key] !== FILTER_DEFAULTS[key];
           const open = openFilter === key;
           // "My favorites" (variant A) sits in the same row, after
@@ -312,7 +368,7 @@ export function PromptTopSection(props: PromptTopSectionProps = {}) {
                   data-testid={`prompt-top-section-filter-${key}-options`}
                   className="absolute left-0 top-full z-popover mt-1 min-w-48 rounded-md border border-line bg-panel p-1 shadow-elevated"
                 >
-                  {FILTER_OPTIONS[key].map((option) => (
+                  {filterOptions(key, props.facets).map((option) => (
                     <button
                       key={option}
                       type="button"

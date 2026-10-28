@@ -18,6 +18,38 @@ import { describe, it, expect } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 
 import { PromptTopSection } from "@/components/prompts/prompt-top-section";
+import type { PromptFacets } from "@fbuploadpro/contracts";
+
+/** Facets fixture: every allowed value present, in server order
+ * (count descending, then value alphabetically). Tests that need
+ * options beyond "All" pass this explicitly — the component has
+ * no hardcoded option lists to fall back on. */
+const TEST_FACETS: PromptFacets = {
+  category: [
+    { value: "animals", count: 2 },
+    { value: "cinematic", count: 1 },
+    { value: "comedy", count: 1 },
+    { value: "tutorial", count: 1 },
+    { value: "ugc", count: 1 },
+    { value: "unboxing", count: 1 },
+  ],
+  tool: [
+    { value: "dola_ai", count: 2 },
+    { value: "google_flow", count: 1 },
+    { value: "veo3", count: 1 },
+  ],
+  language: [
+    { value: "en", count: 2 },
+    { value: "hi", count: 1 },
+    { value: "ur", count: 1 },
+  ],
+  length: [
+    { value: "under_15s", count: 2 },
+    { value: "15_30s", count: 1 },
+    { value: "1min_plus", count: 1 },
+    { value: "30s_plus", count: 1 },
+  ],
+};
 
 describe("PromptTopSection (step 1, filter row)", () => {
   it("renders the new heading, subtitle, smaller search, and all five filter triggers", () => {
@@ -55,7 +87,7 @@ describe("PromptTopSection (step 1, filter row)", () => {
   });
 
   it("expands a filter to show its options, and selecting one updates the label and closes it", () => {
-    render(<PromptTopSection />);
+    render(<PromptTopSection facets={TEST_FACETS} />);
     expect(
       screen.queryByTestId("prompt-top-section-filter-category-options"),
     ).toBeNull();
@@ -72,7 +104,7 @@ describe("PromptTopSection (step 1, filter row)", () => {
   });
 
   it("does not clip filter dropdowns: the section has no overflow-hidden and all Category options render", () => {
-    render(<PromptTopSection />);
+    render(<PromptTopSection facets={TEST_FACETS} />);
     // Regression: the hero section used to carry overflow-hidden,
     // which clipped the absolutely-positioned dropdowns at the
     // section edge so only ~2 options showed. jsdom cannot measure
@@ -185,7 +217,7 @@ describe("PromptTopSection (step 1, filter row)", () => {
   });
 
   it("offers a Language filter and a 1 min+ length option", () => {
-    render(<PromptTopSection />);
+    render(<PromptTopSection facets={TEST_FACETS} />);
     fireEvent.click(screen.getByRole("button", { name: /Language: All/ }));
     expect(screen.getByRole("option", { name: "English" })).toBeTruthy();
     expect(screen.getByRole("option", { name: "Urdu" })).toBeTruthy();
@@ -322,7 +354,7 @@ describe("PromptTopSection (step 1, filter row)", () => {
   });
 
   it("keeps Clear all on the same row when ALL filters carry long values", () => {
-    render(<PromptTopSection />);
+    render(<PromptTopSection facets={TEST_FACETS} />);
     // Reproduce Shahzeb's latest screenshot exactly: every filter
     // selected with a long value, favorites on — the case that
     // broke max-w-4xl and dropped Clear all onto a new line.
@@ -350,8 +382,54 @@ describe("PromptTopSection (step 1, filter row)", () => {
     expect(filterRow.className).not.toContain("flex-wrap");
   });
 
-  it("shows Clear all only when something is chosen, and Clear all resets everything", () => {
+  it("renders dynamic facets instead of hardcoded lists, with All first", () => {
+    const facets: PromptFacets = {
+      category: [
+        { value: "comedy", count: 1 },
+        { value: "animals", count: 1 },
+      ],
+      tool: [{ value: "dola_ai", count: 2 }],
+      language: [{ value: "en", count: 2 }],
+      length: [{ value: "1min_plus", count: 2 }],
+    };
+    render(<PromptTopSection facets={facets} />);
+    fireEvent.click(screen.getByRole("button", { name: /Category: All/ }));
+    const options = screen.getByTestId(
+      "prompt-top-section-filter-category-options",
+    );
+    const optionButtons = options.querySelectorAll('[role="option"]');
+    // "All" first, then the facet values in facets order, with
+    // contracts labels — and nothing else: no unused value leaks in.
+    expect(optionButtons).toHaveLength(3);
+    expect(optionButtons[0].textContent).toContain("All");
+    expect(screen.getByRole("option", { name: "Comedy" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Animals" })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: "Unboxing" })).toBeNull();
+    expect(screen.queryByRole("option", { name: "UGC" })).toBeNull();
+    // Tool likewise: only the facet value, labelled via contracts.
+    fireEvent.click(screen.getByRole("button", { name: /Tool: All/ }));
+    expect(screen.getByRole("option", { name: "Dola AI" })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: "Veo 3" })).toBeNull();
+    // Sort is NOT dynamic: its modes stay fixed.
+    fireEvent.click(screen.getByRole("button", { name: /Sort: Newest/ }));
+    expect(screen.getByRole("option", { name: "Newest" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Most copied" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "A to Z" })).toBeTruthy();
+  });
+
+  it("without facets, a dynamic filter offers only All — never a hardcoded list", () => {
     render(<PromptTopSection />);
+    fireEvent.click(screen.getByRole("button", { name: /Category: All/ }));
+    const options = screen.getByTestId(
+      "prompt-top-section-filter-category-options",
+    );
+    expect(options.querySelectorAll('[role="option"]')).toHaveLength(1);
+    expect(screen.getByRole("option", { name: "All" })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: "UGC" })).toBeNull();
+  });
+
+  it("shows Clear all only when something is chosen, and Clear all resets everything", () => {
+    render(<PromptTopSection facets={TEST_FACETS} />);
     expect(screen.queryByRole("button", { name: "Clear all" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /Tool: All/ }));
     fireEvent.click(screen.getByRole("option", { name: "Veo 3" }));

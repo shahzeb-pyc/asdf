@@ -2,6 +2,9 @@
 
 import React from "react";
 import Image from "next/image";
+import { TriangleAlertIcon } from "lucide-react";
+
+import { Alert } from "@/components/shared/ui/alert";
 
 import {
   PromptCategoryLabels,
@@ -178,12 +181,20 @@ export function PromptDetailSection({
           {copyState === "copied" ? "Copied ✓" : "Copy prompt"}
         </button>
         {copyState === "error" ? (
-          <p
+          // Inline, as before (under the Copy button, where the
+          // failure belongs) — but now a proper design-system error
+          // note (destructive Alert: rose border + icon + text),
+          // not plain grey text. Wording unchanged.
+          <Alert
+            variant="destructive"
             data-testid="prompt-detail-copy-error"
-            className="mt-2 text-sm text-ink-sub"
+            className="mt-2"
           >
-            Copying failed. Please try again — the count was not changed.
-          </p>
+            <TriangleAlertIcon aria-hidden className="size-4 shrink-0" />
+            <span>
+              Copying failed. Please try again — the count was not changed.
+            </span>
+          </Alert>
         ) : null}
         <p className="mt-3 text-sm text-ink-sub">
           {`Copied ${detail.copiedCount} times`}
