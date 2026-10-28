@@ -82,8 +82,11 @@ export function nextAddPagePostingTime(
   }
   const latest = [...used].sort().at(-1) ?? '09:00';
   const [hourText, minuteText] = latest.split(':');
-  const nextHour = (Number.parseInt(hourText ?? '9', 10) + 1) % 24;
-  const candidate = `${String(nextHour).padStart(2, '0')}:${minuteText ?? '00'}`;
+  if (!hourText || !minuteText) {
+    return createAddPagePostingTime('09:00');
+  }
+  const nextHour = (Number.parseInt(hourText, 10) + 1) % 24;
+  const candidate = `${String(nextHour).padStart(2, '0')}:${minuteText}`;
   return createAddPagePostingTime(used.has(candidate) ? '09:00' : candidate);
 }
 
