@@ -25,6 +25,7 @@ const accountId = '22222222-2222-4222-a222-222222222222';
 const pageUuids: Record<string, string> = {
   page_1001: '33333333-3333-4333-a333-333333333333',
   page_1002: '44444444-4444-4444-a444-444444444444',
+  page_1003: '55555555-5555-4555-a555-555555555555',
 };
 
 describe('Import with timezone + posting times', () => {
@@ -86,10 +87,26 @@ describe('Import with timezone + posting times', () => {
   function makeMockDb(options?: {
     failTimezoneFor?: string;
     preExistingFbIds?: string[];
+    preExisting?: Array<{ fbPageId: string; status: string }>;
+    oldTimezone?: string;
+    oldSlots?: Array<{
+      time_of_day: string;
+      kind: string[];
+      is_active: boolean;
+    }>;
   }) {
     const timezoneUpdates: unknown[][] = [];
+    const restoreUpdates: unknown[][] = [];
     const slotInserts: unknown[][] = [];
     const deleteQueries: string[] = [];
+    const deleteCalls: Array<[string, unknown[]]> = [];
+    const preExistingEntries: Array<{ fbPageId: string; status: string }> = [
+      ...(options?.preExistingFbIds ?? []).map((fbPageId) => ({
+        fbPageId,
+        status: 'active',
+      })),
+      ...(options?.preExisting ?? []),
+    ];
     const mockDb = {
       query: vi.fn().mockImplementation((sql: string, params: unknown[]) => {
         if (sql.includes('FROM workspaces')) {
@@ -106,13 +123,30 @@ describe('Import with timezone + posting times', () => {
         }
         if (sql.includes('SELECT external_destination_id')) {
           return Promise.resolve(
-            (options?.preExistingFbIds ?? []).map((fbPageId) => ({
-              external_destination_id: fbPageId,
+            preExistingEntries.map((entry) => ({
+              external_destination_id: entry.fbPageId,
+              status: entry.status,
             }))
+          );
+        }
+        if (sql.includes('SELECT timezone FROM destinations')) {
+          return Promise.resolve([
+            { timezone: options?.oldTimezone ?? 'America/New_York' },
+          ]);
+        }
+        if (
+          sql.startsWith('SELECT') &&
+          sql.includes('FROM posting_slots')
+        ) {
+          return Promise.resolve(
+            options?.oldSlots ?? [
+              { time_of_day: '08:00', kind: ['reel'], is_active: true },
+            ]
           );
         }
         if (sql.startsWith('DELETE FROM')) {
           deleteQueries.push(sql);
+          deleteCalls.push([sql, params]);
           return Promise.resolve([]);
         }
         if (sql.includes('INSERT INTO destinations')) {
@@ -126,6 +160,10 @@ describe('Import with timezone + posting times', () => {
           ]);
         }
         if (sql.includes('UPDATE destinations')) {
+          if (sql.includes('SET status')) {
+            restoreUpdates.push(params);
+            return Promise.resolve([{ id: params[2] }]);
+          }
           timezoneUpdates.push(params);
           if (options?.failTimezoneFor === String(params[1])) {
             return Promise.resolve([]);
@@ -139,7 +177,14 @@ describe('Import with timezone + posting times', () => {
         return Promise.resolve([]);
       }),
     } as unknown as DatabaseClient;
-    return { mockDb, timezoneUpdates, slotInserts, deleteQueries };
+    return {
+      mockDb,
+      timezoneUpdates,
+      restoreUpdates,
+      slotInserts,
+      deleteQueries,
+      deleteCalls,
+    };
   }
 
   function importRequest(body: unknown) {
@@ -308,6 +353,157 @@ describe('Import with timezone + posting times', () => {
     expect(slotInserts[0]?.[0]).toBe(pageUuids.page_1002);
   });
 
+  it('a reactivated disconnected page gets the new timezone and exactly the new slots', async () => {
+    mockGraphPages();
+    const { mockDb, timezoneUpdates, slotInserts, deleteCalls } = makeMockDb({
+      preExisting: [{ fbPageId: 'page_1001', status: 'disconnected' }],
+    });
+
+    const res = await handleImportPages(
+      importRequest(scheduleBody),
+      'acme',
+      mockDb
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()).importedCount).toBe(2);
+    // Both the reactivated page and the new page get the schedule.
+    expect(timezoneUpdates).toHaveLength(2);
+    expect(new Set(timezoneUpdates.map((params) => params[1]))).toEqual(
+      new Set([pageUuids.page_1001, pageUuids.page_1002])
+    );
+    expect(timezoneUpdates.every((params) => params[0] === 'Asia/Karachi')).toBe(
+      true
+    );
+    // The reactivated page's old slots are deleted before the new
+    // schedule is inserted, so the final slots are exactly the new
+    // times — the old 08:00 time never appears in its schedule.
+    const reactivatedDelete = deleteCalls.find(
+      ([sql, params]) =>
+        sql === 'DELETE FROM posting_slots WHERE destination_id = $1' &&
+        params[0] === pageUuids.page_1001
+    );
+    expect(reactivatedDelete).toBeDefined();
+    const scheduleInsert = slotInserts.find(
+      (params) => params[0] === pageUuids.page_1001
+    );
+    expect(scheduleInsert).toBeDefined();
+    const times: string[] = [];
+    for (let i = 1; scheduleInsert && i < scheduleInsert.length; i += 2) {
+      times.push(String(scheduleInsert[i]));
+    }
+    expect(times).toEqual(['09:00', '17:30']);
+  });
+
+  it('a schedule failure after reactivation restores disconnected status, old timezone and old slots without deleting the destination', async () => {
+    mockGraphPages();
+    const { mockDb, restoreUpdates, slotInserts, deleteCalls } = makeMockDb({
+      preExisting: [{ fbPageId: 'page_1001', status: 'disconnected' }],
+      failTimezoneFor: pageUuids.page_1002,
+    });
+
+    const res = await handleImportPages(
+      importRequest(scheduleBody),
+      'acme',
+      mockDb
+    );
+    expect(res.status).toBe(500);
+    const json = await res.json();
+    expect(json.code).toBe('SCHEDULE_FAILED');
+    // The newly created page is deleted; the reactivated page is
+    // never in a destinations delete.
+    const destinationDeletes = deleteCalls.filter(
+      ([sql]) => sql.startsWith('DELETE FROM destinations')
+    );
+    expect(destinationDeletes).toHaveLength(1);
+    expect(destinationDeletes[0]?.[1]?.[0]).toEqual([pageUuids.page_1002]);
+    // The reactivated page is restored to disconnected with its
+    // old timezone, and its old 08:00 slot is re-inserted.
+    expect(restoreUpdates).toHaveLength(1);
+    expect(restoreUpdates[0]?.slice(0, 3)).toEqual([
+      'disconnected',
+      'America/New_York',
+      pageUuids.page_1001,
+    ]);
+    expect(
+      slotInserts.some((params) => params.includes('08:00'))
+    ).toBe(true);
+  });
+
+  it('a mixed batch failure deletes the new page, restores the reactivated page, and leaves the active page untouched', async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: 'page_1001',
+              name: 'Brand Flagship Page',
+              category: 'Retail Company',
+              followers_count: 52000,
+              tasks: ['CREATE_CONTENT'],
+              access_token: 'page_token_1001',
+              picture: { data: { url: null } },
+            },
+            {
+              id: 'page_1002',
+              name: 'Creator Vlog Page',
+              category: 'Digital Creator',
+              followers_count: 14000,
+              tasks: ['CREATE_CONTENT'],
+              access_token: 'page_token_1002',
+              picture: { data: { url: null } },
+            },
+            {
+              id: 'page_1003',
+              name: 'Third Page',
+              category: 'Digital Creator',
+              followers_count: 3000,
+              tasks: ['CREATE_CONTENT'],
+              access_token: 'page_token_1003',
+              picture: { data: { url: null } },
+            },
+          ],
+        }),
+        { status: 200 }
+      )
+    );
+    const { mockDb, timezoneUpdates, restoreUpdates, deleteCalls } =
+      makeMockDb({
+        preExisting: [
+          { fbPageId: 'page_1001', status: 'disconnected' },
+          { fbPageId: 'page_1002', status: 'active' },
+        ],
+        failTimezoneFor: pageUuids.page_1003,
+      });
+
+    const res = await handleImportPages(
+      importRequest({
+        ...scheduleBody,
+        selectedPageIds: ['page_1001', 'page_1002', 'page_1003'],
+      }),
+      'acme',
+      mockDb
+    );
+    expect(res.status).toBe(500);
+    expect((await res.json()).code).toBe('SCHEDULE_FAILED');
+    // Schedule reached only the reactivated and the new page.
+    expect(new Set(timezoneUpdates.map((params) => params[1]))).toEqual(
+      new Set([pageUuids.page_1001, pageUuids.page_1003])
+    );
+    // Rollback deletes only the new page and restores only the
+    // reactivated one; the active page appears in neither.
+    const destinationDeletes = deleteCalls.filter(
+      ([sql]) => sql.startsWith('DELETE FROM destinations')
+    );
+    expect(destinationDeletes).toHaveLength(1);
+    expect(destinationDeletes[0]?.[1]?.[0]).toEqual([pageUuids.page_1003]);
+    expect(restoreUpdates).toHaveLength(1);
+    expect(restoreUpdates[0]?.slice(0, 3)).toEqual([
+      'disconnected',
+      'America/New_York',
+      pageUuids.page_1001,
+    ]);
+  });
+
   it('when Graph returns fewer pages than selected, a scheduled import writes nothing', async () => {
     global.fetch = vi.fn().mockResolvedValueOnce(
       new Response(
@@ -408,13 +604,31 @@ describe('Import with timezone + posting times', () => {
   // delete awaited directly.
   function makeMockSupabase(options?: {
     existingFbIds?: string[];
+    existing?: Array<{ fbPageId: string; status: string }>;
     failScheduleFor?: string;
     failSlotUpsert?: boolean;
+    oldTimezone?: string;
+    oldSlots?: Array<{
+      time_of_day: string;
+      kind: string[];
+      is_active: boolean;
+    }>;
   }) {
     const slotUpserts: unknown[] = [];
     const deletes: Array<{ table: string; filters: Record<string, unknown> }> =
       [];
     const timezoneUpdates: unknown[] = [];
+    const restoreUpdates: Array<Record<string, unknown>> = [];
+    const existingEntries: Array<{ fbPageId: string; status: string }> = [
+      ...(options?.existingFbIds ?? []).map((fbPageId) => ({
+        fbPageId,
+        status: 'active',
+      })),
+      ...(options?.existing ?? []),
+    ];
+    const defaultOldSlots = [
+      { time_of_day: '08:00', kind: ['reel'], is_active: true },
+    ];
 
     class MockQuery {
       table: string;
@@ -478,6 +692,15 @@ describe('Import with timezone + posting times', () => {
             error: null,
           };
         }
+        if (this.table === 'destinations' && this.op === 'select') {
+          return {
+            data: {
+              id: this.filters.id,
+              timezone: options?.oldTimezone ?? 'America/New_York',
+            },
+            error: null,
+          };
+        }
         if (this.table === 'destinations' && this.op === 'upsert') {
           const payload = this.payload as Record<string, unknown>;
           const fbPageId = String(payload.external_destination_id);
@@ -491,7 +714,12 @@ describe('Import with timezone + posting times', () => {
           };
         }
         if (this.table === 'destinations' && this.op === 'update') {
-          timezoneUpdates.push(this.filters.id);
+          const payload = this.payload as Record<string, unknown>;
+          if (payload.status === 'disconnected') {
+            restoreUpdates.push(payload);
+          } else {
+            timezoneUpdates.push(this.filters.id);
+          }
           if (options?.failScheduleFor === String(this.filters.id)) {
             return { data: null, error: null };
           }
@@ -502,11 +730,26 @@ describe('Import with timezone + posting times', () => {
       private resolveAwait(): { data: unknown; error: unknown } {
         if (this.table === 'destinations' && this.op === 'select') {
           return {
-            data: (options?.existingFbIds ?? []).map((fbPageId) => ({
-              external_destination_id: fbPageId,
-              status: 'active',
+            data: existingEntries.map((entry) => ({
+              external_destination_id: entry.fbPageId,
+              status: entry.status,
               metadata: { starting_followers: 100 },
             })),
+            error: null,
+          };
+        }
+        if (this.table === 'destinations' && this.op === 'update') {
+          const payload = this.payload as Record<string, unknown>;
+          if (payload.status === 'disconnected') {
+            restoreUpdates.push(payload);
+          } else {
+            timezoneUpdates.push(this.filters.id);
+          }
+          return { data: { id: this.filters.id }, error: null };
+        }
+        if (this.table === 'posting_slots' && this.op === 'select') {
+          return {
+            data: options?.oldSlots ?? defaultOldSlots,
             error: null,
           };
         }
@@ -527,7 +770,13 @@ describe('Import with timezone + posting times', () => {
     const mockSupabase = {
       from: (table: string) => new MockQuery(table),
     };
-    return { mockSupabase, slotUpserts, deletes, timezoneUpdates };
+    return {
+      mockSupabase,
+      slotUpserts,
+      deletes,
+      timezoneUpdates,
+      restoreUpdates,
+    };
   }
 
   it('applies the schedule on the Supabase path and skips pre-existing pages', async () => {
@@ -575,6 +824,138 @@ describe('Import with timezone + posting times', () => {
     ).toEqual(
       expect.arrayContaining([pageUuids.page_1001, pageUuids.page_1002])
     );
+  });
+
+  it('a Supabase reactivated disconnected page gets the new schedule and replaces old slots', async () => {
+    mockGraphPages();
+    const { mockSupabase, slotUpserts, timezoneUpdates, deletes } =
+      makeMockSupabase({
+        existing: [{ fbPageId: 'page_1001', status: 'disconnected' }],
+      });
+    const res = await handleImportPages(
+      importRequest(scheduleBody),
+      'acme',
+      mockSupabase as never
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()).importedCount).toBe(2);
+    // Both the reactivated page and the new page get the schedule.
+    expect(new Set(timezoneUpdates)).toEqual(
+      new Set([pageUuids.page_1001, pageUuids.page_1002])
+    );
+    // The reactivated page's old slots are deleted before its new
+    // upsert, and its upsert carries exactly the new times.
+    expect(
+      deletes.some(
+        (d) =>
+          d.table === 'posting_slots' &&
+          d.filters.destination_id === pageUuids.page_1001
+      )
+    ).toBe(true);
+    expect(slotUpserts).toHaveLength(2);
+    const reactivatedUpsert = slotUpserts.find(
+      (rows) =>
+        (rows as Array<Record<string, unknown>>)[0]?.destination_id ===
+        pageUuids.page_1001
+    ) as Array<Record<string, unknown>>;
+    expect(reactivatedUpsert.map((row) => row.time_of_day)).toEqual([
+      '09:00',
+      '17:30',
+    ]);
+  });
+
+  it('a Supabase schedule failure after reactivation restores the page instead of deleting it', async () => {
+    mockGraphPages();
+    const { mockSupabase, deletes, restoreUpdates } = makeMockSupabase({
+      existing: [{ fbPageId: 'page_1001', status: 'disconnected' }],
+      failScheduleFor: pageUuids.page_1002,
+    });
+    const res = await handleImportPages(
+      importRequest(scheduleBody),
+      'acme',
+      mockSupabase as never
+    );
+    expect(res.status).toBe(500);
+    expect((await res.json()).code).toBe('SCHEDULE_FAILED');
+    // Only the newly created page is in a destinations delete.
+    const destinationDeletes = deletes.filter(
+      (d) => d.table === 'destinations'
+    );
+    expect(destinationDeletes).toHaveLength(1);
+    expect(destinationDeletes[0]?.filters.id).toEqual([pageUuids.page_1002]);
+    // The reactivated page is restored to disconnected with its
+    // old timezone, and its old slot is re-upserted.
+    expect(restoreUpdates).toHaveLength(1);
+    expect(restoreUpdates[0]?.status).toBe('disconnected');
+    expect(restoreUpdates[0]?.timezone).toBe('America/New_York');
+  });
+
+  it('a Supabase mixed batch failure deletes the new page, restores the reactivated page, and leaves the active page untouched', async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: 'page_1001',
+              name: 'Brand Flagship Page',
+              category: 'Retail Company',
+              followers_count: 52000,
+              tasks: ['CREATE_CONTENT'],
+              access_token: 'page_token_1001',
+              picture: { data: { url: null } },
+            },
+            {
+              id: 'page_1002',
+              name: 'Creator Vlog Page',
+              category: 'Digital Creator',
+              followers_count: 14000,
+              tasks: ['CREATE_CONTENT'],
+              access_token: 'page_token_1002',
+              picture: { data: { url: null } },
+            },
+            {
+              id: 'page_1003',
+              name: 'Third Page',
+              category: 'Digital Creator',
+              followers_count: 3000,
+              tasks: ['CREATE_CONTENT'],
+              access_token: 'page_token_1003',
+              picture: { data: { url: null } },
+            },
+          ],
+        }),
+        { status: 200 }
+      )
+    );
+    const { mockSupabase, timezoneUpdates, restoreUpdates, deletes } =
+      makeMockSupabase({
+        existing: [
+          { fbPageId: 'page_1001', status: 'disconnected' },
+          { fbPageId: 'page_1002', status: 'active' },
+        ],
+        failScheduleFor: pageUuids.page_1003,
+      });
+    const res = await handleImportPages(
+      importRequest({
+        ...scheduleBody,
+        selectedPageIds: ['page_1001', 'page_1002', 'page_1003'],
+      }),
+      'acme',
+      mockSupabase as never
+    );
+    expect(res.status).toBe(500);
+    expect((await res.json()).code).toBe('SCHEDULE_FAILED');
+    // Schedule reached only the reactivated and the new page.
+    expect(new Set(timezoneUpdates)).toEqual(
+      new Set([pageUuids.page_1001, pageUuids.page_1003])
+    );
+    const destinationDeletes = deletes.filter(
+      (d) => d.table === 'destinations'
+    );
+    expect(destinationDeletes).toHaveLength(1);
+    expect(destinationDeletes[0]?.filters.id).toEqual([pageUuids.page_1003]);
+    expect(restoreUpdates).toHaveLength(1);
+    expect(restoreUpdates[0]?.status).toBe('disconnected');
   });
 
   it('a Supabase retry after a slot failure succeeds without duplicating', async () => {
