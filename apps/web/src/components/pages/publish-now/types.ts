@@ -46,6 +46,7 @@ export interface PublishNowResultItem {
     | 'reel-upload'
     | 'reel-finish'
     | 'media-fetch'
+    | 'precheck'
     | 'publish'
     | null
     | undefined;

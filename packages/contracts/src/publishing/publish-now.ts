@@ -68,7 +68,9 @@ export const PublishNowRequestSchema = z.object({
 });
 export type PublishNowRequest = z.infer<typeof PublishNowRequestSchema>;
 
-/** Step a Publish Now publish attempt reached, for failure diagnostics. */
+/** Step a Publish Now publish attempt reached, for failure diagnostics.
+ * 'precheck' is a publish-rights fail-fast (page task / declined
+ * permission), not a Facebook publish call. */
 export const PublishNowStepSchema = z.enum([
   'discover',
   'feed',
@@ -78,6 +80,7 @@ export const PublishNowStepSchema = z.enum([
   'reel-upload',
   'reel-finish',
   'media-fetch',
+  'precheck',
   'publish',
 ]);
 export type PublishNowStep = z.infer<typeof PublishNowStepSchema>;

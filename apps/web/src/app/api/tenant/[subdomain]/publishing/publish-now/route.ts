@@ -45,6 +45,19 @@ import { logServerError } from '@/lib/server-analytics';
  * mutating call made exactly once per page (single-attempt), so a
  * retry of the whole request re-publishes successes — the UI must
  * therefore only ever retry failed pages, never the whole set.
+ *
+ * Two deliberate divergences from the worker, both from the
+ * uniform code-1 failures on the preview: (1) before attempting,
+ * the route checks the publish rights Facebook itself reports —
+ * the page's `tasks` from /me/accounts and an explicit
+ * `pages_manage_posts` decline on /me/permissions — and fails a
+ * page fast with a specific reason when the right is clearly
+ * absent, instead of attempting and surfacing generic code 1;
+ * (2) photos are uploaded as bytes (multipart `source`) rather
+ * than handing Facebook a URL to fetch, because a fresh temporary
+ * R2 object is the one media URL the worker never proves
+ * Facebook can fetch. Videos keep the worker's `file_url` shape
+ * but are reachability-checked first (see below).
  */
 
 const GRAPH_BASE_URL = 'https://graph.facebook.com/v26.0';
@@ -60,6 +73,7 @@ type PublishNowStep =
   | 'reel-upload'
   | 'reel-finish'
   | 'media-fetch'
+  | 'precheck'
   | 'publish';
 
 const PUBLISH_NOW_STEPS: ReadonlySet<string> = new Set([
@@ -71,6 +85,7 @@ const PUBLISH_NOW_STEPS: ReadonlySet<string> = new Set([
   'reel-upload',
   'reel-finish',
   'media-fetch',
+  'precheck',
   'publish',
 ]);
 
@@ -165,6 +180,178 @@ async function graphPost(
   return data;
 }
 
+/**
+ * Page-level publish rights, from the `tasks` array Facebook returns
+ * on /me/accounts. Publishing needs the CREATE_CONTENT task (or
+ * MANAGE, which implies it). This is deliberately strict in only
+ * one direction: a non-empty tasks list that lacks both is a
+ * definite "cannot post" — fail fast with an actionable reason
+ * instead of attempting and surfacing Facebook's generic code 1.
+ * A missing/empty tasks list is unknown, not a denial — attempt
+ * as before rather than blocking a page on absent data.
+ */
+function hasPublishTask(tasks: unknown): boolean | null {
+  if (!Array.isArray(tasks) || tasks.length === 0) return null;
+  const normalized = tasks
+    .filter((task): task is string => typeof task === 'string')
+    .map((task) => task.toUpperCase());
+  if (normalized.length === 0) return null;
+  return normalized.includes('CREATE_CONTENT') || normalized.includes('MANAGE');
+}
+
+/**
+ * Whether the account's user token explicitly declined
+ * `pages_manage_posts` (server-side GET /me/permissions). Only an
+ * explicit 'declined' counts — a missing entry or a failed lookup
+ * is unknown and must not block publishing.
+ */
+async function pagesManagePostsDeclined(accountToken: string): Promise<boolean> {
+  try {
+    const response = await fetch(
+      'https://graph.facebook.com/v26.0/me/permissions?fields=permission,status',
+      {
+        headers: { Authorization: `Bearer ${accountToken}` },
+        signal: AbortSignal.timeout(15_000),
+      }
+    );
+    if (!response.ok) return false;
+    const data = (await response.json().catch(() => ({}))) as {
+      data?: Array<{ permission?: string; status?: string }>;
+    };
+    const entry = (data.data ?? []).find(
+      (item) => item.permission === 'pages_manage_posts'
+    );
+    return entry?.status === 'declined';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Server-side reachability check for a media URL that Facebook is
+ * asked to fetch (feed videos use `file_url`). A HEAD that the host
+ * rejects (405/501) falls back to a ranged GET. A network error or
+ * a non-2xx/3xx answer means the URL is not fetchable — fail fast
+ * with a specific reason rather than letting Facebook return its
+ * generic code 1 for every page. Photos do not need this: they are
+ * uploaded as bytes below, so their fetch failure surfaces there.
+ */
+async function mediaUrlReachable(mediaUrl: string): Promise<boolean> {
+  try {
+    const head = await fetch(mediaUrl, {
+      method: 'HEAD',
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (head.ok) return true;
+    if (head.status === 405 || head.status === 501) {
+      const ranged = await fetch(mediaUrl, {
+        headers: { Range: 'bytes=0-0' },
+        signal: AbortSignal.timeout(15_000),
+      });
+      return ranged.ok;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Photo upload by bytes, not by Facebook-fetched URL. The worker
+ * proves `url` works for library media it already serves, but a
+ * Publish Now photo can also be a fresh temporary R2 object whose
+ * public URL Facebook may not fetch (custom-domain or propagation
+ * quirks) — and when that fetch fails Facebook answers with its
+ * generic code 1, which tells the user nothing. The server can
+ * reach the R2 public URL, so it fetches the bytes and uploads
+ * them as multipart `source` (a documented /photos shape) instead.
+ * A fetch failure here is a specific media-fetch failure, not a
+ * per-page Facebook rejection, and the publish call itself is
+ * still exactly one attempt.
+ */
+async function publishPhotoWithBytes(params: {
+  pageId: string;
+  pageToken: string;
+  caption: string;
+  mediaUrl: string;
+}): Promise<string> {
+  const { pageId, pageToken, caption, mediaUrl } = params;
+  let mediaRes: Response;
+  try {
+    mediaRes = await fetch(mediaUrl, {
+      signal: AbortSignal.timeout(MEDIA_FETCH_TIMEOUT_MS),
+    });
+  } catch {
+    throw steppedError(
+      'The photo could not be fetched for upload to Facebook. Re-attach the photo and try again.',
+      'media-fetch'
+    );
+  }
+  if (!mediaRes.ok || !mediaRes.body) {
+    throw steppedError(
+      'The photo could not be fetched for upload to Facebook. Re-attach the photo and try again.',
+      'media-fetch'
+    );
+  }
+  const contentLength = mediaRes.headers.get('content-length');
+  const size = contentLength ? Number.parseInt(contentLength, 10) : Number.NaN;
+  if (Number.isFinite(size) && size > 30_000_000) {
+    throw steppedError(
+      'This photo is too large to upload directly. Choose a smaller photo and try again.',
+      'media-fetch'
+    );
+  }
+  const buffer = await mediaRes.arrayBuffer();
+  if (buffer.byteLength === 0) {
+    throw steppedError(
+      'The photo could not be fetched for upload to Facebook. Re-attach the photo and try again.',
+      'media-fetch'
+    );
+  }
+  const contentType =
+    mediaRes.headers.get('content-type') ?? 'image/jpeg';
+  const filename =
+    new URL(mediaUrl).pathname.split('/').filter(Boolean).pop() ?? 'photo.jpg';
+  const form = new FormData();
+  form.append('source', new Blob([buffer], { type: contentType }), filename);
+  form.append('caption', caption);
+  form.append('published', 'true');
+  const response = await fetch(
+    `${GRAPH_BASE_URL}/${encodeURIComponent(pageId)}/photos`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${pageToken}` },
+      body: form,
+      signal: AbortSignal.timeout(GRAPH_TIMEOUT_MS),
+    }
+  );
+  const data = (await response.json().catch(() => ({}))) as {
+    post_id?: string;
+    id?: string;
+    error?: {
+      message?: string;
+      code?: number;
+      error_subcode?: number;
+      fbtrace_id?: string;
+    };
+  };
+  if (!response.ok || data.error) {
+    throw {
+      message: data.error?.message ?? `Facebook returned ${response.status}.`,
+      code: data.error?.code,
+      subcode: data.error?.error_subcode,
+      step: 'photos' as PublishNowStep,
+      httpStatus: response.status,
+      fbtraceId: data.error?.fbtrace_id,
+    };
+  }
+  const postId = data.post_id ?? data.id;
+  if (typeof postId !== 'string' || !postId) {
+    throw steppedError('Facebook did not return a post id for the photo.', 'photos');
+  }
+  return postId;
+}
+
 async function publishToPage(params: {
   pageId: string;
   pageToken: string;
@@ -196,17 +383,13 @@ async function publishToPage(params: {
     if (type === 'image') {
       step = 'photos';
       if (!mediaUrl) throw steppedError('An image is required for an image post.', step);
-      const data = await graphPost(
-        `${GRAPH_BASE_URL}/${encodedPageId}/photos`,
+      // Bytes, not a Facebook-fetched URL (see publishPhotoWithBytes).
+      return publishPhotoWithBytes({
+        pageId,
         pageToken,
-        { url: mediaUrl, caption, published: true },
-        step
-      );
-      const postId = data.post_id ?? data.id;
-      if (typeof postId !== 'string' || !postId) {
-        throw steppedError('Facebook did not return a post id for the photo.', step);
-      }
-      return postId;
+        caption,
+        mediaUrl,
+      });
     }
     if (type === 'video') {
       step = 'videos';
@@ -249,12 +432,14 @@ async function publishToPage(params: {
       throw steppedError('The video could not be fetched for upload to Facebook.', step);
     }
     step = 'reel-upload';
+    // The upload host is rupload, not graph: the worker's
+    // streamVideoUpload uses `OAuth` here, not `Bearer`.
     const uploadRes = await fetch(
       uploadUrl,
       {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${pageToken}`,
+          Authorization: `OAuth ${pageToken}`,
           offset: '0',
           'Content-Type': 'application/octet-stream',
         },
@@ -413,6 +598,25 @@ export async function POST(
     mediaUrl = media.url;
   }
 
+  // Feed videos are the one format where Facebook itself fetches
+  // the media URL (`file_url`, the worker's shape). If that URL is
+  // not reachable at all, every page would fail with Facebook's
+  // generic code 1 — fail the whole request early with a specific
+  // reason instead. Photos are uploaded as bytes and reels stream
+  // bytes, so both surface their own media-fetch failure per page.
+  if (derivedType === 'video' && mediaUrl) {
+    if (!(await mediaUrlReachable(mediaUrl))) {
+      return NextResponse.json(
+        {
+          error: 'INVALID_REQUEST',
+          message:
+            'The video for this post could not be reached. Re-attach the video and try again.',
+        },
+        { status: 400 }
+      );
+    }
+  }
+
   let encryptionKey: string;
   try {
     encryptionKey = getTokenEncryptionKey();
@@ -424,6 +628,17 @@ export async function POST(
   }
 
   const results: PublishNowResult[] = [];
+  // Per-account cache for this request only: the account token,
+  // its re-discovered pages, and its permission state. Previously
+  // every target re-ran /me/accounts for its account, so five
+  // pages under one account hit Facebook five times for the same
+  // list — and the publish-rights checks below need the same
+  // data. Nothing here is stored beyond the request.
+  interface CachedAccount {
+    pages: Awaited<ReturnType<typeof fetchAllFacebookPages>>;
+    permissionsDeclined: boolean;
+  }
+  const accountCache = new Map<string, CachedAccount>();
   // Sequential, one page at a time, continuing on failure: a burst
   // of parallel publish calls would invite Facebook rate limiting,
   // and a failure on one page must never block the rest.
@@ -433,36 +648,61 @@ export async function POST(
     // and take precedence over this in the catch below.
     let loopStep: PublishNowStep = 'publish';
     try {
-      const { data: account, error: accountError } = await supabase
-        .from('social_accounts')
-        .select('encrypted_access_token')
-        .eq('id', target.accountId)
-        .eq('workspace_id', workspaceId)
-        .eq('platform', 'facebook')
-        .maybeSingle();
-      if (accountError || !account?.encrypted_access_token) {
-        throw new Error('Facebook account not found.');
+      let cached = accountCache.get(target.accountId);
+      if (!cached) {
+        const { data: account, error: accountError } = await supabase
+          .from('social_accounts')
+          .select('encrypted_access_token')
+          .eq('id', target.accountId)
+          .eq('workspace_id', workspaceId)
+          .eq('platform', 'facebook')
+          .maybeSingle();
+        if (accountError || !account?.encrypted_access_token) {
+          throw new Error('Facebook account not found.');
+        }
+        let accountToken: string;
+        try {
+          accountToken = await decryptToken(
+            account.encrypted_access_token as string,
+            encryptionKey
+          );
+        } catch {
+          throw new Error('Failed to decrypt account credentials.');
+        }
+        // Transient tokens: re-discovered now, used only in memory.
+        loopStep = 'discover';
+        const [pages, permissionsDeclined] = await Promise.all([
+          fetchAllFacebookPages(
+            accountToken,
+            'id,name,category,tasks,access_token,followers_count,picture{url}'
+          ),
+          pagesManagePostsDeclined(accountToken),
+        ]);
+        cached = { pages, permissionsDeclined };
+        accountCache.set(target.accountId, cached);
       }
-      let accountToken: string;
-      try {
-        accountToken = await decryptToken(
-          account.encrypted_access_token as string,
-          encryptionKey
-        );
-      } catch {
-        throw new Error('Failed to decrypt account credentials.');
-      }
-      // Transient token: re-discovered now, used only in memory.
-      loopStep = 'discover';
-      const pages = await fetchAllFacebookPages(
-        accountToken,
-        'id,name,category,tasks,access_token,followers_count,picture{url}'
-      );
-      const page = pages.find((p) => String(p.id) === target.fbPageId);
+      const page = cached.pages.find((p) => String(p.id) === target.fbPageId);
       const pageToken = page?.access_token;
       if (!page || typeof pageToken !== 'string' || !pageToken) {
         throw new Error(
           'This page is no longer available on this Facebook account.'
+        );
+      }
+      // Publish-rights pre-checks. Both are fail-fast only on
+      // definite data (see hasPublishTask / pagesManagePostsDeclined);
+      // anything unknown proceeds to the publish attempt as before,
+      // so these checks can never block a page that could publish.
+      if (cached.permissionsDeclined) {
+        throw steppedError(
+          'This Facebook account has not allowed posting to pages. Reconnect the account and allow posting to pages, then try again.',
+          'precheck'
+        );
+      }
+      const publishTask = hasPublishTask(page.tasks);
+      if (publishTask === false) {
+        throw steppedError(
+          `You do not have permission to post to ${target.pageName}. Your role on this page does not include creating content — ask a page admin to give you the Create content role, or pick a page you can post to.`,
+          'precheck'
         );
       }
       const postId = await publishToPage({
