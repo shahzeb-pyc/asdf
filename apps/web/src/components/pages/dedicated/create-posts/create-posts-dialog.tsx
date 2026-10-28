@@ -131,10 +131,26 @@ export function CreatePostsDialog({
     [updateBlocks]
   );
 
+  /**
+   * Attaching library media prefills the block's text from the
+   * item's saved library caption — but only when the block's text
+   * is still empty. Text the user already typed is never
+   * overwritten, and removing media leaves the text as it stands.
+   */
   const attachMediaToBlock = React.useCallback(
     (id: string, media: ComposerMedia) => {
       updateBlocks((prev) =>
-        prev.map((block) => (block.id === id ? { ...block, media } : block))
+        prev.map((block) => {
+          if (block.id !== id) return block;
+          const caption = media.captionText;
+          const text =
+            block.text.trim().length === 0 &&
+            caption !== null &&
+            caption.trim().length > 0
+              ? caption
+              : block.text;
+          return { ...block, media, text };
+        })
       );
     },
     [updateBlocks]
@@ -173,7 +189,18 @@ export function CreatePostsDialog({
   const handleMultiAttach = React.useCallback(
     (media: ComposerMedia[]) => {
       appendBlocks(
-        media.map((item) => ({ ...newEmptyBlock(), media: item }))
+        media.map((item) => {
+          // New blocks start empty, so a saved library caption (or a
+          // device upload's filename-derived caption) becomes the
+          // block's text; items without one start with empty text.
+          const caption = item.captionText;
+          return {
+            ...newEmptyBlock(),
+            media: item,
+            text:
+              caption !== null && caption.trim().length > 0 ? caption : '',
+          };
+        })
       );
     },
     [appendBlocks]

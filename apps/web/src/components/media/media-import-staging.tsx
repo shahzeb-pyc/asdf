@@ -43,6 +43,8 @@ export interface ImportStagingHeaderProps {
   selectedFolderId: string | null;
   folders: MediaFolder[];
   onSelectFolder: (folderId: string | null) => void;
+  /** When true, the destination is fixed: static text, no picker. */
+  lockDestination?: boolean | undefined;
 }
 
 export function ImportStagingHeader({
@@ -51,6 +53,7 @@ export function ImportStagingHeader({
   selectedFolderId,
   folders,
   onSelectFolder,
+  lockDestination = false,
 }: Readonly<ImportStagingHeaderProps>) {
   return (
     <div className="flex flex-wrap items-start justify-between gap-3">
@@ -69,6 +72,14 @@ export function ImportStagingHeader({
 
       <div className="flex items-center gap-2">
         <FolderIcon className="size-4 shrink-0 text-brand-gold" aria-hidden />
+        {lockDestination ? (
+          <span
+            data-testid="destination-folder-locked"
+            className="text-body font-medium text-ink"
+          >
+            To:&nbsp;{destinationFolderName}
+          </span>
+        ) : (
         <Select
           value={selectedFolderId ?? ROOT_VALUE}
           onValueChange={(value) =>
@@ -99,6 +110,7 @@ export function ImportStagingHeader({
             ))}
           </SelectContent>
         </Select>
+        )}
       </div>
     </div>
   );

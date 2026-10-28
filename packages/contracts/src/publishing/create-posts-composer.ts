@@ -50,7 +50,13 @@ export function deriveComposerPostType(input: {
   return isVerticalVideo(input) ? 'reel' : 'video';
 }
 
-/** One library item attached to a composer block. */
+/**
+ * One library item attached to a composer block. `captionText` is the
+ * item's saved caption in the Media Library (null when it has none):
+ * at attach time the composer prefills an empty block's text from it
+ * (library → post only — editing in the composer never writes back
+ * to the library caption).
+ */
 export const ComposerMediaSchema = z.object({
   id: z.string().uuid(),
   name: z.string().min(1),
@@ -60,6 +66,7 @@ export const ComposerMediaSchema = z.object({
   url: z.string(),
   width: z.number().int().positive().nullable().optional(),
   height: z.number().int().positive().nullable().optional(),
+  captionText: z.string().nullable(),
 });
 export type ComposerMedia = z.infer<typeof ComposerMediaSchema>;
 

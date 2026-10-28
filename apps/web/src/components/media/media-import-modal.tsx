@@ -68,6 +68,13 @@ export interface MediaImportModalProps {
     count: number,
     furthestAlong: { name: string; progressPercent: number } | null
   ) => void;
+  /**
+   * Picker use only (the Create Posts attach flow): the destination
+   * is fixed — device uploads must land in the page's folder, so the
+   * staging destination picker is replaced by static text. Default
+   * off: the library page keeps its changeable destination.
+   */
+  lockDestination?: boolean | undefined;
 }
 
 type ImportStep = 'staging' | 'progress' | 'complete';
@@ -81,6 +88,7 @@ export function MediaImportModal({
   onClose,
   onUploadSuccess,
   onActiveUploadsChange,
+  lockDestination = false,
 }: Readonly<MediaImportModalProps>) {
   const [step, setStep] = useState<ImportStep>('staging');
   const [isMinimized, setIsMinimized] = useState(false);
@@ -365,6 +373,7 @@ export function MediaImportModal({
             selectedFolderId={selectedFolderId}
             folders={folders}
             onSelectFolder={setSelectedFolderId}
+            lockDestination={lockDestination}
           />
         ) : (
           <ImportProgressHeader
