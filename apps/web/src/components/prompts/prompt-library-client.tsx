@@ -1,7 +1,12 @@
 "use client";
 
 import React from "react";
-import { HeartIcon, SearchIcon, SparklesIcon } from "lucide-react";
+import {
+  AlertTriangleIcon,
+  HeartIcon,
+  SearchIcon,
+  SparklesIcon,
+} from "lucide-react";
 
 import type {
   PromptDetail,
@@ -406,22 +411,26 @@ export function PromptLibraryClient({
           </div>
         </section>
       ) : error ? (
-        <div
-          data-testid="prompt-library-error"
-          className="bg-canvas px-4 pb-12 sm:px-6"
-        >
-          <p className="text-sm text-ink">
-            Prompts could not be loaded. Please try again.
-          </p>
-          <button
-            type="button"
-            data-testid="prompt-library-retry"
-            onClick={() => setFetchNonce((n) => n + 1)}
-            className="mt-3 text-sm font-semibold text-brand-gold"
-          >
-            Retry
-          </button>
-        </div>
+        <CentredEmptyState
+          testId="prompt-library-error"
+          icon={
+            <EmptyStateIcon>
+              <AlertTriangleIcon className="size-7" />
+            </EmptyStateIcon>
+          }
+          title="Prompts could not be loaded."
+          description="Something went wrong while loading the prompts. Please try again."
+          action={
+            <Button
+              type="button"
+              size="lg"
+              data-testid="prompt-library-retry"
+              onClick={() => setFetchNonce((n) => n + 1)}
+            >
+              Retry
+            </Button>
+          }
+        />
       ) : favoritesOnly && favoritesAuthRequired ? (
         <FavoritesEmptyState
           testId="prompt-library-favorites-signin"

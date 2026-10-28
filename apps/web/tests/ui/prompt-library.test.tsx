@@ -249,7 +249,21 @@ describe("PromptLibraryClient (real API wiring)", () => {
       return okJson({ items: [listItem], total: 1, page: 1, pageSize: 50 });
     });
     render(<PromptLibraryClient subdomain="test" />);
-    expect(await screen.findByTestId("prompt-library-error")).toBeTruthy();
+    const errorState = await screen.findByTestId("prompt-library-error");
+    expect(errorState).toBeTruthy();
+    // Centred error state, same pattern as the empty states: heading,
+    // plain-language explanation (no error code), and a real button.
+    expect(errorState.className).toContain("items-center");
+    expect(errorState.className).toContain("justify-center");
+    expect(
+      await screen.findByRole("heading", {
+        name: "Prompts could not be loaded.",
+      }),
+    ).toBeTruthy();
+    expect(screen.getByText(/Something went wrong while loading/)).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Retry" }).getAttribute("data-testid"),
+    ).toBe("prompt-library-retry");
     fireEvent.click(screen.getByTestId("prompt-library-retry"));
     expect(
       await screen.findByRole("heading", { name: "Puppy first bath" }),
