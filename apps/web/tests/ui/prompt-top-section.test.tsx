@@ -2,8 +2,9 @@
  * @file prompt-top-section.test.tsx
  * @description Behavioural tests for the Prompt Library top section,
  * STEP 1 of the step-by-step rebuild, corrected: structure only, app's
- * own copy. Hero copy plus a smaller search input with plain-text
- * expandable filter triggers after it. Filters are UI state only in
+ * own copy. Hero copy plus a wide search card containing a smaller
+ * search input with plain-text expandable filter triggers after it,
+ * inside that same card. Filters are UI state only in
  * this step: there is no grid, catalogue, or content below to filter,
  * so selecting a filter changes its trigger label and active state
  * only. The eyebrow pill, the "Browse prompts" button, and the
@@ -33,6 +34,14 @@ describe("PromptTopSection (step 1, filter row)", () => {
     expect(screen.getByRole("button", { name: /Tool: All/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Length: All/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Sort: Newest/ })).toBeTruthy();
+    // The search input and all four filter triggers live INSIDE the
+    // styled search card, not as a bare row on the page.
+    const card = screen.getByTestId("prompt-top-section-search-card");
+    expect(card.contains(screen.getByPlaceholderText("Search prompts…"))).toBe(true);
+    expect(card.contains(screen.getByRole("button", { name: /Category: All/ }))).toBe(true);
+    expect(card.contains(screen.getByRole("button", { name: /Tool: All/ }))).toBe(true);
+    expect(card.contains(screen.getByRole("button", { name: /Length: All/ }))).toBe(true);
+    expect(card.contains(screen.getByRole("button", { name: /Sort: Newest/ }))).toBe(true);
     // Replica copy and the removed elements must be gone.
     expect(screen.queryByText("AI Video Prompt Gallery")).toBeNull();
     expect(screen.queryByText("Try Now")).toBeNull();

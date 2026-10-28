@@ -9,8 +9,9 @@ import { Input } from "@/components/shared/ui/input";
  * Prompt Library top section — STEP 1 ONLY, corrected.
  *
  * Structure only, app's own identity. The reference image supplied the
- * structure — centred hero, a large heading, a subtitle, then a search
- * row — and nothing else from it. Its exact copy, cream/red colours,
+ * structure — centred hero, a large heading, a subtitle, then a wide
+ * search card containing the search input and the filter controls
+ * inside that same card — and nothing else from it. Its exact copy, cream/red colours,
  * and ad-format pills were removed in a correction, and the eyebrow
  * pill, primary button, and category pill row were removed entirely
  * at Shahzeb's direction (no replacements).
@@ -85,8 +86,12 @@ export function PromptTopSection() {
       </div>
 
       <div
+        data-testid="prompt-top-section-search-card"
+        className="mx-auto mt-10 w-full max-w-5xl rounded-2xl border border-line bg-panel p-3 shadow-card sm:p-4"
+      >
+      <div
         data-testid="prompt-top-section-filter-row"
-        className="mx-auto mt-10 flex w-full max-w-5xl flex-wrap items-center gap-x-5 gap-y-3"
+        className="flex flex-wrap items-center gap-x-5 gap-y-3"
       >
         <label className="flex w-full shrink-0 items-center gap-2 rounded-xl border border-line bg-panel px-3 py-1 sm:w-80">
           <SearchIcon aria-hidden className="size-5 shrink-0 text-ink-sub" />
@@ -164,6 +169,7 @@ export function PromptTopSection() {
             Clear all
           </button>
         ) : null}
+      </div>
       </div>
     </section>
   );
