@@ -198,22 +198,30 @@ describe("PromptTopSection (step 1, filter row)", () => {
     expect(screen.getByRole("button", { name: /Length: 1 min\+/ })).toBeTruthy();
   });
 
-  it("keeps the hero full-width but centres a compact search card", () => {
+  it("keeps the hero full-width but centres an expanding search card (fit-content, no fixed max-w cap)", () => {
     render(<PromptTopSection />);
     const section = screen.getByTestId("prompt-top-section");
     const hero = section.firstElementChild as HTMLElement;
     expect(hero.className).not.toContain("max-w-3xl");
     expect(hero.className).toContain("w-full");
     const card = screen.getByTestId("prompt-top-section-search-card");
+    // Full-width below sm, fit-content on sm+ so the card grows
+    // with its filters instead of wrapping them, capped only by
+    // the page width (max-w-full). No fixed max-w-3xl/max-w-4xl
+    // cap remains for the filters to outgrow.
     expect(card.className).toContain("w-full");
     expect(card.className).toContain("mx-auto");
-    expect(card.className).toContain("max-w-4xl");
+    expect(card.className).toContain("sm:w-fit");
+    expect(card.className).toContain("sm:max-w-full");
+    expect(card.className).not.toContain("max-w-3xl");
+    expect(card.className).not.toContain("max-w-4xl");
   });
 
   it("lays out variant A: search on its own row, then a divider, then all six filter controls in order Sort, My favorites, Clear all last", () => {
     render(<PromptTopSection />);
     const card = screen.getByTestId("prompt-top-section-search-card");
-    expect(card.className).toContain("max-w-4xl");
+    expect(card.className).toContain("sm:w-fit");
+    expect(card.className).not.toContain("max-w-4xl");
     // Card children, in order: search row, divider, filter row.
     expect(card.children.length).toBe(3);
     const searchRow = screen.getByTestId("prompt-top-section-search-row");
@@ -241,6 +249,19 @@ describe("PromptTopSection (step 1, filter row)", () => {
     // it sits after Length, with My favorites after it.
     const sortButton = screen.getByRole("button", { name: /Sort: Newest/ });
     expect((sortButton.parentElement as HTMLElement).className).not.toContain("ml-auto");
+    // Expanding, never wrapping: the filter row is no-wrap and
+    // every control is nowrap + shrink-0, so Clear all can no
+    // longer drop onto a new line when filters get long. Below sm
+    // the row scrolls horizontally (last resort); on sm+ it is
+    // overflow-visible so dropdowns open freely below the card.
+    expect(filterRow.className).toContain("flex-nowrap");
+    expect(filterRow.className).not.toContain("flex-wrap");
+    expect(filterRow.className).toContain("overflow-x-auto");
+    expect(filterRow.className).toContain("sm:overflow-visible");
+    for (const button of Array.from(filterRow.querySelectorAll("button"))) {
+      expect(button.className).toContain("whitespace-nowrap");
+    }
+    expect((sortButton.parentElement as HTMLElement).className).toContain("shrink-0");
     // Order inside the filter row: Category, Tool, Language, Length,
     // Sort, My favorites.
     const buttons = Array.from(filterRow.querySelectorAll("button")).map(
@@ -286,12 +307,47 @@ describe("PromptTopSection (step 1, filter row)", () => {
     expect(sortIndex).toBeGreaterThan(-1);
     expect(favoritesIndex).toBeGreaterThan(sortIndex);
     expect(clearIndex).toBeGreaterThan(favoritesIndex);
+    // Clear all itself is also nowrap + shrink-0, so it cannot
+    // wrap onto a new line on its own.
+    expect(clearAll.className).toContain("whitespace-nowrap");
+    expect(clearAll.className).toContain("shrink-0");
     // NOTE (honest jsdom limit): jsdom cannot measure pixel widths,
-    // so this test asserts order and same-row membership, not that
-    // the row fits on one line in a browser. The one-line fit for
-    // this case comes from the card widening to max-w-4xl (see the
-    // width note in prompt-top-section.tsx) and must be confirmed
-    // by the live preview eyeball.
+    // so this test asserts order, same-row membership, and the
+    // no-wrap/expanding classes in code terms, not that the row
+    // fits on one line in a browser. The expanding behaviour (card
+    // w-fit capped only by max-w-full, filter row no-wrap) is in
+    // prompt-top-section.tsx and must be confirmed by the live
+    // preview eyeball with all filters selected, as in Shahzeb's
+    // screenshot.
+  });
+
+  it("keeps Clear all on the same row when ALL filters carry long values", () => {
+    render(<PromptTopSection />);
+    // Reproduce Shahzeb's latest screenshot exactly: every filter
+    // selected with a long value, favorites on — the case that
+    // broke max-w-4xl and dropped Clear all onto a new line.
+    const select = (trigger: RegExp, option: string) => {
+      fireEvent.click(screen.getByRole("button", { name: trigger }));
+      fireEvent.click(screen.getByRole("option", { name: option }));
+    };
+    select(/Category: All/, "Comedy");
+    select(/Tool: All/, "Google Flow");
+    select(/Language: All/, "English");
+    select(/Length: All/, "Under 15s");
+    select(/Sort: Newest/, "Most copied");
+    fireEvent.click(screen.getByTestId("prompt-top-section-filter-favorites"));
+    const filterRow = screen.getByTestId("prompt-top-section-filter-row");
+    const clearAll = screen.getByRole("button", { name: "Clear all" });
+    expect(filterRow.contains(clearAll)).toBe(true);
+    const buttons = Array.from(filterRow.querySelectorAll("button"));
+    expect(buttons[buttons.length - 1]).toBe(clearAll);
+    // The expanding card + no-wrap row are what keep this case on
+    // one row: assert both in code terms (jsdom cannot measure).
+    const card = screen.getByTestId("prompt-top-section-search-card");
+    expect(card.className).toContain("sm:w-fit");
+    expect(card.className).toContain("sm:max-w-full");
+    expect(filterRow.className).toContain("flex-nowrap");
+    expect(filterRow.className).not.toContain("flex-wrap");
   });
 
   it("shows Clear all only when something is chosen, and Clear all resets everything", () => {

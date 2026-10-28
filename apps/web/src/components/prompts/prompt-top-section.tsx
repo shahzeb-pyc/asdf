@@ -39,6 +39,25 @@ import { Input } from "@/components/shared/ui/input";
  * when open (null when closed) and Clear all renders only when
  * active.
  *
+ * The search card EXPANDS instead of wrapping: it is no longer
+ * capped at any fixed max width the filters can outgrow (max-w-3xl,
+ * then max-w-4xl, both failed as soon as longer values were
+ * selected). The card is w-fit (capped only by the page width via
+ * max-w-full, so it can never overflow the viewport): short
+ * filters keep it compact and centred, long filters grow it wider
+ * on one row instead of dropping Clear all onto a new line. The
+ * filter row itself is no-wrap with every control shrink-0 and
+ * whitespace-nowrap, so nothing wraps to a second line on
+ * desktop/tablet. Only on narrow phone widths, where the content
+ * can still exceed the full page width, does the filter row scroll
+ * horizontally inside the card (overflow-x-auto below sm) — that
+ * is the last resort, and wrapping is never allowed. Note the
+ * phone tradeoff, stated honestly: a horizontally scrolling row
+ * is a scroll container, so on phones an open dropdown lives
+ * inside that scroll area rather than overflowing freely; on
+ * desktop/tablet the row is overflow-visible, so dropdowns open
+ * freely below the card as before.
+ *
  * The hero section must NOT carry overflow-hidden: the filter
  * dropdowns are absolutely positioned below the search card at the
  * bottom of this section, and overflow-hidden clipped them so only
@@ -191,7 +210,7 @@ export function PromptTopSection(props: PromptTopSectionProps = {}) {
 
       <div
         data-testid="prompt-top-section-search-card"
-        className="mx-auto mt-10 w-full max-w-4xl rounded-2xl border border-line bg-panel p-3 shadow-card sm:p-4"
+        className="mx-auto mt-10 w-full rounded-2xl border border-line bg-panel p-3 shadow-card sm:w-fit sm:max-w-full sm:p-4"
       >
       <div
         data-testid="prompt-top-section-search-row"
@@ -212,21 +231,24 @@ export function PromptTopSection(props: PromptTopSectionProps = {}) {
       </div>
       <div aria-hidden="true" className="my-3 border-t border-line" />
       {/*
-        Card width: max-w-4xl (896px), not max-w-3xl. At 3xl the
-        worst case — Sort "Most copied" (the longest Sort value) +
-        My favorites active + Clear all visible, other filters at
-        "All" — measured in the user's screenshots to wrap Clear all
-        onto its own line: the controls+gaps total roughly 740px
-        against only 736px of content width at 3xl, so it missed by
-        a hair. At 4xl the content width is 864px, leaving roughly
-        120px of margin for that same case, so Clear all stays at
-        the end of the row. This is an ESTIMATE from label lengths,
-        not a pixel measurement: jsdom cannot measure layout, so
-        the live preview eyeball is the final proof.
+        Card width: fit-content, NOT a fixed max-w. Fixed caps kept
+        failing: max-w-3xl broke on Sort "Most copied", max-w-4xl
+        broke again once ALL filters carried long values (Category:
+        Comedy, Tool: Google Flow, Language: English, Length:
+        Under 15s, Sort: Most copied, My favorites active). The
+        card is now w-fit on sm+ (full-width below sm) capped only
+        by max-w-full, i.e. the page width minus the section's
+        padding, so it grows with its content instead of wrapping
+        Clear all onto a new line. The filter row is no-wrap and
+        scrolls horizontally only below sm, where the content can
+        still exceed the page width. This is asserted in code
+        terms only: jsdom cannot measure pixel widths, so the live
+        preview eyeball (all filters selected, as in Shahzeb's
+        screenshot) is the final proof.
       */}
       <div
         data-testid="prompt-top-section-filter-row"
-        className="flex flex-wrap items-center gap-x-3 gap-y-3"
+        className="flex flex-nowrap items-center gap-x-3 overflow-x-auto sm:overflow-visible"
       >
         {(Object.keys(FILTER_OPTIONS) as FilterKey[]).map((key) => {
           const changed = values[key] !== FILTER_DEFAULTS[key];
@@ -248,8 +270,8 @@ export function PromptTopSection(props: PromptTopSectionProps = {}) {
                 onClick={toggleFavorites}
                 className={
                   favoritesOnly
-                    ? "flex items-center gap-1 text-sm font-semibold text-brand-gold underline underline-offset-4"
-                    : "flex items-center gap-1 text-sm font-semibold text-ink"
+                    ? "flex shrink-0 items-center gap-1 whitespace-nowrap text-sm font-semibold text-brand-gold underline underline-offset-4"
+                    : "flex shrink-0 items-center gap-1 whitespace-nowrap text-sm font-semibold text-ink"
                 }
               >
                 <HeartIcon
@@ -263,7 +285,7 @@ export function PromptTopSection(props: PromptTopSectionProps = {}) {
           return (
             <React.Fragment key={key}>
             <div
-              className="relative"
+              className="relative shrink-0"
               ref={(element) => {
                 filterWrappers.current[key] = element;
               }}
@@ -276,8 +298,8 @@ export function PromptTopSection(props: PromptTopSectionProps = {}) {
                 onClick={() => setOpenFilter(open ? null : key)}
                 className={
                   changed
-                    ? "flex items-center gap-1 text-sm font-semibold text-brand-gold underline underline-offset-4"
-                    : "flex items-center gap-1 text-sm font-semibold text-ink"
+                    ? "flex shrink-0 items-center gap-1 whitespace-nowrap text-sm font-semibold text-brand-gold underline underline-offset-4"
+                    : "flex shrink-0 items-center gap-1 whitespace-nowrap text-sm font-semibold text-ink"
                 }
               >
                 {FILTER_LABELS[key]}: {values[key]}
@@ -323,7 +345,7 @@ export function PromptTopSection(props: PromptTopSectionProps = {}) {
             type="button"
             data-testid="prompt-top-section-clear-all"
             onClick={resetAll}
-            className="text-sm font-semibold text-brand-gold"
+            className="shrink-0 whitespace-nowrap text-sm font-semibold text-brand-gold"
           >
             Clear all
           </button>
