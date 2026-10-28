@@ -16,6 +16,12 @@ import {
   updateDestinationQueueItem,
 } from '@/lib/publishing/destination-queue';
 import { refreshDestinationUnmatchedFlag } from '@/lib/server/unmatched-flag';
+import {
+  lookupIdempotencyResult,
+  parseIdempotencyKeyHeader,
+  storeIdempotencyResult,
+  type IdempotencyScope,
+} from '@/lib/publishing/idempotency';
 
 /**
  * POST /api/tenant/[subdomain]/destinations/[destinationId]/queue/[itemId]/retry
@@ -47,6 +53,46 @@ export async function handleDestinationRetry(
     return context.errorResponse;
   }
   const { session, client, workspaceId } = context;
+
+  // Idempotency: same contract as the enqueue route — a retry with
+  // a known key returns the stored item view without requeueing
+  // (see lib/publishing/idempotency.ts). Only failed items can be
+  // retried, so a duplicate tap is already row-safe; the key
+  // additionally covers a retried request whose response was lost.
+  const idempotency = parseIdempotencyKeyHeader(request.headers);
+  if (idempotency.invalid) {
+    return NextResponse.json(
+      { error: 'INVALID_REQUEST', message: 'Idempotency-Key must be a UUID' },
+      { status: 400 }
+    );
+  }
+  const idempotencyScope: IdempotencyScope | null = idempotency.key
+    ? {
+        workspaceId,
+        userId: session.userId,
+        action: 'destination-retry',
+        key: idempotency.key,
+      }
+    : null;
+  if (idempotencyScope) {
+    try {
+      const replay = await lookupIdempotencyResult(client, idempotencyScope);
+      if (replay) {
+        return NextResponse.json(replay.body, {
+          status: replay.status,
+          headers: { 'Idempotency-Replayed': 'true' },
+        });
+      }
+    } catch {
+      return NextResponse.json(
+        {
+          error: 'IDEMPOTENCY_STORE_UNAVAILABLE',
+          message: 'Idempotency store unavailable',
+        },
+        { status: 500 }
+      );
+    }
+  }
 
   const destination = await fetchDestinationQueueContext(
     client,
@@ -163,7 +209,14 @@ export async function handleDestinationRetry(
     updated,
     new Map(mediaRows.map((media) => [media.id, media]))
   );
-  return NextResponse.json(UnifiedQueueItemSchema.parse(view), { status: 200 });
+  const responseBody = UnifiedQueueItemSchema.parse(view);
+  if (idempotencyScope) {
+    await storeIdempotencyResult(client, idempotencyScope, {
+      status: 200,
+      body: responseBody,
+    });
+  }
+  return NextResponse.json(responseBody, { status: 200 });
 }
 
 /** 'HH:MM' or 'HH:MM:SS' → 'HH:MM:SS'. */

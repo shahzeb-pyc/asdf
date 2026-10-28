@@ -39,7 +39,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
 
 import { api, buildTenantApiPath, isApiError } from '@/lib/api';
-import { assignQueueEstimates } from '@fbuploadpro/contracts';
+import {
+  assignQueueEstimates,
+  IDEMPOTENCY_KEY_HEADER,
+} from '@fbuploadpro/contracts';
 import {
   DisconnectPageResponseSchema,
   ListFacebookPagesResponseSchema,
@@ -339,11 +342,17 @@ export default function TenantDedicatedPageView({
   );
 
   const publishNowMutation = useMutation({
+    // One fresh idempotency key per tap: a retried request whose
+    // response was lost returns the stored acknowledgement instead
+    // of dispatching the item a second time.
     mutationFn: (itemId: string) =>
       api.post(
         buildTenantApiPath(subdomain, `/publishing/queue/${itemId}/publish-now`),
         undefined,
-        { schema: AckSchema }
+        {
+          schema: AckSchema,
+          headers: { [IDEMPOTENCY_KEY_HEADER]: crypto.randomUUID() },
+        }
       ),
     onSuccess: () => {
       invalidateQueue();

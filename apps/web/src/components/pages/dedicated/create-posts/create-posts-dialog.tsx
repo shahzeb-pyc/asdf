@@ -40,6 +40,7 @@ import {
   composerTextLimitForBlock,
   deriveComposerPostType,
   DestinationEnqueueResponseSchema,
+  IDEMPOTENCY_KEY_HEADER,
   toComposerEnqueueItem,
   type ComposerDraftBlock,
   type ComposerMedia,
@@ -102,6 +103,13 @@ export function CreatePostsDialog({
   const [pickerTargetId, setPickerTargetId] = React.useState<string | null>(null);
   const [bulkTextOpen, setBulkTextOpen] = React.useState(false);
   const [isQueueing, setIsQueueing] = React.useState(false);
+  // Idempotency keys, one stable key per post block for the life of
+  // this dialogue session. A block retried after a response-lost
+  // enqueue reuses its key, so the server returns the ORIGINAL
+  // queue item instead of a second row. Keys are keyed by block id
+  // (stable across edits, which replace block objects) and die with
+  // the dialogue: a block drafted in a new session is a new post.
+  const idempotencyKeysRef = React.useRef(new Map<string, string>());
   const [failedAvatarUrl, setFailedAvatarUrl] = React.useState<string | null>(null);
   // P11: the picker's session key — bumped on every fresh dialogue
   // open so the picker resets then, and only then.
@@ -347,6 +355,11 @@ export function CreatePostsDialog({
       for (const block of parsed.data) {
         const item = toComposerEnqueueItem(block);
         if (!item) continue;
+        let idempotencyKey = idempotencyKeysRef.current.get(block.id);
+        if (!idempotencyKey) {
+          idempotencyKey = crypto.randomUUID();
+          idempotencyKeysRef.current.set(block.id, idempotencyKey);
+        }
         await api.post(
           buildTenantApiPath(subdomain, '/publishing/destination-queue'),
           {
@@ -358,7 +371,10 @@ export function CreatePostsDialog({
             mediaItemIds: item.mediaItemIds,
             intent: 'queue',
           },
-          { schema: DestinationEnqueueResponseSchema }
+          {
+            schema: DestinationEnqueueResponseSchema,
+            headers: { [IDEMPOTENCY_KEY_HEADER]: idempotencyKey },
+          }
         );
         queued += 1;
       }

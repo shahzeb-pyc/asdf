@@ -9,6 +9,12 @@ import type { DatabaseClient } from '@fbuploadpro/contracts';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { enforceIpRateLimit } from '@/lib/request-body';
 import { refreshDestinationUnmatchedFlag } from '@/lib/server/unmatched-flag';
+import {
+  lookupIdempotencyResult,
+  parseIdempotencyKeyHeader,
+  storeIdempotencyResult,
+  type IdempotencyScope,
+} from '@/lib/publishing/idempotency';
 
 /**
  * Publish-now for the Facebook Page section, on the unified
@@ -30,6 +36,46 @@ export async function handlePublishNow(
   const workspaceId = await resolveTenantWorkspaceId(dbClient, subdomain, session.userId, session.role);
   if (!workspaceId) {
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
+  }
+
+  // Idempotency (same contract as the enqueue route): a retry with a
+  // known key returns the stored acknowledgement without
+  // re-dispatching. Publish-now re-times a single existing row, so
+  // a duplicate tap is already row-safe — the key additionally
+  // covers a retried request whose response was lost.
+  const idempotency = parseIdempotencyKeyHeader(request.headers);
+  if (idempotency.invalid) {
+    return NextResponse.json(
+      { error: 'INVALID_REQUEST', message: 'Idempotency-Key must be a UUID' },
+      { status: 400 }
+    );
+  }
+  const idempotencyScope: IdempotencyScope | null = idempotency.key
+    ? {
+        workspaceId,
+        userId: session.userId,
+        action: 'publish-now',
+        key: idempotency.key,
+      }
+    : null;
+  if (idempotencyScope) {
+    try {
+      const replay = await lookupIdempotencyResult(dbClient, idempotencyScope);
+      if (replay) {
+        return NextResponse.json(replay.body, {
+          status: replay.status,
+          headers: { 'Idempotency-Replayed': 'true' },
+        });
+      }
+    } catch {
+      return NextResponse.json(
+        {
+          error: 'IDEMPOTENCY_STORE_UNAVAILABLE',
+          message: 'Idempotency store unavailable',
+        },
+        { status: 500 }
+      );
+    }
   }
 
   if (isLegacyClient(dbClient)) {
@@ -73,6 +119,15 @@ export async function handlePublishNow(
       await refreshDestinationUnmatchedFlag(dbClient, destRows[0].destination_id);
     }
 
+    if (idempotencyScope) {
+      await storeIdempotencyResult(dbClient, idempotencyScope, {
+        status: 200,
+        body: {
+          success: true,
+          message: 'Item dispatched for immediate publishing',
+        },
+      });
+    }
     return NextResponse.json(
       {
         success: true,
@@ -125,6 +180,15 @@ export async function handlePublishNow(
     await refreshDestinationUnmatchedFlag(supabase, existing.destination_id);
   }
 
+  if (idempotencyScope) {
+    await storeIdempotencyResult(dbClient, idempotencyScope, {
+      status: 200,
+      body: {
+        success: true,
+        message: 'Item dispatched for immediate publishing',
+      },
+    });
+  }
   return NextResponse.json(
     {
       success: true,

@@ -23,6 +23,12 @@ import {
   type OwnedMediaRow,
 } from '@/lib/publishing/destination-enqueue';
 import { refreshDestinationUnmatchedFlag } from '@/lib/server/unmatched-flag';
+import {
+  lookupIdempotencyResult,
+  parseIdempotencyKeyHeader,
+  storeIdempotencyResult,
+  type IdempotencyScope,
+} from '@/lib/publishing/idempotency';
 
 /**
  * POST /api/tenant/[subdomain]/publishing/destination-queue
@@ -55,6 +61,47 @@ export async function handleDestinationEnqueue(
     return context.errorResponse;
   }
   const { session, client, workspaceId } = context;
+
+  // Idempotency: a retry with a known key returns the stored
+  // response without re-executing. This is the response-lost
+  // protection — without it, a retry after a dropped response
+  // enqueues a second, duplicate post.
+  const idempotency = parseIdempotencyKeyHeader(request.headers);
+  if (idempotency.invalid) {
+    return NextResponse.json(
+      { error: 'INVALID_REQUEST', message: 'Idempotency-Key must be a UUID' },
+      { status: 400 }
+    );
+  }
+  const idempotencyScope: IdempotencyScope | null = idempotency.key
+    ? {
+        workspaceId,
+        userId: session.userId,
+        action: 'destination-queue',
+        key: idempotency.key,
+      }
+    : null;
+  if (idempotencyScope) {
+    try {
+      const replay = await lookupIdempotencyResult(client, idempotencyScope);
+      if (replay) {
+        return NextResponse.json(replay.body, {
+          status: replay.status,
+          headers: { 'Idempotency-Replayed': 'true' },
+        });
+      }
+    } catch {
+      // The request has not executed yet: failing loudly here is
+      // safe, while executing blindly could duplicate the post.
+      return NextResponse.json(
+        {
+          error: 'IDEMPOTENCY_STORE_UNAVAILABLE',
+          message: 'Idempotency store unavailable',
+        },
+        { status: 500 }
+      );
+    }
+  }
 
   // Large-body cap, not the 64 KiB default: a Facebook composer
   // caption alone may legitimately approach 63,206 characters, so a
@@ -266,6 +313,14 @@ export async function handleDestinationEnqueue(
     slotId: created.slot_id ?? null,
     createdAt: new Date(created.created_at).toISOString(),
   });
+  // Only successful responses are stored: a failed request retried
+  // with the same key must execute fresh, not replay its error.
+  if (idempotencyScope) {
+    await storeIdempotencyResult(client, idempotencyScope, {
+      status: 201,
+      body: response,
+    });
+  }
   return NextResponse.json(response, { status: 201 });
 }
 
