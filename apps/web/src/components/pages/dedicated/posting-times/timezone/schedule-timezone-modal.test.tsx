@@ -39,6 +39,9 @@ describe('ScheduleTimezoneModal (rebuilt, spec 134)', () => {
   it('opens on step 1 with the current banner, search, and a disabled Review change', () => {
     renderModal();
     expect(screen.getByTestId('schedule-timezone-modal')).toBeInTheDocument();
+    expect(document.activeElement).toBe(
+      screen.getByTestId('timezone-search-input')
+    );
     expect(screen.getByTestId('current-timezone-banner')).toBeInTheDocument();
     expect(screen.getByTestId('timezone-search-input')).toBeInTheDocument();
     expect(screen.getByText('Change timezone')).toBeInTheDocument();

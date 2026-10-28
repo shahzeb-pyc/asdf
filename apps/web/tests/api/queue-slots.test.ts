@@ -647,6 +647,19 @@ describe('Page Queue Slots CRUD (T121, T122, T123)', () => {
       expect(res.status).toBe(400);
     });
 
+    it('returns 400 on a non-IANA timezone', async () => {
+      const req = new NextRequest(
+        `http://localhost:3000/api/tenant/acme/pages/${pageId}/slots`,
+        {
+          method: 'PATCH',
+          headers: { cookie: validSessionCookie },
+          body: JSON.stringify({ timezone: 'Not/AZone' }),
+        }
+      );
+      const res = await handleUpdateQueueScheduleTimezone(req, 'acme', pageId);
+      expect(res.status).toBe(400);
+    });
+
     it('returns 404 when workspace not found', async () => {
       const mockDb: Partial<DatabaseClient> = {
         query: vi.fn().mockImplementation((sql: string) => {

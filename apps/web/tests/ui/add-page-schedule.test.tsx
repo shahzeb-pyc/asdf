@@ -13,8 +13,10 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { AddPageModal } from '@/components/pages/add-page-modal';
 import {
   createAddPagePostingTime,
+  findFreeAddPagePostingTime,
   isAddPageScheduleValid,
   nextAddPagePostingTime,
+  sortAddPageFormats,
 } from '@/components/pages/add-page-helpers';
 import type { FacebookAccountItem } from '@/components/accounts/account-card';
 
@@ -79,6 +81,25 @@ describe('Add Page schedule helpers', () => {
     expect(
       nextAddPagePostingTime([createAddPagePostingTime('09:00')])
         .allowedFormats
+    ).toEqual(['reel', 'image', 'video', 'story', 'text']);
+  });
+
+  it('a fifth row after the four defaults is a genuinely free time, not a duplicate fallback', () => {
+    const four = ['09:00', '12:00', '17:30', '20:00'].map(
+      createAddPagePostingTime
+    );
+    const fifth = findFreeAddPagePostingTime(four);
+    expect(fifth).not.toBeNull();
+    expect(fifth?.slotTime).toBe('21:00');
+    expect(
+      four.some((time) => time.slotTime === fifth?.slotTime)
+    ).toBe(false);
+  });
+
+  it('deselect-then-reselect keeps the canonical format order', () => {
+    expect(sortAddPageFormats(['text', 'reel'])).toEqual(['reel', 'text']);
+    expect(
+      sortAddPageFormats(['story', 'text', 'reel', 'image', 'video'])
     ).toEqual(['reel', 'image', 'video', 'story', 'text']);
   });
 });
@@ -225,7 +246,12 @@ describe('AddPageModal steps 3–4', () => {
 
     // Step 4 → Step 3 keeps the timezone; Step 3 → Step 4 keeps the time.
     fireEvent.click(screen.getByTestId('back-to-timezone-btn'));
-    expect(screen.getByText(/Selected timezone: Asia\/Karachi/)).toBeTruthy();
+    expect(
+      screen.getByText(/Selected timezone: Karachi/)
+    ).toBeTruthy();
+    expect(
+      screen.getByTestId('add-page-timezone-note').textContent
+    ).toContain('Asia/Karachi');
     expect(
       (screen.getByTestId('continue-to-posting-times-btn') as HTMLButtonElement)
         .disabled
@@ -315,5 +341,277 @@ describe('AddPageModal steps 3–4', () => {
         },
       ],
     });
+  });
+
+  it('a cleared time shows "Choose a time" instead of previewing 09:00 AM', () => {
+    render(
+      <AddPageModal
+        subdomain="acme"
+        open={true}
+        onOpenChange={vi.fn()}
+        accounts={[activeAccount]}
+        initialStep="select-posting-times"
+        initialSelectedAccount={activeAccount}
+        initialDiscoveredPages={[]}
+        initialSelectedPageIds={['fb_page_201']}
+        initialSelectedTimezone="Asia/Karachi"
+      />
+    );
+
+    fireEvent.change(screen.getByTestId('add-page-posting-time-input-0'), {
+      target: { value: '' },
+    });
+    expect(screen.getByText('Choose a time.')).toBeTruthy();
+    expect(screen.queryByText(/Posts will go out at 09:00 AM/)).toBeNull();
+  });
+
+  it('deselect-then-reselect sends formats in canonical order', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        success: true,
+        importedCount: 1,
+        pages: [
+          {
+            id: '44444444-4444-4444-8444-444444444444',
+            fbPageId: 'fb_page_201',
+            pageName: 'Skynet AI Daily',
+          },
+        ],
+      })
+    );
+    render(
+      <AddPageModal
+        subdomain="acme"
+        open={true}
+        onOpenChange={vi.fn()}
+        accounts={[activeAccount]}
+        onSuccess={vi.fn()}
+        initialStep="select-posting-times"
+        initialSelectedAccount={activeAccount}
+        initialDiscoveredPages={[]}
+        initialSelectedPageIds={['fb_page_201']}
+        initialSelectedTimezone="Asia/Karachi"
+      />
+    );
+
+    fireEvent.click(screen.getByTestId('add-page-format-toggle-0-reel'));
+    fireEvent.click(screen.getByTestId('add-page-format-toggle-0-reel'));
+    fireEvent.click(screen.getByTestId('confirm-add-pages-btn'));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const importCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).endsWith('/pages/import')
+    );
+    expect(
+      JSON.parse(String(importCall?.[1]?.body)).postingTimes[0].allowedFormats
+    ).toEqual(['reel', 'image', 'video', 'story', 'text']);
+  });
+
+  it('a schedule failure shows the distinct message in an alert banner and keeps the schedule', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(
+        {
+          error:
+            "Couldn't save the posting times — try again, your timezone and times are kept",
+          code: 'SCHEDULE_FAILED',
+        },
+        500
+      )
+    );
+    render(
+      <AddPageModal
+        subdomain="acme"
+        open={true}
+        onOpenChange={vi.fn()}
+        accounts={[activeAccount]}
+        initialStep="select-posting-times"
+        initialSelectedAccount={activeAccount}
+        initialDiscoveredPages={[]}
+        initialSelectedPageIds={['fb_page_201']}
+        initialSelectedTimezone="Asia/Karachi"
+      />
+    );
+
+    fireEvent.click(screen.getByTestId('confirm-add-pages-btn'));
+    const error = await screen.findByTestId('add-page-error');
+    expect(error.getAttribute('role')).toBe('alert');
+    expect(error.textContent).toContain(
+      "Couldn't save the posting times — try again, your timezone and times are kept"
+    );
+    expect(error.textContent).not.toContain(
+      "Couldn't add the selected pages."
+    );
+    // The schedule is kept for retry.
+    expect(screen.getByText('Set posting times')).toBeTruthy();
+    expect(
+      (
+        screen.getByTestId(
+          'add-page-posting-time-input-0'
+        ) as HTMLInputElement
+      ).value
+    ).toBe('09:00');
+  });
+
+  it('entering Step 3 focuses the timezone search and entering Step 4 focuses the first time input', async () => {
+    render(
+      <AddPageModal
+        subdomain="acme"
+        open={true}
+        onOpenChange={vi.fn()}
+        accounts={[activeAccount]}
+        initialStep="select-timezone"
+        initialSelectedAccount={activeAccount}
+        initialDiscoveredPages={[]}
+        initialSelectedPageIds={['fb_page_201']}
+      />
+    );
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByTestId('add-page-timezone-search-input')
+      )
+    );
+
+    fireEvent.click(
+      screen.getByTestId('add-page-timezone-option-Asia/Karachi')
+    );
+    fireEvent.click(screen.getByTestId('continue-to-posting-times-btn'));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByTestId('add-page-posting-time-input-0')
+      )
+    );
+  });
+
+  it('going back to accounts and picking an account again keeps the timezone and posting times', async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (String(url).includes('/pages/discover')) {
+        return jsonResponse({
+          accountId: activeAccount.id,
+          accountDisplayName: activeAccount.displayName,
+          pages: [
+            {
+              fbPageId: 'fb_page_201',
+              pageName: 'Skynet AI Daily',
+              profilePictureUrl: null,
+              category: 'Automation',
+              currentFollowers: 4300,
+              followersCount: 4300,
+              tasks: [],
+              isImported: false,
+            },
+          ],
+          total: 1,
+        });
+      }
+      return jsonResponse({ success: true, importedCount: 0, pages: [] });
+    });
+    render(
+      <AddPageModal
+        subdomain="acme"
+        open={true}
+        onOpenChange={vi.fn()}
+        accounts={[activeAccount]}
+        initialStep="select-pages"
+        initialSelectedAccount={activeAccount}
+        initialDiscoveredPages={[
+          {
+            fbPageId: 'fb_page_201',
+            pageName: 'Skynet AI Daily',
+            profilePictureUrl: null,
+            category: 'Automation',
+            currentFollowers: 4300,
+            isImported: false,
+          },
+        ]}
+        initialSelectedPageIds={['fb_page_201']}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId('continue-to-timezone-btn'));
+    fireEvent.click(
+      screen.getByTestId('add-page-timezone-option-Asia/Karachi')
+    );
+    fireEvent.click(screen.getByTestId('continue-to-posting-times-btn'));
+    fireEvent.change(screen.getByTestId('add-page-posting-time-input-0'), {
+      target: { value: '17:30' },
+    });
+
+    // Back to pages, then back to accounts, then pick the account
+    // again: the page selection resets, the schedule does not.
+    fireEvent.click(screen.getByTestId('back-to-timezone-btn'));
+    fireEvent.click(screen.getByTestId('back-to-pages-btn'));
+    fireEvent.click(screen.getByTestId('change-account-btn'));
+    expect(screen.getByText('Select a Facebook Account')).toBeTruthy();
+    fireEvent.click(
+      screen.getByTestId(`select-account-${activeAccount.id}`)
+    );
+    await screen.findByText('Select Facebook Pages to Add');
+    fireEvent.click(
+      screen.getByTestId('discovered-page-checkbox-fb_page_201')
+    );
+    fireEvent.click(screen.getByTestId('continue-to-timezone-btn'));
+    expect(
+      screen.getByTestId('add-page-timezone-note').textContent
+    ).toContain('Asia/Karachi');
+    fireEvent.click(screen.getByTestId('continue-to-posting-times-btn'));
+    expect(
+      (
+        screen.getByTestId(
+          'add-page-posting-time-input-0'
+        ) as HTMLInputElement
+      ).value
+    ).toBe('17:30');
+  });
+
+  it('Cancel closes and resets the schedule', async () => {
+    const onOpenChange = vi.fn();
+    render(
+      <AddPageModal
+        subdomain="acme"
+        open={true}
+        onOpenChange={onOpenChange}
+        accounts={[activeAccount]}
+        initialStep="select-posting-times"
+        initialSelectedAccount={activeAccount}
+        initialDiscoveredPages={[]}
+        initialSelectedPageIds={['fb_page_201']}
+        initialSelectedTimezone="Asia/Karachi"
+      />
+    );
+    fireEvent.click(screen.getByTestId('cancel-add-pages-btn'));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it('Add another is disabled at 24 posting times', () => {
+    const times = Array.from({ length: 24 }, (_, i) => ({
+      slotTime: `${String(Math.floor(i / 2)).padStart(2, '0')}:${i % 2 === 0 ? '00' : '30'}`,
+      allowedFormats: ['reel', 'image', 'video', 'story', 'text'],
+    }));
+    render(
+      <AddPageModal
+        subdomain="acme"
+        open={true}
+        onOpenChange={vi.fn()}
+        accounts={[activeAccount]}
+        initialStep="select-posting-times"
+        initialSelectedAccount={activeAccount}
+        initialDiscoveredPages={[]}
+        initialSelectedPageIds={['fb_page_201']}
+        initialSelectedTimezone="Asia/Karachi"
+        initialPostingTimes={times}
+      />
+    );
+    expect(
+      screen.getByTestId('add-another-posting-time-btn') as HTMLButtonElement
+    ).toBeTruthy();
+    expect(
+      (
+        screen.getByTestId(
+          'add-another-posting-time-btn'
+        ) as HTMLButtonElement
+      ).disabled
+    ).toBe(true);
+    expect(
+      screen.getByTestId('add-page-posting-times-cap-note')
+    ).toBeTruthy();
   });
 });

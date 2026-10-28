@@ -83,9 +83,13 @@ describe('Import with timezone + posting times', () => {
     );
   }
 
-  function makeMockDb(options?: { failTimezoneFor?: string }) {
+  function makeMockDb(options?: {
+    failTimezoneFor?: string;
+    preExistingFbIds?: string[];
+  }) {
     const timezoneUpdates: unknown[][] = [];
     const slotInserts: unknown[][] = [];
+    const deleteQueries: string[] = [];
     const mockDb = {
       query: vi.fn().mockImplementation((sql: string, params: unknown[]) => {
         if (sql.includes('FROM workspaces')) {
@@ -99,6 +103,17 @@ describe('Import with timezone + posting times', () => {
               status: 'active',
             },
           ]);
+        }
+        if (sql.includes('SELECT external_destination_id')) {
+          return Promise.resolve(
+            (options?.preExistingFbIds ?? []).map((fbPageId) => ({
+              external_destination_id: fbPageId,
+            }))
+          );
+        }
+        if (sql.startsWith('DELETE FROM')) {
+          deleteQueries.push(sql);
+          return Promise.resolve([]);
         }
         if (sql.includes('INSERT INTO destinations')) {
           const fbPageId = String(params[2]);
@@ -124,7 +139,7 @@ describe('Import with timezone + posting times', () => {
         return Promise.resolve([]);
       }),
     } as unknown as DatabaseClient;
-    return { mockDb, timezoneUpdates, slotInserts };
+    return { mockDb, timezoneUpdates, slotInserts, deleteQueries };
   }
 
   function importRequest(body: unknown) {
@@ -177,9 +192,10 @@ describe('Import with timezone + posting times', () => {
       new Set([pageUuids.page_1001, pageUuids.page_1002])
     );
 
-    // Two times × two pages, each as an upsert keyed on
-    // destination + time — never a plain insert that could duplicate.
-    expect(slotInserts).toHaveLength(4);
+    // Two pages, one batched multi-row upsert per page, each keyed
+    // on destination + time — never a plain insert that could
+    // duplicate, and never one query per time.
+    expect(slotInserts).toHaveLength(2);
     const slotCalls = (mockDb.query as unknown as { mock: { calls: Array<[string, unknown[]]> } }).mock.calls.filter(
       ([sql]) => sql.includes('INSERT INTO posting_slots')
     );
@@ -190,10 +206,12 @@ describe('Import with timezone + posting times', () => {
     const timesByPage = new Map<string, string[]>();
     for (const params of slotInserts) {
       const pageId = String(params[0]);
-      timesByPage.set(pageId, [
-        ...(timesByPage.get(pageId) ?? []),
-        String(params[1]),
-      ]);
+      // Batched params: [pageId, time, formats, time, formats, ...]
+      const times: string[] = [];
+      for (let i = 1; i < params.length; i += 2) {
+        times.push(String(params[i]));
+      }
+      timesByPage.set(pageId, times);
     }
     expect(timesByPage.get(pageUuids.page_1001)).toEqual(['09:00', '17:30']);
     expect(timesByPage.get(pageUuids.page_1002)).toEqual(['09:00', '17:30']);
@@ -212,14 +230,15 @@ describe('Import with timezone + posting times', () => {
       expect(res.status).toBe(200);
       expect((await res.json()).success).toBe(true);
     }
-    // Two attempts, same 4 slot upserts each — the second attempt
-    // updates the existing rows instead of creating duplicates.
-    expect(slotInserts).toHaveLength(8);
+    // Two attempts, one batched upsert per page each — the second
+    // attempt updates the existing rows instead of creating
+    // duplicates.
+    expect(slotInserts).toHaveLength(4);
   });
 
-  it('a schedule failure returns 500 with no success payload', async () => {
+  it('a schedule failure returns the distinct schedule error and rolls back the pages created in this call', async () => {
     mockGraphPages();
-    const { mockDb } = makeMockDb({
+    const { mockDb, deleteQueries } = makeMockDb({
       failTimezoneFor: pageUuids.page_1002,
     });
 
@@ -231,7 +250,132 @@ describe('Import with timezone + posting times', () => {
     expect(res.status).toBe(500);
     const json = await res.json();
     expect(json.success).toBeUndefined();
-    expect(json.error).toContain("Couldn't add the selected pages.");
+    expect(json.code).toBe('SCHEDULE_FAILED');
+    expect(json.error).toContain(
+      "Couldn't save the posting times — try again, your timezone and times are kept"
+    );
+    // Rollback: slots first, then the destinations created here.
+    expect(
+      deleteQueries.some((sql) => sql.startsWith('DELETE FROM posting_slots'))
+    ).toBe(true);
+    expect(
+      deleteQueries.some((sql) => sql.startsWith('DELETE FROM destinations'))
+    ).toBe(true);
+  });
+
+  it('a failed schedule followed by a retry completes all pages', async () => {
+    mockGraphPages();
+    const failing = makeMockDb({
+      failTimezoneFor: pageUuids.page_1002,
+    });
+    const failed = await handleImportPages(
+      importRequest(scheduleBody),
+      'acme',
+      failing.mockDb
+    );
+    expect(failed.status).toBe(500);
+
+    mockGraphPages();
+    const succeeding = makeMockDb();
+    const retried = await handleImportPages(
+      importRequest(scheduleBody),
+      'acme',
+      succeeding.mockDb
+    );
+    expect(retried.status).toBe(200);
+    expect((await retried.json()).success).toBe(true);
+    expect(succeeding.timezoneUpdates).toHaveLength(2);
+    expect(succeeding.slotInserts).toHaveLength(2);
+  });
+
+  it('a schedule is applied only to newly created pages, never to a pre-existing one', async () => {
+    mockGraphPages();
+    const { mockDb, timezoneUpdates, slotInserts } = makeMockDb({
+      preExistingFbIds: ['page_1001'],
+    });
+
+    const res = await handleImportPages(
+      importRequest(scheduleBody),
+      'acme',
+      mockDb
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()).importedCount).toBe(2);
+    // Only page_1002 is new, so only it gets a timezone and slots.
+    expect(timezoneUpdates).toHaveLength(1);
+    expect(timezoneUpdates[0]?.[1]).toBe(pageUuids.page_1002);
+    expect(slotInserts).toHaveLength(1);
+    expect(slotInserts[0]?.[0]).toBe(pageUuids.page_1002);
+  });
+
+  it('when Graph returns fewer pages than selected, a scheduled import writes nothing', async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: 'page_1001',
+              name: 'Brand Flagship Page',
+              category: 'Retail Company',
+              followers_count: 52000,
+              tasks: ['CREATE_CONTENT'],
+              access_token: 'page_token_1001',
+              picture: { data: { url: null } },
+            },
+          ],
+        }),
+        { status: 200 }
+      )
+    );
+    const { mockDb } = makeMockDb();
+    const res = await handleImportPages(
+      importRequest(scheduleBody),
+      'acme',
+      mockDb
+    );
+    expect(res.status).toBe(500);
+    const destinationInserts = (
+      mockDb.query as unknown as { mock: { calls: Array<[string, unknown[]]> } }
+    ).mock.calls.filter(([sql]) => sql.includes('INSERT INTO destinations'));
+    expect(destinationInserts).toHaveLength(0);
+  });
+
+  it('duplicate selected page ids collapse to one import per page', async () => {
+    mockGraphPages();
+    const { mockDb, timezoneUpdates } = makeMockDb();
+    const res = await handleImportPages(
+      importRequest({
+        ...scheduleBody,
+        selectedPageIds: ['page_1001', 'page_1001', 'page_1002'],
+      }),
+      'acme',
+      mockDb
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()).importedCount).toBe(2);
+    expect(timezoneUpdates).toHaveLength(2);
+  });
+
+  it('rejects a non-IANA timezone and more than 24 posting times at the boundary', async () => {
+    const { mockDb } = makeMockDb();
+    const badTimezone = await handleImportPages(
+      importRequest({ ...scheduleBody, timezone: 'Not/AZone' }),
+      'acme',
+      mockDb
+    );
+    expect(badTimezone.status).toBe(400);
+    const tooManyTimes = await handleImportPages(
+      importRequest({
+        ...scheduleBody,
+        postingTimes: Array.from({ length: 25 }, (_, i) => ({
+          slotTime: `${String(Math.floor(i / 2)).padStart(2, '0')}:${i % 2 === 0 ? '00' : '30'}`,
+          allowedFormats: ['reel'],
+        })),
+      }),
+      'acme',
+      mockDb
+    );
+    expect(tooManyTimes.status).toBe(400);
   });
 
   it('rejects a timezone without times, times without a timezone, duplicate times, and empty formats at the boundary', async () => {
@@ -255,5 +399,202 @@ describe('Import with timezone + posting times', () => {
       const res = await handleImportPages(importRequest(body), 'acme', mockDb);
       expect(res.status).toBe(400);
     }
+  });
+
+  // Supabase path: the route's production path (no Postgres client
+  // passed in). A chainable query-builder mock mirrors the real
+  // Postgrest builder closely enough for the route's calls:
+  // from().select().eq().in().maybeSingle()/single(), upsert/update/
+  // delete awaited directly.
+  function makeMockSupabase(options?: {
+    existingFbIds?: string[];
+    failScheduleFor?: string;
+    failSlotUpsert?: boolean;
+  }) {
+    const slotUpserts: unknown[] = [];
+    const deletes: Array<{ table: string; filters: Record<string, unknown> }> =
+      [];
+    const timezoneUpdates: unknown[] = [];
+
+    class MockQuery {
+      table: string;
+      op: 'select' | 'upsert' | 'update' | 'delete' = 'select';
+      payload: unknown = undefined;
+      filters: Record<string, unknown> = {};
+      constructor(table: string) {
+        this.table = table;
+      }
+      select() {
+        return this;
+      }
+      eq(key: string, value: unknown) {
+        this.filters[key] = value;
+        return this;
+      }
+      in(key: string, value: unknown) {
+        this.filters[key] = value;
+        return this;
+      }
+      upsert(payload: unknown) {
+        this.op = 'upsert';
+        this.payload = payload;
+        if (this.table === 'posting_slots') {
+          slotUpserts.push(payload);
+        }
+        return this;
+      }
+      update(payload: unknown) {
+        this.op = 'update';
+        this.payload = payload;
+        return this;
+      }
+      delete() {
+        this.op = 'delete';
+        return this;
+      }
+      async maybeSingle() {
+        return this.resolveSingle();
+      }
+      async single() {
+        return this.resolveSingle();
+      }
+      then(
+        resolve: (value: unknown) => void,
+        reject?: (reason: unknown) => void
+      ) {
+        try {
+          resolve(this.resolveAwait());
+        } catch (err) {
+          reject?.(err);
+        }
+      }
+      private resolveSingle(): { data: unknown; error: unknown } {
+        if (this.table === 'workspaces') {
+          return { data: { id: 'ws_123' }, error: null };
+        }
+        if (this.table === 'social_accounts') {
+          return {
+            data: { encrypted_access_token: sampleEncryptedAccountToken },
+            error: null,
+          };
+        }
+        if (this.table === 'destinations' && this.op === 'upsert') {
+          const payload = this.payload as Record<string, unknown>;
+          const fbPageId = String(payload.external_destination_id);
+          return {
+            data: {
+              id: pageUuids[fbPageId],
+              external_destination_id: fbPageId,
+              name: payload.name,
+            },
+            error: null,
+          };
+        }
+        if (this.table === 'destinations' && this.op === 'update') {
+          timezoneUpdates.push(this.filters.id);
+          if (options?.failScheduleFor === String(this.filters.id)) {
+            return { data: null, error: null };
+          }
+          return { data: { id: this.filters.id }, error: null };
+        }
+        return { data: null, error: null };
+      }
+      private resolveAwait(): { data: unknown; error: unknown } {
+        if (this.table === 'destinations' && this.op === 'select') {
+          return {
+            data: (options?.existingFbIds ?? []).map((fbPageId) => ({
+              external_destination_id: fbPageId,
+              status: 'active',
+              metadata: { starting_followers: 100 },
+            })),
+            error: null,
+          };
+        }
+        if (this.table === 'posting_slots' && this.op === 'upsert') {
+          if (options?.failSlotUpsert) {
+            return { data: null, error: { message: 'slot boom' } };
+          }
+          return { data: this.payload, error: null };
+        }
+        if (this.op === 'delete') {
+          deletes.push({ table: this.table, filters: { ...this.filters } });
+          return { data: null, error: null };
+        }
+        return { data: null, error: null };
+      }
+    }
+
+    const mockSupabase = {
+      from: (table: string) => new MockQuery(table),
+    };
+    return { mockSupabase, slotUpserts, deletes, timezoneUpdates };
+  }
+
+  it('applies the schedule on the Supabase path and skips pre-existing pages', async () => {
+    mockGraphPages();
+    const { mockSupabase, slotUpserts, timezoneUpdates } = makeMockSupabase({
+      existingFbIds: ['page_1001'],
+    });
+    const res = await handleImportPages(
+      importRequest(scheduleBody),
+      'acme',
+      mockSupabase as never
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()).importedCount).toBe(2);
+    // Only the new page gets a timezone update and a slot upsert.
+    expect(timezoneUpdates).toEqual([pageUuids.page_1002]);
+    expect(slotUpserts).toHaveLength(1);
+    expect(
+      (slotUpserts[0] as Array<Record<string, unknown>>).map(
+        (row) => row.time_of_day
+      )
+    ).toEqual(['09:00', '17:30']);
+  });
+
+  it('a Supabase schedule failure returns the distinct error and deletes the created pages', async () => {
+    mockGraphPages();
+    const { mockSupabase, deletes } = makeMockSupabase({
+      failScheduleFor: pageUuids.page_1002,
+    });
+    const res = await handleImportPages(
+      importRequest(scheduleBody),
+      'acme',
+      mockSupabase as never
+    );
+    expect(res.status).toBe(500);
+    const json = await res.json();
+    expect(json.code).toBe('SCHEDULE_FAILED');
+    expect(json.error).toContain("Couldn't save the posting times");
+    expect(deletes.some((d) => d.table === 'posting_slots')).toBe(true);
+    expect(deletes.some((d) => d.table === 'destinations')).toBe(true);
+    expect(
+      deletes
+        .filter((d) => d.table === 'destinations')
+        .flatMap((d) => d.filters.id as string[])
+    ).toEqual(
+      expect.arrayContaining([pageUuids.page_1001, pageUuids.page_1002])
+    );
+  });
+
+  it('a Supabase retry after a slot failure succeeds without duplicating', async () => {
+    mockGraphPages();
+    const failing = makeMockSupabase({ failSlotUpsert: true });
+    const failed = await handleImportPages(
+      importRequest(scheduleBody),
+      'acme',
+      failing.mockSupabase as never
+    );
+    expect(failed.status).toBe(500);
+
+    mockGraphPages();
+    const succeeding = makeMockSupabase();
+    const retried = await handleImportPages(
+      importRequest(scheduleBody),
+      'acme',
+      succeeding.mockSupabase as never
+    );
+    expect(retried.status).toBe(200);
+    expect(succeeding.slotUpserts).toHaveLength(2);
   });
 });
