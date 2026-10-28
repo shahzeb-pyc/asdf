@@ -3,6 +3,7 @@ import {
   isPromptLibraryStorageKey,
   PromptCreateSchema,
   PromptDetailSchema,
+  PromptFacetsSchema,
   PromptListItemSchema,
   PromptListQuerySchema,
   promptFormatMatchesAspectRatio,
@@ -243,5 +244,38 @@ describe('prompt library contracts', () => {
     expect(listItem.previewUrl).toBe(
       'https://media.example.com/prompts/abc/preview.mp4',
     );
+  });
+
+  it('accepts a valid facets payload and rejects unknown values and negative counts', () => {
+    const facets = {
+      category: [
+        { value: 'animals', count: 2 },
+        { value: 'comedy', count: 1 },
+      ],
+      tool: [{ value: 'dola_ai', count: 3 }],
+      language: [{ value: 'en', count: 3 }],
+      length: [{ value: '1min_plus', count: 3 }],
+    };
+    expect(PromptFacetsSchema.safeParse(facets).success).toBe(true);
+    expect(
+      PromptFacetsSchema.safeParse({
+        ...facets,
+        category: [{ value: 'sports', count: 1 }],
+      }).success,
+    ).toBe(false);
+    expect(
+      PromptFacetsSchema.safeParse({
+        ...facets,
+        tool: [{ value: 'dola_ai', count: -1 }],
+      }).success,
+    ).toBe(false);
+    expect(
+      PromptFacetsSchema.safeParse({
+        category: [],
+        tool: [],
+        language: [],
+        length: [],
+      }).success,
+    ).toBe(true);
   });
 });

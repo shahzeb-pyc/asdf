@@ -381,3 +381,37 @@ export const PromptFavouriteResponseSchema = z.object({
 export type PromptFavouriteResponse = z.infer<
   typeof PromptFavouriteResponseSchema
 >;
+
+/**
+ * Facets — the distinct values ACTUALLY present in published
+ * prompts, with counts, for the filter dropdowns (GET
+ * /prompts/facets). Only values a published prompt uses appear;
+ * an allowed-but-unused value disappears until a prompt uses it,
+ * then appears automatically. Sort is NOT a facet: Sort modes are
+ * behaviours (newest / most_copied / a_to_z), not data values.
+ * Ordering is the server's: count descending, then value
+ * alphabetically on ties; the frontend preserves that order.
+ * Computed from ALL published prompts, unfiltered by the current
+ * search/filters, so selecting one filter never hides the other
+ * options. LIMIT, stated plainly: the DB CHECK constraints still
+ * gate which values an admin can insert — a brand-new value needs
+ * a migration to the CHECK before any prompt can use it. Facets
+ * are dynamic only within the values the DB already allows.
+ */
+const promptFacetCount = z.number().int().nonnegative();
+export const PromptFacetsSchema = z.object({
+  category: z.array(
+    z.object({ value: PromptCategorySchema, count: promptFacetCount }),
+  ),
+  tool: z.array(
+    z.object({ value: PromptToolSchema, count: promptFacetCount }),
+  ),
+  language: z.array(
+    z.object({ value: PromptLanguageSchema, count: promptFacetCount }),
+  ),
+  length: z.array(
+    z.object({ value: PromptLengthSchema, count: promptFacetCount }),
+  ),
+});
+export type PromptFacets = z.infer<typeof PromptFacetsSchema>;
+export type PromptFacetKey = keyof PromptFacets;
