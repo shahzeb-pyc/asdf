@@ -88,7 +88,7 @@ export function AddMirrorDialog({
     mutationFn: () =>
       api.post(
         buildTenantApiPath(subdomain, '/tiktok-mirrors'),
-        { accountId, fbPageId, tiktokUsername: username },
+        { accountId, targetExternalId: fbPageId, sourceUsername: username },
         { schema: CreateMirrorResponseSchema }
       ),
     onSuccess: (data) => {

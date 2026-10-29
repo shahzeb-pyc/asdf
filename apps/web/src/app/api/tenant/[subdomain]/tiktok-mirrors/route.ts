@@ -56,12 +56,16 @@ export interface DestinationRow {
 export interface MirrorRow {
   id: string;
   workspace_id: string;
-  destination_id: string;
-  tiktok_username: string;
-  tiktok_display_name: string | null;
-  tiktok_avatar_url: string | null;
+  source_platform: string;
+  source_username: string;
+  source_display_name: string | null;
+  source_avatar_url: string | null;
+  target_platform: string;
+  target_external_id: string;
+  target_display_name: string;
+  target_avatar_url: string | null;
   status: string;
-  last_posted_video_id: string | null;
+  last_posted_source_id: string | null;
   last_posted_create_time: number | null;
   last_checked_at: string | null;
   next_check_at: string | null;
@@ -72,11 +76,11 @@ export interface MirrorRow {
 
 export interface MirrorPostRow {
   id: string;
-  tiktok_video_id: string;
+  source_post_id: string;
   caption: string;
   cover_url: string | null;
   status: string;
-  facebook_post_id: string | null;
+  published_post_id: string | null;
   created_at: string;
 }
 
@@ -123,28 +127,39 @@ export function asMirrorRow(row: unknown): MirrorRow | null {
   if (!isRecord(row)) return null;
   const id = row.id;
   const workspaceId = row.workspace_id;
-  const destinationId = row.destination_id;
-  const username = row.tiktok_username;
+  const sourcePlatform = row.source_platform;
+  const username = row.source_username;
+  const targetPlatform = row.target_platform;
+  const targetExternalId = row.target_external_id;
+  const targetDisplayName = row.target_display_name;
   if (
     typeof id !== 'string' ||
     typeof workspaceId !== 'string' ||
-    typeof destinationId !== 'string' ||
-    typeof username !== 'string'
+    typeof sourcePlatform !== 'string' ||
+    typeof username !== 'string' ||
+    typeof targetPlatform !== 'string' ||
+    typeof targetExternalId !== 'string' ||
+    typeof targetDisplayName !== 'string'
   ) {
     return null;
   }
   return {
     id,
     workspace_id: workspaceId,
-    destination_id: destinationId,
-    tiktok_username: username,
-    tiktok_display_name:
-      typeof row.tiktok_display_name === 'string' ? row.tiktok_display_name : null,
-    tiktok_avatar_url:
-      typeof row.tiktok_avatar_url === 'string' ? row.tiktok_avatar_url : null,
+    source_platform: sourcePlatform,
+    source_username: username,
+    source_display_name:
+      typeof row.source_display_name === 'string' ? row.source_display_name : null,
+    source_avatar_url:
+      typeof row.source_avatar_url === 'string' ? row.source_avatar_url : null,
+    target_platform: targetPlatform,
+    target_external_id: targetExternalId,
+    target_display_name: targetDisplayName,
+    target_avatar_url:
+      typeof row.target_avatar_url === 'string' ? row.target_avatar_url : null,
     status: typeof row.status === 'string' ? row.status : 'active',
-    last_posted_video_id:
-      typeof row.last_posted_video_id === 'string' ? row.last_posted_video_id : null,
+    last_posted_source_id:
+      typeof row.last_posted_source_id === 'string' ? row.last_posted_source_id : null,
     last_posted_create_time:
       typeof row.last_posted_create_time === 'number' ? row.last_posted_create_time : null,
     last_checked_at: typeof row.last_checked_at === 'string' ? row.last_checked_at : null,
@@ -155,33 +170,44 @@ export function asMirrorRow(row: unknown): MirrorRow | null {
   };
 }
 
+/**
+ * Build the API view from a mirror row. The destination row is
+ * resolved at request time (workspace + target platform + target
+ * external id) and only refines the view: the live destination name
+ * / avatar win when present, the stored target copies are the
+ * fallback, and the resolved destination id feeds the Insights tab.
+ * When the target row is gone the mirror still renders (Dashboard
+ * works); Insights reports the target as unavailable.
+ */
 export function toMirrorView(
   mirror: MirrorRow,
-  destination: DestinationRow,
+  destination: DestinationRow | null,
   lastPost: MirrorPostRow | null
 ): MirrorView {
   return {
     id: mirror.id,
-    destinationId: mirror.destination_id,
-    destinationName: destination.name,
-    destinationAvatarUrl: destination.avatar_url,
-    fbPageId: destination.external_destination_id,
-    tiktokUsername: mirror.tiktok_username,
-    tiktokDisplayName: mirror.tiktok_display_name,
-    tiktokAvatarUrl: mirror.tiktok_avatar_url,
+    sourcePlatform: mirror.source_platform,
+    sourceUsername: mirror.source_username,
+    sourceDisplayName: mirror.source_display_name,
+    sourceAvatarUrl: mirror.source_avatar_url,
+    targetPlatform: mirror.target_platform,
+    targetExternalId: mirror.target_external_id,
+    targetDisplayName: destination?.name ?? mirror.target_display_name,
+    targetAvatarUrl: destination?.avatar_url ?? mirror.target_avatar_url,
+    targetDestinationId: destination?.id ?? null,
     status: mirror.status as MirrorView['status'],
-    lastPostedVideoId: mirror.last_posted_video_id,
+    lastPostedSourceId: mirror.last_posted_source_id,
     lastCheckedAt: mirror.last_checked_at,
     nextCheckAt: mirror.next_check_at,
     lastError: mirror.last_error,
     lastMirroredPost: lastPost
       ? {
           id: lastPost.id,
-          tiktokVideoId: lastPost.tiktok_video_id,
+          sourcePostId: lastPost.source_post_id,
           caption: lastPost.caption,
           coverUrl: lastPost.cover_url,
           status: lastPost.status as 'posted' | 'failed' | 'skipped' | 'pending',
-          facebookPostId: lastPost.facebook_post_id,
+          publishedPostId: lastPost.published_post_id,
           createdAt: lastPost.created_at,
         }
       : null,
@@ -189,21 +215,35 @@ export function toMirrorView(
   };
 }
 
-export async function loadDestinationsByIds(
+/**
+ * Resolve target destinations by (workspace, platform, external id)
+ * — the generic target lookup. The mirror row carries no destination
+ * foreign key; the destination row is found at request time from
+ * the mirror's target_platform + target_external_id. When several
+ * rows match (same page under two accounts), the first active one
+ * wins; the map keeps the first match per key.
+ */
+export async function loadDestinationsByExternalIds(
   db: Db,
-  ids: string[]
+  workspaceId: string,
+  platform: string,
+  externalIds: string[]
 ): Promise<Map<string, DestinationRow>> {
   const map = new Map<string, DestinationRow>();
-  if (ids.length === 0) return map;
+  if (externalIds.length === 0) return map;
+  const key = (externalId: string) => `${platform}:${externalId}`;
   if (isLegacyClient(db)) {
     const rows = (await db.query(
       `SELECT id, account_id, external_destination_id, name, avatar_url, encrypted_destination_token, status
-       FROM destinations WHERE id = ANY($1::uuid[])`,
-      [ids]
+       FROM destinations WHERE workspace_id = $1 AND platform = $2 AND external_destination_id = ANY($3::text[])
+       ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END, created_at ASC`,
+      [workspaceId, platform, externalIds]
     )) as unknown[];
     for (const row of rows) {
       const dest = asDestinationRow(row);
-      if (dest) map.set(dest.id, dest);
+      if (dest && !map.has(key(dest.external_destination_id))) {
+        map.set(key(dest.external_destination_id), dest);
+      }
     }
     return map;
   }
@@ -211,11 +251,22 @@ export async function loadDestinationsByIds(
   const { data, error } = await supabase
     .from('destinations')
     .select('id, account_id, external_destination_id, name, avatar_url, encrypted_destination_token, status')
-    .in('id', ids);
+    .eq('workspace_id', workspaceId)
+    .eq('platform', platform)
+    .in('external_destination_id', externalIds);
   if (error) throw new Error(`Failed to load destinations: ${error.message}`);
-  for (const row of data ?? []) {
+  const ordered = (data ?? []).slice().sort((a, b) => {
+    const ra = a as Record<string, unknown>;
+    const rb = b as Record<string, unknown>;
+    const sa = ra.status === 'active' ? 0 : 1;
+    const sb = rb.status === 'active' ? 0 : 1;
+    return sa - sb;
+  });
+  for (const row of ordered) {
     const dest = asDestinationRow(row);
-    if (dest) map.set(dest.id, dest);
+    if (dest && !map.has(key(dest.external_destination_id))) {
+      map.set(key(dest.external_destination_id), dest);
+    }
   }
   return map;
 }
@@ -228,24 +279,24 @@ export async function loadLastPostsByMirror(
   if (mirrorIds.length === 0) return map;
   if (isLegacyClient(db)) {
     const rows = (await db.query(
-      `SELECT DISTINCT ON (mirror_id) id, mirror_id, tiktok_video_id, caption, cover_url, status, facebook_post_id, created_at
-       FROM tiktok_mirror_posts WHERE mirror_id = ANY($1::uuid[]) ORDER BY mirror_id, created_at DESC`,
+      `SELECT DISTINCT ON (mirror_id) id, mirror_id, source_post_id, caption, cover_url, status, published_post_id, created_at
+       FROM mirror_posts WHERE mirror_id = ANY($1::uuid[]) ORDER BY mirror_id, created_at DESC`,
       [mirrorIds]
     )) as Record<string, unknown>[];
     for (const row of rows) {
       if (
         typeof row.mirror_id === 'string' &&
         typeof row.id === 'string' &&
-        typeof row.tiktok_video_id === 'string'
+        typeof row.source_post_id === 'string'
       ) {
         map.set(row.mirror_id, {
           id: row.id,
-          tiktok_video_id: row.tiktok_video_id,
+          source_post_id: row.source_post_id,
           caption: typeof row.caption === 'string' ? row.caption : '',
           cover_url: typeof row.cover_url === 'string' ? row.cover_url : null,
           status: typeof row.status === 'string' ? row.status : 'pending',
-          facebook_post_id:
-            typeof row.facebook_post_id === 'string' ? row.facebook_post_id : null,
+          published_post_id:
+            typeof row.published_post_id === 'string' ? row.published_post_id : null,
           created_at: typeof row.created_at === 'string' ? row.created_at : '',
         });
       }
@@ -254,8 +305,8 @@ export async function loadLastPostsByMirror(
   }
   const supabase = db as SupabaseClient;
   const { data, error } = await supabase
-    .from('tiktok_mirror_posts')
-    .select('id, mirror_id, tiktok_video_id, caption, cover_url, status, facebook_post_id, created_at')
+    .from('mirror_posts')
+    .select('id, mirror_id, source_post_id, caption, cover_url, status, published_post_id, created_at')
     .in('mirror_id', mirrorIds)
     .order('created_at', { ascending: false });
   if (error) throw new Error(`Failed to load mirror posts: ${error.message}`);
@@ -263,15 +314,15 @@ export async function loadLastPostsByMirror(
     const mirrorId = (row as Record<string, unknown>).mirror_id;
     if (typeof mirrorId === 'string' && !map.has(mirrorId)) {
       const post = row as unknown as Record<string, unknown>;
-      if (typeof post.id === 'string' && typeof post.tiktok_video_id === 'string') {
+      if (typeof post.id === 'string' && typeof post.source_post_id === 'string') {
         map.set(mirrorId, {
           id: post.id,
-          tiktok_video_id: post.tiktok_video_id,
+          source_post_id: post.source_post_id,
           caption: typeof post.caption === 'string' ? post.caption : '',
           cover_url: typeof post.cover_url === 'string' ? post.cover_url : null,
           status: typeof post.status === 'string' ? post.status : 'pending',
-          facebook_post_id:
-            typeof post.facebook_post_id === 'string' ? post.facebook_post_id : null,
+          published_post_id:
+            typeof post.published_post_id === 'string' ? post.published_post_id : null,
           created_at: typeof post.created_at === 'string' ? post.created_at : '',
         });
       }
@@ -302,10 +353,11 @@ export async function handleListMirrors(
     const mirrors: MirrorRow[] = [];
     if (isLegacyClient(db)) {
       const rows = (await db.query(
-        `SELECT id, workspace_id, destination_id, tiktok_username, tiktok_display_name,
-                tiktok_avatar_url, status, last_posted_video_id, last_posted_create_time,
+        `SELECT id, workspace_id, source_platform, source_username, source_display_name,
+                source_avatar_url, target_platform, target_external_id, target_display_name,
+                target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time,
                 last_checked_at, next_check_at, last_error, created_at, updated_at
-         FROM tiktok_mirrors WHERE workspace_id = $1 ORDER BY created_at DESC`,
+         FROM mirrors WHERE workspace_id = $1 ORDER BY created_at DESC`,
         [workspaceId]
       )) as unknown[];
       for (const row of rows) {
@@ -315,9 +367,9 @@ export async function handleListMirrors(
     } else {
       const supabase = db as SupabaseClient;
       const { data, error } = await supabase
-        .from('tiktok_mirrors')
+        .from('mirrors')
         .select(
-          'id, workspace_id, destination_id, tiktok_username, tiktok_display_name, tiktok_avatar_url, status, last_posted_video_id, last_posted_create_time, last_checked_at, next_check_at, last_error, created_at, updated_at'
+          'id, workspace_id, source_platform, source_username, source_display_name, source_avatar_url, target_platform, target_external_id, target_display_name, target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time, last_checked_at, next_check_at, last_error, created_at, updated_at'
         )
         .eq('workspace_id', workspaceId)
         .order('created_at', { ascending: false });
@@ -328,18 +380,33 @@ export async function handleListMirrors(
       }
     }
 
-    const destinations = await loadDestinationsByIds(
-      db,
-      mirrors.map((m) => m.destination_id)
-    );
+    // Group mirrors by target platform for the batch resolution.
+    const byPlatform = new Map<string, string[]>();
+    for (const mirror of mirrors) {
+      const list = byPlatform.get(mirror.target_platform) ?? [];
+      if (!list.includes(mirror.target_external_id)) list.push(mirror.target_external_id);
+      byPlatform.set(mirror.target_platform, list);
+    }
+    const destinations = new Map<string, DestinationRow>();
+    for (const [platform, externalIds] of byPlatform) {
+      const resolved = await loadDestinationsByExternalIds(
+        db,
+        workspaceId,
+        platform,
+        externalIds
+      );
+      for (const [key, dest] of resolved) destinations.set(key, dest);
+    }
     const lastPosts = await loadLastPostsByMirror(
       db,
       mirrors.map((m) => m.id)
     );
     const views: MirrorView[] = [];
     for (const mirror of mirrors) {
-      const dest = destinations.get(mirror.destination_id);
-      if (!dest) continue;
+      // A mirror whose target row is gone still renders from its
+      // stored target copies (Insights reports it unavailable).
+      const dest =
+        destinations.get(`${mirror.target_platform}:${mirror.target_external_id}`) ?? null;
       views.push(toMirrorView(mirror, dest, lastPosts.get(mirror.id) ?? null));
     }
     const parsed = ListMirrorsResponseSchema.safeParse({ mirrors: views });
@@ -371,16 +438,15 @@ async function resolveDestination(
   db: Db,
   workspaceId: string,
   input: {
-    destinationId?: string | undefined;
+    targetDestinationId?: string | undefined;
     accountId?: string | undefined;
-    fbPageId?: string | undefined;
+    targetExternalId?: string | undefined;
   },
   deps: CreateMirrorDeps
 ): Promise<{ destination: DestinationRow } | { error: NextResponse }> {
   const encryptionKey = getTokenEncryptionKey();
-  if (input.destinationId) {
-    const map = await loadDestinationsByIds(db, [input.destinationId]);
-    const dest = map.get(input.destinationId);
+  if (input.targetDestinationId) {
+    const dest = await loadDestinationById(db, input.targetDestinationId);
     if (!dest) {
       return {
         error: NextResponse.json({ error: 'Facebook page not found' }, { status: 404 }),
@@ -390,7 +456,7 @@ async function resolveDestination(
   }
 
   const accountId = input.accountId as string;
-  const fbPageId = input.fbPageId as string;
+  const targetExternalId = input.targetExternalId as string;
 
   // Load the account's encrypted token (workspace + facebook only).
   let encryptedAccountToken: string | null = null;
@@ -426,7 +492,7 @@ async function resolveDestination(
     rawAccountToken,
     'id,name,category,tasks,access_token,followers_count,picture{url}'
   );
-  const page = pages.find((p) => String(p.id) === fbPageId);
+  const page = pages.find((p) => String(p.id) === targetExternalId);
   if (!page) {
     return {
       error: NextResponse.json({ error: 'Facebook page not found' }, { status: 404 }),
@@ -572,46 +638,69 @@ async function resolveDestination(
   return { destination: dest };
 }
 
+/**
+ * Load one destination row by id (used when the create request
+ * names an existing destination; the mirror itself never stores
+ * this id — it stores the target platform + external id).
+ */
+export async function loadDestinationById(
+  db: Db,
+  id: string
+): Promise<DestinationRow | null> {
+  if (isLegacyClient(db)) {
+    const rows = (await db.query(
+      `SELECT id, account_id, external_destination_id, name, avatar_url, encrypted_destination_token, status
+       FROM destinations WHERE id = $1 LIMIT 1`,
+      [id]
+    )) as unknown[];
+    return asDestinationRow(rows[0]);
+  }
+  const supabase = db as SupabaseClient;
+  const { data, error } = await supabase
+    .from('destinations')
+    .select('id, account_id, external_destination_id, name, avatar_url, encrypted_destination_token, status')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) throw new Error(`Failed to load destination: ${error.message}`);
+  return asDestinationRow(data);
+}
+
 async function findDuplicateMirror(
   db: Db,
   workspaceId: string,
-  destination: DestinationRow,
+  targetPlatform: string,
+  targetExternalId: string,
   username: string
 ): Promise<boolean> {
-  // Same destination + username (the DB unique backstop).
-  // Same Facebook page + username across destinations in the
-  // workspace (the same page under two accounts would otherwise
-  // double-post every reel).
+  // Exact pair (source platform + username + target platform +
+  // target id) — the DB unique index is the backstop; this check
+  // gives the friendly 409. Same username feeding a different
+  // target stays allowed.
   if (isLegacyClient(db)) {
     const rows = (await db.query(
-      `SELECT 1 FROM tiktok_mirrors m
-       JOIN destinations d ON d.id = m.destination_id
-       WHERE m.workspace_id = $1
-         AND m.tiktok_username = $2
-         AND (m.destination_id = $3 OR d.external_destination_id = $4)
+      `SELECT 1 FROM mirrors
+       WHERE workspace_id = $1
+         AND source_platform = 'tiktok'
+         AND source_username = $2
+         AND target_platform = $3
+         AND target_external_id = $4
        LIMIT 1`,
-      [workspaceId, username, destination.id, destination.external_destination_id]
+      [workspaceId, username, targetPlatform, targetExternalId]
     )) as unknown[];
     return rows.length > 0;
   }
   const supabase = db as SupabaseClient;
   const { data, error } = await supabase
-    .from('tiktok_mirrors')
-    .select('id, destination_id, destinations!inner(external_destination_id)')
+    .from('mirrors')
+    .select('id')
     .eq('workspace_id', workspaceId)
-    .eq('tiktok_username', username);
+    .eq('source_platform', 'tiktok')
+    .eq('source_username', username)
+    .eq('target_platform', targetPlatform)
+    .eq('target_external_id', targetExternalId)
+    .limit(1);
   if (error) throw new Error(`Failed to check duplicates: ${error.message}`);
-  for (const row of data ?? []) {
-    const record = row as unknown as Record<string, unknown>;
-    const dest = record.destinations as Record<string, unknown> | null;
-    if (
-      record.destination_id === destination.id ||
-      dest?.external_destination_id === destination.external_destination_id
-    ) {
-      return true;
-    }
-  }
-  return false;
+  return (data ?? []).length > 0;
 }
 
 export async function handleCreateMirror(
@@ -649,7 +738,7 @@ export async function handleCreateMirror(
       { status: 400 }
     );
   }
-  const username = parsed.data.tiktokUsername;
+  const username = parsed.data.sourceUsername;
 
   try {
     // 1. Resolve (or create) the destination row.
@@ -657,17 +746,25 @@ export async function handleCreateMirror(
       db,
       workspaceId,
       {
-        destinationId: parsed.data.destinationId,
+        targetDestinationId: parsed.data.targetDestinationId,
         accountId: parsed.data.accountId,
-        fbPageId: parsed.data.fbPageId,
+        targetExternalId: parsed.data.targetExternalId,
       },
       deps
     );
     if ('error' in resolved) return resolved.error;
     const destination = resolved.destination;
 
-    // 2. Exact-duplicate block (same username + same page).
-    if (await findDuplicateMirror(db, workspaceId, destination, username)) {
+    // 2. Exact-duplicate block (same source username + same target).
+    if (
+      await findDuplicateMirror(
+        db,
+        workspaceId,
+        'facebook',
+        destination.external_destination_id,
+        username
+      )
+    ) {
       return NextResponse.json(
         {
           error: 'DUPLICATE_MIRROR',
@@ -699,23 +796,28 @@ export async function handleCreateMirror(
     const displayName = info?.nickname ?? firstAuthor?.nickname ?? null;
     const avatarUrl = info?.avatar ?? firstAuthor?.avatar ?? null;
 
-    // 5. Create the mirror row.
+    // 5. Create the mirror row (generic target reference: platform
+    //    + external id + display copies; no destination foreign key).
     let mirror: MirrorRow;
     if (isLegacyClient(db)) {
       const rows = (await db.query(
-        `INSERT INTO tiktok_mirrors (
-           workspace_id, destination_id, tiktok_username, tiktok_display_name,
-           tiktok_avatar_url, status, next_check_at, created_at, updated_at
-         ) VALUES ($1, $2, $3, $4, $5, 'active', $6, now(), now())
-         RETURNING id, workspace_id, destination_id, tiktok_username, tiktok_display_name,
-           tiktok_avatar_url, status, last_posted_video_id, last_posted_create_time,
+        `INSERT INTO mirrors (
+           workspace_id, source_platform, source_username, source_display_name,
+           source_avatar_url, target_platform, target_external_id, target_display_name,
+           target_avatar_url, status, last_checked_at, next_check_at, created_at, updated_at
+         ) VALUES ($1, 'tiktok', $2, $3, $4, 'facebook', $5, $6, $7, 'active', now(), $8, now(), now())
+         RETURNING id, workspace_id, source_platform, source_username, source_display_name,
+           source_avatar_url, target_platform, target_external_id, target_display_name,
+           target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time,
            last_checked_at, next_check_at, last_error, created_at, updated_at`,
         [
           workspaceId,
-          destination.id,
           username,
           displayName,
           avatarUrl,
+          destination.external_destination_id,
+          destination.name,
+          destination.avatar_url,
           new Date(Date.now() + 60 * 60 * 1000).toISOString(),
         ]
       )) as unknown[];
@@ -725,18 +827,26 @@ export async function handleCreateMirror(
     } else {
       const supabase = db as SupabaseClient;
       const { data, error } = await supabase
-        .from('tiktok_mirrors')
+        .from('mirrors')
         .insert({
           workspace_id: workspaceId,
-          destination_id: destination.id,
-          tiktok_username: username,
-          tiktok_display_name: displayName,
-          tiktok_avatar_url: avatarUrl,
+          source_platform: 'tiktok',
+          source_username: username,
+          source_display_name: displayName,
+          source_avatar_url: avatarUrl,
+          target_platform: 'facebook',
+          target_external_id: destination.external_destination_id,
+          target_display_name: destination.name,
+          target_avatar_url: destination.avatar_url,
           status: 'active',
+          // Setup verified the feed, so setup counts as the last
+          // successful check: the tick's 2-hour gap rule measures
+          // from here until the first hourly tick stamps it.
+          last_checked_at: new Date().toISOString(),
           next_check_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
         })
         .select(
-          'id, workspace_id, destination_id, tiktok_username, tiktok_display_name, tiktok_avatar_url, status, last_posted_video_id, last_posted_create_time, last_checked_at, next_check_at, last_error, created_at, updated_at'
+          'id, workspace_id, source_platform, source_username, source_display_name, source_avatar_url, target_platform, target_external_id, target_display_name, target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time, last_checked_at, next_check_at, last_error, created_at, updated_at'
         )
         .single();
       if (error) {
@@ -764,40 +874,40 @@ export async function handleCreateMirror(
     let immediatePost: {
       attempted: boolean;
       status: 'posted' | 'failed' | 'skipped' | 'pending' | null;
-      tiktokVideoId: string | null;
-      facebookPostId: string | null;
+      sourcePostId: string | null;
+      publishedPostId: string | null;
       error: string | null;
     } | null = null;
     if (latest && latest.play) {
       const caption = latest.title ?? '';
       const coverUrl = latest.cover ?? null;
-      const tiktokCreatedAt =
+      const sourceCreatedAt =
         typeof latest.create_time === 'number'
           ? new Date(latest.create_time * 1000).toISOString()
           : null;
       let postRowId: string | null = null;
       if (isLegacyClient(db)) {
         const rows = (await db.query(
-          `INSERT INTO tiktok_mirror_posts (
-             mirror_id, tiktok_video_id, caption, video_url, cover_url,
-             tiktok_created_at, status, created_at
+          `INSERT INTO mirror_posts (
+             mirror_id, source_post_id, caption, video_url, cover_url,
+             source_created_at, status, created_at
            ) VALUES ($1, $2, $3, $4, $5, $6, 'pending', now())
-           ON CONFLICT (mirror_id, tiktok_video_id) DO NOTHING
+           ON CONFLICT (mirror_id, source_post_id) DO NOTHING
            RETURNING id`,
-          [mirror.id, latest.video_id, caption, latest.play, coverUrl, tiktokCreatedAt]
+          [mirror.id, latest.video_id, caption, latest.play, coverUrl, sourceCreatedAt]
         )) as Record<string, unknown>[];
         postRowId = typeof rows[0]?.id === 'string' ? (rows[0].id as string) : null;
       } else {
         const supabase = db as SupabaseClient;
         const { data, error } = await supabase
-          .from('tiktok_mirror_posts')
+          .from('mirror_posts')
           .insert({
             mirror_id: mirror.id,
-            tiktok_video_id: latest.video_id,
+            source_post_id: latest.video_id,
             caption,
             video_url: latest.play,
             cover_url: coverUrl,
-            tiktok_created_at: tiktokCreatedAt,
+            source_created_at: sourceCreatedAt,
             status: 'pending',
           })
           .select('id')
@@ -824,8 +934,8 @@ export async function handleCreateMirror(
           immediatePost = {
             attempted: true,
             status: 'pending',
-            tiktokVideoId: latest.video_id,
-            facebookPostId: null,
+            sourcePostId: latest.video_id,
+            publishedPostId: null,
             error: 'This page has no posting token. Reconnect the page and try again.',
           };
         } else {
@@ -839,8 +949,8 @@ export async function handleCreateMirror(
             });
             await updatePostAndMirror(db, mirror.id, postRowId, {
               status: 'posted',
-              facebookPostId: postId,
-              lastPostedVideoId: latest.video_id,
+              publishedPostId: postId,
+              lastPostedSourceId: latest.video_id,
               lastPostedCreateTime:
                 typeof latest.create_time === 'number' ? latest.create_time : null,
               mirrorStatus: 'active',
@@ -848,8 +958,8 @@ export async function handleCreateMirror(
             immediatePost = {
               attempted: true,
               status: 'posted',
-              tiktokVideoId: latest.video_id,
-              facebookPostId: postId,
+              sourcePostId: latest.video_id,
+              publishedPostId: postId,
               error: null,
             };
           } catch (err) {
@@ -867,8 +977,8 @@ export async function handleCreateMirror(
             immediatePost = {
               attempted: true,
               status: 'pending',
-              tiktokVideoId: latest.video_id,
-              facebookPostId: null,
+              sourcePostId: latest.video_id,
+              publishedPostId: null,
               error: message,
             };
           }
@@ -878,8 +988,8 @@ export async function handleCreateMirror(
         immediatePost = {
           attempted: false,
           status: null,
-          tiktokVideoId: latest.video_id,
-          facebookPostId: null,
+          sourcePostId: latest.video_id,
+          publishedPostId: null,
           error: null,
         };
       }
@@ -921,33 +1031,33 @@ export async function updatePostAndMirror(
   postRowId: string,
   update: {
     status: string;
-    facebookPostId?: string;
+    publishedPostId?: string;
     error?: string;
-    lastPostedVideoId?: string;
+    lastPostedSourceId?: string;
     lastPostedCreateTime?: number | null;
     mirrorStatus: string;
   }
 ): Promise<void> {
   if (isLegacyClient(db)) {
     await db.query(
-      `UPDATE tiktok_mirror_posts SET status = $2, facebook_post_id = $3, error = $4 WHERE id = $1`,
-      [postRowId, update.status, update.facebookPostId ?? null, update.error ?? null]
+      `UPDATE mirror_posts SET status = $2, published_post_id = $3, error = $4 WHERE id = $1`,
+      [postRowId, update.status, update.publishedPostId ?? null, update.error ?? null]
     );
-    if (update.lastPostedVideoId) {
+    if (update.lastPostedSourceId) {
       await db.query(
-        `UPDATE tiktok_mirrors SET status = $2, last_posted_video_id = $3,
+        `UPDATE mirrors SET status = $2, last_posted_source_id = $3,
            last_posted_create_time = $4, last_error = $5, updated_at = now() WHERE id = $1`,
         [
           mirrorId,
           update.mirrorStatus,
-          update.lastPostedVideoId,
+          update.lastPostedSourceId,
           update.lastPostedCreateTime ?? null,
           update.mirrorStatus === 'error' ? (update.error ?? null) : null,
         ]
       );
     } else {
       await db.query(
-        `UPDATE tiktok_mirrors SET status = $2, last_error = $3, updated_at = now() WHERE id = $1`,
+        `UPDATE mirrors SET status = $2, last_error = $3, updated_at = now() WHERE id = $1`,
         [mirrorId, update.mirrorStatus, update.mirrorStatus === 'error' ? (update.error ?? null) : null]
       );
     }
@@ -955,10 +1065,10 @@ export async function updatePostAndMirror(
   }
   const supabase = db as SupabaseClient;
   const { error: postError } = await supabase
-    .from('tiktok_mirror_posts')
+    .from('mirror_posts')
     .update({
       status: update.status,
-      facebook_post_id: update.facebookPostId ?? null,
+      published_post_id: update.publishedPostId ?? null,
       error: update.error ?? null,
     })
     .eq('id', postRowId);
@@ -967,12 +1077,12 @@ export async function updatePostAndMirror(
     status: update.mirrorStatus,
     last_error: update.mirrorStatus === 'error' ? (update.error ?? null) : null,
   };
-  if (update.lastPostedVideoId) {
-    mirrorUpdate.last_posted_video_id = update.lastPostedVideoId;
+  if (update.lastPostedSourceId) {
+    mirrorUpdate.last_posted_source_id = update.lastPostedSourceId;
     mirrorUpdate.last_posted_create_time = update.lastPostedCreateTime ?? null;
   }
   const { error: mirrorError } = await supabase
-    .from('tiktok_mirrors')
+    .from('mirrors')
     .update(mirrorUpdate)
     .eq('id', mirrorId);
   if (mirrorError) throw new Error(`Failed to update mirror: ${mirrorError.message}`);
@@ -981,19 +1091,20 @@ export async function updatePostAndMirror(
 export async function reloadMirror(db: Db, mirrorId: string): Promise<MirrorRow | null> {
   if (isLegacyClient(db)) {
     const rows = (await db.query(
-      `SELECT id, workspace_id, destination_id, tiktok_username, tiktok_display_name,
-              tiktok_avatar_url, status, last_posted_video_id, last_posted_create_time,
+      `SELECT id, workspace_id, source_platform, source_username, source_display_name,
+              source_avatar_url, target_platform, target_external_id, target_display_name,
+              target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time,
               last_checked_at, next_check_at, last_error, created_at, updated_at
-       FROM tiktok_mirrors WHERE id = $1 LIMIT 1`,
+       FROM mirrors WHERE id = $1 LIMIT 1`,
       [mirrorId]
     )) as unknown[];
     return asMirrorRow(rows[0]);
   }
   const supabase = db as SupabaseClient;
   const { data, error } = await supabase
-    .from('tiktok_mirrors')
+    .from('mirrors')
     .select(
-      'id, workspace_id, destination_id, tiktok_username, tiktok_display_name, tiktok_avatar_url, status, last_posted_video_id, last_posted_create_time, last_checked_at, next_check_at, last_error, created_at, updated_at'
+      'id, workspace_id, source_platform, source_username, source_display_name, source_avatar_url, target_platform, target_external_id, target_display_name, target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time, last_checked_at, next_check_at, last_error, created_at, updated_at'
     )
     .eq('id', mirrorId)
     .maybeSingle();

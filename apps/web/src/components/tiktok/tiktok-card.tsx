@@ -61,9 +61,9 @@ export function TikTokCard({ mirror, onSelect, highlighted }: Readonly<TikTokCar
       )}
     >
       <div className="flex items-start gap-3">
-        {mirror.tiktokAvatarUrl ? (
+        {mirror.sourceAvatarUrl ? (
           <Image
-            src={mirror.tiktokAvatarUrl}
+            src={mirror.sourceAvatarUrl}
             alt=""
             width={48}
             height={48}
@@ -75,16 +75,16 @@ export function TikTokCard({ mirror, onSelect, highlighted }: Readonly<TikTokCar
             aria-hidden
             className="flex size-12 shrink-0 items-center justify-center rounded-full bg-subtle text-body font-bold text-ink"
           >
-            {(mirror.tiktokUsername[0] ?? '?').toUpperCase()}
+            {(mirror.sourceUsername[0] ?? '?').toUpperCase()}
           </span>
         )}
         <div className="min-w-0 flex-1">
-          <p className="truncate text-body font-bold text-ink">@{mirror.tiktokUsername}</p>
+          <p className="truncate text-body font-bold text-ink">@{mirror.sourceUsername}</p>
           <p className="truncate text-metadata text-ink-sub">
-            {mirror.tiktokDisplayName ?? 'TikTok account'}
+            {mirror.sourceDisplayName ?? 'TikTok account'}
           </p>
           <p className="truncate text-metadata text-ink-sub">
-            → {mirror.destinationName}
+            → {mirror.targetDisplayName}
           </p>
         </div>
         <StatusMark kind={mark.kind} label={mark.label} testId="tiktok-mirror-status" />

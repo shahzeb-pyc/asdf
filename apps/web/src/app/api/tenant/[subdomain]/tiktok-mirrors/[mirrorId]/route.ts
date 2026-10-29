@@ -13,7 +13,7 @@ import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
 import { logServerError } from '@/lib/server-analytics';
 import {
   asMirrorRow,
-  loadDestinationsByIds,
+  loadDestinationsByExternalIds,
   toMirrorView,
   type MirrorRow,
 } from '../route';
@@ -35,19 +35,20 @@ async function loadMirror(
 ): Promise<MirrorRow | null> {
   if (isLegacyClient(db)) {
     const rows = (await db.query(
-      `SELECT id, workspace_id, destination_id, tiktok_username, tiktok_display_name,
-              tiktok_avatar_url, status, last_posted_video_id, last_posted_create_time,
+      `SELECT id, workspace_id, source_platform, source_username, source_display_name,
+              source_avatar_url, target_platform, target_external_id, target_display_name,
+              target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time,
               last_checked_at, next_check_at, last_error, created_at, updated_at
-       FROM tiktok_mirrors WHERE id = $1 AND workspace_id = $2 LIMIT 1`,
+       FROM mirrors WHERE id = $1 AND workspace_id = $2 LIMIT 1`,
       [mirrorId, workspaceId]
     )) as unknown[];
     return asMirrorRow(rows[0]);
   }
   const supabase = db as SupabaseClient;
   const { data, error } = await supabase
-    .from('tiktok_mirrors')
+    .from('mirrors')
     .select(
-      'id, workspace_id, destination_id, tiktok_username, tiktok_display_name, tiktok_avatar_url, status, last_posted_video_id, last_posted_create_time, last_checked_at, next_check_at, last_error, created_at, updated_at'
+      'id, workspace_id, source_platform, source_username, source_display_name, source_avatar_url, target_platform, target_external_id, target_display_name, target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time, last_checked_at, next_check_at, last_error, created_at, updated_at'
     )
     .eq('id', mirrorId)
     .eq('workspace_id', workspaceId)
@@ -100,26 +101,32 @@ export async function handleGetMirror(
     if (!mirror) {
       return NextResponse.json({ error: 'TikTok mirror not found' }, { status: 404 });
     }
-    const destinations = await loadDestinationsByIds(db, [mirror.destination_id]);
-    const destination = destinations.get(mirror.destination_id);
-    if (!destination) {
-      return NextResponse.json({ error: 'Facebook page not found' }, { status: 404 });
-    }
+    // Target resolved at request time; a missing target row no
+    // longer 404s the mirror — the view carries the stored target
+    // copies and a null targetDestinationId (Insights unavailable).
+    const destinations = await loadDestinationsByExternalIds(
+      db,
+      workspaceId,
+      mirror.target_platform,
+      [mirror.target_external_id]
+    );
+    const destination =
+      destinations.get(`${mirror.target_platform}:${mirror.target_external_id}`) ?? null;
 
     let posts: unknown[] = [];
     if (isLegacyClient(db)) {
       posts = (await db.query(
-        `SELECT id, mirror_id, tiktok_video_id, caption, video_url, cover_url,
-                tiktok_created_at, status, facebook_post_id, error, created_at
-         FROM tiktok_mirror_posts WHERE mirror_id = $1 ORDER BY created_at DESC LIMIT 30`,
+        `SELECT id, mirror_id, source_post_id, caption, video_url, cover_url,
+                source_created_at, status, published_post_id, error, created_at
+         FROM mirror_posts WHERE mirror_id = $1 ORDER BY created_at DESC LIMIT 30`,
         [mirrorId]
       )) as unknown[];
     } else {
       const supabase = db as SupabaseClient;
       const { data, error } = await supabase
-        .from('tiktok_mirror_posts')
+        .from('mirror_posts')
         .select(
-          'id, mirror_id, tiktok_video_id, caption, video_url, cover_url, tiktok_created_at, status, facebook_post_id, error, created_at'
+          'id, mirror_id, source_post_id, caption, video_url, cover_url, source_created_at, status, published_post_id, error, created_at'
         )
         .eq('mirror_id', mirrorId)
         .order('created_at', { ascending: false })
@@ -132,16 +139,16 @@ export async function handleGetMirror(
     const lastPost =
       firstPost &&
       typeof firstPost.id === 'string' &&
-      typeof firstPost.tiktok_video_id === 'string'
+      typeof firstPost.source_post_id === 'string'
         ? {
             id: firstPost.id,
-            tiktok_video_id: firstPost.tiktok_video_id,
+            source_post_id: firstPost.source_post_id,
             caption: typeof firstPost.caption === 'string' ? firstPost.caption : '',
             cover_url: typeof firstPost.cover_url === 'string' ? firstPost.cover_url : null,
             status: typeof firstPost.status === 'string' ? firstPost.status : 'pending',
-            facebook_post_id:
-              typeof firstPost.facebook_post_id === 'string'
-                ? firstPost.facebook_post_id
+            published_post_id:
+              typeof firstPost.published_post_id === 'string'
+                ? firstPost.published_post_id
                 : null,
             created_at: typeof firstPost.created_at === 'string' ? firstPost.created_at : '',
           }
@@ -199,21 +206,38 @@ export async function handleUpdateMirror(
     }
     // Pausing stops new mirrors; resuming re-arms the next hourly
     // check. The last_error is kept until a post succeeds, so a
-    // resumed mirror still shows what went wrong before.
+    // resumed mirror still shows what went wrong before. A resume
+    // (paused -> active only) also arms the tick's catch-up rule:
+    // the first tick after resume posts only the newest reel.
+    // Other transitions leave catch_up_pending untouched — in
+    // particular, re-arming an error mirror must not clear a
+    // catch-up the tick has not run yet.
     const nextCheckAt =
       parsed.data.status === 'active'
         ? new Date(Date.now() + 60 * 60 * 1000).toISOString()
         : null;
+    const isResume = mirror.status === 'paused' && parsed.data.status === 'active';
     if (isLegacyClient(db)) {
-      await db.query(
-        `UPDATE tiktok_mirrors SET status = $2, next_check_at = $3, updated_at = now() WHERE id = $1`,
-        [mirrorId, parsed.data.status, nextCheckAt]
-      );
+      if (isResume) {
+        await db.query(
+          `UPDATE mirrors SET status = $2, next_check_at = $3, catch_up_pending = true, updated_at = now() WHERE id = $1`,
+          [mirrorId, parsed.data.status, nextCheckAt]
+        );
+      } else {
+        await db.query(
+          `UPDATE mirrors SET status = $2, next_check_at = $3, updated_at = now() WHERE id = $1`,
+          [mirrorId, parsed.data.status, nextCheckAt]
+        );
+      }
     } else {
       const supabase = db as SupabaseClient;
       const { error } = await supabase
-        .from('tiktok_mirrors')
-        .update({ status: parsed.data.status, next_check_at: nextCheckAt })
+        .from('mirrors')
+        .update(
+          isResume
+            ? { status: parsed.data.status, next_check_at: nextCheckAt, catch_up_pending: true }
+            : { status: parsed.data.status, next_check_at: nextCheckAt }
+        )
         .eq('id', mirrorId)
         .eq('workspace_id', workspaceId);
       if (error) throw new Error(`Failed to update mirror: ${error.message}`);
@@ -244,8 +268,8 @@ export async function handleDeleteMirror(
       return NextResponse.json({ error: 'TikTok mirror not found' }, { status: 404 });
     }
     if (isLegacyClient(db)) {
-      await db.query(`DELETE FROM tiktok_mirror_posts WHERE mirror_id = $1`, [mirrorId]);
-      await db.query(`DELETE FROM tiktok_mirrors WHERE id = $1 AND workspace_id = $2`, [
+      await db.query(`DELETE FROM mirror_posts WHERE mirror_id = $1`, [mirrorId]);
+      await db.query(`DELETE FROM mirrors WHERE id = $1 AND workspace_id = $2`, [
         mirrorId,
         workspaceId,
       ]);
@@ -254,9 +278,9 @@ export async function handleDeleteMirror(
       // Posts cascade on mirror delete in the schema; the explicit
       // delete keeps the Supabase path deterministic even if the
       // cascade is ever removed.
-      await supabase.from('tiktok_mirror_posts').delete().eq('mirror_id', mirrorId);
+      await supabase.from('mirror_posts').delete().eq('mirror_id', mirrorId);
       const { error } = await supabase
-        .from('tiktok_mirrors')
+        .from('mirrors')
         .delete()
         .eq('id', mirrorId)
         .eq('workspace_id', workspaceId);

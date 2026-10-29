@@ -1,13 +1,22 @@
 import { z } from 'zod';
 
 // ==========================================
-// TikTok mirrors (TikTok → Facebook auto-post)
+// Mirrors (platform-agnostic; TikTok → Facebook is the first pair)
 // ==========================================
 //
-// A mirror links one TikTok username to one Facebook destination
-// (page). The same username may feed several pages — each pair is
-// its own mirror row — but the exact pair (username + page) may
-// exist only once, or every reel would post twice to that page.
+// A mirror links one source-platform username to one target-platform
+// account. The same username may feed several targets — each pair is
+// its own mirror row — but the exact pair (source platform +
+// username + target platform + target id) may exist only once, or
+// every item would post twice to that target.
+//
+// Source/target platforms are plain text, NOT constrained to
+// today's platforms, so a later platform needs no schema change.
+// The source row carries the target's platform + external id (the
+// target platform's own account/page id); the worker tick resolves
+// that pair to a posting token via the normal destination lookup
+// at publish time — the mirror table itself holds no destination
+// foreign key and no platform-specific columns.
 //
 // Data source: https://www.tikwm.com/api/ (free, no key, unofficial).
 // User posts: GET /api/user/posts?unique_id=<username>&count=<n>
@@ -92,24 +101,24 @@ export function selectLatestReel(videos: TikwmVideoItem[]): TikwmVideoItem | nul
 }
 
 /**
- * Reels newer than the mirror's last posted one, oldest-first.
- * Items already recorded in mirrored-posts are excluded by id, and
+ * Items newer than the mirror's last posted one, oldest-first.
+ * Items already recorded in mirror-posts are excluded by id, and
  * items at or before lastPostedCreateTime are excluded by time, so
- * a reordered feed can never re-post an old reel.
+ * a reordered feed can never re-post an old item.
  */
 export function selectNewReels(
   videos: TikwmVideoItem[],
   options: {
-    lastPostedVideoId: string | null;
+    lastPostedSourceId: string | null;
     lastPostedCreateTime: number | null;
-    knownVideoIds: ReadonlySet<string>;
+    knownSourceIds: ReadonlySet<string>;
   }
 ): TikwmVideoItem[] {
-  const { lastPostedVideoId, lastPostedCreateTime, knownVideoIds } = options;
+  const { lastPostedSourceId, lastPostedCreateTime, knownSourceIds } = options;
   const fresh = videos.filter((item) => {
     if (!isTikwmReelItem(item)) return false;
-    if (knownVideoIds.has(item.video_id)) return false;
-    if (lastPostedVideoId !== null && item.video_id === lastPostedVideoId) return false;
+    if (knownSourceIds.has(item.video_id)) return false;
+    if (lastPostedSourceId !== null && item.video_id === lastPostedSourceId) return false;
     if (
       lastPostedCreateTime !== null &&
       typeof item.create_time === 'number' &&
@@ -158,12 +167,17 @@ export type TikwmUserInfoResponse = z.infer<typeof TikwmUserInfoResponseSchema>;
 export const MirrorRowSchema = z.object({
   id: z.string().uuid(),
   workspace_id: z.string().uuid(),
-  destination_id: z.string().uuid(),
-  tiktok_username: z.string(),
-  tiktok_display_name: z.string().nullable(),
-  tiktok_avatar_url: z.string().nullable(),
+  source_platform: z.string(),
+  source_username: z.string(),
+  source_display_name: z.string().nullable(),
+  source_avatar_url: z.string().nullable(),
+  target_platform: z.string(),
+  target_external_id: z.string(),
+  target_display_name: z.string(),
+  target_avatar_url: z.string().nullable(),
   status: MirrorStatusSchema,
-  last_posted_video_id: z.string().nullable(),
+  catch_up_pending: z.boolean(),
+  last_posted_source_id: z.string().nullable(),
   last_posted_create_time: z.number().int().nullable(),
   last_checked_at: z.string().nullable(),
   next_check_at: z.string().nullable(),
@@ -176,13 +190,13 @@ export type MirrorRow = z.infer<typeof MirrorRowSchema>;
 export const MirrorPostRowSchema = z.object({
   id: z.string().uuid(),
   mirror_id: z.string().uuid(),
-  tiktok_video_id: z.string(),
+  source_post_id: z.string(),
   caption: z.string(),
   video_url: z.string().nullable(),
   cover_url: z.string().nullable(),
-  tiktok_created_at: z.string().nullable(),
+  source_created_at: z.string().nullable(),
   status: MirrorPostStatusSchema,
-  facebook_post_id: z.string().nullable(),
+  published_post_id: z.string().nullable(),
   error: z.string().nullable(),
   created_at: z.string(),
 });
@@ -192,38 +206,43 @@ export type MirrorPostRow = z.infer<typeof MirrorPostRowSchema>;
 
 export const CreateMirrorRequestSchema = z
   .object({
-    tiktokUsername: TikTokUsernameSchema,
-    destinationId: z.string().uuid().optional(),
+    sourceUsername: TikTokUsernameSchema,
+    targetDestinationId: z.string().uuid().optional(),
     accountId: z.string().uuid().optional(),
-    fbPageId: z.string().min(1).optional(),
+    targetExternalId: z.string().min(1).optional(),
   })
-  .refine((value) => value.destinationId ?? (value.accountId && value.fbPageId), {
-    message: 'Pick a Facebook page: an existing page or an account + page.',
+  .refine((value) => value.targetDestinationId ?? (value.accountId && value.targetExternalId), {
+    message: 'Pick a target: an existing page or an account + page.',
   });
 export type CreateMirrorRequest = z.infer<typeof CreateMirrorRequestSchema>;
 
 export const MirrorViewSchema = z.object({
   id: z.string().uuid(),
-  destinationId: z.string().uuid(),
-  destinationName: z.string(),
-  destinationAvatarUrl: z.string().nullable(),
-  fbPageId: z.string(),
-  tiktokUsername: z.string(),
-  tiktokDisplayName: z.string().nullable(),
-  tiktokAvatarUrl: z.string().nullable(),
+  sourcePlatform: z.string(),
+  sourceUsername: z.string(),
+  sourceDisplayName: z.string().nullable(),
+  sourceAvatarUrl: z.string().nullable(),
+  targetPlatform: z.string(),
+  targetExternalId: z.string(),
+  targetDisplayName: z.string(),
+  targetAvatarUrl: z.string().nullable(),
+  /** Destination row id resolved at request time for the Insights
+   *  tab; null when the target row is gone (Dashboard still works).
+   *  This is a view-time resolution, never a stored mirror column. */
+  targetDestinationId: z.string().uuid().nullable(),
   status: MirrorStatusSchema,
-  lastPostedVideoId: z.string().nullable(),
+  lastPostedSourceId: z.string().nullable(),
   lastCheckedAt: z.string().nullable(),
   nextCheckAt: z.string().nullable(),
   lastError: z.string().nullable(),
   lastMirroredPost: z
     .object({
       id: z.string().uuid(),
-      tiktokVideoId: z.string(),
+      sourcePostId: z.string(),
       caption: z.string(),
       coverUrl: z.string().nullable(),
       status: MirrorPostStatusSchema,
-      facebookPostId: z.string().nullable(),
+      publishedPostId: z.string().nullable(),
       createdAt: z.string(),
     })
     .nullable(),
@@ -242,8 +261,8 @@ export const CreateMirrorResponseSchema = z.object({
     .object({
       attempted: z.boolean(),
       status: MirrorPostStatusSchema.nullable(),
-      tiktokVideoId: z.string().nullable(),
-      facebookPostId: z.string().nullable(),
+      sourcePostId: z.string().nullable(),
+      publishedPostId: z.string().nullable(),
       error: z.string().nullable(),
     })
     .nullable(),

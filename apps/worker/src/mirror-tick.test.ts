@@ -16,12 +16,16 @@ function mirror(overrides: Partial<MirrorTickMirror> = {}): MirrorTickMirror {
   return {
     id: 'mirror-1',
     workspaceId: 'ws_1',
-    destinationId: 'dest-1',
-    fbPageId: 'fb_123',
-    destinationToken: 'page-token',
-    tiktokUsername: 'alice',
+    sourcePlatform: 'tiktok',
+    sourceUsername: 'alice',
+    targetPlatform: 'facebook',
+    targetExternalId: 'fb_123',
+    targetFound: true,
+    targetToken: 'page-token',
     status: 'active',
-    lastPostedVideoId: null,
+    lastCheckedAt: '2026-10-29T11:30:00.000Z',
+    catchUpPending: false,
+    lastPostedSourceId: null,
     lastPostedCreateTime: null,
     ...overrides,
   };
@@ -51,11 +55,11 @@ interface FakeState {
 function fakeDeps(state: FakeState, feed: unknown[], mirrors: MirrorTickMirror[]): MirrorTickDeps {
   return {
     listMirrors: async () => mirrors,
-    listKnownVideoIds: async () => new Set(),
+    listKnownSourceIds: async () => new Set(),
     claimPost: async (mirrorId, post) => {
-      if (state.claimReturnsNullFor.has(post.tiktokVideoId)) return null;
+      if (state.claimReturnsNullFor.has(post.sourcePostId)) return null;
       state.claimed.push({ mirrorId, post });
-      return `post-${post.tiktokVideoId}`;
+      return `post-${post.sourcePostId}`;
     },
     updatePost: async (id, patch) => {
       state.postUpdates.push({ id, patch });
@@ -109,7 +113,7 @@ describe('runMirrorTick', () => {
     const feed = [reel('v1', 100), reel('v2', 200), reel('v3', 300)];
     const result = await runMirrorTick(
       fakeDeps(state, feed, [
-        mirror({ lastPostedVideoId: 'v2', lastPostedCreateTime: 200 }),
+        mirror({ lastPostedSourceId: 'v2', lastPostedCreateTime: 200 }),
       ])
     );
     expect(result.posted).toBe(1);
@@ -133,7 +137,7 @@ describe('runMirrorTick', () => {
     expect(result.failed).toBe(1);
     // v2 never attempted: the loop stops after the first failure.
     expect(state.published).toHaveLength(0);
-    expect(state.claimed.map((c) => c.post.tiktokVideoId)).toEqual(['v1']);
+    expect(state.claimed.map((c) => c.post.sourcePostId)).toEqual(['v1']);
     const postUpdate = state.postUpdates.find((u) => u.id === 'post-v1');
     expect(postUpdate?.patch.status).toBe('pending');
     const stamp = state.mirrorUpdates[state.mirrorUpdates.length - 1];
@@ -151,7 +155,7 @@ describe('runMirrorTick', () => {
     expect(result.skipped).toBe(1);
     expect(result.posted).toBe(1);
     expect(state.published[0]?.videoUrl).toContain('v_ok');
-    const skippedClaim = state.claimed.find((c) => c.post.tiktokVideoId === 'v_wm');
+    const skippedClaim = state.claimed.find((c) => c.post.sourcePostId === 'v_wm');
     expect(skippedClaim?.post.status).toBe('skipped');
     expect(skippedClaim?.post.videoUrl).toBeNull();
   });
@@ -164,7 +168,7 @@ describe('runMirrorTick', () => {
       return [];
     };
     // Second mirror has a different username so its feed succeeds.
-    const mirrors = [mirror({ id: 'm1' }), mirror({ id: 'm2', tiktokUsername: 'bob' })];
+    const mirrors = [mirror({ id: 'm1' }), mirror({ id: 'm2', sourceUsername: 'bob' })];
     const result = await runMirrorTick({ ...deps, listMirrors: async () => mirrors });
     expect(result.mirrorsChecked).toBe(2);
     const m1Stamp = state.mirrorUpdates.filter((u) => u.id === 'm1').pop();
@@ -189,5 +193,71 @@ describe('runMirrorTick', () => {
     deps.listMirrors = async () => [];
     await runMirrorTick(deps);
     expect(fetchFeed).not.toHaveBeenCalled();
+  });
+
+  it('catch-up after resume posts only the newest reel and marks older missed reels skipped', async () => {
+    const state = newState();
+    const feed = [reel('v1', 100), reel('v2', 200), reel('v3', 300)];
+    const result = await runMirrorTick(
+      fakeDeps(state, feed, [mirror({ catchUpPending: true })])
+    );
+    expect(result.posted).toBe(1);
+    expect(result.skipped).toBe(2);
+    expect(state.published.map((p) => p.videoUrl)).toEqual([
+      'https://example.com/v3.mp4',
+    ]);
+    const skippedClaims = state.claimed.filter((c) => c.post.status === 'skipped');
+    expect(skippedClaims.map((c) => c.post.sourcePostId)).toEqual(['v1', 'v2']);
+    expect(skippedClaims[0]?.post.error).toContain('Superseded');
+    // The catch-up ran, so the resume flag clears and the check stamps.
+    const stamp = state.mirrorUpdates[state.mirrorUpdates.length - 1];
+    expect(stamp?.patch.catchUpPending).toBe(false);
+    expect(stamp?.patch.lastCheckedAt).toBe('2026-10-29T12:00:00.000Z');
+  });
+
+  it('catch-up after a >2h gap posts only the newest reel', async () => {
+    const state = newState();
+    const feed = [reel('v1', 100), reel('v2', 200), reel('v3', 300)];
+    const result = await runMirrorTick(
+      fakeDeps(state, feed, [mirror({ lastCheckedAt: '2026-10-29T09:00:00.000Z' })])
+    );
+    expect(result.posted).toBe(1);
+    expect(result.skipped).toBe(2);
+    expect(state.published[0]?.videoUrl).toContain('v3');
+    const stamp = state.mirrorUpdates[state.mirrorUpdates.length - 1];
+    expect(stamp?.patch.catchUpPending).toBe(false);
+  });
+
+  it('a gap of exactly 2h is NOT catch-up (the rule is "exceeds")', async () => {
+    const state = newState();
+    const feed = [reel('v1', 100), reel('v2', 200), reel('v3', 300)];
+    const result = await runMirrorTick(
+      fakeDeps(state, feed, [mirror({ lastCheckedAt: '2026-10-29T10:00:00.000Z' })])
+    );
+    expect(result.posted).toBe(3);
+    expect(result.skipped).toBe(0);
+  });
+
+  it('a catch-up tick with nothing new still clears the resume flag', async () => {
+    const state = newState();
+    const result = await runMirrorTick(
+      fakeDeps(state, [], [mirror({ catchUpPending: true })])
+    );
+    expect(result.posted).toBe(0);
+    const stamp = state.mirrorUpdates[state.mirrorUpdates.length - 1];
+    expect(stamp?.patch.catchUpPending).toBe(false);
+  });
+
+  it('a feed failure does NOT clear the resume flag and does NOT stamp a check', async () => {
+    const state = newState();
+    const deps = fakeDeps(state, [], [mirror({ catchUpPending: true })]);
+    deps.fetchFeed = async () => {
+      throw new Error('tikwm down');
+    };
+    await runMirrorTick(deps);
+    const stamp = state.mirrorUpdates[state.mirrorUpdates.length - 1];
+    expect(stamp?.patch.status).toBe('error');
+    expect(stamp?.patch.catchUpPending).toBeUndefined();
+    expect(stamp?.patch.lastCheckedAt).toBeUndefined();
   });
 });

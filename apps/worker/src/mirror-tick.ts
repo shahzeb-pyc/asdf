@@ -20,9 +20,9 @@ import { captureWorkerError, type PostHogEnv } from './analytics.js';
 //
 // Dedup (designed upfront, three layers):
 //   1. Time: only items newer than last_posted_create_time.
-//   2. Id: items already in tiktok_mirror_posts are excluded.
+//   2. Id: items already in mirror_posts are excluded.
 //   3. Claim: the post row is inserted (status pending) BEFORE
-//      calling Facebook; the unique (mirror_id, tiktok_video_id)
+//      calling Facebook; the unique (mirror_id, source_post_id)
 //      constraint makes a second claim insert nothing, so
 //      overlapping ticks can never double-post.
 // Oldest-first posting keeps the Facebook page in TikTok order.
@@ -37,6 +37,22 @@ import { captureWorkerError, type PostHogEnv } from './analytics.js';
 //   - A tick that completes without new errors clears the mirror
 //     error back to `active` (the history rows keep the record).
 //   - Paused mirrors are never fetched or posted.
+//
+// Catch-up (owner decision 2026-10-29: "just the latest"):
+//   Normal active ticks post ALL newer reels, oldest-first. A
+//   CATCH-UP tick posts ONLY the newest reel; every older missed
+//   reel gets a `skipped` row (reason: superseded) so history is
+//   honest and those reels are never posted later. A tick is a
+//   catch-up tick when either (a) the mirror was resumed from
+//   paused (the web resume path sets catch_up_pending, cleared
+//   after the first tick that successfully checks the feed), or
+//   (b) the gap since the last successful check (last_checked_at,
+//   stamped by every tick that completes the feed fetch — setup
+//   counts, since setup verifies the feed) exceeds 2 hours, i.e.
+//   hourly checks were missed. A feed failure does NOT clear the
+//   flag: no catch-up happened, so the next tick retries as
+//   catch-up. A catch-up tick with nothing new still clears the
+//   flag — there is nothing left to catch up on.
 
 /** Hourly cron: minute 0 of every hour. */
 export const MIRROR_CRON = '0 * * * *';
@@ -49,41 +65,55 @@ export const MIRROR_FEED_COUNT = 30;
 export interface MirrorTickMirror {
   id: string;
   workspaceId: string;
-  destinationId: string;
-  fbPageId: string;
-  destinationToken: string | null;
-  tiktokUsername: string;
+  sourcePlatform: string;
+  sourceUsername: string;
+  targetPlatform: string;
+  targetExternalId: string;
+  /** False when no destination row matches the target pair (the
+   *  tick then errors loudly instead of posting). */
+  targetFound: boolean;
+  /** Resolved posting token, or null when the target row is gone
+   *  or carries no token (the tick then errors loudly, never posts). */
+  targetToken: string | null;
   status: string;
-  lastPostedVideoId: string | null;
+  /** Last successful feed check (setup counts: setup verifies the
+   *  feed). Null before any check; the gap rule then does not
+   *  apply — only the resume flag can mark such a tick catch-up. */
+  lastCheckedAt: string | null;
+  /** Set on resume (paused -> active); cleared after the first
+   *  tick that successfully checks the feed (see header). */
+  catchUpPending: boolean;
+  lastPostedSourceId: string | null;
   lastPostedCreateTime: number | null;
 }
 
 export interface MirrorTickPostInput {
-  tiktokVideoId: string;
+  sourcePostId: string;
   caption: string;
   videoUrl: string | null;
   coverUrl: string | null;
-  tiktokCreatedAt: string | null;
+  sourceCreatedAt: string | null;
   status: 'posted' | 'failed' | 'skipped' | 'pending';
-  facebookPostId?: string | null;
+  publishedPostId?: string | null;
   error?: string | null;
 }
 
 export interface MirrorTickDeps {
   listMirrors: () => Promise<MirrorTickMirror[]>;
-  listKnownVideoIds: (mirrorId: string) => Promise<ReadonlySet<string>>;
+  listKnownSourceIds: (mirrorId: string) => Promise<ReadonlySet<string>>;
   /** Insert a pending/claimed row; returns the row id, or null when
    *  the unique constraint says another tick claimed it first. */
   claimPost: (mirrorId: string, post: MirrorTickPostInput) => Promise<string | null>;
   updatePost: (
     postId: string,
-    patch: { status: string; facebookPostId?: string | null; error?: string | null }
+    patch: { status: string; publishedPostId?: string | null; error?: string | null }
   ) => Promise<void>;
   updateMirror: (
     mirrorId: string,
     patch: {
       status?: string;
-      lastPostedVideoId?: string | null;
+      catchUpPending?: boolean;
+      lastPostedSourceId?: string | null;
       lastPostedCreateTime?: number | null;
       lastCheckedAt?: string;
       nextCheckAt?: string;
@@ -126,20 +156,36 @@ export async function runMirrorTick(deps: MirrorTickDeps): Promise<MirrorTickRes
   for (const mirror of mirrors) {
     result.mirrorsChecked += 1;
     let mirrorError: string | null = null;
+    let feedFetched = false;
+    let isCatchUp = false;
     try {
-      const feed = await deps.fetchFeed(mirror.tiktokUsername);
-      const knownVideoIds = await deps.listKnownVideoIds(mirror.id);
+      const feed = await deps.fetchFeed(mirror.sourceUsername);
+      const knownSourceIds = await deps.listKnownSourceIds(mirror.id);
       const newReels = selectNewReels(feed, {
-        lastPostedVideoId: mirror.lastPostedVideoId,
+        lastPostedSourceId: mirror.lastPostedSourceId,
         lastPostedCreateTime: mirror.lastPostedCreateTime,
-        knownVideoIds,
+        knownSourceIds,
       });
+      // The feed was fetched: this is a successful check, whatever
+      // happens to individual posts below.
+      feedFetched = true;
+      // Catch-up detection (owner rule): resumed mirrors, or a gap
+      // since the last successful check over the 2-hour bound.
+      // An unparseable stamp never triggers gap catch-up (fail
+      // toward the normal tick, which posts rather than skips).
+      const lastCheckedMs = mirror.lastCheckedAt
+        ? Date.parse(mirror.lastCheckedAt)
+        : Number.NaN;
+      const gapCatchUp =
+        !Number.isNaN(lastCheckedMs) &&
+        now.getTime() - lastCheckedMs > 2 * 60 * 60 * 1000;
+      isCatchUp = mirror.catchUpPending || gapCatchUp;
 
       // Watermarked-only items newer than the last post: record a
       // skipped row (claim-guarded) + mirror error note, never post.
       for (const item of feed) {
         if (!isTikwmWatermarkedOnlyItem(item)) continue;
-        if (knownVideoIds.has(item.video_id)) continue;
+        if (knownSourceIds.has(item.video_id)) continue;
         if (
           mirror.lastPostedCreateTime !== null &&
           typeof item.create_time === 'number' &&
@@ -148,11 +194,11 @@ export async function runMirrorTick(deps: MirrorTickDeps): Promise<MirrorTickRes
           continue;
         }
         const claimedId = await deps.claimPost(mirror.id, {
-          tiktokVideoId: item.video_id,
+          sourcePostId: item.video_id,
           caption: item.title ?? '',
           videoUrl: null,
           coverUrl: item.cover ?? null,
-          tiktokCreatedAt: toIso(item.create_time),
+          sourceCreatedAt: toIso(item.create_time),
           status: 'skipped',
           error: 'Only a watermarked version is available for this reel, so it was not posted.',
         });
@@ -163,41 +209,70 @@ export async function runMirrorTick(deps: MirrorTickDeps): Promise<MirrorTickRes
         }
       }
 
-      // Post new reels oldest-first.
-      for (const reel of newReels) {
+      // Catch-up: post ONLY the newest reel. Every older missed
+      // reel gets a `skipped` row (reason: superseded) so history
+      // is honest and those reels are never posted later. The
+      // claim guard keeps overlapping ticks from double-skipping.
+      let reelsToPost = newReels;
+      if (isCatchUp && newReels.length > 1) {
+        const older = newReels.slice(0, -1);
+        const newest = newReels[newReels.length - 1]!;
+        for (const superseded of older) {
+          if (!isTikwmReelItem(superseded) || !superseded.play) continue;
+          const skippedId = await deps.claimPost(mirror.id, {
+            sourcePostId: superseded.video_id,
+            caption: superseded.title ?? '',
+            videoUrl: superseded.play,
+            coverUrl: superseded.cover ?? null,
+            sourceCreatedAt: toIso(superseded.create_time),
+            status: 'skipped',
+            error:
+              'Superseded by a newer reel during catch-up: after a pause or missed checks, only the latest reel is posted.',
+          });
+          if (skippedId) result.skipped += 1;
+        }
+        reelsToPost = [newest];
+      }
+
+      // Post new reels oldest-first (a catch-up tick posts only
+      // the newest, above).
+      for (const reel of reelsToPost) {
         if (!isTikwmReelItem(reel) || !reel.play) continue;
         const claimedId = await deps.claimPost(mirror.id, {
-          tiktokVideoId: reel.video_id,
+          sourcePostId: reel.video_id,
           caption: reel.title ?? '',
           videoUrl: reel.play,
           coverUrl: reel.cover ?? null,
-          tiktokCreatedAt: toIso(reel.create_time),
+          sourceCreatedAt: toIso(reel.create_time),
           status: 'pending',
         });
         if (!claimedId) continue; // Overlapping tick claimed it first.
-        if (!mirror.destinationToken) {
+        if (!mirror.targetToken) {
+          const message = mirror.targetFound
+            ? 'This target has no posting token. Reconnect the target and try again.'
+            : 'This target is no longer connected. Reconnect it and try again.';
           await deps.updatePost(claimedId, {
             status: 'pending',
-            error: 'This page has no posting token. Reconnect the page and try again.',
+            error: message,
           });
-          mirrorError = 'This page has no posting token. Reconnect the page and try again.';
+          mirrorError = message;
           result.failed += 1;
           break;
         }
         try {
           const postId = await deps.publishReel({
-            pageId: mirror.fbPageId,
-            pageToken: mirror.destinationToken,
+            pageId: mirror.targetExternalId,
+            pageToken: mirror.targetToken,
             videoUrl: reel.play,
             caption: reel.title ?? '',
           });
           await deps.updatePost(claimedId, {
             status: 'posted',
-            facebookPostId: postId,
+            publishedPostId: postId,
             error: null,
           });
           await deps.updateMirror(mirror.id, {
-            lastPostedVideoId: reel.video_id,
+            lastPostedSourceId: reel.video_id,
             lastPostedCreateTime: typeof reel.create_time === 'number' ? reel.create_time : null,
           });
           result.posted += 1;
@@ -221,7 +296,7 @@ export async function runMirrorTick(deps: MirrorTickDeps): Promise<MirrorTickRes
         deps.waitUntil
       );
       console.error(
-        `[mirror-tick] mirror=${mirror.id} (@${mirror.tiktokUsername}) failed; continuing:`,
+        `[mirror-tick] mirror=${mirror.id} (@${mirror.sourceUsername}) failed; continuing:`,
         err
       );
     }
@@ -229,7 +304,15 @@ export async function runMirrorTick(deps: MirrorTickDeps): Promise<MirrorTickRes
       await deps.updateMirror(mirror.id, {
         status: mirrorError ? 'error' : 'active',
         lastError: mirrorError,
-        lastCheckedAt: now.toISOString(),
+        // last_checked_at means the last SUCCESSFUL check: a tick
+        // whose feed fetch failed does not advance it, so the gap
+        // rule above keeps seeing the missed checks. next_check_at
+        // still advances every tick — the next check is scheduled
+        // regardless. The resume flag clears only after a tick that
+        // actually checked the feed; a feed failure leaves it for
+        // the next tick.
+        ...(feedFetched ? { lastCheckedAt: now.toISOString() } : {}),
+        ...(isCatchUp && feedFetched ? { catchUpPending: false } : {}),
         nextCheckAt,
       });
     } catch (err) {
@@ -319,57 +402,97 @@ export function buildMirrorTickDeps(
     now: options?.now,
     waitUntil: options?.waitUntil,
     listMirrors: async () => {
+      // Mirrors carry no destination foreign key: the target is
+      // resolved at tick time by (workspace, target platform,
+      // target external id) against destinations. Batch the lookup:
+      // one destinations query for all mirrors, matched in code
+      // (first active row wins per key). A mirror whose target row
+      // is gone is still listed with targetFound false so the tick
+      // errors loudly instead of silently skipping it (the old
+      // inner-join behaviour dropped such mirrors without a trace).
       const { data, error } = await db
-        .from('tiktok_mirrors')
+        .from('mirrors')
         .select(
-          'id, workspace_id, destination_id, tiktok_username, status, last_posted_video_id, last_posted_create_time, destinations!inner(external_destination_id, encrypted_destination_token)'
+          'id, workspace_id, source_platform, source_username, target_platform, target_external_id, status, catch_up_pending, last_checked_at, last_posted_source_id, last_posted_create_time'
         )
         .in('status', ['active', 'error']);
       if (error) throw new Error(`Failed to list mirrors: ${error.message}`);
-      const mirrors: MirrorTickMirror[] = [];
-      for (const row of (data ?? []) as unknown[]) {
-        if (!isRecord(row)) continue;
-        const dest = row.destinations as Record<string, unknown> | null;
-        if (
-          typeof row.id !== 'string' ||
-          typeof row.workspace_id !== 'string' ||
-          typeof row.destination_id !== 'string' ||
-          typeof row.tiktok_username !== 'string' ||
-          !dest ||
-          typeof dest.external_destination_id !== 'string'
-        ) {
-          continue;
+      const rows = ((data ?? []) as unknown[]).filter(isRecord) as Record<string, unknown>[];
+      const valid = rows.filter(
+        (row) =>
+          typeof row.id === 'string' &&
+          typeof row.workspace_id === 'string' &&
+          typeof row.source_platform === 'string' &&
+          typeof row.source_username === 'string' &&
+          typeof row.target_platform === 'string' &&
+          typeof row.target_external_id === 'string'
+      );
+      const destinations = new Map<string, Record<string, unknown>>();
+      if (valid.length > 0) {
+        const workspaces = [...new Set(valid.map((row) => row.workspace_id as string))];
+        const platforms = [...new Set(valid.map((row) => row.target_platform as string))];
+        const externalIds = [...new Set(valid.map((row) => row.target_external_id as string))];
+        const { data: destData, error: destError } = await db
+          .from('destinations')
+          .select('workspace_id, platform, external_destination_id, encrypted_destination_token, status')
+          .in('workspace_id', workspaces)
+          .in('platform', platforms)
+          .in('external_destination_id', externalIds);
+        if (destError) throw new Error(`Failed to list destinations: ${destError.message}`);
+        const destRows = ((destData ?? []) as unknown[]).filter(isRecord) as Record<
+          string,
+          unknown
+        >[];
+        // First active row wins per key; otherwise the first row.
+        const byKey = new Map<string, Record<string, unknown>>();
+        for (const dest of destRows) {
+          const key = `${dest.workspace_id}:${dest.platform}:${dest.external_destination_id}`;
+          const existing = byKey.get(key);
+          if (!existing || (existing.status !== 'active' && dest.status === 'active')) {
+            byKey.set(key, dest);
+          }
         }
-        const token = dest.encrypted_destination_token;
+        for (const [key, dest] of byKey) destinations.set(key, dest);
+      }
+      const mirrors: MirrorTickMirror[] = [];
+      for (const row of valid) {
+        const key = `${row.workspace_id}:${row.target_platform}:${row.target_external_id}`;
+        const dest = destinations.get(key) ?? null;
+        const token = dest?.encrypted_destination_token;
         mirrors.push({
-          id: row.id,
-          workspaceId: row.workspace_id,
-          destinationId: row.destination_id,
-          fbPageId: dest.external_destination_id,
-          destinationToken:
+          id: row.id as string,
+          workspaceId: row.workspace_id as string,
+          sourcePlatform: row.source_platform as string,
+          sourceUsername: row.source_username as string,
+          targetPlatform: row.target_platform as string,
+          targetExternalId: row.target_external_id as string,
+          targetFound: dest !== null,
+          targetToken:
             typeof token === 'string' ? await decryptToken(token, masterKey) : null,
-          tiktokUsername: row.tiktok_username,
           status: typeof row.status === 'string' ? row.status : 'active',
-          lastPostedVideoId:
-            typeof row.last_posted_video_id === 'string' ? row.last_posted_video_id : null,
+          lastCheckedAt:
+            typeof row.last_checked_at === 'string' ? row.last_checked_at : null,
+          catchUpPending: row.catch_up_pending === true,
+          lastPostedSourceId:
+            typeof row.last_posted_source_id === 'string' ? row.last_posted_source_id : null,
           lastPostedCreateTime:
             typeof row.last_posted_create_time === 'number' ? row.last_posted_create_time : null,
         });
       }
       return mirrors;
     },
-    listKnownVideoIds: async (mirrorId: string) => {
+    listKnownSourceIds: async (mirrorId: string) => {
       const { data, error } = await db
-        .from('tiktok_mirror_posts')
-        .select('tiktok_video_id')
+        .from('mirror_posts')
+        .select('source_post_id')
         .eq('mirror_id', mirrorId)
         .order('created_at', { ascending: false })
         .limit(200);
-      if (error) throw new Error(`Failed to list known videos: ${error.message}`);
+      if (error) throw new Error(`Failed to list known source posts: ${error.message}`);
       const ids = new Set<string>();
       for (const row of (data ?? []) as unknown[]) {
-        if (isRecord(row) && typeof row.tiktok_video_id === 'string') {
-          ids.add(row.tiktok_video_id);
+        if (isRecord(row) && typeof row.source_post_id === 'string') {
+          ids.add(row.source_post_id);
         }
       }
       return ids;
@@ -387,16 +510,16 @@ export function buildMirrorTickDeps(
           };
         };
       })
-        .from('tiktok_mirror_posts')
+        .from('mirror_posts')
         .insert({
           mirror_id: mirrorId,
-          tiktok_video_id: post.tiktokVideoId,
+          source_post_id: post.sourcePostId,
           caption: post.caption,
           video_url: post.videoUrl,
           cover_url: post.coverUrl,
-          tiktok_created_at: post.tiktokCreatedAt,
+          source_created_at: post.sourceCreatedAt,
           status: post.status,
-          facebook_post_id: post.facebookPostId ?? null,
+          published_post_id: post.publishedPostId ?? null,
           error: post.error ?? null,
         })
         .select('id')
@@ -418,10 +541,10 @@ export function buildMirrorTickDeps(
           };
         };
       })
-        .from('tiktok_mirror_posts')
+        .from('mirror_posts')
         .update({
           status: patch.status,
-          facebook_post_id: patch.facebookPostId ?? null,
+          published_post_id: patch.publishedPostId ?? null,
           error: patch.error ?? null,
         })
         .eq('id', postId);
@@ -430,8 +553,9 @@ export function buildMirrorTickDeps(
     updateMirror: async (mirrorId, patch) => {
       const values: Record<string, unknown> = {};
       if (patch.status !== undefined) values.status = patch.status;
-      if (patch.lastPostedVideoId !== undefined) {
-        values.last_posted_video_id = patch.lastPostedVideoId;
+      if (patch.catchUpPending !== undefined) values.catch_up_pending = patch.catchUpPending;
+      if (patch.lastPostedSourceId !== undefined) {
+        values.last_posted_source_id = patch.lastPostedSourceId;
       }
       if (patch.lastPostedCreateTime !== undefined) {
         values.last_posted_create_time = patch.lastPostedCreateTime;
@@ -448,7 +572,7 @@ export function buildMirrorTickDeps(
           };
         };
       })
-        .from('tiktok_mirrors')
+        .from('mirrors')
         .update(values)
         .eq('id', mirrorId);
       if (error) throw new Error(`Failed to update mirror: ${error.message}`);

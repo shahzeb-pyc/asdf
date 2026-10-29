@@ -37,8 +37,10 @@ import { mirrorStatusMark } from './tiktok-card';
  * Dashboard + Insights tabs only (no Queue, Posting Times, or
  * Calendar tabs: mirrors post on the hourly tick, not on a
  * schedule). Tab state lives in ?tab=, like the Pages shell.
- * Insights reuses the linked page's insights panel by destination
- * id. Pause/resume is a switch; delete asks first.
+ * Insights reuses the linked target's insights panel via the
+ * request-time resolved destination id; when the target row is
+ * gone the tab reports it unavailable instead of crashing.
+ * Pause/resume is a switch; delete asks first.
  */
 
 type DetailTab = 'dashboard' | 'insights';
@@ -162,9 +164,9 @@ export function TikTokDetailShell({ subdomain, mirrorId }: Readonly<TikTokDetail
     >
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div className="flex min-w-0 items-start gap-3">
-          {mirror.tiktokAvatarUrl ? (
+          {mirror.sourceAvatarUrl ? (
             <Image
-              src={mirror.tiktokAvatarUrl}
+              src={mirror.sourceAvatarUrl}
               alt=""
               width={56}
               height={56}
@@ -176,15 +178,15 @@ export function TikTokDetailShell({ subdomain, mirrorId }: Readonly<TikTokDetail
               aria-hidden
               className="flex size-14 shrink-0 items-center justify-center rounded-full bg-subtle text-body font-bold text-ink"
             >
-              {(mirror.tiktokUsername[0] ?? '?').toUpperCase()}
+              {(mirror.sourceUsername[0] ?? '?').toUpperCase()}
             </span>
           )}
           <div className="min-w-0">
             <h1 className="truncate text-xxl font-bold tracking-h1 text-ink">
-              @{mirror.tiktokUsername}
+              @{mirror.sourceUsername}
             </h1>
             <p className="truncate text-body text-ink-sub">
-              Mirroring to {mirror.destinationName}
+              Mirroring to {mirror.targetDisplayName}
             </p>
             <StatusMark kind={mark.kind} label={mark.label} testId="tiktok-detail-status-mark" />
           </div>
@@ -221,7 +223,16 @@ export function TikTokDetailShell({ subdomain, mirrorId }: Readonly<TikTokDetail
           <TikTokDashboardTab mirror={mirror} posts={posts} />
         </TabsContent>
         <TabsContent value="insights">
-          <PageTabInsights page={{ id: mirror.destinationId }} subdomain={subdomain} />
+          {mirror.targetDestinationId ? (
+            <PageTabInsights page={{ id: mirror.targetDestinationId }} subdomain={subdomain} />
+          ) : (
+            <EmptyState
+              type="not-found"
+              data-testid="tiktok-insights-unavailable"
+              title="Target page not connected"
+              description="The linked target could not be found, so its insights are unavailable. The mirror itself is untouched."
+            />
+          )}
         </TabsContent>
       </Tabs>
 
@@ -230,7 +241,7 @@ export function TikTokDetailShell({ subdomain, mirrorId }: Readonly<TikTokDetail
           <AlertDialogHeader>
             <AlertDialogTitle>Delete this mirror?</AlertDialogTitle>
             <AlertDialogDescription>
-              @{mirror.tiktokUsername} will stop posting to {mirror.destinationName}.
+              @{mirror.sourceUsername} will stop posting to {mirror.targetDisplayName}.
               The Facebook page itself is not deleted.
             </AlertDialogDescription>
           </AlertDialogHeader>

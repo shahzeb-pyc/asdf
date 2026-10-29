@@ -87,9 +87,9 @@ describe('selection', () => {
       video({ video_id: 'v0', create_time: 50 }),
     ];
     const selected = selectNewReels(feed, {
-      lastPostedVideoId: 'v1',
+      lastPostedSourceId: 'v1',
       lastPostedCreateTime: 100,
-      knownVideoIds: new Set(['v2']),
+      knownSourceIds: new Set(['v2']),
     });
     // v0 is older than the last post; v2 is already recorded.
     expect(selected.map((v) => v.video_id)).toEqual(['v3']);

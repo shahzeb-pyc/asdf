@@ -57,9 +57,9 @@ export function TikTokDashboardTab({ mirror, posts }: Readonly<TikTokDashboardTa
     <div data-testid="tiktok-dashboard-tab" className="flex flex-col gap-6">
       <Card className="p-4">
         <div className="flex flex-wrap items-start gap-4">
-          {mirror.tiktokAvatarUrl ? (
+          {mirror.sourceAvatarUrl ? (
             <Image
-              src={mirror.tiktokAvatarUrl}
+              src={mirror.sourceAvatarUrl}
               alt=""
               width={56}
               height={56}
@@ -71,16 +71,16 @@ export function TikTokDashboardTab({ mirror, posts }: Readonly<TikTokDashboardTa
               aria-hidden
               className="flex size-14 shrink-0 items-center justify-center rounded-full bg-subtle text-body font-bold text-ink"
             >
-              {(mirror.tiktokUsername[0] ?? '?').toUpperCase()}
+              {(mirror.sourceUsername[0] ?? '?').toUpperCase()}
             </span>
           )}
           <div className="min-w-0 flex-1">
-            <p className="text-body font-bold text-ink">@{mirror.tiktokUsername}</p>
-            {mirror.tiktokDisplayName ? (
-              <p className="text-metadata text-ink-sub">{mirror.tiktokDisplayName}</p>
+            <p className="text-body font-bold text-ink">@{mirror.sourceUsername}</p>
+            {mirror.sourceDisplayName ? (
+              <p className="text-metadata text-ink-sub">{mirror.sourceDisplayName}</p>
             ) : null}
             <a
-              href={`https://www.tiktok.com/@${mirror.tiktokUsername}`}
+              href={`https://www.tiktok.com/@${mirror.sourceUsername}`}
               target="_blank"
               rel="noreferrer"
               className="text-metadata text-brand-gold hover:underline"
@@ -88,7 +88,7 @@ export function TikTokDashboardTab({ mirror, posts }: Readonly<TikTokDashboardTa
               View on TikTok
             </a>
             <p className="mt-1 text-metadata text-ink-sub">
-              Mirroring to <strong className="text-ink">{mirror.destinationName}</strong>
+              Mirroring to <strong className="text-ink">{mirror.targetDisplayName}</strong>
             </p>
           </div>
           <StatusMark kind={mark.kind} label={mark.label} testId="tiktok-detail-status" />
@@ -120,7 +120,7 @@ export function TikTokDashboardTab({ mirror, posts }: Readonly<TikTokDashboardTa
         <h2 className="mb-3 text-body font-bold text-ink">Mirror history</h2>
         {posts.length === 0 ? (
           <p data-testid="tiktok-history-empty" className="text-body text-ink-sub">
-            No reels mirrored yet. New reels from @{mirror.tiktokUsername} will appear
+            No reels mirrored yet. New reels from @{mirror.sourceUsername} will appear
             here after the next hourly check.
           </p>
         ) : (
@@ -147,7 +147,7 @@ export function TikTokDashboardTab({ mirror, posts }: Readonly<TikTokDashboardTa
                   </p>
                   <p className="mt-1 text-metadata text-ink-dim">
                     {formatDateTime(post.created_at)} · {postStatusLabel(post.status)}
-                    {post.facebook_post_id ? ' · Posted to Facebook' : ''}
+                    {post.published_post_id ? ' · Posted to Facebook' : ''}
                   </p>
                   {post.error ? (
                     <p className="mt-1 text-metadata text-signal-critical">{post.error}</p>
