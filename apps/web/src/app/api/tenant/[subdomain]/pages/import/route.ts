@@ -429,7 +429,11 @@ export async function handleImportPages(
         const parsed: unknown = JSON.parse(kind);
         if (Array.isArray(parsed)) return parsed.map((f) => String(f));
       } catch (_e) {
-        // Fall through to the empty list below.
+        // A malformed stored kind must surface, never vanish: log it
+        // and fall through to the empty list below.
+        logServerError('[pages/import] Failed to parse slot kind JSON', _e, {
+          source: 'pages-import-kind',
+        });
       }
     }
     return [];

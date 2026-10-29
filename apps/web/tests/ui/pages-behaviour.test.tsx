@@ -478,8 +478,9 @@ describe('Add Page confirmation redesign (toast + gold highlight, no banner)', (
     const toTimezone = screen.getByTestId('continue-to-timezone-btn');
     await waitFor(() => expect((toTimezone as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(toTimezone);
+    // Steps 3–4 are lazy-loaded, so the timezone list arrives a tick later.
     fireEvent.click(
-      screen.getByTestId('add-page-timezone-option-Asia/Karachi')
+      await screen.findByTestId('add-page-timezone-option-Asia/Karachi')
     );
     const toPostingTimes = screen.getByTestId('continue-to-posting-times-btn');
     await waitFor(() =>
@@ -631,10 +632,13 @@ describe('AddPageModal flow behaviour', () => {
     fireEvent.click(toTimezone);
 
     // Step 3 starts blank: Continue is disabled until a timezone is picked.
-    const toPostingTimes = screen.getByTestId('continue-to-posting-times-btn');
+    // Steps 3–4 are lazy-loaded, so wait for the timezone list first.
+    const toPostingTimes = await screen.findByTestId(
+      'continue-to-posting-times-btn'
+    );
     expect((toPostingTimes as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(
-      screen.getByTestId('add-page-timezone-option-Asia/Karachi')
+      await screen.findByTestId('add-page-timezone-option-Asia/Karachi')
     );
     await waitFor(() =>
       expect((toPostingTimes as HTMLButtonElement).disabled).toBe(false)

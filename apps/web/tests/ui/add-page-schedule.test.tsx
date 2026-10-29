@@ -130,23 +130,25 @@ describe('AddPageModal steps 3–4', () => {
       />
     );
 
-    expect(screen.getByText('Select timezone')).toBeTruthy();
-    expect(screen.getByText(/No timezone selected yet/)).toBeTruthy();
+    // Steps 3–4 are lazy-loaded: wait for the Step 3 body first.
+    expect(await screen.findByText('Select timezone')).toBeTruthy();
+    expect(await screen.findByText(/No timezone selected yet/)).toBeTruthy();
     const toPostingTimes = screen.getByTestId(
       'continue-to-posting-times-btn'
     ) as HTMLButtonElement;
     expect(toPostingTimes.disabled).toBe(true);
 
     fireEvent.click(
-      screen.getByTestId('add-page-timezone-option-Asia/Karachi')
+      await screen.findByTestId('add-page-timezone-option-Asia/Karachi')
     );
     await waitFor(() => expect(toPostingTimes.disabled).toBe(false));
     fireEvent.click(toPostingTimes);
 
     expect(screen.getByText('Set posting times')).toBeTruthy();
-    expect(screen.getByTestId('add-page-selected-timezone-note').textContent).toContain(
-      'Asia/Karachi'
-    );
+    expect(
+      (await screen.findByTestId('add-page-selected-timezone-note'))
+        .textContent
+    ).toContain('Asia/Karachi');
     expect(
       (
         screen.getByTestId(
@@ -164,7 +166,7 @@ describe('AddPageModal steps 3–4', () => {
     }
   });
 
-  it('Step 4 allows unlimited times, Remove only while more than one remains, and blocks Add when a time has no post type', () => {
+  it('Step 4 allows unlimited times, Remove only while more than one remains, and blocks Add when a time has no post type', async () => {
     render(
       <AddPageModal
         subdomain="acme"
@@ -179,6 +181,8 @@ describe('AddPageModal steps 3–4', () => {
       />
     );
 
+    // Steps 3–4 are lazy-loaded: wait for the Step 4 body first.
+    await screen.findByTestId('add-page-posting-time-0');
     // One time: no Remove, Add enabled.
     expect(screen.queryByTestId('remove-posting-time-0')).toBeNull();
     const confirm = screen.getByTestId(
@@ -211,7 +215,7 @@ describe('AddPageModal steps 3–4', () => {
     expect(screen.queryByTestId('remove-posting-time-0')).toBeNull();
   });
 
-  it('back navigation preserves the page selection, timezone, and posting times', () => {
+  it('back navigation preserves the page selection, timezone, and posting times', async () => {
     render(
       <AddPageModal
         subdomain="acme"
@@ -236,12 +240,15 @@ describe('AddPageModal steps 3–4', () => {
 
     fireEvent.click(screen.getByTestId('continue-to-timezone-btn'));
     fireEvent.click(
-      screen.getByTestId('add-page-timezone-option-Asia/Karachi')
+      await screen.findByTestId('add-page-timezone-option-Asia/Karachi')
     );
     fireEvent.click(screen.getByTestId('continue-to-posting-times-btn'));
-    fireEvent.change(screen.getByTestId('add-page-posting-time-input-0'), {
-      target: { value: '17:30' },
-    });
+    fireEvent.change(
+      await screen.findByTestId('add-page-posting-time-input-0'),
+      {
+        target: { value: '17:30' },
+      }
+    );
     expect(screen.getByText(/Posts will go out at 05:30 PM/)).toBeTruthy();
 
     // Step 4 → Step 3 keeps the timezone; Step 3 → Step 4 keeps the time.
@@ -528,12 +535,15 @@ describe('AddPageModal steps 3–4', () => {
 
     fireEvent.click(screen.getByTestId('continue-to-timezone-btn'));
     fireEvent.click(
-      screen.getByTestId('add-page-timezone-option-Asia/Karachi')
+      await screen.findByTestId('add-page-timezone-option-Asia/Karachi')
     );
     fireEvent.click(screen.getByTestId('continue-to-posting-times-btn'));
-    fireEvent.change(screen.getByTestId('add-page-posting-time-input-0'), {
-      target: { value: '17:30' },
-    });
+    fireEvent.change(
+      await screen.findByTestId('add-page-posting-time-input-0'),
+      {
+        target: { value: '17:30' },
+      }
+    );
 
     // Back to pages, then back to accounts, then pick the account
     // again: the page selection resets, the schedule does not.

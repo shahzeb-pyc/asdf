@@ -57,10 +57,16 @@ import {
   type DiscoveredPageItem,
 } from './add-page-helpers';
 import { SelectAccountStep, SelectPagesStep } from './add-page-steps';
-import {
-  SelectPostingTimesStep,
-  SelectTimezoneStep,
-} from './add-page-schedule-steps';
+import dynamic from 'next/dynamic';
+// Steps 3–4 load on demand, not in the Pages route's first-load
+// bundle: the timezone directory and posting-times UI are only
+// needed once a user reaches them inside the dialogue.
+const SelectTimezoneStep = dynamic(() =>
+  import('./add-page-schedule-steps').then((m) => m.SelectTimezoneStep)
+);
+const SelectPostingTimesStep = dynamic(() =>
+  import('./add-page-schedule-steps').then((m) => m.SelectPostingTimesStep)
+);
 
 export type { DiscoveredPageItem } from './add-page-helpers';
 export {

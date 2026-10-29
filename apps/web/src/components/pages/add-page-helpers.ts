@@ -77,17 +77,14 @@ export function sortAddPageFormats(formats: string[]): string[] {
   const order = new Map(
     ALL_POST_FORMATS.map((format, index) => [format.id, index])
   );
+  const orderOf = (id: string) => order.get(id) ?? ALL_POST_FORMATS.length;
   const seen = new Set<string>();
   const unique = formats.filter((format) => {
     if (seen.has(format)) return false;
     seen.add(format);
     return true;
   });
-  return unique.sort((a, b) => {
-    const aOrder = order.get(a) ?? ALL_POST_FORMATS.length;
-    const bOrder = order.get(b) ?? ALL_POST_FORMATS.length;
-    return aOrder - bOrder;
-  });
+  return unique.sort((a, b) => orderOf(a) - orderOf(b));
 }
 
 /**
@@ -99,10 +96,19 @@ export function sortAddPageFormats(formats: string[]): string[] {
  * start as a duplicate — duplicates are rejected by the import
  * boundary and would leave Add disabled.
  */
+/** HH:MM, 24-hour clock — shared by validation and free-time search. */
+const ADD_PAGE_TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+
 export function findFreeAddPagePostingTime(
   existing: AddPagePostingTime[]
 ): AddPagePostingTime | null {
-  const used = new Set(existing.map((time) => time.slotTime));
+  // Only well-formed times count: a cleared or malformed row must
+  // never steer the candidate arithmetic into an invalid time.
+  const used = new Set(
+    existing
+      .map((time) => time.slotTime)
+      .filter((slotTime) => ADD_PAGE_TIME_PATTERN.test(slotTime))
+  );
   const candidates: string[] = [...ADD_PAGE_DEFAULT_TIMES];
   const latest = [...used].sort().at(-1) ?? '09:00';
   const [latestHourText, latestMinuteText] = latest.split(':');
@@ -154,7 +160,7 @@ export function isValidAddPagePostingTime(
   postingTime: AddPagePostingTime
 ): boolean {
   return (
-    /^([01]\d|2[0-3]):[0-5]\d$/.test(postingTime.slotTime) &&
+    ADD_PAGE_TIME_PATTERN.test(postingTime.slotTime) &&
     postingTime.allowedFormats.length > 0
   );
 }
@@ -238,13 +244,11 @@ export function computeHeaderSubtitle(
     return 'Choose which connected Facebook account you want to import pages from.';
   }
   const name = accountName || 'Connected Account';
-  if (step === 'select-pages') {
-    const unit = pagesCount === 1 ? 'page available' : 'pages available';
-    return `${name} · ${pagesCount} ${unit}`;
-  }
-  // Steps 3–4: pagesCount is the number of pages selected, and the
-  // timezone + times shown here apply to all of them.
-  const unit = pagesCount === 1 ? 'page selected' : 'pages selected';
+  // Step 2 counts pages available; steps 3–4 count pages selected,
+  // and the timezone + times shown here apply to all of them.
+  const singular = step === 'select-pages' ? 'page available' : 'page selected';
+  const plural = step === 'select-pages' ? 'pages available' : 'pages selected';
+  const unit = pagesCount === 1 ? singular : plural;
   return `${name} · ${pagesCount} ${unit}`;
 }
 
