@@ -99,7 +99,7 @@ export function AddMirrorDialog({
           'Mirror added, but the latest reel could not be posted yet — it will retry on the next hourly check.'
         );
       } else {
-        toast.success('TikTok mirror added');
+        toast.success('Auto Repost added');
       }
       onSuccess?.(data.mirror.id);
       reset();
@@ -110,7 +110,7 @@ export function AddMirrorDialog({
       // on the ApiError itself (no raw body).
       if (isApiError(error) && error.kind === 'http') {
         if (error.code === 'DUPLICATE_MIRROR') {
-          setInlineError('This TikTok account is already mirrored to this Facebook page.');
+          setInlineError('This TikTok account is already reposted to this Facebook page.');
           return;
         }
         if (error.code === 'TIKTOK_FEED_UNAVAILABLE') {
@@ -145,13 +145,13 @@ export function AddMirrorDialog({
     >
       <DialogContent data-testid="add-mirror-dialog">
         <DialogHeader>
-          <DialogTitle>Add TikTok mirror</DialogTitle>
+          <DialogTitle>Add Auto Repost</DialogTitle>
           <DialogDescription>
             {step === 'select-account' &&
               'Pick the Facebook account whose page will receive the reels.'}
             {step === 'select-page' && 'Pick the Facebook page that will receive the reels.'}
             {step === 'username' &&
-              'Enter the TikTok username to mirror. Every new reel from this account will be posted to the page as a Facebook Reel.'}
+              'Enter the TikTok username to repost. Every new reel from this account will be posted to the page as a Facebook Reel.'}
           </DialogDescription>
         </DialogHeader>
 

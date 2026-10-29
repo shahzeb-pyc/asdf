@@ -59,7 +59,7 @@ export function TikTokShell({ subdomain }: Readonly<TikTokShellProps>) {
       <EmptyState
         type="not-found"
         data-testid="tiktok-load-error"
-        title="Couldn't load your TikTok mirrors"
+        title="Couldn't load your mirrors"
         description="Please try again."
         action={
           <Button type="button" data-testid="tiktok-load-retry-btn" onClick={() => { void mirrorsQuery.refetch(); }}>
@@ -73,12 +73,12 @@ export function TikTokShell({ subdomain }: Readonly<TikTokShellProps>) {
       <EmptyState
         type="no-results"
         data-testid="tiktok-empty-state"
-        title="No TikTok mirrors yet"
-        description="Add a TikTok username and every new reel from that account will be posted to your Facebook page automatically."
+        title="No mirrors yet"
+        description="Add a TikTok username and every new reel from that account will be reposted to your Facebook page automatically."
         action={
           <Button type="button" data-testid="tiktok-empty-add-btn" onClick={() => setIsAddOpen(true)}>
             <PlusIcon aria-hidden />
-            <span>Add TikTok mirror</span>
+            <span>Add Auto Repost</span>
           </Button>
         }
       />
@@ -108,17 +108,17 @@ export function TikTokShell({ subdomain }: Readonly<TikTokShellProps>) {
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 data-testid="tiktok-page-title" className="mb-1 text-xxl font-bold tracking-h1 text-ink">
-            TikTok
+            Auto Repost
           </h1>
           <p data-testid="tiktok-page-subtitle" className="m-0 text-body text-ink-sub">
             {mirrors.length === 0
-              ? 'Mirror TikTok accounts to your Facebook pages.'
+              ? 'Auto-repost TikTok reels to your Facebook pages.'
               : `${mirrors.length} ${mirrors.length === 1 ? 'mirror' : 'mirrors'}`}
           </p>
         </div>
         <Button type="button" data-testid="header-add-mirror-btn" onClick={() => setIsAddOpen(true)}>
           <PlusIcon aria-hidden />
-          <span>Add TikTok mirror</span>
+          <span>Add Auto Repost</span>
         </Button>
       </div>
 

@@ -95,7 +95,7 @@ describe('TikTok list', () => {
     apiGetMock.mockResolvedValue({ mirrors: [] });
     renderWithQuery(<TikTokShell subdomain="acme" />);
     expect(await screen.findByTestId('tiktok-empty-state')).toBeTruthy();
-    expect(screen.getByText('No TikTok mirrors yet')).toBeTruthy();
+    expect(screen.getByText('No mirrors yet')).toBeTruthy();
   });
 });
 
