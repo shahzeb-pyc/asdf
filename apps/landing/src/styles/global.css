@@ -498,11 +498,19 @@
   width: 100%;
   height: 100%;
 }
-/* 4-lobed wavy blob: SVG path, r = 36 + 14*cos(4*theta) in a 100x100
-   viewBox — 50 at the cardinal lobe tips, 22 at the diagonal valleys,
-   so the sides are concave, never a circle. Dots sit on the inward
-   side of each blob: section 3 at the inward diagonal, section 4 at
-   the visible bottom lobe tip. */
+/* Soft clover blob: one inline SVG per corner, built from five
+   overlapping circles of the same #1a1a1a fill — a central circle
+   (r=32 at 50,50) plus one lobe circle (r=26) at each cardinal
+   point, centres 22 from the middle (50,28 / 50,72 / 28,50 /
+   72,50). The union outline has lobe tips at radius 48 and
+   diagonal valleys at radius ~36.4, i.e. valley >= 75% of lobe
+   radius — shallow, gentle waves, roughly round overall, never a
+   cross/star/plus. The previous deep-valley shape (valleys
+   only 44% of lobe radius) is gone. Pink dots sit ON a lobe tip
+   edge, straddling the outline (centre exactly on the tip, half
+   in / half out), never buried inside the blob: top blobs on
+   their bottom lobe tip, bottom blobs on their top lobe tip,
+   section 4 top blobs on their visible bottom lobe tip. */
 .blob-tl {
   top: 12px;
   left: 12px;
@@ -535,25 +543,29 @@
   background-color: #ff2d78;
 }
 .blob-dot-tl {
-  top: 60%;
-  left: 60%;
+  top: 98%;
+  left: 50%;
+  transform: translate(-50%, -50%);
 }
 .blob-dot-tr {
-  top: 60%;
-  right: 60%;
+  top: 98%;
+  left: 50%;
+  transform: translate(-50%, -50%);
 }
 .blob-dot-bl {
-  bottom: 60%;
-  left: 60%;
+  top: 2%;
+  left: 50%;
+  transform: translate(-50%, -50%);
 }
 .blob-dot-br {
-  bottom: 60%;
-  right: 60%;
+  top: 2%;
+  left: 50%;
+  transform: translate(-50%, -50%);
 }
 .blob-dot-s4 {
-  bottom: 8%;
+  top: 98%;
   left: 50%;
-  transform: translateX(-50%);
+  transform: translate(-50%, -50%);
 }
 
 /* ---- Section 4 pricing header: same full-section pattern as section 3 ----
