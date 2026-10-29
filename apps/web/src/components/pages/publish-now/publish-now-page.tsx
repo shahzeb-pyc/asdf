@@ -87,7 +87,6 @@ import { getAccountHealth } from '@/components/accounts/account-health';
 import type { FacebookAccountItem } from '@/components/accounts/account-card';
 import { buildDirectConnectUrl } from '@/components/accounts/connect-account-modal';
 import { getUserInitials } from '@/lib/user-initials';
-import { formatPageIdSuffix } from '@/components/pages/page-card';
 import {
   buildAccountsHref,
   buildSettingsFacebookHref,
@@ -525,6 +524,22 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
     setSelectedPageKeys(allSelected ? [] : selectableKeys);
   }, [selectablePages, selectedPageKeys]);
 
+  // Accounts Select All mirrors the pages step: it selects ALL
+  // selectable (connected) accounts, not only the search-filtered
+  // ones, and never selects expired/disconnected accounts (they
+  // are not in activeAccounts and stay non-selectable with
+  // Reconnect).
+  const toggleSelectAllAccounts = React.useCallback(() => {
+    const allSelected =
+      activeAccounts.length > 0 &&
+      activeAccounts.every((account) =>
+        selectedAccountIds.includes(account.id)
+      );
+    setSelectedAccountIds(
+      allSelected ? [] : activeAccounts.map((account) => account.id)
+    );
+  }, [activeAccounts, selectedAccountIds]);
+
   const filteredGroups = React.useMemo(() => {
     const query = pageSearchQuery.trim().toLowerCase();
     if (!query) return groups;
@@ -881,18 +896,18 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
   ) : null;
 
   return (
-    <div className="mx-auto w-full max-w-300 px-6 py-6 pb-32">
+    <div className="mx-auto w-full max-w-300 px-4 py-6 pb-32 sm:px-6">
       {view !== 'composer' && (
-        <div className="mx-auto flex w-full max-w-2xl flex-col items-center py-10">
+        <div className="mx-auto flex w-full max-w-2xl flex-col items-center py-6 sm:py-10">
           <div className="w-full space-y-8">
             <div className="space-y-3 text-center">
               <div className="mx-auto mb-6 flex size-16 items-center justify-center rounded-2xl bg-brand-gold/10 text-brand-gold ring-1 ring-brand-gold/20">
                 <SendIcon size={32} aria-hidden />
               </div>
-              <h1 className="text-4xl font-bold tracking-tight text-ink">
+              <h1 className="text-3xl font-bold tracking-tight text-ink sm:text-4xl">
                 Publish Now
               </h1>
-              <p className="text-lg text-ink-sub">
+              <p className="text-base text-ink-sub sm:text-lg">
                 {view === 'accounts'
                   ? 'Choose the Facebook accounts and pages you want to publish to.'
                   : 'Choose the pages you want this post to go to.'}
@@ -906,7 +921,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
             {errorBanner}
 
             {view === 'accounts' && (
-              <div className="rounded-2xl border border-line bg-subtle p-6">
+              <div className="rounded-2xl border border-line bg-subtle p-4 sm:p-6">
                 {showMissingAppGuidance && (
                   <div
                     data-testid="facebook-app-guidance"
@@ -963,7 +978,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
 
                 {!accountsQuery.isPending && activeAccounts.length > 0 && (
                   <>
-                    <div className="relative mb-6">
+                    <div className="relative mb-4">
                       <SearchIcon
                         className="pointer-events-none absolute left-4 top-3.5 size-4 text-ink-dim"
                         aria-hidden
@@ -979,6 +994,28 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                         className="border-line bg-canvas pl-11 shadow-none"
                       />
                     </div>
+                    <div className="mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+                      <span className="text-metadata text-ink-sub">
+                        {accounts.length}{' '}
+                        {accounts.length === 1 ? 'account' : 'accounts'} ·{' '}
+                        {selectedAccountIds.length} of{' '}
+                        {activeAccounts.length} accounts selected
+                      </span>
+                      <button
+                        type="button"
+                        aria-pressed={activeAccounts.every((account) =>
+                          selectedAccountIds.includes(account.id)
+                        )}
+                        onClick={toggleSelectAllAccounts}
+                        className="inline-flex min-h-11 items-center px-2 text-metadata font-semibold text-link outline-none focus-visible:outline-2 focus-visible:outline-brand-gold"
+                      >
+                        {activeAccounts.every((account) =>
+                          selectedAccountIds.includes(account.id)
+                        )
+                          ? 'Deselect All'
+                          : 'Select All'}
+                      </button>
+                    </div>
                     <div className="flex max-h-75 flex-col gap-1 overflow-y-auto pr-2">
                       {filteredActiveAccounts.length === 0 && (
                         <div className="p-8 text-center text-ink-sub">
@@ -991,7 +1028,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                           <label
                             key={account.id}
                             className={cn(
-                              'flex min-h-11 w-full cursor-pointer items-center gap-4 rounded-sm px-3.5 py-3 outline-none transition-colors hover:bg-hover',
+                              'flex min-h-11 w-full cursor-pointer items-center gap-3 rounded-sm px-3.5 py-3 outline-none transition-colors hover:bg-hover sm:gap-4',
                               checked && 'bg-hover'
                             )}
                           >
@@ -1026,7 +1063,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                       return (
                         <div
                           key={account.id}
-                          className="flex items-center justify-between gap-4 rounded-sm px-3.5 py-3 opacity-55"
+                          className="flex items-center justify-between gap-3 rounded-sm px-3.5 py-3 opacity-55 sm:gap-4"
                         >
                           <div className="flex min-w-0 items-center gap-4">
                             <Avatar
@@ -1066,11 +1103,12 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                   </div>
                 )}
 
-                <div className="mt-6 text-right">
+                <div className="mt-6 sm:text-right">
                   <Button
                     type="button"
                     disabled={selectedAccountIds.length === 0 || isDiscovering}
                     onClick={() => void handleContinueFromAccounts()}
+                    className="w-full sm:w-auto"
                   >
                     {isDiscovering
                       ? 'Finding pages...'
@@ -1083,7 +1121,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
             )}
 
             {view === 'pages' && (
-              <div className="rounded-2xl border border-line bg-subtle p-6">
+              <div className="rounded-2xl border border-line bg-subtle p-4 sm:p-6">
                 <div className="mb-6 flex items-center justify-between">
                   <h2 className="text-xl font-semibold text-ink">Select pages</h2>
                   <Button
@@ -1125,10 +1163,12 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                         className="border-line bg-canvas pl-11 shadow-none"
                       />
                     </div>
-                    <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
+                    <div className="mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
                       <span className="text-metadata text-ink-sub">
                         {allPages.length}{' '}
-                        {allPages.length === 1 ? 'page found' : 'pages found'}
+                        {allPages.length === 1 ? 'page found' : 'pages found'}{' '}
+                        · {selectedPages.length} of {allPages.length} pages
+                        selected
                       </span>
                       {selectablePages.length > 0 && (
                         <button
@@ -1166,7 +1206,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                                 <label
                                   key={key}
                                   className={cn(
-                                    'flex items-start gap-3 rounded-xl border border-line bg-canvas p-4 transition-colors',
+                                    'flex items-start gap-3 rounded-xl border border-line bg-canvas p-3 transition-colors sm:p-4',
                                     checked && !disabled && 'border-brand-gold/50 bg-brand-gold/10',
                                     disabled
                                       ? 'cursor-default opacity-60'
@@ -1192,9 +1232,6 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                                       {page.category || 'Facebook Page'} •{' '}
                                       {page.followers.toLocaleString('en-US')}{' '}
                                       followers
-                                      {formatPageIdSuffix(page.fbPageId)
-                                        ? ` · Page ID ${formatPageIdSuffix(page.fbPageId)}`
-                                        : ''}
                                     </div>
                                     {disabled && page.disabledReason && (
                                       <div className="mt-1 text-metadata font-medium text-ink-dim">
@@ -1209,11 +1246,12 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                         </div>
                       ))}
                     </div>
-                    <div className="mt-6 flex items-center justify-between gap-2">
+                    <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                       <Button
                         type="button"
                         variant="outline"
                         onClick={handleBackToAccounts}
+                        className="w-full sm:w-auto"
                       >
                         Back
                       </Button>
@@ -1221,6 +1259,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                         type="button"
                         disabled={selectedPages.length === 0}
                         onClick={() => setView('composer')}
+                        className="w-full sm:w-auto"
                       >
                         {selectedPages.length === 0
                           ? 'Continue'
@@ -1238,8 +1277,8 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
       {view === 'composer' && (
         <div className="flex flex-col gap-8">
           {/* Active connection header, like old's sticky header. */}
-          <div className="sticky top-0 z-40 -mx-6 border-b border-line bg-canvas/80 px-6 pb-4 pt-6 shadow-sm backdrop-blur-xl sm:-mx-8 sm:px-8">
-            <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center sm:gap-0">
+          <div className="sticky top-0 z-40 -mx-4 border-b border-line bg-canvas/80 px-4 pb-3 pt-4 shadow-sm backdrop-blur-xl sm:-mx-6 sm:px-6 sm:pb-4 sm:pt-6">
+            <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center sm:gap-0">
               <div className="flex min-w-0 items-center gap-4">
                 <div className="flex shrink-0 items-center">
                   {selectedPages.slice(0, 3).map((page, index) => (
@@ -1262,14 +1301,18 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <h2 className="truncate text-lg font-semibold leading-tight text-ink">
-                      {selectedPages.map((page) => page.pageName).join(', ')}
+                      {selectedPages[0]?.pageName}
+                      {selectedPages.length > 1 &&
+                        ` + ${selectedPages.length - 1} more`}
                     </h2>
                     <span className="shrink-0 rounded-full border border-brand-gold/35 px-2 py-0.5 text-metadata font-semibold uppercase tracking-body text-brand-gold">
                       Selected
                     </span>
                   </div>
                   <p className="mt-0.5 truncate text-sm leading-tight text-ink-sub">
-                    via {selectedAccountNames.join(', ')}
+                    via {selectedAccountNames[0]}
+                    {selectedAccountNames.length > 1 &&
+                      ` + ${selectedAccountNames.length - 1} more`}
                   </p>
                 </div>
               </div>
@@ -1279,7 +1322,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                 size="sm"
                 disabled={isPublishing || isRetrying}
                 onClick={() => setView('pages')}
-                className="shrink-0 rounded-full"
+                className="w-full shrink-0 rounded-full sm:w-auto"
               >
                 Change selection
               </Button>
@@ -1288,9 +1331,9 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
 
           {errorBanner}
 
-          <div className="grid items-start gap-8 lg:grid-cols-[1.5fr_1fr]">
+          <div className="grid items-start gap-6 sm:gap-8 lg:grid-cols-[1.5fr_1fr]">
             {/* Composer panel */}
-            <section className="rounded-3xl border border-line bg-subtle p-6 sm:p-8">
+            <section className="rounded-3xl border border-line bg-subtle p-4 sm:p-8">
               <div className="mb-6 flex items-center justify-between">
                 <h2 className="text-xl font-semibold text-ink">Composer</h2>
               </div>
@@ -1298,7 +1341,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
               <div className="space-y-6">
                 <div className="space-y-3">
                   <p className="text-body font-medium text-ink">Post Type</p>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
                     {POST_TYPES.map((type) => {
                       const isActive = postType === type.id;
                       return (
@@ -1308,7 +1351,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                           variant="outline"
                           disabled={isPublishing || isUploadingTemp}
                           className={cn(
-                            'h-11 flex-1',
+                            'h-11 min-w-0 flex-1',
                             isActive &&
                               'border-brand-gold/50 bg-brand-gold/10 text-brand-gold hover:bg-brand-gold/20 hover:text-brand-gold'
                           )}
@@ -1398,10 +1441,10 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                         )}
                       </div>
                     ) : (
-                      <div className="flex items-center gap-4 rounded-2xl border border-line bg-canvas p-4">
+                      <div className="flex items-center gap-3 rounded-2xl border border-line bg-canvas p-3 sm:gap-4 sm:p-4">
                         {attached.mediaType === 'image' &&
                         (attached.thumbnailUrl || attached.url) ? (
-                          <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-line">
+                          <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-lg border border-line sm:h-16 sm:w-16">
                             <Image
                               src={attached.thumbnailUrl ?? attached.url}
                               alt={attached.name}
@@ -1411,7 +1454,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                             />
                           </div>
                         ) : (
-                          <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg border border-line bg-subtle text-metadata text-ink-sub">
+                          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg border border-line bg-subtle text-metadata text-ink-sub sm:h-16 sm:w-16">
                             Video
                           </div>
                         )}
@@ -1506,7 +1549,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
 
             {/* Results panel */}
             <section className="flex max-h-200 flex-col overflow-hidden rounded-3xl border border-line bg-subtle">
-              <div className="border-b border-line p-5">
+              <div className="border-b border-line p-4 sm:p-5">
                 <h2 className="text-lg font-semibold text-ink">
                   Publish results
                 </h2>
@@ -1579,9 +1622,9 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                       return (
                         <div
                           key={`${result.accountId}:${result.fbPageId}`}
-                          className="rounded-xl border border-line bg-canvas p-4"
+                          className="rounded-xl border border-line bg-canvas p-3 sm:p-4"
                         >
-                          <div className="flex items-start gap-4">
+                          <div className="flex items-start gap-3 sm:gap-4">
                             <span
                               aria-hidden
                               className={cn(
