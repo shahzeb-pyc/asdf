@@ -333,6 +333,52 @@ export async function claimIdempotencyResult(
 }
 
 /**
+ * Release a claim without completing it — only when the claimed
+ * execution definitively did NOT insert (insert returned null).
+ * Never call this after a successful insert: releasing then would
+ * reopen the duplicate window the claim exists to close.
+ */
+export async function releaseIdempotencyClaim(
+  client: ConnectDbClient | null | undefined,
+  scope: IdempotencyScope
+): Promise<void> {
+  try {
+    if (isLegacyClient(client ?? undefined)) {
+      await (client as DatabaseClient).query(
+        `DELETE FROM idempotency_keys
+         WHERE workspace_id = $1 AND user_id = $2 AND action = $3
+           AND idempotency_key = $4 AND response_status = $5`,
+        [
+          scope.workspaceId,
+          scope.userId,
+          scope.action,
+          scope.key,
+          IDEMPOTENCY_PROCESSING_STATUS,
+        ]
+      );
+      return;
+    }
+    const supabase = getRouteSupabase(client ?? undefined);
+    if (!supabase) return;
+    await supabase
+      .from('idempotency_keys')
+      .delete()
+      .eq('workspace_id', scope.workspaceId)
+      .eq('user_id', scope.userId)
+      .eq('action', scope.action)
+      .eq('idempotency_key', scope.key)
+      .eq('response_status', IDEMPOTENCY_PROCESSING_STATUS);
+  } catch (err) {
+    logServerError('[idempotency] Failed to release idempotency claim', err, {
+      source: 'idempotency',
+      workspaceId: scope.workspaceId,
+      userId: scope.userId,
+      action: scope.action,
+    });
+  }
+}
+
+/**
  * Turn a claimed sentinel into the real result. Returns true when
  * the claim was completed. Never throws: a completion failure after
  * success must not fail the response — the route's queue-by-key

@@ -59,6 +59,7 @@ interface QueueItemRow {
   scheduled_time: string | null;
   slot_id: string | null;
   queue_seq: number;
+  idempotency_key?: string | null;
   status: string;
   claimed_at: string | null;
   retry_count: number;
@@ -149,6 +150,47 @@ class FakeDb {
           ]
         : [];
     }
+    if (sql.includes('INSERT INTO idempotency_keys') && sql.includes('RETURNING')) {
+      // Atomic claim: ON CONFLICT DO NOTHING RETURNING id — the
+      // mock must model the DB's atomicity, or a concurrency test
+      // proves nothing. An existing row (sentinel or completed)
+      // returns no row: the caller is already-processing.
+      const tuple = [params[0], params[1], params[2], params[3]].map(String);
+      const exists = this.idempotencyKeys.some(
+        (r) =>
+          r.workspace_id === tuple[0] &&
+          r.user_id === tuple[1] &&
+          r.action === tuple[2] &&
+          r.idempotency_key === tuple[3]
+      );
+      if (exists) return [];
+      this.idempotencyKeys.push({
+        workspace_id: tuple[0],
+        user_id: tuple[1],
+        action: tuple[2],
+        idempotency_key: tuple[3],
+        response_status: Number(params[4]),
+        response_body: JSON.parse(String(params[5])) as unknown,
+        expires_at: String(params[6]),
+      });
+      return [{ id: 'claim-row' }];
+    }
+    if (sql.includes('UPDATE idempotency_keys')) {
+      // Complete: only a sentinel row (status 102) may be completed.
+      const row = this.idempotencyKeys.find(
+        (r) =>
+          r.workspace_id === params[3] &&
+          r.user_id === params[4] &&
+          r.action === params[5] &&
+          r.idempotency_key === params[6] &&
+          r.response_status === 102
+      );
+      if (!row) return [];
+      row.response_status = Number(params[0]);
+      row.response_body = JSON.parse(String(params[1])) as unknown;
+      row.expires_at = String(params[2]);
+      return [{ id: 'completed-row' }];
+    }
     if (sql.includes('INSERT INTO idempotency_keys')) {
       const tuple = [params[0], params[1], params[2], params[3]].map(String);
       const exists = this.idempotencyKeys.some(
@@ -207,6 +249,7 @@ class FakeDb {
         platform_options: String(params[12]),
         scheduled_time: params[13] == null ? null : String(params[13]),
         slot_id: (params[14] as string | null) ?? null,
+        idempotency_key: (params[15] as string | null) ?? null,
         queue_seq:
           Math.max(
             0,
@@ -244,6 +287,14 @@ class FakeDb {
       return row && row.workspace_id === params[1] ? [row] : [];
     }
     if (sql.includes('FROM queue_items')) {
+      if (sql.includes('idempotency_key')) {
+        // Heal lookup: find a previously inserted row by its key.
+        const row = this.queueItems.find(
+          (q) =>
+            q.workspace_id === params[0] && q.idempotency_key === params[1]
+        );
+        return row ? [row] : [];
+      }
       if (sql.includes('SELECT destination_id')) {
         const row = this.queueItems.find(
           (q) => q.id === params[0] && q.workspace_id === params[1]
@@ -550,6 +601,47 @@ describe('destination enqueue idempotency', () => {
     const retryBody = await retry.json();
     expect(retryBody).toEqual(firstBody);
     expect(db.queueItems.filter((q) => q.caption === 'hello')).toHaveLength(1);
+  });
+
+  it('creates only one row when the same key is submitted concurrently', async () => {
+    // The old bug: both concurrent lookups missed (neither result
+    // stored yet) and both inserted. The atomic claim must stop the
+    // loser with 409, not a second row. Which call wins is not
+    // asserted — only that exactly one succeeds and one is refused.
+    const [first, second] = await Promise.all([
+      enqueue(facebookTextPost, KEY_A),
+      enqueue(facebookTextPost, KEY_A),
+    ]);
+    const statuses = [first.status, second.status].sort();
+    expect(statuses).toEqual([201, 409]);
+    expect(db.queueItems.filter((q) => q.caption === 'hello')).toHaveLength(1);
+  });
+
+  it('heals a missing stored result from the queue row instead of duplicating', async () => {
+    // Simulate a swallowed store failure: the insert succeeded and
+    // the queue row carries the key, but no idempotency result was
+    // stored. A retry must return the ORIGINAL row, not insert again.
+    db.queueItems.push(
+      fullQueueItemRow({
+        id: 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaa0001',
+        caption: 'hello',
+        idempotency_key: KEY_A,
+      })
+    );
+    const res = await enqueue(facebookTextPost, KEY_A);
+    expect(res.status).toBe(201);
+    expect(res.headers.get('Idempotency-Replayed')).toBe('true');
+    const body = await res.json();
+    expect(body.id).toBe('aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaa0001');
+    expect(db.queueItems.filter((q) => q.caption === 'hello')).toHaveLength(1);
+  });
+
+  it('rejects queueing on a disconnected page and creates nothing', async () => {
+    const destination = db.destinations.get(fbDestinationId);
+    if (destination) destination.status = 'disconnected';
+    const res = await enqueue(facebookTextPost, KEY_A);
+    expect(res.status).toBe(409);
+    expect(db.queueItems.filter((q) => q.caption === 'hello')).toHaveLength(0);
   });
 
   it('executes normally with a different key', async () => {

@@ -15,17 +15,22 @@ import {
 } from '@/lib/request-body';
 import { calculateNextVacantSlot } from '@/lib/slot-scheduler';
 import {
+  destinationWireStatus,
   fetchDestinationForEnqueue,
   fetchDestinationQueuedTimes,
   fetchDestinationSlots,
   fetchOwnedMedia,
+  findQueueItemByIdempotencyKey,
   insertDestinationQueueItem,
   type OwnedMediaRow,
 } from '@/lib/publishing/destination-enqueue';
 import { refreshDestinationUnmatchedFlag } from '@/lib/server/unmatched-flag';
 import {
+  claimIdempotencyResult,
+  completeIdempotencyResult,
   lookupIdempotencyResult,
   parseIdempotencyKeyHeader,
+  releaseIdempotencyClaim,
   storeIdempotencyResult,
   type IdempotencyScope,
 } from '@/lib/publishing/idempotency';
@@ -87,6 +92,49 @@ export async function handleDestinationEnqueue(
       if (replay) {
         return NextResponse.json(replay.body, {
           status: replay.status,
+          headers: { 'Idempotency-Replayed': 'true' },
+        });
+      }
+      // Heal path: the queue row may exist even when no result was
+      // stored (the store after a successful insert is deliberately
+      // swallowed, so a store failure used to mean "retry inserts
+      // again"). Finding the row by key returns the ORIGINAL item
+      // and completes the missing result, instead of duplicating.
+      const healed = await findQueueItemByIdempotencyKey(
+        client,
+        workspaceId,
+        idempotencyScope.key
+      );
+      if (healed) {
+        const healedResponse = DestinationEnqueueResponseSchema.parse({
+          id: healed.id,
+          workspaceId: healed.workspace_id,
+          destinationId: healed.destination_id,
+          platform: healed.platform,
+          kind: healed.kind,
+          platformFormat: healed.platform_format ?? null,
+          status: healed.status,
+          scheduledTime: healed.scheduled_time
+            ? new Date(healed.scheduled_time).toISOString()
+            : null,
+          slotId: healed.slot_id ?? null,
+          createdAt: new Date(healed.created_at).toISOString(),
+        });
+        const completed = await completeIdempotencyResult(client, idempotencyScope, {
+          status: 201,
+          body: healedResponse,
+        });
+        if (!completed) {
+          // No sentinel to complete (e.g. it expired): the healed
+          // row is still the correct answer, and a plain store here
+          // cannot duplicate anything — it only records the replay.
+          await storeIdempotencyResult(client, idempotencyScope, {
+            status: 201,
+            body: healedResponse,
+          });
+        }
+        return NextResponse.json(healedResponse, {
+          status: 201,
           headers: { 'Idempotency-Replayed': 'true' },
         });
       }
@@ -154,6 +202,33 @@ export async function handleDestinationEnqueue(
         message: 'The destination belongs to a different platform than the request.',
       },
       { status: 400 }
+    );
+  }
+
+  // Page-status gate (server side — the client gate alone is never
+  // trusted). Paused pages ARE allowed: their posts wait until
+  // reactivation, and the composer warns about that. Everything else
+  // that cannot publish is rejected here, before any row is written.
+  const wireStatus = destinationWireStatus(destination);
+  const pageStatusMessages: Partial<Record<string, string>> = {
+    invalid_token:
+      'This Page’s connection has expired. Reconnect the Page, then try again.',
+    page_checkpoint:
+      'This Page is waiting on a Facebook identity check. Resolve it in Facebook, then try again.',
+    fb_rate_limited:
+      'This Page is rate-limited by Facebook right now. Wait for the limit to lift, then try again.',
+    disconnected:
+      'This Page is disconnected. Add it again, then try again.',
+  };
+  if (wireStatus !== 'active' && wireStatus !== 'paused') {
+    return NextResponse.json(
+      {
+        error: 'PAGE_NOT_PUBLISHABLE',
+        message:
+          pageStatusMessages[wireStatus] ??
+          'This Page cannot publish right now. Fix the Page connection, then try again.',
+      },
+      { status: 409 }
     );
   }
 
@@ -272,6 +347,34 @@ export async function handleDestinationEnqueue(
     scheduledTime = computed.scheduledTime.toISOString();
   }
 
+  // Atomic claim, AFTER every validation and BEFORE the insert:
+  // a concurrent same-key request must see this claim and stop,
+  // and a failed validation above must never hold a claim (a fixed
+  // retry must execute fresh, not meet a 5-minute processing lock).
+  if (idempotencyScope) {
+    try {
+      const claim = await claimIdempotencyResult(client, idempotencyScope);
+      if (claim === 'already-processing') {
+        return NextResponse.json(
+          {
+            error: 'IDEMPOTENCY_IN_PROGRESS',
+            message:
+              'This post is already being added. Please wait a moment and try again.',
+          },
+          { status: 409 }
+        );
+      }
+    } catch {
+      return NextResponse.json(
+        {
+          error: 'IDEMPOTENCY_STORE_UNAVAILABLE',
+          message: 'Idempotency store unavailable',
+        },
+        { status: 500 }
+      );
+    }
+  }
+
   const created = await insertDestinationQueueItem(client, {
     workspaceId,
     destinationId: destination.id,
@@ -288,9 +391,16 @@ export async function handleDestinationEnqueue(
     platformOptions: optionsResult.options,
     scheduledTime,
     slotId,
+    idempotencyKey: idempotencyScope?.key ?? null,
   });
 
   if (!created) {
+    // The insert definitively did not happen, so the claim can be
+    // released at once — an immediate retry is safe and must not
+    // wait out the 5-minute sentinel.
+    if (idempotencyScope) {
+      await releaseIdempotencyClaim(client, idempotencyScope);
+    }
     return NextResponse.json({ error: 'Failed to enqueue post' }, { status: 500 });
   }
 
@@ -313,10 +423,14 @@ export async function handleDestinationEnqueue(
     slotId: created.slot_id ?? null,
     createdAt: new Date(created.created_at).toISOString(),
   });
-  // Only successful responses are stored: a failed request retried
-  // with the same key must execute fresh, not replay its error.
+  // Complete the claim with an UPDATE, not an upsert: an upsert
+  // with ignoreDuplicates would DO NOTHING against the sentinel
+  // row and leave the key stuck at "processing". If completion
+  // fails, the response still goes out — the next retry heals the
+  // missing result from the queue row itself (see the heal path
+  // at the top of this handler).
   if (idempotencyScope) {
-    await storeIdempotencyResult(client, idempotencyScope, {
+    await completeIdempotencyResult(client, idempotencyScope, {
       status: 201,
       body: response,
     });
