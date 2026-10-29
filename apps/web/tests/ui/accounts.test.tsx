@@ -768,6 +768,20 @@ describe('Facebook Accounts UI Components (Spec 027, Spec 029 & Spec 031)', () =
       );
       expect(notice?.keysToRemove).toEqual(['error', 'tab']);
     });
+
+    it('resolveOAuthRedirectNotice maps account_save_failed to a save message with a Connect-again action (BL1 fix)', () => {
+      const notice = resolveOAuthRedirectNotice(
+        new URLSearchParams({ error: 'account_save_failed' })
+      );
+
+      expect(notice).not.toBeNull();
+      expect(notice?.notice.type).toBe('error');
+      expect(notice?.notice.message).toBe(
+        'We couldn\u2019t save your Facebook account after Facebook approved the connection. Nothing was connected. Please try connecting again.'
+      );
+      expect(notice?.notice.connectAgain).toBe(true);
+      expect(notice?.keysToRemove).toEqual(['error']);
+    });
   });
 });
 

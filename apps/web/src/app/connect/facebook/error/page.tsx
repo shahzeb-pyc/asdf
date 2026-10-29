@@ -1,9 +1,11 @@
 'use client';
 
 import React, { Suspense } from 'react';
+import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 
 import { ConnectStatusLayout } from '@/components/accounts/connect-status-layout';
+import { Button } from '@/components/shared/ui/button';
 
 /**
  * Reason → copy mapping (spec 136 §3.4, preserved verbatim — OD-136-4
@@ -28,6 +30,17 @@ export function getConnectErrorCopy(reason?: string | null): {
       description: "Couldn't connect to Facebook. Check your permissions and try again.",
     };
   }
+  if (reason === 'account_save_failed') {
+    // BL1 fix: a failed account save is not a permissions problem and
+    // not an expired link, so it gets its own copy — never the
+    // fallthrough below, which would send the user into a
+    // generate-a-fresh-link loop for a failure a fresh link cannot fix.
+    return {
+      title: "Couldn't Save Your Facebook Account",
+      description:
+        'Facebook approved the connection, but we couldn\u2019t save the account. Nothing was connected. Please try connecting again from your FBUploadPro dashboard.',
+    };
+  }
   return {
     title: 'Connection Link Expired or Invalid',
     description:
@@ -46,7 +59,19 @@ export function ConnectErrorView({
       variant="error"
       title={title}
       description={description}
-    />
+    >
+      {reason === 'account_save_failed' ? (
+        // BL1 fix: the magic error page previously had no action at all.
+        // This device holds no session, so it cannot restart the connect
+        // itself — the back action returns the user to FBUploadPro, where
+        // they can connect again from Accounts.
+        <Button asChild data-testid="magic-connect-error-back">
+          <Link href={process.env.NEXT_PUBLIC_APP_URL || '/'}>
+            Back to FBUploadPro
+          </Link>
+        </Button>
+      ) : null}
+    </ConnectStatusLayout>
   );
 }
 

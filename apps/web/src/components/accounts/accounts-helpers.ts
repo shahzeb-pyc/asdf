@@ -139,7 +139,12 @@ export function isConnectGatedByMissingCredentials(status: {
 export function resolveOAuthRedirectNotice(searchParams: {
   get: (key: string) => string | null;
 }): {
-  notice: { type: 'success' | 'error'; message: string };
+  notice: {
+    type: 'success' | 'error';
+    message: string;
+    /** BL1 fix: when true, the banner offers a Connect-again action. */
+    connectAgain?: boolean;
+  };
   /** Account name carried by the redirect, when present — used to highlight its card. */
   accountName?: string | undefined;
   keysToRemove: string[];
@@ -187,6 +192,20 @@ export function resolveOAuthRedirectNotice(searchParams: {
 
   const error = searchParams.get('error');
   if (error) {
+    if (error === 'account_save_failed') {
+      // BL1 fix: a failed save is not a permissions problem, so it must
+      // not fall through to the generic permissions copy below. The
+      // banner carries a Connect-again action (see accounts-shell).
+      return {
+        notice: {
+          type: 'error',
+          message:
+            'We couldn\u2019t save your Facebook account after Facebook approved the connection. Nothing was connected. Please try connecting again.',
+          connectAgain: true,
+        },
+        keysToRemove: ['error'],
+      };
+    }
     if (error === 'credentials_required') {
       return {
         notice: {

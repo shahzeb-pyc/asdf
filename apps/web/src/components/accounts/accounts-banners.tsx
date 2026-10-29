@@ -17,15 +17,34 @@ import { Button } from '@/components/shared/ui/button';
 interface FeedbackBannerProps {
   notice: { type: 'success' | 'error'; message: string };
   onDismiss: () => void;
+  /** BL1 fix: optional fix action, e.g. Connect again after a failed save. */
+  onConnectAgain?: (() => void) | undefined;
 }
 
-export function FeedbackBanner({ notice, onDismiss }: Readonly<FeedbackBannerProps>) {
+export function FeedbackBanner({
+  notice,
+  onDismiss,
+  onConnectAgain,
+}: Readonly<FeedbackBannerProps>) {
   return (
     <Banner
       data-testid="oauth-feedback-banner"
       variant={notice.type === 'success' ? 'success' : 'critical'}
       title={notice.message}
       onDismiss={onDismiss}
+      action={
+        onConnectAgain ? (
+          <Button
+            type="button"
+            variant="link"
+            data-testid="oauth-connect-again-btn"
+            onClick={onConnectAgain}
+            className="font-semibold"
+          >
+            Connect again
+          </Button>
+        ) : undefined
+      }
       className="mb-6 border border-line"
     />
   );

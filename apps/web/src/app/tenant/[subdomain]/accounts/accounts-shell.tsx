@@ -174,6 +174,7 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
   const [bannerNotice, setBannerNotice] = React.useState<{
     type: 'success' | 'error';
     message: string;
+    connectAgain?: boolean;
   } | null>(null);
 
   // Option B dialogue: a briefly gold-highlighted card for the account
@@ -598,6 +599,9 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
         <FeedbackBanner
           notice={bannerNotice}
           onDismiss={() => setBannerNotice(null)}
+          onConnectAgain={
+            bannerNotice.connectAgain ? handleOpenNewConnect : undefined
+          }
         />
       )}
 

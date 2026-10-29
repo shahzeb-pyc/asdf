@@ -162,6 +162,37 @@ function buildOAuthStepErrorRedirect(
   return NextResponse.redirect(destinationUrl);
 }
 
+/**
+ * Hard-error redirect for a failed account save (BL1 fix). The user must
+ * never see a success page for an account that was not persisted, so a
+ * save failure redirects here instead of falling through to
+ * buildPostConnectRedirect. Magic flows land on the app-host error page
+ * with a dedicated reason; direct flows land on Accounts with a
+ * dedicated error param handled by resolveOAuthRedirectNotice. No
+ * page-token refresh runs on this path — there is no saved account to
+ * refresh for.
+ */
+function buildAccountSaveErrorRedirect(
+  requestUrl: string,
+  destinationUrl: URL,
+  isMagic: boolean | undefined,
+  rootDomain?: string,
+  appUrl?: string
+): NextResponse {
+  if (isMagic) {
+    const magicErrorUrl = buildMagicConnectUrl(
+      '/connect/facebook/error',
+      requestUrl,
+      rootDomain ?? '',
+      appUrl ?? ''
+    );
+    magicErrorUrl.searchParams.set('reason', 'account_save_failed');
+    return NextResponse.redirect(magicErrorUrl);
+  }
+  destinationUrl.searchParams.set('error', 'account_save_failed');
+  return NextResponse.redirect(destinationUrl);
+}
+
 async function fetchGraphPageTokenMap(
   longAccessToken: string
 ): Promise<Map<string, string>> {
@@ -398,13 +429,22 @@ async function upsertConnectedFacebookAccount(
   const legacyDb = db && 'query' in db && typeof db.query === 'function' ? db : null;
 
   if (supabase) {
-    const { data: existing } = await supabase
+    const { data: existing, error: existingError } = await supabase
       .from('social_accounts')
       .select('id, status, metadata')
       .eq('workspace_id', workspaceId)
       .eq('platform', 'facebook')
       .eq('external_account_id', meProfile.id)
       .maybeSingle();
+
+    // BL1 fix: a failed lookup is a hard error, not a signal to proceed
+    // with empty metadata and hope the upsert succeeds. The caller
+    // redirects to the save-error surface instead of success.
+    if (existingError) {
+      throw new Error(
+        `Failed to look up connected Facebook account: ${existingError.message}`
+      );
+    }
 
     const alreadyExisted = Boolean(existing && typeof existing.status === 'string');
     const profilePictureUrl = meProfile.picture?.data?.url ?? null;
@@ -419,7 +459,7 @@ async function upsertConnectedFacebookAccount(
     if (gender !== null) metadata.gender = gender;
     if (accountLink !== null) metadata.account_link = accountLink;
 
-    const { data: upserted } = await supabase
+    const { data: upserted, error: upsertError } = await supabase
       .from('social_accounts')
       .upsert(
         {
@@ -439,7 +479,23 @@ async function upsertConnectedFacebookAccount(
       .select('id')
       .single();
 
+    // BL1 fix: never swallow an upsert error and redirect to success.
+    // This throws into the caller's save-error handling, which logs the
+    // failure and redirects to the error surface — for a brand-new
+    // account and for an existing account whose token update failed
+    // alike. No "connected with the old token" fallback.
+    if (upsertError) {
+      throw new Error(
+        `Failed to save connected Facebook account: ${upsertError.message}`
+      );
+    }
+
     const accountRowId = upserted?.id ?? existing?.id;
+    if (!accountRowId) {
+      // An upsert that reports success but yields no row is the same
+      // failure mode: nothing was persisted, so success is a lie.
+      throw new Error('Failed to save connected Facebook account: no row returned');
+    }
     return { accountRowId, alreadyExisted };
   }
 
@@ -489,6 +545,10 @@ async function upsertConnectedFacebookAccount(
   )) as Array<{ id: string }>;
 
   const accountRowId = upsertRows?.[0]?.id ?? existingRows?.[0]?.id;
+  if (!accountRowId) {
+    // Same BL1 rule as the Supabase path: no persisted row, no success.
+    throw new Error('Failed to save connected Facebook account: no row returned');
+  }
   return { accountRowId, alreadyExisted };
 }
 
@@ -697,16 +757,38 @@ export async function handleFacebookCallback(
         : 5184000; // ~60 days
     const expiresAt = new Date(Date.now() + expiresInSeconds * 1000);
 
-    // 6. Check existing & upsert into database with workspace_id isolation
-    const { accountRowId, alreadyExisted } =
-      await upsertConnectedFacebookAccount(
+    // 6. Check existing & upsert into database with workspace_id isolation.
+    // BL1 fix: any save failure is a hard error. Do not redirect to
+    // success and do not refresh page tokens on this path.
+    let accountRowId: string | undefined;
+    let alreadyExisted = false;
+    try {
+      ({ accountRowId, alreadyExisted } = await upsertConnectedFacebookAccount(
         db,
         userId,
         workspaceId,
         meProfile,
         encryptedToken,
         expiresAt
+      ));
+    } catch (err) {
+      logServerError(
+        '[FacebookOAuth] Failed to save connected Facebook account',
+        err,
+        {
+          source: 'facebook-oauth-callback',
+          workspaceId,
+          tenantSubdomain,
+        }
       );
+      return buildAccountSaveErrorRedirect(
+        request.url,
+        destinationUrl,
+        statePayload.isMagic,
+        rootDomain,
+        appUrl
+      );
+    }
 
     if (accountRowId) {
       await refreshConnectedPageTokens(
