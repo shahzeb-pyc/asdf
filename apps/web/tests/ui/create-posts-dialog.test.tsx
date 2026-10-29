@@ -158,11 +158,11 @@ describe('CreatePostsDialog rendering and blocks', () => {
     expect(queueButton().textContent).toBe('Add all to Queue (3 posts)');
   });
 
-  it('shows the paused warning but still allows queueing', () => {
+  it('blocks queueing on a paused page', () => {
     renderDialog(makePage({ status: 'paused' }));
-    expect(screen.getByText(/posts you add will wait until the Page is reactivated/)).not.toBeNull();
+    expect(screen.getByText(/queueing is turned off for this Page/)).not.toBeNull();
     typePost('hello');
-    expect(queueButton().disabled).toBe(false);
+    expect(queueButton().disabled).toBe(true);
   });
 
   it('blocks queueing on a disconnected page', () => {

@@ -42,8 +42,9 @@
  * retry of an unedited block still replays safely; dismissing
  * with non-empty drafts asks first, nothing closes mid-queueing,
  * and following "Go to Posting Times" preserves drafts for the
- * next open; a plain-text page-status gate (blocked statuses
- * refuse, paused warns); and a 150-post batch guard with a plain
+ * next open; a plain-text page-status gate (every non-active
+ * status, including paused, refuses queueing); and a 150-post
+ * batch guard with a plain
  * refusal message (no count badge in the header).
  *
  * Queueing never stays stuck: the button label and one plain
@@ -185,9 +186,9 @@ function pageStatusGate(status: FacebookPageItem['status']): {
       };
     case 'paused':
       return {
-        blocked: false,
+        blocked: true,
         message:
-          'This Page is paused — posts you add will wait until the Page is reactivated.',
+          'This Page is paused. Resume posting first — queueing is turned off for this Page until then.',
       };
     default:
       return { blocked: false, message: null };

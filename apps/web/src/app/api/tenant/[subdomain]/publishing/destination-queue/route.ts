@@ -206,9 +206,9 @@ export async function handleDestinationEnqueue(
   }
 
   // Page-status gate (server side — the client gate alone is never
-  // trusted). Paused pages ARE allowed: their posts wait until
-  // reactivation, and the composer warns about that. Everything else
-  // that cannot publish is rejected here, before any row is written.
+  // trusted). Only active pages may queue: paused pages are blocked
+  // like every other non-publishable status (no queueing with a
+  // warning), and are rejected here, before any row is written.
   const wireStatus = destinationWireStatus(destination);
   const pageStatusMessages: Partial<Record<string, string>> = {
     invalid_token:
@@ -219,8 +219,10 @@ export async function handleDestinationEnqueue(
       'This Page is rate-limited by Facebook right now. Wait for the limit to lift, then try again.',
     disconnected:
       'This Page is disconnected. Add it again, then try again.',
+    paused:
+      'This Page is paused. Resume posting, then try again.',
   };
-  if (wireStatus !== 'active' && wireStatus !== 'paused') {
+  if (wireStatus !== 'active') {
     return NextResponse.json(
       {
         error: 'PAGE_NOT_PUBLISHABLE',
