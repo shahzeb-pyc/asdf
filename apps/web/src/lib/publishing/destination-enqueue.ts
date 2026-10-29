@@ -396,28 +396,29 @@ export async function findQueueItemByIdempotencyKey(
   workspaceId: string,
   idempotencyKey: string
 ): Promise<InsertedQueueItemRow | null> {
-  try {
-    if (isLegacyClient(client)) {
-      const rows = (await (client as DatabaseClient).query(
-        `SELECT ${RETURNING_COLUMNS}
-         FROM queue_items
-         WHERE workspace_id = $1 AND idempotency_key = $2
-         LIMIT 1`,
-        [workspaceId, idempotencyKey]
-      )) as InsertedQueueItemRow[];
-      return rows?.[0] ?? null;
-    }
-    const supabase = getRouteSupabase(client as SupabaseClient);
-    if (!supabase) return null;
-    const { data, error } = await supabase
-      .from('queue_items')
-      .select(RETURNING_COLUMNS)
-      .eq('workspace_id', workspaceId)
-      .eq('idempotency_key', idempotencyKey)
-      .maybeSingle();
-    if (error || !data) return null;
-    return data as InsertedQueueItemRow;
-  } catch {
-    return null;
+  // No catch-and-return-null here, deliberately: this is the heal
+  // path, and a failed lookup must NOT silently proceed to a fresh
+  // insert (that is exactly how a retry duplicates). Errors throw
+  // to the route, which fails loudly with 500 before executing.
+  if (isLegacyClient(client)) {
+    const rows = (await (client as DatabaseClient).query(
+      `SELECT ${RETURNING_COLUMNS}
+       FROM queue_items
+       WHERE workspace_id = $1 AND idempotency_key = $2
+       LIMIT 1`,
+      [workspaceId, idempotencyKey]
+    )) as InsertedQueueItemRow[];
+    return rows?.[0] ?? null;
   }
+  const supabase = getRouteSupabase(client as SupabaseClient);
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from('queue_items')
+    .select(RETURNING_COLUMNS)
+    .eq('workspace_id', workspaceId)
+    .eq('idempotency_key', idempotencyKey)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return data as InsertedQueueItemRow;
 }
