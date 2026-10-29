@@ -76,11 +76,14 @@ import {
 import { CreatePostsDialog } from '@/components/pages/dedicated/create-posts/create-posts-dialog';
 // Direct path, same reason: the Queue panel is new work.
 import { QueuePanel } from '@/components/pages/dedicated/queue/queue-panel';
+// Direct path, same reason: the Calendar View panel is new work.
+import { CalendarViewPanel } from '@/components/pages/dedicated/calendar-view/calendar-view-panel';
 
 export type DedicatedPageTab =
   | 'dashboard'
   | 'insights'
   | 'queue'
+  | 'calendar-view'
   | 'calendar';
 
 export interface TenantDedicatedPageViewProps {
@@ -96,13 +99,15 @@ export interface TenantDedicatedPageViewProps {
  *  taxonomy still applies in full — failures throw, never vanish. */
 const AckSchema = z.object({}).passthrough();
 
-// Final tab scope (Shahzeb, 2026-10-27): Dashboard, Insights, Queue,
-// Posting Times — no Settings tab. Queue is the real section now
+// Final tab scope (Shahzeb, 2026-10-27, Calendar View added
+// 2026-10-29): Dashboard, Insights, Queue, Calendar View, Posting
+// Times — no Settings tab. Queue is the real section now
 // (dedicated/queue/QueuePanel), not a placeholder.
 const TAB_ITEMS: ReadonlyArray<{ id: DedicatedPageTab; label: string }> = [
   { id: 'dashboard', label: 'Dashboard' },
   { id: 'insights', label: 'Insights' },
   { id: 'queue', label: 'Queue' },
+  { id: 'calendar-view', label: 'Calendar View' },
   { id: 'calendar', label: 'Posting Times' },
 ];
 
@@ -863,6 +868,17 @@ export default function TenantDedicatedPageView({
                   pageTimezone={pageTimezone}
                   slots={slots}
                   onCreatePost={() => setIsCreatePostsOpen(true)}
+                />
+              </TabsContent>
+            )}
+
+            {visitedTabs.has('calendar-view') && (
+              <TabsContent value="calendar-view" forceMount className="data-[state=inactive]:hidden">
+                <CalendarViewPanel
+                  subdomain={subdomain}
+                  pageId={pageId}
+                  pageTimezone={pageTimezone}
+                  slots={slots}
                 />
               </TabsContent>
             )}
