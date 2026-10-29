@@ -92,8 +92,8 @@ describe("error boundaries", () => {
     expect(html).toContain("<body>");
     expect(html).toContain("Something went wrong");
     expect(html).toContain("Try again");
-    // Self-contained fallback styling carries the Binance gold token value.
-    expect(html).toContain("#fcd535");
+    // Self-contained fallback styling carries the Cyber Yellow primary token value (Direction 4, approved redesign; was Binance gold #fcd535).
+    expect(html).toContain("#FFD300");
     expect(typeof reset).toBe("function");
   });
 

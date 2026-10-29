@@ -64,7 +64,8 @@ describe('root viewport export (spec 142 F03)', () => {
     const match = layout.match(/const themeInitScript = `([\s\S]*?)`;/);
     expect(match, 'themeInitScript template literal must exist').not.toBeNull();
     const hash = createHash('sha256').update(match?.[1] ?? '', 'utf8').digest('hex');
-    expect(hash).toBe('8066bfb7d1a0ef2742fc0f2faebc3616dcf4ce9250c7574d065cb55fe5324867');
+    // Re-pinned for the approved Direction 4 light-first change to themeInitScript (was the spec 139 hash above in history); the pin still guards against unintended changes.
+    expect(hash).toBe('1b8edd924e4ed3b4d9c6308b6e00c3e32170f98bb4273a89c0e898f87e1e6275');
   });
 });
 
