@@ -763,9 +763,43 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
     [attached, firstComment, postType, subdomain, text]
   );
 
+  /**
+   * Pages already published in this run must never be published
+   * again by a second Publish click: the composer is deliberately
+   * kept after a run, so without this exclusion a second click
+   * would re-publish the same post to every page that already
+   * succeeded. Failed pages are NOT excluded — they are
+   * re-attempted — and a newly selected page that has not
+   * published in this run is published normally.
+   */
+  const alreadyPublishedSelectedPages = React.useMemo(
+    () =>
+      selectedPages.filter((page) =>
+        results.some(
+          (result) =>
+            result.status === 'published' &&
+            result.accountId === page.accountId &&
+            result.fbPageId === page.fbPageId
+        )
+      ),
+    [selectedPages, results]
+  );
+  const unpublishedSelectedPages = React.useMemo(
+    () =>
+      selectedPages.filter(
+        (page) => !alreadyPublishedSelectedPages.includes(page)
+      ),
+    [selectedPages, alreadyPublishedSelectedPages]
+  );
+  const allSelectedAlreadyPublished =
+    hasRun &&
+    selectedPages.length > 0 &&
+    unpublishedSelectedPages.length === 0;
+
   const handlePublish = React.useCallback(async () => {
     if (
       selectedPages.length === 0 ||
+      unpublishedSelectedPages.length === 0 ||
       isPostEmpty ||
       isOverLimit ||
       isFirstCommentOverLimit ||
@@ -776,8 +810,32 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
     setIsPublishing(true);
     setErrorMessage(null);
     try {
-      const nextResults = await publishTargets(selectedPages);
-      setResults(nextResults);
+      const nextResults = await publishTargets(unpublishedSelectedPages);
+      // Merge, never replace: run-1 successes must still show
+      // after run 2, run-2 results update their own rows (a
+      // previously failed page re-attempted here), and newly
+      // published pages are appended.
+      setResults((prev) => {
+        const byKey = new Map(
+          nextResults.map((result) => [
+            `${result.accountId}:${result.fbPageId}`,
+            result,
+          ])
+        );
+        const merged = prev.map((result) => {
+          const replacement = byKey.get(
+            `${result.accountId}:${result.fbPageId}`
+          );
+          return replacement ?? result;
+        });
+        for (const result of nextResults) {
+          const key = `${result.accountId}:${result.fbPageId}`;
+          if (!prev.some((p) => `${p.accountId}:${p.fbPageId}` === key)) {
+            merged.push(result);
+          }
+        }
+        return merged;
+      });
       setHasRun(true);
     } catch (error) {
       setErrorMessage(
@@ -788,6 +846,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
     }
   }, [
     selectedPages,
+    unpublishedSelectedPages,
     isPostEmpty,
     isOverLimit,
     isFirstCommentOverLimit,
@@ -1515,6 +1574,16 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                   </p>
                 </div>
 
+                {alreadyPublishedSelectedPages.length > 0 && (
+                  <p
+                    data-testid="publish-now-already-published-note"
+                    className="text-metadata leading-body text-ink-sub"
+                  >
+                    {alreadyPublishedSelectedPages.length === 1
+                      ? 'Page already published in this run will not be published again.'
+                      : 'Pages already published in this run will not be published again.'}
+                  </p>
+                )}
                 <Button
                   type="button"
                   className="h-12 w-full rounded-xl text-base font-semibold"
@@ -1523,7 +1592,8 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                     isOverLimit ||
                     isFirstCommentOverLimit ||
                     isPublishing ||
-                    isUploadingTemp
+                    isUploadingTemp ||
+                    allSelectedAlreadyPublished
                   }
                   onClick={() => void handlePublish()}
                 >

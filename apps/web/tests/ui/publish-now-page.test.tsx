@@ -339,6 +339,124 @@ describe('PublishNowPage wizard', () => {
     );
   });
 
+  it('does not re-publish already published pages on a second Publish, but publishes a newly added page', { timeout: 15000 }, async () => {
+    const publishCalls: Array<{ path: string; body: unknown }> = [];
+    (api.post as unknown as { mockImplementation: (fn: unknown) => void })
+      .mockImplementation(async (path: string, body: unknown) => {
+        publishCalls.push({ path, body });
+        const targets = (body as { targets: Array<{ fbPageId: string; pageName: string }> }).targets;
+        return {
+          results: targets.map((target) => ({
+            accountId: '11111111-1111-4111-a111-111111111111',
+            fbPageId: target.fbPageId,
+            pageName: target.pageName,
+            status: 'published',
+            postId: `post-${target.fbPageId}`,
+            reason: null,
+            graphCode: null,
+            graphSubcode: null,
+            step: null,
+            httpStatus: null,
+            fbtraceId: null,
+            firstCommentFailed: null,
+            firstCommentReason: null,
+          })),
+        };
+      });
+
+    renderPage();
+    await waitFor(
+      () => expect(screen.getByText(/3 accounts/)).toBeTruthy(),
+      { timeout: 5000 }
+    );
+    fireEvent.click(screen.getByText('Shahzeb Malik'));
+    fireEvent.click(
+      screen.getByRole('button', { name: /Continue \(1 account\)/ })
+    );
+    await waitFor(
+      () => expect(screen.getByText(/2 pages found/)).toBeTruthy(),
+      { timeout: 5000 }
+    );
+    // First run: only Maddie Lippy.
+    fireEvent.click(screen.getByText('Maddie Lippy'));
+    fireEvent.click(
+      screen.getByRole('button', { name: /Continue \(1 page\)/ })
+    );
+    await waitFor(
+      () =>
+        expect(
+          screen.getByRole('heading', { name: 'Maddie Lippy' })
+        ).toBeTruthy(),
+      { timeout: 5000 }
+    );
+    fireEvent.change(screen.getByPlaceholderText("What's on your mind?"), {
+      target: { value: 'Hello' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Publish Now' }));
+    await waitFor(
+      () => expect(screen.getByText('Published')).toBeTruthy(),
+      { timeout: 5000 }
+    );
+    expect(publishCalls).toHaveLength(1);
+
+    // The skipped-page note shows, and Publish is guarded while
+    // every selected page is already published in this run.
+    expect(
+      screen.getByText(
+        'Page already published in this run will not be published again.'
+      )
+    ).toBeTruthy();
+    const publishButton = screen.getByRole('button', {
+      name: 'Publish Now',
+    }) as HTMLButtonElement;
+    expect(publishButton.disabled).toBe(true);
+    fireEvent.click(publishButton);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(publishCalls).toHaveLength(1);
+
+    // Add Sunnie James via Change selection (caption is kept),
+    // then Publish again: only the new page is sent.
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Change selection' })
+    );
+    await waitFor(
+      () => expect(screen.getByText(/2 pages found/)).toBeTruthy(),
+      { timeout: 5000 }
+    );
+    fireEvent.click(screen.getByText('Sunnie James'));
+    fireEvent.click(
+      screen.getByRole('button', { name: /Continue \(2 pages\)/ })
+    );
+    await waitFor(
+      () =>
+        expect(
+          screen.getByRole('heading', { name: 'Maddie Lippy + 1 more' })
+        ).toBeTruthy(),
+      { timeout: 5000 }
+    );
+    expect(
+      screen.getByRole('button', { name: 'Publish Now' })
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Publish Now' }));
+    await waitFor(
+      () => expect(publishCalls).toHaveLength(2),
+      { timeout: 5000 }
+    );
+    const secondBody = publishCalls[1].body as {
+      targets: Array<{ fbPageId: string }>;
+    };
+    expect(secondBody.targets).toHaveLength(1);
+    expect(secondBody.targets[0].fbPageId).toBe('page-222');
+
+    // Results merge: both pages still show Published, nothing
+    // from the first run is lost by the second publish.
+    await waitFor(
+      () => expect(screen.getByText(/2 of 2 pages published/)).toBeTruthy(),
+      { timeout: 5000 }
+    );
+    expect(screen.getAllByText('Published')).toHaveLength(2);
+  });
+
   it('attaches library media, prefills its caption, and clears it on type switch', { timeout: 15000 }, async () => {
     const publishCalls: Array<{ path: string; body: unknown }> = [];
     (api.post as unknown as { mockImplementation: (fn: unknown) => void })
