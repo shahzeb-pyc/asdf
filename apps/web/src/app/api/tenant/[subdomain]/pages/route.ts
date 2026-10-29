@@ -11,6 +11,7 @@ import {
   type FacebookPageStatus,
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
+import { logServerError } from '@/lib/server-analytics';
 import {
   paginateItems,
   paginateMeta,
@@ -580,6 +581,177 @@ async function fetchSupabasePagesPage(
   return { pages, total, page: clampedPage, attentionTotal };
 }
 
+/**
+ * Pages list card queue counts (Queued / Posted / Failed).
+ *
+ * `posted` is the all-time `published` total, renamed at this
+ * boundary. `publishing`, `skipped` and `cancelled` are never
+ * counted here. A page with no queue rows — or a failed counts
+ * query, logged below — gets zeros, never a hidden row.
+ */
+export interface PageCardQueueCounts {
+  queued: number;
+  posted: number;
+  failed: number;
+}
+
+const DEFAULT_PAGE_CARD_QUEUE_COUNTS: PageCardQueueCounts = {
+  queued: 0,
+  posted: 0,
+  failed: 0,
+};
+
+function toCount(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? Math.trunc(n) : 0;
+}
+
+/**
+ * SQL path: ONE grouped aggregation over queue_items for the whole
+ * page slice — never one query per page. This is the single-query
+ * shape the list route is built on; the grouped-counts RPC
+ * (get_page_queue_status_counts) cannot be reused because it was
+ * dropped with the legacy schema (20261024130000) and its last
+ * definition still read the dropped legacy_queue_items table.
+ */
+async function fetchPageCardQueueCountsSql(
+  dbClient: DatabaseClient,
+  pageIds: string[]
+): Promise<Map<string, PageCardQueueCounts>> {
+  const counts = new Map<string, PageCardQueueCounts>();
+  if (pageIds.length === 0) return counts;
+  try {
+    const rows = await dbClient.query<{
+      destination_id?: unknown;
+      queued?: unknown;
+      posted?: unknown;
+      failed?: unknown;
+    }>(
+      `SELECT destination_id,
+         COUNT(*) FILTER (WHERE status = 'queued')::int AS queued,
+         COUNT(*) FILTER (WHERE status = 'published')::int AS posted,
+         COUNT(*) FILTER (WHERE status = 'failed')::int AS failed
+       FROM queue_items
+       WHERE destination_id = ANY($1)
+       GROUP BY destination_id`,
+      [pageIds]
+    );
+    for (const row of rows ?? []) {
+      if (typeof row.destination_id !== 'string') continue;
+      counts.set(row.destination_id, {
+        queued: toCount(row.queued),
+        posted: toCount(row.posted),
+        failed: toCount(row.failed),
+      });
+    }
+  } catch (err) {
+    // The list still serves (with zeros), but the failure is logged
+    // — queue counters must not silently zero (spec 139 B19).
+    logServerError('[pages] List queue-count query failed', err, {
+      source: 'pages-list-queue-counts',
+    });
+  }
+  return counts;
+}
+
+/** Minimal PostgREST builder shape for the queue-counts select. */
+interface SupabaseQueueCountsQuery {
+  eq(column: string, value: unknown): SupabaseQueueCountsQuery;
+  in(column: string, values: unknown[]): SupabaseQueueCountsQuery;
+  range(from: number, to: number): SupabaseQueueCountsQuery;
+  then<TResult1 = SupabaseQueueCountsResult, TResult2 = never>(
+    onfulfilled?:
+      | ((
+          value: SupabaseQueueCountsResult
+        ) => TResult1 | PromiseLike<TResult1>)
+      | null,
+    onrejected?:
+      | ((reason: unknown) => TResult2 | PromiseLike<TResult2>)
+      | null
+  ): PromiseLike<TResult1 | TResult2>;
+}
+
+interface SupabaseQueueCountsResult {
+  data: unknown;
+  error: { message: string } | null;
+  count: number | null;
+}
+
+/**
+ * Supabase path: PostgREST has no GROUP BY, and the grouped-counts
+ * RPC is gone (see above), so the slice's queue rows are fetched as
+ * two tiny columns (destination_id, status) only, in 1,000-row
+ * chunks driven by the exact count — never a single capped fetch
+ * that would silently truncate an all-time total, and never one
+ * query per page. Rows are aggregated in code; only the three card
+ * statuses are requested, so publishing/cancelled rows never load.
+ */
+async function fetchPageCardQueueCountsSupabase(
+  supabase: SupabaseClient<Database>,
+  workspaceId: string,
+  pageIds: string[]
+): Promise<Map<string, PageCardQueueCounts>> {
+  const counts = new Map<string, PageCardQueueCounts>();
+  if (pageIds.length === 0) return counts;
+  const bump = (destinationId: string, status: string): void => {
+    const current =
+      counts.get(destinationId) ?? { ...DEFAULT_PAGE_CARD_QUEUE_COUNTS };
+    if (status === 'queued') current.queued += 1;
+    else if (status === 'published') current.posted += 1;
+    else if (status === 'failed') current.failed += 1;
+    counts.set(destinationId, current);
+  };
+  try {
+    const CHUNK_SIZE = 1000;
+    let from = 0;
+    for (;;) {
+      const query = (
+        supabase.from('queue_items').select('destination_id,status', {
+          count: 'exact',
+        }) as unknown as SupabaseQueueCountsQuery
+      )
+        .eq('workspace_id', workspaceId)
+        .in('destination_id', pageIds)
+        .in('status', ['queued', 'published', 'failed'])
+        .range(from, from + CHUNK_SIZE - 1);
+      const { data, error, count } = await query;
+      if (error) throw new Error(error.message);
+      const rows = (Array.isArray(data) ? data : []) as Array<{
+        destination_id?: unknown;
+        status?: unknown;
+      }>;
+      for (const row of rows) {
+        if (
+          typeof row.destination_id === 'string' &&
+          typeof row.status === 'string'
+        ) {
+          bump(row.destination_id, row.status);
+        }
+      }
+      if (rows.length === 0) break;
+      if (typeof count === 'number' && from + rows.length >= count) break;
+      if (rows.length < CHUNK_SIZE) break;
+      from += CHUNK_SIZE;
+    }
+  } catch (err) {
+    logServerError('[pages] List queue-count query failed', err, {
+      source: 'pages-list-queue-counts',
+    });
+    return new Map<string, PageCardQueueCounts>();
+  }
+  return counts;
+}
+
+function attachPageCardQueueCounts(
+  pages: MappedPage[],
+  counts: Map<string, PageCardQueueCounts>
+): Array<MappedPage & { queueCounts: PageCardQueueCounts }> {
+  return pages.map((page) => ({
+    ...page,
+    queueCounts: counts.get(page.id) ?? { ...DEFAULT_PAGE_CARD_QUEUE_COUNTS },
+  }));
+}
+
 export async function handleListPages(
   request: NextRequest,
   subdomain: string,
@@ -664,6 +836,13 @@ export async function handleListPages(
         Date.parse(String(b.createdAt)) - Date.parse(String(a.createdAt))
       );
     });
+    pages = attachPageCardQueueCounts(
+      pages,
+      await fetchPageCardQueueCountsSql(
+        dbClient as DatabaseClient,
+        pages.map((p) => p.id)
+      )
+    );
     meta = paginateMeta(result.total, result.page, limit);
   } else {
     const supabase = (dbClient && 'from' in dbClient ? dbClient : getSupabaseAdminClient()) as SupabaseClient<Database> | null;
@@ -689,6 +868,14 @@ export async function handleListPages(
     // the old full-fetch behaviour for or()-inexpressible terms.
     pages = res.pages;
     attentionTotal = res.attentionTotal;
+    pages = attachPageCardQueueCounts(
+      pages,
+      await fetchPageCardQueueCountsSupabase(
+        supabase,
+        workspaceId,
+        pages.map((p) => p.id)
+      )
+    );
     meta = paginateMeta(res.total, res.page, limit);
   }
 

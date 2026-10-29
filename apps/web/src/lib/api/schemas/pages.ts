@@ -19,6 +19,19 @@ export const FacebookPageStatusSchema = z.enum([
 ]);
 export type FacebookPageStatus = z.infer<typeof FacebookPageStatusSchema>;
 
+/**
+ * Pages list card queue counts, mirroring
+ * `PageCardQueueCountsSchema` in @fbuploadpro/contracts: `posted`
+ * is the all-time `published` total. Optional so payloads without
+ * list counts still parse; the card renders zeros when absent.
+ */
+export const PageCardQueueCountsSchema = z.object({
+  queued: z.number().int().nonnegative(),
+  posted: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+});
+export type PageCardQueueCounts = z.infer<typeof PageCardQueueCountsSchema>;
+
 export const FacebookPageViewSchema = z.object({
   id: z.string().uuid(),
   facebookAccountId: z.string().uuid(),
@@ -39,6 +52,7 @@ export const FacebookPageViewSchema = z.object({
   updatedAt: z.string(),
   rateLimitedAt: z.string().nullable().optional(),
   unmatchedPostTypes: z.array(z.string()).optional(),
+  queueCounts: PageCardQueueCountsSchema.optional(),
 });
 export type FacebookPageView = z.infer<typeof FacebookPageViewSchema>;
 
