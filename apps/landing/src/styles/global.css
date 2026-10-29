@@ -473,65 +473,79 @@
   border-radius: 6px;
   padding: 0.02em 0.12em;
 }
-.community-blob {
+.blob-wrap {
   position: absolute;
   width: 96px;
   height: 96px;
-  background-color: #1a1a1a;
   pointer-events: none;
 }
 @media (min-width: 640px) {
-  .community-blob {
+  .blob-wrap {
     width: 180px;
     height: 180px;
   }
 }
-.community-blob-tl {
-  top: -36px;
-  left: -36px;
-  border-radius: 58% 42% 55% 45% / 52% 48% 52% 48%;
-  transform: rotate(-12deg);
+.blob-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
-.community-blob-tr {
-  top: -36px;
-  right: -36px;
-  border-radius: 42% 58% 45% 55% / 48% 52% 48% 52%;
-  transform: rotate(14deg);
+/* 4-lobed wavy blob: SVG path, r = 36 + 14*cos(4*theta) in a 100x100
+   viewBox — 50 at the cardinal lobe tips, 22 at the diagonal valleys,
+   so the sides are concave, never a circle. Dots sit on the inward
+   side of each blob: section 3 at the inward diagonal, section 4 at
+   the visible bottom lobe tip. */
+.blob-tl {
+  top: 12px;
+  left: 12px;
 }
-.community-blob-bl {
-  bottom: -36px;
-  left: -36px;
-  border-radius: 45% 55% 42% 58% / 52% 48% 52% 48%;
-  transform: rotate(10deg);
+.blob-tr {
+  top: 12px;
+  right: 12px;
 }
-.community-blob-br {
-  bottom: -36px;
-  right: -36px;
-  border-radius: 55% 45% 58% 42% / 48% 52% 48% 52%;
-  transform: rotate(-14deg);
+.blob-bl {
+  bottom: 12px;
+  left: 12px;
 }
-.community-dot {
+.blob-br {
+  bottom: 12px;
+  right: 12px;
+}
+.blob-s4-tl {
+  top: -50%;
+  left: 12px;
+}
+.blob-s4-tr {
+  top: -50%;
+  right: 12px;
+}
+.blob-dot {
   position: absolute;
   width: 10px;
   height: 10px;
   border-radius: 9999px;
   background-color: #ff2d78;
 }
-.community-blob-tl .community-dot {
-  bottom: 26px;
-  right: 34px;
+.blob-dot-tl {
+  top: 60%;
+  left: 60%;
 }
-.community-blob-tr .community-dot {
-  bottom: 26px;
-  left: 34px;
+.blob-dot-tr {
+  top: 60%;
+  right: 60%;
 }
-.community-blob-bl .community-dot {
-  top: 26px;
-  right: 34px;
+.blob-dot-bl {
+  bottom: 60%;
+  left: 60%;
 }
-.community-blob-br .community-dot {
-  top: 26px;
-  left: 34px;
+.blob-dot-br {
+  bottom: 60%;
+  right: 60%;
+}
+.blob-dot-s4 {
+  bottom: 8%;
+  left: 50%;
+  transform: translateX(-50%);
 }
 
 /* ---- Section 4 pricing header: same full-section pattern as section 3 ----
