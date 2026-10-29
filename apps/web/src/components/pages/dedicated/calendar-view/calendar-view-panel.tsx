@@ -250,8 +250,10 @@ export function CalendarViewPanel({
       setIsSaving(true);
       try {
         await editMutation.mutateAsync({ itemId: itemToEdit.id, caption });
-      } catch (_e) {
-        // The mutation's onError already surfaced the failure via toast.
+      } catch (error) {
+        // The mutation's onError already surfaced the failure via
+        // toast; log it so the failure is never silent.
+        console.error('Calendar edit save failed:', error);
       } finally {
         setIsSaving(false);
         setItemToEdit(null);
@@ -399,7 +401,7 @@ export function CalendarViewPanel({
                           {dayNumberOfKey(dayKey)}
                         </span>
                         {dayEntries.length > 0 ? (
-                          <span className="rounded-full bg-brand-gold/10 px-1.5 py-0.5 text-[10px] font-bold text-brand-gold">
+                          <span className="rounded-full bg-brand-gold/10 px-1.5 py-0.5 text-metadata font-bold text-brand-gold">
                             {dayEntries.length}
                           </span>
                         ) : null}
@@ -433,7 +435,7 @@ export function CalendarViewPanel({
                               key={entry.item.id}
                               data-testid={`calendar-entry-${entry.item.id}`}
                               title="Published posts can't be edited"
-                              className="flex min-w-0 items-start gap-1 rounded-lg border border-line bg-canvas p-1.5 text-left text-[11px] leading-tight opacity-70"
+                              className="flex min-w-0 items-start gap-1 rounded-lg border border-line bg-canvas p-1.5 text-left text-metadata leading-tight opacity-70"
                             >
                               {inner}
                             </div>
@@ -443,7 +445,7 @@ export function CalendarViewPanel({
                               type="button"
                               data-testid={`calendar-entry-${entry.item.id}`}
                               onClick={() => setItemToEdit(entry.item)}
-                              className="flex w-full min-w-0 items-start gap-1 rounded-lg border border-line bg-canvas p-1.5 text-left text-[11px] leading-tight hover:border-brand-gold/40"
+                              className="flex w-full min-w-0 items-start gap-1 rounded-lg border border-line bg-canvas p-1.5 text-left text-metadata leading-tight hover:border-brand-gold/40"
                             >
                               {inner}
                             </button>
