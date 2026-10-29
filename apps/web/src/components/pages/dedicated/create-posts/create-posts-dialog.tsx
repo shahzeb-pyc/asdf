@@ -46,15 +46,23 @@
  * refuse, paused warns); and a 150-post batch guard with a plain
  * refusal message (no count badge in the header).
  *
- * Queueing never looks stuck: the button label and one plain
+ * Queueing never stays stuck: the button label and one plain
  * line show live progress ("Adding 2 of 4…", "Checking posting
  * times…"), and a Stop queueing button is available DURING
- * queueing. Stop never cancels an in-flight request — it stops
- * the loop after the current post finishes, keeps posts already
- * queued (dropped from the draft like a partial success), leaves
- * the rest in the dialogue, and re-enables the button. Every
+ * queueing. Every request in a queue run (the posting-times
+ * pre-check and each enqueue) carries a 30-second timeout and an
+ * AbortController, so a hung request ends the run instead of
+ * freezing the dialogue forever; Stop aborts the in-flight
+ * request immediately. Aborting is duplicate-safe because the
+ * timed-out/aborted block is kept in the dialogue with its SAME
+ * idempotency key: if the server did insert it, the retry replays
+ * the original row (lookup, or the queue-by-key heal path); if it
+ * did not insert, the retry executes fresh once any processing
+ * sentinel has expired (at most 5 minutes, surfaced as a plain
+ * 409 "already being added" message, never a duplicate). Every
  * failure path ends the same way: lock released, button
- * re-enabled, a plain message, failed blocks kept for retry.
+ * re-enabled, progress cleared, a plain message, failed blocks
+ * kept for retry.
  */
 
 import * as React from 'react';
@@ -217,11 +225,24 @@ export function CreatePostsDialog({
     total: number;
     phase: 'checking' | 'queueing';
   } | null>(null);
-  // Stop queueing: set by the Stop button, read by the loop. It
-  // never cancels an in-flight request — the loop checks it
-  // between posts and stops after the current post finishes.
+  // Stop queueing: set by the Stop button, read by the loop.
+  // Stop ALSO aborts the in-flight request immediately (see
+  // queueAbortControllerRef) — the previous between-posts-only
+  // design is what left the dialogue genuinely stuck when one
+  // request hung, because neither the slots fetch nor any enqueue
+  // carried a timeout or an AbortSignal.
   const abortQueueingRef = React.useRef(false);
   const [abortRequested, setAbortRequested] = React.useState(false);
+  // Per-request timeout + abort for a queue run. 30 seconds per
+  // request (slots pre-check, each enqueue) is long enough for a
+  // normal round trip and short enough that a hung request cannot
+  // freeze the dialogue. The controller for the request currently
+  // in flight, if any; Stop aborts it, the timeout aborts it when
+  // it fires. abortReasonRef distinguishes the two, because the
+  // handling differs: a user Stop is not an error, a timeout is.
+  const queueAbortControllerRef = React.useRef<AbortController | null>(null);
+  const abortReasonRef = React.useRef<'stop' | 'timeout' | null>(null);
+  const QUEUE_REQUEST_TIMEOUT_MS = 30_000;
   // Set by the "Go to Posting Times" action: the next open restores
   // the drafts instead of resetting to one empty block.
   const preserveDraftsRef = React.useRef(false);
@@ -439,15 +460,47 @@ export function CreatePostsDialog({
   );
 
   /** Stop queueing, the safe way out while a run is in flight.
-   *  This only sets the flag: the loop stops after the current
-   *  post finishes (never mid-request), keeps already-queued
-   *  posts queued, and leaves the rest in the dialogue. Dismiss
-   *  paths (Cancel, backdrop, Esc, X) stay blocked mid-queueing —
-   *  Stop is the exit, so a stopped run cannot strand a request. */
+   *  This sets the flag AND aborts the in-flight request at once:
+   *  without the abort, a hung request left Stop as "Stopping…"
+   *  forever — the exact stuck state being fixed. Aborting is
+   *  duplicate-safe (see the header comment): the aborted block
+   *  is kept with its same key, so a retry replays it if the
+   *  server did insert it, or executes fresh (after any sentinel
+   *  expiry) if it did not. Dismiss paths (Cancel, backdrop, Esc,
+   *  X) stay blocked mid-queueing — Stop is the exit, so a stopped
+   *  run cannot strand a request. */
   const handleStopQueueing = React.useCallback(() => {
     abortQueueingRef.current = true;
+    abortReasonRef.current = 'stop';
+    queueAbortControllerRef.current?.abort();
     setAbortRequested(true);
   }, []);
+
+  /** Start one timed request in a queue run. Returns its signal
+   *  and a `done` that must be called when the request settles
+   *  (success or failure) so the timer cannot fire after the fact
+   *  and abort an unrelated later request. The timeout sets the
+   *  reason BEFORE aborting, so the catch can tell a timeout from
+   *  a user Stop. */
+  const startTimedRequest = React.useCallback(() => {
+    const controller = new AbortController();
+    queueAbortControllerRef.current = controller;
+    const timer = setTimeout(() => {
+      if (abortReasonRef.current === null) {
+        abortReasonRef.current = 'timeout';
+      }
+      controller.abort();
+    }, QUEUE_REQUEST_TIMEOUT_MS);
+    return {
+      signal: controller.signal,
+      done: () => {
+        clearTimeout(timer);
+        if (queueAbortControllerRef.current === controller) {
+          queueAbortControllerRef.current = null;
+        }
+      },
+    };
+  }, [QUEUE_REQUEST_TIMEOUT_MS]);
 
   const handleAddAllToQueue = React.useCallback(async () => {
     // The ref lock is checked and set BEFORE any await: this is the
@@ -455,6 +508,8 @@ export function CreatePostsDialog({
     if (queueingLockRef.current || readyBlocks.length === 0) return;
     queueingLockRef.current = true;
     abortQueueingRef.current = false;
+    abortReasonRef.current = null;
+    queueAbortControllerRef.current = null;
     setAbortRequested(false);
     setIsQueueing(true);
     try {
@@ -514,23 +569,27 @@ export function CreatePostsDialog({
     // and failing with a raw server error. A slots-fetch failure
     // falls through to the queue attempt below (logged, not
     // swallowed): the server then surfaces the real error, so
-    // queueing is never silently skipped.
-    // The user must see something happening during this await:
-    // before this fix the button just said "Adding to queue…"
-    // while nothing had queued yet, which is where the stuck
-    // feeling starts. No timeout exists on this fetch, so a slow
-    // response is a slow wait — but at least it is now a named
-    // wait, and Stop (below) ends the run as soon as it returns.
+    // queueing is never silently skipped. That fall-through does
+    // NOT apply to a timeout or a user Stop: those end the run
+    // here (see the catch), because falling through would start
+    // queueing after the user already asked to stop, or after a
+    // wait that already proved the backend unresponsive.
+    // This fetch carries the 30-second timeout + AbortSignal:
+    // before that, a hung slots response froze the dialogue with
+    // the button on "Checking posting times…" and Stop stuck on
+    // "Stopping…" — the run could not end at all.
     setQueueProgress({
       done: 0,
       total: readyBlocks.length,
       phase: 'checking',
     });
+    const slotsRequest = startTimedRequest();
     try {
       const slotsResponse = await api.get(
         buildTenantApiPath(subdomain, `/pages/${page.id}/slots`),
-        { schema: ListQueueSlotsResponseSchema }
+        { schema: ListQueueSlotsResponseSchema, signal: slotsRequest.signal }
       );
+      slotsRequest.done();
       if (!slotsResponse.slots.some((slot) => slot.isActive)) {
         toast.error(
           'No posting times set yet. Add a posting time on the Posting Times tab, and your queued posts will go out automatically.',
@@ -554,11 +613,26 @@ export function CreatePostsDialog({
         return;
       }
     } catch (error) {
-      console.error('Failed to check posting times before queueing', error);
+      slotsRequest.done();
+      if (abortReasonRef.current === 'timeout') {
+        // Timed-out pre-check: end the run, do NOT fall through
+        // to queueing — the backend just proved unresponsive, and
+        // no post has queued yet, so nothing is lost or duplicated.
+        toast.error(
+          'Checking posting times timed out (30 seconds) — no posts were added. Check your connection and try again.'
+        );
+        return;
+      }
+      if (abortReasonRef.current === 'stop') {
+        // User Stop aborted the pre-check: fall through to the
+        // stopped branch below, which reports "no posts added".
+      } else {
+        console.error('Failed to check posting times before queueing', error);
+      }
     }
     // Stop pressed during the pre-check: the in-flight slots fetch
-    // cannot be cancelled (no AbortSignal is passed to it), but no
-    // post has queued yet, so stopping here queues nothing.
+    // is now aborted at once, and no post has queued yet, so
+    // stopping here queues nothing.
     if (abortQueueingRef.current) {
       toast.info('Queueing stopped — no posts were added.');
       return;
@@ -569,9 +643,12 @@ export function CreatePostsDialog({
       // posting time from the queue as it stands, so parallel posts
       // could otherwise claim the same time.
       for (const block of parsed.data) {
-        // Stop is checked BETWEEN posts only: an in-flight enqueue
-        // is never cancelled mid-request, so a stopped run can
-        // never duplicate or lose the post it was adding.
+        // Stop is also checked BETWEEN posts: if Stop was pressed
+        // after the previous post finished, the loop ends here
+        // without starting another request. If Stop was pressed
+        // during a request, that request's abort already rejected
+        // it into the catch below — either way the aborted block
+        // is kept with its same key, so retry is duplicate-safe.
         if (abortQueueingRef.current) break;
         const item = toComposerEnqueueItem(block);
         if (!item) continue;
@@ -585,22 +662,35 @@ export function CreatePostsDialog({
           total: readyBlocks.length,
           phase: 'queueing',
         });
-        await api.post(
-          buildTenantApiPath(subdomain, '/publishing/destination-queue'),
-          {
-            platform: 'facebook',
-            destinationId: page.id,
-            kind: item.kind,
-            platformFormat: item.platformFormat,
-            caption: item.caption,
-            mediaItemIds: item.mediaItemIds,
-            intent: 'queue',
-          },
-          {
-            schema: DestinationEnqueueResponseSchema,
-            headers: { [IDEMPOTENCY_KEY_HEADER]: idempotencyKey },
-          }
-        );
+        // Each enqueue carries the same 30-second timeout +
+        // AbortSignal as the pre-check. The finally is load-bearing:
+        // without it, a failed request's timer could fire during a
+        // later request and misreport that later request as timed
+        // out. On abort/timeout the await rejects and the outer
+        // catch settles the run — the aborted block itself is kept
+        // with its same key (see the catch), so retry is safe.
+        const enqueueRequest = startTimedRequest();
+        try {
+          await api.post(
+            buildTenantApiPath(subdomain, '/publishing/destination-queue'),
+            {
+              platform: 'facebook',
+              destinationId: page.id,
+              kind: item.kind,
+              platformFormat: item.platformFormat,
+              caption: item.caption,
+              mediaItemIds: item.mediaItemIds,
+              intent: 'queue',
+            },
+            {
+              schema: DestinationEnqueueResponseSchema,
+              headers: { [IDEMPOTENCY_KEY_HEADER]: idempotencyKey },
+              signal: enqueueRequest.signal,
+            }
+          );
+        } finally {
+          enqueueRequest.done();
+        }
         queued += 1;
         setQueueProgress({
           done: queued,
@@ -658,36 +748,76 @@ export function CreatePostsDialog({
           return next.length === 0 ? [newEmptyBlock()] : next;
         });
       }
-      // 409 IDEMPOTENCY_IN_PROGRESS is not a stuck state: the
-      // post is being added by another in-flight request (another
-      // tab/device), the button re-enables via finally below, and
-      // a retry replays instead of duplicating. Say so plainly,
-      // instead of a generic failure that invites repeated clicks
-      // into the same 5-minute processing window.
-      const isAlreadyAdding =
-        isApiError(error) && error.code === 'IDEMPOTENCY_IN_PROGRESS';
-      toast.error(
-        isAlreadyAdding
-          ? queued > 0
-            ? `${queued} of ${readyBlocks.length} posts queued — the next post is already being added (it may be queueing from another tab). Wait a moment, then retry; retrying will not duplicate it.`
-            : 'This post is already being added — it may be queueing from another tab. Wait a moment and try again; retrying will not duplicate it.'
-          : queued > 0
-            ? `${queued} of ${readyBlocks.length} posts queued — then queueing failed: ${errorText(error, 'Please try again.')}`
-            : `Couldn't add posts to the queue: ${errorText(error, 'Please try again.')}`
-      );
+      // A user Stop that aborted the in-flight request is NOT an
+      // error: the aborted block is kept (it was not counted in
+      // `queued`, and the settle above dropped only the queued
+      // ones), and the run ends like the between-posts stop —
+      // with an info toast, never an error toast. Likewise a
+      // timeout is a bounded failure, not a stuck state: the
+      // timed-out block (post queued + 1) is kept with its SAME
+      // key, so retrying it replays the original row if the
+      // server did insert it, or executes fresh if it did not
+      // (a surviving processing sentinel, at most 5 minutes,
+      // surfaces as the 409 message below on an immediate retry
+      // — never as a duplicate).
+      if (abortReasonRef.current === 'stop') {
+        if (queued > 0) {
+          await queryClient.invalidateQueries({
+            queryKey: queryKeys.tenant(subdomain).queue.all,
+          });
+          toast.info(
+            `Stopped — ${queued} post${queued === 1 ? '' : 's'} added to queue. The rest are still here.`
+          );
+        } else {
+          toast.info('Queueing stopped — no posts were added.');
+        }
+      } else if (abortReasonRef.current === 'timeout') {
+        if (queued > 0) {
+          await queryClient.invalidateQueries({
+            queryKey: queryKeys.tenant(subdomain).queue.all,
+          });
+        }
+        toast.error(
+          queued > 0
+            ? `Adding post ${queued + 1} of ${readyBlocks.length} timed out after 30 seconds — ${queued} post${queued === 1 ? '' : 's'} queued, the rest are still here. Retry the timed-out post; retrying will not duplicate it.`
+            : `Adding post 1 of ${readyBlocks.length} timed out after 30 seconds — no posts were added. Check your connection and try again; retrying will not duplicate it.`
+        );
+      } else {
+        // 409 IDEMPOTENCY_IN_PROGRESS is not a stuck state: the
+        // post is being added by another in-flight request (another
+        // tab/device), the button re-enables via finally below, and
+        // a retry replays instead of duplicating. Say so plainly,
+        // instead of a generic failure that invites repeated clicks
+        // into the same 5-minute processing window.
+        const isAlreadyAdding =
+          isApiError(error) && error.code === 'IDEMPOTENCY_IN_PROGRESS';
+        toast.error(
+          isAlreadyAdding
+            ? queued > 0
+              ? `${queued} of ${readyBlocks.length} posts queued — the next post is already being added (it may be queueing from another tab). Wait a moment, then retry; retrying will not duplicate it.`
+              : 'This post is already being added — it may be queueing from another tab. Wait a moment and try again; retrying will not duplicate it.'
+            : queued > 0
+              ? `${queued} of ${readyBlocks.length} posts queued — then queueing failed: ${errorText(error, 'Please try again.')}`
+              : `Couldn't add posts to the queue: ${errorText(error, 'Please try again.')}`
+        );
+      }
     } finally {
       setIsQueueing(false);
     }
     } finally {
-      // Every exit — success, failure, stop, early return — ends
-      // here: lock released, button re-enabled, progress cleared.
-      // No path may leave isQueueing true or the lock held.
+      // Every exit — success, failure, stop, timeout, early
+      // return — ends here: lock released, button re-enabled,
+      // progress cleared, abort state reset. No path may leave
+      // isQueueing true, the lock held, or a stale abort reason
+      // that would mislabel the next run's failure.
       queueingLockRef.current = false;
+      abortReasonRef.current = null;
+      queueAbortControllerRef.current = null;
       setIsQueueing(false);
       setQueueProgress(null);
       setAbortRequested(false);
     }
-  }, [blocks, readyBlocks, statusGate, subdomain, page.id, queryClient, onOpenChange, router, searchParams]);
+  }, [blocks, readyBlocks, statusGate, subdomain, page.id, queryClient, onOpenChange, router, searchParams, startTimedRequest]);
 
   const monogram = (page.pageName || 'P').slice(0, 2).toUpperCase();
 
@@ -835,7 +965,7 @@ export function CreatePostsDialog({
                   ? 'Checking posting times…'
                   : `Adding post ${Math.min(queueProgress.done + 1, queueProgress.total)} of ${queueProgress.total}…`}
               {!abortRequested
-                ? ' Use Stop queueing to stop after the current post.'
+                ? ' Use Stop queueing to stop now.'
                 : ''}
             </p>
           ) : null}
