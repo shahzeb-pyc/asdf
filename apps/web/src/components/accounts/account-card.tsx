@@ -235,6 +235,7 @@ export function AccountCard({
 
   const health = getAccountHealth(account);
   const isExpired = health === 'expired';
+  const isError = health === 'error';
   const isExpiringSoon = isTokenExpiringSoon(account);
   const statusSignal =
     health === 'connected' && isExpiringSoon
@@ -367,14 +368,14 @@ export function AccountCard({
 
       {/* Card Actions */}
       <div className="mt-auto flex flex-wrap items-center justify-between gap-2">
-        {isExpired || isExpiringSoon ? (
+        {isExpired || isExpiringSoon || isError ? (
           <Button
             type="button"
             data-testid="account-reconnect-button"
-            variant={isExpired ? 'default' : 'outline'}
+            variant={isExpired || isError ? 'default' : 'outline'}
             onClick={() => onReconnect?.(account)}
           >
-            <span>{isExpired ? 'Reconnect account' : 'Refresh connection'}</span>
+            <span>{isExpired || isError ? 'Reconnect account' : 'Refresh connection'}</span>
           </Button>
         ) : (
           <div className="flex-1" />

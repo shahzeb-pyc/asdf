@@ -59,6 +59,16 @@ const expiringSoonAccount: FacebookAccountItem = {
   createdAt: '2026-09-15T10:00:00Z',
 };
 
+const errorAccount: FacebookAccountItem = {
+  id: 'acc-err',
+  fbAccountId: 'fb-err',
+  displayName: 'Error Eddie',
+  profilePictureUrl: null,
+  status: 'disconnected',
+  connectedPagesCount: 1,
+  createdAt: '2026-09-15T10:00:00Z',
+};
+
 describe('AccountsFilterBar behaviour', () => {
   it('typing updates the search, Escape clears it, and the clear button clears it', () => {
     const onSearchChange = vi.fn();
@@ -249,5 +259,29 @@ describe('AccountCard behaviour', () => {
 
     fireEvent.click(screen.getByTestId('account-disconnect-button'));
     expect(onDisconnect).toHaveBeenCalledWith(expiredAccount);
+  });
+
+  it('error-health card shows a cross and "Connection error", and fires reconnect/disconnect (BL4)', () => {
+    const onReconnect = vi.fn();
+    const onDisconnect = vi.fn();
+    render(
+      <AccountCard
+        account={errorAccount}
+        onReconnect={onReconnect}
+        onDisconnect={onDisconnect}
+      />
+    );
+
+    const status = screen.getByTestId('account-health-label');
+    expect(status.textContent).toContain('Connection error');
+    const mark = screen.getByTestId('account-health-mark');
+    expect(mark.querySelector('[data-icon="cross"]')).toBeTruthy();
+    expect(mark.querySelector('.rounded-full')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('account-reconnect-button'));
+    expect(onReconnect).toHaveBeenCalledWith(errorAccount);
+
+    fireEvent.click(screen.getByTestId('account-disconnect-button'));
+    expect(onDisconnect).toHaveBeenCalledWith(errorAccount);
   });
 });
