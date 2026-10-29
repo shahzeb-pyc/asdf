@@ -19,19 +19,13 @@
 
   html {
     background-color: #ffffff;
-    scroll-snap-type: y mandatory;
-    scroll-behavior: smooth;
-    /* Fixed-topbar offset: snapped sections land below the pill
-       instead of under it. Layer 1 of the one-step scroll fix. */
+    /* NO snap: scrolling is free. Lenis owns smoothness (see
+       index.astro); CSS scroll-behavior stays auto so it never
+       double-smooths Lenis's per-frame scroll positions. */
+    scroll-snap-type: none;
+    scroll-behavior: auto;
+    /* Fixed-topbar offset for anchor landings. */
     scroll-padding-top: 84px;
-  }
-  @media (max-width: 767px) {
-    /* Phones: proximity, not mandatory — a stacked section 2 taller
-       than a short phone viewport must stay freely scrollable and
-       must never be trapped by a mandatory snap point. */
-    html {
-      scroll-snap-type: y proximity;
-    }
   }
 
   body {
@@ -54,23 +48,18 @@
   }
 }
 
-/* ---- One section per screen: snap + contiguous full-bleed sections ----
-   Every section is exactly one viewport (100vh, 100dvh where supported)
-   and snaps to the top of the viewport. There is NO page-shell grey
-   background and NO margin/gap between sections any more: sections
-   are direct siblings, full width, so white section 2 touches black
-   section 3 directly and black 3 touches black 4 directly. Inner
-   content keeps its existing max-width and side padding — only the
-   edges changed. min-height, never fixed height, so a section grows
-   if its content ever exceeds the viewport instead of clipping. */
+/* ---- Full-screen sections, FREE scrolling (no snap, no stepping) ----
+   Every section still fills a viewport (100vh, 100dvh where
+   supported) and sections are direct siblings, full width, so
+   white section 2 touches black section 3 directly and black 3
+   touches black 4 directly — but nothing snaps the page to a
+   section on scroll stop and nothing steps one section per
+   gesture. The user scrolls freely, at their own speed, through
+   as many sections as they want. min-height, never fixed height,
+   so a section grows if its content ever exceeds the viewport
+   instead of clipping. */
 .snap-section {
   min-height: 100vh;
-  scroll-snap-align: start;
-  /* Layer 1: a single fling must stop at the FIRST snap point it
-     crosses, not fly past intermediate sections. This alone stops
-     skipping in native scrolling; the JS controller in index.astro
-     adds the deterministic one-step guarantee on top of it. */
-  scroll-snap-stop: always;
 }
 @supports (height: 100dvh) {
   .snap-section {
@@ -108,8 +97,8 @@
 /* ---- Section arrival: GSAP ScrollTrigger (see index.astro) ----
    Deliberately NO pre-hidden state in CSS: GSAP uses from-tweens only,
    so if the GSAP bundle fails, every section is fully visible and the
-   page still scrolls natively on the scroll-snap-stop: always fallback.
-   The old .js-snap / IntersectionObserver arrival is gone. */
+   page still scrolls natively, with no snap forcing. The old .js-snap
+   / IntersectionObserver arrival is gone. */
 
 /* ---- Section 2 top clearance for the fixed topbar ----
    The pill occupies the top ~66px (12px offset + ~54px pill); section 2
