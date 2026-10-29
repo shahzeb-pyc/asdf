@@ -1,15 +1,13 @@
 @import "tailwindcss";
 
 @theme {
-  --color-paper: #ffffff;
-  --color-cream: #faf8f2;
-  --color-panel: #f4f3ef;
-  --color-line: #e5e2da;
+  --color-page: #d9dde2;
+  --color-white: #ffffff;
+  --color-line: #e5e7eb;
   --color-ink: #111111;
   --color-ink-sub: #4b5563;
   --color-gold: #f0b90b;
   --color-gold-deep: #92400e;
-  --color-night: #111827;
 }
 
 @layer base {
@@ -20,13 +18,12 @@
   }
 
   html {
-    background-color: #ffffff;
-    scroll-behavior: smooth;
+    background-color: #d9dde2;
   }
 
   body {
     margin: 0;
-    background-color: #ffffff;
+    background-color: #d9dde2;
     color: #111111;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     font-size: 16px;
@@ -38,105 +35,58 @@
     color: inherit;
   }
 
-  a:focus-visible,
-  button:focus-visible {
+  a:focus-visible {
     outline: 2px solid #92400e;
     outline-offset: 3px;
   }
 }
 
-/* ---- Gold highlighter sweep behind the hero key phrase ---- */
-.hl {
-  background-image: linear-gradient(#f0b90b, #f0b90b);
-  background-repeat: no-repeat;
-  background-size: 0% 58%;
-  background-position: 0 88%;
-  padding: 0 0.08em;
-}
-.hl-sweep {
-  animation: hl-sweep 0.9s ease 0.25s forwards;
-}
-@keyframes hl-sweep {
-  from { background-size: 0% 58%; }
-  to { background-size: 100% 58%; }
-}
-
-/* ---- Floating hero tiles ---- */
-@keyframes float-soft {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-10px); }
-}
-.float-tile {
-  animation: float-soft 5s ease-in-out infinite;
-  box-shadow: 0 12px 28px rgba(17, 17, 17, 0.14);
-}
-.float-tile-slow { animation-duration: 6.5s; animation-delay: 0.8s; }
-.float-tile-late { animation-duration: 5.5s; animation-delay: 1.6s; }
-
-/* ---- Orbit diagram ---- */
-@keyframes orbit-spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-.orbit-ring {
-  animation: orbit-spin 40s linear infinite;
-}
-.orbit-dot-travel {
-  animation: orbit-spin 24s linear infinite;
-}
-
-/* ---- Flow line moving dot ---- */
-@keyframes flow-x {
-  from { left: 0%; }
-  to { left: calc(100% - 12px); }
-}
-@keyframes flow-y {
-  from { top: 0%; }
-  to { top: calc(100% - 12px); }
-}
-.flow-dot {
-  animation: flow-x 3.2s ease-in-out infinite alternate;
-}
-@media (max-width: 767px) {
-  .flow-dot {
-    animation-name: flow-y;
+/* ---- Hero fade/slide-in on load ---- */
+@keyframes hero-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
-
-/* ---- Scroll reveals ----
-   Content is fully visible by default. Only once JavaScript adds the
-   `js` class to <html> do reveal elements start hidden, and the
-   IntersectionObserver then adds `in` as they enter view. If JS fails
-   or is disabled, nothing is hidden. */
-.js .reveal {
-  opacity: 0;
-  transform: translateY(18px);
-  transition: opacity 0.6s ease, transform 0.6s ease;
-  transition-delay: var(--d, 0ms);
+.hero-in {
+  animation: hero-in 0.7s ease both;
 }
-.js .reveal.in {
-  opacity: 1;
-  transform: translateY(0);
+
+/* ---- Floating platform tiles, gentle bobbing ---- */
+@keyframes float-soft {
+  0%,
+  100% {
+    transform: translateY(0) rotate(var(--tilt, 0deg));
+  }
+  50% {
+    transform: translateY(-12px) rotate(var(--tilt, 0deg));
+  }
+}
+.float-tile {
+  box-shadow: 0 16px 32px rgba(17, 17, 17, 0.14);
+  animation: float-soft 5s ease-in-out infinite;
+}
+.float-tile-a {
+  animation-duration: 5s;
+  animation-delay: 0s;
+}
+.float-tile-b {
+  animation-duration: 6.5s;
+  animation-delay: 0.8s;
+}
+.float-tile-c {
+  animation-duration: 5.5s;
+  animation-delay: 1.6s;
 }
 
 /* ---- Reduced motion: everything instant and still ---- */
 @media (prefers-reduced-motion: reduce) {
-  html {
-    scroll-behavior: auto;
-  }
-  .hl-sweep,
-  .float-tile,
-  .orbit-ring,
-  .orbit-dot-travel,
-  .flow-dot {
+  .hero-in,
+  .float-tile {
     animation: none !important;
-  }
-  .hl {
-    background-size: 100% 58%;
-  }
-  .js .reveal {
-    opacity: 1;
-    transform: none;
-    transition: none;
   }
 }
