@@ -11,8 +11,17 @@
  * it turns it into a real post (the dialogue appends a fresh empty
  * one below). There is deliberately no "+ Add another post" button:
  * adding posts never costs a click per post.
+ *
+ * Flat composer styling, deliberately: a block is NOT a card.
+ * There is no per-post background, border, rounded box, or shadow
+ * — the dialogue surface is the only surface. Posts are separated
+ * by spacing, their header row, and the hairline divider the
+ * dialogue list puts between them (see create-posts-dialog.tsx),
+ * the way a Facebook composer reads as one continuous flow
+ * rather than boxes inside a box.
  */
 
+import * as React from 'react';
 import Image from 'next/image';
 import { ImageIcon, XIcon } from 'lucide-react';
 
@@ -71,11 +80,8 @@ export function PostBlock({
   const over = count - limit;
 
   return (
-    <div
-      data-testid="create-posts-block"
-      className="rounded-md border border-line bg-canvas p-3"
-    >
-      <div className="mb-2 flex items-center justify-between gap-2">
+    <div data-testid="create-posts-block" className="shrink-0 py-5 first:pt-1">
+      <div className="mb-3 flex items-center justify-between gap-2">
         <span className="text-body font-semibold text-ink">{label}</span>
         <span className="flex items-center gap-2">
           <span
@@ -106,10 +112,13 @@ export function PostBlock({
         value={block.text}
         disabled={disabled}
         onChange={(event) => onTextChange(event.target.value)}
-        className="min-h-16 border-0 bg-transparent px-0 py-0 focus-visible:border-0"
+        className="min-h-20 border-0 bg-transparent px-0 py-0 focus-visible:border-0"
       />
 
-      <div className="mt-1 flex items-center justify-between gap-2">
+      {/* Count and attach share one inline row on the flat surface:
+          no boxed footer, no inner panel. Over-limit stays plain
+          text in rose, never a boxed error. */}
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
         <span
           data-testid="create-posts-block-char-count"
           className={
@@ -128,50 +137,60 @@ export function PostBlock({
             characters.
           </span>
         ) : null}
+        {!block.media ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            data-testid="create-posts-block-attach-btn"
+            disabled={disabled}
+            onClick={onAttachRequest}
+            className="rounded-full"
+          >
+            <ImageIcon aria-hidden />
+            Attach media
+          </Button>
+        ) : null}
       </div>
 
       {block.media ? (
-        <div className="mt-2 flex items-center gap-3 rounded-md border border-line bg-panel p-2">
-          {block.media.thumbnailUrl ? (
-            <Image
-              src={block.media.thumbnailUrl}
-              alt={block.media.name}
-              width={56}
-              height={56}
-              className="size-14 shrink-0 rounded-sm object-cover"
-            />
-          ) : null}
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-body text-ink">
-              {block.media.name}
+        <>
+          {/* Attached media sits inline on the same flat surface:
+              thumbnail + name + remove, no border, background, or
+              padding box around it. */}
+          <div className="mt-3 flex items-center gap-3">
+            {block.media.thumbnailUrl ? (
+              <Image
+                src={block.media.thumbnailUrl}
+                alt={block.media.name}
+                width={64}
+                height={64}
+                className="size-16 shrink-0 rounded-sm object-cover"
+              />
+            ) : null}
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-body text-ink">
+                {block.media.name}
+              </span>
             </span>
-          </span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            data-testid="create-posts-block-remove-media-btn"
-            aria-label="Remove media"
-            disabled={disabled}
-            onClick={onRemoveMedia}
-          >
-            <XIcon aria-hidden />
-          </Button>
-        </div>
-      ) : (
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          data-testid="create-posts-block-attach-btn"
-          disabled={disabled}
-          onClick={onAttachRequest}
-          className="mt-2 rounded-full"
-        >
-          <ImageIcon aria-hidden />
-          Attach media
-        </Button>
-      )}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              data-testid="create-posts-block-remove-media-btn"
+              aria-label="Remove media"
+              disabled={disabled}
+              onClick={onRemoveMedia}
+            >
+              <XIcon aria-hidden />
+            </Button>
+          </div>
+          <p className="mt-1 text-metadata text-ink-sub">
+            Removing the media keeps this caption — the post becomes a
+            text post.
+          </p>
+        </>
+      ) : null}
     </div>
   );
 }

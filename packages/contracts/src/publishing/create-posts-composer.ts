@@ -28,12 +28,63 @@ export type ComposerDerivedType = z.infer<typeof ComposerDerivedTypeSchema>;
 /** Aspect ratios that are vertical by definition. */
 const VERTICAL_ASPECT_RATIOS: ReadonlySet<string> = new Set(['9:16', '4:5']);
 
+function gcd(a: number, b: number): number {
+  let x = Math.abs(a);
+  let y = Math.abs(b);
+  while (y !== 0) {
+    const t = y;
+    y = x % y;
+    x = t;
+  }
+  return x === 0 ? 1 : x;
+}
+
+/**
+ * Parse a stored aspect-ratio string into width/height, or null when
+ * it cannot be parsed. Library rows store ratios in several shapes —
+ * "9:16", "9 / 16", "9x16", "1080:1920", and plain decimals (width /
+ * height, so 0.5625 is 9:16). Exact-string matching silently sent
+ * every non-canonical vertical video out as a plain video post, so
+ * the ratio is normalised here, in one place, before any
+ * vertical/horizontal decision is made.
+ */
+export function parseAspectRatio(
+  input: string | null | undefined
+): { width: number; height: number } | null {
+  if (!input) return null;
+  const trimmed = input.trim();
+  if (trimmed.length === 0) return null;
+  const pair = trimmed.match(
+    /^(\d+(?:\.\d+)?)\s*[:x/]\s*(\d+(?:\.\d+)?)$/i
+  );
+  if (pair) {
+    const width = Number(pair[1]);
+    const height = Number(pair[2]);
+    if (width > 0 && height > 0) {
+      if (Number.isInteger(width) && Number.isInteger(height)) {
+        const divisor = gcd(width, height);
+        return { width: width / divisor, height: height / divisor };
+      }
+      return { width, height };
+    }
+    return null;
+  }
+  const decimal = Number(trimmed);
+  if (Number.isFinite(decimal) && decimal > 0) {
+    // A lone decimal is width/height: <1 is vertical, >1 horizontal.
+    return { width: decimal, height: 1 };
+  }
+  return null;
+}
+
 export function isVerticalVideo(input: {
   aspectRatio: string | null | undefined;
   width: number | null | undefined;
   height: number | null | undefined;
 }): boolean {
   if (input.aspectRatio && VERTICAL_ASPECT_RATIOS.has(input.aspectRatio)) return true;
+  const parsed = parseAspectRatio(input.aspectRatio);
+  if (parsed) return parsed.height > parsed.width;
   if (input.width && input.height) return input.height > input.width;
   return false;
 }
@@ -179,14 +230,18 @@ export function toComposerEnqueueItem(
     width: media?.width ?? null,
     height: media?.height ?? null,
   });
+  // Captions are trimmed at the boundary: a block that is only
+  // whitespace is empty (handled above), and a real caption never
+  // queues with leading/trailing whitespace attached.
+  const caption = block.text.trim();
   if (derived === 'text') {
-    return { kind: 'text', platformFormat: null, caption: block.text, mediaItemIds: [] };
+    return { kind: 'text', platformFormat: null, caption, mediaItemIds: [] };
   }
   if (derived === 'image') {
     return {
       kind: 'image',
       platformFormat: null,
-      caption: block.text,
+      caption,
       mediaItemIds: [media?.id as string],
     };
   }
@@ -194,14 +249,14 @@ export function toComposerEnqueueItem(
     return {
       kind: 'video',
       platformFormat: 'reel',
-      caption: block.text,
+      caption,
       mediaItemIds: [media?.id as string],
     };
   }
   return {
     kind: 'video',
     platformFormat: null,
-    caption: block.text,
+    caption,
     mediaItemIds: [media?.id as string],
   };
 }

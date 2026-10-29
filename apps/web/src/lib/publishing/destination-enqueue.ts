@@ -22,6 +22,8 @@ export interface DestinationForEnqueue {
   platform: Platform;
   timezone: string;
   status: string;
+  /** Raw destinations.metadata (carries fb_status: 'paused'/'checkpoint'). */
+  metadata: Record<string, unknown> | null;
 }
 
 export interface OwnedMediaRow {
@@ -69,6 +71,14 @@ export interface NewDestinationQueueItem {
   /** Null for publisher-driven (Facebook) queue items: no stored time. */
   scheduledTime: string | null;
   slotId: string | null;
+  /**
+   * The client idempotency key that produced this row (new migration
+   * 20261029120100, NOT yet applied to prod). Stored so a retry can
+   * find the row even when the idempotency result store failed —
+   * that is what heals the swallowed-store duplicate. Null when the
+   * caller sent no key, or when the column does not exist yet.
+   */
+  idempotencyKey?: string | null | undefined;
 }
 
 type DestinationRowRaw = {
@@ -76,15 +86,47 @@ type DestinationRowRaw = {
   platform: string;
   timezone?: string | null;
   status: string;
+  metadata?: Record<string, unknown> | string | null;
 };
 
 function toDestination(row: DestinationRowRaw): DestinationForEnqueue {
+  let metadata: Record<string, unknown> | null = null;
+  if (row.metadata && typeof row.metadata === 'object') {
+    metadata = row.metadata;
+  } else if (typeof row.metadata === 'string') {
+    try {
+      const parsed: unknown = JSON.parse(row.metadata);
+      metadata = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+    } catch {
+      metadata = null;
+    }
+  }
   return {
     id: row.id,
     platform: row.platform as Platform,
     timezone: row.timezone || 'UTC',
     status: row.status,
+    metadata,
   };
+}
+
+/**
+ * Map a DB destination status + metadata to the wire page status the
+ * composer sees (mirrors DESTINATION_STATUS_TO_WIRE_SQL in
+ * lib/server/facebook-wire.ts): 'paused' is disconnected + marker,
+ * 'page_checkpoint' is error + checkpoint marker, plain 'error' is
+ * an expired token.
+ */
+export function destinationWireStatus(
+  destination: DestinationForEnqueue
+): 'active' | 'paused' | 'fb_rate_limited' | 'page_checkpoint' | 'invalid_token' | 'disconnected' {
+  const fbStatus = destination.metadata?.fb_status;
+  if (destination.status === 'disconnected' && fbStatus === 'paused') return 'paused';
+  if (destination.status === 'error' && fbStatus === 'checkpoint') return 'page_checkpoint';
+  if (destination.status === 'active') return 'active';
+  if (destination.status === 'rate_limited') return 'fb_rate_limited';
+  if (destination.status === 'error') return 'invalid_token';
+  return 'disconnected';
 }
 
 /** The destination row, only when it belongs to the caller's workspace. */
@@ -95,7 +137,7 @@ export async function fetchDestinationForEnqueue(
 ): Promise<DestinationForEnqueue | null> {
   if (isLegacyClient(client)) {
     const rows = (await (client as DatabaseClient).query(
-      `SELECT id, platform, timezone, status
+      `SELECT id, platform, timezone, status, metadata
        FROM destinations
        WHERE id = $1 AND workspace_id = $2
        LIMIT 1`,
@@ -108,7 +150,7 @@ export async function fetchDestinationForEnqueue(
   if (!supabase) return null;
   const { data, error } = await supabase
     .from('destinations')
-    .select('id, platform, timezone, status')
+    .select('id, platform, timezone, status, metadata')
     .eq('id', destinationId)
     .eq('workspace_id', workspaceId)
     .maybeSingle();
@@ -217,35 +259,74 @@ export async function insertDestinationQueueItem(
   item: NewDestinationQueueItem
 ): Promise<InsertedQueueItemRow | null> {
   if (isLegacyClient(client)) {
-    const rows = (await (client as DatabaseClient).query(
-      `INSERT INTO queue_items (
-         workspace_id, destination_id, platform, kind, platform_format,
-         caption, title, first_comment, media_item_id, media_url,
-         media_storage_key, link_url, platform_options, scheduled_time,
-         slot_id, queue_seq, status, retry_count, max_retries
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-         (SELECT COALESCE(MAX(queue_seq), 0) + 1 FROM queue_items WHERE destination_id = $2),
-         'queued', 0, 3)
-       RETURNING ${RETURNING_COLUMNS}`,
-      [
-        item.workspaceId,
-        item.destinationId,
-        item.platform,
-        item.kind,
-        item.platformFormat,
-        item.caption,
-        item.title,
-        item.firstComment,
-        item.mediaItemId,
-        item.mediaUrl,
-        item.mediaStorageKey,
-        item.linkUrl,
-        JSON.stringify(item.platformOptions),
-        item.scheduledTime,
-        item.slotId,
-      ]
-    )) as InsertedQueueItemRow[];
-    return rows?.[0] ?? null;
+    try {
+      const rows = (await (client as DatabaseClient).query(
+        `INSERT INTO queue_items (
+           workspace_id, destination_id, platform, kind, platform_format,
+           caption, title, first_comment, media_item_id, media_url,
+           media_storage_key, link_url, platform_options, scheduled_time,
+           slot_id, queue_seq, status, retry_count, max_retries, idempotency_key
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+           (SELECT COALESCE(MAX(queue_seq), 0) + 1 FROM queue_items WHERE destination_id = $2),
+           'queued', 0, 3, $16)
+         RETURNING ${RETURNING_COLUMNS}`,
+        [
+          item.workspaceId,
+          item.destinationId,
+          item.platform,
+          item.kind,
+          item.platformFormat,
+          item.caption,
+          item.title,
+          item.firstComment,
+          item.mediaItemId,
+          item.mediaUrl,
+          item.mediaStorageKey,
+          item.linkUrl,
+          JSON.stringify(item.platformOptions),
+          item.scheduledTime,
+          item.slotId,
+          item.idempotencyKey ?? null,
+        ]
+      )) as InsertedQueueItemRow[];
+      return rows?.[0] ?? null;
+    } catch (err) {
+      // Pre-migration databases have no idempotency_key column: fall
+      // back to the old insert shape rather than failing the post.
+      // Any other failure is a real failure, not a missing column.
+      if (!String(err instanceof Error ? err.message : err).includes('idempotency_key')) {
+        return null;
+      }
+      const rows = (await (client as DatabaseClient).query(
+        `INSERT INTO queue_items (
+           workspace_id, destination_id, platform, kind, platform_format,
+           caption, title, first_comment, media_item_id, media_url,
+           media_storage_key, link_url, platform_options, scheduled_time,
+           slot_id, queue_seq, status, retry_count, max_retries
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+           (SELECT COALESCE(MAX(queue_seq), 0) + 1 FROM queue_items WHERE destination_id = $2),
+           'queued', 0, 3)
+         RETURNING ${RETURNING_COLUMNS}`,
+        [
+          item.workspaceId,
+          item.destinationId,
+          item.platform,
+          item.kind,
+          item.platformFormat,
+          item.caption,
+          item.title,
+          item.firstComment,
+          item.mediaItemId,
+          item.mediaUrl,
+          item.mediaStorageKey,
+          item.linkUrl,
+          JSON.stringify(item.platformOptions),
+          item.scheduledTime,
+          item.slotId,
+        ]
+      )) as InsertedQueueItemRow[];
+      return rows?.[0] ?? null;
+    }
   }
 
   const supabase = getRouteSupabase(client as SupabaseClient);
@@ -260,31 +341,112 @@ export async function insertDestinationQueueItem(
     (seqRows as Array<{ queue_seq?: number | null }> | null)?.[0]?.queue_seq != null
       ? Number((seqRows as Array<{ queue_seq?: number | null }>)[0]!.queue_seq) + 1
       : 1;
-  const { data, error } = await supabase
+  const baseRow = {
+    workspace_id: item.workspaceId,
+    destination_id: item.destinationId,
+    platform: item.platform,
+    kind: item.kind,
+    platform_format: item.platformFormat,
+    caption: item.caption,
+    title: item.title,
+    first_comment: item.firstComment,
+    media_item_id: item.mediaItemId,
+    media_url: item.mediaUrl,
+    media_storage_key: item.mediaStorageKey,
+    link_url: item.linkUrl,
+    platform_options: item.platformOptions,
+    scheduled_time: item.scheduledTime,
+    slot_id: item.slotId,
+    queue_seq: nextSeq,
+    status: 'queued',
+    retry_count: 0,
+    max_retries: 3,
+  };
+  const firstAttempt = await supabase
     .from('queue_items')
-    .insert({
-      workspace_id: item.workspaceId,
-      destination_id: item.destinationId,
-      platform: item.platform,
-      kind: item.kind,
-      platform_format: item.platformFormat,
-      caption: item.caption,
-      title: item.title,
-      first_comment: item.firstComment,
-      media_item_id: item.mediaItemId,
-      media_url: item.mediaUrl,
-      media_storage_key: item.mediaStorageKey,
-      link_url: item.linkUrl,
-      platform_options: item.platformOptions,
-      scheduled_time: item.scheduledTime,
-      slot_id: item.slotId,
-      queue_seq: nextSeq,
-      status: 'queued',
-      retry_count: 0,
-      max_retries: 3,
-    })
+    .insert({ ...baseRow, idempotency_key: item.idempotencyKey ?? null })
     .select(RETURNING_COLUMNS)
     .single();
-  if (error || !data) return null;
+  if (!firstAttempt.error && firstAttempt.data) {
+    return firstAttempt.data as InsertedQueueItemRow;
+  }
+  const missingColumn =
+    firstAttempt.error &&
+    (firstAttempt.error.code === '42703' ||
+      String(firstAttempt.error.message ?? '').includes('idempotency_key'));
+  if (!missingColumn) return null;
+  // Pre-migration: retry without the new column.
+  const fallback = await supabase
+    .from('queue_items')
+    .insert(baseRow)
+    .select(RETURNING_COLUMNS)
+    .single();
+  if (fallback.error || !fallback.data) return null;
+  return fallback.data as InsertedQueueItemRow;
+}
+
+/**
+ * True only for a missing idempotency_key column: Postgres 42703
+ * (undefined column), PostgREST PGRST204 (schema-cache miss, which
+ * is how a missing column surfaces through PostgREST), or any error
+ * message naming the column. Nothing else counts — a failed heal
+ * must NOT silently proceed to a fresh insert (that is exactly how
+ * a retry duplicates), so every other error still throws.
+ */
+function isMissingIdempotencyColumn(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  const message = String(
+    (error as { message?: unknown } | null)?.message ?? error ?? ''
+  );
+  return (
+    code === '42703' ||
+    code === 'PGRST204' ||
+    message.includes('idempotency_key')
+  );
+}
+
+/**
+ * Find a queue row previously inserted under one idempotency key —
+ * the heal path for a result whose idempotency store failed. Returns
+ * null when the idempotency_key column does not exist yet (migration
+ * 20261029120100 not applied), so pre-migration deployments simply
+ * skip the heal instead of 500ing every keyed enqueue. Every other
+ * error still throws to the route, which fails loudly with 500
+ * before executing — a failed heal never silently proceeds to a
+ * fresh insert.
+ */
+export async function findQueueItemByIdempotencyKey(
+  client: ConnectDbClient,
+  workspaceId: string,
+  idempotencyKey: string
+): Promise<InsertedQueueItemRow | null> {
+  if (isLegacyClient(client)) {
+    try {
+      const rows = (await (client as DatabaseClient).query(
+        `SELECT ${RETURNING_COLUMNS}
+         FROM queue_items
+         WHERE workspace_id = $1 AND idempotency_key = $2
+         LIMIT 1`,
+        [workspaceId, idempotencyKey]
+      )) as InsertedQueueItemRow[];
+      return rows?.[0] ?? null;
+    } catch (error) {
+      if (isMissingIdempotencyColumn(error)) return null;
+      throw error;
+    }
+  }
+  const supabase = getRouteSupabase(client as SupabaseClient);
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from('queue_items')
+    .select(RETURNING_COLUMNS)
+    .eq('workspace_id', workspaceId)
+    .eq('idempotency_key', idempotencyKey)
+    .maybeSingle();
+  if (error) {
+    if (isMissingIdempotencyColumn(error)) return null;
+    throw error;
+  }
+  if (!data) return null;
   return data as InsertedQueueItemRow;
 }

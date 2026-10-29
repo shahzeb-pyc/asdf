@@ -40,6 +40,12 @@ export interface MediaPreviewMetadataProps {
   isDeleting: boolean;
   onNameChange: (value: string) => void;
   onCaptionChange: (value: string) => void;
+  /**
+   * Picker use: the picker is browse + select only, so its preview
+   * must not offer editing at all — not even editable-looking
+   * fields whose Save is a no-op. Defaults false (library page).
+   */
+  readOnly?: boolean | undefined;
 }
 
 function MetadataRow({
@@ -63,9 +69,11 @@ export function MediaPreviewMetadata({
   isDeleting,
   onNameChange,
   onCaptionChange,
+  readOnly = false,
 }: Readonly<MediaPreviewMetadataProps>) {
   const isVideo = item.mediaType === 'video';
   const isBusy = isSaving || isDeleting;
+  const fieldsDisabled = isBusy || readOnly;
 
   return (
     <div className={cn('flex min-w-0 flex-col gap-4 p-4 sm:p-6', className)}>
@@ -85,6 +93,12 @@ export function MediaPreviewMetadata({
         <MetadataRow label="Upload date">{formatUploadDate(item.createdAt)}</MetadataRow>
       </div>
 
+      {readOnly ? (
+        <p className="text-metadata text-ink-sub">
+          Names and captions are edited on the Media Library page, not
+          here — this preview is for choosing the file.
+        </p>
+      ) : null}
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor="preview-filename-input"
@@ -96,7 +110,7 @@ export function MediaPreviewMetadata({
           id="preview-filename-input"
           type="text"
           data-testid="modal-filename-input"
-          disabled={isBusy}
+          disabled={fieldsDisabled}
           value={nameDraft}
           onChange={(e) => onNameChange(e.target.value)}
         />
@@ -113,7 +127,7 @@ export function MediaPreviewMetadata({
           id="preview-caption-textarea"
           data-testid="modal-caption-input"
           rows={4}
-          disabled={isBusy}
+          disabled={fieldsDisabled}
           value={captionDraft}
           onChange={(e) => onCaptionChange(e.target.value)}
           placeholder="Add a caption..."

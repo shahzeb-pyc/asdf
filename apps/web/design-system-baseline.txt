@@ -43,6 +43,11 @@ arbitrary-allow apps/web/src/components/shared/ui/sidebar.tsx transition-[left,r
 arbitrary-allow apps/web/src/components/shared/ui/sidebar.tsx transition-[margin,opacity]
 arbitrary-allow apps/web/src/components/shared/ui/sidebar.tsx transition-[width,height,padding]
 arbitrary-allow apps/web/src/components/pages/dedicated/insights-panel.tsx min-h-[55svh]
+# Create Posts composer dialog height (PR #36): the dialog must be 90% of
+# the dynamic viewport so 3 full post blocks are visible; no token
+# utility expresses 90dvh (h-9/10 is 90% of the fixed viewport, not dvh).
+arbitrary-allow apps/web/src/components/pages/dedicated/create-posts/create-posts-dialog.tsx h-[90dvh]
+arbitrary-allow apps/web/src/components/pages/dedicated/create-posts/create-posts-dialog.tsx max-h-[90dvh]
 hex apps/web/src/components/connect/byoc-gate.tsx 2
 rgb apps/web/src/components/pages/dedicated/modal-styles.ts 1
 rgb apps/web/src/lib/component-styles.ts 1
