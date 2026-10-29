@@ -87,6 +87,9 @@ export function sortAddPageFormats(formats: string[]): string[] {
   return unique.sort((a, b) => orderOf(a) - orderOf(b));
 }
 
+/** HH:MM, 24-hour clock — shared by validation and free-time search. */
+const ADD_PAGE_TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+
 /**
  * The next genuinely free time for a new row, or null when none of
  * the candidate slots is free. Candidates, in order: the four
@@ -96,24 +99,26 @@ export function sortAddPageFormats(formats: string[]): string[] {
  * start as a duplicate — duplicates are rejected by the import
  * boundary and would leave Add disabled.
  */
-/** HH:MM, 24-hour clock — shared by validation and free-time search. */
-const ADD_PAGE_TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
-
 export function findFreeAddPagePostingTime(
   existing: AddPagePostingTime[]
 ): AddPagePostingTime | null {
   // Only well-formed times count: a cleared or malformed row must
   // never steer the candidate arithmetic into an invalid time.
-  const used = new Set(
-    existing
-      .map((time) => time.slotTime)
-      .filter((slotTime) => ADD_PAGE_TIME_PATTERN.test(slotTime))
-  );
+  const validTimes = existing
+    .map((time) => time.slotTime)
+    .filter((slotTime) => ADD_PAGE_TIME_PATTERN.test(slotTime));
+  const used = new Set(validTimes);
   const candidates: string[] = [...ADD_PAGE_DEFAULT_TIMES];
-  const latest = [...used].sort().at(-1) ?? '09:00';
-  const [latestHourText, latestMinuteText] = latest.split(':');
-  const latestHour = Number.parseInt(latestHourText ?? '9', 10);
-  const latestMinute = latestMinuteText ?? '00';
+  // Latest used time of day: validTimes are all HH:MM, so the
+  // lexicographic maximum is the latest time. '09:00' is the
+  // fallback when nothing valid is set yet, so latestHour and
+  // latestMinute below are always well-formed.
+  let latest = '09:00';
+  for (const slotTime of validTimes) {
+    if (slotTime > latest) latest = slotTime;
+  }
+  const latestHour = Number.parseInt(latest.slice(0, 2), 10);
+  const latestMinute = latest.slice(3, 5);
   const pad = (n: number) => String(n).padStart(2, '0');
   for (let step = 1; step <= 24; step += 1) {
     candidates.push(`${pad((latestHour + step) % 24)}:${latestMinute}`);
