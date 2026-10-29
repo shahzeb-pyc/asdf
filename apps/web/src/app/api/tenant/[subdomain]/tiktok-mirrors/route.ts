@@ -17,8 +17,11 @@ import {
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
 import { logServerError } from '@/lib/server-analytics';
 import {
+  buildTikwmPauseStore,
   fetchTikwmUserInfo,
   fetchTikwmUserPosts,
+  getTikwmApiKeys,
+  resolveTikwmVideo,
   selectLatestReel,
   TikwmError,
 } from '@/lib/server/tikwm';
@@ -32,8 +35,9 @@ import type { DatabaseClient } from '@fbuploadpro/contracts';
  * A mirror links one TikTok username to one Facebook destination
  * (page). The same username may feed several pages, but the exact
  * pair (username + page) may exist only once. Creation verifies the
- * username's feed with tikwm BEFORE creating anything, then
- * immediately posts the account's current latest reel; a failed
+ * username's feed with the paid tikwmapi endpoint BEFORE creating
+ * anything, then resolves and immediately posts the account's
+ * current latest reel via the free tikwm POST endpoint; a failed
  * immediate post stays pending for the next hourly tick and puts
  * the mirror in error — never silently dropped.
  *
@@ -87,6 +91,7 @@ export interface MirrorPostRow {
 export interface CreateMirrorDeps {
   fetchTikwmPosts?: typeof fetchTikwmUserPosts;
   fetchTikwmInfo?: typeof fetchTikwmUserInfo;
+  resolveTikwmVideo?: typeof resolveTikwmVideo;
   publishReel?: typeof publishFacebookReel;
   fetchGraphPages?: typeof fetchAllFacebookPages;
 }
@@ -774,11 +779,16 @@ export async function handleCreateMirror(
       );
     }
 
-    // 3. Verify the feed with tikwm BEFORE creating anything.
+    // 3. Verify the feed with the PAID tikwmapi feed endpoint
+    //    BEFORE creating anything. Key rotation pauses live in
+    //    tikwmapi_key_pauses; the store is built from this
+    //    request's database handle (both client shapes).
+    const apiKeys = getTikwmApiKeys();
+    const pauseStore = buildTikwmPauseStore(db, isLegacyClient(db));
     const fetchPosts = deps.fetchTikwmPosts ?? fetchTikwmUserPosts;
     let videos;
     try {
-      videos = await fetchPosts(username, { count: 30 });
+      videos = await fetchPosts(username, { count: 30, apiKeys, pauseStore });
     } catch (err) {
       if (err instanceof TikwmError) {
         return NextResponse.json(
@@ -791,7 +801,7 @@ export async function handleCreateMirror(
 
     // 4. Display info (best effort; feed author fields are fallback).
     const fetchInfo = deps.fetchTikwmInfo ?? fetchTikwmUserInfo;
-    const info = await fetchInfo(username);
+    const info = await fetchInfo(username, { apiKeys, pauseStore });
     const firstAuthor = videos[0]?.author;
     const displayName = info?.nickname ?? firstAuthor?.nickname ?? null;
     const avatarUrl = info?.avatar ?? firstAuthor?.avatar ?? null;
@@ -867,9 +877,13 @@ export async function handleCreateMirror(
       mirror = created;
     }
 
-    // 6. Immediate post of the current latest reel (claim first,
-    //    then post, then update — the same claim discipline as the
-    //    hourly tick, so a failure stays pending for the next tick).
+    // 6. Immediate post of the current latest reel: resolve it
+    //    via the FREE tikwm POST endpoint (no-watermark URL +
+    //    verbatim title), then claim, then post, then update —
+    //    the same claim discipline as the hourly tick, so a
+    //    failure stays pending for the next tick. A resolve
+    //    failure claims a pending row with the error (mirror
+    //    error), never silently skipped.
     const latest = selectLatestReel(videos);
     let immediatePost: {
       attempted: boolean;
@@ -879,7 +893,20 @@ export async function handleCreateMirror(
       error: string | null;
     } | null = null;
     if (latest && latest.play) {
-      const caption = latest.title ?? '';
+      const resolveVideo = deps.resolveTikwmVideo ?? resolveTikwmVideo;
+      let caption = latest.title ?? '';
+      let resolvedUrl: string | null = null;
+      let resolveError: string | null = null;
+      try {
+        const resolved = await resolveVideo(
+          `https://www.tiktok.com/@${username}/video/${latest.video_id}`
+        );
+        resolvedUrl = resolved.playUrl;
+        caption = resolved.title || caption;
+      } catch (err) {
+        resolveError =
+          err instanceof Error ? err.message : 'The latest reel could not be resolved.';
+      }
       const coverUrl = latest.cover ?? null;
       const sourceCreatedAt =
         typeof latest.create_time === 'number'
@@ -894,7 +921,7 @@ export async function handleCreateMirror(
            ) VALUES ($1, $2, $3, $4, $5, $6, 'pending', now())
            ON CONFLICT (mirror_id, source_post_id) DO NOTHING
            RETURNING id`,
-          [mirror.id, latest.video_id, caption, latest.play, coverUrl, sourceCreatedAt]
+          [mirror.id, latest.video_id, caption, resolvedUrl, coverUrl, sourceCreatedAt]
         )) as Record<string, unknown>[];
         postRowId = typeof rows[0]?.id === 'string' ? (rows[0].id as string) : null;
       } else {
@@ -905,7 +932,7 @@ export async function handleCreateMirror(
             mirror_id: mirror.id,
             source_post_id: latest.video_id,
             caption,
-            video_url: latest.play,
+            video_url: resolvedUrl,
             cover_url: coverUrl,
             source_created_at: sourceCreatedAt,
             status: 'pending',
@@ -918,7 +945,22 @@ export async function handleCreateMirror(
         postRowId = data ? (data as Record<string, unknown>).id as string : null;
       }
 
-      if (postRowId) {
+      if (postRowId && resolveError) {
+        await updatePostAndMirror(db, mirror.id, postRowId, {
+          status: 'pending',
+          error: resolveError,
+          mirrorStatus: 'error',
+        });
+        immediatePost = {
+          attempted: true,
+          status: 'pending',
+          sourcePostId: latest.video_id,
+          publishedPostId: null,
+          error: resolveError,
+        };
+      } else if (postRowId) {
+        if (!resolvedUrl) throw new Error('Resolved video URL is missing.');
+        const videoUrl = resolvedUrl;
         const encryptionKey = getTokenEncryptionKey();
         const pageToken = destination.encrypted_destination_token
           ? await decryptToken(destination.encrypted_destination_token, encryptionKey)
@@ -944,7 +986,7 @@ export async function handleCreateMirror(
             const postId = await publishReel({
               pageId: destination.external_destination_id,
               pageToken,
-              videoUrl: latest.play,
+              videoUrl,
               caption,
             });
             await updatePostAndMirror(db, mirror.id, postRowId, {

@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { InternalError, type PublisherRegistry } from '@fbuploadpro/contracts';
+import { InternalError, parseTikwmApiKeys, type PublisherRegistry } from '@fbuploadpro/contracts';
 import {
   runClaimTick,
   type ClaimerDbClient,
@@ -82,6 +82,15 @@ export interface Env {
   __TEST_DB__?: unknown;
   POSTHOG_KEY?: string;
   POSTHOG_HOST?: string;
+  /**
+   * Paid tikwmapi keys for TikTok mirror feed discovery
+   * (comma-separated list, plus singular fallback — see
+   * contracts parseTikwmApiKeys). Worker secret, set via
+   * wrangler secret; never committed. Empty = every mirror
+   * feed fetch fails loudly as a per-mirror error.
+   */
+  TIKWMAPI_KEYS?: string;
+  TIKWMAPI_KEY?: string;
   /** Post for Me API key (specs 125/126) — provider-managed YouTube/TikTok. Worker env only, via GitHub Secrets. */
   POST_FOR_ME_API_KEY?: string;
   /** X global-app client ID (spec 127, D7) — GitHub Secrets → worker env only, never the database. */
@@ -238,6 +247,7 @@ export async function handleScheduled(
           now: options?.now ?? new Date(controller.scheduledTime),
           env,
           waitUntil,
+          tikwmApiKeys: parseTikwmApiKeys(env.TIKWMAPI_KEYS, env.TIKWMAPI_KEY),
         })
       );
     } catch (err) {

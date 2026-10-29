@@ -1,9 +1,11 @@
 import {
   decryptToken,
+  fetchTikwmApiUserPosts,
   isTikwmReelItem,
   isTikwmWatermarkedOnlyItem,
+  resolveTikwmVideo,
   selectNewReels,
-  TikwmUserPostsResponseSchema,
+  type TikwmApiKeyPauseStore,
   type TikwmVideoItem,
 } from '@fbuploadpro/contracts';
 import { FacebookPublishClient } from './fb-client.js';
@@ -15,8 +17,11 @@ import { captureWorkerError, type PostHogEnv } from './analytics.js';
 //
 // Every hour, for every mirror with status active or error
 // (paused mirrors are skipped), fetch the TikTok account's feed
-// from tikwm and post each NEW reel to the linked Facebook page
-// as a Facebook Reel, caption verbatim.
+// from the PAID tikwmapi endpoint (key rotation with DB-persisted
+// 30-day pauses, see contracts tikwmapi), resolve each NEW reel
+// via the FREE tikwm POST endpoint (no-watermark URL + verbatim
+// title), and post it to the linked Facebook page as a Facebook
+// Reel, caption verbatim.
 //
 // Dedup (designed upfront, three layers):
 //   1. Time: only items newer than last_posted_create_time.
@@ -121,6 +126,12 @@ export interface MirrorTickDeps {
     }
   ) => Promise<void>;
   fetchFeed: (username: string) => Promise<TikwmVideoItem[]>;
+  /** Resolve one known video via the FREE tikwm POST endpoint to
+   *  its no-watermark URL + verbatim title. Throws on failure. */
+  resolveVideo: (params: {
+    username: string;
+    videoId: string;
+  }) => Promise<{ playUrl: string; title: string }>;
   publishReel: (params: {
     pageId: string;
     pageToken: string;
@@ -235,13 +246,41 @@ export async function runMirrorTick(deps: MirrorTickDeps): Promise<MirrorTickRes
       }
 
       // Post new reels oldest-first (a catch-up tick posts only
-      // the newest, above).
+      // the newest, above). Each reel is resolved via the FREE
+      // tikwm POST endpoint (no-watermark URL + verbatim title)
+      // before claiming; a resolve failure claims a pending row
+      // with the error (mirror error, stop this mirror) — never
+      // silently skipped, and the resolved URL is what posts.
       for (const reel of reelsToPost) {
         if (!isTikwmReelItem(reel) || !reel.play) continue;
+        let resolved: { playUrl: string; title: string };
+        try {
+          resolved = await deps.resolveVideo({
+            username: mirror.sourceUsername,
+            videoId: reel.video_id,
+          });
+        } catch (err) {
+          const message = errorMessage(err);
+          const failedId = await deps.claimPost(mirror.id, {
+            sourcePostId: reel.video_id,
+            caption: reel.title ?? '',
+            videoUrl: null,
+            coverUrl: reel.cover ?? null,
+            sourceCreatedAt: toIso(reel.create_time),
+            status: 'pending',
+            error: message,
+          });
+          if (failedId) {
+            mirrorError = message;
+            result.failed += 1;
+          }
+          break;
+        }
+        const caption = resolved.title || reel.title || '';
         const claimedId = await deps.claimPost(mirror.id, {
           sourcePostId: reel.video_id,
-          caption: reel.title ?? '',
-          videoUrl: reel.play,
+          caption,
+          videoUrl: resolved.playUrl,
           coverUrl: reel.cover ?? null,
           sourceCreatedAt: toIso(reel.create_time),
           status: 'pending',
@@ -263,8 +302,8 @@ export async function runMirrorTick(deps: MirrorTickDeps): Promise<MirrorTickRes
           const postId = await deps.publishReel({
             pageId: mirror.targetExternalId,
             pageToken: mirror.targetToken,
-            videoUrl: reel.play,
-            caption: reel.title ?? '',
+            videoUrl: resolved.playUrl,
+            caption,
           });
           await deps.updatePost(claimedId, {
             status: 'posted',
@@ -334,33 +373,50 @@ export async function runMirrorTick(deps: MirrorTickDeps): Promise<MirrorTickRes
   return result;
 }
 
-/** tikwm feed fetch for the worker (same endpoint + shape as web). */
-export async function fetchTikwmFeedForWorker(
-  username: string,
-  fetchFn: typeof fetch = fetch
-): Promise<TikwmVideoItem[]> {
-  let res: Response;
-  try {
-    res = await fetchFn(
-      `https://www.tikwm.com/api/user/posts?unique_id=${encodeURIComponent(username)}&count=${MIRROR_FEED_COUNT}`,
-      { signal: AbortSignal.timeout(30_000), headers: { Accept: 'application/json' } }
-    );
-  } catch {
-    throw new Error('Could not reach TikTok feed service.');
-  }
-  if (!res.ok) {
-    throw new Error(`TikTok feed service returned HTTP ${res.status}.`);
-  }
-  const raw: unknown = await res.json().catch(() => null);
-  const parsed = TikwmUserPostsResponseSchema.safeParse(raw);
-  if (!parsed.success || parsed.data.code !== 0 || !parsed.data.data) {
-    throw new Error(
-      parsed.data && typeof parsed.data.msg === 'string' && parsed.data.msg
-        ? `Could not fetch that TikTok account's feed: ${parsed.data.msg}`
-        : "Could not fetch that TikTok account's feed."
-    );
-  }
-  return parsed.data.data.videos;
+/**
+ * Pause store over the tikwmapi_key_pauses table for the worker's
+ * Supabase client. Lookup/insert failures throw; the rotation
+ * logs them loudly and continues with rotation unpersisted —
+ * a missing table never crashes the feed call on its own.
+ */
+export function buildWorkerTikwmPauseStore(db: SupabaseLike): TikwmApiKeyPauseStore {
+  return {
+    getPausedUntil: async (fingerprint: string) => {
+      const { data, error } = await db
+        .from('tikwmapi_key_pauses')
+        .select('paused_until')
+        .eq('key_fingerprint', fingerprint)
+        .maybeSingle();
+      if (error) throw new Error(`Failed to read key pause: ${error.message}`);
+      const value = (data as { paused_until?: unknown } | null)?.paused_until;
+      if (typeof value !== 'string') return null;
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? null : date;
+    },
+    setPaused: async (fingerprint: string, pausedUntil: Date, reason: string) => {
+      const { error } = await (
+        db as unknown as {
+          from: (table: string) => {
+            upsert: (
+              values: Record<string, unknown>,
+              opts: { onConflict: string }
+            ) => Promise<{ error: { message: string } | null }>;
+          };
+        }
+      )
+        .from('tikwmapi_key_pauses')
+        .upsert(
+          {
+            key_fingerprint: fingerprint,
+            paused_until: pausedUntil.toISOString(),
+            reason,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'key_fingerprint' }
+        );
+      if (error) throw new Error(`Failed to persist key pause: ${error.message}`);
+    },
+  };
 }
 
 type SupabaseLike = {
@@ -389,14 +445,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * Build function deps over a Supabase client (the worker's db) +
  * the token master key. The FB client is the worker's own
  * FacebookPublishClient (3-phase video_reels upload, bytes
- * streamed from the tikwm URL).
+ * streamed from the resolved no-watermark URL). Feed discovery
+ * uses the PAID tikwmapi endpoint with the given keys (rotation
+ * + DB-persisted pauses); an empty key list fails every feed
+ * fetch loudly as a per-mirror error, never silently.
  */
 export function buildMirrorTickDeps(
   db: SupabaseLike,
   masterKey: string,
-  options?: { now?: Date; env?: PostHogEnv; waitUntil?: MirrorTickDeps['waitUntil'] }
+  options?: {
+    now?: Date;
+    env?: PostHogEnv;
+    waitUntil?: MirrorTickDeps['waitUntil'];
+    tikwmApiKeys?: string[];
+  }
 ): MirrorTickDeps {
   const fbClient = new FacebookPublishClient();
+  const tikwmPauseStore = buildWorkerTikwmPauseStore(db);
   return {
     env: options?.env,
     now: options?.now,
@@ -577,7 +642,14 @@ export function buildMirrorTickDeps(
         .eq('id', mirrorId);
       if (error) throw new Error(`Failed to update mirror: ${error.message}`);
     },
-    fetchFeed: (username: string) => fetchTikwmFeedForWorker(username),
+    fetchFeed: (username: string) =>
+      fetchTikwmApiUserPosts(username, {
+        count: MIRROR_FEED_COUNT,
+        apiKeys: options?.tikwmApiKeys ?? [],
+        pauseStore: tikwmPauseStore,
+      }),
+    resolveVideo: async ({ username, videoId }) =>
+      resolveTikwmVideo(`https://www.tiktok.com/@${username}/video/${videoId}`),
     publishReel: async (params) => {
       const result = await fbClient.publishReel({
         pageId: params.pageId,

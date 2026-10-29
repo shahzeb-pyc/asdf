@@ -162,6 +162,10 @@ const createDeps = (options: { publish?: unknown } = {}) => ({
     nickname: 'Alice',
     avatar: 'https://example.com/a.jpg',
   }),
+  resolveTikwmVideo: vi.fn().mockResolvedValue({
+    playUrl: 'https://example.com/no-wm.mp4',
+    title: 'My exact caption',
+  }),
   publishReel:
     options.publish ??
     vi.fn().mockResolvedValue('fb_post_123'),
@@ -287,6 +291,25 @@ describe('POST /tiktok-mirrors', () => {
     expect(body.immediatePost.error).toContain('Graph exploded');
     const postUpdate = calls.find((c) => c.sql.includes('UPDATE mirror_posts'));
     expect(postUpdate?.params?.[1]).toBe('pending');
+    const mirrorUpdate = calls.find((c) => c.sql.includes('UPDATE mirrors'));
+    expect(mirrorUpdate?.params).toContain('error');
+  });
+
+  it('keeps the post pending and the mirror in error when video resolve fails', async () => {
+    const { db, calls } = fakeDb();
+    const deps = createDeps();
+    deps.resolveTikwmVideo = vi.fn().mockRejectedValue(new Error('Could not resolve video'));
+    const res = await handleCreateMirror(
+      createRequest({ accountId, targetExternalId: fbPageId, sourceUsername: 'alice' }),
+      'acme',
+      db,
+      deps as never
+    );
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.immediatePost.status).toBe('pending');
+    expect(body.immediatePost.error).toContain('Could not resolve video');
+    expect(deps.publishReel).not.toHaveBeenCalled();
     const mirrorUpdate = calls.find((c) => c.sql.includes('UPDATE mirrors'));
     expect(mirrorUpdate?.params).toContain('error');
   });

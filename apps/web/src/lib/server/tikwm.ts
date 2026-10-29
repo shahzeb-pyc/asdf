@@ -1,103 +1,146 @@
 import {
-  selectLatestReel as selectLatestReelFromContracts,
-  selectNewReels as selectNewReelsFromContracts,
-  TikwmUserInfoResponseSchema,
-  TikwmUserPostsResponseSchema,
+  fetchTikwmApiUserInfo as fetchPaidUserInfo,
+  fetchTikwmApiUserPosts as fetchPaidUserPosts,
+  parseTikwmApiKeys,
+  resolveTikwmVideo as resolvePaidVideo,
+  TikwmApiError,
+  type TikwmApiKeyPauseStore,
   type TikwmVideoItem,
 } from '@fbuploadpro/contracts';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import type { DatabaseClient } from '@fbuploadpro/contracts';
 
-export { selectLatestReelFromContracts as selectLatestReel };
-export { selectNewReelsFromContracts as selectNewReels };
+export {
+  selectLatestReel,
+  selectNewReels,
+} from '@fbuploadpro/contracts';
+export { TikwmApiError as TikwmError };
 
 /**
- * tikwm client (server-only): https://www.tikwm.com/api/ — free, no
- * key, unofficial. Every failure throws a TikwmError with a plain
- * message; callers surface it loudly (mirror error status / inline
- * add-dialog error), never as silent missing posts.
+ * TikTok data client (server-only) for Auto Repost mirrors.
  *
- * Verified response shapes (2026-10-29, from tikwm client sources):
- * - GET /api/user/posts?unique_id=<username>&count=<n>
- *   -> { code: 0, msg, data: { videos: [...], cursor, hasMore } }
- * - Video item: video_id, play (NO-watermark URL), wmplay
- *   (watermarked URL), hdplay, title (caption), cover, create_time
- *   (unix seconds), images (photo posts only),
- *   author: { unique_id, nickname, avatar }.
- * - A feed item is a reel iff it has a non-empty `play` URL and no
- *   non-empty `images` array (see contracts isTikwmReelItem).
+ * Split by owner decision (2026-10-29):
+ * - Feed discovery + profile: PAID tikwmapi
+ *   (https://api.tikwmapi.com), keyed with `x-tikwmapi-key`.
+ *   Keys come from TIKWMAPI_KEYS (comma-separated) plus
+ *   TIKWMAPI_KEY (singular, appended) — see getTikwmApiKeys.
+ *   Key rotation with DB-persisted 30-day pauses lives in the
+ *   contracts tikwmapi module; the pause store below is built
+ *   from the route's database handle.
+ * - Single-video resolution: FREE tikwm POST
+ *   (https://www.tikwm.com/api/, form {url, hd: 1}) — no key.
+ *
+ * The free tikwm FEED endpoints (GET /api/user/posts,
+ * GET /api/user/info on www.tikwm.com) are NOT used anywhere:
+ * they return a Cloudflare JS-challenge page (HTTP 403) to
+ * server fetches. There is no fallback to them.
+ *
+ * Every failure throws a TikwmError with a plain message; callers
+ * surface it loudly (mirror error status / inline add-dialog
+ * error), never as silent missing posts. Key values are never
+ * logged, stored, or included in errors — only SHA-256
+ * fingerprints reach the pause table.
  */
-
-export const TIKWM_API_BASE_URL = 'https://www.tikwm.com/api';
-const TIKWM_FETCH_TIMEOUT_MS = 30_000;
-
-export class TikwmError extends Error {
-  readonly code: string;
-  constructor(code: string, message: string) {
-    super(message);
-    this.name = 'TikwmError';
-    this.code = code;
-  }
-}
 
 type FetchFn = typeof fetch;
 
-async function fetchTikwmJson(
-  path: string,
-  fetchFn: FetchFn
-): Promise<unknown> {
-  let res: Response;
-  try {
-    res = await fetchFn(`${TIKWM_API_BASE_URL}${path}`, {
-      signal: AbortSignal.timeout(TIKWM_FETCH_TIMEOUT_MS),
-      headers: { Accept: 'application/json' },
-    });
-  } catch {
-    throw new TikwmError('TIKWM_UNREACHABLE', 'Could not reach TikTok feed service. Please try again.');
-  }
-  if (!res.ok) {
-    throw new TikwmError(
-      'TIKWM_HTTP_ERROR',
-      `TikTok feed service returned HTTP ${res.status}. Please try again.`
-    );
-  }
-  let raw: unknown;
-  try {
-    raw = await res.json();
-  } catch {
-    throw new TikwmError('TIKWM_BAD_RESPONSE', 'TikTok feed service returned an unreadable response.');
-  }
-  return raw;
+/** Parse the paid-API key list from the process environment. */
+export function getTikwmApiKeys(): string[] {
+  return parseTikwmApiKeys(process.env.TIKWMAPI_KEYS, process.env.TIKWMAPI_KEY);
 }
 
 /**
- * Fetch a username's posts. Throws TikwmError when the feed cannot
- * be fetched (unknown/private username, service error, bad shape) —
- * the add flow treats this as "feed unavailable" and creates nothing.
- * A fetchable feed with zero videos is valid (a new account with no
- * posts yet mirrors future reels).
+ * Build a pause store over the tikwmapi_key_pauses table from a
+ * database handle. `legacy` selects the raw-SQL (pg) path;
+ * otherwise the Supabase path. Construction performs no I/O;
+ * failures surface from get/set and are handled by the rotation
+ * (logged loudly, rotation continues, pauses unpersisted).
+ */
+export function buildTikwmPauseStore(
+  db: SupabaseClient | DatabaseClient,
+  legacy: boolean
+): TikwmApiKeyPauseStore {
+  if (legacy) {
+    const client = db as DatabaseClient;
+    return {
+      getPausedUntil: async (fingerprint: string) => {
+        const rows = await client.query<{ paused_until: string }>(
+          'SELECT paused_until FROM tikwmapi_key_pauses WHERE key_fingerprint = $1',
+          [fingerprint]
+        );
+        const value = rows[0]?.paused_until;
+        if (typeof value !== 'string') return null;
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? null : date;
+      },
+      setPaused: async (fingerprint: string, pausedUntil: Date, reason: string) => {
+        await client.query(
+          `INSERT INTO tikwmapi_key_pauses (key_fingerprint, paused_until, reason, updated_at)
+           VALUES ($1, $2, $3, now())
+           ON CONFLICT (key_fingerprint) DO UPDATE SET
+             paused_until = EXCLUDED.paused_until,
+             reason = EXCLUDED.reason,
+             updated_at = now()`,
+          [fingerprint, pausedUntil.toISOString(), reason]
+        );
+      },
+    };
+  }
+  const client = db as SupabaseClient;
+  return {
+    getPausedUntil: async (fingerprint: string) => {
+      const { data, error } = await client
+        .from('tikwmapi_key_pauses')
+        .select('paused_until')
+        .eq('key_fingerprint', fingerprint)
+        .maybeSingle();
+      if (error) throw new Error(`Failed to read key pause: ${error.message}`);
+      const value = (data as { paused_until?: unknown } | null)?.paused_until;
+      if (typeof value !== 'string') return null;
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? null : date;
+    },
+    setPaused: async (fingerprint: string, pausedUntil: Date, reason: string) => {
+      const { error } = await client.from('tikwmapi_key_pauses').upsert(
+        {
+          key_fingerprint: fingerprint,
+          paused_until: pausedUntil.toISOString(),
+          reason,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'key_fingerprint' }
+      );
+      if (error) throw new Error(`Failed to persist key pause: ${error.message}`);
+    },
+  };
+}
+
+export interface TikwmFetchOptions {
+  count?: number | undefined;
+  fetchFn?: FetchFn | undefined;
+  apiKeys?: string[] | undefined;
+  pauseStore?: TikwmApiKeyPauseStore | null | undefined;
+}
+
+/**
+ * Fetch a username's posts from the PAID tikwmapi feed endpoint,
+ * with key rotation. Throws TikwmError when the feed cannot be
+ * fetched (unknown/private username, key/quota failure, service
+ * error, bad shape) — the add flow treats this as "feed
+ * unavailable" and creates nothing. A fetchable feed with zero
+ * videos is valid (a new account with no posts yet mirrors future
+ * reels).
  */
 export async function fetchTikwmUserPosts(
   username: string,
-  options?: { count?: number; fetchFn?: FetchFn }
+  options: TikwmFetchOptions = {}
 ): Promise<TikwmVideoItem[]> {
-  const fetchFn = options?.fetchFn ?? fetch;
-  const count = options?.count ?? 30;
-  const raw = await fetchTikwmJson(
-    `/user/posts?unique_id=${encodeURIComponent(username)}&count=${count}`,
-    fetchFn
-  );
-  const parsed = TikwmUserPostsResponseSchema.safeParse(raw);
-  if (!parsed.success) {
-    throw new TikwmError('TIKWM_BAD_RESPONSE', 'TikTok feed service returned an unexpected response.');
-  }
-  if (parsed.data.code !== 0 || !parsed.data.data) {
-    throw new TikwmError(
-      'TIKWM_FEED_UNAVAILABLE',
-      parsed.data.msg?.trim()
-        ? `Could not fetch that TikTok account's feed: ${parsed.data.msg.trim()}`
-        : "Could not fetch that TikTok account's feed. Check the username and try again."
-    );
-  }
-  return parsed.data.data.videos;
+  return fetchPaidUserPosts(username, {
+    count: options.count,
+    fetchFn: options.fetchFn,
+    apiKeys: options.apiKeys ?? getTikwmApiKeys(),
+    pauseStore: options.pauseStore ?? null,
+  });
 }
 
 /** Display info for a username (avatar/nickname). Display-only: a
@@ -105,26 +148,24 @@ export async function fetchTikwmUserPosts(
  *  to the feed's author fields. */
 export async function fetchTikwmUserInfo(
   username: string,
-  options?: { fetchFn?: FetchFn }
+  options: TikwmFetchOptions = {}
 ): Promise<{ nickname: string | null; avatar: string | null } | null> {
-  const fetchFn = options?.fetchFn ?? fetch;
-  try {
-    const raw = await fetchTikwmJson(
-      `/user/info?unique_id=${encodeURIComponent(username)}`,
-      fetchFn
-    );
-    const parsed = TikwmUserInfoResponseSchema.safeParse(raw);
-    if (!parsed.success || parsed.data.code !== 0 || !parsed.data.data?.user) {
-      return null;
-    }
-    const user = parsed.data.data.user;
-    return {
-      nickname: user.nickname ?? null,
-      avatar: user.avatar ?? null,
-    };
-  } catch {
-    return null;
-  }
+  return fetchPaidUserInfo(username, {
+    fetchFn: options.fetchFn,
+    apiKeys: options.apiKeys ?? getTikwmApiKeys(),
+    pauseStore: options.pauseStore ?? null,
+  });
 }
 
-
+/**
+ * Resolve one known TikTok video via the FREE tikwm POST endpoint
+ * to its no-watermark URL + verbatim title. Throws TikwmError on
+ * any failure — callers treat a resolve failure like a publish
+ * failure (post stays pending, mirror errors).
+ */
+export async function resolveTikwmVideo(
+  videoUrl: string,
+  options: { fetchFn?: FetchFn } = {}
+): Promise<{ playUrl: string; title: string }> {
+  return resolvePaidVideo(videoUrl, { fetchFn: options.fetchFn });
+}

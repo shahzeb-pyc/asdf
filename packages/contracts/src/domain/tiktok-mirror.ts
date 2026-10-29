@@ -18,8 +18,12 @@ import { z } from 'zod';
 // at publish time — the mirror table itself holds no destination
 // foreign key and no platform-specific columns.
 //
-// Data source: https://www.tikwm.com/api/ (free, no key, unofficial).
-// User posts: GET /api/user/posts?unique_id=<username>&count=<n>
+// Data source (split 2026-10-29; see domain/tikwmapi.ts): feed +
+// profile from PAID tikwmapi (https://api.tikwmapi.com, keyed),
+// single-video resolve from FREE tikwm POST (https://www.tikwm.com/api/).
+// The free tikwm FEED endpoints are not used: they return a
+// Cloudflare challenge (HTTP 403) to server fetches.
+// User posts: GET /user/posts?unique_id=<username>&count=<n>
 //   -> { code: 0, msg, data: { videos: [...], cursor, hasMore } }.
 // A feed item is a reel iff it carries a non-empty no-watermark
 // `play` URL and no non-empty `images` array (photo posts carry

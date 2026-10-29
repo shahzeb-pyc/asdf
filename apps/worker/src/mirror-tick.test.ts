@@ -68,6 +68,10 @@ function fakeDeps(state: FakeState, feed: unknown[], mirrors: MirrorTickMirror[]
       state.mirrorUpdates.push({ id, patch });
     },
     fetchFeed: async () => feed as never,
+    resolveVideo: async ({ videoId }) => ({
+      playUrl: `https://example.com/${videoId}.mp4`,
+      title: `Caption for ${videoId}`,
+    }),
     publishReel: async (params) => {
       if (state.publishFailsFor.has(params.videoUrl)) {
         throw new Error('Graph exploded');
@@ -143,6 +147,24 @@ describe('runMirrorTick', () => {
     const stamp = state.mirrorUpdates[state.mirrorUpdates.length - 1];
     expect(stamp?.patch.status).toBe('error');
     expect(stamp?.patch.lastError).toContain('Graph exploded');
+  });
+
+  it('keeps a resolve failure pending, marks the mirror error, and stops that mirror', async () => {
+    const state = newState();
+    const deps = fakeDeps(state, [reel('v1', 100), reel('v2', 200)], [mirror()]);
+    deps.resolveVideo = async () => {
+      throw new Error('Could not resolve video');
+    };
+    const result = await runMirrorTick(deps);
+    expect(result.posted).toBe(0);
+    expect(result.failed).toBe(1);
+    expect(state.published).toHaveLength(0);
+    // Only v1 claimed (pending with the resolve error); v2 never attempted.
+    expect(state.claimed.map((c) => c.post.sourcePostId)).toEqual(['v1']);
+    expect(state.claimed[0]?.post.status).toBe('pending');
+    expect(state.claimed[0]?.post.error).toContain('Could not resolve video');
+    const stamp = state.mirrorUpdates[state.mirrorUpdates.length - 1];
+    expect(stamp?.patch.status).toBe('error');
   });
 
   it('skips watermarked-only items with a skipped row + mirror error, never posting them', async () => {
