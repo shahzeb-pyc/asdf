@@ -48,6 +48,7 @@
  */
 
 import * as React from 'react';
+import { ImageIcon, ListIcon, XIcon } from 'lucide-react';
 import Image from 'next/image';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
@@ -77,6 +78,7 @@ import {
 } from '@/components/shared/ui/alert-dialog';
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogFooter,
   DialogHeader,
@@ -584,6 +586,7 @@ export function CreatePostsDialog({
       <Dialog open={open} onOpenChange={handleDialogOpenChange}>
         <DialogContent
           data-testid="create-posts-dialog"
+          showCloseButton={false}
           className="flex h-[90dvh] max-h-[90dvh] flex-col gap-3 sm:max-w-2xl lg:max-w-3xl"
         >
           {/* contents: the sr-only title must not take a flex row
@@ -592,65 +595,90 @@ export function CreatePostsDialog({
             <DialogTitle className="sr-only">Create posts</DialogTitle>
           </DialogHeader>
 
-          {/* Identity row + top-right bulk actions */}
-          <div className="flex shrink-0 items-start justify-between gap-2">
-            <div className="flex min-w-0 items-center gap-2.5">
-              {page.profilePictureUrl &&
-              failedAvatarUrl !== page.profilePictureUrl ? (
-                <Image
-                  src={page.profilePictureUrl}
-                  alt={page.pageName}
-                  width={40}
-                  height={40}
-                  onError={() =>
-                    setFailedAvatarUrl(page.profilePictureUrl ?? '__error__')
-                  }
-                  className="size-10 shrink-0 rounded-full object-cover"
-                />
-              ) : (
-                <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-subtle text-body font-bold text-brand-gold">
-                  {monogram}
+          {/* Header section, flat on the dialog surface: identity on
+              the left, a ghost toolbar (bulk actions + close) on the
+              right, one hairline divider below the whole section.
+              No boxed identity card, no header panel, no dark
+              action boxes — the same flat language as the posts.
+              The close button is in flow here (not the shared
+              dialog's absolute corner button, which overlapped the
+              actions and could clip at the dialog edge); it still
+              goes through the dialog's onOpenChange handler, so the
+              draft-loss confirmation and queueing lock are kept. */}
+          <div className="shrink-0 border-b border-line pb-4">
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
+              <div className="flex min-w-0 flex-1 items-center gap-3">
+                {page.profilePictureUrl &&
+                failedAvatarUrl !== page.profilePictureUrl ? (
+                  <Image
+                    src={page.profilePictureUrl}
+                    alt={page.pageName}
+                    width={44}
+                    height={44}
+                    onError={() =>
+                      setFailedAvatarUrl(page.profilePictureUrl ?? '__error__')
+                    }
+                    className="size-11 shrink-0 rounded-full object-cover"
+                  />
+                ) : (
+                  <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-subtle text-body font-bold text-brand-gold">
+                    {monogram}
+                  </span>
+                )}
+                <span className="min-w-0">
+                  <span className="block truncate text-body font-semibold text-ink">
+                    {page.pageName}
+                  </span>
+                  <span className="block text-metadata text-ink-sub">
+                    Posting as this Page
+                  </span>
                 </span>
-              )}
-              <span className="min-w-0">
-                <span className="block truncate text-body font-semibold text-ink">
-                  {page.pageName}
-                </span>
-                <span className="block text-metadata text-ink-sub">
-                  Posting as this Page
-                </span>
+              </div>
+              <span className="flex shrink-0 items-center gap-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  data-testid="create-posts-bulk-post-btn"
+                  disabled={isQueueing}
+                  onClick={() => {
+                    setPickerMode('multi');
+                    setPickerOpen(true);
+                  }}
+                >
+                  <ImageIcon aria-hidden />
+                  Bulk Post
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  data-testid="create-posts-bulk-text-btn"
+                  disabled={isQueueing}
+                  onClick={() => setBulkTextOpen(true)}
+                >
+                  <ListIcon aria-hidden />
+                  Bulk Text
+                </Button>
+                <span aria-hidden className="mx-1 h-5 w-px shrink-0 bg-line" />
+                <DialogClose asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="Close"
+                    disabled={isQueueing}
+                  >
+                    <XIcon aria-hidden />
+                  </Button>
+                </DialogClose>
               </span>
             </div>
-            <span className="flex shrink-0 gap-1.5">
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                data-testid="create-posts-bulk-post-btn"
-                disabled={isQueueing}
-                onClick={() => {
-                  setPickerMode('multi');
-                  setPickerOpen(true);
-                }}
-              >
-                Bulk Post
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                data-testid="create-posts-bulk-text-btn"
-                disabled={isQueueing}
-                onClick={() => setBulkTextOpen(true)}
-              >
-                Bulk Text
-              </Button>
-            </span>
-          </div>
 
-          {statusGate.message ? (
-            <p className="shrink-0 text-body text-ink-sub">{statusGate.message}</p>
-          ) : null}
+            {statusGate.message ? (
+              <p className="pt-3 text-body text-ink-sub">{statusGate.message}</p>
+            ) : null}
+          </div>
 
           {/* Blocks list: flexes with the dialogue height, internal
               scroll only once the dialogue's own height is the
@@ -705,9 +733,6 @@ export function CreatePostsDialog({
                   : `Add all to Queue (${readyBlocks.length} post${readyBlocks.length === 1 ? '' : 's'})`}
             </Button>
           </DialogFooter>
-          <p className="shrink-0 text-metadata text-ink-sub">
-            Goes out at your next posting time.
-          </p>
         </DialogContent>
       </Dialog>
 
