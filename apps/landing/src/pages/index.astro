@@ -338,8 +338,10 @@ const signin = 'https://app.fbuploadpro.com/login';
          CSS scroll-snap-stop: always fallback) ---- */
       if (sections.length > 1) {
         var current = 0;
-        var locked = false;
-        var lockTimer = null;
+        var animating = false;
+        var moveTimer = null;
+        var moveId = 0;
+        var tweenTarget = -1;
         var accumulated = 0;
         var lastDeltaDir = 0;
         var lastWheelTime = 0;
@@ -350,15 +352,20 @@ const signin = 'https://app.fbuploadpro.com/login';
         function sectionTop(i) {
           return sections[i].getBoundingClientRect().top + (window.scrollY || 0);
         }
-        function syncIndex() {
-          if (locked) return;
+        function computeIndex() {
           var y = window.scrollY || 0;
           var vh = window.innerHeight || 0;
           var idx = 0;
           sections.forEach(function (s, i) {
             if (y >= sectionTop(i) - vh * 0.5) idx = i;
           });
-          current = idx;
+          return idx;
+        }
+        function syncIndex() {
+          /* During a tween, current is the tween's destination; syncing
+             from the in-flight scroll position would fight it. */
+          if (animating) return;
+          current = computeIndex();
         }
         window.addEventListener('scroll', syncIndex, { passive: true });
         function isNestedScrollable(el) {
@@ -383,33 +390,70 @@ const signin = 'https://app.fbuploadpro.com/login';
           return y <= top + 2;
         }
         function unlock() {
-          locked = false;
+          animating = false;
+          tweenTarget = -1;
+          /* Restore BOTH: snap was disabled for the tween (see commit),
+             and scroll-behavior was switched to auto for it. Leaving
+             either inline would break the no-JS fallback behaviour. */
+          document.documentElement.style.scrollSnapType = '';
           document.documentElement.style.scrollBehavior = '';
-          if (lockTimer) { clearTimeout(lockTimer); lockTimer = null; }
+          accumulated = 0;
+          lastDeltaDir = 0;
+          if (moveTimer) { clearTimeout(moveTimer); moveTimer = null; }
         }
-        function commit(dir, targetIndex) {
-          var target = (typeof targetIndex === 'number') ? targetIndex : current + dir;
+        function commit(dir, targetIndex, absolute) {
+          /* Interruptible, never swallowed: a new gesture during a tween
+             kills the running tween and starts from the CURRENT scroll
+             position. If it is already heading to the desired section,
+             let it continue instead of restarting it. */
+          var target;
+          if (absolute && typeof targetIndex === 'number') {
+            target = targetIndex;
+          } else if (animating) {
+            target = computeIndex() + dir;
+          } else if (typeof targetIndex === 'number') {
+            target = targetIndex;
+          } else {
+            target = current + dir;
+          }
           if (target < 0) target = 0;
           if (target >= sections.length) target = sections.length - 1;
-          if (target === current) { accumulated = 0; return; }
+          if (animating && target === tweenTarget) { accumulated = 0; return; }
+          if (!animating && target === current) { accumulated = 0; return; }
+          if (animating) gsap.killTweensOf(window);
           current = target;
-          locked = true;
+          tweenTarget = target;
+          animating = true;
           accumulated = 0;
           try { history.replaceState(null, '', '#section-' + (target + 1)); } catch (e) {}
-          var done = false;
-          var finish = function () { if (done) return; done = true; unlock(); };
-          /* scroll-behavior: smooth in CSS would double-smooth a GSAP
-             tween, so it is switched off for the tween and restored on
-             completion. Lock until the tween completes, 1500ms fallback. */
+          /* Token-guarded finish: an interrupted tween's onInterrupt
+             must never restore snap/behavior in the middle of the
+             replacement tween. */
+          var id = ++moveId;
+          var finish = function () {
+            if (id !== moveId) return;
+            unlock();
+          };
+          /* CSS snap + smooth would fight the GSAP tween mid-move (the
+             "stuck" feel), so BOTH are disabled for the tween only and
+             restored by finish. onStart re-asserts them after any
+             overwrite-kill of a previous tween. */
+          document.documentElement.style.scrollSnapType = 'none';
           document.documentElement.style.scrollBehavior = 'auto';
           gsap.to(window, {
-            duration: 0.9,
-            ease: 'power3.inOut',
-            scrollTo: { y: sectionTop(target), autoKill: false },
+            duration: 0.65,
+            ease: 'power2.out',
+            scrollTo: { y: sectionTop(target), autoKill: true },
+            onStart: function () {
+              document.documentElement.style.scrollSnapType = 'none';
+              document.documentElement.style.scrollBehavior = 'auto';
+            },
             onComplete: finish,
             onInterrupt: finish,
           });
-          lockTimer = setTimeout(finish, 1500);
+          /* Safety timeout no longer than the tween itself — never a
+             dead lock outliving the move. */
+          moveTimer = setTimeout(finish, 650);
         }
 
         window.addEventListener('wheel', function (e) {
@@ -418,7 +462,9 @@ const signin = 'https://app.fbuploadpro.com/login';
           var dx = e.deltaX || 0;
           var dy = e.deltaY || 0;
           if (Math.abs(dx) > Math.abs(dy)) return;
-          if (locked) { e.preventDefault(); return; }
+          /* No locked swallow here: if a tween is running, commit()
+             kills it and starts the new move (or lets it continue if
+             it is already heading to the desired section). */
           var now = Date.now();
           if (now - lastWheelTime > 150) accumulated = 0;
           lastWheelTime = now;
@@ -448,11 +494,9 @@ const signin = 'https://app.fbuploadpro.com/login';
           if (isNestedScrollable(e.target)) return;
           var dir = dy > 0 ? 1 : -1;
           if (!canAdvance(dir)) return;
-          var target = current + dir;
-          if (target < 0 || target >= sections.length) return;
           touchCommitted = true;
           e.preventDefault();
-          commit(dir, target);
+          commit(dir);
         }, { passive: false });
         window.addEventListener('touchend', function () { touchCommitted = false; }, { passive: true });
 
@@ -470,9 +514,10 @@ const signin = 'https://app.fbuploadpro.com/login';
             if (!canAdvance(dir)) return;
             target = current + dir;
           }
-          if (target < 0 || target >= sections.length || target === current) return;
+          if (target !== null && (target < 0 || target >= sections.length)) return;
           e.preventDefault();
-          commit(dir || 0, target);
+          if (target !== null) commit(0, target, true);
+          else commit(dir);
         });
 
         var m = window.location.hash.match(/^#section-([1-4])$/);
