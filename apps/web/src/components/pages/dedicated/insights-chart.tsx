@@ -51,7 +51,7 @@ function TrendTooltip(props: {
         {typeof props.label === 'string' ? shortDate(props.label) : props.label}
       </p>
       <p className="mt-1 text-body text-ink">
-        <span className="text-brand-gold">●</span> Media views{' '}
+        <span className="text-link">●</span> Media views{' '}
         <strong>{typeof views === 'number' ? views.toLocaleString() : '—'}</strong>
       </p>
       <p className="text-body text-ink">
@@ -76,8 +76,8 @@ export function InsightsChart({
         <AreaChart data={trend} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
           <defs>
             <linearGradient id="insightsViewsFill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="var(--color-brand-gold)" stopOpacity={0.35} />
-              <stop offset="100%" stopColor="var(--color-brand-gold)" stopOpacity={0} />
+              <stop offset="0%" stopColor="var(--color-link)" stopOpacity={0.35} />
+              <stop offset="100%" stopColor="var(--color-link)" stopOpacity={0} />
             </linearGradient>
             <linearGradient id="insightsViewersFill" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="var(--color-brand-emerald)" stopOpacity={0.3} />
@@ -106,7 +106,7 @@ export function InsightsChart({
           <Area
             type="monotone"
             dataKey="views"
-            stroke="var(--color-brand-gold)"
+            stroke="var(--color-link)"
             strokeWidth={2}
             fill="url(#insightsViewsFill)"
             dot={false}

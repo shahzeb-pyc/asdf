@@ -154,7 +154,7 @@ export function PlatformConnectedView({
         {revealError ? (
           <span
             data-testid={`${testIdPrefix}-secret-reveal-error`}
-            className="text-metadata text-brand-rose"
+            className="text-metadata text-signal-critical"
           >
             {revealError}
           </span>
@@ -180,7 +180,7 @@ export function PlatformConnectedView({
           variant="outline"
           data-testid={`${testIdPrefix}-disconnect-btn`}
           onClick={onDisconnectClick}
-          className="border-brand-rose/45 text-brand-rose shadow-none hover:bg-brand-rose/10 hover:text-brand-rose"
+          className="border-signal-critical/45 text-signal-critical shadow-none hover:bg-signal-critical/10 hover:text-signal-critical-on-tint"
         >
           Disconnect
         </Button>

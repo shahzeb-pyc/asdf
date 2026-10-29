@@ -15,6 +15,13 @@ vi.mock('@vercel/analytics/next', () => ({
   ),
 }));
 
+// Mock next/font/google: it is a Next.js build-time loader, not runnable in jsdom,
+// so importing the root layout would otherwise crash with "Inter is not a function".
+// The real Inter loading is still asserted by tests/fonts.test.ts (source check on layout).
+vi.mock('next/font/google', () => ({
+  Inter: () => ({ variable: '--font-inter', className: 'mock-inter' }),
+}));
+
 describe('RootLayout Vercel Analytics Integration (Spec 067)', () => {
   it('exposes publishing automation platform metadata', () => {
     expect(metadata.title).toBe('FBUploadPro');

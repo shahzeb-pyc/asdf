@@ -57,7 +57,7 @@ export function MediaPreviewFooter({
   return (
     <div className="border-t border-line px-4 py-3 sm:px-6">
       {saveError ? (
-        <p role="alert" className="m-0 pb-2 text-right text-metadata font-medium text-brand-rose">
+        <p role="alert" className="m-0 pb-2 text-right text-metadata font-medium text-signal-critical">
           {saveError}
         </p>
       ) : null}
@@ -73,7 +73,7 @@ export function MediaPreviewFooter({
             disabled={isBusy}
             onClick={onDelete}
             className={cn(
-              'self-start text-brand-rose hover:bg-brand-rose/10 hover:text-brand-rose sm:self-auto'
+              'self-start text-signal-critical hover:bg-signal-critical/10 hover:text-signal-critical-on-tint sm:self-auto'
             )}
           >
             {isDeleting ? 'Deleting...' : 'Delete asset'}

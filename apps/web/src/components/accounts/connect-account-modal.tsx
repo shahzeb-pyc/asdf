@@ -230,9 +230,9 @@ function ConnectOptionButton({
       data-testid={testId}
       disabled={disabled}
       onClick={onClick}
-      className="flex w-full items-center gap-4 rounded-md border border-line px-6 py-4 text-left transition-colors outline-none hover:border-brand-gold hover:bg-subtle focus-visible:outline-2 focus-visible:outline-brand-gold disabled:cursor-not-allowed disabled:opacity-60"
+      className="flex w-full items-center gap-4 rounded-md border border-line px-6 py-4 text-left transition-colors outline-none hover:border-link hover:bg-subtle focus-visible:outline-2 focus-visible:outline-link disabled:cursor-not-allowed disabled:opacity-60"
     >
-      <div className="flex shrink-0 items-center justify-center text-brand-gold">{icon}</div>
+      <div className="flex shrink-0 items-center justify-center text-link">{icon}</div>
 
       <div className="min-w-0 flex-1">
         <div className="mb-0.5 text-body font-semibold text-ink">{title}</div>
@@ -531,7 +531,7 @@ export function ConnectAccountModal({
 
         <div>
           {magicError && (
-            <div className="mb-4 rounded-sm border border-brand-rose/25 bg-brand-rose/10 px-3 py-2 text-body text-brand-rose">
+            <div className="mb-4 rounded-sm border border-signal-critical/25 bg-signal-critical/10 px-3 py-2 text-body text-signal-critical-on-tint">
               {magicError}
             </div>
           )}

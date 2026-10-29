@@ -939,6 +939,11 @@ describe('Spec 140 PR-140-4: MediaDownloader — Batch paste surface, empty stat
       expect(screen.getByTestId('downloader-progress-percent').textContent).toBe(
         'Cancelled'
       );
+      // Cancelled percent sits in a Banner on bg-subtle, so the danger
+      // tone must use the on-tint colour — plain signal fails on subtle.
+      expect(
+        screen.getByTestId('downloader-progress-percent').className.split(/\s+/)
+      ).toContain('text-signal-critical-on-tint');
     },
     INTERACTION_TIMEOUT
   );
@@ -1522,6 +1527,11 @@ describe('Spec 140 PR-140-4: MediaDownloader — Abort (§3 item 8)', () => {
       expect(screen.getByTestId('downloader-progress-percent').textContent).toBe(
         'Cancelled'
       );
+      // Same on-tint requirement as the abort path: the percent sits in
+      // a Banner on bg-subtle.
+      expect(
+        screen.getByTestId('downloader-progress-percent').className.split(/\s+/)
+      ).toContain('text-signal-critical-on-tint');
 
       // The already-saved item remains in Recent Downloads…
       expect(

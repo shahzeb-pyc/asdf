@@ -49,7 +49,7 @@ export function TimezoneReviewStep({
 
   return (
     <div className="flex flex-col gap-4">
-      <p className="text-metadata font-semibold tracking-wide text-brand-gold uppercase">
+      <p className="text-metadata font-semibold tracking-wide text-link uppercase">
         Step 2 of 2: Review this change
       </p>
 
@@ -69,12 +69,12 @@ export function TimezoneReviewStep({
         </div>
         <span
           aria-hidden
-          className="flex size-7 items-center justify-center rounded-full bg-hover text-brand-gold"
+          className="flex size-7 items-center justify-center rounded-full bg-hover text-link"
         >
           <ArrowRightIcon className="size-3.5" />
         </span>
         <div className="flex flex-1 flex-col">
-          <span className="text-metadata font-semibold tracking-wide text-brand-gold uppercase">
+          <span className="text-metadata font-semibold tracking-wide text-link uppercase">
             New timezone
           </span>
           <span className="text-body font-semibold text-ink">{newEntry.city}</span>
@@ -87,7 +87,7 @@ export function TimezoneReviewStep({
       {/* Impact explanation */}
       <div className="flex flex-col gap-2 py-2 text-body leading-relaxed text-ink-sub">
         <div className="flex items-start gap-2">
-          <InfoIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-brand-gold" />
+          <InfoIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-link" />
           <p>
             <strong className="text-ink">Clock times stay the same:</strong> Your posting times
             will still go out at their exact clock times in the new timezone. For example, a
@@ -95,7 +95,7 @@ export function TimezoneReviewStep({
           </p>
         </div>
         <div className="flex items-start gap-2">
-          <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-brand-gold" />
+          <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-link" />
           <p>
             <strong className="text-ink">No post times change:</strong> Queued posts
             have no fixed time — they go out at your posting times, in queue order. Changing
@@ -134,7 +134,7 @@ export function TimezoneReviewStep({
         <div
           data-testid="timezone-update-error"
           role="alert"
-          className="rounded-sm border border-brand-rose bg-panel px-3 py-2 text-body text-brand-rose"
+          className="rounded-sm border border-signal-critical bg-panel px-3 py-2 text-body text-signal-critical"
         >
           {errorMessage}
         </div>

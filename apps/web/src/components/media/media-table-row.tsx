@@ -162,7 +162,7 @@ export function MediaTableRow({
           type="button"
           onClick={() => (onTileClick ?? onPreview)?.(item)}
           aria-label={`Preview ${item.name}`}
-          className="flex h-10 w-11 cursor-pointer items-center justify-center overflow-hidden rounded-xs border border-line bg-subtle p-0 text-ink-dim outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold"
+          className="flex h-10 w-11 cursor-pointer items-center justify-center overflow-hidden rounded-xs border border-line bg-subtle p-0 text-ink-dim outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link"
         >
           {thumbnailSrc && !imgError ? (
             <Image
@@ -191,7 +191,7 @@ export function MediaTableRow({
               onClick={() => onNameClick(item)}
               title={item.name}
               data-testid={`row-name-${item.id}`}
-              className="block w-full cursor-pointer truncate border-0 bg-transparent p-0 text-left text-metadata font-medium text-ink outline-none focus-visible:outline-2 focus-visible:outline-brand-gold"
+              className="block w-full cursor-pointer truncate border-0 bg-transparent p-0 text-left text-metadata font-medium text-ink outline-none focus-visible:outline-2 focus-visible:outline-link"
             >
               {item.name}
             </button>
@@ -209,7 +209,7 @@ export function MediaTableRow({
               type="button"
               onClick={() => onNavigateFolder?.(item.folderId ?? null)}
               title={`Open folder: ${folderPathLabel}`}
-              className="inline-flex cursor-pointer items-center gap-1 self-start border-0 bg-transparent p-0 text-left text-xs text-ink-dim outline-none focus-visible:outline-2 focus-visible:outline-brand-gold"
+              className="inline-flex cursor-pointer items-center gap-1 self-start border-0 bg-transparent p-0 text-left text-xs text-ink-dim outline-none focus-visible:outline-2 focus-visible:outline-link"
             >
               <span>{folderPathLabel}</span>
             </button>
@@ -251,7 +251,7 @@ export function MediaTableRow({
             data-fallback={hasCaption ? undefined : 'filename'}
             onClick={() => (onTileClick ?? onPreview)?.(item)}
             className={cn(
-              'block w-full cursor-pointer truncate border-0 bg-transparent p-0 py-0.5 text-left text-xs outline-none focus-visible:outline-2 focus-visible:outline-brand-gold',
+              'block w-full cursor-pointer truncate border-0 bg-transparent p-0 py-0.5 text-left text-xs outline-none focus-visible:outline-2 focus-visible:outline-link',
               hasCaption ? 'text-ink' : 'text-ink-dim italic'
             )}
           >
@@ -265,7 +265,7 @@ export function MediaTableRow({
             onClick={() => setIsEditingCaption(true)}
             title="Click to edit caption"
             className={cn(
-              'block w-full cursor-text truncate border-0 bg-transparent p-0 py-0.5 text-left text-xs outline-none focus-visible:outline-2 focus-visible:outline-brand-gold',
+              'block w-full cursor-text truncate border-0 bg-transparent p-0 py-0.5 text-left text-xs outline-none focus-visible:outline-2 focus-visible:outline-link',
               hasCaption ? 'text-ink' : 'text-ink-dim italic'
             )}
           >
@@ -347,7 +347,7 @@ export function MediaTableRow({
               data-testid={`row-action-delete-${item.id}`}
               onClick={() => onDeleteRequest(item)}
               aria-label="Delete asset"
-              className="h-11 px-3 text-brand-rose hover:text-brand-rose lg:h-8"
+              className="h-11 px-3 text-signal-critical-on-tint lg:h-8"
             >
               Delete
             </Button>

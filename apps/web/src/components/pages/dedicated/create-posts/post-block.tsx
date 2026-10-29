@@ -86,7 +86,7 @@ export function PostBlock({
         <span className="flex items-center gap-2">
           <span
             data-testid="create-posts-block-type"
-            className="text-metadata text-brand-gold"
+            className="text-metadata text-link"
           >
             {typeLabel}
           </span>
@@ -122,7 +122,7 @@ export function PostBlock({
         <span
           data-testid="create-posts-block-char-count"
           className={
-            over > 0 ? 'text-metadata text-brand-rose' : 'text-metadata text-ink-dim'
+            over > 0 ? 'text-metadata text-signal-critical' : 'text-metadata text-ink-dim'
           }
         >
           {count.toLocaleString('en-US')} / {limit.toLocaleString('en-US')}
@@ -130,7 +130,7 @@ export function PostBlock({
         {over > 0 ? (
           <span
             data-testid="create-posts-block-over-limit"
-            className="text-metadata text-brand-rose"
+            className="text-metadata text-signal-critical"
           >
             Over the {limit.toLocaleString('en-US')}-character{' '}
             {TYPE_NOUNS[derived]} limit by {over.toLocaleString('en-US')}{' '}

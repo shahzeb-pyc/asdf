@@ -266,7 +266,7 @@ export function MediaPreviewViewer({
   }
 
   const navButtonClass =
-    'absolute top-1/2 z-10 inline-flex size-11 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-line bg-neutral-black/75 text-neutral-white backdrop-blur-sm outline-none transition-opacity focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold disabled:cursor-not-allowed disabled:opacity-40';
+    'absolute top-1/2 z-10 inline-flex size-11 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-line bg-neutral-black/75 text-neutral-white backdrop-blur-sm outline-none transition-opacity focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link disabled:cursor-not-allowed disabled:opacity-40';
 
   return (
     <div
@@ -311,7 +311,7 @@ export function MediaPreviewViewer({
               type="button"
               onClick={handleTogglePlay}
               aria-label={isPlaying ? 'Pause' : 'Play'}
-              className="inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-xs text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold"
+              className="inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-xs text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link"
             >
               {isPlaying ? (
                 <PauseIcon className="size-5" aria-hidden />
@@ -344,7 +344,7 @@ export function MediaPreviewViewer({
               aria-label="Set Current Frame as Thumbnail"
               onClick={handleCaptureFrame}
               disabled={isCapturingFrame || isBusy}
-              className="cursor-pointer border-0 bg-transparent p-2 text-metadata font-medium text-link outline-none focus-visible:outline-2 focus-visible:outline-brand-gold disabled:cursor-wait disabled:opacity-60"
+              className="cursor-pointer border-0 bg-transparent p-2 text-metadata font-medium text-link outline-none focus-visible:outline-2 focus-visible:outline-link disabled:cursor-wait disabled:opacity-60"
             >
               {isCapturingFrame ? 'Capturing frame...' : 'Capture frame'}
             </button>

@@ -943,7 +943,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
   const errorBanner = errorMessage ? (
     <div
       data-testid="publish-now-error"
-      className="mb-4 rounded-sm border border-brand-rose/25 bg-brand-rose/10 px-3 py-2 text-body text-brand-rose"
+      className="mb-4 rounded-sm border border-signal-critical/25 bg-signal-critical/10 px-3 py-2 text-body text-signal-critical-on-tint"
     >
       {errorMessage}
     </div>
@@ -955,7 +955,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
         <div className="mx-auto flex w-full max-w-2xl flex-col items-center py-6 sm:py-10">
           <div className="w-full space-y-8">
             <div className="space-y-3 text-center">
-              <div className="mx-auto mb-6 flex size-16 items-center justify-center rounded-2xl bg-brand-gold/10 text-brand-gold ring-1 ring-brand-gold/20">
+              <div className="mx-auto mb-6 flex size-16 items-center justify-center rounded-2xl bg-link/10 text-link ring-1 ring-link/20">
                 <SendIcon size={32} aria-hidden />
               </div>
               <h1 className="text-3xl font-bold tracking-tight text-ink sm:text-4xl">
@@ -979,7 +979,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                 {showMissingAppGuidance && (
                   <div
                     data-testid="facebook-app-guidance"
-                    className="mb-4 rounded-sm border border-brand-gold/25 bg-brand-gold/10 px-3 py-2.5 text-body leading-body text-ink"
+                    className="mb-4 rounded-sm border border-link/25 bg-link/10 px-3 py-2.5 text-body leading-body text-ink"
                   >
                     <p className="mb-1">
                       Before you can connect an account, add your Facebook App
@@ -1061,7 +1061,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                           selectedAccountIds.includes(account.id)
                         )}
                         onClick={toggleSelectAllAccounts}
-                        className="inline-flex min-h-11 items-center px-2 text-metadata font-semibold text-link outline-none focus-visible:outline-2 focus-visible:outline-brand-gold"
+                        className="inline-flex min-h-11 items-center px-2 text-metadata font-semibold text-link outline-none focus-visible:outline-2 focus-visible:outline-link"
                       >
                         {activeAccounts.every((account) =>
                           selectedAccountIds.includes(account.id)
@@ -1138,7 +1138,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                             type="button"
                             variant="outline"
                             size="sm"
-                            className="shrink-0 border-brand-rose/35 font-semibold text-brand-rose hover:bg-brand-rose/10 hover:text-brand-rose"
+                            className="shrink-0 border-signal-critical/35 font-semibold text-signal-critical hover:bg-signal-critical/10 hover:text-signal-critical-on-tint"
                             onClick={() => {
                               window.location.href = buildDirectConnectUrl({
                                 id: account.id,
@@ -1233,7 +1233,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                             )
                           )}
                           onClick={toggleSelectAllPages}
-                          className="inline-flex min-h-11 items-center px-2 text-metadata font-semibold text-link outline-none focus-visible:outline-2 focus-visible:outline-brand-gold"
+                          className="inline-flex min-h-11 items-center px-2 text-metadata font-semibold text-link outline-none focus-visible:outline-2 focus-visible:outline-link"
                         >
                           {selectablePages.every((page) =>
                             selectedPageKeys.includes(
@@ -1261,7 +1261,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                                   key={key}
                                   className={cn(
                                     'flex items-start gap-3 rounded-xl border border-line bg-canvas p-3 transition-colors sm:p-4',
-                                    checked && disabled === false && 'border-brand-gold/50 bg-brand-gold/10',
+                                    checked && disabled === false && 'border-link/50 bg-link/10',
                                     disabled
                                       ? 'cursor-default opacity-60'
                                       : 'cursor-pointer hover:bg-hover'
@@ -1359,7 +1359,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                       {selectedPages.length > 1 &&
                         ` + ${selectedPages.length - 1} more`}
                     </h2>
-                    <span className="shrink-0 rounded-full border border-brand-gold/35 px-2 py-0.5 text-metadata font-semibold uppercase tracking-body text-brand-gold">
+                    <span className="shrink-0 rounded-full border border-link/35 px-2 py-0.5 text-metadata font-semibold uppercase tracking-body text-link">
                       Selected
                     </span>
                   </div>
@@ -1407,7 +1407,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                           className={cn(
                             'h-11 min-w-0 flex-1',
                             isActive &&
-                              'border-brand-gold/50 bg-brand-gold/10 text-brand-gold hover:bg-brand-gold/20 hover:text-brand-gold'
+                              'border-link/50 bg-link/10 text-link hover:bg-link/10 hover:text-link'
                           )}
                           onClick={() => handlePostTypeChange(type.id)}
                         >
@@ -1424,7 +1424,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                     <span
                       className={cn(
                         'text-xs',
-                        isOverLimit ? 'text-brand-rose' : 'text-ink-sub'
+                        isOverLimit ? 'text-signal-critical' : 'text-ink-sub'
                       )}
                     >
                       {text.length.toLocaleString()} /{' '}
@@ -1440,7 +1440,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                     placeholder="What's on your mind?"
                   />
                   {isOverLimit && (
-                    <p className="text-metadata text-brand-rose">
+                    <p className="text-metadata text-signal-critical">
                       Caption is over the {limit.toLocaleString()}-character
                       limit for {postType === 'reel' ? 'reels' : 'posts'}.
                     </p>
@@ -1534,7 +1534,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                           size="sm"
                           disabled={isPublishing || isUploadingTemp}
                           onClick={removeAttachedMedia}
-                          className="shrink-0 text-ink-sub hover:text-brand-rose"
+                          className="shrink-0 text-ink-sub hover:text-signal-critical-on-tint"
                         >
                           Remove
                         </Button>
@@ -1552,7 +1552,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                       className={cn(
                         'text-xs',
                         isFirstCommentOverLimit
-                          ? 'text-brand-rose'
+                          ? 'text-signal-critical'
                           : 'text-ink-sub'
                       )}
                     >
@@ -1645,7 +1645,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                       Starting over clears this result list.
                     </p>
                     {restrictedResults.length > 0 && (
-                      <div className="rounded-sm border border-brand-rose/25 bg-brand-rose/10 px-3 py-2 text-body leading-body text-ink">
+                      <div className="rounded-sm border border-signal-critical/25 bg-signal-critical/10 px-3 py-2 text-body leading-body text-ink">
                         One or more accounts are restricted by Facebook.
                         Those pages cannot be published to until the
                         restriction is lifted in Facebook Account Status.
@@ -1711,8 +1711,8 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                                   published
                                     ? 'text-metadata text-brand-emerald'
                                     : restricted
-                                      ? 'text-body font-semibold text-brand-rose'
-                                      : 'text-metadata text-brand-rose'
+                                      ? 'text-body font-semibold text-signal-critical'
+                                      : 'text-metadata text-signal-critical'
                                 )}
                               >
                                 {published
@@ -1735,7 +1735,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                                         return next;
                                       });
                                     }}
-                                    className="text-metadata font-semibold text-link outline-none focus-visible:outline-2 focus-visible:outline-brand-gold"
+                                    className="text-metadata font-semibold text-link outline-none focus-visible:outline-2 focus-visible:outline-link"
                                   >
                                     {expandedDetails.has(
                                       `${result.accountId}:${result.fbPageId}`
@@ -1753,7 +1753,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                                 </div>
                               )}
                               {published && result.firstCommentFailed && (
-                                <div className="mt-1 text-metadata leading-body text-brand-rose">
+                                <div className="mt-1 text-metadata leading-body text-signal-critical">
                                   First comment could not be posted
                                   {result.firstCommentReason
                                     ? `: ${result.firstCommentReason}`

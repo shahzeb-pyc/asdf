@@ -118,7 +118,7 @@ export const PasswordInput = forwardRef<HTMLInputElement, PasswordInputProps>(
           </p>
         )}
         {error && (
-          <p id={errorId} role="alert" className="text-metadata font-medium text-brand-rose">
+          <p id={errorId} role="alert" className="text-metadata font-medium text-signal-critical">
             {error}
           </p>
         )}
@@ -126,7 +126,7 @@ export const PasswordInput = forwardRef<HTMLInputElement, PasswordInputProps>(
           <div
             role="status"
             aria-live="polite"
-            className="mt-1 text-metadata font-medium text-brand-gold"
+            className="mt-1 text-metadata font-medium text-link"
           >
             Caps Lock is on
           </div>

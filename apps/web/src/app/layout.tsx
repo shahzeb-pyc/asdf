@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next';
+import { Inter } from 'next/font/google';
 import React, { type ReactNode } from 'react';
 import './globals.css';
 import { DesktopTitleBar } from '@/components/desktop';
@@ -37,6 +38,20 @@ export const viewport: Viewport = {
   viewportFit: 'cover',
 };
 
+/**
+ * Inter (Direction 4, 2026-10-29) — loaded via next/font/google so the
+ * token pipeline can reference it: tokens/primitive.json font.family.sans
+ * is `var(--font-inter), system-ui, ...`, and globals.css @theme maps
+ * --font-sans to that generated variable. Stored-theme precedence is
+ * unchanged (localStorage 'theme', then fbup_theme cookie); only the
+ * fallback when neither is set changes from dark to light (light-first).
+ */
+const inter = Inter({
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-inter',
+});
+
 const themeInitScript = `
   (function() {
     try {
@@ -45,16 +60,16 @@ const themeInitScript = `
         var match = document.cookie.match(/(?:^|;\\s*)fbup_theme=([^;]+)/);
         if (match) theme = match[1];
       }
-      if (!theme && window.matchMedia('(prefers-color-scheme: light)').matches) {
+      if (!theme) {
         theme = 'light';
       }
-      var resolved = theme === 'light' ? 'light' : 'dark';
+      var resolved = theme === 'dark' ? 'dark' : 'light';
       document.documentElement.dataset.theme = resolved;
       document.documentElement.classList.remove('dark', 'light');
       document.documentElement.classList.add(resolved);
     } catch (e) {
-      document.documentElement.dataset.theme = 'dark';
-      document.documentElement.classList.add('dark');
+      document.documentElement.dataset.theme = 'light';
+      document.documentElement.classList.add('light');
     }
   })();
 `;
@@ -69,7 +84,7 @@ export default function RootLayout({
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
-      <body className={fontSansClassName}>
+      <body className={`${inter.variable} ${fontSansClassName}`}>
         <PostHogProvider
           apiKey={process.env.POSTHOG_KEY}
           host={process.env.POSTHOG_HOST || 'https://us.i.posthog.com'}

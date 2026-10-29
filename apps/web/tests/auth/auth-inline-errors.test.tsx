@@ -91,7 +91,7 @@ describe('Auth Inline Error Highlighting & Edge Cases (Spec 016)', () => {
       expect(hasText('Please enter a complete, valid international phone number.')).toBe(true);
       expect(hasAttribute('aria-invalid', 'true')).toBe(true);
       expect(html).toContain('role="alert"');
-      expect(html).toContain('text-brand-rose');
+      expect(html).toContain('text-signal-critical');
     });
 
     it('PasswordInput renders aria-invalid and an inline role="alert" message when error prop is provided', () => {
@@ -107,7 +107,7 @@ describe('Auth Inline Error Highlighting & Edge Cases (Spec 016)', () => {
       expect(hasText('Passwords do not match. Enter the same password in both fields.')).toBe(true);
       expect(hasAttribute('aria-invalid', 'true')).toBe(true);
       expect(html).toContain('role="alert"');
-      expect(html).toContain('text-brand-rose');
+      expect(html).toContain('text-signal-critical');
     });
   });
 

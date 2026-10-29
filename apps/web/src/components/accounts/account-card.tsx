@@ -204,7 +204,7 @@ function AccountLinkedPagesAffordance({
         type="button"
         data-testid="account-pages-toggle"
         onClick={onNavigateToPages}
-        className="inline-flex min-h-11 items-center gap-1.5 rounded-xs px-2 py-1 text-body text-ink-sub outline-none transition-colors hover:bg-subtle hover:text-ink focus-visible:outline-2 focus-visible:outline-brand-gold"
+        className="inline-flex min-h-11 items-center gap-1.5 rounded-xs px-2 py-1 text-body text-ink-sub outline-none transition-colors hover:bg-subtle hover:text-ink focus-visible:outline-2 focus-visible:outline-link"
       >
         <span data-testid="account-pages-count">{pagesCountLabel}</span>
         <ExternalLinkIcon className="size-3 opacity-70" aria-hidden />
@@ -291,9 +291,9 @@ export function AccountCard({
       className={cn(
         'flex min-h-40 flex-col justify-between rounded-md border bg-panel p-6 shadow-card transition hover:-translate-y-0.5 hover:shadow-elevated',
         highlighted
-          ? 'border-brand-gold ring-2 ring-brand-gold/40'
+          ? 'border-link ring-2 ring-link/40'
           : isExpired
-            ? 'border-brand-rose'
+            ? 'border-signal-critical'
             : 'border-line'
       )}
     >
@@ -322,7 +322,7 @@ export function AccountCard({
                 title="View Facebook Profile"
                 aria-label={`View ${account.displayName}'s Facebook Profile`}
                 data-testid="account-profile-link"
-                className="inline-flex shrink-0 items-center text-ink-dim outline-none hover:text-ink focus-visible:outline-2 focus-visible:outline-brand-gold"
+                className="inline-flex shrink-0 items-center text-ink-dim outline-none hover:text-ink focus-visible:outline-2 focus-visible:outline-link"
               >
                 <ExternalLinkIcon className="size-3.5" aria-hidden />
               </a>
@@ -358,7 +358,7 @@ export function AccountCard({
       {isExpired && (
         <div
           data-testid="account-expired-alert"
-          className="mb-4 flex items-center gap-1.5 rounded-sm border border-brand-rose/25 bg-brand-rose/10 px-2.5 py-1.5 text-metadata font-medium text-brand-rose"
+          className="mb-4 flex items-center gap-1.5 rounded-sm border border-signal-critical/25 bg-signal-critical/10 px-2.5 py-1.5 text-metadata font-medium text-signal-critical-on-tint"
         >
           <TriangleAlertIcon className="size-3.5 shrink-0" aria-hidden />
           <span>Session expired — reconnect to resume publishing</span>
@@ -385,7 +385,7 @@ export function AccountCard({
           variant="ghost"
           data-testid="account-disconnect-button"
           onClick={() => onDisconnect?.(account)}
-          className="text-ink-dim hover:bg-brand-rose/10 hover:text-brand-rose"
+          className="text-ink-dim hover:bg-signal-critical/10 hover:text-signal-critical-on-tint"
         >
           Disconnect
         </Button>

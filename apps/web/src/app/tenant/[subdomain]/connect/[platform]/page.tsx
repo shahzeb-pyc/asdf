@@ -146,7 +146,7 @@ export default async function ConnectPickerPage({
           <Link
             href={accountsHref}
             data-testid="connect-picker-accounts-link"
-            className="inline-flex min-h-11 items-center text-body font-semibold text-primary underline outline-none focus-visible:outline-2 focus-visible:outline-brand-gold"
+            className="inline-flex min-h-11 items-center text-body font-semibold text-primary underline outline-none focus-visible:outline-2 focus-visible:outline-link"
           >
             Go to Accounts
           </Link>

@@ -196,14 +196,14 @@ function ShareBar({
     tone === 'emerald'
       ? 'bg-brand-emerald'
       : tone === 'rose'
-        ? 'bg-brand-rose'
+        ? 'bg-signal-critical'
         : tone === 'bronze'
           ? 'bg-brand-bronze'
           : tone === 'peru'
             ? 'bg-brand-peru'
             : tone === 'critical'
               ? 'bg-signal-critical'
-              : 'bg-brand-gold';
+              : 'bg-link';
   const widthClass =
     SHARE_BAR_WIDTHS[Math.min(20, Math.max(0, Math.round(sharePct / 5)))] ?? 'w-0';
   return (
@@ -360,7 +360,7 @@ export function PageTabInsights({ page, subdomain }: Readonly<PageTabInsightsPro
           title="No insights yet"
           description="Insights will appear here after your first posts publish."
           className="min-h-[55svh] justify-center"
-          icon={<ChartColumnIcon className="h-10 w-10 text-brand-gold" aria-hidden />}
+          icon={<ChartColumnIcon className="h-10 w-10 text-link" aria-hidden />}
           action={renderSyncButton('insights-empty-sync-btn')}
         />
       )}
@@ -380,7 +380,7 @@ export function PageTabInsights({ page, subdomain }: Readonly<PageTabInsightsPro
             </Card>
             <Card className="p-4">
               <p className="flex items-center gap-2 text-body text-ink-sub">
-                <PlayIcon className="h-5 w-5 shrink-0 text-brand-gold" /> Media views
+                <PlayIcon className="h-5 w-5 shrink-0 text-link" /> Media views
               </p>
               <p className="mt-1 text-xxl font-bold text-ink">{formatCount(data.kpis.mediaViews)}</p>
               <p className="mt-1 text-xs text-ink-dim">In this range</p>
@@ -396,7 +396,7 @@ export function PageTabInsights({ page, subdomain }: Readonly<PageTabInsightsPro
             </Card>
             <Card className="p-4">
               <p className="flex items-center gap-2 text-body text-ink-sub">
-                <HeartIcon className="h-5 w-5 shrink-0 text-brand-rose" /> Engagements
+                <HeartIcon className="h-5 w-5 shrink-0 text-signal-critical" /> Engagements
               </p>
               <p className="mt-1 text-xxl font-bold text-ink">{formatCount(data.kpis.engagements)}</p>
               <p className="mt-1 text-xs text-ink-dim">Reactions, comments and shares in this range</p>
@@ -440,7 +440,7 @@ export function PageTabInsights({ page, subdomain }: Readonly<PageTabInsightsPro
             ) : null}
             <div className="mt-3 flex items-center gap-4 text-body text-ink">
               <span>
-                <span className="text-brand-gold">●</span> Media views {formatCount(data.kpis.mediaViews)}
+                <span className="text-link">●</span> Media views {formatCount(data.kpis.mediaViews)}
               </span>
               <span>
                 <span className="text-brand-emerald">●</span> Unique viewers{' '}

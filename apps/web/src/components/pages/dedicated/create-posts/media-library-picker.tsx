@@ -719,7 +719,7 @@ export function MediaLibraryPicker({
               className={cn(
                 '-mb-px border-b-2 pb-2 text-body',
                 tab === 'library'
-                  ? 'border-brand-gold font-semibold text-brand-gold'
+                  ? 'border-link font-semibold text-link'
                   : 'border-transparent text-ink-sub'
               )}
             >
@@ -731,7 +731,7 @@ export function MediaLibraryPicker({
               className={cn(
                 '-mb-px border-b-2 pb-2 text-body',
                 tab === 'device'
-                  ? 'border-brand-gold font-semibold text-brand-gold'
+                  ? 'border-link font-semibold text-link'
                   : 'border-transparent text-ink-sub'
               )}
             >
@@ -896,7 +896,7 @@ export function MediaLibraryPicker({
                   data-testid="breadcrumb-root"
                   onClick={navigateRoot}
                   className={cn(
-                    'cursor-pointer border-0 bg-transparent p-0 outline-none focus-visible:outline-2 focus-visible:outline-brand-gold',
+                    'cursor-pointer border-0 bg-transparent p-0 outline-none focus-visible:outline-2 focus-visible:outline-link',
                     currentFolderId === null
                       ? 'font-semibold text-ink'
                       : 'text-ink-sub'
@@ -914,7 +914,7 @@ export function MediaLibraryPicker({
                         data-testid={`breadcrumb-folder-${crumb.id}`}
                         onClick={() => navigateFolder(crumb.id)}
                         className={cn(
-                          'cursor-pointer border-0 bg-transparent p-0 outline-none focus-visible:outline-2 focus-visible:outline-brand-gold',
+                          'cursor-pointer border-0 bg-transparent p-0 outline-none focus-visible:outline-2 focus-visible:outline-link',
                           isLast ? 'font-semibold text-ink' : 'text-ink-sub'
                         )}
                       >
@@ -987,7 +987,7 @@ export function MediaLibraryPicker({
                           }
                         }}
                         onClick={() => navigateFolder(folder.id)}
-                        className="flex cursor-pointer items-center justify-between gap-2 border-b border-line px-1 py-2 transition-colors outline-none hover:bg-hover focus-visible:outline-2 focus-visible:outline-brand-gold"
+                        className="flex cursor-pointer items-center justify-between gap-2 border-b border-line px-1 py-2 transition-colors outline-none hover:bg-hover focus-visible:outline-2 focus-visible:outline-link"
                       >
                         <div className="flex min-w-0 items-center gap-2">
                           <FolderIcon
@@ -1274,7 +1274,7 @@ export function MediaLibraryPicker({
           <TabsContent
             value="device"
             className={cn(
-              isDraggingOverDevice && 'rounded-md ring-2 ring-brand-gold/60 ring-inset'
+              isDraggingOverDevice && 'rounded-md ring-2 ring-link/60 ring-inset'
             )}
             onDragOver={(e) => {
               e.preventDefault();
@@ -1316,12 +1316,12 @@ export function MediaLibraryPicker({
                 : 'Choose files from your device'}
             </Button>
             {isDraggingOverDevice && (
-              <p className="mt-3 text-center text-body font-medium text-brand-gold">
+              <p className="mt-3 text-center text-body font-medium text-link">
                 Drop files to upload them
               </p>
             )}
             {deviceError && (
-              <p className="mt-3 text-body text-brand-rose">{deviceError}</p>
+              <p className="mt-3 text-body text-signal-critical">{deviceError}</p>
             )}
             {/* P5: the batch's live state on the device tab itself —
                 visible while the import modal is minimised to its

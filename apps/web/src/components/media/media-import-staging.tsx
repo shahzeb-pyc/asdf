@@ -71,7 +71,7 @@ export function ImportStagingHeader({
       </div>
 
       <div className="flex items-center gap-2">
-        <FolderIcon className="size-4 shrink-0 text-brand-gold" aria-hidden />
+        <FolderIcon className="size-4 shrink-0 text-link" aria-hidden />
         {lockDestination ? (
           <span
             data-testid="destination-folder-locked"
@@ -158,9 +158,9 @@ export function ImportStagingRow({
               className="size-full object-cover"
             />
           ) : item.mediaType === 'video' ? (
-            <FilmIcon className="size-5 text-brand-gold" aria-hidden />
+            <FilmIcon className="size-5 text-link" aria-hidden />
           ) : (
-            <ImageIcon className="size-5 text-brand-gold" aria-hidden />
+            <ImageIcon className="size-5 text-link" aria-hidden />
           )}
         </div>
 
@@ -183,7 +183,7 @@ export function ImportStagingRow({
         {item.validationError && (
           <span
             data-testid={`validation-error-${item.id}`}
-            className="text-metadata font-medium text-brand-rose"
+            className="text-metadata font-medium text-signal-critical"
           >
             {item.validationError}
           </span>
@@ -193,7 +193,7 @@ export function ImportStagingRow({
           <div className="flex items-center gap-1.5">
             <span
               data-testid={`duplicate-flag-${item.id}`}
-              className="text-metadata font-semibold text-brand-gold"
+              className="text-metadata font-semibold text-link"
             >
               possible duplicate
             </span>
@@ -280,7 +280,7 @@ export function ImportStagingFooter({
               variant="link"
               data-testid="remove-invalid-btn"
               onClick={onRemoveInvalid}
-              className="h-11 px-0 text-brand-rose"
+              className="h-11 px-0 text-signal-critical"
             >
               Remove invalid ({invalidCount})
             </Button>

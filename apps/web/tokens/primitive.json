@@ -1,5 +1,5 @@
 {
-  "$description": "Primitive design tokens — the raw Binance identity values, captured from the shipped globals.css / theme.ts (spec 129, PR-F1). Hand-edit ONLY files in apps/web/tokens/; everything else is generated. Never reference primitives directly from component code — consume semantic tokens.",
+  "$description": "Primitive design tokens — Cyber Yellow + Inter identity (Direction 4, 2026-10-29). Hand-edit ONLY files in apps/web/tokens/; everything else is generated. Never reference primitives directly from component code — consume semantic tokens. Neutral and status scales are Tailwind stone / green / red steps (see spec); brand steps are HSL derivations of #FFD300 (see spec).",
   "breakpoint": {
     "$description": "One breakpoint set, replacing the ad-hoc 440/639/767/768/1023 scatter. Boundaries align to the shipped media queries (max-width 639/767, min-width 768, max-width 1023).",
     "lg": {
@@ -69,51 +69,51 @@
   "color": {
     "alpha": {
       "emeraldHalo": {
-        "$description": "Operational status halo",
+        "$description": "Operational status halo — Tailwind green-400 (dark operational colour) at the existing 0.50 halo alpha",
         "$type": "color",
-        "$value": "rgba(14, 203, 129, 0.50)"
+        "$value": "rgba(74, 222, 128, 0.50)"
       },
       "goldFocus": {
-        "$description": "Pre-computed focus ring / focus border (both modes) — replaces hand-mixed rgba()",
+        "$description": "Pre-computed focus ring / focus border (both modes) — cyber yellow at the existing 0.35 focus alpha",
         "$type": "color",
-        "$value": "rgba(252, 213, 53, 0.35)"
+        "$value": "rgba(255, 211, 0, 0.35)"
       },
       "goldHalo": {
-        "$description": "Queued status halo",
+        "$description": "Queued status halo — cyber yellow at the existing 0.50 halo alpha",
         "$type": "color",
-        "$value": "rgba(252, 213, 53, 0.50)"
+        "$value": "rgba(255, 211, 0, 0.50)"
       },
       "idleHalo": {
-        "$description": "Idle status halo",
+        "$description": "Idle status halo — Tailwind stone-500 at the existing 0.40 halo alpha",
         "$type": "color",
-        "$value": "rgba(71, 77, 87, 0.40)"
+        "$value": "rgba(120, 113, 108, 0.40)"
       },
       "roseHalo": {
-        "$description": "Critical status halo",
+        "$description": "Critical status halo — Tailwind red-400 (dark critical colour) at the existing 0.50 halo alpha",
         "$type": "color",
-        "$value": "rgba(246, 70, 93, 0.50)"
+        "$value": "rgba(248, 113, 113, 0.50)"
       }
     },
     "border": {
       "darkStrong": {
-        "$description": "Dark-mode strong border (existing Binance-family grey, used for the dark idle dot)",
+        "$description": "Tailwind stone-700 — dark strong border",
         "$type": "color",
-        "$value": "#474d57"
+        "$value": "#44403c"
       },
       "lightStrong": {
-        "$description": "Binance border strong on light",
+        "$description": "Tailwind stone-300 — light strong border",
         "$type": "color",
-        "$value": "#cdd1d6"
+        "$value": "#d6d3d1"
       },
       "darkHairline": {
-        "$description": "Binance hairline on dark — same value as the dark elevated surface, borders read as surface steps",
+        "$description": "Tailwind stone-800 — dark hairline, one tonal step above the dark panel",
         "$type": "color",
-        "$value": "#2b3139"
+        "$value": "#292524"
       },
       "lightHairline": {
-        "$description": "Binance hairline on light",
+        "$description": "Tailwind stone-200 — light hairline",
         "$type": "color",
-        "$value": "#eaecef"
+        "$value": "#e7e5e4"
       }
     },
     "brand": {
@@ -123,127 +123,169 @@
         "$value": "#1877f2"
       },
       "bronze": {
-        "$description": "Deep gold — light-mode focus ring and light-mode link colour only, retained for readability on white (bright yellow is unreadable as light-mode link text)",
+        "$description": "Deep yellow — RETAINED from the old palette for one reason only: light-mode link text. Pure #FFD300 on white is 1.44:1 (fails); bronze on white is 6.08:1 (passes AA).",
         "$type": "color",
         "$value": "#766018"
       },
       "emerald": {
-        "$description": "Binance trading up — positive status, operational states (Binance live UI)",
+        "$description": "Legacy Binance trading-up green — RETAINED only so the generated PALETTE shape is unchanged (generator requires color.brand.emerald). Semantic status no longer references it; see color.status.",
         "$type": "color",
         "$value": "#0ecb81"
       },
       "gold": {
-        "$description": "Binance Yellow — primary brand accent, primary buttons, active moments, inline links on dark (Binance live UI primary)",
+        "$description": "Cyber Yellow — primary brand colour, primary buttons, active moments (Direction 4). Buttons use dark #181a20 text on it (12.07:1); white text on it (1.44:1) is never used.",
         "$type": "color",
-        "$value": "#fcd535"
+        "$value": "#FFD300"
       },
       "peru": {
-        "$description": "Binance Yellow Active — classic Binance yellow, pressed/hover state of the primary gold",
+        "$description": "Cyber Yellow shade — hover/pressed state of the primary. HSL derivation of #FFD300: hue 50, saturation 100%, lightness 50% -> 40% (one 10-point step down).",
         "$type": "color",
-        "$value": "#f0b90b"
+        "$value": "#cca900"
       },
       "rose": {
-        "$description": "Binance trading down — negative status, error states, critical alerts (Binance live UI; unchanged, already matched)",
+        "$description": "Tailwind red-600 — light-mode critical/error. 4.83:1 on white (passes AA). Dark-mode critical uses color.status.criticalDark instead (red-600 is only 4.09:1 on dark canvas).",
         "$type": "color",
-        "$value": "#f6465d"
+        "$value": "#dc2626"
       }
     },
     "gray": {
       "400": {
-        "$description": "Binance muted-strong — dark-mode secondary text, light-mode muted text",
+        "$description": "Tailwind stone-400 — dark-mode muted text, light-mode idle dot",
         "$type": "color",
-        "$value": "#929aa5"
+        "$value": "#a8a29e"
       },
       "500": {
-        "$description": "Binance muted — dark-mode muted text, light-mode secondary text",
+        "$description": "Tailwind stone-500 — light-mode muted text and light-mode idle colour",
         "$type": "color",
-        "$value": "#707a8a"
+        "$value": "#78716c"
       },
       "mutedLight": {
-        "$description": "Light-mode idle status dot only (no longer used as light-mode muted text)",
+        "$description": "Tailwind stone-400 — light-mode idle status dot (same step as gray.400)",
         "$type": "color",
-        "$value": "#848e9c"
+        "$value": "#a8a29e"
       },
       "slateText": {
-        "$description": "Light-mode secondary text; dark-mode idle dot",
+        "$description": "Tailwind stone-600 — light-mode secondary text",
         "$type": "color",
-        "$value": "#474d57"
+        "$value": "#57534e"
+      },
+      "300": {
+        "$description": "Tailwind stone-300 — dark-mode secondary text",
+        "$type": "color",
+        "$value": "#d6d3d1"
+      },
+      "600": {
+        "$description": "Tailwind stone-600 — light-mode secondary text (same step as slateText)",
+        "$type": "color",
+        "$value": "#57534e"
       }
     },
     "neutral": {
       "black": {
-        "$description": "Pitch black — dark canvas, text on primary",
+        "$description": "Pitch black — retained neutral (not a surface in the new system; surfaces use stone-950)",
         "$type": "color",
         "$value": "#000000"
       },
       "slate": {
-        "$description": "Pitch slate — dark hairline borders, dividers, dark hover surface",
+        "$description": "Tailwind stone-800 — dark hairline / divider step (replaces the old blue-grey slate)",
         "$type": "color",
-        "$value": "#1f242d"
+        "$value": "#292524"
       },
       "white": {
-        "$description": "Pure white — dark-mode primary text (21.0:1 AAA on black), light-mode panel",
+        "$description": "Pure white — light-mode panel surface",
         "$type": "color",
         "$value": "#ffffff"
       }
     },
     "surface": {
       "darkActive": {
-        "$description": "Binance surface elevated dark — dark-mode active/pressed surface, also the dark hairline value",
+        "$description": "Tailwind stone-600 — dark active/pressed surface",
         "$type": "color",
-        "$value": "#2b3139"
+        "$value": "#57534e"
       },
       "darkPanel": {
-        "$description": "Binance surface card dark — dark-mode panel surface",
+        "$description": "Tailwind stone-800 — dark panel surface",
         "$type": "color",
-        "$value": "#1e2329"
+        "$value": "#292524"
       },
       "darkSubtle": {
-        "$description": "Dark-mode subtle/recessed surface — interpolated step between Binance canvas (#0b0e11) and card (#1e2329), same blue-grey family",
+        "$description": "Tailwind stone-900 — dark subtle/recessed surface",
         "$type": "color",
-        "$value": "#14181d"
+        "$value": "#1c1917"
       },
       "lightActive": {
-        "$description": "Binance hairline on light — light-mode active/pressed surface",
+        "$description": "Tailwind stone-200 — light active/pressed surface",
         "$type": "color",
-        "$value": "#eaecef"
+        "$value": "#e7e5e4"
       },
       "lightCanvas": {
-        "$description": "Binance canvas light — light-mode page floor",
+        "$description": "Tailwind stone-50 — light page floor (warm off-white; the mockup's #fafaf7 is 2 RGB units away — the standard scale step is used so every neutral is a scale step)",
         "$type": "color",
-        "$value": "#ffffff"
+        "$value": "#fafaf9"
       },
       "lightHover": {
-        "$description": "Binance surface strong light — light-mode hover surface",
+        "$description": "Tailwind stone-100 — light hover surface (one step darker than the white panel, standard light-state pattern)",
         "$type": "color",
-        "$value": "#f5f5f5"
+        "$value": "#f5f5f4"
       },
       "lightSubtle": {
-        "$description": "Binance surface soft light — light-mode subtle surface",
+        "$description": "Tailwind stone-100 — light subtle surface",
         "$type": "color",
-        "$value": "#fafafa"
+        "$value": "#f5f5f4"
       },
       "darkCanvas": {
-        "$description": "Binance canvas dark — near-black with a slight blue tint, never pure black",
+        "$description": "Tailwind stone-950 — dark page floor (darkest step; layering rises 950 -> 900 -> 800 -> 700 -> 600)",
         "$type": "color",
-        "$value": "#0b0e11"
+        "$value": "#0c0a09"
       },
       "darkHover": {
-        "$description": "Dark-mode hover surface — interpolated step between Binance card (#1e2329) and elevated (#2b3139)",
+        "$description": "Tailwind stone-700 — dark hover surface",
         "$type": "color",
-        "$value": "#252b33"
+        "$value": "#44403c"
       }
     },
     "text": {
       "darkPrimary": {
-        "$description": "Binance body on dark — deliberately not pure white",
+        "$description": "Tailwind stone-50 — body text on dark (18.92:1 on stone-950)",
         "$type": "color",
-        "$value": "#eaecef"
+        "$value": "#fafaf9"
       },
       "lightPrimary": {
-        "$description": "Binance ink — strongest text on light, and black text on yellow primary CTAs",
+        "$description": "Tailwind stone-900 — body text on light (17.49:1 on white)",
+        "$type": "color",
+        "$value": "#1c1917"
+      },
+      "onPrimary": {
+        "$description": "Dark ink on the cyber-yellow primary — RETAINED exact value #181a20 from the old lightPrimary so primary buttons keep their checked 12.07:1 ratio in both modes",
         "$type": "color",
         "$value": "#181a20"
+      }
+    },
+    "status": {
+      "successLight": {
+        "$description": "Tailwind green-700 — light operational text. green-600 is only 3.30:1 on white (fails AA); green-700 is 5.02:1 on white, 4.60:1 on stone-100",
+        "$type": "color",
+        "$value": "#15803d"
+      },
+      "successDark": {
+        "$description": "Tailwind green-400 — dark operational text. 11.34:1 on stone-950",
+        "$type": "color",
+        "$value": "#4ade80"
+      },
+      "criticalDark": {
+        "$description": "Tailwind red-400 — dark critical text. red-600 is only 4.09:1 on stone-950 (fails AA); red-400 is 7.14:1",
+        "$type": "color",
+        "$value": "#f87171"
+      },
+      "criticalOnTintDark": {
+        "$description": "Tailwind red-200 — dark critical text ON a tinted/subtle/hover/active background. red-300 is only 4.02:1 on stone-600 active (fails AA); red-200 is 5.27:1 on stone-600 active, 7.10:1 on stone-700 hover, 8.34:1 on a 15% critical tint over stone-800, 10.48:1 on stone-800 panel and 13.66:1 on stone-950 canvas",
+        "$type": "color",
+        "$value": "#fecaca"
+      },
+      "criticalOnTintLight": {
+        "$description": "Tailwind red-700 — light critical text ON a tinted/subtle/hover background. red-600 is only 4.13:1 on a 10% tint, 3.81:1 on a 15% tint and 4.43:1 on stone-100 (fails AA); red-700 is 5.54:1 on the 10% tint, 5.10:1 on the 15% tint and 5.93:1 on stone-100",
+        "$type": "color",
+        "$value": "#b91c1c"
       }
     }
   },
@@ -255,7 +297,8 @@
       },
       "sans": {
         "$type": "fontFamily",
-        "$value": "system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif"
+        "$value": "var(--font-inter), system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif",
+        "$description": "Inter (loaded via next/font/google in layout.tsx, variable --font-inter) with the old system stack as fallback. Sizes, line-heights, tracking and weights are unchanged — see spec for why no size change is needed."
       }
     },
     "featureSettings": {
@@ -454,24 +497,24 @@
   },
   "radius": {
     "full": {
-      "$description": "Circular avatars and round indicators only",
+      "$description": "Material 3 shape full — circular avatars and round indicators only (unchanged)",
       "$type": "dimension",
       "$value": "9999px"
     },
     "md": {
-      "$description": "Cards, data tables, sheet containers, dialog modals",
+      "$description": "Material 3 shape large (16px) — cards, data tables, sheets, dialogs (was 8px)",
       "$type": "dimension",
-      "$value": "8px"
+      "$value": "16px"
     },
     "sm": {
-      "$description": "Buttons, form text inputs, select triggers",
+      "$description": "Material 3 shape medium (12px) — buttons, form inputs, select triggers (was 6px)",
       "$type": "dimension",
-      "$value": "6px"
+      "$value": "12px"
     },
     "xs": {
-      "$description": "Checkboxes, micro switches, segmented toggles",
+      "$description": "Material 3 shape small (8px) — checkboxes, micro switches, segmented toggles (was 4px)",
       "$type": "dimension",
-      "$value": "4px"
+      "$value": "8px"
     }
   },
   "shadow": {

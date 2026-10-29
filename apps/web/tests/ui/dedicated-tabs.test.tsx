@@ -250,14 +250,14 @@ describe('Dedicated tab row — sticky row, scroll fade, gold active state', () 
       expect(btn?.getAttribute('data-variant')).toBe('line-gold');
     }
     const gold = tabsTriggerVariants({ variant: 'line-gold' });
-    expect(gold).toContain('data-[state=active]:text-brand-gold');
-    expect(gold).toContain('data-[state=active]:border-brand-gold');
+    expect(gold).toContain('data-[state=active]:text-link');
+    expect(gold).toContain('data-[state=active]:border-link');
     const line = tabsTriggerVariants({ variant: 'line' });
-    // The base trigger class already carries a gold focus outline in
-    // every variant — the line variant must not carry the gold
+    // The base trigger class already carries a link focus outline in
+    // every variant — the line variant must not carry the link
     // ACTIVE classes (those belong to line-gold only).
-    expect(line).not.toContain('data-[state=active]:text-brand-gold');
-    expect(line).not.toContain('data-[state=active]:border-brand-gold');
+    expect(line).not.toContain('data-[state=active]:text-link');
+    expect(line).not.toContain('data-[state=active]:border-link');
     expect(line).toContain('data-[state=active]:text-ink');
   });
 });

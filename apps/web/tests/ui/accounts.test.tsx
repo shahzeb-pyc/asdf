@@ -134,14 +134,14 @@ describe('Facebook Accounts UI Components (Spec 027, Spec 029 & Spec 031)', () =
     });
 
     it('derives the avatar status ring from the single health model (Spec 102)', () => {
-      // connected -> operational green, expiring soon -> queued amber,
+      // connected -> operational green, expiring soon -> queued yellow,
       // expired -> critical red
       expect(
         getAccountHealthSignal(getAccountHealth({ status: 'active' }))
       ).toBe('operational');
-      expect(STATUS_SIGNALS.operational.color).toBe('#0ecb81');
-      expect(STATUS_SIGNALS.queued.color).toBe('#fcd535');
-      expect(STATUS_SIGNALS.critical.color).toBe('#f6465d');
+      expect(STATUS_SIGNALS.operational.color).toBe('#4ade80');
+      expect(STATUS_SIGNALS.queued.color).toBe('#FFD300');
+      expect(STATUS_SIGNALS.critical.color).toBe('#f87171');
       expect(
         isTokenExpiringSoon({
           status: 'active',

@@ -59,7 +59,7 @@ export function WhatsAppSupportButton({
               rel="noopener noreferrer"
               aria-label="Contact WhatsApp Support"
               data-testid="whatsapp-support-button"
-              className="flex size-13 items-center justify-center rounded-full bg-brand-emerald text-neutral-white shadow-card transition-transform duration-base ease-standard hover:scale-105 hover:shadow-elevated focus-visible:scale-105 focus-visible:shadow-elevated focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold"
+              className="flex size-13 items-center justify-center rounded-full bg-brand-emerald text-neutral-white shadow-card transition-transform duration-base ease-standard hover:scale-105 hover:shadow-elevated focus-visible:scale-105 focus-visible:shadow-elevated focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link"
             >
               {/* Official WhatsApp Glyph */}
               <svg

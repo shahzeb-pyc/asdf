@@ -73,9 +73,9 @@ export function ImportProgressRow({
               className="size-full object-cover"
             />
           ) : item.mediaType === 'video' ? (
-            <FilmIcon className="size-5 text-brand-gold" aria-hidden />
+            <FilmIcon className="size-5 text-link" aria-hidden />
           ) : (
-            <ImageIcon className="size-5 text-brand-gold" aria-hidden />
+            <ImageIcon className="size-5 text-link" aria-hidden />
           )}
         </div>
 
@@ -186,7 +186,7 @@ export function ImportProgressRow({
 
         {isFailed && (
           <div className="flex items-center gap-1.5">
-            <span className="text-metadata text-brand-rose">
+            <span className="text-metadata text-signal-critical">
               {item.validationError || 'failed — retry'}
             </span>
             <Button
@@ -195,7 +195,7 @@ export function ImportProgressRow({
               size="sm"
               data-testid={`retry-upload-${item.id}`}
               onClick={() => onRetry(item.id)}
-              className="min-h-11 text-brand-gold sm:min-h-8"
+              className="min-h-11 text-link sm:min-h-8"
             >
               Retry
             </Button>

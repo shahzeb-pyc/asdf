@@ -127,7 +127,7 @@ export function SelectTimezoneStep({
                     data-testid={`add-page-timezone-option-${entry.iana}`}
                     aria-pressed={isSelected}
                     onClick={() => onSelectTimezone(entry.iana)}
-                    className="flex min-h-11 w-full items-center justify-between gap-2 border-b border-line px-2 py-2 text-left outline-none focus-visible:outline-2 focus-visible:outline-brand-gold"
+                    className="flex min-h-11 w-full items-center justify-between gap-2 border-b border-line px-2 py-2 text-left outline-none focus-visible:outline-2 focus-visible:outline-link"
                   >
                     <span className="flex items-center gap-2">
                       <span
@@ -135,7 +135,7 @@ export function SelectTimezoneStep({
                         className={cn(
                           'box-border size-3.5 shrink-0 rounded-full',
                           isSelected
-                            ? 'border-4 border-brand-gold bg-neutral-white'
+                            ? 'border-4 border-link bg-neutral-white'
                             : 'border border-line-strong'
                         )}
                       />
@@ -316,7 +316,7 @@ export function SelectPostingTimesStep({
                     : 'Choose a time.'}
                 </div>
                 {isDuplicate && (
-                  <div className="mt-1 text-metadata text-brand-rose">
+                  <div className="mt-1 text-metadata text-signal-critical">
                     Choose a different time for each posting time.
                   </div>
                 )}
@@ -343,9 +343,9 @@ export function SelectPostingTimesStep({
                         aria-pressed={isSelected}
                         onClick={() => onToggleFormat(index, format.id)}
                         className={cn(
-                          'inline-flex min-h-9 items-center rounded-full px-3 text-body font-medium outline-none transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold',
+                          'inline-flex min-h-9 items-center rounded-full px-3 text-body font-medium outline-none transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link',
                           isSelected
-                            ? 'bg-transparent text-brand-gold ring-2 ring-brand-gold ring-inset'
+                            ? 'bg-transparent text-link ring-2 ring-link ring-inset'
                             : 'bg-subtle text-ink-sub hover:text-ink'
                         )}
                       >
@@ -355,7 +355,7 @@ export function SelectPostingTimesStep({
                   })}
                 </div>
                 {postingTime.allowedFormats.length === 0 && (
-                  <div className="mt-1 text-metadata text-brand-rose">
+                  <div className="mt-1 text-metadata text-signal-critical">
                     Choose at least one post type.
                   </div>
                 )}

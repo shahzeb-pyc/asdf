@@ -66,7 +66,7 @@ function TabsList({
 }
 
 const tabsTriggerVariants = cva(
-  "inline-flex h-9 grow basis-0 shrink-0 items-center justify-center gap-1.5 rounded-sm border-transparent px-3 text-body font-medium whitespace-nowrap text-ink-sub transition-colors duration-fast outline-none hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold disabled:pointer-events-none disabled:opacity-50",
+  "inline-flex h-9 grow basis-0 shrink-0 items-center justify-center gap-1.5 rounded-sm border-transparent px-3 text-body font-medium whitespace-nowrap text-ink-sub transition-colors duration-fast outline-none hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link disabled:pointer-events-none disabled:opacity-50",
   {
     variants: {
       variant: {
@@ -80,11 +80,11 @@ const tabsTriggerVariants = cva(
         // under inactive tabs. Ink is a theme token, so this works
         // in both light and dark themes.
         line: "-mb-px border-b-3 data-[state=active]:border-ink data-[state=active]:font-bold data-[state=active]:text-ink",
-        // Line-gold: line geometry with a brand-gold active mark
-        // (gold label text + gold underline). Dedicated page tab
+        // Line-gold: line geometry with a link active mark
+        // (link label text + link underline). Dedicated page tab
         // row only; inactive tabs stay muted, hover unchanged.
         "line-gold":
-          "-mb-px border-b-3 data-[state=active]:border-brand-gold data-[state=active]:font-bold data-[state=active]:text-brand-gold",
+          "-mb-px border-b-3 data-[state=active]:border-link data-[state=active]:font-bold data-[state=active]:text-link",
       },
     },
     defaultVariants: { variant: "default" },

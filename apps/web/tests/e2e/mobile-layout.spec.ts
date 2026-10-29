@@ -203,7 +203,7 @@ test.describe('mobile layout — shared dialog geometry (PR-M142-1)', () => {
         <button type="button" data-slot="button" class="${buttonBase} border border-line bg-panel text-ink shadow-card hover:bg-hover h-control px-3 py-2">
           Cancel
         </button>
-        <button type="button" data-slot="button" class="${buttonBase} bg-brand-rose text-neutral-white hover:bg-brand-rose/90 focus-visible:outline-brand-rose h-control px-3 py-2">
+        <button type="button" data-slot="button" class="${buttonBase} bg-brand-rose text-neutral-white hover:bg-brand-rose/90 focus-visible:outline-signal-critical h-control px-3 py-2">
           Delete workspace
         </button>
       </div>

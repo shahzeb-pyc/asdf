@@ -123,7 +123,7 @@ export function TimezoneSelectorStep({
                       data-testid={`timezone-option-${entry.iana}`}
                       aria-pressed={isSelected}
                       onClick={() => onSelectTimezone(entry.iana)}
-                      className="flex min-h-11 w-full items-center justify-between gap-2 border-b border-line px-2 py-2 text-left outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold"
+                      className="flex min-h-11 w-full items-center justify-between gap-2 border-b border-line px-2 py-2 text-left outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link"
                     >
                       <span className="flex items-center gap-2">
                         <span
@@ -131,7 +131,7 @@ export function TimezoneSelectorStep({
                           className={cn(
                             'box-border size-3.5 shrink-0 rounded-full',
                             isSelected
-                              ? 'border-4 border-brand-gold bg-neutral-white'
+                              ? 'border-4 border-link bg-neutral-white'
                               : 'border border-line-strong'
                           )}
                         />
@@ -144,7 +144,7 @@ export function TimezoneSelectorStep({
                           >
                             {entry.city}
                             {isCurrent ? (
-                              <span className="ml-1 text-metadata text-brand-gold">
+                              <span className="ml-1 text-metadata text-link">
                                 (Current)
                               </span>
                             ) : null}

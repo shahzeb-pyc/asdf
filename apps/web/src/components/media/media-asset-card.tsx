@@ -194,7 +194,7 @@ export function MediaAssetCard({
           data-testid={`preview-media-${item.id}`}
           onClick={() => (onTileClick ?? onPreview)?.(item)}
           aria-label={`Preview ${item.name}`}
-          className="flex h-full w-full cursor-pointer items-center justify-center border-0 bg-transparent p-0 outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold"
+          className="flex h-full w-full cursor-pointer items-center justify-center border-0 bg-transparent p-0 outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link"
         >
           <MediaThumbnail
             item={item}
@@ -246,7 +246,7 @@ export function MediaAssetCard({
               onPreview?.(item);
             }}
             aria-label="Preview asset"
-            className="inline-flex h-10 cursor-pointer items-center rounded-xs border border-line bg-neutral-black/75 px-2 text-xs font-medium text-neutral-white backdrop-blur-sm outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold"
+            className="inline-flex h-10 cursor-pointer items-center rounded-xs border border-line bg-neutral-black/75 px-2 text-xs font-medium text-neutral-white backdrop-blur-sm outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link"
           >
             Preview
           </button>
@@ -258,7 +258,7 @@ export function MediaAssetCard({
                 data-testid={`overflow-menu-btn-${item.id}`}
                 onClick={(e) => e.stopPropagation()}
                 aria-label="More actions"
-                className="inline-flex size-10 cursor-pointer items-center justify-center rounded-xs border border-line bg-neutral-black/75 text-neutral-white backdrop-blur-sm outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold"
+                className="inline-flex size-10 cursor-pointer items-center justify-center rounded-xs border border-line bg-neutral-black/75 text-neutral-white backdrop-blur-sm outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link"
               >
                 <MoreVerticalIcon className="size-4" aria-hidden />
               </button>
@@ -323,7 +323,7 @@ export function MediaAssetCard({
           data-testid={`media-caption-status-${item.id}`}
           className={cn(
             'inline-flex items-center gap-1 text-xs font-medium',
-            hasCaption ? 'text-ink-sub' : 'text-brand-rose'
+            hasCaption ? 'text-ink-sub' : 'text-signal-critical'
           )}
         >
           {hasCaption ? (
@@ -345,7 +345,7 @@ export function MediaAssetCard({
             type="button"
             data-testid={`media-folder-path-${item.id}`}
             onClick={() => onNavigateFolder?.(item.folderId ?? null)}
-            className="max-w-full cursor-pointer self-start truncate border-0 bg-transparent p-0 text-left text-xs text-ink-dim outline-none focus-visible:outline-2 focus-visible:outline-brand-gold"
+            className="max-w-full cursor-pointer self-start truncate border-0 bg-transparent p-0 text-left text-xs text-ink-dim outline-none focus-visible:outline-2 focus-visible:outline-link"
           >
             {folderPathLabel}
           </button>

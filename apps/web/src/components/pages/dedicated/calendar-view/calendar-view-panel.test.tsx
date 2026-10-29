@@ -174,7 +174,7 @@ describe('CalendarViewPanel', () => {
     await waitFor(() => expect(screen.getByTestId('calendar-month-label')).toBeTruthy());
     expect(screen.getByTestId('calendar-month-label').textContent).toBe('October 2026');
     const todayCell = screen.getByTestId('calendar-day-2026-10-29');
-    expect(todayCell.className).toContain('ring-brand-gold/20');
+    expect(todayCell.className).toContain('ring-link/20');
     await user.click(screen.getByTestId('calendar-next-btn'));
     expect(screen.getByTestId('calendar-month-label').textContent).toBe('November 2026');
     await user.click(screen.getByTestId('calendar-today-btn'));
@@ -352,10 +352,10 @@ describe('CalendarViewPanel', () => {
     );
     expect(screen.getByTestId('calendar-month-label').textContent).toBe('October 2026');
     expect(screen.getByTestId('calendar-day-2026-10-28').className).toContain(
-      'ring-brand-gold/20'
+      'ring-link/20'
     );
     expect(screen.getByTestId('calendar-day-2026-10-29').className).not.toContain(
-      'ring-brand-gold/20'
+      'ring-link/20'
     );
   });
 

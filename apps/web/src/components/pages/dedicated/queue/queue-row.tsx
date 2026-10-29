@@ -180,7 +180,7 @@ export function QueueRow({
       <div className="min-w-0 flex-1 space-y-1">
         <div className="flex flex-wrap items-center gap-2">
           <Tag variant="outline">{typeLabel}</Tag>
-          <span className={isFailed ? 'text-brand-rose' : 'text-ink-sub'}>
+          <span className={isFailed ? 'text-signal-critical' : 'text-ink-sub'}>
             {formatQueueStatus(item.status)}
           </span>
           {isFailed ? (
@@ -195,7 +195,7 @@ export function QueueRow({
           )}
         </p>
         {isQueued && unmatched ? (
-          <p className="m-0 text-metadata text-brand-gold">{UNMATCHED_NOTE}</p>
+          <p className="m-0 text-metadata text-link">{UNMATCHED_NOTE}</p>
         ) : null}
       </div>
 
@@ -203,7 +203,7 @@ export function QueueRow({
       {pillText ? (
         <span
           data-testid="queue-row-estimate"
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-brand-gold/20 bg-brand-gold/10 px-2.5 py-1 text-metadata font-semibold text-brand-gold"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-link/20 bg-link/10 px-2.5 py-1 text-metadata font-semibold text-link"
         >
           <CalendarClockIcon aria-hidden className="size-3.5" />
           {pillText}
@@ -255,7 +255,7 @@ export function QueueRow({
           data-testid="queue-row-delete"
           disabled={busy || isPublished}
           onClick={onDelete}
-          className="border-brand-rose/30 text-brand-rose hover:bg-brand-rose/10 hover:text-brand-rose"
+          className="border-signal-critical/30 text-signal-critical hover:bg-signal-critical/10 hover:text-signal-critical-on-tint"
         >
           Delete
         </Button>

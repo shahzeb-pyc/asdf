@@ -238,7 +238,7 @@ function NewFolderForm({
           <div
             role="alert"
             data-testid="downloader-new-folder-error"
-            className="text-body font-medium text-brand-rose"
+            className="text-body font-medium text-signal-critical"
           >
             {serverError}
           </div>

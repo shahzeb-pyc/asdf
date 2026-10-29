@@ -759,9 +759,9 @@ export default function TenantDedicatedPageView({
       {pageError && !page && (
         <div
           data-testid="page-error-state"
-          className="flex flex-col items-center gap-4 rounded-md border border-brand-rose/40 bg-panel px-6 py-12 text-center"
+          className="flex flex-col items-center gap-4 rounded-md border border-signal-critical/40 bg-panel px-6 py-12 text-center"
         >
-          <h3 className="m-0 text-lg font-semibold text-brand-rose">Page Not Found</h3>
+          <h3 className="m-0 text-lg font-semibold text-signal-critical">Page Not Found</h3>
           <p className="m-0 text-body text-ink-sub">{pageError}</p>
           <Button type="button" onClick={() => router.push(pagesListHref)}>
             Return to Pages

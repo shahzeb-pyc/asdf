@@ -137,10 +137,10 @@ describe('Shared Toast theme', () => {
         'var(--color-brand-emerald)',
       );
       expect(computed.getPropertyValue('--error-text').trim()).toBe(
-        'var(--color-brand-rose)',
+        'var(--color-signal-critical-on-tint)',
       );
       expect(computed.getPropertyValue('--warning-text').trim()).toBe(
-        'var(--color-brand-gold)',
+        'var(--color-link)',
       );
     } finally {
       styleEl.remove();

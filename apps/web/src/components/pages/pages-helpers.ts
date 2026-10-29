@@ -92,7 +92,7 @@ export function computeSituationalSubtitle(
       `${totalCount} connected ${totalCount === 1 ? 'page' : 'pages'} · `,
       React.createElement(
         'span',
-        { className: 'font-medium text-brand-rose' },
+        { className: 'font-medium text-signal-critical' },
         `${attentionCount} ${attentionCount === 1 ? 'requires' : 'require'} reconnecting`
       )
     );

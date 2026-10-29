@@ -475,7 +475,7 @@ export function MediaImportModal({
           data-testid="import-files-list"
           className={cn(
             'flex max-h-80 flex-col divide-y divide-line overflow-y-auto sm:max-h-96',
-            isDraggingOverList && 'ring-2 ring-brand-gold/60 ring-inset'
+            isDraggingOverList && 'ring-2 ring-link/60 ring-inset'
           )}
           onDragOver={(e) => {
             if (step !== 'staging') return;
@@ -500,7 +500,7 @@ export function MediaImportModal({
           {step === 'staging' && duplicatesCount > 0 && (
             <div
               data-testid="duplicate-banner"
-              className="flex items-center justify-between gap-3 border border-brand-gold/40 bg-brand-gold/10 px-3 py-2 text-body text-brand-gold"
+              className="flex items-center justify-between gap-3 border border-link/40 bg-link/10 px-3 py-2 text-body text-link"
             >
               <span>
                 {duplicatesCount} possible duplicate{duplicatesCount === 1 ? '' : 's'} found
@@ -529,7 +529,7 @@ export function MediaImportModal({
           )}
 
           {isDraggingOverList && (
-            <div className="px-3 py-2 text-center text-body font-medium text-brand-gold">
+            <div className="px-3 py-2 text-center text-body font-medium text-link">
               Drop files to add them
             </div>
           )}

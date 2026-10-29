@@ -49,8 +49,8 @@ export function ByocConfigPromptModal({
       >
         <DialogHeader>
           <div className="flex items-center gap-2">
-            <div className="flex size-9 shrink-0 items-center justify-center rounded-sm bg-brand-gold/10">
-              <MonitorIcon className="size-5 text-brand-gold" aria-hidden />
+            <div className="flex size-9 shrink-0 items-center justify-center rounded-sm bg-link/10">
+              <MonitorIcon className="size-5 text-link" aria-hidden />
             </div>
             <div>
               <DialogTitle id="byoc-prompt-title" data-testid="byoc-prompt-title">

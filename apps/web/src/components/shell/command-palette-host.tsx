@@ -87,7 +87,7 @@ export function CommandPaletteHost({
         aria-label="Search and commands (Control or Command plus K)"
         aria-keyshortcuts="Meta+K Control+K"
         onClick={openPalette}
-        className="ml-auto flex h-control min-w-9 items-center gap-2 rounded-sm border border-line bg-panel px-3 text-body text-ink-dim outline-none transition-colors duration-base ease-standard hover:bg-hover hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold sm:min-w-48"
+        className="ml-auto flex h-control min-w-9 items-center gap-2 rounded-sm border border-line bg-panel px-3 text-body text-ink-dim outline-none transition-colors duration-base ease-standard hover:bg-hover hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link sm:min-w-48"
       >
         <svg
           width="16"

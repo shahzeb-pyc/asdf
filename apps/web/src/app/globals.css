@@ -90,6 +90,7 @@
   --color-signal-operational: var(--signal-operational);
   --color-signal-queued: var(--signal-queued);
   --color-signal-critical: var(--signal-critical);
+  --color-signal-critical-on-tint: var(--signal-critical-on-tint);
   --color-signal-idle: var(--signal-idle);
 
   /* Type */
@@ -427,12 +428,12 @@
   --success-bg: color-mix(in srgb, var(--color-brand-emerald) 15%, transparent);
   --success-border: var(--color-brand-emerald);
   --success-text: var(--color-brand-emerald);
-  --error-bg: color-mix(in srgb, var(--color-brand-rose) 15%, transparent);
-  --error-border: var(--color-brand-rose);
-  --error-text: var(--color-brand-rose);
-  --warning-bg: color-mix(in srgb, var(--color-brand-gold) 15%, transparent);
-  --warning-border: var(--color-brand-gold);
-  --warning-text: var(--color-brand-gold);
+  --error-bg: color-mix(in srgb, var(--color-signal-critical) 15%, transparent);
+  --error-border: var(--color-signal-critical);
+  --error-text: var(--color-signal-critical-on-tint);
+  --warning-bg: color-mix(in srgb, var(--color-link) 15%, transparent);
+  --warning-border: var(--color-link);
+  --warning-text: var(--color-link);
   --info-bg: var(--bg-subtle);
   --info-border: var(--border-subtle);
   --info-text: var(--text-main);

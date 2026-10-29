@@ -120,7 +120,7 @@ export function ListPagination({
                       variant: item === page ? 'outline' : 'ghost',
                       size: 'icon',
                     }),
-                    item === page && 'font-semibold text-brand-gold'
+                    item === page && 'font-semibold text-link'
                   )}
                 >
                   {item}

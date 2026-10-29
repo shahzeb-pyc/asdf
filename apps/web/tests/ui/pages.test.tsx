@@ -436,7 +436,7 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
       );
       expect(negRender.hasText('7,650')).toBe(true);
       expect(negRender.hasText('-350 gained')).toBe(true);
-      expect(negRender.html).toContain('text-brand-rose');
+      expect(negRender.html).toContain('text-signal-critical');
     });
 
     it('highlights attention-needed statuses (invalid_token, page_checkpoint, fb_rate_limited) with red/rose border and cross status but NO attention banner (final card spec)', () => {
@@ -465,7 +465,7 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
         expect(hasText('Reconnect the parent Facebook account')).toBe(false);
         expect(hasText('Confirm page identity on Facebook mobile')).toBe(false);
         expect(hasText('temporarily restricted posting')).toBe(false);
-        expect(html).toContain('border-brand-rose');
+        expect(html).toContain('border-signal-critical');
       }
     });
 
@@ -1033,22 +1033,22 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
       expect(hasAttribute('data-testid', 'pages-expired-connection-banner')).toBe(false);
     });
 
-    it('validates light mode canvas contrast token is #ffffff and panel is #ffffff (Binance light)', () => {
-      expect(LIGHT_THEME.surfaces.canvas).toBe('#ffffff');
+    it('validates light mode canvas is stone-50 #fafaf9 and panel is #ffffff (Direction 4)', () => {
+      expect(LIGHT_THEME.surfaces.canvas).toBe('#fafaf9');
       expect(LIGHT_THEME.surfaces.panel).toBe('#ffffff');
-      // Binance light: cards sit on the white canvas separated by hairlines,
-      // so canvas and panel are deliberately the same value.
-      expect(LIGHT_THEME.surfaces.canvas).toBe(LIGHT_THEME.surfaces.panel);
+      // Direction 4 light: cards sit on a stone-50 canvas as a white
+      // panel layer, so canvas and panel are deliberately different.
+      expect(LIGHT_THEME.surfaces.canvas).not.toBe(LIGHT_THEME.surfaces.panel);
     });
 
-    it('validates dark mode canvas and surface calibration tokens for Binance dark (Spec 055)', () => {
-      expect(DARK_THEME.surfaces.canvas).toBe('#0b0e11');
-      expect(DARK_THEME.surfaces.panel).toBe('#1e2329');
-      expect(DARK_THEME.surfaces.subtle).toBe('#14181d');
-      expect(DARK_THEME.surfaces.hover).toBe('#252b33');
-      expect(DARK_THEME.surfaces.active).toBe('#2b3139');
-      expect(DARK_THEME.borders.hairline).toBe('#2b3139');
-      expect(DARK_THEME.borders.strong).toBe('#474d57');
+    it('validates dark mode canvas and surface calibration tokens for Direction 4 stone layering', () => {
+      expect(DARK_THEME.surfaces.canvas).toBe('#0c0a09');
+      expect(DARK_THEME.surfaces.panel).toBe('#292524');
+      expect(DARK_THEME.surfaces.subtle).toBe('#1c1917');
+      expect(DARK_THEME.surfaces.hover).toBe('#44403c');
+      expect(DARK_THEME.surfaces.active).toBe('#57534e');
+      expect(DARK_THEME.borders.hairline).toBe('#292524');
+      expect(DARK_THEME.borders.strong).toBe('#44403c');
       expect(DARK_THEME.surfaces.panel).not.toBe(DARK_THEME.surfaces.canvas);
     });
   });

@@ -341,7 +341,7 @@ export function CalendarViewPanel({
       ) : isError ? (
         <div
           data-testid="calendar-error-state"
-          className="flex flex-col items-center gap-4 rounded-md border border-brand-rose/40 bg-panel px-6 py-12 text-center"
+          className="flex flex-col items-center gap-4 rounded-md border border-signal-critical/40 bg-panel px-6 py-12 text-center"
         >
           <p className="m-0 text-body text-ink-sub">Couldn't load the calendar.</p>
           <Button
@@ -386,7 +386,7 @@ export function CalendarViewPanel({
                       className={[
                         'flex min-h-24 min-w-0 flex-col rounded-xl border p-1.5',
                         isToday
-                          ? 'border-brand-gold/60 bg-brand-gold/5 ring-1 ring-brand-gold/20'
+                          ? 'border-link/60 bg-link/5 ring-1 ring-link/20'
                           : 'border-line bg-panel',
                         inMonth ? '' : 'opacity-40',
                       ].join(' ')}
@@ -401,7 +401,7 @@ export function CalendarViewPanel({
                           {dayNumberOfKey(dayKey)}
                         </span>
                         {dayEntries.length > 0 ? (
-                          <span className="rounded-full bg-brand-gold/10 px-1.5 py-0.5 text-metadata font-bold text-brand-gold">
+                          <span className="rounded-full bg-link/10 px-1.5 py-0.5 text-metadata font-bold text-link">
                             {dayEntries.length}
                           </span>
                         ) : null}
@@ -445,7 +445,7 @@ export function CalendarViewPanel({
                               type="button"
                               data-testid={`calendar-entry-${entry.item.id}`}
                               onClick={() => setItemToEdit(entry.item)}
-                              className="flex w-full min-w-0 items-start gap-1 rounded-lg border border-line bg-canvas p-1.5 text-left text-metadata leading-tight hover:border-brand-gold/40"
+                              className="flex w-full min-w-0 items-start gap-1 rounded-lg border border-line bg-canvas p-1.5 text-left text-metadata leading-tight hover:border-link/40"
                             >
                               {inner}
                             </button>
@@ -468,7 +468,7 @@ export function CalendarViewPanel({
         </p>
       ) : null}
       {unscheduledCount > 0 ? (
-        <p data-testid="calendar-unscheduled-note" className="m-0 text-metadata text-brand-gold">
+        <p data-testid="calendar-unscheduled-note" className="m-0 text-metadata text-link">
           {unscheduledCount} queued{' '}
           {unscheduledCount === 1 ? 'post has' : 'posts have'} no estimate yet (no posting
           time matches {unscheduledCount === 1 ? 'its' : 'their'} type) so{' '}
