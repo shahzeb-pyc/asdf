@@ -2,7 +2,6 @@ import { type NextRequest, NextResponse } from 'next/server';
 import {
   composerTextLimitForType,
   decryptToken,
-  deriveComposerPostType,
   evaluateGraphApiError,
   fetchAllFacebookPages,
   getTokenEncryptionKey,
@@ -197,6 +196,50 @@ async function graphPost(
     };
   }
   return data;
+}
+
+/**
+ * First comment, old Direct Post mechanics: after a page's post
+ * succeeds, POST /{postId}/comments with the page token and the
+ * trimmed message. A failure here throws like a Graph failure but
+ * is caught by the caller and reported as a WARNING on an
+ * otherwise published row — it never fails the post, because the
+ * post already published.
+ */
+async function postFirstComment(params: {
+  postId: string;
+  pageToken: string;
+  message: string;
+}): Promise<void> {
+  const response = await fetch(
+    `${GRAPH_BASE_URL}/${encodeURIComponent(params.postId)}/comments`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${params.pageToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ message: params.message }),
+      signal: AbortSignal.timeout(GRAPH_TIMEOUT_MS),
+    }
+  );
+  const data = (await response.json().catch(() => ({}))) as {
+    error?: {
+      message?: string;
+      code?: number;
+      error_subcode?: number;
+      fbtrace_id?: string;
+    };
+  };
+  if (!response.ok || data.error) {
+    throw {
+      message: data.error?.message ?? `Facebook returned ${response.status}.`,
+      code: data.error?.code,
+      subcode: data.error?.error_subcode,
+      httpStatus: response.status,
+      fbtraceId: data.error?.fbtrace_id,
+    };
+  }
 }
 
 /**
@@ -544,26 +587,27 @@ export async function POST(
       { status: 400 }
     );
   }
-  const { caption, targets, media } = parsed.data;
+  const { caption, postType, firstComment, targets, media } = parsed.data;
+  const trimmedFirstComment = firstComment?.trim() || undefined;
 
-  if (caption.trim().length === 0 && !media) {
+  // Explicit type decides emptiness: text needs caption, every
+  // other type needs media (the composer clears media on a type
+  // switch, so a text post never carries media).
+  if (postType === 'text' && caption.trim().length === 0) {
     return NextResponse.json(
-      { error: 'INVALID_REQUEST', message: 'A post needs text or media.' },
+      { error: 'INVALID_REQUEST', message: 'A text post needs text.' },
+      { status: 400 }
+    );
+  }
+  if (postType !== 'text' && !media) {
+    return NextResponse.json(
+      { error: 'INVALID_REQUEST', message: 'This post type needs media.' },
       { status: 400 }
     );
   }
 
-  // Derived type + limit, exactly as the composer derives them.
-  const derivedType = !media
-    ? 'text'
-    : deriveComposerPostType({
-        text: caption,
-        mediaType: media.mediaType,
-        aspectRatio: media.aspectRatio,
-        width: media.width,
-        height: media.height,
-      });
-  const limit = composerTextLimitForType(derivedType);
+  // Explicit type + limit: the picked type is the type published.
+  const limit = composerTextLimitForType(postType);
   if (caption.length > limit) {
     return NextResponse.json(
       {
@@ -623,7 +667,7 @@ export async function POST(
   // generic code 1 — fail the whole request early with a specific
   // reason instead. Photos are uploaded as bytes and reels stream
   // bytes, so both surface their own media-fetch failure per page.
-  if (derivedType === 'video' && mediaUrl) {
+  if (postType === 'video' && mediaUrl) {
     if (!(await mediaUrlReachable(mediaUrl))) {
       return NextResponse.json(
         {
@@ -727,10 +771,32 @@ export async function POST(
       const postId = await publishToPage({
         pageId: target.fbPageId,
         pageToken,
-        type: derivedType,
+        type: postType,
         caption,
         mediaUrl,
       });
+      // First comment: only after this page's post succeeded, and
+      // a failure here is a warning, never a failed row — the post
+      // published, and retry must never re-publish it to retry
+      // the comment.
+      let firstCommentFailed = false;
+      let firstCommentReason: string | null = null;
+      if (trimmedFirstComment) {
+        try {
+          await postFirstComment({
+            postId,
+            pageToken,
+            message: trimmedFirstComment,
+          });
+        } catch (commentError) {
+          firstCommentFailed = true;
+          firstCommentReason = toGraphFailure(commentError).message.slice(0, 500);
+          logServerError('[publish-now] First comment failed for a target', commentError, {
+            source: 'publish-now',
+            subdomain,
+          });
+        }
+      }
       results.push({
         accountId: target.accountId,
         fbPageId: target.fbPageId,
@@ -743,6 +809,8 @@ export async function POST(
         step: null,
         httpStatus: null,
         fbtraceId: null,
+        firstCommentFailed: firstCommentFailed || null,
+        firstCommentReason,
       });
     } catch (error) {
       const failure = toGraphFailure(error);
@@ -768,6 +836,8 @@ export async function POST(
         step,
         httpStatus: failure.httpStatus ?? null,
         fbtraceId: failure.fbtraceId ?? null,
+        firstCommentFailed: null,
+        firstCommentReason: null,
       });
     }
   }

@@ -5,9 +5,9 @@ import { PublishNowPage } from '@/components/pages/publish-now/publish-now-page'
 export const metadata: Metadata = { title: 'Publish Now' };
 
 /**
- * Publish Now — direct multi-page publish. The page auto-opens
- * the account selector dialogue (see PublishNowPage); the flow
- * itself lives in the PublishNowDialog component.
+ * Publish Now — direct multi-page publish. Full page, modelled
+ * on the old Direct Post section: selection wizard, then the
+ * active composer beside the results panel (see PublishNowPage).
  */
 export default async function TenantPublishNowPage({
   params,

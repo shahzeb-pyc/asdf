@@ -52,6 +52,9 @@ export interface PublishNowResultItem {
     | undefined;
   httpStatus?: number | null | undefined;
   fbtraceId?: string | null | undefined;
+  /** First-comment warning on a published row (never flips it to failed). */
+  firstCommentFailed?: boolean | null | undefined;
+  firstCommentReason?: string | null | undefined;
 }
 
 /** Attached media in the single-post composer. */

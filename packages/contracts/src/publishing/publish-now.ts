@@ -60,9 +60,20 @@ export const PublishNowMediaSchema = z
   });
 export type PublishNowMedia = z.infer<typeof PublishNowMediaSchema>;
 
-/** Direct-publish request: one caption + optional media, N targets. */
+/**
+ * Direct-publish request: one caption + optional media, N targets.
+ * `postType` is EXPLICIT (picked in the composer, old Direct Post
+ * style) — it replaces the previously derived type: the picked
+ * type is the type published. `firstComment` is the old Direct
+ * Post first comment: trimmed server-side, empty = absent, max
+ * 8,000 (the old schedule validations' figure). It is posted per
+ * page only after that page's own post succeeds, and a comment
+ * failure never fails the post (see the result fields below).
+ */
 export const PublishNowRequestSchema = z.object({
   caption: z.string().max(63206),
+  postType: z.enum(['text', 'image', 'video', 'reel']),
+  firstComment: z.string().max(8000).optional(),
   targets: z.array(PublishNowTargetSchema).min(1).max(50),
   media: PublishNowMediaSchema.nullable(),
 });
@@ -105,6 +116,16 @@ export const PublishNowResultSchema = z.object({
   step: PublishNowStepSchema.optional().nullable(),
   httpStatus: z.number().int().optional().nullable(),
   fbtraceId: z.string().max(200).optional().nullable(),
+  /**
+   * First-comment outcome, only meaningful on a published row: a
+   * failed comment never flips a published post to failed — the
+   * post DID publish — so it is reported here as a warning, with
+   * the reason, and is not retryable (retry never re-publishes
+   * a success). Null/absent on failed rows and on published
+   * rows with no first comment.
+   */
+  firstCommentFailed: z.boolean().optional().nullable(),
+  firstCommentReason: z.string().max(500).optional().nullable(),
 });
 export type PublishNowResult = z.infer<typeof PublishNowResultSchema>;
 
