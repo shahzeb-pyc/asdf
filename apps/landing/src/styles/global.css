@@ -41,6 +41,14 @@
   }
 }
 
+/* ---- Headline gold marker: rounded ends, marker-style padding ---- */
+.hero-highlight {
+  background-color: #f0b90b;
+  color: #111111;
+  border-radius: 12px;
+  padding: 0.08em 0.15em;
+}
+
 /* ---- Hero fade/slide-in on load ---- */
 @keyframes hero-in {
   from {
