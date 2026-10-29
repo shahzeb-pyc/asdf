@@ -558,7 +558,8 @@
   .iso-bob,
   .mob-float,
   .orbit-spin,
-  .orbit-counter {
+  .orbit-counter,
+  .community-card::after {
     animation: none !important;
   }
   html {
@@ -567,4 +568,64 @@
   .topbar-fixed {
     transition: none;
   }
+}
+
+/* ---- Full GSAP animation: clip masks, GSAP-owned motion, glow ----
+   Masks: each reveal line sits inside an overflow:hidden mask with a
+   small padding/margin cancel, so descenders never clip mid-rise.
+   Word masks are inline-block so words still wrap at spaces.
+   .gsap-anim (added by the GSAP module only) switches the CSS
+   animations GSAP now owns OFF — CSS float/spin/sweep and GSAP
+   must never fight over the same transform. If GSAP fails, the
+   class is never added and every CSS animation + full visibility
+   remains, exactly as before. */
+.hero-mask, .s2-mask, .s3-mask, .s4-mask {
+  display: block;
+  overflow: hidden;
+  padding-bottom: 0.14em;
+  margin-bottom: -0.14em;
+}
+.hero-line, .s2-line, .s3-line, .s4-line {
+  display: block;
+  will-change: transform;
+}
+.word-mask {
+  display: inline-block;
+  overflow: hidden;
+  padding-bottom: 0.12em;
+  margin-bottom: -0.12em;
+  vertical-align: bottom;
+}
+.word-inner {
+  display: inline-block;
+  will-change: transform;
+}
+.gsap-anim .hero-highlight {
+  animation: none;
+}
+.gsap-anim .iso-bob,
+.gsap-anim .mob-float,
+.gsap-anim .orbit-spin,
+.gsap-anim .orbit-counter {
+  animation: none;
+}
+/* Section 3 glow: a pseudo-element only (no new DOM element), radial
+   gold at 10% opacity behind the heading, opacity pulse only, slow.
+   Blobs sit above it (z-index 1), heading above both (z-10). */
+.community-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: radial-gradient(ellipse at center, rgba(240, 185, 11, 0.10), transparent 62%);
+  opacity: 0;
+  animation: glowPulse 6s ease-in-out infinite;
+  pointer-events: none;
+}
+.blob-wrap {
+  z-index: 1;
+}
+@keyframes glowPulse {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 1; }
 }
