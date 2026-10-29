@@ -436,3 +436,30 @@
   .iso-stage > span:nth-child(5) .iso-logo { width: 36px; height: 36px; }
   .iso-stage > span:nth-child(6) .iso-logo { width: 39px; height: 39px; }
 }
+
+/* Light-to-dark transition zone between Section 2 and Section 3:
+   a static gradient fade (white -> black) over 120px desktop /
+   80px phones. Geometry only — no animation, no transition, no
+   divider line, no content. Section 2 content and Section 3
+   blobs are untouched: the fade sits in its own strip between
+   the two sections, so it never overlaps Section 2's orbit or
+   Section 3's top blobs, which stay on black. */
+.light-dark-fade {
+  height: 80px;
+  background: linear-gradient(to bottom, #ffffff 0%, #0b0e11 100%);
+}
+@media (min-width: 640px) {
+  .light-dark-fade {
+    height: 120px;
+  }
+}
+
+/* Pink dots: centred on a lobe tip by negative margins, NOT by a
+   CSS translate. GSAP now animates only opacity/scale on dots, so
+   nothing ever fights the centring transform and the dot cannot
+   flip position mid-scroll. Dot stays 10px, #ff2d78, half in /
+   half out on its lobe tip (top/bottom offsets unchanged). */
+.blob-dot {
+  transform: none;
+  margin: -5px 0 0 -5px;
+}

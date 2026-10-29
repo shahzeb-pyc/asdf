@@ -143,6 +143,12 @@ const signin = 'https://app.fbuploadpro.com/login';
       </div>
     </section>
 
+    <!-- Light-to-dark transition: a static gradient fade zone
+         between white Section 2 and black Section 3. Geometry only,
+         no animation, no content, no divider line — it eases the
+         hard straight cut into the dark section. -->
+    <div class="light-dark-fade" aria-hidden="true"></div>
+
     <!-- Section 3: community banner. Full viewport, black, soft
          four-petaled clover blobs tucked into the corners, one pink
          dot on a lobe tip of each. No subhead, no button, no link. -->
@@ -162,7 +168,7 @@ const signin = 'https://app.fbuploadpro.com/login';
     <!-- Section 4: pricing teaser, header only. Top clover blobs
          only. No tiers, no plan names, no prices, no button. -->
     <section id="section-4" class="section-full bg-[#0b0e11]" aria-label="Pricing">
-      <div class="dark-panel relative flex flex-col items-center justify-center overflow-hidden bg-[#0b0e11] px-5 py-16 text-center sm:py-20 lg:py-24">
+      <div class="dark-panel relative flex flex-col items-center justify-start overflow-hidden bg-[#0b0e11] px-5 pt-28 pb-16 text-center sm:pt-32 sm:pb-20 lg:pt-36 lg:pb-24">
         <span class="blob-wrap blob-s4-tl" aria-hidden="true"><svg class="blob-svg" viewBox="0 0 100 100" aria-hidden="true"><g fill="#1a1a1a"><circle cx="50" cy="50" r="32"/><circle cx="50" cy="28" r="26"/><circle cx="50" cy="72" r="26"/><circle cx="28" cy="50" r="26"/><circle cx="72" cy="50" r="26"/></g></svg><span class="blob-dot blob-dot-s4"></span></span>
         <span class="blob-wrap blob-s4-tr" aria-hidden="true"><svg class="blob-svg" viewBox="0 0 100 100" aria-hidden="true"><g fill="#1a1a1a"><circle cx="50" cy="50" r="32"/><circle cx="50" cy="28" r="26"/><circle cx="50" cy="72" r="26"/><circle cx="28" cy="50" r="26"/><circle cx="72" cy="50" r="26"/></g></svg><span class="blob-dot blob-dot-s4"></span></span>
         <div class="relative z-10 flex flex-col items-center">
@@ -269,13 +275,23 @@ const signin = 'https://app.fbuploadpro.com/login';
       var heroWords = splitWords(document.querySelector('.hero-sub'));
       var s2Words = splitWords(document.querySelector('.s2-text'));
 
-      /* Hero load timeline: topbar pill drops in, headline lines
-         rise out of their masks, the gold highlight sweeps on, the
-         subhead cascades word by word, the button pops, tiles pop. */
+      /* Hero load timeline: topbar pill drops in, the gold
+         highlight sweeps on, the subhead cascades word by word,
+         the button pops, tiles pop. Headline lines are NOT in
+         this timeline (see note below) — they are fully visible
+         on first paint. */
+      /* Hero headline: deliberately NOT animated on load. The old
+         mask-rise (.from yPercent 110 inside an overflow-hidden
+         mask) meant that at first paint / mid-load the headline
+         was literally half inside its own mask — top halves
+         visible, lower half covered, yellow line below. With no
+         load tween on these lines, the headline renders complete
+         on first paint and can never be half-clipped by its mask,
+         on load, reload, or at rest. The highlight sweep below
+         still animates, over an already-full gold base. */
       var heroTl = gsap.timeline({ defaults: { ease: 'power3.out' } });
       heroTl
         .from('#site-topbar .topbar-pill', { y: -16, opacity: 0, duration: 0.8, clearProps: 'transform,opacity' }, 0)
-        .from('.hero-copy .reveal-line', { yPercent: 110, duration: 0.9, stagger: 0.12, clearProps: 'transform' }, 0.1)
         .fromTo('.hero-highlight', { backgroundSize: '0% 100%' }, { backgroundSize: '100% 100%', duration: 0.8, ease: 'power2.out' }, 0.9)
         .from(heroWords, { yPercent: 110, duration: 0.7, stagger: 0.03, clearProps: 'transform' }, 0.7)
         .from('.hero-cta', { y: 16, scale: 0.96, opacity: 0, duration: 0.8, ease: 'back.out(1.2)', clearProps: 'transform,opacity' }, 1.0)
@@ -336,8 +352,8 @@ const signin = 'https://app.fbuploadpro.com/login';
       })
         .from('#section-3 .reveal-line', { yPercent: 110, duration: 0.9, stagger: 0.12 })
         .fromTo('#section-3 .community-highlight', { backgroundSize: '0% 100%' }, { backgroundSize: '100% 100%', duration: 0.8, ease: 'power2.out' }, '-=0.3')
-        .from('#section-3 .blob-wrap', { scale: 0.7, rotation: -12, opacity: 0, duration: 0.8, stagger: 0.1, ease: 'back.out(1.2)', transformOrigin: '50% 50%' }, '-=0.5')
-        .from('#section-3 .blob-dot', { opacity: 0, xPercent: -50, yPercent: -50, duration: 0.7, stagger: 0.1 }, '-=0.4');
+        .from('#section-3 .blob-wrap', { scale: 0.7, opacity: 0, duration: 0.8, stagger: 0.1, ease: 'back.out(1.2)', transformOrigin: '50% 50%', clearProps: 'transform' }, '-=0.5')
+        .from('#section-3 .blob-dot', { opacity: 0, duration: 0.7, stagger: 0.1 }, '-=0.4');
 
       /* Section 4 reveal, SCRUBBED (same forward/backward rule:
          top 90% -> top 45%, no stepped replay). The pill
@@ -353,7 +369,7 @@ const signin = 'https://app.fbuploadpro.com/login';
         .from('#section-4 .blob-wrap', { scale: 0.7, y: -20, opacity: 0, duration: 0.8, stagger: 0.1, ease: 'back.out(1.2)', transformOrigin: '50% 50%' }, '-=0.5');
 
       /* Pink dots: a gentle slow pulse, never flashing. */
-      gsap.to('.blob-dot', { scale: 1.25, xPercent: -50, yPercent: -50, duration: 1.8, ease: 'sine.inOut', yoyo: true, repeat: -1, delay: 3, transformOrigin: '50% 50%' });
+      gsap.to('.blob-dot', { scale: 1.25, duration: 1.8, ease: 'sine.inOut', yoyo: true, repeat: -1, delay: 3, transformOrigin: '50% 50%' });
 
       /* Scroll parallax, scrubbed, so scrolling back moves
          everything back along the same path. Applied to parent
@@ -364,8 +380,8 @@ const signin = 'https://app.fbuploadpro.com/login';
       gsap.to('.iso-stage, .mob-grid', { y: 30, ease: 'none', scrollTrigger: { trigger: '#section-1', start: 'top top', end: 'bottom top', scrub: 1 } });
       gsap.to('.s2-grid > div:first-child', { y: -25, ease: 'none', scrollTrigger: { trigger: '#section-2', start: 'top bottom', end: 'bottom top', scrub: 1 } });
       gsap.to('.s2-orbit', { y: 15, ease: 'none', scrollTrigger: { trigger: '#section-2', start: 'top bottom', end: 'bottom top', scrub: 1 } });
-      gsap.to('#section-3 .dark-panel', { y: -20, scale: 0.99, transformOrigin: '50% 50%', ease: 'none', scrollTrigger: { trigger: '#section-3', start: 'top bottom', end: 'bottom top', scrub: 1 } });
-      gsap.to('#section-4 .dark-panel', { y: -20, scale: 0.99, transformOrigin: '50% 50%', ease: 'none', scrollTrigger: { trigger: '#section-4', start: 'top bottom', end: 'bottom top', scrub: 1 } });
+      gsap.to('#section-3 .dark-panel', { y: -20, ease: 'none', scrollTrigger: { trigger: '#section-3', start: 'top bottom', end: 'bottom top', scrub: 1 } });
+      gsap.to('#section-4 .dark-panel', { y: -20, ease: 'none', scrollTrigger: { trigger: '#section-4', start: 'top bottom', end: 'bottom top', scrub: 1 } });
 
       window.addEventListener('load', function () { ScrollTrigger.refresh(); });
     }
