@@ -6,9 +6,12 @@
  * ONE layout, post blocks — never a single/bulk mode switcher.
  * The dialogue holds a list of post blocks in order, each with its
  * own text, its own attached media, and its own type derived from
- * its content (never picked). The list scrolls in a fixed-height
- * area, so the footer (Cancel / Add all to Queue) never moves as
- * posts are added.
+ * its content (never picked). The dialogue is a proper, tall
+ * composer (90dvh, wider on desktop); the blocks list flexes with
+ * that height and only scrolls once the dialogue's own height is
+ * the limit, so at least three full post blocks are visible at
+ * once on a normal desktop height, and the footer (Cancel / Add
+ * all to Queue) stays pinned at the bottom, never scrolled away.
  *
  * Adding posts costs no per-post click:
  *   - Bulk Post (top right) opens the Media Library picker in
@@ -579,13 +582,18 @@ export function CreatePostsDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={handleDialogOpenChange}>
-        <DialogContent data-testid="create-posts-dialog">
-          <DialogHeader>
+        <DialogContent
+          data-testid="create-posts-dialog"
+          className="flex h-[90dvh] max-h-[90dvh] flex-col gap-3 sm:max-w-2xl lg:max-w-3xl"
+        >
+          {/* contents: the sr-only title must not take a flex row
+              (and its gap) in this column layout. */}
+          <DialogHeader className="contents">
             <DialogTitle className="sr-only">Create posts</DialogTitle>
           </DialogHeader>
 
           {/* Identity row + top-right bulk actions */}
-          <div className="flex items-start justify-between gap-2">
+          <div className="flex shrink-0 items-start justify-between gap-2">
             <div className="flex min-w-0 items-center gap-2.5">
               {page.profilePictureUrl &&
               failedAvatarUrl !== page.profilePictureUrl ? (
@@ -641,12 +649,14 @@ export function CreatePostsDialog({
           </div>
 
           {statusGate.message ? (
-            <p className="text-body text-ink-sub">{statusGate.message}</p>
+            <p className="shrink-0 text-body text-ink-sub">{statusGate.message}</p>
           ) : null}
 
-          {/* Blocks list: fixed height, internal scroll — the footer
-              below never moves, however many posts are added. */}
-          <div className="flex h-80 flex-col gap-2.5 overflow-y-auto pr-1">
+          {/* Blocks list: flexes with the dialogue height, internal
+              scroll only once the dialogue's own height is the
+              limit — the footer below stays pinned, however many
+              posts are added. */}
+          <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1">
             {blocks.map((block, index) => {
               const isLast = index === blocks.length - 1;
               const isDraft = isLast && isBlockEmpty(block);
@@ -670,7 +680,7 @@ export function CreatePostsDialog({
             })}
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="shrink-0">
             <Button
               type="button"
               variant="secondary"
@@ -693,7 +703,7 @@ export function CreatePostsDialog({
                   : `Add all to Queue (${readyBlocks.length} post${readyBlocks.length === 1 ? '' : 's'})`}
             </Button>
           </DialogFooter>
-          <p className="text-metadata text-ink-sub">
+          <p className="shrink-0 text-metadata text-ink-sub">
             Goes out at your next posting time.
           </p>
         </DialogContent>

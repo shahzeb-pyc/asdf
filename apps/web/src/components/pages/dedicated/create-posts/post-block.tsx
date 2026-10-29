@@ -73,7 +73,7 @@ export function PostBlock({
   return (
     <div
       data-testid="create-posts-block"
-      className="rounded-md border border-line bg-canvas p-3"
+      className="shrink-0 rounded-md border border-line bg-canvas p-3"
     >
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="text-body font-semibold text-ink">{label}</span>
@@ -106,7 +106,7 @@ export function PostBlock({
         value={block.text}
         disabled={disabled}
         onChange={(event) => onTextChange(event.target.value)}
-        className="min-h-16 border-0 bg-transparent px-0 py-0 focus-visible:border-0"
+        className="min-h-20 border-0 bg-transparent px-0 py-0 focus-visible:border-0"
       />
 
       <div className="mt-1 flex items-center justify-between gap-2">
@@ -137,9 +137,9 @@ export function PostBlock({
             <Image
               src={block.media.thumbnailUrl}
               alt={block.media.name}
-              width={56}
-              height={56}
-              className="size-14 shrink-0 rounded-sm object-cover"
+              width={64}
+              height={64}
+              className="size-16 shrink-0 rounded-sm object-cover"
             />
           ) : null}
           <span className="min-w-0 flex-1">
