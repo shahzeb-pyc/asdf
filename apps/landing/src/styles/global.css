@@ -19,9 +19,9 @@
 
   html {
     background-color: #ffffff;
-    /* NO snap: scrolling is free. Lenis owns smoothness (see
-       index.astro); CSS scroll-behavior stays auto so it never
-       double-smooths Lenis's per-frame scroll positions. */
+    /* Free scrolling: the page never forces a section into view,
+       and CSS smoothing stays off so it never double-smooths the
+       per-frame positions Lenis writes. */
     scroll-snap-type: none;
     scroll-behavior: auto;
     /* Fixed-topbar offset for anchor landings. */
@@ -48,187 +48,73 @@
   }
 }
 
-/* ---- Full-screen sections, FREE scrolling (no snap, no stepping) ----
-   Every section still fills a viewport (100vh, 100dvh where
-   supported) and sections are direct siblings, full width, so
-   white section 2 touches black section 3 directly and black 3
-   touches black 4 directly — but nothing snaps the page to a
-   section on scroll stop and nothing steps one section per
-   gesture. The user scrolls freely, at their own speed, through
-   as many sections as they want. min-height, never fixed height,
-   so a section grows if its content ever exceeds the viewport
-   instead of clipping. */
-.snap-section {
+/* Every section fills a viewport at minimum (100dvh where
+   supported), and grows instead of clipping if its content is ever
+   taller. Sections are direct siblings, full width, so white
+   section 2 meets black section 3 with zero gap, and 3 meets 4 the
+   same way. */
+.section-full {
   min-height: 100vh;
 }
 @supports (height: 100dvh) {
-  .snap-section {
+  .section-full {
     min-height: 100dvh;
   }
 }
 
-/* ---- Fixed topbar: hides on scroll down, shows on scroll up ----
-   Fixed to the viewport, centred by left:50% + translateX(-50%).
-   The pill itself is opaque white with a strong dark shadow, so it
-   stays legible over white sections AND black sections — it is never
-   transparent over dark. .topbar-hidden (added by the inline script)
-   slides it up out of view with a 300ms ease transition; at scrollY
-   = 0 the script always removes the class. Width caps at the viewport
-   minus 16px so the pill never overflows a 320px phone. */
+/* Fixed topbar: centred by flex, not by a translate, so GSAP can
+   animate its vertical position freely. The pill is opaque white
+   with a strong dark shadow, legible over white and black sections
+   alike. Width caps at the viewport minus 16px so it never
+   overflows a 320px phone. */
 .topbar-fixed {
   position: fixed;
   top: 12px;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 0;
+  right: 0;
   z-index: 50;
-  width: max-content;
-  max-width: calc(100vw - 16px);
-  transition: transform 0.3s ease, opacity 0.3s ease;
-}
-.topbar-fixed.topbar-hidden {
-  transform: translate(-50%, -140%);
-  opacity: 0;
+  display: flex;
+  justify-content: center;
+  padding: 0 8px;
   pointer-events: none;
 }
 .topbar-pill {
+  pointer-events: auto;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
-/* ---- Section arrival: GSAP ScrollTrigger (see index.astro) ----
-   Deliberately NO pre-hidden state in CSS: GSAP uses from-tweens only,
-   so if the GSAP bundle fails, every section is fully visible and the
-   page still scrolls natively, with no snap forcing. The old .js-snap
-   / IntersectionObserver arrival is gone. */
-
-/* ---- Section 2 top clearance for the fixed topbar ----
-   The pill occupies the top ~66px (12px offset + ~54px pill); section 2
-   is vertically centred, so this padding only guarantees its content
-   never slides under the pill on short viewports. */
-.section2-full {
-  padding-top: 84px;
-  padding-bottom: 32px;
+/* Clip-mask headline reveals. Each reveal line sits inside an
+   overflow-hidden mask with a small padding/margin cancel, so
+   descenders never clip mid-rise. Word masks are inline-block so
+   words still wrap at spaces. There is deliberately no pre-hidden
+   state here: GSAP uses from-tweens only, so if the motion module
+   fails, every line is fully visible and the page scrolls natively. */
+.reveal-mask {
+  display: block;
+  overflow: hidden;
+  padding-bottom: 0.14em;
+  margin-bottom: -0.14em;
+}
+.reveal-line {
+  display: block;
+  will-change: transform;
+}
+.word-mask {
+  display: inline-block;
+  overflow: hidden;
+  padding-bottom: 0.12em;
+  margin-bottom: -0.12em;
+  vertical-align: bottom;
+}
+.word-inner {
+  display: inline-block;
+  will-change: transform;
 }
 
-/* ---- Short-viewport fit: hero ----
-   At <=620px viewport height the hero shrinks (smaller headline and
-   subhead, smaller mobile tiles, tighter gaps) so it still fits one
-   screen at 320x568 without hiding anything. */
-@media (max-height: 620px) {
-  .snap-hero {
-    padding-top: 76px;
-    padding-bottom: 16px;
-  }
-  .snap-hero h1 {
-    font-size: 34px;
-  }
-  .hero-sub {
-    font-size: 14px;
-  }
-  .mob-grid {
-    margin-top: 24px;
-    gap: 8px;
-  }
-  .snap-hero .grid-cols-3 > span {
-    width: 60px;
-    height: 60px;
-  }
-  .snap-hero .grid-cols-3 > span > span:first-child {
-    width: 44px;
-    height: 44px;
-  }
-  .snap-hero .grid-cols-3 > span > svg {
-    width: 22px;
-    height: 22px;
-  }
-}
-
-/* ---- Short desktop viewport: smaller perspective stage ---- */
-@media (min-width: 1024px) and (max-height: 760px) {
-  .iso-stage {
-    height: 220px;
-  }
-}
-
-/* ---- Phone fit: section 2 stacked layout ----
-   Phones stack text + orbit, which is the tallest layout on the page.
-   Below 768px the orbit, centre, badges, heading and text shrink so
-   the stacked section still fits one screen at 667px height, and
-   further at 568px — without removing or hiding any copy, badge, or
-   platform. Above 768px the desktop two-column layout is untouched. */
-@media (max-width: 767px) {
-  .s2-grid {
-    gap: 24px;
-  }
-  .s2-heading {
-    font-size: 28px;
-  }
-  .s2-text {
-    font-size: 14px;
-  }
-  .s2-orbit {
-    width: 200px;
-    height: 200px;
-  }
-  .s2-centre {
-    width: 120px;
-    height: 120px;
-  }
-  .s2-centre svg {
-    width: 72px;
-  }
-  .s2-badge {
-    width: 44px;
-    height: 44px;
-  }
-  .s2-badge svg {
-    width: 22px;
-    height: 22px;
-  }
-}
-@media (max-width: 767px) and (max-height: 620px) {
-  .section2-full {
-    padding-top: 76px;
-    padding-bottom: 16px;
-  }
-  .s2-grid {
-    gap: 16px;
-  }
-  .s2-heading {
-    font-size: 26px;
-  }
-  .s2-text {
-    margin-bottom: 16px;
-  }
-  .s2-orbit {
-    width: 160px;
-    height: 160px;
-  }
-  .s2-centre {
-    width: 100px;
-    height: 100px;
-  }
-  .s2-centre svg {
-    width: 60px;
-  }
-  .s2-badge {
-    width: 40px;
-    height: 40px;
-  }
-}
-
-/* ---- Headline gold marker: rounded ends, marker-style padding ----
-   Sweep on load: the gold background itself grows left-to-right
-   (background-size 0% -> 100%) over 0.7s ease-out after a 0.1s delay,
-   then stays exactly as before. Base state is full gold, so if the
-   animation fails or is disabled the highlight is simply there. */
-@keyframes highlight-sweep {
-  from {
-    background-size: 0% 100%;
-  }
-  to {
-    background-size: 100% 100%;
-  }
-}
+/* Gold highlights. Base state is full gold, so if the sweep
+   animation never runs the highlight is simply there. The hero and
+   community highlights sweep on via GSAP background-size; the
+   section 2 word stays static gold. */
 .hero-highlight {
   background-color: #f0b90b;
   background-image: linear-gradient(#f0b90b, #f0b90b);
@@ -237,17 +123,7 @@
   color: #111111;
   border-radius: 12px;
   padding: 0.08em 0.15em;
-  animation: highlight-sweep 0.7s ease-out 0.1s backwards;
 }
-
-/* ---- Section 2 heading highlight: single word, STATIC ----
-   Only the word "manages" is gold in the section 2 heading (the
-   earlier two gold bars for "it manages" / "FBUploadPro" are gone).
-   The gold itself is an INLINE-BLOCK (not inline), so its line box
-   grows to contain its padding instead of overflowing into the
-   next line, and each heading line is its own block with a small
-   mt gap, so no line overlaps or clips another. No sweep animation
-   here — static gold. .hero-highlight is untouched. */
 .section-highlight {
   display: inline-block;
   background-color: #f0b90b;
@@ -255,51 +131,28 @@
   border-radius: 12px;
   padding: 0.08em 0.15em;
 }
-
-/* ---- Section 2 as a full page on its own ----
-   Section 2 is not a short block under the hero: it gets a
-   viewport-height min-height (vh fallback, dvh where supported,
-   same pattern as .page-shell) and its content is vertically
-   centred inside that height, so when a visitor scrolls to
-   section 2, section 2 fills the whole viewport and the hero has
-   scrolled completely out of view. min-height, never fixed height,
-   so it grows if content ever exceeds the viewport — nothing clips.
-   Section 2 stays inside the same white card; no separate card,
-   no grey gap, card outer margins unchanged. */
-.section2-full {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-}
-@supports (height: 100dvh) {
-  .section2-full {
-    min-height: 100dvh;
-  }
+.community-highlight {
+  display: inline-block;
+  background-color: #f0b90b;
+  background-image: linear-gradient(#f0b90b, #f0b90b);
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  color: #111111;
+  border-radius: 6px;
+  padding: 0.02em 0.12em;
 }
 
-/* ---- Hero entrance: GSAP timeline (see index.astro) ----
-   The old CSS hero-rise animation is gone — GSAP owns the hero fade +
-   rise now, so there is exactly one entrance animation, not two
-   fighting over the same transform. The gold highlight sweep below
-   stays CSS (it animates background-size, not the headline itself). */
-
-
-/* ---- Isometric platform tiles ----
-   Logos: Simple Icons v16.36.0 (CC0), paths copied faithfully from
-   package/icons/{facebook,instagram,threads,tiktok,youtube,x}.svg.
-   Tile: diamond via rotateX(58deg) rotateZ(-45deg). Logo: a SEPARATE
-   layer, a sibling of the tile (NOT a child of it), absolutely centred
-   over the tile with transform translate(-50%,-50%) only — no rotate,
-   no rotateX — so it renders upright and undistorted on top of the
-   diamond. The old counter-rotation approach is gone: a child of a
-   3D-tilted tile still inherits the tile's flattening. Bobbing is
-   translateY only, on the outer wrapper, so it never tilts or
-   flattens anything. */
+/* Isometric platform tiles (desktop). Tile: a diamond via
+   rotateX(58deg) rotateZ(-45deg). Logo: a separate layer, a
+   sibling of the tile, absolutely centred over it with
+   translate(-50%, -50%) only — no tilt — so it renders upright
+   and undistorted on top of the diamond. Logos: Simple Icons
+   paths, copied faithfully from the previous page. */
 .iso-tile {
   transform: rotateX(58deg) rotateZ(-45deg);
   box-shadow: 0 18px 32px rgba(17, 17, 17, 0.14);
 }
-.iso-logo-flat {
+.iso-logo {
   position: absolute;
   left: 50%;
   top: 50%;
@@ -308,131 +161,50 @@
   flex-shrink: 0;
   filter: drop-shadow(0 2px 4px rgba(17, 17, 17, 0.15));
 }
-@keyframes iso-bob {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-5px);
-  }
-}
-.iso-bob {
-  animation: iso-bob 5s ease-in-out infinite;
-}
-.iso-bob-a {
-  animation-duration: 5s;
-  animation-delay: 0s;
-}
-.iso-bob-b {
-  animation-duration: 5.5s;
-  animation-delay: 0.9s;
-}
-.iso-bob-c {
-  animation-duration: 4.5s;
-  animation-delay: 1.7s;
+
+/* Section 2 orbit badges. Positioned by percentage left/top with
+   a centring translate; GSAP reads that translate as a percentage
+   offset, so badge pops and the ring revolution keep the badges
+   centred on their orbit points at every size. */
+.orbit-badge {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: translate(-50%, -50%);
+  border-radius: 9999px;
+  border: 1px solid #e9ebef;
+  background-color: #ffffff;
+  box-shadow: 0 0 0 6px rgba(255, 255, 255, 1), 0 14px 28px rgba(17, 17, 17, 0.16);
 }
 
-/* ---- Mobile diamond-grid float: same gentle translateY-only float,
-   same stagger principle (a/b/c phases), amplitude 5px, slow
-   4.5–5.5s, so phones float too without any horizontal overflow.
-   Applied to the tile wrapper only; the grid's entrance animation
-   lives on the grid container, so the two never conflict. */
-.mob-float {
-  animation: iso-bob 5s ease-in-out infinite;
-}
-.mob-float-a {
-  animation-duration: 5s;
-  animation-delay: 0s;
-}
-.mob-float-b {
-  animation-duration: 5.5s;
-  animation-delay: 0.9s;
-}
-.mob-float-c {
-  animation-duration: 4.5s;
-  animation-delay: 1.7s;
-}
-
-/* ---- Section 2 orbit revolution: platforms revolve, logos stay upright ----
-   .orbit-spin rotates the whole badge ring slowly (24s per revolution,
-   linear, professional not frantic) around the orbit centre. Each badge
-   logo sits in an .orbit-counter span that rotates the same 24s in the
-   opposite direction, so the logo's net rotation is zero and it stays
-   upright and readable at every point of the revolution. The centre
-   Muse logo is OUTSIDE the spinner and never rotates. The rings are
-   static. Base state (animation off) is the even 6-badge spacing, so
-   reduced-motion users see the badges at their static positions. */
-@keyframes orbit-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-.orbit-spin {
-  animation: orbit-spin 24s linear infinite;
-}
-@keyframes orbit-counter {
-  to {
-    transform: rotate(-360deg);
-  }
-}
-.orbit-counter {
-  animation: orbit-counter 24s linear infinite;
-}
-
-/* ---- Sections 3/4: full-bleed, no separator ----
-   .community-card / .pricing-card used to be rounded cards inset by
-   the page margins; they are now the section itself, full width and
-   full viewport height, so section 2 (white) meets section 3 (black)
-   with zero gap and zero page-background strip, and 3 meets 4 the
-   same way. The old calc(100vh - 16px/32px) inset heights are gone. */
-.community-card,
-.pricing-card {
+/* Dark panels (sections 3 and 4): the panel is the section, full
+   width and full viewport height, content centred inside it. */
+.dark-panel {
   min-height: 100vh;
   width: 100%;
 }
 @supports (height: 100dvh) {
-  .community-card,
-  .pricing-card {
+  .dark-panel {
     min-height: 100dvh;
   }
 }
 
-/* ---- Section 3 community banner: black card, corner blobs ----
-   Modelled on the reference screenshot's layout only (black card,
-   white bold centred heading, gold number highlight, dark corner
-   blobs each with one small pink dot). The blobs are pure
-   decoration: they sit tucked into the four corners, clipped by
-   the card's overflow-hidden, and the heading sits above them
-   (z-index) so they never cover text. Static — no animation.
-   Section 3 is a FULL section like section 2, not a short strip:
-   .section3-full gets a viewport-height min-height (vh fallback,
-   dvh where supported, same pattern as .section2-full) and its
-   card is vertically centred inside that height, so section 2
-   scrolls completely out of view. The black card itself fills
-   that height minus the page's outer margins (16px total on
-   phones, 32px on desktop — same calc pattern as .hero-card),
-   and its heading is vertically centred inside it. min-height,
-   never fixed height, so everything grows if content is taller. */
-.section3-full {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-}
-@supports (height: 100dvh) {
-  .section3-full {
-    min-height: 100dvh;
-  }
-}
-.community-highlight {
-  display: inline-block;
-  background-color: #f0b90b;
-  color: #111111;
-  border-radius: 6px;
-  padding: 0.02em 0.12em;
-}
+/* Clover corner blobs. One inline SVG per corner, built from five
+   overlapping circles of the same #1a1a1a fill — a central circle
+   (r=32 at 50,50) plus one lobe circle (r=26) at each cardinal
+   point, centres 22 from the middle (50,28 / 50,72 / 28,50 /
+   72,50). The union outline has lobe tips at radius 48 and
+   diagonal valleys at radius ~36.4, i.e. valleys at 75% or more of
+   lobe radius — shallow, gentle waves, roughly round overall,
+   never a cross or pointed star. Pink dots sit on a lobe tip edge,
+   straddling the outline (centre exactly on the tip, half in and
+   half out), never buried inside the blob: top blobs on their
+   bottom lobe tip, bottom blobs on their top lobe tip, section 4
+   top blobs on their visible bottom lobe tip. */
 .blob-wrap {
   position: absolute;
+  z-index: 1;
   width: 96px;
   height: 96px;
   pointer-events: none;
@@ -448,19 +220,6 @@
   width: 100%;
   height: 100%;
 }
-/* Soft clover blob: one inline SVG per corner, built from five
-   overlapping circles of the same #1a1a1a fill — a central circle
-   (r=32 at 50,50) plus one lobe circle (r=26) at each cardinal
-   point, centres 22 from the middle (50,28 / 50,72 / 28,50 /
-   72,50). The union outline has lobe tips at radius 48 and
-   diagonal valleys at radius ~36.4, i.e. valley >= 75% of lobe
-   radius — shallow, gentle waves, roughly round overall, never a
-   cross/star/plus. The previous deep-valley shape (valleys
-   only 44% of lobe radius) is gone. Pink dots sit ON a lobe tip
-   edge, straddling the outline (centre exactly on the tip, half
-   in / half out), never buried inside the blob: top blobs on
-   their bottom lobe tip, bottom blobs on their top lobe tip,
-   section 4 top blobs on their visible bottom lobe tip. */
 .blob-tl {
   top: 12px;
   left: 12px;
@@ -491,130 +250,123 @@
   height: 10px;
   border-radius: 9999px;
   background-color: #ff2d78;
-}
-.blob-dot-tl {
-  top: 98%;
-  left: 50%;
   transform: translate(-50%, -50%);
 }
-.blob-dot-tr {
-  top: 98%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-}
-.blob-dot-bl {
-  top: 2%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-}
-.blob-dot-br {
-  top: 2%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-}
+.blob-dot-tl,
+.blob-dot-tr,
 .blob-dot-s4 {
   top: 98%;
   left: 50%;
-  transform: translate(-50%, -50%);
+}
+.blob-dot-bl,
+.blob-dot-br {
+  top: 2%;
+  left: 50%;
 }
 
-/* ---- Section 4 pricing header: same full-section pattern as section 3 ----
-   .section4-full fills its own viewport (vh fallback, dvh where
-   supported) and .pricing-card fills that height minus the page's
-   outer margins (16px total on phones, 32px on desktop), with its
-   content vertically centred inside it. Corner blobs are reused
-   from section 3 (top-left and top-right only, no dots). min-height,
-   never fixed height, so everything grows if content is taller. */
-.section4-full {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-}
-@supports (height: 100dvh) {
-  .section4-full {
-    min-height: 100dvh;
+/* Short-viewport fit: hero. At 620px viewport height or less the
+   hero shrinks (smaller headline and subhead, smaller mobile
+   tiles, tighter gaps) so it still fits one screen at 320x568
+   without hiding anything. */
+@media (max-height: 620px) {
+  .hero {
+    padding-top: 76px;
+    padding-bottom: 16px;
   }
-}
-
-/* ---- Reduced motion: everything instant and still ----
-   With animation: none, every element falls back to its base state:
-   hero fully visible, highlight fully gold (base background-size
-   100%), tiles at rest, orbit badges at their static even positions
-   (spinner at 0deg, counter at 0deg). Nothing is ever hidden waiting
-   for an animation. */
-@media (prefers-reduced-motion: reduce) {
-  .hero-highlight,
-  .iso-bob,
-  .mob-float,
-  .orbit-spin,
-  .orbit-counter,
-  .community-card::after {
-    animation: none !important;
+  .hero h1 {
+    font-size: 34px;
   }
-  html {
-    scroll-behavior: auto;
+  .hero-sub {
+    font-size: 14px;
   }
-  .topbar-fixed {
-    transition: none;
+  .mob-grid {
+    margin-top: 24px;
+    gap: 8px;
+  }
+  .hero .grid-cols-3 > span {
+    width: 60px;
+    height: 60px;
+  }
+  .hero .grid-cols-3 > span > span:first-child {
+    width: 44px;
+    height: 44px;
+  }
+  .hero .grid-cols-3 > span > svg {
+    width: 22px;
+    height: 22px;
   }
 }
 
-/* ---- Full GSAP animation: clip masks, GSAP-owned motion, glow ----
-   Masks: each reveal line sits inside an overflow:hidden mask with a
-   small padding/margin cancel, so descenders never clip mid-rise.
-   Word masks are inline-block so words still wrap at spaces.
-   .gsap-anim (added by the GSAP module only) switches the CSS
-   animations GSAP now owns OFF — CSS float/spin/sweep and GSAP
-   must never fight over the same transform. If GSAP fails, the
-   class is never added and every CSS animation + full visibility
-   remains, exactly as before. */
-.hero-mask, .s2-mask, .s3-mask, .s4-mask {
-  display: block;
-  overflow: hidden;
-  padding-bottom: 0.14em;
-  margin-bottom: -0.14em;
+/* Short desktop viewport: smaller perspective stage. */
+@media (min-width: 1024px) and (max-height: 760px) {
+  .iso-stage {
+    height: 220px;
+  }
 }
-.hero-line, .s2-line, .s3-line, .s4-line {
-  display: block;
-  will-change: transform;
+
+/* Phone fit: section 2 stacked layout. Phones stack text plus
+   orbit, the tallest layout on the page. Below 768px the orbit,
+   centre, badges, heading and text shrink so the stacked section
+   still fits one screen at 667px height, and further at 568px —
+   without removing or hiding any copy, badge, or platform. Above
+   768px the desktop two-column layout is untouched. */
+@media (max-width: 767px) {
+  .s2-grid {
+    gap: 24px;
+  }
+  .s2-heading {
+    font-size: 28px;
+  }
+  .s2-text {
+    font-size: 14px;
+  }
+  .s2-orbit {
+    width: 200px;
+    height: 200px;
+  }
+  .s2-centre {
+    width: 120px;
+    height: 120px;
+  }
+  .s2-centre svg {
+    width: 72px;
+  }
+  .orbit-badge {
+    width: 44px;
+    height: 44px;
+  }
+  .orbit-badge svg {
+    width: 22px;
+    height: 22px;
+  }
 }
-.word-mask {
-  display: inline-block;
-  overflow: hidden;
-  padding-bottom: 0.12em;
-  margin-bottom: -0.12em;
-  vertical-align: bottom;
-}
-.word-inner {
-  display: inline-block;
-  will-change: transform;
-}
-.gsap-anim .hero-highlight {
-  animation: none;
-}
-.gsap-anim .iso-bob,
-.gsap-anim .mob-float,
-.gsap-anim .orbit-spin,
-.gsap-anim .orbit-counter {
-  animation: none;
-}
-/* Section 3 glow: a pseudo-element only (no new DOM element), radial
-   gold at 10% opacity behind the heading, opacity pulse only, slow.
-   Blobs sit above it (z-index 1), heading above both (z-10). */
-.community-card::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  background: radial-gradient(ellipse at center, rgba(240, 185, 11, 0.10), transparent 62%);
-  opacity: 0;
-  animation: glowPulse 6s ease-in-out infinite;
-  pointer-events: none;
-}
-.blob-wrap {
-  z-index: 1;
-}
-@keyframes glowPulse {
-  0%, 100% { opacity: 0; }
-  50% { opacity: 1; }
+@media (max-width: 767px) and (max-height: 620px) {
+  #section-2 {
+    padding-top: 76px;
+    padding-bottom: 16px;
+  }
+  .s2-grid {
+    gap: 16px;
+  }
+  .s2-heading {
+    font-size: 26px;
+  }
+  .s2-text {
+    margin-bottom: 16px;
+  }
+  .s2-orbit {
+    width: 160px;
+    height: 160px;
+  }
+  .s2-centre {
+    width: 100px;
+    height: 100px;
+  }
+  .s2-centre svg {
+    width: 60px;
+  }
+  .orbit-badge {
+    width: 40px;
+    height: 40px;
+  }
 }

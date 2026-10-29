@@ -9,489 +9,358 @@ const signin = 'https://app.fbuploadpro.com/login';
   title="FBUploadPro — Your Accounts, posting themselves — 100% in the cloud"
   description="Schedule posts across Facebook, Instagram, TikTok, YouTube, Threads, and X — they go live while you sleep, even when your laptop is closed."
 >
-  <div class="snap-page">
-    {/* ===== TOPBAR — fixed pill, hides on scroll down, shows on scroll up =====
-        Fixed to the viewport (not inside any section), opaque white pill
-        with a strong shadow so it stays legible over white AND black
-        sections. Hide/show is driven by the small inline script at the
-        bottom of this page (scroll listener + threshold + translateY). */}
-    <header id="site-topbar" class="topbar-fixed">
-      <div class="topbar-pill mx-auto flex w-fit max-w-full items-center gap-6 rounded-full border border-line bg-white px-3 py-1.5 sm:px-5 lg:gap-12">
-          <a href="#" class="inline-flex min-h-10 shrink-0 items-center gap-2 text-sm font-bold tracking-tight no-underline sm:text-base" aria-label="FBUploadPro home">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="32" height="32" fill="none" role="img" aria-label="FBUploadPro" class="h-6 w-6 shrink-0 sm:h-7 sm:w-7"><path d="M24 11L12 23L17 28L20 25V51L28 45V23H45L53 15H28L24 11Z" fill="#fcd535" /><path d="M24 11L12 23L13.2 24.2L24 13.4L28 17.4H50.6L53 15H28L24 11Z" fill="#ffffff" fill-opacity="0.35" /><path d="M32 30H48L40 38H32V30Z" fill="#f0b90b" /><path d="M32 43H41L35 49H32V43Z" fill="#766018" /></svg><span>FBUploadPro</span>
+  <!-- Topbar: fixed pill, always legible over light and dark sections. -->
+  <header id="site-topbar" class="topbar-fixed">
+    <div class="topbar-pill mx-auto flex w-fit max-w-full items-center gap-6 rounded-full border border-line bg-white px-3 py-1.5 sm:px-5 lg:gap-12">
+      <a href="#" class="inline-flex min-h-10 shrink-0 items-center gap-2 text-sm font-bold tracking-tight no-underline sm:text-base" aria-label="FBUploadPro home">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="32" height="32" fill="none" role="img" aria-label="FBUploadPro" class="h-6 w-6 shrink-0 sm:h-7 sm:w-7"><path d="M24 11L12 23L17 28L20 25V51L28 45V23H45L53 15H28L24 11Z" fill="#fcd535" /><path d="M24 11L12 23L13.2 24.2L24 13.4L28 17.4H50.6L53 15H28L24 11Z" fill="#ffffff" fill-opacity="0.35" /><path d="M32 30H48L40 38H32V30Z" fill="#f0b90b" /><path d="M32 43H41L35 49H32V43Z" fill="#766018" /></svg><span>FBUploadPro</span>
+      </a>
+      <nav class="hidden items-center gap-7 lg:flex" aria-label="Main">
+        <a href="#" class="inline-flex min-h-10 items-center text-base font-medium text-ink-sub no-underline hover:text-ink">Features</a>
+        <a href="#" class="inline-flex min-h-10 items-center text-base font-medium text-ink-sub no-underline hover:text-ink">How it works</a>
+        <a href="#" class="inline-flex min-h-10 items-center text-base font-medium text-ink-sub no-underline hover:text-ink">Platforms</a>
+      </nav>
+      <div class="flex shrink-0 items-center gap-2 sm:gap-4">
+        <a href={signin} class="hidden min-h-10 items-center text-sm font-medium no-underline min-[375px]:inline-flex sm:text-base">Sign in</a>
+        <a href={signup} class="inline-flex min-h-10 items-center rounded-full bg-ink px-3 text-sm font-semibold text-white no-underline sm:px-4 sm:text-base">Get started</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- Section 1: hero. -->
+    <section id="section-1" class="section-full hero relative flex flex-col justify-center overflow-hidden bg-white px-5 pt-24 pb-10 text-center sm:pt-28" aria-label="Hero">
+      <div class="hero-copy">
+        <h1 class="mx-auto mb-6 max-w-4xl text-[40px] leading-[1.05] font-bold tracking-tight sm:text-5xl md:text-[64px] lg:text-[72px]">
+          <span class="reveal-mask"><span class="reveal-line">Your Accounts, posting <span class="whitespace-nowrap">themselves —</span></span></span>
+          <span class="reveal-mask mt-1"><span class="reveal-line"><span class="hero-highlight inline-block">100% in the cloud</span></span></span>
+        </h1>
+        <p class="hero-sub mx-auto mb-8 max-w-2xl text-base leading-relaxed text-ink-sub sm:text-lg">
+          Schedule posts across Facebook, Instagram, TikTok, YouTube, Threads, and X — they go live while you sleep, even when your <span class="whitespace-nowrap">laptop is closed.</span><br />Manage FBUploadPro using Muse or any AI agent.
+        </p>
+        <div class="hero-cta flex justify-center">
+          <a href={signup} class="inline-flex min-h-11 items-center gap-2 rounded-full bg-ink px-7 text-base font-semibold text-white no-underline">
+            Get started
+            <span aria-hidden="true">→</span>
           </a>
-          <nav class="hidden items-center gap-7 lg:flex" aria-label="Main">
-            <a href="#" class="inline-flex min-h-10 items-center text-base font-medium text-ink-sub no-underline hover:text-ink">Features</a>
-            <a href="#" class="inline-flex min-h-10 items-center text-base font-medium text-ink-sub no-underline hover:text-ink">How it works</a>
-            <a href="#" class="inline-flex min-h-10 items-center text-base font-medium text-ink-sub no-underline hover:text-ink">Platforms</a>
-          </nav>
-          <div class="flex shrink-0 items-center gap-2 sm:gap-4">
-            <a href={signin} class="hidden min-h-10 items-center text-sm font-medium no-underline min-[375px]:inline-flex sm:text-base">Sign in</a>
-            <a href={signup} class="inline-flex min-h-10 items-center rounded-full bg-ink px-3 text-sm font-semibold text-white no-underline sm:px-4 sm:text-base">Get started</a>
+        </div>
+      </div>
+
+      <!-- Mobile platform tiles: 2 rows of 3. Each tile is a small 2D
+           diamond with its logo as a separate upright layer centred
+           over it; the logo itself is never tilted. -->
+      <div class="mob-grid mx-auto mt-10 grid max-w-[280px] grid-cols-3 justify-items-center gap-3 lg:hidden" aria-hidden="true">
+        <span class="mob-tile relative block h-[72px] w-[72px]">
+          <span class="absolute left-1/2 top-1/2 h-[52px] w-[52px] -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[14px] border border-line bg-white shadow-[0_8px_20px_rgba(17,17,17,0.12)]"></span>
+          <svg class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="26" height="26" fill="#1877f2" role="img" aria-label="Facebook"><path d="M9.101 23.691v-7.98H6.627v-3.667h2.474v-1.58c0-4.085 1.848-5.978 5.858-5.978.401 0 .955.042 1.468.103a8.68 8.68 0 0 1 1.141.195v3.325a8.623 8.623 0 0 0-.653-.036 26.805 26.805 0 0 0-.733-.009c-.707 0-1.259.096-1.675.309a1.686 1.686 0 0 0-.679.622c-.258.42-.374.995-.374 1.752v1.297h3.919l-.386 2.103-.287 1.564h-3.246v8.245C19.396 23.238 24 18.179 24 12.044c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.628 3.874 10.35 9.101 11.647Z"/></svg>
+        </span>
+        <span class="mob-tile relative block h-[72px] w-[72px] translate-y-2">
+          <span class="absolute left-1/2 top-1/2 h-[52px] w-[52px] -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[14px] border border-line bg-white shadow-[0_8px_20px_rgba(17,17,17,0.12)]"></span>
+          <svg class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="26" height="26" role="img" aria-label="Instagram"><defs><linearGradient id="ig-grad-m" x1="0%" y1="100%" x2="100%" y2="0%"><stop offset="0%" stop-color="#f09433"/><stop offset="25%" stop-color="#e6683c"/><stop offset="50%" stop-color="#dc2743"/><stop offset="75%" stop-color="#cc2366"/><stop offset="100%" stop-color="#bc1888"/></linearGradient></defs><path fill="url(#ig-grad-m)" d="M7.0301.084c-1.2768.0602-2.1487.264-2.911.5634-.7888.3075-1.4575.72-2.1228 1.3877-.6652.6677-1.075 1.3368-1.3802 2.127-.2954.7638-.4956 1.6365-.552 2.914-.0564 1.2775-.0689 1.6882-.0626 4.947.0062 3.2586.0206 3.6671.0825 4.9473.061 1.2765.264 2.1482.5635 2.9107.308.7889.72 1.4573 1.388 2.1228.6679.6655 1.3365 1.0743 2.1285 1.38.7632.295 1.6361.4961 2.9134.552 1.2773.056 1.6884.069 4.9462.0627 3.2578-.0062 3.668-.0207 4.9478-.0814 1.28-.0607 2.147-.2652 2.9098-.5633.7889-.3086 1.4578-.72 2.1228-1.3881.665-.6682 1.0745-1.3378 1.3795-2.1284.2957-.7632.4966-1.636.552-2.9124.056-1.2809.0692-1.6898.063-4.948-.0063-3.2583-.021-3.6668-.0817-4.9465-.0607-1.2797-.264-2.1487-.5633-2.9117-.3084-.7889-.72-1.4568-1.3876-2.1228C21.2982 1.33 20.628.9208 19.8378.6165 19.074.321 18.2017.1197 16.9244.0645 15.6471.0093 15.236-.005 11.977.0014 8.718.0076 8.31.0215 7.0301.0839m.1402 21.6932c-1.17-.0509-1.8053-.2453-2.2287-.408-.5606-.216-.96-.4771-1.3819-.895-.422-.4178-.6811-.8186-.9-1.378-.1644-.4234-.3624-1.058-.4171-2.228-.0595-1.2645-.072-1.6442-.079-4.848-.007-3.2037.0053-3.583.0607-4.848.05-1.169.2456-1.805.408-2.2282.216-.5613.4762-.96.895-1.3816.4188-.4217.8184-.6814 1.3783-.9003.423-.1651 1.0575-.3614 2.227-.4171 1.2655-.06 1.6447-.072 4.848-.079 3.2033-.007 3.5835.005 4.8495.0608 1.169.0508 1.8053.2445 2.228.408.5608.216.96.4754 1.3816.895.4217.4194.6816.8176.9005 1.3787.1653.4217.3617 1.056.4169 2.2263.0602 1.2655.0739 1.645.0796 4.848.0058 3.203-.0055 3.5834-.061 4.848-.051 1.17-.245 1.8055-.408 2.2294-.216.5604-.4763.96-.8954 1.3814-.419.4215-.8181.6811-1.3783.9-.4224.1649-1.0577.3617-2.2262.4174-1.2656.0595-1.6448.072-4.8493.079-3.2045.007-3.5825-.006-4.848-.0608M16.953 5.5864A1.44 1.44 0 1 0 18.39 4.144a1.44 1.44 0 0 0-1.437 1.4424M5.8385 12.012c.0067 3.4032 2.7706 6.1557 6.173 6.1493 3.4026-.0065 6.157-2.7701 6.1506-6.1733-.0065-3.4032-2.771-6.1565-6.174-6.1498-3.403.0067-6.156 2.771-6.1496 6.1738M8 12.0077a4 4 0 1 1 4.008 3.9921A3.9996 3.9996 0 0 1 8 12.0077"/></svg>
+        </span>
+        <span class="mob-tile relative block h-[72px] w-[72px]">
+          <span class="absolute left-1/2 top-1/2 h-[52px] w-[52px] -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[14px] border border-line bg-white shadow-[0_8px_20px_rgba(17,17,17,0.12)]"></span>
+          <svg class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="26" height="26" fill="#000000" role="img" aria-label="Threads"><path d="M18.263 11.097c-.03-3.486-1.92-5.586-5.111-5.586-2.13 0-3.922.963-4.863 2.499l2.062 1.438c.535-.843 1.272-1.543 2.628-1.543 1.528 0 2.318.85 2.544 2.431a15 15 0 0 0-2.236-.173c-4.125 0-6.068 1.867-6.068 4.336s1.943 3.99 4.804 3.99c3.139 0 5.013-2.115 5.781-4.735.798.361 1.348 1.204 1.348 2.47 0 3.387-3.907 5.232-7.22 5.232-4.885 0-8.077-3.207-8.077-8.424 0-6.392 4.223-10.487 9.9-10.487 3.808 0 5.69 1.671 6.97 3.914l2.108-1.475C21.44 2.078 18.331 0 13.663 0 6.227 0 1.168 5.277 1.168 12.934c0 7 4.953 11.066 10.856 11.066 4.878 0 9.809-2.846 9.809-7.716 0-2.545-1.46-4.231-3.569-5.187m-6.33 4.855c-1.077 0-2.026-.512-2.026-1.453 0-1.483 1.822-1.934 3.606-1.934.678 0 1.34.045 1.927.173-.422 1.927-1.671 3.215-3.508 3.214Z"/></svg>
+        </span>
+        <span class="mob-tile relative block h-[72px] w-[72px]">
+          <span class="absolute left-1/2 top-1/2 h-[52px] w-[52px] -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[14px] border border-line bg-white shadow-[0_8px_20px_rgba(17,17,17,0.12)]"></span>
+          <svg class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="26" height="26" fill="#000000" role="img" aria-label="TikTok"><path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z"/></svg>
+        </span>
+        <span class="mob-tile relative block h-[72px] w-[72px] translate-y-2">
+          <span class="absolute left-1/2 top-1/2 h-[52px] w-[52px] -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[14px] border border-line bg-white shadow-[0_8px_20px_rgba(17,17,17,0.12)]"></span>
+          <svg class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="28" height="28" fill="#ff0000" role="img" aria-label="YouTube"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
+        </span>
+        <span class="mob-tile relative block h-[72px] w-[72px]">
+          <span class="absolute left-1/2 top-1/2 h-[52px] w-[52px] -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[14px] border border-line bg-white shadow-[0_8px_20px_rgba(17,17,17,0.12)]"></span>
+          <svg class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="26" height="26" fill="#000000" role="img" aria-label="X"><path d="M14.234 10.162 22.977 0h-2.072l-7.591 8.824L7.251 0H.258l9.168 13.343L.258 24H2.33l8.016-9.318L16.749 24h6.993zm-2.837 3.299-.929-1.329L3.076 1.56h3.182l5.965 8.532.929 1.329 7.754 11.09h-3.182z"/></svg>
+        </span>
+      </div>
+
+      <!-- Desktop platform tiles: a perspective floor of white diamond
+           tiles at varying depths. Each logo is a separate layer, a
+           sibling of its tilted tile, centred over it upright and
+           undistorted. -->
+      <div class="iso-stage pointer-events-none relative mx-auto mt-8 hidden h-[280px] max-w-[1100px] lg:block" aria-hidden="true">
+        <span class="iso-wrap absolute bottom-[84px] left-[-14px] z-[3] h-[118px] w-[118px]">
+          <span class="iso-tile absolute inset-0 rounded-[24px] border border-line bg-white"></span>
+          <svg class="iso-logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="52" height="52" fill="#1877f2" role="img" aria-label="Facebook"><path d="M9.101 23.691v-7.98H6.627v-3.667h2.474v-1.58c0-4.085 1.848-5.978 5.858-5.978.401 0 .955.042 1.468.103a8.68 8.68 0 0 1 1.141.195v3.325a8.623 8.623 0 0 0-.653-.036 26.805 26.805 0 0 0-.733-.009c-.707 0-1.259.096-1.675.309a1.686 1.686 0 0 0-.679.622c-.258.42-.374.995-.374 1.752v1.297h3.919l-.386 2.103-.287 1.564h-3.246v8.245C19.396 23.238 24 18.179 24 12.044c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.628 3.874 10.35 9.101 11.647Z"/></svg>
+        </span>
+        <span class="iso-wrap absolute bottom-[18px] left-[17%] z-[5] h-[138px] w-[138px]">
+          <span class="iso-tile absolute inset-0 rounded-[26px] border border-line bg-white"></span>
+          <svg class="iso-logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="60" height="60" role="img" aria-label="Instagram"><defs><linearGradient id="ig-grad" x1="0%" y1="100%" x2="100%" y2="0%"><stop offset="0%" stop-color="#f09433"/><stop offset="25%" stop-color="#e6683c"/><stop offset="50%" stop-color="#dc2743"/><stop offset="75%" stop-color="#cc2366"/><stop offset="100%" stop-color="#bc1888"/></linearGradient></defs><path fill="url(#ig-grad)" d="M7.0301.084c-1.2768.0602-2.1487.264-2.911.5634-.7888.3075-1.4575.72-2.1228 1.3877-.6652.6677-1.075 1.3368-1.3802 2.127-.2954.7638-.4956 1.6365-.552 2.914-.0564 1.2775-.0689 1.6882-.0626 4.947.0062 3.2586.0206 3.6671.0825 4.9473.061 1.2765.264 2.1482.5635 2.9107.308.7889.72 1.4573 1.388 2.1228.6679.6655 1.3365 1.0743 2.1285 1.38.7632.295 1.6361.4961 2.9134.552 1.2773.056 1.6884.069 4.9462.0627 3.2578-.0062 3.668-.0207 4.9478-.0814 1.28-.0607 2.147-.2652 2.9098-.5633.7889-.3086 1.4578-.72 2.1228-1.3881.665-.6682 1.0745-1.3378 1.3795-2.1284.2957-.7632.4966-1.636.552-2.9124.056-1.2809.0692-1.6898.063-4.948-.0063-3.2583-.021-3.6668-.0817-4.9465-.0607-1.2797-.264-2.1487-.5633-2.9117-.3084-.7889-.72-1.4568-1.3876-2.1228C21.2982 1.33 20.628.9208 19.8378.6165 19.074.321 18.2017.1197 16.9244.0645 15.6471.0093 15.236-.005 11.977.0014 8.718.0076 8.31.0215 7.0301.0839m.1402 21.6932c-1.17-.0509-1.8053-.2453-2.2287-.408-.5606-.216-.96-.4771-1.3819-.895-.422-.4178-.6811-.8186-.9-1.378-.1644-.4234-.3624-1.058-.4171-2.228-.0595-1.2645-.072-1.6442-.079-4.848-.007-3.2037.0053-3.583.0607-4.848.05-1.169.2456-1.805.408-2.2282.216-.5613.4762-.96.895-1.3816.4188-.4217.8184-.6814 1.3783-.9003.423-.1651 1.0575-.3614 2.227-.4171 1.2655-.06 1.6447-.072 4.848-.079 3.2033-.007 3.5835.005 4.8495.0608 1.169.0508 1.8053.2445 2.228.408.5608.216.96.4754 1.3816.895.4217.4194.6816.8176.9005 1.3787.1653.4217.3617 1.056.4169 2.2263.0602 1.2655.0739 1.645.0796 4.848.0058 3.203-.0055 3.5834-.061 4.848-.051 1.17-.245 1.8055-.408 2.2294-.216.5604-.4763.96-.8954 1.3814-.419.4215-.8181.6811-1.3783.9-.4224.1649-1.0577.3617-2.2262.4174-1.2656.0595-1.6448.072-4.8493.079-3.2045.007-3.5825-.006-4.848-.0608M16.953 5.5864A1.44 1.44 0 1 0 18.39 4.144a1.44 1.44 0 0 0-1.437 1.4424M5.8385 12.012c.0067 3.4032 2.7706 6.1557 6.173 6.1493 3.4026-.0065 6.157-2.7701 6.1506-6.1733-.0065-3.4032-2.771-6.1565-6.174-6.1498-3.403.0067-6.156 2.771-6.1496 6.1738M8 12.0077a4 4 0 1 1 4.008 3.9921A3.9996 3.9996 0 0 1 8 12.0077"/></svg>
+        </span>
+        <span class="iso-wrap absolute bottom-[118px] left-[35%] z-[2] h-[106px] w-[106px]">
+          <span class="iso-tile absolute inset-0 rounded-[22px] border border-line bg-white"></span>
+          <svg class="iso-logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="46" height="46" fill="#000000" role="img" aria-label="Threads"><path d="M18.263 11.097c-.03-3.486-1.92-5.586-5.111-5.586-2.13 0-3.922.963-4.863 2.499l2.062 1.438c.535-.843 1.272-1.543 2.628-1.543 1.528 0 2.318.85 2.544 2.431a15 15 0 0 0-2.236-.173c-4.125 0-6.068 1.867-6.068 4.336s1.943 3.99 4.804 3.99c3.139 0 5.013-2.115 5.781-4.735.798.361 1.348 1.204 1.348 2.47 0 3.387-3.907 5.232-7.22 5.232-4.885 0-8.077-3.207-8.077-8.424 0-6.392 4.223-10.487 9.9-10.487 3.808 0 5.69 1.671 6.97 3.914l2.108-1.475C21.44 2.078 18.331 0 13.663 0 6.227 0 1.168 5.277 1.168 12.934c0 7 4.953 11.066 10.856 11.066 4.878 0 9.809-2.846 9.809-7.716 0-2.545-1.46-4.231-3.569-5.187m-6.33 4.855c-1.077 0-2.026-.512-2.026-1.453 0-1.483 1.822-1.934 3.606-1.934.678 0 1.34.045 1.927.173-.422 1.927-1.671 3.215-3.508 3.214Z"/></svg>
+        </span>
+        <span class="iso-wrap absolute bottom-[28px] left-[51%] z-[4] h-[134px] w-[134px]">
+          <span class="iso-tile absolute inset-0 rounded-[26px] border border-line bg-white"></span>
+          <svg class="iso-logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="58" height="58" fill="#000000" role="img" aria-label="TikTok"><path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z"/></svg>
+        </span>
+        <span class="iso-wrap absolute bottom-[108px] left-[67%] z-[3] h-[112px] w-[112px]">
+          <span class="iso-tile absolute inset-0 rounded-[24px] border border-line bg-white"></span>
+          <svg class="iso-logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="52" height="52" fill="#ff0000" role="img" aria-label="YouTube"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
+        </span>
+        <span class="iso-wrap absolute bottom-[38px] right-[-14px] z-[5] h-[130px] w-[130px]">
+          <span class="iso-tile absolute inset-0 rounded-[26px] border border-line bg-white"></span>
+          <svg class="iso-logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="56" height="56" fill="#000000" role="img" aria-label="X"><path d="M14.234 10.162 22.977 0h-2.072l-7.591 8.824L7.251 0H.258l9.168 13.343L.258 24H2.33l8.016-9.318L16.749 24h6.993zm-2.837 3.299-.929-1.329L3.076 1.56h3.182l5.965 8.532.929 1.329 7.754 11.09h-3.182z"/></svg>
+        </span>
+      </div>
+    </section>
+
+    <!-- Section 2: how Muse manages FBUploadPro. Left headline plus
+         description, right circular orbit: thick soft white rings,
+         the Muse mark at the centre, six platform badges revolving
+         with their logos kept upright. -->
+    <section id="section-2" class="section-full relative flex items-center overflow-hidden bg-white px-5 pt-24 pb-16 sm:px-8 sm:pt-16 lg:px-12" aria-label="How Muse manages FBUploadPro">
+      <div class="s2-grid mx-auto grid w-full max-w-[1240px] items-center gap-12 lg:grid-cols-[1fr_auto] lg:justify-between lg:gap-24">
+        <div class="text-left">
+          <h2 class="s2-heading mb-6 text-[36px] leading-[1.15] font-bold tracking-tight sm:text-5xl lg:text-[56px]">
+            <span class="reveal-mask xl:whitespace-nowrap"><span class="reveal-line">Give Muse your login,</span></span>
+            <span class="reveal-mask mt-2 ml-[1em] xl:whitespace-nowrap"><span class="reveal-line">it <span class="section-highlight">manages</span> FBUploadPro</span></span>
+            <span class="reveal-mask mt-2"><span class="reveal-line">for you</span></span>
+          </h2>
+          <p class="s2-text mb-6 max-w-2xl text-base leading-relaxed text-ink-sub sm:text-lg">
+            Giving Muse direct access can put an account at risk of being restricted. Through FBUploadPro, Muse gets API access instead — not a login — so your accounts stay safe, and you can connect unlimited accounts per platform, not just one, without worrying about restriction. Muse also creates content directly in your Media Library, ready to publish — no downloading it first.
+          </p>
+        </div>
+        <div class="s2-orbit relative mx-auto h-[280px] w-[280px] shrink-0 sm:h-[400px] sm:w-[400px] lg:h-[480px] lg:w-[480px]" aria-hidden="true">
+          <span class="absolute inset-0 rounded-full border border-[#e9ebef] bg-white shadow-[0_20px_45px_rgba(17,17,17,0.12)]"></span>
+          <span class="absolute inset-[9%] rounded-full border border-[#e9ebef] bg-white shadow-[0_16px_36px_rgba(17,17,17,0.10)]"></span>
+          <span class="absolute inset-[20%] rounded-full border border-[#e9ebef] bg-white shadow-[0_12px_28px_rgba(17,17,17,0.10)]"></span>
+          <span class="s2-centre absolute left-1/2 top-1/2 flex h-[152px] w-[152px] -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-[#e9ebef] bg-white shadow-[0_20px_40px_rgba(17,17,17,0.14)] sm:h-[192px] sm:w-[192px] lg:h-[216px] lg:w-[216px]">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 68" class="h-auto w-[84px] sm:w-[96px] lg:w-[120px]" fill="none" role="img" aria-label="Muse"><defs><linearGradient id="muse-grad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#0b3dce"/><stop offset="55%" stop-color="#1a4fe0"/><stop offset="100%" stop-color="#0a6cff"/></linearGradient></defs><path d="M 6 38 C 12 16, 22 12, 30 18 C 38 24, 36 50, 44 52 C 52 54, 52 26, 60 22 C 68 18, 70 44, 78 48 C 86 52, 86 30, 94 28 C 102 26, 108 32, 114 38" stroke="url(#muse-grad)" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </span>
+          <div class="orbit-ring absolute inset-0">
+            <span class="orbit-badge h-[54px] w-[54px] sm:h-16 sm:w-16 lg:h-[72px] lg:w-[72px]" style="left: 50%; top: 8%;" aria-label="Facebook"><span class="orbit-upright flex h-full w-full items-center justify-center"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="28" height="28" class="h-7 w-7 sm:h-8 sm:w-8 lg:h-9 lg:w-9" fill="#1877f2" role="img" aria-label="Facebook"><path d="M9.101 23.691v-7.98H6.627v-3.667h2.474v-1.58c0-4.085 1.848-5.978 5.858-5.978.401 0 .955.042 1.468.103a8.68 8.68 0 0 1 1.141.195v3.325a8.623 8.623 0 0 0-.653-.036 26.805 26.805 0 0 0-.733-.009c-.707 0-1.259.096-1.675.309a1.686 1.686 0 0 0-.679.622c-.258.42-.374.995-.374 1.752v1.297h3.919l-.386 2.103-.287 1.564h-3.246v8.245C19.396 23.238 24 18.179 24 12.044c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.628 3.874 10.35 9.101 11.647Z"/></svg></span></span>
+            <span class="orbit-badge h-[54px] w-[54px] sm:h-16 sm:w-16 lg:h-[72px] lg:w-[72px]" style="left: 86.4%; top: 29%;" aria-label="Instagram"><span class="orbit-upright flex h-full w-full items-center justify-center"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="28" height="28" class="h-7 w-7 sm:h-8 sm:w-8 lg:h-9 lg:w-9" role="img" aria-label="Instagram"><defs><linearGradient id="ig-grad-s2" x1="0%" y1="100%" x2="100%" y2="0%"><stop offset="0%" stop-color="#f09433"/><stop offset="25%" stop-color="#e6683c"/><stop offset="50%" stop-color="#dc2743"/><stop offset="75%" stop-color="#cc2366"/><stop offset="100%" stop-color="#bc1888"/></linearGradient></defs><path fill="url(#ig-grad-s2)" d="M7.0301.084c-1.2768.0602-2.1487.264-2.911.5634-.7888.3075-1.4575.72-2.1228 1.3877-.6652.6677-1.075 1.3368-1.3802 2.127-.2954.7638-.4956 1.6365-.552 2.914-.0564 1.2775-.0689 1.6882-.0626 4.947.0062 3.2586.0206 3.6671.0825 4.9473.061 1.2765.264 2.1482.5635 2.9107.308.7889.72 1.4573 1.388 2.1228.6679.6655 1.3365 1.0743 2.1285 1.38.7632.295 1.6361.4961 2.9134.552 1.2773.056 1.6884.069 4.9462.0627 3.2578-.0062 3.668-.0207 4.9478-.0814 1.28-.0607 2.147-.2652 2.9098-.5633.7889-.3086 1.4578-.72 2.1228-1.3881.665-.6682 1.0745-1.3378 1.3795-2.1284.2957-.7632.4966-1.636.552-2.9124.056-1.2809.0692-1.6898.063-4.948-.0063-3.2583-.021-3.6668-.0817-4.9465-.0607-1.2797-.264-2.1487-.5633-2.9117-.3084-.7889-.72-1.4568-1.3876-2.1228C21.2982 1.33 20.628.9208 19.8378.6165 19.074.321 18.2017.1197 16.9244.0645 15.6471.0093 15.236-.005 11.977.0014 8.718.0076 8.31.0215 7.0301.0839m.1402 21.6932c-1.17-.0509-1.8053-.2453-2.2287-.408-.5606-.216-.96-.4771-1.3819-.895-.422-.4178-.6811-.8186-.9-1.378-.1644-.4234-.3624-1.058-.4171-2.228-.0595-1.2645-.072-1.6442-.079-4.848-.007-3.2037.0053-3.583.0607-4.848.05-1.169.2456-1.805.408-2.2282.216-.5613.4762-.96.895-1.3816.4188-.4217.8184-.6814 1.3783-.9003.423-.1651 1.0575-.3614 2.227-.4171 1.2655-.06 1.6447-.072 4.848-.079 3.2033-.007 3.5835.005 4.8495.0608 1.169.0508 1.8053.2445 2.228.408.5608.216.96.4754 1.3816.895.4217.4194.6816.8176.9005 1.3787.1653.4217.3617 1.056.4169 2.2263.0602 1.2655.0739 1.645.0796 4.848.0058 3.203-.0055 3.5834-.061 4.848-.051 1.17-.245 1.8055-.408 2.2294-.216.5604-.4763.96-.8954 1.3814-.419.4215-.8181.6811-1.3783.9-.4224.1649-1.0577.3617-2.2262.4174-1.2656.0595-1.6448.072-4.8493.079-3.2045.007-3.5825-.006-4.848-.0608M16.953 5.5864A1.44 1.44 0 1 0 18.39 4.144a1.44 1.44 0 0 0-1.437 1.4424M5.8385 12.012c.0067 3.4032 2.7706 6.1557 6.173 6.1493 3.4026-.0065 6.157-2.7701 6.1506-6.1733-.0065-3.4032-2.771-6.1565-6.174-6.1498-3.403.0067-6.156 2.771-6.1496 6.1738M8 12.0077a4 4 0 1 1 4.008 3.9921A3.9996 3.9996 0 0 1 8 12.0077"/></svg></span></span>
+            <span class="orbit-badge h-[54px] w-[54px] sm:h-16 sm:w-16 lg:h-[72px] lg:w-[72px]" style="left: 86.4%; top: 71%;" aria-label="Threads"><span class="orbit-upright flex h-full w-full items-center justify-center"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="28" height="28" class="h-7 w-7 sm:h-8 sm:w-8 lg:h-9 lg:w-9" fill="#000000" role="img" aria-label="Threads"><path d="M18.263 11.097c-.03-3.486-1.92-5.586-5.111-5.586-2.13 0-3.922.963-4.863 2.499l2.062 1.438c.535-.843 1.272-1.543 2.628-1.543 1.528 0 2.318.85 2.544 2.431a15 15 0 0 0-2.236-.173c-4.125 0-6.068 1.867-6.068 4.336s1.943 3.99 4.804 3.99c3.139 0 5.013-2.115 5.781-4.735.798.361 1.348 1.204 1.348 2.47 0 3.387-3.907 5.232-7.22 5.232-4.885 0-8.077-3.207-8.077-8.424 0-6.392 4.223-10.487 9.9-10.487 3.808 0 5.69 1.671 6.97 3.914l2.108-1.475C21.44 2.078 18.331 0 13.663 0 6.227 0 1.168 5.277 1.168 12.934c0 7 4.953 11.066 10.856 11.066 4.878 0 9.809-2.846 9.809-7.716 0-2.545-1.46-4.231-3.569-5.187m-6.33 4.855c-1.077 0-2.026-.512-2.026-1.453 0-1.483 1.822-1.934 3.606-1.934.678 0 1.34.045 1.927.173-.422 1.927-1.671 3.215-3.508 3.214Z"/></svg></span></span>
+            <span class="orbit-badge h-[54px] w-[54px] sm:h-16 sm:w-16 lg:h-[72px] lg:w-[72px]" style="left: 50%; top: 92%;" aria-label="TikTok"><span class="orbit-upright flex h-full w-full items-center justify-center"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="28" height="28" class="h-7 w-7 sm:h-8 sm:w-8 lg:h-9 lg:w-9" fill="#000000" role="img" aria-label="TikTok"><path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z"/></svg></span></span>
+            <span class="orbit-badge h-[54px] w-[54px] sm:h-16 sm:w-16 lg:h-[72px] lg:w-[72px]" style="left: 13.6%; top: 71%;" aria-label="YouTube"><span class="orbit-upright flex h-full w-full items-center justify-center"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="28" height="28" class="h-7 w-7 sm:h-8 sm:w-8 lg:h-9 lg:w-9" fill="#ff0000" role="img" aria-label="YouTube"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg></span></span>
+            <span class="orbit-badge h-[54px] w-[54px] sm:h-16 sm:w-16 lg:h-[72px] lg:w-[72px]" style="left: 13.6%; top: 29%;" aria-label="X"><span class="orbit-upright flex h-full w-full items-center justify-center"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="28" height="28" class="h-7 w-7 sm:h-8 sm:w-8 lg:h-9 lg:w-9" fill="#000000" role="img" aria-label="X"><path d="M14.234 10.162 22.977 0h-2.072l-7.591 8.824L7.251 0H.258l9.168 13.343L.258 24H2.33l8.016-9.318L16.749 24h6.993zm-2.837 3.299-.929-1.329L3.076 1.56h3.182l5.965 8.532.929 1.329 7.754 11.09h-3.182z"/></svg></span></span>
           </div>
         </div>
-    </header>
+      </div>
+    </section>
 
-    {/* ===== HERO ONLY ===== */}
-    <main>
-      <section id="section-1" class="snap-section snap-hero relative overflow-hidden bg-white px-5 pt-20 pb-8 text-center sm:pt-24 sm:pb-10" aria-label="Hero">
-          <div class="hero-copy">
-          <h1 class="mx-auto mb-6 max-w-4xl text-[40px] leading-[1.05] font-bold tracking-tight sm:text-5xl md:text-[64px] lg:text-[72px]">
-            <span class="block hero-mask"><span class="hero-line">Your Accounts, posting <span class="whitespace-nowrap">themselves —</span></span></span>
-            <span class="block hero-mask mt-1"><span class="hero-line"><span class="hero-highlight inline-block">100% in the cloud</span></span></span>
-          </h1>
-          <p class="hero-sub mx-auto mb-8 max-w-2xl text-base leading-relaxed text-ink-sub sm:text-lg">
-            Schedule posts across Facebook, Instagram, TikTok, YouTube, Threads, and X — they go live while you sleep, even when your <span class="whitespace-nowrap">laptop is closed.</span><br />Manage FBUploadPro using Muse or any AI agent.
-          </p>
-          <div class="hero-cta flex justify-center">
-            <a href={signup} class="inline-flex min-h-11 items-center gap-2 rounded-full bg-ink px-7 text-base font-semibold text-white no-underline">
-              Get started
-              <span aria-hidden="true">→</span>
-            </a>
-          </div>
-          </div>
-
-          {/* Mobile platform tiles — phones only (hidden at lg and up).
-              Compact diamond grid, two rows of three, so phones are not
-              left tile-less while the desktop perspective stage stays
-              hidden below lg. Each tile is a small 2D diamond (a square
-              rotated 45deg) with its logo as a SEPARATE upright layer
-              centred over it (translate(-50%,-50%) only, no rotate, no
-              tilt) — the logo itself is never tilted or flattened.
-              Same six Simple Icons logos as the desktop stage; the
-              Instagram gradient uses its own id (ig-grad-m) so it does
-              not duplicate the desktop stage's ig-grad. Middle-column
-              tiles sit 8px lower for a slight stagger. */}
-          <div class="mob-grid mx-auto mt-10 grid max-w-[280px] grid-cols-3 justify-items-center gap-3 lg:hidden" aria-hidden="true">
-            <span class="mob-float mob-float-a relative block h-[72px] w-[72px]">
-              <span class="absolute left-1/2 top-1/2 h-[52px] w-[52px] -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[14px] border border-line bg-white shadow-[0_8px_20px_rgba(17,17,17,0.12)]"></span>
-              <svg class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="26" height="26" fill="#1877f2" role="img" aria-label="Facebook"><path d="M9.101 23.691v-7.98H6.627v-3.667h2.474v-1.58c0-4.085 1.848-5.978 5.858-5.978.401 0 .955.042 1.468.103a8.68 8.68 0 0 1 1.141.195v3.325a8.623 8.623 0 0 0-.653-.036 26.805 26.805 0 0 0-.733-.009c-.707 0-1.259.096-1.675.309a1.686 1.686 0 0 0-.679.622c-.258.42-.374.995-.374 1.752v1.297h3.919l-.386 2.103-.287 1.564h-3.246v8.245C19.396 23.238 24 18.179 24 12.044c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.628 3.874 10.35 9.101 11.647Z"/></svg>
-            </span>
-            <span class="mob-float mob-float-b relative block h-[72px] w-[72px] translate-y-2">
-              <span class="absolute left-1/2 top-1/2 h-[52px] w-[52px] -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[14px] border border-line bg-white shadow-[0_8px_20px_rgba(17,17,17,0.12)]"></span>
-              <svg class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="26" height="26" role="img" aria-label="Instagram"><defs><linearGradient id="ig-grad-m" x1="0%" y1="100%" x2="100%" y2="0%"><stop offset="0%" stop-color="#f09433"/><stop offset="25%" stop-color="#e6683c"/><stop offset="50%" stop-color="#dc2743"/><stop offset="75%" stop-color="#cc2366"/><stop offset="100%" stop-color="#bc1888"/></linearGradient></defs><path fill="url(#ig-grad-m)" d="M7.0301.084c-1.2768.0602-2.1487.264-2.911.5634-.7888.3075-1.4575.72-2.1228 1.3877-.6652.6677-1.075 1.3368-1.3802 2.127-.2954.7638-.4956 1.6365-.552 2.914-.0564 1.2775-.0689 1.6882-.0626 4.947.0062 3.2586.0206 3.6671.0825 4.9473.061 1.2765.264 2.1482.5635 2.9107.308.7889.72 1.4573 1.388 2.1228.6679.6655 1.3365 1.0743 2.1285 1.38.7632.295 1.6361.4961 2.9134.552 1.2773.056 1.6884.069 4.9462.0627 3.2578-.0062 3.668-.0207 4.9478-.0814 1.28-.0607 2.147-.2652 2.9098-.5633.7889-.3086 1.4578-.72 2.1228-1.3881.665-.6682 1.0745-1.3378 1.3795-2.1284.2957-.7632.4966-1.636.552-2.9124.056-1.2809.0692-1.6898.063-4.948-.0063-3.2583-.021-3.6668-.0817-4.9465-.0607-1.2797-.264-2.1487-.5633-2.9117-.3084-.7889-.72-1.4568-1.3876-2.1228C21.2982 1.33 20.628.9208 19.8378.6165 19.074.321 18.2017.1197 16.9244.0645 15.6471.0093 15.236-.005 11.977.0014 8.718.0076 8.31.0215 7.0301.0839m.1402 21.6932c-1.17-.0509-1.8053-.2453-2.2287-.408-.5606-.216-.96-.4771-1.3819-.895-.422-.4178-.6811-.8186-.9-1.378-.1644-.4234-.3624-1.058-.4171-2.228-.0595-1.2645-.072-1.6442-.079-4.848-.007-3.2037.0053-3.583.0607-4.848.05-1.169.2456-1.805.408-2.2282.216-.5613.4762-.96.895-1.3816.4188-.4217.8184-.6814 1.3783-.9003.423-.1651 1.0575-.3614 2.227-.4171 1.2655-.06 1.6447-.072 4.848-.079 3.2033-.007 3.5835.005 4.8495.0608 1.169.0508 1.8053.2445 2.228.408.5608.216.96.4754 1.3816.895.4217.4194.6816.8176.9005 1.3787.1653.4217.3617 1.056.4169 2.2263.0602 1.2655.0739 1.645.0796 4.848.0058 3.203-.0055 3.5834-.061 4.848-.051 1.17-.245 1.8055-.408 2.2294-.216.5604-.4763.96-.8954 1.3814-.419.4215-.8181.6811-1.3783.9-.4224.1649-1.0577.3617-2.2262.4174-1.2656.0595-1.6448.072-4.8493.079-3.2045.007-3.5825-.006-4.848-.0608M16.953 5.5864A1.44 1.44 0 1 0 18.39 4.144a1.44 1.44 0 0 0-1.437 1.4424M5.8385 12.012c.0067 3.4032 2.7706 6.1557 6.173 6.1493 3.4026-.0065 6.157-2.7701 6.1506-6.1733-.0065-3.4032-2.771-6.1565-6.174-6.1498-3.403.0067-6.156 2.771-6.1496 6.1738M8 12.0077a4 4 0 1 1 4.008 3.9921A3.9996 3.9996 0 0 1 8 12.0077"/></svg>
-            </span>
-            <span class="mob-float mob-float-c relative block h-[72px] w-[72px]">
-              <span class="absolute left-1/2 top-1/2 h-[52px] w-[52px] -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[14px] border border-line bg-white shadow-[0_8px_20px_rgba(17,17,17,0.12)]"></span>
-              <svg class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="26" height="26" fill="#000000" role="img" aria-label="Threads"><path d="M18.263 11.097c-.03-3.486-1.92-5.586-5.111-5.586-2.13 0-3.922.963-4.863 2.499l2.062 1.438c.535-.843 1.272-1.543 2.628-1.543 1.528 0 2.318.85 2.544 2.431a15 15 0 0 0-2.236-.173c-4.125 0-6.068 1.867-6.068 4.336s1.943 3.99 4.804 3.99c3.139 0 5.013-2.115 5.781-4.735.798.361 1.348 1.204 1.348 2.47 0 3.387-3.907 5.232-7.22 5.232-4.885 0-8.077-3.207-8.077-8.424 0-6.392 4.223-10.487 9.9-10.487 3.808 0 5.69 1.671 6.97 3.914l2.108-1.475C21.44 2.078 18.331 0 13.663 0 6.227 0 1.168 5.277 1.168 12.934c0 7 4.953 11.066 10.856 11.066 4.878 0 9.809-2.846 9.809-7.716 0-2.545-1.46-4.231-3.569-5.187m-6.33 4.855c-1.077 0-2.026-.512-2.026-1.453 0-1.483 1.822-1.934 3.606-1.934.678 0 1.34.045 1.927.173-.422 1.927-1.671 3.215-3.508 3.214Z"/></svg>
-            </span>
-            <span class="mob-float mob-float-a relative block h-[72px] w-[72px]">
-              <span class="absolute left-1/2 top-1/2 h-[52px] w-[52px] -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[14px] border border-line bg-white shadow-[0_8px_20px_rgba(17,17,17,0.12)]"></span>
-              <svg class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="26" height="26" fill="#000000" role="img" aria-label="TikTok"><path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z"/></svg>
-            </span>
-            <span class="mob-float mob-float-b relative block h-[72px] w-[72px] translate-y-2">
-              <span class="absolute left-1/2 top-1/2 h-[52px] w-[52px] -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[14px] border border-line bg-white shadow-[0_8px_20px_rgba(17,17,17,0.12)]"></span>
-              <svg class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="28" height="28" fill="#ff0000" role="img" aria-label="YouTube"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
-            </span>
-            <span class="mob-float mob-float-c relative block h-[72px] w-[72px]">
-              <span class="absolute left-1/2 top-1/2 h-[52px] w-[52px] -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[14px] border border-line bg-white shadow-[0_8px_20px_rgba(17,17,17,0.12)]"></span>
-              <svg class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="26" height="26" fill="#000000" role="img" aria-label="X"><path d="M14.234 10.162 22.977 0h-2.072l-7.591 8.824L7.251 0H.258l9.168 13.343L.258 24H2.33l8.016-9.318L16.749 24h6.993zm-2.837 3.299-.929-1.329L3.076 1.56h3.182l5.965 8.532.929 1.329 7.754 11.09h-3.182z"/></svg>
-            </span>
-          </div>
-
-          {/* Isometric platform tiles — desktop only, visual only.
-              Perspective floor, like the reference original: white diamond tiles
-              (rotateX + rotateZ) at varying depths, overlapping, edge tiles
-              partially cut. Each logo is a SEPARATE layer, NOT a child of its
-              tilted tile: the wrapper holds two siblings — the diamond tile
-              div (isometric transform) and the logo SVG, absolutely centred
-              over it with transform translate(-50%,-50%) only, no rotate,
-              no rotateX — so the logo renders upright, undistorted, on top
-              of its diamond, like the original. Bobbing lives on the outer
-              wrapper (translateY only) so it never tilts or flattens
-              anything. Logos: Simple Icons v16.36.0 paths, copied
-              faithfully (see global.css comment). Instagram shape is filled
-              with the official Instagram gradient; all others use their
-              brand colour. */}
-          <div class="iso-stage pointer-events-none relative mx-auto mt-8 hidden h-[280px] max-w-[1100px] lg:block" aria-hidden="true">
-            {/* Facebook — front-left, partially cut at left edge */}
-            <span class="iso-bob iso-bob-a absolute bottom-[84px] left-[-14px] z-[3] h-[118px] w-[118px]">
-              <span class="iso-tile absolute inset-0 rounded-[24px] border border-line bg-white"></span>
-              <svg class="iso-logo-flat" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="52" height="52" fill="#1877f2" role="img" aria-label="Facebook"><path d="M9.101 23.691v-7.98H6.627v-3.667h2.474v-1.58c0-4.085 1.848-5.978 5.858-5.978.401 0 .955.042 1.468.103a8.68 8.68 0 0 1 1.141.195v3.325a8.623 8.623 0 0 0-.653-.036 26.805 26.805 0 0 0-.733-.009c-.707 0-1.259.096-1.675.309a1.686 1.686 0 0 0-.679.622c-.258.42-.374.995-.374 1.752v1.297h3.919l-.386 2.103-.287 1.564h-3.246v8.245C19.396 23.238 24 18.179 24 12.044c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.628 3.874 10.35 9.101 11.647Z"/></svg>
-            </span>
-            {/* Instagram — front, larger, lower */}
-            <span class="iso-bob iso-bob-b absolute bottom-[18px] left-[17%] z-[5] h-[138px] w-[138px]">
-              <span class="iso-tile absolute inset-0 rounded-[26px] border border-line bg-white"></span>
-              <svg class="iso-logo-flat" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="60" height="60" role="img" aria-label="Instagram"><defs><linearGradient id="ig-grad" x1="0%" y1="100%" x2="100%" y2="0%"><stop offset="0%" stop-color="#f09433"/><stop offset="25%" stop-color="#e6683c"/><stop offset="50%" stop-color="#dc2743"/><stop offset="75%" stop-color="#cc2366"/><stop offset="100%" stop-color="#bc1888"/></linearGradient></defs><path fill="url(#ig-grad)" d="M7.0301.084c-1.2768.0602-2.1487.264-2.911.5634-.7888.3075-1.4575.72-2.1228 1.3877-.6652.6677-1.075 1.3368-1.3802 2.127-.2954.7638-.4956 1.6365-.552 2.914-.0564 1.2775-.0689 1.6882-.0626 4.947.0062 3.2586.0206 3.6671.0825 4.9473.061 1.2765.264 2.1482.5635 2.9107.308.7889.72 1.4573 1.388 2.1228.6679.6655 1.3365 1.0743 2.1285 1.38.7632.295 1.6361.4961 2.9134.552 1.2773.056 1.6884.069 4.9462.0627 3.2578-.0062 3.668-.0207 4.9478-.0814 1.28-.0607 2.147-.2652 2.9098-.5633.7889-.3086 1.4578-.72 2.1228-1.3881.665-.6682 1.0745-1.3378 1.3795-2.1284.2957-.7632.4966-1.636.552-2.9124.056-1.2809.0692-1.6898.063-4.948-.0063-3.2583-.021-3.6668-.0817-4.9465-.0607-1.2797-.264-2.1487-.5633-2.9117-.3084-.7889-.72-1.4568-1.3876-2.1228C21.2982 1.33 20.628.9208 19.8378.6165 19.074.321 18.2017.1197 16.9244.0645 15.6471.0093 15.236-.005 11.977.0014 8.718.0076 8.31.0215 7.0301.0839m.1402 21.6932c-1.17-.0509-1.8053-.2453-2.2287-.408-.5606-.216-.96-.4771-1.3819-.895-.422-.4178-.6811-.8186-.9-1.378-.1644-.4234-.3624-1.058-.4171-2.228-.0595-1.2645-.072-1.6442-.079-4.848-.007-3.2037.0053-3.583.0607-4.848.05-1.169.2456-1.805.408-2.2282.216-.5613.4762-.96.895-1.3816.4188-.4217.8184-.6814 1.3783-.9003.423-.1651 1.0575-.3614 2.227-.4171 1.2655-.06 1.6447-.072 4.848-.079 3.2033-.007 3.5835.005 4.8495.0608 1.169.0508 1.8053.2445 2.228.408.5608.216.96.4754 1.3816.895.4217.4194.6816.8176.9005 1.3787.1653.4217.3617 1.056.4169 2.2263.0602 1.2655.0739 1.645.0796 4.848.0058 3.203-.0055 3.5834-.061 4.848-.051 1.17-.245 1.8055-.408 2.2294-.216.5604-.4763.96-.8954 1.3814-.419.4215-.8181.6811-1.3783.9-.4224.1649-1.0577.3617-2.2262.4174-1.2656.0595-1.6448.072-4.8493.079-3.2045.007-3.5825-.006-4.848-.0608M16.953 5.5864A1.44 1.44 0 1 0 18.39 4.144a1.44 1.44 0 0 0-1.437 1.4424M5.8385 12.012c.0067 3.4032 2.7706 6.1557 6.173 6.1493 3.4026-.0065 6.157-2.7701 6.1506-6.1733-.0065-3.4032-2.771-6.1565-6.174-6.1498-3.403.0067-6.156 2.771-6.1496 6.1738M8 12.0077a4 4 0 1 1 4.008 3.9921A3.9996 3.9996 0 0 1 8 12.0077"/></svg>
-            </span>
-            {/* Threads — back, smaller, higher */}
-            <span class="iso-bob iso-bob-c absolute bottom-[118px] left-[35%] z-[2] h-[106px] w-[106px]">
-              <span class="iso-tile absolute inset-0 rounded-[22px] border border-line bg-white"></span>
-              <svg class="iso-logo-flat" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="46" height="46" fill="#000000" role="img" aria-label="Threads"><path d="M18.263 11.097c-.03-3.486-1.92-5.586-5.111-5.586-2.13 0-3.922.963-4.863 2.499l2.062 1.438c.535-.843 1.272-1.543 2.628-1.543 1.528 0 2.318.85 2.544 2.431a15 15 0 0 0-2.236-.173c-4.125 0-6.068 1.867-6.068 4.336s1.943 3.99 4.804 3.99c3.139 0 5.013-2.115 5.781-4.735.798.361 1.348 1.204 1.348 2.47 0 3.387-3.907 5.232-7.22 5.232-4.885 0-8.077-3.207-8.077-8.424 0-6.392 4.223-10.487 9.9-10.487 3.808 0 5.69 1.671 6.97 3.914l2.108-1.475C21.44 2.078 18.331 0 13.663 0 6.227 0 1.168 5.277 1.168 12.934c0 7 4.953 11.066 10.856 11.066 4.878 0 9.809-2.846 9.809-7.716 0-2.545-1.46-4.231-3.569-5.187m-6.33 4.855c-1.077 0-2.026-.512-2.026-1.453 0-1.483 1.822-1.934 3.606-1.934.678 0 1.34.045 1.927.173-.422 1.927-1.671 3.215-3.508 3.214Z"/></svg>
-            </span>
-            {/* TikTok — front, larger, lower */}
-            <span class="iso-bob iso-bob-a absolute bottom-[28px] left-[51%] z-[4] h-[134px] w-[134px]">
-              <span class="iso-tile absolute inset-0 rounded-[26px] border border-line bg-white"></span>
-              <svg class="iso-logo-flat" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="58" height="58" fill="#000000" role="img" aria-label="TikTok"><path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z"/></svg>
-            </span>
-            {/* YouTube — back, higher */}
-            <span class="iso-bob iso-bob-b absolute bottom-[108px] left-[67%] z-[3] h-[112px] w-[112px]">
-              <span class="iso-tile absolute inset-0 rounded-[24px] border border-line bg-white"></span>
-              <svg class="iso-logo-flat" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="52" height="52" fill="#ff0000" role="img" aria-label="YouTube"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
-            </span>
-            {/* X — front-right, partially cut at right edge */}
-            <span class="iso-bob iso-bob-c absolute bottom-[38px] right-[-14px] z-[5] h-[130px] w-[130px]">
-              <span class="iso-tile absolute inset-0 rounded-[26px] border border-line bg-white"></span>
-              <svg class="iso-logo-flat" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="56" height="56" fill="#000000" role="img" aria-label="X"><path d="M14.234 10.162 22.977 0h-2.072l-7.591 8.824L7.251 0H.258l9.168 13.343L.258 24H2.33l8.016-9.318L16.749 24h6.993zm-2.837 3.299-.929-1.329L3.076 1.56h3.182l5.965 8.532.929 1.329 7.754 11.09h-3.182z"/></svg>
-            </span>
-          </div>
-        </section>
-
-        {/* ===== SECTION 2 — HOW MUSE MANAGES FBUploadPro =====
-            Two-column layout adapted from the reference screenshot's
-            layout ONLY (left headline + description, right circular
-            orbit diagram). No reference copy, artwork, or badges are
-            used: the heading, description, and steps are fbuploadpro
-            copy, the centre is the real Muse logo (a single continuous
-            lowercase wavy "m" stroke, blue gradient, faithfully
-            reproduced from the verified Wikipedia Muse_icon.svg
-            thumbnail description — the Wikimedia SVG fetch was
-            denied, so this is a reproduction, not the exact file
-            bytes), and the orbit badges are the six platform
-            Simple Icons already used on this page. Orbit STYLE (not
-            artwork) follows the reference: thick soft white bands
-            with soft shadows, a large soft-shadowed centre, and
-            large white badges with a white halo sitting on the
-            outer band edge. No reference artwork is copied: no
-            chart, no pink person, no star, no UFO, no emoji badges.
-            The platform badges REVOLVE around the centre (CSS-only
-            orbit-spin, 24s) with each badge counter-rotating
-            (orbit-counter) so every logo stays upright and
-            readable at every point of the revolution; the
-            centre Muse logo itself does not rotate. */}
-        <section id="section-2" class="snap-section section2-full relative overflow-hidden bg-white px-5 pt-12 pb-16 sm:px-8 sm:pt-16 lg:px-12" aria-label="How Muse manages FBUploadPro">
-          <div class="s2-grid mx-auto grid w-full max-w-[1240px] items-center gap-12 lg:grid-cols-[1fr_auto] lg:justify-between lg:gap-24">
-            <div class="text-left">
-              <h2 class="s2-heading mb-6 text-[36px] leading-[1.15] font-bold tracking-tight sm:text-5xl lg:text-[56px]">
-                <span class="block s2-mask xl:whitespace-nowrap"><span class="s2-line">Give Muse your login,</span></span>
-                <span class="mt-2 ml-[1em] block s2-mask xl:whitespace-nowrap"><span class="s2-line">it <span class="section-highlight">manages</span> FBUploadPro</span></span>
-                <span class="mt-2 block s2-mask"><span class="s2-line">for you</span></span>
-              </h2>
-              <p class="s2-text mb-6 max-w-2xl text-base leading-relaxed text-ink-sub sm:text-lg">
-                Giving Muse direct access can put an account at risk of being restricted. Through FBUploadPro, Muse gets API access instead — not a login — so your accounts stay safe, and you can connect unlimited accounts per platform, not just one, without worrying about restriction. Muse also creates content directly in your Media Library, ready to publish — no downloading it first.
-              </p>
-            </div>
-            <div class="s2-orbit relative mx-auto h-[280px] w-[280px] shrink-0 sm:h-[400px] sm:w-[400px] lg:h-[480px] lg:w-[480px]" aria-hidden="true">
-              <span class="absolute inset-0 rounded-full border border-[#e9ebef] bg-white shadow-[0_20px_45px_rgba(17,17,17,0.12)]"></span>
-              <span class="absolute inset-[9%] rounded-full border border-[#e9ebef] bg-white shadow-[0_16px_36px_rgba(17,17,17,0.10)]"></span>
-              <span class="absolute inset-[20%] rounded-full border border-[#e9ebef] bg-white shadow-[0_12px_28px_rgba(17,17,17,0.10)]"></span>
-              <span class="s2-centre absolute left-1/2 top-1/2 flex h-[152px] w-[152px] -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-[#e9ebef] bg-white shadow-[0_20px_40px_rgba(17,17,17,0.14)] sm:h-[192px] sm:w-[192px] lg:h-[216px] lg:w-[216px]">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 68" class="h-auto w-[84px] sm:w-[96px] lg:w-[120px]" fill="none" role="img" aria-label="Muse"><defs><linearGradient id="muse-grad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#0b3dce"/><stop offset="55%" stop-color="#1a4fe0"/><stop offset="100%" stop-color="#0a6cff"/></linearGradient></defs><path d="M 6 38 C 12 16, 22 12, 30 18 C 38 24, 36 50, 44 52 C 52 54, 52 26, 60 22 C 68 18, 70 44, 78 48 C 86 52, 86 30, 94 28 C 102 26, 108 32, 114 38" stroke="url(#muse-grad)" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              </span>
-            <div class="orbit-spin absolute inset-0">
-            <span class="s2-badge absolute flex h-[54px] w-[54px] items-center justify-center rounded-full border border-[#e9ebef] bg-white shadow-[0_0_0_6px_rgba(255,255,255,1),0_14px_28px_rgba(17,17,17,0.16)] sm:h-16 sm:w-16 lg:h-[72px] lg:w-[72px]" style="left: 50%; top: 8%; transform: translate(-50%, -50%);" aria-label="Facebook"><span class="orbit-counter flex h-full w-full items-center justify-center"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="28" height="28" class="h-7 w-7 sm:h-8 sm:w-8 lg:h-9 lg:w-9" fill="#1877f2" role="img" aria-label="Facebook"><path d="M9.101 23.691v-7.98H6.627v-3.667h2.474v-1.58c0-4.085 1.848-5.978 5.858-5.978.401 0 .955.042 1.468.103a8.68 8.68 0 0 1 1.141.195v3.325a8.623 8.623 0 0 0-.653-.036 26.805 26.805 0 0 0-.733-.009c-.707 0-1.259.096-1.675.309a1.686 1.686 0 0 0-.679.622c-.258.42-.374.995-.374 1.752v1.297h3.919l-.386 2.103-.287 1.564h-3.246v8.245C19.396 23.238 24 18.179 24 12.044c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.628 3.874 10.35 9.101 11.647Z"/></svg></span></span>
-            <span class="s2-badge absolute flex h-[54px] w-[54px] items-center justify-center rounded-full border border-[#e9ebef] bg-white shadow-[0_0_0_6px_rgba(255,255,255,1),0_14px_28px_rgba(17,17,17,0.16)] sm:h-16 sm:w-16 lg:h-[72px] lg:w-[72px]" style="left: 86.4%; top: 29%; transform: translate(-50%, -50%);" aria-label="Instagram"><span class="orbit-counter flex h-full w-full items-center justify-center"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="28" height="28" class="h-7 w-7 sm:h-8 sm:w-8 lg:h-9 lg:w-9" role="img" aria-label="Instagram"><defs><linearGradient id="ig-grad-s2" x1="0%" y1="100%" x2="100%" y2="0%"><stop offset="0%" stop-color="#f09433"/><stop offset="25%" stop-color="#e6683c"/><stop offset="50%" stop-color="#dc2743"/><stop offset="75%" stop-color="#cc2366"/><stop offset="100%" stop-color="#bc1888"/></linearGradient></defs><path fill="url(#ig-grad-s2)" d="M7.0301.084c-1.2768.0602-2.1487.264-2.911.5634-.7888.3075-1.4575.72-2.1228 1.3877-.6652.6677-1.075 1.3368-1.3802 2.127-.2954.7638-.4956 1.6365-.552 2.914-.0564 1.2775-.0689 1.6882-.0626 4.947.0062 3.2586.0206 3.6671.0825 4.9473.061 1.2765.264 2.1482.5635 2.9107.308.7889.72 1.4573 1.388 2.1228.6679.6655 1.3365 1.0743 2.1285 1.38.7632.295 1.6361.4961 2.9134.552 1.2773.056 1.6884.069 4.9462.0627 3.2578-.0062 3.668-.0207 4.9478-.0814 1.28-.0607 2.147-.2652 2.9098-.5633.7889-.3086 1.4578-.72 2.1228-1.3881.665-.6682 1.0745-1.3378 1.3795-2.1284.2957-.7632.4966-1.636.552-2.9124.056-1.2809.0692-1.6898.063-4.948-.0063-3.2583-.021-3.6668-.0817-4.9465-.0607-1.2797-.264-2.1487-.5633-2.9117-.3084-.7889-.72-1.4568-1.3876-2.1228C21.2982 1.33 20.628.9208 19.8378.6165 19.074.321 18.2017.1197 16.9244.0645 15.6471.0093 15.236-.005 11.977.0014 8.718.0076 8.31.0215 7.0301.0839m.1402 21.6932c-1.17-.0509-1.8053-.2453-2.2287-.408-.5606-.216-.96-.4771-1.3819-.895-.422-.4178-.6811-.8186-.9-1.378-.1644-.4234-.3624-1.058-.4171-2.228-.0595-1.2645-.072-1.6442-.079-4.848-.007-3.2037.0053-3.583.0607-4.848.05-1.169.2456-1.805.408-2.2282.216-.5613.4762-.96.895-1.3816.4188-.4217.8184-.6814 1.3783-.9003.423-.1651 1.0575-.3614 2.227-.4171 1.2655-.06 1.6447-.072 4.848-.079 3.2033-.007 3.5835.005 4.8495.0608 1.169.0508 1.8053.2445 2.228.408.5608.216.96.4754 1.3816.895.4217.4194.6816.8176.9005 1.3787.1653.4217.3617 1.056.4169 2.2263.0602 1.2655.0739 1.645.0796 4.848.0058 3.203-.0055 3.5834-.061 4.848-.051 1.17-.245 1.8055-.408 2.2294-.216.5604-.4763.96-.8954 1.3814-.419.4215-.8181.6811-1.3783.9-.4224.1649-1.0577.3617-2.2262.4174-1.2656.0595-1.6448.072-4.8493.079-3.2045.007-3.5825-.006-4.848-.0608M16.953 5.5864A1.44 1.44 0 1 0 18.39 4.144a1.44 1.44 0 0 0-1.437 1.4424M5.8385 12.012c.0067 3.4032 2.7706 6.1557 6.173 6.1493 3.4026-.0065 6.157-2.7701 6.1506-6.1733-.0065-3.4032-2.771-6.1565-6.174-6.1498-3.403.0067-6.156 2.771-6.1496 6.1738M8 12.0077a4 4 0 1 1 4.008 3.9921A3.9996 3.9996 0 0 1 8 12.0077"/></svg></span></span>
-            <span class="s2-badge absolute flex h-[54px] w-[54px] items-center justify-center rounded-full border border-[#e9ebef] bg-white shadow-[0_0_0_6px_rgba(255,255,255,1),0_14px_28px_rgba(17,17,17,0.16)] sm:h-16 sm:w-16 lg:h-[72px] lg:w-[72px]" style="left: 86.4%; top: 71%; transform: translate(-50%, -50%);" aria-label="Threads"><span class="orbit-counter flex h-full w-full items-center justify-center"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="28" height="28" class="h-7 w-7 sm:h-8 sm:w-8 lg:h-9 lg:w-9" fill="#000000" role="img" aria-label="Threads"><path d="M18.263 11.097c-.03-3.486-1.92-5.586-5.111-5.586-2.13 0-3.922.963-4.863 2.499l2.062 1.438c.535-.843 1.272-1.543 2.628-1.543 1.528 0 2.318.85 2.544 2.431a15 15 0 0 0-2.236-.173c-4.125 0-6.068 1.867-6.068 4.336s1.943 3.99 4.804 3.99c3.139 0 5.013-2.115 5.781-4.735.798.361 1.348 1.204 1.348 2.47 0 3.387-3.907 5.232-7.22 5.232-4.885 0-8.077-3.207-8.077-8.424 0-6.392 4.223-10.487 9.9-10.487 3.808 0 5.69 1.671 6.97 3.914l2.108-1.475C21.44 2.078 18.331 0 13.663 0 6.227 0 1.168 5.277 1.168 12.934c0 7 4.953 11.066 10.856 11.066 4.878 0 9.809-2.846 9.809-7.716 0-2.545-1.46-4.231-3.569-5.187m-6.33 4.855c-1.077 0-2.026-.512-2.026-1.453 0-1.483 1.822-1.934 3.606-1.934.678 0 1.34.045 1.927.173-.422 1.927-1.671 3.215-3.508 3.214Z"/></svg></span></span>
-            <span class="s2-badge absolute flex h-[54px] w-[54px] items-center justify-center rounded-full border border-[#e9ebef] bg-white shadow-[0_0_0_6px_rgba(255,255,255,1),0_14px_28px_rgba(17,17,17,0.16)] sm:h-16 sm:w-16 lg:h-[72px] lg:w-[72px]" style="left: 50%; top: 92%; transform: translate(-50%, -50%);" aria-label="TikTok"><span class="orbit-counter flex h-full w-full items-center justify-center"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="28" height="28" class="h-7 w-7 sm:h-8 sm:w-8 lg:h-9 lg:w-9" fill="#000000" role="img" aria-label="TikTok"><path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z"/></svg></span></span>
-            <span class="s2-badge absolute flex h-[54px] w-[54px] items-center justify-center rounded-full border border-[#e9ebef] bg-white shadow-[0_0_0_6px_rgba(255,255,255,1),0_14px_28px_rgba(17,17,17,0.16)] sm:h-16 sm:w-16 lg:h-[72px] lg:w-[72px]" style="left: 13.6%; top: 71%; transform: translate(-50%, -50%);" aria-label="YouTube"><span class="orbit-counter flex h-full w-full items-center justify-center"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="28" height="28" class="h-7 w-7 sm:h-8 sm:w-8 lg:h-9 lg:w-9" fill="#ff0000" role="img" aria-label="YouTube"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg></span></span>
-            <span class="s2-badge absolute flex h-[54px] w-[54px] items-center justify-center rounded-full border border-[#e9ebef] bg-white shadow-[0_0_0_6px_rgba(255,255,255,1),0_14px_28px_rgba(17,17,17,0.16)] sm:h-16 sm:w-16 lg:h-[72px] lg:w-[72px]" style="left: 13.6%; top: 29%; transform: translate(-50%, -50%);" aria-label="X"><span class="orbit-counter flex h-full w-full items-center justify-center"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="28" height="28" class="h-7 w-7 sm:h-8 sm:w-8 lg:h-9 lg:w-9" fill="#000000" role="img" aria-label="X"><path d="M14.234 10.162 22.977 0h-2.072l-7.591 8.824L7.251 0H.258l9.168 13.343L.258 24H2.33l8.016-9.318L16.749 24h6.993zm-2.837 3.299-.929-1.329L3.076 1.56h3.182l5.965 8.532.929 1.329 7.754 11.09h-3.182z"/></svg></span></span>
-            </div>
-            </div>
-          </div>
-        </section>
-    {/* ===== SECTION 3 — COMMUNITY BANNER =====
-        Black card on the grey page background, modelled on the
-        reference screenshot's layout only (black card, white bold
-        centred heading, gold number highlight, dark corner blobs
-        each with one small pink dot). FULL-PAGE like section 2:
-        the section fills its own viewport (100vh/100dvh, flex,
-        vertically centred) and the black card fills that height
-        minus the page's outer margins, with the heading centred
-        inside it — not a short strip. Heading copy is exactly
-        Shahzeb's: "Join our community" / "of 700+ members", only
-        "700+" gold. No subhead, no CTA, no platform name, no link,
-        no other number, no other claim. The card sits OUTSIDE the
-        hero white card so section 2's full-page layout is untouched. */}
-    <section id="section-3" class="snap-section section3-full bg-[#0b0e11]" aria-label="Community">
-      <div class="community-card relative flex items-center justify-center overflow-hidden bg-[#0b0e11] px-5 py-16 text-center sm:py-20 lg:py-24">
+    <!-- Section 3: community banner. Full viewport, black, soft
+         four-petaled clover blobs tucked into the corners, one pink
+         dot on a lobe tip of each. No subhead, no button, no link. -->
+    <section id="section-3" class="section-full bg-[#0b0e11]" aria-label="Community">
+      <div class="dark-panel relative flex items-center justify-center overflow-hidden bg-[#0b0e11] px-5 py-16 text-center sm:py-20 lg:py-24">
         <span class="blob-wrap blob-tl" aria-hidden="true"><svg class="blob-svg" viewBox="0 0 100 100" aria-hidden="true"><g fill="#1a1a1a"><circle cx="50" cy="50" r="32"/><circle cx="50" cy="28" r="26"/><circle cx="50" cy="72" r="26"/><circle cx="28" cy="50" r="26"/><circle cx="72" cy="50" r="26"/></g></svg><span class="blob-dot blob-dot-tl"></span></span>
         <span class="blob-wrap blob-tr" aria-hidden="true"><svg class="blob-svg" viewBox="0 0 100 100" aria-hidden="true"><g fill="#1a1a1a"><circle cx="50" cy="50" r="32"/><circle cx="50" cy="28" r="26"/><circle cx="50" cy="72" r="26"/><circle cx="28" cy="50" r="26"/><circle cx="72" cy="50" r="26"/></g></svg><span class="blob-dot blob-dot-tr"></span></span>
         <span class="blob-wrap blob-bl" aria-hidden="true"><svg class="blob-svg" viewBox="0 0 100 100" aria-hidden="true"><g fill="#1a1a1a"><circle cx="50" cy="50" r="32"/><circle cx="50" cy="28" r="26"/><circle cx="50" cy="72" r="26"/><circle cx="28" cy="50" r="26"/><circle cx="72" cy="50" r="26"/></g></svg><span class="blob-dot blob-dot-bl"></span></span>
         <span class="blob-wrap blob-br" aria-hidden="true"><svg class="blob-svg" viewBox="0 0 100 100" aria-hidden="true"><g fill="#1a1a1a"><circle cx="50" cy="50" r="32"/><circle cx="50" cy="28" r="26"/><circle cx="50" cy="72" r="26"/><circle cx="28" cy="50" r="26"/><circle cx="72" cy="50" r="26"/></g></svg><span class="blob-dot blob-dot-br"></span></span>
         <h2 class="relative z-10 mx-auto text-[clamp(28px,8vw,64px)] leading-[1.1] font-bold tracking-tight text-white">
-          <span class="block s3-mask"><span class="s3-line">Join our community</span></span>
-          <span class="mt-1 block s3-mask whitespace-nowrap"><span class="s3-line">of <span class="community-highlight">700+</span> members</span></span>
+          <span class="reveal-mask"><span class="reveal-line">Join our community</span></span>
+          <span class="reveal-mask mt-1 whitespace-nowrap"><span class="reveal-line">of <span class="community-highlight">700+</span> members</span></span>
         </h2>
       </div>
     </section>
 
-    {/* ===== SECTION 4 — PRICING HEADER ONLY =====
-        Black card on the grey page background, following the
-        section 3 pattern exactly: the section fills its own
-        viewport and the black card fills that height minus the
-        page's outer margins, with the content centred inside it.
-        Same dark corner blobs as section 3, top-left and
-        top-right only, with a pink dot on the visible bottom lobe tip.
-        Content is exactly the screenshot's header and nothing
-        else: a small gold "Pricing" pill, then the white bold
-        two-line headline "Start for free." / "Upgrade to scale".
-        No tiers, no prices, no cards, no button, no extra copy.
-        The card sits OUTSIDE the hero white card, below section 3. */}
-    <section id="section-4" class="snap-section section4-full bg-[#0b0e11]" aria-label="Pricing">
-      <div class="pricing-card relative flex flex-col items-center justify-center overflow-hidden bg-[#0b0e11] px-5 py-16 text-center sm:py-20 lg:py-24">
+    <!-- Section 4: pricing teaser, header only. Top clover blobs
+         only. No tiers, no plan names, no prices, no button. -->
+    <section id="section-4" class="section-full bg-[#0b0e11]" aria-label="Pricing">
+      <div class="dark-panel relative flex flex-col items-center justify-center overflow-hidden bg-[#0b0e11] px-5 py-16 text-center sm:py-20 lg:py-24">
         <span class="blob-wrap blob-s4-tl" aria-hidden="true"><svg class="blob-svg" viewBox="0 0 100 100" aria-hidden="true"><g fill="#1a1a1a"><circle cx="50" cy="50" r="32"/><circle cx="50" cy="28" r="26"/><circle cx="50" cy="72" r="26"/><circle cx="28" cy="50" r="26"/><circle cx="72" cy="50" r="26"/></g></svg><span class="blob-dot blob-dot-s4"></span></span>
         <span class="blob-wrap blob-s4-tr" aria-hidden="true"><svg class="blob-svg" viewBox="0 0 100 100" aria-hidden="true"><g fill="#1a1a1a"><circle cx="50" cy="50" r="32"/><circle cx="50" cy="28" r="26"/><circle cx="50" cy="72" r="26"/><circle cx="28" cy="50" r="26"/><circle cx="72" cy="50" r="26"/></g></svg><span class="blob-dot blob-dot-s4"></span></span>
         <div class="relative z-10 flex flex-col items-center">
           <span class="s4-pill mb-6 inline-flex items-center rounded-full bg-gold px-3.5 py-1 text-sm font-medium text-ink">Pricing</span>
           <h2 class="mx-auto text-[clamp(28px,8vw,64px)] leading-[1.1] font-bold tracking-tight text-white">
-            <span class="block s4-mask"><span class="s4-line">Start for free.</span></span>
-            <span class="mt-1 block s4-mask"><span class="s4-line">Upgrade to scale</span></span>
+            <span class="reveal-mask"><span class="reveal-line">Start for free.</span></span>
+            <span class="reveal-mask mt-1"><span class="reveal-line">Upgrade to scale</span></span>
           </h2>
         </div>
       </div>
     </section>
-    </main>
-  </div>
+  </main>
 
-  {/* ===== TOPBAR HIDE/SHOW — small inline script, GSAP-independent =====
-      Kept separate from the GSAP module on purpose: if the GSAP bundle
-      ever fails to load, the topbar still works and no content is ever
-      hidden waiting for an animation (GSAP uses from-tweens only, so a
-      failed module leaves every element at its fully visible base state).
-      Hides on scroll down, shows on scroll up, always visible at
-      scrollY = 0; a 6px direction delta + 72px hide floor stop tiny
-      jitters flickering it. */}
-  <script is:inline>
-    (function () {
-      var bar = document.getElementById('site-topbar');
-      if (!bar) return;
-      var lastY = window.scrollY || 0;
-      var ticking = false;
-      var onScroll = function () {
-        var y = window.scrollY || 0;
-        if (y <= 0) {
-          bar.classList.remove('topbar-hidden');
-        } else if (y > lastY && y - lastY > 6 && y > 72) {
-          bar.classList.add('topbar-hidden');
-        } else if (lastY - y > 6) {
-          bar.classList.remove('topbar-hidden');
-        }
-        lastY = y;
-        ticking = false;
-      };
-      window.addEventListener('scroll', function () {
-        if (!ticking) {
-          window.requestAnimationFrame(onScroll);
-          ticking = true;
-        }
-      }, { passive: true });
-      /* Lenis drives the native scroll position, so window scroll
-         already fires — but also listen for the explicit event the
-         GSAP/Lenis module dispatches on every Lenis scroll, so the
-         topbar can never fall out of sync with smooth scrolling. */
-      document.addEventListener('lenis-scroll', function () {
-        if (!ticking) {
-          window.requestAnimationFrame(onScroll);
-          ticking = true;
-        }
-      });
-    })();
-  </script>
-
-  {/* ===== GSAP + Lenis — free smooth scrolling, forward/backward animation =====
-      Bundled from npm packages (NOT CDN links), so the static build
-      works offline and on GitHub Pages with no third-party script
-      host. Standard GSAP licence covers ScrollTrigger; no Club
-      plugins, no fullPage.js, no one-step paging. There is NO scroll
-      hijack here: wheel, touch, keyboard and scrollbar all scroll
-      FREELY through as many sections as the user wants, smoothed by
-      Lenis. Every reveal uses toggleActions "play reverse play
-      reverse", so scrolling up genuinely plays it backwards.
-      Transform/opacity only, never width/height/margin, so no layout
-      shift. Reduced motion: this whole module returns early — no
-      animation, no smooth hijack — with every section fully visible
-      and natively scrollable. */}
+  <!-- Motion: one GSAP system, bundled from npm packages. Free
+       scrolling, smoothed by Lenis: wheel, touch, keyboard and
+       scrollbar all move freely through as many sections as the
+       visitor wants. Every scroll reveal plays forward on the way
+       down and genuinely reverses on the way back up. All motion
+       uses from-tweens, so if this module ever fails to load, every
+       element stays at its fully visible base state and the page
+       still scrolls natively. With reduced motion preferred, this
+       whole module stays off and the page is plain native scroll. -->
   <script>
     import gsap from 'gsap';
     import { ScrollTrigger } from 'gsap/ScrollTrigger';
     import Lenis from 'lenis';
 
     gsap.registerPlugin(ScrollTrigger);
+
     if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      /* ---- Lenis smooth scroll, GSAP-native integration ----
-         Lerp 0.1 = gentle smoothing. syncTouch stays false (the
-         default), so touch devices keep their native momentum —
-         Lenis only smooths wheel input. No snap, no stepping, no
-         swallowed input: the user scrolls freely at their own speed.
-         If Lenis fails, this module throws before any reveal runs
-         and the page stays fully visible / natively scrollable. */
+      initMotion();
+    }
+
+    function initMotion() {
+      /* Lenis smooth scroll, wired into GSAP the standard way.
+         Lerp 0.1 is gentle smoothing; touch keeps its native
+         momentum, Lenis only smooths wheel input. */
       var lenis = new Lenis({ lerp: 0.1, smoothWheel: true, syncTouch: false });
       lenis.on('scroll', ScrollTrigger.update);
-      lenis.on('scroll', function () { document.dispatchEvent(new CustomEvent('lenis-scroll')); });
       gsap.ticker.add(function (time) { lenis.raf(time * 1000); });
       gsap.ticker.lagSmoothing(0);
-      /* Anchors / deep links go through Lenis so they animate
-         smoothly instead of jumping; a load-time hash goes instantly. */
-      document.querySelectorAll('a[href^="#section-"]').forEach(function (a) {
-        a.addEventListener('click', function (e) {
-          var target = document.querySelector(a.getAttribute('href'));
-          if (target) { e.preventDefault(); lenis.scrollTo(target, { duration: 1.2 }); }
+
+      /* Topbar: animated in with the hero, then hides while
+         scrolling down and returns while scrolling up, always
+         visible at the very top. Driven by Lenis scroll position. */
+      var topbar = document.getElementById('site-topbar');
+      var lastScroll = 0;
+      var topbarHidden = false;
+      function setTopbar(hidden) {
+        if (hidden === topbarHidden || !topbar) return;
+        topbarHidden = hidden;
+        gsap.to(topbar, {
+          yPercent: hidden ? -160 : 0,
+          opacity: hidden ? 0 : 1,
+          duration: 0.35,
+          ease: 'power2.out',
+          overwrite: 'auto',
         });
-      });
-      var hashMatch = window.location.hash.match(/^#section-([1-4])$/);
-      if (hashMatch) {
-        var hashEl = document.getElementById('section-' + hashMatch[1]);
-        if (hashEl) lenis.scrollTo(hashEl, { immediate: true });
       }
+      lenis.on('scroll', function (e) {
+        var y = e.scroll;
+        if (y <= 0) setTopbar(false);
+        else if (y > lastScroll && y > 72) setTopbar(true);
+        else if (y < lastScroll) setTopbar(false);
+        lastScroll = y;
+      });
 
-      /* ---- Full GSAP animation (replaces the old fade-only entrances) ----
-         Clip/mask reveals, GSAP orbit + float, mouse + scroll parallax.
-         Everything is from-tweens with clearProps, so a failed GSAP load
-         leaves every element at its fully visible base state. */
-      document.documentElement.classList.add('gsap-anim');
-
-      /* Word splitter: wraps each word in a mask > inner pair so words
-         rise from below their mask, line by line as they cascade.
-         Runs inside this module only — if GSAP fails, no split happens
-         and the original text stays untouched and visible. <br> is kept
-         in place; a whitespace-nowrap span keeps its nowrap on itself
-         while its words are split inside it. */
-      function splitWords(el) {
-        if (!el) return [];
+      /* Word splitter: wraps each word in a mask > inner pair so
+         words rise from below their mask in a cascade. <br> stays
+         in place, and words inside a nowrap span stay inside it.
+         Runs only inside this module, so a failed load leaves the
+         original text untouched and visible. */
+      function splitWords(root) {
         var words = [];
-        function addWord(container, text) {
-          var mask = document.createElement('span');
-          mask.className = 'word-mask';
-          var inner = document.createElement('span');
-          inner.className = 'word-inner';
-          inner.textContent = text;
-          mask.appendChild(inner);
-          container.appendChild(mask);
-          words.push(inner);
+        function walk(node) {
+          var children = Array.prototype.slice.call(node.childNodes);
+          children.forEach(function (child) {
+            if (child.nodeType === 3) {
+              var parts = child.textContent.split(/(\s+)/);
+              parts.forEach(function (part) {
+                if (!part) return;
+                if (/^\s+$/.test(part)) {
+                  node.insertBefore(document.createTextNode(part), child);
+                } else {
+                  var mask = document.createElement('span');
+                  mask.className = 'word-mask';
+                  var inner = document.createElement('span');
+                  inner.className = 'word-inner';
+                  inner.textContent = part;
+                  mask.appendChild(inner);
+                  node.insertBefore(mask, child);
+                  words.push(inner);
+                }
+              });
+              node.removeChild(child);
+            } else if (child.nodeType === 1 && child.tagName !== 'BR') {
+              walk(child);
+            }
+          });
         }
-        var nodes = Array.prototype.slice.call(el.childNodes);
-        nodes.forEach(function (node) {
-          if (node.nodeType === 3) {
-            var parts = node.textContent.split(/(\s+)/);
-            parts.forEach(function (part) {
-              if (!part) return;
-              if (/^\s+$/.test(part)) { el.insertBefore(document.createTextNode(part), node); }
-              else {
-                var mask = document.createElement('span');
-                mask.className = 'word-mask';
-                var inner = document.createElement('span');
-                inner.className = 'word-inner';
-                inner.textContent = part;
-                mask.appendChild(inner);
-                el.insertBefore(mask, node);
-                words.push(inner);
-              }
-            });
-            el.removeChild(node);
-          } else if (node.nodeType === 1 && node.tagName !== 'BR') {
-            var txt = node.textContent;
-            node.textContent = '';
-            txt.split(/(\s+)/).forEach(function (part) {
-              if (!part) return;
-              if (/^\s+$/.test(part)) { node.appendChild(document.createTextNode(part)); }
-              else addWord(node, part);
-            });
-          }
-        });
+        if (root) walk(root);
         return words;
       }
       var heroWords = splitWords(document.querySelector('.hero-sub'));
       var s2Words = splitWords(document.querySelector('.s2-text'));
 
-      /* ---- HERO: clip reveal + GSAP gold sweep + CTA pop + tile entrance ---- */
+      /* Hero load timeline: topbar pill drops in, headline lines
+         rise out of their masks, the gold highlight sweeps on, the
+         subhead cascades word by word, the button pops, tiles pop. */
       var heroTl = gsap.timeline({ defaults: { ease: 'power3.out' } });
       heroTl
         .from('#site-topbar .topbar-pill', { y: -16, opacity: 0, duration: 0.8, clearProps: 'transform,opacity' }, 0)
-        .from('.hero-line', { yPercent: 110, duration: 0.9, stagger: 0.12, clearProps: 'transform' }, 0.1)
+        .from('.hero-copy .reveal-line', { yPercent: 110, duration: 0.9, stagger: 0.12, clearProps: 'transform' }, 0.1)
         .fromTo('.hero-highlight', { backgroundSize: '0% 100%' }, { backgroundSize: '100% 100%', duration: 0.8, ease: 'power2.out' }, 0.9)
         .from(heroWords, { yPercent: 110, duration: 0.7, stagger: 0.03, clearProps: 'transform' }, 0.7)
         .from('.hero-cta', { y: 16, scale: 0.96, opacity: 0, duration: 0.8, ease: 'back.out(1.2)', clearProps: 'transform,opacity' }, 1.0)
-        .from('.iso-bob, .mob-float', { opacity: 0, scale: 0.85, duration: 0.7, stagger: 0.08, ease: 'back.out(1.2)' }, 0.9);
+        .from('.iso-wrap, .mob-tile', { opacity: 0, scale: 0.85, duration: 0.7, stagger: 0.08, ease: 'back.out(1.2)' }, 0.9);
 
-      /* ---- HERO tiles: GSAP float (replaces the CSS float while GSAP runs)
-         + desktop mouse tilt + scroll parallax. Float is yoyo, different
-         durations/delays per tile, transform only, on the wrappers — the
-         logo SVGs themselves are never animated. ---- */
-      var tileEls = document.querySelectorAll('.iso-bob, .mob-float');
-      tileEls.forEach(function (el, i) {
+      /* Tile float: gentle, slow, staggered, transform only, on the
+         wrappers — the logo artwork itself is never animated. */
+      document.querySelectorAll('.iso-wrap, .mob-tile').forEach(function (el, i) {
         gsap.to(el, { y: -8, duration: 2.2 + (i % 3) * 0.3, ease: 'sine.inOut', yoyo: true, repeat: -1, delay: 1.6 + (i % 6) * 0.15 });
       });
+
+      /* Desktop mouse tilt on the perspective stage. */
       var isoStage = document.querySelector('.iso-stage');
       if (isoStage && window.matchMedia('(pointer: fine)').matches && window.innerWidth >= 1024) {
         gsap.set(isoStage, { transformPerspective: 900 });
-        var qRotY = gsap.quickTo(isoStage, 'rotationY', { duration: 0.6, ease: 'power3.out' });
-        var qRotX = gsap.quickTo(isoStage, 'rotationX', { duration: 0.6, ease: 'power3.out' });
-        var heroSec = document.getElementById('section-1');
-        heroSec.addEventListener('mousemove', function (e) {
-          var r = heroSec.getBoundingClientRect();
-          qRotY(((e.clientX - r.left) / r.width - 0.5) * 6);
-          qRotX(-((e.clientY - r.top) / r.height - 0.5) * 6);
+        var tiltY = gsap.quickTo(isoStage, 'rotationY', { duration: 0.6, ease: 'power3.out' });
+        var tiltX = gsap.quickTo(isoStage, 'rotationX', { duration: 0.6, ease: 'power3.out' });
+        var heroSection = document.getElementById('section-1');
+        heroSection.addEventListener('mousemove', function (e) {
+          var r = heroSection.getBoundingClientRect();
+          tiltY(((e.clientX - r.left) / r.width - 0.5) * 6);
+          tiltX(-((e.clientY - r.top) / r.height - 0.5) * 6);
         });
-        heroSec.addEventListener('mouseleave', function () { qRotY(0); qRotX(0); });
+        heroSection.addEventListener('mouseleave', function () { tiltY(0); tiltX(0); });
       }
 
-      /* ---- SECTION 2: clip reveal + word cascade + centre pop + badge pops ---- */
+      /* Section 2 reveal: headline masks, word cascade, centre fade,
+         badge pops. */
       gsap.timeline({
         scrollTrigger: { trigger: '#section-2', start: 'top 75%', end: 'bottom 25%', toggleActions: 'play reverse play reverse' },
         defaults: { ease: 'power3.out' },
       })
-        .from('.s2-line', { yPercent: 110, duration: 0.9, stagger: 0.12 })
-        .from(s2Words, { yPercent: 110, duration: 0.6, stagger: 0.015 }, '-=0.5')
+        .from('#section-2 .reveal-line', { yPercent: 110, duration: 0.9, stagger: 0.12 })
+        .from(s2Words, { yPercent: 110, duration: 0.7, stagger: 0.015 }, '-=0.5')
         .from('.s2-centre', { opacity: 0, duration: 0.7 }, '-=0.5')
-        .from('.s2-centre svg', { scale: 0.8, opacity: 0, duration: 0.8, ease: 'back.out(1.2)', transformOrigin: '50% 50%' }, '<')
-        .from('.s2-badge', { scale: 0.8, opacity: 0, xPercent: -50, yPercent: -50, duration: 0.5, stagger: 0.08, ease: 'back.out(1.2)' }, '-=0.4');
-      /* Centre glow pulse (transform only, on the SVG — never on the
-         centre wrapper, whose centring is a Tailwind translate). */
+        .from('.s2-centre svg', { opacity: 0, duration: 0.8 }, '<')
+        .from('.orbit-badge', { scale: 0.8, opacity: 0, xPercent: -50, yPercent: -50, duration: 0.7, stagger: 0.08, ease: 'back.out(1.2)' }, '-=0.4');
+
+      /* Orbit: the badge ring revolves slowly, each badge logo
+         counter-rotates so every logo stays upright. The centre
+         mark never rotates. These loops keep running; they are
+         never reversed by scrolling. */
+      gsap.to('.orbit-ring', { rotation: 360, duration: 24, repeat: -1, ease: 'none' });
+      gsap.to('.orbit-upright', { rotation: -360, duration: 24, repeat: -1, ease: 'none' });
+      /* Centre glow: a slow breathing scale on the mark only. */
       gsap.to('.s2-centre svg', { scale: 1.03, duration: 2.4, ease: 'sine.inOut', yoyo: true, repeat: -1, delay: 2.5, transformOrigin: '50% 50%' });
 
-      /* ---- SECTION 2 orbit: GSAP rotation (CSS spin is off while
-         .gsap-anim is present, so the two never fight). Badges
-         counter-rotate so every logo stays upright. Starts when the
-         section first arrives, not at page load. ---- */
-      /* Loops keep running — they are never reversed by scrolling. */
-      gsap.to('.orbit-spin', { rotation: 360, duration: 24, repeat: -1, ease: 'none' });
-      gsap.to('.orbit-counter', { rotation: -360, duration: 24, repeat: -1, ease: 'none' });
-
-      /* ---- SECTION 3: clip reveal + GSAP gold sweep + blob/dot pops ---- */
+      /* Section 3 reveal: headline masks, gold sweep, blob scale-ins,
+         dot fades. */
       gsap.timeline({
         scrollTrigger: { trigger: '#section-3', start: 'top 75%', end: 'bottom 25%', toggleActions: 'play reverse play reverse' },
         defaults: { ease: 'power3.out' },
       })
-        .from('#section-3 .s3-line', { yPercent: 110, duration: 0.9, stagger: 0.12 })
-        .fromTo('#section-3 .community-highlight', { backgroundImage: 'linear-gradient(#f0b90b,#f0b90b)', backgroundRepeat: 'no-repeat', backgroundSize: '0% 100%' }, { backgroundSize: '100% 100%', duration: 0.8, ease: 'power2.out' }, '-=0.3')
+        .from('#section-3 .reveal-line', { yPercent: 110, duration: 0.9, stagger: 0.12 })
+        .fromTo('#section-3 .community-highlight', { backgroundSize: '0% 100%' }, { backgroundSize: '100% 100%', duration: 0.8, ease: 'power2.out' }, '-=0.3')
         .from('#section-3 .blob-wrap', { scale: 0.7, rotation: -12, opacity: 0, duration: 0.8, stagger: 0.1, ease: 'back.out(1.2)', transformOrigin: '50% 50%' }, '-=0.5')
-        .from('#section-3 .blob-dot', { scale: 0, xPercent: -50, yPercent: -50, duration: 0.5, stagger: 0.1, ease: 'back.out(1.2)', transformOrigin: '50% 50%' }, '-=0.4');
+        .from('#section-3 .blob-dot', { opacity: 0, xPercent: -50, yPercent: -50, duration: 0.7, stagger: 0.1 }, '-=0.4');
 
-      /* ---- SECTION 4: pill pop + pulse once + clip reveal + blob pops ---- */
+      /* Section 4 reveal: pill pop and settle, headline masks,
+         top blob scale-ins. */
       gsap.timeline({
         scrollTrigger: { trigger: '#section-4', start: 'top 75%', end: 'bottom 25%', toggleActions: 'play reverse play reverse' },
         defaults: { ease: 'power3.out' },
       })
         .from('.s4-pill', { scale: 0.85, y: 14, opacity: 0, duration: 0.7, ease: 'back.out(1.2)' })
         .to('.s4-pill', { scale: 1.06, duration: 0.4, ease: 'power2.out', yoyo: true, repeat: 1 }, '-=0.1')
-        .from('#section-4 .s4-line', { yPercent: 110, duration: 0.9, stagger: 0.12 }, '-=0.5')
+        .from('#section-4 .reveal-line', { yPercent: 110, duration: 0.9, stagger: 0.12 }, '-=0.5')
         .from('#section-4 .blob-wrap', { scale: 0.7, y: -20, opacity: 0, duration: 0.8, stagger: 0.1, ease: 'back.out(1.2)', transformOrigin: '50% 50%' }, '-=0.5');
 
-      /* ---- Pink dots: gentle pulse, subtle, never flashing ---- */
-      gsap.to('.blob-dot', { scale: 1.25, duration: 1.8, ease: 'sine.inOut', yoyo: true, repeat: -1, delay: 3, transformOrigin: '50% 50%' });
+      /* Pink dots: a gentle slow pulse, never flashing. */
+      gsap.to('.blob-dot', { scale: 1.25, xPercent: -50, yPercent: -50, duration: 1.8, ease: 'sine.inOut', yoyo: true, repeat: -1, delay: 3, transformOrigin: '50% 50%' });
 
-      /* ---- Scroll parallax (scrub 1, small ranges, transform only) ----
-         Applied to PARENT wrappers, never to the same elements the
-         reveal timelines animate, so reveal and parallax never fight.
-         Ranges are small (15-30px). Scrubbed parallax is inherently
-         forward/backward: scrolling up moves everything back along
-         the same path. ---- */
+      /* Scroll parallax, scrubbed, so scrolling back moves
+         everything back along the same path. Applied to parent
+         wrappers only, never to elements the reveal timelines
+         animate, so the two never fight. Transform only. */
       gsap.to('.hero-copy', { y: -20, ease: 'none', scrollTrigger: { trigger: '#section-1', start: 'top top', end: 'bottom top', scrub: 1 } });
-      /* Hero scroll-away: fades slightly as it leaves, and fades
-         back in when scrolling back up — scrub, so fully reversible. */
       gsap.to('.hero-copy', { opacity: 0.25, ease: 'none', scrollTrigger: { trigger: '#section-1', start: 'top top', end: 'bottom top', scrub: 1 } });
       gsap.to('.iso-stage, .mob-grid', { y: 30, ease: 'none', scrollTrigger: { trigger: '#section-1', start: 'top top', end: 'bottom top', scrub: 1 } });
       gsap.to('.s2-grid > div:first-child', { y: -25, ease: 'none', scrollTrigger: { trigger: '#section-2', start: 'top bottom', end: 'bottom top', scrub: 1 } });
       gsap.to('.s2-orbit', { y: 15, ease: 'none', scrollTrigger: { trigger: '#section-2', start: 'top bottom', end: 'bottom top', scrub: 1 } });
-      gsap.to('.community-card', { y: -20, scale: 0.99, transformOrigin: '50% 50%', ease: 'none', scrollTrigger: { trigger: '#section-3', start: 'top bottom', end: 'bottom top', scrub: 1 } });
-      gsap.to('.pricing-card', { y: -20, scale: 0.99, transformOrigin: '50% 50%', ease: 'none', scrollTrigger: { trigger: '#section-4', start: 'top bottom', end: 'bottom top', scrub: 1 } });
+      gsap.to('#section-3 .dark-panel', { y: -20, scale: 0.99, transformOrigin: '50% 50%', ease: 'none', scrollTrigger: { trigger: '#section-3', start: 'top bottom', end: 'bottom top', scrub: 1 } });
+      gsap.to('#section-4 .dark-panel', { y: -20, scale: 0.99, transformOrigin: '50% 50%', ease: 'none', scrollTrigger: { trigger: '#section-4', start: 'top bottom', end: 'bottom top', scrub: 1 } });
 
       window.addEventListener('load', function () { ScrollTrigger.refresh(); });
-
-      /* No scroll hijack: Lenis + native scrolling above are the
-         whole scrolling story. Wheel, touch, keyboard and scrollbar
-         all scroll freely — nothing steps, locks, or swallows input. */
-
     }
   </script>
 </Layout>
