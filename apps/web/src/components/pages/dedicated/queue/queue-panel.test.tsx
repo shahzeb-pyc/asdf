@@ -11,6 +11,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
+import { toast } from '@/components/shared/ui/toast';
 import { QueuePanel } from './queue-panel';
 
 const ID_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -374,6 +375,190 @@ describe('QueuePanel', () => {
     );
     expect(call).toBeDefined();
     expect(call![1]).toEqual({ pageId: PAGE_ID, itemIds: [ID_B, ID_A] });
+  });
+
+  it('moves the row immediately, before the reorder request resolves, with no success toast', async () => {
+    const user = userEvent.setup();
+    // Deferred reorder: the request stays in flight until the test
+    // resolves it, so anything the UI does before that point is the
+    // optimistic update, not the server round trip. The mock applies
+    // the order to the seed like a real server would, so the refetch
+    // after success converges on the same order.
+    let resolveReorder: (() => void) | null = null;
+    apiPost.mockImplementation(async (path: string, body: Record<string, any>) => {
+      if (String(path).includes('/publishing/queue/reorder')) {
+        const ids = body.itemIds as string[];
+        const byId = new Map(seed.map((row) => [row.id, row]));
+        seed = [
+          ...ids.map((id) => byId.get(id)!).filter(Boolean),
+          ...seed.filter((row) => !ids.includes(row.id)),
+        ];
+        return new Promise((resolve) => {
+          resolveReorder = () => resolve({});
+        });
+      }
+      return {};
+    });
+    renderPanel();
+    await waitFor(() => expect(screen.getByTestId(`queue-row-${ID_A}`)).toBeTruthy());
+    const panel = screen.getByTestId('queue-panel');
+    const estimateBefore = within(screen.getByTestId(`queue-row-${ID_A}`))
+      .getByTestId('queue-row-estimate').textContent;
+    const estimateBBefore = within(screen.getByTestId(`queue-row-${ID_B}`))
+      .getByTestId('queue-row-estimate').textContent;
+    const rowA = within(screen.getByTestId(`queue-row-${ID_A}`));
+    await user.click(rowA.getByTestId('queue-row-move-down'));
+    // Still in flight — but the row has already moved, its position
+    // and estimate have already followed, and the button is live.
+    await waitFor(() =>
+      expect(panel.querySelectorAll('ul > li').item(0).textContent).toContain('Second queued post')
+    );
+    expect(
+      within(screen.getByTestId(`queue-row-${ID_A}`)).getByTestId('queue-row-position')
+        .textContent
+    ).toContain('#2');
+    expect(
+      within(screen.getByTestId(`queue-row-${ID_B}`)).getByTestId('queue-row-position')
+        .textContent
+    ).toContain('#1');
+    expect(
+      within(screen.getByTestId(`queue-row-${ID_A}`)).getByTestId('queue-row-estimate')
+        .textContent
+    ).toBe(estimateBBefore);
+    expect(
+      within(screen.getByTestId(`queue-row-${ID_B}`)).getByTestId('queue-row-estimate')
+        .textContent
+    ).toBe(estimateBefore);
+    // Buttons stay live during the sync: A was first (up disabled)
+    // and is now last, so its move-up is live and B's move-down is
+    // live — nothing is stuck behind the in-flight request.
+    expect(
+      (
+        within(screen.getByTestId(`queue-row-${ID_A}`)).getByTestId(
+          'queue-row-move-up'
+        ) as HTMLButtonElement
+      ).disabled
+    ).toBe(false);
+    expect(
+      (
+        within(screen.getByTestId(`queue-row-${ID_B}`)).getByTestId(
+          'queue-row-move-down'
+        ) as HTMLButtonElement
+      ).disabled
+    ).toBe(false);
+    expect(resolveReorder).not.toBeNull();
+    resolveReorder!();
+    await waitFor(() => expect(apiPost).toHaveBeenCalled());
+    const call = apiPost.mock.calls.find((args) =>
+      String(args[0]).includes('/publishing/queue/reorder')
+    );
+    expect(call![1]).toEqual({ pageId: PAGE_ID, itemIds: [ID_B, ID_A] });
+    // Success stays silent: no per-click toast, and the order sticks
+    // after the refetch converges on the server order.
+    expect(toast.success).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(panel.querySelectorAll('ul > li').item(0).textContent).toContain('Second queued post')
+    );
+  });
+
+  it('applies rapid consecutive clicks in order, syncing only the newest order', async () => {
+    const user = userEvent.setup();
+    seed = [
+      item({ id: ID_A, caption: 'First queued post', postFormat: 'text', status: 'queued' }),
+      item({ id: ID_B, caption: 'Second queued post', postFormat: 'text', status: 'queued' }),
+      item({ id: ID_C, caption: 'Third queued post', postFormat: 'text', status: 'queued' }),
+    ];
+    const deferred: Array<() => void> = [];
+    apiPost.mockImplementation(async (path: string, body: Record<string, any>) => {
+      if (String(path).includes('/publishing/queue/reorder')) {
+        const ids = body.itemIds as string[];
+        const byId = new Map(seed.map((row) => [row.id, row]));
+        seed = [
+          ...ids.map((id) => byId.get(id)!).filter(Boolean),
+          ...seed.filter((row) => !ids.includes(row.id)),
+        ];
+        return new Promise((resolve) => {
+          deferred.push(() => resolve({}));
+        });
+      }
+      return {};
+    });
+    renderPanel();
+    await waitFor(() => expect(screen.getByTestId(`queue-row-${ID_A}`)).toBeTruthy());
+    const panel = screen.getByTestId('queue-panel');
+    const positionOf = (id: string) =>
+      within(screen.getByTestId(`queue-row-${id}`)).getByTestId('queue-row-position')
+        .textContent;
+    // First click: A moves down, sync starts and stays in flight.
+    await user.click(
+      within(screen.getByTestId(`queue-row-${ID_A}`)).getByTestId('queue-row-move-down')
+    );
+    await waitFor(() => expect(positionOf(ID_A)).toContain('#2'));
+    expect(positionOf(ID_B)).toContain('#1');
+    // Second click while the first sync is still in flight: A moves
+    // down again from the optimistic order, and no second request
+    // goes out yet — the newest order is coalesced, not queued.
+    await user.click(
+      within(screen.getByTestId(`queue-row-${ID_A}`)).getByTestId('queue-row-move-down')
+    );
+    await waitFor(() => expect(positionOf(ID_A)).toContain('#3'));
+    expect(positionOf(ID_C)).toContain('#2');
+    const reorderCalls = () =>
+      apiPost.mock.calls.filter((args) =>
+        String(args[0]).includes('/publishing/queue/reorder')
+      );
+    expect(reorderCalls()).toHaveLength(1);
+    expect(reorderCalls()[0]![1]).toEqual({ pageId: PAGE_ID, itemIds: [ID_B, ID_A, ID_C] });
+    // Letting the first sync resolve sends the newest order, never
+    // the stale one — and the final order sticks after convergence.
+    deferred[0]!();
+    await waitFor(() => expect(reorderCalls()).toHaveLength(2));
+    expect(reorderCalls()[1]![1]).toEqual({ pageId: PAGE_ID, itemIds: [ID_B, ID_C, ID_A] });
+    deferred[1]!();
+    await waitFor(() =>
+      expect(panel.querySelectorAll('ul > li').item(0).textContent).toContain('Second queued post')
+    );
+    await waitFor(() => expect(positionOf(ID_A)).toContain('#3'));
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it('rolls back to the server order with an error toast when the sync fails', async () => {
+    const user = userEvent.setup();
+    // Deferred rejection: the request stays in flight until the test
+    // rejects it, so the optimistic state is stable and observable
+    // before the rollback (an immediate throw would roll back inside
+    // the same flush and the swapped state could never be observed).
+    let rejectReorder: (() => void) | null = null;
+    apiPost.mockImplementation(async (path: string) => {
+      if (String(path).includes('/publishing/queue/reorder')) {
+        return new Promise((_, reject) => {
+          rejectReorder = () => reject(new Error(''));
+        });
+      }
+      return {};
+    });
+    renderPanel();
+    await waitFor(() => expect(screen.getByTestId(`queue-row-${ID_A}`)).toBeTruthy());
+    const panel = screen.getByTestId('queue-panel');
+    await user.click(
+      within(screen.getByTestId(`queue-row-${ID_A}`)).getByTestId('queue-row-move-down')
+    );
+    await waitFor(() =>
+      expect(panel.querySelectorAll('ul > li').item(0).textContent).toContain('Second queued post')
+    );
+    expect(rejectReorder).not.toBeNull();
+    rejectReorder!();
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("Couldn't reorder the queue. Please try again.")
+    );
+    await waitFor(() =>
+      expect(panel.querySelectorAll('ul > li').item(0).textContent).toContain('First queued post')
+    );
+    expect(
+      within(screen.getByTestId(`queue-row-${ID_A}`)).getByTestId('queue-row-position')
+        .textContent
+    ).toContain('#1');
+    expect(toast.success).not.toHaveBeenCalled();
   });
 
   it('filters by status and resets to the first page', async () => {

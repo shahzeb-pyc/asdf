@@ -94,7 +94,9 @@ test.describe('queue section (dedicated page)', () => {
       .getByTestId(`queue-row-${ID_A}`)
       .getByTestId('queue-row-move-down')
       .click();
-    await expect(page.getByText('Queue order updated.')).toBeVisible({ timeout: 15_000 });
+    // Reorder is optimistic and success stays silent (no per-click
+    // toast): the rows swap immediately and stay swapped once the
+    // list re-reads in the new server order.
     const rows = page.getByTestId('queue-panel').locator('ul > li');
     await expect(rows.first()).toContainText('Queue second post');
     await expect(rows.nth(1)).toContainText('Queue first post');

@@ -16,15 +16,19 @@
  * - Rows whose format no active posting time covers show the inline
  *   unmatched note (the page banner behaviour is untouched).
  * - Actions: delete (confirmed), caption-only edit, up/down reorder
- *   (queued rows only), publish now (queued rows, fresh idempotency
- *   key per tap), retry (failed rows, fresh idempotency key per tap).
+ *   (queued rows only, OPTIMISTIC — the row moves on click and the
+ *   reorder POST syncs in the background; buttons stay live during
+ *   the sync, rapid clicks coalesce to the newest order, and a
+ *   failed sync rolls back to the last server-confirmed order),
+ *   publish now (queued rows, fresh idempotency key per tap), retry
+ *   (failed rows, fresh idempotency key per tap).
  *   Published rows refuse edit/delete in the UI (server 400s
  *   regardless). Every mutation invalidates the whole queue cache,
  *   so the shell summary and dashboard stay in sync.
  */
 import * as React from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { z } from 'zod';
 
 import { api, buildTenantApiPath, isApiError } from '@/lib/api';
@@ -37,6 +41,7 @@ import {
 import {
   ListQueueItemsResponseSchema,
   QueueItemSchema,
+  type ListQueueItemsResponse,
   type QueueItem,
 } from '@/lib/api/schemas/queue';
 import { queryKeys } from '@/lib/data/query-keys';
@@ -64,6 +69,45 @@ const FILTERS: Array<{ id: QueueFilter; label: string }> = [
   { id: 'failed', label: 'Failed' },
   { id: 'published', label: 'Published' },
 ];
+
+/**
+ * Reorder a full queued list to a new id order. Items missing from
+ * the order keep their relative order at the end (defensive only —
+ * the panel always passes the complete queued set).
+ */
+function reorderFullItems(items: QueueItem[], nextIds: string[]): QueueItem[] {
+  const byId = new Map(items.map((item) => [item.id, item]));
+  const ordered = nextIds
+    .map((id) => byId.get(id))
+    .filter((item): item is QueueItem => item !== undefined);
+  const rest = items.filter((item) => !nextIds.includes(item.id));
+  return [...ordered, ...rest];
+}
+
+/**
+ * Reorder only the queued items of one rendered page, in place: queued
+ * slots take the new order while published/failed/cancelled rows stay
+ * exactly where they were, so a mixed page never scrambles.
+ */
+function reorderPageItems(items: QueueItem[], nextIds: string[]): QueueItem[] {
+  const rank = new Map(nextIds.map((id, index) => [id, index]));
+  const queued = items
+    .filter((item) => item.status === 'queued')
+    .sort((a, b) => (rank.get(a.id) ?? Infinity) - (rank.get(b.id) ?? Infinity));
+  let queuedIndex = 0;
+  return items.map((item) =>
+    item.status === 'queued' ? (queued[queuedIndex++] ?? item) : item
+  );
+}
+
+function sameOrder(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((id, index) => id === b[index]);
+}
+
+type QueueCacheSnapshot = Array<{
+  queryKey: QueryKey;
+  data: ListQueueItemsResponse;
+}>;
 
 function errorMessage(error: unknown, fallback: string): string {
   if (isApiError(error) && error.message) return error.message;
@@ -234,19 +278,94 @@ export function QueuePanel({
     },
   });
 
-  const reorderMutation = useMutation({
-    mutationFn: (itemIds: string[]) =>
-      api.post(buildTenantApiPath(subdomain, '/publishing/queue/reorder'), { pageId, itemIds }, {
-        schema: ReorderQueueItemsResponseSchema,
-      }),
-    onSuccess: () => {
+  // Optimistic reorder state. The panel never disables the move
+  // buttons while a reorder sync is in flight: every click applies
+  // to the cache immediately, and the serializer below sends only
+  // the newest order — a stale order never overwrites a newer one.
+  // `snapshot` is the last server-confirmed cache state, taken when
+  // the first optimistic move lands; a failed sync restores it.
+  const reorderSyncRef = React.useRef<{
+    inFlight: boolean;
+    pending: string[] | null;
+    snapshot: QueueCacheSnapshot | null;
+    active: boolean;
+  }>({ inFlight: false, pending: null, snapshot: null, active: false });
+
+  const snapshotQueueCache = (): QueueCacheSnapshot => {
+    const snapshot: QueueCacheSnapshot = [];
+    for (const entry of queryClient
+      .getQueryCache()
+      .findAll({ queryKey: tenant.queue.items(pageId) })) {
+      const data = entry.state.data as ListQueueItemsResponse | undefined;
+      if (data && Array.isArray(data.items)) {
+        snapshot.push({ queryKey: entry.queryKey, data });
+      }
+    }
+    return snapshot;
+  };
+
+  const applyOrderToCache = (nextIds: string[]) => {
+    for (const entry of queryClient
+      .getQueryCache()
+      .findAll({ queryKey: tenant.queue.items(pageId) })) {
+      const data = entry.state.data as ListQueueItemsResponse | undefined;
+      if (!data || !Array.isArray(data.items)) continue;
+      const nextItems = entry.queryKey.includes('estimates')
+        ? reorderFullItems(data.items, nextIds)
+        : reorderPageItems(data.items, nextIds);
+      queryClient.setQueryData(entry.queryKey, { ...data, items: nextItems });
+    }
+  };
+
+  const runReorderSync = async (order: string[]) => {
+    const state = reorderSyncRef.current;
+    if (state.inFlight) {
+      // A sync is already running: remember only the newest order.
+      state.pending = order;
+      return;
+    }
+    state.inFlight = true;
+    try {
+      let current = order;
+      for (;;) {
+        try {
+          await api.post(
+            buildTenantApiPath(subdomain, '/publishing/queue/reorder'),
+            { pageId, itemIds: current },
+            { schema: ReorderQueueItemsResponseSchema }
+          );
+        } catch (error) {
+          // Failed sync: roll back to the last server-confirmed
+          // order, then re-read server truth. The failure toast is
+          // the only toast reorder ever shows — success stays silent
+          // so rapid moves never spam it.
+          if (state.snapshot) {
+            for (const { queryKey, data } of state.snapshot) {
+              queryClient.setQueryData(queryKey, data);
+            }
+          }
+          state.snapshot = null;
+          state.active = false;
+          state.pending = null;
+          toast.error(errorMessage(error, "Couldn't reorder the queue. Please try again."));
+          invalidateQueue();
+          return;
+        }
+        if (state.pending && !sameOrder(state.pending, current)) {
+          current = state.pending;
+          state.pending = null;
+          continue;
+        }
+        state.pending = null;
+        break;
+      }
+      state.snapshot = null;
+      state.active = false;
       invalidateQueue();
-      toast.success('Queue order updated.');
-    },
-    onError: (error) => {
-      toast.error(errorMessage(error, "Couldn't reorder the queue. Please try again."));
-    },
-  });
+    } finally {
+      state.inFlight = false;
+    }
+  };
 
   const runMutation = React.useCallback(
     async (action: string, itemId: string, fn: () => Promise<unknown>) => {
@@ -281,21 +400,30 @@ export function QueuePanel({
     [runMutation, editMutation, itemToEdit]
   );
 
-  const handleMove = React.useCallback(
-    async (item: QueueItem, direction: -1 | 1) => {
-      const order = queuedList.map((queued) => queued.id);
-      const index = order.indexOf(item.id);
-      const target = index + direction;
-      if (index === -1 || target < 0 || target >= order.length) return;
-      const next = [...order];
-      const moved = next[index]!;
-      const displaced = next[target]!;
-      next[index] = displaced;
-      next[target] = moved;
-      await runMutation('reorder', item.id, () => reorderMutation.mutateAsync(next));
-    },
-    [runMutation, reorderMutation, queuedList]
-  );
+  // Optimistic move: swap the rows in the cache immediately (the
+  // rendered list, positions, and derived estimates all follow the
+  // cache, so the row visibly moves on click with no wait), then
+  // sync the new order in the background. Buttons are deliberately
+  // NOT put into the shared busy state here — consecutive clicks
+  // keep working while a sync is in flight.
+  const handleMove = (item: QueueItem, direction: -1 | 1) => {
+    const order = queuedList.map((queued) => queued.id);
+    const index = order.indexOf(item.id);
+    const target = index + direction;
+    if (index === -1 || target < 0 || target >= order.length) return;
+    const next = [...order];
+    const moved = next[index]!;
+    const displaced = next[target]!;
+    next[index] = displaced;
+    next[target] = moved;
+    const state = reorderSyncRef.current;
+    if (!state.active) {
+      state.snapshot = snapshotQueueCache();
+      state.active = true;
+    }
+    applyOrderToCache(next);
+    void runReorderSync(next);
+  };
 
   const handleFilterChange = React.useCallback(
     (next: QueueFilter) => {
