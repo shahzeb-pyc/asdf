@@ -54,14 +54,7 @@ export function BulkTextDialog({ open, onOpenChange, onAdd }: Readonly<BulkTextD
             One post per line — type or paste as many as you want, fast.
           </DialogDescription>
         </DialogHeader>
-        <label
-          htmlFor="bulk-text-input"
-          className="text-metadata font-semibold tracking-wide text-ink-dim uppercase"
-        >
-          Posts, one per line
-        </label>
         <Textarea
-          id="bulk-text-input"
           data-testid="bulk-text-input"
           placeholder={'Morning motivation\nNew recipe video\nWeekend sale reminder'}
           value={value}
