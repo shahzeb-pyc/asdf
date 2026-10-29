@@ -90,6 +90,8 @@ const DISCOVERED = [
   },
 ];
 
+import { api } from '@/lib/api';
+
 vi.mock('@/lib/api', () => ({
   api: {
     get: async (path: string) => {
@@ -178,5 +180,129 @@ describe('PublishNowPage wizard', () => {
     // The header names only the first page; the rest are collapsed.
     expect(screen.queryByText('Sunnie James')).toBeNull();
     expect(screen.getByText(/via Shahzeb Malik/)).toBeTruthy();
+  });
+
+  it('publishes, shows per-page results, and retries only the failed page', async () => {
+    const publishCalls: Array<{ path: string; body: unknown }> = [];
+    const firstRun = [
+      {
+        accountId: '11111111-1111-4111-a111-111111111111',
+        fbPageId: 'page-111',
+        pageName: 'Maddie Lippy',
+        status: 'published',
+        postId: 'post-111',
+        reason: null,
+        graphCode: null,
+        graphSubcode: null,
+        step: null,
+        httpStatus: null,
+        fbtraceId: null,
+        firstCommentFailed: true,
+        firstCommentReason: 'Comment failed',
+      },
+      {
+        accountId: '11111111-1111-4111-a111-111111111111',
+        fbPageId: 'page-222',
+        pageName: 'Sunnie James',
+        status: 'failed',
+        postId: null,
+        reason: 'Facebook is busy',
+        graphCode: 1,
+        graphSubcode: null,
+        step: 'feed',
+        httpStatus: 400,
+        fbtraceId: null,
+        firstCommentFailed: null,
+        firstCommentReason: null,
+      },
+    ];
+    const retryRun = [
+      {
+        ...firstRun[1],
+        status: 'published',
+        postId: 'post-222',
+        reason: null,
+        graphCode: null,
+        step: null,
+        httpStatus: null,
+      },
+    ];
+    (api.post as unknown as { mockImplementation: (fn: unknown) => void })
+      .mockImplementation(async (path: string, body: unknown) => {
+        publishCalls.push({ path, body });
+        return {
+          results: publishCalls.length === 1 ? firstRun : retryRun,
+        };
+      });
+
+    renderPage();
+    await waitFor(
+      () => expect(screen.getByText(/3 accounts/)).toBeTruthy(),
+      { timeout: 5000 }
+    );
+    fireEvent.click(screen.getByText('Shahzeb Malik'));
+    fireEvent.click(
+      screen.getByRole('button', { name: /Continue \(1 account\)/ })
+    );
+    await waitFor(
+      () => expect(screen.getByText(/2 pages found/)).toBeTruthy(),
+      { timeout: 5000 }
+    );
+    fireEvent.click(screen.getByText('Maddie Lippy'));
+    fireEvent.click(screen.getByText('Sunnie James'));
+    fireEvent.click(
+      screen.getByRole('button', { name: /Continue \(2 pages\)/ })
+    );
+    await waitFor(
+      () =>
+        expect(
+          screen.getByRole('heading', { name: 'Maddie Lippy + 1 more' })
+        ).toBeTruthy(),
+      { timeout: 5000 }
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("What's on your mind?"), {
+      target: { value: 'Hello' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('Write a comment...'), {
+      target: { value: 'Nice!' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Publish Now' }));
+
+    await waitFor(
+      () => expect(screen.getByText('Published')).toBeTruthy(),
+      { timeout: 5000 }
+    );
+    expect(screen.getByText('Facebook is busy')).toBeTruthy();
+    expect(
+      screen.getByText(/First comment could not be posted/)
+    ).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: 'Retry failed only' })
+    ).toBeTruthy();
+
+    // Retry sends only the failed page, never the published one.
+    fireEvent.click(screen.getByRole('button', { name: 'Retry failed only' }));
+    await waitFor(
+      () => expect(publishCalls.length).toBe(2),
+      { timeout: 5000 }
+    );
+    const retryBody = publishCalls[1].body as {
+      targets: Array<{ fbPageId: string }>;
+    };
+    expect(retryBody.targets).toHaveLength(1);
+    expect(retryBody.targets[0].fbPageId).toBe('page-222');
+    await waitFor(
+      () => expect(screen.queryByText('Facebook is busy')).toBeNull(),
+      { timeout: 5000 }
+    );
+    expect(screen.queryByRole('button', { name: 'Retry failed only' })).toBeNull();
+
+    // Start over returns to the wizard with a clean slate.
+    fireEvent.click(screen.getByRole('button', { name: 'Start over' }));
+    await waitFor(
+      () => expect(screen.getByText(/3 accounts/)).toBeTruthy(),
+      { timeout: 5000 }
+    );
   });
 });

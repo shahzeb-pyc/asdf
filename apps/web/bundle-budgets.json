@@ -36,10 +36,10 @@
         "routeSpecificRawBytes": 114198
       },
       "/tenant/[subdomain]/publish-now": {
-        "firstLoadGzipBytes": 161057,
-        "firstLoadRawBytes": 536817,
-        "routeSpecificGzipBytes": 27283,
-        "routeSpecificRawBytes": 86004
+        "firstLoadGzipBytes": 164262,
+        "firstLoadRawBytes": 549141,
+        "routeSpecificGzipBytes": 30471,
+        "routeSpecificRawBytes": 98304
       },
       "/tenant/[subdomain]/destinations/[destinationId]": {
         "firstLoadGzipBytes": 163912,
@@ -325,10 +325,10 @@
         "routeSpecificRawBytes": 89213
       },
       "/tenant/[subdomain]/publish-now": {
-        "firstLoadGzipBytes": 169110,
-        "firstLoadRawBytes": 563658,
-        "routeSpecificGzipBytes": 28648,
-        "routeSpecificRawBytes": 90305
+        "firstLoadGzipBytes": 172476,
+        "firstLoadRawBytes": 576599,
+        "routeSpecificGzipBytes": 31995,
+        "routeSpecificRawBytes": 103220
       },
       "/tenant/[subdomain]/settings": {
         "firstLoadGzipBytes": 170245,

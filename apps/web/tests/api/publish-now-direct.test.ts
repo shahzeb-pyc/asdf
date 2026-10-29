@@ -52,6 +52,16 @@ let feedFailures: Record<
   { code: number; error_subcode: number } | undefined
 > = {};
 let commentShouldFail = false;
+let permissionsResponse: {
+  data: Array<{ permission: string; status: string }>;
+} = { data: [] };
+let mediaRow: { id: string; media_type: string; url: string } | null = {
+  id: '22222222-2222-4222-a222-222222222222',
+  media_type: 'image',
+  url: 'https://media.example.com/photo.jpg',
+};
+let mediaFetchShouldFail = false;
+let headShouldFail = false;
 
 function graphResponse(ok: boolean, status: number, data: unknown) {
   return {
@@ -61,20 +71,27 @@ function graphResponse(ok: boolean, status: number, data: unknown) {
   } as unknown as Response;
 }
 
-function supabaseBuilder() {
+function supabaseBuilder(table: string) {
   const builder = {
     select: () => builder,
     eq: () => builder,
-    maybeSingle: async () => ({
-      data: { encrypted_access_token: 'enc-token' },
-      error: null,
-    }),
+    maybeSingle: async () => {
+      if (table === 'media_items') {
+        return { data: mediaRow, error: null };
+      }
+      return {
+        data: { encrypted_access_token: 'enc-token' },
+        error: null,
+      };
+    },
   };
   return builder;
 }
 
 vi.mock('@/lib/auth/clients', () => ({
-  getSupabaseAdminClient: () => ({ from: () => supabaseBuilder() }),
+  getSupabaseAdminClient: () => ({
+    from: (table: string) => supabaseBuilder(table),
+  }),
 }));
 
 beforeEach(() => {
@@ -94,40 +111,110 @@ beforeEach(() => {
   ];
   feedFailures = {};
   commentShouldFail = false;
+  permissionsResponse = { data: [] };
+  mediaRow = {
+    id: '22222222-2222-4222-a222-222222222222',
+    media_type: 'image',
+    url: 'https://media.example.com/photo.jpg',
+  };
+  mediaFetchShouldFail = false;
+  headShouldFail = false;
 
-  vi.stubGlobal('fetch', async (input: unknown) => {
-    const url = String(input);
-    if (url.includes('/me/accounts')) {
-      return graphResponse(true, 200, { data: graphPages });
-    }
-    if (url.includes('/me/permissions')) {
-      return graphResponse(true, 200, { data: [] });
-    }
-    if (url.includes('/comments')) {
-      if (commentShouldFail) {
-        return graphResponse(false, 400, {
-          error: { message: 'Comment failed', code: 1 },
+  vi.stubGlobal(
+    'fetch',
+    async (
+      input: unknown,
+      init?: { method?: string; body?: unknown }
+    ) => {
+      const url = String(input);
+      if (url.includes('/me/accounts')) {
+        return graphResponse(true, 200, { data: graphPages });
+      }
+      if (url.includes('/me/permissions')) {
+        return graphResponse(true, 200, permissionsResponse);
+      }
+      if (url.includes('/comments')) {
+        if (commentShouldFail) {
+          return graphResponse(false, 400, {
+            error: { message: 'Comment failed', code: 1 },
+          });
+        }
+        return graphResponse(true, 200, { id: 'comment-1' });
+      }
+      if (url.includes('media.example.com')) {
+        if (init?.method === 'HEAD') {
+          return headShouldFail
+            ? graphResponse(false, 404, {})
+            : graphResponse(true, 200, {});
+        }
+        if (mediaFetchShouldFail) {
+          return {
+            ok: false,
+            status: 404,
+            body: null,
+            headers: new Headers(),
+            arrayBuffer: async () => new ArrayBuffer(0),
+            json: async () => ({}),
+          } as unknown as Response;
+        }
+        return {
+          ok: true,
+          status: 200,
+          body: {},
+          headers: new Headers({
+            'content-length': '8',
+            'content-type': 'image/jpeg',
+          }),
+          arrayBuffer: async () =>
+            new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]).buffer,
+          json: async () => ({}),
+        } as unknown as Response;
+      }
+      if (url.includes('rupload.example.com')) {
+        return graphResponse(true, 200, {});
+      }
+      const photosMatch = url.match(/\/(\d+)\/photos$/);
+      if (photosMatch) {
+        return graphResponse(true, 200, {
+          post_id: `photo-post-${photosMatch[1]}`,
         });
       }
-      return graphResponse(true, 200, { id: 'comment-1' });
-    }
-    const feedMatch = url.match(/\/(\d+)\/feed$/);
-    if (feedMatch) {
-      const failure = feedFailures[feedMatch[1]];
-      if (failure) {
-        return graphResponse(false, 400, {
-          error: {
-            message: 'An unknown error occurred',
-            code: failure.code,
-            error_subcode: failure.error_subcode,
-            fbtrace_id: 'trace-1',
-          },
-        });
+      const videosMatch = url.match(/\/(\d+)\/videos$/);
+      if (videosMatch) {
+        return graphResponse(true, 200, { id: `video-post-${videosMatch[1]}` });
       }
-      return graphResponse(true, 200, { id: `post-${feedMatch[1]}` });
+      if (url.includes('/video_reels')) {
+        const bodyText =
+          typeof init?.body === 'string' ? init.body : '{}';
+        const parsedBody = JSON.parse(bodyText) as {
+          upload_phase?: string;
+        };
+        if (parsedBody.upload_phase === 'start') {
+          return graphResponse(true, 200, {
+            video_id: 'vid-1',
+            upload_url: 'https://rupload.example.com/up',
+          });
+        }
+        return graphResponse(true, 200, { post_id: 'reel-post-111' });
+      }
+      const feedMatch = url.match(/\/(\d+)\/feed$/);
+      if (feedMatch) {
+        const failure = feedFailures[feedMatch[1]];
+        if (failure) {
+          return graphResponse(false, 400, {
+            error: {
+              message: 'An unknown error occurred',
+              code: failure.code,
+              error_subcode: failure.error_subcode,
+              fbtrace_id: 'trace-1',
+            },
+          });
+        }
+        return graphResponse(true, 200, { id: `post-${feedMatch[1]}` });
+      }
+      return graphResponse(false, 404, {});
     }
-    return graphResponse(false, 404, {});
-  });
+  );
 });
 
 const ACCOUNT_ID = '11111111-1111-4111-a111-111111111111';
@@ -291,5 +378,203 @@ describe('POST publish-now', () => {
     expect(longReel.body.message).toBe(
       'Text exceeds the 2,200-character limit'
     );
+  });
+
+  it('publishes a photo by uploading its bytes, not a Facebook-fetched URL', async () => {
+    const { status, body } = await callPost({
+      caption: 'Hello',
+      postType: 'image',
+      targets: [target('111', 'Page One')],
+      media: {
+        source: 'library',
+        mediaId: '22222222-2222-4222-a222-222222222222',
+        tempKey: null,
+        url: 'https://media.example.com/photo.jpg',
+        mediaType: 'image',
+        aspectRatio: null,
+        width: null,
+        height: null,
+        name: 'photo.jpg',
+      },
+    });
+    expect(status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      status: 'published',
+      postId: 'photo-post-111',
+    });
+  });
+
+  it('fails a photo with a media-fetch step when its bytes cannot be fetched', async () => {
+    mediaFetchShouldFail = true;
+    const { status, body } = await callPost({
+      caption: 'Hello',
+      postType: 'image',
+      targets: [target('111', 'Page One')],
+      media: {
+        source: 'library',
+        mediaId: '22222222-2222-4222-a222-222222222222',
+        tempKey: null,
+        url: 'https://media.example.com/photo.jpg',
+        mediaType: 'image',
+        aspectRatio: null,
+        width: null,
+        height: null,
+        name: 'photo.jpg',
+      },
+    });
+    expect(status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      status: 'failed',
+      step: 'media-fetch',
+    });
+  });
+
+  it('publishes a video after the reachability guard passes', async () => {
+    mediaRow = {
+      id: '22222222-2222-4222-a222-222222222222',
+      media_type: 'video',
+      url: 'https://media.example.com/clip.mp4',
+    };
+    const { status, body } = await callPost({
+      caption: 'Hello',
+      postType: 'video',
+      targets: [target('111', 'Page One')],
+      media: {
+        source: 'library',
+        mediaId: '22222222-2222-4222-a222-222222222222',
+        tempKey: null,
+        url: 'https://media.example.com/clip.mp4',
+        mediaType: 'video',
+        aspectRatio: null,
+        width: null,
+        height: null,
+        name: 'clip.mp4',
+      },
+    });
+    expect(status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      status: 'published',
+      postId: 'video-post-111',
+    });
+  });
+
+  it('rejects a video outright when its URL is not reachable', async () => {
+    headShouldFail = true;
+    mediaRow = {
+      id: '22222222-2222-4222-a222-222222222222',
+      media_type: 'video',
+      url: 'https://media.example.com/clip.mp4',
+    };
+    const { status, body } = await callPost({
+      caption: 'Hello',
+      postType: 'video',
+      targets: [target('111', 'Page One')],
+      media: {
+        source: 'library',
+        mediaId: '22222222-2222-4222-a222-222222222222',
+        tempKey: null,
+        url: 'https://media.example.com/clip.mp4',
+        mediaType: 'video',
+        aspectRatio: null,
+        width: null,
+        height: null,
+        name: 'clip.mp4',
+      },
+    });
+    expect(status).toBe(400);
+    expect(body.message).toContain('Please re-attach the video');
+  });
+
+  it('publishes a reel through start, upload, and finish', async () => {
+    mediaRow = {
+      id: '22222222-2222-4222-a222-222222222222',
+      media_type: 'video',
+      url: 'https://media.example.com/clip.mp4',
+    };
+    const { status, body } = await callPost({
+      caption: 'Hello',
+      postType: 'reel',
+      targets: [target('111', 'Page One')],
+      media: {
+        source: 'library',
+        mediaId: '22222222-2222-4222-a222-222222222222',
+        tempKey: null,
+        url: 'https://media.example.com/clip.mp4',
+        mediaType: 'video',
+        aspectRatio: null,
+        width: null,
+        height: null,
+        name: 'clip.mp4',
+      },
+    });
+    expect(status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      status: 'published',
+      postId: 'reel-post-111',
+    });
+  });
+
+  it('fails fast on the pre-check when posting permission is declined', async () => {
+    permissionsResponse = {
+      data: [{ permission: 'pages_manage_posts', status: 'declined' }],
+    };
+    const { status, body } = await callPost({
+      caption: 'Hello',
+      postType: 'text',
+      targets: [target('111', 'Page One')],
+      media: null,
+    });
+    expect(status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      status: 'failed',
+      step: 'precheck',
+    });
+    expect(body.results[0].reason).toContain(
+      'has not allowed posting to pages'
+    );
+  });
+
+  it('rejects a library media id with no stored row', async () => {
+    mediaRow = null;
+    const { status, body } = await callPost({
+      caption: 'Hello',
+      postType: 'image',
+      targets: [target('111', 'Page One')],
+      media: {
+        source: 'library',
+        mediaId: '22222222-2222-4222-a222-222222222222',
+        tempKey: null,
+        url: 'https://media.example.com/photo.jpg',
+        mediaType: 'image',
+        aspectRatio: null,
+        width: null,
+        height: null,
+        name: 'photo.jpg',
+      },
+    });
+    expect(status).toBe(400);
+    expect(body.message).toContain('was not found');
+  });
+
+  it('rejects temp media whose key does not verify', async () => {
+    const { status, body } = await callPost({
+      caption: 'Hello',
+      postType: 'image',
+      targets: [target('111', 'Page One')],
+      media: {
+        source: 'temp',
+        mediaId: null,
+        tempKey: 'users/user-1/publish-now-temp/abc/photo.jpg',
+        url: 'https://media.example.com/photo.jpg',
+        mediaType: 'image',
+        aspectRatio: null,
+        width: null,
+        height: null,
+        name: 'photo.jpg',
+      },
+    });
+    // The R2 config mock returns null, so no temp URL can verify.
+    expect(status).toBe(400);
+    expect(body.message).toContain('could not be verified');
   });
 });

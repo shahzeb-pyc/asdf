@@ -647,7 +647,17 @@ export async function POST(
     mediaUrl = data.url;
   } else if (media?.source === 'temp' && media.tempKey) {
     const config = getR2Config();
-    const publicBase = config?.publicUrl.replace(/\/+$/, '') ?? null;
+    // Strip trailing slashes without a regex: the R2 public URL is
+    // stored with a trailing slash in some environments, and the
+    // prefix check below needs the bare base.
+    let publicBase: string | null = null;
+    if (config) {
+      let stripped = config.publicUrl;
+      while (stripped.endsWith('/')) {
+        stripped = stripped.slice(0, -1);
+      }
+      publicBase = stripped;
+    }
     const expectedPrefix = `users/${session.userId}/publish-now-temp/`;
     const keyFromUrl =
       publicBase && media.url.startsWith(`${publicBase}/`)
