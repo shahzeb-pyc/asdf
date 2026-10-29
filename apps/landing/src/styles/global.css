@@ -63,7 +63,7 @@
     transform: translateY(0) rotate(var(--tilt, 0deg));
   }
   50% {
-    transform: translateY(-12px) rotate(var(--tilt, 0deg));
+    transform: translateY(-6px) rotate(var(--tilt, 0deg));
   }
 }
 .float-tile {
