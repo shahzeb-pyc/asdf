@@ -80,7 +80,7 @@ const signin = 'https://app.fbuploadpro.com/login';
            tiles at varying depths. Each logo is a separate layer, a
            sibling of its tilted tile, centred over it upright and
            undistorted. -->
-      <div class="iso-stage pointer-events-none relative mx-auto mt-8 hidden h-[280px] max-w-[1100px] lg:block" aria-hidden="true">
+      <div class="iso-stage pointer-events-none relative mx-auto mt-8 hidden h-[280px] w-full max-w-[1100px] lg:block" aria-hidden="true">
         <span class="iso-wrap absolute bottom-[84px] left-[-14px] z-[3] h-[118px] w-[118px]">
           <span class="iso-tile absolute inset-0 rounded-[24px] border border-line bg-white"></span>
           <svg class="iso-logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="52" height="52" fill="#1877f2" role="img" aria-label="Facebook"><path d="M9.101 23.691v-7.98H6.627v-3.667h2.474v-1.58c0-4.085 1.848-5.978 5.858-5.978.401 0 .955.042 1.468.103a8.68 8.68 0 0 1 1.141.195v3.325a8.623 8.623 0 0 0-.653-.036 26.805 26.805 0 0 0-.733-.009c-.707 0-1.259.096-1.675.309a1.686 1.686 0 0 0-.679.622c-.258.42-.374.995-.374 1.752v1.297h3.919l-.386 2.103-.287 1.564h-3.246v8.245C19.396 23.238 24 18.179 24 12.044c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.628 3.874 10.35 9.101 11.647Z"/></svg>
@@ -302,11 +302,16 @@ const signin = 'https://app.fbuploadpro.com/login';
         heroSection.addEventListener('mouseleave', function () { tiltY(0); tiltX(0); });
       }
 
-      /* Section 2 reveal: headline masks, word cascade, centre fade,
-         badge pops. */
+      /* Section 2 reveal, SCRUBBED: progress is tied directly to
+         scroll position, so scrolling down plays it forward and
+         scrolling up reverses it along the exact same path — no
+         replay, no snap, no stepped replay. Reveal completes while
+         the section is entering (top 90% -> top 45%), before it is
+         centred. Defaults ease 'none' so scrub progress maps 1:1;
+         pops keep their own back.out ease. */
       gsap.timeline({
-        scrollTrigger: { trigger: '#section-2', start: 'top 75%', end: 'bottom 25%', toggleActions: 'play reverse play reverse' },
-        defaults: { ease: 'power3.out' },
+        scrollTrigger: { trigger: '#section-2', start: 'top 90%', end: 'top 45%', scrub: 1 },
+        defaults: { ease: 'none' },
       })
         .from('#section-2 .reveal-line', { yPercent: 110, duration: 0.9, stagger: 0.12 })
         .from(s2Words, { yPercent: 110, duration: 0.7, stagger: 0.015 }, '-=0.5')
@@ -323,22 +328,24 @@ const signin = 'https://app.fbuploadpro.com/login';
       /* Centre glow: a slow breathing scale on the mark only. */
       gsap.to('.s2-centre svg', { scale: 1.03, duration: 2.4, ease: 'sine.inOut', yoyo: true, repeat: -1, delay: 2.5, transformOrigin: '50% 50%' });
 
-      /* Section 3 reveal: headline masks, gold sweep, blob scale-ins,
-         dot fades. */
+      /* Section 3 reveal, SCRUBBED (same forward/backward rule as
+         section 2: top 90% -> top 45%, no stepped replay). */
       gsap.timeline({
-        scrollTrigger: { trigger: '#section-3', start: 'top 75%', end: 'bottom 25%', toggleActions: 'play reverse play reverse' },
-        defaults: { ease: 'power3.out' },
+        scrollTrigger: { trigger: '#section-3', start: 'top 90%', end: 'top 45%', scrub: 1 },
+        defaults: { ease: 'none' },
       })
         .from('#section-3 .reveal-line', { yPercent: 110, duration: 0.9, stagger: 0.12 })
         .fromTo('#section-3 .community-highlight', { backgroundSize: '0% 100%' }, { backgroundSize: '100% 100%', duration: 0.8, ease: 'power2.out' }, '-=0.3')
         .from('#section-3 .blob-wrap', { scale: 0.7, rotation: -12, opacity: 0, duration: 0.8, stagger: 0.1, ease: 'back.out(1.2)', transformOrigin: '50% 50%' }, '-=0.5')
         .from('#section-3 .blob-dot', { opacity: 0, xPercent: -50, yPercent: -50, duration: 0.7, stagger: 0.1 }, '-=0.4');
 
-      /* Section 4 reveal: pill pop and settle, headline masks,
-         top blob scale-ins. */
+      /* Section 4 reveal, SCRUBBED (same forward/backward rule:
+         top 90% -> top 45%, no stepped replay). The pill
+         settle is part of the scrubbed timeline, so it too runs
+         forward on scroll down and backward on scroll up. */
       gsap.timeline({
-        scrollTrigger: { trigger: '#section-4', start: 'top 75%', end: 'bottom 25%', toggleActions: 'play reverse play reverse' },
-        defaults: { ease: 'power3.out' },
+        scrollTrigger: { trigger: '#section-4', start: 'top 90%', end: 'top 45%', scrub: 1 },
+        defaults: { ease: 'none' },
       })
         .from('.s4-pill', { scale: 0.85, y: 14, opacity: 0, duration: 0.7, ease: 'back.out(1.2)' })
         .to('.s4-pill', { scale: 1.06, duration: 0.4, ease: 'power2.out', yoyo: true, repeat: 1 }, '-=0.1')
