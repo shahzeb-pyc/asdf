@@ -283,7 +283,6 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
   const [text, setText] = React.useState('');
   const [firstComment, setFirstComment] = React.useState('');
   const [attached, setAttached] = React.useState<PublishNowAttachedMedia | null>(null);
-  const [attachChoiceOpen, setAttachChoiceOpen] = React.useState(false);
   const [pickerOpen, setPickerOpen] = React.useState(false);
   const [pickerSession, setPickerSession] = React.useState(0);
   const [isUploadingTemp, setIsUploadingTemp] = React.useState(false);
@@ -588,7 +587,6 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
       // post can never carry media of the wrong type.
       if (attached) removeAttachedMedia();
       setPostType(nextType);
-      setAttachChoiceOpen(false);
       setErrorMessage(null);
     },
     [attached, postType, removeAttachedMedia]
@@ -643,7 +641,6 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
         }
         return prev;
       });
-      setAttachChoiceOpen(false);
       setPickerOpen(false);
     },
     [postType, subdomain]
@@ -717,7 +714,6 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
         setText((prev) =>
           prev.trim().length === 0 && defaultCaption ? defaultCaption : prev
         );
-        setAttachChoiceOpen(false);
       } catch (error) {
         setErrorMessage(
           errorText(error, 'The upload failed. Please try again.')
@@ -861,7 +857,6 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
       setText('');
       setFirstComment('');
       setAttached(null);
-      setAttachChoiceOpen(false);
       setPickerOpen(false);
       setPickerSession((prev) => prev + 1);
       setResults([]);
