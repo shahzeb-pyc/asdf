@@ -45,6 +45,16 @@
  * next open; a plain-text page-status gate (blocked statuses
  * refuse, paused warns); and a 150-post batch guard with a plain
  * refusal message (no count badge in the header).
+ *
+ * Queueing never looks stuck: the button label and one plain
+ * line show live progress ("Adding 2 of 4…", "Checking posting
+ * times…"), and a Stop queueing button is available DURING
+ * queueing. Stop never cancels an in-flight request — it stops
+ * the loop after the current post finishes, keeps posts already
+ * queued (dropped from the draft like a partial success), leaves
+ * the rest in the dialogue, and re-enables the button. Every
+ * failure path ends the same way: lock released, button
+ * re-enabled, a plain message, failed blocks kept for retry.
  */
 
 import * as React from 'react';
@@ -198,6 +208,20 @@ export function CreatePostsDialog({
   // would still see isQueueing === false. The ref is set before
   // any await, so that window does not exist.
   const queueingLockRef = React.useRef(false);
+  // Live queueing progress, shown as plain text (button label +
+  // one line above the footer) — never a progress panel or strip
+  // box. `phase` is 'checking' while the posting-times pre-check
+  // runs (before any post queues) and 'queueing' during the loop.
+  const [queueProgress, setQueueProgress] = React.useState<{
+    done: number;
+    total: number;
+    phase: 'checking' | 'queueing';
+  } | null>(null);
+  // Stop queueing: set by the Stop button, read by the loop. It
+  // never cancels an in-flight request — the loop checks it
+  // between posts and stops after the current post finishes.
+  const abortQueueingRef = React.useRef(false);
+  const [abortRequested, setAbortRequested] = React.useState(false);
   // Set by the "Go to Posting Times" action: the next open restores
   // the drafts instead of resetting to one empty block.
   const preserveDraftsRef = React.useRef(false);
@@ -414,11 +438,24 @@ export function CreatePostsDialog({
     [blocks]
   );
 
+  /** Stop queueing, the safe way out while a run is in flight.
+   *  This only sets the flag: the loop stops after the current
+   *  post finishes (never mid-request), keeps already-queued
+   *  posts queued, and leaves the rest in the dialogue. Dismiss
+   *  paths (Cancel, backdrop, Esc, X) stay blocked mid-queueing —
+   *  Stop is the exit, so a stopped run cannot strand a request. */
+  const handleStopQueueing = React.useCallback(() => {
+    abortQueueingRef.current = true;
+    setAbortRequested(true);
+  }, []);
+
   const handleAddAllToQueue = React.useCallback(async () => {
     // The ref lock is checked and set BEFORE any await: this is the
     // fix for the double-click window the old code left open.
     if (queueingLockRef.current || readyBlocks.length === 0) return;
     queueingLockRef.current = true;
+    abortQueueingRef.current = false;
+    setAbortRequested(false);
     setIsQueueing(true);
     try {
     if (statusGate.blocked) {
@@ -478,6 +515,17 @@ export function CreatePostsDialog({
     // falls through to the queue attempt below (logged, not
     // swallowed): the server then surfaces the real error, so
     // queueing is never silently skipped.
+    // The user must see something happening during this await:
+    // before this fix the button just said "Adding to queue…"
+    // while nothing had queued yet, which is where the stuck
+    // feeling starts. No timeout exists on this fetch, so a slow
+    // response is a slow wait — but at least it is now a named
+    // wait, and Stop (below) ends the run as soon as it returns.
+    setQueueProgress({
+      done: 0,
+      total: readyBlocks.length,
+      phase: 'checking',
+    });
     try {
       const slotsResponse = await api.get(
         buildTenantApiPath(subdomain, `/pages/${page.id}/slots`),
@@ -508,12 +556,23 @@ export function CreatePostsDialog({
     } catch (error) {
       console.error('Failed to check posting times before queueing', error);
     }
+    // Stop pressed during the pre-check: the in-flight slots fetch
+    // cannot be cancelled (no AbortSignal is passed to it), but no
+    // post has queued yet, so stopping here queues nothing.
+    if (abortQueueingRef.current) {
+      toast.info('Queueing stopped — no posts were added.');
+      return;
+    }
     let queued = 0;
     try {
       // Sequential, in order: each enqueue resolves the next vacant
       // posting time from the queue as it stands, so parallel posts
       // could otherwise claim the same time.
       for (const block of parsed.data) {
+        // Stop is checked BETWEEN posts only: an in-flight enqueue
+        // is never cancelled mid-request, so a stopped run can
+        // never duplicate or lose the post it was adding.
+        if (abortQueueingRef.current) break;
         const item = toComposerEnqueueItem(block);
         if (!item) continue;
         let idempotencyKey = idempotencyKeysRef.current.get(block.id);
@@ -521,6 +580,11 @@ export function CreatePostsDialog({
           idempotencyKey = crypto.randomUUID();
           idempotencyKeysRef.current.set(block.id, idempotencyKey);
         }
+        setQueueProgress({
+          done: queued,
+          total: readyBlocks.length,
+          phase: 'queueing',
+        });
         await api.post(
           buildTenantApiPath(subdomain, '/publishing/destination-queue'),
           {
@@ -538,14 +602,43 @@ export function CreatePostsDialog({
           }
         );
         queued += 1;
+        setQueueProgress({
+          done: queued,
+          total: readyBlocks.length,
+          phase: 'queueing',
+        });
       }
-      await queryClient.invalidateQueries({
-        queryKey: queryKeys.tenant(subdomain).queue.all,
-      });
-      toast.success(
-        queued === 1 ? 'Post added to queue.' : `${queued} posts added to queue.`
-      );
-      onOpenChange(false);
+      if (abortQueueingRef.current) {
+        // Stopped run: exactly like a partial success — posts
+        // already queued leave the draft, the rest stay for retry,
+        // and the dialogue stays open with the button re-enabled
+        // (outer finally). Never treated as an error, never closed.
+        if (queued > 0) {
+          const queuedIds = new Set(
+            readyBlocks.slice(0, queued).map((block) => block.id)
+          );
+          setBlocks((prev) => {
+            const next = prev.filter((block) => !queuedIds.has(block.id));
+            return next.length === 0 ? [newEmptyBlock()] : next;
+          });
+          await queryClient.invalidateQueries({
+            queryKey: queryKeys.tenant(subdomain).queue.all,
+          });
+          toast.info(
+            `Stopped — ${queued} post${queued === 1 ? '' : 's'} added to queue. The rest are still here.`
+          );
+        } else {
+          toast.info('Queueing stopped — no posts were added.');
+        }
+      } else {
+        await queryClient.invalidateQueries({
+          queryKey: queryKeys.tenant(subdomain).queue.all,
+        });
+        toast.success(
+          queued === 1 ? 'Post added to queue.' : `${queued} posts added to queue.`
+        );
+        onOpenChange(false);
+      }
     } catch (error) {
       if (queued > 0) {
         // Settle: queueing is sequential and in order, and every
@@ -565,17 +658,34 @@ export function CreatePostsDialog({
           return next.length === 0 ? [newEmptyBlock()] : next;
         });
       }
+      // 409 IDEMPOTENCY_IN_PROGRESS is not a stuck state: the
+      // post is being added by another in-flight request (another
+      // tab/device), the button re-enables via finally below, and
+      // a retry replays instead of duplicating. Say so plainly,
+      // instead of a generic failure that invites repeated clicks
+      // into the same 5-minute processing window.
+      const isAlreadyAdding =
+        isApiError(error) && error.code === 'IDEMPOTENCY_IN_PROGRESS';
       toast.error(
-        queued > 0
-          ? `${queued} of ${readyBlocks.length} posts queued — then queueing failed: ${errorText(error, 'Please try again.')}`
-          : `Couldn't add posts to the queue: ${errorText(error, 'Please try again.')}`
+        isAlreadyAdding
+          ? queued > 0
+            ? `${queued} of ${readyBlocks.length} posts queued — the next post is already being added (it may be queueing from another tab). Wait a moment, then retry; retrying will not duplicate it.`
+            : 'This post is already being added — it may be queueing from another tab. Wait a moment and try again; retrying will not duplicate it.'
+          : queued > 0
+            ? `${queued} of ${readyBlocks.length} posts queued — then queueing failed: ${errorText(error, 'Please try again.')}`
+            : `Couldn't add posts to the queue: ${errorText(error, 'Please try again.')}`
       );
     } finally {
       setIsQueueing(false);
     }
     } finally {
+      // Every exit — success, failure, stop, early return — ends
+      // here: lock released, button re-enabled, progress cleared.
+      // No path may leave isQueueing true or the lock held.
       queueingLockRef.current = false;
       setIsQueueing(false);
+      setQueueProgress(null);
+      setAbortRequested(false);
     }
   }, [blocks, readyBlocks, statusGate, subdomain, page.id, queryClient, onOpenChange, router, searchParams]);
 
@@ -710,16 +820,47 @@ export function CreatePostsDialog({
             })}
           </div>
 
-          <DialogFooter className="shrink-0">
-            <Button
-              type="button"
-              variant="secondary"
-              data-testid="create-posts-cancel-btn"
-              disabled={isQueueing}
-              onClick={() => handleDialogOpenChange(false)}
+          {/* Live progress as one plain text line — no panel, no
+              strip box, nothing that looks like a new UI element.
+              It sits above the pinned footer while queueing and
+              disappears with the run (outer finally clears it). */}
+          {isQueueing && queueProgress ? (
+            <p
+              aria-live="polite"
+              className="shrink-0 text-metadata text-ink-sub"
             >
-              Cancel
-            </Button>
+              {abortRequested
+                ? 'Stopping…'
+                : queueProgress.phase === 'checking'
+                  ? 'Checking posting times…'
+                  : `Adding post ${Math.min(queueProgress.done + 1, queueProgress.total)} of ${queueProgress.total}…`}
+              {!abortRequested
+                ? ' Use Stop queueing to stop after the current post.'
+                : ''}
+            </p>
+          ) : null}
+
+          <DialogFooter className="shrink-0">
+            {isQueueing ? (
+              <Button
+                type="button"
+                variant="secondary"
+                data-testid="create-posts-stop-queue-btn"
+                disabled={abortRequested}
+                onClick={handleStopQueueing}
+              >
+                {abortRequested ? 'Stopping…' : 'Stop queueing'}
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                variant="secondary"
+                data-testid="create-posts-cancel-btn"
+                onClick={() => handleDialogOpenChange(false)}
+              >
+                Cancel
+              </Button>
+            )}
             <Button
               type="button"
               data-testid="create-posts-queue-btn"
@@ -727,7 +868,13 @@ export function CreatePostsDialog({
               onClick={() => void handleAddAllToQueue()}
             >
               {isQueueing
-                ? 'Adding to queue…'
+                ? abortRequested
+                  ? 'Stopping…'
+                  : queueProgress?.phase === 'checking'
+                    ? 'Checking posting times…'
+                    : queueProgress
+                      ? `Adding ${Math.min(queueProgress.done + 1, queueProgress.total)} of ${queueProgress.total}…`
+                      : 'Adding to queue…'
                 : readyBlocks.length === 0
                   ? 'Add all to Queue'
                   : `Add all to Queue (${readyBlocks.length} post${readyBlocks.length === 1 ? '' : 's'})`}
