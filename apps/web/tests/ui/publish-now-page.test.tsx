@@ -28,7 +28,30 @@ vi.mock('next/image', () => ({
 }));
 
 vi.mock('@/components/pages/dedicated/create-posts/media-library-picker', () => ({
-  MediaLibraryPicker: () => null,
+  MediaLibraryPicker: (props: {
+    open: boolean;
+    onSingleAttach: (media: unknown) => void;
+  }) =>
+    props.open ? (
+      <button
+        type="button"
+        onClick={() =>
+          props.onSingleAttach({
+            id: '22222222-2222-4222-a222-222222222222',
+            name: 'photo.jpg',
+            mediaType: 'image',
+            aspectRatio: '4:5',
+            thumbnailUrl: null,
+            url: 'https://media.example.com/photo.jpg',
+            width: 1080,
+            height: 1350,
+            captionText: 'A photo caption',
+          })
+        }
+      >
+        Attach test photo
+      </button>
+    ) : null,
 }));
 
 const ACCOUNTS = [
@@ -92,10 +115,17 @@ const DISCOVERED = [
 
 import { api } from '@/lib/api';
 
+let mockAccountsData: typeof ACCOUNTS = ACCOUNTS;
+let mockDiscoverShouldFail = false;
+let mockAccountsShouldFail = false;
+
 vi.mock('@/lib/api', () => ({
   api: {
     get: async (path: string) => {
       if (path.includes('/pages/discover')) {
+        if (mockDiscoverShouldFail) {
+          throw new Error('discover failed');
+        }
         return { accountId: '11111111-1111-4111-a111-111111111111', accountDisplayName: 'Shahzeb Malik', pages: DISCOVERED, total: 2 };
       }
       if (path.endsWith('/pages')) {
@@ -105,7 +135,10 @@ vi.mock('@/lib/api', () => ({
         return { fbAppId: null, hasSecret: false };
       }
       if (path.includes('/accounts')) {
-        return { accounts: ACCOUNTS, total: 3 };
+        if (mockAccountsShouldFail) {
+          throw new Error('accounts failed');
+        }
+        return { accounts: mockAccountsData, total: mockAccountsData.length };
       }
       throw new Error(`unexpected api.get path: ${path}`);
     },
@@ -182,7 +215,7 @@ describe('PublishNowPage wizard', () => {
     expect(screen.getByText(/via Shahzeb Malik/)).toBeTruthy();
   });
 
-  it('publishes, shows per-page results, and retries only the failed page', async () => {
+  it('publishes, shows per-page results, and retries only the failed page', { timeout: 15000 }, async () => {
     const publishCalls: Array<{ path: string; body: unknown }> = [];
     const firstRun = [
       {
@@ -305,4 +338,408 @@ describe('PublishNowPage wizard', () => {
       { timeout: 5000 }
     );
   });
+
+  it('attaches library media, prefills its caption, and clears it on type switch', { timeout: 15000 }, async () => {
+    const publishCalls: Array<{ path: string; body: unknown }> = [];
+    (api.post as unknown as { mockImplementation: (fn: unknown) => void })
+      .mockImplementation(async (path: string, body: unknown) => {
+        publishCalls.push({ path, body });
+        return {
+          results: [
+            {
+              accountId: '11111111-1111-4111-a111-111111111111',
+              fbPageId: 'page-111',
+              pageName: 'Maddie Lippy',
+              status: 'published',
+              postId: 'photo-post-111',
+              reason: null,
+              graphCode: null,
+              graphSubcode: null,
+              step: null,
+              httpStatus: null,
+              fbtraceId: null,
+              firstCommentFailed: null,
+              firstCommentReason: null,
+            },
+          ],
+        };
+      });
+
+    await reachComposer();
+    fireEvent.click(screen.getByRole('button', { name: 'Image' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Attach from Media Library' })
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Attach test photo' }));
+    expect(screen.getByText('photo.jpg')).toBeTruthy();
+    expect(screen.getByText(/from Media Library/)).toBeTruthy();
+    // The library caption prefills an empty composer.
+    expect(
+      (
+        screen.getByPlaceholderText(
+          "What's on your mind?"
+        ) as HTMLTextAreaElement
+      ).value
+    ).toBe('A photo caption');
+
+    // Removing clears the preview; switching type clears attached media.
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    expect(screen.queryByText('photo.jpg')).toBeNull();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Attach from Media Library' })
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Attach test photo' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Video' }));
+    expect(screen.queryByText('photo.jpg')).toBeNull();
+
+    // Re-attach as an image and publish: the request carries library media.
+    fireEvent.click(screen.getByRole('button', { name: 'Image' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Attach from Media Library' })
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Attach test photo' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Publish Now' }));
+    await waitFor(() => expect(publishCalls.length).toBe(1), {
+      timeout: 5000,
+    });
+    const body = publishCalls[0].body as {
+      postType: string;
+      media: { source: string; mediaId: string };
+    };
+    expect(body.postType).toBe('image');
+    expect(body.media.source).toBe('library');
+    expect(body.media.mediaId).toBe('22222222-2222-4222-a222-222222222222');
+  });
+
+  it('shows restriction results, diagnostics, and a disabled retry', { timeout: 15000 }, async () => {
+    const restricted = (fbPageId: string, pageName: string) => ({
+      accountId: '11111111-1111-4111-a111-111111111111',
+      fbPageId,
+      pageName,
+      status: 'failed',
+      postId: null,
+      reason:
+        'Facebook has restricted this account from posting. Check Account Status on Facebook for the reason and to appeal — retrying won\'t work until the restriction is lifted.',
+      graphCode: 1,
+      graphSubcode: 2424009,
+      step: 'feed',
+      httpStatus: 400,
+      fbtraceId: 'trace-9',
+      firstCommentFailed: null,
+      firstCommentReason: null,
+    });
+    (api.post as unknown as { mockImplementation: (fn: unknown) => void })
+      .mockImplementation(async () => ({
+        results: [
+          restricted('page-111', 'Maddie Lippy'),
+          restricted('page-222', 'Sunnie James'),
+        ],
+      }));
+
+    await reachComposer();
+    fireEvent.change(screen.getByPlaceholderText("What's on your mind?"), {
+      target: { value: 'Hello' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Publish Now' }));
+    await waitFor(
+      () =>
+        expect(
+          screen.getByText(/One or more accounts are restricted by Facebook/)
+        ).toBeTruthy(),
+      { timeout: 5000 }
+    );
+    expect(screen.getByText(/Retry is disabled/)).toBeTruthy();
+    const retry = screen.getByRole('button', { name: 'Retry failed only' });
+    expect((retry as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.click(
+      screen.getAllByRole('button', { name: 'View details' })[0]
+    );
+    expect(screen.getByText(/Facebook error #1/)).toBeTruthy();
+    expect(screen.getByText(/trace: trace-9/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Hide details' }));
+    expect(screen.queryByText(/trace: trace-9/)).toBeNull();
+  });
+
+  it('keeps the caption when changing the selection', { timeout: 15000 }, async () => {
+    await reachComposer();
+    fireEvent.change(screen.getByPlaceholderText("What's on your mind?"), {
+      target: { value: 'Keep me' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Change selection' }));
+    await waitFor(
+      () => expect(screen.getByText(/2 pages found/)).toBeTruthy(),
+      { timeout: 5000 }
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: /Continue \(2 pages\)/ })
+    );
+    await waitFor(
+      () =>
+        expect(
+          screen.getByRole('heading', { name: 'Maddie Lippy + 1 more' })
+        ).toBeTruthy(),
+      { timeout: 5000 }
+    );
+    expect(
+      (
+        screen.getByPlaceholderText(
+          "What's on your mind?"
+        ) as HTMLTextAreaElement
+      ).value
+    ).toBe('Keep me');
+  });
+
+  it('shows expired accounts as non-selectable and the empty state', async () => {
+    renderPage();
+    await waitFor(
+      () => expect(screen.getByText(/3 accounts/)).toBeTruthy(),
+      { timeout: 5000 }
+    );
+    expect(screen.getByText('Expired User')).toBeTruthy();
+    expect(screen.getByText('Session expired')).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: 'Reconnect' })
+    ).toBeTruthy();
+
+    mockAccountsData = [];
+    renderPage();
+    await waitFor(
+      () =>
+        expect(
+          screen.getByText('No Facebook accounts connected')
+        ).toBeTruthy(),
+      { timeout: 5000 }
+    );
+    expect(
+      screen.getByRole('link', { name: 'Go to Facebook Accounts' })
+    ).toBeTruthy();
+    mockAccountsData = ACCOUNTS;
+  });
+
+  it('filters accounts and pages, selects all pages, and goes back', { timeout: 15000 }, async () => {
+    renderPage();
+    await waitFor(
+      () => expect(screen.getByText(/3 accounts/)).toBeTruthy(),
+      { timeout: 5000 }
+    );
+    fireEvent.change(screen.getByLabelText('Search accounts'), {
+      target: { value: 'ayesha' },
+    });
+    expect(screen.getByText('Ayesha Khan')).toBeTruthy();
+    expect(screen.queryByText('Shahzeb Malik')).toBeNull();
+    fireEvent.change(screen.getByLabelText('Search accounts'), {
+      target: { value: 'zzz' },
+    });
+    expect(screen.getByText('No accounts match your search')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Search accounts'), {
+      target: { value: '' },
+    });
+    fireEvent.click(screen.getByText('Shahzeb Malik'));
+    fireEvent.click(
+      screen.getByRole('button', { name: /Continue \(1 account\)/ })
+    );
+    await waitFor(
+      () => expect(screen.getByText(/2 pages found/)).toBeTruthy(),
+      { timeout: 5000 }
+    );
+    fireEvent.change(screen.getByLabelText('Filter pages'), {
+      target: { value: 'sunnie' },
+    });
+    expect(screen.getByText('Sunnie James')).toBeTruthy();
+    expect(screen.queryByText('Maddie Lippy')).toBeNull();
+    fireEvent.change(screen.getByLabelText('Filter pages'), {
+      target: { value: '' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Select All' }));
+    expect(screen.getByText(/2 of 2 pages selected/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Deselect All' }));
+    expect(screen.getByText(/0 of 2 pages selected/)).toBeTruthy();
+    fireEvent.click(
+      screen.getAllByRole('button', { name: 'Back' })[0]
+    );
+    await waitFor(
+      () =>
+        expect(
+          screen.getByRole('heading', { name: 'Select accounts' })
+        ).toBeTruthy(),
+      { timeout: 5000 }
+    );
+  });
+
+  it('shows plain banners when publishing and retrying fail', { timeout: 15000 }, async () => {
+    const failed = [
+      {
+        accountId: '11111111-1111-4111-a111-111111111111',
+        fbPageId: 'page-111',
+        pageName: 'Maddie Lippy',
+        status: 'failed',
+        postId: null,
+        reason: 'Facebook is busy',
+        graphCode: null,
+        graphSubcode: null,
+        step: null,
+        httpStatus: null,
+        fbtraceId: null,
+        firstCommentFailed: null,
+        firstCommentReason: null,
+      },
+    ];
+    const postMock = api.post as unknown as {
+      mockImplementation: (fn: unknown) => void;
+      mockRejectedValueOnce: (error: unknown) => void;
+      mockResolvedValueOnce: (value: unknown) => void;
+    };
+    postMock.mockRejectedValueOnce(new Error('Network down'));
+    await reachComposer();
+    fireEvent.change(screen.getByPlaceholderText("What's on your mind?"), {
+      target: { value: 'Hello' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Publish Now' }));
+    await waitFor(
+      () => expect(screen.getByText('Network down')).toBeTruthy(),
+      { timeout: 5000 }
+    );
+    postMock.mockResolvedValueOnce({ results: failed });
+    fireEvent.click(screen.getByRole('button', { name: 'Publish Now' }));
+    await waitFor(
+      () => expect(screen.getByText('Facebook is busy')).toBeTruthy(),
+      { timeout: 5000 }
+    );
+    postMock.mockRejectedValueOnce(new Error('Retry boom'));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry failed only' }));
+    // The banner shows the error's own message when it has one.
+    await waitFor(
+      () => expect(screen.getByText('Retry boom')).toBeTruthy(),
+      { timeout: 5000 }
+    );
+  });
+
+  it('guards over-limit text and mismatched device and library media', { timeout: 15000 }, async () => {
+    const publishCalls: Array<unknown> = [];
+    (api.post as unknown as { mockImplementation: (fn: unknown) => void })
+      .mockImplementation(async (_path: string, body: unknown) => {
+        publishCalls.push(body);
+        return { results: [] };
+      });
+    await reachComposer();
+    // Over-limit reel text never reaches the server.
+    fireEvent.click(screen.getByRole('button', { name: 'Reel' }));
+    fireEvent.change(screen.getByPlaceholderText("What's on your mind?"), {
+      target: { value: 'x'.repeat(2201) },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Publish Now' }));
+    expect(publishCalls).toHaveLength(0);
+
+    // Device file of the wrong kind, then of an unsupported type.
+    fireEvent.click(screen.getByRole('button', { name: 'Image' }));
+    const fileInput = screen.getByLabelText('Upload file from device');
+    fireEvent.change(fileInput, {
+      target: {
+        files: [new File(['x'], 'clip.mp4', { type: 'video/mp4' })],
+      },
+    });
+    await waitFor(
+      () =>
+        expect(
+          screen.getByText(/This is a video, but the post type is Image/)
+        ).toBeTruthy(),
+      { timeout: 5000 }
+    );
+    fireEvent.change(fileInput, {
+      target: {
+        files: [new File(['x'], 'doc.pdf', { type: 'application/pdf' })],
+      },
+    });
+    await waitFor(
+      () =>
+        expect(
+          screen.getByText(/This file type is not supported/)
+        ).toBeTruthy(),
+      { timeout: 5000 }
+    );
+
+    // Library photo attached while the type is Video mismatches.
+    fireEvent.click(screen.getByRole('button', { name: 'Video' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Attach from Media Library' })
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Attach test photo' }));
+    await waitFor(
+      () =>
+        expect(
+          screen.getByText(/This is a photo, but the post type is Video/)
+        ).toBeTruthy(),
+      { timeout: 5000 }
+    );
+    expect(screen.queryByText('photo.jpg')).toBeNull();
+  });
+
+  it('shows a plain error when accounts fail to load', async () => {
+    mockAccountsShouldFail = true;
+    try {
+      renderPage();
+      await waitFor(
+        () =>
+          expect(
+            screen.getByText(/Couldn't load your Facebook accounts/)
+          ).toBeTruthy(),
+        { timeout: 5000 }
+      );
+    } finally {
+      mockAccountsShouldFail = false;
+    }
+  });
+
+  it('shows a plain error when page discovery fails', async () => {
+    mockDiscoverShouldFail = true;
+    try {
+      renderPage();
+      await waitFor(
+        () => expect(screen.getByText(/3 accounts/)).toBeTruthy(),
+        { timeout: 5000 }
+      );
+      fireEvent.click(screen.getByText('Shahzeb Malik'));
+      fireEvent.click(
+        screen.getByRole('button', { name: /Continue \(1 account\)/ })
+      );
+      await waitFor(
+        () =>
+          expect(
+            screen.getByText(/Couldn't load pages from this Facebook account/)
+          ).toBeTruthy(),
+        { timeout: 5000 }
+      );
+    } finally {
+      mockDiscoverShouldFail = false;
+    }
+  });
 });
+
+async function reachComposer() {
+  renderPage();
+  await waitFor(
+    () => expect(screen.getByText(/3 accounts/)).toBeTruthy(),
+    { timeout: 5000 }
+  );
+  fireEvent.click(screen.getByText('Shahzeb Malik'));
+  fireEvent.click(
+    screen.getByRole('button', { name: /Continue \(1 account\)/ })
+  );
+  await waitFor(
+    () => expect(screen.getByText(/2 pages found/)).toBeTruthy(),
+    { timeout: 5000 }
+  );
+  fireEvent.click(screen.getByText('Maddie Lippy'));
+  fireEvent.click(screen.getByText('Sunnie James'));
+  fireEvent.click(
+    screen.getByRole('button', { name: /Continue \(2 pages\)/ })
+  );
+  await waitFor(
+    () =>
+      expect(
+        screen.getByRole('heading', { name: 'Maddie Lippy + 1 more' })
+      ).toBeTruthy(),
+    { timeout: 5000 }
+  );
+}
