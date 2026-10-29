@@ -157,9 +157,10 @@ export async function handleReorderQueueItems(
     } catch (_e) {
       try {
         await dbClient.query('ROLLBACK');
-      } catch (_rollbackErr) {
-        // Rollback failure after a failed reorder: nothing left to do
-        // but report the original failure.
+      } catch (rollbackErr) {
+        // Rollback also failed: log it; the original reorder failure is
+        // still reported below, so the caller sees the reorder failure.
+        console.error('[handleReorderQueueItems] Rollback failed after reorder error:', rollbackErr);
       }
       return NextResponse.json({ error: 'Failed to reorder queue' }, { status: 500 });
     }

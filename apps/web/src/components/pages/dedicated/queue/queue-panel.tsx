@@ -368,12 +368,15 @@ export function QueuePanel({
   };
 
   const runMutation = React.useCallback(
-    async (action: string, itemId: string, fn: () => Promise<unknown>) => {
+    async (action: string, itemId: string, fn: () => Promise<unknown>): Promise<boolean> => {
       setBusy({ action, itemId });
       try {
         await fn();
-      } catch (_e) {
-        // The mutation's onError already toasted; nothing else to do.
+        return true;
+      } catch {
+        // The mutation's onError already surfaced the failure via toast;
+        // converting the rejection to a status keeps callers rejection-free.
+        return false;
       } finally {
         setBusy(null);
       }

@@ -12,6 +12,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { toast } from '@/components/shared/ui/toast';
+import type { ApiFetchOptions } from '@/lib/api';
 import { QueuePanel } from './queue-panel';
 
 const ID_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -148,12 +149,12 @@ describe('QueuePanel', () => {
     vi.clearAllMocks();
     mockQuery = '';
     defaultSeed();
-    apiGet.mockImplementation(async (_path: string, options: Record<string, any>) => {
+    apiGet.mockImplementation(async (_path: string, options: ApiFetchOptions) => {
       const q = options.query ?? {};
       let items = [...seed];
       if (q.status) items = items.filter((row) => row.status === q.status);
-      const offset = q.offset ?? 0;
-      const limit = q.limit ?? 50;
+      const offset = typeof q.offset === 'number' ? q.offset : 0;
+      const limit = typeof q.limit === 'number' ? q.limit : 50;
       const page = items.slice(offset, offset + limit);
       return {
         items: page,
@@ -316,7 +317,7 @@ describe('QueuePanel', () => {
       String(args[0]).includes(`/destinations/${PAGE_ID}/queue/${ID_C}/retry`)
     );
     expect(call).toBeDefined();
-    const headers = (call![2] as Record<string, any>).headers ?? {};
+    const headers = (call![2] as ApiFetchOptions).headers ?? {};
     expect(UUID_RE.test(headers['Idempotency-Key'] ?? '')).toBe(true);
   });
 
@@ -331,7 +332,7 @@ describe('QueuePanel', () => {
       String(args[0]).includes(`/publishing/queue/${ID_A}/publish-now`)
     );
     expect(call).toBeDefined();
-    const headers = (call![2] as Record<string, any>).headers ?? {};
+    const headers = (call![2] as ApiFetchOptions).headers ?? {};
     expect(UUID_RE.test(headers['Idempotency-Key'] ?? '')).toBe(true);
   });
 
@@ -385,7 +386,7 @@ describe('QueuePanel', () => {
     // the order to the seed like a real server would, so the refetch
     // after success converges on the same order.
     let resolveReorder: (() => void) | null = null;
-    apiPost.mockImplementation(async (path: string, body: Record<string, any>) => {
+    apiPost.mockImplementation(async (path: string, body: { itemIds?: unknown }) => {
       if (String(path).includes('/publishing/queue/reorder')) {
         const ids = body.itemIds as string[];
         const byId = new Map(seed.map((row) => [row.id, row]));
@@ -469,7 +470,7 @@ describe('QueuePanel', () => {
       item({ id: ID_C, caption: 'Third queued post', postFormat: 'text', status: 'queued' }),
     ];
     const deferred: Array<() => void> = [];
-    apiPost.mockImplementation(async (path: string, body: Record<string, any>) => {
+    apiPost.mockImplementation(async (path: string, body: { itemIds?: unknown }) => {
       if (String(path).includes('/publishing/queue/reorder')) {
         const ids = body.itemIds as string[];
         const byId = new Map(seed.map((row) => [row.id, row]));
