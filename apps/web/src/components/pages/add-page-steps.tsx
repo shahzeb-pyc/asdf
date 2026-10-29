@@ -63,7 +63,7 @@ function AccountAvatar({
   );
 }
 
-function DiscoveredPageAvatar({
+export function DiscoveredPageAvatar({
   pageName,
   profilePictureUrl,
 }: Readonly<{

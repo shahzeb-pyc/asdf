@@ -287,7 +287,7 @@ export function WorkspaceSidebar({
             <SidebarMenu>
               <SidebarMenuItem>
                 <SidebarMenuButton
-                  tooltip="Facebook — Accounts, Pages, Publish Now & TikTok"
+                  tooltip="Facebook — Accounts, Pages, Publish Now & Auto Repost"
                   isActive={isCollapsed && (isAccountsActive || isPagesActive || isPublishNowActive || isTiktokMirrorsActive)}
                   aria-expanded={isCollapsed ? undefined : isFacebookOpen}
                   onClick={() => {
