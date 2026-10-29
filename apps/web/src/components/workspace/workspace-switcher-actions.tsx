@@ -23,7 +23,7 @@ export interface SwitcherActionsListProps {
 }
 
 const rowClassName =
-  'flex min-h-11 w-full items-center gap-2 rounded-sm px-2 py-1 text-left text-body text-ink outline-none transition-colors duration-base ease-standard hover:bg-hover focus-visible:outline-2 focus-visible:outline-brand-gold';
+  'flex min-h-11 w-full items-center gap-2 rounded-sm px-2 py-1 text-left text-body text-ink outline-none transition-colors duration-base ease-standard hover:bg-hover focus-visible:outline-2 focus-visible:outline-link';
 
 export function SwitcherActionsList({
   isThemeDark,

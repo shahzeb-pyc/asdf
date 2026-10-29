@@ -282,7 +282,7 @@ export function DestinationPicker({
           disabled={selectedIds.length === 0 || isSaving}
           aria-busy={isSaving || undefined}
           onClick={() => void handleConfirm()}
-          className="inline-flex h-11 items-center justify-center rounded-sm bg-primary px-6 text-body font-semibold text-on-primary transition-colors outline-none hover:bg-brand-peru focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold disabled:pointer-events-none disabled:opacity-50"
+          className="inline-flex h-11 items-center justify-center rounded-sm bg-primary px-6 text-body font-semibold text-on-primary transition-colors outline-none hover:bg-brand-peru focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link disabled:pointer-events-none disabled:opacity-50"
         >
           {confirmButtonLabel(
             isSaving,

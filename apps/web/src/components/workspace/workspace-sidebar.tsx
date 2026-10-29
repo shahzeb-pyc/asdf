@@ -257,7 +257,7 @@ export function WorkspaceSidebar({
           data-testid="sidebar-branding-link"
           aria-label="FBUploadPro Studio"
           className={cn(
-            'flex items-center gap-2 rounded-sm px-2 py-1.5 outline-none transition-colors duration-base ease-standard hover:bg-hover focus-visible:outline-2 focus-visible:outline-brand-gold',
+            'flex items-center gap-2 rounded-sm px-2 py-1.5 outline-none transition-colors duration-base ease-standard hover:bg-hover focus-visible:outline-2 focus-visible:outline-link',
             isCollapsed && 'justify-center px-0'
           )}
         >

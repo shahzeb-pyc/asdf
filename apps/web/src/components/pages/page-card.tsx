@@ -277,9 +277,9 @@ export function PageCard({
       onClick={handleActivate}
       onKeyDown={handleKeyDown}
       className={cn(
-        'group flex min-w-0 cursor-pointer flex-col rounded-md border bg-panel p-6 shadow-card transition outline-none hover:-translate-y-0.5 hover:shadow-elevated focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold',
+        'group flex min-w-0 cursor-pointer flex-col rounded-md border bg-panel p-6 shadow-card transition outline-none hover:-translate-y-0.5 hover:shadow-elevated focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link',
         highlighted
-          ? 'border-brand-gold ring-2 ring-brand-gold/40'
+          ? 'border-link ring-2 ring-link/40'
           : needsAttention
             ? 'border-brand-rose hover:border-brand-rose'
             : 'border-line hover:border-brand-emerald/40'
@@ -351,7 +351,7 @@ export function PageCard({
         <span
           data-testid="page-card-arrow"
           aria-hidden
-          className="flex size-7 shrink-0 items-center justify-center rounded-full border border-line text-ink-sub transition group-hover:border-brand-gold group-hover:text-brand-gold"
+          className="flex size-7 shrink-0 items-center justify-center rounded-full border border-line text-ink-sub transition group-hover:border-link group-hover:text-link"
         >
           <MoveUpRightIcon className="size-4" />
         </span>

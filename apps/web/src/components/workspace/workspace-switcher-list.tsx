@@ -110,7 +110,7 @@ export function SwitcherWorkspaceList({
             onClick={() => onSelectWorkspace(ws.subdomain)}
             disabled={isSwitching}
             className={cn(
-              'flex min-h-11 w-full items-center gap-2 rounded-sm px-2 py-1 text-left text-ink outline-none transition-colors duration-base ease-standard hover:bg-hover focus-visible:outline-2 focus-visible:outline-brand-gold disabled:cursor-not-allowed',
+              'flex min-h-11 w-full items-center gap-2 rounded-sm px-2 py-1 text-left text-ink outline-none transition-colors duration-base ease-standard hover:bg-hover focus-visible:outline-2 focus-visible:outline-link disabled:cursor-not-allowed',
               isActive && 'bg-active'
             )}
           >
@@ -151,7 +151,7 @@ export function SwitcherWorkspaceList({
         type="button"
         data-testid="create-workspace-button"
         onClick={onOpenCreate}
-        className="flex min-h-11 w-full items-center gap-2 rounded-sm px-2 py-1 text-left text-body text-ink-sub outline-none transition-colors duration-base ease-standard hover:bg-hover focus-visible:outline-2 focus-visible:outline-brand-gold"
+        className="flex min-h-11 w-full items-center gap-2 rounded-sm px-2 py-1 text-left text-body text-ink-sub outline-none transition-colors duration-base ease-standard hover:bg-hover focus-visible:outline-2 focus-visible:outline-link"
       >
         <svg
           width="14"

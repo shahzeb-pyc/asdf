@@ -96,7 +96,7 @@ function Toast({ theme, ...props }: ToasterProps) {
           closeButton: "text-ink-sub hover:text-ink",
           success: "text-brand-emerald",
           error: "text-brand-rose",
-          warning: "text-brand-gold",
+          warning: "text-link",
           info: "text-ink",
         },
       }}

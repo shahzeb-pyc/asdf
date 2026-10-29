@@ -195,7 +195,7 @@ export function QueueRow({
           )}
         </p>
         {isQueued && unmatched ? (
-          <p className="m-0 text-metadata text-brand-gold">{UNMATCHED_NOTE}</p>
+          <p className="m-0 text-metadata text-link">{UNMATCHED_NOTE}</p>
         ) : null}
       </div>
 
@@ -203,7 +203,7 @@ export function QueueRow({
       {pillText ? (
         <span
           data-testid="queue-row-estimate"
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-brand-gold/20 bg-brand-gold/10 px-2.5 py-1 text-metadata font-semibold text-brand-gold"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-link/20 bg-link/10 px-2.5 py-1 text-metadata font-semibold text-link"
         >
           <CalendarClockIcon aria-hidden className="size-3.5" />
           {pillText}

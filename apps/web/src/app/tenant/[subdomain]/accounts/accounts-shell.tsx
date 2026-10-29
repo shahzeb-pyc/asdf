@@ -88,7 +88,7 @@ export const ACCOUNTS_CONNECT_TOAST_OPTIONS: NonNullable<ToasterProps['toastOpti
     closeButton: 'text-ink-sub hover:text-ink',
     success: 'text-brand-emerald border-brand-emerald bg-brand-emerald/15',
     error: 'text-brand-rose',
-    warning: 'text-brand-gold',
+    warning: 'text-link',
     info: 'text-ink',
   },
 };

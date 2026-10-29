@@ -562,7 +562,7 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
             closeButton: 'text-ink-sub hover:text-ink',
             success: 'border-brand-emerald bg-brand-emerald/15 text-brand-emerald',
             error: 'text-brand-rose',
-            warning: 'text-brand-gold',
+            warning: 'text-link',
             info: 'text-ink',
           },
         }}

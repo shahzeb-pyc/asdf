@@ -54,13 +54,13 @@ describe('Option B connected dialogue', () => {
     expect(screen.queryByTestId('magic-pulse-indicator')).toBeNull();
   });
 
-  it('highlighted card carries the gold highlight marker, plain card does not', () => {
+  it('highlighted card carries the link highlight marker, plain card does not', () => {
     const { rerender } = render(<AccountCard account={activeAccount} />);
     expect(screen.getByTestId('account-card-acc-123').getAttribute('data-highlighted')).toBeNull();
     rerender(<AccountCard account={activeAccount} highlighted />);
     const card = screen.getByTestId('account-card-acc-123');
     expect(card.getAttribute('data-highlighted')).toBe('true');
-    expect(card.className).toContain('border-brand-gold');
+    expect(card.className).toContain('border-link');
   });
 
   it('magic success copy: fresh, already-connected, mismatch, and legacy no-param cases', () => {

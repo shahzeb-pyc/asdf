@@ -430,9 +430,9 @@
   --error-bg: color-mix(in srgb, var(--color-brand-rose) 15%, transparent);
   --error-border: var(--color-brand-rose);
   --error-text: var(--color-brand-rose);
-  --warning-bg: color-mix(in srgb, var(--color-brand-gold) 15%, transparent);
-  --warning-border: var(--color-brand-gold);
-  --warning-text: var(--color-brand-gold);
+  --warning-bg: color-mix(in srgb, var(--color-link) 15%, transparent);
+  --warning-border: var(--color-link);
+  --warning-text: var(--color-link);
   --info-bg: var(--bg-subtle);
   --info-border: var(--border-subtle);
   --info-text: var(--text-main);

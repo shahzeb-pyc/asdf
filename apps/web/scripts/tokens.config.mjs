@@ -128,7 +128,7 @@ function formatTokensCss({ dictionary }) {
     block(
       ':root, [data-theme="dark"]',
       dark,
-      '/* Semantic tokens — dark (default mode) */',
+      '/* Semantic tokens — dark */',
     ),
     '',
     block('[data-theme="light"]', light, '/* Semantic tokens — light */'),
@@ -347,7 +347,7 @@ ${themeObject('light')};
 export const THEME = {
   dark: DARK_THEME,
   light: LIGHT_THEME,
-  default: DARK_THEME,
+  default: LIGHT_THEME,
 } as const;
 
 /** Motion scale — duration tokens + easings (exit faster than enter). */

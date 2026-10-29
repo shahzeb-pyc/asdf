@@ -229,7 +229,7 @@ export const LIGHT_THEME: ThemeTokens = {
 export const THEME = {
   dark: DARK_THEME,
   light: LIGHT_THEME,
-  default: DARK_THEME,
+  default: LIGHT_THEME,
 } as const;
 
 /** Motion scale — duration tokens + easings (exit faster than enter). */

@@ -493,7 +493,7 @@ export function AddPageModal({
                 data-testid="change-account-btn"
                 onClick={handleBackToAccounts}
                 aria-label="Back to account selection"
-                className="mt-0.5 inline-flex size-11 shrink-0 items-center justify-center rounded-xs text-ink-sub outline-none transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-brand-gold"
+                className="mt-0.5 inline-flex size-11 shrink-0 items-center justify-center rounded-xs text-ink-sub outline-none transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-link"
               >
                 <ArrowLeftIcon className="size-4" aria-hidden />
               </button>
@@ -505,7 +505,7 @@ export function AddPageModal({
                 data-testid="back-to-pages-btn"
                 onClick={handleBackToPages}
                 aria-label="Back to page selection"
-                className="mt-0.5 inline-flex size-11 shrink-0 items-center justify-center rounded-xs text-ink-sub outline-none transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-brand-gold"
+                className="mt-0.5 inline-flex size-11 shrink-0 items-center justify-center rounded-xs text-ink-sub outline-none transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-link"
               >
                 <ArrowLeftIcon className="size-4" aria-hidden />
               </button>
@@ -517,7 +517,7 @@ export function AddPageModal({
                 data-testid="back-to-timezone-btn"
                 onClick={handleBackToTimezone}
                 aria-label="Back to timezone selection"
-                className="mt-0.5 inline-flex size-11 shrink-0 items-center justify-center rounded-xs text-ink-sub outline-none transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-brand-gold"
+                className="mt-0.5 inline-flex size-11 shrink-0 items-center justify-center rounded-xs text-ink-sub outline-none transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-link"
               >
                 <ArrowLeftIcon className="size-4" aria-hidden />
               </button>

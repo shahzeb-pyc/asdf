@@ -127,7 +127,7 @@ function TableBatchBar({ selectedCount, children, onClearSelection, className, .
           type="button"
           onClick={onClearSelection}
           aria-label="Clear selection"
-          className="ml-auto inline-flex size-8 items-center justify-center rounded-sm text-ink-sub outline-none hover:bg-hover hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold"
+          className="ml-auto inline-flex size-8 items-center justify-center rounded-sm text-ink-sub outline-none hover:bg-hover hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link"
         >
           <XIcon className="size-4" aria-hidden />
         </button>

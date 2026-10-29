@@ -881,7 +881,7 @@ export function CreatePostsDialog({
                     className="size-11 shrink-0 rounded-full object-cover"
                   />
                 ) : (
-                  <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-subtle text-body font-bold text-brand-gold">
+                  <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-subtle text-body font-bold text-link">
                     {monogram}
                   </span>
                 )}

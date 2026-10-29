@@ -363,7 +363,7 @@ function SidebarGroupLabel({
       data-slot="sidebar-group-label"
       data-sidebar="group-label"
       className={cn(
-        "flex h-8 shrink-0 items-center rounded-sm px-2 text-xs font-medium text-ink-sub outline-none transition-[margin,opacity] duration-base ease-standard focus-visible:outline-2 focus-visible:outline-brand-gold [&_svg]:size-4 [&_svg]:shrink-0",
+        "flex h-8 shrink-0 items-center rounded-sm px-2 text-xs font-medium text-ink-sub outline-none transition-[margin,opacity] duration-base ease-standard focus-visible:outline-2 focus-visible:outline-link [&_svg]:size-4 [&_svg]:shrink-0",
         "group-data-[collapsible=icon]:-mt-8 group-data-[collapsible=icon]:opacity-0",
         className
       )}
@@ -383,7 +383,7 @@ function SidebarGroupAction({
       data-slot="sidebar-group-action"
       data-sidebar="group-action"
       className={cn(
-        "absolute top-3.5 right-3 flex size-6 items-center justify-center rounded-sm p-0 text-ink outline-none transition-transform hover:bg-hover focus-visible:outline-2 focus-visible:outline-brand-gold [&_svg]:size-4 [&_svg]:shrink-0",
+        "absolute top-3.5 right-3 flex size-6 items-center justify-center rounded-sm p-0 text-ink outline-none transition-transform hover:bg-hover focus-visible:outline-2 focus-visible:outline-link [&_svg]:size-4 [&_svg]:shrink-0",
         "group-data-[collapsible=icon]:hidden",
         className
       )}
@@ -411,7 +411,7 @@ function SidebarMenuItem({ className, ...props }: React.ComponentProps<"li">) {
 }
 
 const sidebarMenuButtonVariants = cva(
-  "peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-sm p-2 text-left text-body outline-none transition-[width,height,padding] duration-base hover:bg-hover hover:text-ink focus-visible:outline-2 focus-visible:outline-brand-gold active:bg-active disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-active data-[active=true]:font-medium data-[active=true]:text-ink group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:p-2 [&>span:last-child]:truncate [&_svg]:size-4 [&_svg]:shrink-0",
+  "peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-sm p-2 text-left text-body outline-none transition-[width,height,padding] duration-base hover:bg-hover hover:text-ink focus-visible:outline-2 focus-visible:outline-link active:bg-active disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-active data-[active=true]:font-medium data-[active=true]:text-ink group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:p-2 [&>span:last-child]:truncate [&_svg]:size-4 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
@@ -479,7 +479,7 @@ function SidebarMenuAction({
       data-slot="sidebar-menu-action"
       data-sidebar="menu-action"
       className={cn(
-        "absolute top-1.5 right-1 flex size-6 items-center justify-center rounded-sm p-0 text-ink outline-none transition-transform hover:bg-hover focus-visible:outline-2 focus-visible:outline-brand-gold peer-data-[size=sm]/menu-button:top-1 peer-data-[size=default]/menu-button:top-1.5 peer-data-[size=lg]/menu-button:top-2.5 [&_svg]:size-4 [&_svg]:shrink-0",
+        "absolute top-1.5 right-1 flex size-6 items-center justify-center rounded-sm p-0 text-ink outline-none transition-transform hover:bg-hover focus-visible:outline-2 focus-visible:outline-link peer-data-[size=sm]/menu-button:top-1 peer-data-[size=default]/menu-button:top-1.5 peer-data-[size=lg]/menu-button:top-2.5 [&_svg]:size-4 [&_svg]:shrink-0",
         "group-data-[collapsible=icon]:hidden",
         showOnHover &&
           "group-focus-within/menu-item:opacity-100 group-hover/menu-item:opacity-100 data-[state=open]:opacity-100 md:opacity-0",
@@ -565,7 +565,7 @@ function SidebarMenuSubButton({
       data-active={isActive}
       aria-current={isActive ? "page" : undefined}
       className={cn(
-        "flex min-h-8 min-w-0 -translate-x-px items-center gap-2 overflow-hidden rounded-sm px-2 text-ink outline-none hover:bg-hover focus-visible:outline-2 focus-visible:outline-brand-gold active:bg-active disabled:pointer-events-none disabled:opacity-50 data-[active=true]:bg-active [&>span:last-child]:truncate [&_svg]:size-4 [&_svg]:shrink-0",
+        "flex min-h-8 min-w-0 -translate-x-px items-center gap-2 overflow-hidden rounded-sm px-2 text-ink outline-none hover:bg-hover focus-visible:outline-2 focus-visible:outline-link active:bg-active disabled:pointer-events-none disabled:opacity-50 data-[active=true]:bg-active [&>span:last-child]:truncate [&_svg]:size-4 [&_svg]:shrink-0",
         size === "sm" && "text-xs",
         size === "md" && "text-body",
         "group-data-[collapsible=icon]:hidden",

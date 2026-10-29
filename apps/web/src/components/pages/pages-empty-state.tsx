@@ -54,7 +54,7 @@ export function PagesEmptyState({
         {showMissingAppGuidance && (
           <div
             data-testid="pages-empty-facebook-app-guidance"
-            className="mb-6 w-full max-w-105 rounded-sm border border-brand-gold/25 bg-brand-gold/10 px-3 py-2.5 text-center text-body leading-body text-ink"
+            className="mb-6 w-full max-w-105 rounded-sm border border-link/25 bg-link/10 px-3 py-2.5 text-center text-body leading-body text-ink"
           >
             <p className="mb-1">
               No account connected yet? First add your Facebook App ID and App

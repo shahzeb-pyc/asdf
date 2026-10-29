@@ -127,7 +127,7 @@
   --z-index-toast: 9999;
 }
 
-/* Semantic tokens — dark (default mode) */
+/* Semantic tokens — dark */
 :root, [data-theme="dark"] {
   --border-focus: rgba(255, 211, 0, 0.35);
   --border-subtle: #292524;

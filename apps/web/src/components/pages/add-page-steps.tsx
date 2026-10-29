@@ -137,7 +137,7 @@ export function SelectAccountStep({
       {showMissingAppGuidance && (
         <div
           data-testid="facebook-app-guidance"
-          className="mb-4 rounded-sm border border-brand-gold/25 bg-brand-gold/10 px-3 py-2.5 text-body leading-body text-ink"
+          className="mb-4 rounded-sm border border-link/25 bg-link/10 px-3 py-2.5 text-body leading-body text-ink"
         >
           <p className="mb-1">
             Before you can connect an account, add your Facebook App ID and
@@ -198,7 +198,7 @@ export function SelectAccountStep({
               onClick={() => {
                 onSelectAccount(account);
               }}
-              className="flex min-h-11 w-full items-center justify-between gap-4 rounded-sm px-3.5 py-3 text-left outline-none transition-colors hover:bg-hover focus-visible:outline-2 focus-visible:outline-brand-gold"
+              className="flex min-h-11 w-full items-center justify-between gap-4 rounded-sm px-3.5 py-3 text-left outline-none transition-colors hover:bg-hover focus-visible:outline-2 focus-visible:outline-link"
             >
               <div className="flex min-w-0 items-center gap-4">
                 <AccountAvatar account={account} />
@@ -348,7 +348,7 @@ export function SelectPagesStep({
                   data-testid="select-all-pages-btn"
                   aria-pressed={allSelectableChecked}
                   onClick={onSelectAll}
-                  className="inline-flex min-h-11 items-center px-2 text-metadata font-semibold text-link outline-none focus-visible:outline-2 focus-visible:outline-brand-gold"
+                  className="inline-flex min-h-11 items-center px-2 text-metadata font-semibold text-link outline-none focus-visible:outline-2 focus-visible:outline-link"
                 >
                   {allSelectableChecked ? 'Deselect All' : 'Select All'}
                 </button>

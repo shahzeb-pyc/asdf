@@ -18,7 +18,7 @@ import { cn } from "@/lib/utils";
 
 const BANNER_VARIANTS = {
   info: { icon: InfoIcon, role: "status" as const, classes: "border-line bg-subtle text-ink" },
-  warning: { icon: TriangleAlertIcon, role: "alert" as const, classes: "border-brand-gold bg-subtle text-ink" },
+  warning: { icon: TriangleAlertIcon, role: "alert" as const, classes: "border-link bg-subtle text-ink" },
   critical: { icon: CircleAlertIcon, role: "alert" as const, classes: "border-brand-rose bg-subtle text-ink" },
   success: { icon: CircleCheckIcon, role: "status" as const, classes: "border-brand-emerald bg-subtle text-ink" },
 };
@@ -53,7 +53,7 @@ function Banner({ variant = "info", title, description, action, onDismiss, class
           type="button"
           onClick={onDismiss}
           aria-label="Dismiss banner"
-          className="inline-flex size-9 shrink-0 items-center justify-center rounded-sm text-ink-sub outline-none hover:bg-hover hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold"
+          className="inline-flex size-9 shrink-0 items-center justify-center rounded-sm text-ink-sub outline-none hover:bg-hover hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link"
         >
           <XIcon className="size-4" aria-hidden />
         </button>

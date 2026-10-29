@@ -114,7 +114,7 @@ export function MediaLibraryMain({
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => onFilesDrop(e, null)}
             className={cn(
-              'cursor-pointer border-0 bg-transparent p-0 outline-none focus-visible:outline-2 focus-visible:outline-brand-gold',
+              'cursor-pointer border-0 bg-transparent p-0 outline-none focus-visible:outline-2 focus-visible:outline-link',
               activeSmartView === null && currentFolderId === null
                 ? 'font-semibold text-ink'
                 : 'text-ink-sub'
@@ -150,7 +150,7 @@ export function MediaLibraryMain({
                     onDragOver={(e) => e.preventDefault()}
                     onDrop={(e) => onFilesDrop(e, crumb.id)}
                     className={cn(
-                      'cursor-pointer border-0 bg-transparent p-0 outline-none focus-visible:outline-2 focus-visible:outline-brand-gold',
+                      'cursor-pointer border-0 bg-transparent p-0 outline-none focus-visible:outline-2 focus-visible:outline-link',
                       isLast ? 'font-semibold text-ink' : 'text-ink-sub'
                     )}
                   >

@@ -84,7 +84,7 @@ export function ImportProgressHeader({
         {/* Overall percentage (header shows overall progress only) */}
         <div
           data-testid="overall-progress-percentage"
-          className="text-xl leading-none font-bold text-brand-gold tabular-nums"
+          className="text-xl leading-none font-bold text-link tabular-nums"
           aria-label={`${title}: ${barPercent}%`}
         >
           {barPercent}%
@@ -149,7 +149,7 @@ export function ImportProgressFooter({
             variant="link"
             data-testid="retry-all-failed-btn"
             onClick={onRetryAllFailed}
-            className="h-11 px-0 text-metadata text-brand-gold"
+            className="h-11 px-0 text-metadata text-link"
           >
             Retry all failed ({failedCount})
           </Button>
@@ -183,7 +183,7 @@ export function ImportProgressFooter({
             variant="link"
             data-testid="retry-all-failed-btn"
             onClick={onRetryAllFailed}
-            className="h-11 px-0 text-metadata text-brand-gold"
+            className="h-11 px-0 text-metadata text-link"
           >
             Retry all failed ({failedCount})
           </Button>
@@ -234,7 +234,7 @@ export function MinimizedUploadPill({
           <span className="text-metadata font-medium text-ink">
             Uploading {completedCount} of {totalCount}
           </span>
-          <span className="text-metadata font-semibold text-brand-gold tabular-nums">
+          <span className="text-metadata font-semibold text-link tabular-nums">
             {overallPercent}%
           </span>
         </div>

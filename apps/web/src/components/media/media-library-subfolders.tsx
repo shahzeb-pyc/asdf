@@ -73,7 +73,7 @@ export function SubfolderRowsSection({
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => onFilesDrop(e, folder.id)}
               onClick={() => onSelectFolder(folder.id)}
-              className="group flex cursor-pointer items-center justify-between gap-2 border-b border-line px-1 py-2 transition-colors outline-none hover:bg-hover focus-visible:outline-2 focus-visible:outline-brand-gold"
+              className="group flex cursor-pointer items-center justify-between gap-2 border-b border-line px-1 py-2 transition-colors outline-none hover:bg-hover focus-visible:outline-2 focus-visible:outline-link"
             >
               <div className="flex min-w-0 items-center gap-2">
                 <FolderIcon className="size-5 shrink-0 text-primary" aria-hidden />
@@ -105,7 +105,7 @@ export function SubfolderRowsSection({
                     if (isLocked) return;
                     onStartRename(folder);
                   }}
-                  className="inline-flex size-10 cursor-pointer items-center justify-center rounded-xs border-0 bg-transparent text-ink-sub outline-none hover:bg-hover focus-visible:outline-2 focus-visible:outline-brand-gold disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex size-10 cursor-pointer items-center justify-center rounded-xs border-0 bg-transparent text-ink-sub outline-none hover:bg-hover focus-visible:outline-2 focus-visible:outline-link disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <PencilIcon className="size-4" aria-hidden />
                 </button>
@@ -120,7 +120,7 @@ export function SubfolderRowsSection({
                     if (isLocked) return;
                     onStartMove(folder);
                   }}
-                  className="inline-flex size-10 cursor-pointer items-center justify-center rounded-xs border-0 bg-transparent text-ink-sub outline-none hover:bg-hover focus-visible:outline-2 focus-visible:outline-brand-gold disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex size-10 cursor-pointer items-center justify-center rounded-xs border-0 bg-transparent text-ink-sub outline-none hover:bg-hover focus-visible:outline-2 focus-visible:outline-link disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <MoveIcon className="size-4" aria-hidden />
                 </button>
@@ -135,7 +135,7 @@ export function SubfolderRowsSection({
                     if (isLocked) return;
                     onStartDelete(folder);
                   }}
-                  className="inline-flex size-10 cursor-pointer items-center justify-center rounded-xs border-0 bg-transparent text-brand-rose outline-none hover:bg-hover focus-visible:outline-2 focus-visible:outline-brand-gold disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex size-10 cursor-pointer items-center justify-center rounded-xs border-0 bg-transparent text-brand-rose outline-none hover:bg-hover focus-visible:outline-2 focus-visible:outline-link disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <Trash2Icon className="size-4" aria-hidden />
                 </button>

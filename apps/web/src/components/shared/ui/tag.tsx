@@ -54,7 +54,7 @@ function Tag({ className, variant = "default", asChild = false, onRemove, remove
           type="button"
           onClick={onRemove}
           aria-label={removeLabel ?? "Remove tag"}
-          className="inline-flex hit-area-44 size-4 shrink-0 items-center justify-center rounded-full outline-none hover:bg-hover focus-visible:outline-2 focus-visible:outline-brand-gold"
+          className="inline-flex hit-area-44 size-4 shrink-0 items-center justify-center rounded-full outline-none hover:bg-hover focus-visible:outline-2 focus-visible:outline-link"
         >
           <XIcon aria-hidden />
         </button>

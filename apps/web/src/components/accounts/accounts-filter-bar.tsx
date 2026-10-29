@@ -69,7 +69,7 @@ export function AccountsFilterBar({
             type="button"
             aria-label="Clear search query"
             onClick={() => onSearchChange('')}
-            className="absolute right-0 inline-flex size-11 items-center justify-center rounded-sm text-ink-dim outline-none hover:text-ink focus-visible:outline-2 focus-visible:outline-brand-gold"
+            className="absolute right-0 inline-flex size-11 items-center justify-center rounded-sm text-ink-dim outline-none hover:text-ink focus-visible:outline-2 focus-visible:outline-link"
           >
             <XIcon className="size-4" aria-hidden />
           </button>
@@ -90,9 +90,9 @@ export function AccountsFilterBar({
               aria-selected={isActive}
               onClick={() => onStatusFilterChange(tab.value)}
               className={cn(
-                '-mb-px inline-flex min-h-11 items-center gap-1 border-b-2 px-0 py-1 text-body outline-none transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold',
+                '-mb-px inline-flex min-h-11 items-center gap-1 border-b-2 px-0 py-1 text-body outline-none transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link',
                 isActive
-                  ? 'border-brand-gold font-semibold text-ink'
+                  ? 'border-link font-semibold text-ink'
                   : 'border-transparent font-medium text-ink-sub hover:text-ink'
               )}
             >

@@ -18,7 +18,7 @@ const alertVariants = cva(
         default: "border-line",
         destructive: "border-brand-rose text-brand-rose",
         success: "border-brand-emerald text-brand-emerald",
-        warning: "border-brand-gold text-ink",
+        warning: "border-link text-ink",
       },
     },
     defaultVariants: { variant: "default" },
