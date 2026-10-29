@@ -131,6 +131,37 @@ class FakeDb {
 
   query = vi.fn(async (sql: string, params: unknown[] = []) => {
     // Idempotency store.
+    // DELETE must be checked before the SELECT branch: "DELETE FROM
+    // idempotency_keys" contains "FROM idempotency_keys", so checking
+    // SELECT first would shadow every prune/release and leave expired
+    // rows in place — which then falsely conflict with a fresh claim.
+    if (sql.includes('DELETE FROM idempotency_keys')) {
+      const now = new Date().toISOString();
+      if (params.length >= 5) {
+        // Release: workspace, user, action, key, status.
+        this.idempotencyKeys = this.idempotencyKeys.filter(
+          (r) =>
+            !(
+              r.workspace_id === params[0] &&
+              r.user_id === params[1] &&
+              r.action === params[2] &&
+              r.idempotency_key === params[3] &&
+              r.response_status === params[4]
+            )
+        );
+      } else {
+        // Prune: workspace, user, expired rows only.
+        this.idempotencyKeys = this.idempotencyKeys.filter(
+          (r) =>
+            !(
+              r.workspace_id === params[0] &&
+              r.user_id === params[1] &&
+              r.expires_at < now
+            )
+        );
+      }
+      return [];
+    }
     if (sql.includes('FROM idempotency_keys')) {
       const now = new Date().toISOString();
       const row = this.idempotencyKeys.find(
@@ -211,18 +242,6 @@ class FakeDb {
           expires_at: String(params[6]),
         });
       }
-      return [];
-    }
-    if (sql.includes('DELETE FROM idempotency_keys')) {
-      const now = new Date().toISOString();
-      this.idempotencyKeys = this.idempotencyKeys.filter(
-        (r) =>
-          !(
-            r.workspace_id === params[0] &&
-            r.user_id === params[1] &&
-            r.expires_at < now
-          )
-      );
       return [];
     }
     if (sql.includes('FROM workspaces')) {
@@ -605,16 +624,42 @@ describe('destination enqueue idempotency', () => {
 
   it('creates only one row when the same key is submitted concurrently', async () => {
     // The old bug: both concurrent lookups missed (neither result
-    // stored yet) and both inserted. The atomic claim must stop the
-    // loser with 409, not a second row. Which call wins is not
-    // asserted — only that exactly one succeeds and one is refused.
+    // stored yet) and both inserted. Exactly one row must result.
+    // Which outcome the loser gets is NOT asserted exactly: in a
+    // real DB both requests truly overlap and the atomic claim
+    // refuses the loser with 409, but this JS fake serialises the
+    // two calls, so the loser may instead arrive after the winner
+    // completed and correctly replay the stored 201. Both are
+    // duplicate-safe; the 409 path itself is covered deterministically
+    // by the sentinel test below.
     const [first, second] = await Promise.all([
       enqueue(facebookTextPost, KEY_A),
       enqueue(facebookTextPost, KEY_A),
     ]);
     const statuses = [first.status, second.status].sort();
-    expect(statuses).toEqual([201, 409]);
+    expect(statuses).toHaveLength(2);
+    expect(statuses[0]).toBe(201);
+    expect(statuses.every((s) => s === 201 || s === 409)).toBe(true);
     expect(db.queueItems.filter((q) => q.caption === 'hello')).toHaveLength(1);
+  });
+
+  it('refuses with 409 when the key is already claimed (sentinel in flight)', async () => {
+    // Deterministic coverage for the atomic-claim path: a sentinel
+    // row (status 102) means another request is mid-execution.
+    db.idempotencyKeys.push({
+      workspace_id: workspaceId,
+      user_id: userId,
+      action: 'destination-queue',
+      idempotency_key: KEY_A,
+      response_status: 102,
+      response_body: { processing: true },
+      expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+    });
+    const res = await enqueue(facebookTextPost, KEY_A);
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toBe('IDEMPOTENCY_IN_PROGRESS');
+    expect(db.queueItems.filter((q) => q.caption === 'hello')).toHaveLength(0);
   });
 
   it('heals a missing stored result from the queue row instead of duplicating', async () => {
