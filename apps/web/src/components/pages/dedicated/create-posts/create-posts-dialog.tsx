@@ -130,10 +130,26 @@ function newEmptyBlock(): ComposerDraftBlock {
  *  a header badge (that was part of the rejected redesign). */
 const MAX_POSTS_PER_BATCH = 150;
 
+/**
+ * Idempotency keys must be UUIDs (the server rejects anything else),
+ * so this never falls back to an insecure generator: randomUUID when
+ * available, otherwise a v4 UUID built from getRandomValues. If
+ * neither is available, throw rather than minting a key that the
+ * server would reject — or, worse, that could collide.
+ */
 function newKey(): string {
-  return typeof crypto !== 'undefined'
-    ? crypto.randomUUID()
-    : `key-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+  throw new Error('Secure random number generation is unavailable');
 }
 
 /** Plain-language page-status gate for the composer (the server

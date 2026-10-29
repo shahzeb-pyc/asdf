@@ -21,6 +21,7 @@
  * rather than boxes inside a box.
  */
 
+import * as React from 'react';
 import Image from 'next/image';
 import { ImageIcon, XIcon } from 'lucide-react';
 
