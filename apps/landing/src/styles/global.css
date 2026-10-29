@@ -251,16 +251,45 @@
   animation-delay: 1.7s;
 }
 
+/* ---- Section 2 orbit revolution: platforms revolve, logos stay upright ----
+   .orbit-spin rotates the whole badge ring slowly (24s per revolution,
+   linear, professional not frantic) around the orbit centre. Each badge
+   logo sits in an .orbit-counter span that rotates the same 24s in the
+   opposite direction, so the logo's net rotation is zero and it stays
+   upright and readable at every point of the revolution. The centre
+   Muse logo is OUTSIDE the spinner and never rotates. The rings are
+   static. Base state (animation off) is the even 6-badge spacing, so
+   reduced-motion users see the badges at their static positions. */
+@keyframes orbit-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.orbit-spin {
+  animation: orbit-spin 24s linear infinite;
+}
+@keyframes orbit-counter {
+  to {
+    transform: rotate(-360deg);
+  }
+}
+.orbit-counter {
+  animation: orbit-counter 24s linear infinite;
+}
+
 /* ---- Reduced motion: everything instant and still ----
    With animation: none, every element falls back to its base state:
    hero fully visible, highlight fully gold (base background-size
-   100%), tiles at rest. Nothing is ever hidden waiting for an
-   animation. */
+   100%), tiles at rest, orbit badges at their static even positions
+   (spinner at 0deg, counter at 0deg). Nothing is ever hidden waiting
+   for an animation. */
 @media (prefers-reduced-motion: reduce) {
   .anim-enter,
   .hero-highlight,
   .iso-bob,
-  .mob-float {
+  .mob-float,
+  .orbit-spin,
+  .orbit-counter {
     animation: none !important;
   }
 }
