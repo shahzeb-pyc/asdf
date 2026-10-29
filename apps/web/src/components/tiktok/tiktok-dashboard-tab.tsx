@@ -83,7 +83,7 @@ export function TikTokDashboardTab({ mirror, posts }: Readonly<TikTokDashboardTa
               href={`https://www.tiktok.com/@${mirror.sourceUsername}`}
               target="_blank"
               rel="noreferrer"
-              className="text-metadata text-brand-gold hover:underline"
+              className="text-metadata text-link hover:underline"
             >
               View on TikTok
             </a>
