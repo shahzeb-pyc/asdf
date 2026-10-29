@@ -11,9 +11,9 @@ const queueRows = [
 ];
 
 const steps = [
-  { number: '01', title: 'Create', text: 'Create your posts.' },
-  { number: '02', title: 'Schedule', text: 'Schedule them to publish.' },
-  { number: '03', title: 'Grow', text: 'Keep your pages posting.' },
+  { number: '01', title: 'Create', text: 'Create your posts in one place, for every platform at once.' },
+  { number: '02', title: 'Schedule', text: 'Drop them in the queue. Each one takes its next posting time.' },
+  { number: '03', title: 'Grow', text: 'They publish on time from the cloud, so your pages keep posting — even when you\'re not there.' },
 ];
 
 const weekDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -22,7 +22,7 @@ const scheduledWeekDays = ['Tue', 'Thu', 'Sat'];
 
 <Layout
   title="FBUploadPro — Your pages, posting themselves, 100% on the cloud"
-  description="Schedule reels and posts across Facebook, Instagram, TikTok, YouTube, Threads, and X — they go live while you sleep, even when your laptop is closed."
+  description="Queue reels and posts for Facebook, Instagram, TikTok, YouTube, Threads, and X once, pick your posting times, and they go live from the cloud, on time, whether your laptop is open or not."
 >
   <header class="sticky top-0 z-20 border-b border-line bg-night/80 backdrop-blur">
     <div class="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-4">
@@ -64,8 +64,9 @@ const scheduledWeekDays = ['Tue', 'Thu', 'Sat'];
         <span class="text-gold">100% on the cloud.</span>
       </h1>
       <p class="mx-auto mb-8 max-w-2xl text-lg text-ink-sub sm:text-xl">
-        Schedule reels and posts across Facebook, Instagram, TikTok, YouTube, Threads, and X —
-        they go live while you sleep, even when your laptop is closed.
+        Queue reels and posts for Facebook, Instagram, TikTok, YouTube, Threads, and X once, pick
+        your posting times, and they go live from the cloud, on time, whether your laptop is open
+        or not.
       </p>
       <div class="flex flex-wrap justify-center gap-3">
         <a
@@ -169,9 +170,10 @@ const scheduledWeekDays = ['Tue', 'Thu', 'Sat'];
       <h2 id="features-heading" class="mb-8 text-4xl font-bold tracking-tight sm:mb-12 sm:text-5xl">Features</h2>
       <div class="grid grid-cols-1 gap-4 md:grid-cols-6">
         <article class="rounded-2xl border border-line bg-panel p-6 sm:p-8 md:col-span-4">
-          <h3 class="mb-2 text-2xl font-semibold">Every platform, one dashboard</h3>
+          <h3 class="mb-2 text-2xl font-semibold">One queue for every platform.</h3>
           <p class="m-0 mb-6 text-base text-ink-sub">
-            Connect each account once, then run everything from a single place.
+            Connect each account once, then run everything from one place. No switching apps to post
+            the same thing six times.
           </p>
           <div class="flex flex-wrap gap-2" aria-hidden="true">
             {
@@ -184,9 +186,10 @@ const scheduledWeekDays = ['Tue', 'Thu', 'Sat'];
           </div>
         </article>
         <article class="rounded-2xl border border-line bg-panel p-6 sm:p-8 md:col-span-2">
-          <h3 class="mb-2 text-2xl font-semibold">Post from anywhere</h3>
+          <h3 class="mb-2 text-2xl font-semibold">It publishes while you're offline.</h3>
           <p class="m-0 mb-6 text-base text-ink-sub">
-            Schedule from your phone or laptop; publishing runs in the cloud.
+            Your posts don't wait for you. Once they're queued, the cloud publishes them at the time
+            you picked — laptop closed, phone off.
           </p>
           <div class="flex items-end gap-3" aria-hidden="true">
             <span class="flex h-16 w-24 items-center justify-center rounded-md border border-line bg-panel-soft text-sm text-ink-sub">
@@ -202,15 +205,17 @@ const scheduledWeekDays = ['Tue', 'Thu', 'Sat'];
             <rect x="5" y="11" width="14" height="9" rx="1" />
             <path d="M8 11V7a4 4 0 0 1 8 0v4" />
           </svg>
-          <h3 class="mt-4 mb-2 text-2xl font-semibold">Your accounts stay yours</h3>
+          <h3 class="mt-4 mb-2 text-2xl font-semibold">Your accounts stay yours.</h3>
           <p class="m-0 text-base text-ink-sub">
-            You sign in on each platform itself, so we never see your passwords.
+            You sign in on Facebook, Instagram, and the rest themselves. We never ask for your
+            passwords, and we never see them.
           </p>
         </article>
         <article class="rounded-2xl border border-line bg-panel p-6 sm:p-8 md:col-span-4">
-          <h3 class="mb-2 text-2xl font-semibold">Goes live while you sleep</h3>
+          <h3 class="mb-2 text-2xl font-semibold">Pick your times once.</h3>
           <p class="m-0 mb-6 text-base text-ink-sub">
-            They go live while you sleep, even when your laptop is closed.
+            Set posting times for each page once. Every post you queue takes the next open time, in
+            order — no picking a time for every post.
           </p>
           <div class="flex flex-wrap items-center gap-2 text-sm" aria-hidden="true">
             <span class="rounded-md border border-line bg-panel-soft px-3 py-2 text-ink-sub">Scheduled</span>
@@ -242,8 +247,7 @@ const scheduledWeekDays = ['Tue', 'Thu', 'Sat'];
 
     <section class="mx-auto max-w-4xl px-5 py-16 text-center sm:py-24">
       <h2 class="mb-8 text-4xl leading-tight font-bold tracking-tight sm:text-5xl">
-        Your pages, posting themselves —<br />
-        <span class="text-gold">100% on the cloud.</span>
+        Start posting every day, without posting every day.
       </h2>
       <a
         href="https://app.fbuploadpro.com/signup"
@@ -252,7 +256,7 @@ const scheduledWeekDays = ['Tue', 'Thu', 'Sat'];
         Get started
       </a>
       <p class="m-0 mt-8 text-base text-ink-sub">
-        You sign in on each platform itself, so we never see your passwords.
+        No passwords shared. You sign in on each platform itself.
       </p>
     </section>
   </main>
