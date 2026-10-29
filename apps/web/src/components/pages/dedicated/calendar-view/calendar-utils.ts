@@ -4,10 +4,15 @@
  *
  * Timezone discipline: every day key is a `yyyy-mm-dd` date in the
  * page timezone, never a browser-local date. Grid weeks are built by
- * stepping whole days at noon UTC and formatting each step in the
- * page timezone, so DST transitions can never skip or duplicate a
- * day. The grid is labelled by its (year, month) numbers, not by
- * formatting a Date, so the label can never drift from the cells.
+ * stepping whole days from a 06:00 UTC anchor and formatting each
+ * step in the page timezone. 06:00 UTC maps to a local time between
+ * 18:00 (previous day) and 20:00 across every real zone — at least
+ * 4 hours from midnight — so a 24h step always advances the local
+ * date by exactly one day, even across DST transitions in zones
+ * like Pacific/Norfolk where a noon-UTC anchor sits on midnight
+ * and skips or duplicates a day. The grid is labelled by its
+ * (year, month) numbers, not by formatting a Date, so the label
+ * can never drift from the cells.
  *
  * Placement (owner's rules, 2026-10-29):
  * - queued → the derived estimate day (same estimate computation
@@ -171,11 +176,13 @@ export function getMonthGridKeys(
   month: number,
   timezone: string
 ): string[][] {
+  // Last day of the month as pure calendar math — never derived
+  // from an instant, so no timezone can shift it into the next month.
+  const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  const monthEndKey = `${year}-${String(month + 1).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`;
   const monthStartKey = `${year}-${String(month + 1).padStart(2, '0')}-01`;
-  const monthEnd = new Date(Date.UTC(year, month + 1, 0, 12));
-  const monthEndKey = formatDayKey(monthEnd, timezone) ?? monthStartKey;
-  // First of the month at noon UTC, then step back to its Sunday.
-  const first = new Date(Date.UTC(year, month, 1, 12));
+  // First of the month at 06:00 UTC, then step back to its Sunday.
+  const first = new Date(Date.UTC(year, month, 1, 6));
   const back = weekdayIndexInTimezone(first, timezone);
   const cursor = new Date(first.getTime() - back * 24 * 60 * 60 * 1000);
   const weeks: string[][] = [];

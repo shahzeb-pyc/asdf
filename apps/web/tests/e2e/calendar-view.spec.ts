@@ -134,4 +134,41 @@ test.describe('calendar view section (dedicated page)', () => {
       expect(overflows).toBe(false);
     }
   });
+
+  test('a crowded day cell holds many posts without horizontal overflow at 320px', async ({
+    page,
+    context,
+  }) => {
+    await context.addCookies([SESSION_COOKIE]);
+    const now = new Date();
+    const day15 = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      15,
+      15,
+      30,
+      0
+    ).toISOString();
+    const crowded = Array.from({ length: 8 }, (_, i) =>
+      queueItemFixture({
+        id: `eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee${i}`,
+        caption: `Crowded post ${i + 1}`,
+        postFormat: 'text',
+        status: 'failed',
+        retryCount: 1,
+        maxRetries: 3,
+        updatedAt: day15,
+      })
+    );
+    await installApiFixtures(page, createFixtureState({ queue: crowded }));
+    await page.setViewportSize({ width: 320, height: 800 });
+    await openCalendarTab(page);
+    // Count, not visibility: entries below the cell's scroll fold
+    // are present but legitimately out of view until scrolled.
+    await expect(page.locator('[data-testid^="calendar-entry-"]')).toHaveCount(8);
+    const overflows = await page.evaluate(
+      () => document.documentElement.scrollWidth > document.documentElement.clientWidth
+    );
+    expect(overflows).toBe(false);
+  });
 });

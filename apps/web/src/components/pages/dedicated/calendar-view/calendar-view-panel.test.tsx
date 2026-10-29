@@ -85,7 +85,7 @@ function renderPanel(overrides: Record<string, unknown> = {}) {
     <CalendarViewPanel
       subdomain="acme"
       pageId={PAGE_ID}
-      pageTimezone="UTC"
+      pageTimezone={(overrides.pageTimezone as string | undefined) ?? 'UTC'}
       slots={(overrides.slots as typeof allFormatsSlot[] | undefined) ?? [allFormatsSlot]}
     />,
     { wrapper }
@@ -289,5 +289,128 @@ describe('CalendarViewPanel', () => {
     expect(caption.className).toContain('truncate');
     const entriesArea = dayCell.querySelector('.overflow-y-auto');
     expect(entriesArea).not.toBeNull();
+  });
+
+  it('renders a clean empty state with no posts and no stale entries', async () => {
+    seed = [];
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId('calendar-empty-state')).toBeTruthy()
+    );
+    expect(screen.getByTestId('calendar-empty-state').textContent).toMatch(/No posts yet/);
+    expect(screen.queryByTestId('calendar-day-2026-10-29')).toBeNull();
+    expect(screen.queryByTestId(`calendar-entry-${ID_A}`)).toBeNull();
+  });
+
+  it('queued and published filter chips show exactly that status', async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId(`calendar-entry-${ID_A}`)).toBeTruthy()
+    );
+    await user.click(screen.getByTestId('calendar-filter-queued'));
+    await waitFor(() =>
+      expect(screen.getByTestId(`calendar-entry-${ID_B}`)).toBeTruthy()
+    );
+    expect(screen.queryByTestId(`calendar-entry-${ID_C}`)).toBeNull();
+    expect(screen.queryByTestId(`calendar-entry-${ID_D}`)).toBeNull();
+    await user.click(screen.getByTestId('calendar-filter-published'));
+    await waitFor(() =>
+      expect(screen.getByTestId(`calendar-entry-${ID_D}`)).toBeTruthy()
+    );
+    expect(screen.queryByTestId(`calendar-entry-${ID_A}`)).toBeNull();
+    expect(screen.queryByTestId(`calendar-entry-${ID_C}`)).toBeNull();
+  });
+
+  it('clicking a failed post opens the shared edit dialogue and saves', async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId(`calendar-entry-${ID_C}`)).toBeTruthy()
+    );
+    await user.click(screen.getByTestId(`calendar-entry-${ID_C}`));
+    const dialog = await screen.findByTestId('queue-edit-dialog');
+    const caption = within(dialog).getByTestId('queue-edit-caption') as HTMLTextAreaElement;
+    expect(caption.value).toBe('Failed post');
+    await user.clear(caption);
+    await user.type(caption, 'Failed post fixed');
+    await user.click(within(dialog).getByTestId('queue-edit-save-btn'));
+    await waitFor(() => expect(apiPatch).toHaveBeenCalled());
+    expect(apiPatch).toHaveBeenCalledWith(
+      expect.stringContaining(`/publishing/queue/${ID_C}`),
+      expect.objectContaining({ caption: 'Failed post fixed' }),
+      expect.anything()
+    );
+  });
+
+  it('today highlight follows the page timezone, not UTC', async () => {
+    // 01:00 UTC on 29 Oct is still 28 Oct in Chicago.
+    vi.setSystemTime(new Date('2026-10-29T01:00:00.000Z'));
+    renderPanel({ pageTimezone: 'America/Chicago' });
+    await waitFor(() =>
+      expect(screen.getByTestId('calendar-month-label')).toBeTruthy()
+    );
+    expect(screen.getByTestId('calendar-month-label').textContent).toBe('October 2026');
+    expect(screen.getByTestId('calendar-day-2026-10-28').className).toContain(
+      'ring-brand-gold/20'
+    );
+    expect(screen.getByTestId('calendar-day-2026-10-29').className).not.toContain(
+      'ring-brand-gold/20'
+    );
+  });
+
+  it('a crowded day cell shows every post and scrolls internally', async () => {
+    seed = Array.from({ length: 8 }, (_, i) =>
+      item({
+        id: `eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee${i}`,
+        caption: `Crowded post ${i + 1}`,
+        postFormat: 'text',
+        status: 'failed',
+        updatedAt: '2026-10-28T15:30:00.000Z',
+      })
+    );
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId('calendar-day-2026-10-28')).toBeTruthy()
+    );
+    const dayCell = screen.getByTestId('calendar-day-2026-10-28');
+    expect(within(dayCell).getAllByTestId(/^calendar-entry-/)).toHaveLength(8);
+    expect(dayCell.querySelector('.overflow-y-auto')).not.toBeNull();
+  });
+
+  it('month-boundary posts stay in their month across year-rollover navigation', async () => {
+    const user = userEvent.setup();
+    seed = [
+      item({
+        id: ID_A,
+        caption: 'First of October',
+        postFormat: 'text',
+        status: 'published',
+        publishedAt: '2026-10-01T09:00:00.000Z',
+      }),
+      item({
+        id: ID_B,
+        caption: 'Last of October',
+        postFormat: 'text',
+        status: 'published',
+        publishedAt: '2026-10-31T09:00:00.000Z',
+      }),
+    ];
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId(`calendar-entry-${ID_A}`)).toBeTruthy()
+    );
+    expect(screen.getByTestId(`calendar-entry-${ID_B}`)).toBeTruthy();
+    await user.click(screen.getByTestId('calendar-next-btn'));
+    expect(screen.getByTestId('calendar-month-label').textContent).toBe('November 2026');
+    await user.click(screen.getByTestId('calendar-next-btn'));
+    expect(screen.getByTestId('calendar-month-label').textContent).toBe('December 2026');
+    // Neither October post leaks into December's grid.
+    expect(screen.queryByTestId(`calendar-entry-${ID_A}`)).toBeNull();
+    expect(screen.queryByTestId(`calendar-entry-${ID_B}`)).toBeNull();
+    await user.click(screen.getByTestId('calendar-next-btn'));
+    expect(screen.getByTestId('calendar-month-label').textContent).toBe('January 2027');
+    await user.click(screen.getByTestId('calendar-prev-btn'));
+    expect(screen.getByTestId('calendar-month-label').textContent).toBe('December 2026');
   });
 });
