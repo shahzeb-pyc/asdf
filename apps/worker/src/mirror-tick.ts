@@ -12,16 +12,33 @@ import { FacebookPublishClient } from './fb-client.js';
 import { captureWorkerError, type PostHogEnv } from './analytics.js';
 
 // ==========================================
-// TikTok mirror tick (hourly)
+// TikTok mirror checks (scaled: dispatcher + queue fan-out)
 // ==========================================
 //
-// Every hour, for every mirror with status active or error
-// (paused mirrors are skipped), fetch the TikTok account's feed
-// from the PAID tikwmapi endpoint (key rotation with DB-persisted
-// 30-day pauses, see contracts tikwmapi), resolve each NEW reel
-// via the FREE tikwm POST endpoint (no-watermark URL + verbatim
-// title), and post it to the linked Facebook page as a Facebook
-// Reel, caption verbatim.
+// Every 10 minutes a tiny dispatcher cron hands out work: it
+// scans mirrors due for their hourly check (next_check_at
+// reached, NULL counts as due) in due order, in pages of 500,
+// and enqueues one job per mirror (at most 1,700 per run —
+// 6 runs/hour = 10,200/hour capacity) to the mirror-check
+// queue, with per-message delays spacing jobs ~3/second so
+// feed checks land at a steady ~180/minute instead of one
+// 10,000-strong burst. Queue consumers then do the real work
+// per mirror: fetch the TikTok account's feed from the PAID
+// tikwmapi endpoint (key rotation with DB-persisted 30-day
+// pauses, see contracts tikwmapi), resolve each NEW reel via
+// the FREE tikwm POST endpoint (no-watermark URL + verbatim
+// title), and post it to the linked Facebook page as a
+// Facebook Reel, caption verbatim.
+//
+// One mirror's failure never blocks other mirrors: each job
+// is independent, consumers run in parallel, and a message
+// that exhausts queue retries lands in the dead-letter queue,
+// whose consumer marks the mirror error. Per-mirror business
+// failures (feed down, resolve failure, publish rejection)
+// keep today's semantics — the mirror is marked error and
+// the next hourly check retries it — while transport/DB
+// failures that escape the per-mirror handler retry via
+// queue semantics instead.
 //
 // Dedup (designed upfront, three layers):
 //   1. Time: only items newer than last_posted_create_time.
@@ -59,11 +76,41 @@ import { captureWorkerError, type PostHogEnv } from './analytics.js';
 //   catch-up. A catch-up tick with nothing new still clears the
 //   flag — there is nothing left to catch up on.
 
-/** Hourly cron: minute 0 of every hour. */
-export const MIRROR_CRON = '0 * * * *';
+/** Dispatcher cron: every 10 minutes it hands out the due slice. */
+export const MIRROR_DISPATCH_CRON = '*/10 * * * *';
 
-/** One feed fetch per tick (bounded: a burst above this is not
- *  silently partial — items past the bound wait for next tick,
+/** Queue carrying one job per mirror check, and its dead-letter queue. */
+export const MIRROR_CHECK_QUEUE_NAME = 'mirror-check';
+export const MIRROR_CHECK_DLQ_NAME = 'mirror-check-dlq';
+
+/**
+ * Due-scan page size. PostgREST silently truncates an unbounded
+ * select at 1,000 rows, so the dispatcher NEVER fetches mirrors
+ * without an explicit page bound — a single unbounded list would
+ * silently skip every mirror past ~1,000.
+ */
+export const MIRROR_DISPATCH_BATCH_SIZE = 500;
+
+/**
+ * Max jobs enqueued per dispatcher run. 6 runs/hour × 1,700 =
+ * 10,200/hour capacity, covering 10,000 mirrors; mirrors past
+ * the cap stay due and are picked up by later runs (graceful
+ * delay, never dropped).
+ */
+export const MIRROR_DISPATCH_PER_RUN_CAP = 1700;
+
+/**
+ * Dispatch pacing: jobs are sent with delaySeconds = floor(index
+ * / 3), i.e. ~3 jobs/second, a steady ~180 feed checks/minute
+ * at full load — inside the tikwmapi per-minute caps of every
+ * paid plan (600/min and up), instead of a 10,000-strong burst.
+ * delaySeconds supports up to 24h, so the ~566s max delay at
+ * full load is well inside the limit.
+ */
+export const MIRROR_DISPATCH_JOBS_PER_SECOND = 3;
+
+/** One feed fetch per check (bounded: a burst above this is not
+ *  silently partial — items past the bound wait for next check,
  *  and the mirror's next_check_at still advances). */
 export const MIRROR_FEED_COUNT = 30;
 
@@ -104,7 +151,6 @@ export interface MirrorTickPostInput {
 }
 
 export interface MirrorTickDeps {
-  listMirrors: () => Promise<MirrorTickMirror[]>;
   listKnownSourceIds: (mirrorId: string) => Promise<ReadonlySet<string>>;
   /** Insert a pending/claimed row; returns the row id, or null when
    *  the unique constraint says another tick claimed it first. */
@@ -143,8 +189,7 @@ export interface MirrorTickDeps {
   waitUntil?: ((promise: Promise<unknown>) => void) | undefined;
 }
 
-export interface MirrorTickResult {
-  mirrorsChecked: number;
+export interface MirrorCheckResult {
   posted: number;
   skipped: number;
   failed: number;
@@ -158,14 +203,29 @@ function toIso(createTime: number | undefined): string | null {
   return typeof createTime === 'number' ? new Date(createTime * 1000).toISOString() : null;
 }
 
-export async function runMirrorTick(deps: MirrorTickDeps): Promise<MirrorTickResult> {
+/**
+ * Process ONE mirror's hourly check (the queue consumer's unit
+ * of work). This is the old runMirrorTick loop body with the
+ * loop removed: every semantic is unchanged — catch-up rule,
+ * watermark skips, resolve-then-claim, claim-then-publish,
+ * stop-on-first-failure, and the final stamp (status, error,
+ * last_checked_at, catch_up_pending, next_check_at = check
+ * time + 1h). It never throws for per-mirror business
+ * failures (they are stamped as mirror errors); only a
+ * failure of the final stamp's own error capture is logged,
+ * exactly as before. Transport/DB failures raised by
+ * fetchMirror (consumer side, before this runs) still
+ * propagate to queue retry semantics.
+ */
+export async function processMirrorCheck(
+  deps: MirrorTickDeps,
+  mirror: MirrorTickMirror
+): Promise<MirrorCheckResult> {
   const now = deps.now ?? new Date();
   const nextCheckAt = new Date(now.getTime() + 60 * 60 * 1000).toISOString();
-  const result: MirrorTickResult = { mirrorsChecked: 0, posted: 0, skipped: 0, failed: 0 };
+  const result: MirrorCheckResult = { posted: 0, skipped: 0, failed: 0 };
 
-  const mirrors = await deps.listMirrors();
-  for (const mirror of mirrors) {
-    result.mirrorsChecked += 1;
+  {
     let mirrorError: string | null = null;
     let feedFetched = false;
     let isCatchUp = false;
@@ -331,7 +391,7 @@ export async function runMirrorTick(deps: MirrorTickDeps): Promise<MirrorTickRes
       captureWorkerError(
         deps.env ?? {},
         err instanceof Error ? err : new Error(message),
-        { site: 'runMirrorTick', kind: 'mirror_tick_failed', mirrorId: mirror.id },
+        { site: 'processMirrorCheck', kind: 'mirror_tick_failed', mirrorId: mirror.id },
         deps.waitUntil
       );
       console.error(
@@ -358,18 +418,16 @@ export async function runMirrorTick(deps: MirrorTickDeps): Promise<MirrorTickRes
       captureWorkerError(
         deps.env ?? {},
         err instanceof Error ? err : new Error(String(err)),
-        { site: 'runMirrorTick', kind: 'mirror_stamp_failed', mirrorId: mirror.id },
+        { site: 'processMirrorCheck', kind: 'mirror_stamp_failed', mirrorId: mirror.id },
         deps.waitUntil
       );
       console.error(`[mirror-tick] mirror=${mirror.id} stamp failed:`, err);
     }
   }
 
-  if (result.mirrorsChecked > 0) {
-    console.info(
-      `[mirror-tick] checked=${result.mirrorsChecked} posted=${result.posted} skipped=${result.skipped} failed=${result.failed}`
-    );
-  }
+  console.info(
+    `[mirror-tick] mirror=${mirror.id} posted=${result.posted} skipped=${result.skipped} failed=${result.failed}`
+  );
   return result;
 }
 
@@ -428,8 +486,12 @@ type SupabaseLike = {
 type SupabaseQuery = {
   eq: (column: string, value: unknown) => SupabaseQuery;
   in: (column: string, values: unknown[]) => SupabaseQuery;
-  order: (column: string, options?: { ascending?: boolean }) => SupabaseQuery;
+  order: (
+    column: string,
+    options?: { ascending?: boolean; nullsFirst?: boolean }
+  ) => SupabaseQuery;
   limit: (count: number) => SupabaseQuery;
+  range: (from: number, to: number) => SupabaseQuery;
   single: () => Promise<{ data: unknown; error: { message: string; code?: string } | null }>;
   maybeSingle: () => Promise<{ data: unknown; error: { message: string; code?: string } | null }>;
   then: <T>(
@@ -450,6 +512,44 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * + DB-persisted pauses); an empty key list fails every feed
  * fetch loudly as a per-mirror error, never silently.
  */
+/** Minimal queue-producer handle (Cloudflare Queue binding shape). */
+export interface MirrorCheckQueue {
+  send: (body: MirrorCheckMessage, options?: { delaySeconds?: number }) => Promise<void>;
+}
+
+/** One queued job: the consumer re-fetches the mirror fresh by id,
+ *  so a pause/delete between dispatch and consume is honoured. */
+export interface MirrorCheckMessage {
+  mirrorId: string;
+}
+
+/**
+ * Full worker deps: per-mirror check deps (MirrorTickDeps) plus
+ * the dispatcher/consumer deps. The old whole-list
+ * `listMirrors` is gone on purpose: an unbounded select is
+ * silently truncated at 1,000 rows, and a batch destinations
+ * lookup over 10,000 mirrors would blow up the .in() lists —
+ * both are replaced by paged due scans + single-mirror fetches.
+ */
+export interface MirrorWorkerDeps extends MirrorTickDeps {
+  /**
+   * Due-mirror ids in due order (next_check_at ASC NULLS FIRST,
+   * id ASC), paged MIRROR_DISPATCH_BATCH_SIZE at a time, stopping
+   * at the first not-yet-due row or at `cap`. NULL next_check_at
+   * counts as due (never checked); an unparseable stamp also
+   * counts as due (fail toward checking). Nothing is mutated
+   * during the scan, so offset paging cannot skip rows.
+   */
+  listDueMirrorIds: (now: Date, cap: number) => Promise<string[]>;
+  /** Single mirror + its resolved target (first active row wins;
+   *  targetFound false when the target row is gone, so the
+   *  consumer errors loudly instead of silently skipping it).
+   *  Null when the mirror row itself is gone (deleted). */
+  fetchMirror: (mirrorId: string) => Promise<MirrorTickMirror | null>;
+  /** Enqueue one mirror-check job with the given delivery delay. */
+  enqueueMirrorCheck: (mirrorId: string, delaySeconds: number) => Promise<void>;
+}
+
 export function buildMirrorTickDeps(
   db: SupabaseLike,
   masterKey: string,
@@ -458,93 +558,116 @@ export function buildMirrorTickDeps(
     env?: PostHogEnv;
     waitUntil?: MirrorTickDeps['waitUntil'];
     tikwmApiKeys?: string[];
+    mirrorQueue?: MirrorCheckQueue;
   }
-): MirrorTickDeps {
+): MirrorWorkerDeps {
   const fbClient = new FacebookPublishClient();
   const tikwmPauseStore = buildWorkerTikwmPauseStore(db);
   return {
     env: options?.env,
     now: options?.now,
     waitUntil: options?.waitUntil,
-    listMirrors: async () => {
-      // Mirrors carry no destination foreign key: the target is
-      // resolved at tick time by (workspace, target platform,
-      // target external id) against destinations. Batch the lookup:
-      // one destinations query for all mirrors, matched in code
-      // (first active row wins per key). A mirror whose target row
-      // is gone is still listed with targetFound false so the tick
-      // errors loudly instead of silently skipping it (the old
-      // inner-join behaviour dropped such mirrors without a trace).
+    listDueMirrorIds: async (now: Date, cap: number) => {
+      const nowMs = now.getTime();
+      const ids: string[] = [];
+      let offset = 0;
+      while (ids.length < cap) {
+        const { data, error } = await db
+          .from('mirrors')
+          .select('id, next_check_at')
+          .in('status', ['active', 'error'])
+          .order('next_check_at', { ascending: true, nullsFirst: true })
+          .order('id', { ascending: true })
+          .range(offset, offset + MIRROR_DISPATCH_BATCH_SIZE - 1);
+        if (error) throw new Error(`Failed to list due mirrors: ${error.message}`);
+        const rows = ((data ?? []) as unknown[]).filter(isRecord) as Record<
+          string,
+          unknown
+        >[];
+        if (rows.length === 0) break;
+        let stopped = false;
+        for (const row of rows) {
+          const stamp = row.next_check_at;
+          // A stamp in the future ends the due prefix; NULL and
+          // unparseable stamps count as due (see interface doc).
+          if (typeof stamp === 'string' && !Number.isNaN(Date.parse(stamp))) {
+            if (Date.parse(stamp) > nowMs) {
+              stopped = true;
+              break;
+            }
+          }
+          if (typeof row.id === 'string') ids.push(row.id);
+          if (ids.length >= cap) break;
+        }
+        if (stopped || rows.length < MIRROR_DISPATCH_BATCH_SIZE) break;
+        offset += MIRROR_DISPATCH_BATCH_SIZE;
+      }
+      return ids;
+    },
+    fetchMirror: async (mirrorId: string) => {
       const { data, error } = await db
         .from('mirrors')
         .select(
           'id, workspace_id, source_platform, source_username, target_platform, target_external_id, status, catch_up_pending, last_checked_at, last_posted_source_id, last_posted_create_time'
         )
-        .in('status', ['active', 'error']);
-      if (error) throw new Error(`Failed to list mirrors: ${error.message}`);
-      const rows = ((data ?? []) as unknown[]).filter(isRecord) as Record<string, unknown>[];
-      const valid = rows.filter(
-        (row) =>
-          typeof row.id === 'string' &&
-          typeof row.workspace_id === 'string' &&
-          typeof row.source_platform === 'string' &&
-          typeof row.source_username === 'string' &&
-          typeof row.target_platform === 'string' &&
-          typeof row.target_external_id === 'string'
-      );
-      const destinations = new Map<string, Record<string, unknown>>();
-      if (valid.length > 0) {
-        const workspaces = [...new Set(valid.map((row) => row.workspace_id as string))];
-        const platforms = [...new Set(valid.map((row) => row.target_platform as string))];
-        const externalIds = [...new Set(valid.map((row) => row.target_external_id as string))];
-        const { data: destData, error: destError } = await db
-          .from('destinations')
-          .select('workspace_id, platform, external_destination_id, encrypted_destination_token, status')
-          .in('workspace_id', workspaces)
-          .in('platform', platforms)
-          .in('external_destination_id', externalIds);
-        if (destError) throw new Error(`Failed to list destinations: ${destError.message}`);
-        const destRows = ((destData ?? []) as unknown[]).filter(isRecord) as Record<
-          string,
-          unknown
-        >[];
-        // First active row wins per key; otherwise the first row.
-        const byKey = new Map<string, Record<string, unknown>>();
-        for (const dest of destRows) {
-          const key = `${dest.workspace_id}:${dest.platform}:${dest.external_destination_id}`;
-          const existing = byKey.get(key);
-          if (!existing || (existing.status !== 'active' && dest.status === 'active')) {
-            byKey.set(key, dest);
-          }
-        }
-        for (const [key, dest] of byKey) destinations.set(key, dest);
+        .eq('id', mirrorId)
+        .maybeSingle();
+      if (error) throw new Error(`Failed to fetch mirror: ${error.message}`);
+      if (!isRecord(data)) return null;
+      const row = data as Record<string, unknown>;
+      if (
+        typeof row.id !== 'string' ||
+        typeof row.workspace_id !== 'string' ||
+        typeof row.source_platform !== 'string' ||
+        typeof row.source_username !== 'string' ||
+        typeof row.target_platform !== 'string' ||
+        typeof row.target_external_id !== 'string'
+      ) {
+        return null;
       }
-      const mirrors: MirrorTickMirror[] = [];
-      for (const row of valid) {
-        const key = `${row.workspace_id}:${row.target_platform}:${row.target_external_id}`;
-        const dest = destinations.get(key) ?? null;
-        const token = dest?.encrypted_destination_token;
-        mirrors.push({
-          id: row.id as string,
-          workspaceId: row.workspace_id as string,
-          sourcePlatform: row.source_platform as string,
-          sourceUsername: row.source_username as string,
-          targetPlatform: row.target_platform as string,
-          targetExternalId: row.target_external_id as string,
-          targetFound: dest !== null,
-          targetToken:
-            typeof token === 'string' ? await decryptToken(token, masterKey) : null,
-          status: typeof row.status === 'string' ? row.status : 'active',
-          lastCheckedAt:
-            typeof row.last_checked_at === 'string' ? row.last_checked_at : null,
-          catchUpPending: row.catch_up_pending === true,
-          lastPostedSourceId:
-            typeof row.last_posted_source_id === 'string' ? row.last_posted_source_id : null,
-          lastPostedCreateTime:
-            typeof row.last_posted_create_time === 'number' ? row.last_posted_create_time : null,
-        });
-      }
-      return mirrors;
+      // Mirrors carry no destination foreign key: resolve the
+      // target at check time by (workspace, target platform,
+      // target external id). First active row wins.
+      const { data: destData, error: destError } = await db
+        .from('destinations')
+        .select('encrypted_destination_token, status')
+        .eq('workspace_id', row.workspace_id)
+        .eq('platform', row.target_platform)
+        .eq('external_destination_id', row.target_external_id)
+        .limit(10);
+      if (destError) throw new Error(`Failed to list destinations: ${destError.message}`);
+      const destRows = ((destData ?? []) as unknown[]).filter(isRecord) as Record<
+        string,
+        unknown
+      >[];
+      const dest =
+        destRows.find((d) => d.status === 'active') ??
+        (destRows.length > 0 ? destRows[0] : undefined);
+      const token = dest?.encrypted_destination_token;
+      return {
+        id: row.id,
+        workspaceId: row.workspace_id,
+        sourcePlatform: row.source_platform,
+        sourceUsername: row.source_username,
+        targetPlatform: row.target_platform,
+        targetExternalId: row.target_external_id,
+        targetFound: dest !== undefined,
+        targetToken:
+          typeof token === 'string' ? await decryptToken(token, masterKey) : null,
+        status: typeof row.status === 'string' ? row.status : 'active',
+        lastCheckedAt:
+          typeof row.last_checked_at === 'string' ? row.last_checked_at : null,
+        catchUpPending: row.catch_up_pending === true,
+        lastPostedSourceId:
+          typeof row.last_posted_source_id === 'string' ? row.last_posted_source_id : null,
+        lastPostedCreateTime:
+          typeof row.last_posted_create_time === 'number' ? row.last_posted_create_time : null,
+      };
+    },
+    enqueueMirrorCheck: async (mirrorId: string, delaySeconds: number) => {
+      const queue = options?.mirrorQueue;
+      if (!queue) throw new Error('Mirror check queue is not configured');
+      await queue.send({ mirrorId }, { delaySeconds });
     },
     listKnownSourceIds: async (mirrorId: string) => {
       const { data, error } = await db
@@ -660,4 +783,142 @@ export function buildMirrorTickDeps(
       return result.postId;
     },
   };
+}
+
+export interface MirrorDispatchDeps {
+  listDueMirrorIds: (now: Date, cap: number) => Promise<string[]>;
+  enqueueMirrorCheck: (mirrorId: string, delaySeconds: number) => Promise<void>;
+  /** Advance a dispatched mirror's next check (dispatch time + 1h). */
+  advanceMirrorCheck: (mirrorId: string, nextCheckAt: string) => Promise<void>;
+  now?: Date;
+}
+
+export interface MirrorDispatchResult {
+  /** Jobs successfully enqueued (their next check was advanced). */
+  dispatched: number;
+  /** Mirrors whose enqueue failed (left due for the next run). */
+  failed: number;
+  /** Due mirrors found by the scan (capped at the per-run cap). */
+  due: number;
+}
+
+/**
+ * Dispatcher (MIRROR_DISPATCH_CRON, every 10 minutes): the ONLY
+ * thing the cron does. It scans due mirrors, enqueues one job
+ * per mirror with a pacing delay (index / 3 seconds, ~3
+ * jobs/second), and advances each enqueued mirror's
+ * next_check_at to dispatch time + 1h so it is not
+ * re-dispatched until its next hourly slot. A failed enqueue
+ * leaves the mirror due (no advance, retried next run); a
+ * failed advance after a successful enqueue is logged loudly
+ * but the job still runs — the consumer's claim guard keeps
+ * any re-dispatch from double-posting. Mirrors past the
+ * per-run cap simply stay due for later runs.
+ */
+export async function runMirrorDispatch(
+  deps: MirrorDispatchDeps
+): Promise<MirrorDispatchResult> {
+  const now = deps.now ?? new Date();
+  const scanned = await deps.listDueMirrorIds(now, MIRROR_DISPATCH_PER_RUN_CAP);
+  // Defense in depth: the per-run cap is a dispatcher invariant,
+  // enforced here even if a scan implementation over-returns.
+  const ids = scanned.slice(0, MIRROR_DISPATCH_PER_RUN_CAP);
+  const nextCheckAt = new Date(now.getTime() + 60 * 60 * 1000).toISOString();
+  let dispatched = 0;
+  let failed = 0;
+  for (let i = 0; i < ids.length; i++) {
+    const mirrorId = ids[i]!;
+    const delaySeconds = Math.floor(i / MIRROR_DISPATCH_JOBS_PER_SECOND);
+    try {
+      await deps.enqueueMirrorCheck(mirrorId, delaySeconds);
+    } catch (err) {
+      failed += 1;
+      console.error(
+        `[mirror-dispatch] mirror=${mirrorId} enqueue failed; leaving due:`,
+        err
+      );
+      continue;
+    }
+    try {
+      await deps.advanceMirrorCheck(mirrorId, nextCheckAt);
+    } catch (err) {
+      // The job is already queued: log loudly, do not fail the
+      // run, and do not count it as failed — the consumer still
+      // checks the mirror, and its final stamp sets the next
+      // check. A later re-dispatch (next_check_at unadvanced)
+      // is deduped by the claim guard.
+      console.error(
+        `[mirror-dispatch] mirror=${mirrorId} next_check_at advance failed after enqueue:`,
+        err
+      );
+    }
+    dispatched += 1;
+  }
+  console.info(
+    `[mirror-dispatch] due=${scanned.length} dispatched=${dispatched} failed=${failed}`
+  );
+  return { dispatched, failed, due: scanned.length };
+}
+
+export interface MirrorCheckConsumerDeps {
+  check: MirrorTickDeps;
+  /** Fresh single-mirror fetch; throws on transport/DB failure
+   *  so the batch retries via queue semantics. */
+  fetchMirror: (mirrorId: string) => Promise<MirrorTickMirror | null>;
+}
+
+/**
+ * Queue consumer for the mirror-check queue: one message = one
+ * mirror, processed sequentially within the batch (messages in
+ * one batch are independent mirrors, so a failure in one never
+ * blocks the others — each message is handled in its own
+ * try/catch via processMirrorCheck's mirror-error stamping).
+ * A mirror deleted since dispatch, or paused since dispatch,
+ * is acked without work. A throw here (fetchMirror failure)
+ * retries the whole batch via queue semantics; after
+ * max_retries the message lands in the DLQ (see below).
+ */
+export async function handleMirrorCheckBatch(
+  batch: { messages: Array<{ body: MirrorCheckMessage }> },
+  deps: MirrorCheckConsumerDeps
+): Promise<void> {
+  for (const message of batch.messages) {
+    const mirror = await deps.fetchMirror(message.body.mirrorId);
+    if (!mirror) continue; // Deleted since dispatch: ack, nothing to do.
+    if (mirror.status !== 'active' && mirror.status !== 'error') {
+      continue; // Paused (or otherwise held) since dispatch: ack, skip.
+    }
+    await processMirrorCheck(deps.check, mirror);
+  }
+}
+
+export interface MirrorCheckDlqDeps {
+  /** Best-effort error stamp; the DLQ handler never throws. */
+  markMirrorError: (mirrorId: string, error: string) => Promise<void>;
+}
+
+/**
+ * Dead-letter consumer: a message that exhausted queue retries
+ * (a poison message — repeated transport/DB failure) marks its
+ * mirror error so the failure is visible instead of silent.
+ * Failures of the stamp itself are logged and swallowed: the
+ * DLQ must not throw endlessly.
+ */
+export async function handleMirrorCheckDlqBatch(
+  batch: { messages: Array<{ body: MirrorCheckMessage }> },
+  deps: MirrorCheckDlqDeps
+): Promise<void> {
+  for (const message of batch.messages) {
+    try {
+      await deps.markMirrorError(
+        message.body.mirrorId,
+        'Mirror check failed repeatedly and was moved to the dead-letter queue.'
+      );
+    } catch (err) {
+      console.error(
+        `[mirror-dlq] mirror=${message.body.mirrorId} error stamp failed:`,
+        err
+      );
+    }
+  }
 }

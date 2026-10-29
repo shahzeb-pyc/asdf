@@ -1,13 +1,16 @@
 /**
- * TikTok mirror tick (hourly): newer-only oldest-first posting,
- * claim-then-post (overlapping ticks never double-post), paused
- * mirrors skipped, watermarked-only skipped with error, tikwm
- * failure → mirror error, publish failure → post stays pending +
- * mirror error, success clears the mirror error, caption verbatim.
+ * TikTok mirror check (per-mirror, queue consumer unit of work):
+ * newer-only oldest-first posting, claim-then-post (overlapping
+ * checks never double-post), watermarked-only skipped with
+ * error, tikwm failure → mirror error, publish failure → post
+ * stays pending + mirror error, success clears the mirror
+ * error, caption verbatim. (Paused/deleted skipping lives in
+ * the consumer tests — the consumer fetches the mirror fresh
+ * and skips before this runs.)
  */
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
-  runMirrorTick,
+  processMirrorCheck,
   type MirrorTickDeps,
   type MirrorTickMirror,
 } from './mirror-tick.js';
@@ -52,9 +55,8 @@ interface FakeState {
   publishFailsFor: Set<string>;
 }
 
-function fakeDeps(state: FakeState, feed: unknown[], mirrors: MirrorTickMirror[]): MirrorTickDeps {
+function fakeDeps(state: FakeState, feed: unknown[]): MirrorTickDeps {
   return {
-    listMirrors: async () => mirrors,
     listKnownSourceIds: async () => new Set(),
     claimPost: async (mirrorId, post) => {
       if (state.claimReturnsNullFor.has(post.sourcePostId)) return null;
@@ -94,11 +96,11 @@ function newState(): FakeState {
   };
 }
 
-describe('runMirrorTick', () => {
+describe('processMirrorCheck', () => {
   it('posts new reels oldest-first with the caption verbatim', async () => {
     const state = newState();
     const feed = [reel('v3', 300), reel('v1', 100), reel('v2', 200)];
-    const result = await runMirrorTick(fakeDeps(state, feed, [mirror()]));
+    const result = await processMirrorCheck(fakeDeps(state, feed), mirror());
     expect(result.posted).toBe(3);
     expect(state.published.map((p) => p.videoUrl)).toEqual([
       'https://example.com/v1.mp4',
@@ -115,11 +117,7 @@ describe('runMirrorTick', () => {
   it('posts only items newer than the last posted reel', async () => {
     const state = newState();
     const feed = [reel('v1', 100), reel('v2', 200), reel('v3', 300)];
-    const result = await runMirrorTick(
-      fakeDeps(state, feed, [
-        mirror({ lastPostedSourceId: 'v2', lastPostedCreateTime: 200 }),
-      ])
-    );
+    const result = await processMirrorCheck(fakeDeps(state, feed), mirror({ lastPostedSourceId: 'v2', lastPostedCreateTime: 200 }));
     expect(result.posted).toBe(1);
     expect(state.published[0]?.videoUrl).toContain('v3');
   });
@@ -127,7 +125,7 @@ describe('runMirrorTick', () => {
   it('skips an overlapping-tick claim (claim returns null) without publishing', async () => {
     const state = newState();
     state.claimReturnsNullFor.add('v1');
-    const result = await runMirrorTick(fakeDeps(state, [reel('v1', 100)], [mirror()]));
+    const result = await processMirrorCheck(fakeDeps(state, [reel('v1', 100)]), mirror());
     expect(result.posted).toBe(0);
     expect(state.published).toHaveLength(0);
   });
@@ -136,7 +134,7 @@ describe('runMirrorTick', () => {
     const state = newState();
     state.publishFailsFor.add('https://example.com/v1.mp4');
     const feed = [reel('v1', 100), reel('v2', 200)];
-    const result = await runMirrorTick(fakeDeps(state, feed, [mirror()]));
+    const result = await processMirrorCheck(fakeDeps(state, feed), mirror());
     expect(result.posted).toBe(0);
     expect(result.failed).toBe(1);
     // v2 never attempted: the loop stops after the first failure.
@@ -151,11 +149,11 @@ describe('runMirrorTick', () => {
 
   it('keeps a resolve failure pending, marks the mirror error, and stops that mirror', async () => {
     const state = newState();
-    const deps = fakeDeps(state, [reel('v1', 100), reel('v2', 200)], [mirror()]);
+    const deps = fakeDeps(state, [reel('v1', 100), reel('v2', 200)]);
     deps.resolveVideo = async () => {
       throw new Error('Could not resolve video');
     };
-    const result = await runMirrorTick(deps);
+    const result = await processMirrorCheck(deps, mirror());
     expect(result.posted).toBe(0);
     expect(result.failed).toBe(1);
     expect(state.published).toHaveLength(0);
@@ -173,7 +171,7 @@ describe('runMirrorTick', () => {
       reel('v_wm', 100, { play: '' }),
       reel('v_ok', 200),
     ];
-    const result = await runMirrorTick(fakeDeps(state, feed, [mirror()]));
+    const result = await processMirrorCheck(fakeDeps(state, feed), mirror());
     expect(result.skipped).toBe(1);
     expect(result.posted).toBe(1);
     expect(state.published[0]?.videoUrl).toContain('v_ok');
@@ -182,17 +180,15 @@ describe('runMirrorTick', () => {
     expect(skippedClaim?.post.videoUrl).toBeNull();
   });
 
-  it('marks the mirror error and continues when tikwm fails', async () => {
+  it('marks the mirror error when tikwm fails (other mirrors are independent jobs)', async () => {
     const state = newState();
-    const deps = fakeDeps(state, [], [mirror({ id: 'm1' }), mirror({ id: 'm2' })]);
+    const deps = fakeDeps(state, []);
     deps.fetchFeed = async (username: string) => {
       if (username === 'alice') throw new Error('tikwm down');
       return [];
     };
-    // Second mirror has a different username so its feed succeeds.
-    const mirrors = [mirror({ id: 'm1' }), mirror({ id: 'm2', sourceUsername: 'bob' })];
-    const result = await runMirrorTick({ ...deps, listMirrors: async () => mirrors });
-    expect(result.mirrorsChecked).toBe(2);
+    await processMirrorCheck(deps, mirror({ id: 'm1' }));
+    await processMirrorCheck(deps, mirror({ id: 'm2', sourceUsername: 'bob' }));
     const m1Stamp = state.mirrorUpdates.filter((u) => u.id === 'm1').pop();
     expect(m1Stamp?.patch.status).toBe('error');
     const m2Stamp = state.mirrorUpdates.filter((u) => u.id === 'm2').pop();
@@ -201,28 +197,16 @@ describe('runMirrorTick', () => {
 
   it('clears a prior error on a clean tick', async () => {
     const state = newState();
-    await runMirrorTick(fakeDeps(state, [], [mirror({ status: 'error' })]));
+    await processMirrorCheck(fakeDeps(state, []), mirror({ status: 'error' }));
     const stamp = state.mirrorUpdates[state.mirrorUpdates.length - 1];
     expect(stamp?.patch.status).toBe('active');
     expect(stamp?.patch.lastError).toBeNull();
   });
 
-  it('never fetches paused mirrors (listMirrors is the gate)', async () => {
-    const state = newState();
-    const fetchFeed = vi.fn(async () => []);
-    const deps = fakeDeps(state, [], []);
-    deps.fetchFeed = fetchFeed;
-    deps.listMirrors = async () => [];
-    await runMirrorTick(deps);
-    expect(fetchFeed).not.toHaveBeenCalled();
-  });
-
   it('catch-up after resume posts only the newest reel and marks older missed reels skipped', async () => {
     const state = newState();
     const feed = [reel('v1', 100), reel('v2', 200), reel('v3', 300)];
-    const result = await runMirrorTick(
-      fakeDeps(state, feed, [mirror({ catchUpPending: true })])
-    );
+    const result = await processMirrorCheck(fakeDeps(state, feed), mirror({ catchUpPending: true }));
     expect(result.posted).toBe(1);
     expect(result.skipped).toBe(2);
     expect(state.published.map((p) => p.videoUrl)).toEqual([
@@ -240,9 +224,7 @@ describe('runMirrorTick', () => {
   it('catch-up after a >2h gap posts only the newest reel', async () => {
     const state = newState();
     const feed = [reel('v1', 100), reel('v2', 200), reel('v3', 300)];
-    const result = await runMirrorTick(
-      fakeDeps(state, feed, [mirror({ lastCheckedAt: '2026-10-29T09:00:00.000Z' })])
-    );
+    const result = await processMirrorCheck(fakeDeps(state, feed), mirror({ lastCheckedAt: '2026-10-29T09:00:00.000Z' }));
     expect(result.posted).toBe(1);
     expect(result.skipped).toBe(2);
     expect(state.published[0]?.videoUrl).toContain('v3');
@@ -253,18 +235,14 @@ describe('runMirrorTick', () => {
   it('a gap of exactly 2h is NOT catch-up (the rule is "exceeds")', async () => {
     const state = newState();
     const feed = [reel('v1', 100), reel('v2', 200), reel('v3', 300)];
-    const result = await runMirrorTick(
-      fakeDeps(state, feed, [mirror({ lastCheckedAt: '2026-10-29T10:00:00.000Z' })])
-    );
+    const result = await processMirrorCheck(fakeDeps(state, feed), mirror({ lastCheckedAt: '2026-10-29T10:00:00.000Z' }));
     expect(result.posted).toBe(3);
     expect(result.skipped).toBe(0);
   });
 
   it('a catch-up tick with nothing new still clears the resume flag', async () => {
     const state = newState();
-    const result = await runMirrorTick(
-      fakeDeps(state, [], [mirror({ catchUpPending: true })])
-    );
+    const result = await processMirrorCheck(fakeDeps(state, []), mirror({ catchUpPending: true }));
     expect(result.posted).toBe(0);
     const stamp = state.mirrorUpdates[state.mirrorUpdates.length - 1];
     expect(stamp?.patch.catchUpPending).toBe(false);
@@ -272,11 +250,11 @@ describe('runMirrorTick', () => {
 
   it('a feed failure does NOT clear the resume flag and does NOT stamp a check', async () => {
     const state = newState();
-    const deps = fakeDeps(state, [], [mirror({ catchUpPending: true })]);
+    const deps = fakeDeps(state, []);
     deps.fetchFeed = async () => {
       throw new Error('tikwm down');
     };
-    await runMirrorTick(deps);
+    await processMirrorCheck(deps, mirror({ catchUpPending: true }));
     const stamp = state.mirrorUpdates[state.mirrorUpdates.length - 1];
     expect(stamp?.patch.status).toBe('error');
     expect(stamp?.patch.catchUpPending).toBeUndefined();
