@@ -35,14 +35,14 @@ const signin = 'https://app.fbuploadpro.com/login';
     {/* ===== HERO ONLY ===== */}
     <main>
       <section id="section-1" class="snap-section snap-hero relative overflow-hidden bg-white px-5 pt-20 pb-8 text-center sm:pt-24 sm:pb-10" aria-label="Hero">
-          <h1 class="anim-enter anim-d1 mx-auto mb-6 max-w-4xl text-[40px] leading-[1.05] font-bold tracking-tight sm:text-5xl md:text-[64px] lg:text-[72px]">
+          <h1 class="mx-auto mb-6 max-w-4xl text-[40px] leading-[1.05] font-bold tracking-tight sm:text-5xl md:text-[64px] lg:text-[72px]">
             <span class="block">Your Accounts, posting <span class="whitespace-nowrap">themselves —</span></span>
             <span class="hero-highlight mt-1 inline-block">100% in the cloud</span>
           </h1>
-          <p class="hero-sub anim-enter anim-d2 mx-auto mb-8 max-w-2xl text-base leading-relaxed text-ink-sub sm:text-lg">
+          <p class="hero-sub mx-auto mb-8 max-w-2xl text-base leading-relaxed text-ink-sub sm:text-lg">
             Schedule posts across Facebook, Instagram, TikTok, YouTube, Threads, and X — they go live while you sleep, even when your <span class="whitespace-nowrap">laptop is closed.</span><br />Manage FBUploadPro using Muse or any AI agent.
           </p>
-          <div class="anim-enter anim-d3 flex justify-center">
+          <div class="hero-cta flex justify-center">
             <a href={signup} class="inline-flex min-h-11 items-center gap-2 rounded-full bg-ink px-7 text-base font-semibold text-white no-underline">
               Get started
               <span aria-hidden="true">→</span>
@@ -60,7 +60,7 @@ const signin = 'https://app.fbuploadpro.com/login';
               Instagram gradient uses its own id (ig-grad-m) so it does
               not duplicate the desktop stage's ig-grad. Middle-column
               tiles sit 8px lower for a slight stagger. */}
-          <div class="mob-grid anim-enter anim-d4 mx-auto mt-10 grid max-w-[280px] grid-cols-3 justify-items-center gap-3 lg:hidden" aria-hidden="true">
+          <div class="mob-grid mx-auto mt-10 grid max-w-[280px] grid-cols-3 justify-items-center gap-3 lg:hidden" aria-hidden="true">
             <span class="mob-float mob-float-a relative block h-[72px] w-[72px]">
               <span class="absolute left-1/2 top-1/2 h-[52px] w-[52px] -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[14px] border border-line bg-white shadow-[0_8px_20px_rgba(17,17,17,0.12)]"></span>
               <svg class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="26" height="26" fill="#1877f2" role="img" aria-label="Facebook"><path d="M9.101 23.691v-7.98H6.627v-3.667h2.474v-1.58c0-4.085 1.848-5.978 5.858-5.978.401 0 .955.042 1.468.103a8.68 8.68 0 0 1 1.141.195v3.325a8.623 8.623 0 0 0-.653-.036 26.805 26.805 0 0 0-.733-.009c-.707 0-1.259.096-1.675.309a1.686 1.686 0 0 0-.679.622c-.258.42-.374.995-.374 1.752v1.297h3.919l-.386 2.103-.287 1.564h-3.246v8.245C19.396 23.238 24 18.179 24 12.044c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.628 3.874 10.35 9.101 11.647Z"/></svg>
@@ -101,7 +101,7 @@ const signin = 'https://app.fbuploadpro.com/login';
               faithfully (see global.css comment). Instagram shape is filled
               with the official Instagram gradient; all others use their
               brand colour. */}
-          <div class="iso-stage anim-enter anim-d4 pointer-events-none relative mx-auto mt-8 hidden h-[280px] max-w-[1100px] lg:block" aria-hidden="true">
+          <div class="iso-stage pointer-events-none relative mx-auto mt-8 hidden h-[280px] max-w-[1100px] lg:block" aria-hidden="true">
             {/* Facebook — front-left, partially cut at left edge */}
             <span class="iso-bob iso-bob-a absolute bottom-[84px] left-[-14px] z-[3] h-[118px] w-[118px]">
               <span class="iso-tile absolute inset-0 rounded-[24px] border border-line bg-white"></span>
@@ -241,62 +241,102 @@ const signin = 'https://app.fbuploadpro.com/login';
     </main>
   </div>
 
-  {/* ===== TOPBAR HIDE/SHOW + SECTION ARRIVAL + ONE-STEP SCROLL — one small inline script only =====
-      No libraries, no tracking, no other behaviour. (1) Topbar: hides on
-      scroll down, shows on scroll up, always visible at scrollY = 0;
-      a 6px direction delta + 72px hide floor stop tiny jitters flickering
-      it. (2) Arrival: IntersectionObserver adds .is-visible so each
-      section fades + rises ~12px on arrival; the hidden state only
-      applies when JS has added .js-snap to <html>, so if JS fails the
-      page stays fully visible. Reduced-motion users get the CSS final
-      state with no transition (see global.css). (3) One-step scroll
-      (Layer 2, on top of the CSS scroll-snap-stop: always fallback):
-      wheel/touch/keyboard gestures commit exactly ±1 section, locked
-      until the move finishes, so a fast flick can never skip a section.
-      Disabled entirely under prefers-reduced-motion, and tall sections
-      scroll natively to their edge before advancing. */}
+  {/* ===== TOPBAR HIDE/SHOW — small inline script, GSAP-independent =====
+      Kept separate from the GSAP module on purpose: if the GSAP bundle
+      ever fails to load, the topbar still works and no content is ever
+      hidden waiting for an animation (GSAP uses from-tweens only, so a
+      failed module leaves every element at its fully visible base state).
+      Hides on scroll down, shows on scroll up, always visible at
+      scrollY = 0; a 6px direction delta + 72px hide floor stop tiny
+      jitters flickering it. */}
   <script is:inline>
     (function () {
       var bar = document.getElementById('site-topbar');
-      if (bar) {
-        var lastY = window.scrollY || 0;
-        var ticking = false;
-        var onScroll = function () {
-          var y = window.scrollY || 0;
-          if (y <= 0) {
-            bar.classList.remove('topbar-hidden');
-          } else if (y > lastY && y - lastY > 6 && y > 72) {
-            bar.classList.add('topbar-hidden');
-          } else if (lastY - y > 6) {
-            bar.classList.remove('topbar-hidden');
-          }
-          lastY = y;
-          ticking = false;
-        };
-        window.addEventListener('scroll', function () {
-          if (!ticking) {
-            window.requestAnimationFrame(onScroll);
-            ticking = true;
-          }
-        }, { passive: true });
-      }
-      document.documentElement.classList.add('js-snap');
-      var sections = document.querySelectorAll('.snap-section');
-      if ('IntersectionObserver' in window) {
-        var io = new IntersectionObserver(function (entries) {
-          entries.forEach(function (e) {
-            if (e.isIntersecting) e.target.classList.add('is-visible');
-          });
-        }, { threshold: 0.15 });
-        sections.forEach(function (s) { io.observe(s); });
-      } else {
-        sections.forEach(function (s) { s.classList.add('is-visible'); });
-      }
+      if (!bar) return;
+      var lastY = window.scrollY || 0;
+      var ticking = false;
+      var onScroll = function () {
+        var y = window.scrollY || 0;
+        if (y <= 0) {
+          bar.classList.remove('topbar-hidden');
+        } else if (y > lastY && y - lastY > 6 && y > 72) {
+          bar.classList.add('topbar-hidden');
+        } else if (lastY - y > 6) {
+          bar.classList.remove('topbar-hidden');
+        }
+        lastY = y;
+        ticking = false;
+      };
+      window.addEventListener('scroll', function () {
+        if (!ticking) {
+          window.requestAnimationFrame(onScroll);
+          ticking = true;
+        }
+      }, { passive: true });
+    })();
+  </script>
 
-      /* ---- One-step scroll controller (custom code only, no library) ---- */
-      var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-      if (!reduced && sections.length > 1) {
-        var list = Array.prototype.slice.call(sections);
+  {/* ===== GSAP — entrance animations + one-step section scrolling =====
+      Bundled from the gsap npm package (NOT a CDN link), so the static
+      build works offline and on GitHub Pages with no third-party script
+      host. Standard GSAP licence covers ScrollTrigger + ScrollToPlugin;
+      no Club plugins, no Lenis, no fullPage.js. Transform/opacity only,
+      never width/height/margin, so no layout shift. Reduced motion:
+      this whole module returns early — no animation, no scroll hijack —
+      and the CSS scroll-snap-stop: always fallback (global.css) is all
+      that remains, with every section fully visible. */}
+  <script>
+    import gsap from 'gsap';
+    import { ScrollTrigger } from 'gsap/ScrollTrigger';
+    import { ScrollToPlugin } from 'gsap/ScrollToPlugin';
+
+    gsap.registerPlugin(ScrollTrigger, ScrollToPlugin);
+    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      var sections = Array.prototype.slice.call(document.querySelectorAll('.snap-section'));
+
+      /* ---- Hero entrance: fade + small rise, staggered, once on load ---- */
+      var heroTl = gsap.timeline({ defaults: { ease: 'power2.out' } });
+      heroTl
+        .from('#section-1 h1', { y: 12, opacity: 0, duration: 0.7 }, 0.1)
+        .from('.hero-sub', { y: 12, opacity: 0, duration: 0.7 }, 0.2)
+        .from('.hero-cta', { y: 12, opacity: 0, duration: 0.7 }, 0.3)
+        /* Tiles: opacity only — their wrappers already run an infinite
+           translateY float in CSS, and a GSAP transform would fight it. */
+        .from('.iso-bob, .mob-float', { opacity: 0, duration: 0.6, stagger: 0.08 }, 0.4);
+
+      /* ---- Section arrivals: ScrollTrigger, once, never replaying ---- */
+      gsap.timeline({
+        scrollTrigger: { trigger: '#section-2', start: 'top 75%', once: true },
+        defaults: { ease: 'power2.out' },
+      })
+        .from('.s2-heading', { y: 16, opacity: 0, duration: 0.7 })
+        .from('.s2-text', { y: 12, opacity: 0, duration: 0.6 }, '-=0.4')
+        /* Centre: opacity only — its centring is a Tailwind translate
+           property, and a GSAP transform would double-shift it. */
+        .from('.s2-centre', { opacity: 0, duration: 0.7 }, '-=0.3')
+        /* Badges: inline translate(-50%,-50%) is parsed by GSAP, so
+           scale is safe during the tween; clearProps restores the
+           percentage translate afterwards so breakpoints stay exact. */
+        .from('.s2-badge', { scale: 0.8, opacity: 0, duration: 0.5, stagger: 0.08, clearProps: 'transform' }, '-=0.4');
+
+      gsap.timeline({
+        scrollTrigger: { trigger: '#section-3', start: 'top 75%', once: true },
+        defaults: { ease: 'power2.out' },
+      })
+        .from('#section-3 h2', { y: 16, opacity: 0, duration: 0.7 })
+        .from('#section-3 .blob-wrap', { scale: 0.9, opacity: 0, duration: 0.6, stagger: 0.08, transformOrigin: '50% 50%' }, '-=0.4');
+
+      gsap.timeline({
+        scrollTrigger: { trigger: '#section-4', start: 'top 75%', once: true },
+        defaults: { ease: 'power2.out' },
+      })
+        .from('#section-4 .pricing-card > div > span', { y: 14, opacity: 0, duration: 0.6 })
+        .from('#section-4 h2', { y: 14, opacity: 0, duration: 0.7 }, '-=0.4')
+        .from('#section-4 .blob-wrap', { scale: 0.9, opacity: 0, duration: 0.6, stagger: 0.08, transformOrigin: '50% 50%' }, '-=0.4');
+
+      /* ---- One-step scroll via ScrollToPlugin (Layer 2, on top of the
+         CSS scroll-snap-stop: always fallback) ---- */
+      if (sections.length > 1) {
         var current = 0;
         var locked = false;
         var lockTimer = null;
@@ -308,14 +348,14 @@ const signin = 'https://app.fbuploadpro.com/login';
         var touchCommitted = false;
 
         function sectionTop(i) {
-          return list[i].getBoundingClientRect().top + (window.scrollY || 0);
+          return sections[i].getBoundingClientRect().top + (window.scrollY || 0);
         }
         function syncIndex() {
           if (locked) return;
           var y = window.scrollY || 0;
           var vh = window.innerHeight || 0;
           var idx = 0;
-          list.forEach(function (s, i) {
+          sections.forEach(function (s, i) {
             if (y >= sectionTop(i) - vh * 0.5) idx = i;
           });
           current = idx;
@@ -333,7 +373,7 @@ const signin = 'https://app.fbuploadpro.com/login';
            the viewport, let it scroll natively until its edge, and only
            then advance. Never trap tall content. */
         function canAdvance(dir) {
-          var sec = list[current];
+          var sec = sections[current];
           if (!sec) return true;
           var vh = window.innerHeight || 0;
           if (sec.offsetHeight <= vh + 1) return true;
@@ -344,12 +384,13 @@ const signin = 'https://app.fbuploadpro.com/login';
         }
         function unlock() {
           locked = false;
+          document.documentElement.style.scrollBehavior = '';
           if (lockTimer) { clearTimeout(lockTimer); lockTimer = null; }
         }
         function commit(dir, targetIndex) {
           var target = (typeof targetIndex === 'number') ? targetIndex : current + dir;
           if (target < 0) target = 0;
-          if (target >= list.length) target = list.length - 1;
+          if (target >= sections.length) target = sections.length - 1;
           if (target === current) { accumulated = 0; return; }
           current = target;
           locked = true;
@@ -357,17 +398,20 @@ const signin = 'https://app.fbuploadpro.com/login';
           try { history.replaceState(null, '', '#section-' + (target + 1)); } catch (e) {}
           var done = false;
           var finish = function () { if (done) return; done = true; unlock(); };
-          /* Lock until scrollend, with a 1500ms timeout fallback — this
-             is a move-completion lock, not a bare debounce. */
-          if ('onscrollend' in window) window.addEventListener('scrollend', finish, { once: true });
+          /* scroll-behavior: smooth in CSS would double-smooth a GSAP
+             tween, so it is switched off for the tween and restored on
+             completion. Lock until the tween completes, 1500ms fallback. */
+          document.documentElement.style.scrollBehavior = 'auto';
+          gsap.to(window, {
+            duration: 0.9,
+            ease: 'power3.inOut',
+            scrollTo: { y: sectionTop(target), autoKill: false },
+            onComplete: finish,
+            onInterrupt: finish,
+          });
           lockTimer = setTimeout(finish, 1500);
-          window.scrollTo({ top: sectionTop(target), behavior: 'smooth' });
         }
 
-        /* Wheel: accumulate normalised deltaY to a ~40px threshold, then
-           commit exactly one section. Accumulation resets after 150ms
-           of quiet and on direction change, so slow separate scrolls
-           do not add up to a phantom step. */
         window.addEventListener('wheel', function (e) {
           if (e.ctrlKey || e.metaKey) return;
           if (isNestedScrollable(e.target)) return;
@@ -390,9 +434,6 @@ const signin = 'https://app.fbuploadpro.com/login';
           commit(dir);
         }, { passive: false });
 
-        /* Touch: a vertical swipe past ~50px commits exactly one section.
-           Only preventDefault when a real move will happen, so
-           pull-to-refresh at the top and inner scrolling still work. */
         window.addEventListener('touchstart', function (e) {
           if (e.touches.length !== 1) return;
           touchStartY = e.touches[0].clientY;
@@ -408,15 +449,13 @@ const signin = 'https://app.fbuploadpro.com/login';
           var dir = dy > 0 ? 1 : -1;
           if (!canAdvance(dir)) return;
           var target = current + dir;
-          if (target < 0 || target >= list.length) return;
+          if (target < 0 || target >= sections.length) return;
           touchCommitted = true;
           e.preventDefault();
           commit(dir, target);
         }, { passive: false });
         window.addEventListener('touchend', function () { touchCommitted = false; }, { passive: true });
 
-        /* Keyboard: one section per key. Tab / Shift+Tab / focus movement
-           are never touched, and typing in a field is never hijacked. */
         window.addEventListener('keydown', function (e) {
           var t = e.target;
           if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
@@ -425,28 +464,27 @@ const signin = 'https://app.fbuploadpro.com/login';
           if (e.key === 'ArrowDown' || e.key === 'PageDown' || e.key === ' ') dir = 1;
           else if (e.key === 'ArrowUp' || e.key === 'PageUp') dir = -1;
           else if (e.key === 'Home') target = 0;
-          else if (e.key === 'End') target = list.length - 1;
+          else if (e.key === 'End') target = sections.length - 1;
           else return;
           if (target === null) {
             if (!canAdvance(dir)) return;
             target = current + dir;
           }
-          if (target < 0 || target >= list.length || target === current) return;
+          if (target < 0 || target >= sections.length || target === current) return;
           e.preventDefault();
           commit(dir || 0, target);
         });
 
-        /* Deep link on load: honour #section-1..4, instantly, no loop. */
         var m = window.location.hash.match(/^#section-([1-4])$/);
         if (m) {
           var hi = parseInt(m[1], 10) - 1;
-          if (hi >= 0 && hi < list.length) {
+          if (hi >= 0 && hi < sections.length) {
             current = hi;
             window.scrollTo({ top: sectionTop(hi), behavior: 'auto' });
           }
         }
         syncIndex();
       }
-    })();
+    }
   </script>
 </Layout>

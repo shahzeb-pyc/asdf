@@ -105,20 +105,11 @@
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
-/* ---- Section arrival: fade + rise ~12px, JS-gated ----
-   The hidden state only applies once JS has added .js-snap to <html>,
-   so a JS failure leaves every section fully visible. The observer
-   adds .is-visible on arrival; reduced motion (below) forces the
-   final state with no transition. */
-.js-snap .snap-section {
-  opacity: 0;
-  transform: translateY(12px);
-  transition: opacity 0.6s ease-out, transform 0.6s ease-out;
-}
-.js-snap .snap-section.is-visible {
-  opacity: 1;
-  transform: translateY(0);
-}
+/* ---- Section arrival: GSAP ScrollTrigger (see index.astro) ----
+   Deliberately NO pre-hidden state in CSS: GSAP uses from-tweens only,
+   so if the GSAP bundle fails, every section is fully visible and the
+   page still scrolls natively on the scroll-snap-stop: always fallback.
+   The old .js-snap / IntersectionObserver arrival is gone. */
 
 /* ---- Section 2 top clearance for the fixed topbar ----
    The pill occupies the top ~66px (12px offset + ~54px pill); section 2
@@ -297,42 +288,12 @@
   }
 }
 
-/* ---- Hero entrance on load: subtle fade + small rise only ----
-   Base state is fully visible (opacity 1, no transform); the
-   animation only applies transiently (fill backwards, so the
-   from-state shows during each element's delay, then the element
-   returns to its base state). Transform + opacity only, so there
-   is no layout shift and no change after the animation finishes.
-   Order/delays: topbar 0s, headline 0.1s, subhead 0.2s,
-   button 0.3s, tiles 0.4s. */
-@keyframes hero-rise {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-.anim-enter {
-  animation: hero-rise 0.6s ease-out backwards;
-}
-.anim-d0 {
-  animation-delay: 0s;
-}
-.anim-d1 {
-  animation-delay: 0.1s;
-}
-.anim-d2 {
-  animation-delay: 0.2s;
-}
-.anim-d3 {
-  animation-delay: 0.3s;
-}
-.anim-d4 {
-  animation-delay: 0.4s;
-}
+/* ---- Hero entrance: GSAP timeline (see index.astro) ----
+   The old CSS hero-rise animation is gone — GSAP owns the hero fade +
+   rise now, so there is exactly one entrance animation, not two
+   fighting over the same transform. The gold highlight sweep below
+   stays CSS (it animates background-size, not the headline itself). */
+
 
 /* ---- Isometric platform tiles ----
    Logos: Simple Icons v16.36.0 (CC0), paths copied faithfully from
@@ -593,7 +554,6 @@
    (spinner at 0deg, counter at 0deg). Nothing is ever hidden waiting
    for an animation. */
 @media (prefers-reduced-motion: reduce) {
-  .anim-enter,
   .hero-highlight,
   .iso-bob,
   .mob-float,
@@ -603,11 +563,6 @@
   }
   html {
     scroll-behavior: auto;
-  }
-  .js-snap .snap-section {
-    opacity: 1;
-    transform: none;
-    transition: none;
   }
   .topbar-fixed {
     transition: none;
