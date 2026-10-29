@@ -135,7 +135,7 @@ export function SubfolderRowsSection({
                     if (isLocked) return;
                     onStartDelete(folder);
                   }}
-                  className="inline-flex size-10 cursor-pointer items-center justify-center rounded-xs border-0 bg-transparent text-brand-rose outline-none hover:bg-hover focus-visible:outline-2 focus-visible:outline-link disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex size-10 cursor-pointer items-center justify-center rounded-xs border-0 bg-transparent text-signal-critical outline-none hover:bg-hover focus-visible:outline-2 focus-visible:outline-link disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <Trash2Icon className="size-4" aria-hidden />
                 </button>

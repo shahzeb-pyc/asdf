@@ -226,7 +226,7 @@ export function PageCard({
     gained > 0
       ? 'text-brand-emerald'
       : gained < 0
-        ? 'text-brand-rose'
+        ? 'text-signal-critical'
         : 'text-ink-sub';
 
   const rawPageName = page.pageName.trim();
@@ -281,7 +281,7 @@ export function PageCard({
         highlighted
           ? 'border-link ring-2 ring-link/40'
           : needsAttention
-            ? 'border-brand-rose hover:border-brand-rose'
+            ? 'border-signal-critical hover:border-signal-critical'
             : 'border-line hover:border-brand-emerald/40'
       )}
     >

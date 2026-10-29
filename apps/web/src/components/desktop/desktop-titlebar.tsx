@@ -121,7 +121,7 @@ export function DesktopTitleBar({ forceVisible = false, platformOverride }: Read
               data-tauri-drag-region="false"
               onClick={handleAction('close')}
               aria-label="Close window"
-              className="size-3 cursor-pointer rounded-full bg-brand-rose p-0"
+              className="size-3 cursor-pointer rounded-full bg-signal-critical p-0"
             />
             <button
               type="button"

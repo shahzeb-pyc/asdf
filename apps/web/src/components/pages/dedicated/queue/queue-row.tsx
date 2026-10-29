@@ -180,7 +180,7 @@ export function QueueRow({
       <div className="min-w-0 flex-1 space-y-1">
         <div className="flex flex-wrap items-center gap-2">
           <Tag variant="outline">{typeLabel}</Tag>
-          <span className={isFailed ? 'text-brand-rose' : 'text-ink-sub'}>
+          <span className={isFailed ? 'text-signal-critical' : 'text-ink-sub'}>
             {formatQueueStatus(item.status)}
           </span>
           {isFailed ? (
@@ -255,7 +255,7 @@ export function QueueRow({
           data-testid="queue-row-delete"
           disabled={busy || isPublished}
           onClick={onDelete}
-          className="border-brand-rose/30 text-brand-rose hover:bg-brand-rose/10 hover:text-brand-rose"
+          className="border-signal-critical/30 text-signal-critical hover:bg-signal-critical/10 hover:text-signal-critical"
         >
           Delete
         </Button>

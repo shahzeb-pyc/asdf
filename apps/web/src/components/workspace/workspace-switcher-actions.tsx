@@ -116,7 +116,7 @@ export function SwitcherActionsList({
         onClick={onSignOut}
         disabled={isSigningOut}
         aria-disabled={isSigningOut ? 'true' : undefined}
-        className={cn(rowClassName, 'text-brand-rose disabled:cursor-not-allowed disabled:opacity-60')}
+        className={cn(rowClassName, 'text-signal-critical disabled:cursor-not-allowed disabled:opacity-60')}
       >
         <svg
           width="14"

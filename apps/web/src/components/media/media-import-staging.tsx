@@ -183,7 +183,7 @@ export function ImportStagingRow({
         {item.validationError && (
           <span
             data-testid={`validation-error-${item.id}`}
-            className="text-metadata font-medium text-brand-rose"
+            className="text-metadata font-medium text-signal-critical"
           >
             {item.validationError}
           </span>
@@ -280,7 +280,7 @@ export function ImportStagingFooter({
               variant="link"
               data-testid="remove-invalid-btn"
               onClick={onRemoveInvalid}
-              className="h-11 px-0 text-brand-rose"
+              className="h-11 px-0 text-signal-critical"
             >
               Remove invalid ({invalidCount})
             </Button>

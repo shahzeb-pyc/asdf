@@ -531,7 +531,7 @@ export function ConnectAccountModal({
 
         <div>
           {magicError && (
-            <div className="mb-4 rounded-sm border border-brand-rose/25 bg-brand-rose/10 px-3 py-2 text-body text-brand-rose">
+            <div className="mb-4 rounded-sm border border-signal-critical/25 bg-signal-critical/10 px-3 py-2 text-body text-signal-critical">
               {magicError}
             </div>
           )}

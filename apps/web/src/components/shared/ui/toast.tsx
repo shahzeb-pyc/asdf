@@ -95,7 +95,7 @@ function Toast({ theme, ...props }: ToasterProps) {
           cancelButton: "bg-subtle text-ink rounded-sm px-3 h-9 font-medium",
           closeButton: "text-ink-sub hover:text-ink",
           success: "text-brand-emerald",
-          error: "text-brand-rose",
+          error: "text-signal-critical",
           warning: "text-link",
           info: "text-ink",
         },

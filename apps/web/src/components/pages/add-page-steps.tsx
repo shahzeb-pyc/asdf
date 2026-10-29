@@ -252,7 +252,7 @@ export function SelectAccountStep({
                 size="sm"
                 data-testid={`reconnect-account-${account.id}`}
                 onClick={() => onReconnectAccount(account)}
-                className="shrink-0 border-brand-rose/35 font-semibold text-brand-rose hover:bg-brand-rose/10 hover:text-brand-rose"
+                className="shrink-0 border-signal-critical/35 font-semibold text-signal-critical hover:bg-signal-critical/10 hover:text-signal-critical"
               >
                 Reconnect
               </Button>

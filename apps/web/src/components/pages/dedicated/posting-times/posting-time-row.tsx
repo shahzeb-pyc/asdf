@@ -139,7 +139,7 @@ export function PostingTimeRow({
           size="sm"
           data-testid={`delete-slot-btn-${slot.id}`}
           onClick={() => onRemove(slot)}
-          className="min-h-11 px-3 text-ink-dim hover:text-brand-rose sm:min-h-8"
+          className="min-h-11 px-3 text-ink-dim hover:text-signal-critical sm:min-h-8"
         >
           Remove
         </Button>

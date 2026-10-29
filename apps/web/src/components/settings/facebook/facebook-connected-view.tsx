@@ -159,7 +159,7 @@ export function FacebookConnectedView({
         {revealError ? (
           <span
             data-testid="fb-secret-reveal-error"
-            className="text-metadata text-brand-rose"
+            className="text-metadata text-signal-critical"
           >
             {revealError}
           </span>
@@ -185,7 +185,7 @@ export function FacebookConnectedView({
           variant="outline"
           data-testid="fb-disconnect-btn"
           onClick={onDisconnectClick}
-          className="border-brand-rose/45 text-brand-rose shadow-none hover:bg-brand-rose/10 hover:text-brand-rose"
+          className="border-signal-critical/45 text-signal-critical shadow-none hover:bg-signal-critical/10 hover:text-signal-critical"
         >
           Disconnect
         </Button>

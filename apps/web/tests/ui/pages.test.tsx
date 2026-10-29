@@ -436,7 +436,7 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
       );
       expect(negRender.hasText('7,650')).toBe(true);
       expect(negRender.hasText('-350 gained')).toBe(true);
-      expect(negRender.html).toContain('text-brand-rose');
+      expect(negRender.html).toContain('text-signal-critical');
     });
 
     it('highlights attention-needed statuses (invalid_token, page_checkpoint, fb_rate_limited) with red/rose border and cross status but NO attention banner (final card spec)', () => {
@@ -465,7 +465,7 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
         expect(hasText('Reconnect the parent Facebook account')).toBe(false);
         expect(hasText('Confirm page identity on Facebook mobile')).toBe(false);
         expect(hasText('temporarily restricted posting')).toBe(false);
-        expect(html).toContain('border-brand-rose');
+        expect(html).toContain('border-signal-critical');
       }
     });
 

@@ -134,7 +134,7 @@ export function TimezoneReviewStep({
         <div
           data-testid="timezone-update-error"
           role="alert"
-          className="rounded-sm border border-brand-rose bg-panel px-3 py-2 text-body text-brand-rose"
+          className="rounded-sm border border-signal-critical bg-panel px-3 py-2 text-body text-signal-critical"
         >
           {errorMessage}
         </div>

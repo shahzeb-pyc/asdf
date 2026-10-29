@@ -98,7 +98,7 @@ export function AccountsFilterBar({
             >
               <span>{tab.label}</span>
               {isAttention && attentionCount > 0 && (
-                <span className="text-metadata font-semibold text-brand-rose">
+                <span className="text-metadata font-semibold text-signal-critical">
                   ({attentionCount})
                 </span>
               )}

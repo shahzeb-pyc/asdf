@@ -491,7 +491,7 @@ export function QueuePanel({
       ) : displayQuery.isError ? (
         <div
           data-testid="queue-error-state"
-          className="flex flex-col items-center gap-4 rounded-md border border-brand-rose/40 bg-panel px-6 py-12 text-center"
+          className="flex flex-col items-center gap-4 rounded-md border border-signal-critical/40 bg-panel px-6 py-12 text-center"
         >
           <p className="m-0 text-body text-ink-sub">Couldn't load the queue.</p>
           <Button type="button" onClick={() => void displayQuery.refetch()}>

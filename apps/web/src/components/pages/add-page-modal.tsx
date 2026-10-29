@@ -535,7 +535,7 @@ export function AddPageModal({
             <div
               data-testid="add-page-error"
               role="alert"
-              className="mb-4 rounded-sm border border-brand-rose/25 bg-brand-rose/10 px-3 py-2 text-body text-brand-rose"
+              className="mb-4 rounded-sm border border-signal-critical/25 bg-signal-critical/10 px-3 py-2 text-body text-signal-critical"
             >
               {errorMessage}
             </div>

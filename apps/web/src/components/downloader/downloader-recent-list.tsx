@@ -66,13 +66,13 @@ export function DownloaderRecentList({
               <article
                 key={entry.id}
                 data-testid="downloader-failed-item"
-                className="flex flex-wrap items-center justify-between gap-4 rounded-md border border-brand-rose bg-panel p-4"
+                className="flex flex-wrap items-center justify-between gap-4 rounded-md border border-signal-critical bg-panel p-4"
               >
                 <div className="flex min-w-0 flex-1 flex-col gap-1">
                   <span className="truncate text-body font-semibold text-ink">
                     {entry.url}
                   </span>
-                  <span className="text-body text-brand-rose">
+                  <span className="text-body text-signal-critical">
                     {entry.errorMessage}
                   </span>
                 </div>

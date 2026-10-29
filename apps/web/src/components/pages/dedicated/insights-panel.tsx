@@ -196,7 +196,7 @@ function ShareBar({
     tone === 'emerald'
       ? 'bg-brand-emerald'
       : tone === 'rose'
-        ? 'bg-brand-rose'
+        ? 'bg-signal-critical'
         : tone === 'bronze'
           ? 'bg-brand-bronze'
           : tone === 'peru'
@@ -396,7 +396,7 @@ export function PageTabInsights({ page, subdomain }: Readonly<PageTabInsightsPro
             </Card>
             <Card className="p-4">
               <p className="flex items-center gap-2 text-body text-ink-sub">
-                <HeartIcon className="h-5 w-5 shrink-0 text-brand-rose" /> Engagements
+                <HeartIcon className="h-5 w-5 shrink-0 text-signal-critical" /> Engagements
               </p>
               <p className="mt-1 text-xxl font-bold text-ink">{formatCount(data.kpis.engagements)}</p>
               <p className="mt-1 text-xs text-ink-dim">Reactions, comments and shares in this range</p>

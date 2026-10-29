@@ -323,7 +323,7 @@ export function MediaAssetCard({
           data-testid={`media-caption-status-${item.id}`}
           className={cn(
             'inline-flex items-center gap-1 text-xs font-medium',
-            hasCaption ? 'text-ink-sub' : 'text-brand-rose'
+            hasCaption ? 'text-ink-sub' : 'text-signal-critical'
           )}
         >
           {hasCaption ? (

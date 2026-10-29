@@ -335,7 +335,7 @@ export default function LoginPage({ initialResetSuccess = false }: LoginPageProp
           />
 
           {serverError && (
-            <p role="alert" className="text-metadata font-medium text-brand-rose">
+            <p role="alert" className="text-metadata font-medium text-signal-critical">
               {serverError}
             </p>
           )}

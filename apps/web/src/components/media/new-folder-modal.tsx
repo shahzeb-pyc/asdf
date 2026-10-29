@@ -231,14 +231,14 @@ function NewFolderForm({
                 <p
                   data-testid="folder-duplicate-warning"
                   role="alert"
-                  className="text-metadata font-medium text-brand-rose"
+                  className="text-metadata font-medium text-signal-critical"
                 >
                   {DUPLICATE_FOLDER_MESSAGE}
                 </p>
               ) : fieldState.error ? (
                 <p
                   role="alert"
-                  className="text-metadata font-medium text-brand-rose"
+                  className="text-metadata font-medium text-signal-critical"
                 >
                   {fieldState.error.message}
                 </p>

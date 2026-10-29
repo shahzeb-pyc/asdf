@@ -943,7 +943,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
   const errorBanner = errorMessage ? (
     <div
       data-testid="publish-now-error"
-      className="mb-4 rounded-sm border border-brand-rose/25 bg-brand-rose/10 px-3 py-2 text-body text-brand-rose"
+      className="mb-4 rounded-sm border border-signal-critical/25 bg-signal-critical/10 px-3 py-2 text-body text-signal-critical"
     >
       {errorMessage}
     </div>
@@ -1138,7 +1138,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                             type="button"
                             variant="outline"
                             size="sm"
-                            className="shrink-0 border-brand-rose/35 font-semibold text-brand-rose hover:bg-brand-rose/10 hover:text-brand-rose"
+                            className="shrink-0 border-signal-critical/35 font-semibold text-signal-critical hover:bg-signal-critical/10 hover:text-signal-critical"
                             onClick={() => {
                               window.location.href = buildDirectConnectUrl({
                                 id: account.id,
@@ -1424,7 +1424,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                     <span
                       className={cn(
                         'text-xs',
-                        isOverLimit ? 'text-brand-rose' : 'text-ink-sub'
+                        isOverLimit ? 'text-signal-critical' : 'text-ink-sub'
                       )}
                     >
                       {text.length.toLocaleString()} /{' '}
@@ -1440,7 +1440,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                     placeholder="What's on your mind?"
                   />
                   {isOverLimit && (
-                    <p className="text-metadata text-brand-rose">
+                    <p className="text-metadata text-signal-critical">
                       Caption is over the {limit.toLocaleString()}-character
                       limit for {postType === 'reel' ? 'reels' : 'posts'}.
                     </p>
@@ -1534,7 +1534,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                           size="sm"
                           disabled={isPublishing || isUploadingTemp}
                           onClick={removeAttachedMedia}
-                          className="shrink-0 text-ink-sub hover:text-brand-rose"
+                          className="shrink-0 text-ink-sub hover:text-signal-critical"
                         >
                           Remove
                         </Button>
@@ -1552,7 +1552,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                       className={cn(
                         'text-xs',
                         isFirstCommentOverLimit
-                          ? 'text-brand-rose'
+                          ? 'text-signal-critical'
                           : 'text-ink-sub'
                       )}
                     >
@@ -1645,7 +1645,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                       Starting over clears this result list.
                     </p>
                     {restrictedResults.length > 0 && (
-                      <div className="rounded-sm border border-brand-rose/25 bg-brand-rose/10 px-3 py-2 text-body leading-body text-ink">
+                      <div className="rounded-sm border border-signal-critical/25 bg-signal-critical/10 px-3 py-2 text-body leading-body text-ink">
                         One or more accounts are restricted by Facebook.
                         Those pages cannot be published to until the
                         restriction is lifted in Facebook Account Status.
@@ -1711,8 +1711,8 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                                   published
                                     ? 'text-metadata text-brand-emerald'
                                     : restricted
-                                      ? 'text-body font-semibold text-brand-rose'
-                                      : 'text-metadata text-brand-rose'
+                                      ? 'text-body font-semibold text-signal-critical'
+                                      : 'text-metadata text-signal-critical'
                                 )}
                               >
                                 {published
@@ -1753,7 +1753,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                                 </div>
                               )}
                               {published && result.firstCommentFailed && (
-                                <div className="mt-1 text-metadata leading-body text-brand-rose">
+                                <div className="mt-1 text-metadata leading-body text-signal-critical">
                                   First comment could not be posted
                                   {result.firstCommentReason
                                     ? `: ${result.firstCommentReason}`

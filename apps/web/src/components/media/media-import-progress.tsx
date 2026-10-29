@@ -172,7 +172,7 @@ export function ImportProgressFooter({
             variant="link"
             data-testid="cancel-remaining-btn"
             onClick={onCancelRemaining}
-            className="h-11 px-0 text-metadata text-brand-rose"
+            className="h-11 px-0 text-metadata text-signal-critical"
           >
             Cancel remaining
           </Button>

@@ -94,7 +94,7 @@ export function SwitcherWorkspaceList({
       )}
 
       {switchError && (
-        <p role="alert" className="px-2 py-1 text-body text-brand-rose">
+        <p role="alert" className="px-2 py-1 text-body text-signal-critical">
           {switchError}
         </p>
       )}

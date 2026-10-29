@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils";
 const BANNER_VARIANTS = {
   info: { icon: InfoIcon, role: "status" as const, classes: "border-line bg-subtle text-ink" },
   warning: { icon: TriangleAlertIcon, role: "alert" as const, classes: "border-link bg-subtle text-ink" },
-  critical: { icon: CircleAlertIcon, role: "alert" as const, classes: "border-brand-rose bg-subtle text-ink" },
+  critical: { icon: CircleAlertIcon, role: "alert" as const, classes: "border-signal-critical bg-subtle text-ink" },
   success: { icon: CircleCheckIcon, role: "status" as const, classes: "border-brand-emerald bg-subtle text-ink" },
 };
 

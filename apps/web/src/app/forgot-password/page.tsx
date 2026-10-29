@@ -159,7 +159,7 @@ function ForgotEmailForm({
         />
 
         {generalError && (
-          <p role="alert" className="text-metadata font-medium text-brand-rose">
+          <p role="alert" className="text-metadata font-medium text-signal-critical">
             {generalError}
           </p>
         )}
@@ -393,7 +393,7 @@ function ResetPasswordForm({
         )}
 
         {generalError && (
-          <p role="alert" className="text-metadata font-medium text-brand-rose">
+          <p role="alert" className="text-metadata font-medium text-signal-critical">
             {generalError}
           </p>
         )}

@@ -427,9 +427,9 @@
   --success-bg: color-mix(in srgb, var(--color-brand-emerald) 15%, transparent);
   --success-border: var(--color-brand-emerald);
   --success-text: var(--color-brand-emerald);
-  --error-bg: color-mix(in srgb, var(--color-brand-rose) 15%, transparent);
-  --error-border: var(--color-brand-rose);
-  --error-text: var(--color-brand-rose);
+  --error-bg: color-mix(in srgb, var(--color-signal-critical) 15%, transparent);
+  --error-border: var(--color-signal-critical);
+  --error-text: var(--color-signal-critical);
   --warning-bg: color-mix(in srgb, var(--color-link) 15%, transparent);
   --warning-border: var(--color-link);
   --warning-text: var(--color-link);

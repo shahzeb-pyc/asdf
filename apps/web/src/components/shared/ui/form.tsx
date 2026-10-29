@@ -173,7 +173,7 @@ function FormMessage({ className, children, ...props }: React.ComponentProps<"p"
       data-slot="form-message"
       id={formMessageId}
       role={error ? "alert" : undefined}
-      className={cn("text-metadata font-medium text-brand-rose", className)}
+      className={cn("text-metadata font-medium text-signal-critical", className)}
       {...props}
     >
       {body}
@@ -220,7 +220,7 @@ function Field({ id, label, hint, error, optional, className, children }: FieldP
       ) : null}
       {control}
       {error ? (
-        <p id={errorId} role="alert" className="text-metadata font-medium text-brand-rose">
+        <p id={errorId} role="alert" className="text-metadata font-medium text-signal-critical">
           {error}
         </p>
       ) : null}
@@ -291,17 +291,17 @@ const FormErrorSummary = React.forwardRef<HTMLDivElement, FormErrorSummaryProps>
         role="alert"
         data-slot="form-error-summary"
         className={cn(
-          "rounded-md border border-brand-rose bg-panel px-4 py-3 text-body text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-rose",
+          "rounded-md border border-signal-critical bg-panel px-4 py-3 text-body text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-signal-critical",
           className
         )}
         {...props}
       >
-        <p className="font-medium text-brand-rose">{title}</p>
+        <p className="font-medium text-signal-critical">{title}</p>
         <ul className="mt-1 list-inside list-disc">
           {errors.map((e, index) => (
             <li key={e.fieldId ?? `form-level-${index}`}>
               {e.fieldId ? (
-                <a href={`#${e.fieldId}`} className="underline underline-offset-4 hover:text-brand-rose">
+                <a href={`#${e.fieldId}`} className="underline underline-offset-4 hover:text-signal-critical">
                   {e.message}
                 </a>
               ) : (

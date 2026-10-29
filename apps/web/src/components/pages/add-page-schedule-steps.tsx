@@ -316,7 +316,7 @@ export function SelectPostingTimesStep({
                     : 'Choose a time.'}
                 </div>
                 {isDuplicate && (
-                  <div className="mt-1 text-metadata text-brand-rose">
+                  <div className="mt-1 text-metadata text-signal-critical">
                     Choose a different time for each posting time.
                   </div>
                 )}
@@ -355,7 +355,7 @@ export function SelectPostingTimesStep({
                   })}
                 </div>
                 {postingTime.allowedFormats.length === 0 && (
-                  <div className="mt-1 text-metadata text-brand-rose">
+                  <div className="mt-1 text-metadata text-signal-critical">
                     Choose at least one post type.
                   </div>
                 )}

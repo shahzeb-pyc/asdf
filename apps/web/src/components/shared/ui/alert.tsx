@@ -16,7 +16,7 @@ const alertVariants = cva(
     variants: {
       variant: {
         default: "border-line",
-        destructive: "border-brand-rose text-brand-rose",
+        destructive: "border-signal-critical text-signal-critical",
         success: "border-brand-emerald text-brand-emerald",
         warning: "border-link text-ink",
       },

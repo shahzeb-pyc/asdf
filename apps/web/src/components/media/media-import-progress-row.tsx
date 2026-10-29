@@ -186,7 +186,7 @@ export function ImportProgressRow({
 
         {isFailed && (
           <div className="flex items-center gap-1.5">
-            <span className="text-metadata text-brand-rose">
+            <span className="text-metadata text-signal-critical">
               {item.validationError || 'failed — retry'}
             </span>
             <Button

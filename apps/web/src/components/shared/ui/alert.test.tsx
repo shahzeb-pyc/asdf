@@ -24,6 +24,6 @@ describe("Alert", () => {
         <AlertTitle>Failed</AlertTitle>
       </Alert>
     );
-    expect(screen.getByRole("alert").className).toContain("border-brand-rose");
+    expect(screen.getByRole("alert").className).toContain("border-signal-critical");
   });
 });

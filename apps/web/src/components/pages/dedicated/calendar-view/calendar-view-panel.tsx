@@ -341,7 +341,7 @@ export function CalendarViewPanel({
       ) : isError ? (
         <div
           data-testid="calendar-error-state"
-          className="flex flex-col items-center gap-4 rounded-md border border-brand-rose/40 bg-panel px-6 py-12 text-center"
+          className="flex flex-col items-center gap-4 rounded-md border border-signal-critical/40 bg-panel px-6 py-12 text-center"
         >
           <p className="m-0 text-body text-ink-sub">Couldn't load the calendar.</p>
           <Button

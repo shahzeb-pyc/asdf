@@ -204,7 +204,7 @@ export function DedicatedPageHeader({
     gained > 0
       ? 'text-brand-emerald'
       : gained < 0
-        ? 'text-brand-rose'
+        ? 'text-signal-critical'
         : 'text-ink-sub';
 
   // Pause/resume feedback: the menu is controlled and stays open while

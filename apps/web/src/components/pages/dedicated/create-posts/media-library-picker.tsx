@@ -1321,7 +1321,7 @@ export function MediaLibraryPicker({
               </p>
             )}
             {deviceError && (
-              <p className="mt-3 text-body text-brand-rose">{deviceError}</p>
+              <p className="mt-3 text-body text-signal-critical">{deviceError}</p>
             )}
             {/* P5: the batch's live state on the device tab itself —
                 visible while the import modal is minimised to its

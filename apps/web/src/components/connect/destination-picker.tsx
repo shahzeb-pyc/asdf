@@ -269,7 +269,7 @@ export function DestinationPicker({
       {errorMessage && (
         <p
           data-testid="destination-picker-error"
-          className="mt-4 mb-0 text-body text-brand-rose"
+          className="mt-4 mb-0 text-body text-signal-critical"
         >
           {errorMessage}
         </p>

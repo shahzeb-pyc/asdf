@@ -87,7 +87,7 @@ export const ACCOUNTS_CONNECT_TOAST_OPTIONS: NonNullable<ToasterProps['toastOpti
     cancelButton: 'bg-subtle text-ink rounded-sm px-3 h-9 font-medium',
     closeButton: 'text-ink-sub hover:text-ink',
     success: 'text-brand-emerald border-brand-emerald bg-brand-emerald/15',
-    error: 'text-brand-rose',
+    error: 'text-signal-critical',
     warning: 'text-link',
     info: 'text-ink',
   },
