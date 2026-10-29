@@ -300,6 +300,10 @@ export async function installApiFixtures(
   // Publishing queue: list + create. A created post is prepended to the
   // fixture state, so the queue refetch after submit returns it — the
   // composer→queue assertion reads real app rendering of that state.
+  // The list honors the panel's status filter and pagination: when the
+  // caller sends no limit (the shell's summary query), the full list
+  // is returned, preserving the composer behaviour. Counts are computed
+  // from the full fixture state, like the real API's page-wide counts.
   await page.route(`**/api/tenant/${SUB}/publishing/queue**`, async (route) => {
     const req = route.request();
     if (req.method() === 'POST') {
@@ -315,11 +319,26 @@ export async function installApiFixtures(
       state.queue = [item, ...state.queue];
       return json(route, item, 201);
     }
+    const url = new URL(req.url());
+    const status = url.searchParams.get('status');
+    const filtered = status
+      ? state.queue.filter((q) => q.status === status)
+      : [...state.queue];
+    const limitParam = url.searchParams.get('limit');
+    const offsetParam = url.searchParams.get('offset');
+    const limit = limitParam === null ? filtered.length : Number(limitParam);
+    const offset = offsetParam === null ? 0 : Number(offsetParam);
+    const count = (value: string) => state.queue.filter((q) => q.status === value).length;
     return json(route, {
-      items: state.queue,
-      total: state.queue.length,
-      limit: 50,
-      offset: 0,
+      items: filtered.slice(offset, offset + limit),
+      total: filtered.length,
+      limit,
+      offset,
+      queuedCount: count('queued'),
+      publishedCount: count('published'),
+      failedCount: count('failed'),
+      cancelledCount: count('cancelled'),
+      skippedCount: count('skipped'),
     });
   });
 
@@ -345,6 +364,35 @@ export async function installApiFixtures(
       return json(route, { success: true, itemId });
     }
     return json(route, {});
+  });
+
+  // Queue reorder (Queue section rebuild): POST reorders the fixture
+  // queue per body.itemIds and acks the contracts shape. Registered
+  // AFTER the per-item handler so it wins over the `publishing/queue/*`
+  // glob, which would otherwise swallow the reorder path.
+  await page.route(`**/api/tenant/${SUB}/publishing/queue/reorder`, async (route) => {
+    const body = (route.request().postDataJSON() ?? {}) as Record<string, unknown>;
+    const ids = Array.isArray(body.itemIds) ? (body.itemIds as string[]) : [];
+    const byId = new Map(state.queue.map((q) => [q.id as string, q]));
+    const ordered = ids
+      .map((id) => byId.get(id))
+      .filter((q) => q !== undefined);
+    const rest = state.queue.filter((q) => !ids.includes(q.id as string));
+    state.queue = [...ordered, ...rest];
+    return json(route, { success: true, itemIds: ids });
+  });
+
+  // Destination-scoped queue retry (Queue section rebuild): a failed
+  // item goes back to queued, keeping its place in the fixture list.
+  await page.route(`**/api/tenant/${SUB}/destinations/*/queue/*/retry`, async (route) => {
+    const url = new URL(route.request().url());
+    const itemId = url.pathname.split('/queue/')[1]?.split('/')[0] ?? '';
+    const idx = state.queue.findIndex((q) => q.id === itemId);
+    if (idx >= 0) {
+      state.queue[idx] = { ...state.queue[idx], status: 'queued' };
+      return json(route, state.queue[idx]);
+    }
+    return json(route, { error: 'Queue item not found' }, 404);
   });
 
   // Unified destination enqueue (Phase 7 G4 retarget): the composer +

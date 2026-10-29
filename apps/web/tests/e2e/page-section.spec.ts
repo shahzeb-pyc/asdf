@@ -81,9 +81,9 @@ test.describe('dedicated page section — click-through (spec 131 §8.7)', () =>
     await expect(page.getByTestId('page-tab-dashboard')).toBeVisible();
     await expect(page.getByTestId('metric-followers')).toBeVisible();
 
-    // Queue tab is an empty placeholder while it is rebuilt.
+    // Queue tab renders the real queue panel (Queue section rebuild).
     await page.getByTestId('tab-queue-btn').click();
-    await expect(page.getByTestId('page-tab-queue-placeholder')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId('queue-panel')).toBeVisible({ timeout: 15_000 });
 
     // Posting Times tab (134's panel through the slot).
     await page.getByTestId('tab-calendar-btn').click();
@@ -94,14 +94,14 @@ test.describe('dedicated page section — click-through (spec 131 §8.7)', () =>
     await expect(page.getByTestId('insights-kpi-grid')).toBeVisible({ timeout: 15_000 });
 
 
-    // State preservation (§9.3): the visited queue placeholder stays
+    // State preservation (§9.3): the visited queue panel stays
     // mounted (hidden) while another tab is active — switching never
     // destroys visited panels' state.
     await page.getByTestId('tab-dashboard-btn').click();
     await expect(page.getByTestId('page-tab-dashboard')).toBeVisible();
-    await expect(page.getByTestId('page-tab-queue-placeholder')).toBeAttached();
+    await expect(page.getByTestId('queue-panel')).toBeAttached();
     await page.getByTestId('tab-queue-btn').click();
-    await expect(page.getByTestId('page-tab-queue-placeholder')).toBeVisible();
+    await expect(page.getByTestId('queue-panel')).toBeVisible();
 
   });
 });
