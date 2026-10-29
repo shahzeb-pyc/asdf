@@ -42,28 +42,51 @@ import { buildDirectConnectUrl } from '@/components/accounts/connect-account-mod
 import type { FacebookAccountItem } from '@/components/accounts/account-card';
 
 import {
+  canAddAnotherPostingTime,
   computeConfirmButtonText,
   computeHeaderSubtitle,
+  createAddPagePostingTime,
+  findFreeAddPagePostingTime,
   getActiveAccounts,
   getExpiredAccounts,
+  isAddPageScheduleValid,
+  sortAddPageFormats,
   toggleSelectAllPages,
+  type AddPagePostingTime,
   type AddPageStep,
   type DiscoveredPageItem,
 } from './add-page-helpers';
 import { SelectAccountStep, SelectPagesStep } from './add-page-steps';
+import dynamic from 'next/dynamic';
+// Steps 3–4 load on demand, not in the Pages route's first-load
+// bundle: the timezone directory and posting-times UI are only
+// needed once a user reaches them inside the dialogue.
+const SelectTimezoneStep = dynamic(() =>
+  import('./add-page-schedule-steps').then((m) => m.SelectTimezoneStep)
+);
+const SelectPostingTimesStep = dynamic(() =>
+  import('./add-page-schedule-steps').then((m) => m.SelectPostingTimesStep)
+);
 
 export type { DiscoveredPageItem } from './add-page-helpers';
 export {
   buildAccountsHref,
   buildSettingsFacebookHref,
+  canAddAnotherPostingTime,
   computeConfirmButtonText,
   computeHeaderSubtitle,
+  createAddPagePostingTime,
   filterDiscoveredPages,
+  findFreeAddPagePostingTime,
   getActiveAccounts,
   getExpiredAccounts,
   getSelectablePageIds,
+  isAddPageScheduleValid,
+  nextAddPagePostingTime,
+  sortAddPageFormats,
   toggleSelectAllPages,
 } from './add-page-helpers';
+export type { AddPagePostingTime } from './add-page-helpers';
 
 export interface AddPageModalProps {
   subdomain: string;
@@ -86,6 +109,8 @@ export interface AddPageModalProps {
   initialSelectedAccount?: FacebookAccountItem | null | undefined;
   initialDiscoveredPages?: DiscoveredPageItem[] | undefined;
   initialSelectedPageIds?: string[] | undefined;
+  initialSelectedTimezone?: string | null | undefined;
+  initialPostingTimes?: AddPagePostingTime[] | undefined;
 }
 
 async function executeDiscoverPages(subdomain: string, accountId: string) {
@@ -115,12 +140,30 @@ async function executeDiscoverPages(subdomain: string, accountId: string) {
 async function executeImportPages(
   subdomain: string,
   accountId: string,
-  selectedPageIds: string[]
+  selectedPageIds: string[],
+  timezone: string | null,
+  postingTimes: AddPagePostingTime[]
 ) {
   try {
     const data = await api.post(
       buildTenantApiPath(subdomain, '/pages/import'),
-      { accountId, selectedPageIds },
+      {
+        accountId,
+        selectedPageIds,
+        // The schedule travels with the import, so the server applies
+        // the same timezone + times to every imported page in the
+        // same operation — there is no separate post-import step
+        // that could leave a page half-configured.
+        ...(timezone
+          ? {
+              timezone,
+              postingTimes: postingTimes.map((postingTime) => ({
+                slotTime: postingTime.slotTime,
+                allowedFormats: postingTime.allowedFormats,
+              })),
+            }
+          : {}),
+      },
       { schema: ImportPagesResponseSchema }
     );
     return {
@@ -131,6 +174,22 @@ async function executeImportPages(
     };
   } catch (error) {
     reportError(error, { source: 'add-page-import' });
+    // A schedule failure carries its own server signal and message:
+    // the timezone and times are kept for retry, so the user must
+    // hear that, not the generic import failure. Anything else keeps
+    // the generic import message.
+    if (
+      isApiError(error) &&
+      error.kind === 'http' &&
+      error.code === 'SCHEDULE_FAILED'
+    ) {
+      return {
+        success: false as const,
+        importedCount: 0,
+        importedPageIds: [] as string[],
+        error: error.message,
+      };
+    }
     return {
       success: false as const,
       importedCount: 0,
@@ -157,6 +216,8 @@ export function AddPageModal({
   initialSelectedAccount = null,
   initialDiscoveredPages = [],
   initialSelectedPageIds = [],
+  initialSelectedTimezone = null,
+  initialPostingTimes,
 }: Readonly<AddPageModalProps>) {
   const [step, setStep] = React.useState<AddPageStep>(initialStep);
   const [fetchedAccounts, setFetchedAccounts] = React.useState<
@@ -173,6 +234,19 @@ export function AddPageModal({
   const [isDiscovering, setIsDiscovering] = React.useState(false);
   const [selectedPageIds, setSelectedPageIds] = React.useState<string[]>(
     initialSelectedPageIds
+  );
+  // Steps 3–4 state. The timezone starts blank (no default) and the
+  // posting-times list starts with one time, all post types selected.
+  // The schedule is account-independent, so it survives picking a
+  // new account and going back to accounts — only Cancel or closing
+  // the dialog resets it. The page selection, which is
+  // account-specific, still resets on an account change.
+  const [selectedTimezone, setSelectedTimezone] = React.useState<
+    string | null
+  >(initialSelectedTimezone);
+  const [timezoneSearchQuery, setTimezoneSearchQuery] = React.useState('');
+  const [postingTimes, setPostingTimes] = React.useState<AddPagePostingTime[]>(
+    initialPostingTimes ?? [createAddPagePostingTime()]
   );
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
@@ -204,6 +278,12 @@ export function AddPageModal({
     }
   }, [open, accounts, fetchAccountsIfNeeded]);
 
+  const resetSchedule = React.useCallback(() => {
+    setSelectedTimezone(null);
+    setTimezoneSearchQuery('');
+    setPostingTimes([createAddPagePostingTime()]);
+  }, []);
+
   const handleDialogOpenChange = (nextOpen: boolean) => {
     if (!nextOpen) {
       setStep('select-account');
@@ -211,6 +291,7 @@ export function AddPageModal({
       setDiscoveredPages([]);
       setSelectedPageIds([]);
       setPageSearchQuery('');
+      resetSchedule();
       setErrorMessage(null);
       setIsSubmitting(false);
     }
@@ -244,6 +325,18 @@ export function AddPageModal({
     setErrorMessage(null);
   };
 
+  // Back between steps 2, 3 and 4 preserves the page selection, the
+  // timezone, and the posting times — only the step changes.
+  const handleBackToPages = () => {
+    setStep('select-pages');
+    setErrorMessage(null);
+  };
+
+  const handleBackToTimezone = () => {
+    setStep('select-timezone');
+    setErrorMessage(null);
+  };
+
   const handleTogglePage = (fbPageId: string) => {
     setSelectedPageIds((prev) =>
       prev.includes(fbPageId)
@@ -256,8 +349,54 @@ export function AddPageModal({
     setSelectedPageIds((prev) => toggleSelectAllPages(discoveredPages, prev));
   };
 
+  const isScheduleValid = isAddPageScheduleValid(
+    selectedTimezone,
+    postingTimes
+  );
+
+  const handleAddPostingTime = () => {
+    setPostingTimes((prev) => {
+      const next = findFreeAddPagePostingTime(prev);
+      return next ? [...prev, next] : prev;
+    });
+  };
+
+  const handleRemovePostingTime = (index: number) => {
+    setPostingTimes((prev) =>
+      prev.length > 1 ? prev.filter((_, i) => i !== index) : prev
+    );
+  };
+
+  const handlePostingTimeChange = (index: number, slotTime: string) => {
+    setPostingTimes((prev) =>
+      prev.map((postingTime, i) =>
+        i === index ? { ...postingTime, slotTime } : postingTime
+      )
+    );
+  };
+
+  const handleToggleFormat = (index: number, formatId: string) => {
+    setPostingTimes((prev) =>
+      prev.map((postingTime, i) => {
+        if (i !== index) return postingTime;
+        const toggled = postingTime.allowedFormats.includes(formatId)
+          ? postingTime.allowedFormats.filter((format) => format !== formatId)
+          : [...postingTime.allowedFormats, formatId];
+        // Keep the canonical order: deselect-then-reselect must not
+        // move a type to the end of the stored list.
+        return { ...postingTime, allowedFormats: sortAddPageFormats(toggled) };
+      })
+    );
+  };
+
   const handleConfirmImport = async () => {
-    if (!selectedAccount || selectedPageIds.length === 0 || isSubmitting) {
+    if (
+      !selectedAccount ||
+      selectedPageIds.length === 0 ||
+      !selectedTimezone ||
+      !isScheduleValid ||
+      isSubmitting
+    ) {
       return;
     }
     setIsSubmitting(true);
@@ -266,9 +405,15 @@ export function AddPageModal({
     const result = await executeImportPages(
       subdomain,
       selectedAccount.id,
-      selectedPageIds
+      selectedPageIds,
+      selectedTimezone,
+      postingTimes
     );
     if (!result.success) {
+      // "Nothing finish": the dialog stays open on Step 4 with the
+      // inline error, no success banner, no close. The user's
+      // timezone and times are kept, so Retry re-sends the same
+      // schedule and the server's slot upsert cannot duplicate it.
       setErrorMessage(result.error);
     } else {
       onSuccess?.({
@@ -325,12 +470,16 @@ export function AddPageModal({
   const headerTitle =
     step === 'select-account'
       ? 'Select a Facebook Account'
-      : 'Select Facebook Pages to Add';
+      : step === 'select-timezone'
+        ? 'Select timezone'
+        : step === 'select-posting-times'
+          ? 'Set posting times'
+          : 'Select Facebook Pages to Add';
 
   const headerSubtitle = computeHeaderSubtitle(
     step,
     selectedAccount?.displayName,
-    discoveredPages.length
+    step === 'select-pages' ? discoveredPages.length : selectedPageIds.length
   );
 
   return (
@@ -350,6 +499,30 @@ export function AddPageModal({
               </button>
             )}
 
+            {step === 'select-timezone' && (
+              <button
+                type="button"
+                data-testid="back-to-pages-btn"
+                onClick={handleBackToPages}
+                aria-label="Back to page selection"
+                className="mt-0.5 inline-flex size-11 shrink-0 items-center justify-center rounded-xs text-ink-sub outline-none transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-brand-gold"
+              >
+                <ArrowLeftIcon className="size-4" aria-hidden />
+              </button>
+            )}
+
+            {step === 'select-posting-times' && (
+              <button
+                type="button"
+                data-testid="back-to-timezone-btn"
+                onClick={handleBackToTimezone}
+                aria-label="Back to timezone selection"
+                className="mt-0.5 inline-flex size-11 shrink-0 items-center justify-center rounded-xs text-ink-sub outline-none transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-brand-gold"
+              >
+                <ArrowLeftIcon className="size-4" aria-hidden />
+              </button>
+            )}
+
             <div className="min-w-0 flex-1">
               <DialogTitle>{headerTitle}</DialogTitle>
               <DialogDescription>{headerSubtitle}</DialogDescription>
@@ -361,6 +534,7 @@ export function AddPageModal({
           {errorMessage && (
             <div
               data-testid="add-page-error"
+              role="alert"
               className="mb-4 rounded-sm border border-brand-rose/25 bg-brand-rose/10 px-3 py-2 text-body text-brand-rose"
             >
               {errorMessage}
@@ -394,6 +568,28 @@ export function AddPageModal({
               onSelectAll={handleSelectAll}
             />
           )}
+
+          {step === 'select-timezone' && (
+            <SelectTimezoneStep
+              selectedTimezone={selectedTimezone}
+              timezoneSearchQuery={timezoneSearchQuery}
+              onTimezoneSearchChange={setTimezoneSearchQuery}
+              onSelectTimezone={setSelectedTimezone}
+            />
+          )}
+
+          {step === 'select-posting-times' && selectedTimezone && (
+            <SelectPostingTimesStep
+              timezone={selectedTimezone}
+              postingTimes={postingTimes}
+              canAddAnotherPostingTime={canAddAnotherPostingTime(postingTimes)}
+              onChangeTimezone={handleBackToTimezone}
+              onAddPostingTime={handleAddPostingTime}
+              onRemovePostingTime={handleRemovePostingTime}
+              onPostingTimeChange={handlePostingTimeChange}
+              onToggleFormat={handleToggleFormat}
+            />
+          )}
         </div>
 
         <DialogFooter>
@@ -409,8 +605,30 @@ export function AddPageModal({
           {step === 'select-pages' && (
             <Button
               type="button"
+              data-testid="continue-to-timezone-btn"
+              disabled={selectedPageIds.length === 0}
+              onClick={() => setStep('select-timezone')}
+            >
+              Continue
+            </Button>
+          )}
+
+          {step === 'select-timezone' && (
+            <Button
+              type="button"
+              data-testid="continue-to-posting-times-btn"
+              disabled={!selectedTimezone}
+              onClick={() => setStep('select-posting-times')}
+            >
+              Continue
+            </Button>
+          )}
+
+          {step === 'select-posting-times' && (
+            <Button
+              type="button"
               data-testid="confirm-add-pages-btn"
-              disabled={selectedPageIds.length === 0 || isSubmitting}
+              disabled={!isScheduleValid || isSubmitting}
               onClick={() => {
                 void handleConfirmImport();
               }}

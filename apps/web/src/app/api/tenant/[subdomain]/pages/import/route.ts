@@ -60,7 +60,8 @@ export async function handleImportPages(
     );
   }
 
-  const { accountId, selectedPageIds } = parseResult.data;
+  const { accountId, selectedPageIds, timezone, postingTimes } =
+    parseResult.data;
 
   // 4. Resolve workspace ID scoped to user
   const workspaceId = await resolveTenantWorkspaceId(dbClient, subdomain, session.userId, session.role);
@@ -153,7 +154,11 @@ export async function handleImportPages(
     );
   }
 
-  const selectedSet = new Set(selectedPageIds);
+  // Duplicate ids in the request collapse to one page: the Graph
+  // result holds each page once, so the count check below compares
+  // against the deduped list, not the raw request list.
+  const dedupedSelectedPageIds = [...new Set(selectedPageIds)];
+  const selectedSet = new Set(dedupedSelectedPageIds);
   const matchedPages = rawItems.filter((item) => selectedSet.has(String(item.id)));
 
   // Query existing destinations before upserting via Supabase to
@@ -169,6 +174,69 @@ export async function handleImportPages(
       metadata: Record<string, unknown>;
     }
   >();
+  // Postgres pre-existing status map, for the same "schedule only
+  // newly created or previously disconnected pages" rule the
+  // Supabase path gets from existingPagesMap. Status matters, not
+  // mere existence: a disconnected row is reactivated by this
+  // import and must receive the new schedule, while an active (or
+  // paused, etc.) row must keep its own schedule untouched.
+  const preExistingStatusByFbId = new Map<string, string>();
+
+  if (
+    dbClient &&
+    'query' in dbClient &&
+    typeof dbClient.query === 'function' &&
+    matchedPages.length > 0
+  ) {
+    const preExistingRows = (await dbClient.query<{
+      external_destination_id?: string;
+      externalDestinationId?: string;
+      status?: string;
+    }>(
+      `SELECT external_destination_id, status FROM destinations
+       WHERE account_id = $1 AND external_destination_id = ANY($2::text[])`,
+      [accountId, matchedPages.map((item) => String(item.id))]
+    )) as Array<{
+      external_destination_id?: string;
+      externalDestinationId?: string;
+      status?: string;
+    }>;
+    for (const row of preExistingRows ?? []) {
+      const fbPageId = row.external_destination_id ?? row.externalDestinationId;
+      if (fbPageId) preExistingStatusByFbId.set(String(fbPageId), row.status ?? '');
+    }
+  }
+
+  // Evaluated at upsert time, after existingPagesMap is populated
+  // below for the Supabase path.
+  const isPreExistingDestination = (fbPageId: string): boolean =>
+    isSupabaseMode
+      ? existingPagesMap.has(fbPageId)
+      : preExistingStatusByFbId.has(fbPageId);
+  const preExistingStatus = (fbPageId: string): string =>
+    isSupabaseMode
+      ? (existingPagesMap.get(fbPageId)?.status ?? '')
+      : (preExistingStatusByFbId.get(fbPageId) ?? '');
+  const isReactivatedDestination = (fbPageId: string): boolean =>
+    isPreExistingDestination(fbPageId) &&
+    preExistingStatus(fbPageId) === 'disconnected';
+
+  // When a schedule is supplied, a Graph result that returns fewer
+  // pages than selected is an error BEFORE any destination is
+  // written — otherwise a failed schedule would leave pages behind
+  // with no schedule and no success to show for them. The legacy
+  // import (no schedule) keeps its old behaviour of importing
+  // whatever matched.
+  if (
+    timezone &&
+    postingTimes &&
+    matchedPages.length !== dedupedSelectedPageIds.length
+  ) {
+    return NextResponse.json(
+      { error: "Couldn't add the selected pages. Please try again." },
+      { status: 500 }
+    );
+  }
 
   if (isSupabaseMode && matchedPages.length > 0) {
     const supabase = (
@@ -176,12 +244,29 @@ export async function handleImportPages(
     ) as SupabaseClient | null;
     if (supabase) {
       const pageFbIds = matchedPages.map((item) => String(item.id));
-      const { data: existingRows } = await supabase
+      const { data: existingRows, error: existingErr } = await supabase
         .from('destinations')
         .select('external_destination_id, status, metadata')
         .eq('workspace_id', workspaceId)
         .eq('platform', 'facebook')
         .in('external_destination_id', pageFbIds);
+
+      // Fail loud: an error here must never be read as "no pages
+      // exist". Proceeding with an empty map would misclassify
+      // every pre-existing page as new, overwrite an active page's
+      // schedule, and — on a schedule failure — delete that
+      // pre-existing destination in rollback. Abort before any
+      // upsert runs.
+      if (existingErr) {
+        logServerError('[pages/import] Failed to load existing destinations', existingErr, {
+          source: 'pages-import-existing',
+          subdomain,
+        });
+        return NextResponse.json(
+          { error: "Couldn't add the selected pages. Please try again." },
+          { status: 500 }
+        );
+      }
 
       if (Array.isArray(existingRows)) {
         for (const row of existingRows) {
@@ -267,6 +352,8 @@ export async function handleImportPages(
           id: row.id,
           fbPageId: row.fb_page_id || row.fbPageId,
           pageName: row.page_name || row.pageName,
+          isNew: !isPreExistingDestination(String(pageItem.id)),
+          isReactivated: isReactivatedDestination(String(pageItem.id)),
         };
       }
       return null;
@@ -318,14 +405,520 @@ export async function handleImportPages(
         id: upserted.id,
         fbPageId: upserted.external_destination_id,
         pageName: upserted.name,
+        isNew: !isPreExistingDestination(String(pageItem.id)),
+        isReactivated: isReactivatedDestination(String(pageItem.id)),
       };
     }
   });
 
   const resolved = await Promise.all(importPromises);
   const importedList = resolved.filter(
-    (item): item is { id: string; fbPageId: string; pageName: string } => item !== null
+    (
+      item
+    ): item is {
+      id: string;
+      fbPageId: string;
+      pageName: string;
+      isNew: boolean;
+      isReactivated: boolean;
+    } => item !== null
   );
+
+  // Snapshot of a reactivated destination's schedule before this
+  // call replaces it, so a schedule failure can restore it exactly.
+  // kind may arrive as an array or a JSON string depending on the
+  // driver; it is normalised to an array when the snapshot is read.
+  interface ReactivatedSnapshot {
+    id: string;
+    oldTimezone: string;
+    oldSlots: Array<{
+      slotTime: string;
+      allowedFormats: string[];
+      isActive: boolean;
+    }>;
+    complete: boolean;
+  }
+
+  const normaliseFormats = (kind: unknown): string[] => {
+    if (Array.isArray(kind)) return kind.map((f) => String(f));
+    if (typeof kind === 'string') {
+      try {
+        const parsed: unknown = JSON.parse(kind);
+        if (Array.isArray(parsed)) return parsed.map((f) => String(f));
+      } catch (_e) {
+        // A malformed stored kind must surface, never vanish: log it
+        // and fall through to the empty list below.
+        logServerError('[pages/import] Failed to parse slot kind JSON', _e, {
+          source: 'pages-import-kind',
+        });
+      }
+    }
+    return [];
+  };
+
+  const snapshotReactivated = async (
+    targets: Array<{ id: string }>
+  ): Promise<Map<string, ReactivatedSnapshot>> => {
+    const snapshots = new Map<string, ReactivatedSnapshot>();
+    if (targets.length === 0) return snapshots;
+    for (const target of targets) {
+      try {
+        if (
+          dbClient &&
+          'query' in dbClient &&
+          typeof dbClient.query === 'function'
+        ) {
+          const tzRows = (await dbClient.query<{
+            timezone?: string;
+          }>(
+            `SELECT timezone FROM destinations
+             WHERE id = $1 AND workspace_id = $2 AND platform = 'facebook'`,
+            [target.id, workspaceId]
+          )) as Array<{ timezone?: string }>;
+          const slotRows = (await dbClient.query<{
+            time_of_day?: string;
+            slotTime?: string;
+            kind?: unknown;
+            is_active?: boolean;
+            isActive?: boolean;
+          }>(
+            `SELECT time_of_day, kind, is_active FROM posting_slots
+             WHERE destination_id = $1
+             ORDER BY time_of_day`,
+            [target.id]
+          )) as Array<{
+            time_of_day?: string;
+            slotTime?: string;
+            kind?: unknown;
+            is_active?: boolean;
+            isActive?: boolean;
+          }>;
+          // A missing destination row must never be recorded as a
+          // complete snapshot with a fabricated UTC/empty schedule:
+          // the caller aborts the schedule and restores status only.
+          if (!tzRows || tzRows.length === 0 || !tzRows[0]?.timezone) {
+            logServerError('[pages/import] Failed to snapshot reactivated page', new Error('Destination row missing while snapshotting reactivated page'), {
+              source: 'pages-import-snapshot',
+              subdomain,
+            });
+            snapshots.set(target.id, {
+              id: target.id,
+              oldTimezone: 'UTC',
+              oldSlots: [],
+              complete: false,
+            });
+          } else {
+            snapshots.set(target.id, {
+              id: target.id,
+              oldTimezone: String(tzRows[0].timezone),
+              oldSlots: (slotRows ?? []).map((row) => ({
+                slotTime: String(row.time_of_day ?? row.slotTime ?? ''),
+                allowedFormats: normaliseFormats(row.kind),
+                isActive: row.is_active ?? row.isActive ?? true,
+              })),
+              complete: true,
+            });
+          }
+        } else {
+          const supabase = (
+            dbClient && 'from' in dbClient ? dbClient : getSupabaseAdminClient()
+          ) as SupabaseClient | null;
+          if (!supabase) {
+            snapshots.set(target.id, {
+              id: target.id,
+              oldTimezone: 'UTC',
+              oldSlots: [],
+              complete: false,
+            });
+            continue;
+          }
+          const { data: tzData, error: tzError } = await supabase
+            .from('destinations')
+            .select('timezone')
+            .eq('id', target.id)
+            .eq('workspace_id', workspaceId)
+            .eq('platform', 'facebook')
+            .maybeSingle();
+          const { data: slotData, error: slotError } = await supabase
+            .from('posting_slots')
+            .select('time_of_day, kind, is_active')
+            .eq('destination_id', target.id);
+          // Fail loud: a snapshot query error (or a missing row)
+          // must never be recorded as a complete UTC/empty
+          // snapshot — that would let a later schedule failure
+          // delete the page's real slots and restore UTC. Mark it
+          // incomplete so the caller aborts the schedule and
+          // restores status only, without touching timezone/slots.
+          if (
+            tzError ||
+            slotError ||
+            !tzData ||
+            !(tzData as { timezone?: string }).timezone
+          ) {
+            logServerError('[pages/import] Failed to snapshot reactivated page', tzError ?? slotError ?? new Error('Destination row missing while snapshotting reactivated page'), {
+              source: 'pages-import-snapshot',
+              subdomain,
+            });
+            snapshots.set(target.id, {
+              id: target.id,
+              oldTimezone: 'UTC',
+              oldSlots: [],
+              complete: false,
+            });
+            continue;
+          }
+          const slotRows = (slotData as Array<{
+            time_of_day?: string;
+            kind?: unknown;
+            is_active?: boolean;
+          }> | null) ?? [];
+          snapshots.set(target.id, {
+            id: target.id,
+            oldTimezone: String(
+              (tzData as { timezone?: string }).timezone
+            ),
+            oldSlots: slotRows.map((row) => ({
+              slotTime: String(row.time_of_day ?? ''),
+              allowedFormats: normaliseFormats(row.kind),
+              isActive: row.is_active ?? true,
+            })),
+            complete: true,
+          });
+        }
+      } catch (snapshotErr) {
+        // No snapshot means no safe full restore for this page, but
+        // its status still changed to active in the upsert, so it
+        // must at least be returned to disconnected on rollback.
+        // The failure is logged here; the schedule itself is
+        // aborted by the caller (see below) rather than applied
+        // without a restore path.
+        logServerError('[pages/import] Failed to snapshot reactivated page', snapshotErr, {
+          source: 'pages-import-snapshot',
+          subdomain,
+        });
+        snapshots.set(target.id, {
+          id: target.id,
+          oldTimezone: 'UTC',
+          oldSlots: [],
+          complete: false,
+        });
+      }
+    }
+    return snapshots;
+  };
+
+  // Best-effort rollback for this call's schedule targets.
+  // Newly created destinations are deleted (slots first, then the
+  // destination). Reactivated destinations are NEVER deleted: they
+  // are restored to disconnected with their snapshotted timezone
+  // and slots (or, when no snapshot exists, at least to
+  // disconnected, since their timezone/slots were never touched).
+  // Active pre-existing destinations are never passed here, so
+  // they can never be touched by a rollback. Each target is
+  // attempted independently and a rollback failure is logged,
+  // never masked over the original schedule error.
+  const rollbackScheduleTargets = async (
+    created: Array<{ id: string }>,
+    reactivatedSnapshots: Map<string, ReactivatedSnapshot>
+  ): Promise<void> => {
+    const logRollback = (err: unknown) =>
+      logServerError('[pages/import] Failed to roll back schedule targets', err, {
+        source: 'pages-import-rollback',
+        subdomain,
+      });
+    if (created.length > 0) {
+      const ids = created.map((page) => page.id);
+      try {
+        if (
+          dbClient &&
+          'query' in dbClient &&
+          typeof dbClient.query === 'function'
+        ) {
+          await dbClient.query(
+            `DELETE FROM posting_slots WHERE destination_id = ANY($1::uuid[])`,
+            [ids]
+          );
+          await dbClient.query(
+            `DELETE FROM destinations WHERE id = ANY($1::uuid[]) AND workspace_id = $2 AND platform = 'facebook'`,
+            [ids, workspaceId]
+          );
+        } else {
+          const supabase = (
+            dbClient && 'from' in dbClient ? dbClient : getSupabaseAdminClient()
+          ) as SupabaseClient | null;
+          if (supabase) {
+            await supabase.from('posting_slots').delete().in('destination_id', ids);
+            await supabase
+              .from('destinations')
+              .delete()
+              .in('id', ids)
+              .eq('workspace_id', workspaceId)
+              .eq('platform', 'facebook');
+          }
+        }
+      } catch (rollbackErr) {
+        logRollback(rollbackErr);
+      }
+    }
+    for (const snapshot of reactivatedSnapshots.values()) {
+      try {
+        if (
+          dbClient &&
+          'query' in dbClient &&
+          typeof dbClient.query === 'function'
+        ) {
+          if (snapshot.complete) {
+            await dbClient.query(
+              `DELETE FROM posting_slots WHERE destination_id = $1`,
+              [snapshot.id]
+            );
+            if (snapshot.oldSlots.length > 0) {
+              const valuePlaceholders: string[] = [];
+              const slotParams: unknown[] = [snapshot.id];
+              snapshot.oldSlots.forEach((slot, index) => {
+                const base = 2 + index * 3;
+                valuePlaceholders.push(
+                  `($1, $${base}, $${base + 1}, $${base + 2}, now(), now())`
+                );
+                slotParams.push(
+                  slot.slotTime,
+                  slot.isActive,
+                  slot.allowedFormats
+                );
+              });
+              await dbClient.query(
+                `INSERT INTO posting_slots (destination_id, time_of_day, is_active, kind, created_at, updated_at)
+                 VALUES ${valuePlaceholders.join(', ')}`,
+                slotParams
+              );
+            }
+            await dbClient.query(
+              `UPDATE destinations SET status = $1, timezone = $2, updated_at = now()
+               WHERE id = $3 AND workspace_id = $4 AND platform = 'facebook'`,
+              ['disconnected', snapshot.oldTimezone, snapshot.id, workspaceId]
+            );
+          } else {
+            await dbClient.query(
+              `UPDATE destinations SET status = $1, updated_at = now()
+               WHERE id = $2 AND workspace_id = $3 AND platform = 'facebook'`,
+              ['disconnected', snapshot.id, workspaceId]
+            );
+          }
+        } else {
+          const supabase = (
+            dbClient && 'from' in dbClient ? dbClient : getSupabaseAdminClient()
+          ) as SupabaseClient | null;
+          if (!supabase) continue;
+          if (snapshot.complete) {
+            await supabase
+              .from('posting_slots')
+              .delete()
+              .eq('destination_id', snapshot.id);
+            if (snapshot.oldSlots.length > 0) {
+              await supabase.from('posting_slots').upsert(
+                snapshot.oldSlots.map((slot) => ({
+                  destination_id: snapshot.id,
+                  time_of_day: slot.slotTime,
+                  is_active: slot.isActive,
+                  kind: slot.allowedFormats,
+                })),
+                { onConflict: 'destination_id,time_of_day' }
+              );
+            }
+            await supabase
+              .from('destinations')
+              .update({
+                status: 'disconnected',
+                timezone: snapshot.oldTimezone,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', snapshot.id)
+              .eq('workspace_id', workspaceId)
+              .eq('platform', 'facebook');
+          } else {
+            await supabase
+              .from('destinations')
+              .update({
+                status: 'disconnected',
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', snapshot.id)
+              .eq('workspace_id', workspaceId)
+              .eq('platform', 'facebook');
+          }
+        }
+      } catch (rollbackErr) {
+        logRollback(rollbackErr);
+      }
+    }
+  };
+
+  // Add Page steps 3–4: when a schedule was supplied, it is applied
+  // ONLY to destinations newly created in this call or previously
+  // disconnected and reactivated by it, and success is returned
+  // only when all of it applied. Any other pre-existing
+  // destination keeps its own timezone and slots untouched — in
+  // particular a paused page's slots/schedule are untouched by a
+  // re-import (its destination row itself is still upserted to
+  // active by the import, as before).
+  // A reactivated destination's old slots are deleted first, so
+  // its final slots are exactly the times picked in Step 4, not
+  // old + new merged. On any schedule failure the destinations
+  // created in this call are deleted again and reactivated ones
+  // are restored to disconnected with their snapshotted timezone
+  // and slots, so "nothing finish" is true on the server too, not
+  // just in the dialog. Slot writes are idempotent upserts keyed
+  // on destination + time, so a retry can never duplicate a
+  // posting time. The schedule is skipped entirely when absent, so
+  // the legacy import path is unchanged.
+  const SCHEDULE_FAILED_MESSAGE =
+    "Couldn't save the posting times — try again, your timezone and times are kept";
+  if (timezone && postingTimes) {
+    const scheduleTargets = importedList.filter(
+      (page) => page.isNew || page.isReactivated
+    );
+    const createdTargets = importedList.filter((page) => page.isNew);
+    const reactivatedTargets = importedList.filter(
+      (page) => page.isReactivated
+    );
+    // Snapshots are taken before any schedule write, so a failure
+    // anywhere in the batch can restore every reactivated page.
+    // If a snapshot could not be taken, the schedule is not
+    // applied at all: that page's status is still restored to
+    // disconnected by the rollback below.
+    const reactivatedSnapshots =
+      await snapshotReactivated(reactivatedTargets);
+    const snapshotIncomplete = [...reactivatedSnapshots.values()].some(
+      (snapshot) => !snapshot.complete
+    );
+    // An upsert that failed after the pre-check must not turn into a
+    // partial success either: roll back what this call changed and
+    // report the generic import failure.
+    if (importedList.length !== dedupedSelectedPageIds.length) {
+      await rollbackScheduleTargets(createdTargets, reactivatedSnapshots);
+      return NextResponse.json(
+        { error: "Couldn't add the selected pages. Please try again." },
+        { status: 500 }
+      );
+    }
+    if (snapshotIncomplete) {
+      await rollbackScheduleTargets(createdTargets, reactivatedSnapshots);
+      return NextResponse.json(
+        { error: SCHEDULE_FAILED_MESSAGE, code: 'SCHEDULE_FAILED' },
+        { status: 500 }
+      );
+    }
+    try {
+      if (
+        dbClient &&
+        'query' in dbClient &&
+        typeof dbClient.query === 'function'
+      ) {
+        for (const page of scheduleTargets) {
+          const updated = await dbClient.query(
+            `UPDATE destinations
+             SET timezone = $1, updated_at = now()
+             WHERE id = $2 AND workspace_id = $3 AND platform = 'facebook'
+             RETURNING id`,
+            [timezone, page.id, workspaceId]
+          );
+          if (!updated || updated.length === 0) {
+            throw new Error('Destination not found while applying schedule');
+          }
+          // Reactivated pages replace their old schedule outright;
+          // newly created pages have no slots yet, so this delete
+          // is a no-op for them.
+          if (page.isReactivated) {
+            await dbClient.query(
+              `DELETE FROM posting_slots WHERE destination_id = $1`,
+              [page.id]
+            );
+          }
+          // One multi-row insert per page, not one query per time.
+          const valuePlaceholders: string[] = [];
+          const slotParams: unknown[] = [page.id];
+          postingTimes.forEach((postingTime, index) => {
+            const base = 2 + index * 2;
+            valuePlaceholders.push(
+              `($1, $${base}, true, $${base + 1}, now(), now())`
+            );
+            slotParams.push(
+              postingTime.slotTime,
+              postingTime.allowedFormats
+            );
+          });
+          await dbClient.query(
+            `INSERT INTO posting_slots (destination_id, time_of_day, is_active, kind, created_at, updated_at)
+             VALUES ${valuePlaceholders.join(', ')}
+             ON CONFLICT (destination_id, time_of_day) DO UPDATE SET
+               kind = EXCLUDED.kind,
+               is_active = true,
+               updated_at = now()`,
+            slotParams
+          );
+        }
+      } else {
+        const supabase = (
+          dbClient && 'from' in dbClient ? dbClient : getSupabaseAdminClient()
+        ) as SupabaseClient | null;
+        if (!supabase) {
+          throw new Error('Database service unavailable');
+        }
+        for (const page of scheduleTargets) {
+          const { data: updatedPage, error: updateErr } = await supabase
+            .from('destinations')
+            .update({
+              timezone,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', page.id)
+            .eq('workspace_id', workspaceId)
+            .eq('platform', 'facebook')
+            .select('id')
+            .maybeSingle();
+          if (updateErr || !updatedPage) {
+            throw new Error(
+              updateErr?.message ??
+                'Destination not found while applying schedule'
+            );
+          }
+          if (page.isReactivated) {
+            const { error: deleteErr } = await supabase
+              .from('posting_slots')
+              .delete()
+              .eq('destination_id', page.id);
+            if (deleteErr) {
+              throw deleteErr;
+            }
+          }
+          const { error: slotErr } = await supabase
+            .from('posting_slots')
+            .upsert(
+              postingTimes.map((postingTime) => ({
+                destination_id: page.id,
+                time_of_day: postingTime.slotTime,
+                is_active: true,
+                kind: postingTime.allowedFormats,
+              })),
+              { onConflict: 'destination_id,time_of_day' }
+            );
+          if (slotErr) {
+            throw slotErr;
+          }
+        }
+      }
+    } catch (err) {
+      logServerError('[pages/import] Failed to apply schedule', err, {
+        source: 'pages-import-schedule',
+        subdomain,
+      });
+      await rollbackScheduleTargets(createdTargets, reactivatedSnapshots);
+      return NextResponse.json(
+        { error: SCHEDULE_FAILED_MESSAGE, code: 'SCHEDULE_FAILED' },
+        { status: 500 }
+      );
+    }
+  }
 
   const responsePayload = ImportPagesResponseSchema.parse({
     success: true,

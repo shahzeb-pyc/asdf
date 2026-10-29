@@ -474,6 +474,19 @@ describe('Add Page confirmation redesign (toast + gold highlight, no banner)', (
     for (const p of newPages) {
       fireEvent.click(screen.getByTestId(`discovered-page-checkbox-${p.fbPageId}`));
     }
+    // Steps 3–4: pick a timezone, then accept the default posting time.
+    const toTimezone = screen.getByTestId('continue-to-timezone-btn');
+    await waitFor(() => expect((toTimezone as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(toTimezone);
+    // Steps 3–4 are lazy-loaded, so the timezone list arrives a tick later.
+    fireEvent.click(
+      await screen.findByTestId('add-page-timezone-option-Asia/Karachi')
+    );
+    const toPostingTimes = screen.getByTestId('continue-to-posting-times-btn');
+    await waitFor(() =>
+      expect((toPostingTimes as HTMLButtonElement).disabled).toBe(false)
+    );
+    fireEvent.click(toPostingTimes);
     const confirm = screen.getByTestId('confirm-add-pages-btn');
     await waitFor(() => expect((confirm as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(confirm);
@@ -543,7 +556,7 @@ describe('AddPageModal flow behaviour', () => {
     vi.restoreAllMocks();
   });
 
-  it('pick account → discover → select page → import calls onSuccess and closes', async () => {
+  it('pick account → discover → select page → timezone → posting times → import calls onSuccess and closes', async () => {
     fetchMock.mockImplementation(async (url: string) => {
       if (url.includes('/pages/discover')) {
         return jsonResponse({
@@ -612,6 +625,27 @@ describe('AddPageModal flow behaviour', () => {
     expect(screen.getByTestId('already-added-fb_page_101')).toBeTruthy();
 
     fireEvent.click(screen.getByTestId('discovered-page-checkbox-fb_page_201'));
+    const toTimezone = screen.getByTestId('continue-to-timezone-btn');
+    await waitFor(() =>
+      expect((toTimezone as HTMLButtonElement).disabled).toBe(false)
+    );
+    fireEvent.click(toTimezone);
+
+    // Step 3 starts blank: Continue is disabled until a timezone is picked.
+    // Steps 3–4 are lazy-loaded, so wait for the timezone list first.
+    const toPostingTimes = await screen.findByTestId(
+      'continue-to-posting-times-btn'
+    );
+    expect((toPostingTimes as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(
+      await screen.findByTestId('add-page-timezone-option-Asia/Karachi')
+    );
+    await waitFor(() =>
+      expect((toPostingTimes as HTMLButtonElement).disabled).toBe(false)
+    );
+    fireEvent.click(toPostingTimes);
+
+    // Step 4 starts with one time, all post types selected.
     const confirm = screen.getByTestId('confirm-add-pages-btn');
     await waitFor(() => expect((confirm as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(confirm);
@@ -632,6 +666,13 @@ describe('AddPageModal flow behaviour', () => {
       JSON.stringify({
         accountId: activeAccount.id,
         selectedPageIds: ['fb_page_201'],
+        timezone: 'Asia/Karachi',
+        postingTimes: [
+          {
+            slotTime: '09:00',
+            allowedFormats: ['reel', 'image', 'video', 'story', 'text'],
+          },
+        ],
       })
     );
   });

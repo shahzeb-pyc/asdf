@@ -207,6 +207,13 @@ test.describe('pages list + add page (spec 131 PR-131-2)', () => {
 
     await expect(page.getByTestId('discovered-pages-list')).toBeVisible({ timeout: 15_000 });
     await page.getByTestId('discovered-page-checkbox-100000000000099').click();
+    // 4-step flow: Step 2 only continues to the timezone step.
+    await page.getByTestId('continue-to-timezone-btn').click();
+    await page.getByTestId('add-page-timezone-search-input').fill('Chicago');
+    await page.getByTestId('add-page-timezone-option-America/Chicago').click();
+    await page.getByTestId('continue-to-posting-times-btn').click();
+    // Step 4 starts with one default posting time, all formats on.
+    await expect(page.getByTestId('add-page-posting-time-0')).toBeVisible();
     await page.getByTestId('confirm-add-pages-btn').click();
 
     // Approved redesign: no persistent confirmation banner — a top-right

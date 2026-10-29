@@ -785,7 +785,7 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
       // onSuccess + close) is covered live in pages-behaviour.test.tsx.
     });
 
-    it('Step 2 displays integrated breadcrumb header, ghost page search input, dynamic import button copy, and back navigation', () => {
+    it('Step 2 displays integrated breadcrumb header, ghost page search input, Continue button state, and back navigation', () => {
       const first = renderBehavioural(
         <AddPageModal
           subdomain="acme"
@@ -805,11 +805,18 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
       expect(screen.getByTestId('change-account-btn')).toBeTruthy();
       expect(screen.getByTestId('modal-page-search-input')).toBeTruthy();
 
-      // Dynamic button copy for 1 selected page
-      expect(screen.getByText('Import 1 Page')).toBeTruthy();
+      // Step 2 now continues to the timezone step instead of
+      // importing directly: the footer button is Continue, enabled
+      // once at least one page is selected, and the final Import
+      // button lives on Step 4 (covered in add-page-schedule.test.tsx).
+      const continueBtn = screen.getByTestId(
+        'continue-to-timezone-btn'
+      ) as HTMLButtonElement;
+      expect(continueBtn.textContent).toBe('Continue');
+      expect(continueBtn.disabled).toBe(false);
       first.unmount();
 
-      // Dynamic button copy for 2 selected pages
+      // Continue is also enabled for 2 selected pages
       const second = renderBehavioural(
         <AddPageModal
           subdomain="acme"
@@ -822,10 +829,13 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
           initialSelectedPageIds={['fb_page_202', 'fb_page_303']}
         />
       );
-      expect(screen.getByText('Import 2 Pages')).toBeTruthy();
+      expect(
+        (screen.getByTestId('continue-to-timezone-btn') as HTMLButtonElement)
+          .disabled
+      ).toBe(false);
       second.unmount();
 
-      // Button copy for 0 selected pages
+      // Continue is disabled for 0 selected pages
       renderBehavioural(
         <AddPageModal
           subdomain="acme"
@@ -838,7 +848,10 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
           initialSelectedPageIds={[]}
         />
       );
-      expect(screen.getByText('Add Selected Pages')).toBeTruthy();
+      expect(
+        (screen.getByTestId('continue-to-timezone-btn') as HTMLButtonElement)
+          .disabled
+      ).toBe(true);
     });
   });
 

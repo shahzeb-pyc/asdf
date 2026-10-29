@@ -85,6 +85,7 @@ export function TimezoneSelectorStep({
         />
         <Input
           type="text"
+          autoFocus
           data-testid="timezone-search-input"
           value={searchQuery}
           onChange={(e) => onSearchChange(e.target.value)}
