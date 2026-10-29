@@ -284,17 +284,12 @@ describe('Dedicated tab row — final scope (Dashboard, Insights, Queue, Posting
     expect(container.querySelector('[data-testid="tab-settings-btn"]')).toBeNull();
   });
 
-  it('Queue tab renders an empty placeholder with no queue functionality', async () => {
+  it('Queue tab renders the real queue panel, not a placeholder', async () => {
     const user = userEvent.setup();
     const { container } = renderShell();
     await user.click(screen.getByTestId('tab-queue-btn'));
-    const placeholder = container.querySelector('[data-testid="page-tab-queue-placeholder"]');
-    expect(placeholder).not.toBeNull();
-    expect(placeholder?.textContent).toContain('This section is being rebuilt.');
-    // No list, no buttons, no composer entry points in the placeholder.
-    expect(placeholder?.querySelector('button')).toBeNull();
-    expect(container.querySelector('[data-testid="content-tab"]')).toBeNull();
-    expect(container.querySelector('[data-testid="queue-create-post-btn"]')).toBeNull();
+    expect(container.querySelector('[data-testid="page-tab-queue-placeholder"]')).toBeNull();
+    expect(container.querySelector('[data-testid="queue-panel"]')).not.toBeNull();
   });
 
   it('?tab=settings is no longer valid and falls back to Dashboard', () => {
@@ -304,10 +299,11 @@ describe('Dedicated tab row — final scope (Dashboard, Insights, Queue, Posting
     expect(screen.getByTestId('tab-queue-btn').getAttribute('data-state')).toBe('inactive');
   });
 
-  it('?tab=queue still selects the Queue placeholder', () => {
+  it('?tab=queue selects the Queue panel', () => {
     mockQuery = 'tab=queue';
     const { container } = renderShell();
     expect(screen.getByTestId('tab-queue-btn').getAttribute('data-state')).toBe('active');
-    expect(container.querySelector('[data-testid="page-tab-queue-placeholder"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="page-tab-queue-placeholder"]')).toBeNull();
+    expect(container.querySelector('[data-testid="queue-panel"]')).not.toBeNull();
   });
 });

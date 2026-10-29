@@ -73,6 +73,8 @@ import {
 // Direct path, not the dedicated barrel: the composer dialogue is
 // new work and the barrel is owned by parallel branch work.
 import { CreatePostsDialog } from '@/components/pages/dedicated/create-posts/create-posts-dialog';
+// Direct path, same reason: the Queue panel is new work.
+import { QueuePanel } from '@/components/pages/dedicated/queue/queue-panel';
 
 export type DedicatedPageTab =
   | 'dashboard'
@@ -94,8 +96,8 @@ export interface TenantDedicatedPageViewProps {
 const AckSchema = z.object({}).passthrough();
 
 // Final tab scope (Shahzeb, 2026-10-27): Dashboard, Insights, Queue,
-// Posting Times — no Settings tab. Queue is an empty placeholder
-// panel only; it will be rebuilt later, more professionally.
+// Posting Times — no Settings tab. Queue is the real section now
+// (dedicated/queue/QueuePanel), not a placeholder.
 const TAB_ITEMS: ReadonlyArray<{ id: DedicatedPageTab; label: string }> = [
   { id: 'dashboard', label: 'Dashboard' },
   { id: 'insights', label: 'Insights' },
@@ -829,17 +831,13 @@ export default function TenantDedicatedPageView({
 
             {visitedTabs.has('queue') && (
               <TabsContent value="queue" forceMount className="data-[state=inactive]:hidden">
-                {/*
-                  Queue placeholder only: no list, no buttons, no
-                  composer entry points. The Queue section will be
-                  built later, more professionally.
-                */}
-                <div data-testid="page-tab-queue-placeholder" className="rounded-md border border-line bg-panel p-6 shadow-card">
-                  <h2 className="m-0 text-lg font-bold text-ink">Queue</h2>
-                  <p className="mt-1 text-body text-ink-sub">
-                    This section is being rebuilt.
-                  </p>
-                </div>
+                <QueuePanel
+                  subdomain={subdomain}
+                  pageId={pageId}
+                  pageTimezone={pageTimezone}
+                  slots={slots}
+                  onCreatePost={() => setIsCreatePostsOpen(true)}
+                />
               </TabsContent>
             )}
 
