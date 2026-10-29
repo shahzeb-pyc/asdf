@@ -41,27 +41,65 @@
   }
 }
 
-/* ---- Headline gold marker: rounded ends, marker-style padding ---- */
+/* ---- Headline gold marker: rounded ends, marker-style padding ----
+   Sweep on load: the gold background itself grows left-to-right
+   (background-size 0% -> 100%) over 0.7s ease-out after a 0.1s delay,
+   then stays exactly as before. Base state is full gold, so if the
+   animation fails or is disabled the highlight is simply there. */
+@keyframes highlight-sweep {
+  from {
+    background-size: 0% 100%;
+  }
+  to {
+    background-size: 100% 100%;
+  }
+}
 .hero-highlight {
   background-color: #f0b90b;
+  background-image: linear-gradient(#f0b90b, #f0b90b);
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
   color: #111111;
   border-radius: 12px;
   padding: 0.08em 0.15em;
+  animation: highlight-sweep 0.7s ease-out 0.1s backwards;
 }
 
-/* ---- Hero fade/slide-in on load ---- */
-@keyframes hero-in {
+/* ---- Hero entrance on load: subtle fade + small rise only ----
+   Base state is fully visible (opacity 1, no transform); the
+   animation only applies transiently (fill backwards, so the
+   from-state shows during each element's delay, then the element
+   returns to its base state). Transform + opacity only, so there
+   is no layout shift and no change after the animation finishes.
+   Order/delays: topbar 0s, headline 0.1s, subhead 0.2s,
+   button 0.3s, tiles 0.4s. */
+@keyframes hero-rise {
   from {
     opacity: 0;
-    transform: translateY(18px);
+    transform: translateY(10px);
   }
   to {
     opacity: 1;
     transform: translateY(0);
   }
 }
-.hero-in {
-  animation: hero-in 0.7s ease both;
+.anim-enter {
+  animation: hero-rise 0.6s ease-out backwards;
+}
+.anim-d0 {
+  animation-delay: 0s;
+}
+.anim-d1 {
+  animation-delay: 0.1s;
+}
+.anim-d2 {
+  animation-delay: 0.2s;
+}
+.anim-d3 {
+  animation-delay: 0.3s;
+}
+.anim-d4 {
+  animation-delay: 0.4s;
 }
 
 /* ---- Isometric platform tiles ----
@@ -105,18 +143,45 @@
   animation-delay: 0s;
 }
 .iso-bob-b {
-  animation-duration: 6.5s;
-  animation-delay: 0.8s;
+  animation-duration: 5.5s;
+  animation-delay: 0.9s;
 }
 .iso-bob-c {
-  animation-duration: 5.5s;
-  animation-delay: 1.6s;
+  animation-duration: 4.5s;
+  animation-delay: 1.7s;
 }
 
-/* ---- Reduced motion: everything instant and still ---- */
+/* ---- Mobile diamond-grid float: same gentle translateY-only float,
+   same stagger principle (a/b/c phases), amplitude 5px, slow
+   4.5–5.5s, so phones float too without any horizontal overflow.
+   Applied to the tile wrapper only; the grid's entrance animation
+   lives on the grid container, so the two never conflict. */
+.mob-float {
+  animation: iso-bob 5s ease-in-out infinite;
+}
+.mob-float-a {
+  animation-duration: 5s;
+  animation-delay: 0s;
+}
+.mob-float-b {
+  animation-duration: 5.5s;
+  animation-delay: 0.9s;
+}
+.mob-float-c {
+  animation-duration: 4.5s;
+  animation-delay: 1.7s;
+}
+
+/* ---- Reduced motion: everything instant and still ----
+   With animation: none, every element falls back to its base state:
+   hero fully visible, highlight fully gold (base background-size
+   100%), tiles at rest. Nothing is ever hidden waiting for an
+   animation. */
 @media (prefers-reduced-motion: reduce) {
-  .hero-in,
-  .iso-bob {
+  .anim-enter,
+  .hero-highlight,
+  .iso-bob,
+  .mob-float {
     animation: none !important;
   }
 }
