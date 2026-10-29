@@ -21,7 +21,7 @@ import type { DownloaderBatchProgressState } from './downloader-data';
 const TONE_TEXT_CLASS: Record<DownloaderProgressTone, string> = {
   primary: 'text-primary',
   success: 'text-brand-emerald',
-  danger: 'text-signal-critical',
+  danger: 'text-signal-critical-on-tint',
 };
 
 export function DownloaderProgress({

@@ -278,9 +278,9 @@
         "$value": "#f87171"
       },
       "criticalOnTintDark": {
-        "$description": "Tailwind red-300 — dark critical text ON a tinted/subtle/hover background. red-400 is only 4.36:1 on a 15% critical tint over stone-800 and 3.71:1 on stone-700 hover (fails AA); red-300 is 6.36:1 on the 15% tint and 5.41:1 on stone-700",
+        "$description": "Tailwind red-200 — dark critical text ON a tinted/subtle/hover/active background. red-300 is only 4.02:1 on stone-600 active (fails AA); red-200 is 5.27:1 on stone-600 active, 7.10:1 on stone-700 hover, 8.34:1 on a 15% critical tint over stone-800, 10.48:1 on stone-800 panel and 13.66:1 on stone-950 canvas",
         "$type": "color",
-        "$value": "#fca5a5"
+        "$value": "#fecaca"
       },
       "criticalOnTintLight": {
         "$description": "Tailwind red-700 — light critical text ON a tinted/subtle/hover background. red-600 is only 4.13:1 on a 10% tint, 3.81:1 on a 15% tint and 4.43:1 on stone-100 (fails AA); red-700 is 5.54:1 on the 10% tint, 5.10:1 on the 15% tint and 5.93:1 on stone-100",

@@ -296,6 +296,15 @@ describe('MediaTableRow (PB-6, PB-20)', () => {
     expect(props.onPreview).toHaveBeenCalledWith(VIDEO_ITEM);
     await user.click(screen.getByTestId(`row-action-move-${VIDEO_ITEM.id}`));
     expect(props.onMoveRequest).toHaveBeenCalledWith(VIDEO_ITEM);
+    // Delete sits in a TableRow whose hover/selected background changes
+    // independently of the button, so it must use the on-tint colour
+    // unconditionally — plain signal fails on row hover/selected.
+    expect(
+      screen.getByTestId(`row-action-delete-${VIDEO_ITEM.id}`).className.split(/\s+/)
+    ).toContain('text-signal-critical-on-tint');
+    expect(
+      screen.getByTestId(`row-action-delete-${VIDEO_ITEM.id}`).className.split(/\s+/)
+    ).not.toContain('text-signal-critical');
     await user.click(screen.getByTestId(`row-action-delete-${VIDEO_ITEM.id}`));
     expect(props.onDeleteRequest).toHaveBeenCalledWith(VIDEO_ITEM);
   });

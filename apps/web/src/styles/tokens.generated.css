@@ -34,7 +34,7 @@
   --color-neutral-slate: #292524;
   --color-neutral-white: #ffffff;
   --color-status-critical-dark: #f87171;
-  --color-status-critical-on-tint-dark: #fca5a5;
+  --color-status-critical-on-tint-dark: #fecaca;
   --color-status-critical-on-tint-light: #b91c1c;
   --color-status-success-dark: #4ade80;
   --color-status-success-light: #15803d;
@@ -138,7 +138,7 @@
   --shadow-elevated: 0 12px 24px -4px rgba(0, 0, 0, 0.85);
   --shadow-modal: 0 24px 48px -8px rgba(0, 0, 0, 0.95);
   --signal-critical: #f87171;
-  --signal-critical-on-tint: #fca5a5;
+  --signal-critical-on-tint: #fecaca;
   --signal-idle: #a8a29e;
   --signal-idle-dot: #a8a29e;
   --signal-operational: #4ade80;
