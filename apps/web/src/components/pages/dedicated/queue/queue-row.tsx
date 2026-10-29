@@ -1,28 +1,42 @@
 'use client';
 
 /**
- * One queued-post row in the Queue section: content first, so the row
- * reads as a POST, not an admin list item. The caption is the post
- * body at normal body size (clamped to a few lines so one row cannot
- * blow up the list); image/video posts show a proper attachment
- * preview below the caption — natural aspect ratio, never cropped,
- * height capped (reels keep their vertical shape within the cap).
- * Text posts get no preview box at all — the caption IS the row.
- * Status + time are one small secondary line, with the type pill
- * small and muted beside it (never competing with the caption).
- * Actions stay compact and secondary: small Publish now / Retry,
- * small reorder icon buttons, Edit/Delete in the row menu.
+ * One queued-post row in the Queue section, shaped like the old
+ * inapp-schedule list view: a structured, bordered card, dense and
+ * informative — not a sparse flat line. Left to right: the queue
+ * position number with small up/down buttons (queued rows only; the
+ * old drag grip is deliberately NOT revived — buttons are the
+ * mobile-safe reorder mechanism), a thumbnail slot (real media
+ * thumbnail for media posts, a type icon in the same slot for text
+ * posts, never a placeholder box), the middle (type tag, caption at
+ * readable size truncated to two lines, the unmatched-posts inline
+ * flag where it applies), a gold-tinted estimate pill, and visible
+ * action buttons on the right.
+ *
+ * Adapted, not copied, from the old model:
+ * - The pill shows the DERIVED estimate ("Est. …"), never a stored
+ *   scheduled time — publisher-driven posts carry no time per post.
+ * - No first-comment line (the new model has no first comment).
+ * - No 5-minute edit lock (no scheduled_at lock concept here).
+ * - No bulk-batch chip, no calendar view.
  * Published rows refuse edit/delete in the UI (the server 400s
- * regardless); move + publish-now exist on queued rows only, retry on
- * failed rows only. Edit/Delete live in the row menu as disabled
- * items on published rows, never removed.
+ * regardless); move + publish-now exist on queued rows only, retry
+ * on failed rows only. Cancelled rows keep their current treatment:
+ * no position, no pill, no primary button — Edit/Delete as usual.
  */
 import * as React from 'react';
 import Image from 'next/image';
-import { ChevronDownIcon, ChevronUpIcon, MoreVerticalIcon } from 'lucide-react';
+import {
+  CalendarClockIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
+  ImageIcon,
+  TypeIcon,
+  VideoIcon,
+} from 'lucide-react';
 
 import { Button } from '@/components/shared/ui/button';
-import { Menu, MenuContent, MenuItem, MenuTrigger } from '@/components/shared/ui/menu';
+import { Tag } from '@/components/shared/ui/tag';
 import type { QueueItem } from '@/lib/api/schemas/queue';
 import {
   formatQueuePostType,
@@ -34,24 +48,10 @@ import {
 export const UNMATCHED_NOTE =
   'No posting time matches this post type yet — add one and it will get an estimate';
 
-/**
- * next/image dimensions from the stored ratio ("16:9", "9:16",
- * "1:1", "4:5", or a raw "W:H" / "unknown"). The CSS below caps the
- * rendered height and lets the width follow, so the ratio — not the
- * absolute numbers — is what matters; "unknown" falls back to 4:3.
- */
-function ratioDimensions(aspectRatio: string): { width: number; height: number } {
-  const match = /^(\d+):(\d+)$/.exec(aspectRatio.trim());
-  if (match) {
-    const width = Number.parseInt(match[1]!, 10);
-    const height = Number.parseInt(match[2]!, 10);
-    if (width > 0 && height > 0) return { width, height };
-  }
-  return { width: 1200, height: 900 };
-}
-
 export interface QueueRowProps {
   item: QueueItem;
+  /** 1-based position in true queue order; null = no queue position. */
+  position: number | null;
   /** Derived estimate for queued rows; null = no estimate computed. */
   estimate: Date | null;
   /** Queued row whose format no active posting time covers. */
@@ -71,6 +71,7 @@ export interface QueueRowProps {
 
 export function QueueRow({
   item,
+  position,
   estimate,
   unmatched,
   pageTimezone,
@@ -90,94 +91,140 @@ export function QueueRow({
   const media = item.media ?? null;
   const typeLabel = formatQueuePostType(item.postFormat);
 
-  let timeMeta: string | null = null;
+  // Thumbnail slot: real thumbnail for media posts (image falls back
+  // to its own URL; video without a thumbnail gets the video icon),
+  // a type icon in the same slot for text posts.
+  const thumbnailSrc =
+    media?.mediaType === 'image'
+      ? (media.thumbnailUrl ?? media.url)
+      : (media?.thumbnailUrl ?? null);
+  const showThumbnailImage = thumbnailSrc !== null;
+
+  // The pill: derived estimate for queued rows, published time for
+  // published rows. Nothing for failed/cancelled/publishing rows —
+  // their state lives in the middle line instead.
+  let pillText: string | null = null;
   if (isQueued && estimate) {
-    timeMeta = `Est. ${formatQueueTime(estimate.toISOString(), pageTimezone) ?? ''}`;
-  } else if (item.status === 'published' && item.publishedAt) {
-    timeMeta = `Published ${formatQueueTime(item.publishedAt, pageTimezone) ?? ''}`;
-  } else if (isFailed) {
-    timeMeta = `Retry ${item.retryCount} of ${item.maxRetries}`;
+    pillText = `Est. ${formatQueueTime(estimate.toISOString(), pageTimezone) ?? ''}`;
+  } else if (isPublished && item.publishedAt) {
+    pillText = `Published ${formatQueueTime(item.publishedAt, pageTimezone) ?? ''}`;
   }
 
   return (
-    <li data-testid={`queue-row-${item.id}`} className="py-4">
-      {/* The post itself: caption as body text, then the attachment. */}
-      {item.caption ? (
-        <p className="m-0 text-body text-ink line-clamp-4">{item.caption}</p>
+    <li
+      data-testid={`queue-row-${item.id}`}
+      className="flex flex-col gap-3 rounded-lg border border-line bg-panel p-4 md:flex-row md:flex-wrap md:items-center"
+    >
+      {/* Order controls: position number + up/down buttons, queued only. */}
+      {isQueued ? (
+        <div className="flex shrink-0 items-center gap-2">
+          {position !== null ? (
+            <span
+              data-testid="queue-row-position"
+              className="rounded bg-subtle px-2 py-0.5 font-mono text-xs font-semibold text-ink-sub"
+            >
+              {`#${position}`}
+            </span>
+          ) : null}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            data-testid="queue-row-move-up"
+            aria-label="Move up"
+            disabled={busy || !canMoveUp}
+            onClick={onMoveUp}
+          >
+            <ChevronUpIcon aria-hidden />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            data-testid="queue-row-move-down"
+            aria-label="Move down"
+            disabled={busy || !canMoveDown}
+            onClick={onMoveDown}
+          >
+            <ChevronDownIcon aria-hidden />
+          </Button>
+        </div>
       ) : null}
-      {media?.mediaType === 'image' ? (
-        <div data-testid="queue-row-media-preview" className="mt-3">
-          {/* Ratio from the stored aspect ratio; the height cap + auto
-              width keep the natural shape, never cropped. */}
+
+      {/* Thumbnail slot: real thumbnail, or the type icon for text. */}
+      <div
+        data-testid="queue-row-thumbnail"
+        className="relative flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-line bg-subtle"
+      >
+        {showThumbnailImage ? (
           <Image
-            src={media.url}
-            alt={media.name}
-            {...ratioDimensions(media.aspectRatio)}
-            className="h-auto max-h-80 w-auto max-w-full rounded-lg object-contain"
+            src={thumbnailSrc}
+            alt={media?.name ?? 'Post media'}
+            fill
+            className="object-cover"
           />
+        ) : (
+          <span className="text-ink-sub">
+            {media?.mediaType === 'video' ? (
+              <VideoIcon aria-hidden className="size-5" />
+            ) : media?.mediaType === 'image' ? (
+              <ImageIcon aria-hidden className="size-5" />
+            ) : (
+              <TypeIcon aria-hidden className="size-5" />
+            )}
+          </span>
+        )}
+      </div>
+
+      {/* Middle: type tag, caption, status, unmatched flag. */}
+      <div className="min-w-0 flex-1 space-y-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <Tag variant="outline">{typeLabel}</Tag>
+          <span className={isFailed ? 'text-brand-rose' : 'text-ink-sub'}>
+            {formatQueueStatus(item.status)}
+          </span>
+          {isFailed ? (
+            <span className="text-ink-sub">{`· Retry ${item.retryCount} of ${item.maxRetries}`}</span>
+          ) : null}
         </div>
-      ) : null}
-      {media?.mediaType === 'video' ? (
-        <div data-testid="queue-row-media-preview" className="mt-3">
-          <video
-            src={media.url}
-            poster={media.thumbnailUrl ?? undefined}
-            controls
-            preload="metadata"
-            className="max-h-80 w-auto max-w-full rounded-lg object-contain"
-          />
-        </div>
-      ) : null}
-      {/* Quiet meta: small muted pill + status + time, nothing more. */}
-      <p className="m-0 mt-2 flex flex-wrap items-center gap-2 text-metadata text-ink-sub">
-        <span className="inline-flex shrink-0 items-center rounded-full border border-line bg-subtle px-2 py-0.5 text-metadata text-ink-sub">
-          {typeLabel}
+        <p className="m-0 line-clamp-2 text-body text-ink">
+          {item.caption ? (
+            item.caption
+          ) : (
+            <span className="italic text-ink-sub">No caption</span>
+          )}
+        </p>
+        {isQueued && unmatched ? (
+          <p className="m-0 text-metadata text-brand-gold">{UNMATCHED_NOTE}</p>
+        ) : null}
+      </div>
+
+      {/* Estimate pill, gold-tinted like the old scheduled-time pill. */}
+      {pillText ? (
+        <span
+          data-testid="queue-row-estimate"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-brand-gold/20 bg-brand-gold/10 px-2.5 py-1 text-metadata font-semibold text-brand-gold"
+        >
+          <CalendarClockIcon aria-hidden className="size-3.5" />
+          {pillText}
         </span>
-        <span className={isFailed ? 'text-brand-rose' : undefined}>
-          {formatQueueStatus(item.status)}
-        </span>
-        {timeMeta ? <span>{`· ${timeMeta}`}</span> : null}
-      </p>
-      {isQueued && unmatched ? (
-        <p className="m-0 mt-1 text-metadata text-brand-gold">{UNMATCHED_NOTE}</p>
       ) : null}
-      {/* Compact, secondary actions — the post above is the row. */}
-      <div className="mt-2 flex flex-wrap items-center gap-1">
+
+      {/* Actions: primary for the row's state, then visible Edit/Delete.
+          Shrinkable + wrapping: at narrow tablet widths the buttons
+          drop to a second line instead of pushing the row off-screen. */}
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
         {isQueued ? (
-          <>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              data-testid="queue-row-move-up"
-              aria-label="Move up"
-              disabled={busy || !canMoveUp}
-              onClick={onMoveUp}
-            >
-              <ChevronUpIcon aria-hidden />
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              data-testid="queue-row-move-down"
-              aria-label="Move down"
-              disabled={busy || !canMoveDown}
-              onClick={onMoveDown}
-            >
-              <ChevronDownIcon aria-hidden />
-            </Button>
-            <Button
-              type="button"
-              variant="default"
-              size="sm"
-              data-testid="queue-row-publish-now"
-              disabled={busy}
-              onClick={onPublishNow}
-            >
-              Publish now
-            </Button>
-          </>
+          <Button
+            type="button"
+            variant="default"
+            size="sm"
+            data-testid="queue-row-publish-now"
+            disabled={busy}
+            onClick={onPublishNow}
+          >
+            Publish now
+          </Button>
         ) : null}
         {isFailed ? (
           <Button
@@ -191,37 +238,27 @@ export function QueueRow({
             Retry
           </Button>
         ) : null}
-        <Menu>
-          <MenuTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              data-testid="queue-row-menu"
-              aria-label="Row actions"
-              disabled={busy}
-            >
-              <MoreVerticalIcon aria-hidden />
-            </Button>
-          </MenuTrigger>
-          <MenuContent align="end">
-            <MenuItem
-              data-testid="queue-row-edit"
-              disabled={busy || isPublished}
-              onSelect={() => onEdit()}
-            >
-              Edit
-            </MenuItem>
-            <MenuItem
-              data-testid="queue-row-delete"
-              variant="destructive"
-              disabled={busy || isPublished}
-              onSelect={() => onDelete()}
-            >
-              Delete
-            </MenuItem>
-          </MenuContent>
-        </Menu>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          data-testid="queue-row-edit"
+          disabled={busy || isPublished}
+          onClick={onEdit}
+        >
+          Edit
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          data-testid="queue-row-delete"
+          disabled={busy || isPublished}
+          onClick={onDelete}
+          className="border-brand-rose/30 text-brand-rose hover:bg-brand-rose/10 hover:text-brand-rose"
+        >
+          Delete
+        </Button>
       </div>
     </li>
   );

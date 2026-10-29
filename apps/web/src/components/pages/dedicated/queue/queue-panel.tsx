@@ -385,7 +385,7 @@ export function QueuePanel({
         </div>
       ) : (
         <>
-          <ul className="m-0 flex list-none flex-col divide-y divide-line p-0">
+          <ul className="m-0 flex list-none flex-col gap-3 p-0">
             {items.map((item) => {
               const isQueued = item.status === 'queued';
               const orderIndex = queuedOrder.indexOf(item.id);
@@ -400,6 +400,7 @@ export function QueuePanel({
                 <QueueRow
                   key={item.id}
                   item={item}
+                  position={isQueued && orderIndex >= 0 ? orderIndex + 1 : null}
                   estimate={isQueued ? (estimates.get(item.id) ?? null) : null}
                   unmatched={unmatched}
                   pageTimezone={pageTimezone}

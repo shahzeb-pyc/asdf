@@ -215,50 +215,48 @@ describe('QueuePanel', () => {
   });
 
   it('disables edit and delete on published rows', async () => {
-    const user = userEvent.setup();
     renderPanel();
     await waitFor(() => expect(screen.getByTestId(`queue-row-${ID_D}`)).toBeTruthy());
     const row = within(screen.getByTestId(`queue-row-${ID_D}`));
-    // Edit/Delete live in the row menu (portalled when open), so they
-    // are disabled items there — visible but not actionable.
-    await user.click(row.getByTestId('queue-row-menu'));
-    const edit = screen.getByTestId('queue-row-edit');
-    const del = screen.getByTestId('queue-row-delete');
-    expect(edit.getAttribute('data-disabled')).not.toBeNull();
-    expect(edit.getAttribute('aria-disabled')).toBe('true');
-    expect(del.getAttribute('data-disabled')).not.toBeNull();
-    expect(del.getAttribute('aria-disabled')).toBe('true');
+    // Edit/Delete are visible buttons on the row, disabled — never removed.
+    const edit = row.getByTestId('queue-row-edit') as HTMLButtonElement;
+    const del = row.getByTestId('queue-row-delete') as HTMLButtonElement;
+    expect(edit.disabled).toBe(true);
+    expect(del.disabled).toBe(true);
     // Status and published time both say Published, so two matches is correct.
     expect(row.getAllByText(/Published/).length).toBeGreaterThan(0);
   });
 
-  it('renders content-first rows: body-size caption, muted pill in the meta, attachment preview for media', async () => {
+  it('renders structured card rows: position, thumbnail/icon slot, estimate pill, visible Edit/Delete', async () => {
     renderPanel();
     await waitFor(() => expect(screen.getByTestId(`queue-row-${ID_A}`)).toBeTruthy());
     const rowA = within(screen.getByTestId(`queue-row-${ID_A}`));
-    // Text posts: the caption IS the row — body size, clamped to a few
-    // lines, no preview box, no thumbnail.
+    // Queued text row: position #1 in true queue order, caption at
+    // readable size clamped to two lines, type tag, status, estimate pill.
+    expect(rowA.getByTestId('queue-row-position').textContent).toContain('#1');
     const captionA = rowA.getByText('First queued post');
     expect(captionA.className).toContain('text-body');
-    expect(captionA.className).toContain('line-clamp-4');
-    expect(rowA.queryByTestId('queue-row-media-preview')).toBeNull();
-    expect(rowA.queryByRole('img')).toBeNull();
-    // The type pill is small and muted in the meta line, not next to
-    // the caption competing with it; meta is status + time only.
+    expect(captionA.className).toContain('line-clamp-2');
     expect(rowA.getByText('Text')).toBeTruthy();
     expect(rowA.getByText('Queued')).toBeTruthy();
-    expect(rowA.getByText(/Est\./)).toBeTruthy();
-    // Media rows show a proper attachment preview below the caption.
+    expect(rowA.getByTestId('queue-row-estimate').textContent).toMatch(/Est\./);
+    // Text posts: the thumbnail slot holds a type icon, no image.
+    expect(rowA.getByTestId('queue-row-thumbnail')).toBeTruthy();
+    expect(rowA.queryByRole('img')).toBeNull();
+    // Media rows: position #2, real thumbnail in the slot (cover, not
+    // a full attachment preview), no video player in the row.
     const rowB = within(screen.getByTestId(`queue-row-${ID_B}`));
-    expect(rowB.getByTestId('queue-row-media-preview')).toBeTruthy();
-    const previewImg = rowB.getByRole('img');
-    expect(previewImg.className).toContain('max-h-80');
-    expect(previewImg.className).toContain('object-contain');
-    // Flat row, not a card panel.
-    expect(screen.getByTestId(`queue-row-${ID_A}`).className).not.toContain('bg-panel');
+    expect(rowB.getByTestId('queue-row-position').textContent).toContain('#2');
+    const thumbImg = rowB.getByRole('img');
+    expect(thumbImg.className).toContain('object-cover');
+    expect(rowB.queryByTestId('queue-row-media-preview')).toBeNull();
+    expect(screen.getByTestId(`queue-row-${ID_B}`).querySelector('video')).toBeNull();
+    // Structured card, not a flat divider row.
+    expect(screen.getByTestId(`queue-row-${ID_A}`).className).toContain('bg-panel');
+    expect(screen.getByTestId(`queue-row-${ID_A}`).className).toContain('rounded-lg');
   });
 
-  it('renders a video attachment preview with the thumbnail as poster', async () => {
+  it('renders a video thumbnail in the slot from the poster, never a player', async () => {
     seed = [
       item({
         id: ID_A,
@@ -279,26 +277,21 @@ describe('QueuePanel', () => {
     renderPanel();
     await waitFor(() => expect(screen.getByTestId(`queue-row-${ID_A}`)).toBeTruthy());
     const rowA = within(screen.getByTestId(`queue-row-${ID_A}`));
-    const preview = rowA.getByTestId('queue-row-media-preview');
-    const video = preview.querySelector('video');
-    expect(video).toBeTruthy();
-    expect(video?.getAttribute('src')).toBe('https://images.example.com/clip.mp4');
-    expect(video?.getAttribute('poster')).toBe('https://images.example.com/clip-poster.jpg');
-    expect(video?.className).toContain('max-h-80');
-    // No caption: the preview leads the row.
-    expect(rowA.queryByText('First queued post')).toBeNull();
+    const thumb = rowA.getByTestId('queue-row-thumbnail');
+    const img = within(thumb).getByRole('img');
+    expect(img.getAttribute('src')).toContain('clip-poster.jpg');
+    expect(screen.getByTestId(`queue-row-${ID_A}`).querySelector('video')).toBeNull();
+    // Empty caption renders as an italic placeholder, not a blank middle.
+    expect(rowA.getByText('No caption')).toBeTruthy();
   });
 
-  it('opens the row menu to reach Edit and Delete', async () => {
-    const user = userEvent.setup();
+  it('shows Edit and Delete as visible buttons on the row', async () => {
     renderPanel();
     await waitFor(() => expect(screen.getByTestId(`queue-row-${ID_A}`)).toBeTruthy());
     const row = within(screen.getByTestId(`queue-row-${ID_A}`));
-    // Closed menu renders no items.
-    expect(row.queryByTestId('queue-row-edit')).toBeNull();
-    await user.click(row.getByTestId('queue-row-menu'));
-    expect(screen.getByTestId('queue-row-edit')).toBeTruthy();
-    expect(screen.getByTestId('queue-row-delete')).toBeTruthy();
+    expect(row.getByTestId('queue-row-edit')).toBeTruthy();
+    expect(row.getByTestId('queue-row-delete')).toBeTruthy();
+    expect(row.queryByTestId('queue-row-menu')).toBeNull();
   });
 
   it('shows Retry as the primary action on failed rows, no Publish now', async () => {
@@ -346,8 +339,7 @@ describe('QueuePanel', () => {
     renderPanel();
     await waitFor(() => expect(screen.getByTestId(`queue-row-${ID_A}`)).toBeTruthy());
     const row = within(screen.getByTestId(`queue-row-${ID_A}`));
-    await user.click(row.getByTestId('queue-row-menu'));
-    await user.click(screen.getByTestId('queue-row-edit'));
+    await user.click(row.getByTestId('queue-row-edit'));
     const textarea = screen.getByTestId('queue-edit-caption') as HTMLTextAreaElement;
     expect(textarea.value).toBe('First queued post');
     await user.clear(textarea);
@@ -364,8 +356,7 @@ describe('QueuePanel', () => {
     renderPanel();
     await waitFor(() => expect(screen.getByTestId(`queue-row-${ID_C}`)).toBeTruthy());
     const row = within(screen.getByTestId(`queue-row-${ID_C}`));
-    await user.click(row.getByTestId('queue-row-menu'));
-    await user.click(screen.getByTestId('queue-row-delete'));
+    await user.click(row.getByTestId('queue-row-delete'));
     await user.click(screen.getByTestId('queue-delete-confirm-btn'));
     await waitFor(() => expect(apiDelete).toHaveBeenCalled());
     expect(String(apiDelete.mock.calls[0][0])).toContain(`/publishing/queue/${ID_C}`);
