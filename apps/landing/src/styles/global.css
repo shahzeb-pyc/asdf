@@ -273,6 +273,81 @@
   animation: orbit-counter 24s linear infinite;
 }
 
+/* ---- Section 3 community banner: black card, corner blobs ----
+   Modelled on the reference screenshot's layout only (black card,
+   white bold centred heading, gold number highlight, dark corner
+   blobs each with one small pink dot). The blobs are pure
+   decoration: they sit tucked into the four corners, clipped by
+   the card's overflow-hidden, and the heading sits above them
+   (z-index) so they never cover text. Static — no animation. */
+.community-highlight {
+  display: inline-block;
+  background-color: #f0b90b;
+  color: #111111;
+  border-radius: 6px;
+  padding: 0.02em 0.12em;
+}
+.community-blob {
+  position: absolute;
+  width: 96px;
+  height: 96px;
+  background-color: #1a1a1a;
+  pointer-events: none;
+}
+@media (min-width: 640px) {
+  .community-blob {
+    width: 180px;
+    height: 180px;
+  }
+}
+.community-blob-tl {
+  top: -36px;
+  left: -36px;
+  border-radius: 58% 42% 55% 45% / 52% 48% 52% 48%;
+  transform: rotate(-12deg);
+}
+.community-blob-tr {
+  top: -36px;
+  right: -36px;
+  border-radius: 42% 58% 45% 55% / 48% 52% 48% 52%;
+  transform: rotate(14deg);
+}
+.community-blob-bl {
+  bottom: -36px;
+  left: -36px;
+  border-radius: 45% 55% 42% 58% / 52% 48% 52% 48%;
+  transform: rotate(10deg);
+}
+.community-blob-br {
+  bottom: -36px;
+  right: -36px;
+  border-radius: 55% 45% 58% 42% / 48% 52% 48% 52%;
+  transform: rotate(-14deg);
+}
+.community-dot {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 9999px;
+  background-color: #ff2d78;
+}
+.community-blob-tl .community-dot {
+  bottom: 26px;
+  right: 34px;
+}
+.community-blob-tr .community-dot {
+  bottom: 26px;
+  left: 34px;
+}
+.community-blob-bl .community-dot {
+  top: 26px;
+  right: 34px;
+}
+.community-blob-br .community-dot {
+  top: 26px;
+  left: 34px;
+}
+
 /* ---- Reduced motion: everything instant and still ----
    With animation: none, every element falls back to its base state:
    hero fully visible, highlight fully gold (base background-size

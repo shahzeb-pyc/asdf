@@ -186,5 +186,29 @@ const signin = 'https://app.fbuploadpro.com/login';
         </section>
       </main>
     </div>
+
+    {/* ===== SECTION 3 — COMMUNITY BANNER =====
+        Black card on the grey page background, modelled on the
+        reference screenshot's layout only (black card, white bold
+        centred heading, gold number highlight, dark corner blobs
+        each with one small pink dot). NOT full-page: generous
+        vertical padding only, so it reads as a banner after the
+        full-page section 2. Heading copy is exactly Shahzeb's:
+        "Join our community" / "of 700+ members", only "700+" gold.
+        No subhead, no CTA, no platform name, no link, no other
+        number, no other claim. The card sits OUTSIDE the hero
+        white card so section 2's full-page layout is untouched. */}
+    <section class="mt-2 sm:mt-4" aria-label="Community">
+      <div class="relative overflow-hidden rounded-[24px] bg-[#0b0e11] px-5 py-16 text-center shadow-[0_20px_60px_rgba(17,17,17,0.12)] sm:py-20 lg:py-24">
+        <span class="community-blob community-blob-tl" aria-hidden="true"><span class="community-dot"></span></span>
+        <span class="community-blob community-blob-tr" aria-hidden="true"><span class="community-dot"></span></span>
+        <span class="community-blob community-blob-bl" aria-hidden="true"><span class="community-dot"></span></span>
+        <span class="community-blob community-blob-br" aria-hidden="true"><span class="community-dot"></span></span>
+        <h2 class="relative z-10 mx-auto text-[clamp(28px,8vw,64px)] leading-[1.1] font-bold tracking-tight text-white">
+          <span class="block">Join our community</span>
+          <span class="mt-1 block whitespace-nowrap">of <span class="community-highlight">700+</span> members</span>
+        </h2>
+      </div>
+    </section>
   </div>
 </Layout>
