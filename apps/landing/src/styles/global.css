@@ -103,18 +103,14 @@
   animation: highlight-sweep 0.7s ease-out 0.1s backwards;
 }
 
-/* ---- Section 2 heading highlight: multi-line safe, STATIC ----
-   The hero's .hero-highlight is an inline padded background with a
-   sweep. That works for the hero's single line, but when section 2's
-   phrase wraps to two lines at a tight 1.05 line-height, the inline
-   padding overflows its line box and overlaps/clips neighbouring
-   lines (the bug in Shahzeb's screenshot: "login." overlapped, "it
-   manages" clipped). Fix, section 2 only: each gold phrase is its
-   own line, and the gold itself is an INLINE-BLOCK (not inline), so
-   its line box grows to contain its padding instead of overflowing
-   into the next line. A small mt gap separates the bars. No sweep
-   animation here — static gold, so multi-line rendering cannot be
-   broken by background-size animation. .hero-highlight is untouched. */
+/* ---- Section 2 heading highlight: single word, STATIC ----
+   Only the word "manages" is gold in the section 2 heading (the
+   earlier two gold bars for "it manages" / "FBUploadPro" are gone).
+   The gold itself is an INLINE-BLOCK (not inline), so its line box
+   grows to contain its padding instead of overflowing into the
+   next line, and each heading line is its own block with a small
+   mt gap, so no line overlaps or clips another. No sweep animation
+   here — static gold. .hero-highlight is untouched. */
 .section-highlight {
   display: inline-block;
   background-color: #f0b90b;
