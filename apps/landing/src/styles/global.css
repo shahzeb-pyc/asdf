@@ -21,6 +21,9 @@
     background-color: #ffffff;
     scroll-snap-type: y mandatory;
     scroll-behavior: smooth;
+    /* Fixed-topbar offset: snapped sections land below the pill
+       instead of under it. Layer 1 of the one-step scroll fix. */
+    scroll-padding-top: 84px;
   }
   @media (max-width: 767px) {
     /* Phones: proximity, not mandatory — a stacked section 2 taller
@@ -63,6 +66,11 @@
 .snap-section {
   min-height: 100vh;
   scroll-snap-align: start;
+  /* Layer 1: a single fling must stop at the FIRST snap point it
+     crosses, not fly past intermediate sections. This alone stops
+     skipping in native scrolling; the JS controller in index.astro
+     adds the deterministic one-step guarantee on top of it. */
+  scroll-snap-stop: always;
 }
 @supports (height: 100dvh) {
   .snap-section {
