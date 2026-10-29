@@ -5,6 +5,7 @@ import {
   PublishNowTempMediaDeleteResponseSchema,
   PublishNowTempMediaRequestSchema,
   PublishNowTempMediaResponseSchema,
+  publishNowValidationMessage,
 } from '@fbuploadpro/contracts';
 import { extractConnectSession } from '@/lib/connect/session';
 import { canAccessTenant } from '@fbuploadpro/contracts';
@@ -56,7 +57,11 @@ export async function POST(
   const parsed = PublishNowTempMediaRequestSchema.safeParse(bodyResult.value);
   if (!parsed.success) {
     return NextResponse.json(
-      { error: 'INVALID_REQUEST', details: parsed.error.flatten() },
+      {
+        error: 'INVALID_REQUEST',
+        message: publishNowValidationMessage(parsed.error),
+        details: parsed.error.flatten(),
+      },
       { status: 400 }
     );
   }
@@ -131,7 +136,11 @@ export async function DELETE(
   );
   if (!parsed.success) {
     return NextResponse.json(
-      { error: 'INVALID_REQUEST', details: parsed.error.flatten() },
+      {
+        error: 'INVALID_REQUEST',
+        message: publishNowValidationMessage(parsed.error),
+        details: parsed.error.flatten(),
+      },
       { status: 400 }
     );
   }

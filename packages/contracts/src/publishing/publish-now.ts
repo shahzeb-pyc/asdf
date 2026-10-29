@@ -33,13 +33,20 @@ export type PublishNowTarget = z.infer<typeof PublishNowTargetSchema>;
 export const PublishNowMediaSchema = z
   .object({
     source: z.enum(['library', 'temp']),
-    mediaId: z.string().uuid().nullable(),
-    tempKey: z.string().min(1).nullable(),
+    // Validation fix (2026-10-29, bare INVALID_REQUEST): these fields
+    // are .nullish(), not just .nullable() — a client may legitimately
+    // omit a field it has no value for (JSON.stringify drops
+    // undefined), and an absent field must be treated as null, not
+    // as a validation failure. The superRefine below still enforces
+    // the source-specific requirement (library needs mediaId, temp
+    // needs tempKey), so nothing safety-critical is loosened.
+    mediaId: z.string().uuid().nullish(),
+    tempKey: z.string().min(1).nullish(),
     url: z.string().url(),
     mediaType: z.enum(['image', 'video']),
-    aspectRatio: z.string().nullable(),
-    width: z.number().int().positive().nullable(),
-    height: z.number().int().positive().nullable(),
+    aspectRatio: z.string().nullish(),
+    width: z.number().int().positive().nullish(),
+    height: z.number().int().positive().nullish(),
     name: z.string().min(1).max(255),
   })
   .superRefine((media, ctx) => {
@@ -160,7 +167,14 @@ export const PUBLISH_NOW_TEMP_MAX_FILE_SIZE_BYTES = 524288000;
 export const PublishNowTempMediaRequestSchema = z.object({
   fileName: z.string().trim().min(1).max(255),
   fileSize: z.number().int().positive().max(PUBLISH_NOW_TEMP_MAX_FILE_SIZE_BYTES),
-  mimeType: z.enum(PublishNowTempMimeTypes),
+  // Browser alias: some browsers report JPEG files as image/jpg,
+  // which is not in the allowlist. Normalise that one genuine alias
+  // to image/jpeg before the enum check; every other type still has
+  // to be in the allowlist, so this is not an open-ended accept.
+  mimeType: z.preprocess(
+    (value) => (value === 'image/jpg' ? 'image/jpeg' : value),
+    z.enum(PublishNowTempMimeTypes)
+  ),
 });
 export type PublishNowTempMediaRequest = z.infer<
   typeof PublishNowTempMediaRequestSchema
@@ -186,6 +200,109 @@ export type PublishNowTempMediaDeleteRequest = z.infer<
 export const PublishNowTempMediaDeleteResponseSchema = z.object({
   deleted: z.boolean(),
 });
+
+// ==========================================
+// Human-readable validation messages
+// ==========================================
+// Added 2026-10-29 after a bare "INVALID_REQUEST" reached the user:
+// the Publish Now routes used to return { error, details } with no
+// message for schema failures, and the client then displayed the
+// code itself. Every schema failure in these routes must now carry
+// this message, which names the actual problem in plain user
+// language. It describes only the FIRST issue (the one most likely
+// to be the cause) — the full flattened details are still returned
+// alongside it for debugging. Raw Zod wording is never surfaced.
+
+const VALIDATION_FIELD_LABELS: Record<string, string> = {
+  caption: 'Text',
+  postType: 'Post type',
+  firstComment: 'First comment',
+  targets: 'Pages',
+  accountId: 'A selected page',
+  fbPageId: 'A selected page',
+  pageName: 'A selected page',
+  media: 'Media',
+  mediaId: 'Media',
+  tempKey: 'Media',
+  url: 'Media',
+  mediaType: 'Media',
+  aspectRatio: 'Media',
+  width: 'Media',
+  height: 'Media',
+  name: 'File name',
+  source: 'Media',
+  fileName: 'File name',
+  fileSize: 'File size',
+  mimeType: 'File type',
+  key: 'File',
+};
+
+function validationFieldLabel(path: (string | number)[]): string {
+  for (let i = path.length - 1; i >= 0; i -= 1) {
+    const label = VALIDATION_FIELD_LABELS[String(path[i])];
+    if (label) return label;
+  }
+  return 'This request';
+}
+
+export function publishNowValidationMessage(error: z.ZodError): string {
+  const first = error.issues[0];
+  if (!first) {
+    return 'The request could not be understood. Please check your post and try again.';
+  }
+  // Custom issues (e.g. the media superRefine) already carry plain
+  // wording — use them as written.
+  if (first.code === z.ZodIssueCode.custom) return first.message;
+  const label = validationFieldLabel(first.path);
+  const path = first.path.map(String);
+  const last = path[path.length - 1];
+
+  if (first.code === z.ZodIssueCode.too_big) {
+    if (last === 'targets') {
+      return 'You can publish to at most 50 pages at once.';
+    }
+    if (last === 'caption') {
+      return 'Text exceeds the 63,206-character limit.';
+    }
+    if (last === 'firstComment') {
+      return 'First comment exceeds the 8,000-character limit.';
+    }
+    if (last === 'fileSize') {
+      return 'This file is over the 500 MB limit.';
+    }
+    return `${label} is too long.`;
+  }
+  if (first.code === z.ZodIssueCode.too_small) {
+    if (last === 'targets') {
+      return 'Please select at least one page.';
+    }
+    if (last === 'fileSize') {
+      return 'The file appears to be empty. Please choose a different file.';
+    }
+    if (first.type === 'array' || first.type === 'string') {
+      return `${label} is missing.`;
+    }
+    return `${label} is not valid.`;
+  }
+  if (first.code === z.ZodIssueCode.invalid_type) {
+    return first.received === 'undefined'
+      ? `${label} is missing.`
+      : `${label} is not valid.`;
+  }
+  if (first.code === z.ZodIssueCode.invalid_enum_value) {
+    if (last === 'mimeType' || last === 'mediaType') {
+      return 'This file type is not supported. Choose an image or video.';
+    }
+    return `${label} is not valid.`;
+  }
+  if (first.code === z.ZodIssueCode.invalid_string) {
+    if (first.validation === 'url') {
+      return `${label} link is not valid.`;
+    }
+    return `${label} is not valid.`;
+  }
+  return 'The request could not be understood. Please check your post and try again.';
+}
 export type PublishNowTempMediaDeleteResponse = z.infer<
   typeof PublishNowTempMediaDeleteResponseSchema
 >;

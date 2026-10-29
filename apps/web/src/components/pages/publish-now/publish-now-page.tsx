@@ -125,6 +125,9 @@ const TEMP_MIME_TYPES = new Set([
   'video/quicktime',
   'video/webm',
   'image/jpeg',
+  // Browser alias for JPEG, normalised to image/jpeg before the
+  // temp-media request (the server accepts the same alias).
+  'image/jpg',
   'image/png',
   'image/webp',
 ]);
@@ -132,9 +135,56 @@ const TEMP_MAX_FILE_SIZE_BYTES = 524288000;
 /** First comment max, from the old schedule validations (8,000). */
 const FIRST_COMMENT_MAX_LENGTH = 8000;
 
+/**
+ * Plain words for a server validation body's fieldErrors, used only
+ * when the server sent no human message at all (a legacy bare
+ * "INVALID_REQUEST" body). The raw code is never shown to the user.
+ */
+function validationDetailsMessage(cause: unknown): string | null {
+  if (cause === null || typeof cause !== 'object') return null;
+  const details = (cause as Record<string, unknown>).details;
+  if (details === null || typeof details !== 'object') return null;
+  const fieldErrors = (details as Record<string, unknown>).fieldErrors;
+  if (fieldErrors === null || typeof fieldErrors !== 'object') return null;
+  const entries = Object.entries(fieldErrors as Record<string, unknown>);
+  const first = entries.find(([, messages]) => Array.isArray(messages) && messages.length > 0);
+  if (!first) return null;
+  const [path, messages] = first as [string, string[]];
+  const labelMap: Record<string, string> = {
+    caption: 'Text',
+    postType: 'Post type',
+    firstComment: 'First comment',
+    targets: 'Pages',
+    media: 'Media',
+    fileName: 'File name',
+    fileSize: 'File size',
+    mimeType: 'File type',
+    key: 'File',
+  };
+  const lastSegment = path.split('.').pop() ?? path;
+  const label = labelMap[lastSegment] ?? labelMap[path] ?? 'This request';
+  const raw = messages[0] ?? '';
+  if (/required/i.test(raw) || /at least 1/i.test(raw)) return `${label} is missing.`;
+  if (/too long|at most|maximum/i.test(raw)) return `${label} is too long.`;
+  if (/invalid/i.test(raw)) return `${label} is not valid.`;
+  return `${label} is not valid.`;
+}
+
 function errorText(error: unknown, fallback: string): string {
-  if (isApiError(error) && error.message) return error.message;
-  if (error instanceof Error && error.message) return error.message;
+  if (isApiError(error)) {
+    // The server message is the display text. A bare code
+    // ("INVALID_REQUEST") is never shown: fall back to the field
+    // details the server sent, then to the generic fallback.
+    if (error.message && error.message !== 'INVALID_REQUEST') {
+      return error.message;
+    }
+    const fromDetails = validationDetailsMessage(error.cause);
+    if (fromDetails) return fromDetails;
+    return fallback;
+  }
+  if (error instanceof Error && error.message && error.message !== 'INVALID_REQUEST') {
+    return error.message;
+  }
   return fallback;
 }
 
@@ -605,14 +655,17 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
       setErrorMessage(null);
       try {
         const mediaType = file.type.startsWith('video/') ? 'video' : 'image';
+        // Normalise the image/jpg browser alias so the presigned
+        // upload's content type matches the temp-media request.
+        const mimeType = file.type === 'image/jpg' ? 'image/jpeg' : file.type;
         const upload = await api.post(
           buildTenantApiPath(subdomain, '/publishing/publish-now/temp-media'),
-          { fileName: file.name, fileSize: file.size, mimeType: file.type },
+          { fileName: file.name, fileSize: file.size, mimeType },
           { schema: PublishNowTempMediaResponseSchema }
         );
         const putResponse = await fetch(upload.uploadUrl, {
           method: 'PUT',
-          headers: { 'Content-Type': file.type },
+          headers: { 'Content-Type': mimeType },
           body: file,
         });
         if (!putResponse.ok) {

@@ -7,6 +7,7 @@ import {
   getTokenEncryptionKey,
   PublishNowRequestSchema,
   PublishNowResponseSchema,
+  publishNowValidationMessage,
   type PublishNowResult,
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
@@ -582,8 +583,15 @@ export async function POST(
   }
   const parsed = PublishNowRequestSchema.safeParse(bodyResult.value);
   if (!parsed.success) {
+    // Never a bare code: the message names the actual problem in
+    // plain language (see publishNowValidationMessage); details
+    // are kept alongside for debugging, never as the display text.
     return NextResponse.json(
-      { error: 'INVALID_REQUEST', details: parsed.error.flatten() },
+      {
+        error: 'INVALID_REQUEST',
+        message: publishNowValidationMessage(parsed.error),
+        details: parsed.error.flatten(),
+      },
       { status: 400 }
     );
   }
