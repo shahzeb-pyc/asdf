@@ -655,8 +655,10 @@ export function CreatePostsDialog({
           {/* Blocks list: flexes with the dialogue height, internal
               scroll only once the dialogue's own height is the
               limit — the footer below stays pinned, however many
-              posts are added. */}
-          <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1">
+              posts are added. Posts are separated by a single
+              hairline divider (divide-y), not by per-post cards:
+              the dialogue surface is the only surface. */}
+          <div className="flex min-h-0 flex-1 flex-col divide-y divide-line overflow-y-auto pr-1">
             {blocks.map((block, index) => {
               const isLast = index === blocks.length - 1;
               const isDraft = isLast && isBlockEmpty(block);
