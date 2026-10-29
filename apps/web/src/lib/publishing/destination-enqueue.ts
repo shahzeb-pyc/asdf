@@ -386,29 +386,54 @@ export async function insertDestinationQueueItem(
 }
 
 /**
+ * True only for a missing idempotency_key column: Postgres 42703
+ * (undefined column), PostgREST PGRST204 (schema-cache miss, which
+ * is how a missing column surfaces through PostgREST), or any error
+ * message naming the column. Nothing else counts — a failed heal
+ * must NOT silently proceed to a fresh insert (that is exactly how
+ * a retry duplicates), so every other error still throws.
+ */
+function isMissingIdempotencyColumn(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  const message = String(
+    (error as { message?: unknown } | null)?.message ?? error ?? ''
+  );
+  return (
+    code === '42703' ||
+    code === 'PGRST204' ||
+    message.includes('idempotency_key')
+  );
+}
+
+/**
  * Find a queue row previously inserted under one idempotency key —
  * the heal path for a result whose idempotency store failed. Returns
- * null (never throws) when the column does not exist yet, so
- * pre-migration deployments simply skip the heal.
+ * null when the idempotency_key column does not exist yet (migration
+ * 20261029120100 not applied), so pre-migration deployments simply
+ * skip the heal instead of 500ing every keyed enqueue. Every other
+ * error still throws to the route, which fails loudly with 500
+ * before executing — a failed heal never silently proceeds to a
+ * fresh insert.
  */
 export async function findQueueItemByIdempotencyKey(
   client: ConnectDbClient,
   workspaceId: string,
   idempotencyKey: string
 ): Promise<InsertedQueueItemRow | null> {
-  // No catch-and-return-null here, deliberately: this is the heal
-  // path, and a failed lookup must NOT silently proceed to a fresh
-  // insert (that is exactly how a retry duplicates). Errors throw
-  // to the route, which fails loudly with 500 before executing.
   if (isLegacyClient(client)) {
-    const rows = (await (client as DatabaseClient).query(
-      `SELECT ${RETURNING_COLUMNS}
-       FROM queue_items
-       WHERE workspace_id = $1 AND idempotency_key = $2
-       LIMIT 1`,
-      [workspaceId, idempotencyKey]
-    )) as InsertedQueueItemRow[];
-    return rows?.[0] ?? null;
+    try {
+      const rows = (await (client as DatabaseClient).query(
+        `SELECT ${RETURNING_COLUMNS}
+         FROM queue_items
+         WHERE workspace_id = $1 AND idempotency_key = $2
+         LIMIT 1`,
+        [workspaceId, idempotencyKey]
+      )) as InsertedQueueItemRow[];
+      return rows?.[0] ?? null;
+    } catch (error) {
+      if (isMissingIdempotencyColumn(error)) return null;
+      throw error;
+    }
   }
   const supabase = getRouteSupabase(client as SupabaseClient);
   if (!supabase) return null;
@@ -418,7 +443,10 @@ export async function findQueueItemByIdempotencyKey(
     .eq('workspace_id', workspaceId)
     .eq('idempotency_key', idempotencyKey)
     .maybeSingle();
-  if (error) throw error;
+  if (error) {
+    if (isMissingIdempotencyColumn(error)) return null;
+    throw error;
+  }
   if (!data) return null;
   return data as InsertedQueueItemRow;
 }

@@ -209,3 +209,83 @@ describe('findQueueItemByIdempotencyKey (Supabase path)', () => {
     expect(await findQueueItemByIdempotencyKey({} as never, WS, key)).toBeNull();
   });
 });
+
+describe('findQueueItemByIdempotencyKey missing-column handling', () => {
+  const key = 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb';
+  it('returns null (does not throw) for a missing idempotency_key column, on both paths', async () => {
+    // Supabase: Postgres 42703.
+    const pg42703 = {
+      from: () =>
+        chainable(() =>
+          Promise.resolve({
+            data: null,
+            error: { code: '42703', message: 'column does not exist' },
+          })
+        ),
+    };
+    expect(await findQueueItemByIdempotencyKey(pg42703 as never, WS, key)).toBeNull();
+    // Supabase/PostgREST: schema-cache miss PGRST204.
+    const pgrst204 = {
+      from: () =>
+        chainable(() =>
+          Promise.resolve({
+            data: null,
+            error: { code: 'PGRST204', message: 'schema cache miss' },
+          })
+        ),
+    };
+    expect(await findQueueItemByIdempotencyKey(pgrst204 as never, WS, key)).toBeNull();
+    // Supabase: message naming the column, whatever the code.
+    const named = {
+      from: () =>
+        chainable(() =>
+          Promise.resolve({
+            data: null,
+            error: {
+              code: 'PGRST200',
+              message: "Could not find the 'idempotency_key' column",
+            },
+          })
+        ),
+    };
+    expect(await findQueueItemByIdempotencyKey(named as never, WS, key)).toBeNull();
+    // Legacy SQL: a thrown 42703.
+    const legacyMissing = {
+      query: async () => {
+        throw Object.assign(new Error('column "idempotency_key" does not exist'), {
+          code: '42703',
+        });
+      },
+    };
+    expect(await findQueueItemByIdempotencyKey(legacyMissing as never, WS, key)).toBeNull();
+  });
+
+  it('still throws for any other error, on both paths', async () => {
+    const supabaseOther = {
+      from: () =>
+        chainable(() =>
+          Promise.resolve({
+            data: null,
+            error: { code: '23505', message: 'conflict' },
+          })
+        ),
+    };
+    // Supabase errors are thrown as plain { code, message } objects,
+    // not Errors, so capture rather than using toThrow.
+    let caught: unknown;
+    try {
+      await findQueueItemByIdempotencyKey(supabaseOther as never, WS, key);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toMatchObject({ code: '23505' });
+    const legacyOther = {
+      query: async () => {
+        throw new Error('connection reset');
+      },
+    };
+    await expect(findQueueItemByIdempotencyKey(legacyOther as never, WS, key)).rejects.toThrow(
+      'connection reset'
+    );
+  });
+});

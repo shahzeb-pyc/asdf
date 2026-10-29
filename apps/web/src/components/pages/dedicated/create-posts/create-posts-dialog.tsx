@@ -670,7 +670,10 @@ export function CreatePostsDialog({
         if (!item) continue;
         let idempotencyKey = idempotencyKeysRef.current.get(block.id);
         if (!idempotencyKey) {
-          idempotencyKey = crypto.randomUUID();
+          // newKey() (not crypto.randomUUID() directly): without a
+          // secure source it throws cleanly here, instead of the
+          // loop crashing on an undefined randomUUID mid-run.
+          idempotencyKey = newKey();
           idempotencyKeysRef.current.set(block.id, idempotencyKey);
         }
         setQueueProgress({

@@ -1,9 +1,16 @@
 -- Queue-item idempotency key (Create Posts duplicate fix, 2026-10-29).
 --
--- WRITTEN BUT NOT APPLIED TO PROD. The web code falls back gracefully
--- when this column does not exist yet (insert without it, heal lookup
--- returns null), so applying this migration is safe at any time and
--- only strengthens the duplicate protection.
+-- WRITTEN BUT NOT APPLIED TO PROD. The web code works before this
+-- migration is applied, with one deliberate limit: inserts fall back
+-- to inserting without the column, and the heal lookup returns null
+-- ONLY for missing-column errors (Postgres 42703, PostgREST PGRST204,
+-- or a message naming idempotency_key) — every other heal error
+-- still throws and the route 500s before executing, so a failed heal
+-- never silently proceeds to a fresh insert. Until this migration is
+-- applied, the heal cannot find a row by key (there is no column to
+-- find it by), so the key-column duplicate protection only takes
+-- full effect once this migration is applied. Apply it manually
+-- after merge; there is no broken-composer window either way.
 --
 -- Why a second guard when idempotency_keys already exists: the
 -- idempotency result is stored AFTER the queue insert. If that store
