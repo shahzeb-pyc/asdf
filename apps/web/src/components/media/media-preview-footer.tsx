@@ -26,6 +26,12 @@ export interface MediaPreviewFooterProps {
   onCancel: () => void;
   onSave: () => void;
   /**
+   * Picker use: hide the default "Save changes" button entirely, so
+   * a preview that cannot save never shows a dead Save. A
+   * primaryAction (single-mode Attach) still renders when present.
+   */
+  hideSave?: boolean | undefined;
+  /**
    * Picker single-attach use (P7): replaces "Save changes" with one
    * explicit action — "Attach this file" — so tapping a tile never
    * attaches instantly; the user previews first, then attaches.
@@ -43,6 +49,7 @@ export function MediaPreviewFooter({
   onDelete,
   onCancel,
   onSave,
+  hideSave = false,
   primaryAction,
 }: Readonly<MediaPreviewFooterProps>) {
   const isBusy = isSaving || isDeleting;
@@ -87,7 +94,7 @@ export function MediaPreviewFooter({
             >
               {primaryAction.label}
             </Button>
-          ) : (
+          ) : hideSave ? null : (
             <Button
               data-testid="modal-save-caption-btn"
               disabled={isBusy}

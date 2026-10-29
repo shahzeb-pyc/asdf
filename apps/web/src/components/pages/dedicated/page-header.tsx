@@ -29,10 +29,9 @@
  *   (only `accountDisplayName`), so the connected account renders an
  *   initials avatar. Surfacing a real account picture is a follow-up
  *   that needs an API/contract field — it is NOT expanded here.
- * - Create Posts is rendered only: `onCreatePosts` is optional and the
- *   shell leaves it unhandled, so clicking the button does nothing yet.
- *   The Create Posts dialogue is separate later work, by Shahzeb's
- *   scoping — the no-op is intentional, not a bug.
+ * - Create Posts opens the Create Posts dialogue (wired by the shell);
+ *   `onCreatePosts` is optional only so the header can render without
+ *   a handler in tests.
  */
 
 import * as React from 'react';
@@ -83,9 +82,7 @@ export interface DedicatedPageHeaderProps {
   subdomain: string;
   onStatusToggle: (nextStatus: 'active' | 'paused') => Promise<void>;
   onDisconnectRequest: () => void | Promise<void>;
-  /** Optional for now: the shell leaves this unhandled, so the Create
-   * Posts button intentionally does nothing until the dialogue work
-   * lands. */
+  /** Opens the Create Posts dialogue; optional only for test renders. */
   onCreatePosts?: (() => void) | undefined;
 }
 

@@ -53,6 +53,7 @@ import {
 import {
   ListQueueItemsResponseSchema,
   ListQueueSlotsResponseSchema,
+  type ListQueueItemsResponse,
   PageQueueSlotSchema,
   UpdateScheduleTimezoneResponseSchema,
   type ListQueueSlotsResponse,
@@ -242,14 +243,39 @@ export default function TenantDedicatedPageView({
     [slotsQuery.data]
   );
 
+  // Estimates tick: passing time moves estimates even without a
+  // refetch (a slot passing, a claim firing), so recompute on a
+  // 60-second clock instead of freezing `now` at the last fetch.
+  const [estimateNow, setEstimateNow] = React.useState(() => new Date());
+  React.useEffect(() => {
+    const timer = setInterval(() => setEstimateNow(new Date()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+
   const queueQuery = useQuery({
     queryKey: tenant.queue.items(pageId),
-    queryFn: ({ signal }) =>
-      api.get(queuePath, {
-        schema: ListQueueItemsResponseSchema,
-        query: { pageId },
-        signal,
-      }),
+    // The list route caps at 100 per page, but estimates must see
+    // the FULL queued set: with only the first page, posts past it
+    // got no estimate and visible ones ignored the backlog ahead
+    // of them. Page through until the total is reached (bounded:
+    // 100 pages max, so a runaway total cannot loop forever).
+    queryFn: async ({ signal }) => {
+      const all: ListQueueItemsResponse['items'] = [];
+      let offset = 0;
+      let total = 0;
+      for (let pageCount = 0; pageCount < 100; pageCount += 1) {
+        const res = await api.get(queuePath, {
+          schema: ListQueueItemsResponseSchema,
+          query: { pageId, limit: 100, offset },
+          signal,
+        });
+        all.push(...res.items);
+        total = res.total;
+        if (all.length >= total || res.items.length < 100) break;
+        offset += 100;
+      }
+      return { items: all, total, limit: 100, offset: 0 };
+    },
     enabled: Boolean(subdomain && pageId),
   });
   const queueItems = React.useMemo(
@@ -275,7 +301,7 @@ export default function TenantDedicatedPageView({
         })),
         timezone: pageTimezone,
         posts: queued.map((item) => ({ id: item.id, format: item.postFormat })),
-        now: new Date(),
+        now: estimateNow,
       });
       return queueItems.map((item) => ({
         id: item.id,
@@ -294,7 +320,7 @@ export default function TenantDedicatedPageView({
         thumbnailUrl: item.media?.thumbnailUrl ?? null,
       }));
     },
-    [queueItems, slots, pageTimezone]
+    [queueItems, slots, pageTimezone, estimateNow]
   );
   // The timezone review counts all queued posts: under
   // publisher-driven scheduling there are no slot links and no

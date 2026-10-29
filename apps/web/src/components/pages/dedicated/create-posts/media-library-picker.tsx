@@ -87,13 +87,16 @@ import {
 } from '@/components/shared/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shared/ui/tabs';
 import {
+  MEDIA_LIST_LIMIT,
   mediaFoldersQuery,
   mediaListQuery,
   invalidateMediaAll,
   invalidateMediaList,
   toMediaFolder,
+  toMediaItemResponse,
   useUpdateItemCaption,
 } from '@/components/media/media-data';
+import { MediaListResponseSchema } from '@/lib/api/schemas/media';
 import { MediaAssetCard } from '@/components/media/media-asset-card';
 import { MediaTableRow } from '@/components/media/media-table-row';
 import {
@@ -252,6 +255,12 @@ export function MediaLibraryPicker({
     React.useState<CaptionStatusFilterKey>('all');
   const [sortOption, setSortOption] = React.useState<SortOptionKey>('created_at:desc');
   const [previewItem, setPreviewItem] = React.useState<MediaItemResponse | null>(null);
+  // Picker-local Load more: pages beyond the shared 500-item list,
+  // kept out of the library page's shared cache (its query key is
+  // untouched). Reset with the rest of the picker session below.
+  const [extraMediaItems, setExtraMediaItems] = React.useState<MediaItemResponse[]>([]);
+  const [extraTotal, setExtraTotal] = React.useState<number | null>(null);
+  const [loadingMore, setLoadingMore] = React.useState(false);
   // Style A top section: the filter/sort controls live behind the
   // Filters button instead of sitting out as always-visible
   // dropdowns. Closed by default, reset on every open.
@@ -265,10 +274,16 @@ export function MediaLibraryPicker({
     () => foldersQuery.data ?? [],
     [foldersQuery.data]
   );
-  const mediaItems = React.useMemo<MediaItemResponse[]>(
+  const sharedMediaItems = React.useMemo<MediaItemResponse[]>(
     () => itemsQuery.data ?? [],
     [itemsQuery.data]
   );
+  const mediaItems = React.useMemo<MediaItemResponse[]>(() => {
+    if (extraMediaItems.length === 0) return sharedMediaItems;
+    const seen = new Set(sharedMediaItems.map((item) => item.id));
+    const extra = extraMediaItems.filter((item) => !seen.has(item.id));
+    return [...sharedMediaItems, ...extra];
+  }, [sharedMediaItems, extraMediaItems]);
   const isLoading = itemsQuery.isPending || foldersQuery.isPending;
   const isError = itemsQuery.isError || foldersQuery.isError;
 
@@ -298,6 +313,9 @@ export function MediaLibraryPicker({
     setSortOption('created_at:desc');
     setPreviewItem(null);
     setFiltersOpen(false);
+    setExtraMediaItems([]);
+    setExtraTotal(null);
+    setLoadingMore(false);
     singleAttachedRef.current = false;
     pendingInvalidationRef.current = false;
     prevActiveCountRef.current = 0;
@@ -412,6 +430,32 @@ export function MediaLibraryPicker({
     void foldersQuery.refetch();
   }, [itemsQuery, foldersQuery]);
 
+  const handleLoadMore = React.useCallback(async () => {
+    if (loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const res = await api.get(buildTenantApiPath(subdomain, '/media'), {
+        schema: MediaListResponseSchema,
+        query: {
+          limit: MEDIA_LIST_LIMIT,
+          offset: MEDIA_LIST_LIMIT + extraMediaItems.length,
+        },
+      });
+      setExtraTotal(res.total);
+      setExtraMediaItems((prev) => {
+        const seen = new Set(prev.map((item) => item.id));
+        const fresh = res.items
+          .map(toMediaItemResponse)
+          .filter((item) => !seen.has(item.id));
+        return [...prev, ...fresh];
+      });
+    } catch (error) {
+      reportError(error, { source: 'media-picker-load-more' });
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, subdomain, extraMediaItems.length]);
+
   // Selection: the library's own model (checkbox + shift-range).
   // Single mode previews first (P7): every select/preview gesture
   // opens the library preview with an "Attach this file" button
@@ -431,12 +475,27 @@ export function MediaLibraryPicker({
     [mode, mediaItems, displayedMediaItems]
   );
 
+  // Select-all compares MEMBERSHIP, not counts: selection persists
+  // across folders, so a count coincidence (2 picked in Folder A,
+  // 2 shown in Folder B) must never wipe the Folder A picks.
+  const allDisplayedSelected =
+    displayedMediaItems.length > 0 &&
+    displayedMediaItems.every((item) => selectedIds.includes(item.id));
   const handleSelectAll = React.useCallback(() => {
-    setSelectedIds((prev) =>
-      prev.length === displayedMediaItems.length
-        ? []
-        : displayedMediaItems.map((item) => item.id)
-    );
+    setSelectedIds((prev) => {
+      const displayedIds = new Set(displayedMediaItems.map((item) => item.id));
+      const allSelected = displayedMediaItems.every((item) =>
+        prev.includes(item.id)
+      );
+      if (allSelected) {
+        // Deselect only the displayed items; picks in other folders stay.
+        return prev.filter((id) => !displayedIds.has(id));
+      }
+      const missing = displayedMediaItems
+        .map((item) => item.id)
+        .filter((id) => !prev.includes(id));
+      return [...prev, ...missing];
+    });
   }, [displayedMediaItems]);
 
   const handlePreview = React.useCallback(
@@ -686,21 +745,20 @@ export function MediaLibraryPicker({
                 Type / Ratio / Captions / Sort controls live behind
                 the Filters button (same menu pieces as the library
                 toolbar, same testids) instead of sitting out as
-                always-visible dropdowns. Search behaviour is the
-                library's: typing a query resets the local filters. */}
+                always-visible dropdowns. Search and filters combine
+                here — unlike the library page, typing a query never
+                resets the local filters. */}
             <div className="flex min-w-0 items-center gap-2">
               <SearchIcon className="size-4 shrink-0 text-ink-dim" aria-hidden />
               <Input
                 type="search"
                 data-testid="media-search-input"
                 value={searchInput}
+                // Search NEVER resets filters: silently wiping a
+                // user's Type/Ratio/Captions choices on first keystroke
+                // was a data-loss trap. Search and filters combine.
                 onChange={(e) => {
                   setSearchInput(e.target.value);
-                  if (e.target.value.trim().length > 0) {
-                    setMediaTypeFilter('all');
-                    setAspectRatioFilter('all');
-                    setCaptionStatusFilter('all');
-                  }
                 }}
                 placeholder="Search files and captions…"
                 aria-label="Search files and captions"
@@ -744,6 +802,13 @@ export function MediaLibraryPicker({
                 </TabsList>
               </Tabs>
             </div>
+
+            {debouncedSearch && activeFilterCount > 0 && (
+              <p className="mt-2 text-metadata text-ink-sub">
+                Search and filters are both applied — your filters were
+                kept.
+              </p>
+            )}
 
             {filtersOpen && (
               <div
@@ -880,9 +945,7 @@ export function MediaLibraryPicker({
                   onClick={handleSelectAll}
                   className="h-11 px-2 text-metadata text-ink-sub hover:text-ink md:h-10"
                 >
-                  {selectedIds.length === displayedMediaItems.length
-                    ? 'Deselect all'
-                    : 'Select all'}
+                  {allDisplayedSelected ? 'Deselect all' : 'Select all'}
                 </Button>
               )}
             </div>
@@ -1086,6 +1149,32 @@ export function MediaLibraryPicker({
                   Showing {displayedMediaItems.length} of {totalMediaCount}{' '}
                   {totalMediaCount === 1 ? 'file' : 'files'}
                 </p>
+                {/* Truncation is disclosed, never hidden: the shared
+                    list stops at 500, so a larger library shows a
+                    Load more instead of a count that pretends the
+                    first 500 are everything. */}
+                {sharedMediaItems.length >= MEDIA_LIST_LIMIT &&
+                  (extraTotal === null || totalMediaCount < extraTotal) && (
+                    <div className="flex flex-wrap items-center gap-2 pt-2">
+                      <p className="text-xs text-ink-dim">
+                        Showing the first {totalMediaCount} files
+                        {extraTotal !== null
+                          ? ` of ${extraTotal} in your library`
+                          : ' — older files are not loaded yet'}
+                        .
+                      </p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        data-testid="media-picker-load-more-btn"
+                        disabled={loadingMore}
+                        onClick={() => void handleLoadMore()}
+                      >
+                        {loadingMore ? 'Loading…' : 'Load more'}
+                      </Button>
+                    </div>
+                  )}
               </>
             ) : isLoading ? (
               <div
@@ -1296,7 +1385,7 @@ export function MediaLibraryPicker({
         </Tabs>
 
         {mode === 'multi' && (
-          <div className="flex min-w-0 justify-end gap-2">
+          <div className="sticky bottom-0 flex min-w-0 justify-end gap-2 bg-panel pt-3">
             <Button
               type="button"
               variant="secondary"
@@ -1364,6 +1453,7 @@ export function MediaLibraryPicker({
           <MediaPreviewModal
             item={previewItem}
             open={previewItem !== null}
+            readOnlyMetadata
             onOpenChange={(next) => {
               if (!next) setPreviewItem(null);
             }}

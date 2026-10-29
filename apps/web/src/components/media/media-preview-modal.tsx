@@ -71,6 +71,12 @@ export interface MediaPreviewModalProps {
       ) => Promise<void> | void)
     | undefined;
   onDelete?: ((mediaId: string) => Promise<void> | void) | undefined;
+  /**
+   * Picker use: the picker is browse + select only, so its preview
+   * shows metadata read-only and no Save button. Defaults false
+   * (library page keeps full editing).
+   */
+  readOnlyMetadata?: boolean | undefined;
   /** P7: picker single-attach action, rendered instead of Save. */
   primaryAction?:
     | { label: string; onClick: () => void; testid?: string | undefined }
@@ -88,6 +94,7 @@ export function MediaPreviewModal({
   onSave,
   onUpdateThumbnail,
   onDelete,
+  readOnlyMetadata = false,
   primaryAction,
 }: Readonly<MediaPreviewModalProps>) {
   const [nameDraft, setNameDraft] = useState(() => item?.name || '');
@@ -120,7 +127,7 @@ export function MediaPreviewModal({
   };
 
   const handleSaveChanges = async () => {
-    if (!onSave || isBusy) return;
+    if (!onSave || isBusy || readOnlyMetadata) return;
     setIsSaving(true);
     setSaveError(null);
     try {
@@ -179,6 +186,7 @@ export function MediaPreviewModal({
               isDeleting={isDeleting}
               onNameChange={setNameDraft}
               onCaptionChange={setCaptionDraft}
+              readOnly={readOnlyMetadata}
             />
           </div>
 
@@ -190,6 +198,7 @@ export function MediaPreviewModal({
             onDelete={onDelete ? () => setShowDeleteConfirm(true) : undefined}
             onCancel={() => handleOpenChange(false)}
             onSave={handleSaveChanges}
+            hideSave={readOnlyMetadata && !primaryAction}
             primaryAction={primaryAction}
           />
         </DialogContent>
