@@ -242,6 +242,9 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
   const [isRetrying, setIsRetrying] = React.useState(false);
   const [results, setResults] = React.useState<PublishNowResultItem[]>([]);
   const [hasRun, setHasRun] = React.useState(false);
+  const [expandedDetails, setExpandedDetails] = React.useState<Set<string>>(
+    new Set()
+  );
   const tempKeysRef = React.useRef<Set<string>>(new Set());
   const tempInputRef = React.useRef<HTMLInputElement | null>(null);
 
@@ -590,7 +593,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
       const expectedKind = postType === 'image' ? 'image' : 'video';
       if (!file.type.startsWith(`${expectedKind}/`)) {
         setErrorMessage(
-          `This is a ${file.type.startsWith('video/') ? 'video' : 'file'}, but the post type is ${postType === 'image' ? 'Image' : postType === 'video' ? 'Video' : 'Reel'}. Switch the post type or pick matching media.`
+          `This is a ${file.type.startsWith('video/') ? 'video' : 'photo'}, but the post type is ${postType === 'image' ? 'Image' : postType === 'video' ? 'Video' : 'Reel'}. Switch the post type or pick matching media.`
         );
         return;
       }
@@ -613,7 +616,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
           body: file,
         });
         if (!putResponse.ok) {
-          throw new Error('The upload to storage failed.');
+          throw new Error('The upload failed. Please try again.');
         }
         tempKeysRef.current.add(upload.key);
         const dimensions = await mediaDimensions(file, mediaType);
@@ -649,7 +652,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
         setAttachChoiceOpen(false);
       } catch (error) {
         setErrorMessage(
-          errorText(error, 'The temporary upload failed. Please try again.')
+          errorText(error, 'The upload failed. Please try again.')
         );
       } finally {
         setIsUploadingTemp(false);
@@ -776,7 +779,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
     void deleteAllTempMedia().then((deleted) => {
       if (!deleted) {
         toast.error(
-          'A temporary upload could not be deleted. It was not saved to your Media Library.'
+          "We couldn't remove the uploaded file. Please try again."
         );
       }
       setView('accounts');
@@ -838,14 +841,12 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
               </h1>
               <p className="text-lg text-ink-sub">
                 {view === 'accounts'
-                  ? 'Select a Facebook account and page to begin publishing.'
-                  : 'Select the pages to publish to.'}
+                  ? 'Choose the Facebook accounts and pages you want to publish to.'
+                  : 'Choose the pages you want this post to go to.'}
               </p>
               <p className="mx-auto max-w-160 text-body leading-body text-ink-sub">
                 Publish one post directly to several Facebook pages at
-                once. Nothing in this flow is saved — no queue, no post
-                record — and pages you publish to here are not added to
-                your Pages list unless you add them separately.
+                once.
               </p>
             </div>
 
@@ -873,7 +874,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                 )}
 
                 <div className="mb-6 flex items-center gap-3">
-                  <h2 className="text-xl font-semibold text-ink">Select Account</h2>
+                  <h2 className="text-xl font-semibold text-ink">Select accounts</h2>
                 </div>
 
                 {accountsQuery.isPending && (
@@ -1031,7 +1032,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
             {view === 'pages' && (
               <div className="rounded-2xl border border-line bg-subtle p-6">
                 <div className="mb-6 flex items-center justify-between">
-                  <h2 className="text-xl font-semibold text-ink">Select Page</h2>
+                  <h2 className="text-xl font-semibold text-ink">Select pages</h2>
                   <Button
                     type="button"
                     variant="ghost"
@@ -1155,10 +1156,6 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                         </div>
                       ))}
                     </div>
-                    <p className="mt-2 text-metadata leading-body text-ink-sub">
-                      Selecting a page here does not add it to your Pages
-                      list. It is published to directly, and nothing is saved.
-                    </p>
                     <div className="mt-6 flex items-center justify-between gap-2">
                       <Button
                         type="button"
@@ -1322,7 +1319,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                             disabled={isUploadingTemp || isPublishing}
                             onClick={() => tempInputRef.current?.click()}
                           >
-                            Upload from device (temporary)
+                            Upload from device
                           </Button>
                           <input
                             ref={tempInputRef}
@@ -1343,7 +1340,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                         </div>
                         {isUploadingTemp && (
                           <p className="text-body text-ink-sub">
-                            Uploading temporary file...
+                            Uploading file...
                           </p>
                         )}
                       </div>
@@ -1373,7 +1370,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                             {attached.mediaType === 'image' ? 'Image' : 'Video'}
                             {attached.libraryId
                               ? ' · from Media Library'
-                              : ' · temporary device file'}
+                              : ' · from your device'}
                           </p>
                           {isUploadingTemp && (
                             <p className="mt-1 text-xs text-ink-sub">
@@ -1392,13 +1389,6 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                           Remove
                         </Button>
                       </div>
-                    )}
-                    {attached?.tempKey && (
-                      <p className="text-metadata leading-body text-ink-sub">
-                        This device file is temporary: it is used only for
-                        this post and deleted when this run ends. It is not
-                        saved in your Media Library.
-                      </p>
                     )}
                   </div>
                 )}
@@ -1429,9 +1419,8 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                     aria-label="First comment (optional)"
                   />
                   <p className="text-metadata leading-body text-ink-sub">
-                    The same first comment is posted to every page, right
-                    after that page&apos;s post succeeds. If a page&apos;s
-                    post fails, no comment goes there.
+                    The same comment will appear on every page this post
+                    publishes to.
                   </p>
                 </div>
 
@@ -1459,9 +1448,6 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                     </>
                   )}
                 </Button>
-                <p className="text-metadata leading-body text-ink-sub">
-                  Nothing is saved in the database in this flow.
-                </p>
               </div>
             </section>
 
@@ -1495,8 +1481,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                 {hasRun && (
                   <div className="space-y-3">
                     <p className="px-1 text-metadata leading-body text-ink-sub">
-                      Nothing was saved in the database. Starting over
-                      clears this result list.
+                      Starting over clears this result list.
                     </p>
                     {restrictedResults.length > 0 && (
                       <div className="rounded-sm border border-brand-rose/25 bg-brand-rose/10 px-3 py-2 text-body leading-body text-ink">
@@ -1574,18 +1559,45 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                                   : (result.reason ?? 'Publishing failed.')}
                               </div>
                               {diagnosticParts.length > 0 && (
-                                <div className="mt-0.5 break-all text-metadata text-ink-sub">
-                                  {diagnosticParts.join(' · ')}
+                                <div className="mt-0.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const key = `${result.accountId}:${result.fbPageId}`;
+                                      setExpandedDetails((prev) => {
+                                        const next = new Set(prev);
+                                        if (next.has(key)) {
+                                          next.delete(key);
+                                        } else {
+                                          next.add(key);
+                                        }
+                                        return next;
+                                      });
+                                    }}
+                                    className="text-metadata font-semibold text-link outline-none focus-visible:outline-2 focus-visible:outline-brand-gold"
+                                  >
+                                    {expandedDetails.has(
+                                      `${result.accountId}:${result.fbPageId}`
+                                    )
+                                      ? 'Hide details'
+                                      : 'View details'}
+                                  </button>
+                                  {expandedDetails.has(
+                                    `${result.accountId}:${result.fbPageId}`
+                                  ) && (
+                                    <div className="mt-0.5 break-all text-metadata text-ink-sub">
+                                      {diagnosticParts.join(' · ')}
+                                    </div>
+                                  )}
                                 </div>
                               )}
                               {published && result.firstCommentFailed && (
                                 <div className="mt-1 text-metadata leading-body text-brand-rose">
-                                  First comment failed
+                                  First comment could not be posted
                                   {result.firstCommentReason
                                     ? `: ${result.firstCommentReason}`
                                     : '.'}{' '}
-                                  The post published; retrying a failed
-                                  post will not re-post this comment.
+                                  The post was published.
                                 </div>
                               )}
                             </div>

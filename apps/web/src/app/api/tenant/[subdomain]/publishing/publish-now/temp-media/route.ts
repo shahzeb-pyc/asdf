@@ -49,7 +49,7 @@ export async function POST(
   if (!bodyResult.ok) {
     if (bodyResult.reason === 'too-large') return bodyTooLargeResponse();
     return NextResponse.json(
-      { error: 'INVALID_REQUEST', message: 'Invalid JSON' },
+      { error: 'INVALID_REQUEST', message: 'The request could not be understood. Please try again.' },
       { status: 400 }
     );
   }
@@ -86,7 +86,7 @@ export async function POST(
       subdomain,
     });
     return NextResponse.json(
-      { error: 'Storage service unavailable' },
+      { error: 'Something went wrong. Please try again.' },
       { status: 500 }
     );
   }
@@ -122,7 +122,7 @@ export async function DELETE(
   if (!bodyResult.ok) {
     if (bodyResult.reason === 'too-large') return bodyTooLargeResponse();
     return NextResponse.json(
-      { error: 'INVALID_REQUEST', message: 'Invalid JSON' },
+      { error: 'INVALID_REQUEST', message: 'The request could not be understood. Please try again.' },
       { status: 400 }
     );
   }
@@ -138,7 +138,7 @@ export async function DELETE(
   const { key } = parsed.data;
   if (!key.startsWith(tempPrefix(session.userId)) || key.includes('..')) {
     return NextResponse.json(
-      { error: 'INVALID_REQUEST', message: 'Only temporary Publish Now media can be deleted here.' },
+      { error: 'INVALID_REQUEST', message: 'This file cannot be deleted here.' },
       { status: 400 }
     );
   }

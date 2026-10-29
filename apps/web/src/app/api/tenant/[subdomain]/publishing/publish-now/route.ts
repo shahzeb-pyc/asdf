@@ -187,7 +187,7 @@ async function graphPost(
   } & Record<string, unknown>;
   if (!response.ok || data.error) {
     throw {
-      message: data.error?.message ?? `Facebook returned ${response.status}.`,
+      message: data.error?.message ?? 'Facebook could not complete this request. Please try again.',
       code: data.error?.code,
       subcode: data.error?.error_subcode,
       step,
@@ -233,7 +233,7 @@ async function postFirstComment(params: {
   };
   if (!response.ok || data.error) {
     throw {
-      message: data.error?.message ?? `Facebook returned ${response.status}.`,
+      message: data.error?.message ?? 'Facebook could not complete this request. Please try again.',
       code: data.error?.code,
       subcode: data.error?.error_subcode,
       httpStatus: response.status,
@@ -345,13 +345,13 @@ async function publishPhotoWithBytes(params: {
     });
   } catch {
     throw steppedError(
-      'The photo could not be fetched for upload to Facebook. Re-attach the photo and try again.',
+      'The photo could not be uploaded to Facebook. Please re-attach the photo and try again.',
       'media-fetch'
     );
   }
   if (!mediaRes.ok || !mediaRes.body) {
     throw steppedError(
-      'The photo could not be fetched for upload to Facebook. Re-attach the photo and try again.',
+      'The photo could not be uploaded to Facebook. Please re-attach the photo and try again.',
       'media-fetch'
     );
   }
@@ -359,14 +359,14 @@ async function publishPhotoWithBytes(params: {
   const size = contentLength ? Number.parseInt(contentLength, 10) : Number.NaN;
   if (Number.isFinite(size) && size > 30_000_000) {
     throw steppedError(
-      'This photo is too large to upload directly. Choose a smaller photo and try again.',
+      'This photo is too large to upload. Choose a smaller photo and try again.',
       'media-fetch'
     );
   }
   const buffer = await mediaRes.arrayBuffer();
   if (buffer.byteLength === 0) {
     throw steppedError(
-      'The photo could not be fetched for upload to Facebook. Re-attach the photo and try again.',
+      'The photo could not be uploaded to Facebook. Please re-attach the photo and try again.',
       'media-fetch'
     );
   }
@@ -399,7 +399,7 @@ async function publishPhotoWithBytes(params: {
   };
   if (!response.ok || data.error) {
     throw {
-      message: data.error?.message ?? `Facebook returned ${response.status}.`,
+      message: data.error?.message ?? 'Facebook could not complete this request. Please try again.',
       code: data.error?.code,
       subcode: data.error?.error_subcode,
       step: 'photos' as PublishNowStep,
@@ -409,7 +409,7 @@ async function publishPhotoWithBytes(params: {
   }
   const postId = data.post_id ?? data.id;
   if (typeof postId !== 'string' || !postId) {
-    throw steppedError('Facebook did not return a post id for the photo.', 'photos');
+    throw steppedError('The photo post could not be completed. Please try again.', 'photos');
   }
   return postId;
 }
@@ -438,7 +438,7 @@ async function publishToPage(params: {
         step
       );
       if (typeof data.id !== 'string' || !data.id) {
-        throw steppedError('Facebook did not return a post id for the text post.', step);
+        throw steppedError('The post could not be completed. Please try again.', step);
       }
       return data.id;
     }
@@ -463,7 +463,7 @@ async function publishToPage(params: {
         step
       );
       if (typeof data.id !== 'string' || !data.id) {
-        throw steppedError('Facebook did not return a post id for the video.', step);
+        throw steppedError('The video post could not be completed. Please try again.', step);
       }
       return data.id;
     }
@@ -479,7 +479,7 @@ async function publishToPage(params: {
     const videoId = start.video_id;
     const uploadUrl = start.upload_url;
     if (typeof videoId !== 'string' || !videoId || typeof uploadUrl !== 'string' || !uploadUrl) {
-      throw steppedError('Facebook did not start a reel upload session.', step);
+      throw steppedError('The reel could not be uploaded. Please try again.', step);
     }
     step = 'media-fetch';
     let videoRes: Response;
@@ -488,10 +488,10 @@ async function publishToPage(params: {
         signal: AbortSignal.timeout(MEDIA_FETCH_TIMEOUT_MS),
       });
     } catch {
-      throw steppedError('The video could not be fetched for upload to Facebook.', step);
+      throw steppedError('The video could not be uploaded to Facebook.', step);
     }
     if (!videoRes.ok || !videoRes.body) {
-      throw steppedError('The video could not be fetched for upload to Facebook.', step);
+      throw steppedError('The video could not be uploaded to Facebook.', step);
     }
     step = 'reel-upload';
     // The upload host is rupload, not graph: the worker's
@@ -519,7 +519,7 @@ async function publishToPage(params: {
         };
       };
       throw {
-        message: uploadData.error?.message ?? 'The reel upload to Facebook failed.',
+        message: uploadData.error?.message ?? 'The reel could not be uploaded. Please try again.',
         code: uploadData.error?.code,
         subcode: uploadData.error?.error_subcode,
         step,
@@ -541,7 +541,7 @@ async function publishToPage(params: {
     );
     const postId = finish.post_id ?? finish.id ?? finish.video_id ?? videoId;
     if (typeof postId !== 'string' || !postId) {
-      throw steppedError('Facebook did not return a post id for the reel.', step);
+      throw steppedError('The reel could not be completed. Please try again.', step);
     }
     return postId;
   } catch (error) {
@@ -567,7 +567,7 @@ export async function POST(
   const supabase = getSupabaseAdminClient();
   if (!supabase) {
     return NextResponse.json(
-      { error: 'Database service unavailable' },
+      { error: 'Something went wrong. Please try again.' },
       { status: 503 }
     );
   }
@@ -576,7 +576,7 @@ export async function POST(
   if (!bodyResult.ok) {
     if (bodyResult.reason === 'too-large') return bodyTooLargeResponse();
     return NextResponse.json(
-      { error: 'INVALID_REQUEST', message: 'Invalid JSON payload' },
+      { error: 'INVALID_REQUEST', message: 'The request could not be understood. Please try again.' },
       { status: 400 }
     );
   }
@@ -654,7 +654,7 @@ export async function POST(
       media.tempKey.includes('..')
     ) {
       return NextResponse.json(
-        { error: 'INVALID_REQUEST', message: 'The temporary media could not be verified.' },
+        { error: 'INVALID_REQUEST', message: 'The uploaded media could not be verified. Please try again.' },
         { status: 400 }
       );
     }
@@ -673,7 +673,7 @@ export async function POST(
         {
           error: 'INVALID_REQUEST',
           message:
-            'The video for this post could not be reached. Re-attach the video and try again.',
+            'The video could not be uploaded. Please re-attach the video and try again.',
         },
         { status: 400 }
       );
@@ -685,7 +685,7 @@ export async function POST(
     encryptionKey = getTokenEncryptionKey();
   } catch {
     return NextResponse.json(
-      { error: 'Failed to decrypt account credentials' },
+      { error: 'We could not access your Facebook account. Please try again.' },
       { status: 500 }
     );
   }
@@ -730,7 +730,7 @@ export async function POST(
             encryptionKey
           );
         } catch {
-          throw new Error('Failed to decrypt account credentials.');
+          throw new Error('We could not access your Facebook account. Please try again.');
         }
         // Transient tokens: re-discovered now, used only in memory.
         loopStep = 'discover';
