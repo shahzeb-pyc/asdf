@@ -50,9 +50,9 @@
 
 /* Every section fills a viewport at minimum (100dvh where
    supported), and grows instead of clipping if its content is ever
-   taller. Sections are direct siblings, full width, so white
-   section 2 meets black section 3 with zero gap, and 3 meets 4 the
-   same way. */
+   taller. Sections are direct siblings, full width, with zero gap:
+   white section 2 meets section 3's rounded-top black panel, and
+   section 3 meets section 4 dark-to-dark the same way. */
 .section-full {
   min-height: 100vh;
 }
@@ -179,7 +179,12 @@
 }
 
 /* Dark panels (sections 3 and 4): the panel is the section, full
-   width and full viewport height, content centred inside it. */
+   width and full viewport height, content centred inside it.
+   Section 3 only: rounded TOP corners, so the black panel enters
+   as a soft rounded shape out of the white section background
+   above it. Straight sides and bottom, and the panel still fills
+   its whole section, so there is no white gap below the rounding
+   and no white strip between section 3 and section 4. */
 .dark-panel {
   min-height: 100vh;
   width: 100%;
@@ -187,6 +192,18 @@
 @supports (height: 100dvh) {
   .dark-panel {
     min-height: 100dvh;
+  }
+}
+#section-3 .dark-panel {
+  border-top-left-radius: 24px;
+  border-top-right-radius: 24px;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+@media (min-width: 1024px) {
+  #section-3 .dark-panel {
+    border-top-left-radius: 32px;
+    border-top-right-radius: 32px;
   }
 }
 
@@ -363,20 +380,4 @@
   .iso-stage > span:nth-child(6) .iso-logo { width: 39px; height: 39px; }
 }
 
-/* Light-to-dark transition zone between Section 2 and Section 3:
-   a static gradient fade (white -> black) over 120px desktop /
-   80px phones. Geometry only — no animation, no transition, no
-   divider line, no content. Section 2 content and Section 3
-   content are untouched: the fade sits in its own strip between
-   the two sections, so it never overlaps Section 2's orbit or
-   Section 3, which stay on black. */
-.light-dark-fade {
-  height: 80px;
-  background: linear-gradient(to bottom, #ffffff 0%, #0b0e11 100%);
-}
-@media (min-width: 640px) {
-  .light-dark-fade {
-    height: 120px;
-  }
-}
 

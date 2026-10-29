@@ -143,15 +143,12 @@ const signin = 'https://app.fbuploadpro.com/login';
       </div>
     </section>
 
-    <!-- Light-to-dark transition: a static gradient fade zone
-         between white Section 2 and black Section 3. Geometry only,
-         no animation, no content, no divider line — it eases the
-         hard straight cut into the dark section. -->
-    <div class="light-dark-fade" aria-hidden="true"></div>
-
-    <!-- Section 3: community banner. Full viewport, black.
+    <!-- Section 3: community banner. Full viewport. The section
+         itself is white; the black panel inside it has rounded
+         top corners only, so the dark area enters as a soft
+         rounded shape instead of a straight full-width cut.
          No subhead, no button, no link. -->
-    <section id="section-3" class="section-full bg-[#0b0e11]" aria-label="Community">
+    <section id="section-3" class="section-full bg-white" aria-label="Community">
       <div class="dark-panel relative flex items-center justify-center overflow-hidden bg-[#0b0e11] px-5 py-16 text-center sm:py-20 lg:py-24">
         <h2 class="relative z-10 mx-auto text-[clamp(28px,8vw,64px)] leading-[1.1] font-bold tracking-tight text-white">
           <span class="reveal-mask"><span class="reveal-line">Join our community</span></span>
@@ -367,7 +364,10 @@ const signin = 'https://app.fbuploadpro.com/login';
       gsap.to('.iso-stage, .mob-grid', { y: 30, ease: 'none', scrollTrigger: { trigger: '#section-1', start: 'top top', end: 'bottom top', scrub: 1 } });
       gsap.to('.s2-grid > div:first-child', { y: -25, ease: 'none', scrollTrigger: { trigger: '#section-2', start: 'top bottom', end: 'bottom top', scrub: 1 } });
       gsap.to('.s2-orbit', { y: 15, ease: 'none', scrollTrigger: { trigger: '#section-2', start: 'top bottom', end: 'bottom top', scrub: 1 } });
-      gsap.to('#section-3 .dark-panel', { y: -20, ease: 'none', scrollTrigger: { trigger: '#section-3', start: 'top bottom', end: 'bottom top', scrub: 1 } });
+      /* No parallax on the section-3 panel: its section background
+         is now white, so moving the panel up would expose a white
+         strip between it and section 4. Section 4's panel keeps
+         its parallax — black on black, so the join stays seamless. */
       gsap.to('#section-4 .dark-panel', { y: -20, ease: 'none', scrollTrigger: { trigger: '#section-4', start: 'top bottom', end: 'bottom top', scrub: 1 } });
 
       window.addEventListener('load', function () { ScrollTrigger.refresh(); });
