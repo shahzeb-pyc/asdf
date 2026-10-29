@@ -247,70 +247,55 @@
   }
 }
 
-/* Phone fit: section 2 stacked layout. Phones stack text plus
-   orbit, the tallest layout on the page. Below 768px the orbit,
-   centre, badges, heading and text shrink so the stacked section
-   still fits one screen at 667px height, and further at 568px —
-   without removing or hiding any copy, badge, or platform. Above
-   768px the desktop two-column layout is untouched. */
+/* Phone layout: section 2 stacked layout. Phones stack text plus
+   orbit, and the section is NO LONGER forced full-height: it is
+   exactly as tall as its content, so it ends shortly after the
+   orbit instead of leaving a large white void below it. A short
+   phone scrolls naturally; nothing shrinks to fit one screen.
+   The orbit is the visual anchor again at 300px (it fits a 320px
+   screen: the orbit box sits 10px into the section padding each
+   side, badges reach 17px–303px, badge halo included, so nothing
+   is clipped by the screen edge — no downscaling is needed, and
+   none is applied). Above 768px the desktop two-column layout
+   is untouched. */
 @media (max-width: 767px) {
-  .s2-grid {
-    gap: 24px;
-  }
-  .s2-heading {
-    font-size: 28px;
-  }
-  .s2-text {
-    font-size: 14px;
-  }
-  .s2-orbit {
-    width: 200px;
-    height: 200px;
-  }
-  .s2-centre {
-    width: 120px;
-    height: 120px;
-  }
-  .s2-centre svg {
-    width: 72px;
-  }
-  .orbit-badge {
-    width: 44px;
-    height: 44px;
-  }
-  .orbit-badge svg {
-    width: 22px;
-    height: 22px;
-  }
-}
-@media (max-width: 767px) and (max-height: 620px) {
   #section-2 {
-    padding-top: 76px;
-    padding-bottom: 16px;
+    min-height: auto;
+    align-items: flex-start;
+    padding-top: 88px;
+    padding-bottom: 48px;
   }
   .s2-grid {
-    gap: 16px;
+    gap: 32px;
   }
   .s2-heading {
-    font-size: 26px;
-  }
-  .s2-text {
+    font-size: 32px;
+    line-height: 1.1;
     margin-bottom: 16px;
   }
+  .s2-text {
+    font-size: 15px;
+    line-height: 1.6;
+    margin-bottom: 32px;
+  }
   .s2-orbit {
+    width: 300px;
+    height: 300px;
+  }
+  .s2-centre {
     width: 160px;
     height: 160px;
   }
-  .s2-centre {
-    width: 100px;
-    height: 100px;
-  }
   .s2-centre svg {
-    width: 60px;
+    width: 88px;
   }
   .orbit-badge {
-    width: 40px;
-    height: 40px;
+    width: 56px;
+    height: 56px;
+  }
+  .orbit-badge svg {
+    width: 28px;
+    height: 28px;
   }
 }
 
