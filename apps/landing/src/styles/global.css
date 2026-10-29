@@ -279,7 +279,43 @@
    blobs each with one small pink dot). The blobs are pure
    decoration: they sit tucked into the four corners, clipped by
    the card's overflow-hidden, and the heading sits above them
-   (z-index) so they never cover text. Static — no animation. */
+   (z-index) so they never cover text. Static — no animation.
+   Section 3 is a FULL section like section 2, not a short strip:
+   .section3-full gets a viewport-height min-height (vh fallback,
+   dvh where supported, same pattern as .section2-full) and its
+   card is vertically centred inside that height, so section 2
+   scrolls completely out of view. The black card itself fills
+   that height minus the page's outer margins (16px total on
+   phones, 32px on desktop — same calc pattern as .hero-card),
+   and its heading is vertically centred inside it. min-height,
+   never fixed height, so everything grows if content is taller. */
+.section3-full {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+}
+.community-card {
+  min-height: calc(100vh - 16px);
+  width: 100%;
+}
+@media (min-width: 640px) {
+  .community-card {
+    min-height: calc(100vh - 32px);
+  }
+}
+@supports (height: 100dvh) {
+  .section3-full {
+    min-height: 100dvh;
+  }
+  .community-card {
+    min-height: calc(100dvh - 16px);
+  }
+  @media (min-width: 640px) {
+    .community-card {
+      min-height: calc(100dvh - 32px);
+    }
+  }
+}
 .community-highlight {
   display: inline-block;
   background-color: #f0b90b;
