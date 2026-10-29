@@ -41,6 +41,44 @@
   }
 }
 
+/* ---- Full-height white card, equal margin on all sides ----
+   The outer shell is the viewport height and the card is the viewport
+   height minus twice the margin, so the bottom margin equals the top
+   and side margins and no grey void is left below the card on a short
+   page. Phones (below sm): 8px all around. Desktop (sm and up, matching
+   the wrapper's sm:px-4 sm:py-4): 16px all around. min-height, never a
+   fixed height, so the card grows naturally if content ever exceeds the
+   viewport and the bottom padding/margin is preserved. dvh first with a
+   vh fallback (the dvh line is ignored by browsers that don't support
+   it, leaving the vh line in effect) so mobile browser chrome doesn't
+   break the fit (vh is the base, dvh overrides it inside @supports, so
+   old browsers keep vh and modern browsers get dvh). Hero content stays at the top; nothing is centred
+   vertically and no content is added to fill the stretched card. */
+.page-shell {
+  min-height: 100vh;
+}
+.hero-card {
+  min-height: calc(100vh - 16px);
+}
+@media (min-width: 640px) {
+  .hero-card {
+    min-height: calc(100vh - 32px);
+  }
+}
+@supports (height: 100dvh) {
+  .page-shell {
+    min-height: 100dvh;
+  }
+  .hero-card {
+    min-height: calc(100dvh - 16px);
+  }
+  @media (min-width: 640px) {
+    .hero-card {
+      min-height: calc(100dvh - 32px);
+    }
+  }
+}
+
 /* ---- Headline gold marker: rounded ends, marker-style padding ----
    Sweep on load: the gold background itself grows left-to-right
    (background-size 0% -> 100%) over 0.7s ease-out after a 0.1s delay,
