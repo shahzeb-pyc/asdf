@@ -1,5 +1,5 @@
 {
-  "$description": "Semantic design tokens — mode-specific aliases over primitives (spec 129 §5.2). Components consume semantic tokens ONLY; semantic tokens alias primitives; primitives are never referenced from component code. Dark is the default mode (OD-1: both themes kept, both generated from this single source).",
+  "$description": "Semantic design tokens — mode-specific aliases over primitives (spec 129 §5.2). Components consume semantic tokens ONLY; semantic tokens alias primitives; primitives are never referenced from component code. Light is the default mode (Direction 4, 2026-10-29: light-first, dark kept and fully generated from this single source).",
   "semantic": {
     "dark": {
       "border": {
@@ -34,31 +34,31 @@
         "critical": {
           "color": {
             "$type": "color",
-            "$value": "{color.brand.rose}"
+            "$value": "{color.status.criticalDark}"
           },
           "dot": {
             "$type": "color",
-            "$value": "{color.brand.rose}"
+            "$value": "{color.status.criticalDark}"
           }
         },
         "idle": {
           "color": {
             "$type": "color",
-            "$value": "{color.gray.500}"
+            "$value": "{color.gray.400}"
           },
           "dot": {
             "$type": "color",
-            "$value": "{color.gray.slateText}"
+            "$value": "{color.gray.400}"
           }
         },
         "operational": {
           "color": {
             "$type": "color",
-            "$value": "{color.brand.emerald}"
+            "$value": "{color.status.successDark}"
           },
           "dot": {
             "$type": "color",
-            "$value": "{color.brand.emerald}"
+            "$value": "{color.status.successDark}"
           }
         },
         "queued": {
@@ -101,11 +101,11 @@
         },
         "muted": {
           "$type": "color",
-          "$value": "{color.gray.500}"
+          "$value": "{color.gray.400}"
         },
         "onPrimary": {
           "$type": "color",
-          "$value": "{color.text.lightPrimary}"
+          "$value": "{color.text.onPrimary}"
         },
         "primary": {
           "$type": "color",
@@ -113,7 +113,7 @@
         },
         "secondary": {
           "$type": "color",
-          "$value": "{color.gray.400}"
+          "$value": "{color.gray.300}"
         }
       }
     },
@@ -164,27 +164,27 @@
           },
           "dot": {
             "$type": "color",
-            "$value": "{color.gray.mutedLight}"
+            "$value": "{color.gray.500}"
           }
         },
         "operational": {
           "color": {
             "$type": "color",
-            "$value": "{color.brand.emerald}"
+            "$value": "{color.status.successLight}"
           },
           "dot": {
             "$type": "color",
-            "$value": "{color.brand.emerald}"
+            "$value": "{color.status.successLight}"
           }
         },
         "queued": {
           "color": {
             "$type": "color",
-            "$value": "{color.brand.gold}"
+            "$value": "{color.brand.bronze}"
           },
           "dot": {
             "$type": "color",
-            "$value": "{color.brand.gold}"
+            "$value": "{color.brand.bronze}"
           }
         }
       },
@@ -217,11 +217,11 @@
         },
         "muted": {
           "$type": "color",
-          "$value": "{color.gray.400}"
+          "$value": "{color.gray.500}"
         },
         "onPrimary": {
           "$type": "color",
-          "$value": "{color.text.lightPrimary}"
+          "$value": "{color.text.onPrimary}"
         },
         "primary": {
           "$type": "color",
@@ -229,7 +229,7 @@
         },
         "secondary": {
           "$type": "color",
-          "$value": "{color.gray.500}"
+          "$value": "{color.gray.600}"
         }
       }
     }

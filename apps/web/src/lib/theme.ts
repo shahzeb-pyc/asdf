@@ -13,13 +13,13 @@
 
 export const PALETTE = {
   /** Dominant brand keystone — primary buttons, active moments (14.86:1 AAA on black) */
-  primary: '#fcd535',
+  primary: '#FFD300',
   /** Secondary highlight — links, callouts, active underline tabs */
-  accent1: '#f0b90b',
+  accent1: '#cca900',
   /** Deep bronze — tertiary highlight, active tab borders, deep pressed states */
   accent2: '#766018',
   /** Rose / Danger — negative status, error states, sell indicator, critical alerts */
-  accent3: '#f6465d',
+  accent3: '#dc2626',
   /** Emerald / Success — positive status, operational states, buy indicator, success */
   accent4: '#0ecb81',
   /** Pitch Black — base canvas surface in dark mode */
@@ -27,7 +27,7 @@ export const PALETTE = {
   /** Pure White — readable foreground typography in dark mode (21.0:1 AAA on black) */
   text: '#ffffff',
   /** Pitch Slate — 1px hairline borders, dividers, subtle recessed UI surfaces */
-  neutral: '#1f242d',
+  neutral: '#292524',
 } as const;
 
 export type PaletteKey = keyof typeof PALETTE;
@@ -55,11 +55,11 @@ export const SPACING = {
 
 export const RADII = {
   /** 4px: Checkboxes, micro switches, segmented toggles */
-  xs: '4px',
+  xs: '8px',
   /** 6px: Primary/Secondary buttons, form text inputs, select triggers */
-  sm: '6px',
+  sm: '12px',
   /** 8px: Cards, data tables, sheet containers, dialog modals */
-  md: '8px',
+  md: '16px',
   /** 9999px: Strictly reserved for circular avatars and round indicators. */
   full: '9999px',
 } as const;
@@ -69,7 +69,7 @@ export const RADII = {
 // ============================================================================
 
 export const TYPOGRAPHY = {
-  fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+  fontFamily: 'var(--font-inter), system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
   mono: 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
   fontFeatureSettings: "'cv02', 'cv03', 'cv04', 'cv11'",
   tabularNums: 'tabular-nums',
@@ -96,28 +96,28 @@ export const TYPOGRAPHY = {
 
 export const STATUS_SIGNALS = {
   operational: {
-    color: '#0ecb81',
-    dot: '#0ecb81',
-    halo: '0 0 8px rgba(14, 203, 129, 0.50)',
+    color: '#4ade80',
+    dot: '#4ade80',
+    halo: '0 0 8px rgba(74, 222, 128, 0.50)',
     label: 'Operational',
   },
   queued: {
-    color: '#fcd535',
-    dot: '#fcd535',
-    halo: '0 0 8px rgba(252, 213, 53, 0.50)',
+    color: '#FFD300',
+    dot: '#FFD300',
+    halo: '0 0 8px rgba(255, 211, 0, 0.50)',
     label: 'Queued',
   },
   critical: {
-    color: '#f6465d',
-    dot: '#f6465d',
-    halo: '0 0 8px rgba(246, 70, 93, 0.50)',
+    color: '#f87171',
+    dot: '#f87171',
+    halo: '0 0 8px rgba(248, 113, 113, 0.50)',
     label: 'Critical',
   },
   idle: {
-    color: '#707a8a',
-    dot: '#474d57',
-    dotLight: '#848e9c',
-    halo: '0 0 4px rgba(71, 77, 87, 0.40)',
+    color: '#a8a29e',
+    dot: '#a8a29e',
+    dotLight: '#78716c',
+    halo: '0 0 4px rgba(120, 113, 108, 0.40)',
     label: 'Idle',
   },
 } as const;
@@ -161,23 +161,23 @@ export interface ThemeTokens {
 export const DARK_THEME: ThemeTokens = {
   mode: 'dark',
   surfaces: {
-    canvas: '#0b0e11',
-    panel: '#1e2329',
-    subtle: '#14181d',
-    hover: '#252b33',
-    active: '#2b3139',
+    canvas: '#0c0a09',
+    panel: '#292524',
+    subtle: '#1c1917',
+    hover: '#44403c',
+    active: '#57534e',
   },
   borders: {
-    hairline: '#2b3139',
-    strong: '#474d57',
-    focus: 'rgba(252, 213, 53, 0.35)',
+    hairline: '#292524',
+    strong: '#44403c',
+    focus: 'rgba(255, 211, 0, 0.35)',
   },
   text: {
-    primary: '#eaecef',
-    secondary: '#929aa5',
-    muted: '#707a8a',
+    primary: '#fafaf9',
+    secondary: '#d6d3d1',
+    muted: '#a8a29e',
     onPrimary: '#181a20',
-    link: '#fcd535',
+    link: '#FFD300',
   },
   shadows: {
     card: '0 2px 8px rgba(0, 0, 0, 0.60)',
@@ -193,21 +193,21 @@ export const DARK_THEME: ThemeTokens = {
 export const LIGHT_THEME: ThemeTokens = {
   mode: 'light',
   surfaces: {
-    canvas: '#ffffff',
+    canvas: '#fafaf9',
     panel: '#ffffff',
-    subtle: '#fafafa',
-    hover: '#f5f5f5',
-    active: '#eaecef',
+    subtle: '#f5f5f4',
+    hover: '#f5f5f4',
+    active: '#e7e5e4',
   },
   borders: {
-    hairline: '#eaecef',
-    strong: '#cdd1d6',
-    focus: 'rgba(252, 213, 53, 0.35)',
+    hairline: '#e7e5e4',
+    strong: '#d6d3d1',
+    focus: 'rgba(255, 211, 0, 0.35)',
   },
   text: {
-    primary: '#181a20',
-    secondary: '#707a8a',
-    muted: '#929aa5',
+    primary: '#1c1917',
+    secondary: '#57534e',
+    muted: '#78716c',
     onPrimary: '#181a20',
     link: '#766018',
   },
