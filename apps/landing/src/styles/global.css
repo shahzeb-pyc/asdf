@@ -64,29 +64,43 @@
   animation: hero-in 0.7s ease both;
 }
 
-/* ---- Floating platform tiles, gentle bobbing ---- */
-@keyframes float-soft {
+/* ---- Isometric platform tiles ----
+   Logos: Simple Icons v16.36.0 (CC0), paths copied faithfully from
+   package/icons/{facebook,instagram,threads,tiktok,youtube,x}.svg.
+   Tile: diamond via rotateX(58deg) rotateZ(-45deg). Logo: inverse
+   rotateZ(45deg) rotateX(-58deg) so the logo reads upright inside
+   the diamond, not diamond-distorted. Bobbing is translateY only,
+   on the outer wrapper, so it never breaks the tile tilt. */
+.iso-tile {
+  transform: rotateX(58deg) rotateZ(-45deg);
+  box-shadow: 0 18px 32px rgba(17, 17, 17, 0.14);
+}
+.iso-logo {
+  transform: rotateZ(45deg) rotateX(-58deg);
+  display: block;
+  flex-shrink: 0;
+}
+@keyframes iso-bob {
   0%,
   100% {
-    transform: translateY(0) rotate(var(--tilt, 0deg));
+    transform: translateY(0);
   }
   50% {
-    transform: translateY(-6px) rotate(var(--tilt, 0deg));
+    transform: translateY(-5px);
   }
 }
-.float-tile {
-  box-shadow: 0 16px 32px rgba(17, 17, 17, 0.14);
-  animation: float-soft 5s ease-in-out infinite;
+.iso-bob {
+  animation: iso-bob 5s ease-in-out infinite;
 }
-.float-tile-a {
+.iso-bob-a {
   animation-duration: 5s;
   animation-delay: 0s;
 }
-.float-tile-b {
+.iso-bob-b {
   animation-duration: 6.5s;
   animation-delay: 0.8s;
 }
-.float-tile-c {
+.iso-bob-c {
   animation-duration: 5.5s;
   animation-delay: 1.6s;
 }
@@ -94,7 +108,7 @@
 /* ---- Reduced motion: everything instant and still ---- */
 @media (prefers-reduced-motion: reduce) {
   .hero-in,
-  .float-tile {
+  .iso-bob {
     animation: none !important;
   }
 }
