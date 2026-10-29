@@ -262,13 +262,13 @@ describe('Dedicated tab row — sticky row, scroll fade, gold active state', () 
   });
 });
 
-describe('Dedicated tab row — final scope (Dashboard, Insights, Queue, Posting Times)', () => {
+describe('Dedicated tab row — final scope (Dashboard, Insights, Queue, Calendar View, Posting Times)', () => {
   beforeEach(() => {
     mockQuery = '';
     mockPush.mockReset();
   });
 
-  it('renders tabs in order Dashboard, Insights, Queue, Posting Times — and no Settings tab', () => {
+  it('renders tabs in order Dashboard, Insights, Queue, Calendar View, Posting Times — and no Settings tab', () => {
     const { container } = renderShell();
     const nav = container.querySelector('[data-testid="dedicated-tabs-nav"]');
     expect(nav).not.toBeNull();
@@ -279,6 +279,7 @@ describe('Dedicated tab row — final scope (Dashboard, Insights, Queue, Posting
       'tab-dashboard-btn',
       'tab-insights-btn',
       'tab-queue-btn',
+      'tab-calendar-view-btn',
       'tab-calendar-btn',
     ]);
     expect(container.querySelector('[data-testid="tab-settings-btn"]')).toBeNull();
@@ -305,5 +306,12 @@ describe('Dedicated tab row — final scope (Dashboard, Insights, Queue, Posting
     expect(screen.getByTestId('tab-queue-btn').getAttribute('data-state')).toBe('active');
     expect(container.querySelector('[data-testid="page-tab-queue-placeholder"]')).toBeNull();
     expect(container.querySelector('[data-testid="queue-panel"]')).not.toBeNull();
+  });
+
+  it('?tab=calendar-view selects the Calendar View panel', () => {
+    mockQuery = 'tab=calendar-view';
+    const { container } = renderShell();
+    expect(screen.getByTestId('tab-calendar-view-btn').getAttribute('data-state')).toBe('active');
+    expect(container.querySelector('[data-testid="calendar-view-panel"]')).not.toBeNull();
   });
 });
