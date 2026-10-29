@@ -149,15 +149,10 @@ const signin = 'https://app.fbuploadpro.com/login';
          hard straight cut into the dark section. -->
     <div class="light-dark-fade" aria-hidden="true"></div>
 
-    <!-- Section 3: community banner. Full viewport, black, soft
-         four-petaled clover blobs tucked into the corners, one pink
-         dot on a lobe tip of each. No subhead, no button, no link. -->
+    <!-- Section 3: community banner. Full viewport, black.
+         No subhead, no button, no link. -->
     <section id="section-3" class="section-full bg-[#0b0e11]" aria-label="Community">
       <div class="dark-panel relative flex items-center justify-center overflow-hidden bg-[#0b0e11] px-5 py-16 text-center sm:py-20 lg:py-24">
-        <span class="blob-wrap blob-tl" aria-hidden="true"><svg class="blob-svg" viewBox="0 0 100 100" aria-hidden="true"><g fill="#1a1a1a"><circle cx="50" cy="50" r="32"/><circle cx="50" cy="28" r="26"/><circle cx="50" cy="72" r="26"/><circle cx="28" cy="50" r="26"/><circle cx="72" cy="50" r="26"/></g></svg><span class="blob-dot blob-dot-tl"></span></span>
-        <span class="blob-wrap blob-tr" aria-hidden="true"><svg class="blob-svg" viewBox="0 0 100 100" aria-hidden="true"><g fill="#1a1a1a"><circle cx="50" cy="50" r="32"/><circle cx="50" cy="28" r="26"/><circle cx="50" cy="72" r="26"/><circle cx="28" cy="50" r="26"/><circle cx="72" cy="50" r="26"/></g></svg><span class="blob-dot blob-dot-tr"></span></span>
-        <span class="blob-wrap blob-bl" aria-hidden="true"><svg class="blob-svg" viewBox="0 0 100 100" aria-hidden="true"><g fill="#1a1a1a"><circle cx="50" cy="50" r="32"/><circle cx="50" cy="28" r="26"/><circle cx="50" cy="72" r="26"/><circle cx="28" cy="50" r="26"/><circle cx="72" cy="50" r="26"/></g></svg><span class="blob-dot blob-dot-bl"></span></span>
-        <span class="blob-wrap blob-br" aria-hidden="true"><svg class="blob-svg" viewBox="0 0 100 100" aria-hidden="true"><g fill="#1a1a1a"><circle cx="50" cy="50" r="32"/><circle cx="50" cy="28" r="26"/><circle cx="50" cy="72" r="26"/><circle cx="28" cy="50" r="26"/><circle cx="72" cy="50" r="26"/></g></svg><span class="blob-dot blob-dot-br"></span></span>
         <h2 class="relative z-10 mx-auto text-[clamp(28px,8vw,64px)] leading-[1.1] font-bold tracking-tight text-white">
           <span class="reveal-mask"><span class="reveal-line">Join our community</span></span>
           <span class="reveal-mask mt-1 whitespace-nowrap"><span class="reveal-line">of <span class="community-highlight">700+</span> members</span></span>
@@ -165,12 +160,10 @@ const signin = 'https://app.fbuploadpro.com/login';
       </div>
     </section>
 
-    <!-- Section 4: pricing teaser, header only. Top clover blobs
-         only. No tiers, no plan names, no prices, no button. -->
+    <!-- Section 4: pricing teaser, header only.
+         No tiers, no plan names, no prices, no button. -->
     <section id="section-4" class="section-full bg-[#0b0e11]" aria-label="Pricing">
       <div class="dark-panel relative flex flex-col items-center justify-start overflow-hidden bg-[#0b0e11] px-5 pt-28 pb-16 text-center sm:pt-32 sm:pb-20 lg:pt-36 lg:pb-24">
-        <span class="blob-wrap blob-s4-tl" aria-hidden="true"><svg class="blob-svg" viewBox="0 0 100 100" aria-hidden="true"><g fill="#1a1a1a"><circle cx="50" cy="50" r="32"/><circle cx="50" cy="28" r="26"/><circle cx="50" cy="72" r="26"/><circle cx="28" cy="50" r="26"/><circle cx="72" cy="50" r="26"/></g></svg><span class="blob-dot blob-dot-s4"></span></span>
-        <span class="blob-wrap blob-s4-tr" aria-hidden="true"><svg class="blob-svg" viewBox="0 0 100 100" aria-hidden="true"><g fill="#1a1a1a"><circle cx="50" cy="50" r="32"/><circle cx="50" cy="28" r="26"/><circle cx="50" cy="72" r="26"/><circle cx="28" cy="50" r="26"/><circle cx="72" cy="50" r="26"/></g></svg><span class="blob-dot blob-dot-s4"></span></span>
         <div class="relative z-10 flex flex-col items-center">
           <span class="s4-pill mb-6 inline-flex items-center rounded-full bg-gold px-3.5 py-1 text-sm font-medium text-ink">Pricing</span>
           <h2 class="mx-auto text-[clamp(28px,8vw,64px)] leading-[1.1] font-bold tracking-tight text-white">
@@ -351,9 +344,7 @@ const signin = 'https://app.fbuploadpro.com/login';
         defaults: { ease: 'none' },
       })
         .from('#section-3 .reveal-line', { yPercent: 110, duration: 0.9, stagger: 0.12 })
-        .fromTo('#section-3 .community-highlight', { backgroundSize: '0% 100%' }, { backgroundSize: '100% 100%', duration: 0.8, ease: 'power2.out' }, '-=0.3')
-        .from('#section-3 .blob-wrap', { scale: 0.7, opacity: 0, duration: 0.8, stagger: 0.1, ease: 'back.out(1.2)', transformOrigin: '50% 50%', clearProps: 'transform' }, '-=0.5')
-        .from('#section-3 .blob-dot', { opacity: 0, duration: 0.7, stagger: 0.1 }, '-=0.4');
+        .fromTo('#section-3 .community-highlight', { backgroundSize: '0% 100%' }, { backgroundSize: '100% 100%', duration: 0.8, ease: 'power2.out' }, '-=0.3');
 
       /* Section 4 reveal, SCRUBBED (same forward/backward rule:
          top 90% -> top 45%, no stepped replay). The pill
@@ -365,11 +356,7 @@ const signin = 'https://app.fbuploadpro.com/login';
       })
         .from('.s4-pill', { scale: 0.85, y: 14, opacity: 0, duration: 0.7, ease: 'back.out(1.2)' })
         .to('.s4-pill', { scale: 1.06, duration: 0.4, ease: 'power2.out', yoyo: true, repeat: 1 }, '-=0.1')
-        .from('#section-4 .reveal-line', { yPercent: 110, duration: 0.9, stagger: 0.12 }, '-=0.5')
-        .from('#section-4 .blob-wrap', { scale: 0.7, y: -20, opacity: 0, duration: 0.8, stagger: 0.1, ease: 'back.out(1.2)', transformOrigin: '50% 50%' }, '-=0.5');
-
-      /* Pink dots: a gentle slow pulse, never flashing. */
-      gsap.to('.blob-dot', { scale: 1.25, duration: 1.8, ease: 'sine.inOut', yoyo: true, repeat: -1, delay: 3, transformOrigin: '50% 50%' });
+        .from('#section-4 .reveal-line', { yPercent: 110, duration: 0.9, stagger: 0.12 }, '-=0.5');
 
       /* Scroll parallax, scrubbed, so scrolling back moves
          everything back along the same path. Applied to parent

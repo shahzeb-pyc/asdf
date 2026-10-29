@@ -190,80 +190,6 @@
   }
 }
 
-/* Clover corner blobs. One inline SVG per corner, built from five
-   overlapping circles of the same #1a1a1a fill — a central circle
-   (r=32 at 50,50) plus one lobe circle (r=26) at each cardinal
-   point, centres 22 from the middle (50,28 / 50,72 / 28,50 /
-   72,50). The union outline has lobe tips at radius 48 and
-   diagonal valleys at radius ~36.4, i.e. valleys at 75% or more of
-   lobe radius — shallow, gentle waves, roughly round overall,
-   never a cross or pointed star. Pink dots sit on a lobe tip edge,
-   straddling the outline (centre exactly on the tip, half in and
-   half out), never buried inside the blob: top blobs on their
-   bottom lobe tip, bottom blobs on their top lobe tip, section 4
-   top blobs on their visible bottom lobe tip. */
-.blob-wrap {
-  position: absolute;
-  z-index: 1;
-  width: 96px;
-  height: 96px;
-  pointer-events: none;
-}
-@media (min-width: 640px) {
-  .blob-wrap {
-    width: 180px;
-    height: 180px;
-  }
-}
-.blob-svg {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-.blob-tl {
-  top: 12px;
-  left: 12px;
-}
-.blob-tr {
-  top: 12px;
-  right: 12px;
-}
-.blob-bl {
-  bottom: 12px;
-  left: 12px;
-}
-.blob-br {
-  bottom: 12px;
-  right: 12px;
-}
-.blob-s4-tl {
-  top: -50%;
-  left: 12px;
-}
-.blob-s4-tr {
-  top: -50%;
-  right: 12px;
-}
-.blob-dot {
-  position: absolute;
-  width: 10px;
-  height: 10px;
-  border-radius: 9999px;
-  background-color: #ff2d78;
-  transform: translate(-50%, -50%);
-}
-.blob-dot-tl,
-.blob-dot-tr,
-.blob-dot-s4 {
-  top: 98%;
-  left: 50%;
-}
-.blob-dot-bl,
-.blob-dot-br {
-  top: 2%;
-  left: 50%;
-}
-
 /* Short-viewport fit: hero. At 620px viewport height or less the
    hero shrinks (smaller headline and subhead, smaller mobile
    tiles, tighter gaps) so it still fits one screen at 320x568
@@ -441,9 +367,9 @@
    a static gradient fade (white -> black) over 120px desktop /
    80px phones. Geometry only — no animation, no transition, no
    divider line, no content. Section 2 content and Section 3
-   blobs are untouched: the fade sits in its own strip between
+   content are untouched: the fade sits in its own strip between
    the two sections, so it never overlaps Section 2's orbit or
-   Section 3's top blobs, which stay on black. */
+   Section 3, which stay on black. */
 .light-dark-fade {
   height: 80px;
   background: linear-gradient(to bottom, #ffffff 0%, #0b0e11 100%);
@@ -454,12 +380,3 @@
   }
 }
 
-/* Pink dots: centred on a lobe tip by negative margins, NOT by a
-   CSS translate. GSAP now animates only opacity/scale on dots, so
-   nothing ever fights the centring transform and the dot cannot
-   flip position mid-scroll. Dot stays 10px, #ff2d78, half in /
-   half out on its lobe tip (top/bottom offsets unchanged). */
-.blob-dot {
-  transform: none;
-  margin: -5px 0 0 -5px;
-}
