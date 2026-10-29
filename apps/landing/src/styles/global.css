@@ -67,18 +67,26 @@
 /* ---- Isometric platform tiles ----
    Logos: Simple Icons v16.36.0 (CC0), paths copied faithfully from
    package/icons/{facebook,instagram,threads,tiktok,youtube,x}.svg.
-   Tile: diamond via rotateX(58deg) rotateZ(-45deg). Logo: inverse
-   rotateZ(45deg) rotateX(-58deg) so the logo reads upright inside
-   the diamond, not diamond-distorted. Bobbing is translateY only,
-   on the outer wrapper, so it never breaks the tile tilt. */
+   Tile: diamond via rotateX(58deg) rotateZ(-45deg). Logo: a SEPARATE
+   layer, a sibling of the tile (NOT a child of it), absolutely centred
+   over the tile with transform translate(-50%,-50%) only — no rotate,
+   no rotateX — so it renders upright and undistorted on top of the
+   diamond. The old counter-rotation approach is gone: a child of a
+   3D-tilted tile still inherits the tile's flattening. Bobbing is
+   translateY only, on the outer wrapper, so it never tilts or
+   flattens anything. */
 .iso-tile {
   transform: rotateX(58deg) rotateZ(-45deg);
   box-shadow: 0 18px 32px rgba(17, 17, 17, 0.14);
 }
-.iso-logo {
-  transform: rotateZ(45deg) rotateX(-58deg);
+.iso-logo-flat {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   display: block;
   flex-shrink: 0;
+  filter: drop-shadow(0 2px 4px rgba(17, 17, 17, 0.15));
 }
 @keyframes iso-bob {
   0%,
