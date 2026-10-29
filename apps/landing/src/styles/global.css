@@ -1,14 +1,13 @@
 @import "tailwindcss";
 
 @theme {
-  --color-ink: #111827;
-  --color-ink-sub: #4b5563;
-  --color-panel: #ffffff;
-  --color-panel-sub: #f9fafb;
-  --color-line: #e5e7eb;
+  --color-night: #0b0e11;
+  --color-panel: #12161a;
+  --color-panel-soft: #171d23;
+  --color-line: #232a31;
+  --color-ink: #eceff2;
+  --color-ink-sub: #aeb6bf;
   --color-gold: #f0b90b;
-  --color-gold-dark: #92400e;
-  --color-gold-soft: #fef3c7;
 }
 
 @layer base {
@@ -19,14 +18,14 @@
   }
 
   html {
-    background-color: #ffffff;
+    background-color: #0b0e11;
     scroll-behavior: smooth;
   }
 
   body {
     margin: 0;
-    background-color: #ffffff;
-    color: #111827;
+    background-color: #0b0e11;
+    color: #eceff2;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     font-size: 16px;
     line-height: 1.5;
@@ -37,7 +36,13 @@
   }
 
   a:focus-visible {
-    outline: 2px solid #92400e;
+    outline: 2px solid #f0b90b;
     outline-offset: 3px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
   }
 }

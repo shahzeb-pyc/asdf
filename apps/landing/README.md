@@ -4,11 +4,14 @@ Standalone static marketing site for Cloudflare Pages. No backend, no
 database, no sign-in code, no pricing, no forms. It only links out to
 the separate web app for signup and login.
 
-Design: light theme, ChronoTask-style layout and feel only (no copy,
-logo, colour, image, or artwork copied from ChronoTask). Gold is the
-primary accent, used as a background with dark text so contrast passes.
-The hero dashboard is a CSS-built illustration, not a screenshot and
-not an AI or stock image; a real app screenshot can replace it later.
+Design: dark theme, modern 2026 SaaS pattern (Linear/Vercel/Stripe as
+patterns only — no copy, logo, colour, or layout copied verbatim).
+Binance dark #0b0e11 + gold #f0b90b used sparingly as the single accent
+(primary CTA with dark text, H1 accent phrase, small section markers).
+The hero dashboard is a CSS-built illustration inside a browser frame,
+not a screenshot and not an AI or stock image; a real app screenshot
+can replace it later. This version replaces the earlier light
+ChronoTask-style version, which was judged not modern enough.
 
 ## Stack
 
