@@ -1,147 +1,129 @@
 ---
 import Layout from '../layouts/Layout.astro';
 
-const platforms = ['Facebook', 'Instagram', 'TikTok', 'YouTube', 'Threads', 'X'];
+const signup = 'https://app.fbuploadpro.com/signup';
+const signin = 'https://app.fbuploadpro.com/login';
+
+const platforms = [
+  { initial: 'F', name: 'Facebook' },
+  { initial: 'I', name: 'Instagram' },
+  { initial: 'T', name: 'TikTok' },
+  { initial: 'Y', name: 'YouTube' },
+  { initial: 'Th', name: 'Threads' },
+  { initial: 'X', name: 'X' },
+];
 
 const queueRows = [
-  { initial: 'F', platform: 'Facebook', type: 'Reel', status: 'Scheduled' },
-  { initial: 'I', platform: 'Instagram', type: 'Post', status: 'Scheduled' },
-  { initial: 'T', platform: 'TikTok', type: 'Reel', status: 'Published' },
-  { initial: 'Y', platform: 'YouTube', type: 'Video', status: 'Scheduled' },
+  { initial: 'F', platform: 'Facebook', caption: 'Morning routine reel', time: 'Today · 9:00 AM', status: 'Scheduled', thumb: 'linear-gradient(135deg, #f59e0b, #ef4444)' },
+  { initial: 'I', platform: 'Instagram', caption: 'New product post', time: 'Today · 1:30 PM', status: 'Scheduled', thumb: 'linear-gradient(135deg, #ec4899, #f97316)' },
+  { initial: 'T', platform: 'TikTok', caption: 'Behind the scenes video', time: 'Tomorrow · 9:00 AM', status: 'Scheduled', thumb: 'linear-gradient(135deg, #111827, #6366f1)' },
+  { initial: 'Y', platform: 'YouTube', caption: 'Weekly tip video', time: 'Tomorrow · 6:00 PM', status: 'Published', thumb: 'linear-gradient(135deg, #dc2626, #f97316)' },
 ];
 
-const steps = [
-  { number: '01', title: 'Create', text: 'Create your posts in one place, for every platform at once.' },
-  { number: '02', title: 'Schedule', text: 'Drop them in the queue. Each one takes its next posting time.' },
-  { number: '03', title: 'Grow', text: 'They publish on time from the cloud, so your pages keep posting — even when you\'re not there.' },
+const week = [
+  { day: 'Mon', date: '3', time: '9:00 AM' },
+  { day: 'Tue', date: '4', time: '1:30 PM' },
+  { day: 'Wed', date: '5', time: '—' },
+  { day: 'Thu', date: '6', time: '9:00 AM' },
+  { day: 'Fri', date: '7', time: '—' },
+  { day: 'Sat', date: '8', time: '6:00 PM' },
+  { day: 'Sun', date: '9', time: '—' },
 ];
-
-const weekDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-const scheduledWeekDays = ['Tue', 'Thu', 'Sat'];
 ---
 
 <Layout
-  title="FBUploadPro — Your pages, posting themselves, 100% on the cloud"
-  description="Queue reels and posts for Facebook, Instagram, TikTok, YouTube, Threads, and X once, pick your posting times, and they go live from the cloud, on time, whether your laptop is open or not."
+  title="FBUploadPro — Your pages post every day, even when you don't open the app"
+  description="Queue reels and posts once for Facebook, Instagram, TikTok, YouTube, Threads, and X. Set each page's posting times once, and every post takes its next slot. The cloud publishes it on time, laptop closed or not."
 >
-  <header class="sticky top-0 z-20 border-b border-line bg-night/80 backdrop-blur">
+  <header class="sticky top-0 z-20 border-b border-line bg-white/85 backdrop-blur">
     <div class="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-4">
       <div class="text-lg font-bold tracking-tight">
-        FB<span class="text-gold">Upload</span>Pro
+        FB<span class="text-gold-deep">Upload</span>Pro
       </div>
       <nav class="hidden items-center gap-8 sm:flex" aria-label="Main">
-        <a href="#features" class="inline-flex min-h-11 items-center text-base font-medium no-underline">
-          Features
-        </a>
-        <a href="#how-it-works" class="inline-flex min-h-11 items-center text-base font-medium no-underline">
-          How it works
-        </a>
+        <a href="#features" class="inline-flex min-h-11 items-center text-base font-medium no-underline">Features</a>
+        <a href="#how-it-works" class="inline-flex min-h-11 items-center text-base font-medium no-underline">How it works</a>
       </nav>
       <div class="flex items-center gap-3">
-        <a
-          href="https://app.fbuploadpro.com/login"
-          class="hidden min-h-11 items-center rounded-md border border-line px-4 text-base font-semibold no-underline sm:inline-flex"
-        >
-          Sign in
-        </a>
-        <a
-          href="https://app.fbuploadpro.com/signup"
-          class="inline-flex min-h-11 items-center rounded-md bg-gold px-5 text-base font-semibold text-night no-underline"
-        >
-          Get started
-        </a>
+        <a href={signin} class="hidden min-h-11 items-center rounded-md border border-line px-4 text-base font-semibold no-underline sm:inline-flex">Sign in</a>
+        <a href={signup} class="inline-flex min-h-11 items-center rounded-md bg-gold px-5 text-base font-semibold text-ink no-underline">Get started</a>
       </div>
     </div>
   </header>
 
   <main>
-    <section class="mx-auto max-w-4xl px-5 pt-16 pb-12 text-center sm:pt-24 sm:pb-16">
-      <p class="mb-6 text-sm font-bold tracking-[0.2em] text-gold uppercase">
-        CREATE · SCHEDULE · GROW
-      </p>
-      <h1 class="mb-6 text-[40px] leading-[1.05] font-bold tracking-tight md:text-[64px] lg:text-[72px]">
-        Your pages, posting themselves —<br />
-        <span class="text-gold">100% on the cloud.</span>
+    {/* ===== HERO ===== */}
+    <section class="relative mx-auto max-w-6xl px-5 pt-16 pb-12 text-center sm:pt-20 sm:pb-16">
+      {/* Floating platform tiles — desktop only, so they can never overflow a phone screen */}
+      <div class="pointer-events-none absolute inset-0 hidden lg:block" aria-hidden="true">
+        <span class="float-tile absolute top-24 left-8 flex h-14 w-14 items-center justify-center rounded-2xl border border-line bg-white text-lg font-bold">F</span>
+        <span class="float-tile float-tile-slow absolute top-56 left-28 flex h-12 w-12 items-center justify-center rounded-2xl border border-line bg-white text-base font-bold">I</span>
+        <span class="float-tile float-tile-late absolute top-24 right-8 flex h-14 w-14 items-center justify-center rounded-2xl border border-line bg-white text-lg font-bold">T</span>
+        <span class="float-tile absolute top-56 right-28 flex h-12 w-12 items-center justify-center rounded-2xl border border-line bg-white text-base font-bold">Y</span>
+      </div>
+
+      <p class="reveal mb-6 text-sm font-bold tracking-[0.2em] text-gold-deep uppercase">For pages that post every day</p>
+      <h1 class="reveal mx-auto mb-6 max-w-4xl text-[40px] leading-[1.05] font-bold tracking-tight md:text-[64px] lg:text-[72px]" style="--d:100ms">
+        Your pages post <span class="hl hl-sweep">every day</span> — even when you don't open the app.
       </h1>
-      <p class="mx-auto mb-8 max-w-2xl text-lg text-ink-sub sm:text-xl">
-        Queue reels and posts for Facebook, Instagram, TikTok, YouTube, Threads, and X once, pick
-        your posting times, and they go live from the cloud, on time, whether your laptop is open
-        or not.
+      <p class="reveal mx-auto mb-8 max-w-2xl text-lg text-ink-sub sm:text-xl" style="--d:200ms">
+        Queue reels and posts once for Facebook, Instagram, TikTok, YouTube, Threads, and X.
+        Set each page's posting times once, and every post takes its next slot.
+        The cloud publishes it on time, laptop closed or not.
       </p>
-      <div class="flex flex-wrap justify-center gap-3">
-        <a
-          href="https://app.fbuploadpro.com/signup"
-          class="inline-flex min-h-11 w-full items-center justify-center rounded-md bg-gold px-6 text-base font-semibold text-night no-underline sm:w-auto"
-        >
-          Get started
-        </a>
-        <a
-          href="https://app.fbuploadpro.com/login"
-          class="inline-flex min-h-11 w-full items-center justify-center rounded-md border border-line px-6 text-base font-semibold no-underline sm:w-auto"
-        >
-          Sign in
-        </a>
+      <div class="reveal flex flex-wrap justify-center gap-3" style="--d:300ms">
+        <a href={signup} class="inline-flex min-h-11 w-full items-center justify-center rounded-md bg-gold px-6 text-base font-semibold text-ink no-underline sm:w-auto">Get started</a>
+        <a href={signin} class="inline-flex min-h-11 w-full items-center justify-center rounded-md border border-line px-6 text-base font-semibold no-underline sm:w-auto">Sign in</a>
       </div>
     </section>
 
-    <section aria-label="Product illustration" class="relative mx-auto max-w-5xl px-5 pb-8">
-      <p class="sr-only">
-        Designed illustration of a dashboard with a sidebar, a queue of scheduled and published
-        posts, and a calendar strip. Not a screenshot.
-      </p>
-      <div
-        class="absolute inset-x-8 top-8 bottom-0 rounded-3xl bg-gold/15 blur-3xl"
-        aria-hidden="true"
-      ></div>
-      <div class="relative overflow-hidden rounded-2xl border border-line bg-panel shadow-2xl">
-        <div class="flex items-center gap-3 border-b border-line bg-night px-4 py-3">
+    {/* ===== HERO PRODUCT VISUAL ===== */}
+    <section aria-label="Product illustration" class="reveal mx-auto max-w-5xl px-5 pb-8">
+      <p class="sr-only">Designed illustration of a dashboard with a sidebar, a queue of scheduled and published posts with thumbnails, captions and times, and a calendar strip. Not a screenshot.</p>
+      <div class="relative overflow-hidden rounded-2xl border border-line bg-white shadow-2xl">
+        <div class="flex items-center gap-3 border-b border-line bg-cream px-4 py-3">
           <div class="flex gap-2" aria-hidden="true">
             <span class="h-3 w-3 rounded-full bg-[#ff5f57]"></span>
             <span class="h-3 w-3 rounded-full bg-[#febc2e]"></span>
             <span class="h-3 w-3 rounded-full bg-[#28c840]"></span>
           </div>
-          <p class="m-0 mx-auto rounded-md border border-line bg-panel px-4 py-1 text-sm text-ink-sub">
-            app.fbuploadpro.com
-          </p>
+          <p class="m-0 mx-auto rounded-md border border-line bg-white px-4 py-1 text-sm text-ink-sub">app.fbuploadpro.com</p>
           <span class="w-16" aria-hidden="true"></span>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-4">
-          <div class="hidden border-r border-line p-4 sm:block" aria-hidden="true">
-            <p class="m-0 mb-4 rounded-md bg-gold/15 px-3 py-2 text-base font-semibold text-gold">Queue</p>
+          <div class="hidden border-r border-line bg-cream p-4 sm:block" aria-hidden="true">
+            <p class="m-0 mb-2 rounded-md bg-gold px-3 py-2 text-base font-semibold">Queue</p>
             <p class="m-0 mb-2 px-3 py-2 text-base text-ink-sub">Calendar</p>
             <p class="m-0 px-3 py-2 text-base text-ink-sub">Platforms</p>
           </div>
           <div class="p-4 sm:col-span-3 sm:p-6">
             <div class="mb-4 flex items-center justify-between gap-3">
-              <p class="m-0 text-base font-semibold">Queue</p>
-              <p class="m-0 rounded-full bg-gold/15 px-3 py-1 text-sm font-semibold text-gold">Scheduled</p>
+              <p class="m-0 text-base font-semibold">Your queue</p>
+              <p class="m-0 rounded-full bg-gold px-3 py-1 text-sm font-semibold">Next up: Today, 9:00 AM</p>
             </div>
             <ul class="m-0 list-none p-0">
               {
                 queueRows.map((row) => (
-                  <li class="mb-3 flex min-h-11 flex-wrap items-center gap-3 rounded-lg border border-line bg-panel-soft px-4 py-2">
-                    <span class="flex h-8 w-8 items-center justify-center rounded-full border border-line text-sm font-bold" aria-hidden="true">
-                      {row.initial}
+                  <li class="mb-3 flex min-h-11 flex-wrap items-center gap-3 rounded-lg border border-line bg-white px-3 py-2">
+                    <span class="flex h-12 w-16 shrink-0 items-center justify-center rounded-md text-white" style={`background: ${row.thumb}`} aria-hidden="true">▶</span>
+                    <span class="flex h-8 w-8 items-center justify-center rounded-full border border-line text-sm font-bold" aria-hidden="true">{row.initial}</span>
+                    <span class="min-w-0">
+                      <span class="block text-base font-semibold">{row.caption}</span>
+                      <span class="block text-sm text-ink-sub">{row.platform} · {row.time}</span>
                     </span>
-                    <span class="text-base font-medium">{row.platform}</span>
-                    <span class="text-base text-ink-sub">{row.type}</span>
-                    <span class="ml-auto text-sm font-medium text-ink-sub">{row.status}</span>
+                    <span class={`ml-auto rounded-full px-3 py-1 text-sm font-semibold ${row.status === 'Published' ? 'bg-[#e6f4ea] text-[#137333]' : 'bg-gold/25 text-ink'}`}>{row.status}</span>
                   </li>
                 ))
               }
             </ul>
             <div class="mt-6 border-t border-line pt-4" aria-hidden="true">
               <div class="grid grid-cols-7 gap-1 text-center">
-                {weekDays.map((day) => (
+                {week.map((d) => (
                   <div class="py-1">
-                    <p class="m-0 text-sm text-ink-sub">{day}</p>
-                    <span
-                      class={
-                        scheduledWeekDays.includes(day)
-                          ? 'mx-auto mt-1 block h-2 w-2 rounded-full bg-gold'
-                          : 'mx-auto mt-1 block h-2 w-2 rounded-full bg-line'
-                      }
-                    ></span>
+                    <p class="m-0 text-sm text-ink-sub">{d.day}</p>
+                    <p class="m-0 text-base font-semibold">{d.date}</p>
+                    <p class="m-0 text-xs text-ink-sub">{d.time}</p>
+                    <span class={`mx-auto mt-1 block h-2 w-2 rounded-full ${d.time === '—' ? 'bg-line' : 'bg-gold'}`}></span>
                   </div>
                 ))}
               </div>
@@ -149,115 +131,127 @@ const scheduledWeekDays = ['Tue', 'Thu', 'Sat'];
           </div>
         </div>
       </div>
-      <p class="mt-6 text-center text-sm text-ink-sub">
-        Illustration of the queue and calendar — not a screenshot.
-      </p>
+      <p class="mt-6 text-center text-sm text-ink-sub">Illustration — example posts, not a screenshot.</p>
     </section>
 
-    <section aria-label="Platforms" class="mx-auto max-w-6xl px-5 py-12 sm:py-16">
+    {/* ===== PLATFORMS ===== */}
+    <section aria-label="Platforms" class="reveal mx-auto max-w-6xl px-5 py-12 sm:py-16">
       <p class="mb-6 text-center text-sm font-bold tracking-[0.2em] text-ink-sub uppercase">Works with</p>
       <ul class="m-0 flex flex-wrap justify-center gap-x-8 gap-y-3 p-0 list-none">
-        {
-          platforms.map((platform) => (
-            <li class="text-lg font-semibold text-ink-sub">{platform}</li>
-          ))
-        }
+        {platforms.map((p) => (
+          <li class="text-lg font-semibold text-ink-sub">{p.name}</li>
+        ))}
       </ul>
     </section>
 
-    <section id="features" class="mx-auto max-w-6xl scroll-mt-24 px-5 py-16 sm:py-24" aria-labelledby="features-heading">
-      <p class="mb-4 text-sm font-bold tracking-[0.2em] text-gold uppercase">Features</p>
-      <h2 id="features-heading" class="mb-8 text-4xl font-bold tracking-tight sm:mb-12 sm:text-5xl">Features</h2>
-      <div class="grid grid-cols-1 gap-4 md:grid-cols-6">
-        <article class="rounded-2xl border border-line bg-panel p-6 sm:p-8 md:col-span-4">
-          <h3 class="mb-2 text-2xl font-semibold">One queue for every platform.</h3>
-          <p class="m-0 mb-6 text-base text-ink-sub">
-            Connect each account once, then run everything from one place. No switching apps to post
-            the same thing six times.
-          </p>
-          <div class="flex flex-wrap gap-2" aria-hidden="true">
-            {
-              platforms.map((platform) => (
-                <span class="rounded-md border border-line bg-panel-soft px-3 py-2 text-sm font-medium text-ink-sub">
-                  {platform}
-                </span>
-              ))
-            }
+    {/* ===== ORBIT ===== */}
+    <section class="reveal bg-cream px-5 py-16 sm:py-24" aria-labelledby="orbit-heading">
+      <div class="mx-auto max-w-6xl">
+        <div class="mx-auto mb-12 max-w-2xl text-center">
+          <h2 id="orbit-heading" class="mb-4 text-4xl font-bold tracking-tight sm:text-5xl">One queue, every account.</h2>
+          <p class="m-0 text-lg text-ink-sub">Every account you connect feeds the same queue. One place to see what's next, whatever platform it's going to.</p>
+        </div>
+        <div class="relative mx-auto aspect-square w-full max-w-md" aria-hidden="true">
+          <div class="orbit-ring absolute inset-0 rounded-full border-2 border-dashed border-line"></div>
+          <div class="orbit-dot-travel absolute inset-0">
+            <span class="absolute top-0 left-1/2 block h-3 w-3 -translate-x-1/2 rounded-full bg-gold"></span>
+          </div>
+          <div class="absolute inset-0 flex items-center justify-center">
+            <div class="flex h-28 w-28 flex-col items-center justify-center rounded-full border border-line bg-white shadow-xl">
+              <span class="text-base font-bold">Queue</span>
+              <span class="text-sm text-ink-sub">Next up today</span>
+            </div>
+          </div>
+          <span class="absolute top-[4%] left-1/2 flex h-12 w-12 -translate-x-1/2 items-center justify-center rounded-full border border-line bg-white text-base font-bold shadow">F</span>
+          <span class="absolute top-[24%] right-[6%] flex h-12 w-12 items-center justify-center rounded-full border border-line bg-white text-base font-bold shadow">I</span>
+          <span class="absolute right-[6%] bottom-[24%] flex h-12 w-12 items-center justify-center rounded-full border border-line bg-white text-base font-bold shadow">T</span>
+          <span class="absolute bottom-[4%] left-1/2 flex h-12 w-12 -translate-x-1/2 items-center justify-center rounded-full border border-line bg-white text-base font-bold shadow">Y</span>
+          <span class="absolute bottom-[24%] left-[6%] flex h-12 w-12 items-center justify-center rounded-full border border-line bg-white text-base font-bold shadow">Th</span>
+          <span class="absolute top-[24%] left-[6%] flex h-12 w-12 items-center justify-center rounded-full border border-line bg-white text-base font-bold shadow">X</span>
+        </div>
+        <p class="sr-only">Facebook, Instagram, TikTok, YouTube, Threads, and X all feed into one central queue.</p>
+      </div>
+    </section>
+
+    {/* ===== FEATURES ===== */}
+    <section id="features" class="reveal mx-auto max-w-6xl scroll-mt-24 px-5 py-16 sm:py-24" aria-labelledby="features-heading">
+      <p class="mb-4 text-sm font-bold tracking-[0.2em] text-gold-deep uppercase">What it does</p>
+      <h2 id="features-heading" class="mb-8 text-4xl font-bold tracking-tight sm:mb-12 sm:text-5xl">Built for pages that never go quiet.</h2>
+      <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <article class="rounded-2xl border border-line bg-white p-6 shadow-sm sm:p-8">
+          <h3 class="mb-2 text-2xl font-semibold">One queue for every account.</h3>
+          <p class="m-0 mb-6 text-base text-ink-sub">Connect each account once, then run every page from one queue. No switching apps to post the same thing six times.</p>
+          <div class="rounded-lg border border-line bg-cream p-3" aria-hidden="true">
+            <p class="m-0 mb-2 flex items-center gap-2 text-sm font-semibold"><span class="flex h-8 w-12 items-center justify-center rounded text-white" style="background: linear-gradient(135deg, #f59e0b, #ef4444)">▶</span> Morning routine reel <span class="ml-auto text-ink-sub">Today · 9:00 AM</span></p>
+            <p class="m-0 flex items-center gap-2 text-sm font-semibold"><span class="flex h-8 w-12 items-center justify-center rounded text-white" style="background: linear-gradient(135deg, #ec4899, #f97316)">▶</span> New product post <span class="ml-auto text-ink-sub">Today · 1:30 PM</span></p>
           </div>
         </article>
-        <article class="rounded-2xl border border-line bg-panel p-6 sm:p-8 md:col-span-2">
-          <h3 class="mb-2 text-2xl font-semibold">It publishes while you're offline.</h3>
-          <p class="m-0 mb-6 text-base text-ink-sub">
-            Your posts don't wait for you. Once they're queued, the cloud publishes them at the time
-            you picked — laptop closed, phone off.
-          </p>
-          <div class="flex items-end gap-3" aria-hidden="true">
-            <span class="flex h-16 w-24 items-center justify-center rounded-md border border-line bg-panel-soft text-sm text-ink-sub">
-              Laptop
-            </span>
-            <span class="flex h-12 w-8 items-center justify-center rounded-md border border-line bg-panel-soft text-xs text-ink-sub">
-              Phone
-            </span>
+        <article class="rounded-2xl border border-line bg-white p-6 shadow-sm sm:p-8">
+          <h3 class="mb-2 text-2xl font-semibold">Posting times, set once.</h3>
+          <p class="m-0 mb-6 text-base text-ink-sub">Pick the times for each page once. Every post you add takes the next open slot, in order. No choosing a time for every single post.</p>
+          <div class="rounded-lg border border-line bg-cream p-3" aria-hidden="true">
+            <div class="grid grid-cols-7 gap-1 text-center text-sm">
+              <span>Mon<br /><b>9:00</b></span><span>Tue<br /><b>1:30</b></span><span>Wed<br />—</span><span>Thu<br /><b>9:00</b></span><span>Fri<br />—</span><span>Sat<br /><b>6:00</b></span><span>Sun<br />—</span>
+            </div>
           </div>
         </article>
-        <article class="rounded-2xl border border-line bg-panel p-6 sm:p-8 md:col-span-2">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#f0b90b" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-            <rect x="5" y="11" width="14" height="9" rx="1" />
-            <path d="M8 11V7a4 4 0 0 1 8 0v4" />
-          </svg>
-          <h3 class="mt-4 mb-2 text-2xl font-semibold">Your accounts stay yours.</h3>
-          <p class="m-0 text-base text-ink-sub">
-            You sign in on Facebook, Instagram, and the rest themselves. We never ask for your
-            passwords, and we never see them.
-          </p>
+        <article class="rounded-2xl border border-line bg-white p-6 shadow-sm sm:p-8">
+          <h3 class="mb-2 text-2xl font-semibold">Publishes while you're offline.</h3>
+          <p class="m-0 mb-6 text-base text-ink-sub">Once a post is queued, it doesn't wait for you. It goes live at its time from the cloud, whether your laptop is open, closed, or off.</p>
+          <div class="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-cream p-3 text-sm" aria-hidden="true">
+            <span class="rounded-md border border-line bg-white px-3 py-2">Scheduled</span>
+            <span>→</span>
+            <span class="rounded-md bg-gold px-3 py-2 font-semibold">Cloud</span>
+            <span>→</span>
+            <span class="rounded-md bg-[#e6f4ea] px-3 py-2 font-semibold text-[#137333]">Published</span>
+            <span class="ml-auto text-ink-sub">Laptop: off</span>
+          </div>
         </article>
-        <article class="rounded-2xl border border-line bg-panel p-6 sm:p-8 md:col-span-4">
-          <h3 class="mb-2 text-2xl font-semibold">Pick your times once.</h3>
-          <p class="m-0 mb-6 text-base text-ink-sub">
-            Set posting times for each page once. Every post you queue takes the next open time, in
-            order — no picking a time for every post.
-          </p>
-          <div class="flex flex-wrap items-center gap-2 text-sm" aria-hidden="true">
-            <span class="rounded-md border border-line bg-panel-soft px-3 py-2 text-ink-sub">Scheduled</span>
-            <span class="text-ink-sub">→</span>
-            <span class="rounded-md border border-line bg-panel-soft px-3 py-2 text-ink-sub">Cloud</span>
-            <span class="text-ink-sub">→</span>
-            <span class="rounded-md bg-gold/15 px-3 py-2 font-semibold text-gold">Published</span>
+        <article class="rounded-2xl border border-line bg-white p-6 shadow-sm sm:p-8">
+          <h3 class="mb-2 text-2xl font-semibold">Your accounts stay yours.</h3>
+          <p class="m-0 mb-6 text-base text-ink-sub">You sign in on Facebook, Instagram, and the rest themselves. We never ask for your passwords, and we never see them.</p>
+          <div class="rounded-lg border border-line bg-cream p-3 text-sm" aria-hidden="true">
+            <p class="m-0 mb-2 flex items-center gap-2"><span class="flex h-6 w-6 items-center justify-center rounded-full bg-[#137333] text-white">✓</span> Signed in on Facebook</p>
+            <p class="m-0 flex items-center gap-2"><span class="flex h-6 w-6 items-center justify-center rounded-full bg-[#137333] text-white">✓</span> Signed in on Instagram</p>
           </div>
         </article>
       </div>
     </section>
 
-    <section id="how-it-works" class="mx-auto max-w-6xl scroll-mt-24 px-5 py-16 sm:py-24" aria-labelledby="how-it-works-heading">
-      <p class="mb-4 text-sm font-bold tracking-[0.2em] text-gold uppercase">How it works</p>
-      <h2 id="how-it-works-heading" class="mb-8 text-4xl font-bold tracking-tight sm:mb-12 sm:text-5xl">How it works</h2>
-      <div class="mb-8 hidden h-px bg-line md:block" aria-hidden="true"></div>
+    {/* ===== FLOW ===== */}
+    <section id="how-it-works" class="reveal mx-auto max-w-6xl scroll-mt-24 px-5 py-16 sm:py-24" aria-labelledby="how-it-works-heading">
+      <p class="mb-4 text-sm font-bold tracking-[0.2em] text-gold-deep uppercase">How it works</p>
+      <h2 id="how-it-works-heading" class="mb-10 text-4xl font-bold tracking-tight sm:text-5xl">Three steps, then it runs itself.</h2>
+      <div class="relative mb-10 h-1 rounded bg-line" aria-hidden="true">
+        <span class="flow-dot absolute -top-1 block h-3 w-3 rounded-full bg-gold"></span>
+      </div>
       <div class="grid grid-cols-1 gap-8 md:grid-cols-3">
-        {
-          steps.map((step) => (
-            <article>
-              <p class="m-0 mb-4 text-5xl font-bold text-ink-sub" aria-hidden="true">{step.number}</p>
-              <h3 class="mb-2 text-2xl font-semibold">{step.title}</h3>
-              <p class="m-0 text-base text-ink-sub">{step.text}</p>
-            </article>
-          ))
-        }
+        <article class="reveal">
+          <p class="m-0 mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-gold text-lg font-bold">1</p>
+          <h3 class="mb-2 text-2xl font-semibold">Connect</h3>
+          <p class="m-0 text-base text-ink-sub">Add your pages once, signing in on each platform itself.</p>
+        </article>
+        <article class="reveal" style="--d:150ms">
+          <p class="m-0 mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-gold text-lg font-bold">2</p>
+          <h3 class="mb-2 text-2xl font-semibold">Queue</h3>
+          <p class="m-0 text-base text-ink-sub">Create your posts and drop them in the queue. Each one takes its next posting time.</p>
+        </article>
+        <article class="reveal" style="--d:300ms">
+          <p class="m-0 mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-gold text-lg font-bold">3</p>
+          <h3 class="mb-2 text-2xl font-semibold">Publish</h3>
+          <p class="m-0 text-base text-ink-sub">The cloud publishes on time, every day, so your pages never go quiet.</p>
+        </article>
       </div>
     </section>
 
-    <section class="mx-auto max-w-4xl px-5 py-16 text-center sm:py-24">
-      <h2 class="mb-8 text-4xl leading-tight font-bold tracking-tight sm:text-5xl">
-        Start posting every day, without posting every day.
-      </h2>
-      <a
-        href="https://app.fbuploadpro.com/signup"
-        class="inline-flex min-h-11 w-full items-center justify-center rounded-md bg-gold px-6 text-base font-semibold text-night no-underline sm:w-auto"
-      >
-        Get started
-      </a>
-      <p class="m-0 mt-8 text-base text-ink-sub">
-        No passwords shared. You sign in on each platform itself.
-      </p>
+    {/* ===== CLOSING ===== */}
+    <section class="reveal mx-auto max-w-6xl px-5 pb-16 sm:pb-24">
+      <div class="rounded-3xl bg-night px-6 py-14 text-center text-white sm:py-20">
+        <h2 class="mx-auto mb-4 max-w-2xl text-4xl leading-tight font-bold tracking-tight sm:text-5xl">Start posting every day, without posting every day.</h2>
+        <p class="mx-auto mb-8 max-w-xl text-lg text-white/70">Queue a week of posts in one sitting, and let the cloud do the daily work.</p>
+        <a href={signup} class="inline-flex min-h-11 w-full items-center justify-center rounded-md bg-gold px-6 text-base font-semibold text-ink no-underline sm:w-auto">Get started</a>
+        <p class="m-0 mt-8 text-base text-white/70">No passwords shared. You sign in on each platform itself.</p>
+      </div>
     </section>
   </main>
 
@@ -270,4 +264,22 @@ const scheduledWeekDays = ['Tue', 'Thu', 'Sat'];
       </nav>
     </div>
   </footer>
+
+  <script is:inline>
+    document.documentElement.classList.add('js');
+    var items = Array.prototype.slice.call(document.querySelectorAll('.reveal'));
+    if ('IntersectionObserver' in window) {
+      var observer = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('in');
+            observer.unobserve(entry.target);
+          }
+        });
+      }, { threshold: 0.12 });
+      items.forEach(function (el) { observer.observe(el); });
+    } else {
+      items.forEach(function (el) { el.classList.add('in'); });
+    }
+  </script>
 </Layout>
