@@ -103,6 +103,47 @@
   animation: highlight-sweep 0.7s ease-out 0.1s backwards;
 }
 
+/* ---- Section 2 heading highlight: multi-line safe, STATIC ----
+   The hero's .hero-highlight is an inline padded background with a
+   sweep. That works for the hero's single line, but when section 2's
+   phrase wraps to two lines at a tight 1.05 line-height, the inline
+   padding overflows its line box and overlaps/clips neighbouring
+   lines (the bug in Shahzeb's screenshot: "login." overlapped, "it
+   manages" clipped). Fix, section 2 only: each gold phrase is its
+   own line, and the gold itself is an INLINE-BLOCK (not inline), so
+   its line box grows to contain its padding instead of overflowing
+   into the next line. A small mt gap separates the bars. No sweep
+   animation here — static gold, so multi-line rendering cannot be
+   broken by background-size animation. .hero-highlight is untouched. */
+.section-highlight {
+  display: inline-block;
+  background-color: #f0b90b;
+  color: #111111;
+  border-radius: 12px;
+  padding: 0.08em 0.15em;
+}
+
+/* ---- Section 2 as a full page on its own ----
+   Section 2 is not a short block under the hero: it gets a
+   viewport-height min-height (vh fallback, dvh where supported,
+   same pattern as .page-shell) and its content is vertically
+   centred inside that height, so when a visitor scrolls to
+   section 2, section 2 fills the whole viewport and the hero has
+   scrolled completely out of view. min-height, never fixed height,
+   so it grows if content ever exceeds the viewport — nothing clips.
+   Section 2 stays inside the same white card; no separate card,
+   no grey gap, card outer margins unchanged. */
+.section2-full {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+}
+@supports (height: 100dvh) {
+  .section2-full {
+    min-height: 100dvh;
+  }
+}
+
 /* ---- Hero entrance on load: subtle fade + small rise only ----
    Base state is fully visible (opacity 1, no transform); the
    animation only applies transiently (fill backwards, so the
