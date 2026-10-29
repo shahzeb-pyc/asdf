@@ -384,6 +384,41 @@
   left: 34px;
 }
 
+/* ---- Section 4 pricing header: same full-section pattern as section 3 ----
+   .section4-full fills its own viewport (vh fallback, dvh where
+   supported) and .pricing-card fills that height minus the page's
+   outer margins (16px total on phones, 32px on desktop), with its
+   content vertically centred inside it. Corner blobs are reused
+   from section 3 (top-left and top-right only, no dots). min-height,
+   never fixed height, so everything grows if content is taller. */
+.section4-full {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+}
+.pricing-card {
+  min-height: calc(100vh - 16px);
+  width: 100%;
+}
+@media (min-width: 640px) {
+  .pricing-card {
+    min-height: calc(100vh - 32px);
+  }
+}
+@supports (height: 100dvh) {
+  .section4-full {
+    min-height: 100dvh;
+  }
+  .pricing-card {
+    min-height: calc(100dvh - 16px);
+  }
+  @media (min-width: 640px) {
+    .pricing-card {
+      min-height: calc(100dvh - 32px);
+    }
+  }
+}
+
 /* ---- Reduced motion: everything instant and still ----
    With animation: none, every element falls back to its base state:
    hero fully visible, highlight fully gold (base background-size

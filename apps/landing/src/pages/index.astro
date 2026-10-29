@@ -212,5 +212,31 @@ const signin = 'https://app.fbuploadpro.com/login';
         </h2>
       </div>
     </section>
+
+    {/* ===== SECTION 4 — PRICING HEADER ONLY =====
+        Black card on the grey page background, following the
+        section 3 pattern exactly: the section fills its own
+        viewport and the black card fills that height minus the
+        page's outer margins, with the content centred inside it.
+        Same dark corner blobs as section 3, top-left and
+        top-right only (no dots — the screenshot shows none).
+        Content is exactly the screenshot's header and nothing
+        else: a small gold "Pricing" pill, then the white bold
+        two-line headline "Start for free." / "Upgrade to scale".
+        No tiers, no prices, no cards, no button, no extra copy.
+        The card sits OUTSIDE the hero white card, below section 3. */}
+    <section class="section4-full mt-2 sm:mt-4" aria-label="Pricing">
+      <div class="pricing-card relative flex flex-col items-center justify-center overflow-hidden rounded-[24px] bg-[#0b0e11] px-5 py-16 text-center shadow-[0_20px_60px_rgba(17,17,17,0.12)] sm:py-20 lg:py-24">
+        <span class="community-blob community-blob-tl" aria-hidden="true"></span>
+        <span class="community-blob community-blob-tr" aria-hidden="true"></span>
+        <div class="relative z-10 flex flex-col items-center">
+          <span class="mb-6 inline-flex items-center rounded-full bg-gold px-3.5 py-1 text-sm font-medium text-ink">Pricing</span>
+          <h2 class="mx-auto text-[clamp(28px,8vw,64px)] leading-[1.1] font-bold tracking-tight text-white">
+            <span class="block">Start for free.</span>
+            <span class="mt-1 block">Upgrade to scale</span>
+          </h2>
+        </div>
+      </div>
+    </section>
   </div>
 </Layout>
