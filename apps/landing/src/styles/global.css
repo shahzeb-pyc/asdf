@@ -18,12 +18,22 @@
   }
 
   html {
-    background-color: #d9dde2;
+    background-color: #ffffff;
+    scroll-snap-type: y mandatory;
+    scroll-behavior: smooth;
+  }
+  @media (max-width: 767px) {
+    /* Phones: proximity, not mandatory — a stacked section 2 taller
+       than a short phone viewport must stay freely scrollable and
+       must never be trapped by a mandatory snap point. */
+    html {
+      scroll-snap-type: y proximity;
+    }
   }
 
   body {
     margin: 0;
-    background-color: #d9dde2;
+    background-color: #ffffff;
     color: #111111;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     font-size: 16px;
@@ -41,41 +51,180 @@
   }
 }
 
-/* ---- Full-height white card, equal margin on all sides ----
-   The outer shell is the viewport height and the card is the viewport
-   height minus twice the margin, so the bottom margin equals the top
-   and side margins and no grey void is left below the card on a short
-   page. Phones (below sm): 8px all around. Desktop (sm and up, matching
-   the wrapper's sm:px-4 sm:py-4): 16px all around. min-height, never a
-   fixed height, so the card grows naturally if content ever exceeds the
-   viewport and the bottom padding/margin is preserved. dvh first with a
-   vh fallback (the dvh line is ignored by browsers that don't support
-   it, leaving the vh line in effect) so mobile browser chrome doesn't
-   break the fit (vh is the base, dvh overrides it inside @supports, so
-   old browsers keep vh and modern browsers get dvh). Hero content stays at the top; nothing is centred
-   vertically and no content is added to fill the stretched card. */
-.page-shell {
+/* ---- One section per screen: snap + contiguous full-bleed sections ----
+   Every section is exactly one viewport (100vh, 100dvh where supported)
+   and snaps to the top of the viewport. There is NO page-shell grey
+   background and NO margin/gap between sections any more: sections
+   are direct siblings, full width, so white section 2 touches black
+   section 3 directly and black 3 touches black 4 directly. Inner
+   content keeps its existing max-width and side padding — only the
+   edges changed. min-height, never fixed height, so a section grows
+   if its content ever exceeds the viewport instead of clipping. */
+.snap-section {
   min-height: 100vh;
-}
-.hero-card {
-  min-height: calc(100vh - 16px);
-}
-@media (min-width: 640px) {
-  .hero-card {
-    min-height: calc(100vh - 32px);
-  }
+  scroll-snap-align: start;
 }
 @supports (height: 100dvh) {
-  .page-shell {
+  .snap-section {
     min-height: 100dvh;
   }
-  .hero-card {
-    min-height: calc(100dvh - 16px);
+}
+
+/* ---- Fixed topbar: hides on scroll down, shows on scroll up ----
+   Fixed to the viewport, centred by left:50% + translateX(-50%).
+   The pill itself is opaque white with a strong dark shadow, so it
+   stays legible over white sections AND black sections — it is never
+   transparent over dark. .topbar-hidden (added by the inline script)
+   slides it up out of view with a 300ms ease transition; at scrollY
+   = 0 the script always removes the class. Width caps at the viewport
+   minus 16px so the pill never overflows a 320px phone. */
+.topbar-fixed {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  width: max-content;
+  max-width: calc(100vw - 16px);
+  transition: transform 0.3s ease, opacity 0.3s ease;
+}
+.topbar-fixed.topbar-hidden {
+  transform: translate(-50%, -140%);
+  opacity: 0;
+  pointer-events: none;
+}
+.topbar-pill {
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+/* ---- Section arrival: fade + rise ~12px, JS-gated ----
+   The hidden state only applies once JS has added .js-snap to <html>,
+   so a JS failure leaves every section fully visible. The observer
+   adds .is-visible on arrival; reduced motion (below) forces the
+   final state with no transition. */
+.js-snap .snap-section {
+  opacity: 0;
+  transform: translateY(12px);
+  transition: opacity 0.6s ease-out, transform 0.6s ease-out;
+}
+.js-snap .snap-section.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ---- Section 2 top clearance for the fixed topbar ----
+   The pill occupies the top ~66px (12px offset + ~54px pill); section 2
+   is vertically centred, so this padding only guarantees its content
+   never slides under the pill on short viewports. */
+.section2-full {
+  padding-top: 84px;
+  padding-bottom: 32px;
+}
+
+/* ---- Short-viewport fit: hero ----
+   At <=620px viewport height the hero shrinks (smaller headline and
+   subhead, smaller mobile tiles, tighter gaps) so it still fits one
+   screen at 320x568 without hiding anything. */
+@media (max-height: 620px) {
+  .snap-hero {
+    padding-top: 76px;
+    padding-bottom: 16px;
   }
-  @media (min-width: 640px) {
-    .hero-card {
-      min-height: calc(100dvh - 32px);
-    }
+  .snap-hero h1 {
+    font-size: 34px;
+  }
+  .hero-sub {
+    font-size: 14px;
+  }
+  .mob-grid {
+    margin-top: 24px;
+    gap: 8px;
+  }
+  .snap-hero .grid-cols-3 > span {
+    width: 60px;
+    height: 60px;
+  }
+  .snap-hero .grid-cols-3 > span > span:first-child {
+    width: 44px;
+    height: 44px;
+  }
+  .snap-hero .grid-cols-3 > span > svg {
+    width: 22px;
+    height: 22px;
+  }
+}
+
+/* ---- Short desktop viewport: smaller perspective stage ---- */
+@media (min-width: 1024px) and (max-height: 760px) {
+  .iso-stage {
+    height: 220px;
+  }
+}
+
+/* ---- Phone fit: section 2 stacked layout ----
+   Phones stack text + orbit, which is the tallest layout on the page.
+   Below 768px the orbit, centre, badges, heading and text shrink so
+   the stacked section still fits one screen at 667px height, and
+   further at 568px — without removing or hiding any copy, badge, or
+   platform. Above 768px the desktop two-column layout is untouched. */
+@media (max-width: 767px) {
+  .s2-grid {
+    gap: 24px;
+  }
+  .s2-heading {
+    font-size: 28px;
+  }
+  .s2-text {
+    font-size: 14px;
+  }
+  .s2-orbit {
+    width: 200px;
+    height: 200px;
+  }
+  .s2-centre {
+    width: 120px;
+    height: 120px;
+  }
+  .s2-centre svg {
+    width: 72px;
+  }
+  .s2-badge {
+    width: 44px;
+    height: 44px;
+  }
+  .s2-badge svg {
+    width: 22px;
+    height: 22px;
+  }
+}
+@media (max-width: 767px) and (max-height: 620px) {
+  .section2-full {
+    padding-top: 76px;
+    padding-bottom: 16px;
+  }
+  .s2-grid {
+    gap: 16px;
+  }
+  .s2-heading {
+    font-size: 26px;
+  }
+  .s2-text {
+    margin-bottom: 16px;
+  }
+  .s2-orbit {
+    width: 160px;
+    height: 160px;
+  }
+  .s2-centre {
+    width: 100px;
+    height: 100px;
+  }
+  .s2-centre svg {
+    width: 60px;
+  }
+  .s2-badge {
+    width: 40px;
+    height: 40px;
   }
 }
 
@@ -273,6 +422,24 @@
   animation: orbit-counter 24s linear infinite;
 }
 
+/* ---- Sections 3/4: full-bleed, no separator ----
+   .community-card / .pricing-card used to be rounded cards inset by
+   the page margins; they are now the section itself, full width and
+   full viewport height, so section 2 (white) meets section 3 (black)
+   with zero gap and zero page-background strip, and 3 meets 4 the
+   same way. The old calc(100vh - 16px/32px) inset heights are gone. */
+.community-card,
+.pricing-card {
+  min-height: 100vh;
+  width: 100%;
+}
+@supports (height: 100dvh) {
+  .community-card,
+  .pricing-card {
+    min-height: 100dvh;
+  }
+}
+
 /* ---- Section 3 community banner: black card, corner blobs ----
    Modelled on the reference screenshot's layout only (black card,
    white bold centred heading, gold number highlight, dark corner
@@ -294,26 +461,9 @@
   display: flex;
   align-items: center;
 }
-.community-card {
-  min-height: calc(100vh - 16px);
-  width: 100%;
-}
-@media (min-width: 640px) {
-  .community-card {
-    min-height: calc(100vh - 32px);
-  }
-}
 @supports (height: 100dvh) {
   .section3-full {
     min-height: 100dvh;
-  }
-  .community-card {
-    min-height: calc(100dvh - 16px);
-  }
-  @media (min-width: 640px) {
-    .community-card {
-      min-height: calc(100dvh - 32px);
-    }
   }
 }
 .community-highlight {
@@ -396,26 +546,9 @@
   display: flex;
   align-items: center;
 }
-.pricing-card {
-  min-height: calc(100vh - 16px);
-  width: 100%;
-}
-@media (min-width: 640px) {
-  .pricing-card {
-    min-height: calc(100vh - 32px);
-  }
-}
 @supports (height: 100dvh) {
   .section4-full {
     min-height: 100dvh;
-  }
-  .pricing-card {
-    min-height: calc(100dvh - 16px);
-  }
-  @media (min-width: 640px) {
-    .pricing-card {
-      min-height: calc(100dvh - 32px);
-    }
   }
 }
 
@@ -433,5 +566,16 @@
   .orbit-spin,
   .orbit-counter {
     animation: none !important;
+  }
+  html {
+    scroll-behavior: auto;
+  }
+  .js-snap .snap-section {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+  .topbar-fixed {
+    transition: none;
   }
 }
