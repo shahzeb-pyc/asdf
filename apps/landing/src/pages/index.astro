@@ -12,19 +12,19 @@ const signin = 'https://app.fbuploadpro.com/login';
   <div class="page-shell bg-page px-2 py-2 sm:px-4 sm:py-4">
     <div class="hero-card overflow-hidden rounded-[28px] bg-white shadow-[0_20px_60px_rgba(17,17,17,0.12)]">
       {/* ===== TOPBAR — pill bar, like the screenshot ===== */}
-      <header class="anim-enter anim-d0 px-4 pt-4 sm:px-8 sm:pt-5">
-        <div class="flex items-center justify-between gap-4 rounded-full border border-line bg-white px-3 py-2 shadow-[0_8px_24px_rgba(17,17,17,0.08)] sm:px-5">
-          <a href="#" class="inline-flex min-h-11 shrink-0 items-center gap-2 text-base font-bold tracking-tight no-underline sm:text-lg" aria-label="FBUploadPro home">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="32" height="32" fill="none" role="img" aria-label="FBUploadPro" class="h-7 w-7 shrink-0 sm:h-8 sm:w-8"><path d="M24 11L12 23L17 28L20 25V51L28 45V23H45L53 15H28L24 11Z" fill="#fcd535" /><path d="M24 11L12 23L13.2 24.2L24 13.4L28 17.4H50.6L53 15H28L24 11Z" fill="#ffffff" fill-opacity="0.35" /><path d="M32 30H48L40 38H32V30Z" fill="#f0b90b" /><path d="M32 43H41L35 49H32V43Z" fill="#766018" /></svg><span>FBUploadPro</span>
+      <header class="anim-enter anim-d0 px-4 pt-3 sm:px-8 sm:pt-4">
+        <div class="flex items-center justify-between gap-4 rounded-full border border-line bg-white px-3 py-1.5 shadow-[0_8px_24px_rgba(17,17,17,0.08)] sm:px-5">
+          <a href="#" class="inline-flex min-h-10 shrink-0 items-center gap-2 text-sm font-bold tracking-tight no-underline sm:text-base" aria-label="FBUploadPro home">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="32" height="32" fill="none" role="img" aria-label="FBUploadPro" class="h-6 w-6 shrink-0 sm:h-7 sm:w-7"><path d="M24 11L12 23L17 28L20 25V51L28 45V23H45L53 15H28L24 11Z" fill="#fcd535" /><path d="M24 11L12 23L13.2 24.2L24 13.4L28 17.4H50.6L53 15H28L24 11Z" fill="#ffffff" fill-opacity="0.35" /><path d="M32 30H48L40 38H32V30Z" fill="#f0b90b" /><path d="M32 43H41L35 49H32V43Z" fill="#766018" /></svg><span>FBUploadPro</span>
           </a>
           <nav class="hidden items-center gap-7 lg:flex" aria-label="Main">
-            <a href="#" class="inline-flex min-h-11 items-center text-base font-medium text-ink-sub no-underline hover:text-ink">Features</a>
-            <a href="#" class="inline-flex min-h-11 items-center text-base font-medium text-ink-sub no-underline hover:text-ink">How it works</a>
-            <a href="#" class="inline-flex min-h-11 items-center text-base font-medium text-ink-sub no-underline hover:text-ink">Platforms</a>
+            <a href="#" class="inline-flex min-h-10 items-center text-base font-medium text-ink-sub no-underline hover:text-ink">Features</a>
+            <a href="#" class="inline-flex min-h-10 items-center text-base font-medium text-ink-sub no-underline hover:text-ink">How it works</a>
+            <a href="#" class="inline-flex min-h-10 items-center text-base font-medium text-ink-sub no-underline hover:text-ink">Platforms</a>
           </nav>
           <div class="flex shrink-0 items-center gap-2 sm:gap-4">
-            <a href={signin} class="hidden min-h-11 items-center text-sm font-medium no-underline min-[375px]:inline-flex sm:text-base">Sign in</a>
-            <a href={signup} class="inline-flex min-h-11 items-center rounded-full bg-ink px-3 text-sm font-semibold text-white no-underline sm:px-5 sm:text-base">Get started</a>
+            <a href={signin} class="hidden min-h-10 items-center text-sm font-medium no-underline min-[375px]:inline-flex sm:text-base">Sign in</a>
+            <a href={signup} class="inline-flex min-h-10 items-center rounded-full bg-ink px-3 text-sm font-semibold text-white no-underline sm:px-4 sm:text-base">Get started</a>
           </div>
         </div>
       </header>
@@ -32,6 +32,9 @@ const signin = 'https://app.fbuploadpro.com/login';
       {/* ===== HERO ONLY ===== */}
       <main>
         <section class="relative overflow-hidden px-5 pt-16 pb-16 text-center sm:pt-20" aria-label="Hero">
+          <div class="anim-enter anim-d0 mb-5 flex justify-center">
+            <span class="inline-block max-w-full rounded-full border border-line bg-white px-4 py-1.5 text-center text-sm leading-snug font-medium text-ink shadow-[0_8px_20px_rgba(17,17,17,0.08)] sm:text-[15px]"><span class="mr-2 inline-block h-2 w-2 rounded-full bg-gold align-middle" aria-hidden="true"></span>Manage FBUploadPro using Muse or any AI agent</span>
+          </div>
           <h1 class="anim-enter anim-d1 mx-auto mb-6 max-w-4xl text-[40px] leading-[1.05] font-bold tracking-tight sm:text-5xl md:text-[64px] lg:text-[72px]">
             <span class="block">Your Accounts, posting <span class="whitespace-nowrap">themselves —</span></span>
             <span class="hero-highlight mt-1 inline-block">100% in the cloud</span>
