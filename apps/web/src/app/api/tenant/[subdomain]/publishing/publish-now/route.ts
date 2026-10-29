@@ -647,9 +647,7 @@ export async function POST(
     mediaUrl = data.url;
   } else if (media?.source === 'temp' && media.tempKey) {
     const config = getR2Config();
-    const publicBase = config?.publicUrl
-      ? config.publicUrl.replace(/\/+$/, '')
-      : null;
+    const publicBase = config?.publicUrl.replace(/\/+$/, '') ?? null;
     const expectedPrefix = `users/${session.userId}/publish-now-temp/`;
     const keyFromUrl =
       publicBase && media.url.startsWith(`${publicBase}/`)

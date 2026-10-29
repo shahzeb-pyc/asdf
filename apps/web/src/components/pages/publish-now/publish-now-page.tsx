@@ -1202,7 +1202,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                                   key={key}
                                   className={cn(
                                     'flex items-start gap-3 rounded-xl border border-line bg-canvas p-3 transition-colors sm:p-4',
-                                    checked && !disabled && 'border-brand-gold/50 bg-brand-gold/10',
+                                    checked && disabled === false && 'border-brand-gold/50 bg-brand-gold/10',
                                     disabled
                                       ? 'cursor-default opacity-60'
                                       : 'cursor-pointer hover:bg-hover'
@@ -1326,9 +1326,9 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
 
           {errorBanner}
 
-          <div className="grid items-start gap-6 sm:gap-8 lg:grid-cols-[1.5fr_1fr]">
+          <div className="grid items-start gap-6 sm:gap-8 lg:grid-cols-3">
             {/* Composer panel */}
-            <section className="rounded-3xl border border-line bg-subtle p-4 sm:p-8">
+            <section className="rounded-3xl border border-line bg-subtle p-4 sm:p-8 lg:col-span-2">
               <div className="mb-6 flex items-center justify-between">
                 <h2 className="text-xl font-semibold text-ink">Composer</h2>
               </div>
@@ -1415,13 +1415,13 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                           <input
                             ref={tempInputRef}
                             type="file"
+                            aria-label="Upload file from device"
                             accept={
                               postType === 'image'
                                 ? 'image/jpeg,image/png,image/webp'
                                 : 'video/mp4,video/quicktime,video/webm'
                             }
                             className="hidden"
-                            aria-hidden
                             onChange={(event) => {
                               const file = event.target.files?.[0];
                               event.target.value = '';
@@ -1543,7 +1543,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
             </section>
 
             {/* Results panel */}
-            <section className="flex max-h-200 flex-col overflow-hidden rounded-3xl border border-line bg-subtle">
+            <section className="flex max-h-200 flex-col overflow-hidden rounded-3xl border border-line bg-subtle lg:col-span-1">
               <div className="border-b border-line p-4 sm:p-5">
                 <h2 className="text-lg font-semibold text-ink">
                   Publish results
