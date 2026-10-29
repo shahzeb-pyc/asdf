@@ -203,7 +203,8 @@ const signin = 'https://app.fbuploadpro.com/login';
 
       /* Topbar: animated in with the hero, then hides while
          scrolling down and returns while scrolling up, always
-         visible at the very top. Driven by Lenis scroll position. */
+         visible at the very top. Driven by Lenis scroll position,
+         with a native scroll fallback for phone touch scrolling. */
       var topbar = document.getElementById('site-topbar');
       var lastScroll = 0;
       var topbarHidden = false;
@@ -225,6 +226,21 @@ const signin = 'https://app.fbuploadpro.com/login';
         else if (y < lastScroll) setTopbar(false);
         lastScroll = y;
       });
+      /* Native scroll fallback for the topbar: with syncTouch
+         false, Lenis does not reliably emit scroll during native
+         phone touch scrolling, so the topbar would stay visible
+         on scroll down. Same direction logic, its own last
+         position, same guarded setTopbar — the two listeners are
+         idempotent and never fight. A listener, not animation:
+         all topbar motion stays in the GSAP tween above. */
+      var lastNativeScroll = 0;
+      window.addEventListener('scroll', function () {
+        var y = window.scrollY || window.pageYOffset || 0;
+        if (y <= 0) setTopbar(false);
+        else if (y > lastNativeScroll && y > 72) setTopbar(true);
+        else if (y < lastNativeScroll) setTopbar(false);
+        lastNativeScroll = y;
+      }, { passive: true });
 
       /* Word splitter: wraps each word in a mask > inner pair so
          words rise from below their mask in a cascade. <br> stays
@@ -344,16 +360,18 @@ const signin = 'https://app.fbuploadpro.com/login';
         .fromTo('#section-3 .community-highlight', { backgroundSize: '0% 100%' }, { backgroundSize: '100% 100%', duration: 0.8, ease: 'power2.out' }, '-=0.3');
 
       /* Section 4 reveal, SCRUBBED (same forward/backward rule:
-         top 90% -> top 45%, no stepped replay). The pill
-         settle is part of the scrubbed timeline, so it too runs
-         forward on scroll down and backward on scroll up. */
+         top 90% -> top 45%, no stepped replay). Calm fade+rise
+         only: no pop, no scale, no bounce, no masked-line rise,
+         so scrolling back up genuinely returns pill + heading
+         to opacity 0 / y 24 (hidden) along the same path. The
+         reveal-mask wrappers are animated, not the inner
+         reveal-line spans, so nothing clips through a mask. */
       gsap.timeline({
         scrollTrigger: { trigger: '#section-4', start: 'top 90%', end: 'top 45%', scrub: 1 },
         defaults: { ease: 'none' },
       })
-        .from('.s4-pill', { scale: 0.85, y: 14, opacity: 0, duration: 0.7, ease: 'back.out(1.2)' })
-        .to('.s4-pill', { scale: 1.06, duration: 0.4, ease: 'power2.out', yoyo: true, repeat: 1 }, '-=0.1')
-        .from('#section-4 .reveal-line', { yPercent: 110, duration: 0.9, stagger: 0.12 }, '-=0.5');
+        .from('.s4-pill', { opacity: 0, y: 24, duration: 0.7 })
+        .from('#section-4 .reveal-mask', { opacity: 0, y: 24, duration: 0.9, stagger: 0.12 }, '-=0.3');
 
       /* Scroll parallax, scrubbed, so scrolling back moves
          everything back along the same path. Applied to parent
