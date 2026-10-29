@@ -86,6 +86,7 @@ describe('Import with timezone + posting times', () => {
 
   function makeMockDb(options?: {
     failTimezoneFor?: string;
+    missingTimezoneRow?: boolean;
     preExistingFbIds?: string[];
     preExisting?: Array<{ fbPageId: string; status: string }>;
     oldTimezone?: string;
@@ -130,9 +131,11 @@ describe('Import with timezone + posting times', () => {
           );
         }
         if (sql.includes('SELECT timezone FROM destinations')) {
-          return Promise.resolve([
-            { timezone: options?.oldTimezone ?? 'America/New_York' },
-          ]);
+          return Promise.resolve(
+            options?.missingTimezoneRow
+              ? []
+              : [{ timezone: options?.oldTimezone ?? 'America/New_York' }]
+          );
         }
         if (
           sql.startsWith('SELECT') &&
@@ -429,6 +432,39 @@ describe('Import with timezone + posting times', () => {
     ).toBe(true);
   });
 
+  it('a missing Postgres snapshot row aborts the schedule and restores status only, without touching timezone or slots', async () => {
+    mockGraphPages();
+    const { mockDb, restoreUpdates, timezoneUpdates, deleteCalls } =
+      makeMockDb({
+        preExisting: [{ fbPageId: 'page_1001', status: 'disconnected' }],
+        missingTimezoneRow: true,
+      });
+
+    const res = await handleImportPages(
+      importRequest(scheduleBody),
+      'acme',
+      mockDb
+    );
+    expect(res.status).toBe(500);
+    expect((await res.json()).code).toBe('SCHEDULE_FAILED');
+    // No schedule write at all, and the reactivated page is
+    // restored to disconnected only: the status-only rollback
+    // carries ['disconnected', pageId, workspaceId], never a
+    // fabricated timezone.
+    expect(timezoneUpdates).toHaveLength(0);
+    expect(restoreUpdates).toHaveLength(1);
+    expect(restoreUpdates[0]).toEqual([
+      'disconnected',
+      pageUuids.page_1001,
+      'ws_123',
+    ]);
+    expect(
+      deleteCalls.some(([, params]) =>
+        JSON.stringify(params).includes(pageUuids.page_1001)
+      )
+    ).toBe(false);
+  });
+
   it('a mixed batch failure deletes the new page, restores the reactivated page, and leaves the active page untouched', async () => {
     global.fetch = vi.fn().mockResolvedValueOnce(
       new Response(
@@ -607,6 +643,9 @@ describe('Import with timezone + posting times', () => {
     existing?: Array<{ fbPageId: string; status: string }>;
     failScheduleFor?: string;
     failSlotUpsert?: boolean;
+    failExistingQuery?: boolean;
+    failSnapshotTimezone?: boolean;
+    failSnapshotSlots?: boolean;
     oldTimezone?: string;
     oldSlots?: Array<{
       time_of_day: string;
@@ -615,6 +654,7 @@ describe('Import with timezone + posting times', () => {
     }>;
   }) {
     const slotUpserts: unknown[] = [];
+    const destinationUpserts: unknown[] = [];
     const deletes: Array<{ table: string; filters: Record<string, unknown> }> =
       [];
     const timezoneUpdates: unknown[] = [];
@@ -693,6 +733,9 @@ describe('Import with timezone + posting times', () => {
           };
         }
         if (this.table === 'destinations' && this.op === 'select') {
+          if (options?.failSnapshotTimezone) {
+            return { data: null, error: { message: 'tz boom' } };
+          }
           return {
             data: {
               id: this.filters.id,
@@ -703,6 +746,7 @@ describe('Import with timezone + posting times', () => {
         }
         if (this.table === 'destinations' && this.op === 'upsert') {
           const payload = this.payload as Record<string, unknown>;
+          destinationUpserts.push(payload);
           const fbPageId = String(payload.external_destination_id);
           return {
             data: {
@@ -729,6 +773,9 @@ describe('Import with timezone + posting times', () => {
       }
       private resolveAwait(): { data: unknown; error: unknown } {
         if (this.table === 'destinations' && this.op === 'select') {
+          if (options?.failExistingQuery) {
+            return { data: null, error: { message: 'existing boom' } };
+          }
           return {
             data: existingEntries.map((entry) => ({
               external_destination_id: entry.fbPageId,
@@ -748,6 +795,9 @@ describe('Import with timezone + posting times', () => {
           return { data: { id: this.filters.id }, error: null };
         }
         if (this.table === 'posting_slots' && this.op === 'select') {
+          if (options?.failSnapshotSlots) {
+            return { data: null, error: { message: 'slots boom' } };
+          }
           return {
             data: options?.oldSlots ?? defaultOldSlots,
             error: null,
@@ -773,6 +823,7 @@ describe('Import with timezone + posting times', () => {
     return {
       mockSupabase,
       slotUpserts,
+      destinationUpserts,
       deletes,
       timezoneUpdates,
       restoreUpdates,
@@ -888,6 +939,91 @@ describe('Import with timezone + posting times', () => {
     expect(restoreUpdates).toHaveLength(1);
     expect(restoreUpdates[0]?.status).toBe('disconnected');
     expect(restoreUpdates[0]?.timezone).toBe('America/New_York');
+  });
+
+  it('a Supabase existing-pages query error aborts the import with no upsert and no schedule write', async () => {
+    mockGraphPages();
+    const {
+      mockSupabase,
+      destinationUpserts,
+      slotUpserts,
+      timezoneUpdates,
+      deletes,
+    } = makeMockSupabase({
+      existing: [{ fbPageId: 'page_1001', status: 'active' }],
+      failExistingQuery: true,
+    });
+    const res = await handleImportPages(
+      importRequest(scheduleBody),
+      'acme',
+      mockSupabase as never
+    );
+    expect(res.status).toBe(500);
+    // An error is never read as "no pages exist": no destination
+    // upsert, no timezone update, no slot write, no rollback
+    // delete of any pre-existing page.
+    expect(destinationUpserts).toHaveLength(0);
+    expect(slotUpserts).toHaveLength(0);
+    expect(timezoneUpdates).toHaveLength(0);
+    expect(deletes).toHaveLength(0);
+  });
+
+  it('a Supabase snapshot query error restores the reactivated page to disconnected only, leaving its timezone and slots untouched', async () => {
+    mockGraphPages();
+    const { mockSupabase, deletes, restoreUpdates, timezoneUpdates } =
+      makeMockSupabase({
+        existing: [{ fbPageId: 'page_1001', status: 'disconnected' }],
+        failSnapshotTimezone: true,
+      });
+    const res = await handleImportPages(
+      importRequest(scheduleBody),
+      'acme',
+      mockSupabase as never
+    );
+    expect(res.status).toBe(500);
+    expect((await res.json()).code).toBe('SCHEDULE_FAILED');
+    // The schedule is aborted before any timezone write, and the
+    // rollback restores status only — no timezone field on the
+    // restore, no slot delete and no destination delete for the
+    // reactivated page.
+    expect(timezoneUpdates).toHaveLength(0);
+    expect(restoreUpdates).toHaveLength(1);
+    expect(restoreUpdates[0]?.status).toBe('disconnected');
+    expect(restoreUpdates[0]?.timezone).toBeUndefined();
+    expect(
+      deletes.some(
+        (d) =>
+          d.table === 'posting_slots' &&
+          JSON.stringify(d.filters).includes(pageUuids.page_1001)
+      )
+    ).toBe(false);
+    expect(
+      deletes.some(
+        (d) =>
+          d.table === 'destinations' &&
+          JSON.stringify(d.filters).includes(pageUuids.page_1001)
+      )
+    ).toBe(false);
+  });
+
+  it('a Supabase snapshot slot query error also restores the reactivated page to disconnected only', async () => {
+    mockGraphPages();
+    const { mockSupabase, restoreUpdates, timezoneUpdates } =
+      makeMockSupabase({
+        existing: [{ fbPageId: 'page_1001', status: 'disconnected' }],
+        failSnapshotSlots: true,
+      });
+    const res = await handleImportPages(
+      importRequest(scheduleBody),
+      'acme',
+      mockSupabase as never
+    );
+    expect(res.status).toBe(500);
+    expect((await res.json()).code).toBe('SCHEDULE_FAILED');
+    expect(timezoneUpdates).toHaveLength(0);
+    expect(restoreUpdates).toHaveLength(1);
+    expect(restoreUpdates[0]?.status).toBe('disconnected');
+    expect(restoreUpdates[0]?.timezone).toBeUndefined();
   });
 
   it('a Supabase mixed batch failure deletes the new page, restores the reactivated page, and leaves the active page untouched', async () => {

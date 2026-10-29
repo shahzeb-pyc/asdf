@@ -244,12 +244,29 @@ export async function handleImportPages(
     ) as SupabaseClient | null;
     if (supabase) {
       const pageFbIds = matchedPages.map((item) => String(item.id));
-      const { data: existingRows } = await supabase
+      const { data: existingRows, error: existingErr } = await supabase
         .from('destinations')
         .select('external_destination_id, status, metadata')
         .eq('workspace_id', workspaceId)
         .eq('platform', 'facebook')
         .in('external_destination_id', pageFbIds);
+
+      // Fail loud: an error here must never be read as "no pages
+      // exist". Proceeding with an empty map would misclassify
+      // every pre-existing page as new, overwrite an active page's
+      // schedule, and — on a schedule failure — delete that
+      // pre-existing destination in rollback. Abort before any
+      // upsert runs.
+      if (existingErr) {
+        logServerError('[pages/import] Failed to load existing destinations', existingErr, {
+          source: 'pages-import-existing',
+          subdomain,
+        });
+        return NextResponse.json(
+          { error: "Couldn't add the selected pages. Please try again." },
+          { status: 500 }
+        );
+      }
 
       if (Array.isArray(existingRows)) {
         for (const row of existingRows) {
@@ -476,16 +493,32 @@ export async function handleImportPages(
             is_active?: boolean;
             isActive?: boolean;
           }>;
-          snapshots.set(target.id, {
-            id: target.id,
-            oldTimezone: String(tzRows?.[0]?.timezone ?? 'UTC'),
-            oldSlots: (slotRows ?? []).map((row) => ({
-              slotTime: String(row.time_of_day ?? row.slotTime ?? ''),
-              allowedFormats: normaliseFormats(row.kind),
-              isActive: row.is_active ?? row.isActive ?? true,
-            })),
-            complete: true,
-          });
+          // A missing destination row must never be recorded as a
+          // complete snapshot with a fabricated UTC/empty schedule:
+          // the caller aborts the schedule and restores status only.
+          if (!tzRows || tzRows.length === 0 || !tzRows[0]?.timezone) {
+            logServerError('[pages/import] Failed to snapshot reactivated page', new Error('Destination row missing while snapshotting reactivated page'), {
+              source: 'pages-import-snapshot',
+              subdomain,
+            });
+            snapshots.set(target.id, {
+              id: target.id,
+              oldTimezone: 'UTC',
+              oldSlots: [],
+              complete: false,
+            });
+          } else {
+            snapshots.set(target.id, {
+              id: target.id,
+              oldTimezone: String(tzRows[0].timezone),
+              oldSlots: (slotRows ?? []).map((row) => ({
+                slotTime: String(row.time_of_day ?? row.slotTime ?? ''),
+                allowedFormats: normaliseFormats(row.kind),
+                isActive: row.is_active ?? row.isActive ?? true,
+              })),
+              complete: true,
+            });
+          }
         } else {
           const supabase = (
             dbClient && 'from' in dbClient ? dbClient : getSupabaseAdminClient()
@@ -499,17 +532,41 @@ export async function handleImportPages(
             });
             continue;
           }
-          const { data: tzData } = await supabase
+          const { data: tzData, error: tzError } = await supabase
             .from('destinations')
             .select('timezone')
             .eq('id', target.id)
             .eq('workspace_id', workspaceId)
             .eq('platform', 'facebook')
             .maybeSingle();
-          const { data: slotData } = await supabase
+          const { data: slotData, error: slotError } = await supabase
             .from('posting_slots')
             .select('time_of_day, kind, is_active')
             .eq('destination_id', target.id);
+          // Fail loud: a snapshot query error (or a missing row)
+          // must never be recorded as a complete UTC/empty
+          // snapshot — that would let a later schedule failure
+          // delete the page's real slots and restore UTC. Mark it
+          // incomplete so the caller aborts the schedule and
+          // restores status only, without touching timezone/slots.
+          if (
+            tzError ||
+            slotError ||
+            !tzData ||
+            !(tzData as { timezone?: string }).timezone
+          ) {
+            logServerError('[pages/import] Failed to snapshot reactivated page', tzError ?? slotError ?? new Error('Destination row missing while snapshotting reactivated page'), {
+              source: 'pages-import-snapshot',
+              subdomain,
+            });
+            snapshots.set(target.id, {
+              id: target.id,
+              oldTimezone: 'UTC',
+              oldSlots: [],
+              complete: false,
+            });
+            continue;
+          }
           const slotRows = (slotData as Array<{
             time_of_day?: string;
             kind?: unknown;
@@ -518,7 +575,7 @@ export async function handleImportPages(
           snapshots.set(target.id, {
             id: target.id,
             oldTimezone: String(
-              (tzData as { timezone?: string } | null)?.timezone ?? 'UTC'
+              (tzData as { timezone?: string }).timezone
             ),
             oldSlots: slotRows.map((row) => ({
               slotTime: String(row.time_of_day ?? ''),
@@ -701,7 +758,9 @@ export async function handleImportPages(
   // disconnected and reactivated by it, and success is returned
   // only when all of it applied. Any other pre-existing
   // destination keeps its own timezone and slots untouched — in
-  // particular a paused slot is never reactivated by a re-import.
+  // particular a paused page's slots/schedule are untouched by a
+  // re-import (its destination row itself is still upserted to
+  // active by the import, as before).
   // A reactivated destination's old slots are deleted first, so
   // its final slots are exactly the times picked in Step 4, not
   // old + new merged. On any schedule failure the destinations
