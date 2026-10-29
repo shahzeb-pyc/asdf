@@ -12,33 +12,40 @@ import { FacebookPublishClient } from './fb-client.js';
 import { captureWorkerError, type PostHogEnv } from './analytics.js';
 
 // ==========================================
-// TikTok mirror checks (scaled: dispatcher + queue fan-out)
+// TikTok mirror checks (scaled: dispatcher + database queue)
 // ==========================================
 //
 // Every 10 minutes a tiny dispatcher cron hands out work: it
 // scans mirrors due for their hourly check (next_check_at
 // reached, NULL counts as due) in due order, in pages of 500,
-// and enqueues one job per mirror (at most 1,700 per run —
-// 6 runs/hour = 10,200/hour capacity) to the mirror-check
-// queue, with per-message delays spacing jobs ~3/second so
+// and inserts one job per mirror (at most 1,700 per run —
+// 6 runs/hour = 10,200/hour capacity) into the mirror_check_jobs
+// table, with available_at slots spacing jobs ~3/second so
 // feed checks land at a steady ~180/minute instead of one
-// 10,000-strong burst. Queue consumers then do the real work
-// per mirror: fetch the TikTok account's feed from the PAID
-// tikwmapi endpoint (key rotation with DB-persisted 30-day
-// pauses, see contracts tikwmapi), resolve each NEW reel via
-// the FREE tikwm POST endpoint (no-watermark URL + verbatim
-// title), and post it to the linked Facebook page as a
-// Facebook Reel, caption verbatim.
+// 10,000-strong burst. The every-minute tick is the consumer:
+// it atomically claims due jobs (single UPDATE ... FOR UPDATE
+// SKIP LOCKED via the claim_mirror_check_jobs RPC, so two ticks
+// can never grab the same job) and runs one mirror check per
+// job, in parallel chunks. The check itself is unchanged: fetch
+// the TikTok account's feed from the PAID tikwmapi endpoint (key
+// rotation with DB-persisted 30-day pauses, see contracts
+// tikwmapi), resolve each NEW reel via the FREE tikwm POST
+// endpoint (no-watermark URL + verbatim title), and post it to
+// the linked Facebook page as a Facebook Reel, caption verbatim.
 //
-// One mirror's failure never blocks other mirrors: each job
-// is independent, consumers run in parallel, and a message
-// that exhausts queue retries lands in the dead-letter queue,
-// whose consumer marks the mirror error. Per-mirror business
+// One mirror's failure never blocks other mirrors: each job is
+// independent, jobs in a tick run in parallel chunks, and a job
+// whose transport/DB failures exhaust its 3 attempts is marked
+// `exhausted` and its mirror stamped error — the database
+// equivalent of a dead-letter queue. Per-mirror business
 // failures (feed down, resolve failure, publish rejection)
 // keep today's semantics — the mirror is marked error and
-// the next hourly check retries it — while transport/DB
-// failures that escape the per-mirror handler retry via
-// queue semantics instead.
+// the next hourly check retries it — and the job completes
+// normally. A finished job row is DELETED (queue ack): at
+// 10,000 mirrors/hour, keeping finished rows would grow the
+// table by ~7M rows/month. A stale processing job (worker died
+// mid-check) is reclaimed by a later tick while attempts
+// remain, or exhausted when attempts are used up.
 //
 // Dedup (designed upfront, three layers):
 //   1. Time: only items newer than last_posted_create_time.
@@ -79,10 +86,6 @@ import { captureWorkerError, type PostHogEnv } from './analytics.js';
 /** Dispatcher cron: every 10 minutes it hands out the due slice. */
 export const MIRROR_DISPATCH_CRON = '*/10 * * * *';
 
-/** Queue carrying one job per mirror check, and its dead-letter queue. */
-export const MIRROR_CHECK_QUEUE_NAME = 'mirror-check';
-export const MIRROR_CHECK_DLQ_NAME = 'mirror-check-dlq';
-
 /**
  * Due-scan page size. PostgREST silently truncates an unbounded
  * select at 1,000 rows, so the dispatcher NEVER fetches mirrors
@@ -100,12 +103,12 @@ export const MIRROR_DISPATCH_BATCH_SIZE = 500;
 export const MIRROR_DISPATCH_PER_RUN_CAP = 1700;
 
 /**
- * Dispatch pacing: jobs are sent with delaySeconds = floor(index
- * / 3), i.e. ~3 jobs/second, a steady ~180 feed checks/minute
- * at full load — inside the tikwmapi per-minute caps of every
- * paid plan (600/min and up), instead of a 10,000-strong burst.
- * delaySeconds supports up to 24h, so the ~566s max delay at
- * full load is well inside the limit.
+ * Dispatch pacing: jobs are inserted with available_at =
+ * dispatch time + floor(index / 3) seconds, i.e. ~3 jobs/second,
+ * a steady ~180 feed checks/minute at full load — inside the
+ * tikwmapi per-minute caps of every paid plan (600/min and
+ * up), instead of a 10,000-strong burst. The minute tick only
+ * claims jobs whose slot has arrived.
  */
 export const MIRROR_DISPATCH_JOBS_PER_SECOND = 3;
 
@@ -113,6 +116,37 @@ export const MIRROR_DISPATCH_JOBS_PER_SECOND = 3;
  *  silently partial — items past the bound wait for next check,
  *  and the mirror's next_check_at still advances). */
 export const MIRROR_FEED_COUNT = 30;
+
+/** Max jobs one minute tick claims (steady drain ~200/minute,
+ *  above the ~170/minute dispatch rate, so the queue drains
+ *  instead of growing). */
+export const MIRROR_JOB_CLAIM_PER_TICK = 200;
+
+/** Jobs processed concurrently within one minute tick (chunked
+ *  Promise.allSettled — no extra dependency). */
+export const MIRROR_JOB_CONCURRENCY = 50;
+
+/** Max attempts per job before exhaustion (the database
+ *  equivalent of the old queue max_retries = 3). */
+export const MIRROR_JOB_MAX_ATTEMPTS = 3;
+
+/** A processing job unreported after this long is stale: the
+ *  worker died mid-check, so a later tick reclaims it (while
+ *  attempts remain) or exhausts it. Well above any legitimate
+ *  single-mirror check, which is bounded by stop-on-first-failure. */
+export const MIRROR_JOB_STALE_AFTER_SECONDS = 1800;
+
+/** Retry backoff after attempt N: 60s, then 120s, then (on the
+ *  third failure) exhaustion instead of a fourth attempt. */
+export const MIRROR_JOB_BACKOFF_BASE_SECONDS = 60;
+
+/** One row of the mirror_check_jobs database queue. */
+export interface MirrorCheckJob {
+  id: string;
+  mirrorId: string;
+  /** Claims so far, including the current one. */
+  attempts: number;
+}
 
 export interface MirrorTickMirror {
   id: string;
@@ -204,7 +238,7 @@ function toIso(createTime: number | undefined): string | null {
 }
 
 /**
- * Process ONE mirror's hourly check (the queue consumer's unit
+ * Process ONE mirror's hourly check (the job consumer's unit
  * of work). This is the old runMirrorTick loop body with the
  * loop removed: every semantic is unchanged — catch-up rule,
  * watermark skips, resolve-then-claim, claim-then-publish,
@@ -215,7 +249,7 @@ function toIso(createTime: number | undefined): string | null {
  * failure of the final stamp's own error capture is logged,
  * exactly as before. Transport/DB failures raised by
  * fetchMirror (consumer side, before this runs) still
- * propagate to queue retry semantics.
+ * propagate to the job retry path (see runMirrorJobTick).
  */
 export async function processMirrorCheck(
   deps: MirrorTickDeps,
@@ -512,17 +546,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * + DB-persisted pauses); an empty key list fails every feed
  * fetch loudly as a per-mirror error, never silently.
  */
-/** Minimal queue-producer handle (Cloudflare Queue binding shape). */
-export interface MirrorCheckQueue {
-  send: (body: MirrorCheckMessage, options?: { delaySeconds?: number }) => Promise<void>;
-}
-
-/** One queued job: the consumer re-fetches the mirror fresh by id,
- *  so a pause/delete between dispatch and consume is honoured. */
-export interface MirrorCheckMessage {
-  mirrorId: string;
-}
-
 /**
  * Full worker deps: per-mirror check deps (MirrorTickDeps) plus
  * the dispatcher/consumer deps. The old whole-list
@@ -530,6 +553,13 @@ export interface MirrorCheckMessage {
  * silently truncated at 1,000 rows, and a batch destinations
  * lookup over 10,000 mirrors would blow up the .in() lists —
  * both are replaced by paged due scans + single-mirror fetches.
+ * The job transport is the mirror_check_jobs table: enqueue
+ * via the enqueue_mirror_check_jobs RPC (idempotent — one live
+ * job per mirror), claim via the claim_mirror_check_jobs RPC
+ * (atomic, SKIP LOCKED). Both RPCs live in migration
+ * 20261029230000_mirror_check_jobs.sql, which must be applied
+ * before a worker build that consumes this queue deploys —
+ * without the table and functions, mirror checks cannot run.
  */
 export interface MirrorWorkerDeps extends MirrorTickDeps {
   /**
@@ -546,8 +576,39 @@ export interface MirrorWorkerDeps extends MirrorTickDeps {
    *  consumer errors loudly instead of silently skipping it).
    *  Null when the mirror row itself is gone (deleted). */
   fetchMirror: (mirrorId: string) => Promise<MirrorTickMirror | null>;
-  /** Enqueue one mirror-check job with the given delivery delay. */
-  enqueueMirrorCheck: (mirrorId: string, delaySeconds: number) => Promise<void>;
+  /**
+   * Insert jobs idempotently (one live job per mirror; a
+   * re-dispatch inserts nothing for mirrors already queued).
+   * Returns the number of newly inserted jobs. Throws on
+   * transport/DB failure — the dispatcher leaves that chunk
+   * due for the next run.
+   */
+  enqueueMirrorCheckJobs: (
+    jobs: Array<{ mirrorId: string; availableAt: string }>
+  ) => Promise<number>;
+  /**
+   * Atomically claim up to `limit` due jobs (available_at
+   * reached, or stale processing jobs with attempts left).
+   * Throws on transport/DB failure — the tick retries next
+   * minute and no job is lost.
+   */
+  claimMirrorCheckJobs: (now: Date, limit: number) => Promise<MirrorCheckJob[]>;
+  /** Delete a finished job (queue ack). Throws on failure —
+   *  the job stays processing and is reclaimed when stale. */
+  completeMirrorCheckJob: (jobId: string) => Promise<void>;
+  /**
+   * Record a job failure. Returns 'retried' (job back to
+   * pending with backoff) or 'exhausted' (attempts used up:
+   * job marked exhausted AND its mirror stamped error — the
+   * database equivalent of the dead-letter queue). The mirror
+   * stamp is best-effort: if it fails, the exhausted job row
+   * itself still records the failure and the tick logs loudly.
+   */
+  failMirrorCheckJob: (
+    job: MirrorCheckJob,
+    error: string,
+    now: Date
+  ) => Promise<'retried' | 'exhausted'>;
 }
 
 export function buildMirrorTickDeps(
@@ -558,11 +619,48 @@ export function buildMirrorTickDeps(
     env?: PostHogEnv;
     waitUntil?: MirrorTickDeps['waitUntil'];
     tikwmApiKeys?: string[];
-    mirrorQueue?: MirrorCheckQueue;
   }
 ): MirrorWorkerDeps {
   const fbClient = new FacebookPublishClient();
   const tikwmPauseStore = buildWorkerTikwmPauseStore(db);
+  const updateMirrorRow = async (
+    mirrorId: string,
+    patch: {
+      status?: string;
+      catchUpPending?: boolean;
+      lastPostedSourceId?: string | null;
+      lastPostedCreateTime?: number | null;
+      lastCheckedAt?: string;
+      nextCheckAt?: string;
+      lastError?: string | null;
+    }
+  ): Promise<void> => {
+    const values: Record<string, unknown> = {};
+    if (patch.status !== undefined) values.status = patch.status;
+    if (patch.catchUpPending !== undefined) values.catch_up_pending = patch.catchUpPending;
+    if (patch.lastPostedSourceId !== undefined) {
+      values.last_posted_source_id = patch.lastPostedSourceId;
+    }
+    if (patch.lastPostedCreateTime !== undefined) {
+      values.last_posted_create_time = patch.lastPostedCreateTime;
+    }
+    if (patch.lastCheckedAt !== undefined) values.last_checked_at = patch.lastCheckedAt;
+    if (patch.nextCheckAt !== undefined) values.next_check_at = patch.nextCheckAt;
+    if (patch.lastError !== undefined) values.last_error = patch.lastError;
+    const { error } = await (db as unknown as {
+      from: (table: string) => {
+        update: (values: Record<string, unknown>) => {
+          eq: (column: string, value: unknown) => Promise<{
+            error: { message: string } | null;
+          }>;
+        };
+      };
+    })
+      .from('mirrors')
+      .update(values)
+      .eq('id', mirrorId);
+    if (error) throw new Error(`Failed to update mirror: ${error.message}`);
+  };
   return {
     env: options?.env,
     now: options?.now,
@@ -664,10 +762,147 @@ export function buildMirrorTickDeps(
           typeof row.last_posted_create_time === 'number' ? row.last_posted_create_time : null,
       };
     },
-    enqueueMirrorCheck: async (mirrorId: string, delaySeconds: number) => {
-      const queue = options?.mirrorQueue;
-      if (!queue) throw new Error('Mirror check queue is not configured');
-      await queue.send({ mirrorId }, { delaySeconds });
+    enqueueMirrorCheckJobs: async (jobs) => {
+      const rpc = (db as unknown as { rpc?: unknown }).rpc;
+      if (typeof rpc !== 'function') {
+        throw new Error('Mirror check job enqueue RPC is not configured');
+      }
+      const { data, error } = await (
+        rpc as (
+          fn: string,
+          args: Record<string, unknown>
+        ) => Promise<{
+          data: unknown;
+          error: { message: string } | null;
+        }>
+      )('enqueue_mirror_check_jobs', {
+        p_jobs: jobs.map((job) => ({
+          mirror_id: job.mirrorId,
+          available_at: job.availableAt,
+        })),
+      });
+      if (error) {
+        throw new Error(`Failed to enqueue mirror check jobs: ${error.message}`);
+      }
+      if (typeof data !== 'number') {
+        throw new Error(
+          'enqueue_mirror_check_jobs returned a non-number payload'
+        );
+      }
+      return data;
+    },
+    claimMirrorCheckJobs: async (now, limit) => {
+      const rpc = (db as unknown as { rpc?: unknown }).rpc;
+      if (typeof rpc !== 'function') {
+        throw new Error('Mirror check job claim RPC is not configured');
+      }
+      const { data, error } = await (
+        rpc as (
+          fn: string,
+          args: Record<string, unknown>
+        ) => Promise<{
+          data: unknown;
+          error: { message: string } | null;
+        }>
+      )('claim_mirror_check_jobs', {
+        p_limit: limit,
+        p_now: now.toISOString(),
+        p_stale_after_seconds: MIRROR_JOB_STALE_AFTER_SECONDS,
+      });
+      if (error) {
+        throw new Error(`Failed to claim mirror check jobs: ${error.message}`);
+      }
+      if (!Array.isArray(data)) {
+        throw new Error('claim_mirror_check_jobs returned a non-array payload');
+      }
+      const jobs: MirrorCheckJob[] = [];
+      for (const row of data) {
+        if (
+          isRecord(row) &&
+          typeof row.id === 'string' &&
+          typeof row.mirror_id === 'string' &&
+          typeof row.attempts === 'number'
+        ) {
+          jobs.push({ id: row.id, mirrorId: row.mirror_id, attempts: row.attempts });
+        }
+      }
+      return jobs;
+    },
+    completeMirrorCheckJob: async (jobId) => {
+      const { error } = await (db as unknown as {
+        from: (table: string) => {
+          delete: () => {
+            eq: (column: string, value: unknown) => Promise<{
+              error: { message: string } | null;
+            }>;
+          };
+        };
+      })
+        .from('mirror_check_jobs')
+        .delete()
+        .eq('id', jobId);
+      if (error) {
+        throw new Error(`Failed to complete mirror check job: ${error.message}`);
+      }
+    },
+    failMirrorCheckJob: async (job, errorMessage, now) => {
+      if (job.attempts >= MIRROR_JOB_MAX_ATTEMPTS) {
+        const { error } = await (db as unknown as {
+          from: (table: string) => {
+            update: (values: Record<string, unknown>) => {
+              eq: (column: string, value: unknown) => Promise<{
+                error: { message: string } | null;
+              }>;
+            };
+          };
+        })
+          .from('mirror_check_jobs')
+          .update({ status: 'exhausted', error: errorMessage, updated_at: now.toISOString() })
+          .eq('id', job.id);
+        if (error) {
+          throw new Error(`Failed to exhaust mirror check job: ${error.message}`);
+        }
+        // Best-effort mirror stamp: the exhausted row itself
+        // records the failure even if this stamp fails.
+        try {
+          await updateMirrorRow(job.mirrorId, {
+            status: 'error',
+            lastError: errorMessage,
+          });
+        } catch (err) {
+          console.error(
+            `[mirror-job-tick] job=${job.id} mirror=${job.mirrorId} error stamp failed after exhaustion:`,
+            err
+          );
+        }
+        return 'exhausted';
+      }
+      const backoffSeconds =
+        MIRROR_JOB_BACKOFF_BASE_SECONDS * 2 ** (job.attempts - 1);
+      const availableAt = new Date(
+        now.getTime() + backoffSeconds * 1000
+      ).toISOString();
+      const { error } = await (db as unknown as {
+        from: (table: string) => {
+          update: (values: Record<string, unknown>) => {
+            eq: (column: string, value: unknown) => Promise<{
+              error: { message: string } | null;
+            }>;
+          };
+        };
+      })
+        .from('mirror_check_jobs')
+        .update({
+          status: 'pending',
+          available_at: availableAt,
+          error: errorMessage,
+          updated_at: now.toISOString(),
+        })
+        .eq('id', job.id);
+      if (error) {
+        throw new Error(`Failed to retry mirror check job: ${error.message}`);
+      }
+      return 'retried';
     },
     listKnownSourceIds: async (mirrorId: string) => {
       const { data, error } = await db
@@ -738,33 +973,7 @@ export function buildMirrorTickDeps(
         .eq('id', postId);
       if (error) throw new Error(`Failed to update mirror post: ${error.message}`);
     },
-    updateMirror: async (mirrorId, patch) => {
-      const values: Record<string, unknown> = {};
-      if (patch.status !== undefined) values.status = patch.status;
-      if (patch.catchUpPending !== undefined) values.catch_up_pending = patch.catchUpPending;
-      if (patch.lastPostedSourceId !== undefined) {
-        values.last_posted_source_id = patch.lastPostedSourceId;
-      }
-      if (patch.lastPostedCreateTime !== undefined) {
-        values.last_posted_create_time = patch.lastPostedCreateTime;
-      }
-      if (patch.lastCheckedAt !== undefined) values.last_checked_at = patch.lastCheckedAt;
-      if (patch.nextCheckAt !== undefined) values.next_check_at = patch.nextCheckAt;
-      if (patch.lastError !== undefined) values.last_error = patch.lastError;
-      const { error } = await (db as unknown as {
-        from: (table: string) => {
-          update: (values: Record<string, unknown>) => {
-            eq: (column: string, value: unknown) => Promise<{
-              error: { message: string } | null;
-            }>;
-          };
-        };
-      })
-        .from('mirrors')
-        .update(values)
-        .eq('id', mirrorId);
-      if (error) throw new Error(`Failed to update mirror: ${error.message}`);
-    },
+    updateMirror: updateMirrorRow,
     fetchFeed: (username: string) =>
       fetchTikwmApiUserPosts(username, {
         count: MIRROR_FEED_COUNT,
@@ -787,16 +996,24 @@ export function buildMirrorTickDeps(
 
 export interface MirrorDispatchDeps {
   listDueMirrorIds: (now: Date, cap: number) => Promise<string[]>;
-  enqueueMirrorCheck: (mirrorId: string, delaySeconds: number) => Promise<void>;
+  /**
+   * Insert jobs idempotently; returns the newly inserted count.
+   * A mirror already holding a live job is skipped, not
+   * duplicated — so advancing every mirror in a successfully
+   * inserted chunk is correct even when some were already queued.
+   */
+  enqueueMirrorCheckJobs: (
+    jobs: Array<{ mirrorId: string; availableAt: string }>
+  ) => Promise<number>;
   /** Advance a dispatched mirror's next check (dispatch time + 1h). */
   advanceMirrorCheck: (mirrorId: string, nextCheckAt: string) => Promise<void>;
   now?: Date;
 }
 
 export interface MirrorDispatchResult {
-  /** Jobs successfully enqueued (their next check was advanced). */
+  /** Jobs inserted or already queued (their next check was advanced). */
   dispatched: number;
-  /** Mirrors whose enqueue failed (left due for the next run). */
+  /** Mirrors whose chunk insert failed (left due for the next run). */
   failed: number;
   /** Due mirrors found by the scan (capped at the per-run cap). */
   due: number;
@@ -804,16 +1021,18 @@ export interface MirrorDispatchResult {
 
 /**
  * Dispatcher (MIRROR_DISPATCH_CRON, every 10 minutes): the ONLY
- * thing the cron does. It scans due mirrors, enqueues one job
- * per mirror with a pacing delay (index / 3 seconds, ~3
- * jobs/second), and advances each enqueued mirror's
- * next_check_at to dispatch time + 1h so it is not
- * re-dispatched until its next hourly slot. A failed enqueue
- * leaves the mirror due (no advance, retried next run); a
- * failed advance after a successful enqueue is logged loudly
- * but the job still runs — the consumer's claim guard keeps
- * any re-dispatch from double-posting. Mirrors past the
- * per-run cap simply stay due for later runs.
+ * thing the cron does. It scans due mirrors, inserts one job
+ * per mirror into the mirror_check_jobs table with a pacing
+ * slot (available_at = dispatch time + index / 3 seconds, ~3
+ * jobs/second), and advances each mirror's next_check_at to
+ * dispatch time + 1h so it is not re-dispatched until its next
+ * hourly slot. Jobs are inserted in 500-row chunks: a failed
+ * chunk leaves its mirrors due (no advance, retried next run);
+ * a failed advance after a successful insert is logged loudly
+ * but the job still runs — the next run's re-insert is a
+ * no-op for that mirror (one live job per mirror) and the
+ * advance is retried then. Mirrors past the per-run cap simply
+ * stay due for later runs.
  */
 export async function runMirrorDispatch(
   deps: MirrorDispatchDeps
@@ -826,33 +1045,45 @@ export async function runMirrorDispatch(
   const nextCheckAt = new Date(now.getTime() + 60 * 60 * 1000).toISOString();
   let dispatched = 0;
   let failed = 0;
-  for (let i = 0; i < ids.length; i++) {
-    const mirrorId = ids[i]!;
-    const delaySeconds = Math.floor(i / MIRROR_DISPATCH_JOBS_PER_SECOND);
+  for (let start = 0; start < ids.length; start += MIRROR_DISPATCH_BATCH_SIZE) {
+    const chunk = ids.slice(start, start + MIRROR_DISPATCH_BATCH_SIZE);
+    const jobs = chunk.map((mirrorId, j) => ({
+      mirrorId,
+      availableAt: new Date(
+        now.getTime() +
+          Math.floor((start + j) / MIRROR_DISPATCH_JOBS_PER_SECOND) * 1000
+      ).toISOString(),
+    }));
+    let inserted: number;
     try {
-      await deps.enqueueMirrorCheck(mirrorId, delaySeconds);
+      inserted = await deps.enqueueMirrorCheckJobs(jobs);
     } catch (err) {
-      failed += 1;
+      failed += chunk.length;
       console.error(
-        `[mirror-dispatch] mirror=${mirrorId} enqueue failed; leaving due:`,
+        `[mirror-dispatch] chunk of ${chunk.length} jobs failed to enqueue; leaving due:`,
         err
       );
       continue;
     }
-    try {
-      await deps.advanceMirrorCheck(mirrorId, nextCheckAt);
-    } catch (err) {
-      // The job is already queued: log loudly, do not fail the
-      // run, and do not count it as failed — the consumer still
-      // checks the mirror, and its final stamp sets the next
-      // check. A later re-dispatch (next_check_at unadvanced)
-      // is deduped by the claim guard.
-      console.error(
-        `[mirror-dispatch] mirror=${mirrorId} next_check_at advance failed after enqueue:`,
-        err
-      );
+    for (const job of jobs) {
+      try {
+        await deps.advanceMirrorCheck(job.mirrorId, nextCheckAt);
+      } catch (err) {
+        // The job is already queued: log loudly, do not fail
+        // the run — the job still runs, and its final stamp
+        // sets the next check. A later re-dispatch (next_check_at
+        // unadvanced) inserts nothing new for this mirror and
+        // retries the advance.
+        console.error(
+          `[mirror-dispatch] mirror=${job.mirrorId} next_check_at advance failed after enqueue:`,
+          err
+        );
+      }
+      dispatched += 1;
     }
-    dispatched += 1;
+    console.info(
+      `[mirror-dispatch] chunk inserted=${inserted} of ${jobs.length}`
+    );
   }
   console.info(
     `[mirror-dispatch] due=${scanned.length} dispatched=${dispatched} failed=${failed}`
@@ -860,65 +1091,123 @@ export async function runMirrorDispatch(
   return { dispatched, failed, due: scanned.length };
 }
 
-export interface MirrorCheckConsumerDeps {
+export interface MirrorJobTickDeps {
   check: MirrorTickDeps;
+  /** Atomically claimed jobs for this tick (see claim RPC). */
+  claimJobs: (now: Date, limit: number) => Promise<MirrorCheckJob[]>;
   /** Fresh single-mirror fetch; throws on transport/DB failure
-   *  so the batch retries via queue semantics. */
+   *  so the job retries with backoff (see failJob). */
   fetchMirror: (mirrorId: string) => Promise<MirrorTickMirror | null>;
+  /** Delete a finished job (queue ack). */
+  completeJob: (jobId: string) => Promise<void>;
+  /** Retry with backoff, or exhaust + stamp the mirror error. */
+  failJob: (
+    job: MirrorCheckJob,
+    error: string,
+    now: Date
+  ) => Promise<'retried' | 'exhausted'>;
+  now?: Date;
 }
 
+export interface MirrorJobTickResult {
+  claimed: number;
+  completed: number;
+  retried: number;
+  exhausted: number;
+  /** Jobs left processing because their completion write failed
+   *  (reclaimed when stale — never lost, never double-run). */
+  stuck: number;
+}
+
+type MirrorJobOutcome = 'completed' | 'retried' | 'exhausted' | 'stuck';
+
 /**
- * Queue consumer for the mirror-check queue: one message = one
- * mirror, processed sequentially within the batch (messages in
- * one batch are independent mirrors, so a failure in one never
- * blocks the others — each message is handled in its own
- * try/catch via processMirrorCheck's mirror-error stamping).
- * A mirror deleted since dispatch, or paused since dispatch,
- * is acked without work. A throw here (fetchMirror failure)
- * retries the whole batch via queue semantics; after
- * max_retries the message lands in the DLQ (see below).
+ * Minute-tick job consumer: the database queue's consumer.
+ * Claims up to MIRROR_JOB_CLAIM_PER_TICK due jobs and runs one
+ * mirror check per job, in MIRROR_JOB_CONCURRENCY-sized chunks
+ * (Promise.allSettled per chunk — a failure in one job never
+ * blocks the others in its chunk). A mirror deleted since
+ * dispatch, or paused since dispatch, completes its job
+ * without work. A fetchMirror failure retries the job with
+ * backoff (or exhausts it, stamping the mirror error, when
+ * attempts are used up). Per-mirror business failures are
+ * stamped inside processMirrorCheck and complete the job
+ * normally. A completion-write failure leaves the job
+ * processing — it is reclaimed when stale, never lost and
+ * never double-run (the claim guard dedupes any overlap).
+ * A claim failure aborts the tick with zeros: nothing is
+ * lost, the next minute retries.
  */
-export async function handleMirrorCheckBatch(
-  batch: { messages: Array<{ body: MirrorCheckMessage }> },
-  deps: MirrorCheckConsumerDeps
-): Promise<void> {
-  for (const message of batch.messages) {
-    const mirror = await deps.fetchMirror(message.body.mirrorId);
-    if (!mirror) continue; // Deleted since dispatch: ack, nothing to do.
+export async function runMirrorJobTick(
+  deps: MirrorJobTickDeps
+): Promise<MirrorJobTickResult> {
+  const now = deps.now ?? new Date();
+  let claimed: MirrorCheckJob[];
+  try {
+    claimed = await deps.claimJobs(now, MIRROR_JOB_CLAIM_PER_TICK);
+  } catch (err) {
+    console.error('[mirror-job-tick] claim failed; retrying next minute:', err);
+    return { claimed: 0, completed: 0, retried: 0, exhausted: 0, stuck: 0 };
+  }
+  const result: MirrorJobTickResult = {
+    claimed: claimed.length,
+    completed: 0,
+    retried: 0,
+    exhausted: 0,
+    stuck: 0,
+  };
+  const processJob = async (job: MirrorCheckJob): Promise<MirrorJobOutcome> => {
+    let mirror: MirrorTickMirror | null;
+    try {
+      mirror = await deps.fetchMirror(job.mirrorId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      try {
+        return await deps.failJob(job, message, now);
+      } catch (failErr) {
+        console.error(
+          `[mirror-job-tick] job=${job.id} fail write failed; leaving processing for stale reclaim:`,
+          failErr
+        );
+        return 'stuck';
+      }
+    }
+    if (!mirror) {
+      // Deleted since dispatch: complete, nothing to do.
+      return complete(job);
+    }
     if (mirror.status !== 'active' && mirror.status !== 'error') {
-      continue; // Paused (or otherwise held) since dispatch: ack, skip.
+      // Paused (or otherwise held) since dispatch: complete, skip.
+      return complete(job);
     }
     await processMirrorCheck(deps.check, mirror);
-  }
-}
-
-export interface MirrorCheckDlqDeps {
-  /** Best-effort error stamp; the DLQ handler never throws. */
-  markMirrorError: (mirrorId: string, error: string) => Promise<void>;
-}
-
-/**
- * Dead-letter consumer: a message that exhausted queue retries
- * (a poison message — repeated transport/DB failure) marks its
- * mirror error so the failure is visible instead of silent.
- * Failures of the stamp itself are logged and swallowed: the
- * DLQ must not throw endlessly.
- */
-export async function handleMirrorCheckDlqBatch(
-  batch: { messages: Array<{ body: MirrorCheckMessage }> },
-  deps: MirrorCheckDlqDeps
-): Promise<void> {
-  for (const message of batch.messages) {
+    return complete(job);
+  };
+  const complete = async (job: MirrorCheckJob): Promise<MirrorJobOutcome> => {
     try {
-      await deps.markMirrorError(
-        message.body.mirrorId,
-        'Mirror check failed repeatedly and was moved to the dead-letter queue.'
-      );
+      await deps.completeJob(job.id);
+      return 'completed';
     } catch (err) {
       console.error(
-        `[mirror-dlq] mirror=${message.body.mirrorId} error stamp failed:`,
+        `[mirror-job-tick] job=${job.id} completion write failed; leaving processing for stale reclaim:`,
         err
       );
+      return 'stuck';
+    }
+  };
+  for (let start = 0; start < claimed.length; start += MIRROR_JOB_CONCURRENCY) {
+    const chunk = claimed.slice(start, start + MIRROR_JOB_CONCURRENCY);
+    const outcomes = await Promise.allSettled(chunk.map(processJob));
+    for (const outcome of outcomes) {
+      // processJob never rejects (every await is guarded), but
+      // count a rejection as stuck rather than crashing the tick.
+      const value: MirrorJobOutcome =
+        outcome.status === 'fulfilled' ? outcome.value : 'stuck';
+      result[value] += 1;
     }
   }
+  console.info(
+    `[mirror-job-tick] claimed=${result.claimed} completed=${result.completed} retried=${result.retried} exhausted=${result.exhausted} stuck=${result.stuck}`
+  );
+  return result;
 }

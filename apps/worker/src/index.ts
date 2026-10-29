@@ -9,13 +9,9 @@ import {
 import { runSlotClaimTick } from './slot-claim.js';
 import {
   buildMirrorTickDeps,
-  handleMirrorCheckBatch,
-  handleMirrorCheckDlqBatch,
-  MIRROR_CHECK_DLQ_NAME,
-  MIRROR_CHECK_QUEUE_NAME,
   MIRROR_DISPATCH_CRON,
   runMirrorDispatch,
-  type MirrorCheckMessage,
+  runMirrorJobTick,
 } from './mirror-tick.js';
 import { handleQueueBatch, type ConsumerDbClient } from './consumers.js';
 import {
@@ -110,8 +106,6 @@ export interface Env {
   SUPABASE_URL?: string;
   NEXT_PUBLIC_SUPABASE_URL?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
-  /** Producer binding for the mirror-check queue (scaled mirror checks). */
-  MIRROR_CHECK_QUEUE?: Queue<MirrorCheckMessage>;
   /** Producer binding for the publish-fast lane queue (spec 121). */
   PUBLISH_FAST_QUEUE?: Queue<PublishQueueMessage>;
   /** Producer binding for the publish-heavy lane queue (spec 121). */
@@ -243,13 +237,14 @@ export async function handleScheduled(
 
   // Mirror dispatcher cron (TikTok mirrors, scaled): every 10
   // minutes the dispatcher runs ONLY the dispatch job (same
-  // pattern as retention) — it scans due mirrors and enqueues
-  // one mirror-check job per mirror. The actual checks run in
-  // queue consumers (see the queue() handler below), never in
-  // the cron itself, so one slow mirror cannot hold up the
-  // others. A dispatch-level failure (scan query, queue
-  // binding) is captured here and rethrown like the refresh
-  // cycle; per-mirror failures live in the consumers.
+  // pattern as retention) — it scans due mirrors and inserts
+  // one mirror-check job per mirror into the mirror_check_jobs
+  // database queue. The actual checks run in the every-minute
+  // tick below (the queue consumer), never in the cron itself,
+  // so one slow mirror cannot hold up the others. A
+  // dispatch-level failure (scan query, enqueue RPC) is
+  // captured here and rethrown like the refresh cycle;
+  // per-mirror failures live in the job consumer.
   if (controller.cron === MIRROR_DISPATCH_CRON) {
     try {
       const tickDeps = buildMirrorTickDeps(db, masterKey, {
@@ -257,11 +252,10 @@ export async function handleScheduled(
         env,
         waitUntil,
         tikwmApiKeys: parseTikwmApiKeys(env.TIKWMAPI_KEYS, env.TIKWMAPI_KEY),
-        mirrorQueue: env.MIRROR_CHECK_QUEUE as never,
       });
       await runMirrorDispatch({
         listDueMirrorIds: tickDeps.listDueMirrorIds,
-        enqueueMirrorCheck: tickDeps.enqueueMirrorCheck,
+        enqueueMirrorCheckJobs: tickDeps.enqueueMirrorCheckJobs,
         advanceMirrorCheck: (mirrorId, nextCheckAt) =>
           tickDeps.updateMirror(mirrorId, { nextCheckAt }),
         now: options?.now ?? new Date(controller.scheduledTime),
@@ -316,6 +310,37 @@ export async function handleScheduled(
       console.error('[handleScheduled] slot claim tick failed; continuing:', slotErr);
     }
 
+    // Mirror-check jobs (TikTok mirrors, database queue): the
+    // every-minute tick is the consumer — it claims due jobs
+    // from mirror_check_jobs and runs one mirror check per job.
+    // Isolated like the slot claim: a failure here never breaks
+    // the claimer, the slot claim, or the heartbeat below —
+    // unclaimed jobs simply wait for the next minute, and the
+    // job tick itself never throws (see runMirrorJobTick).
+    try {
+      const tickDeps = buildMirrorTickDeps(db, masterKey, {
+        env,
+        waitUntil,
+        tikwmApiKeys: parseTikwmApiKeys(env.TIKWMAPI_KEYS, env.TIKWMAPI_KEY),
+      });
+      await runMirrorJobTick({
+        check: tickDeps,
+        claimJobs: tickDeps.claimMirrorCheckJobs,
+        fetchMirror: tickDeps.fetchMirror,
+        completeJob: tickDeps.completeMirrorCheckJob,
+        failJob: tickDeps.failMirrorCheckJob,
+        now: options?.now ?? new Date(controller.scheduledTime),
+      });
+    } catch (jobErr) {
+      captureWorkerError(
+        env,
+        jobErr,
+        { site: 'handleScheduled', kind: 'mirror_job_tick_failed' },
+        waitUntil
+      );
+      console.error('[handleScheduled] mirror job tick failed; continuing:', jobErr);
+    }
+
     await recordHeartbeat(db, {
       success: true,
       claimed: result.claimed,
@@ -337,11 +362,12 @@ export async function handleScheduled(
 /**
  * Queue handler (spec 121 consumers): dispatches by queue name to the
  * publish consumers or the DLQ consumers. See consumers.ts for the
- * ack/retry semantics. Mirror-check queues are routed to the
- * mirror consumers in mirror-tick.ts before the publish queues.
+ * ack/retry semantics. (Mirror checks no longer use Cloudflare
+ * Queues — they run on the mirror_check_jobs database queue,
+ * consumed by the every-minute tick in handleScheduled.)
  */
 export async function handleQueue(
-  batch: MessageBatch<PublishQueueMessage | MirrorCheckMessage>,
+  batch: MessageBatch<PublishQueueMessage>,
   env: Env,
   _ctx?: ExecutionContext,
   options?: QueueOptions
@@ -349,31 +375,6 @@ export async function handleQueue(
   const db = initWorkerDb(env, options?.db);
   if (!db) {
     throw new InternalError('Database client is not configured; cannot consume queue batch');
-  }
-  if (batch.queue === MIRROR_CHECK_QUEUE_NAME) {
-    const tickDeps = buildMirrorTickDeps(db, env.TOKEN_ENCRYPTION_KEY as string, {
-      env,
-      tikwmApiKeys: parseTikwmApiKeys(env.TIKWMAPI_KEYS, env.TIKWMAPI_KEY),
-    });
-    await handleMirrorCheckBatch(
-      batch as MessageBatch<MirrorCheckMessage> & { messages: Array<{ body: MirrorCheckMessage }> },
-      { check: tickDeps, fetchMirror: tickDeps.fetchMirror }
-    );
-    return;
-  }
-  if (batch.queue === MIRROR_CHECK_DLQ_NAME) {
-    const tickDeps = buildMirrorTickDeps(db, env.TOKEN_ENCRYPTION_KEY as string, {
-      env,
-      tikwmApiKeys: parseTikwmApiKeys(env.TIKWMAPI_KEYS, env.TIKWMAPI_KEY),
-    });
-    await handleMirrorCheckDlqBatch(
-      batch as MessageBatch<MirrorCheckMessage> & { messages: Array<{ body: MirrorCheckMessage }> },
-      {
-        markMirrorError: (mirrorId, error) =>
-          tickDeps.updateMirror(mirrorId, { status: 'error', lastError: error }),
-      }
-    );
-    return;
   }
   const registry = options?.registry ?? createWorkerPublisherRegistry(env);
   await handleQueueBatch(batch as MessageBatch<PublishQueueMessage>, {

@@ -12,11 +12,15 @@ compatibility_flags = ["nodejs_compat"]
 ENVIRONMENT = "production"
 
 [triggers]
-# "* * * * *" = claimer tick; "*/15 * * * *" = token-refresh job (spec 121 D6);
+# "* * * * *" = claimer tick (also the mirror-check job consumer:
+# it claims due rows from the mirror_check_jobs database queue);
+# "*/15 * * * *" = token-refresh job (spec 121 D6);
 # "0 2 * * *" = daily 30-day retention cleanup for publish_logs / queue_items (spec 139 residue);
-# "*/10 * * * *" = mirror-check dispatcher (scaled TikTok mirrors: hands out
-# due mirror checks to the mirror-check queue; the old "0 * * * *" full
-# loop tick is gone — a single run cannot cover 10,000 mirrors).
+# "*/10 * * * *" = mirror-check dispatcher (scaled TikTok mirrors: inserts
+# one job per due mirror into the mirror_check_jobs table; the old
+# "0 * * * *" full loop tick is gone — a single run cannot cover
+# 10,000 mirrors). Mirror checks use NO Cloudflare Queues, so there
+# is no queue-creation deploy step for them.
 crons = ["* * * * *", "*/15 * * * *", "0 2 * * *", "*/10 * * * *"]
 
 # Spec 121: publish pipeline queues. The queues themselves are provisioned
@@ -57,33 +61,5 @@ max_concurrency = 5
 
 [[queues.consumers]]
 queue = "publish-heavy-dlq"
-max_batch_size = 10
-max_concurrency = 5
-
-# Scaled TikTok mirrors: the dispatcher enqueues one job per due
-# mirror; consumers run the per-mirror check in parallel. The
-# queues themselves are provisioned with wrangler BEFORE the
-# deploy that binds them (deploy will fail without them):
-#   wrangler queues create mirror-check
-#   wrangler queues create mirror-check-dlq
-# Consumer bound: max_concurrency 10 × batch 5 = at most 50
-# mirror jobs in flight; dispatcher pacing (~3 jobs/second)
-# keeps the sustained feed rate near ~180/minute at full load,
-# inside every paid tikwmapi plan's per-minute cap.
-
-[[queues.producers]]
-queue = "mirror-check"
-binding = "MIRROR_CHECK_QUEUE"
-
-[[queues.consumers]]
-queue = "mirror-check"
-max_batch_size = 5
-max_batch_timeout = 5
-max_retries = 3
-max_concurrency = 10
-dead_letter_queue = "mirror-check-dlq"
-
-[[queues.consumers]]
-queue = "mirror-check-dlq"
 max_batch_size = 10
 max_concurrency = 5
