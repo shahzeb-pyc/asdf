@@ -28,7 +28,7 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default: "bg-primary text-on-primary hover:bg-brand-peru",
-        destructive: "bg-brand-rose text-neutral-white hover:bg-brand-rose/90 focus-visible:outline-signal-critical",
+        destructive: "bg-brand-rose text-neutral-white hover:bg-brand-rose focus-visible:outline-signal-critical",
         outline: "border border-line bg-panel text-ink shadow-card hover:bg-hover",
         secondary: "bg-subtle text-ink hover:bg-hover",
         ghost: "text-ink hover:bg-hover",

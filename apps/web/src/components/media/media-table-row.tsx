@@ -347,7 +347,7 @@ export function MediaTableRow({
               data-testid={`row-action-delete-${item.id}`}
               onClick={() => onDeleteRequest(item)}
               aria-label="Delete asset"
-              className="h-11 px-3 text-signal-critical hover:text-signal-critical lg:h-8"
+              className="h-11 px-3 text-signal-critical hover:text-signal-critical-on-tint lg:h-8"
             >
               Delete
             </Button>

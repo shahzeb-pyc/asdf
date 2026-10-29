@@ -28,7 +28,7 @@ const STATUS_VARIANTS = {
   error: {
     label: 'Error',
     Icon: XIcon,
-    medallionClass: 'border-signal-critical bg-signal-critical/15 text-signal-critical',
+    medallionClass: 'border-signal-critical bg-signal-critical/15 text-signal-critical-on-tint',
   },
 } as const;
 

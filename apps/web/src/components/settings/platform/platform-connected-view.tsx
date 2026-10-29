@@ -180,7 +180,7 @@ export function PlatformConnectedView({
           variant="outline"
           data-testid={`${testIdPrefix}-disconnect-btn`}
           onClick={onDisconnectClick}
-          className="border-signal-critical/45 text-signal-critical shadow-none hover:bg-signal-critical/10 hover:text-signal-critical"
+          className="border-signal-critical/45 text-signal-critical shadow-none hover:bg-signal-critical/10 hover:text-signal-critical-on-tint"
         >
           Disconnect
         </Button>

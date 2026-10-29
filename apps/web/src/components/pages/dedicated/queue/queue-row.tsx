@@ -255,7 +255,7 @@ export function QueueRow({
           data-testid="queue-row-delete"
           disabled={busy || isPublished}
           onClick={onDelete}
-          className="border-signal-critical/30 text-signal-critical hover:bg-signal-critical/10 hover:text-signal-critical"
+          className="border-signal-critical/30 text-signal-critical hover:bg-signal-critical/10 hover:text-signal-critical-on-tint"
         >
           Delete
         </Button>

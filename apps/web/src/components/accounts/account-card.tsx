@@ -358,7 +358,7 @@ export function AccountCard({
       {isExpired && (
         <div
           data-testid="account-expired-alert"
-          className="mb-4 flex items-center gap-1.5 rounded-sm border border-signal-critical/25 bg-signal-critical/10 px-2.5 py-1.5 text-metadata font-medium text-signal-critical"
+          className="mb-4 flex items-center gap-1.5 rounded-sm border border-signal-critical/25 bg-signal-critical/10 px-2.5 py-1.5 text-metadata font-medium text-signal-critical-on-tint"
         >
           <TriangleAlertIcon className="size-3.5 shrink-0" aria-hidden />
           <span>Session expired — reconnect to resume publishing</span>
@@ -385,7 +385,7 @@ export function AccountCard({
           variant="ghost"
           data-testid="account-disconnect-button"
           onClick={() => onDisconnect?.(account)}
-          className="text-ink-dim hover:bg-signal-critical/10 hover:text-signal-critical"
+          className="text-ink-dim hover:bg-signal-critical/10 hover:text-signal-critical-on-tint"
         >
           Disconnect
         </Button>

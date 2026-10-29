@@ -74,7 +74,7 @@ export function DisconnectAccountDialog({
             data-testid="disconnect-linked-pages-warning"
             className="rounded-sm border border-signal-critical/25 bg-signal-critical/10 p-4 text-body leading-body text-ink"
           >
-            <p className="m-0 mb-2 font-semibold text-signal-critical">
+            <p className="m-0 mb-2 font-semibold text-signal-critical-on-tint">
               Before you disconnect
             </p>
             <p className="m-0">

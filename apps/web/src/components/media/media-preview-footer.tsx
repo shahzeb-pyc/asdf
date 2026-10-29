@@ -73,7 +73,7 @@ export function MediaPreviewFooter({
             disabled={isBusy}
             onClick={onDelete}
             className={cn(
-              'self-start text-signal-critical hover:bg-signal-critical/10 hover:text-signal-critical sm:self-auto'
+              'self-start text-signal-critical hover:bg-signal-critical/10 hover:text-signal-critical-on-tint sm:self-auto'
             )}
           >
             {isDeleting ? 'Deleting...' : 'Delete asset'}

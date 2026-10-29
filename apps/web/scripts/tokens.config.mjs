@@ -81,6 +81,7 @@ const SEMANTIC_CSS_VARS = {
   'status.operational.color': '--signal-operational',
   'status.queued.color': '--signal-queued',
   'status.critical.color': '--signal-critical',
+  'status.critical.onTint': '--signal-critical-on-tint',
   'status.idle.color': '--signal-idle',
   'status.idle.dot': '--signal-idle-dot',
 };

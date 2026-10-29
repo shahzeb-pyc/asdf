@@ -112,7 +112,7 @@ export function BatchActionBar({
               data-testid="batch-delete-btn"
               disabled={isBusy}
               onClick={onBatchDelete}
-              className="text-signal-critical hover:text-signal-critical"
+              className="text-signal-critical hover:text-signal-critical-on-tint"
             >
               Delete
             </Button>

@@ -87,7 +87,7 @@ function MenuItem({
       data-inset={inset}
       data-variant={variant}
       className={cn(
-        "relative flex min-h-9 cursor-default items-center gap-2 rounded-xs px-2 py-1.5 text-body outline-none select-none focus:bg-hover focus:text-ink data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[inset]:pl-8 data-[variant=destructive]:text-signal-critical data-[variant=destructive]:focus:bg-subtle [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg]:size-4",
+        "relative flex min-h-9 cursor-default items-center gap-2 rounded-xs px-2 py-1.5 text-body outline-none select-none focus:bg-hover focus:text-ink data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[inset]:pl-8 data-[variant=destructive]:text-signal-critical data-[variant=destructive]:focus:bg-subtle data-[variant=destructive]:focus:text-signal-critical-on-tint [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg]:size-4",
         className
       )}
       {...props}

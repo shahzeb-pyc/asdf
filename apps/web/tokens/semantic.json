@@ -39,6 +39,10 @@
           "dot": {
             "$type": "color",
             "$value": "{color.status.criticalDark}"
+          },
+          "onTint": {
+            "$type": "color",
+            "$value": "{color.status.criticalOnTintDark}"
           }
         },
         "idle": {
@@ -155,6 +159,10 @@
           "dot": {
             "$type": "color",
             "$value": "{color.brand.rose}"
+          },
+          "onTint": {
+            "$type": "color",
+            "$value": "{color.status.criticalOnTintLight}"
           }
         },
         "idle": {
