@@ -1,0 +1,330 @@
+/**
+ * TikTok mirrors API (legacy DB path): auth, validation,
+ * exact-duplicate block (same username + same page) with
+ * same-username-different-page allowed, feed-verification failure
+ * creating nothing, immediate latest-reel post on setup +
+ * failure-stays-pending, and existing-destination reuse without
+ * touching its status.
+ */
+import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { NextRequest } from 'next/server';
+import { encryptToken, signSessionToken } from '@fbuploadpro/contracts';
+import {
+  handleCreateMirror,
+  handleListMirrors,
+} from '../../src/app/api/tenant/[subdomain]/tiktok-mirrors/route';
+import { TikwmError } from '../../src/lib/server/tikwm';
+import type { DatabaseClient } from '@fbuploadpro/contracts';
+
+const TEST_SECRET = 'test-session-secret-32-chars-minimum!!';
+const TEST_KEY = 'a'.repeat(64);
+
+const userId = '11111111-1111-4111-a111-111111111111';
+const accountId = '22222222-2222-4222-a222-222222222222';
+const destId = '33333333-3333-4333-a333-333333333333';
+const mirrorId = '44444444-4444-4444-a444-444444444444';
+const postId = '55555555-5555-4555-a555-555555555555';
+const fbPageId = '749557154917108';
+
+let validSessionCookie: string;
+let encAccountToken: string;
+let encPageToken: string;
+
+function createRequest(body: unknown, cookie = validSessionCookie): NextRequest {
+  return new NextRequest('http://localhost:3000/api/tenant/acme/tiktok-mirrors', {
+    method: 'POST',
+    body: JSON.stringify(body),
+    headers: { cookie, 'content-type': 'application/json' },
+  });
+}
+
+function listRequest(cookie = validSessionCookie): NextRequest {
+  return new NextRequest('http://localhost:3000/api/tenant/acme/tiktok-mirrors', {
+    headers: { cookie },
+  });
+}
+
+function mirrorRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: mirrorId,
+    workspace_id: 'ws_1',
+    destination_id: destId,
+    tiktok_username: 'alice',
+    tiktok_display_name: 'Alice',
+    tiktok_avatar_url: 'https://example.com/a.jpg',
+    status: 'active',
+    last_posted_video_id: null,
+    last_posted_create_time: null,
+    last_checked_at: null,
+    next_check_at: null,
+    last_error: null,
+    created_at: '2026-10-29T00:00:00.000Z',
+    updated_at: '2026-10-29T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function destRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: destId,
+    account_id: accountId,
+    external_destination_id: fbPageId,
+    name: 'Test Page',
+    avatar_url: null,
+    encrypted_destination_token: encPageToken,
+    status: 'paused',
+    ...overrides,
+  };
+}
+
+interface FakeDbOptions {
+  existingDestination?: Record<string, unknown> | null;
+  duplicate?: boolean;
+}
+
+/** Legacy-path fake DB dispatching on SQL content. */
+function fakeDb(options: FakeDbOptions = {}) {
+  const calls: Array<{ sql: string; params: unknown[] }> = [];
+  const existing = options.existingDestination ?? null;
+  const db: Partial<DatabaseClient> = {
+    query: vi.fn().mockImplementation((sql: string, params: unknown[] = []) => {
+      calls.push({ sql, params });
+      if (sql.includes('FROM workspaces')) return Promise.resolve([{ id: 'ws_1' }]);
+      if (sql.includes('FROM social_accounts')) {
+        return Promise.resolve([{ encrypted_access_token: encAccountToken }]);
+      }
+      if (sql.includes('FROM destinations WHERE account_id')) {
+        return Promise.resolve(existing ? [existing] : []);
+      }
+      if (sql.includes('INSERT INTO destinations')) {
+        return Promise.resolve([destRow({ status: 'active' })]);
+      }
+      if (sql.includes('SELECT 1 FROM tiktok_mirrors')) {
+        return Promise.resolve(options.duplicate ? [{ '1': 1 }] : []);
+      }
+      if (sql.includes('INSERT INTO tiktok_mirrors')) {
+        return Promise.resolve([mirrorRow()]);
+      }
+      if (sql.includes('INSERT INTO tiktok_mirror_posts')) {
+        return Promise.resolve([{ id: postId }]);
+      }
+      if (sql.includes('FROM tiktok_mirrors WHERE id = $1')) {
+        return Promise.resolve([mirrorRow()]);
+      }
+      if (sql.includes('FROM tiktok_mirrors WHERE workspace_id')) {
+        return Promise.resolve([mirrorRow()]);
+      }
+      if (sql.includes('FROM destinations WHERE id = ANY')) {
+        return Promise.resolve([destRow()]);
+      }
+      if (sql.includes('FROM tiktok_mirror_posts WHERE mirror_id = ANY')) {
+        return Promise.resolve([]);
+      }
+      return Promise.resolve([]);
+    }),
+  };
+  return { db: db as DatabaseClient, calls };
+}
+
+function feedVideo(overrides: Record<string, unknown> = {}) {
+  return {
+    video_id: 'v_latest',
+    play: 'https://example.com/no-wm.mp4',
+    wmplay: 'https://example.com/wm.mp4',
+    title: 'My exact caption',
+    cover: 'https://example.com/cover.jpg',
+    create_time: 1700000000,
+    author: { unique_id: 'alice', nickname: 'Alice', avatar: 'https://example.com/a.jpg' },
+    ...overrides,
+  };
+}
+
+const createDeps = (options: { publish?: unknown } = {}) => ({
+  fetchGraphPages: vi.fn().mockResolvedValue([
+    {
+      id: fbPageId,
+      name: 'Test Page',
+      category: 'Test',
+      access_token: 'page-token-plain',
+      picture: { data: { url: 'https://example.com/pic.jpg' } },
+    },
+  ]),
+  fetchTikwmPosts: vi.fn().mockResolvedValue([feedVideo()]),
+  fetchTikwmInfo: vi.fn().mockResolvedValue({
+    unique_id: 'alice',
+    nickname: 'Alice',
+    avatar: 'https://example.com/a.jpg',
+  }),
+  publishReel:
+    options.publish ??
+    vi.fn().mockResolvedValue('fb_post_123'),
+});
+
+describe('POST /tiktok-mirrors', () => {
+  beforeEach(async () => {
+    process.env.SESSION_SECRET = TEST_SECRET;
+    process.env.TOKEN_ENCRYPTION_KEY = TEST_KEY;
+    const token = await signSessionToken(
+      {
+        userId,
+        email: 'alexander@gmail.com',
+        name: 'Alex Acme',
+        subdomain: 'acme',
+        role: 'user',
+        status: 'active',
+      },
+      TEST_SECRET
+    );
+    validSessionCookie = `fbup_session=${token}`;
+    encAccountToken = await encryptToken('acct-token-plain', TEST_KEY);
+    encPageToken = await encryptToken('page-token-plain', TEST_KEY);
+  });
+
+  it('returns 401 without a session cookie', async () => {
+    const res = await handleCreateMirror(
+      createRequest({ accountId, fbPageId, tiktokUsername: 'alice' }, ''),
+      'acme'
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 403 on cross-tenant subdomain mismatch', async () => {
+    const req = new NextRequest('http://localhost:3000/api/tenant/other/tiktok-mirrors', {
+      method: 'POST',
+      body: JSON.stringify({ accountId, fbPageId, tiktokUsername: 'alice' }),
+      headers: { cookie: validSessionCookie, 'content-type': 'application/json' },
+    });
+    const res = await handleCreateMirror(req, 'other');
+    expect(res.status).toBe(403);
+  });
+
+  it('returns 400 on invalid usernames', async () => {
+    const { db } = fakeDb();
+    for (const username of ['has space', '', 'a'.repeat(25)]) {
+      const res = await handleCreateMirror(
+        createRequest({ accountId, fbPageId, tiktokUsername: username }),
+        'acme',
+        db,
+        createDeps() as never
+      );
+      expect(res.status).toBe(400);
+    }
+  });
+
+  it('returns 400 TIKTOK_FEED_UNAVAILABLE and creates nothing when the feed fails', async () => {
+    const { db, calls } = fakeDb();
+    const deps = createDeps();
+    deps.fetchTikwmPosts = vi.fn().mockRejectedValue(
+      new TikwmError('FEED_UNAVAILABLE', 'no such account')
+    );
+    const res = await handleCreateMirror(
+      createRequest({ accountId, fbPageId, tiktokUsername: 'ghost' }),
+      'acme',
+      db,
+      deps as never
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe('TIKTOK_FEED_UNAVAILABLE');
+    expect(calls.some((c) => c.sql.includes('INSERT INTO tiktok_mirrors'))).toBe(false);
+  });
+
+  it('returns 409 DUPLICATE_MIRROR for the same username + same page', async () => {
+    const { db } = fakeDb({ duplicate: true });
+    const res = await handleCreateMirror(
+      createRequest({ accountId, fbPageId, tiktokUsername: 'alice' }),
+      'acme',
+      db,
+      createDeps() as never
+    );
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe('DUPLICATE_MIRROR');
+  });
+
+  it('allows the same username for a different page (no duplicate row)', async () => {
+    const { db } = fakeDb({ duplicate: false });
+    const deps = createDeps();
+    const res = await handleCreateMirror(
+      createRequest({ accountId, fbPageId, tiktokUsername: 'alice' }),
+      'acme',
+      db,
+      deps as never
+    );
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.mirror.tiktokUsername).toBe('alice');
+    expect(body.immediatePost.status).toBe('posted');
+    // Caption verbatim + no-watermark URL passed to the reel publish.
+    expect(deps.publishReel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pageId: fbPageId,
+        videoUrl: 'https://example.com/no-wm.mp4',
+        caption: 'My exact caption',
+      })
+    );
+  });
+
+  it('keeps the post pending and the mirror in error when the immediate post fails', async () => {
+    const { db, calls } = fakeDb();
+    const deps = createDeps({
+      publish: vi.fn().mockRejectedValue(new Error('Graph exploded')),
+    });
+    const res = await handleCreateMirror(
+      createRequest({ accountId, fbPageId, tiktokUsername: 'alice' }),
+      'acme',
+      db,
+      deps as never
+    );
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.immediatePost.status).toBe('pending');
+    expect(body.immediatePost.error).toContain('Graph exploded');
+    const postUpdate = calls.find((c) => c.sql.includes('UPDATE tiktok_mirror_posts'));
+    expect(postUpdate?.params?.[1]).toBe('pending');
+    const mirrorUpdate = calls.find((c) => c.sql.includes('UPDATE tiktok_mirrors'));
+    expect(mirrorUpdate?.params).toContain('error');
+  });
+
+  it('reuses an existing destination without touching its status', async () => {
+    const { db, calls } = fakeDb({ existingDestination: destRow() });
+    const res = await handleCreateMirror(
+      createRequest({ accountId, fbPageId, tiktokUsername: 'alice' }),
+      'acme',
+      db,
+      createDeps() as never
+    );
+    expect(res.status).toBe(201);
+    expect(calls.some((c) => c.sql.includes('INSERT INTO destinations'))).toBe(false);
+    const destUpdates = calls.filter((c) => c.sql.includes('UPDATE destinations'));
+    for (const update of destUpdates) {
+      expect(update.sql).not.toContain('status');
+    }
+  });
+});
+
+describe('GET /tiktok-mirrors', () => {
+  beforeEach(async () => {
+    process.env.SESSION_SECRET = TEST_SECRET;
+    const token = await signSessionToken(
+      {
+        userId,
+        email: 'alexander@gmail.com',
+        name: 'Alex Acme',
+        subdomain: 'acme',
+        role: 'user',
+        status: 'active',
+      },
+      TEST_SECRET
+    );
+    validSessionCookie = `fbup_session=${token}`;
+  });
+
+  it('lists mirrors with their linked destination names', async () => {
+    const { db } = fakeDb();
+    const res = await handleListMirrors(listRequest(), 'acme', db);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.mirrors).toHaveLength(1);
+    expect(body.mirrors[0].tiktokUsername).toBe('alice');
+    expect(body.mirrors[0].destinationName).toBe('Test Page');
+  });
+});

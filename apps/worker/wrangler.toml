@@ -14,7 +14,7 @@ ENVIRONMENT = "production"
 [triggers]
 # "* * * * *" = claimer tick; "*/15 * * * *" = token-refresh job (spec 121 D6);
 # "0 2 * * *" = daily 30-day retention cleanup for publish_logs / queue_items (spec 139 residue).
-crons = ["* * * * *", "*/15 * * * *", "0 2 * * *"]
+crons = ["* * * * *", "*/15 * * * *", "0 2 * * *", "0 * * * *"]
 
 # Spec 121: publish pipeline queues. The queues themselves are provisioned
 # with wrangler before the deploy that binds them (see PR ops steps):

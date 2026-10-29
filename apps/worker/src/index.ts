@@ -7,6 +7,11 @@ import {
   type PublishQueueMessage,
 } from './claimer.js';
 import { runSlotClaimTick } from './slot-claim.js';
+import {
+  buildMirrorTickDeps,
+  MIRROR_CRON,
+  runMirrorTick,
+} from './mirror-tick.js';
 import { handleQueueBatch, type ConsumerDbClient } from './consumers.js';
 import {
   isTokenEncryptionKeyWellFormed,
@@ -213,6 +218,34 @@ export async function handleScheduled(
         env,
         err,
         { site: 'handleScheduled', kind: 'retention_cleanup_failed' },
+        waitUntil
+      );
+      throw err;
+    }
+    return;
+  }
+
+  // Mirror cron (TikTok mirrors): the hourly mirror tick runs ONLY
+  // the mirror job (same pattern as retention). It publishes
+  // directly via the Facebook reel path — mirrors bypass the
+  // queue/slots entirely. Per-mirror failures are captured inside
+  // runMirrorTick; a tick-level failure (list query, missing token
+  // key) is captured here and rethrown like the refresh cycle.
+  if (controller.cron === MIRROR_CRON) {
+    try {
+      await runMirrorTick(
+        buildMirrorTickDeps(db, masterKey, {
+          now: options?.now ?? new Date(controller.scheduledTime),
+          env,
+          waitUntil,
+        })
+      );
+    } catch (err) {
+      console.error('[Scheduled] mirror tick failed:', err);
+      captureWorkerError(
+        env,
+        err,
+        { site: 'handleScheduled', kind: 'mirror_tick_failed' },
         waitUntil
       );
       throw err;

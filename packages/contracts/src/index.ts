@@ -15,6 +15,7 @@ export * from './domain/storage.js';
 export * from './domain/downloader.js';
 export * from './domain/download-jobs.js';
 export * from './domain/queue.js';
+export * from './domain/tiktok-mirror.js';
 export * from './scheduling.js';
 export * from './domain/dispatcher.js';
 export * from './domain/publishing.js';
