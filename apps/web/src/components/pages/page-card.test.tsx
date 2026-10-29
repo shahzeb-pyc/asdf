@@ -49,6 +49,45 @@ describe('PageCard queue counts', () => {
     expect(failed.className).toContain('text-signal-critical');
   });
 
+  it('lays each stat out as a centred column: big number on top, label below, in Queued/Posted/Failed order', () => {
+    render(
+      <PageCard
+        page={makePage({
+          queueCounts: { queued: 12, posted: 48, failed: 3 },
+        })}
+        onSelectPage={() => {}}
+      />
+    );
+    const row = screen.getByTestId('page-queue-counts');
+    // Three evenly spaced columns across the full card width.
+    expect(row.className).toContain('grid-cols-3');
+
+    const stats = [
+      { stat: 'page-queued-stat', count: 'page-queued-count', label: 'Queued' },
+      { stat: 'page-posted-stat', count: 'page-posted-count', label: 'Posted' },
+      { stat: 'page-failed-stat', count: 'page-failed-count', label: 'Failed' },
+    ];
+    // Row children are the stats in Queued / Posted / Failed order.
+    const rowStats = Array.from(row.children).map((el) =>
+      el.getAttribute('data-testid')
+    );
+    expect(rowStats).toEqual(stats.map((s) => s.stat));
+
+    for (const { stat, count, label } of stats) {
+      const column = screen.getByTestId(stat);
+      expect(column.className).toContain('text-center');
+      expect(column.className).toContain('flex-col');
+      // Number is the first child, label the second — i.e. label below number.
+      const children = Array.from(column.children);
+      expect(children[0]?.getAttribute('data-testid')).toBe(count);
+      expect(children[1]?.textContent).toBe(label);
+      // Big number: the dashboard metric token, clearly larger than
+      // the old text-body number.
+      expect(screen.getByTestId(count).className).toContain('text-xxl');
+      expect(screen.getByTestId(count).className).not.toContain('text-body');
+    }
+  });
+
   it('shows zeros, never a hidden row, when no counts were fetched', () => {
     render(<PageCard page={makePage()} onSelectPage={() => {}} />);
     expect(screen.getByTestId('page-queued-count').textContent).toBe('0');

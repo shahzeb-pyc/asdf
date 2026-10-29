@@ -405,43 +405,54 @@ export function PageCard({
 
       {/* Bottom queue-counts row: display only (plain spans, so a
           click here is the card's own navigation, like anywhere else
-          on the card). Numbers use the design-system signal colours
-          — queued gold, posted green, failed red — labels stay muted.
-          Zeros are always shown; a missing queueCounts (other
-          consumers) renders zeros, never a hidden row. */}
+          on the card). Each stat is a centred column: a big number
+          on top (the dashboard metric token, text-xxl) with its
+          label below it. Numbers use the design-system signal
+          colours — queued gold, posted green, failed red — labels
+          stay muted. Zeros are always shown; a missing queueCounts
+          (other consumers) renders zeros, never a hidden row. */}
       <div aria-hidden className="pt-3">
         <div className="border-t border-line" />
       </div>
       <div
         data-testid="page-queue-counts"
-        className="mt-3 flex items-center justify-between gap-4"
+        className="mt-3 grid grid-cols-3 gap-4"
       >
-        <span className="flex items-baseline gap-1.5">
-          <span className="text-metadata text-ink-sub">Queued</span>
+        <span
+          data-testid="page-queued-stat"
+          className="flex flex-col items-center text-center"
+        >
           <span
             data-testid="page-queued-count"
-            className="text-body font-bold tabular-nums text-signal-queued"
+            className="text-xxl font-bold tabular-nums text-signal-queued"
           >
             {(page.queueCounts?.queued ?? 0).toLocaleString('en-US')}
           </span>
+          <span className="mt-1 text-metadata text-ink-sub">Queued</span>
         </span>
-        <span className="flex items-baseline gap-1.5">
-          <span className="text-metadata text-ink-sub">Posted</span>
+        <span
+          data-testid="page-posted-stat"
+          className="flex flex-col items-center text-center"
+        >
           <span
             data-testid="page-posted-count"
-            className="text-body font-bold tabular-nums text-signal-operational"
+            className="text-xxl font-bold tabular-nums text-signal-operational"
           >
             {(page.queueCounts?.posted ?? 0).toLocaleString('en-US')}
           </span>
+          <span className="mt-1 text-metadata text-ink-sub">Posted</span>
         </span>
-        <span className="flex items-baseline gap-1.5">
-          <span className="text-metadata text-ink-sub">Failed</span>
+        <span
+          data-testid="page-failed-stat"
+          className="flex flex-col items-center text-center"
+        >
           <span
             data-testid="page-failed-count"
-            className="text-body font-bold tabular-nums text-signal-critical"
+            className="text-xxl font-bold tabular-nums text-signal-critical"
           >
             {(page.queueCounts?.failed ?? 0).toLocaleString('en-US')}
           </span>
+          <span className="mt-1 text-metadata text-ink-sub">Failed</span>
         </span>
       </div>
 
