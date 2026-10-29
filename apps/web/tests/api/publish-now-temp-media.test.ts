@@ -14,15 +14,16 @@ import {
  * rule, and the storage-failure shapes.
  */
 
-const extractConnectSession = vi.fn(async () => ({
-  userId: 'user-1',
-  role: 'admin',
-  status: 'active',
-}));
+const extractConnectSession = vi.hoisted(() =>
+  vi.fn(async () => ({
+    userId: 'user-1',
+    role: 'admin',
+    status: 'active',
+  }))
+);
 
 vi.mock('@/lib/connect/session', () => ({
-  extractConnectSession: (...args: unknown[]) =>
-    extractConnectSession(...args),
+  extractConnectSession,
 }));
 
 vi.mock('@/lib/server-analytics', () => ({
