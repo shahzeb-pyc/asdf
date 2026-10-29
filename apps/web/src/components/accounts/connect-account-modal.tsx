@@ -54,6 +54,8 @@ export interface ConnectAccountModalProps {
     message: string;
     /** Id of the account that was connected/refreshed, when known — used to highlight its card. */
     accountId?: string | undefined;
+    /** BL2 fix: display name of the expected account on a mismatch, when known. */
+    expectedAccountName?: string | undefined;
   }) => void;
   existingAccountIds?: string[];
   reconnectingAccount?: {
@@ -475,10 +477,13 @@ export function ConnectAccountModal({
         // (it was upserted by the callback); only the expected account
         // still needs reconnecting.
         if (outcome.kind === 'reconnected_mismatch') {
+          // BL2 fix: same two-part copy as the redirect surfaces — the
+          // mismatched account IS connected as a separate account.
           onConnectionNotice?.({
             type: 'error',
-            message: `You signed into ${outcome.newAccountName} instead of ${outcome.expectedAccountName}. ${outcome.expectedAccountName} still needs to be reconnected.`,
+            message: `${outcome.newAccountName} is now connected as a separate account. ${outcome.expectedAccountName} still needs to be reconnected.`,
             accountId: outcome.accountId,
+            expectedAccountName: outcome.expectedAccountName,
           });
         } else if (outcome.kind === 'already_connected') {
           onConnectionNotice?.({

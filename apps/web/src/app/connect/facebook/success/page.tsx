@@ -3,7 +3,10 @@
 import React, { Suspense } from 'react';
 import { useSearchParams, type ReadonlyURLSearchParams } from 'next/navigation';
 
+import Link from 'next/link';
+
 import { ConnectStatusLayout } from '@/components/accounts/connect-status-layout';
+import { Button } from '@/components/shared/ui/button';
 
 export interface ConnectSuccessParams {
   alreadyConnected?: boolean | undefined;
@@ -27,9 +30,13 @@ export function getConnectSuccessCopy(params: ConnectSuccessParams): {
   if (params.reconnectedMismatch) {
     const expected = params.expectedAccountName || 'the expired account';
     return {
+      // BL2 fix: the mismatched account IS connected (auto-saved as a
+      // separate account) — say so plainly instead of reading like a
+      // failed connect. Variant stays 'error' because action is still
+      // needed: the expected account is not reconnected yet.
       variant: 'error',
-      title: `You signed into ${params.newAccountName || 'another account'} instead of ${expected}.`,
-      description: `${expected} still needs to be reconnected.`,
+      title: `${params.newAccountName || 'another account'} is now connected as a separate account.`,
+      description: `${expected} still needs to be reconnected. Open your FBUploadPro dashboard, go to Facebook Accounts, and use Reconnect on ${expected}.`,
     };
   }
   if (params.alreadyConnected) {
@@ -64,6 +71,17 @@ export function ConnectSuccessView({
       <div className="rounded-sm bg-subtle px-3.5 py-2.5 text-metadata text-ink-dim">
         Linked to FBUploadPro via Facebook.
       </div>
+      {params.reconnectedMismatch ? (
+        // BL2 fix: this device holds no session, so it cannot reconnect
+        // the expected account itself — link back to the dashboard,
+        // where the expected account's card Reconnect lives. Do not
+        // fake a reconnect action here.
+        <Button asChild variant="outline" className="mt-4">
+          <Link href="/" data-testid="magic-mismatch-dashboard-link">
+            Back to FBUploadPro dashboard
+          </Link>
+        </Button>
+      ) : null}
     </ConnectStatusLayout>
   );
 }

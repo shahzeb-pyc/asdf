@@ -497,8 +497,10 @@ describe('Facebook Accounts UI Components (Spec 027, Spec 029 & Spec 031)', () =
         expectedAccountName: 'John Doe',
       });
 
+      // BL2 fix: the mismatched account IS connected as a separate
+      // account — the copy must say so, not read like a failed connect.
       const mismatchMessage =
-        'You signed into Jane Smith instead of John Doe. John Doe still needs to be reconnected.';
+        'Jane Smith is now connected as a separate account. John Doe still needs to be reconnected.';
       // The magic success page now reads its params: mismatch renders
       // the cross variant with the approved message, never a success.
       const mismatchCopy = getConnectSuccessCopy({
@@ -507,7 +509,11 @@ describe('Facebook Accounts UI Components (Spec 027, Spec 029 & Spec 031)', () =
         expectedAccountName: 'John Doe',
       });
       expect(mismatchCopy.variant).toBe('error');
-      expect(`${mismatchCopy.title} ${mismatchCopy.description}`).toBe(mismatchMessage);
+      // Magic page description adds the dashboard instruction; the
+      // direct-flow banner message (mismatchMessage) does not.
+      expect(`${mismatchCopy.title} ${mismatchCopy.description}`).toBe(
+        `${mismatchMessage} Open your FBUploadPro dashboard, go to Facebook Accounts, and use Reconnect on John Doe.`
+      );
       const mismatchView = render(
         <ConnectSuccessView
           params={{
@@ -517,8 +523,16 @@ describe('Facebook Accounts UI Components (Spec 027, Spec 029 & Spec 031)', () =
           }}
         />
       );
-      expect(mismatchView.hasText('You signed into Jane Smith instead of John Doe.')).toBe(true);
+      expect(
+        mismatchView.hasText('Jane Smith is now connected as a separate account.')
+      ).toBe(true);
       expect(mismatchView.hasText('John Doe still needs to be reconnected.')).toBe(true);
+      // BL2 fix: the magic page must link back to the dashboard, where
+      // the expected account's card Reconnect lives — never a fake
+      // reconnect on the session-less device.
+      expect(
+        mismatchView.hasAttribute('data-testid', 'magic-mismatch-dashboard-link')
+      ).toBe(true);
 
       const directMismatchNotice = resolveOAuthRedirectNotice(
         new URLSearchParams({
@@ -530,6 +544,8 @@ describe('Facebook Accounts UI Components (Spec 027, Spec 029 & Spec 031)', () =
       expect(directMismatchNotice?.notice).toEqual({
         type: 'error',
         message: mismatchMessage,
+        reconnectExpected: true,
+        expectedAccountName: 'John Doe',
       });
 
       // 2. Standard Connect flow where an already-connected account has its session refreshed

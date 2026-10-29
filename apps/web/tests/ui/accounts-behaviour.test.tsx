@@ -118,6 +118,46 @@ describe('Accounts banners behaviour', () => {
     expect(onDismiss).toHaveBeenCalledTimes(1);
   });
 
+  it('BL2: mismatch banner states the new account is connected and offers Reconnect for the expected account', () => {
+    const onReconnectExpected = vi.fn();
+    render(
+      <FeedbackBanner
+        notice={{
+          type: 'error',
+          message:
+            'Jane Smith is now connected as a separate account. John Doe still needs to be reconnected.',
+        }}
+        onDismiss={vi.fn()}
+        onReconnectExpected={onReconnectExpected}
+        expectedAccountName="John Doe"
+      />
+    );
+
+    // Must not render as a plain failure: the connected-as-separate
+    // message and a Reconnect action for the expected account are both
+    // required.
+    expect(
+      screen.getByText(
+        'Jane Smith is now connected as a separate account. John Doe still needs to be reconnected.'
+      )
+    ).toBeTruthy();
+    const reconnectBtn = screen.getByTestId('oauth-reconnect-expected-btn');
+    expect(reconnectBtn.textContent).toBe('Reconnect John Doe');
+    fireEvent.click(reconnectBtn);
+    expect(onReconnectExpected).toHaveBeenCalledTimes(1);
+  });
+
+  it('BL2: mismatch banner without a reconnect handler renders no reconnect action', () => {
+    render(
+      <FeedbackBanner
+        notice={{ type: 'error', message: 'Something went wrong.' }}
+        onDismiss={vi.fn()}
+      />
+    );
+
+    expect(screen.queryByTestId('oauth-reconnect-expected-btn')).toBeNull();
+  });
+
   it('BYOC retry banner fires its retry action', () => {
     const onRetry = vi.fn();
     render(

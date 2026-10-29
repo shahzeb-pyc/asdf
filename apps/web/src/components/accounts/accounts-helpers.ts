@@ -144,6 +144,10 @@ export function resolveOAuthRedirectNotice(searchParams: {
     message: string;
     /** BL1 fix: when true, the banner offers a Connect-again action. */
     connectAgain?: boolean;
+    /** BL2 fix: when true, the banner offers a Reconnect action for the expected account. */
+    reconnectExpected?: boolean;
+    /** BL2 fix: display name of the account that still needs reconnecting. */
+    expectedAccountName?: string | undefined;
   };
   /** Account name carried by the redirect, when present — used to highlight its card. */
   accountName?: string | undefined;
@@ -155,8 +159,15 @@ export function resolveOAuthRedirectNotice(searchParams: {
     const expectedAccountName = searchParams.get('expectedAccountName') || 'the expired account';
     return {
       notice: {
+        // BL2 fix: the mismatched account IS connected (auto-saved as a
+        // separate account by the callback) — the copy must say so
+        // plainly instead of reading like the connect failed, and the
+        // banner offers a Reconnect action for the expected account.
         type: 'error',
-        message: `You signed into ${newAccountName} instead of ${expectedAccountName}. ${expectedAccountName} still needs to be reconnected.`,
+        message: `${newAccountName} is now connected as a separate account. ${expectedAccountName} still needs to be reconnected.`,
+        reconnectExpected: true,
+        expectedAccountName:
+          searchParams.get('expectedAccountName') || undefined,
       },
       keysToRemove: ['reconnected_mismatch', 'newAccountName', 'expectedAccountName'],
     };

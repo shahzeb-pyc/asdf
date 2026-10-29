@@ -19,32 +19,52 @@ interface FeedbackBannerProps {
   onDismiss: () => void;
   /** BL1 fix: optional fix action, e.g. Connect again after a failed save. */
   onConnectAgain?: (() => void) | undefined;
+  /** BL2 fix: optional fix action, e.g. Reconnect the expected account after a mismatch. */
+  onReconnectExpected?: (() => void) | undefined;
+  /** BL2 fix: display name used in the Reconnect action label, when known. */
+  expectedAccountName?: string | undefined;
 }
 
 export function FeedbackBanner({
   notice,
   onDismiss,
   onConnectAgain,
+  onReconnectExpected,
+  expectedAccountName,
 }: Readonly<FeedbackBannerProps>) {
+  const actions = (
+    <>
+      {onReconnectExpected ? (
+        <Button
+          type="button"
+          variant="link"
+          data-testid="oauth-reconnect-expected-btn"
+          onClick={onReconnectExpected}
+          className="font-semibold"
+        >
+          {expectedAccountName ? `Reconnect ${expectedAccountName}` : 'Reconnect account'}
+        </Button>
+      ) : null}
+      {onConnectAgain ? (
+        <Button
+          type="button"
+          variant="link"
+          data-testid="oauth-connect-again-btn"
+          onClick={onConnectAgain}
+          className="font-semibold"
+        >
+          Connect again
+        </Button>
+      ) : null}
+    </>
+  );
   return (
     <Banner
       data-testid="oauth-feedback-banner"
       variant={notice.type === 'success' ? 'success' : 'critical'}
       title={notice.message}
       onDismiss={onDismiss}
-      action={
-        onConnectAgain ? (
-          <Button
-            type="button"
-            variant="link"
-            data-testid="oauth-connect-again-btn"
-            onClick={onConnectAgain}
-            className="font-semibold"
-          >
-            Connect again
-          </Button>
-        ) : undefined
-      }
+      action={onReconnectExpected || onConnectAgain ? actions : undefined}
       className="mb-6 border border-line"
     />
   );

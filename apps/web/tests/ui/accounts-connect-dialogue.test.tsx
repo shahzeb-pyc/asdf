@@ -79,8 +79,9 @@ describe('Option B connected dialogue', () => {
       expectedAccountName: 'Shahzeb Malik',
     });
     expect(mismatch.variant).toBe('error');
+    // BL2 fix: the mismatched account IS connected as a separate account.
     expect(`${mismatch.title} ${mismatch.description}`).toBe(
-      'You signed into Daily Grind instead of Shahzeb Malik. Shahzeb Malik still needs to be reconnected.'
+      'Daily Grind is now connected as a separate account. Shahzeb Malik still needs to be reconnected. Open your FBUploadPro dashboard, go to Facebook Accounts, and use Reconnect on Shahzeb Malik.'
     );
     expect(getConnectSuccessCopy({}).title).toBe('Facebook account connected');
     // No confirmation copy anywhere mentions pages.
@@ -106,7 +107,10 @@ describe('Option B connected dialogue', () => {
     expect(screen.getByTestId('magic-connect-success').getAttribute('data-variant')).toBe(
       'error'
     );
-    expect(screen.getByText('You signed into Daily Grind instead of Shahzeb Malik.')).toBeTruthy();
+    expect(
+      screen.getByText('Daily Grind is now connected as a separate account.')
+    ).toBeTruthy();
+    expect(screen.getByTestId('magic-mismatch-dashboard-link')).toBeTruthy();
   });
 
   it('direct-flow resolver: fresh and already-connected use name + connected only', () => {
@@ -131,10 +135,14 @@ describe('Option B connected dialogue', () => {
       })
     );
     // Persistent banner copy (shell renders it dismissible, never auto-dismissed).
+    // BL2 fix: connected-as-separate copy plus a Reconnect action for
+    // the expected account — never a plain failure with no action.
     expect(mismatch?.notice).toEqual({
       type: 'error',
       message:
-        'You signed into Daily Grind instead of Shahzeb Malik. Shahzeb Malik still needs to be reconnected.',
+        'Daily Grind is now connected as a separate account. Shahzeb Malik still needs to be reconnected.',
+      reconnectExpected: true,
+      expectedAccountName: 'Shahzeb Malik',
     });
   });
 

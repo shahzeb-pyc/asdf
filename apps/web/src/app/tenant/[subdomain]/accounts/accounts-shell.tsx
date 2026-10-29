@@ -175,6 +175,10 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
     type: 'success' | 'error';
     message: string;
     connectAgain?: boolean;
+    /** BL2 fix: when true, the banner offers a Reconnect action for the expected account. */
+    reconnectExpected?: boolean;
+    /** BL2 fix: display name of the account that still needs reconnecting. */
+    expectedAccountName?: string | undefined;
   } | null>(null);
 
   // Option B dialogue: a briefly gold-highlighted card for the account
@@ -207,12 +211,23 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
       type: 'success' | 'error';
       message: string;
       accountId?: string | undefined;
+      /** BL2 fix: display name of the expected account on a mismatch, when known. */
+      expectedAccountName?: string | undefined;
     }) => {
       if (notice.type === 'success') {
         toast.success(notice.message, { toasterId: ACCOUNTS_CONNECT_TOASTER_ID });
         flashHighlight(notice.accountId ?? null);
       } else {
-        setBannerNotice({ type: 'error', message: notice.message });
+        setBannerNotice({
+          type: 'error',
+          message: notice.message,
+          ...(notice.expectedAccountName
+            ? {
+                reconnectExpected: true as const,
+                expectedAccountName: notice.expectedAccountName,
+              }
+            : {}),
+        });
         flashHighlight(notice.accountId ?? null);
       }
     },
@@ -391,6 +406,21 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
     }
     setReconnectingAccount(account);
     setIsConnectOpen(true);
+  };
+
+  // BL2 fix: banner Reconnect action for the expected account after a
+  // mismatch. Matched by display name, like the OAuth-return highlight
+  // above; if the account is not on the loaded page slice, fall back to
+  // the fresh connect entry point (BYOC gating unchanged).
+  const handleReconnectExpected = () => {
+    const expected = accounts.find(
+      (account) => account.displayName === bannerNotice?.expectedAccountName
+    );
+    if (expected) {
+      handleReconnect(expected);
+    } else {
+      handleOpenNewConnect();
+    }
   };
 
   const handleConnectOpenChange = (open: boolean) => {
@@ -602,6 +632,10 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
           onConnectAgain={
             bannerNotice.connectAgain ? handleOpenNewConnect : undefined
           }
+          onReconnectExpected={
+            bannerNotice.reconnectExpected ? handleReconnectExpected : undefined
+          }
+          expectedAccountName={bannerNotice.expectedAccountName}
         />
       )}
 
