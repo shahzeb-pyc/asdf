@@ -532,7 +532,10 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
           if (sql.includes('FROM workspaces')) {
             return Promise.resolve([{ id: 'ws_123' }]);
           }
-          capturedSql = sql;
+          // Accumulate, not overwrite: the list route now runs a
+          // grouped queue-counts query after the destinations query,
+          // so the last query alone is no longer the destinations one.
+          capturedSql += `${sql}\n`;
           return Promise.resolve([
             {
               id: '33333333-3333-4333-a333-333333333331',

@@ -114,6 +114,21 @@ export const FacebookPageSchema = z.object({
 
 export type FacebookPage = z.infer<typeof FacebookPageSchema>;
 
+/**
+ * Queue counts shown on a Pages list card. `posted` is the all-time
+ * `published` total, renamed at the list boundary so the UI vocabulary
+ * matches the card labels (Queued / Posted / Failed). `publishing`,
+ * `skipped` and `cancelled` are deliberately absent — they are
+ * ignored for the card, never folded into these three.
+ */
+export const PageCardQueueCountsSchema = z.object({
+  queued: z.number().int().nonnegative(),
+  posted: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+});
+
+export type PageCardQueueCounts = z.infer<typeof PageCardQueueCountsSchema>;
+
 // Sanitized view model for Facebook Page (zero token exposure)
 export const FacebookPageViewSchema = z.object({
   id: z.string().uuid(),
@@ -139,6 +154,13 @@ export const FacebookPageViewSchema = z.object({
    * queued is covered, or when nothing is queued.
    */
   unmatchedPostTypes: z.array(z.string()).default([]),
+  /**
+   * Pages list card counts (optional so detail / discover payloads
+   * that predate the list counts still parse). The list route always
+   * populates it; a missing value means "no counts fetched", and the
+   * card renders zeros rather than hiding the row.
+   */
+  queueCounts: PageCardQueueCountsSchema.optional(),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
   rateLimitedAt: z.coerce.date().nullable().optional(),

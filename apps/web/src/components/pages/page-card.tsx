@@ -54,6 +54,20 @@ export interface FacebookPageItem {
    * otherwise non-active (the status itself explains those).
    */
   unmatchedPostTypes?: string[] | undefined;
+  /**
+   * Pages list card queue counts, populated by the Pages list API.
+   * `posted` is the all-time `published` total; `publishing`,
+   * `skipped` and `cancelled` are never included. Optional so other
+   * FacebookPageItem consumers (dedicated section, posting-times)
+   * keep working without counts — the card renders zeros then.
+   */
+  queueCounts?:
+    | {
+        queued: number;
+        posted: number;
+        failed: number;
+      }
+    | undefined;
   createdAt: string;
   updatedAt?: string | undefined;
 }
@@ -387,6 +401,48 @@ export function PageCard({
         >
           Account: {page.accountDisplayName || 'Connected Account'}
         </div>
+      </div>
+
+      {/* Bottom queue-counts row: display only (plain spans, so a
+          click here is the card's own navigation, like anywhere else
+          on the card). Numbers use the design-system signal colours
+          — queued gold, posted green, failed red — labels stay muted.
+          Zeros are always shown; a missing queueCounts (other
+          consumers) renders zeros, never a hidden row. */}
+      <div aria-hidden className="pt-3">
+        <div className="border-t border-line" />
+      </div>
+      <div
+        data-testid="page-queue-counts"
+        className="mt-3 flex items-center justify-between gap-4"
+      >
+        <span className="flex items-baseline gap-1.5">
+          <span className="text-metadata text-ink-sub">Queued</span>
+          <span
+            data-testid="page-queued-count"
+            className="text-body font-bold tabular-nums text-signal-queued"
+          >
+            {(page.queueCounts?.queued ?? 0).toLocaleString('en-US')}
+          </span>
+        </span>
+        <span className="flex items-baseline gap-1.5">
+          <span className="text-metadata text-ink-sub">Posted</span>
+          <span
+            data-testid="page-posted-count"
+            className="text-body font-bold tabular-nums text-signal-operational"
+          >
+            {(page.queueCounts?.posted ?? 0).toLocaleString('en-US')}
+          </span>
+        </span>
+        <span className="flex items-baseline gap-1.5">
+          <span className="text-metadata text-ink-sub">Failed</span>
+          <span
+            data-testid="page-failed-count"
+            className="text-body font-bold tabular-nums text-signal-critical"
+          >
+            {(page.queueCounts?.failed ?? 0).toLocaleString('en-US')}
+          </span>
+        </span>
       </div>
 
       {/* Needs-attention mark (no dot — clock icon + text, like the
