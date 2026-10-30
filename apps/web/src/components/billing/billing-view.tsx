@@ -76,7 +76,7 @@ function countsSummary(counts: PlatformCounts): string {
 
 function BillingSkeleton() {
   return (
-    <div aria-busy="true" aria-label="Loading billing" className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6">
+    <div aria-busy="true" aria-label="Loading billing" className="mx-auto flex w-full flex-col gap-6 px-4 py-6 sm:px-6">
       <div className="flex flex-col gap-2">
         <Skeleton className="h-8 w-32" />
         <Skeleton className="h-4 w-72 max-w-full" />
@@ -87,7 +87,7 @@ function BillingSkeleton() {
           <Skeleton className="h-4 w-full" />
         </CardContent>
       </Card>
-      <div className="grid items-start gap-6 md:grid-cols-2">
+      <div className="grid items-stretch gap-6 lg:grid-cols-[340px_minmax(0,1fr)]">
         <Card>
           <CardContent className="flex flex-col gap-4 pt-6">
             <Skeleton className="h-6 w-32" />
@@ -116,6 +116,43 @@ function BillingSkeleton() {
   );
 }
 
+function StepIndicator({ current }: Readonly<{ current: Step }>) {
+  const steps: { id: Step; label: string }[] = [
+    { id: 'plans', label: 'Plans' },
+    { id: 'checkout', label: 'Checkout' },
+    { id: 'confirmation', label: 'Confirmation' },
+  ];
+  const currentIndex = steps.findIndex((step) => step.id === current);
+  return (
+    <nav aria-label="Billing steps" className="flex flex-wrap items-center gap-2">
+      {steps.map((step, index) => {
+        const active = step.id === current;
+        const done = index < currentIndex;
+        return (
+          <span key={step.id} className="flex items-center gap-2">
+            {index > 0 ? <span aria-hidden className="h-px w-6 bg-line" /> : null}
+            <span
+              aria-hidden
+              className={cn(
+                'flex size-6 items-center justify-center rounded-full text-metadata font-medium',
+                active ? 'bg-primary text-on-primary' : 'bg-subtle text-ink-sub'
+              )}
+            >
+              {done ? <CheckIcon className="size-3.5" /> : index + 1}
+            </span>
+            <span
+              aria-current={active ? 'step' : undefined}
+              className={cn('text-body', active ? 'font-medium text-ink' : 'text-ink-sub')}
+            >
+              {step.label}
+            </span>
+          </span>
+        );
+      })}
+    </nav>
+  );
+}
+
 function MethodCard({
   selected,
   title,
@@ -138,7 +175,7 @@ function MethodCard({
       onClick={onClick}
       className={cn(
         'rounded-md border p-3 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link',
-        selected ? 'border-primary bg-primary/10' : 'border-line bg-panel hover:bg-hover'
+        selected ? 'border-ink bg-subtle' : 'border-line bg-panel hover:bg-hover'
       )}
     >
       <span className="block text-body font-medium text-ink">{title}</span>
@@ -327,7 +364,7 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
 
   if (loadError && !status) {
     return (
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6">
+      <div className="mx-auto flex w-full flex-col gap-6 px-4 py-6 sm:px-6">
         <h1 className="text-xl leading-heading font-semibold text-ink">Billing</h1>
         <Alert variant="destructive">
           <AlertTitle>Couldn&apos;t load billing</AlertTitle>
@@ -354,53 +391,64 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
     ? 'Choose at least one page or account first.'
     : quoteError ?? (!screenshot ? 'Attach a screenshot so your payment can be approved.' : null);
 
+  // Rate is stated once, in the Paid card header — not repeated on every row.
+  // Included/used only shows where it matters (a non-zero included or used count);
+  // otherwise the row just names the unit, so a Free workspace is not six
+  // identical "Included 0, used 0" lines.
   const configurator = (
     <div className="flex flex-col">
-      {SUBSCRIPTION_PLATFORMS.map((platform) => (
-        <div
-          key={platform}
-          className="flex flex-wrap items-center gap-3 border-t border-line py-3 first:border-t-0 first:pt-0"
-        >
-          <div className="min-w-44 flex-1">
-            <p className="text-body font-medium text-ink">{PLATFORM_LABELS[platform]}</p>
-            <p className="text-metadata text-ink-sub">
-              {subscriptionUnitLabel(platform)} · 70 PKR each, per month · Included{' '}
-              {entitlement.counts[platform]}, used {entitlement.usage[platform]}
-            </p>
+      {SUBSCRIPTION_PLATFORMS.map((platform) => {
+        const count = effectiveCounts[platform];
+        const showUsage = entitlement.counts[platform] > 0 || entitlement.usage[platform] > 0;
+        return (
+          <div
+            key={platform}
+            className="flex items-center gap-3 border-t border-line py-3 first:border-t-0 first:pt-0"
+          >
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-body font-medium text-ink">{PLATFORM_LABELS[platform]}</p>
+              <p className="truncate text-body text-ink-sub">
+                {showUsage
+                  ? `Included ${entitlement.counts[platform]} · Used ${entitlement.usage[platform]}`
+                  : subscriptionUnitLabel(platform)}
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <Button
+                variant="outline"
+                size="icon-lg"
+                aria-label={`Decrease ${PLATFORM_LABELS[platform]}`}
+                onClick={() => setCount(platform, count - 1)}
+                disabled={count <= 0}
+                className="text-lg disabled:opacity-100 disabled:text-ink-sub"
+              >
+                −
+              </Button>
+              <Input
+                type="number"
+                inputMode="numeric"
+                min={0}
+                value={count}
+                aria-label={`${PLATFORM_LABELS[platform]} ${subscriptionUnitLabel(platform)}`}
+                className="h-10 w-16 text-center tabular-nums"
+                onChange={(event) => setCount(platform, Number(event.target.value))}
+              />
+              <Button
+                variant="outline"
+                size="icon-lg"
+                aria-label={`Increase ${PLATFORM_LABELS[platform]}`}
+                onClick={() => setCount(platform, count + 1)}
+                className="text-lg"
+              >
+                +
+              </Button>
+            </div>
+            <span className="w-20 shrink-0 text-right text-body font-medium tabular-nums text-ink">
+              {count * SUBSCRIPTION_PRICE_PKR_PER_UNIT} PKR
+            </span>
           </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="icon"
-              aria-label={`Decrease ${PLATFORM_LABELS[platform]}`}
-              onClick={() => setCount(platform, effectiveCounts[platform] - 1)}
-              disabled={effectiveCounts[platform] <= 0}
-            >
-              −
-            </Button>
-            <Input
-              type="number"
-              inputMode="numeric"
-              min={0}
-              value={effectiveCounts[platform]}
-              aria-label={`${PLATFORM_LABELS[platform]} ${subscriptionUnitLabel(platform)}`}
-              className="w-16 text-center tabular-nums"
-              onChange={(event) => setCount(platform, Number(event.target.value))}
-            />
-            <Button
-              variant="outline"
-              size="icon"
-              aria-label={`Increase ${PLATFORM_LABELS[platform]}`}
-              onClick={() => setCount(platform, effectiveCounts[platform] + 1)}
-            >
-              +
-            </Button>
-          </div>
-          <span className="w-full text-body text-ink-sub tabular-nums sm:w-24 sm:text-right">
-            {effectiveCounts[platform] * SUBSCRIPTION_PRICE_PKR_PER_UNIT} PKR
-          </span>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 
@@ -431,7 +479,7 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
           ) : null}
           <div className="flex items-baseline justify-between gap-3">
             <dt className="text-ink-sub">Monthly total</dt>
-            <dd className="font-medium tabular-nums text-ink">{total} PKR</dd>
+            <dd className="font-semibold tabular-nums text-ink">{total} PKR</dd>
           </div>
           {isUpgrade && quote ? (
             <>
@@ -454,8 +502,8 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
             </>
           ) : (
             <div className="flex items-baseline justify-between gap-3 border-t border-line pt-2">
-              <dt className="font-medium text-ink">You pay</dt>
-              <dd className="font-semibold tabular-nums text-ink">{total} PKR / month</dd>
+              <dt className="text-lg font-medium text-ink">You pay</dt>
+              <dd className="text-lg font-semibold tabular-nums text-ink">{total} PKR / month</dd>
             </div>
           )}
         </dl>
@@ -481,8 +529,8 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
             title="No payments yet"
             description="Payments you submit will appear here, with their approval status."
             action={
-              <Button variant="outline" onClick={() => scrollToId('billing-paid-card')}>
-                Build a paid plan
+              <Button variant="link" onClick={() => scrollToId('billing-paid-card')}>
+                Back to the Paid card
               </Button>
             }
           />
@@ -525,11 +573,12 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
       ? (confirmation.crypto.payAmount ?? confirmation.crypto.estimatedUsdt)
       : null;
     return (
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6">
+      <div className="mx-auto flex w-full flex-col gap-6 px-4 py-6 sm:px-6">
         <div className="flex flex-col gap-1">
           <h1 className="text-xl leading-heading font-semibold text-ink">Billing</h1>
           <p className="text-body text-ink-sub">Your payment is on its way.</p>
         </div>
+        <StepIndicator current="confirmation" />
         <Card>
           <CardHeader>
             <CardTitle>
@@ -581,7 +630,7 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
   /* ---------- Checkout step ---------- */
   if (step === 'checkout') {
     return (
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6">
+      <div className="mx-auto flex w-full flex-col gap-6 px-4 py-6 sm:px-6">
         <div className="flex flex-col gap-1">
           <Button variant="outline" size="sm" className="self-start" onClick={goToPlans}>
             <ArrowLeftIcon aria-hidden className="size-4" /> Back to plans
@@ -593,6 +642,7 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
             {isUpgrade ? ' to pay now' : ' / month'}
           </p>
         </div>
+        <StepIndicator current="checkout" />
         {quoteError ? (
           <Alert variant="destructive">
             <AlertTitle>That change is not an upgrade</AlertTitle>
@@ -719,6 +769,7 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
                     </div>
                     <div className="flex flex-col gap-2">
                       <Button
+                        variant={bankDisabled ? 'secondary' : 'default'}
                         onClick={() => void submitBank()}
                         loading={busy === 'bank'}
                         disabled={bankDisabled}
@@ -726,9 +777,9 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
                         Submit payment for approval
                       </Button>
                       {bankDisabledReason ? (
-                        <p className="text-metadata text-ink-sub">{bankDisabledReason}</p>
+                        <p className="text-body text-ink-sub">{bankDisabledReason}</p>
                       ) : null}
-                      <p className="text-metadata text-ink-sub">Approval lasts 30 days from approval.</p>
+                      <p className="text-body text-ink-sub">Approval lasts 30 days from approval.</p>
                     </div>
                   </section>
                 ) : (
@@ -759,7 +810,7 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
                         Continue with NOWPayments
                       </Button>
                       {units === 0 ? (
-                        <p className="mt-2 text-metadata text-ink-sub">
+                        <p className="mt-2 text-body text-ink-sub">
                           Choose at least one page or account first.
                         </p>
                       ) : null}
@@ -784,13 +835,14 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
 
   /* ---------- Plans view (default) ---------- */
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6">
+    <div className="mx-auto flex w-full flex-col gap-6 px-4 py-6 sm:px-6">
       <div className="flex flex-col gap-1">
         <h1 className="text-xl leading-heading font-semibold text-ink">Billing</h1>
         <p className="text-body text-ink-sub">
           Choose a plan, then check out. Paid is charged per page or account, per month.
         </p>
       </div>
+      <StepIndicator current="plans" />
 
       {entitlement.reason ? (
         <Alert variant="warning">
@@ -799,29 +851,37 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
         </Alert>
       ) : null}
 
-      {/* Compact current-plan summary strip */}
+      {/* Current-plan status panel — Free is a plan, not a failure, so it
+          gets no red mark; "No paid period" replaces the bare dash. */}
       <Card>
-        <CardContent className="grid gap-4 py-4 sm:grid-cols-2 lg:grid-cols-4">
+        <CardHeader>
+          <CardTitle>Your plan</CardTitle>
+          <CardDescription>What you are on right now.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div className="flex flex-col gap-1">
-            <span className="text-metadata text-ink-sub">Plan</span>
+            <span className="text-body text-ink-sub">Plan</span>
+            <span className="text-lg font-semibold text-ink">{isPaid ? 'Paid' : 'Free'}</span>
             {isPaid ? (
               <BillingStatusMark kind="ok" label="Paid and active" />
             ) : (
-              <BillingStatusMark kind="failed" label="Free plan" />
+              <span className="text-body text-ink-sub">Prompt Library only</span>
             )}
           </div>
           <div className="flex flex-col gap-1">
-            <span className="text-metadata text-ink-sub">Paid until</span>
-            <span className="text-body font-medium text-ink">{formatDate(entitlement.periodEndsAt)}</span>
+            <span className="text-body text-ink-sub">Paid until</span>
+            <span className="text-body font-medium text-ink">
+              {entitlement.periodEndsAt ? formatDate(entitlement.periodEndsAt) : 'No paid period'}
+            </span>
           </div>
           <div className="flex flex-col gap-1">
-            <span className="text-metadata text-ink-sub">Included</span>
+            <span className="text-body text-ink-sub">Included</span>
             <span className="text-body font-medium tabular-nums text-ink">
               {includedUnits} pages / accounts
             </span>
           </div>
           <div className="flex flex-col gap-1">
-            <span className="text-metadata text-ink-sub">Used in features</span>
+            <span className="text-body text-ink-sub">Used in features</span>
             <span className="text-body font-medium tabular-nums text-ink">
               {usedUnits} pages / accounts
             </span>
@@ -829,15 +889,16 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
         </CardContent>
       </Card>
 
-      {/* Pricing cards */}
-      <div className="grid items-start gap-6 md:grid-cols-2">
+      {/* Pricing cards — matched pair: equal height, Free content anchored
+          to the bottom instead of stranded mid-card. */}
+      <div className="grid items-stretch gap-6 lg:grid-cols-[340px_minmax(0,1fr)]">
         {/* Free card */}
-        <Card>
+        <Card className="flex flex-col">
           <CardHeader>
             <CardTitle>Free</CardTitle>
             <CardDescription>Start with the Prompt Library.</CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-col gap-4">
+          <CardContent className="flex flex-1 flex-col gap-4">
             <p className="text-body text-ink">
               <span className="text-3xl font-semibold tabular-nums">0 PKR</span>
               <span className="text-ink-sub"> / month</span>
@@ -848,92 +909,185 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
                 <span>Prompt Library</span>
               </li>
               <li className="flex items-start gap-2">
+                <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
+                <span>Connect as many accounts as you like</span>
+              </li>
+              <li className="flex items-start gap-2">
                 <XIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-critical" />
                 <span>Posting and scheduling</span>
               </li>
+              <li className="flex items-start gap-2">
+                <XIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-critical" />
+                <span>Paid features: schedule, auto download-upload, auto repost</span>
+              </li>
             </ul>
-            <p className="text-body text-ink-sub">There is no free trial. Free is the starting plan.</p>
-            {!isPaid ? (
-              <BillingStatusMark kind="ok" label="Current plan" />
-            ) : null}
+            <div className="mt-auto flex flex-col gap-2">
+              <p className="text-body text-ink-sub">
+                There is no free trial. Free is the starting plan.
+              </p>
+              {!isPaid ? (
+                <BillingStatusMark kind="ok" label="Current plan" />
+              ) : null}
+            </div>
           </CardContent>
         </Card>
 
-        {/* Paid card — featured, configurator lives here, not a fixed tier */}
-        <Card id="billing-paid-card" className="scroll-mt-20 border-primary">
+        {/* Paid card — featured, configurator lives here, not a fixed tier.
+            The 70 PKR rate is stated once, in the header below. On desktop
+            the builder sits beside a neutral summary panel, so the total
+            and the checkout action are reachable without scrolling all six
+            rows; on phone the summary stacks below the builder. The only
+            yellow in the card is the primary shade (Featured badge and the
+            enabled checkout button) — no yellow border, no yellow total bar. */}
+        <Card id="billing-paid-card" className="scroll-mt-20">
           <CardHeader>
-            <p className="text-metadata font-medium text-ink">Featured</p>
-            <CardTitle>Paid</CardTitle>
+            <div className="flex items-baseline gap-2">
+              <CardTitle>Paid</CardTitle>
+              <span className="rounded-sm bg-primary px-2 py-0.5 text-metadata font-medium text-on-primary">
+                Featured
+              </span>
+            </div>
             <CardDescription>Pay only for what you manage.</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
-            <p className="text-body text-ink">
+            <p className="flex flex-wrap items-baseline gap-x-2 text-ink">
               <span className="text-3xl font-semibold tabular-nums">70 PKR</span>
-              <span className="text-ink-sub"> per page or account, per month</span>
+              <span className="text-body text-ink-sub">per page or account, per month</span>
             </p>
             <p className="text-body text-ink-sub">
               Monthly only. Facebook counts pages; every other platform counts accounts.
             </p>
-            {configurator}
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-primary px-4 py-3">
-              <span className="text-body font-semibold text-on-primary">
-                {units} pages / accounts selected
-              </span>
-              <span className="text-body font-semibold tabular-nums text-on-primary">
-                {isUpgrade ? `${amountToPay} PKR to upgrade` : `${total} PKR / month`}
-              </span>
-            </div>
-            <p className="text-body text-ink-sub">
-              Example: 5 Facebook pages + 3 Instagram accounts = 560 PKR / month.
-            </p>
-            {isUpgrade && quote ? (
-              <p className="text-body text-ink-sub">
-                Upgrade preview: credit {quote.creditPkr} PKR for {quote.daysRemaining} days left —
-                you pay {amountToPay} PKR. Your new period starts from the upgrade approval.
-              </p>
-            ) : null}
-            {quoteError ? (
-              <Alert variant="destructive">
-                <AlertTitle>That change is not an upgrade</AlertTitle>
-                <AlertDescription>{quoteError}</AlertDescription>
-              </Alert>
-            ) : null}
-            {isPaid && countsUnchanged ? (
-              <div className="flex flex-col gap-2">
-                <BillingStatusMark kind="ok" label="Current plan" />
-                <Button disabled>Current plan</Button>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-2">
-                <Button onClick={goToCheckout} disabled={units === 0 || Boolean(quoteError)}>
-                  {isUpgrade ? 'Continue to upgrade checkout' : 'Continue to checkout'}
-                </Button>
-                {units === 0 ? (
-                  <p className="text-metadata text-ink-sub">
-                    Choose at least one page or account first.
-                  </p>
+            <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_260px]">
+              <div>{configurator}</div>
+              <aside className="flex flex-col gap-3 rounded-md bg-subtle p-4 lg:sticky lg:top-20">
+                <h3 className="text-body font-semibold text-ink">Your plan total</h3>
+                <dl className="flex flex-col gap-2 text-body">
+                  {SUBSCRIPTION_PLATFORMS.filter((p) => effectiveCounts[p] > 0).map((platform) => (
+                    <div key={platform} className="flex items-baseline justify-between gap-3">
+                      <dt className="min-w-0 truncate text-ink-sub">
+                        {PLATFORM_LABELS[platform]} · {effectiveCounts[platform]}{' '}
+                        {subscriptionUnitLabel(platform)}
+                      </dt>
+                      <dd className="shrink-0 font-medium tabular-nums text-ink">
+                        {effectiveCounts[platform] * SUBSCRIPTION_PRICE_PKR_PER_UNIT} PKR
+                      </dd>
+                    </div>
+                  ))}
+                  {units === 0 ? (
+                    <div className="flex items-baseline justify-between gap-3">
+                      <dt className="text-ink-sub">Selected</dt>
+                      <dd className="font-medium text-ink">Nothing selected yet</dd>
+                    </div>
+                  ) : null}
+                  <div className="flex items-baseline justify-between gap-3 border-t border-line pt-2">
+                    <dt className="text-ink-sub">Monthly total</dt>
+                    <dd className="text-xl font-semibold tabular-nums text-ink">{total} PKR</dd>
+                  </div>
+                  {isUpgrade && quote ? (
+                    <>
+                      <div className="flex items-baseline justify-between gap-3">
+                        <dt className="text-ink-sub">Old plan total</dt>
+                        <dd className="font-medium tabular-nums text-ink">
+                          {quote.oldMonthlyTotalPkr} PKR
+                        </dd>
+                      </div>
+                      <div className="flex items-baseline justify-between gap-3">
+                        <dt className="text-ink-sub">Days remaining</dt>
+                        <dd className="font-medium tabular-nums text-ink">
+                          {quote.daysRemaining} days
+                        </dd>
+                      </div>
+                      <div className="flex items-baseline justify-between gap-3">
+                        <dt className="text-ink-sub">Credit</dt>
+                        <dd className="font-medium tabular-nums text-ink">
+                          −{quote.creditPkr} PKR
+                        </dd>
+                      </div>
+                      <div className="flex items-baseline justify-between gap-3 border-t border-line pt-2">
+                        <dt className="font-medium text-ink">You pay now</dt>
+                        <dd className="font-semibold tabular-nums text-ink">{amountToPay} PKR</dd>
+                      </div>
+                      <p className="text-body text-ink-sub">
+                        Your new period starts from the upgrade approval.
+                      </p>
+                    </>
+                  ) : null}
+                </dl>
+                <p className="text-body text-ink-sub">
+                  Example: 5 Facebook pages + 3 Instagram accounts = 560 PKR / month.
+                </p>
+                {quoteError ? (
+                  <Alert variant="destructive">
+                    <AlertTitle>That change is not an upgrade</AlertTitle>
+                    <AlertDescription>{quoteError}</AlertDescription>
+                  </Alert>
                 ) : null}
-              </div>
-            )}
+                {isPaid && countsUnchanged ? (
+                  <div className="flex flex-col gap-2">
+                    <BillingStatusMark kind="ok" label="Current plan" />
+                    <Button variant="secondary" disabled>
+                      Current plan
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    <Button
+                      variant={units === 0 || Boolean(quoteError) ? 'secondary' : 'default'}
+                      onClick={goToCheckout}
+                      disabled={units === 0 || Boolean(quoteError)}
+                    >
+                      {isUpgrade ? 'Continue to upgrade checkout' : 'Continue to checkout'}
+                    </Button>
+                    {units === 0 ? (
+                      <p className="text-body text-ink-sub">
+                        Choose at least one page or account first.
+                      </p>
+                    ) : null}
+                  </div>
+                )}
+              </aside>
+            </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* How the limit works */}
+      {/* How the limit works — bullets, not a wall of text */}
       <Card>
         <CardHeader>
           <CardTitle>How the limit works</CardTitle>
         </CardHeader>
-        <CardContent className="flex flex-col gap-2">
-          <p className="text-body text-ink-sub">
-            Your count covers a whole platform, not each feature. Example: 5 Facebook pages means
-            5 in total across in-app schedule, auto download-upload and auto repost — not 5 in
-            each. Connecting accounts is unlimited; using one in a feature counts.
-          </p>
-          <p className="text-body text-ink-sub">
-            Free covers the Prompt Library only. When a paid period ends without renewal, posting
-            pauses and the app becomes read-only until you renew.
-          </p>
+        <CardContent>
+          <ul className="flex flex-col gap-3 text-body text-ink">
+            <li className="flex items-start gap-2">
+              <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
+              <span>
+                <span className="font-medium">One count per platform, across all features.</span>{' '}
+                5 Facebook pages means 5 in total across schedule, auto download-upload and auto
+                repost — not 5 in each.
+              </span>
+            </li>
+            <li className="flex items-start gap-2">
+              <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
+              <span>
+                <span className="font-medium">Connecting is unlimited.</span> Connecting an
+                account never counts; using it in a feature does.
+              </span>
+            </li>
+            <li className="flex items-start gap-2">
+              <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
+              <span>
+                <span className="font-medium">Monthly, from approval.</span> A paid period lasts
+                30 days from approval.
+              </span>
+            </li>
+            <li className="flex items-start gap-2">
+              <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
+              <span>
+                <span className="font-medium">If a period ends without renewal, posting pauses</span>{' '}
+                and the app becomes read-only until you renew.
+              </span>
+            </li>
+          </ul>
         </CardContent>
       </Card>
 
