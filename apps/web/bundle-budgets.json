@@ -435,8 +435,8 @@
       "/tenant/[subdomain]/auto-download-upload": {
         "firstLoadGzipBytes": 173250,
         "firstLoadRawBytes": 581385,
-        "routeSpecificGzipBytes": 36430,
-        "routeSpecificRawBytes": 119070
+        "routeSpecificGzipBytes": 36562,
+        "routeSpecificRawBytes": 119518
       },
       "/tenant/[subdomain]/auto-download-upload/[id]": {
         "firstLoadGzipBytes": 170520,
