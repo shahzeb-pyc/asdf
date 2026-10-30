@@ -211,12 +211,19 @@ export type MirrorPostRow = z.infer<typeof MirrorPostRowSchema>;
 export const CreateMirrorRequestSchema = z
   .object({
     sourceUsername: TikTokUsernameSchema,
+    /**
+     * Target platform. Defaults to facebook so every existing caller
+     * (Facebook mirrors) parses unchanged; Instagram Auto Repost passes
+     * 'instagram'. The mirror table itself is platform-agnostic, so no
+     * schema change is needed for a new target platform.
+     */
+    targetPlatform: z.enum(['facebook', 'instagram']).optional().default('facebook'),
     targetDestinationId: z.string().uuid().optional(),
     accountId: z.string().uuid().optional(),
     targetExternalId: z.string().min(1).optional(),
   })
   .refine((value) => value.targetDestinationId ?? (value.accountId && value.targetExternalId), {
-    message: 'Pick a target: an existing page or an account + page.',
+    message: 'Pick a target: an existing destination or an account + target.',
   });
 export type CreateMirrorRequest = z.infer<typeof CreateMirrorRequestSchema>;
 

@@ -12,6 +12,8 @@ import {
   type TikwmVideoItem,
 } from '@fbuploadpro/contracts';
 import { FacebookPublishClient } from './fb-client.js';
+import { InstagramPublishClient } from './instagram-client.js';
+import { publishInstagramMirrorReel } from './instagram-mirror-reel.js';
 import { captureWorkerError, type PostHogEnv } from './analytics.js';
 
 // ==========================================
@@ -34,7 +36,9 @@ import { captureWorkerError, type PostHogEnv } from './analytics.js';
 // rotation with DB-persisted 30-day pauses, see contracts
 // tikwmapi), resolve each NEW reel via the FREE tikwm POST
 // endpoint (no-watermark URL + verbatim title), and post it to
-// the linked Facebook page as a Facebook Reel, caption verbatim.
+// the linked target — a Facebook page as a Facebook Reel, or an
+// Instagram account as an Instagram Reel (container flow) —
+// caption verbatim.
 //
 // One mirror's failure never blocks other mirrors: each job is
 // independent, jobs in a tick run in parallel chunks, and a job
@@ -215,9 +219,17 @@ export interface MirrorTickDeps {
     username: string;
     videoId: string;
   }) => Promise<{ playUrl: string; title: string }>;
+  /**
+   * Publish one reel to the mirror's target. `targetId`/`targetToken`
+   * are generic: a Facebook page id + page token, or an Instagram
+   * user id + account token. `targetPlatform` decides the dispatch
+   * (and, in processMirrorCheck, which plain-language error rewrite
+   * applies — the Facebook restriction message is Facebook-only).
+   */
   publishReel: (params: {
-    pageId: string;
-    pageToken: string;
+    targetId: string;
+    targetToken: string;
+    targetPlatform: string;
     videoUrl: string;
     caption: string;
   }) => Promise<string>;
@@ -397,8 +409,9 @@ export async function processMirrorCheck(
         }
         try {
           const postId = await deps.publishReel({
-            pageId: mirror.targetExternalId,
-            pageToken: mirror.targetToken,
+            targetId: mirror.targetExternalId,
+            targetToken: mirror.targetToken,
+            targetPlatform: mirror.targetPlatform,
             videoUrl: resolved.playUrl,
             caption,
           });
@@ -417,9 +430,13 @@ export async function processMirrorCheck(
           // Same rule as the setup path: a Facebook account restriction
           // shows the approved plain-language message, never Facebook's
           // raw text. The raw detail stays in worker logs for debugging.
-          const message = isFacebookAccountRestricted(err)
-            ? MIRROR_FACEBOOK_RESTRICTED_MESSAGE
-            : rawMessage;
+          // This rewrite is Facebook-only: Instagram publish helpers
+          // already throw plain-language messages, and a Facebook
+          // restriction message on an Instagram mirror would be wrong.
+          const message =
+            mirror.targetPlatform === 'facebook' && isFacebookAccountRestricted(err)
+              ? MIRROR_FACEBOOK_RESTRICTED_MESSAGE
+              : rawMessage;
           if (message !== rawMessage) {
             console.error(
               `[mirror-tick] mirror=${mirror.id} publish restricted by Facebook; raw: ${rawMessage}`
@@ -633,9 +650,12 @@ export function buildMirrorTickDeps(
     env?: PostHogEnv;
     waitUntil?: MirrorTickDeps['waitUntil'];
     tikwmApiKeys?: string[];
+    /** Instagram container poll interval (tests pass 0; production default 60 s). */
+    instagramPollIntervalMs?: number;
   }
 ): MirrorWorkerDeps {
   const fbClient = new FacebookPublishClient();
+  const igClient = new InstagramPublishClient();
   const tikwmPauseStore = buildWorkerTikwmPauseStore(db);
   const updateMirrorRow = async (
     mirrorId: string,
@@ -755,7 +775,33 @@ export function buildMirrorTickDeps(
       const dest =
         destRows.find((d) => d.status === 'active') ??
         (destRows.length > 0 ? destRows[0] : undefined);
-      const token = dest?.encrypted_destination_token;
+      let token = dest?.encrypted_destination_token;
+      // Instagram-only fallback: Instagram destination rows carry no
+      // destination token (the publishing token lives on the account
+      // row — the account IS the destination). Without this fallback
+      // every Instagram mirror would fail "no posting token".
+      // Facebook is untouched: a missing Facebook page token stays
+      // missing, so its error path is identical to before.
+      let accountFound = false;
+      if (row.target_platform === 'instagram' && typeof token !== 'string') {
+        const { data: accountData, error: accountError } = await db
+          .from('social_accounts')
+          .select('encrypted_access_token')
+          .eq('workspace_id', row.workspace_id)
+          .eq('platform', 'instagram')
+          .eq('external_account_id', row.target_external_id)
+          .limit(1);
+        if (accountError) {
+          throw new InternalError(`Failed to list Instagram accounts: ${accountError.message}`);
+        }
+        const accountRow = ((accountData ?? []) as unknown[]).filter(isRecord)[0] as
+          | Record<string, unknown>
+          | undefined;
+        accountFound = accountRow !== undefined;
+        if (typeof accountRow?.encrypted_access_token === 'string') {
+          token = accountRow.encrypted_access_token;
+        }
+      }
       return {
         id: row.id,
         workspaceId: row.workspace_id,
@@ -763,7 +809,7 @@ export function buildMirrorTickDeps(
         sourceUsername: row.source_username,
         targetPlatform: row.target_platform,
         targetExternalId: row.target_external_id,
-        targetFound: dest !== undefined,
+        targetFound: dest !== undefined || accountFound,
         targetToken:
           typeof token === 'string' ? await decryptToken(token, masterKey) : null,
         status: typeof row.status === 'string' ? row.status : 'active',
@@ -1007,9 +1053,21 @@ export function buildMirrorTickDeps(
     resolveVideo: async ({ username, videoId }) =>
       resolveTikwmVideo(`https://www.tiktok.com/@${username}/video/${videoId}`),
     publishReel: async (params) => {
+      if (params.targetPlatform === 'instagram') {
+        return publishInstagramMirrorReel({
+          igUserId: params.targetId,
+          accessToken: params.targetToken,
+          videoUrl: params.videoUrl,
+          caption: params.caption,
+          client: igClient,
+          ...(options?.instagramPollIntervalMs !== undefined
+            ? { pollIntervalMs: options.instagramPollIntervalMs }
+            : {}),
+        });
+      }
       const result = await fbClient.publishReel({
-        pageId: params.pageId,
-        accessToken: params.pageToken,
+        pageId: params.targetId,
+        accessToken: params.targetToken,
         videoUrl: params.videoUrl,
         caption: params.caption,
       });

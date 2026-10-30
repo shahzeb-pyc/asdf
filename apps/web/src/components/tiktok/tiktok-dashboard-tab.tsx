@@ -148,7 +148,7 @@ export function TikTokDashboardTab({ mirror, posts }: Readonly<TikTokDashboardTa
                   </p>
                   <p className="mt-1 text-metadata text-ink-dim">
                     {formatDateTime(post.created_at)} · {postStatusLabel(post.status)}
-                    {post.published_post_id ? ' · Posted to Facebook' : ''}
+                    {post.published_post_id ? ' · Posted' : ''}
                   </p>
                   {post.error ? (
                     <p className="mt-1 text-metadata text-signal-critical">{mapStoredMirrorErrorToDisplay(post.error)}</p>
