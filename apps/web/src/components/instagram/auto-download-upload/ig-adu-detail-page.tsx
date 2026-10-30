@@ -43,7 +43,7 @@ interface ConfigView {
   destinationExternalId: string;
   destinationAvatarUrl: string | null;
   destinationHandle: string | null;
-  destinationPlatform: string;
+  destinationPlatform: string | null;
   accountName: string | null;
   sourcePlatform: string;
   sourceUsername: string;
