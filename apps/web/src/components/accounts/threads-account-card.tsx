@@ -11,7 +11,7 @@
  */
 import * as React from 'react';
 import Image from 'next/image';
-import { TriangleAlertIcon } from 'lucide-react';
+import { ExternalLinkIcon, TriangleAlertIcon } from 'lucide-react';
 
 import { Button } from '@/components/shared/ui/button';
 import { StatusMark, type StatusMarkKind } from '@/components/shared/ui/status-mark';
@@ -28,6 +28,12 @@ export interface ThreadsAccountItem {
   threadsAccountId: string;
   displayName: string;
   profilePictureUrl?: string | null | undefined;
+  /** Threads @handle from the account's destination row, when linked. */
+  handle?: string | null | undefined;
+  /** Public Threads profile address for the handle, when linked. */
+  accountLink?: string | null | undefined;
+  /** Destinations linked to this account (the profile itself, normally 1). */
+  connectedDestinationsCount?: number | undefined;
   status: 'active' | 'disconnected' | 'expired';
   tokenExpiresAt?: string | null | undefined;
   createdAt: string;
@@ -129,12 +135,28 @@ export function ThreadsAccountCard({
         )}
 
         <div className="min-w-0 flex-1">
-          <h3
-            data-testid="threads-account-name"
-            className="truncate text-body font-semibold text-ink"
-          >
-            {account.displayName}
-          </h3>
+          <div className="flex items-center gap-1 overflow-hidden">
+            <h3
+              data-testid="threads-account-name"
+              className="truncate text-body font-semibold text-ink"
+            >
+              {account.displayName}
+            </h3>
+
+            {account.accountLink && (
+              <a
+                href={account.accountLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="View Threads Profile"
+                aria-label={`View ${account.displayName}'s Threads Profile`}
+                data-testid="threads-account-profile-link"
+                className="inline-flex shrink-0 items-center text-ink-dim outline-none hover:text-ink focus-visible:outline-2 focus-visible:outline-link"
+              >
+                <ExternalLinkIcon className="size-3.5" aria-hidden />
+              </a>
+            )}
+          </div>
           <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
             <span data-testid="threads-account-health-label" className="inline-flex">
               <StatusMark

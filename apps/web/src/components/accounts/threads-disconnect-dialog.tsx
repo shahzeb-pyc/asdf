@@ -43,6 +43,13 @@ export function ThreadsDisconnectDialog({
     await onConfirm(account.id);
   };
 
+  // Facebook parity: the dialog shows the real linked count from
+  // the list API, never a fixed singular "its destination" — the
+  // count is destinations, not pages.
+  const destinationsCount = account.connectedDestinationsCount ?? 0;
+  const destinationsLabel =
+    destinationsCount === 1 ? 'Threads destination' : 'Threads destinations';
+
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent className="sm:max-w-115">
@@ -53,15 +60,31 @@ export function ThreadsDisconnectDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
 
-        <div
-          data-testid="threads-disconnect-notice"
-          className="rounded-sm border border-line bg-subtle p-4 text-body leading-body text-ink-sub"
-        >
-          <p className="m-0">
-            This Threads account and its destination will be removed.
-            It&apos;s safe to remove — you can reconnect it any time.
-          </p>
-        </div>
+        {destinationsCount === 0 ? (
+          <div
+            data-testid="threads-disconnect-zero-destinations-notice"
+            className="rounded-sm border border-line bg-subtle p-4 text-body leading-body text-ink-sub"
+          >
+            <p className="m-0">
+              No Threads destinations are linked to this account yet. It&apos;s safe to remove — you can reconnect it any time.
+            </p>
+          </div>
+        ) : (
+          <div
+            data-testid="threads-disconnect-linked-destinations-warning"
+            className="rounded-sm border border-signal-critical/25 bg-signal-critical/10 p-4 text-body leading-body text-ink"
+          >
+            <p className="m-0 mb-2 font-semibold text-signal-critical-on-tint">
+              Before you disconnect
+            </p>
+            <p className="m-0">
+              <strong>
+                {destinationsCount} linked {destinationsLabel}
+              </strong>{' '}
+              will be removed, and any scheduled content on them will be removed as well.
+            </p>
+          </div>
+        )}
 
         <AlertDialogFooter>
           <AlertDialogCancel

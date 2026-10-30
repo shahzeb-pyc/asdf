@@ -81,6 +81,120 @@ export interface ThreadsHealthCounts {
   error: number;
 }
 
+/**
+ * OAuth-return notice resolver — the Threads copy of Facebook's
+ * `resolveOAuthRedirectNotice`, same param contract and copy with
+ * only the platform name changed. The connect-complete route and
+ * the callback's Threads denial redirect both land here with these
+ * params: `connected=1|already` + `accountName`,
+ * `reconnected_mismatch=1` + `newAccountName` + `expectedAccountName`,
+ * or `error=credentials_required|access_denied|user_cancelled|…`.
+ */
+export function resolveThreadsOAuthRedirectNotice(searchParams: {
+  get: (key: string) => string | null;
+}): {
+  notice: { type: 'success' | 'error'; message: string };
+  /** Account name carried by the redirect, when present — used to highlight its card. */
+  accountName?: string | undefined;
+  keysToRemove: string[];
+} | null {
+  const reconnectedMismatch = searchParams.get('reconnected_mismatch');
+  if (reconnectedMismatch === '1') {
+    const newAccountName = searchParams.get('newAccountName') || 'another account';
+    const expectedAccountName = searchParams.get('expectedAccountName') || 'the expired account';
+    return {
+      notice: {
+        type: 'error',
+        message: `You signed into ${newAccountName} instead of ${expectedAccountName}. ${expectedAccountName} still needs to be reconnected.`,
+      },
+      keysToRemove: ['reconnected_mismatch', 'newAccountName', 'expectedAccountName'],
+    };
+  }
+
+  const connected = searchParams.get('connected');
+  if (connected === 'already') {
+    const accountName = searchParams.get('accountName') || 'Account';
+    return {
+      notice: {
+        type: 'success',
+        message: `${accountName} already connected — session refreshed`,
+      },
+      accountName,
+      keysToRemove: ['connected', 'accountName'],
+    };
+  }
+
+  if (connected === '1') {
+    const accountName = searchParams.get('accountName') || undefined;
+    return {
+      notice: {
+        type: 'success',
+        message: accountName ? `${accountName} connected` : 'Threads account connected',
+      },
+      accountName,
+      keysToRemove: ['connected', 'accountName'],
+    };
+  }
+
+  const error = searchParams.get('error');
+  if (error) {
+    if (error === 'credentials_required') {
+      return {
+        notice: {
+          type: 'error',
+          message:
+            'Threads App credentials are required before connecting accounts. Please configure your App ID and Secret in Workspace Settings.',
+        },
+        keysToRemove: ['error', 'tab'],
+      };
+    }
+    const isCancelled = error === 'access_denied' || error === 'user_cancelled';
+    const message = isCancelled
+      ? 'Connection canceled. No changes were made.'
+      : "Couldn't connect to Threads. Check your permissions and try again.";
+    return {
+      notice: {
+        type: 'error',
+        message,
+      },
+      keysToRemove: ['error'],
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Page-slice subtitle fallback, Facebook parity: when the list
+ * response carries no `healthCounts` (old payloads), count the
+ * health of the accounts on this page instead of reporting
+ * "0 connected" on a non-zero total.
+ */
+export function computeThreadsSubtitle(
+  accounts: ThreadsAccountHealthInput[],
+  filteredCount: number,
+  isFiltered: boolean
+): string {
+  const totalCount = accounts.length;
+  if (totalCount === 0) {
+    return 'Connect your first Threads account to schedule and publish posts.';
+  }
+  if (isFiltered) {
+    return `Showing ${filteredCount} of ${totalCount} ${
+      totalCount === 1 ? 'account' : 'accounts'
+    }`;
+  }
+  const healthCounts: Record<ThreadsAccountHealth, number> = {
+    connected: 0,
+    expired: 0,
+    error: 0,
+  };
+  for (const account of accounts) {
+    healthCounts[getThreadsAccountHealth(account)] += 1;
+  }
+  return computeThreadsSubtitleFromCounts(totalCount, healthCounts);
+}
+
 /** Subtitle from full-set health counts (Facebook's count form). */
 export function computeThreadsSubtitleFromCounts(
   totalCount: number,

@@ -2,33 +2,40 @@
 
 /**
  * Threads accounts shell — the Threads accounts list, modelled on the
- * Facebook Accounts shell but Threads-specific and Threads-only.
+ * Facebook Accounts shell (same architecture, same UI and features),
+ * Threads data only.
  *
- * Data: the Threads accounts list API (social_accounts rows with
- * platform='threads'), fetched with the typed API client and validated
- * by the Threads list schema. Server pagination: page lives in the
- * URL (?page=), filter/search reset to page 1.
+ * Architecture (Facebook parity): the server page prefetches the list
+ * page + the Threads platform credentials into DataHydration; this
+ * shell reads them with React Query (`keepPreviousData` — no skeleton
+ * flash on search/page/disconnect refetches; skeleton only while the
+ * first page is pending). The BYOC read shares the Settings surface's
+ * platform-credentials cache entry, so the Settings page and this
+ * page never disagree about whether Threads app details are saved.
  *
- * Connect is NOT a modal here: Threads keeps its existing direct
- * connect flow (/api/connect/threads) behind the Threads app-details
- * check. Gating semantics match Facebook: connect is gated only when
- * Threads app details are known to be missing — never while the check
- * runs, and never when the check itself fails (a retry banner covers
- * that case instead). The settings link points at the real Threads
- * credentials tab (?tab=threads).
+ * Connect is an in-page modal (ThreadsConnectModal) with the same two
+ * options as Facebook's: "This Browser" direct OAuth and "Different
+ * Browser or Phone" magic link. A gated click (known-missing Threads
+ * App ID/Secret) opens the Threads BYOC prompt modal instead of
+ * leaving a disabled button with nowhere to go. Gating semantics
+ * match Facebook: gated only when app details are known to be
+ * missing — never while the check runs, and never when the check
+ * itself fails (a retry banner covers that case instead).
  *
- * Success path, and its honest limit: the shared connect-complete
- * route lands a finished connect on the generic /accounts page, not
- * here, so no current flow sends an OAuth-return notice to this page.
- * This shell still handles a `connected` / `connect_error` param the
- * same way Facebook's shell handles its OAuth returns (top-right
- * toast + briefly gold-highlighted card, once, params stripped) so
- * the hook exists if that landing ever changes — it is not claimed
- * as a live end-to-end path today.
+ * Connect completion lands HERE (never generic /accounts): the
+ * complete route and the callback's Threads denial redirect both
+ * carry Facebook's notice params, resolved by
+ * `resolveThreadsOAuthRedirectNotice` — success toasts
+ * "`<name> connected`" (green flow-scoped toast) + a 5-second gold
+ * highlight of that card; already-connected and mismatch stay as a
+ * persistent banner. The once-only notice effect runs only after
+ * the accounts query has data, so the name match can actually find
+ * the card (server prefetch means data is there on first render).
  */
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PlusIcon } from 'lucide-react';
 
 import { api, buildTenantApiPath, buildUrl, isApiError } from '@/lib/api';
@@ -36,38 +43,62 @@ import {
   DisconnectThreadsAccountResponseSchema,
   ListThreadsAccountsResponseSchema,
 } from '@fbuploadpro/contracts';
+import { PlatformCredentialsResponseSchema } from '@/lib/api/schemas/settings';
 import { DEFAULT_PAGE_SIZE } from '@/lib/server/pagination';
+import { queryKeys } from '@/lib/data';
 import { reportError } from '@/lib/report-error';
 import { Button } from '@/components/shared/ui/button';
 import { EmptyState } from '@/components/shared/ui/empty-state';
 import { ListPagination } from '@/components/shared/ui/list-pagination';
 import { Skeleton } from '@/components/shared/ui/skeleton';
-import { Toast, toast } from '@/components/shared/ui/toast';
+import { Toast, toast, type ToasterProps } from '@/components/shared/ui/toast';
 import { Banner } from '@/components/shared/ui/banner';
 import { AccountsFilterBar } from '@/components/accounts/accounts-filter-bar';
 import type { AccountStatusFilter } from '@/components/accounts/accounts-helpers';
+import { isConnectGatedByMissingCredentials } from '@/components/accounts/accounts-helpers';
 import {
   ByocGatePrompt,
-  checkByocCredentials,
-  type ByocGateStatus,
 } from '@/components/connect/byoc-gate';
 import {
   ThreadsAccountCard,
   type ThreadsAccountItem,
 } from './threads-account-card';
 import { ThreadsDisconnectDialog } from './threads-disconnect-dialog';
+import { ThreadsConnectModal } from './threads-connect-modal';
+import { ThreadsByocConfigPromptModal } from './threads-byoc-config-prompt-modal';
 import {
+  computeThreadsSubtitle,
   computeThreadsSubtitleFromCounts,
+  resolveThreadsOAuthRedirectNotice,
   sortThreadsAccountsExpiredFirst,
 } from './threads-accounts-helpers';
 
 const THREADS_CONNECT_TOASTER_ID = 'threads-accounts-connect-toaster';
+
+/** Green flow-scoped toast styling, copied from Facebook's ACCOUNTS_CONNECT_TOAST_OPTIONS. */
+const THREADS_CONNECT_TOAST_OPTIONS: NonNullable<ToasterProps['toastOptions']> = {
+  classNames: {
+    toast:
+      'group toast group flex items-start gap-2 rounded-md border border-brand-emerald bg-brand-emerald/15 p-4 text-body text-ink shadow-elevated',
+    title: 'font-medium',
+    description: 'text-ink-sub',
+    actionButton: 'bg-primary text-on-primary rounded-sm px-3 h-9 font-medium',
+    cancelButton: 'bg-subtle text-ink rounded-sm px-3 h-9 font-medium',
+    closeButton: 'text-ink-sub hover:text-ink',
+    success: 'text-brand-emerald border-brand-emerald bg-brand-emerald/15',
+    error: 'text-signal-critical',
+    warning: 'text-link',
+    info: 'text-ink',
+  },
+};
 
 const THREADS_DESCRIPTION =
   'Connect your Threads account to schedule and publish posts from one place. Your workspace uses its own Threads app details, so your accounts stay yours.';
 
 export interface ThreadsAccountsShellProps {
   subdomain: string;
+  /** Page from the URL at server render time (?page=, ≥1, default 1). */
+  initialPage?: number;
 }
 
 function ThreadsLoadingSkeleton() {
@@ -87,42 +118,109 @@ function ThreadsLoadingSkeleton() {
 
 export function ThreadsAccountsShell({
   subdomain,
+  initialPage = 1,
 }: Readonly<ThreadsAccountsShellProps>) {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const queryClient = useQueryClient();
+  const tenant = queryKeys.tenant(subdomain);
   const accountsPath = buildTenantApiPath(subdomain, '/threads/accounts');
-  const connectHref = `/api/connect/threads?subdomain=${encodeURIComponent(subdomain)}`;
   const settingsThreadsHref = `/tenant/${subdomain}/settings?tab=threads`;
 
-  const initialPage = React.useMemo(() => {
-    const raw = Number.parseInt(searchParams.get('page') ?? '', 10);
-    return Number.isFinite(raw) && raw >= 1 ? raw : 1;
-    // Deliberately read once at mount: later URL changes flow
-    // through the sync effect, not through this initializer.
-  }, []);
   const [page, setPage] = React.useState(initialPage);
   const [searchQuery, setSearchQuery] = React.useState('');
   const [statusFilter, setStatusFilter] =
     React.useState<AccountStatusFilter>('all');
 
-  const [accounts, setAccounts] = React.useState<ThreadsAccountItem[]>([]);
-  const [total, setTotal] = React.useState(0);
-  const [totalPages, setTotalPages] = React.useState(0);
-  const [healthCounts, setHealthCounts] = React.useState({
-    connected: 0,
-    expired: 0,
-    error: 0,
+  const accountsQuery = useQuery({
+    queryKey: tenant.threadsAccounts.listPage({
+      page,
+      limit: DEFAULT_PAGE_SIZE,
+      search: searchQuery.trim(),
+      status: statusFilter,
+    }),
+    queryFn: ({ signal }) =>
+      api.get(
+        buildUrl(accountsPath, {
+          page,
+          limit: DEFAULT_PAGE_SIZE,
+          ...(searchQuery.trim() ? { search: searchQuery.trim() } : {}),
+          ...(statusFilter !== 'all' ? { status: statusFilter } : {}),
+        }),
+        { schema: ListThreadsAccountsResponseSchema, signal }
+      ),
+    placeholderData: keepPreviousData,
   });
-  const [isLoading, setIsLoading] = React.useState(true);
-  const [loadError, setLoadError] = React.useState(false);
-  const [reloadToken, setReloadToken] = React.useState(0);
 
-  const [byocStatus, setByocStatus] = React.useState<ByocGateStatus>({
-    isLoading: true,
-    hasCredentials: false,
-    error: null,
+  // BYOC: the Settings surface's platform-credentials entry for
+  // Threads — one cache entry, shared with Settings.
+  const byocQuery = useQuery({
+    queryKey: tenant.settings.platformCredentials('threads'),
+    queryFn: ({ signal }) =>
+      api.get(
+        buildTenantApiPath(subdomain, '/settings/platform-credentials/threads'),
+        { schema: PlatformCredentialsResponseSchema, signal }
+      ),
   });
-  const [byocReloadToken, setByocReloadToken] = React.useState(0);
+
+  const accounts = React.useMemo<ThreadsAccountItem[]>(
+    () =>
+      sortThreadsAccountsExpiredFirst(
+        (accountsQuery.data?.accounts ?? []).map((account) => ({
+          id: account.id,
+          threadsAccountId: account.threadsAccountId,
+          displayName: account.displayName,
+          profilePictureUrl: account.profilePictureUrl ?? null,
+          handle: account.handle ?? null,
+          accountLink: account.accountLink ?? null,
+          connectedDestinationsCount: account.connectedDestinationsCount ?? 0,
+          status: account.status,
+          tokenExpiresAt: account.tokenExpiresAt
+            ? new Date(account.tokenExpiresAt).toISOString()
+            : null,
+          createdAt: new Date(account.createdAt).toISOString(),
+          updatedAt: account.updatedAt
+            ? new Date(account.updatedAt).toISOString()
+            : undefined,
+        }))
+      ),
+    [accountsQuery.data]
+  );
+  const isLoading = accountsQuery.isPending;
+  const total = accountsQuery.data?.total ?? 0;
+  const totalPages = accountsQuery.data?.totalPages ?? 0;
+
+  const byocStatus = React.useMemo<{
+    isConfigured: boolean;
+    isLoading: boolean;
+    error: string | null;
+  }>(() => {
+    const isConfigured = byocQuery.data
+      ? Boolean(byocQuery.data.appId && byocQuery.data.hasSecret)
+      : false;
+    if (byocQuery.isError && !byocQuery.isFetching) {
+      return {
+        isConfigured,
+        isLoading: false,
+        error:
+          isApiError(byocQuery.error) && byocQuery.error.kind === 'network'
+            ? "Couldn't verify your Threads App credentials. Please check your connection."
+            : "Couldn't verify your Threads App credentials. Please try again.",
+      };
+    }
+    return {
+      isConfigured,
+      isLoading: byocQuery.isPending || (byocQuery.isFetching && byocQuery.isError),
+      error: null,
+    };
+  }, [byocQuery.data, byocQuery.error, byocQuery.isError, byocQuery.isFetching, byocQuery.isPending]);
+  const [isByocPromptOpen, setIsByocPromptOpen] = React.useState(false);
+
+  const [isConnectOpen, setIsConnectOpen] = React.useState(false);
+  const [reconnectingAccount, setReconnectingAccount] =
+    React.useState<ThreadsAccountItem | null>(null);
+  const [disconnectingAccount, setDisconnectingAccount] =
+    React.useState<ThreadsAccountItem | null>(null);
 
   const [bannerNotice, setBannerNotice] = React.useState<{
     type: 'success' | 'error';
@@ -150,74 +248,18 @@ export function ThreadsAccountsShell({
     []
   );
 
-  const [disconnectingAccount, setDisconnectingAccount] =
-    React.useState<ThreadsAccountItem | null>(null);
-  const [isDisconnecting, setIsDisconnecting] = React.useState(false);
-
+  // An out-of-range ?page= is clamped by the API; sync state (and the
+  // URL, via the effect below) to the page that actually came back —
+  // a stale ?page=999 can never render "Showing 29941–90 of 90".
   React.useEffect(() => {
-    let cancelled = false;
-    setIsLoading(true);
-    setLoadError(false);
-    const apiStatus =
-      statusFilter === 'active' || statusFilter === 'expired'
-        ? statusFilter
-        : undefined;
-    api
-      .get(
-        buildUrl(accountsPath, {
-          page,
-          limit: DEFAULT_PAGE_SIZE,
-          ...(searchQuery.trim() ? { search: searchQuery.trim() } : {}),
-          ...(apiStatus ? { status: apiStatus } : {}),
-        }),
-        { schema: ListThreadsAccountsResponseSchema }
-      )
-      .then((data) => {
-        if (cancelled) return;
-        setAccounts(
-          sortThreadsAccountsExpiredFirst(
-            data.accounts.map((account) => ({
-              id: account.id,
-              threadsAccountId: account.threadsAccountId,
-              displayName: account.displayName,
-              profilePictureUrl: account.profilePictureUrl ?? null,
-              status: account.status,
-              tokenExpiresAt: account.tokenExpiresAt
-                ? new Date(account.tokenExpiresAt).toISOString()
-                : null,
-              createdAt: new Date(account.createdAt).toISOString(),
-              updatedAt: account.updatedAt
-                ? new Date(account.updatedAt).toISOString()
-                : undefined,
-            }))
-          )
-        );
-        setTotal(data.total);
-        setTotalPages(data.totalPages ?? 0);
-        if (data.healthCounts) setHealthCounts(data.healthCounts);
-        setIsLoading(false);
-      })
-      .catch((error: unknown) => {
-        if (cancelled) return;
-        reportError(error, { source: 'threads-accounts-list' });
-        setLoadError(true);
-        setIsLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [accountsPath, page, searchQuery, statusFilter, reloadToken]);
-
-  React.useEffect(() => {
-    let cancelled = false;
-    setByocStatus((prev) => ({ ...prev, isLoading: true }));
-    void checkByocCredentials(subdomain, 'threads').then((result) => {
-      if (!cancelled) setByocStatus(result);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [subdomain, byocReloadToken]);
+    if (
+      accountsQuery.data &&
+      accountsQuery.data.page !== undefined &&
+      accountsQuery.data.page !== page
+    ) {
+      setPage(accountsQuery.data.page);
+    }
+  }, [accountsQuery.data, page]);
 
   // Keep ?page= in the URL in step with state (page 1 omits the param).
   React.useEffect(() => {
@@ -230,36 +272,142 @@ export function ThreadsAccountsShell({
     }
   }, [page, router, searchParams]);
 
-  // OAuth-return hook (see the file header for its honest limit):
-  // a `connected` name toasts + highlights that card once; a
-  // `connect_error` becomes a banner. Params are stripped afterwards
-  // so a later refetch cannot re-fire the toast.
-  const connectedNoticeHandledRef = React.useRef(false);
+  // OAuth-return notices (direct flow): success confirmations become
+  // the same top-right toast as the modal flow; only errors (including
+  // mismatch) become a banner. Guarded to run once per return, and —
+  // the mount-race fix — only after the accounts query has data, so
+  // the name match can actually find the card. The keys are stripped
+  // via replaceState (no re-render), so without this guard a later
+  // accounts refetch would re-fire the toast.
+  const oauthNoticeHandledRef = React.useRef(false);
   React.useEffect(() => {
-    if (connectedNoticeHandledRef.current) return;
-    const connectedName = searchParams.get('connected');
-    const connectError = searchParams.get('connect_error');
-    if (!connectedName && !connectError) return;
-    connectedNoticeHandledRef.current = true;
-    if (connectedName) {
-      toast.success(`${connectedName} connected`, {
+    if (oauthNoticeHandledRef.current) return;
+    if (!accountsQuery.data) return;
+    const resolved = resolveThreadsOAuthRedirectNotice(searchParams);
+    if (!resolved) return;
+    oauthNoticeHandledRef.current = true;
+
+    if (resolved.notice.type === 'success') {
+      toast.success(resolved.notice.message, {
         toasterId: THREADS_CONNECT_TOASTER_ID,
       });
-      const match = accounts.find((a) => a.displayName === connectedName);
+      const match = resolved.accountName
+        ? accounts.find((a) => a.displayName === resolved.accountName)
+        : undefined;
       flashHighlight(match?.id ?? null);
     } else {
-      setBannerNotice({
-        type: 'error',
-        message: "Couldn't connect your Threads account. Please try again.",
-      });
+      setBannerNotice(resolved.notice);
     }
     if (typeof window !== 'undefined') {
       const url = new URL(window.location.href);
-      url.searchParams.delete('connected');
-      url.searchParams.delete('connect_error');
+      for (const key of resolved.keysToRemove) {
+        url.searchParams.delete(key);
+      }
       window.history.replaceState({}, '', url.pathname + url.search);
     }
-  }, [searchParams, accounts, flashHighlight]);
+  }, [searchParams, accounts, accountsQuery.data, flashHighlight]);
+
+  const handleConnectionNotice = React.useCallback(
+    (notice: {
+      type: 'success' | 'error';
+      message: string;
+      accountId?: string | undefined;
+    }) => {
+      if (notice.type === 'success') {
+        toast.success(notice.message, { toasterId: THREADS_CONNECT_TOASTER_ID });
+        flashHighlight(notice.accountId ?? null);
+      } else {
+        setBannerNotice({ type: 'error', message: notice.message });
+        flashHighlight(notice.accountId ?? null);
+      }
+    },
+    [flashHighlight]
+  );
+
+  const refetchAccounts = React.useCallback(() => {
+    void queryClient.invalidateQueries({
+      queryKey: tenant.threadsAccounts.list,
+    });
+  }, [queryClient, tenant.threadsAccounts.list]);
+
+  const disconnectMutation = useMutation({
+    mutationFn: (accountId: string) =>
+      api.delete(buildTenantApiPath(subdomain, `/threads/accounts/${accountId}`), {
+        schema: DisconnectThreadsAccountResponseSchema,
+      }),
+    onSuccess: (_data, accountId) => {
+      queryClient.setQueryData<{ accounts: unknown[]; total: number }>(
+        tenant.threadsAccounts.list,
+        (prev) =>
+          prev
+            ? {
+                ...prev,
+                accounts: prev.accounts.filter(
+                  (a) => (a as { id: string }).id !== accountId
+                ),
+                total: Math.max(0, prev.total - 1),
+              }
+            : prev
+      );
+      void queryClient.invalidateQueries({
+        queryKey: tenant.threadsAccounts.list,
+      });
+      setDisconnectingAccount(null);
+      setBannerNotice({
+        type: 'success',
+        message: 'Account disconnected.',
+      });
+    },
+    onError: (error) => {
+      setBannerNotice({
+        type: 'error',
+        message:
+          isApiError(error) && error.kind === 'http'
+            ? "Couldn't disconnect account. Please refresh and try again."
+            : "Couldn't disconnect the account. Please try again.",
+      });
+    },
+  });
+
+  const handleOpenNewConnect = () => {
+    if (byocStatus.isLoading) return;
+    if (!byocStatus.isConfigured) {
+      setIsByocPromptOpen(true);
+      return;
+    }
+    setReconnectingAccount(null);
+    setIsConnectOpen(true);
+  };
+
+  // Targeted reconnect: the clicked account rides into the connect
+  // flow (expected id + display name); a sign-in to a different
+  // account produces the mismatch warning, never a silent success.
+  const handleReconnect = (account: ThreadsAccountItem) => {
+    if (byocStatus.isLoading) return;
+    if (!byocStatus.isConfigured) {
+      setIsByocPromptOpen(true);
+      return;
+    }
+    setReconnectingAccount(account);
+    setIsConnectOpen(true);
+  };
+
+  const handleConnectOpenChange = (open: boolean) => {
+    setIsConnectOpen(open);
+    if (!open) {
+      setReconnectingAccount(null);
+    }
+  };
+
+  const handleConfirmDisconnect = async (accountId: string) => {
+    try {
+      await disconnectMutation.mutateAsync(accountId);
+    } catch (error) {
+      // The failure is surfaced to the user by the mutation's onError
+      // banner; report it here so the rejection is never unhandled.
+      reportError(error, { source: 'threads-accounts-disconnect' });
+    }
+  };
 
   const handleSearchChange = React.useCallback((value: string) => {
     setSearchQuery(value);
@@ -278,56 +426,51 @@ export function ThreadsAccountsShell({
     setPage(1);
   }, []);
 
-  const isConnectGated =
-    !byocStatus.isLoading && !byocStatus.hasCredentials && !byocStatus.error;
+  const isConnectGated = isConnectGatedByMissingCredentials(byocStatus);
   const isConnectDisabled = byocStatus.isLoading || isConnectGated;
 
-  const handleReconnect = React.useCallback(() => {
-    window.location.assign(connectHref);
-  }, [connectHref]);
-
-  const handleConfirmDisconnect = async (accountId: string) => {
-    setIsDisconnecting(true);
-    try {
-      await api.delete(
-        buildTenantApiPath(subdomain, `/threads/accounts/${accountId}`),
-        { schema: DisconnectThreadsAccountResponseSchema }
-      );
-      setDisconnectingAccount(null);
-      setBannerNotice({ type: 'success', message: 'Account disconnected.' });
-      setReloadToken((t) => t + 1);
-    } catch (error) {
-      reportError(error, { source: 'threads-accounts-disconnect' });
-      setBannerNotice({
-        type: 'error',
-        message: isApiError(error) && error.kind === 'http'
-          ? "Couldn't disconnect account. Please refresh and try again."
-          : "Couldn't disconnect the account. Please try again.",
-      });
-    } finally {
-      setIsDisconnecting(false);
-    }
-  };
-
+  // Page-slice expired count: only a fallback for payloads that
+  // predate the healthCounts field. The subtitle and the filter-bar
+  // badge count the FULL filtered set — counting the slice made page
+  // 1 of 65 accounts read "30 connected" while the pagination line
+  // below read "Showing 1–30 of 65".
+  const attentionCount = React.useMemo(
+    () => accounts.filter((a) => a.status === 'expired').length,
+    [accounts]
+  );
+  const healthCounts = accountsQuery.data?.healthCounts;
+  const expiredTotal = healthCounts?.expired ?? attentionCount;
   const isFiltered = searchQuery.trim().length > 0 || statusFilter !== 'all';
   const situationalSubtitle = React.useMemo(() => {
     if (total === 0 && !isFiltered) {
-      return computeThreadsSubtitleFromCounts(0, {
-        connected: 0,
-        expired: 0,
-        error: 0,
-      });
+      return computeThreadsSubtitle([], 0, false);
     }
     if (isFiltered) {
       return `${total} matching ${total === 1 ? 'account' : 'accounts'}`;
     }
-    return computeThreadsSubtitleFromCounts(total, healthCounts);
-  }, [total, isFiltered, healthCounts]);
+    if (healthCounts) {
+      return computeThreadsSubtitleFromCounts(total, healthCounts);
+    }
+    return computeThreadsSubtitle(accounts, accounts.length, false);
+  }, [total, accounts, healthCounts, isFiltered]);
+
+  const existingAccountIds = React.useMemo(() => accounts.map((a) => a.id), [accounts]);
+  const initialAccounts = React.useMemo(
+    () =>
+      accounts.map((a) => ({
+        id: a.id,
+        threadsAccountId: a.threadsAccountId,
+        displayName: a.displayName,
+        status: a.status,
+        updatedAt: a.updatedAt,
+      })),
+    [accounts]
+  );
 
   let contentNode: React.ReactNode;
   if (isLoading) {
     contentNode = <ThreadsLoadingSkeleton />;
-  } else if (loadError && accounts.length === 0) {
+  } else if (accountsQuery.isError && accounts.length === 0) {
     contentNode = (
       <EmptyState
         type="not-found"
@@ -338,7 +481,9 @@ export function ThreadsAccountsShell({
           <Button
             type="button"
             data-testid="threads-accounts-load-retry-btn"
-            onClick={() => setReloadToken((t) => t + 1)}
+            onClick={() => {
+              void accountsQuery.refetch();
+            }}
           >
             Retry
           </Button>
@@ -362,32 +507,21 @@ export function ThreadsAccountsShell({
           title="Connect your first Threads account"
           description={THREADS_DESCRIPTION}
           action={
-            isConnectDisabled ? (
-              <Button
-                type="button"
-                size="lg"
-                data-testid="threads-empty-connect-button"
-                disabled
-                aria-describedby={
-                  isConnectGated
-                    ? 'threads-empty-connect-disabled-reason'
-                    : undefined
-                }
-              >
-                <PlusIcon aria-hidden />
-                <span>Connect Threads</span>
-              </Button>
-            ) : (
-              <Button asChild size="lg">
-                <a
-                  href={connectHref}
-                  data-testid="threads-connect-link"
-                >
-                  <PlusIcon aria-hidden />
-                  <span>Connect Threads</span>
-                </a>
-              </Button>
-            )
+            <Button
+              type="button"
+              size="lg"
+              data-testid="threads-empty-connect-button"
+              disabled={isConnectDisabled}
+              aria-describedby={
+                isConnectGated
+                  ? 'threads-empty-connect-disabled-reason'
+                  : undefined
+              }
+              onClick={handleOpenNewConnect}
+            >
+              <PlusIcon aria-hidden />
+              <span>Connect Threads</span>
+            </Button>
           }
         />
         {isConnectGated && (
@@ -463,7 +597,11 @@ export function ThreadsAccountsShell({
       data-testid="threads-accounts-page"
       className="mx-auto box-border w-full max-w-300 px-6 py-6"
     >
-      <Toast id={THREADS_CONNECT_TOASTER_ID} position="top-right" />
+      <Toast
+        id={THREADS_CONNECT_TOASTER_ID}
+        position="top-right"
+        toastOptions={THREADS_CONNECT_TOAST_OPTIONS}
+      />
 
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -483,31 +621,20 @@ export function ThreadsAccountsShell({
 
         {total > 0 && (
           <div className="flex flex-col items-end gap-1">
-            {isConnectDisabled ? (
-              <Button
-                type="button"
-                data-testid="threads-header-connect-button"
-                disabled
-                aria-describedby={
-                  isConnectGated
-                    ? 'threads-header-connect-gated-reason'
-                    : undefined
-                }
-              >
-                <PlusIcon aria-hidden />
-                <span>Connect Threads</span>
-              </Button>
-            ) : (
-              <Button asChild>
-                <a
-                  href={connectHref}
-                  data-testid="threads-connect-link"
-                >
-                  <PlusIcon aria-hidden />
-                  <span>Connect Threads</span>
-                </a>
-              </Button>
-            )}
+            <Button
+              type="button"
+              data-testid="threads-header-connect-button"
+              disabled={isConnectDisabled}
+              aria-describedby={
+                isConnectGated
+                  ? 'threads-header-connect-gated-reason'
+                  : undefined
+              }
+              onClick={handleOpenNewConnect}
+            >
+              <PlusIcon aria-hidden />
+              <span>Connect Threads</span>
+            </Button>
             {isConnectGated && (
               <span
                 id="threads-header-connect-gated-reason"
@@ -549,7 +676,9 @@ export function ThreadsAccountsShell({
               type="button"
               variant="link"
               data-testid="threads-byoc-retry-btn"
-              onClick={() => setByocReloadToken((t) => t + 1)}
+              onClick={() => {
+                void byocQuery.refetch();
+              }}
               className="font-semibold"
             >
               Retry Check
@@ -574,7 +703,7 @@ export function ThreadsAccountsShell({
           onSearchChange={handleSearchChange}
           statusFilter={statusFilter}
           onStatusFilterChange={handleStatusFilterChange}
-          attentionCount={healthCounts.expired}
+          attentionCount={expiredTotal}
         />
       )}
 
@@ -585,7 +714,24 @@ export function ThreadsAccountsShell({
         open={Boolean(disconnectingAccount)}
         onOpenChange={(open) => !open && setDisconnectingAccount(null)}
         onConfirm={handleConfirmDisconnect}
-        isDisconnecting={isDisconnecting}
+        isDisconnecting={disconnectMutation.isPending}
+      />
+
+      <ThreadsConnectModal
+        subdomain={subdomain}
+        open={isConnectOpen}
+        onOpenChange={handleConnectOpenChange}
+        onAccountConnected={refetchAccounts}
+        onConnectionNotice={handleConnectionNotice}
+        existingAccountIds={existingAccountIds}
+        reconnectingAccount={reconnectingAccount}
+        initialAccounts={initialAccounts}
+      />
+
+      <ThreadsByocConfigPromptModal
+        subdomain={subdomain}
+        open={isByocPromptOpen}
+        onClose={() => setIsByocPromptOpen(false)}
       />
     </div>
   );
