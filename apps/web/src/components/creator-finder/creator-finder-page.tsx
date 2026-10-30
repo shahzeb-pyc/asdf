@@ -155,7 +155,7 @@ export function CreatorFinderPage({
         buildTenantApiPath(subdomain, '/creator-finder/similar'),
         {
           schema: SimilarResponseSchema,
-          query: { username },
+          query: { username: username.trim().replace(/^@/, '') },
         },
       );
       setSimilar({

@@ -381,15 +381,15 @@ describe('fetchCreatorsByKeyword', () => {
 });
 
 describe('fetchSimilarCreators', () => {
-  it('resolves a username to a numeric id, then lists who they follow', async () => {
-    const fetchFn = vi
-      .fn()
-      .mockResolvedValueOnce(
-        jsonResponse({
-          code: 0,
-          data: { user: { id: '107955', unique_id: 'seed', nickname: 'Seed' } },
-        }),
-      )
+  const profile = {
+    code: 0,
+    data: { user: { id: '107955', unique_id: 'seed', nickname: 'Seed' } },
+  };
+  // Full flow mocks, in call order: profile, following, followers,
+  // user search, seed posts, info+posts per top hashtag.
+  function fullFlow(fetchFn: ReturnType<typeof vi.fn>) {
+    fetchFn
+      .mockResolvedValueOnce(jsonResponse(profile))
       .mockResolvedValueOnce(
         jsonResponse({
           code: 0,
@@ -397,75 +397,173 @@ describe('fetchSimilarCreators', () => {
             followings: [
               { unique_id: 'alice', nickname: 'Alice' },
               { unique_id: 'bob', nickname: 'Bob' },
+              { unique_id: 'seed', nickname: 'Seed' },
             ],
           },
-        }),
-      );
-    const result = await fetchSimilarCreators('@seed', {
-      fetchFn,
-      apiKeys: ['key-1'],
-    });
-    expect(result.username).toBe('seed');
-    expect(result.creators.map((c) => c.handle)).toEqual(['alice', 'bob']);
-    expect(fetchFn.mock.calls[1]?.[0]).toContain(
-      '/user/following?user_id=107955&count=200',
-    );
-  });
-
-  it('passes following-entry avatar variants through to the creator', async () => {
-    const fetchFn = vi
-      .fn()
-      .mockResolvedValueOnce(
-        jsonResponse({
-          code: 0,
-          data: { user: { id: '107955', unique_id: 'seed', nickname: 'Seed' } },
         }),
       )
       .mockResolvedValueOnce(
         jsonResponse({
           code: 0,
           data: {
-            followings: [
-              {
-                unique_id: 'alice',
-                nickname: 'Alice',
-                avatarMedium: 'https://cdn.example/alice-medium.jpg',
-              },
+            followers: [
               { unique_id: 'bob', nickname: 'Bob' },
+              { unique_id: 'carol', nickname: 'Carol' },
             ],
           },
         }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          code: 0,
+          data: {
+            user_list: [
+              {
+                user: {
+                  uniqueId: 'dave',
+                  nickname: 'Dave',
+                  avatarThumb: 'https://cdn.example/dave.jpg',
+                },
+                stats: { followerCount: 5 },
+              },
+            ],
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          code: 0,
+          data: {
+            videos: [
+              { title: 'Morning run #fitness and #yoga', author: { unique_id: 'seed', nickname: 'Seed' } },
+              { title: 'Evening stretch #yoga', author: { unique_id: 'seed', nickname: 'Seed' } },
+            ],
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ code: 0, data: { id: '1', cha_name: 'fitness' } }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          code: 0,
+          data: {
+            videos: [
+              { author: { unique_id: 'erin', nickname: 'Erin' } },
+              { author: { unique_id: 'alice', nickname: 'Alice' } },
+            ],
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ code: 0, data: { id: '2', cha_name: 'yoga' } }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          code: 0,
+          data: { videos: [{ author: { unique_id: 'frank', nickname: 'Frank' } }] },
+        }),
       );
+  }
+
+  it('merges following, followers, hashtag creators, and search matches, more sources first, seed excluded', async () => {
+    const fetchFn = vi.fn();
+    fullFlow(fetchFn);
     const result = await fetchSimilarCreators('@seed', {
       fetchFn,
       apiKeys: ['key-1'],
     });
-    expect(result.creators[0]?.avatarUrl).toBe(
-      'https://cdn.example/alice-medium.jpg',
+    expect(result.username).toBe('seed');
+    // alice: following + hashtag (2 sources), bob: following + followers (2),
+    // then carol, erin, frank, dave in first-appearance order.
+    expect(result.creators.map((c) => c.handle)).toEqual([
+      'alice',
+      'bob',
+      'carol',
+      'erin',
+      'frank',
+      'dave',
+    ]);
+    expect(result.creators.find((c) => c.handle === 'dave')?.avatarUrl).toBe(
+      'https://cdn.example/dave.jpg',
     );
-    expect(result.creators[1]?.avatarUrl).toBeNull();
+    const urls = fetchFn.mock.calls.map((call) => String(call[0]));
+    expect(urls).toContain('/user/following?user_id=107955&count=200');
+    expect(urls).toContain('/user/followers?user_id=107955&count=200');
+    expect(urls).toContain('/user/search?keywords=Seed&count=30');
+    expect(urls).toContain('/user/posts?unique_id=seed&count=30');
+    expect(urls).toContain('/challenge/info?challenge_name=fitness');
+    expect(urls).toContain('/challenge/posts?challenge_id=1&count=30');
+  });
+
+  it('skips a private followers source and still shows the rest', async () => {
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(profile))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          code: 0,
+          data: { followings: [{ unique_id: 'alice', nickname: 'Alice' }] },
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ code: -1, msg: 'followers are private' }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ code: 0, data: { user_list: [] } }))
+      .mockResolvedValueOnce(jsonResponse({ code: 0, data: { videos: [] } }));
+    const result = await fetchSimilarCreators('seed', {
+      fetchFn,
+      apiKeys: ['key-1'],
+    });
+    expect(result.creators.map((c) => c.handle)).toEqual(['alice']);
+  });
+
+  it('fails the whole search loudly on a quota error in a parallel source', async () => {
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(profile))
+      .mockResolvedValueOnce(
+        jsonResponse({ code: 10430, msg: 'quota exhausted' }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ code: 0, data: { followers: [] } }))
+      .mockResolvedValueOnce(jsonResponse({ code: 0, data: { user_list: [] } }));
+    await expect(
+      fetchSimilarCreators('seed', { fetchFn, apiKeys: ['key-1'] }),
+    ).rejects.toMatchObject({ code: 'QUOTA_EXHAUSTED' });
+  });
+
+  it('fails the whole search loudly when the profile lookup fails', async () => {
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ code: -1, msg: 'no such user' }));
+    await expect(
+      fetchSimilarCreators('ghost', { fetchFn, apiKeys: ['key-1'] }),
+    ).rejects.toBeInstanceOf(CreatorFinderError);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
   it('tries the next key on an invalid key, then succeeds', async () => {
     const fetchFn = vi
       .fn()
-      .mockResolvedValueOnce(
-        jsonResponse({ code: 10401, msg: 'invalid key' }),
-      )
-      .mockResolvedValueOnce(
-        jsonResponse({
-          code: 0,
-          data: { user: { id: '1', unique_id: 'seed' } },
-        }),
-      )
-      .mockResolvedValueOnce(
-        jsonResponse({ code: 0, data: { followings: [] } }),
-      );
+      .mockResolvedValueOnce(jsonResponse({ code: 10401, msg: 'invalid key' }))
+      .mockResolvedValueOnce(jsonResponse(profile))
+      .mockResolvedValueOnce(jsonResponse({ code: 0, data: { followings: [] } }))
+      .mockResolvedValueOnce(jsonResponse({ code: 0, data: { followers: [] } }))
+      .mockResolvedValueOnce(jsonResponse({ code: 0, data: { user_list: [] } }))
+      .mockResolvedValueOnce(jsonResponse({ code: 0, data: { videos: [] } }));
     const result = await fetchSimilarCreators('seed', {
       fetchFn,
       apiKeys: ['bad', 'good'],
     });
     expect(result.creators).toEqual([]);
-    expect(fetchFn).toHaveBeenCalledTimes(3);
+    expect(fetchFn).toHaveBeenCalledTimes(6);
+  });
+
+  it('rejects an empty username instead of calling the API', async () => {
+    const fetchFn = vi.fn();
+    await expect(
+      fetchSimilarCreators('  @ ', { fetchFn, apiKeys: ['key-1'] }),
+    ).rejects.toBeInstanceOf(CreatorFinderError);
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 });

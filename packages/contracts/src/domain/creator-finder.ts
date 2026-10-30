@@ -9,6 +9,13 @@ import { z } from 'zod';
  * - GET /feed/list — region required, count optional, max 20.
  * - GET /user/info — unique_id or user_id.
  * - GET /user/following — user_id required, count optional, max 200.
+ * - GET /user/followers — user_id required, count optional, max 200.
+ * - GET /user/search — keywords required, count optional, max 30.
+ * - GET /user/posts — unique_id or user_id, count optional, max 30.
+ * There is no similar/related/recommended-creator endpoint: the
+ * similar tab merges following, followers, hashtag creators from
+ * the seed's own posts, and name-search matches, ranked by how
+ * many sources each creator appears in.
  * - GET /challenge/info — challenge_id or challenge_name.
  * - GET /challenge/posts — challenge_id required, count optional, max 30.
  * - GET /challenge/search — keywords required, count optional, max 30.
@@ -30,8 +37,14 @@ export const TRENDING_COUNT_MAX = 20;
 export const CHALLENGE_COUNT_MAX = 30;
 export const SEARCH_COUNT_MAX = 30;
 export const FOLLOWING_COUNT_MAX = 200;
+export const FOLLOWERS_COUNT_MAX = 200;
+export const USER_SEARCH_COUNT_MAX = 30;
+export const USER_POSTS_COUNT_MAX = 30;
 /** Niche search fetches posts for at most this many top hashtags. */
 export const NICHE_HASHTAG_TOP = 3;
+/** Similar search fetches posts for at most this many top hashtags
+ *  taken from the seed creator's own posts. */
+export const SIMILAR_HASHTAG_TOP = 3;
 const FETCH_TIMEOUT_MS = 30_000;
 
 export type CreatorFinderErrorCode =
@@ -171,6 +184,7 @@ function creatorFromAuthor(
 ): Creator | null {
   const handle =
     asString(author?.unique_id) ??
+    asString(author?.uniqueId) ??
     asString(video?.author_unique_id) ??
     asString(video?.unique_id);
   if (!handle) return null;
@@ -584,6 +598,149 @@ export async function fetchCreatorsByKeyword(
   return { keyword: cleanKeyword, creators, videosSeen };
 }
 
+/** People-list entries under the first non-empty of these keys. */
+function peopleFromData(
+  data: Record<string, unknown>,
+  keys: string[],
+): Record<string, unknown>[] {
+  for (const key of keys) {
+    const parsed = asStringArray(data[key])
+      .map((item) => asRecord(item))
+      .filter((item): item is Record<string, unknown> => item !== null);
+    if (parsed.length > 0) return parsed;
+  }
+  return [];
+}
+
+/** A user-search item is either a bare user record or a wrapper
+ *  around one ({user, stats}). Either way it maps through the same
+ *  author mapping, so avatar variants carry over. */
+function creatorFromSearchItem(item: Record<string, unknown>): Creator | null {
+  const user = asRecord(item.user) ?? item;
+  return creatorFromAuthor(user, null);
+}
+
+/**
+ * A single source failing for a source-level reason (private,
+ * not found, bad/unrecognised shape) contributes nothing; key,
+ * quota, rate-limit, HTTP, and reachability errors fail the whole
+ * search loudly, as they say nothing about that one source.
+ */
+async function skipOnSourceError<T>(
+  call: () => Promise<T>,
+  empty: T,
+): Promise<T> {
+  try {
+    return await call();
+  } catch (err) {
+    if (
+      err instanceof CreatorFinderError &&
+      (err.code === 'NOT_FOUND' ||
+        err.code === 'FEED_UNAVAILABLE' ||
+        err.code === 'BAD_RESPONSE')
+    ) {
+      return empty;
+    }
+    throw err;
+  }
+}
+
+/** Hashtags in first-appearance order, deduplicated case-insensitively. */
+function extractHashtags(
+  videos: ReadonlyArray<Record<string, unknown>>,
+): string[] {
+  const seen = new Set<string>();
+  const hashtags: string[] = [];
+  for (const video of videos) {
+    for (const field of [video.title, video.content_desc]) {
+      if (typeof field !== 'string') continue;
+      for (const match of field.matchAll(/#([\p{L}\p{N}_]+)/gu)) {
+        const tag = match[1];
+        if (!tag) continue;
+        const key = tag.toLowerCase();
+        if (!seen.has(key)) {
+          seen.add(key);
+          hashtags.push(tag);
+        }
+      }
+    }
+  }
+  return hashtags;
+}
+
+/**
+ * Merge source lists into one list, deduplicated by handle
+ * (case-insensitive). Creators found in more sources come first;
+ * within the same source count, first-appearance order wins, with
+ * sources in the order they are passed in. The seed creator is
+ * excluded by handle; the Creator schema carries no numeric id,
+ * so handle exclusion is the available check.
+ */
+function mergeSimilarCreators(
+  sources: ReadonlyArray<ReadonlyArray<Creator>>,
+  seedHandle: string,
+): Creator[] {
+  const seed = seedHandle.toLowerCase();
+  const byHandle = new Map<
+    string,
+    { creator: Creator; sourceCount: number; firstIndex: number }
+  >();
+  let index = 0;
+  for (const source of sources) {
+    const seenInSource = new Set<string>();
+    for (const creator of source) {
+      const key = creator.handle.toLowerCase();
+      if (key === seed) {
+        index += 1;
+        continue;
+      }
+      const existing = byHandle.get(key);
+      if (existing) {
+        if (!seenInSource.has(key)) {
+          existing.sourceCount += 1;
+          seenInSource.add(key);
+        }
+      } else {
+        byHandle.set(key, { creator, sourceCount: 1, firstIndex: index });
+        seenInSource.add(key);
+      }
+      index += 1;
+    }
+  }
+  return [...byHandle.values()]
+    .sort(
+      (a, b) =>
+        b.sourceCount - a.sourceCount || a.firstIndex - b.firstIndex,
+    )
+    .map((entry) => entry.creator);
+}
+
+/**
+ * Similar creators, one merged list. There is no similar/related
+ * endpoint, so the flow combines every creator source the API
+ * offers for a known creator:
+ * 1. GET /user/info (unique_id) resolves the numeric user_id and
+ *    the seed's nickname. If this fails, the whole search fails
+ *    loudly — no partial-source fallback.
+ * 2. In parallel: GET /user/following and GET /user/followers
+ *    (user_id, count 200 each) and GET /user/search (keywords =
+ *    nickname if present, else username, count 30, no filters).
+ * 3. Content chain: GET /user/posts (unique_id, count 30),
+ *    hashtags extracted from titles/descriptions, top 3 taken,
+ *    each resolved via GET /challenge/info (name alone is not a
+ *    usable id, so info is needed for every top hashtag here)
+ *    and then GET /challenge/posts (count 30).
+ * 4. Merge: deduped by handle, seed excluded, more sources first,
+ *    then first-appearance order in the source sequence
+ *    following, followers, hashtag creators (hashtag order),
+ *    search matches. No source badges or sections.
+ * Failure handling follows skipOnSourceError: one private /
+ * not-found / bad-shape source contributes nothing, while key,
+ * quota, rate-limit, HTTP, and reachability errors fail the
+ * whole search. If every source is empty, the result is an empty
+ * list (the page's empty message), not an error. No per-creator
+ * /user/info enrichment.
+ */
 export async function fetchSimilarCreators(
   username: string,
   options: CreatorFinderCallOptions = {},
@@ -593,7 +750,8 @@ export async function fetchSimilarCreators(
   if (cleanName.length === 0) {
     throw new CreatorFinderError('BAD_RESPONSE', 'Enter a TikTok username.');
   }
-  const profile = await callWithKeys(options.apiKeys ?? [], async (key) => {
+  const keys = options.apiKeys ?? [];
+  const profile = await callWithKeys(keys, async (key) => {
     const body = await fetchTikwmJson(
       `/user/info?unique_id=${encodeURIComponent(cleanName)}`,
       key,
@@ -612,35 +770,132 @@ export async function fetchSimilarCreators(
     return {
       numericId,
       displayName: asString(user.nickname),
-      handle: asString(user.unique_id) ?? cleanName,
+      handle: asString(user.unique_id) ?? asString(user.uniqueId) ?? cleanName,
     };
   });
-  const data = await callWithKeys(options.apiKeys ?? [], async (key) => {
-    const body = await fetchTikwmJson(
-      `/user/following?user_id=${encodeURIComponent(profile.numericId)}&count=${FOLLOWING_COUNT_MAX}`,
-      key,
-      fetchFn,
+
+  const encodedId = encodeURIComponent(profile.numericId);
+  const [following, followers, searchMatches] = await Promise.all([
+    skipOnSourceError(
+      () =>
+        callWithKeys(keys, async (key) => {
+          const body = await fetchTikwmJson(
+            `/user/following?user_id=${encodedId}&count=${FOLLOWING_COUNT_MAX}`,
+            key,
+            fetchFn,
+          );
+          const data = unwrapData(body);
+          return peopleFromData(data, [
+            'followings',
+            'following',
+            'users',
+            'followers',
+          ])
+            .map((entry) => creatorFromFollowingEntry(entry))
+            .filter((creator): creator is Creator => creator !== null);
+        }),
+      [] as Creator[],
+    ),
+    skipOnSourceError(
+      () =>
+        callWithKeys(keys, async (key) => {
+          const body = await fetchTikwmJson(
+            `/user/followers?user_id=${encodedId}&count=${FOLLOWERS_COUNT_MAX}`,
+            key,
+            fetchFn,
+          );
+          const data = unwrapData(body);
+          return peopleFromData(data, [
+            'followers',
+            'followings',
+            'users',
+          ])
+            .map((entry) => creatorFromFollowingEntry(entry))
+            .filter((creator): creator is Creator => creator !== null);
+        }),
+      [] as Creator[],
+    ),
+    skipOnSourceError(
+      () =>
+        callWithKeys(keys, async (key) => {
+          const searchKeyword = profile.displayName ?? profile.handle;
+          const body = await fetchTikwmJson(
+            `/user/search?keywords=${encodeURIComponent(searchKeyword)}&count=${USER_SEARCH_COUNT_MAX}`,
+            key,
+            fetchFn,
+          );
+          const data = unwrapData(body);
+          return peopleFromData(data, ['user_list', 'users', 'items', 'list'])
+            .map((item) => creatorFromSearchItem(item))
+            .filter((creator): creator is Creator => creator !== null);
+        }),
+      [] as Creator[],
+    ),
+  ]);
+
+  // Content chain: the seed's own posts, then creators under the
+  // top hashtags from those posts. The whole chain is one source
+  // for skip purposes: a private posts list contributes nothing.
+  let postsVideosSeen = 0;
+  let hashtagVideosSeen = 0;
+  const hashtagCreators: Creator[] = [];
+  const postsVideos = await skipOnSourceError(
+    () =>
+      callWithKeys(keys, async (key) => {
+        const body = await fetchTikwmJson(
+          `/user/posts?unique_id=${encodeURIComponent(cleanName)}&count=${USER_POSTS_COUNT_MAX}`,
+          key,
+          fetchFn,
+        );
+        return videosFromData(unwrapData(body));
+      }),
+    [] as Record<string, unknown>[],
+  );
+  postsVideosSeen = postsVideos.length;
+  for (const tag of extractHashtags(postsVideos).slice(0, SIMILAR_HASHTAG_TOP)) {
+    const creatorsForTag = await skipOnSourceError(
+      async () => {
+        const challengeId = await callWithKeys(keys, async (key) => {
+          const body = await fetchTikwmJson(
+            `/challenge/info?challenge_name=${encodeURIComponent(tag)}`,
+            key,
+            fetchFn,
+          );
+          const id = challengeIdFromData(unwrapData(body));
+          if (!id) {
+            throw new CreatorFinderError(
+              'NOT_FOUND',
+              `No hashtag was found for "${tag}".`,
+            );
+          }
+          return id;
+        });
+        const data = await callWithKeys(keys, async (key) => {
+          const body = await fetchTikwmJson(
+            `/challenge/posts?challenge_id=${encodeURIComponent(challengeId)}&count=${CHALLENGE_COUNT_MAX}`,
+            key,
+            fetchFn,
+          );
+          return unwrapData(body);
+        });
+        const videos = videosFromData(data);
+        hashtagVideosSeen += videos.length;
+        return dedupeCreators(videos);
+      },
+      [] as Creator[],
     );
-    return unwrapData(body);
-  });
-  const entries: Record<string, unknown>[] = [];
-  for (const key of ['followings', 'following', 'users', 'followers']) {
-    const parsed = asStringArray(data[key])
-      .map((item) => asRecord(item))
-      .filter((item): item is Record<string, unknown> => item !== null);
-    if (parsed.length > 0) {
-      entries.push(...parsed);
-      break;
-    }
+    hashtagCreators.push(...creatorsForTag);
   }
-  const creators = entries
-    .map((entry) => creatorFromFollowingEntry(entry))
-    .filter((creator): creator is Creator => creator !== null);
+
+  const creators = mergeSimilarCreators(
+    [following, followers, hashtagCreators, searchMatches],
+    profile.handle,
+  );
   return {
     username: profile.handle,
     displayName: profile.displayName,
     creators,
-    videosSeen: 0,
+    videosSeen: postsVideosSeen + hashtagVideosSeen,
   };
 }
 
