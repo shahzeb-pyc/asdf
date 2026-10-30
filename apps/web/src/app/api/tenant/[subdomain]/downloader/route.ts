@@ -78,7 +78,10 @@ async function notifyDownloadConsumer(jobIds: string[], subdomain: string): Prom
   const secret = process.env.DOWNLOAD_ENQUEUE_SECRET;
   if (!consumerUrl || !secret || jobIds.length === 0) return;
   try {
-    const response = await fetch(`${consumerUrl.replace(/\/+$/, '')}/enqueue`, {
+    let end = consumerUrl.length;
+    while (end > 0 && consumerUrl[end - 1] === '/') end -= 1;
+    const baseUrl = consumerUrl.slice(0, end);
+    const response = await fetch(`${baseUrl}/enqueue`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
