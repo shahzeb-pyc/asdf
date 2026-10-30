@@ -111,6 +111,17 @@ export async function DELETE(
   const resolved = await aduContext(request, subdomain);
   if ('errorResponse' in resolved) return resolved.errorResponse;
   const { workspaceId, supabase } = resolved.context;
+  // Ownership first: the reels delete below is keyed only by config id,
+  // so a foreign id must 404 here before anything is deleted — otherwise
+  // one workspace could wipe another workspace's reels while its config
+  // (deleted with the workspace filter) survives.
+  const { data: owned } = await supabase
+    .from('adu_configs')
+    .select('id')
+    .eq('workspace_id', workspaceId)
+    .eq('id', id)
+    .maybeSingle();
+  if (!owned) return NextResponse.json({ error: 'Page not found.' }, { status: 404 });
   // Old behaviour: reels are deleted first (in batches in the old app;
   // a single delete by config is equivalent here), then the page.
   await supabase.from('adu_reels').delete().eq('config_id', id);

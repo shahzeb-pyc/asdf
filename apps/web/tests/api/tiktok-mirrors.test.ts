@@ -85,6 +85,8 @@ function destRow(overrides: Record<string, unknown> = {}) {
 
 interface FakeDbOptions {
   existingDestination?: Record<string, unknown> | null;
+  /** A destination row owned by ANOTHER workspace (for tenant-isolation tests). */
+  foreignDestination?: Record<string, unknown> | null;
   duplicate?: boolean;
   mirrorRowOverride?: Record<string, unknown>;
   /** Full mirror set for pagination tests; the list branch slices it by LIMIT/OFFSET. */
@@ -104,6 +106,13 @@ function fakeDb(options: FakeDbOptions = {}) {
       }
       if (sql.includes('FROM destinations WHERE account_id')) {
         return Promise.resolve(existing ? [existing] : []);
+      }
+      if (sql.includes('FROM destinations WHERE id = $1')) {
+        // Models the destinations table holding a foreign-workspace row:
+        // the unscoped (old) query finds it, the workspace-scoped (new)
+        // query for ws_1 does not.
+        if (!options.foreignDestination) return Promise.resolve([]);
+        return Promise.resolve(params.includes('ws_1') ? [] : [options.foreignDestination]);
       }
       if (sql.includes('INSERT INTO destinations')) {
         return Promise.resolve([destRow({ status: 'active' })]);
@@ -373,6 +382,21 @@ describe('POST /tiktok-mirrors', () => {
     for (const update of destUpdates) {
       expect(update.sql).not.toContain('status');
     }
+  });
+
+  it('returns 404 and creates nothing when targetDestinationId belongs to another workspace', async () => {
+    const { db, calls } = fakeDb({ foreignDestination: destRow() });
+    const deps = createDeps();
+    const res = await handleCreateMirror(
+      createRequest({ targetDestinationId: destId, sourceUsername: 'alice' }),
+      'acme',
+      db,
+      deps as never
+    );
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe('Facebook page not found');
+    expect(calls.some((c) => c.sql.includes('INSERT INTO mirrors'))).toBe(false);
+    expect(deps.publishReel).not.toHaveBeenCalled();
   });
 });
 
