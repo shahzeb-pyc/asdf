@@ -254,8 +254,20 @@ export const MirrorViewSchema = z.object({
 });
 export type MirrorView = z.infer<typeof MirrorViewSchema>;
 
+/**
+ * List response — paginated like the Pages list (30 per page, ?page=):
+ * `total` is the workspace-wide mirror count; `page`/`limit`/
+ * `totalPages` describe the returned slice. The batch lookups behind
+ * the list (destinations, last posts) run over the page slice only,
+ * never the full set — an unbounded list would hit PostgREST's silent
+ * 1,000-row truncation and render an incomplete list with no error.
+ */
 export const ListMirrorsResponseSchema = z.object({
   mirrors: z.array(MirrorViewSchema),
+  total: z.number().int().nonnegative(),
+  page: z.number().int().positive().optional(),
+  limit: z.number().int().positive().optional(),
+  totalPages: z.number().int().nonnegative().optional(),
 });
 export type ListMirrorsResponse = z.infer<typeof ListMirrorsResponseSchema>;
 

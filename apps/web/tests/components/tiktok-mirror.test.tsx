@@ -97,6 +97,19 @@ describe('TikTok list', () => {
     expect(await screen.findByTestId('tiktok-empty-state')).toBeTruthy();
     expect(screen.getByText('No mirrors yet')).toBeTruthy();
   });
+
+  it('renders pagination when there is more than one page', async () => {
+    apiGetMock.mockResolvedValue({
+      mirrors: [mirrorView()],
+      total: 65,
+      page: 1,
+      limit: 30,
+      totalPages: 3,
+    });
+    renderWithQuery(<TikTokShell subdomain="acme" />);
+    expect(await screen.findByTestId('list-pagination')).toBeTruthy();
+    expect(screen.getByTestId('pagination-page-3')).toBeTruthy();
+  });
 });
 
 describe('TikTok dedicated view', () => {

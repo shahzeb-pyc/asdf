@@ -87,6 +87,8 @@ interface FakeDbOptions {
   existingDestination?: Record<string, unknown> | null;
   duplicate?: boolean;
   mirrorRowOverride?: Record<string, unknown>;
+  /** Full mirror set for pagination tests; the list branch slices it by LIMIT/OFFSET. */
+  mirrorRows?: Record<string, unknown>[];
 }
 
 /** Legacy-path fake DB dispatching on SQL content. */
@@ -118,8 +120,15 @@ function fakeDb(options: FakeDbOptions = {}) {
       if (sql.includes('FROM mirrors WHERE id = $1')) {
         return Promise.resolve([mirrorRow(options.mirrorRowOverride ?? {})]);
       }
+      if (sql.includes('COUNT(*)')) {
+        const rows = options.mirrorRows ?? [mirrorRow()];
+        return Promise.resolve([{ total: rows.length }]);
+      }
       if (sql.includes('FROM mirrors WHERE workspace_id')) {
-        return Promise.resolve([mirrorRow()]);
+        const rows = options.mirrorRows ?? [mirrorRow()];
+        const limit = typeof params[1] === 'number' ? params[1] : rows.length;
+        const offset = typeof params[2] === 'number' ? params[2] : 0;
+        return Promise.resolve(rows.slice(offset, offset + limit));
       }
       if (sql.includes('FROM destinations WHERE workspace_id')) {
         return Promise.resolve([destRow()]);
@@ -441,5 +450,56 @@ describe('GET /tiktok-mirrors', () => {
     expect(body.mirrors).toHaveLength(1);
     expect(body.mirrors[0].sourceUsername).toBe('alice');
     expect(body.mirrors[0].targetDisplayName).toBe('Test Page');
+  });
+
+  it('paginates: page 1 + page 2 of a 35-mirror workspace cover all 35 rows exactly once', async () => {
+    const rows = Array.from({ length: 35 }, (_, i) =>
+      mirrorRow({
+        id: `44444444-4444-4444-a444-${String(i).padStart(12, '0')}`,
+        source_username: `user${i}`,
+      })
+    );
+    const { db } = fakeDb({ mirrorRows: rows });
+    const page1Res = await handleListMirrors(listRequest(), 'acme', db);
+    expect(page1Res.status).toBe(200);
+    const page1 = await page1Res.json();
+    expect(page1.total).toBe(35);
+    expect(page1.page).toBe(1);
+    expect(page1.limit).toBe(30);
+    expect(page1.totalPages).toBe(2);
+    expect(page1.mirrors).toHaveLength(30);
+    const page2Req = new NextRequest(
+      'http://localhost:3000/api/tenant/acme/tiktok-mirrors?page=2',
+      { headers: { cookie: validSessionCookie } }
+    );
+    const page2Res = await handleListMirrors(page2Req, 'acme', db);
+    expect(page2Res.status).toBe(200);
+    const page2 = await page2Res.json();
+    expect(page2.page).toBe(2);
+    expect(page2.total).toBe(35);
+    expect(page2.mirrors).toHaveLength(5);
+    // No row silently dropped, none duplicated across pages.
+    const ids = [...page1.mirrors, ...page2.mirrors].map((m) => m.id);
+    expect(new Set(ids).size).toBe(35);
+  });
+
+  it('clamps an out-of-range page to the last page instead of returning an empty list', async () => {
+    const rows = Array.from({ length: 35 }, (_, i) =>
+      mirrorRow({
+        id: `44444444-4444-4444-a444-${String(i).padStart(12, '0')}`,
+        source_username: `user${i}`,
+      })
+    );
+    const { db } = fakeDb({ mirrorRows: rows });
+    const req = new NextRequest(
+      'http://localhost:3000/api/tenant/acme/tiktok-mirrors?page=99',
+      { headers: { cookie: validSessionCookie } }
+    );
+    const res = await handleListMirrors(req, 'acme', db);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.page).toBe(2);
+    expect(body.totalPages).toBe(2);
+    expect(body.mirrors).toHaveLength(5);
   });
 });

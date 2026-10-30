@@ -17,6 +17,11 @@ import {
   isLegacyClient,
 } from '@/lib/route-auth';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import {
+  paginateMeta,
+  parsePaginationParams,
+  type PaginationMeta,
+} from '@/lib/server/pagination';
 import { logServerError } from '@/lib/server-analytics';
 import {
   buildTikwmPauseStore,
@@ -357,15 +362,34 @@ export async function handleListMirrors(
   }
 
   try {
+    // Paginated exactly like the Pages list: the count is taken first
+    // so an out-of-range ?page= clamps to the last page (never an
+    // empty grid with no explanation), then only the page slice is
+    // fetched. The destination + last-post batch lookups below run
+    // over this slice only, so no query on the list path is unbounded
+    // (PostgREST silently truncates at 1,000 rows — an unbounded list
+    // would render silently incomplete past that point).
+    const { page: requestedPage, limit } = parsePaginationParams(
+      new URL(request.url).searchParams
+    );
+    let meta: PaginationMeta;
     const mirrors: MirrorRow[] = [];
     if (isLegacyClient(db)) {
+      const countRows = (await db.query(
+        `SELECT COUNT(*)::int AS total FROM mirrors WHERE workspace_id = $1`,
+        [workspaceId]
+      )) as Record<string, unknown>[];
+      const total =
+        typeof countRows[0]?.total === 'number' ? countRows[0].total : 0;
+      meta = paginateMeta(total, requestedPage, limit);
+      const offset = (meta.page - 1) * limit;
       const rows = (await db.query(
         `SELECT id, workspace_id, source_platform, source_username, source_display_name,
                 source_avatar_url, target_platform, target_external_id, target_display_name,
                 target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time,
                 last_checked_at, next_check_at, last_error, created_at, updated_at
-         FROM mirrors WHERE workspace_id = $1 ORDER BY created_at DESC`,
-        [workspaceId]
+         FROM mirrors WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+        [workspaceId, limit, offset]
       )) as unknown[];
       for (const row of rows) {
         const mirror = asMirrorRow(row);
@@ -373,13 +397,24 @@ export async function handleListMirrors(
       }
     } else {
       const supabase = db as SupabaseClient;
+      const { count, error: countError } = await supabase
+        .from('mirrors')
+        .select('*', { count: 'exact', head: true })
+        .eq('workspace_id', workspaceId);
+      if (countError) {
+        throw new Error(`Failed to count mirrors: ${countError.message}`);
+      }
+      const total = typeof count === 'number' ? count : 0;
+      meta = paginateMeta(total, requestedPage, limit);
+      const offset = (meta.page - 1) * limit;
       const { data, error } = await supabase
         .from('mirrors')
         .select(
           'id, workspace_id, source_platform, source_username, source_display_name, source_avatar_url, target_platform, target_external_id, target_display_name, target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time, last_checked_at, next_check_at, last_error, created_at, updated_at'
         )
         .eq('workspace_id', workspaceId)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1);
       if (error) throw new Error(`Failed to list mirrors: ${error.message}`);
       for (const row of data ?? []) {
         const mirror = asMirrorRow(row);
@@ -387,7 +422,10 @@ export async function handleListMirrors(
       }
     }
 
-    // Group mirrors by target platform for the batch resolution.
+    // Group mirrors by target platform for the batch resolution. Both
+    // lookups below run over the page slice only: their ids come from
+    // `mirrors`, which holds at most one page (30 rows), never the
+    // full set.
     const byPlatform = new Map<string, string[]>();
     for (const mirror of mirrors) {
       const list = byPlatform.get(mirror.target_platform) ?? [];
@@ -416,7 +454,13 @@ export async function handleListMirrors(
         destinations.get(`${mirror.target_platform}:${mirror.target_external_id}`) ?? null;
       views.push(toMirrorView(mirror, dest, lastPosts.get(mirror.id) ?? null));
     }
-    const parsed = ListMirrorsResponseSchema.safeParse({ mirrors: views });
+    const parsed = ListMirrorsResponseSchema.safeParse({
+      mirrors: views,
+      total: meta.total,
+      page: meta.page,
+      limit: meta.limit,
+      totalPages: meta.totalPages,
+    });
     if (!parsed.success) {
       logServerError('[tiktok-mirrors] List response failed validation', parsed.error, {
         source: 'tiktok-mirrors-list',
