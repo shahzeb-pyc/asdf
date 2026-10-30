@@ -161,6 +161,28 @@ export async function POST(
       )
       .single();
     if (error || !data) {
+      // Diagnostic only: the Supabase error was previously discarded here,
+      // so the server log could not say WHY the insert was rejected
+      // (e.g. 42501 RLS denial vs 42P01 missing table vs 42703 missing
+      // column). Log the PostgREST fields server-side, then still throw
+      // the generic error so the user-facing message is unchanged.
+      // PostgREST code/message/details/hint for an insert describe the
+      // schema/constraint failure, not row contents or secrets.
+      if (error) {
+        const detailParts = [
+          `PostgREST code: ${error.code}`,
+          `message: ${error.message}`,
+          ...(error.details ? [`details: ${error.details}`] : []),
+          ...(error.hint ? [`hint: ${error.hint}`] : []),
+        ];
+        logServerError('[billing] bank payment insert failed', new Error(detailParts.join(' | ')), {
+          source: 'billing',
+          postgrest_code: error.code,
+          postgrest_message: error.message,
+          ...(error.details ? { postgrest_details: error.details } : {}),
+          ...(error.hint ? { postgrest_hint: error.hint } : {}),
+        });
+      }
       throw new Error('Payment insert failed');
     }
     const payment = paymentFromRow(data as Record<string, unknown>);
