@@ -11,6 +11,14 @@
  * single, then, insert, update, delete, upsert, rpc. Every call is
  * recorded in `store.calls` for assertions such as "the copy route
  * never writes copied_count directly".
+ *
+ * NOTE ON then(): the five builders below are deliberately thenable
+ * because the real Supabase PostgREST builders they mirror are
+ * thenable, and the routes await the builder chains directly (e.g.
+ * `await client.from(...).select('*').eq(...).order(...)` with no
+ * terminal method). Renaming then() would break that await
+ * behaviour, so each then() is marked NOSONAR with this
+ * justification instead of being removed.
  */
 
 import { signSessionToken } from "@fbuploadpro/contracts";
@@ -227,7 +235,7 @@ class QueryBuilder {
 
   // Thenable: queries awaited directly (favourites list/flag, media
   // and steps loads via .order()) resolve to the filtered rows.
-  then(
+  then( // NOSONAR - intentional thenable: routes await this builder directly, mirroring Supabase PostgREST builders
     resolve: (value: { data: Row[]; count: number; error: Error | null }) => void,
     reject: (reason: unknown) => void,
   ): void {
@@ -294,7 +302,7 @@ class InsertBuilder {
     };
   }
 
-  then(
+  then( // NOSONAR - intentional thenable: routes await this builder directly, mirroring Supabase PostgREST builders
     resolve: (value: { data: Row[] | null; error: Error | null }) => void,
     reject: (reason: unknown) => void,
   ): void {
@@ -317,7 +325,7 @@ class DeleteBuilder {
     return this;
   }
 
-  then(
+  then( // NOSONAR - intentional thenable: routes await this builder directly, mirroring Supabase PostgREST builders
     resolve: (value: { error: Error | null }) => void,
     reject: (reason: unknown) => void,
   ): void {
@@ -358,7 +366,7 @@ class UpdateBuilder {
     return this;
   }
 
-  then(
+  then( // NOSONAR - intentional thenable: routes await this builder directly, mirroring Supabase PostgREST builders
     resolve: (value: { error: Error | null }) => void,
     reject: (reason: unknown) => void,
   ): void {
@@ -385,7 +393,7 @@ class UpsertBuilder {
     private row: Row,
   ) {}
 
-  then(
+  then( // NOSONAR - intentional thenable: routes await this builder directly, mirroring Supabase PostgREST builders
     resolve: (value: { error: Error | null }) => void,
     reject: (reason: unknown) => void,
   ): void {

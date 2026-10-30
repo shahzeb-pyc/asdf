@@ -135,11 +135,18 @@ export function getPromptPublicUrl(): string | null {
   return url && url.length > 0 ? url : null;
 }
 
+/** Removes trailing slashes without a regex: identical result, no backtracking. */
+function stripTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url[end - 1] === '/') end -= 1;
+  return url.slice(0, end);
+}
+
 function mediaUrls(
   row: PromptMediaDbRow,
   publicUrl: string,
 ): { url: string; posterUrl: string | null } {
-  const base = publicUrl.replace(/\/+$/, '');
+  const base = stripTrailingSlashes(publicUrl);
   return {
     url: `${base}/${row.storage_key}`,
     posterUrl: row.poster_key ? `${base}/${row.poster_key}` : null,

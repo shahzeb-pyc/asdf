@@ -235,9 +235,16 @@ export const PromptSlugSchema = z
     message: 'Slug must be lowercase letters, digits, and single hyphens',
   });
 
+/** Removes trailing slashes without a regex: identical result, no backtracking. */
+function stripTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url[end - 1] === '/') end -= 1;
+  return url.slice(0, end);
+}
+
 /** Derives the public preview URL for an R2 key, exactly as media does. */
 export function promptPreviewUrl(publicUrl: string, storageKey: string): string {
-  return `${publicUrl.replace(/\/+$/, '')}/${storageKey}`;
+  return `${stripTrailingSlashes(publicUrl)}/${storageKey}`;
 }
 
 const promptCoreFields = {
