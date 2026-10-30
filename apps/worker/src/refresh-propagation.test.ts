@@ -13,6 +13,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { InternalError } from '@fbuploadpro/contracts';
 import { propagateExpiredDestinations, type RefreshDbClient } from './refresh.js';
 
 const ACCOUNT_ID = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
@@ -22,7 +23,7 @@ type DestinationRow = { id: string; account_id: string; status: string };
 function makeClient(rows: DestinationRow[]): RefreshDbClient {
   return {
     from: (table: string) => {
-      if (table !== 'destinations') throw new Error(`unexpected table ${table}`);
+      if (table !== 'destinations') throw new InternalError(`unexpected table ${table}`);
       let accountId: unknown;
       let status: unknown;
       const builder: Record<string, unknown> = {};
@@ -103,7 +104,7 @@ describe('slot-claim RPCs exclude propagated pages', () => {
         join(root, 'supabase', 'migrations', '20261027130000_publisher_driven_posting_times.sql')
       )
     );
-    if (!found) throw new Error('slot-claim migration not found');
+    if (!found) throw new InternalError('slot-claim migration not found');
     const sql = readFileSync(
       join(found, 'supabase', 'migrations', '20261027130000_publisher_driven_posting_times.sql'),
       'utf8'

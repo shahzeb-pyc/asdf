@@ -436,7 +436,6 @@ async function sectionDeferred(pool: Pool): Promise<void> {
 
   // Defer #1 — the caller deliberately passes an inflated count (99):
   // the deferred branch must ignore it for the stored count.
-  const before = new Date();
   const r1 = await settle(pool, {
     outcome: 'deferred', retryCount: 99, errorCode: 'publishing_limit_reached',
     errorMessage: 'This account has reached its publishing limit for now.',
@@ -457,10 +456,17 @@ async function sectionDeferred(pool: Pool): Promise<void> {
     'deferred settle records the deferral reason on the item',
     String(item1?.error_code)
   );
+  // BG3 (audit owner decision 2026-10-30, 1A): a deferred FACEBOOK item
+  // must NOT be rescheduled into the future — that would make it
+  // due-claimable off-schedule. It returns to the slot pool with
+  // scheduled_time NULL and is picked up only by claim_posting_slot_item
+  // at a later posting slot. The old spec-139 "rescheduled into the
+  // future" expectation is superseded for this Facebook fixture; other
+  // platforms keep the future timestamp (see the settle migration).
   const sched1 = asDate(item1?.scheduled_time);
   check(
-    sched1 !== null && sched1.getTime() > before.getTime(),
-    'deferred item is rescheduled into the future',
+    sched1 === null,
+    'deferred Facebook item returns to the slot pool (scheduled_time NULL, not rescheduled into the future)',
     String(item1?.scheduled_time)
   );
   const logs1 = await logRows(pool, ITEM_MAIN);

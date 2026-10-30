@@ -10,6 +10,7 @@ import { describe, expect, it, vi, afterEach } from 'vitest';
 import {
   decryptToken,
   encryptToken,
+  InternalError,
 } from '@fbuploadpro/contracts';
 import {
   handlePublishBatch,
@@ -183,7 +184,7 @@ describe('rediscoverFacebookPageToken', () => {
 
   it('returns null when Graph fails', async () => {
     const failing = vi.fn(async () => {
-      throw new Error('network down');
+      throw new InternalError('network down');
     }) as unknown as typeof fetch;
     const token = await rediscoverFacebookPageToken('live_user_token', 'page_123', failing);
     expect(token).toBeNull();

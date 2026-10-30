@@ -847,7 +847,7 @@ export async function handleFacebookCallback(
     const expiresAt = new Date(Date.now() + expiresInSeconds * 1000);
 
     // 6. Check existing & upsert into database with workspace_id isolation.
-    // BL1 fix: any save failure is a hard error. Do not redirect to
+    // BL1 fix: a save failure is a hard error. Do not redirect to
     // success and do not refresh page tokens on this path.
     let accountRowId: string | undefined;
     let alreadyExisted = false;

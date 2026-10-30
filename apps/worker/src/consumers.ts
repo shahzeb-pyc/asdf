@@ -252,7 +252,12 @@ export async function rediscoverFacebookPageToken(
       5,
       fetchFn
     );
-    const match = pages.find((p) => String(p.id) === pageId);
+    // Guarded: String(undefined) is the truthy string "undefined",
+    // so a page without an id must never match by stringification.
+    const match = pages.find((p) => {
+      if (!p.id) return false;
+      return String(p.id) === pageId;
+    });
     const token = match?.access_token;
     return typeof token === 'string' && token.length > 0 ? token : null;
   } catch (err) {
