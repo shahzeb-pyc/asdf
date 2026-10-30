@@ -17,6 +17,7 @@ import {
   type PaginationMeta,
 } from '@/lib/server/pagination';
 import type { PostgrestError } from '@supabase/supabase-js';
+import { enforceIpRateLimit } from '@/lib/request-body';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
 import { propagateExpiredAccountDestinations } from '@/lib/publishing/account-expiry-propagation';
 import {
@@ -611,5 +612,8 @@ export async function GET(
   context: { params: Promise<{ subdomain: string }> }
 ): Promise<NextResponse> {
   const { subdomain } = await context.params;
+  // Audit S6: previously unthrottled; 60/min like the other list reads.
+  const limited = await enforceIpRateLimit(request, 'tenant_accounts_list', 60);
+  if (limited) return limited;
   return handleListAccounts(request, subdomain);
 }

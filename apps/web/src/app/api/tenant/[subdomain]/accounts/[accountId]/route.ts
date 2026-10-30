@@ -12,6 +12,7 @@ import {
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import { revokeFacebookAuthorization } from '@/lib/connect/facebook-revoke';
 import { logServerError } from '@/lib/server-analytics';
+import { enforceIpRateLimit } from '@/lib/request-body';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -270,5 +271,8 @@ export async function DELETE(
   context: { params: Promise<{ subdomain: string; accountId: string }> }
 ): Promise<NextResponse> {
   const { subdomain, accountId } = await context.params;
+  // Audit S6: previously unthrottled destructive action; 20/min like initiate.
+  const limited = await enforceIpRateLimit(request, 'tenant_account_disconnect', 20);
+  if (limited) return limited;
   return handleDisconnectAccount(request, subdomain, accountId);
 }

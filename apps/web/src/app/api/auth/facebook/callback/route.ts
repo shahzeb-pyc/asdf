@@ -19,6 +19,7 @@ import {
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import { logServerError } from '@/lib/server-analytics';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { enforceIpRateLimit } from '@/lib/request-body';
 import { resolveWorkspaceFacebookCredentials } from '@/lib/server/byoc-resolver';
 import {
   GRAPH_API_TIMEOUT_MS,
@@ -912,6 +913,10 @@ export async function handleFacebookCallback(
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  // Audit S6: previously unthrottled OAuth callback; 20/min like initiate.
+  // Over the limit the caller gets the standard JSON 429, not a redirect.
+  const limited = await enforceIpRateLimit(request, 'auth_facebook_callback', 20);
+  if (limited) return limited;
   return await handleFacebookCallback(request);
 }
 

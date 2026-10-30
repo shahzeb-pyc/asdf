@@ -3,6 +3,7 @@ import {
   fetchDestinationDetail,
   type ConnectDbClient,
 } from '@/lib/connect/persist';
+import { enforceIpRateLimit } from '@/lib/request-body';
 import { resolveSocialRouteContext } from '@/lib/connect/session';
 
 /**
@@ -50,5 +51,8 @@ export async function GET(
   }
 ): Promise<NextResponse> {
   const { subdomain, destinationId } = await context.params;
+  // Audit S6: previously unthrottled; 60/min like the other list reads.
+  const limited = await enforceIpRateLimit(request, 'tenant_social_detail', 60);
+  if (limited) return limited;
   return handleGetSocialDestination(request, subdomain, destinationId);
 }

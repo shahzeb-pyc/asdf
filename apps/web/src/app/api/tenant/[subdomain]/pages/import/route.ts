@@ -19,6 +19,7 @@ import {
   markAccountConnectionError,
 } from '@/lib/connect/account-probe';
 import { logServerError } from '@/lib/server-analytics';
+import { enforceIpRateLimit } from '@/lib/request-body';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -1055,5 +1056,8 @@ export async function POST(
   context: { params: Promise<{ subdomain: string }> }
 ): Promise<NextResponse> {
   const { subdomain } = await context.params;
+  // Audit S6: previously unthrottled Graph-backed call; 20/min like initiate.
+  const limited = await enforceIpRateLimit(request, 'tenant_pages_import', 20);
+  if (limited) return limited;
   return handleImportPages(request, subdomain);
 }
