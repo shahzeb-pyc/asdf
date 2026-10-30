@@ -7,11 +7,16 @@ import {
   fetchRegionList,
   fetchSimilarCreators,
   fetchTrendingCreators,
+  filterSavedCreators,
+  NicheSearchFiltersQuerySchema,
+  paginateSavedCreators,
   parseCreatorFinderKeys,
   savedCreatorFromRow,
   savedCreatorsToCsv,
   savedCreatorUpsertRow,
+  SavedCreatorListQuerySchema,
   TrendingResponseSchema,
+  type SavedCreator,
 } from '../src/domain/creator-finder.js';
 
 function jsonResponse(body: unknown): Response {
@@ -719,5 +724,159 @@ describe('saved creators', () => {
         saveFailed: true,
       }).saveFailed,
     ).toBe(true);
+  });
+});
+
+describe('filterSavedCreators', () => {
+  const creators: SavedCreator[] = [
+    {
+      handle: 'alice',
+      displayName: 'Alice Fit',
+      avatarUrl: null,
+      latestVideoTitle: null,
+      latestVideoCover: null,
+      profileUrl: 'https://www.tiktok.com/@alice',
+      source: 'niche',
+      searchTerm: 'fitness',
+      savedAt: '2026-10-30T08:00:00.000Z',
+    },
+    {
+      handle: 'bob',
+      displayName: 'Bob Daily',
+      avatarUrl: null,
+      latestVideoTitle: null,
+      latestVideoCover: null,
+      profileUrl: 'https://www.tiktok.com/@bob',
+      source: 'trending',
+      searchTerm: 'PK',
+      savedAt: '2026-10-30T08:01:00.000Z',
+    },
+  ];
+
+  it('matches display name or handle, case-insensitively, ignoring a leading @', () => {
+    expect(filterSavedCreators(creators, { q: 'FIT' }).map((c) => c.handle)).toEqual(['alice']);
+    expect(filterSavedCreators(creators, { q: '@bob' }).map((c) => c.handle)).toEqual(['bob']);
+    expect(filterSavedCreators(creators, { q: 'zzz' })).toEqual([]);
+  });
+
+  it('combines search and source: both must match', () => {
+    // 'fit' matches Alice Fit, but Alice was saved from niche, not trending.
+    expect(
+      filterSavedCreators(creators, { q: 'fit', source: 'trending' }).map((c) => c.handle),
+    ).toEqual([]);
+    expect(
+      filterSavedCreators(creators, { q: '', source: 'trending' }).map((c) => c.handle),
+    ).toEqual(['bob']);
+    expect(filterSavedCreators(creators, { source: 'all' }).map((c) => c.handle)).toEqual([
+      'alice',
+      'bob',
+    ]);
+  });
+});
+
+describe('paginateSavedCreators', () => {
+  function saved(handle: string): SavedCreator {
+    return {
+      handle,
+      displayName: handle,
+      avatarUrl: null,
+      latestVideoTitle: null,
+      latestVideoCover: null,
+      profileUrl: `https://www.tiktok.com/@${handle}`,
+      source: 'trending',
+      searchTerm: 'PK',
+      savedAt: '2026-10-30T08:00:00.000Z',
+    };
+  }
+
+  it('slices 30 per page and clamps an out-of-range page', () => {
+    const creators = Array.from({ length: 65 }, (_, i) => saved(`user${i}`));
+    const page1 = paginateSavedCreators(creators, 1);
+    expect(page1.creators).toHaveLength(30);
+    expect(page1.total).toBe(65);
+    expect(page1.totalPages).toBe(3);
+    expect(paginateSavedCreators(creators, 3).creators).toHaveLength(5);
+    // A page past the end lands on the last page instead of empty.
+    expect(paginateSavedCreators(creators, 99).page).toBe(3);
+    expect(paginateSavedCreators([], 1).totalPages).toBe(0);
+  });
+});
+
+describe('SavedCreatorListQuerySchema', () => {
+  it('defaults source to all and page to 1', () => {
+    expect(SavedCreatorListQuerySchema.parse({})).toEqual({
+      source: 'all',
+      page: 1,
+    });
+    expect(SavedCreatorListQuerySchema.parse({ page: '2' }).page).toBe(2);
+  });
+
+  it('rejects an invalid source or page', () => {
+    expect(
+      SavedCreatorListQuerySchema.safeParse({ source: 'other' }).success,
+    ).toBe(false);
+    expect(SavedCreatorListQuerySchema.safeParse({ page: '0' }).success).toBe(false);
+  });
+});
+
+describe('fetchCreatorsByKeyword filters', () => {
+  function video(handle: string) {
+    return { author: { unique_id: handle, nickname: handle }, title: 'T' };
+  }
+
+  it('sends region to feed/search and challenge/posts, and time/sort to feed/search only', async () => {
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({ code: 0, data: { challenges: [{ id: '111', cha_name: 'fitness' }] } }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ code: 0, data: { videos: [video('alice')] } }))
+      .mockResolvedValueOnce(
+        jsonResponse({ code: 0, data: { videos: [video('bob')] } }),
+      );
+    await fetchCreatorsByKeyword('fitness', {
+      fetchFn,
+      apiKeys: ['key-1'],
+      filters: { region: 'PK', publishTime: 7, sortType: 1 },
+    });
+    const urls = fetchFn.mock.calls.map((call) => String(call[0]));
+    // The mock receives full URLs (base + path), so assert on fragments.
+    expect(urls[0]).toContain('/challenge/search?keywords=fitness&count=30');
+    expect(urls[0]).not.toContain('region=');
+    expect(urls[1]).toContain(
+      '/feed/search?keywords=fitness&count=30&region=PK&publish_time=7&sort_type=1',
+    );
+    expect(urls[2]).toContain(
+      '/challenge/posts?challenge_id=111&count=30&region=PK',
+    );
+  });
+
+  it('sends no filter params at all when filters are at their defaults', async () => {
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ code: 0, data: { challenges: [] } }))
+      .mockResolvedValueOnce(jsonResponse({ code: 0, data: { videos: [] } }));
+    await fetchCreatorsByKeyword('fitness', {
+      fetchFn,
+      apiKeys: ['key-1'],
+      filters: { publishTime: 0, sortType: 0 },
+    });
+    const urls = fetchFn.mock.calls.map((call) => String(call[0]));
+    expect(urls[1]).toContain('/feed/search?keywords=fitness&count=30');
+    expect(urls[1]).not.toContain('publish_time');
+    expect(urls[1]).not.toContain('sort_type');
+    expect(urls[1]).not.toContain('region');
+  });
+
+  it('rejects invalid filter values at the route schema', () => {
+    expect(
+      NicheSearchFiltersQuerySchema.safeParse({ publish_time: '2' }).success,
+    ).toBe(false);
+    expect(
+      NicheSearchFiltersQuerySchema.safeParse({ sort_type: '2' }).success,
+    ).toBe(false);
+    expect(
+      NicheSearchFiltersQuerySchema.parse({ publish_time: '30', sort_type: '3' }),
+    ).toEqual({ publish_time: '30', sort_type: '3' });
   });
 });

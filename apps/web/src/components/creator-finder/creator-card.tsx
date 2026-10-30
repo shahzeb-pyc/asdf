@@ -1,5 +1,6 @@
 'use client';
 
+import * as React from 'react';
 import { useState } from 'react';
 import Link from 'next/link';
 import { CheckIcon } from 'lucide-react';

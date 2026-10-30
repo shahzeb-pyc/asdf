@@ -14,9 +14,27 @@ import {
   type SavedCreator,
 } from '@fbuploadpro/contracts';
 import { api, buildTenantApiPath, isApiError } from '@/lib/api';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/shared/ui/alert-dialog';
 import { Banner } from '@/components/shared/ui/banner';
 import { Button } from '@/components/shared/ui/button';
 import { Input } from '@/components/shared/ui/input';
+import { ListPagination } from '@/components/shared/ui/list-pagination';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/shared/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shared/ui/tabs';
 import { CreatorCard } from './creator-card';
 
@@ -60,21 +78,59 @@ export function CreatorFinderPage({
   const [countryListOpen, setCountryListOpen] = React.useState(false);
   const [keyword, setKeyword] = React.useState('');
   const [username, setUsername] = React.useState('');
+  /**
+   * Niche filters. The country typeahead is a second instance of the
+   * trending tab's behaviour (type to filter, list below, click to
+   * select) over the SAME regions list — no second regions fetch.
+   * Unlike trending, it starts empty: empty means all regions, not
+   * the default country. Time/Sort default to the API's unfiltered
+   * values (All time / Relevance), which are never sent.
+   */
+  const [nicheRegion, setNicheRegion] = React.useState<string>('');
+  const [nicheCountryQuery, setNicheCountryQuery] = React.useState('');
+  const [nicheCountryListOpen, setNicheCountryListOpen] = React.useState(false);
+  const [nicheTime, setNicheTime] = React.useState('0');
+  const [nicheSort, setNicheSort] = React.useState('0');
   const [trending, setTrending] = React.useState<SearchState>(IDLE_STATE);
   const [niche, setNiche] = React.useState<SearchState>(IDLE_STATE);
   const [similar, setSimilar] = React.useState<SearchState>(IDLE_STATE);
   const [removingHandle, setRemovingHandle] = React.useState<string | null>(null);
   const [exporting, setExporting] = React.useState(false);
   const [exportError, setExportError] = React.useState<string | null>(null);
+  // Saved tab controls. The applied search/source/page are what the
+  // query runs on; typing in the search box alone does not refetch.
+  // Any new search, source choice, or Clear-all resets to page 1.
+  const [savedSearchInput, setSavedSearchInput] = React.useState('');
+  const [savedSearch, setSavedSearch] = React.useState('');
+  const [savedSource, setSavedSource] = React.useState('all');
+  const [savedPage, setSavedPage] = React.useState(1);
+  const [clearAllOpen, setClearAllOpen] = React.useState(false);
+  const [clearingAll, setClearingAll] = React.useState(false);
 
   const savedQuery = useQuery({
-    queryKey: ['creator-finder', 'saved', subdomain],
+    queryKey: [
+      'creator-finder',
+      'saved',
+      subdomain,
+      savedSearch,
+      savedSource,
+      savedPage,
+    ],
     queryFn: () =>
       api.get(buildTenantApiPath(subdomain, '/creator-finder/saved'), {
         schema: SavedCreatorListResponseSchema,
+        query: {
+          q: savedSearch || undefined,
+          source: savedSource,
+          page: savedPage,
+        },
       }),
   });
   const savedCreators: SavedCreator[] = savedQuery.data?.creators ?? [];
+  const savedTotal: number = savedQuery.data?.total ?? 0;
+  const savedTotalPages: number = savedQuery.data?.totalPages ?? 0;
+  const savedFiltersActive =
+    savedSearch.trim() !== '' || savedSource !== 'all';
 
   async function removeSaved(handle: string) {
     setRemovingHandle(handle);
@@ -86,11 +142,44 @@ export function CreatorFinderPage({
           query: { handle },
         },
       );
-      await savedQuery.refetch();
+      // If this was the last card on a page past the first, step back
+      // a page instead of leaving an empty page behind.
+      if (savedCreators.length === 1 && savedPage > 1) {
+        setSavedPage(savedPage - 1);
+      } else {
+        await savedQuery.refetch();
+      }
     } catch (err) {
       setExportError(errorMessage(err));
     } finally {
       setRemovingHandle(null);
+    }
+  }
+
+  /** Clear-all, gated by the confirmation dialogue in the Saved tab. */
+  async function clearAllSaved() {
+    setClearingAll(true);
+    setExportError(null);
+    try {
+      await api.delete(
+        buildTenantApiPath(subdomain, '/creator-finder/saved'),
+        {
+          schema: SavedCreatorDeleteResponseSchema,
+          query: { clearAll: 'true' },
+        },
+      );
+      // Reset every control so the tab returns to the plain
+      // no-saved-creators empty state, not a filtered empty state.
+      setSavedSearchInput('');
+      setSavedSearch('');
+      setSavedSource('all');
+      setSavedPage(1);
+      setClearAllOpen(false);
+      await savedQuery.refetch();
+    } catch (err) {
+      setExportError(errorMessage(err));
+    } finally {
+      setClearingAll(false);
     }
   }
 
@@ -153,6 +242,30 @@ export function CreatorFinderPage({
       item.code.toLowerCase().includes(countryFilter),
   );
   const countryListId = 'creator-finder-country-list';
+  // Niche country typeahead, same safety rule as trending: a
+  // half-typed name never searches a previously selected country —
+  // only an exact name match or a clicked row counts as selected.
+  const nicheSelectedRegionName =
+    nicheRegion === ''
+      ? ''
+      : (regions.find((item) => item.code === nicheRegion)?.name ?? '');
+  const nicheExactCountryMatch = regions.find(
+    (item) => item.name.toLowerCase() === nicheCountryQuery.trim().toLowerCase(),
+  );
+  const nicheEffectiveRegion =
+    nicheCountryQuery.trim() === ''
+      ? ''
+      : nicheSelectedRegionName === nicheCountryQuery
+        ? nicheRegion
+        : (nicheExactCountryMatch?.code ?? '');
+  const nicheCountryFilter = nicheCountryQuery.trim().toLowerCase();
+  const nicheFilteredCountries = regions.filter(
+    (item) =>
+      nicheCountryFilter === '' ||
+      item.name.toLowerCase().includes(nicheCountryFilter) ||
+      item.code.toLowerCase().includes(nicheCountryFilter),
+  );
+  const nicheCountryListId = 'creator-finder-niche-country-list';
 
   async function searchTrending() {
     if (!effectiveRegion) return;
@@ -194,7 +307,12 @@ export function CreatorFinderPage({
         buildTenantApiPath(subdomain, '/creator-finder/niche'),
         {
           schema: NicheResponseSchema,
-          query: { keyword },
+          query: {
+            keyword,
+            region: nicheEffectiveRegion || undefined,
+            publish_time: nicheTime !== '0' ? nicheTime : undefined,
+            sort_type: nicheSort !== '0' ? nicheSort : undefined,
+          },
         },
       );
       setNiche({
@@ -391,6 +509,99 @@ export function CreatorFinderPage({
                 required
               />
             </label>
+            <div className="flex flex-col gap-2 text-body font-medium text-ink">
+              <label htmlFor="creator-finder-niche-country">Country (optional)</label>
+              <div className="relative w-full max-w-xs">
+                <Input
+                  id="creator-finder-niche-country"
+                  role="combobox"
+                  aria-expanded={nicheCountryListOpen}
+                  aria-controls={nicheCountryListId}
+                  autoComplete="off"
+                  value={nicheCountryQuery}
+                  placeholder="All countries"
+                  disabled={regionsQuery.isLoading || regions.length === 0}
+                  onFocus={() => setNicheCountryListOpen(true)}
+                  onBlur={() => setNicheCountryListOpen(false)}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setNicheCountryQuery(value);
+                    if (value.trim() === '') {
+                      setNicheRegion('');
+                    }
+                    setNicheCountryListOpen(true);
+                  }}
+                />
+                {nicheCountryListOpen && regions.length > 0 ? (
+                  <ul
+                    id={nicheCountryListId}
+                    role="listbox"
+                    aria-label="Countries"
+                    className="absolute left-0 right-0 top-full z-overlay-top mt-1 max-h-60 overflow-y-auto rounded-md border border-line bg-panel p-1 text-ink shadow-elevated"
+                  >
+                    {nicheFilteredCountries.length === 0 ? (
+                      <li className="px-2 py-2 text-body text-ink-dim">
+                        No country matches that.
+                      </li>
+                    ) : (
+                      nicheFilteredCountries.map((item) => (
+                        <li key={item.code} role="option" aria-selected={item.code === nicheEffectiveRegion}>
+                          <button
+                            type="button"
+                            className="flex w-full items-center justify-between gap-2 rounded-sm px-2 py-2 text-left text-body text-ink hover:bg-hover"
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => {
+                              setNicheRegion(item.code);
+                              setNicheCountryQuery(item.name);
+                              setNicheCountryListOpen(false);
+                            }}
+                          >
+                            <span>{item.name}</span>
+                            <span className="text-metadata text-ink-dim">{item.code}</span>
+                          </button>
+                        </li>
+                      ))
+                    )}
+                  </ul>
+                ) : null}
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <label className="flex flex-col gap-2 text-body font-medium text-ink">
+                Time
+                <Select value={nicheTime} onValueChange={setNicheTime}>
+                  <SelectTrigger aria-label="Time">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0">All time</SelectItem>
+                    <SelectItem value="1">Past 24 hours</SelectItem>
+                    <SelectItem value="7">This week</SelectItem>
+                    <SelectItem value="30">This month</SelectItem>
+                    <SelectItem value="90">Last 3 months</SelectItem>
+                    <SelectItem value="180">Last 6 months</SelectItem>
+                  </SelectContent>
+                </Select>
+              </label>
+              <label className="flex flex-col gap-2 text-body font-medium text-ink">
+                Sort
+                <Select value={nicheSort} onValueChange={setNicheSort}>
+                  <SelectTrigger aria-label="Sort">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0">Relevance</SelectItem>
+                    <SelectItem value="1">Like count</SelectItem>
+                    <SelectItem value="3">Date posted</SelectItem>
+                  </SelectContent>
+                </Select>
+              </label>
+            </div>
+            <p className="text-metadata text-ink-dim">
+              Country filters video results and videos under matching hashtags.
+              Time and sort apply to the video search only — not to matching
+              hashtags or their videos.
+            </p>
             <div>
               <Button type="submit" disabled={niche.status === 'loading'}>
                 Find creators
@@ -422,14 +633,78 @@ export function CreatorFinderPage({
 
         <TabsContent value="saved">
           <div className="flex flex-col gap-3">
-            <div>
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                setSavedSearch(savedSearchInput);
+                setSavedPage(1);
+              }}
+              className="flex flex-col gap-3"
+            >
+              <label className="flex flex-col gap-2 text-body font-medium text-ink">
+                Search saved creators
+                <Input
+                  value={savedSearchInput}
+                  onChange={(event) => setSavedSearchInput(event.target.value)}
+                  placeholder="e.g. name or @handle"
+                />
+              </label>
+              <div className="flex flex-wrap items-end gap-3">
+                <label className="flex flex-col gap-2 text-body font-medium text-ink">
+                  Source
+                  <Select
+                    value={savedSource}
+                    onValueChange={(value) => {
+                      setSavedSource(value);
+                      setSavedPage(1);
+                    }}
+                  >
+                    <SelectTrigger aria-label="Source">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All</SelectItem>
+                      <SelectItem value="trending">Trending</SelectItem>
+                      <SelectItem value="niche">Niche</SelectItem>
+                      <SelectItem value="similar">Similar</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </label>
+                <Button type="submit">Search</Button>
+                {savedFiltersActive ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setSavedSearchInput('');
+                      setSavedSearch('');
+                      setSavedSource('all');
+                      setSavedPage(1);
+                    }}
+                  >
+                    Clear search
+                  </Button>
+                ) : null}
+              </div>
+            </form>
+            <div className="flex flex-wrap gap-3">
               <Button
                 onClick={exportSavedCsv}
-                disabled={exporting || savedCreators.length === 0}
+                disabled={exporting || savedTotal === 0}
               >
                 {exporting ? 'Exporting…' : 'Export CSV'}
               </Button>
+              <Button
+                variant="destructive"
+                onClick={() => setClearAllOpen(true)}
+                disabled={savedTotal === 0}
+              >
+                Clear all
+              </Button>
             </div>
+            <p className="text-metadata text-ink-dim">
+              Export downloads every saved creator, not just this page.
+            </p>
             {exportError ? (
               <Banner
                 variant="critical"
@@ -447,26 +722,72 @@ export function CreatorFinderPage({
               />
             ) : savedCreators.length === 0 ? (
               <p className="text-body text-ink-sub">
-                No saved creators yet. Search trending, niche, or similar creators
-                and they will be saved automatically.
+                {savedFiltersActive
+                  ? 'No saved creators match that search.'
+                  : 'No saved creators yet. Search trending, niche, or similar creators and they will be saved automatically.'}
               </p>
             ) : (
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {savedCreators.map((creator) => (
-                  <div key={creator.handle} className="flex flex-col gap-2">
-                    <CreatorCard creator={creator} />
-                    <Button
-                      variant="outline"
-                      onClick={() => removeSaved(creator.handle)}
-                      disabled={removingHandle === creator.handle}
-                    >
-                      {removingHandle === creator.handle ? 'Removing…' : 'Remove'}
-                    </Button>
-                  </div>
-                ))}
+              <div>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {savedCreators.map((creator) => (
+                    <div key={creator.handle} className="flex flex-col gap-2">
+                      <CreatorCard creator={creator} />
+                      <Button
+                        variant="outline"
+                        onClick={() => removeSaved(creator.handle)}
+                        disabled={removingHandle === creator.handle}
+                      >
+                        {removingHandle === creator.handle ? 'Removing…' : 'Remove'}
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+                <ListPagination
+                  page={savedPage}
+                  totalPages={savedTotalPages}
+                  total={savedTotal}
+                  limit={30}
+                  onPageChange={setSavedPage}
+                />
               </div>
             )}
           </div>
+          {clearAllOpen ? (
+            <AlertDialog
+              open
+              onOpenChange={(open) => {
+                if (!open) setClearAllOpen(false);
+              }}
+            >
+              <AlertDialogContent data-testid="clear-all-saved-modal" className="sm:max-w-md">
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Clear all saved creators?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This deletes every saved creator for you —{' '}
+                    {savedTotal === 1
+                      ? '1 creator'
+                      : `${savedTotal} creators`}
+                    — and it cannot be undone. New searches will keep saving
+                    automatically afterwards.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={clearingAll}>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    variant="destructive"
+                    data-testid="confirm-clear-all-saved-btn"
+                    disabled={clearingAll}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      void clearAllSaved();
+                    }}
+                  >
+                    {clearingAll ? 'Clearing…' : 'Clear all'}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          ) : null}
         </TabsContent>
       </Tabs>
     </div>

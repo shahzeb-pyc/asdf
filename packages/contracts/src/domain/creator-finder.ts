@@ -20,8 +20,8 @@ import { z } from 'zod';
  * - GET /challenge/posts — challenge_id required, count optional, max 30.
  * - GET /challenge/search — keywords required, count optional, max 30.
  * - GET /feed/search — keywords required, count optional, max 30;
- *   region, publish_time, and sort_type are optional but the niche
- *   search deliberately sends none of them (no filters in the UI).
+ *   region, publish_time, and sort_type are optional and are sent
+ *   only when the niche tab's filters are set away from defaults.
  * Every call sends `x-tikwmapi-key` and returns {code, msg, data}.
  * Codes: 0 success, 10401 invalid/missing key, 10429 rate limit,
  * 10430 quota exhausted. There is no fallback to the free tikwm
@@ -136,8 +136,71 @@ export const SavedCreatorSchema = CreatorSchema.extend({
 });
 export type SavedCreator = z.infer<typeof SavedCreatorSchema>;
 
+/** Saved tab page size — the repo's list-pagination pattern, 30 per page. */
+export const SAVED_PAGE_SIZE = 30;
+
+/** Query params for the Saved list: server-side search, source filter, page. */
+export const SavedCreatorListQuerySchema = z.object({
+  q: z.string().trim().max(200).optional(),
+  source: z.enum(['all', 'trending', 'niche', 'similar']).default('all'),
+  page: z.coerce.number().int().min(1).default(1),
+});
+export type SavedCreatorListQuery = z.infer<typeof SavedCreatorListQuerySchema>;
+
+/**
+ * Server-side Saved filter: both conditions must match. Search is a
+ * case-insensitive substring over display name or handle (a leading
+ * @ on the query is ignored, so "@alice" matches handle "alice").
+ * Source 'all' (or absent) matches every source.
+ */
+export function filterSavedCreators(
+  creators: ReadonlyArray<SavedCreator>,
+  query: { q?: string | undefined; source?: string | undefined },
+): SavedCreator[] {
+  const needle = (query.q ?? '').trim().replace(/^@/, '').toLowerCase();
+  const source = query.source ?? 'all';
+  return creators.filter((creator) => {
+    if (source !== 'all' && creator.source !== source) return false;
+    if (!needle) return true;
+    const name = (creator.displayName ?? '').toLowerCase();
+    return (
+      name.includes(needle) || creator.handle.toLowerCase().includes(needle)
+    );
+  });
+}
+
+/** Slice a filtered Saved list into one page (page clamped into range). */
+export function paginateSavedCreators(
+  creators: ReadonlyArray<SavedCreator>,
+  page: number,
+  pageSize: number = SAVED_PAGE_SIZE,
+): {
+  creators: SavedCreator[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+} {
+  const total = creators.length;
+  const totalPages = Math.ceil(total / pageSize);
+  const effectivePage =
+    total === 0 ? 1 : Math.min(Math.max(1, page), totalPages);
+  const start = (effectivePage - 1) * pageSize;
+  return {
+    creators: creators.slice(start, start + pageSize),
+    total,
+    page: effectivePage,
+    pageSize,
+    totalPages,
+  };
+}
+
 export const SavedCreatorListResponseSchema = z.object({
   creators: z.array(SavedCreatorSchema),
+  total: z.number().int().nonnegative(),
+  page: z.number().int().min(1),
+  pageSize: z.number().int().min(1),
+  totalPages: z.number().int().nonnegative(),
 });
 export type SavedCreatorListResponse = z.infer<
   typeof SavedCreatorListResponseSchema
@@ -554,10 +617,33 @@ function challengeNameFromSearchItem(
   );
 }
 
+/** Niche filter values, exactly as the API defines them. */
+export type NichePublishTime = 0 | 1 | 7 | 30 | 90 | 180;
+export type NicheSortType = 0 | 1 | 3;
+export interface NicheSearchFilters {
+  region?: string | undefined;
+  publishTime?: NichePublishTime | undefined;
+  sortType?: NicheSortType | undefined;
+}
+
+/** Raw query params for the niche route: strings, validated before use. */
+export const NicheSearchFiltersQuerySchema = z.object({
+  region: z.string().trim().min(1).max(10).optional(),
+  publish_time: z.enum(['0', '1', '7', '30', '90', '180']).optional(),
+  sort_type: z.enum(['0', '1', '3']).optional(),
+});
+
 /**
  * Niche keyword search, one merged list. Flow, in order:
  * 1. In parallel: GET /challenge/search and GET /feed/search, both
- *    with keywords and count 30, no region/publish_time/sort_type.
+ *    with keywords and count 30. Optional filters: region is sent
+ *    to feed/search and to challenge/posts (both support region);
+ *    publish_time and sort_type are sent to feed/search ONLY —
+ *    the hashtag endpoints have no such parameters, so Time and
+ *    Sort never pretend to filter the hashtag side. When all
+ *    filters are at their defaults (no region, publishTime 0,
+ *    sortType 0), no filter param is sent at all and the search
+ *    behaves exactly as the unfiltered one did.
  * 2. From the hashtag search, take the top 3 hashtags in
  *    API-returned order and fetch GET /challenge/posts for each.
  *    GET /challenge/info is used ONLY when a search item carries
@@ -572,7 +658,7 @@ function challengeNameFromSearchItem(
  */
 export async function fetchCreatorsByKeyword(
   keyword: string,
-  options: CreatorFinderCallOptions = {},
+  options: CreatorFinderCallOptions & { filters?: NicheSearchFilters } = {},
 ): Promise<NicheResponse> {
   const fetchFn = options.fetchFn ?? fetch;
   const cleanKeyword = keyword.trim();
@@ -582,6 +668,18 @@ export async function fetchCreatorsByKeyword(
       'Enter a niche or keyword to search.',
     );
   }
+  const filters = options.filters ?? {};
+  const regionParam = filters.region
+    ? `&region=${encodeURIComponent(filters.region)}`
+    : '';
+  // Defaults send nothing: publishTime 0 = All time, sortType 0 =
+  // Relevance are the API's unfiltered behaviour (and falsy), so
+  // they are only sent when the user actually picked something else.
+  const feedParams =
+    `?keywords=${encodeURIComponent(cleanKeyword)}&count=${SEARCH_COUNT_MAX}` +
+    regionParam +
+    (filters.publishTime ? `&publish_time=${filters.publishTime}` : '') +
+    (filters.sortType ? `&sort_type=${filters.sortType}` : '');
   const encoded = encodeURIComponent(cleanKeyword);
   const [hashtagSearchData, videoSearchData] = await Promise.all([
     callWithKeys(options.apiKeys ?? [], async (key) => {
@@ -594,7 +692,7 @@ export async function fetchCreatorsByKeyword(
     }),
     callWithKeys(options.apiKeys ?? [], async (key) => {
       const body = await fetchTikwmJson(
-        `/feed/search?keywords=${encoded}&count=${SEARCH_COUNT_MAX}`,
+        `/feed/search${feedParams}`,
         key,
         fetchFn,
       );
@@ -637,7 +735,7 @@ export async function fetchCreatorsByKeyword(
       }
       const data = await callWithKeys(options.apiKeys ?? [], async (key) => {
         const body = await fetchTikwmJson(
-          `/challenge/posts?challenge_id=${encodeURIComponent(challengeId)}&count=${CHALLENGE_COUNT_MAX}`,
+          `/challenge/posts?challenge_id=${encodeURIComponent(challengeId)}&count=${CHALLENGE_COUNT_MAX}${regionParam}`,
           key,
           fetchFn,
         );
