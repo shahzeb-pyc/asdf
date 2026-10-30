@@ -11,6 +11,13 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
  * code (api_host would be "US") and passes on the new code.
  */
 
+const TEST_KEY = 'test-key';
+const USER_ID = 'user-123';
+const TENANT_ID = 'acme';
+const PLATFORM = 'facebook';
+const HOST_REGION = 'US';
+const PAGE_ADDED_EVENT = 'page_added';
+
 type FakeInstance = {
   init: ReturnType<typeof vi.fn>;
   identify: ReturnType<typeof vi.fn>;
@@ -60,10 +67,10 @@ afterEach(() => {
 describe('initPostHog', () => {
   it('normalizes a bare region host and keeps analytics explicit-only', async () => {
     const { lib, instance } = await loadClient();
-    lib.initPostHog('test-key', 'US');
+    lib.initPostHog(TEST_KEY, HOST_REGION);
     await flush();
     expect(instance.init).toHaveBeenCalledWith(
-      'test-key',
+      TEST_KEY,
       expect.objectContaining({
         api_host: 'https://us.i.posthog.com',
         autocapture: false,
@@ -76,14 +83,14 @@ describe('initPostHog', () => {
 
   it('is a no-op without an API key', async () => {
     const { lib, instance } = await loadClient();
-    lib.initPostHog(undefined, 'US');
+    lib.initPostHog(undefined, HOST_REGION);
     await flush();
     expect(instance.init).not.toHaveBeenCalled();
   });
 
   it('is a no-op on repeat calls', async () => {
     const { lib, instance } = await loadClient();
-    lib.initPostHog('test-key', 'US');
+    lib.initPostHog(TEST_KEY, HOST_REGION);
     lib.initPostHog('other-key', 'EU');
     await flush();
     expect(instance.init).toHaveBeenCalledTimes(1);
@@ -93,11 +100,11 @@ describe('initPostHog', () => {
 describe('identifyUser', () => {
   it('identifies with the user id and tenant subdomain only', async () => {
     const { lib, instance } = await loadClient();
-    lib.initPostHog('test-key', 'US');
-    lib.identifyUser('user-123', 'acme');
+    lib.initPostHog(TEST_KEY, HOST_REGION);
+    lib.identifyUser(USER_ID, TENANT_ID);
     await flush();
-    expect(instance.identify).toHaveBeenCalledWith('user-123', {
-      tenant_id: 'acme',
+    expect(instance.identify).toHaveBeenCalledWith(USER_ID, {
+      tenant_id: TENANT_ID,
     });
     // No PII: the call carries ids only — no email, no name.
     const props = instance.identify.mock.calls[0][1] as Record<string, unknown>;
@@ -107,8 +114,8 @@ describe('identifyUser', () => {
 
   it('is a no-op without a user id, and before init', async () => {
     const { lib, instance } = await loadClient();
-    lib.identifyUser(undefined, 'acme');
-    lib.identifyUser('user-123', 'acme');
+    lib.identifyUser(undefined, TENANT_ID);
+    lib.identifyUser(USER_ID, TENANT_ID);
     await flush();
     expect(instance.identify).not.toHaveBeenCalled();
   });
@@ -117,7 +124,7 @@ describe('identifyUser', () => {
 describe('capturePageview', () => {
   it('captures $pageview with a full $current_url on navigation', async () => {
     const { lib, instance } = await loadClient();
-    lib.initPostHog('test-key', 'US');
+    lib.initPostHog(TEST_KEY, HOST_REGION);
     lib.capturePageview('/pages?tab=queue');
     await flush();
     expect(instance.capture).toHaveBeenCalledWith('$pageview', {
@@ -136,27 +143,27 @@ describe('capturePageview', () => {
 describe('trackEvent', () => {
   it('captures taxonomy events with their properties', async () => {
     const { lib, instance } = await loadClient();
-    lib.initPostHog('test-key', 'US');
-    lib.trackEvent('page_added', { platform: 'facebook', count: 3 });
+    lib.initPostHog(TEST_KEY, HOST_REGION);
+    lib.trackEvent(PAGE_ADDED_EVENT, { platform: PLATFORM, count: 3 });
     lib.trackEvent('mirror_created', {
       source_platform: 'tiktok',
-      target_platform: 'facebook',
+      target_platform: PLATFORM,
     });
     await flush();
-    expect(instance.capture).toHaveBeenCalledWith('page_added', {
-      platform: 'facebook',
+    expect(instance.capture).toHaveBeenCalledWith(PAGE_ADDED_EVENT, {
+      platform: PLATFORM,
       count: 3,
     });
     expect(instance.capture).toHaveBeenCalledWith('mirror_created', {
       source_platform: 'tiktok',
-      target_platform: 'facebook',
+      target_platform: PLATFORM,
     });
   });
 
   it('drops events issued before init (no-op, never throws)', async () => {
     const { lib, instance } = await loadClient();
-    lib.trackEvent('page_added', { platform: 'facebook', count: 1 });
-    lib.initPostHog('test-key', 'US');
+    lib.trackEvent(PAGE_ADDED_EVENT, { platform: PLATFORM, count: 1 });
+    lib.initPostHog(TEST_KEY, HOST_REGION);
     await flush();
     // trackEvent before init is a deliberate no-op (no load promise
     // yet) — it must not throw and must not crash the page. Events

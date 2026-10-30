@@ -25,16 +25,16 @@ describe('normalizePostHogHost', () => {
   });
 
   it('maps bare region codes to the real ingest hosts', () => {
-    expect(normalizePostHogHost('US')).toBe('https://us.i.posthog.com');
-    expect(normalizePostHogHost('us')).toBe('https://us.i.posthog.com');
-    expect(normalizePostHogHost('  US  ')).toBe('https://us.i.posthog.com');
+    expect(normalizePostHogHost('US')).toBe(POSTHOG_DEFAULT_HOST);
+    expect(normalizePostHogHost('us')).toBe(POSTHOG_DEFAULT_HOST);
+    expect(normalizePostHogHost('  US  ')).toBe(POSTHOG_DEFAULT_HOST);
     expect(normalizePostHogHost('EU')).toBe('https://eu.i.posthog.com');
     expect(normalizePostHogHost('eu')).toBe('https://eu.i.posthog.com');
   });
 
   it('prepends https to a bare hostname', () => {
     expect(normalizePostHogHost('us.i.posthog.com')).toBe(
-      'https://us.i.posthog.com'
+      POSTHOG_DEFAULT_HOST
     );
     expect(normalizePostHogHost('eu.i.posthog.com')).toBe(
       'https://eu.i.posthog.com'
@@ -43,10 +43,10 @@ describe('normalizePostHogHost', () => {
 
   it('passes a full ingest URL through, minus trailing slashes', () => {
     expect(normalizePostHogHost('https://us.i.posthog.com')).toBe(
-      'https://us.i.posthog.com'
+      POSTHOG_DEFAULT_HOST
     );
     expect(normalizePostHogHost('https://us.i.posthog.com/')).toBe(
-      'https://us.i.posthog.com'
+      POSTHOG_DEFAULT_HOST
     );
     expect(normalizePostHogHost('https://custom.example.com/ingest/')).toBe(
       'https://custom.example.com/ingest'

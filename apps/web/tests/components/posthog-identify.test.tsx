@@ -16,6 +16,9 @@ vi.mock('@/lib/posthog', () => posthogMocks);
 
 import { PostHogIdentify } from '@/components/posthog-identify';
 
+const USER_ID = 'user-123';
+const TENANT_ID = 'acme';
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
@@ -23,23 +26,23 @@ beforeEach(() => {
 describe('PostHogIdentify', () => {
   it('identifies with the user id and tenant subdomain only', () => {
     const { container } = render(
-      <PostHogIdentify userId="user-123" tenantId="acme" />
+      <PostHogIdentify userId={USER_ID} tenantId={TENANT_ID} />
     );
     expect(posthogMocks.identifyUser).toHaveBeenCalledWith(
-      'user-123',
-      'acme'
+      USER_ID,
+      TENANT_ID
     );
     expect(container).toBeEmptyDOMElement();
   });
 
   it('re-identifies when the user or workspace changes', () => {
     const { rerender } = render(
-      <PostHogIdentify userId="user-123" tenantId="acme" />
+      <PostHogIdentify userId={USER_ID} tenantId={TENANT_ID} />
     );
-    rerender(<PostHogIdentify userId="user-123" tenantId="other" />);
+    rerender(<PostHogIdentify userId={USER_ID} tenantId="other" />);
     expect(posthogMocks.identifyUser).toHaveBeenCalledTimes(2);
     expect(posthogMocks.identifyUser).toHaveBeenLastCalledWith(
-      'user-123',
+      USER_ID,
       'other'
     );
   });

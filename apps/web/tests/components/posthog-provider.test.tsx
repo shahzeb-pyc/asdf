@@ -18,7 +18,13 @@ const posthogMocks = vi.hoisted(() => ({
 
 vi.mock('@/lib/posthog', () => posthogMocks);
 
+const PAGES_PATH = '/pages';
+const HOST_REGION = 'US';
+
 const navState = vi.hoisted(() => ({
+  // Literal here, not PAGES_PATH: hoisted factories run before the
+  // module's top-level consts initialize (TDZ). beforeEach resets
+  // this to PAGES_PATH anyway, so both stay the same value.
   pathname: '/pages',
   search: '',
 }));
@@ -32,38 +38,36 @@ import { PostHogProvider } from '@/components/posthog-provider';
 
 beforeEach(() => {
   vi.clearAllMocks();
-  navState.pathname = '/pages';
+  navState.pathname = PAGES_PATH;
   navState.search = '';
 });
 
 describe('PostHogProvider', () => {
   it('inits and captures the initial pageview', () => {
     render(
-      <PostHogProvider apiKey="test-key" host="US">
+      <PostHogProvider apiKey="test-key" host={HOST_REGION}>
         <div>child</div>
       </PostHogProvider>
     );
     expect(posthogMocks.initPostHog).toHaveBeenCalledWith('test-key', 'US');
-    expect(posthogMocks.capturePageview).toHaveBeenCalledWith('/pages');
+    expect(posthogMocks.capturePageview).toHaveBeenCalledWith(PAGES_PATH);
     expect(posthogMocks.identifyUser).not.toHaveBeenCalled();
   });
 
   it('captures a new pageview when the route changes', () => {
     const { rerender } = render(
-      <PostHogProvider apiKey="test-key" host="US">
+      <PostHogProvider apiKey="test-key" host={HOST_REGION}>
         <div>child</div>
       </PostHogProvider>
     );
-    expect(posthogMocks.capturePageview).toHaveBeenCalledWith('/pages');
-    navState.pathname = '/pages';
+    expect(posthogMocks.capturePageview).toHaveBeenCalledWith(PAGES_PATH);
+    navState.pathname = PAGES_PATH;
     navState.search = 'tab=queue';
     rerender(
-      <PostHogProvider apiKey="test-key" host="US">
+      <PostHogProvider apiKey="test-key" host={HOST_REGION}>
         <div>child</div>
       </PostHogProvider>
     );
-    expect(posthogMocks.capturePageview).toHaveBeenCalledWith(
-      '/pages?tab=queue'
-    );
+    expect(posthogMocks.capturePageview).toHaveBeenCalledWith(`${PAGES_PATH}?tab=queue`);
   });
 });

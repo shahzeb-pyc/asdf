@@ -28,15 +28,22 @@
  *   resilience) is a noted follow-up, not half-built here.
  */
 
+/**
+ * The Facebook platform literal, shared by every event that carries
+ * it — written once so the string is never duplicated across the
+ * taxonomy (and so a future platform rename touches one line).
+ */
+export type FacebookPlatform = 'facebook';
+
 export interface AnalyticsEventProperties {
   /** A social account finished connecting. `reconnected` = the account row already existed. */
   account_connected: {
-    platform: 'facebook' | 'instagram';
+    platform: FacebookPlatform | 'instagram';
     reconnected: boolean;
   };
   /** Pages finished importing via Add Page. `count` = pages actually added. */
   page_added: {
-    platform: 'facebook';
+    platform: FacebookPlatform;
     count: number;
   };
   /** One post was queued from the composer. `post_type` = the derived queue kind. */
@@ -46,7 +53,7 @@ export interface AnalyticsEventProperties {
   };
   /** Publish Now finished. Only fires when at least one page published. */
   post_published_now: {
-    platform: 'facebook';
+    platform: FacebookPlatform;
     page_count: number;
     published_count: number;
   };
@@ -57,7 +64,7 @@ export interface AnalyticsEventProperties {
   /** An Auto Repost mirror was created. */
   mirror_created: {
     source_platform: 'tiktok';
-    target_platform: 'facebook';
+    target_platform: FacebookPlatform;
   };
 }
 
