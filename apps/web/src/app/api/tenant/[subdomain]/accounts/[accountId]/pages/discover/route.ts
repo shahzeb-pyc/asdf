@@ -123,14 +123,46 @@ export async function handleDiscoverPages(
     }
     account = accData;
 
-    const { data: pageRows } = await supabase
-      .from('destinations')
-      .select('external_destination_id, status, metadata')
-      .eq('workspace_id', workspaceId)
-      .eq('account_id', accountId)
-      .eq('platform', 'facebook');
+    // Audit N1: page through with .range() like the accounts
+    // list — a single select would silently truncate past
+    // PostgREST's 1,000-row limit and misreport isImported.
+    // Past 10 full pages the discover fails loudly instead.
+    const DISCOVER_PAGE_SIZE = 1000;
+    const DISCOVER_MAX_PAGES = 10;
+    const pageRows: unknown[] = [];
+    for (let page = 0; page < DISCOVER_MAX_PAGES; page++) {
+      const from = page * DISCOVER_PAGE_SIZE;
+      const { data, error: pageErr } = await supabase
+        .from('destinations')
+        .select('external_destination_id, status, metadata')
+        .eq('workspace_id', workspaceId)
+        .eq('account_id', accountId)
+        .eq('platform', 'facebook')
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+        .range(from, from + DISCOVER_PAGE_SIZE - 1);
+      if (pageErr) {
+        return NextResponse.json(
+          { error: 'Failed to load imported pages' },
+          { status: 500 }
+        );
+      }
+      const slice = (data || []) as unknown[];
+      pageRows.push(...slice);
+      if (slice.length < DISCOVER_PAGE_SIZE) {
+        break;
+      }
+      if (page === DISCOVER_MAX_PAGES - 1) {
+        // A 10th full page means more rows may exist — fail
+        // loudly rather than misreport isImported on a partial set.
+        return NextResponse.json(
+          { error: 'Too many imported pages to list reliably; please contact support.' },
+          { status: 500 }
+        );
+      }
+    }
 
-    const destinationRows = (pageRows || []) as unknown as Array<{
+    const destinationRows = pageRows as unknown as Array<{
       external_destination_id: string;
       status: string;
       metadata: Record<string, unknown> | null;

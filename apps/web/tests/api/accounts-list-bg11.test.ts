@@ -144,6 +144,86 @@ process.env.SESSION_SECRET = TEST_SECRET;
     expect(dataQuery).not.toContain("sa.status = 'active' AND sa.token_expires_at < now()");
   });
 
+  it('escapes ILIKE wildcards in the search term (N2)', async () => {
+    const seenSql: string[] = [];
+    const db = {
+      query: vi.fn().mockImplementation((sql: string) => {
+        seenSql.push(sql);
+        if (sql.includes('FROM workspaces')) {
+          return Promise.resolve([{ id: 'ws_123' }]);
+        }
+        if (sql.includes('SELECT COUNT(*)')) {
+          return Promise.resolve([{ total: 0 }]);
+        }
+        return Promise.resolve([]);
+      }),
+    } as unknown as DatabaseClient;
+
+    const req = new NextRequest(
+      'http://localhost:3000/api/tenant/acme/accounts?search=100%25',
+      { headers: { cookie: validSessionCookie } }
+    );
+    const res = await handleListAccounts(req, 'acme', db);
+    expect(res.status).toBe(200);
+    const dataQuery = seenSql.find(
+      (sql) => sql.includes('FROM social_accounts sa') && sql.includes('LIMIT')
+    );
+    expect(dataQuery).toBeDefined();
+    expect(dataQuery).toContain('ILIKE');
+    expect(dataQuery).toContain("ESCAPE '\\'");
+  });
+
+  it('rejects an unknown status filter instead of silently listing all (N2)', async () => {
+    const db = {
+      query: vi.fn().mockImplementation((sql: string) => {
+        if (sql.includes('FROM workspaces')) {
+          return Promise.resolve([{ id: 'ws_123' }]);
+        }
+        return Promise.resolve([]);
+      }),
+    } as unknown as DatabaseClient;
+
+    const req = new NextRequest(
+      'http://localhost:3000/api/tenant/acme/accounts?status=bogus',
+      { headers: { cookie: validSessionCookie } }
+    );
+    const res = await handleListAccounts(req, 'acme', db);
+    expect(res.status).toBe(400);
+  });
+
+  it('runs the workspace-wide lapse sync before the list fetch (N3)', async () => {
+    const seenSql: string[] = [];
+    const db = {
+      query: vi.fn().mockImplementation((sql: string) => {
+        seenSql.push(sql);
+        if (sql.includes('FROM workspaces')) {
+          return Promise.resolve([{ id: 'ws_123' }]);
+        }
+        if (sql.includes('SELECT COUNT(*)')) {
+          return Promise.resolve([{ total: 0 }]);
+        }
+        return Promise.resolve([]);
+      }),
+    } as unknown as DatabaseClient;
+
+    const req = new NextRequest(
+      'http://localhost:3000/api/tenant/acme/accounts',
+      { headers: { cookie: validSessionCookie } }
+    );
+    const res = await handleListAccounts(req, 'acme', db);
+    expect(res.status).toBe(200);
+    const syncIdx = seenSql.findIndex((sql) =>
+      sql.includes("SET status = 'expired'") && sql.includes('token_expires_at < now()')
+    );
+    const dataIdx = seenSql.findIndex(
+      (sql) => sql.includes('FROM social_accounts sa') && sql.includes('LIMIT')
+    );
+    expect(syncIdx).toBeGreaterThanOrEqual(0);
+    expect(dataIdx).toBeGreaterThan(syncIdx);
+    // Workspace-wide, not page-scoped: no per-row id filter.
+    expect(seenSql[syncIdx]).not.toContain('WHERE id = $1');
+  });
+
   it("filters 'error' as neither connected nor expired (UX2)", async () => {
     const seenSql: string[] = [];
     const db = {
