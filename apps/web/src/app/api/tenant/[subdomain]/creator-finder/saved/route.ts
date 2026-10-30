@@ -14,6 +14,7 @@ import {
   getCreatorFinderSupabase,
   getCreatorFinderWorkspaceId,
   listSavedCreators,
+  logCreatorFinderDbError,
 } from '../lib';
 
 type Resolved =
@@ -115,6 +116,7 @@ export async function DELETE(
       .eq('workspace_id', resolved.workspaceId)
       .eq('user_id', resolved.session.userId);
     if (error) {
+      logCreatorFinderDbError('saved clear-all delete', error);
       return NextResponse.json(
         {
           error: 'SAVED_UNAVAILABLE',

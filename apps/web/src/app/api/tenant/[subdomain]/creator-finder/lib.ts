@@ -72,6 +72,28 @@ export async function getCreatorFinderSession(
   return { session };
 }
 
+/**
+ * Log a database failure server-side with its error code + reason
+ * (never secrets, never user data) so a failed persist can be
+ * diagnosed from the log. User-facing messages stay plain and are
+ * produced by the calling route; this log is the diagnosis trail.
+ */
+export function logCreatorFinderDbError(
+  context: string,
+  error: unknown,
+): void {
+  const record = error as { code?: unknown; message?: unknown } | null;
+  const code =
+    record && typeof record.code === 'string' ? record.code : 'UNKNOWN';
+  const message =
+    record && typeof record.message === 'string'
+      ? record.message
+      : 'unknown database error';
+  console.error(
+    `[creator-finder] ${context} failed: code=${code} message=${message}`,
+  );
+}
+
 /** Admin client for creator-finder database access, or null. */
 export function getCreatorFinderSupabase(): SupabaseClient | null {
   return getRouteSupabase();
@@ -116,7 +138,10 @@ export async function saveCreatorsToDb(
       .eq('workspace_id', workspaceId)
       .eq('user_id', userId)
       .in('handle', handles);
-    if (readError) return false;
+    if (readError) {
+      logCreatorFinderDbError('saveCreatorsToDb read existing', readError);
+      return false;
+    }
     const existingByHandle = new Map<
       string,
       { followerCount?: number | undefined; verified?: boolean | undefined }
@@ -158,8 +183,12 @@ export async function saveCreatorsToDb(
     const { error: upsertError } = await supabase
       .from(SAVED_CREATORS_TABLE)
       .upsert(rows, { onConflict: 'workspace_id,user_id,handle' });
+    if (upsertError) {
+      logCreatorFinderDbError('saveCreatorsToDb upsert', upsertError);
+    }
     return !upsertError;
-  } catch {
+  } catch (err) {
+    logCreatorFinderDbError('saveCreatorsToDb', err);
     return false;
   }
 }
@@ -182,7 +211,10 @@ export async function listSavedCreators(
       .eq('workspace_id', workspaceId)
       .eq('user_id', userId)
       .order('updated_at', { ascending: false });
-    if (error) return null;
+    if (error) {
+      logCreatorFinderDbError('listSavedCreators', error);
+      return null;
+    }
     const creators: SavedCreator[] = [];
     for (const row of data ?? []) {
       const creator = savedCreatorFromRow(
@@ -191,7 +223,8 @@ export async function listSavedCreators(
       if (creator) creators.push(creator);
     }
     return creators;
-  } catch {
+  } catch (err) {
+    logCreatorFinderDbError('listSavedCreators', err);
     return null;
   }
 }
@@ -211,8 +244,12 @@ export async function deleteSavedCreator(
       .eq('workspace_id', workspaceId)
       .eq('user_id', userId)
       .eq('handle', handle);
+    if (error) {
+      logCreatorFinderDbError('deleteSavedCreator', error);
+    }
     return !error;
-  } catch {
+  } catch (err) {
+    logCreatorFinderDbError('deleteSavedCreator', err);
     return false;
   }
 }

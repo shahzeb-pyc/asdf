@@ -519,12 +519,14 @@ describe('fetchSimilarCreators', () => {
     expect(result.creators.find((c) => c.handle === 'frank')?.followerCount).toBeUndefined();
     expect(result.creators.find((c) => c.handle === 'carol')?.followerCount).toBeUndefined();
     const urls = fetchFn.mock.calls.map((call) => String(call[0]));
-    expect(urls).toContain('/user/following?user_id=107955&count=200');
-    expect(urls).toContain('/user/followers?user_id=107955&count=200');
-    expect(urls).toContain('/user/search?keywords=Seed&count=30');
-    expect(urls).toContain('/user/posts?unique_id=seed&count=30');
-    expect(urls).toContain('/challenge/info?challenge_name=fitness');
-    expect(urls).toContain('/challenge/posts?challenge_id=1&count=30');
+    // The code calls full URLs (TIKWMAPI_BASE_URL + path), so assert
+    // against the full URLs the code actually produces.
+    expect(urls).toContain('https://api.tikwmapi.com/user/following?user_id=107955&count=200');
+    expect(urls).toContain('https://api.tikwmapi.com/user/followers?user_id=107955&count=200');
+    expect(urls).toContain('https://api.tikwmapi.com/user/search?keywords=Seed&count=30');
+    expect(urls).toContain('https://api.tikwmapi.com/user/posts?unique_id=seed&count=30');
+    expect(urls).toContain('https://api.tikwmapi.com/challenge/info?challenge_name=fitness');
+    expect(urls).toContain('https://api.tikwmapi.com/challenge/posts?challenge_id=1&count=30');
   });
 
   it('keeps followerCount and verified optional: trending/niche-style creators parse without them', async () => {
