@@ -12,9 +12,10 @@
  * - Structure and order: branding header (logo + wordmark, a Link to
  *   Home) → primary group (Home, Media Library, Fdola
  *   Studio) → Facebook collapsible group (default open; Accounts,
- *   Pages, Publish Now) → one collapsible group per upcoming platform, each with a
- *   single Accounts item and the testing-placeholder note → Billing collapsible
- *   group (default open; My Plan, Purchase, Payments), last → footer.
+ *   Pages, Publish Now, Auto Repost, Auto Download/Upload) → one collapsible
+ *   group per upcoming platform, each with a single Accounts item and the
+ *   testing-placeholder note → Billing collapsible group (default open;
+ *   My Plan, Purchase, Payments), last → footer.
  * - Spec 110 single-click model: every leaf is a Next.js <Link> that
  *   navigates on the FIRST click; the leaf click handler only paints
  *   the active state optimistically and closes the mobile drawer — it
@@ -158,6 +159,7 @@ function WorkspaceSidebarContent({
   const billingMyPlanHref = href('/billing?view=my-plan');
   const billingPurchaseHref = href('/billing?view=purchase');
   const billingPaymentsHref = href('/billing?view=payments');
+  const autoDownloadUploadHref = href('/auto-download-upload');
 
   const isHomeActive = effectivePath === normalizeTenantPath(homeHref, subdomain);
   const isMediaActive = effectivePath.startsWith(normalizeTenantPath(mediaHref, subdomain));
@@ -195,6 +197,9 @@ function WorkspaceSidebarContent({
     isBillingActive && (billingView === null || billingView === 'my-plan');
   const isPurchaseActive = isBillingActive && billingView === 'purchase';
   const isPaymentsActive = isBillingActive && billingView === 'payments';
+  const isAutoDownloadUploadActive = effectivePath.startsWith(
+    normalizeTenantPath(autoDownloadUploadHref, subdomain)
+  );
 
   const handleNavigate = (targetHref: string) => {
     setOptimisticPathname(targetHref);
@@ -361,8 +366,15 @@ function WorkspaceSidebarContent({
             <SidebarMenu>
               <SidebarMenuItem>
                 <SidebarMenuButton
-                  tooltip="Facebook — Accounts, Pages, Publish Now & Auto Repost"
-                  isActive={isCollapsed && (isAccountsActive || isPagesActive || isPublishNowActive || isTiktokMirrorsActive)}
+                  tooltip="Facebook — Accounts, Pages, Publish Now, Auto Repost & Auto Download/Upload"
+                  isActive={
+                    isCollapsed &&
+                    (isAccountsActive ||
+                      isPagesActive ||
+                      isPublishNowActive ||
+                      isTiktokMirrorsActive ||
+                      isAutoDownloadUploadActive)
+                  }
                   aria-expanded={isCollapsed ? undefined : isFacebookOpen}
                   onClick={() => {
                     if (isCollapsed) {
@@ -386,6 +398,7 @@ function WorkspaceSidebarContent({
                     <NavSubLeaf label="Pages" href={pagesHref} isActive={isPagesActive} onLeafClick={handleLeafClick} />
                     <NavSubLeaf label="Publish Now" href={publishNowHref} isActive={isPublishNowActive} onLeafClick={handleLeafClick} />
                     <NavSubLeaf label="Auto Repost" href={tiktokMirrorsHref} isActive={isTiktokMirrorsActive} onLeafClick={handleLeafClick} />
+                    <NavSubLeaf label="Auto Download/Upload" href={autoDownloadUploadHref} isActive={isAutoDownloadUploadActive} onLeafClick={handleLeafClick} />
                   </SidebarMenuSub>
                 )}
               </SidebarMenuItem>

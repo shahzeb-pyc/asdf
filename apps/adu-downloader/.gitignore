@@ -1,0 +1,8 @@
+logs/
+cache/
+__pycache__/
+*.pyc
+.venv/
+.env
+# (old .gitignore only ignored logs/ and cache/; bytecode and the venv
+# were in .dockerignore instead — this file now covers them for git too)

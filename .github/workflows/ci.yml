@@ -37,6 +37,14 @@ jobs:
       - name: Run Turbo test with Vitest coverage
         run: pnpm turbo run test -- --coverage
 
+      - name: ADU scraper tests (standalone VPS service, outside the pnpm workspace)
+        run: node --test apps/adu-scraper/discovery/*.test.js
+
+      - name: ADU downloader tests (standalone VPS service, pure functions only)
+        run: |
+          python3 -m pip install -q --only-binary :all: pytest==9.2.0 python-dotenv==1.2.4 boto3==1.43.122
+          python3 -m pytest apps/adu-downloader/tests -q
+
       - name: "Install Tauri system dependencies (spec 145: the desktop crate now depends on Tauri v2)"
         run: |
           sudo apt-get update -qq
@@ -375,7 +383,7 @@ jobs:
           node --input-type=module -e "
           import pg from 'pg';
           const pool = new pg.Pool({ connectionString: 'postgres://postgres:postgres@localhost:5432/postgres' });
-          for (const db of ['rls117', 'claim138_parity', 'claim138_scale', 'settle139', 'dbhygiene139']) {
+          for (const db of ['rls117', 'claim138_parity', 'claim138_scale', 'settle139', 'dbhygiene139', 'adurpc']) {
             await pool.query('CREATE DATABASE ' + db);
             console.log('created database ' + db);
           }
@@ -431,4 +439,14 @@ jobs:
         env:
           CLAIM_RPC_PG_URL: postgres://postgres:postgres@localhost:5432/claim138_scale
         run: pnpm --filter @fbuploadpro/worker exec tsx tests/claim-rpc/scale.ts
+
+      - name: ADU RPC-grants rig — apply bootstrap + migrations
+        env:
+          ADU_RPC_GRANTS_PG_URL: postgres://postgres:postgres@localhost:5432/adurpc
+        run: pnpm --filter @fbuploadpro/worker exec tsx tests/adu-rpc-grants/db/run-migrations.ts
+
+      - name: ADU RPC-grants rig — grant closure + hub list/stats assertions
+        env:
+          ADU_RPC_GRANTS_PG_URL: postgres://postgres:postgres@localhost:5432/adurpc
+        run: pnpm --filter @fbuploadpro/worker exec tsx tests/adu-rpc-grants/check.ts
 
