@@ -59,7 +59,13 @@ export async function handleConnectFacebook(
     appUrlFallback
   );
 
-  // 3. Generate signed OAuth state flagged with isMagic: true
+  // 3. Generate signed OAuth state flagged with isMagic: true.
+  // Audit BG12 — window composition rule: the magic window
+  // bounds the flow end-to-end. The OAuth state for a magic
+  // flow never outlives the magic token that admitted it, so a
+  // user who enters at minute 14 does NOT get a fresh 10
+  // minutes (no ~25-minute composition). Direct flows keep
+  // their own 10-minute state (see /api/auth/facebook).
   const now = Math.floor(Date.now() / 1000);
   const nonce = crypto.randomUUID().replaceAll('-', '');
   const state = await signOAuthState(
@@ -68,7 +74,7 @@ export async function handleConnectFacebook(
       userId: payload.userId,
       nonce,
       iat: now,
-      exp: now + 600, // 10 minutes
+      exp: Math.min(now + 600, payload.exp),
       isMagic: true,
       redirectUri,
       ...(payload.expectedFbAccountId

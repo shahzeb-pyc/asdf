@@ -21,18 +21,33 @@ export async function handleInitiateFacebookOAuth(
     process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 
   try {
+    // Audit BG14: a session lost before the flow starts must
+    // keep a return path. The old code sent every session
+    // failure to bare /login, dropping both the explanation
+    // and the destination. Now: reason=session-expired always
+    // (the login page renders that notice), and next=<tenant
+    // accounts path> whenever the tenant is known (a parsed
+    // session, including an inactive one). With no cookie or
+    // an unverifiable cookie the tenant is unknowable, so no
+    // next is sent — the login page defaults sensibly.
+    const sessionLossRedirect = (subdomain?: string) => {
+      const loginUrl = new URL('/login', request.url);
+      if (subdomain) {
+        loginUrl.searchParams.set('next', `/tenant/${subdomain}/accounts`);
+      }
+      loginUrl.searchParams.set('reason', 'session-expired');
+      return NextResponse.redirect(loginUrl);
+    };
     const sessionCookie = request.cookies.get('fbup_session')?.value;
     if (!sessionCookie) {
-      const loginUrl = new URL('/login', request.url);
-      return NextResponse.redirect(loginUrl);
+      return sessionLossRedirect();
     }
 
     let session;
     try {
       session = await verifySessionToken(sessionCookie, sessionSecret);
     } catch (_e) {
-      const loginUrl = new URL('/login', request.url);
-      return NextResponse.redirect(loginUrl);
+      return sessionLossRedirect();
     }
 
     // Audit S1: live session validation — a suspended user or a
@@ -40,8 +55,7 @@ export async function handleInitiateFacebookOAuth(
     // connect flow, same as an unverifiable session.
     const { validateSessionActive } = await import('@/lib/auth/session');
     if (!(await validateSessionActive(session))) {
-      const loginUrl = new URL('/login', request.url);
-      return NextResponse.redirect(loginUrl);
+      return sessionLossRedirect(session.subdomain);
     }
 
     // 2. Resolve workspace BYOC Facebook credentials

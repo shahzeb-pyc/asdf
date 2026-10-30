@@ -10,6 +10,7 @@ import {
   getSessionSecret,
   getTokenEncryptionKey,
   type OAuthStatePayload,
+  peekOAuthStatePayload,
   verifyOAuthState,
   verifySessionToken,
   type DatabaseClient,
@@ -127,10 +128,32 @@ async function resolveOAuthErrorTarget(
       );
     } catch (err) {
       // Fallback to /accounts if state cannot be verified — logged
-      // (spec 139 B3), not silent.
+      // (spec 139 B3), not silent. Audit BG13: before falling
+      // back, peek the signed (possibly expired) state for the
+      // explicit magic signal — an expired magic state still
+      // routes to the magic error page instead of the tenant
+      // accounts page whose login gate would swallow the error.
+      // A tampered state peeks to null and keeps the fallback:
+      // with no signal, magic cannot be proven.
       logServerError('[FacebookOAuth] Callback state verification failed', err, {
         source: 'facebook-oauth-callback',
       });
+      const peeked = await peekOAuthStatePayload(state, sessionSecret);
+      if (peeked?.isMagic) {
+        const magicErrorUrl = buildMagicConnectUrl(
+          '/connect/facebook/error',
+          requestUrl,
+          rootDomain,
+          appUrl
+        );
+        const isCancelled =
+          error === 'access_denied' || error === 'user_cancelled';
+        magicErrorUrl.searchParams.set(
+          'reason',
+          isCancelled ? 'cancelled' : 'oauth_failed'
+        );
+        return magicErrorUrl;
+      }
     }
   }
   target.searchParams.set('error', error);
@@ -607,6 +630,24 @@ export async function handleFacebookCallback(
   try {
     statePayload = await verifyOAuthState(state, sessionSecret);
   } catch (_e) {
+    // Audit BG13: an expired-but-signed magic state routes to
+    // the magic error page (reason expired_or_invalid → the
+    // page's default "link expired, generate a fresh link"
+    // copy), not to the tenant accounts page whose login gate
+    // would drop the user at /login with the error lost. A
+    // tampered state peeks to null and keeps the tenant
+    // fallback — magic cannot be proven from it.
+    const peeked = await peekOAuthStatePayload(state, sessionSecret);
+    if (peeked?.isMagic) {
+      const magicErrorUrl = buildMagicConnectUrl(
+        '/connect/facebook/error',
+        request.url,
+        rootDomain,
+        appUrl
+      );
+      magicErrorUrl.searchParams.set('reason', 'expired_or_invalid');
+      return NextResponse.redirect(magicErrorUrl);
+    }
     const target = new URL('/accounts', request.url);
     target.searchParams.set('error', 'invalid_oauth_state');
     return NextResponse.redirect(target);
@@ -622,10 +663,32 @@ export async function handleFacebookCallback(
 
   // CSRF validation for direct OAuth flows (Spec Issue 8)
   if (!statePayload.isMagic) {
+    // Audit BG14: a session lost mid-flow must keep a return
+    // path. The old code sent every session failure to the
+    // tenant accounts page, which itself requires a session —
+    // so the user bounced to /login with the error lost and no
+    // way back. Expiry-like failures (missing, unverifiable, or
+    // inactive session) now go to /login directly with
+    // next=<tenant accounts path> and reason=session-expired:
+    // the login page shows the session-expired notice and
+    // returns the user to accounts after sign-in, where they
+    // can click Connect again. A session_mismatch keeps the
+    // accounts error banner: a session exists there, so the
+    // banner renders (the specific mismatch detail is only
+    // lost for the login-bound cases, where the accounts page
+    // cannot render at all).
+    const sessionLossRedirect = () => {
+      const loginUrl = new URL('/login', request.url);
+      loginUrl.searchParams.set(
+        'next',
+        `/tenant/${tenantSubdomain}/accounts`
+      );
+      loginUrl.searchParams.set('reason', 'session-expired');
+      return NextResponse.redirect(loginUrl);
+    };
     const sessionCookie = request.cookies.get('fbup_session')?.value;
     if (!sessionCookie) {
-      destinationUrl.searchParams.set('error', 'unauthorized');
-      return NextResponse.redirect(destinationUrl);
+      return sessionLossRedirect();
     }
     try {
       const session = await verifySessionToken(sessionCookie, sessionSecret);
@@ -639,12 +702,10 @@ export async function handleFacebookCallback(
       // owner decision on BL3), so it is deliberately untouched.
       const { validateSessionActive } = await import('@/lib/auth/session');
       if (!(await validateSessionActive(session))) {
-        destinationUrl.searchParams.set('error', 'unauthorized');
-        return NextResponse.redirect(destinationUrl);
+        return sessionLossRedirect();
       }
     } catch {
-      destinationUrl.searchParams.set('error', 'unauthorized');
-      return NextResponse.redirect(destinationUrl);
+      return sessionLossRedirect();
     }
   }
 
