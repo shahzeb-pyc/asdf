@@ -358,4 +358,12 @@ describe('propagateRevokedAccount (Supabase path)', () => {
       propagateRevokedAccount(supabase as never, ACCOUNT_ID)
     ).rejects.toThrow('boom');
   });
+
+  it('touches no queue items when no destination flips', async () => {
+    const { supabase, calls } = supabaseMock([], []);
+    const result = await propagateRevokedAccount(supabase as never, ACCOUNT_ID);
+    expect(result).toEqual({ destinationsFlipped: 0, itemsCancelled: 0 });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.table).toBe('destinations');
+  });
 });
