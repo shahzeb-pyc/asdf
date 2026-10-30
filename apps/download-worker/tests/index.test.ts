@@ -131,3 +131,147 @@ describe('worker scheduled', () => {
     ).rejects.toThrow(/misconfigured/);
   });
 });
+
+describe('worker fetch /enqueue and cron gaps', () => {
+  it('500s listing every missing binding and secret', async () => {
+    const env = makeEnv({
+      SUPABASE_URL: '',
+      SUPABASE_SERVICE_ROLE_KEY: '',
+      DOWNLOAD_ENQUEUE_SECRET: '',
+      R2_PUBLIC_URL: '',
+    });
+    const response = await worker.fetch(enqueueRequest({ jobIds: [JOB_ID] }), env);
+    expect(response.status).toBe(500);
+    const body = (await response.json()) as { error: string };
+    for (const name of [
+      'SUPABASE_URL',
+      'SUPABASE_SERVICE_ROLE_KEY',
+      'DOWNLOAD_ENQUEUE_SECRET',
+      'R2_PUBLIC_URL',
+    ]) {
+      expect(body.error).toContain(name);
+    }
+  });
+
+  it('400s a body that is not JSON', async () => {
+    const env = makeEnv();
+    const request = new Request('https://worker.example.test/enqueue', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-download-enqueue-secret': SECRET,
+      },
+      body: 'not json',
+    });
+    const response = await worker.fetch(request, env);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'Invalid JSON' });
+  });
+
+  it('enqueues a still-queued job and reports enqueued 1', async () => {
+    const sent: unknown[] = [];
+    const row = {
+      id: JOB_ID,
+      user_id: USER_ID,
+      source_url: 'https://cdn.example.com/v.mp4',
+      source_platform: 'direct',
+      target_folder_id: null,
+      status: 'queued',
+      progress_percent: 0,
+      total_bytes: null,
+      downloaded_bytes: 0,
+      media_id: null,
+      error_code: null,
+      error_message: null,
+      attempts: 0,
+      claimed_at: null,
+      claimed_by: null,
+      created_at: '2026-10-30T00:00:00.000Z',
+      updated_at: '2026-10-30T00:00:00.000Z',
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify(row), { status: 200 }))
+    );
+    const env = makeEnv({
+      DOWNLOAD_QUEUE: {
+        send: async (message: unknown) => {
+          sent.push(message);
+        },
+        sendBatch: async () => undefined,
+      } as unknown as Queue,
+    });
+    const response = await worker.fetch(enqueueRequest({ jobIds: [JOB_ID] }), env);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ enqueued: 1 });
+    expect(sent).toEqual([{ jobId: JOB_ID, userId: USER_ID }]);
+  });
+});
+
+describe('worker queue extractor URL validation', () => {
+  const batch = {
+    queue: 'download-jobs',
+    messages: [{ body: { jobId: JOB_ID, userId: USER_ID } }],
+  } as unknown as MessageBatch<DownloadQueueMessage>;
+
+  it('rejects a non-https extractor URL before processing', async () => {
+    const env = makeEnv({ DOWNLOADER_EXTRACTOR_API_URL: 'http://ext.example.com' });
+    await expect(worker.queue(batch, env)).rejects.toThrow(/must be https/);
+  });
+
+  it('rejects an https extractor URL pointing at a private address', async () => {
+    const env = makeEnv({ DOWNLOADER_EXTRACTOR_API_URL: 'https://127.0.0.1/x' });
+    await expect(worker.queue(batch, env)).rejects.toThrow(/rejected/);
+  });
+
+  it('trims a valid extractor URL instead of rejecting it', async () => {
+    const env = makeEnv({ DOWNLOADER_EXTRACTOR_API_URL: '  https://ext.example.com  ' });
+    // A malformed message still throws its own validation error, which
+    // proves the extractor URL itself passed validation.
+    const bad = {
+      queue: 'download-jobs',
+      messages: [{ body: { jobId: 'not-a-uuid', userId: USER_ID } }],
+    } as unknown as MessageBatch<DownloadQueueMessage>;
+    await expect(worker.queue(bad, env)).rejects.toThrow(/Malformed/);
+  });
+});
+
+describe('worker scheduled success path', () => {
+  it('sweeps a queued job into the Queue when its user has a free slot', async () => {
+    const sent: unknown[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? 'GET';
+        if (url.includes('/rest/v1/download_worker_heartbeats')) {
+          return new Response(JSON.stringify([{}]), { status: 200 });
+        }
+        if (url.includes('/rest/v1/media_download_jobs') && method === 'HEAD') {
+          return new Response(null, { headers: { 'content-range': '*/0' } });
+        }
+        if (url.includes('/rest/v1/media_download_jobs') && method === 'GET') {
+          return new Response(JSON.stringify([{ id: JOB_ID, user_id: USER_ID }]), {
+            status: 200,
+          });
+        }
+        if (url.includes('/rest/v1/media_download_jobs') && method === 'PATCH') {
+          return new Response(JSON.stringify([]), { status: 200 });
+        }
+        throw new Error(`unexpected request: ${method} ${url}`);
+      })
+    );
+    const env = makeEnv({
+      DOWNLOAD_QUEUE: {
+        send: async (message: unknown) => {
+          sent.push(message);
+        },
+        sendBatch: async () => undefined,
+      } as unknown as Queue,
+    });
+    await expect(
+      worker.scheduled({} as unknown as ScheduledEvent, env)
+    ).resolves.toBeUndefined();
+    expect(sent).toEqual([{ jobId: JOB_ID, userId: USER_ID }]);
+  });
+});

@@ -8,17 +8,16 @@ import {
 import {
   deriveFileNameFromUrl,
   extractFilenameFromContentDisposition,
-  resolveAllowedMimeType,
-  sanitizeFileNameWithExtension,
-  type AllowedMediaMime,
-} from './mime.js';
-import {
   fetchCandidateResponse,
+  fetchWithTimeoutToHeaders,
   MediaDownloaderError,
+  MEDIA_FETCH_TIMEOUT_MS,
+  resolveAllowedMimeType,
+  ResumeUnsupportedError,
+  sanitizeFileNameWithExtension,
   validateAndNormalizeStreamUrl,
-} from './resolvers.js';
-import { DownloadAbortedError, ResumeUnsupportedError } from './errors.js';
-import { MEDIA_FETCH_TIMEOUT_MS, fetchWithTimeoutToHeaders } from './http.js';
+  type AllowedMediaMime,
+} from '@fbuploadpro/downloader-engine';
 
 /**
  * Workers-native single-candidate stream (spec 149 backend revision
@@ -213,26 +212,15 @@ async function streamToSink(
   onProgress: ((progress: DownloadProgress) => void) | undefined
 ): Promise<{ key: string; byteLength: number; publicUrl: string }> {
   if (!response.body) {
-    const buffer = await response.arrayBuffer();
-    if (buffer.byteLength === 0) {
-      throw new MediaDownloaderError(
-        'UNSUPPORTED_MEDIA',
-        'The remote media file was empty and could not be saved.',
-        400
-      );
-    }
-    const bytes = new Uint8Array(buffer);
-    if (startByte + bytes.byteLength > DOWNLOAD_JOB_MAX_BYTES) {
-      throw new MediaDownloaderError('FILE_TOO_LARGE', 'This file exceeds the 500 MB maximum size limit.', 400);
-    }
-    try {
-      await sink.write(bytes);
-      onProgress?.({ downloadedBytes: startByte + bytes.byteLength, totalBytes });
-      return await sink.finish();
-    } catch (err) {
-      await sink.abort().catch(() => undefined);
-      throw err;
-    }
+    // A null body is always empty (null-body / 204 / HEAD responses):
+    // there are no bytes to write, so this is the empty-stream case.
+    // (The write path below is unreachable for a null body and was
+    // removed rather than left as uncovered dead code.)
+    throw new MediaDownloaderError(
+      'UNSUPPORTED_MEDIA',
+      'The remote media file was empty and could not be saved.',
+      400
+    );
   }
 
   const reader = response.body.getReader();
@@ -413,5 +401,3 @@ export async function downloadAndStoreCandidate(
     captionText,
   };
 }
-
-export { DownloadAbortedError };

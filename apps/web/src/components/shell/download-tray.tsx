@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import type { DownloadJob } from '@fbuploadpro/contracts';
 import { Button } from '@/components/shared/ui/button';
+import { Progress } from '@/components/shared/ui/progress';
 import { buildTenantHref } from '@/lib/tenant-href';
 import {
   isDownloadJobActive,
@@ -279,17 +280,11 @@ export function DownloadTray({ subdomain, useCleanPaths = false }: Readonly<Down
                 </p>
               ) : (
                 <div className="flex items-center gap-2">
-                  <div
-                    role="progressbar"
-                    aria-valuenow={job.totalBytes ? job.progressPercent : undefined}
+                  <Progress
+                    value={job.progressPercent}
                     aria-label={`Download progress for ${displayNameForJob(job)}`}
-                    className="h-2 flex-1 overflow-hidden rounded-full bg-line"
-                  >
-                    <div
-                      className="h-full rounded-full bg-primary"
-                      style={{ width: `${job.progressPercent}%` }}
-                    />
-                  </div>
+                    className="flex-1"
+                  />
                   <span className="w-20 shrink-0 text-right text-metadata tabular-nums text-ink-sub">
                     {job.status === 'queued' && 'Queued'}
                     {job.status === 'resolving' && 'Resolving…'}

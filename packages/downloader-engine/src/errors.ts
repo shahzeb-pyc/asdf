@@ -1,7 +1,8 @@
 /**
- * Download error types (Workers port). Same wire codes as the web
- * engine: UNSAFE_URL, UNSUPPORTED_MEDIA, FILE_TOO_LARGE,
- * DOWNLOAD_FAILED. A cancelled job is never reported as a failure.
+ * Download error types — the canonical location, imported by the web
+ * orchestrator and the Cloudflare download consumer alike. Wire codes:
+ * UNSAFE_URL, UNSUPPORTED_MEDIA, FILE_TOO_LARGE, DOWNLOAD_FAILED.
+ * A cancelled job is never reported as a failure.
  */
 
 export type DownloaderErrorCode =

@@ -309,3 +309,178 @@ describe('processClaimedJob', () => {
     expect((await store.fetchJob(JOB_ID))?.checkpoint).toBeNull();
   });
 });
+
+describe('processClaimedJob edge paths', () => {
+  it('fails when the job row vanishes before processing', async () => {
+    const job = makeJob({ attempts: 1 });
+    const store = new FakeStore([job]);
+    store.fetchJobOverride = () => null;
+    const outcome = await processClaimedJob(
+      job,
+      depsFor(store, new FakeBucket(), makeMediaFetch(MB))
+    );
+    expect(outcome).toBe('failed');
+  });
+
+  it('returns cancelled when the initial read already shows cancelled', async () => {
+    const job = makeJob({ attempts: 1, status: 'cancelled' });
+    const store = new FakeStore([job]);
+    const outcome = await processClaimedJob(
+      job,
+      depsFor(store, new FakeBucket(), makeMediaFetch(MB))
+    );
+    expect(outcome).toBe('cancelled');
+    expect(store.updateCalls.some((call) => call.patch.status === 'failed')).toBe(false);
+  });
+
+  it('fails with UNSUPPORTED_MEDIA when resolution yields no candidates', async () => {
+    const job = makeJob({ attempts: 1 });
+    const store = new FakeStore([job]);
+    const deps = depsFor(store, new FakeBucket(), makeMediaFetch(MB));
+    deps.resolve = (async () => ({
+      sourceUrl: 'https://example.com/video.mp4',
+      platform: 'direct' as const,
+      candidates: [],
+      prefetchedBinaryResponse: undefined,
+    })) as never;
+    const outcome = await processClaimedJob(job, deps);
+    expect(outcome).toBe('failed');
+    expect(store.updateCalls.some((call) => call.patch.errorCode === 'UNSUPPORTED_MEDIA')).toBe(
+      true
+    );
+  });
+
+  it('a lost progress write never kills the download', async () => {
+    const job = makeJob({ attempts: 1 });
+    const store = new FakeStore([job]);
+    const realUpdate = store.updateJob.bind(store);
+    store.updateJob = async (jobId: string, patch: never) => {
+      if ((patch as { status?: string }).status === 'downloading') {
+        throw new Error('progress db down');
+      }
+      return realUpdate(jobId, patch as never);
+    };
+    const outcome = await processClaimedJob(
+      job,
+      depsFor(store, new FakeBucket(), makeMediaFetch(2 * MB))
+    );
+    expect(outcome).toBe('done');
+  });
+
+  it('throttles progress writes to the configured interval', async () => {
+    const job = makeJob({ attempts: 1 });
+    const store = new FakeStore([job]);
+    const deps = depsFor(store, new FakeBucket(), makeMediaFetch(20 * MB));
+    deps.progressUpdateMinIntervalMs = 3_600_000;
+    const outcome = await processClaimedJob(job, deps);
+    expect(outcome).toBe('done');
+    const progressWrites = store.updateCalls.filter(
+      (call) => call.patch.status === 'downloading'
+    );
+    expect(progressWrites.length).toBe(1);
+  });
+
+  it('cancels after resolve without saving, and tolerates a failing cleanup delete', async () => {
+    const job = makeJob({ attempts: 1 });
+    const store = new FakeStore([job]);
+    // 1-part file: call 1 = initial read, call 2 = onPart re-read,
+    // call 3 = after-resolve read, which now shows cancelled.
+    store.fetchJobOverride = (_jobId, call) =>
+      call >= 3 ? { ...job, status: 'cancelled' } : { ...job };
+    const bucket = new FakeBucket();
+    const storage = new FakeStorage(BASE);
+    storage.deleteObject = async () => {
+      throw new Error('r2 down');
+    };
+    const deps = depsFor(store, bucket, makeMediaFetch(MB));
+    deps.storage = storage as never;
+    const outcome = await processClaimedJob(job, deps);
+    expect(outcome).toBe('cancelled');
+    expect(store.mediaItems).toHaveLength(0);
+    expect(store.updateCalls.some((call) => call.patch.status === 'failed')).toBe(false);
+  });
+
+  it('drops our upload and finishes with the pre-existing media id', async () => {
+    const existingId = '44444444-4444-4444-8444-444444444444';
+    const job = makeJob({ attempts: 1 });
+    const store = new FakeStore([job]);
+    store.fetchJobOverride = (_jobId, call) =>
+      call >= 3 ? { ...job, mediaId: existingId } : { ...job };
+    const outcome = await processClaimedJob(
+      job,
+      depsFor(store, new FakeBucket(), makeMediaFetch(MB))
+    );
+    expect(outcome).toBe('done');
+    expect(store.mediaItems).toHaveLength(0);
+    expect(
+      store.updateCalls.some(
+        (call) => call.patch.status === 'done' && call.patch.mediaId === existingId
+      )
+    ).toBe(true);
+  });
+
+  it('fails when the job row vanishes after resolve', async () => {
+    const job = makeJob({ attempts: 1 });
+    const store = new FakeStore([job]);
+    store.fetchJobOverride = (_jobId, call) => (call >= 3 ? null : { ...job });
+    const outcome = await processClaimedJob(
+      job,
+      depsFor(store, new FakeBucket(), makeMediaFetch(MB))
+    );
+    expect(outcome).toBe('failed');
+  });
+
+  it('deletes uploads and fails when the library insert fails', async () => {
+    const job = makeJob({ attempts: 1 });
+    const store = new FakeStore([job]);
+    store.insertMediaItems = async () => {
+      throw new Error('db down');
+    };
+    const storage = new FakeStorage(BASE);
+    const deps = depsFor(store, new FakeBucket(), makeMediaFetch(MB));
+    deps.storage = storage as never;
+    const outcome = await processClaimedJob(job, deps);
+    expect(outcome).toBe('failed');
+    expect(store.mediaItems).toHaveLength(0);
+    expect(storage.deletedKeys.length).toBeGreaterThan(0);
+    expect(
+      store.updateCalls.some(
+        (call) =>
+          call.patch.status === 'failed' &&
+          call.patch.errorMessage === 'The download finished but could not be saved to your library.'
+      )
+    ).toBe(true);
+  });
+
+  it('treats a JobCancelledError from resolution as cancelled, not failed', async () => {
+    const { JobCancelledError } = await import('../src/engine/index.js');
+    const job = makeJob({ attempts: 1 });
+    const store = new FakeStore([job]);
+    const deps = depsFor(store, new FakeBucket(), makeMediaFetch(MB));
+    deps.resolve = (async () => {
+      throw new JobCancelledError();
+    }) as never;
+    const outcome = await processClaimedJob(job, deps);
+    expect(outcome).toBe('cancelled');
+    expect(store.updateCalls.some((call) => call.patch.status === 'failed')).toBe(false);
+  });
+
+  it('fails with DOWNLOAD_FAILED on an unexpected resolution error', async () => {
+    const job = makeJob({ attempts: 1 });
+    const store = new FakeStore([job]);
+    const deps = depsFor(store, new FakeBucket(), makeMediaFetch(MB));
+    deps.resolve = (async () => {
+      throw new Error('weird');
+    }) as never;
+    const outcome = await processClaimedJob(job, deps);
+    expect(outcome).toBe('failed');
+    expect(
+      store.updateCalls.some(
+        (call) =>
+          call.patch.status === 'failed' &&
+          call.patch.errorCode === 'DOWNLOAD_FAILED' &&
+          call.patch.errorMessage === 'The download failed. Please try again.'
+      )
+    ).toBe(true);
+  });
+});

@@ -1,10 +1,11 @@
 /**
- * Workers-native fetch timeout helpers (spec 149 backend revision §3.1).
- * Ported from apps/web/src/lib/http/fetch-with-timeout.ts with no
- * behaviour change: `fetchWithTimeout` bounds a whole small exchange,
+ * Fetch timeout helpers — the canonical location, imported by the web
+ * orchestrator and the Cloudflare download consumer alike (the web
+ * '@/lib/http/fetch-with-timeout' module re-exports these). No Node
+ * APIs: plain fetch + AbortSignal, so it bundles in a Worker without
+ * nodejs_compat. `fetchWithTimeout` bounds a whole small exchange,
  * `fetchWithTimeoutToHeaders` bounds only the time to response headers
- * so a slow media body is never aborted mid-stream. `setTimeout`
- * inside one invocation is allowed in Workers.
+ * so a slow media body is never aborted mid-stream.
  */
 
 /** Budget for remote-media / download fetches (time-to-headers). */

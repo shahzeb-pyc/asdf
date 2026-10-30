@@ -7,21 +7,20 @@ import {
   type RemoteMediaCandidate,
 } from '@fbuploadpro/contracts';
 import {
-  extractFilenameFromContentDisposition,
   deriveFileNameFromUrl,
+  DownloadAbortedError,
+  extractFilenameFromContentDisposition,
+  fetchCandidateResponse,
+  MediaDownloaderError,
   resolveAllowedMimeType,
   sanitizeFileNameWithExtension,
-} from './mime';
-import {
-  MediaDownloaderError,
-  fetchCandidateResponse,
   validateAndNormalizeStreamUrl,
-} from './resolvers';
+} from '@fbuploadpro/downloader-engine';
 import type { UploadedDownloadedMediaItem } from './index';
 import {
   MEDIA_FETCH_TIMEOUT_MS,
   fetchWithTimeoutToHeaders,
-} from '@/lib/http/fetch-with-timeout';
+} from '@fbuploadpro/downloader-engine';
 
 const MAX_THUMBNAIL_BYTES = 10 * 1024 * 1024; // 10 MB
 const MAX_CAPTION_LENGTH = 5000;
@@ -33,12 +32,9 @@ const MAX_CAPTION_LENGTH = 5000;
  * without parsing messages: a cancelled job keeps its `cancelled`
  * status instead of being re-marked failed.
  */
-export class DownloadAbortedError extends Error {
-  constructor() {
-    super('Download was cancelled.');
-    this.name = 'DownloadAbortedError';
-  }
-}
+// Single definition lives in @fbuploadpro/downloader-engine; re-exported
+// here so the existing `from './storage-upload'` import site keeps working.
+export { DownloadAbortedError } from '@fbuploadpro/downloader-engine';
 
 export interface DownloadProgress {
   downloadedBytes: number;

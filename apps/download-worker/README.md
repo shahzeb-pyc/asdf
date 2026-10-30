@@ -96,10 +96,12 @@ separate go-ahead (never by the PR itself): the existing
 - `src/store.ts` — Supabase JobStore over fetch (15 s bound).
 - `src/r2-sink.ts` — R2-binding multipart sink + storage service.
 - `src/heartbeat.ts` — Cron heartbeat / sweep / stale reclaim.
-- `src/engine/` — Workers port of the web media-downloader engine
-  (mime + resolvers + extractors, bounded resolve bodies, sequential
-  candidates, Range-resumable streaming). The web copies remain in
-  `apps/web/src/lib/media-downloader/`; behaviour changes must be
-  mirrored — see the headers in the ported files for why the port
-  exists instead of a shared import (Node-only imports in the web
-  orchestrator cannot bundle in a Worker without `nodejs_compat`).
+- `src/engine/` — Worker-side streaming only (`stream.ts` +
+  `index.ts` orchestrator). The resolvers/mime/extractors/http/errors
+  engine is NOT copied here: it lives once in the shared package
+  `packages/downloader-engine/` (canonical location, imported by both
+  this Worker and the web app's `apps/web/src/lib/media-downloader/`
+  orchestrator). Behaviour changes go in the package, never in a
+  Worker-local copy — there must be no second copy to drift. The web
+  orchestrator's Node-only pieces (presigned sink, `node:crypto`,
+  `process.env`) stay web-side and are not part of the package.

@@ -105,21 +105,36 @@ async function notifyDownloadConsumer(jobIds: string[], subdomain: string): Prom
 async function readConsumerHealthy(
   supabase: SupabaseClient
 ): Promise<boolean | undefined> {
+  // An unreadable heartbeat is "unknown", not "paused": the caller omits
+  // the field and the tray shows no paused banner. Unknown is a distinct
+  // outcome, not a swallowed error — the failure is logged, and the
+  // catch assigns rather than bare-returning (spec 137 §3.1 ban on
+  // bare-catch-return in data code).
+  let healthy: boolean | undefined;
   try {
     const { data, error } = await supabase
       .from('download_worker_heartbeats')
       .select('heartbeat_at')
       .eq('worker_id', DOWNLOAD_CONSUMER_WORKER_ID)
       .maybeSingle();
-    if (error) return undefined;
-    if (!data) return false;
-    const heartbeatAt = (data as { heartbeat_at?: unknown })['heartbeat_at'];
-    if (typeof heartbeatAt !== 'string') return false;
-    const ageMs = Date.now() - new Date(heartbeatAt).getTime();
-    return ageMs < DOWNLOAD_CONSUMER_HEALTHY_MINUTES * 60_000;
-  } catch {
-    return undefined;
+    if (error) {
+      healthy = undefined;
+    } else if (!data) {
+      healthy = false;
+    } else {
+      const heartbeatAt = (data as { heartbeat_at?: unknown })['heartbeat_at'];
+      healthy =
+        typeof heartbeatAt === 'string' &&
+        Date.now() - new Date(heartbeatAt).getTime() <
+          DOWNLOAD_CONSUMER_HEALTHY_MINUTES * 60_000;
+    }
+  } catch (err: unknown) {
+    logServerError('[downloader] Failed to read consumer heartbeat', err, {
+      source: 'downloader-heartbeat',
+    });
+    healthy = undefined;
   }
+  return healthy;
 }
 
 async function verifyFolderOwnership(

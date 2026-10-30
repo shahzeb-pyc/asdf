@@ -23,6 +23,7 @@ export * from "./input";
 export * from "./menu";
 export * from "./pagination";
 export * from "./popover";
+export * from "./progress";
 export * from "./select";
 export * from "./sidebar";
 export * from "./skeleton";

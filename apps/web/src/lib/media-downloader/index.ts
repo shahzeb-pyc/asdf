@@ -4,21 +4,24 @@ import {
   type DownloaderSourcePlatform,
   type IStorageService,
 } from '@fbuploadpro/contracts';
-import { tryResolveViaExternalExtractor } from './extractors';
 import {
   MediaDownloaderError,
   resolveCandidatesBuiltIn,
-} from './resolvers';
+  tryResolveViaExternalExtractor,
+} from '@fbuploadpro/downloader-engine';
 import { downloadAndStoreSingleCandidate } from './storage-upload';
-import type { AllowedMediaMime } from './mime';
+import type { AllowedMediaMime } from '@fbuploadpro/downloader-engine';
 
 export type { RemoteMediaCandidate } from '@fbuploadpro/contracts';
 
 export { normalizeCloudDriveUrl } from '@fbuploadpro/contracts';
 
-export { resolveAllowedMimeType, type AllowedMediaMime } from './mime';
-
-export { MediaDownloaderError, type DownloaderErrorCode } from './resolvers';
+export {
+  resolveAllowedMimeType,
+  type AllowedMediaMime,
+  MediaDownloaderError,
+  type DownloaderErrorCode,
+} from '@fbuploadpro/downloader-engine';
 
 export {
   DownloadAbortedError,

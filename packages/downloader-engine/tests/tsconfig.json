@@ -1,0 +1,13 @@
+{
+  // Type-aware linting project for downloader-engine tests (same shape
+  // as packages/contracts/tests/tsconfig.json, Spec 098).
+  // The main tsconfig.json can't include tests (rootDir: src would break
+  // the build with TS6059), so tests get their own lint-only project.
+  // The build (tsc in packages/downloader-engine/) only reads
+  // ../tsconfig.json and is unaffected by this file.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["./**/*", "../src/**/*"]
+}

@@ -8,13 +8,12 @@ import {
   type RemoteMediaCandidate,
 } from '@fbuploadpro/contracts';
 /**
- * Workers port of apps/web/src/lib/media-downloader/resolvers.ts.
- * Two adaptations only (spec 149 backend revision §3.2/§3.4): the
- * timeout helper is imported from the local ./http.js instead of the
- * web '@/lib/http' alias, and resolve bodies are read through a
- * 10 MB bounded reader instead of unbounded response.text()/.json().
- * Everything else — URL safety, redirect checks, platform fallbacks —
- * is verbatim. Mirror behaviour changes in the web copy.
+ * Built-in resolvers — the canonical location, imported by the web
+ * orchestrator and the Cloudflare download consumer alike. Resolve
+ * bodies are read through a 10 MB bounded reader, never unbounded
+ * response.text()/.json() (spec 149 backend revision §3.4); the
+ * timeout helper is the local ./http.js, so no web '@/lib/http' alias
+ * and no Node API is needed.
  */
 import {
   DOWNLOAD_RESOLVE_BODY_MAX_BYTES,
@@ -30,24 +29,10 @@ import {
   readBoundedJson,
   readBoundedText,
 } from './http.js';
-
-export type DownloaderErrorCode =
-  | 'UNSAFE_URL'
-  | 'UNSUPPORTED_MEDIA'
-  | 'FILE_TOO_LARGE'
-  | 'DOWNLOAD_FAILED';
-
-export class MediaDownloaderError extends Error {
-  public readonly code: DownloaderErrorCode;
-  public readonly statusCode: 400 | 502;
-
-  constructor(code: DownloaderErrorCode, message: string, statusCode: 400 | 502 = 400) {
-    super(message);
-    this.name = 'MediaDownloaderError';
-    this.code = code;
-    this.statusCode = statusCode;
-  }
-}
+// Single error definition lives in ./errors.js (imported for internal
+// use here; import sites take the error types from './errors.js' or
+// the package root, never from this module).
+import { MediaDownloaderError } from './errors.js';
 
 export function validateAndNormalizeStreamUrl(rawStreamUrl: string): string {
   const safeCheck = validateSafeRemoteUrl(rawStreamUrl);

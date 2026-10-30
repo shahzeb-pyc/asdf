@@ -1,11 +1,8 @@
 /**
- * Workers port of apps/web/src/lib/media-downloader/mime.ts, verbatim
- * except for this header. Pure string/regex logic (mime + filename);
- * no DOM, no filesystem, no Node APIs. If behaviour changes here it
- * must be mirrored in the web copy, and vice versa — the two copies
- * exist because the web copy's siblings (storage-upload, index) carry
- * Node-only imports that cannot bundle in a Worker without
- * nodejs_compat, which this Worker deliberately does not use.
+ * Mime + filename logic — the canonical location, imported by the web
+ * orchestrator and the Cloudflare download consumer alike. Pure
+ * string/regex logic; no DOM, no filesystem, no Node APIs, so it
+ * bundles in a Worker without nodejs_compat.
  */
 import {
   AllowedMediaMimeTypes,
