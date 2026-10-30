@@ -218,7 +218,7 @@ function AddAccountDialog({ subdomain, open, onOpenChange, onCreated }: {
   const [scheduleType, setScheduleType] = React.useState<'dailyrandom' | 'fixed'>('dailyrandom');
   const [fixedTimes, setFixedTimes] = React.useState<string[]>(['09:00']);
   // Bulk / multi only: old 'Apply Schedule' scope. 'all' is the shared
-  // schedule above; 'separate' keeps one schedule per selected page,
+  // schedule above; 'separate' keeps one schedule per selected account,
   // exactly like the old AddAccountDialog (bulkScheduleByPage).
   type PageSchedule = { postsPerDay: number; timezone: string; postingTimes: string[] };
   const [timingScope, setTimingScope] = React.useState<'all' | 'separate'>('all');
@@ -288,7 +288,7 @@ function AddAccountDialog({ subdomain, open, onOpenChange, onCreated }: {
       assigned += 1;
     }
     setSources(next);
-    setPasteFeedback(`${assigned} new sources assigned to ${empty.length} empty page slots. ${parsed.warnings.join(' ')}`);
+    setPasteFeedback(`${assigned} new sources assigned to ${empty.length} empty account slots. ${parsed.warnings.join(' ')}`);
     setPasteOpen(false);
   };
 
@@ -325,8 +325,8 @@ function AddAccountDialog({ subdomain, open, onOpenChange, onCreated }: {
         setResult('Account added. Automation will discover its reels on the next run.');
       } else {
         // Bulk / multi: 'all' uses the shared schedule below; 'separate'
-        // sends one schedule per page, exactly like the old dialog.
-        // Per-page failures are reported individually.
+        // sends one schedule per account, exactly like the old dialog.
+        // Per-account failures are reported individually.
         if (timingScope === 'separate' && scheduleType === 'fixed') {
           for (const p of selectedPages) {
             const s = pageSchedule(p.id);
@@ -503,7 +503,7 @@ function AddAccountDialog({ subdomain, open, onOpenChange, onCreated }: {
             {csvFeedback ? <p className="text-body text-ink-sub">{csvFeedback}</p> : null}
             {pasteOpen ? (
               <div className="flex flex-col gap-2 rounded-md border p-3">
-                <p className="text-body">One source per line, platform|username — for example instagram|ronaldo, facebook|messi. Sources are assigned randomly to empty page slots only.</p>
+                <p className="text-body">One source per line, platform|username — for example instagram|ronaldo, facebook|messi. Sources are assigned randomly to empty account slots only.</p>
                 <Textarea rows={6} value={pasteText} onChange={(e) => setPasteText(e.target.value)} placeholder={'instagram|ronaldo\nfacebook|messi'} />
                 <div className="flex gap-2">
                   <Button type="button" onClick={applyPaste}>Apply assignment</Button>
