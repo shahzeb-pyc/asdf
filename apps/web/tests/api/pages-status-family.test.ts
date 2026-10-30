@@ -343,5 +343,100 @@ describe('Pages status family', () => {
       const json = await res.json();
       expect(json.error).toBe('PAGE_NOT_PUBLISHABLE');
     });
+
+    it('fails loud on a Supabase destinations-fetch error (500, update never runs)', async () => {
+      let updateRan = false;
+      const builderFor = (table: string) => {
+        const b: Record<string, unknown> = {};
+        b.select = () => b;
+        b.eq = () => b;
+        b.update = () => {
+          updateRan = true;
+          return b;
+        };
+        b.maybeSingle = () =>
+          Promise.resolve(
+            table === 'workspaces'
+              ? { data: { id: 'ws_123' }, error: null }
+              : table === 'destinations'
+                ? { data: null, error: { message: 'destinations fetch failed' } }
+                : { data: { id: itemId, status: 'queued', destination_id: pageId }, error: null }
+          );
+        b.then = (onOk: (v: unknown) => unknown, onErr?: (e: unknown) => unknown) =>
+          Promise.resolve({ error: null }).then(onOk, onErr);
+        return b;
+      };
+      const fake = { from: builderFor, rpc: vi.fn().mockResolvedValue({ error: null }) };
+      const res = await handlePublishNow(
+        postRequest(`/api/tenant/acme/publishing/queue/${itemId}/publish-now`),
+        'acme',
+        itemId,
+        fake as never
+      );
+      expect(res.status).toBe(500);
+      expect((await res.json()).error).toBe('Failed to load destination');
+      expect(updateRan).toBe(false);
+    });
+
+    it('fails loud on a missing Supabase destination row (404, update never runs)', async () => {
+      let updateRan = false;
+      const builderFor = (table: string) => {
+        const b: Record<string, unknown> = {};
+        b.select = () => b;
+        b.eq = () => b;
+        b.update = () => {
+          updateRan = true;
+          return b;
+        };
+        b.maybeSingle = () =>
+          Promise.resolve(
+            table === 'workspaces'
+              ? { data: { id: 'ws_123' }, error: null }
+              : table === 'destinations'
+                ? { data: null, error: null }
+                : { data: { id: itemId, status: 'queued', destination_id: pageId }, error: null }
+          );
+        b.then = (onOk: (v: unknown) => unknown, onErr?: (e: unknown) => unknown) =>
+          Promise.resolve({ error: null }).then(onOk, onErr);
+        return b;
+      };
+      const fake = { from: builderFor, rpc: vi.fn().mockResolvedValue({ error: null }) };
+      const res = await handlePublishNow(
+        postRequest(`/api/tenant/acme/publishing/queue/${itemId}/publish-now`),
+        'acme',
+        itemId,
+        fake as never
+      );
+      expect(res.status).toBe(404);
+      expect((await res.json()).error).toBe('Destination not found');
+      expect(updateRan).toBe(false);
+    });
+
+    it('fails loud on a missing SQL destination row (404, update never runs)', async () => {
+      let updateRan = false;
+      const mockDb = {
+        query: vi.fn().mockImplementation((sql: string) => {
+          if (sql.includes('FROM workspaces')) return Promise.resolve([{ id: 'ws_123' }]);
+          if (sql.includes('FROM queue_items')) {
+            return Promise.resolve([{ id: itemId, status: 'queued', destination_id: pageId }]);
+          }
+          if (sql.includes('FROM destinations')) return Promise.resolve([]);
+          if (sql.includes('UPDATE queue_items')) {
+            updateRan = true;
+            return Promise.resolve([]);
+          }
+          return Promise.resolve([]);
+        }),
+      } as unknown as DatabaseClient;
+      const res = await handlePublishNow(
+        postRequest(`/api/tenant/acme/publishing/queue/${itemId}/publish-now`),
+        'acme',
+        itemId,
+        mockDb
+      );
+      expect(res.status).toBe(404);
+      expect((await res.json()).error).toBe('Destination not found');
+      expect(updateRan).toBe(false);
+    });
   });
 });

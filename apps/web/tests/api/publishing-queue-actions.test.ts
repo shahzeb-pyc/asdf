@@ -536,6 +536,16 @@ describe('Publishing Queue Actions Route Handlers (T128, T129)', () => {
               },
             ]);
           }
+          if (sql.includes('FROM destinations')) {
+            // SEND BACK fix for PR #44: the gate must not proceed on
+            // a missing destination row. This happy-path test
+            // previously relied on that fail-open (its mock returned
+            // no destination row); it now models an active
+            // destination explicitly. Test intent unchanged.
+            return Promise.resolve([
+              { status: 'active', metadata: {}, updated_at: new Date().toISOString() },
+            ]);
+          }
           if (sql.includes('UPDATE queue_items') && sql.includes("status = 'queued'")) {
             updateExecutedWithNow = true;
             return Promise.resolve([{ id: itemId }]);

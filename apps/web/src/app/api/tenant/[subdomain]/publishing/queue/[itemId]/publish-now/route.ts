@@ -66,36 +66,87 @@ async function fetchPublishNowGate(
   workspaceId: string,
   destinationId: string
 ): Promise<NextResponse | null> {
+  // Fail loud, never fail open: null here means ONLY "destination is
+  // active, proceed". A destination-fetch error returns 500 and a
+  // missing destination row returns 404 (matching the Retry gate) —
+  // neither may fall through to a queue-item update and a success
+  // response, which is exactly the fake-success pattern this gate
+  // exists to eliminate.
   let rawStatus: string | null = null;
   let metadata: Record<string, unknown> | null = null;
   let updatedAt: string | null = null;
   if (dbClient && 'query' in dbClient && typeof dbClient.query === 'function') {
-    const rows = (await dbClient.query(
-      `SELECT status, metadata, updated_at FROM destinations WHERE id = $1 AND workspace_id = $2`,
-      [destinationId, workspaceId]
-    )) as Array<{
+    let rows: Array<{
       status: string;
       metadata: unknown;
       updated_at: string;
-    }>;
+    }> | null = null;
+    try {
+      rows = (await dbClient.query(
+        `SELECT status, metadata, updated_at FROM destinations WHERE id = $1 AND workspace_id = $2`,
+        [destinationId, workspaceId]
+      )) as Array<{
+        status: string;
+        metadata: unknown;
+        updated_at: string;
+      }>;
+    } catch {
+      return NextResponse.json(
+        { error: 'Failed to load destination' },
+        { status: 500 }
+      );
+    }
     const row = rows?.[0];
-    if (!row) return null;
+    if (!row) {
+      return NextResponse.json(
+        { error: 'Destination not found' },
+        { status: 404 }
+      );
+    }
     rawStatus = row.status;
     metadata = parseDestinationMetadata(row.metadata);
     updatedAt = row.updated_at ?? null;
   } else {
     const supabase = getRouteSupabase(dbClient);
-    if (!supabase) return null;
-    const { data, error } = await supabase
-      .from('destinations')
-      .select('status, metadata, updated_at')
-      .eq('id', destinationId)
-      .eq('workspace_id', workspaceId)
-      .maybeSingle();
-    if (error || !data) return null;
-    rawStatus = (data as { status: string }).status;
-    metadata = parseDestinationMetadata((data as { metadata: unknown }).metadata);
-    updatedAt = (data as { updated_at?: string }).updated_at ?? null;
+    if (!supabase) {
+      return NextResponse.json(
+        { error: 'Database service unavailable' },
+        { status: 500 }
+      );
+    }
+    try {
+      const result = await supabase
+        .from('destinations')
+        .select('status, metadata, updated_at')
+        .eq('id', destinationId)
+        .eq('workspace_id', workspaceId)
+        .maybeSingle();
+      if (result.error) {
+        return NextResponse.json(
+          { error: 'Failed to load destination' },
+          { status: 500 }
+        );
+      }
+      const row = result.data as {
+        status: string;
+        metadata: unknown;
+        updated_at?: string;
+      } | null;
+      if (!row) {
+        return NextResponse.json(
+          { error: 'Destination not found' },
+          { status: 404 }
+        );
+      }
+      rawStatus = row.status;
+      metadata = parseDestinationMetadata(row.metadata);
+      updatedAt = row.updated_at ?? null;
+    } catch {
+      return NextResponse.json(
+        { error: 'Failed to load destination' },
+        { status: 500 }
+      );
+    }
   }
   const wire = unifiedDestinationStatusToWire(rawStatus, metadata);
   const effective =
@@ -205,7 +256,13 @@ export async function handlePublishNow(
     // Status gate, after the idempotency replay above (a replayed
     // acknowledgement is not a new dispatch) and after the
     // published check: a non-active destination is a 409 here.
-    if (typeof existing.destination_id === 'string') {
+    // A missing destination_id must not skip the gate: without a
+    // destination there is nothing to verify as active, so fail
+    // loud instead of proceeding to the update.
+    if (typeof existing.destination_id !== 'string' || existing.destination_id.length === 0) {
+      return NextResponse.json({ error: 'Destination not found' }, { status: 404 });
+    }
+    {
       const gate = await fetchPublishNowGate(
         dbClient,
         workspaceId,
@@ -277,7 +334,12 @@ export async function handlePublishNow(
     );
   }
 
-  if (existing.destination_id) {
+  // Same fail-loud rule as the SQL branch above: a missing
+  // destination_id must not skip the gate and proceed to update.
+  if (!existing.destination_id) {
+    return NextResponse.json({ error: 'Destination not found' }, { status: 404 });
+  }
+  {
     const gate = await fetchPublishNowGate(
       dbClient,
       workspaceId,
