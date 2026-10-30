@@ -117,18 +117,12 @@ function shellWrapper({
       totalPages: pages.length === 0 ? 0 : 1,
     }
   );
-  // The pages shell reads accounts at limit 50 (filter options +
-  // expired banner), not the paginated 30.
-  queryClient.setQueryData(
-    tenant.accounts.listPage({ page: 1, limit: 50, search: '', status: 'all' }),
-    {
-      accounts,
-      total: accounts.length,
-      page: 1,
-      limit: 50,
-      totalPages: accounts.length === 0 ? 0 : 1,
-    }
-  );
+  // R16: the pages shell reads the complete accounts set
+  // (listAll), not page 1 of the paginated accounts view.
+  queryClient.setQueryData(tenant.accounts.listAll, {
+    accounts,
+    total: accounts.length,
+  });
   queryClient.setQueryData(tenant.settings.byoc, {
     workspaceId: '33333333-3333-4333-8333-333333333333',
     subdomain: 'acme',
@@ -165,7 +159,9 @@ describe('PagesScaleToolbar behaviour', () => {
         onStatusFilterChange={onStatusFilterChange}
         accountFilter="all"
         onAccountFilterChange={vi.fn()}
-        accountOptions={['Sarah Connor']}
+        accountOptions={[
+          { value: '11111111-1111-4111-8111-111111111111', label: 'Sarah Connor' },
+        ]}
         attentionCount={2}
       />
     );
@@ -654,6 +650,8 @@ describe('AddPageModal flow behaviour', () => {
       expect(onSuccess).toHaveBeenCalledWith({
         importedCount: 1,
         importedPageIds: ['44444444-4444-4444-8444-444444444444'],
+        // K9: the shell lands the list on the imported account.
+        accountId: activeAccount.id,
       })
     );
     expect(onOpenChange).toHaveBeenCalledWith(false);
@@ -726,9 +724,15 @@ describe('AddPageModal flow behaviour', () => {
     );
 
     fireEvent.click(screen.getByTestId(`select-account-${activeAccount.id}`));
-    const error = await screen.findByTestId('add-page-error');
+    // K9: the failure renders as step 2's own error + Retry — not
+    // the modal banner, and never the "no discovered pages" empty
+    // state alongside the error (which would read as "this
+    // account has no pages").
+    const error = await screen.findByTestId('discover-error-state');
     expect(error.textContent).toContain(
       "Couldn't load pages from this Facebook account."
     );
+    expect(screen.queryByTestId('no-discovered-pages-state')).toBeNull();
+    expect(screen.getByTestId('discover-retry-btn')).toBeTruthy();
   });
 });

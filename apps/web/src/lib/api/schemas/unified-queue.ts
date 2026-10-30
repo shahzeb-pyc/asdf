@@ -93,63 +93,20 @@ export const UnifiedQueueItemSchema = z.object({
 export type UnifiedQueueItem = z.infer<typeof UnifiedQueueItemSchema>;
 
 /**
- * The destination's D5 limit state, derived server-side from the
- * contracts limits config (the single source — no numeric limit is
- * ever spelled in UI code) plus the destination's live metering
- * columns. `null` when the platform carries no centred cap.
+ * K10: the destinations queue-list schemas (D5 limit state + list
+ * response) were deleted with the GET route they served — no UI,
+ * API, worker, or other route consumed them. The item schemas above
+ * stay: retry/publish-now still return the unified item view.
  */
-export const DestinationLimitStateSchema = z.object({
-  /** The published-posts cap for the binding window. */
-  windowLimit: z.number().int().positive(),
-  windowSeconds: z.number().int().positive(),
-  /** Live usage of the binding window, 0–100+ (`destinations.rate_usage_pct`). */
-  rateUsagePct: z.number(),
-  /** When the destination may publish again, when the worker has pushed it out. */
-  nextAllowedPublishAt: z.string().datetime({ offset: true }).nullable(),
-});
-export type DestinationLimitState = z.infer<
-  typeof DestinationLimitStateSchema
->;
-
-/** GET …/destinations/[destinationId]/queue — the full ordered list. */
-export const ListDestinationQueueResponseSchema = z.object({
-  destinationId: z.string().uuid(),
-  platform: PlatformSchema,
-  /** The destination's IANA timezone; item times render in it. */
-  timezone: z.string(),
-  /** The destination's connection status — gates failed-post retry. */
-  destinationStatus: z.string(),
-  limit: DestinationLimitStateSchema.nullable(),
-  /** Ordered by scheduled time (the claim order), then creation. */
-  items: z.array(UnifiedQueueItemSchema),
-});
-export type ListDestinationQueueResponse = z.infer<
-  typeof ListDestinationQueueResponseSchema
->;
 
 /**
- * PATCH …/queue/[itemId] — the unified edit-save / reschedule /
- * reorder / requeue write. Mirrors the legacy `UpdateQueueItemRequest`
- * field names and caps where the two shapes overlap; format travels as
- * the unified `kind` + `platformFormat` pair. `status` is the only
- * lifecycle control a client may request: requeue (`queued`) or
- * cancel (`cancelled`) — publishing outcomes are the worker's alone.
+ * K10: the destinations item-PATCH request schema was deleted with
+ * the PATCH route it served — the Pages UI edits through
+ * `publishing/queue/[itemId]` instead. (K7 note: that deletion is
+ * also what closes the PATCH path that could write a carousel kind
+ * for Facebook; the publishing PATCH's postFormat enum has no
+ * carousel, so it cannot introduce one.)
  */
-export const UpdateDestinationQueueItemRequestSchema = z.object({
-  caption: z.string().max(5000).optional(),
-  title: z.string().max(500).nullable().optional(),
-  firstComment: z.string().max(2000).nullable().optional(),
-  linkUrl: z.string().url().nullable().optional(),
-  kind: UnifiedQueueKindSchema.optional(),
-  platformFormat: z.string().nullable().optional(),
-  platformOptions: z.record(z.string(), z.unknown()).optional(),
-  scheduledTime: z.string().datetime({ offset: true }).optional(),
-  slotId: z.string().uuid().nullable().optional(),
-  status: z.enum(['queued', 'cancelled']).optional(),
-});
-export type UpdateDestinationQueueItemRequest = z.infer<
-  typeof UpdateDestinationQueueItemRequestSchema
->;
 
 /** Ack for the item actions that do not return the item (delete, publish-now). */
 export const DestinationQueueActionResponseSchema = z.object({

@@ -51,7 +51,49 @@ const RANGE_DAYS: Record<PageInsightsRange, number> = {
   '90d': 90,
 };
 
-export function insightsWindow(range: PageInsightsRange, now = new Date()): {
+/**
+ * K3: day boundaries are the PAGE's timezone, not UTC. "Today" is the
+ * calendar date in `timeZone` at `now`, and the window is that many
+ * consecutive calendar days in that zone (calendar arithmetic, so a
+ * DST transition never drops or duplicates a day). Facebook's own
+ * period handling is untouched — only this app's window, labels and
+ * trend bucketing use the page zone. An unknown zone falls back to
+ * UTC rather than throwing (fail loud happens at the fetch, not in
+ * a date helper).
+ */
+function todayInTimezone(now: Date, timeZone: string): { year: number; month: number; day: number } {
+  let parts: Intl.DateTimeFormatPart[] | null = null;
+  try {
+    parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(now);
+  } catch {
+    // Unknown zone: parts stays null and the UTC date below is used.
+    // The fallback is explicit (not a swallowed error): an unknown
+    // zone is a documented input case for this helper, and the UTC
+    // fallback is the specified behaviour, not a failed request.
+    parts = null;
+  }
+  if (parts) {
+    const get = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? 0);
+    const year = get('year');
+    const month = get('month');
+    const day = get('day');
+    if (year > 0 && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return { year, month, day };
+    }
+  }
+  return { year: now.getUTCFullYear(), month: now.getUTCMonth() + 1, day: now.getUTCDate() };
+}
+
+export function insightsWindow(
+  range: PageInsightsRange,
+  now = new Date(),
+  timeZone = 'UTC',
+): {
   days: number;
   since: string;
   until: string;
@@ -59,7 +101,8 @@ export function insightsWindow(range: PageInsightsRange, now = new Date()): {
 } {
   const days = RANGE_DAYS[range];
   const toDate = (d: Date) => d.toISOString().slice(0, 10);
-  const untilDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const today = todayInTimezone(now, timeZone);
+  const untilDate = new Date(Date.UTC(today.year, today.month - 1, today.day));
   const dates: string[] = [];
   for (let i = days - 1; i >= 0; i--) {
     const d = new Date(untilDate);
@@ -176,9 +219,11 @@ export function mapGraphToInsights(input: {
   raw: RawInsightsData;
   fetchedAt: string;
   now?: Date;
+  /** Page timezone (K3); UTC when absent, preserving old callers. */
+  timeZone?: string;
 }): PageInsightsResponse {
   const { pageId, range, raw, fetchedAt, now } = input;
-  const { dates } = insightsWindow(range, now);
+  const { dates } = insightsWindow(range, now, input.timeZone);
   const byMetric = (metric: string) => metricDailyValues(raw.daily, metric);
   const sum = (metric: string) => {
     let total = 0;
@@ -238,10 +283,12 @@ export async function fetchPageInsights(input: {
   range: PageInsightsRange;
   graphFetch?: FetchFn;
   now?: Date;
+  /** Page timezone (K3) for the window/trend dates. */
+  timeZone?: string;
 }): Promise<PageInsightsResponse> {
   const { fbPageId, pageId, token, range, now } = input;
   const graphFetch = (input.graphFetch ?? fetch) as FetchFn;
-  const { since, until } = insightsWindow(range, now);
+  const { since, until } = insightsWindow(range, now, input.timeZone);
   const encoded = encodeURIComponent(fbPageId);
   // Token travels only in these server-side URLs, never to the client.
   const dailyUrl =
@@ -266,5 +313,6 @@ export async function fetchPageInsights(input: {
     raw: { daily, audience, followersCount },
     fetchedAt: (now ?? new Date()).toISOString(),
     ...(now ? { now } : {}),
+    ...(input.timeZone ? { timeZone: input.timeZone } : {}),
   });
 }

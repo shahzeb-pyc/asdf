@@ -10,7 +10,6 @@ import {
   FacebookPageStatusSchema,
   FacebookPageViewSchema,
   fetchAllFacebookPages,
-  fetchAllFacebookPagesWithMeta,
 } from '../src/domain/facebook.js';
 import { evaluateGraphApiError } from '../src/domain/facebook-health.js';
 
@@ -319,6 +318,44 @@ describe('Facebook Account & Page Domain Schemas', () => {
     });
   });
 
+  // K11: the detail path passes `?? null` for a missing account
+  // row and a stored avatar that is not a URL — neither may throw
+  // the whole view parse (old code: accountDisplayName was
+  // optional-only, so null threw; profilePictureUrl was .url(),
+  // so a non-URL threw).
+  describe('K11 detail-view null/non-URL fallbacks', () => {
+    const baseView = {
+      id: pageId,
+      facebookAccountId: accountId,
+      fbPageId: 'page_1092837465',
+      pageName: 'Engineering Insights',
+      status: 'active' as const,
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+      updatedAt: new Date('2026-01-01T00:00:00Z'),
+    };
+    it('accepts a null accountDisplayName (missing account row)', () => {
+      const parsed = FacebookPageViewSchema.parse({
+        ...baseView,
+        accountDisplayName: null,
+      });
+      expect(parsed.accountDisplayName).toBeNull();
+    });
+    it('falls back a non-URL profilePictureUrl to null instead of throwing', () => {
+      const parsed = FacebookPageViewSchema.parse({
+        ...baseView,
+        profilePictureUrl: 'not-a-url',
+      });
+      expect(parsed.profilePictureUrl).toBeNull();
+    });
+    it('still keeps a valid profilePictureUrl', () => {
+      const parsed = FacebookPageViewSchema.parse({
+        ...baseView,
+        profilePictureUrl: 'https://example.com/pic.jpg',
+      });
+      expect(parsed.profilePictureUrl).toBe('https://example.com/pic.jpg');
+    });
+  });
+
   describe('fetchAllFacebookPages helper', () => {
     it('fetches a single page of results with limit=100', async () => {
       const mockFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -338,10 +375,12 @@ describe('Facebook Account & Page Domain Schemas', () => {
         } as Response;
       };
 
-      const pages = await fetchAllFacebookPages('test-token', 'id,name', 5, mockFetch as any);
-      expect(pages).toHaveLength(2);
-      expect(pages[0]?.id).toBe('p1');
-      expect(pages[1]?.id).toBe('p2');
+      const result = await fetchAllFacebookPages('test-token', 'id,name', 5, mockFetch as any);
+      expect(result.pages).toHaveLength(2);
+      expect(result.pages[0]?.id).toBe('p1');
+      expect(result.pages[1]?.id).toBe('p2');
+      expect(result.truncated).toBe(false);
+      expect(result.partial).toBe(false);
     });
 
     it('follows cursor pagination paging.next across multiple pages', async () => {
@@ -369,10 +408,12 @@ describe('Facebook Account & Page Domain Schemas', () => {
         } as Response;
       };
 
-      const pages = await fetchAllFacebookPages('test-token', 'id,name', 5, mockFetch as any);
+      const result = await fetchAllFacebookPages('test-token', 'id,name', 5, mockFetch as any);
       expect(callCount).toBe(2);
-      expect(pages).toHaveLength(2);
-      expect(pages.map((p) => p.id)).toEqual(['p1', 'p2']);
+      expect(result.pages).toHaveLength(2);
+      expect(result.pages.map((p) => p.id)).toEqual(['p1', 'p2']);
+      expect(result.truncated).toBe(false);
+      expect(result.partial).toBe(false);
     });
 
     it('stops after maxPages limit is reached', async () => {
@@ -391,9 +432,13 @@ describe('Facebook Account & Page Domain Schemas', () => {
         } as Response;
       };
 
-      const pages = await fetchAllFacebookPages('test-token', 'id,name', 2, mockFetch as any);
+      const result = await fetchAllFacebookPages('test-token', 'id,name', 2, mockFetch as any);
       expect(callCount).toBe(2);
-      expect(pages).toHaveLength(2);
+      expect(result.pages).toHaveLength(2);
+      // R14: the cap stopped us while Facebook still had another
+      // page waiting, so the list must say it is truncated.
+      expect(result.truncated).toBe(true);
+      expect(result.partial).toBe(false);
     });
 
     it('throws when graph API returns an error response', async () => {
@@ -407,10 +452,48 @@ describe('Facebook Account & Page Domain Schemas', () => {
         fetchAllFacebookPages('bad-token', 'id,name', 5, mockFetch as any)
       ).rejects.toThrow('Facebook Graph API returned 401');
     });
+
+    it('reports a partial list (not a throw, not a complete list) when a mid-list page fails', async () => {
+      let callCount = 0;
+      const mockFetch = async () => {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              data: [{ id: 'p1', name: 'Page One' }],
+              paging: {
+                next: 'https://graph.facebook.com/v26.0/me/accounts?after=cursor1',
+              },
+            }),
+          } as Response;
+        }
+        return {
+          ok: false,
+          status: 500,
+          statusText: 'Server Error',
+        } as Response;
+      };
+
+      const result = await fetchAllFacebookPages('test-token', 'id,name', 5, mockFetch as any);
+      expect(callCount).toBe(2);
+      expect(result.pages).toHaveLength(1);
+      expect(result.pages[0]?.id).toBe('p1');
+      // R14: the fetched prefix is kept, but it must not present
+      // as the account's complete list. Unified semantics: the
+      // error case is BOTH truncated (either-cause flag) and
+      // partial (error-only flag) — the discover payload splits
+      // them back into capped vs error warnings.
+      expect(result.partial).toBe(true);
+      expect(result.truncated).toBe(true);
+      expect(result.truncationReason).toBe('page_error');
+    });
   });
 
-  // Audit BG6: truncation must be reported, never silently complete.
-  describe('fetchAllFacebookPagesWithMeta truncation', () => {
+  // Unified helper (BG6 + R14 merged): truncation must be
+  // reported, never silently complete.
+  describe('fetchAllFacebookPages truncation', () => {
     it('reports page_limit when the cap is hit with a cursor remaining', async () => {
       let callCount = 0;
       const mockFetch = async () => {
@@ -427,7 +510,7 @@ describe('Facebook Account & Page Domain Schemas', () => {
         } as Response;
       };
 
-      const result = await fetchAllFacebookPagesWithMeta(
+      const result = await fetchAllFacebookPages(
         'test-token',
         'id,name',
         2,
@@ -437,6 +520,7 @@ describe('Facebook Account & Page Domain Schemas', () => {
       expect(result.pages).toHaveLength(2);
       expect(result.truncated).toBe(true);
       expect(result.truncationReason).toBe('page_limit');
+      expect(result.partial).toBe(false);
     });
 
     it('reports page_error when a later page fails, keeping the pages already fetched', async () => {
@@ -458,7 +542,7 @@ describe('Facebook Account & Page Domain Schemas', () => {
         return { ok: false, status: 500 } as Response;
       };
 
-      const result = await fetchAllFacebookPagesWithMeta(
+      const result = await fetchAllFacebookPages(
         'test-token',
         'id,name',
         5,
@@ -467,6 +551,7 @@ describe('Facebook Account & Page Domain Schemas', () => {
       expect(result.pages).toHaveLength(1);
       expect(result.truncated).toBe(true);
       expect(result.truncationReason).toBe('page_error');
+      expect(result.partial).toBe(true);
     });
 
     it('reports not truncated when the last page has no cursor', async () => {
@@ -476,7 +561,7 @@ describe('Facebook Account & Page Domain Schemas', () => {
         json: async () => ({ data: [{ id: 'p1', name: 'Page One' }] }),
       });
 
-      const result = await fetchAllFacebookPagesWithMeta(
+      const result = await fetchAllFacebookPages(
         'test-token',
         'id,name',
         5,
@@ -485,6 +570,7 @@ describe('Facebook Account & Page Domain Schemas', () => {
       expect(result.pages).toHaveLength(1);
       expect(result.truncated).toBe(false);
       expect(result.truncationReason).toBeUndefined();
+      expect(result.partial).toBe(false);
     });
   });
 

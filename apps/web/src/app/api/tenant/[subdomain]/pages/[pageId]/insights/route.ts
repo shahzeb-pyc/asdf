@@ -34,6 +34,7 @@ interface DestinationRow {
   id: string;
   external_destination_id: string;
   encrypted_destination_token: string | null;
+  timezone?: string | null;
 }
 
 export async function handleGetPageInsights(
@@ -82,7 +83,7 @@ export async function handleGetPageInsights(
   }
   const { data: row, error: rowError } = await supabase
     .from('destinations')
-    .select('id, external_destination_id, encrypted_destination_token')
+    .select('id, external_destination_id, encrypted_destination_token, timezone')
     .eq('id', pageId)
     .eq('workspace_id', workspaceId)
     .eq('platform', 'facebook')
@@ -109,6 +110,8 @@ export async function handleGetPageInsights(
       token,
       range: parsedQuery.data.range,
       ...(graphFetch ? { graphFetch } : {}),
+      // K3: the window/trend dates follow the page's timezone.
+      ...(destination.timezone ? { timeZone: destination.timezone } : {}),
     });
     return NextResponse.json(payload, {
       headers: { 'Cache-Control': 'private, no-cache, no-store' },

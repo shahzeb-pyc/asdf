@@ -156,15 +156,19 @@ function feedVideo(overrides: Record<string, unknown> = {}) {
 }
 
 const createDeps = (options: { publish?: unknown } = {}) => ({
-  fetchGraphPages: vi.fn().mockResolvedValue([
-    {
-      id: fbPageId,
-      name: 'Test Page',
-      category: 'Test',
-      access_token: 'page-token-plain',
-      picture: { data: { url: 'https://example.com/pic.jpg' } },
-    },
-  ]),
+  fetchGraphPages: vi.fn().mockResolvedValue({
+    pages: [
+      {
+        id: fbPageId,
+        name: 'Test Page',
+        category: 'Test',
+        access_token: 'page-token-plain',
+        picture: { data: { url: 'https://example.com/pic.jpg' } },
+      },
+    ],
+    truncated: false,
+    partial: false,
+  }),
   fetchTikwmPosts: vi.fn().mockResolvedValue([feedVideo()]),
   fetchTikwmInfo: vi.fn().mockResolvedValue({
     unique_id: 'alice',

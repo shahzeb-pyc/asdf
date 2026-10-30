@@ -81,15 +81,18 @@ function renderPanel(overrides: Record<string, unknown> = {}) {
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
   );
-  return render(
-    <CalendarViewPanel
-      subdomain="acme"
-      pageId={PAGE_ID}
-      pageTimezone={(overrides.pageTimezone as string | undefined) ?? 'UTC'}
-      slots={(overrides.slots as typeof allFormatsSlot[] | undefined) ?? [allFormatsSlot]}
-    />,
-    { wrapper }
-  );
+  return {
+    ...render(
+      <CalendarViewPanel
+        subdomain="acme"
+        pageId={PAGE_ID}
+        pageTimezone={(overrides.pageTimezone as string | undefined) ?? 'UTC'}
+        slots={(overrides.slots as typeof allFormatsSlot[] | undefined) ?? [allFormatsSlot]}
+      />,
+      { wrapper }
+    ),
+    client,
+  };
 }
 
 function defaultSeed() {
@@ -139,6 +142,7 @@ describe('CalendarViewPanel', () => {
         failedCount: seed.filter((row) => row.status === 'failed').length,
         cancelledCount: 0,
         skippedCount: 0,
+        publishingCount: seed.filter((row) => row.status === 'publishing').length,
       };
     });
     apiPatch.mockImplementation(async (_path: string, body: unknown) => ({
@@ -231,6 +235,68 @@ describe('CalendarViewPanel', () => {
     );
     await user.click(screen.getByTestId(`calendar-entry-${ID_D}`));
     expect(screen.queryByTestId('queue-edit-dialog')).toBeNull();
+  });
+
+  it('publishing entries are not clickable for edit (K1)', async () => {
+    const user = userEvent.setup();
+    seed.push(
+      item({
+        id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+        caption: 'Publishing post',
+        status: 'publishing',
+        updatedAt: '2026-10-28T10:00:00.000Z',
+      })
+    );
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId('calendar-entry-eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee')).toBeTruthy()
+    );
+    await user.click(screen.getByTestId('calendar-entry-eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'));
+    expect(screen.queryByTestId('queue-edit-dialog')).toBeNull();
+    expect(apiPatch).not.toHaveBeenCalled();
+  });
+
+  it('keeps the edit dialog open with the draft intact when the save fails (R24)', async () => {
+    const user = userEvent.setup();
+    apiPatch.mockRejectedValueOnce(new Error('Server exploded'));
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId(`calendar-entry-${ID_A}`)).toBeTruthy()
+    );
+    await user.click(screen.getByTestId(`calendar-entry-${ID_A}`));
+    const dialog = await screen.findByTestId('queue-edit-dialog');
+    const caption = within(dialog).getByTestId('queue-edit-caption') as HTMLTextAreaElement;
+    await user.clear(caption);
+    await user.type(caption, 'Edited from calendar');
+    await user.click(within(dialog).getByTestId('queue-edit-save-btn'));
+    await waitFor(() => expect(apiPatch).toHaveBeenCalled());
+    // The old `finally` cleared the draft on failure; now the
+    // dialog — and the caption — stay for a retry.
+    expect(screen.getByTestId('queue-edit-dialog')).toBeTruthy();
+    expect((screen.getByTestId('queue-edit-caption') as HTMLTextAreaElement).value).toBe(
+      'Edited from calendar'
+    );
+  });
+
+  it('invalidates the pages list and detail on an edit (K8)', async () => {
+    const user = userEvent.setup();
+    const { client } = renderPanel();
+    const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
+    await waitFor(() =>
+      expect(screen.getByTestId(`calendar-entry-${ID_A}`)).toBeTruthy()
+    );
+    await user.click(screen.getByTestId(`calendar-entry-${ID_A}`));
+    const dialog = await screen.findByTestId('queue-edit-dialog');
+    await user.click(within(dialog).getByTestId('queue-edit-save-btn'));
+    await waitFor(() => expect(apiPatch).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(invalidateSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ queryKey: ['tenant', 'acme', 'pages', 'list'] })
+      )
+    );
+    expect(invalidateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: ['tenant', 'acme', 'pages', PAGE_ID] })
+    );
   });
 
   it('reports queued posts with no estimate instead of dropping them', async () => {
@@ -412,5 +478,29 @@ describe('CalendarViewPanel', () => {
     expect(screen.getByTestId('calendar-month-label').textContent).toBe('January 2027');
     await user.click(screen.getByTestId('calendar-prev-btn'));
     expect(screen.getByTestId('calendar-month-label').textContent).toBe('December 2026');
+  });
+
+  it('keeps the All count identical under any filter while a post is publishing (R11)', async () => {
+    const user = userEvent.setup();
+    seed.push(
+      item({
+        id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+        caption: 'Publishing post',
+        status: 'publishing',
+        updatedAt: '2026-10-28T10:00:00.000Z',
+      }),
+    );
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId('calendar-filter-all')).toBeTruthy(),
+    );
+    // 2 queued + 1 publishing + 1 failed + 1 published = 5, under
+    // every filter — identical rule to the queue panel.
+    expect(screen.getByTestId('calendar-filter-all')).toHaveTextContent('All (5)');
+    expect(screen.getByTestId('calendar-filter-publishing')).toHaveTextContent('Publishing (1)');
+    await user.click(screen.getByTestId('calendar-filter-queued'));
+    await waitFor(() =>
+      expect(screen.getByTestId('calendar-filter-all')).toHaveTextContent('All (5)'),
+    );
   });
 });

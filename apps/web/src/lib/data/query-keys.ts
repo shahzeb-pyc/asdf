@@ -21,6 +21,14 @@ export const queryKeys = {
       accounts: {
         all: [...tenantRoot, 'accounts'] as const,
         list: [...tenantRoot, 'accounts', 'list'] as const,
+        /**
+         * R16: the Pages shell's filter options need EVERY account,
+         * not page 1 of the paginated accounts view. This key holds
+         * that complete set (fetched page by page under the hood);
+         * it stays under `list`, so accounts-list invalidation
+         * (e.g. disconnect) refreshes it too.
+         */
+        listAll: [...tenantRoot, 'accounts', 'list', 'all'] as const,
         /** Paginated list key: page + limit + filters, so each page caches separately. */
         listPage: (params: {
           page: number;
@@ -82,9 +90,9 @@ export const queryKeys = {
         all: [...tenantRoot, 'destinations'] as const,
         detail: (destinationId: string) =>
           [...tenantRoot, 'destinations', destinationId] as const,
-        /** Unified queue list for one destination (spec 134 PR-134-3). */
-        queue: (destinationId: string) =>
-          [...tenantRoot, 'destinations', destinationId, 'queue'] as const,
+        // K10: the destinations queue key was deleted with the
+        // destinations queue-list route it invalidated — no UI
+        // queried that list (the Pages section uses queue.items).
         /** Unified posting slots for one destination (spec 134 PR-134-3). */
         slots: (destinationId: string) =>
           [...tenantRoot, 'destinations', destinationId, 'posting-slots'] as const,

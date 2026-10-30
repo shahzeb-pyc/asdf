@@ -93,9 +93,12 @@ describe('PageTabPostingTimes (rebuilt, spec 134)', () => {
     await waitFor(() =>
       expect(props.onUpdateSlot).toHaveBeenCalledWith(
         'slot-2',
-        expect.objectContaining({ slotTime: '15:00', timezone: 'UTC' })
+        expect.objectContaining({ slotTime: '15:00' })
       )
     );
+    // Nit: the update shape carries no dead timezone field.
+    const updateArg = (props.onUpdateSlot as unknown as { mock: { calls: Array<[string, Record<string, unknown>]> } }).mock.calls[0]?.[1];
+    expect(updateArg).not.toHaveProperty('timezone');
   });
 
   it('deletes through the AlertDialog confirm with the verb-named action', async () => {
@@ -164,5 +167,18 @@ describe('PageTabPostingTimes (rebuilt, spec 134)', () => {
     renderTab({ isLoading: true });
     expect(screen.getByTestId('calendar-loading')).toBeInTheDocument();
     expect(screen.queryByTestId('slots-grid')).not.toBeInTheDocument();
+  });
+
+  it('shows an error state with Retry, not the first-use empty state, when slots fail (R4)', async () => {
+    const user = userEvent.setup();
+    const onRetrySlots = vi.fn();
+    renderTab({ slots: [], slotsError: true, onRetrySlots });
+    // An empty slots array on failure must not read as "no posting
+    // times": no empty state, no slot grid, error banner instead.
+    expect(screen.queryByTestId('calendar-empty-state')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('slots-grid')).not.toBeInTheDocument();
+    expect(screen.getByText("Couldn't load posting times")).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(onRetrySlots).toHaveBeenCalledTimes(1);
   });
 });

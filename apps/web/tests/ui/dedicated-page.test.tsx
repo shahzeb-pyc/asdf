@@ -542,9 +542,12 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
       const modal = document.querySelector('[data-testid="header-disconnect-modal"]');
       expect(modal).not.toBeNull();
       expect(modal?.textContent).toContain(`Disconnect ${samplePage.pageName}?`);
-      expect(modal?.textContent).toContain(
-        'This will disconnect the Facebook Page from your workspace. Any queued posts will be cancelled.'
-      );
+      // K11 honest copy: page-only (not the account), token
+      // cleared, queued cancelled, publishing untouched.
+      expect(modal?.textContent).toContain('not the Facebook account');
+      expect(modal?.textContent).toContain('access token for this page is cleared');
+      expect(modal?.textContent).toContain('Queued posts are cancelled');
+      expect(modal?.textContent).toContain('posts already publishing are untouched');
       expect(
         document.querySelector('[data-testid="header-cancel-disconnect-btn"]')
       ).not.toBeNull();

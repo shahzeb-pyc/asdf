@@ -167,6 +167,251 @@ describe('Publishing Queue Actions Route Handlers (T128, T129)', () => {
       expect(json.error).toBe('CANNOT_UPDATE_PUBLISHED_ITEM');
     });
 
+    it('returns 400 Bad Request if trying to update a publishing queue item (K1 fail-closed)', async () => {
+      const mockDb: Partial<DatabaseClient> = {
+        query: vi.fn().mockImplementation((sql: string) => {
+          if (sql.includes('FROM workspaces')) {
+            return Promise.resolve([{ id: 'ws_123' }]);
+          }
+          if (sql.includes('SELECT') && sql.includes('FROM queue_items')) {
+            return Promise.resolve([
+              {
+                id: itemId,
+                user_id: userId,
+                status: 'publishing',
+              },
+            ]);
+          }
+          return Promise.resolve([]);
+        }),
+      };
+
+      const req = new NextRequest(`http://localhost:3000/api/tenant/acme/publishing/queue/${itemId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ caption: 'New caption' }),
+        headers: {
+          cookie: validSessionCookie,
+          'content-type': 'application/json',
+        },
+      });
+
+      const res = await handleUpdateQueueItem(req, 'acme', itemId, mockDb as DatabaseClient);
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toBe('CANNOT_UPDATE_PUBLISHING_ITEM');
+    });
+
+    it('returns 400 Bad Request if trying to update a cancelled queue item (nit: cancelled is terminal)', async () => {
+      const mockDb: Partial<DatabaseClient> = {
+        query: vi.fn().mockImplementation((sql: string) => {
+          if (sql.includes('FROM workspaces')) {
+            return Promise.resolve([{ id: 'ws_123' }]);
+          }
+          if (sql.includes('SELECT') && sql.includes('FROM queue_items')) {
+            return Promise.resolve([
+              {
+                id: itemId,
+                user_id: userId,
+                status: 'cancelled',
+              },
+            ]);
+          }
+          return Promise.resolve([]);
+        }),
+      };
+
+      const req = new NextRequest(`http://localhost:3000/api/tenant/acme/publishing/queue/${itemId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ caption: 'New caption' }),
+        headers: {
+          cookie: validSessionCookie,
+          'content-type': 'application/json',
+        },
+      });
+
+      const res = await handleUpdateQueueItem(req, 'acme', itemId, mockDb as DatabaseClient);
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toBe('CANNOT_UPDATE_CANCELLED_ITEM');
+    });
+
+    it('returns 400 Bad Request for a reel caption over 2,200 on an existing reel (R13)', async () => {
+      const mockDb: Partial<DatabaseClient> = {
+        query: vi.fn().mockImplementation((sql: string) => {
+          if (sql.includes('FROM workspaces')) {
+            return Promise.resolve([{ id: 'ws_123' }]);
+          }
+          if (sql.includes('SELECT') && sql.includes('FROM queue_items')) {
+            return Promise.resolve([
+              {
+                id: itemId,
+                user_id: userId,
+                destination_id: pageId,
+                kind: 'video',
+                platform_format: 'reel',
+                caption: 'Short reel',
+                first_comment: null,
+                scheduled_time: new Date('2026-10-08T18:00:00.000Z'),
+                status: 'queued',
+                retry_count: 0,
+                max_retries: 3,
+              },
+            ]);
+          }
+          return Promise.resolve([]);
+        }),
+      };
+
+      const req = new NextRequest(`http://localhost:3000/api/tenant/acme/publishing/queue/${itemId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ caption: 'R'.repeat(2201) }),
+        headers: {
+          cookie: validSessionCookie,
+          'content-type': 'application/json',
+        },
+      });
+
+      const res = await handleUpdateQueueItem(req, 'acme', itemId, mockDb as DatabaseClient);
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toBe('INVALID_REQUEST');
+      expect(json.message).toBe('Reel captions are limited to 2,200 characters');
+    });
+
+    it('returns 200 OK for a long feed caption and refreshes the unmatched flag (R13, R25)', async () => {
+      const longCaption = 'L'.repeat(60000);
+      const query = vi.fn().mockImplementation((sql: string) => {
+        if (sql.includes('FROM workspaces')) {
+          return Promise.resolve([{ id: 'ws_123' }]);
+        }
+        if (sql.includes('SELECT') && sql.includes('FROM queue_items')) {
+          return Promise.resolve([
+            {
+              id: itemId,
+              user_id: userId,
+              destination_id: pageId,
+              kind: 'text',
+              platform_format: null,
+              caption: 'Original caption',
+              first_comment: null,
+              scheduled_time: new Date('2026-10-08T18:00:00.000Z'),
+              status: 'queued',
+              retry_count: 0,
+              max_retries: 3,
+            },
+          ]);
+        }
+        if (sql.includes('UPDATE queue_items')) {
+          return Promise.resolve([
+            {
+              id: itemId,
+              user_id: userId,
+              destination_id: pageId,
+              slot_id: slotId,
+              media_item_id: null,
+              scheduled_time: new Date('2026-10-08T18:00:00.000Z'),
+              caption: longCaption,
+              first_comment: null,
+              status: 'queued',
+              retry_count: 0,
+              max_retries: 3,
+              external_post_id: null,
+              external_comment_id: null,
+              created_at: new Date('2026-10-07T12:00:00.000Z'),
+              updated_at: new Date('2026-10-07T13:00:00.000Z'),
+            },
+          ]);
+        }
+        return Promise.resolve([]);
+      });
+      const mockDb: Partial<DatabaseClient> = { query };
+
+      const req = new NextRequest(`http://localhost:3000/api/tenant/acme/publishing/queue/${itemId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ caption: longCaption }),
+        headers: {
+          cookie: validSessionCookie,
+          'content-type': 'application/json',
+        },
+      });
+
+      const res = await handleUpdateQueueItem(req, 'acme', itemId, mockDb as DatabaseClient);
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.caption).toBe(longCaption);
+      expect(query).toHaveBeenCalledWith(
+        expect.stringContaining('refresh_destination_unmatched_flag'),
+        [pageId]
+      );
+    });
+
+    it('resets the retry budget when requeueing a failed item (R12)', async () => {
+      const query = vi.fn().mockImplementation((sql: string, params: unknown[] = []) => {
+        if (sql.includes('FROM workspaces')) {
+          return Promise.resolve([{ id: 'ws_123' }]);
+        }
+        if (sql.includes('SELECT') && sql.includes('FROM queue_items')) {
+          return Promise.resolve([
+            {
+              id: itemId,
+              user_id: userId,
+              destination_id: pageId,
+              kind: 'text',
+              platform_format: null,
+              caption: 'Failed post',
+              first_comment: null,
+              scheduled_time: new Date('2026-10-08T18:00:00.000Z'),
+              status: 'failed',
+              retry_count: 2,
+              max_retries: 3,
+            },
+          ]);
+        }
+        if (sql.includes('UPDATE queue_items')) {
+          return Promise.resolve([
+            {
+              id: itemId,
+              user_id: userId,
+              destination_id: pageId,
+              slot_id: slotId,
+              media_item_id: null,
+              scheduled_time: new Date('2026-10-08T18:00:00.000Z'),
+              caption: 'Failed post',
+              first_comment: null,
+              status: 'queued',
+              retry_count: 0,
+              max_retries: 3,
+              external_post_id: null,
+              external_comment_id: null,
+              created_at: new Date('2026-10-07T12:00:00.000Z'),
+              updated_at: new Date('2026-10-07T13:00:00.000Z'),
+            },
+          ]);
+        }
+        return Promise.resolve([]);
+      });
+      const mockDb: Partial<DatabaseClient> = { query };
+
+      const req = new NextRequest(`http://localhost:3000/api/tenant/acme/publishing/queue/${itemId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'queued' }),
+        headers: {
+          cookie: validSessionCookie,
+          'content-type': 'application/json',
+        },
+      });
+
+      const res = await handleUpdateQueueItem(req, 'acme', itemId, mockDb as DatabaseClient);
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.retryCount).toBe(0);
+      const updateCall = query.mock.calls.find(([sql]) =>
+        (sql as string).includes('UPDATE queue_items')
+      );
+      // retry_count is $8 in the requeue UPDATE.
+      expect(updateCall?.[1]?.[7]).toBe(0);
+    });
+
     it('returns 200 OK updating caption, firstComment, scheduledTime, and status', async () => {
       const updatedTime = '2026-10-08T20:00:00.000Z';
       const mockDb: Partial<DatabaseClient> = {
@@ -413,6 +658,36 @@ describe('Publishing Queue Actions Route Handlers (T128, T129)', () => {
       expect(json.error).toBe('CANNOT_DELETE_PUBLISHED_ITEM');
     });
 
+    it('returns 400 Bad Request if trying to delete a publishing queue item (K1 fail-closed)', async () => {
+      const mockDb: Partial<DatabaseClient> = {
+        query: vi.fn().mockImplementation((sql: string) => {
+          if (sql.includes('FROM workspaces')) {
+            return Promise.resolve([{ id: 'ws_123' }]);
+          }
+          if (sql.includes('SELECT') && sql.includes('FROM queue_items')) {
+            return Promise.resolve([
+              {
+                id: itemId,
+                user_id: userId,
+                status: 'publishing',
+              },
+            ]);
+          }
+          return Promise.resolve([]);
+        }),
+      };
+
+      const req = new NextRequest(`http://localhost:3000/api/tenant/acme/publishing/queue/${itemId}`, {
+        method: 'DELETE',
+        headers: { cookie: validSessionCookie },
+      });
+
+      const res = await handleDeleteQueueItem(req, 'acme', itemId, mockDb as DatabaseClient);
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toBe('CANNOT_DELETE_PUBLISHING_ITEM');
+    });
+
     it('returns 200 OK removing item from queue', async () => {
       const mockDb: Partial<DatabaseClient> = {
         query: vi.fn().mockImplementation((sql: string) => {
@@ -444,6 +719,41 @@ describe('Publishing Queue Actions Route Handlers (T128, T129)', () => {
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(data).toEqual({ success: true, itemId });
+    });
+
+    it('refreshes the unmatched flag on delete (R25)', async () => {
+      const query = vi.fn().mockImplementation((sql: string) => {
+        if (sql.includes('FROM workspaces')) {
+          return Promise.resolve([{ id: 'ws_123' }]);
+        }
+        if (sql.includes('SELECT') && sql.includes('FROM queue_items')) {
+          return Promise.resolve([
+            {
+              id: itemId,
+              user_id: userId,
+              status: 'queued',
+              destination_id: pageId,
+            },
+          ]);
+        }
+        if (sql.includes('DELETE FROM queue_items')) {
+          return Promise.resolve([{ id: itemId }]);
+        }
+        return Promise.resolve([]);
+      });
+      const mockDb: Partial<DatabaseClient> = { query };
+
+      const req = new NextRequest(`http://localhost:3000/api/tenant/acme/publishing/queue/${itemId}`, {
+        method: 'DELETE',
+        headers: { cookie: validSessionCookie },
+      });
+
+      const res = await handleDeleteQueueItem(req, 'acme', itemId, mockDb as DatabaseClient);
+      expect(res.status).toBe(200);
+      expect(query).toHaveBeenCalledWith(
+        expect.stringContaining('refresh_destination_unmatched_flag'),
+        [pageId]
+      );
     });
   });
 
@@ -567,6 +877,48 @@ describe('Publishing Queue Actions Route Handlers (T128, T129)', () => {
         success: true,
         message: 'Item dispatched for immediate publishing',
       });
+    });
+
+    it('resets the retry budget when publishing now a failed item (R12)', async () => {
+      let updateSql = '';
+      const mockDb: Partial<DatabaseClient> = {
+        query: vi.fn().mockImplementation((sql: string) => {
+          if (sql.includes('FROM workspaces')) {
+            return Promise.resolve([{ id: 'ws_123' }]);
+          }
+          if (sql.includes('SELECT') && sql.includes('FROM queue_items')) {
+            return Promise.resolve([
+              {
+                id: itemId,
+                user_id: userId,
+                status: 'failed',
+                destination_id: pageId,
+              },
+            ]);
+          }
+          if (sql.includes('FROM destinations')) {
+            return Promise.resolve([
+              { status: 'active', metadata: {}, updated_at: new Date().toISOString() },
+            ]);
+          }
+          if (sql.includes('UPDATE queue_items')) {
+            updateSql = sql;
+            return Promise.resolve([{ id: itemId }]);
+          }
+          return Promise.resolve([]);
+        }),
+      };
+
+      const req = new NextRequest(`http://localhost:3000/api/tenant/acme/publishing/queue/${itemId}/publish-now`, {
+        method: 'POST',
+        headers: { cookie: validSessionCookie },
+      });
+
+      const res = await handlePublishNow(req, 'acme', itemId, mockDb as DatabaseClient);
+      expect(res.status).toBe(200);
+      // The failed-only reset lives in the UPDATE itself, so the
+      // budget cannot survive a re-queue even if the caller forgets.
+      expect(updateSql).toContain("retry_count = CASE WHEN status = 'failed' THEN 0 ELSE retry_count END");
     });
 
     it('returns 200 via the Supabase path and refreshes the unmatched flag', async () => {

@@ -120,16 +120,11 @@ describe('paginated subtitles report full-set counts', () => {
         attentionTotal: 3,
       }
     );
-    queryClient.setQueryData(
-      tenant.accounts.listPage({ page: 1, limit: 50, search: '', status: 'all' }),
-      {
-        accounts: [makeAccount(1)],
-        total: 1,
-        page: 1,
-        limit: 50,
-        totalPages: 1,
-      }
-    );
+    // R16: the shell reads the complete accounts set (listAll).
+    queryClient.setQueryData(tenant.accounts.listAll, {
+      accounts: [makeAccount(1)],
+      total: 1,
+    });
     seedByoc(queryClient);
 
     render(

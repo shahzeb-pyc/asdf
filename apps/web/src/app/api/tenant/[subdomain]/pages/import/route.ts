@@ -4,7 +4,6 @@ import {
   decryptToken,
   encryptToken,
   fetchAllFacebookPages,
-  fetchAllFacebookPagesWithMeta,
   getSessionSecret,
   getTokenEncryptionKey,
   ImportPagesRequestSchema,
@@ -158,13 +157,18 @@ export async function handleImportPages(
   }
 
   // 5. Query Facebook Graph API v26.0 /me/accounts with pagination
-  // Audit BG6: the meta variant reports truncation — a selected
+  // BG6 + R14: the unified helper reports truncation — a selected
   // page missing from a truncated list is not "removed", it is
   // unseen, and the PARTIAL_IMPORT message below says so.
-  let rawItems: Awaited<ReturnType<typeof fetchAllFacebookPages>> = [];
+  // A truncated/partial re-discovery can only fail to match a
+  // selected page, which the schedule pre-check below turns into
+  // an error (or the legacy path imports what matched) — it never
+  // imports the wrong page. Truncation surfacing for the user
+  // belongs to the discover flow (R14), not this import.
+  let rawItems: Awaited<ReturnType<typeof fetchAllFacebookPages>>['pages'] = [];
   let graphTruncated = false;
   try {
-    const fetched = await fetchAllFacebookPagesWithMeta(
+    const fetched = await fetchAllFacebookPages(
       rawToken,
       'id,name,category,tasks,access_token,followers_count,picture{url}'
     );
@@ -269,26 +273,59 @@ export async function handleImportPages(
   // baseline lives in destinations.metadata since the unified schema).
   const isSupabaseMode =
     !dbClient || !('query' in dbClient) || typeof dbClient.query !== 'function';
+  // The pre-upsert snapshot of a destination, used by rollback to
+  // restore exactly what the upsert overwrote (name, avatar, token,
+  // metadata) — the upsert runs before any schedule write, so a
+  // post-upsert read of these columns would already see the new
+  // values. Keyed by fbPageId; populated from the same pre-loads
+  // below, so no extra query is needed in either path.
+  interface PreUpsertSnapshot {
+    name: string | null;
+    avatarUrl: string | null;
+    encryptedToken: string | null;
+    metadata: Record<string, unknown>;
+  }
+  // The snapshot columns as a load carries them: present (possibly
+  // null) when the load selected them, undefined when it did not —
+  // kept distinct under exactOptionalPropertyTypes so a load that
+  // did not carry a column can never pass as "restore null".
+  interface PreUpsertSnapshotCarried {
+    name?: string | null | undefined;
+    avatarUrl?: string | null | undefined;
+    encryptedToken?: string | null | undefined;
+  }
   const existingPagesMap = new Map<
     string,
     {
       status: string;
       starting_followers: number | null;
       metadata: Record<string, unknown>;
-    }
+    } & PreUpsertSnapshotCarried
   >();
-  // Postgres pre-existing status map, for the same "schedule only
-  // newly created or previously disconnected pages" rule the
-  // Supabase path gets from existingPagesMap. Status matters, not
-  // mere existence: a disconnected row is reactivated by this
-  // import and must receive the new schedule, while an active (or
-  // paused, etc.) row must keep its own schedule untouched.
-  const preExistingStatusByFbId = new Map<string, string>();
-  // Audit BG8: a paused page is a 'disconnected' row carrying
-  // metadata.fb_status = 'paused'. It must survive a re-import
-  // paused (token refreshed, status untouched) — so the paused
-  // marker is tracked alongside status on both paths.
-  const preExistingPausedByFbId = new Map<string, boolean>();
+  // Postgres pre-existing map, for the same "schedule only newly
+  // created or previously disconnected pages" rule the Supabase
+  // path gets from existingPagesMap. Status matters, not mere
+  // existence: a disconnected row is reactivated by this import
+  // and must receive the new schedule, while an active (or paused,
+  // etc.) row must keep its own schedule untouched. The map is
+  // account-scoped (the upsert key is (account_id,
+  // external_destination_id)) and also carries fb_status, because a
+  // PAUSED page is stored as disconnected + fb_status='paused' and
+  // must NOT be treated as reactivated (K9).
+  const preExistingStatusByFbId = new Map<
+    string,
+    {
+      status: string;
+      fbStatus: string | null;
+      metadata: Record<string, unknown>;
+    } & PreUpsertSnapshotCarried
+  >();
+  // The paused marker is derived from the rich map's fbStatus
+  // below (no separate paused map): a paused page is a
+  // 'disconnected' row carrying metadata.fb_status = 'paused'.
+  // It must survive a re-import paused (token refreshed, status
+  // untouched) — so the marker is tracked alongside status on
+  // both paths.
 
   if (
     dbClient &&
@@ -300,26 +337,64 @@ export async function handleImportPages(
       external_destination_id?: string;
       externalDestinationId?: string;
       status?: string;
-      metadata?: Record<string, unknown> | null;
+      fb_status?: string | null;
+      name?: string | null;
+      avatar_url?: string | null;
+      encrypted_destination_token?: string | null;
+      metadata?: Record<string, unknown> | string | null;
     }>(
-      `SELECT external_destination_id, status, metadata FROM destinations
+      `SELECT external_destination_id, status, metadata->>'fb_status' AS fb_status,
+        name, avatar_url, encrypted_destination_token, metadata FROM destinations
        WHERE account_id = $1 AND external_destination_id = ANY($2::text[])`,
       [accountId, matchedPages.map((item) => String(item.id))]
     )) as Array<{
       external_destination_id?: string;
       externalDestinationId?: string;
       status?: string;
-      metadata?: Record<string, unknown> | null;
+      fb_status?: string | null;
+      name?: string | null;
+      avatar_url?: string | null;
+      encrypted_destination_token?: string | null;
+      metadata?: Record<string, unknown> | string | null;
     }>;
     for (const row of preExistingRows ?? []) {
       const fbPageId = row.external_destination_id ?? row.externalDestinationId;
-      if (fbPageId) {
-        preExistingStatusByFbId.set(String(fbPageId), row.status ?? '');
-        preExistingPausedByFbId.set(
-          String(fbPageId),
-          row.metadata?.fb_status === 'paused'
-        );
+      if (!fbPageId) continue;
+      let metadata: Record<string, unknown> = {};
+      if (row.metadata && typeof row.metadata === 'object') {
+        metadata = row.metadata as Record<string, unknown>;
+      } else if (typeof row.metadata === 'string') {
+        try {
+          const parsed: unknown = JSON.parse(row.metadata);
+          if (parsed && typeof parsed === 'object') {
+            metadata = parsed as Record<string, unknown>;
+          }
+        } catch (_e) {
+          // An unparseable stored metadata is treated as empty for
+          // the snapshot; the upsert below still rewrites it, and
+          // rollback then cannot restore what it could not read —
+          // that page is marked incomplete by the caller instead.
+          metadata = {};
+        }
       }
+      // fbStatus prefers the SQL alias; the metadata object's own
+      // fb_status is the fallback for loads that did not carry the
+      // alias (e.g. older test doubles) — same value in production.
+      const fbStatusFromMetadata =
+        typeof metadata.fb_status === 'string' ? metadata.fb_status : null;
+      preExistingStatusByFbId.set(String(fbPageId), {
+        status: row.status ?? '',
+        fbStatus: row.fb_status ?? fbStatusFromMetadata,
+        // Raw values, NOT coerced: a missing column (undefined)
+        // means this load did not carry a restorable snapshot, and
+        // preUpsertSnapshot below must say so instead of restoring
+        // nulls over the page's real name/token. A real NULL (e.g.
+        // no avatar) stays null and restores as null.
+        name: row.name,
+        avatarUrl: row.avatar_url,
+        encryptedToken: row.encrypted_destination_token,
+        metadata,
+      });
     }
   }
 
@@ -332,19 +407,51 @@ export async function handleImportPages(
   const preExistingStatus = (fbPageId: string): string =>
     isSupabaseMode
       ? (existingPagesMap.get(fbPageId)?.status ?? '')
-      : (preExistingStatusByFbId.get(fbPageId) ?? '');
-  const isPausedDestination = (fbPageId: string): boolean =>
-    isSupabaseMode
-      ? existingPagesMap.get(fbPageId)?.metadata?.fb_status === 'paused'
-      : (preExistingPausedByFbId.get(fbPageId) ?? false);
-  // A paused page is NOT a reactivation: it keeps its paused
-  // marker and receives no schedule, even though its stored
-  // status is also 'disconnected'.
+      : (preExistingStatusByFbId.get(fbPageId)?.status ?? '');
+  const isPausedDestination = (fbPageId: string): boolean => {
+    if (preExistingStatus(fbPageId) !== 'disconnected') return false;
+    const fbStatus = isSupabaseMode
+      ? (existingPagesMap.get(fbPageId)?.metadata?.fb_status ?? null)
+      : (preExistingStatusByFbId.get(fbPageId)?.fbStatus ?? null);
+    return fbStatus === 'paused';
+  };
+  // K9/BG8: a paused page (disconnected + fb_status='paused') is
+  // NOT a reactivation — it keeps its paused marker and receives
+  // no schedule, must not enter scheduleTargets, must not have
+  // its slots deleted, and must not have its marker stripped.
   const isReactivatedDestination = (fbPageId: string): boolean =>
     isPreExistingDestination(fbPageId) &&
     preExistingStatus(fbPageId) === 'disconnected' &&
     !isPausedDestination(fbPageId);
-
+  // Pre-upsert snapshot for a fbPageId, from whichever path loaded
+  // it. Undefined when the page is not pre-existing (or the load
+  // did not carry the columns, e.g. a stale test double) — the
+  // rollback caller treats a missing snapshot for a reactivated
+  // target as incomplete rather than restoring fabricated values.
+  const preUpsertSnapshot = (
+    fbPageId: string
+  ): PreUpsertSnapshot | undefined => {
+    const entry = isSupabaseMode
+      ? existingPagesMap.get(fbPageId)
+      : preExistingStatusByFbId.get(fbPageId);
+    // Every snapshot column must have been carried by the load;
+    // a single missing column means "no restorable snapshot", not
+    // "restore nulls" — the caller aborts the schedule instead.
+    if (
+      !entry ||
+      entry.name === undefined ||
+      entry.avatarUrl === undefined ||
+      entry.encryptedToken === undefined
+    ) {
+      return undefined;
+    }
+    return {
+      name: entry.name,
+      avatarUrl: entry.avatarUrl,
+      encryptedToken: entry.encryptedToken,
+      metadata: entry.metadata,
+    };
+  };
   // The universal BG8 guard above already rejects a short Graph
   // result before anything is written, schedule or not — the old
   // schedule-only guard lived here and is deleted, not kept
@@ -358,9 +465,14 @@ export async function handleImportPages(
       const pageFbIds = matchedPages.map((item) => String(item.id));
       const { data: existingRows, error: existingErr } = await supabase
         .from('destinations')
-        .select('external_destination_id, status, metadata')
+        .select('external_destination_id, status, metadata, name, avatar_url, encrypted_destination_token')
         .eq('workspace_id', workspaceId)
         .eq('platform', 'facebook')
+        // K9: the upsert key is (account_id,
+        // external_destination_id) — scoping by workspace alone
+        // misclassifies a second account's row for the same page as
+        // pre-existing under this account.
+        .eq('account_id', accountId)
         .in('external_destination_id', pageFbIds);
 
       // Fail loud: an error here must never be read as "no pages
@@ -392,6 +504,14 @@ export async function handleImportPages(
                   ? metadata.starting_followers
                   : null,
               metadata,
+              // Raw values for the pre-upsert rollback snapshot
+              // (see preUpsertSnapshot): a missing column stays
+              // undefined so a load that did not carry it cannot
+              // restore fabricated values.
+              name: (row as { name?: string | null }).name,
+              avatarUrl: (row as { avatar_url?: string | null }).avatar_url,
+              encryptedToken: (row as { encrypted_destination_token?: string | null })
+                .encrypted_destination_token,
             });
           }
         }
@@ -403,6 +523,9 @@ export async function handleImportPages(
     // Audit N4: the token-less guard above already returned, so
     // a missing token here is unreachable — but it must never
     // silently fall back to the user token again, so fail loud.
+    // (The R14/K9 per-page skip this replaced is superseded: the
+    // upfront guard aborts before anything is written, so this
+    // throw can only fire if that guard is ever bypassed.)
     const rawPageToken = pageItem.access_token;
     if (!rawPageToken) {
       throw new Error(
@@ -439,19 +562,35 @@ export async function handleImportPages(
           name = EXCLUDED.name,
           avatar_url = EXCLUDED.avatar_url,
           encrypted_destination_token = EXCLUDED.encrypted_destination_token,
-          status = CASE WHEN $10 THEN 'disconnected' ELSE 'active' END,
+          -- K9/BG8: a paused page (disconnected + fb_status='paused')
+          -- stays paused on re-import: its status, its marker and
+          -- its follower baseline are preserved, not reset as if
+          -- it were a fresh reactivation. Every other row keeps
+          -- the previous behaviour (active, marker stripped,
+          -- baseline reset only for truly disconnected rows).
+          -- The guard is SQL-level (not a $param) so it holds even
+          -- if the pre-existing load disagreed with the row.
+          status = CASE
+            WHEN destinations.status = 'disconnected' AND destinations.metadata->>'fb_status' = 'paused'
+              THEN 'disconnected'
+            ELSE 'active'
+          END,
           metadata = (destinations.metadata - 'fb_status')
             || jsonb_build_object(
               'category', $7::text,
               'tasks', $8::jsonb,
               'current_followers', $9::int,
               'starting_followers', CASE
-                WHEN destinations.status = 'disconnected' AND NOT $10
+                WHEN destinations.status = 'disconnected' AND destinations.metadata->>'fb_status' IS DISTINCT FROM 'paused'
                   THEN $9::int
                 ELSE COALESCE((destinations.metadata->>'starting_followers')::int, $9::int)
               END
             )
-            || CASE WHEN $10 THEN jsonb_build_object('fb_status', 'paused') ELSE '{}'::jsonb END,
+            || CASE
+              WHEN destinations.status = 'disconnected' AND destinations.metadata->>'fb_status' = 'paused'
+                THEN jsonb_build_object('fb_status', 'paused')
+              ELSE '{}'::jsonb
+            END,
           updated_at = now()
         RETURNING id, external_destination_id AS fb_page_id, name AS page_name`,
         [
@@ -464,8 +603,6 @@ export async function handleImportPages(
           pageItem.category ?? null,
           tasksJson,
           followers,
-          // Audit BG8: $10 — paused pages stay paused on re-import.
-          isPausedDestination(String(pageItem.id)),
         ]
       )) as Record<string, unknown>[];
 
@@ -485,8 +622,10 @@ export async function handleImportPages(
       if (!supabase) return null;
 
       const existingPage = existingPagesMap.get(String(pageItem.id));
-      // Audit BG8: a paused page keeps its baseline like an active
-      // page (it is not a reactivation) and keeps its marker below.
+      // K9/BG8: a paused page (disconnected + fb_status='paused')
+      // is not a reactivation — its baseline is preserved like an
+      // active page's, not reset like a truly disconnected one's,
+      // and it keeps its marker below.
       const paused = isPausedDestination(String(pageItem.id));
       const preserveBaseline =
         existingPage &&
@@ -567,6 +706,12 @@ export async function handleImportPages(
       allowedFormats: string[];
       isActive: boolean;
     }>;
+    // K9: the pre-upsert row the import overwrote (name, avatar,
+    // token, metadata). A reactivated page's upsert rewrites all of
+    // these, so a schedule rollback that only restored status /
+    // timezone / slots would leave the page with the import's new
+    // facts attached to its old schedule — a half-restored row.
+    preUpsert: PreUpsertSnapshot | undefined;
     complete: boolean;
   }
 
@@ -588,11 +733,26 @@ export async function handleImportPages(
   };
 
   const snapshotReactivated = async (
-    targets: Array<{ id: string }>
+    targets: Array<{ id: string; fbPageId?: string }>
   ): Promise<Map<string, ReactivatedSnapshot>> => {
     const snapshots = new Map<string, ReactivatedSnapshot>();
     if (targets.length === 0) return snapshots;
     for (const target of targets) {
+      // The pre-upsert snapshot comes from the pre-loads above, not
+      // from a post-upsert read (which would already see the new
+      // name/token/metadata). A missing one means the schedule
+      // cannot be safely restored for this page, so the caller
+      // aborts the schedule rather than restoring fabricated rows.
+      const pre =
+        typeof target.fbPageId === 'string'
+          ? preUpsertSnapshot(target.fbPageId)
+          : undefined;
+      if (!pre) {
+        logServerError('[pages/import] Missing pre-upsert snapshot for reactivated page', new Error('Pre-upsert snapshot missing while snapshotting reactivated page'), {
+          source: 'pages-import-snapshot',
+          subdomain,
+        });
+      }
       try {
         if (
           dbClient &&
@@ -627,6 +787,9 @@ export async function handleImportPages(
           // A missing destination row must never be recorded as a
           // complete snapshot with a fabricated UTC/empty schedule:
           // the caller aborts the schedule and restores status only.
+          // A missing pre-upsert snapshot gates the same way: the
+          // rollback could not restore the upsert's name/token/
+          // metadata changes, so the schedule must not be applied.
           if (!tzRows || tzRows.length === 0 || !tzRows[0]?.timezone) {
             logServerError('[pages/import] Failed to snapshot reactivated page', new Error('Destination row missing while snapshotting reactivated page'), {
               source: 'pages-import-snapshot',
@@ -636,6 +799,7 @@ export async function handleImportPages(
               id: target.id,
               oldTimezone: 'UTC',
               oldSlots: [],
+              preUpsert: pre,
               complete: false,
             });
           } else {
@@ -647,7 +811,8 @@ export async function handleImportPages(
                 allowedFormats: normaliseFormats(row.kind),
                 isActive: row.is_active ?? row.isActive ?? true,
               })),
-              complete: true,
+              preUpsert: pre,
+              complete: pre !== undefined,
             });
           }
         } else {
@@ -659,6 +824,7 @@ export async function handleImportPages(
               id: target.id,
               oldTimezone: 'UTC',
               oldSlots: [],
+              preUpsert: pre,
               complete: false,
             });
             continue;
@@ -694,6 +860,7 @@ export async function handleImportPages(
               id: target.id,
               oldTimezone: 'UTC',
               oldSlots: [],
+              preUpsert: pre,
               complete: false,
             });
             continue;
@@ -713,7 +880,8 @@ export async function handleImportPages(
               allowedFormats: normaliseFormats(row.kind),
               isActive: row.is_active ?? true,
             })),
-            complete: true,
+            preUpsert: pre,
+            complete: pre !== undefined,
           });
         }
       } catch (snapshotErr) {
@@ -731,6 +899,7 @@ export async function handleImportPages(
           id: target.id,
           oldTimezone: 'UTC',
           oldSlots: [],
+          preUpsert: pre,
           complete: false,
         });
       }
@@ -742,8 +911,11 @@ export async function handleImportPages(
   // Newly created destinations are deleted (slots first, then the
   // destination). Reactivated destinations are NEVER deleted: they
   // are restored to disconnected with their snapshotted timezone
-  // and slots (or, when no snapshot exists, at least to
-  // disconnected, since their timezone/slots were never touched).
+  // and slots AND their pre-upsert name/avatar/token/metadata
+  // (K9 — the upsert overwrote all of those, so restoring only
+  // status/timezone/slots would leave a half-restored row), or,
+  // when no snapshot exists, at least to disconnected, since their
+  // timezone/slots were never touched.
   // Active pre-existing destinations are never passed here, so
   // they can never be touched by a rollback. Each target is
   // attempted independently and a rollback failure is logged,
@@ -823,10 +995,26 @@ export async function handleImportPages(
                 slotParams
               );
             }
+            // K9: restore the pre-upsert row too, not just
+            // status/timezone/slots — the upsert overwrote name,
+            // avatar, token and metadata. Param order keeps
+            // [status, timezone, id] first (pinned by tests);
+            // the restored columns follow, never fabricated:
+            // complete implies preUpsert is present.
             await dbClient.query(
-              `UPDATE destinations SET status = $1, timezone = $2, updated_at = now()
+              `UPDATE destinations SET status = $1, timezone = $2, updated_at = now(),
+                 name = $5, avatar_url = $6, encrypted_destination_token = $7, metadata = $8::jsonb
                WHERE id = $3 AND workspace_id = $4 AND platform = 'facebook'`,
-              ['disconnected', snapshot.oldTimezone, snapshot.id, workspaceId]
+              [
+                'disconnected',
+                snapshot.oldTimezone,
+                snapshot.id,
+                workspaceId,
+                snapshot.preUpsert?.name ?? null,
+                snapshot.preUpsert?.avatarUrl ?? null,
+                snapshot.preUpsert?.encryptedToken ?? null,
+                JSON.stringify(snapshot.preUpsert?.metadata ?? {}),
+              ]
             );
           } else {
             await dbClient.query(
@@ -861,6 +1049,12 @@ export async function handleImportPages(
               .update({
                 status: 'disconnected',
                 timezone: snapshot.oldTimezone,
+                // K9: same pre-upsert restore as the SQL path.
+                name: snapshot.preUpsert?.name ?? null,
+                avatar_url: snapshot.preUpsert?.avatarUrl ?? null,
+                encrypted_destination_token:
+                  snapshot.preUpsert?.encryptedToken ?? null,
+                metadata: snapshot.preUpsert?.metadata ?? {},
                 updated_at: new Date().toISOString(),
               })
               .eq('id', snapshot.id)
@@ -890,8 +1084,8 @@ export async function handleImportPages(
   // only when all of it applied. Any other pre-existing
   // destination keeps its own timezone and slots untouched — in
   // particular a paused page's slots/schedule are untouched by a
-  // re-import (its destination row itself is still upserted to
-  // active by the import, as before).
+  // re-import, and its row stays paused (status + marker + baseline
+  // preserved by the upsert, K9), not flipped to active.
   // A reactivated destination's old slots are deleted first, so
   // its final slots are exactly the times picked in Step 4, not
   // old + new merged. On any schedule failure the destinations

@@ -88,6 +88,18 @@ describe('PageCard queue counts', () => {
     }
   });
 
+  it('shows dashes and an unavailable note, never fake zeros, when counts failed (R6)', () => {
+    render(
+      <PageCard page={makePage({ queueCountsError: true })} onSelectPage={() => {}} />
+    );
+    expect(screen.getByTestId('page-queued-count').textContent).toBe('—');
+    expect(screen.getByTestId('page-posted-count').textContent).toBe('—');
+    expect(screen.getByTestId('page-failed-count').textContent).toBe('—');
+    expect(screen.getByTestId('page-queue-counts-error')).toHaveTextContent(
+      'Queue counts unavailable',
+    );
+  });
+
   it('shows zeros, never a hidden row, when no counts were fetched', () => {
     render(<PageCard page={makePage()} onSelectPage={() => {}} />);
     expect(screen.getByTestId('page-queued-count').textContent).toBe('0');

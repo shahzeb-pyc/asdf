@@ -176,4 +176,34 @@ describe('page insights Graph mapping (research-based, range-consistent)', () =>
     expect(out.kpis.mediaViews).toBe(0);
     expect(out.topCountries).toEqual([]);
   });
+
+  // K3: day boundaries follow the page timezone, not UTC.
+  it('ends the window on the page-timezone date, not the UTC date', () => {
+    // 20:00 UTC on the 27th is already the 28th in Karachi (+5).
+    const late = new Date('2026-10-27T20:00:00.000Z');
+    expect(insightsWindow('7d', late).until).toBe('2026-10-27');
+    expect(insightsWindow('7d', late, 'Asia/Karachi').until).toBe('2026-10-28');
+    expect(insightsWindow('7d', late, 'Asia/Karachi').since).toBe('2026-10-22');
+    // 02:00 UTC on the 27th is still the 26th in New York (-4).
+    const early = new Date('2026-10-27T02:00:00.000Z');
+    expect(insightsWindow('7d', early, 'America/New_York').until).toBe('2026-10-26');
+  });
+
+  it('buckets trend dates in the page timezone through the mapper', () => {
+    const out = mapGraphToInsights({
+      pageId: 'page-1',
+      range: '7d',
+      raw: { daily: DAILY, audience: AUDIENCE, followersCount: 1234 },
+      fetchedAt: '2026-10-27T12:00:00.000Z',
+      now: new Date('2026-10-27T20:00:00.000Z'),
+      timeZone: 'Asia/Karachi',
+    });
+    expect(out.trend.map((p) => p.date)).toContain('2026-10-28');
+    expect(out.trend).toHaveLength(7);
+  });
+
+  it('falls back to UTC for an unknown timezone instead of throwing', () => {
+    const w = insightsWindow('7d', new Date('2026-10-27T20:00:00.000Z'), 'Not/AZone');
+    expect(w.until).toBe('2026-10-27');
+  });
 });

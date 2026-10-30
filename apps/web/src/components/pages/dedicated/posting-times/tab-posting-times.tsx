@@ -18,6 +18,8 @@
 import * as React from 'react';
 import dynamic from 'next/dynamic';
 
+import { Banner } from '@/components/shared/ui/banner';
+import { Button } from '@/components/shared/ui/button';
 import { Skeleton } from '@/components/shared/ui/skeleton';
 import type { FacebookPageItem } from '../../page-card';
 import type { PageSlotSummary } from '../tab-dashboard';
@@ -53,6 +55,15 @@ export interface PageTabPostingTimesProps {
   slots: PageSlotSummary[];
   isLoading?: boolean;
   /**
+   * R4: the slots fetch failed. An empty `slots` array then means
+   * "unknown", never "no posting times": the first-use empty state
+   * must not render, and no unmatched warnings may be derived from
+   * the failed fetch. Shows an error state with Retry instead.
+   */
+  slotsError?: boolean;
+  /** Re-runs the shell's slots fetch. */
+  onRetrySlots?: () => void;
+  /**
    * All queued posts. Under publisher-driven scheduling there are no
    * slot links and no stored times to realign — the timezone review
    * shows this count with copy saying estimates update, not that
@@ -64,11 +75,14 @@ export interface PageTabPostingTimesProps {
     timezone: string;
     allowedFormats?: string[];
   }) => Promise<void>;
+  // Nit: no timezone on the update shape — slots have no per-slot
+  // timezone, and the shell's update mutation never sent it (the
+  // form's timezone belongs to the add path only). The tab strips
+  // it in handleSaveModal so a dead field stops travelling.
   onUpdateSlot?: (
     slotId: string,
     data: {
       slotTime?: string;
-      timezone?: string;
       isActive?: boolean;
       allowedFormats?: string[];
     }
@@ -82,6 +96,8 @@ export function PageTabPostingTimes({
   page,
   slots,
   isLoading = false,
+  slotsError = false,
+  onRetrySlots,
   queuedCount = 0,
   onAddSlot,
   onUpdateSlot,
@@ -100,9 +116,22 @@ export function PageTabPostingTimes({
   const activeTimezone = page.timezone || slots[0]?.timezone || fallbackTimezone;
 
   const handleTimezoneChange = async (newTz: string) => {
+    // Nit: the old code set the fallback BEFORE awaiting and never
+    // rolled back, so a failed change left the header showing a
+    // zone the server never stored. Roll back to the previous
+    // fallback on failure (the shell's mutation toast reports the
+    // failure itself). In practice page.timezone is truthy, so the
+    // fallback is rarely the displayed value — but when it is, it
+    // must be the stored one.
+    const previousFallback = fallbackTimezone;
     setFallbackTimezone(newTz);
     if (onUpdateTimezone) {
-      await onUpdateTimezone(newTz);
+      try {
+        await onUpdateTimezone(newTz);
+      } catch (err) {
+        setFallbackTimezone(previousFallback);
+        throw err;
+      }
     }
   };
 
@@ -137,7 +166,12 @@ export function PageTabPostingTimes({
   }) => {
     if (editingSlot) {
       if (onUpdateSlot) {
-        await onUpdateSlot(editingSlot.id, data);
+        // Dead timezone stripped: the update shape carries no
+        // timezone (see onUpdateSlot above).
+        await onUpdateSlot(editingSlot.id, {
+          slotTime: data.slotTime,
+          allowedFormats: data.allowedFormats,
+        });
       } else {
         await onDeleteSlot(editingSlot.id);
         await onAddSlot(data);
@@ -175,11 +209,26 @@ export function PageTabPostingTimes({
         </div>
       )}
 
-      {!isLoading && slots.length === 0 && (
+      {!isLoading && slotsError && (
+        <Banner
+          variant="critical"
+          title="Couldn't load posting times"
+          description="Your posting times are unavailable until they load again — this does not mean you have none."
+          action={
+            onRetrySlots ? (
+              <Button type="button" variant="outline" size="sm" onClick={onRetrySlots}>
+                Retry
+              </Button>
+            ) : undefined
+          }
+        />
+      )}
+
+      {!isLoading && !slotsError && slots.length === 0 && (
         <PostingTimesEmptyState onOpenAddModal={handleOpenAdd} />
       )}
 
-      {!isLoading && slots.length > 0 && (
+      {!isLoading && !slotsError && slots.length > 0 && (
         <div data-testid="slots-grid" className="flex flex-col">
           {slots.map((slot) => (
             <PostingTimeRow

@@ -223,14 +223,41 @@ describe('CreatePostsDialog queueing', () => {
     expect(toastError.mock.calls[0][0]).toContain('No posting times set yet');
   });
 
-  it('falls through to the queue attempt when the slots check fails', async () => {
-    const { onOpenChange } = renderDialog();
+  it('K5: stops with a clear error when the slots check fails (no blind fall-through)', async () => {
+    renderDialog();
     apiGet.mockRejectedValue(new Error('slots down'));
     typePost('hello');
     fireEvent.click(queueButton());
     await waitFor(() => {
+      expect(toastError).toHaveBeenCalled();
+    });
+    expect(apiPost).not.toHaveBeenCalled();
+    expect(toastError.mock.calls[0][0]).toContain("Couldn't check posting times");
+  });
+
+  it('K5: refuses a text post when the only active time allows images', async () => {
+    renderDialog();
+    apiGet.mockResolvedValue({
+      slots: [{ id: 'slot-1', isActive: true, allowedFormats: ['image'] }],
+    });
+    typePost('hello');
+    fireEvent.click(queueButton());
+    await waitFor(() => {
+      expect(toastError).toHaveBeenCalled();
+    });
+    expect(apiPost).not.toHaveBeenCalled();
+    expect(toastError.mock.calls[0][0]).toContain('will wait for a matching posting time');
+  });
+
+  it('K5: queues a text post when an active time allows text', async () => {
+    renderDialog();
+    apiGet.mockResolvedValue({
+      slots: [{ id: 'slot-1', isActive: true, allowedFormats: ['text'] }],
+    });
+    typePost('hello');
+    fireEvent.click(queueButton());
+    await waitFor(() => {
       expect(apiPost).toHaveBeenCalledTimes(1);
-      expect(onOpenChange).toHaveBeenCalledWith(false);
     });
   });
 
@@ -375,5 +402,25 @@ describe('CreatePostsDialog draft confirmation', () => {
     fireEvent.click(screen.getByText('Keep editing'));
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
     expect(screen.getByDisplayValue('unsaved draft')).not.toBeNull();
+  });
+});
+
+describe('CreatePostsDialog K8 pages-cache invalidation', () => {
+  it('invalidates tenant.pages.list + tenant.pages.detail as well as tenant.queue.all on queue success', async () => {
+    const { onOpenChange, queryClient } = renderDialog();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    typePost('hello');
+    fireEvent.click(queueButton());
+    await waitFor(() => {
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
+    const keys = invalidateSpy.mock.calls.map(
+      (call) => (call[0] as { queryKey?: unknown }).queryKey
+    );
+    // Queue cache (existing behaviour) plus the pages caches whose
+    // list counters / unmatched flags a new queued post moves.
+    expect(keys).toContainEqual(['tenant', 'acme', 'queue']);
+    expect(keys).toContainEqual(['tenant', 'acme', 'pages', 'list']);
+    expect(keys).toContainEqual(['tenant', 'acme', 'pages', PAGE_ID]);
   });
 });

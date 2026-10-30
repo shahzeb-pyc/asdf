@@ -66,11 +66,12 @@ import {
 /** The list API caps limit at 100 — same cap discipline as the queue. */
 const ITEMS_LIMIT = 100;
 
-type CalendarFilter = 'all' | 'queued' | 'failed' | 'published';
+type CalendarFilter = 'all' | 'queued' | 'publishing' | 'failed' | 'published';
 
 const FILTERS: Array<{ id: CalendarFilter; label: string }> = [
   { id: 'all', label: 'All' },
   { id: 'queued', label: 'Queued' },
+  { id: 'publishing', label: 'Publishing' },
   { id: 'failed', label: 'Failed' },
   { id: 'published', label: 'Published' },
 ];
@@ -101,6 +102,12 @@ export interface CalendarViewPanelProps {
   pageTimezone: string;
   /** Active + paused posting times, from the shell's slots cache. */
   slots: PageSlotSummary[];
+  /**
+   * K11: same hidden-panel rule as the queue panel — a visited
+   * panel stays mounted but must not refetch on window focus
+   * while hidden. Defaults to true; the shell passes the tab state.
+   */
+  isActive?: boolean;
 }
 
 export function CalendarViewPanel({
@@ -108,6 +115,7 @@ export function CalendarViewPanel({
   pageId,
   pageTimezone,
   slots,
+  isActive = true,
 }: Readonly<CalendarViewPanelProps>) {
   const queryClient = useQueryClient();
   const tenant = queryKeys.tenant(subdomain);
@@ -115,6 +123,14 @@ export function CalendarViewPanel({
 
   const [filter, setFilter] = React.useState<CalendarFilter>('all');
   const [month, setMonth] = React.useState(() => currentYearMonth(pageTimezone));
+  // Nit: the month used to freeze at the first render's zone — a
+  // timezone change left the calendar showing the old zone's
+  // current month. Re-derive it whenever the page zone changes
+  // (a user-navigated month is only reset by a zone change, which
+  // is exactly when the "current month" itself moves).
+  React.useEffect(() => {
+    setMonth(currentYearMonth(pageTimezone));
+  }, [pageTimezone]);
   const [itemToEdit, setItemToEdit] = React.useState<QueueItem | null>(null);
   const [isSaving, setIsSaving] = React.useState(false);
 
@@ -132,6 +148,7 @@ export function CalendarViewPanel({
         signal,
       }),
     enabled: Boolean(subdomain && pageId),
+    refetchOnWindowFocus: isActive,
   });
 
   // Full queued list in queue order, for estimates — same query the
@@ -146,6 +163,7 @@ export function CalendarViewPanel({
         signal,
       }),
     enabled: Boolean(subdomain && pageId),
+    refetchOnWindowFocus: isActive,
   });
 
   const items = itemsQuery.data?.items ?? [];
@@ -159,13 +177,21 @@ export function CalendarViewPanel({
   const failedCount = counts?.failedCount ?? 0;
   const cancelledCount = counts?.cancelledCount ?? 0;
   const skippedCount = counts?.skippedCount ?? 0;
+  const publishingCount = counts?.publishingCount ?? 0;
+  // R11, identical to the queue panel: All is ALWAYS the sum of
+  // every per-status count, including publishing, so its number
+  // cannot vary with the active filter while a post is publishing.
   const allCount =
-    filter === 'all'
-      ? itemsTotal
-      : queuedCount + publishedCount + failedCount + cancelledCount + skippedCount;
+    queuedCount +
+    publishedCount +
+    failedCount +
+    cancelledCount +
+    skippedCount +
+    publishingCount;
   const filterCounts: Record<CalendarFilter, number> = {
     all: allCount,
     queued: queuedCount,
+    publishing: publishingCount,
     failed: failedCount,
     published: publishedCount,
   };
@@ -228,7 +254,11 @@ export function CalendarViewPanel({
 
   const invalidateQueue = React.useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: tenant.queue.all });
-  }, [queryClient, tenant.queue]);
+    // K8: same pages-cache refresh as the queue panel — an edit
+    // here must not leave list counters and unmatched flags stale.
+    void queryClient.invalidateQueries({ queryKey: tenant.pages.list });
+    void queryClient.invalidateQueries({ queryKey: tenant.pages.detail(pageId) });
+  }, [queryClient, tenant.queue, tenant.pages, pageId]);
 
   const editMutation = useMutation({
     mutationFn: ({ itemId, caption }: { itemId: string; caption: string }) =>
@@ -244,19 +274,23 @@ export function CalendarViewPanel({
     },
   });
 
+  // R24: the dialog closes only on success, like the
+  // posting-time form — a failed save used to clear the draft in
+  // `finally`, losing the caption the user had just typed.
   const handleSaveEdit = React.useCallback(
     async (caption: string) => {
       if (!itemToEdit) return;
       setIsSaving(true);
       try {
         await editMutation.mutateAsync({ itemId: itemToEdit.id, caption });
+        setItemToEdit(null);
       } catch (error) {
         // The mutation's onError already surfaced the failure via
-        // toast; log it so the failure is never silent.
+        // toast; log it so the failure is never silent. The dialog
+        // stays open with the draft intact for a retry.
         console.error('Calendar edit save failed:', error);
       } finally {
         setIsSaving(false);
-        setItemToEdit(null);
       }
     },
     [editMutation, itemToEdit]
@@ -409,6 +443,17 @@ export function CalendarViewPanel({
                       <div className="max-h-24 flex-1 space-y-1 overflow-y-auto pr-0.5">
                         {dayEntries.map((entry) => {
                           const isPublished = entry.item.status === 'published';
+                          // K1: publishing entries are not
+                          // clickable either — the row is
+                          // immutable until the worker settles it.
+                          // Nit: cancelled entries join them — a
+                          // cancelled post is terminal, so no edit
+                          // is offered for it (the server PATCH
+                          // guard added with this fix rejects
+                          // cancelled too, so the UI and server
+                          // agree even for API callers).
+                          const isPublishing = entry.item.status === 'publishing';
+                          const isCancelled = entry.item.status === 'cancelled';
                           const inner = (
                             <>
                               <span className="shrink-0 text-ink-sub">
@@ -428,13 +473,20 @@ export function CalendarViewPanel({
                               </span>
                             </>
                           );
-                          // Published posts keep edit disabled, same as
-                          // the list: their entries are not clickable.
-                          return isPublished ? (
+                          // Published, publishing, and cancelled
+                          // posts keep edit disabled, same as the
+                          // list: their entries are not clickable.
+                          return isPublished || isPublishing || isCancelled ? (
                             <div
                               key={entry.item.id}
                               data-testid={`calendar-entry-${entry.item.id}`}
-                              title="Published posts can't be edited"
+                              title={
+                                isPublishing
+                                  ? "Publishing posts can't be edited"
+                                  : isCancelled
+                                    ? "Cancelled posts can't be edited"
+                                    : "Published posts can't be edited"
+                              }
                               className="flex min-w-0 items-start gap-1 rounded-lg border border-line bg-canvas p-1.5 text-left text-metadata leading-tight opacity-70"
                             >
                               {inner}

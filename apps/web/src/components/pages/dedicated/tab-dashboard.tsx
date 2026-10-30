@@ -15,6 +15,7 @@
 import * as React from 'react';
 import { CalendarClockIcon, ClockIcon } from 'lucide-react';
 
+import { Banner } from '@/components/shared/ui/banner';
 import { Button } from '@/components/shared/ui/button';
 import { EmptyState } from '@/components/shared/ui/empty-state';
 import { StatusDot } from '@/components/shared/ui/status-dot';
@@ -23,6 +24,7 @@ import type { FacebookPageItem } from '../page-card';
 import { getPageStatusLabel } from '../page-card';
 import type { PostFormat } from '@fbuploadpro/contracts';
 import { formatSlotDisplay } from './posting-times/posting-time-utils';
+import { formatQueueTime } from './queue/queue-utils';
 
 export interface PageQueueItemSummary {
   id: string;
@@ -59,6 +61,24 @@ export interface PageTabDashboardProps {
   slots: PageSlotSummary[];
   onPublishNow: (itemId: string) => Promise<void>;
   onSwitchTab: (tab: 'queue' | 'calendar' | 'insights') => void;
+  /**
+   * R5: the shell's queue fetch failed. The queue count, the next
+   * publication, and the upcoming list are then UNKNOWN — never 0,
+   * never "Nothing scheduled yet", never "Waiting for a posting
+   * time". The tab shows an error state with Retry instead.
+   */
+  queueError?: boolean;
+  /**
+   * R4: the shell's slots fetch failed. Slot-derived text (next
+   * publication, estimate pills, the active-times list) is then
+   * UNKNOWN — never "no posting times" and never "waiting for a
+   * matching posting time", which would read as a real empty state.
+   */
+  slotsError?: boolean;
+  /** Shell dashboard fetch hit its 100-pages-x-100 cap (R10). */
+  queueTruncated?: boolean;
+  /** Re-runs the shell's queue + slots fetches. */
+  onRetryData?: () => void;
 }
 
 function formatItemBadge(item: PageQueueItemSummary): string {
@@ -76,8 +96,16 @@ export function PageTabDashboard({
   slots,
   onPublishNow,
   onSwitchTab,
+  queueError = false,
+  slotsError = false,
+  queueTruncated = false,
+  onRetryData,
 }: Readonly<PageTabDashboardProps>) {
   const [publishingId, setPublishingId] = React.useState<string | null>(null);
+  // R8: estimates and the next publication render in the PAGE
+  // timezone (the same formatter the queue rows use), never the
+  // browser timezone's bare toLocale* output.
+  const pageTimezone = page.timezone ?? 'UTC';
 
   const activeQueuedItems = queueItems.filter((i) => i.status === 'queued');
   // Next publication = the first queued post that actually has an
@@ -108,8 +136,31 @@ export function PageTabDashboard({
     : `Publish now unavailable — page is ${getPageStatusLabel(page.status)}`;
   const delta = page.followersGained ?? 0;
 
+  const dataError = queueError || slotsError;
+
   return (
     <div data-testid="page-tab-dashboard" className="flex flex-col gap-6">
+      {dataError && (
+        <Banner
+          variant="critical"
+          title={
+            queueError ? "Couldn't load the queue" : "Couldn't load posting times"
+          }
+          description={
+            queueError
+              ? 'The queue and its estimates are unavailable until the queue loads again.'
+              : 'Posting times and queue estimates are unavailable until posting times load again.'
+          }
+          action={
+            onRetryData ? (
+              <Button type="button" variant="outline" size="sm" onClick={onRetryData}>
+                Retry
+              </Button>
+            ) : undefined
+          }
+        />
+      )}
+
       {/* 4 overview metric cards */}
       <div
         data-testid="dashboard-metrics-grid"
@@ -133,12 +184,26 @@ export function PageTabDashboard({
               </span>
             )}
           </div>
+          {/*
+            K4: this figure is the STORED follower count, not a
+            live one — the stored row is written only at import
+            (pages/import writes current_followers from Graph at
+            import time; no refresh job, sync, or insights fetch
+            ever updates it). Insights' "Followers" is the live
+            total, so the two can legitimately differ. The note
+            says so instead of inventing a live call or faking
+            agreement; there is no stored timestamp to show, so
+            no "last updated" date is claimed.
+          */}
+          <span className="mt-1 block text-body text-ink-dim">At last import</span>
         </div>
 
         <div data-testid="metric-queued-count" className={cardClass}>
           <span className={metricLabelClass}>Queued Content</span>
           <div className="mt-1">
-            <span className={metricValueClass}>{activeQueuedItems.length}</span>
+            <span className={metricValueClass}>
+              {queueError ? '—' : activeQueuedItems.length}
+            </span>
             <span className="ml-1.5 text-body text-ink-dim">posts in queue</span>
           </div>
         </div>
@@ -147,17 +212,14 @@ export function PageTabDashboard({
           <span className={metricLabelClass}>Next Publication</span>
           <div className="mt-1">
             <span className={nextItem ? 'text-lg font-semibold text-ink' : 'text-body font-semibold text-ink'}>
-              {nextItem?.estimatedTime
-                ? new Date(nextItem.estimatedTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                : activeQueuedItems.length > 0
-                  ? 'Waiting for a posting time'
-                  : 'No posts in queue'}
+              {queueError || slotsError
+                ? "Couldn't load"
+                : nextItem?.estimatedTime
+                  ? (formatQueueTime(nextItem.estimatedTime, pageTimezone) ?? '—')
+                  : activeQueuedItems.length > 0
+                    ? 'Waiting for a posting time'
+                    : 'No posts in queue'}
             </span>
-            {nextItem?.estimatedTime && (
-              <span className="block text-xs text-ink-dim">
-                {new Date(nextItem.estimatedTime).toLocaleDateString([], { month: 'short', day: 'numeric' })}
-              </span>
-            )}
           </div>
         </div>
 
@@ -195,7 +257,19 @@ export function PageTabDashboard({
             )}
           </div>
 
-          {upcomingSlice.length === 0 ? (
+          {queueError ? (
+            <div
+              data-testid="dashboard-queue-error"
+              className="flex flex-col items-center gap-4 rounded-md border border-signal-critical/40 bg-panel px-6 py-12 text-center"
+            >
+              <p className="m-0 text-body text-ink-sub">Couldn't load the queue.</p>
+              {onRetryData ? (
+                <Button type="button" onClick={onRetryData}>
+                  Retry
+                </Button>
+              ) : null}
+            </div>
+          ) : upcomingSlice.length === 0 ? (
             <EmptyState
               type="first-use"
               data-testid="dashboard-queue-empty"
@@ -221,8 +295,10 @@ export function PageTabDashboard({
                     </div>
                     <span className="text-xs text-ink-dim">
                       {item.estimatedTime
-                        ? `Expected ${new Date(item.estimatedTime).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}`
-                        : 'Waiting for a matching posting time'}
+                        ? `Expected ${formatQueueTime(item.estimatedTime, pageTimezone) ?? ''}`
+                        : slotsError
+                          ? "Posting times couldn't be loaded"
+                          : 'Waiting for a matching posting time'}
                     </span>
                   </div>
 
@@ -259,7 +335,19 @@ export function PageTabDashboard({
             </Button>
           </div>
 
-          {activeSlots.length === 0 ? (
+          {slotsError ? (
+            <div
+              data-testid="dashboard-slots-error"
+              className="flex flex-col items-center gap-4 rounded-md border border-signal-critical/40 bg-panel px-6 py-12 text-center"
+            >
+              <p className="m-0 text-body text-ink-sub">Couldn't load posting times.</p>
+              {onRetryData ? (
+                <Button type="button" onClick={onRetryData}>
+                  Retry
+                </Button>
+              ) : null}
+            </div>
+          ) : activeSlots.length === 0 ? (
             <EmptyState
               type="first-use"
               title="No active daily posting times defined yet."
@@ -296,6 +384,13 @@ export function PageTabDashboard({
           )}
         </div>
       </div>
+
+      {queueTruncated && !queueError ? (
+        <p data-testid="dashboard-queue-truncated-note" className="m-0 text-metadata text-ink-sub">
+          Only the first 10,000 queued posts were loaded for estimates — the queue is larger
+          than that.
+        </p>
+      ) : null}
     </div>
   );
 }

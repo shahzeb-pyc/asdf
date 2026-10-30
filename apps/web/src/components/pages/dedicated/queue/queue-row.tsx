@@ -93,6 +93,10 @@ export function QueueRow({
   onRetry,
 }: Readonly<QueueRowProps>) {
   const isPublished = item.status === 'published';
+  // K1: publishing rows are immutable until the worker settles
+  // them — Edit/Delete stay visible but disabled, like published
+  // rows (the server 400s regardless).
+  const isPublishing = item.status === 'publishing';
   const isQueued = item.status === 'queued';
   const isFailed = item.status === 'failed';
   const media = item.media ?? null;
@@ -254,7 +258,7 @@ export function QueueRow({
           variant="outline"
           size="sm"
           data-testid="queue-row-edit"
-          disabled={busy || isPublished}
+          disabled={busy || isPublished || isPublishing}
           onClick={onEdit}
         >
           Edit
@@ -264,7 +268,7 @@ export function QueueRow({
           variant="outline"
           size="sm"
           data-testid="queue-row-delete"
-          disabled={busy || isPublished}
+          disabled={busy || isPublished || isPublishing}
           onClick={onDelete}
           className="border-signal-critical/30 text-signal-critical hover:bg-signal-critical/10 hover:text-signal-critical-on-tint"
         >

@@ -213,6 +213,18 @@ export function getExpiredAccounts(
   return accounts.filter((acc) => getAccountHealth(acc) === 'expired');
 }
 
+/**
+ * K9: error-health accounts (wire disconnected — neither connected
+ * nor expired) used to vanish from Add Page entirely, because only
+ * the connected and expired lists were rendered. They are listed
+ * separately with the same reconnect recovery as expired accounts.
+ */
+export function getErrorAccounts(
+  accounts: FacebookAccountItem[]
+): FacebookAccountItem[] {
+  return accounts.filter((acc) => getAccountHealth(acc) === 'error');
+}
+
 export function getSelectablePageIds(pages: DiscoveredPageItem[]): string[] {
   return pages.filter((p) => !p.isImported).map((p) => p.fbPageId);
 }

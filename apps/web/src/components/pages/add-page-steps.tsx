@@ -110,6 +110,13 @@ export interface SelectAccountStepProps {
   isLoadingAccounts: boolean;
   activeAccounts: FacebookAccountItem[];
   expiredAccounts: FacebookAccountItem[];
+  /**
+   * K9: error-health (wire disconnected) accounts. They used to
+   * vanish here entirely; they render below with the same
+   * reconnect recovery as expired accounts, plus a link to the
+   * Accounts surface via the existing Go-to-Accounts action.
+   */
+  errorAccounts?: FacebookAccountItem[] | undefined;
   showMissingAppGuidance: boolean;
   /** Audit UX5: the app-setup check is still running. */
   showByocChecking?: boolean | undefined;
@@ -128,6 +135,7 @@ export function SelectAccountStep({
   isLoadingAccounts,
   activeAccounts,
   expiredAccounts,
+  errorAccounts = [],
   showMissingAppGuidance,
   showByocChecking = false,
   showByocCheckFailed = false,
@@ -137,7 +145,10 @@ export function SelectAccountStep({
   onGoToAccounts,
   onGoToSettingsFacebook,
 }: Readonly<SelectAccountStepProps>) {
-  const hasAnyAccounts = activeAccounts.length > 0 || expiredAccounts.length > 0;
+  const hasAnyAccounts =
+    activeAccounts.length > 0 ||
+    expiredAccounts.length > 0 ||
+    errorAccounts.length > 0;
   const accountsHref = buildAccountsHref(subdomain);
   const settingsFacebookHref = buildSettingsFacebookHref(subdomain);
 
@@ -261,12 +272,55 @@ export function SelectAccountStep({
         </div>
       )}
 
+      {!isLoadingAccounts && errorAccounts.length > 0 && (
+        <div
+          data-testid="error-accounts-list"
+          className={cn(
+            'flex flex-col gap-1',
+            (activeAccounts.length > 0 || expiredAccounts.length > 0) &&
+              'mt-4'
+          )}
+        >
+          {errorAccounts.map((account) => (
+            <div
+              key={account.id}
+              data-testid={`error-account-${account.id}`}
+              className="flex items-center justify-between gap-4 rounded-sm px-3.5 py-3 opacity-55"
+            >
+              <div className="flex min-w-0 items-center gap-4">
+                <AccountAvatar account={account} />
+                <div className="min-w-0">
+                  <div className="truncate text-body font-semibold text-ink">
+                    {account.displayName}
+                  </div>
+                  <div className="mt-0.5 text-metadata text-ink-sub">
+                    {pagesLinkedLabel(account)} · Connection issue
+                  </div>
+                </div>
+              </div>
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                data-testid={`reconnect-account-${account.id}`}
+                onClick={() => onReconnectAccount(account)}
+                className="shrink-0 border-signal-critical/35 font-semibold text-signal-critical hover:bg-signal-critical/10 hover:text-signal-critical-on-tint"
+              >
+                Reconnect
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {!isLoadingAccounts && expiredAccounts.length > 0 && (
         <div
           data-testid="expired-accounts-list"
           className={cn(
             'flex flex-col gap-1',
-            activeAccounts.length > 0 && 'mt-4'
+            (activeAccounts.length > 0 || errorAccounts.length > 0) &&
+              'mt-4'
           )}
         >
           {expiredAccounts.map((account) => (
@@ -319,6 +373,19 @@ export interface SelectPagesStepProps {
   onPageSearchChange: (value: string) => void;
   onTogglePage: (fbPageId: string) => void;
   onSelectAll: () => void;
+  /**
+   * K9: a failed discover renders an error + Retry here — never
+   * the "no discovered pages" empty state alongside an error,
+   * which reads as "this account has no pages" when the load
+   * simply failed.
+   */
+  discoverError?: string | null | undefined;
+  onRetryDiscover?: (() => void) | undefined;
+  /** R14/K9: the last successful discover was capped or partial. */
+  listTruncated?: boolean | undefined;
+  listPartial?: boolean | undefined;
+  /** K9: Graph nodes the discover filter dropped (see route). */
+  droppedCount?: number | undefined;
 }
 
 export function SelectPagesStep({
@@ -329,6 +396,11 @@ export function SelectPagesStep({
   onPageSearchChange,
   onTogglePage,
   onSelectAll,
+  discoverError = null,
+  onRetryDiscover,
+  listTruncated = false,
+  listPartial = false,
+  droppedCount = 0,
 }: Readonly<SelectPagesStepProps>) {
   const selectableIds = getSelectablePageIds(discoveredPages);
   const allSelectableChecked =
@@ -339,6 +411,63 @@ export function SelectPagesStep({
     () => filterDiscoveredPages(discoveredPages, pageSearchQuery),
     [discoveredPages, pageSearchQuery]
   );
+
+  // Completeness notes for a successful-but-incomplete discover:
+  // shown above the list (or the empty state, when every node was
+  // dropped) so a partial list is never presented as complete.
+  const completenessNotes: React.ReactNode =
+    !isDiscovering && !discoverError ? (
+      <>
+        {listTruncated && (
+          <div
+            data-testid="discover-truncated-warning"
+            role="status"
+            className="rounded-sm border border-link/25 bg-link/10 px-3 py-2 text-body leading-body text-ink"
+          >
+            Only the first 500 pages from this account are shown —
+            this account has more pages on Facebook, so the list
+            below may not include every page.
+          </div>
+        )}
+        {listPartial && (
+          <div
+            data-testid="discover-partial-warning"
+            role="status"
+            className="flex flex-wrap items-center justify-between gap-4 rounded-sm border border-link/25 bg-link/10 px-3 py-2 text-body leading-body text-ink"
+          >
+            <span>
+              Some pages couldn&apos;t be loaded from Facebook, so
+              this list may be incomplete.
+            </span>
+            {onRetryDiscover && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                data-testid="discover-retry-btn"
+                onClick={onRetryDiscover}
+              >
+                Retry
+              </Button>
+            )}
+          </div>
+        )}
+        {droppedCount > 0 && (
+          <div
+            data-testid="discover-dropped-note"
+            role="status"
+            className="rounded-sm border border-link/25 bg-link/10 px-3 py-2 text-body leading-body text-ink"
+          >
+            {droppedCount}{' '}
+            {droppedCount === 1 ? 'item' : 'items'} from Facebook
+            {droppedCount === 1 ? ' was' : ' were'} left out —{' '}
+            {droppedCount === 1 ? 'it had' : 'they had'} no category
+            or page tasks, so {droppedCount === 1 ? 'it may' : 'they may'}{' '}
+            not be a page.
+          </div>
+        )}
+      </>
+    ) : null;
 
   return (
     <div className="flex flex-col gap-2">
@@ -351,17 +480,43 @@ export function SelectPagesStep({
         </div>
       )}
 
-      {!isDiscovering && discoveredPages.length === 0 && (
+      {!isDiscovering && discoverError && (
         <div
-          data-testid="no-discovered-pages-state"
-          className="p-6 text-center text-body text-ink-sub"
+          data-testid="discover-error-state"
+          role="alert"
+          className="flex flex-col items-center gap-4 p-6 text-center"
         >
-          No Facebook Pages were found on this account.
+          <p className="m-0 text-body leading-body text-signal-critical">
+            {discoverError}
+          </p>
+          {onRetryDiscover && (
+            <Button
+              type="button"
+              variant="outline"
+              data-testid="discover-retry-btn"
+              onClick={onRetryDiscover}
+            >
+              Retry
+            </Button>
+          )}
         </div>
       )}
 
-      {!isDiscovering && discoveredPages.length > 0 && (
+      {!isDiscovering && !discoverError && discoveredPages.length === 0 && (
         <>
+          {completenessNotes}
+          <div
+            data-testid="no-discovered-pages-state"
+            className="p-6 text-center text-body text-ink-sub"
+          >
+            No Facebook Pages were found on this account.
+          </div>
+        </>
+      )}
+
+      {!isDiscovering && !discoverError && discoveredPages.length > 0 && (
+        <>
+          {completenessNotes}
           <div className="mb-1 flex flex-wrap items-center justify-between gap-4 px-0.5">
             <div className="relative flex max-w-60 flex-1 items-center">
               <SearchIcon

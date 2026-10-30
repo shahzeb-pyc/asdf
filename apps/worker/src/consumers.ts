@@ -246,7 +246,7 @@ export async function rediscoverFacebookPageToken(
   fetchFn: typeof fetch = globalThis.fetch
 ): Promise<string | null> {
   try {
-    const pages = await fetchAllFacebookPages(
+    const { pages } = await fetchAllFacebookPages(
       userToken,
       'id,access_token',
       5,

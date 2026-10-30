@@ -241,6 +241,21 @@ export const DestinationEnqueueRequestSchema = z
       });
     }
 
+    // K7: Facebook has no carousel publish path — the worker
+    // rejects carousels with "Unsupported post format: carousel",
+    // so queueing one can never publish. Refuse it at enqueue
+    // with the worker's exact error, instead of letting it sit in
+    // the queue until claim time. Other platforms keep their own
+    // carousel rules (Instagram/Threads validate their item lists
+    // below); this guard is Facebook-only.
+    if (val.platform === 'facebook' && val.kind === 'carousel') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Unsupported post format: carousel',
+        path: ['kind'],
+      });
+    }
+
     // --- Per-platform kind rules --------------------------------------
     if (val.platform === 'instagram' && val.kind === 'text') {
       ctx.addIssue({

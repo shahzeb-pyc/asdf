@@ -264,8 +264,24 @@ describe('Publishing Engine Domain Contracts', () => {
       });
 
       it('enforces character limits on updates', () => {
-        expect(UpdateQueueItemRequestSchema.safeParse({ caption: 'C'.repeat(5001) }).success).toBe(false);
+        // R13: the edit cap matches creation (63,206), not the old
+        // 5,000 — a long created post must stay editable.
+        expect(UpdateQueueItemRequestSchema.safeParse({ caption: 'C'.repeat(63206) }).success).toBe(true);
+        expect(UpdateQueueItemRequestSchema.safeParse({ caption: 'C'.repeat(63207) }).success).toBe(false);
         expect(UpdateQueueItemRequestSchema.safeParse({ firstComment: 'D'.repeat(2001) }).success).toBe(false);
+      });
+
+      it('holds reel edits to 2,200 characters (R13)', () => {
+        expect(
+          UpdateQueueItemRequestSchema.safeParse({ postFormat: 'reel', caption: 'R'.repeat(2200) }).success
+        ).toBe(true);
+        expect(
+          UpdateQueueItemRequestSchema.safeParse({ postFormat: 'reel', caption: 'R'.repeat(2201) }).success
+        ).toBe(false);
+        // Non-reel formats keep the full creation cap.
+        expect(
+          UpdateQueueItemRequestSchema.safeParse({ postFormat: 'image', caption: 'C'.repeat(63206) }).success
+        ).toBe(true);
       });
     });
 

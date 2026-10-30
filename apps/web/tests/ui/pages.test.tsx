@@ -171,18 +171,12 @@ function renderPagesShell({
       totalPages: pages.length === 0 ? 0 : 1,
     }
   );
-  // The pages shell reads accounts at limit 50 (filter options +
-  // expired banner), not the paginated 30.
-  queryClient.setQueryData(
-    tenant.accounts.listPage({ page: 1, limit: 50, search: '', status: 'all' }),
-    {
-      accounts,
-      total: accounts.length,
-      page: 1,
-      limit: 50,
-      totalPages: accounts.length === 0 ? 0 : 1,
-    }
-  );
+  // R16: the pages shell reads the complete accounts set
+  // (listAll), not page 1 of the paginated accounts view.
+  queryClient.setQueryData(tenant.accounts.listAll, {
+    accounts,
+    total: accounts.length,
+  });
   return render(
     <QueryClientProvider client={queryClient}>
       <PagesShell subdomain="acme" />

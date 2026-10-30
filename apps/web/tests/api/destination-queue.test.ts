@@ -1,22 +1,19 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { signSessionToken, type DatabaseClient } from '@fbuploadpro/contracts';
-import { handleListDestinationQueue } from '@/app/api/tenant/[subdomain]/destinations/[destinationId]/queue/route';
-import {
-  handleDeleteDestinationQueueItem,
-  handleUpdateDestinationQueueItem,
-} from '@/app/api/tenant/[subdomain]/destinations/[destinationId]/queue/[itemId]/route';
 import { handleDestinationPublishNow } from '@/app/api/tenant/[subdomain]/destinations/[destinationId]/queue/[itemId]/publish-now/route';
 import { handleDestinationRetry } from '@/app/api/tenant/[subdomain]/destinations/[destinationId]/queue/[itemId]/retry/route';
 
 /**
  * Unified destination queue routes (spec 134 PR-134-3, T24).
  *
- * Covers the list read + the item actions the composer-retarget
- * residual (#759) named: PATCH edit-save, DELETE, publish-now, retry —
- * all workspace/destination-scoped on the unified `queue_items`, with
- * the legacy guards mirrored (published items immutable; retry only
- * for failed items, timed through the unified slot scheduler).
+ * K10: the list read + PATCH edit-save + DELETE describes were
+ * removed with the routes they tested — no Pages UI called them
+ * (the Pages section lists/edits through `publishing/queue`).
+ * What remains here: publish-now + retry, still workspace /
+ * destination-scoped on the unified `queue_items`, with the legacy
+ * guards mirrored (published items immutable; retry only for failed
+ * items, timed through the unified slot scheduler).
  */
 
 const TEST_SECRET = ['destination','queue','test','secret','key'].join('-');
@@ -123,11 +120,13 @@ class FakeDb {
       return row ? [row] : [];
     }
     if (sql.includes('UPDATE queue_items')) {
+      // R12: updateDestinationQueueItem now writes retry_count as
+      // $12, shifting the WHERE params to $13/$14/$15.
       const row = this.queueItems.find(
         (q) =>
-          q.id === params[11] &&
-          q.workspace_id === params[12] &&
-          q.destination_id === params[13]
+          q.id === params[12] &&
+          q.workspace_id === params[13] &&
+          q.destination_id === params[14]
       );
       if (!row) return [];
       row.caption = String(params[0]);
@@ -143,6 +142,7 @@ class FakeDb {
       row.slot_id = (params[8] as string | null) ?? null;
       row.status = String(params[9]);
       row.claimed_at = (params[10] as string | null) ?? null;
+      row.retry_count = Number(params[11]);
       row.updated_at = new Date().toISOString();
       return [row];
     }
@@ -287,234 +287,6 @@ beforeEach(async () => {
   sessionCookie = `fbup_session=${token}`;
 });
 
-describe('destination queue list', () => {
-  it('rejects an unauthenticated request', async () => {
-    const res = await handleListDestinationQueue(
-      request('GET', undefined, null),
-      subdomain,
-      igDestinationId,
-      dbClient
-    );
-    expect(res.status).toBe(401);
-  });
-
-  it('reads a destination in another workspace as not found', async () => {
-    const res = await handleListDestinationQueue(
-      request('GET'),
-      subdomain,
-      foreignDestinationId,
-      dbClient
-    );
-    expect(res.status).toBe(404);
-  });
-
-  it('lists the destination items in claim order with media joined and the D5 limit state', async () => {
-    const later = makeItem({ caption: 'Later', scheduled_time: '2999-01-02T09:00:00.000Z' });
-    const sooner = makeItem({
-      caption: 'Sooner',
-      scheduled_time: '2999-01-01T09:00:00.000Z',
-      media_item_id: imageMediaId,
-      media_url: 'https://cdn.example.com/photo.jpg',
-    });
-    db.queueItems.push(later, sooner);
-    db.queueItems.push(makeItem({ destination_id: foreignDestinationId, caption: 'Foreign' }));
-
-    const res = await handleListDestinationQueue(
-      request('GET'),
-      subdomain,
-      igDestinationId,
-      dbClient
-    );
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      destinationId: string;
-      platform: string;
-      limit: { windowLimit: number; rateUsagePct: number } | null;
-      items: Array<{ caption: string; media: { name: string } | null }>;
-    };
-    expect(body.destinationId).toBe(igDestinationId);
-    expect(body.platform).toBe('instagram');
-    expect(body.items.map((i) => i.caption)).toEqual(['Sooner', 'Later']);
-    expect(body.items[0]?.media?.name).toBe('photo.jpg');
-    // Instagram's contracts cap: 100 published posts per rolling 24h.
-    expect(body.limit?.windowLimit).toBe(100);
-    expect(body.limit?.rateUsagePct).toBe(12);
-  });
-});
-
-describe('destination queue item PATCH (edit-save)', () => {
-  it('updates content fields and returns the unified item view', async () => {
-    const item = makeItem({});
-    db.queueItems.push(item);
-    const res = await handleUpdateDestinationQueueItem(
-      request('PATCH', { caption: 'Edited', firstComment: 'First!' }),
-      subdomain,
-      igDestinationId,
-      item.id,
-      dbClient
-    );
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { caption: string; firstComment: string };
-    expect(body.caption).toBe('Edited');
-    expect(body.firstComment).toBe('First!');
-    expect(db.queueItems[0]?.caption).toBe('Edited');
-  });
-
-  it('requeues a failed item on edit-save and clears its claim marker', async () => {
-    const item = makeItem({ status: 'failed', claimed_at: '2999-01-01T00:00:00.000Z' });
-    db.queueItems.push(item);
-    const res = await handleUpdateDestinationQueueItem(
-      request('PATCH', { status: 'queued', scheduledTime: '2999-06-01T09:00:00.000Z' }),
-      subdomain,
-      igDestinationId,
-      item.id,
-      dbClient
-    );
-    expect(res.status).toBe(200);
-    expect(db.queueItems[0]?.status).toBe('queued');
-    expect(db.queueItems[0]?.claimed_at).toBeNull();
-  });
-
-  it('refuses to modify a published item (legacy guard)', async () => {
-    const item = makeItem({ status: 'published' });
-    db.queueItems.push(item);
-    const res = await handleUpdateDestinationQueueItem(
-      request('PATCH', { caption: 'Nope' }),
-      subdomain,
-      igDestinationId,
-      item.id,
-      dbClient
-    );
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe('CANNOT_UPDATE_PUBLISHED_ITEM');
-  });
-
-  it('rejects a first comment on a story (legacy rule)', async () => {
-    const item = makeItem({ kind: 'story' });
-    db.queueItems.push(item);
-    const res = await handleUpdateDestinationQueueItem(
-      request('PATCH', { firstComment: 'Not allowed' }),
-      subdomain,
-      igDestinationId,
-      item.id,
-      dbClient
-    );
-    expect(res.status).toBe(400);
-  });
-
-  it('rejects platform options the platform schema rejects', async () => {
-    const item = makeItem({});
-    db.queueItems.push(item);
-    const res = await handleUpdateDestinationQueueItem(
-      request('PATCH', { platformOptions: { bogusOption: true } }),
-      subdomain,
-      igDestinationId,
-      item.id,
-      dbClient
-    );
-    expect(res.status).toBe(400);
-  });
-
-  it('reads an item on a foreign destination as not found', async () => {
-    const item = makeItem({ destination_id: foreignDestinationId });
-    db.queueItems.push(item);
-    const res = await handleUpdateDestinationQueueItem(
-      request('PATCH', { caption: 'Nope' }),
-      subdomain,
-      foreignDestinationId,
-      item.id,
-      dbClient
-    );
-    expect(res.status).toBe(404);
-  });
-
-  it('refuses a fixed time for a Facebook post (publisher-driven, no one-offs)', async () => {
-    const item = makeItem({ destination_id: fbDestinationId, platform: 'facebook' });
-    db.queueItems.push(item);
-    const res = await handleUpdateDestinationQueueItem(
-      request('PATCH', { scheduledTime: '2999-06-01T09:00:00.000Z' }),
-      subdomain,
-      fbDestinationId,
-      item.id,
-      dbClient
-    );
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe('ONE_OFF_NOT_SUPPORTED');
-  });
-
-  it('edits a Facebook post and refreshes the unmatched flag', async () => {
-    const item = makeItem({ destination_id: fbDestinationId, platform: 'facebook' });
-    db.queueItems.push(item);
-    const res = await handleUpdateDestinationQueueItem(
-      request('PATCH', { caption: 'FB edited' }),
-      subdomain,
-      fbDestinationId,
-      item.id,
-      dbClient
-    );
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { caption: string };
-    expect(body.caption).toBe('FB edited');
-    expect(db.query).toHaveBeenCalledWith(
-      expect.stringContaining('refresh_destination_unmatched_flag'),
-      [fbDestinationId]
-    );
-  });
-
-});
-
-describe('destination queue item DELETE', () => {
-  it('deletes a queued item', async () => {
-    const item = makeItem({});
-    db.queueItems.push(item);
-    const res = await handleDeleteDestinationQueueItem(
-      request('DELETE'),
-      subdomain,
-      igDestinationId,
-      item.id,
-      dbClient
-    );
-    expect(res.status).toBe(200);
-    expect(db.queueItems).toHaveLength(0);
-  });
-
-  it('refuses to delete a published item (legacy guard)', async () => {
-    const item = makeItem({ status: 'published' });
-    db.queueItems.push(item);
-    const res = await handleDeleteDestinationQueueItem(
-      request('DELETE'),
-      subdomain,
-      igDestinationId,
-      item.id,
-      dbClient
-    );
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe('CANNOT_DELETE_PUBLISHED_ITEM');
-    expect(db.queueItems).toHaveLength(1);
-  });
-
-  it('deletes a Facebook post and refreshes the unmatched flag', async () => {
-    const item = makeItem({ destination_id: fbDestinationId, platform: 'facebook' });
-    db.queueItems.push(item);
-    const res = await handleDeleteDestinationQueueItem(
-      request('DELETE'),
-      subdomain,
-      fbDestinationId,
-      item.id,
-      dbClient
-    );
-    expect(res.status).toBe(200);
-    expect(db.queueItems).toHaveLength(0);
-    expect(db.query).toHaveBeenCalledWith(
-      expect.stringContaining('refresh_destination_unmatched_flag'),
-      [fbDestinationId]
-    );
-  });
-});
-
 describe('destination queue publish-now', () => {
   it('re-times the item to now and queues it', async () => {
     const item = makeItem({ scheduled_time: '2999-01-01T09:00:00.000Z' });
@@ -550,6 +322,35 @@ describe('destination queue publish-now', () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe('ALREADY_PUBLISHED');
+  });
+
+  it('resets the retry budget when publishing now a failed item (R12)', async () => {
+    const item = makeItem({ status: 'failed', retry_count: 3 });
+    db.queueItems.push(item);
+    const res = await handleDestinationPublishNow(
+      request('POST'),
+      subdomain,
+      igDestinationId,
+      item.id,
+      dbClient
+    );
+    expect(res.status).toBe(200);
+    expect(db.queueItems[0]?.status).toBe('queued');
+    expect(db.queueItems[0]?.retry_count).toBe(0);
+  });
+
+  it('preserves the retry count when publishing now a queued item (R12)', async () => {
+    const item = makeItem({ status: 'queued', retry_count: 0 });
+    db.queueItems.push(item);
+    const res = await handleDestinationPublishNow(
+      request('POST'),
+      subdomain,
+      igDestinationId,
+      item.id,
+      dbClient
+    );
+    expect(res.status).toBe(200);
+    expect(db.queueItems[0]?.retry_count).toBe(0);
   });
 });
 
@@ -606,6 +407,30 @@ describe('destination queue retry', () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe('ITEM_NOT_FAILED');
+  });
+
+  it('resets the retry budget on retry, so the row reads Retry 0 of 3 (R12)', async () => {
+    const item = makeItem({
+      status: 'failed',
+      retry_count: 2,
+      scheduled_time: '2000-01-01T09:00:00.000Z',
+      slot_id: slotId,
+      claimed_at: '2000-01-01T09:00:00.000Z',
+    });
+    db.queueItems.push(item);
+    const res = await handleDestinationRetry(
+      request('POST'),
+      subdomain,
+      igDestinationId,
+      item.id,
+      dbClient
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { status: string; retryCount: number; maxRetries: number };
+    expect(body.status).toBe('queued');
+    expect(body.retryCount).toBe(0);
+    expect(body.maxRetries).toBe(3);
+    expect(db.queueItems[0]?.retry_count).toBe(0);
   });
 
   it('returns a plain-language 400 when no slot covers the post', async () => {

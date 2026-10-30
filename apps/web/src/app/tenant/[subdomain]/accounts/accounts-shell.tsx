@@ -334,6 +334,11 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
       // disconnect happened, but the app authorization may still
       // be live in the user's Facebook settings.
       void queryClient.invalidateQueries({ queryKey: tenant.accounts.list });
+      // K9: disconnecting an account changes the Pages list too
+      // (its pages leave the list) — the dedicated page-level
+      // disconnect already invalidates pages.list, and this one
+      // must as well, or Pages keeps showing a stale grid.
+      void queryClient.invalidateQueries({ queryKey: tenant.pages.list });
       setDisconnectingAccount(null);
       setBannerNotice(
         data.facebookRevoked

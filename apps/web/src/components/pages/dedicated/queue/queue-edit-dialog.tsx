@@ -4,9 +4,10 @@
  * Caption-only edit dialogue for a queued post. Only the caption is
  * editable here: scheduled-time editing is deliberately not surfaced
  * (publisher-driven posts carry no stored time; estimates are
- * derived). The server PATCH still caps captions at 5000 characters —
- * a longer existing caption is shown in full and never truncated, and
- * a save that exceeds the cap surfaces as an error toast.
+ * derived). The server PATCH caps captions at 63,206 characters
+ * (2,200 for reels) — a longer existing caption is shown in full
+ * and never truncated, and a save that exceeds the cap surfaces as
+ * an error toast.
  */
 import * as React from 'react';
 

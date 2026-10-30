@@ -184,14 +184,37 @@ export type EnqueueMediaRequest = z.infer<typeof EnqueueMediaRequestSchema>;
 export type EnqueueRequest = z.infer<typeof EnqueueRequestSchema>;
 
 // Update Queue Item Request
-export const UpdateQueueItemRequestSchema = z.object({
-  caption: z.string().max(5000).optional(),
-  firstComment: z.string().max(2000).nullable().optional(),
-  scheduledTime: z.string().datetime().optional(),
-  status: z.enum(['queued', 'skipped', 'cancelled']).optional(),
-  postFormat: PostFormatSchema.optional(),
-  linkUrl: z.string().url().nullable().optional(),
-});
+//
+// R13: the caption cap matches creation (63,206 for feed posts —
+// the composer limit; see publishing/create-posts-composer), NOT
+// the old 5,000: a long post created through the composer could
+// never be edited afterwards. Reels keep their own, much smaller
+// cap (2,200, the reel API's limit): the schema guard covers edits
+// that change the format to reel, and the route handler re-checks
+// against the item's resolved format, so an edit that leaves the
+// format untouched on an existing reel is held to 2,200 too.
+export const UpdateQueueItemRequestSchema = z
+  .object({
+    caption: z.string().max(63206).optional(),
+    firstComment: z.string().max(2000).nullable().optional(),
+    scheduledTime: z.string().datetime().optional(),
+    status: z.enum(['queued', 'skipped', 'cancelled']).optional(),
+    postFormat: PostFormatSchema.optional(),
+    linkUrl: z.string().url().nullable().optional(),
+  })
+  .superRefine((val, ctx) => {
+    if (
+      val.postFormat === 'reel' &&
+      val.caption !== undefined &&
+      val.caption.length > 2200
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Reel captions are limited to 2,200 characters',
+        path: ['caption'],
+      });
+    }
+  });
 
 export type UpdateQueueItemRequest = z.infer<typeof UpdateQueueItemRequestSchema>;
 
@@ -255,6 +278,13 @@ export const ListQueueItemsResponseSchema = z.object({
   failedCount: z.number().int().nonnegative().optional(),
   skippedCount: z.number().int().nonnegative().optional(),
   cancelledCount: z.number().int().nonnegative().optional(),
+  /**
+   * In-flight posts. Previously absent, so a publishing post was
+   * counted in `total` (and in the All chip when unfiltered) but in
+   * no per-status count — the All chip's number then varied with
+   * the active filter (R11). Optional so older payloads still parse.
+   */
+  publishingCount: z.number().int().nonnegative().optional(),
 });
 
 export type ListQueueItemsResponse = z.infer<typeof ListQueueItemsResponseSchema>;

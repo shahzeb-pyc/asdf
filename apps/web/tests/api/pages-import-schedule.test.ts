@@ -91,6 +91,10 @@ describe('Import with timezone + posting times', () => {
     preExisting?: Array<{
       fbPageId: string;
       status: string;
+      fbStatus?: string;
+      name?: string;
+      avatarUrl?: string | null;
+      encryptedToken?: string;
       metadata?: Record<string, unknown>;
     }>;
     oldTimezone?: string;
@@ -103,11 +107,16 @@ describe('Import with timezone + posting times', () => {
     const timezoneUpdates: unknown[][] = [];
     const restoreUpdates: unknown[][] = [];
     const slotInserts: unknown[][] = [];
+    const upsertSqls: string[] = [];
     const deleteQueries: string[] = [];
     const deleteCalls: Array<[string, unknown[]]> = [];
     const preExistingEntries: Array<{
       fbPageId: string;
       status: string;
+      fbStatus?: string;
+      name?: string;
+      avatarUrl?: string | null;
+      encryptedToken?: string;
       metadata?: Record<string, unknown>;
     }> = [
       ...(options?.preExistingFbIds ?? []).map((fbPageId) => ({
@@ -135,7 +144,16 @@ describe('Import with timezone + posting times', () => {
             preExistingEntries.map((entry) => ({
               external_destination_id: entry.fbPageId,
               status: entry.status,
-              metadata: entry.metadata ?? null,
+              fb_status: entry.fbStatus ?? null,
+              name: entry.name ?? 'Old Page Name',
+              avatar_url: entry.avatarUrl ?? null,
+              encrypted_destination_token:
+                entry.encryptedToken ?? 'old_encrypted_token',
+              metadata: entry.metadata ?? {
+                category: 'Old',
+                starting_followers: 100,
+                current_followers: 200,
+              },
             }))
           );
         }
@@ -162,6 +180,7 @@ describe('Import with timezone + posting times', () => {
           return Promise.resolve([]);
         }
         if (sql.includes('INSERT INTO destinations')) {
+          upsertSqls.push(sql);
           const fbPageId = String(params[2]);
           return Promise.resolve([
             {
@@ -194,6 +213,7 @@ describe('Import with timezone + posting times', () => {
       timezoneUpdates,
       restoreUpdates,
       slotInserts,
+      upsertSqls,
       deleteQueries,
       deleteCalls,
     };
@@ -663,10 +683,15 @@ describe('Import with timezone + posting times', () => {
       mockDb.query as unknown as { mock: { calls: Array<[string, unknown[]]> } }
     ).mock.calls.filter(([sql]) => sql.includes('INSERT INTO destinations'));
     expect(upserts).toHaveLength(1);
-    // $10 = paused: the upsert keeps status 'disconnected' and
-    // re-adds the fb_status marker instead of activating.
-    expect(upserts[0][1][9]).toBe(true);
-    expect(upserts[0][0]).toContain("WHEN $10 THEN 'disconnected'");
+    // Merged shape (K9/BG8): the pause guard is SQL-level, not a
+    // $10 parameter — #48's $10 shape was superseded in the merge
+    // because the SQL CASE holds even if the pre-existing load
+    // disagreed with the stored row. Behaviour asserted is the
+    // same: status stays 'disconnected', marker re-added.
+    expect(upserts[0][1]).toHaveLength(9);
+    expect(upserts[0][0]).toContain(
+      "WHEN destinations.status = 'disconnected' AND destinations.metadata->>'fb_status' = 'paused'"
+    );
     expect(upserts[0][0]).toContain("jsonb_build_object('fb_status', 'paused')");
   });
 
@@ -776,7 +801,14 @@ describe('Import with timezone + posting times', () => {
   // delete awaited directly.
   function makeMockSupabase(options?: {
     existingFbIds?: string[];
-    existing?: Array<{ fbPageId: string; status: string }>;
+    existing?: Array<{
+      fbPageId: string;
+      status: string;
+      name?: string;
+      avatarUrl?: string | null;
+      encryptedToken?: string;
+      metadata?: Record<string, unknown>;
+    }>;
     failScheduleFor?: string;
     failSlotUpsert?: boolean;
     failExistingQuery?: boolean;
@@ -795,7 +827,17 @@ describe('Import with timezone + posting times', () => {
       [];
     const timezoneUpdates: unknown[] = [];
     const restoreUpdates: Array<Record<string, unknown>> = [];
-    const existingEntries: Array<{ fbPageId: string; status: string }> = [
+    // Filters the existing-destinations load was issued with, so
+    // tests can pin that it is account-scoped (K9).
+    const existingLoadFilters: Array<Record<string, unknown>> = [];
+    const existingEntries: Array<{
+      fbPageId: string;
+      status: string;
+      name?: string;
+      avatarUrl?: string | null;
+      encryptedToken?: string;
+      metadata?: Record<string, unknown>;
+    }> = [
       ...(options?.existingFbIds ?? []).map((fbPageId) => ({
         fbPageId,
         status: 'active',
@@ -912,11 +954,16 @@ describe('Import with timezone + posting times', () => {
           if (options?.failExistingQuery) {
             return { data: null, error: { message: 'existing boom' } };
           }
+          existingLoadFilters.push({ ...this.filters });
           return {
             data: existingEntries.map((entry) => ({
               external_destination_id: entry.fbPageId,
               status: entry.status,
-              metadata: { starting_followers: 100 },
+              metadata: entry.metadata ?? { starting_followers: 100 },
+              name: entry.name ?? 'Old Page Name',
+              avatar_url: entry.avatarUrl ?? null,
+              encrypted_destination_token:
+                entry.encryptedToken ?? 'old_encrypted_token',
             })),
             error: null,
           };
@@ -963,6 +1010,7 @@ describe('Import with timezone + posting times', () => {
       deletes,
       timezoneUpdates,
       restoreUpdates,
+      existingLoadFilters,
     };
   }
 
@@ -1249,5 +1297,170 @@ describe('Import with timezone + posting times', () => {
     );
     expect(retried.status).toBe(200);
     expect(succeeding.slotUpserts).toHaveLength(2);
+  });
+
+  // ---- Area 3 (R16–R18, K9): paused re-import, rollback restore,
+  // cross-account classification ----
+
+  it('a paused page is not reactivated: no schedule, no slot deletion, upsert keeps it paused', async () => {
+    mockGraphPages();
+    const { mockDb, timezoneUpdates, slotInserts, upsertSqls, deleteCalls } =
+      makeMockDb({
+        preExisting: [
+          { fbPageId: 'page_1001', status: 'disconnected', fbStatus: 'paused' },
+        ],
+      });
+
+    const res = await handleImportPages(
+      importRequest(scheduleBody),
+      'acme',
+      mockDb
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()).importedCount).toBe(2);
+    // Only the genuinely new page gets a timezone and slots — the
+    // paused page is not a schedule target.
+    expect(timezoneUpdates).toHaveLength(1);
+    expect(timezoneUpdates[0]?.[1]).toBe(pageUuids.page_1002);
+    expect(slotInserts).toHaveLength(1);
+    expect(slotInserts[0]?.[0]).toBe(pageUuids.page_1002);
+    // Its old slots are never deleted either.
+    expect(
+      deleteCalls.some(
+        ([, params]) => params[0] === pageUuids.page_1001
+      )
+    ).toBe(false);
+    // And the upsert itself preserves the paused state instead of
+    // flipping the row to active and stripping the marker.
+    expect(upsertSqls).toHaveLength(2);
+    expect(upsertSqls[0]).toContain("fb_status' = 'paused'");
+  });
+
+  it('a schedule failure after reactivation restores the pre-upsert name, avatar, token and metadata', async () => {
+    mockGraphPages();
+    const oldMetadata = {
+      category: 'OldCat',
+      starting_followers: 100,
+      current_followers: 200,
+      custom: 'keep',
+    };
+    const { mockDb, restoreUpdates } = makeMockDb({
+      preExisting: [
+        {
+          fbPageId: 'page_1001',
+          status: 'disconnected',
+          name: 'Old Brand',
+          avatarUrl: 'https://old.example/a.png',
+          encryptedToken: 'old_enc_token',
+          metadata: oldMetadata,
+        },
+      ],
+      failTimezoneFor: pageUuids.page_1002,
+    });
+
+    const res = await handleImportPages(
+      importRequest(scheduleBody),
+      'acme',
+      mockDb
+    );
+    expect(res.status).toBe(500);
+    expect((await res.json()).code).toBe('SCHEDULE_FAILED');
+    // Param order keeps [status, timezone, id] first; the restored
+    // pre-upsert columns follow — never fabricated values.
+    expect(restoreUpdates).toHaveLength(1);
+    expect(restoreUpdates[0]).toEqual([
+      'disconnected',
+      'America/New_York',
+      pageUuids.page_1001,
+      'ws_123',
+      'Old Brand',
+      'https://old.example/a.png',
+      'old_enc_token',
+      JSON.stringify(oldMetadata),
+    ]);
+  });
+
+  it('Supabase: a paused page keeps its status, marker and baseline on re-import', async () => {
+    mockGraphPages();
+    const { mockSupabase, destinationUpserts } = makeMockSupabase({
+      existing: [
+        {
+          fbPageId: 'page_1001',
+          status: 'disconnected',
+          metadata: {
+            fb_status: 'paused',
+            starting_followers: 777,
+            current_followers: 900,
+          },
+        },
+      ],
+    });
+    const res = await handleImportPages(
+      importRequest({
+        accountId,
+        selectedPageIds: ['page_1001'],
+      }),
+      'acme',
+      mockSupabase as never
+    );
+    expect(res.status).toBe(200);
+    expect(destinationUpserts).toHaveLength(1);
+    const payload = destinationUpserts[0] as Record<string, unknown>;
+    expect(payload.status).toBe('disconnected');
+    const metadata = payload.metadata as Record<string, unknown>;
+    expect(metadata.fb_status).toBe('paused');
+    // The Graph followers (52000) must not overwrite the baseline
+    // of a page that was never truly disconnected.
+    expect(metadata.starting_followers).toBe(777);
+    expect(metadata.current_followers).toBe(52000);
+  });
+
+  it('Supabase: a paused page gets no schedule on re-import', async () => {
+    mockGraphPages();
+    const { mockSupabase, slotUpserts, timezoneUpdates } = makeMockSupabase({
+      existing: [
+        {
+          fbPageId: 'page_1001',
+          status: 'disconnected',
+          metadata: {
+            fb_status: 'paused',
+            starting_followers: 777,
+          },
+        },
+      ],
+    });
+    const res = await handleImportPages(
+      importRequest(scheduleBody),
+      'acme',
+      mockSupabase as never
+    );
+    expect(res.status).toBe(200);
+    expect(timezoneUpdates).toEqual([pageUuids.page_1002]);
+    expect(slotUpserts).toHaveLength(1);
+    expect(
+      (slotUpserts[0] as Array<Record<string, unknown>>)[0]?.destination_id
+    ).toBe(pageUuids.page_1002);
+  });
+
+  it('Supabase: the existing-destinations load is scoped to the importing account', async () => {
+    mockGraphPages();
+    const { mockSupabase, existingLoadFilters } = makeMockSupabase();
+    const res = await handleImportPages(
+      importRequest({
+        accountId,
+        selectedPageIds: ['page_1001'],
+      }),
+      'acme',
+      mockSupabase as never
+    );
+    expect(res.status).toBe(200);
+    // The upsert key is (account_id, external_destination_id): a
+    // workspace-only load would misclassify another account's row
+    // for the same page as pre-existing under this account.
+    expect(
+      existingLoadFilters.some(
+        (filters) => filters.account_id === accountId
+      )
+    ).toBe(true);
   });
 });

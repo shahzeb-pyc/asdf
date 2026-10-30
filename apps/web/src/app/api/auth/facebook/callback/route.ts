@@ -3,7 +3,7 @@ import {
   buildSubdomainOAuthRedirectUri,
   buildTenantUrl,
   encryptToken,
-  fetchAllFacebookPagesWithMeta,
+  fetchAllFacebookPages,
   FacebookTokenExchangeResponseSchema,
   type FacebookUserProfileResponse,
   FacebookUserProfileResponseSchema,
@@ -180,7 +180,7 @@ async function fetchGraphPageTokenMap(
   // silently — the BG5 worker fallback covers the publish path
   // for any page whose token stayed stale.
   const { pages, truncated, truncationReason } =
-    await fetchAllFacebookPagesWithMeta(longAccessToken, 'id,access_token');
+    await fetchAllFacebookPages(longAccessToken, 'id,access_token');
   if (truncated) {
     console.warn(
       `[FacebookOAuth] Page token refresh truncated (${truncationReason}): refreshed ${pages.length} pages, further pages unseen — their stored tokens stay stale until the next reconnect or a publish-time BG5 re-discovery.`

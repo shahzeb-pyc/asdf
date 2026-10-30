@@ -142,16 +142,12 @@ function renderShell(search: string) {
   // The ?account= value is kept raw (not resolved to a display name),
   // so the id form gets its own key too.
   seedPages('acc-john', johnPages, johnPages.length);
-  queryClient.setQueryData(
-    tenant.accounts.listPage({ page: 1, limit: 50, search: '', status: 'all' }),
-    {
-      accounts: [sarahAccount, johnAccount],
-      total: 2,
-      page: 1,
-      limit: 50,
-      totalPages: 1,
-    }
-  );
+  // R16: the shell reads the complete accounts set (listAll),
+  // not page 1 of the paginated accounts view.
+  queryClient.setQueryData(tenant.accounts.listAll, {
+    accounts: [sarahAccount, johnAccount],
+    total: 2,
+  });
   queryClient.setQueryData(tenant.settings.byoc, {
     workspaceId: '33333333-3333-4333-8333-333333333333',
     subdomain: 'acme',
@@ -222,8 +218,10 @@ describe('Pages ?account= filter contract', () => {
     const option = await screen.findByRole('option', { name: 'John Doe' });
     await user.click(option);
     await waitFor(() => {
+      // R16: the toolbar writes the account id, not the name —
+      // two accounts sharing a name must not collapse.
       expect(mockReplace).toHaveBeenCalledWith(
-        '/tenant/acme/pages?account=John+Doe'
+        '/tenant/acme/pages?account=acc-john'
       );
     });
     // And the list itself is filtered to John's pages.

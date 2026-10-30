@@ -77,6 +77,8 @@ import {
   deriveComposerPostType,
   DestinationEnqueueResponseSchema,
   IDEMPOTENCY_KEY_HEADER,
+  itemSlotFormat,
+  slotMatchesFormat,
   toComposerEnqueueItem,
   type ComposerDraftBlock,
   type ComposerMedia,
@@ -584,14 +586,24 @@ export function CreatePostsDialog({
     // No-posting-times pre-check: when the page has zero ACTIVE
     // posting times, send nothing at all — show the friendly message
     // with a button to the Posting Times tab instead of queueing
-    // and failing with a raw server error. A slots-fetch failure
-    // falls through to the queue attempt below (logged, not
-    // swallowed): the server then surfaces the real error, so
-    // queueing is never silently skipped. That fall-through does
-    // NOT apply to a timeout or a user Stop: those end the run
-    // here (see the catch), because falling through would start
-    // queueing after the user already asked to stop, or after a
-    // wait that already proved the backend unresponsive.
+    // and failing with a raw server error. K5: the check is
+    // FORMAT-AWARE, not "any active slot passes": a block counts as
+    // covered only when an active slot's allowed formats include
+    // the block's derived slot format (the same slotMatchesFormat
+    // the publisher's claim uses). A block with no covering slot
+    // is refused with an honest message — it would wait for a
+    // matching time, not go out at the next time — instead of
+    // queueing silently unmatched. The server rule is untouched:
+    // zero active times is still not a server error for Facebook;
+    // this client pre-check is what keeps the user informed.
+    // A slots-fetch failure STOPS the run with a clear error
+    // (K5): the old fall-through queued posts blind after a failed
+    // check, which is exactly how unmatched posts got queued with
+    // no warning. That stop does NOT apply to a timeout or a user
+    // Stop: those end the run here (see the catch), because
+    // falling through would start queueing after the user already
+    // asked to stop, or after a wait that already proved the
+    // backend unresponsive.
     // This fetch carries the 30-second timeout + AbortSignal:
     // before that, a hung slots response froze the dialogue with
     // the button on "Checking posting times…" and Stop stuck on
@@ -601,6 +613,20 @@ export function CreatePostsDialog({
       total: readyBlocks.length,
       phase: 'checking',
     });
+    const goToPostingTimesAction = {
+      label: 'Go to Posting Times',
+      onClick: () => {
+        // Drafts survive this: the next open restores them.
+        preserveDraftsRef.current = true;
+        onOpenChange(false);
+        const nextParams = new URLSearchParams(searchParams.toString());
+        nextParams.set('tab', 'calendar');
+        router.push(
+          `/tenant/${subdomain}/pages/${page.id}?${nextParams.toString()}`,
+          { scroll: false }
+        );
+      },
+    };
     const slotsRequest = startTimedRequest();
     try {
       const slotsResponse = await api.get(
@@ -608,29 +634,44 @@ export function CreatePostsDialog({
         { schema: ListQueueSlotsResponseSchema, signal: slotsRequest.signal }
       );
       slotsRequest.done();
-      if (!slotsResponse.slots.some((slot) => slot.isActive)) {
+      const activeSlots = slotsResponse.slots.filter((slot) => slot.isActive);
+      if (activeSlots.length === 0) {
         toast.error(
           'No posting times set yet. Add a posting time on the Posting Times tab, and your queued posts will go out automatically.',
-          {
-            action: {
-              label: 'Go to Posting Times',
-              onClick: () => {
-                // Drafts survive this: the next open restores them.
-                preserveDraftsRef.current = true;
-                onOpenChange(false);
-                const nextParams = new URLSearchParams(searchParams.toString());
-                nextParams.set('tab', 'calendar');
-                router.push(
-                  `/tenant/${subdomain}/pages/${page.id}?${nextParams.toString()}`,
-                  { scroll: false }
-                );
-              },
-            },
-          }
+          { action: goToPostingTimesAction }
         );
         return;
       }
-    } catch (error) {
+      // Format-aware coverage: every ready block needs an active
+      // slot that allows its derived format. Labels match what the
+      // block shows ("Post N", never the filtered ready-list
+      // position).
+      const unmatched: string[] = [];
+      blocks.forEach((block, index) => {
+        if (isBlockEmpty(block)) return;
+        const item = toComposerEnqueueItem(block);
+        if (!item) return;
+        const format = itemSlotFormat(item.kind, item.platformFormat);
+        const covered = activeSlots.some((slot) => slotMatchesFormat(format, slot.allowedFormats));
+        if (!covered) {
+          const label = `Post ${index + 1}`;
+          // Composer formats are exactly typeNouns' keys; anything
+          // else keeps its raw format name instead of "undefined".
+          const noun =
+            format === 'text' || format === 'image' || format === 'reel' || format === 'video'
+              ? typeNouns[format]
+              : `${format} post`;
+          unmatched.push(`${label} (${noun}) has no posting time that allows it yet`);
+        }
+      });
+      if (unmatched.length > 0) {
+        toast.error(
+          `${unmatched.join('; ')}. These posts will wait for a matching posting time — add one on the Posting Times tab, then try again. No posts were added.`,
+          { action: goToPostingTimesAction }
+        );
+        return;
+      }
+    } catch {
       slotsRequest.done();
       if (abortReasonRef.current === 'timeout') {
         // Timed-out pre-check: end the run, do NOT fall through
@@ -645,7 +686,12 @@ export function CreatePostsDialog({
         // User Stop aborted the pre-check: fall through to the
         // stopped branch below, which reports "no posts added".
       } else {
-        console.error('Failed to check posting times before queueing', error);
+        // K5: a failed check stops the run — queueing blind after
+        // it would enqueue posts whose coverage is unknown.
+        toast.error(
+          "Couldn't check posting times — no posts were added. Check your connection and try again."
+        );
+        return;
       }
     }
     // Stop pressed during the pre-check: the in-flight slots fetch
@@ -655,6 +701,21 @@ export function CreatePostsDialog({
       toast.info('Queueing stopped — no posts were added.');
       return;
     }
+    // K8: queue mutations move list counters and unmatched flags,
+    // so the pages list + this page's detail must not sit stale
+    // for up to 60s behind the queue cache (same refresh the queue
+    // panel and calendar panel already do for their mutations).
+    const invalidateQueueAndPages = async () => {
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.tenant(subdomain).queue.all,
+      });
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.tenant(subdomain).pages.list,
+      });
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.tenant(subdomain).pages.detail(page.id),
+      });
+    };
     let queued = 0;
     try {
       // Sequential, in order: each enqueue resolves the next vacant
@@ -732,9 +793,7 @@ export function CreatePostsDialog({
             const next = prev.filter((block) => !queuedIds.has(block.id));
             return next.length === 0 ? [newEmptyBlock()] : next;
           });
-          await queryClient.invalidateQueries({
-            queryKey: queryKeys.tenant(subdomain).queue.all,
-          });
+          await invalidateQueueAndPages();
           toast.info(
             `Stopped — ${queued} post${queued === 1 ? '' : 's'} added to queue. The rest are still here.`
           );
@@ -742,9 +801,7 @@ export function CreatePostsDialog({
           toast.info('Queueing stopped — no posts were added.');
         }
       } else {
-        await queryClient.invalidateQueries({
-          queryKey: queryKeys.tenant(subdomain).queue.all,
-        });
+        await invalidateQueueAndPages();
         toast.success(
           queued === 1 ? 'Post added to queue.' : `${queued} posts added to queue.`
         );
@@ -783,9 +840,7 @@ export function CreatePostsDialog({
       // — never as a duplicate).
       if (abortReasonRef.current === 'stop') {
         if (queued > 0) {
-          await queryClient.invalidateQueries({
-            queryKey: queryKeys.tenant(subdomain).queue.all,
-          });
+          await invalidateQueueAndPages();
           toast.info(
             `Stopped — ${queued} post${queued === 1 ? '' : 's'} added to queue. The rest are still here.`
           );
@@ -794,9 +849,7 @@ export function CreatePostsDialog({
         }
       } else if (abortReasonRef.current === 'timeout') {
         if (queued > 0) {
-          await queryClient.invalidateQueries({
-            queryKey: queryKeys.tenant(subdomain).queue.all,
-          });
+          await invalidateQueueAndPages();
         }
         toast.error(
           queued > 0

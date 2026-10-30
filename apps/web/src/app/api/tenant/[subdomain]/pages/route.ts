@@ -58,6 +58,7 @@ interface PageListRow {
   tasks?: unknown;
   unmatched_post_types?: unknown;
   unmatchedPostTypes?: unknown;
+  timezone?: string | null;
   rate_limited_at?: string | Date | null;
   rateLimitedAt?: string | Date | null;
   created_at?: string | Date | null;
@@ -117,6 +118,23 @@ const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
+ * Escapes a user search term for LIKE/ILIKE patterns (K9): % and _
+ * must match literally, and a literal backslash must not escape
+ * the next character. Same backslash convention as the prompts
+ * route's escapeIlikePattern (PostgREST passes ilike patterns
+ * straight to Postgres ILIKE, whose default escape is backslash);
+ * the SQL path states ESCAPE '\' explicitly so the SQL, Supabase
+ * or(), and in-memory (.includes, already literal) search paths
+ * all agree on what a wildcard character means: nothing special.
+ */
+function escapeLikePattern(input: string): string {
+  return input
+    .replaceAll('\\', '\\\\')
+    .replaceAll('%', '\\%')
+    .replaceAll('_', '\\_');
+}
+
+/**
  * The attention-first rank the shell sorts by (pages-helpers
  * sortPagesAttentionFirst), expressed in SQL so pagination can be a
  * real range: attention (0), paused (1), active (2), other (3). A
@@ -161,10 +179,12 @@ function buildPageWhere(
   ];
   const nextParam = () => `$${params.length + 1}`;
   if (filters.search) {
-    const like = `%${filters.search}%`;
+    const like = `%${escapeLikePattern(filters.search)}%`;
     const p = nextParam();
     params.push(like);
-    conditions.push(`(d.name ILIKE ${p} OR d.metadata->>'category' ILIKE ${p})`);
+    conditions.push(
+      `(d.name ILIKE ${p} ESCAPE '\\' OR d.metadata->>'category' ILIKE ${p} ESCAPE '\\')`
+    );
   }
   if (filters.status === 'needs_attention') {
     conditions.push(PAGE_NEEDS_ATTENTION_SQL);
@@ -238,6 +258,7 @@ async function fetchSqlPagesPage(
       d.external_destination_id AS fb_page_id,
       d.name AS page_name,
       d.avatar_url AS profile_picture_url,
+      d.timezone,
       d.metadata->>'category' AS category,
       (d.metadata->>'starting_followers')::int AS starting_followers,
       (d.metadata->>'current_followers')::int AS current_followers,
@@ -273,6 +294,7 @@ interface SupabaseDestinationJoinRow {
   external_destination_id: string;
   name: string;
   avatar_url: string | null;
+  timezone?: string | null;
   metadata: Record<string, unknown> | null;
   status: string;
   created_at: string;
@@ -281,9 +303,9 @@ interface SupabaseDestinationJoinRow {
 }
 
 const SUPABASE_PAGE_COLUMNS =
-  'id, account_id, external_destination_id, name, avatar_url, metadata, status, created_at, updated_at, social_accounts(display_name, avatar_url)';
+  'id, account_id, external_destination_id, name, avatar_url, timezone, metadata, status, created_at, updated_at, social_accounts(display_name, avatar_url)';
 const SUPABASE_PAGE_COLUMNS_INNER =
-  'id, account_id, external_destination_id, name, avatar_url, metadata, status, created_at, updated_at, social_accounts!inner(display_name, avatar_url)';
+  'id, account_id, external_destination_id, name, avatar_url, timezone, metadata, status, created_at, updated_at, social_accounts!inner(display_name, avatar_url)';
 
 /**
  * The attention-first rank groups, in order. PostgREST cannot ORDER BY
@@ -401,8 +423,13 @@ function buildSupabasePageQuery(
     .eq('platform', 'facebook');
   query = applySupabasePageGroup(query, group, freshThresholdIso);
   if (filters.search) {
+    // Terms containing PostgREST or() metacharacters (, ( ) ")
+    // never reach here — they take the chunked fallback in
+    // fetchSupabasePagesPage — so the escaped pattern below cannot
+    // break the or() syntax.
+    const pattern = `%${escapeLikePattern(filters.search)}%`;
     query = query.or(
-      `name.ilike.%${filters.search}%,metadata->>category.ilike.%${filters.search}%`
+      `name.ilike.${pattern},metadata->>category.ilike.${pattern}`
     );
   }
   if (filters.account && filters.account !== 'all') {
@@ -431,6 +458,7 @@ function mapSupabaseDestinationRows(
     fb_page_id: p.external_destination_id,
     page_name: p.name,
     profile_picture_url: p.avatar_url,
+    timezone: p.timezone ?? null,
     category: typeof p.metadata?.category === 'string' ? p.metadata.category : null,
     starting_followers:
       typeof p.metadata?.starting_followers === 'number'
@@ -476,23 +504,34 @@ async function fetchSupabasePagesPage(
   error?: string;
 }> {
   // Search terms containing PostgREST or() metacharacters cannot be
-  // expressed as a single or() filter — keep the previous full-fetch
-  // behaviour for those requests instead of returning wrong results.
+  // expressed as a single or() filter — keep the in-memory
+  // filter/sort/paginate behaviour for those requests instead of
+  // returning wrong results, but fetch in 1,000-row chunks (R18):
+  // the previous single fetch silently truncated at PostgREST's
+  // 1,000-row cap, so a metacharacter search over a large
+  // workspace searched only the newest 1,000 pages.
   if (/[,()"]/.test(filters.search)) {
-    const { data: pageData, error } = await supabase
-      .from('destinations')
-      .select(SUPABASE_PAGE_COLUMNS)
-      .eq('workspace_id', workspaceId)
-      .eq('platform', 'facebook')
-      .order('created_at', { ascending: false });
-    if (error) {
-      return { pages: [], total: 0, page, attentionTotal: 0, error: error.message };
+    const CHUNK_SIZE = 1000;
+    const pageRows: SupabaseDestinationJoinRow[] = [];
+    for (let from = 0; ; from += CHUNK_SIZE) {
+      const { data: chunkData, error } = await supabase
+        .from('destinations')
+        .select(SUPABASE_PAGE_COLUMNS)
+        .eq('workspace_id', workspaceId)
+        .eq('platform', 'facebook')
+        .order('created_at', { ascending: false })
+        .range(from, from + CHUNK_SIZE - 1);
+      if (error) {
+        return { pages: [], total: 0, page, attentionTotal: 0, error: error.message };
+      }
+      // The contracts Database type resolves this joined select to never[]
+      // (no Relationships metadata for supabase-js), so the result is
+      // asserted once, here at the boundary, to the shape the select
+      // actually returns.
+      const chunkRows = (chunkData || []) as unknown as SupabaseDestinationJoinRow[];
+      pageRows.push(...chunkRows);
+      if (chunkRows.length < CHUNK_SIZE) break;
     }
-    // The contracts Database type resolves this joined select to never[]
-    // (no Relationships metadata for supabase-js), so the result is
-    // asserted once, here at the boundary, to the shape the select
-    // actually returns.
-    const pageRows = (pageData || []) as unknown as SupabaseDestinationJoinRow[];
     const mapped = mapPageRows(mapSupabaseDestinationRows(pageRows));
     const filtered = filterAndSortPages(mapped, filters);
     const attentionTotal = filtered.filter((p) =>
@@ -586,8 +625,9 @@ async function fetchSupabasePagesPage(
  *
  * `posted` is the all-time `published` total, renamed at this
  * boundary. `publishing`, `skipped` and `cancelled` are never
- * counted here. A page with no queue rows — or a failed counts
- * query, logged below — gets zeros, never a hidden row.
+ * counted here. A page with no queue rows gets zeros, never a
+ * hidden row. A failed counts query gets NO numbers at all plus
+ * `queueCountsError` (R6) — never zeros.
  */
 export interface PageCardQueueCounts {
   queued: number;
@@ -614,12 +654,24 @@ function toCount(value: unknown): number {
  * dropped with the legacy schema (20261024130000) and its last
  * definition still read the dropped legacy_queue_items table.
  */
+/**
+ * Counts result, with the failure carried alongside the map (R6):
+ * a failed counts query is slice-wide, not per-page, so no page in
+ * the slice can be told apart from a genuinely empty page by its
+ * counts alone. Callers must surface `error` on the card instead of
+ * rendering the map's zeros.
+ */
+interface PageCardQueueCountsResult {
+  counts: Map<string, PageCardQueueCounts>;
+  error: boolean;
+}
+
 async function fetchPageCardQueueCountsSql(
   dbClient: DatabaseClient,
   pageIds: string[]
-): Promise<Map<string, PageCardQueueCounts>> {
+): Promise<PageCardQueueCountsResult> {
   const counts = new Map<string, PageCardQueueCounts>();
-  if (pageIds.length === 0) return counts;
+  if (pageIds.length === 0) return { counts, error: false };
   try {
     const rows = await dbClient.query<{
       destination_id?: unknown;
@@ -645,13 +697,15 @@ async function fetchPageCardQueueCountsSql(
       });
     }
   } catch (err) {
-    // The list still serves (with zeros), but the failure is logged
-    // — queue counters must not silently zero (spec 139 B19).
+    // The list still serves, but the failure is logged AND carried
+    // to the caller (R6) — queue counters must not silently zero
+    // (spec 139 B19). The card omits the numbers on error.
     logServerError('[pages] List queue-count query failed', err, {
       source: 'pages-list-queue-counts',
     });
+    return { counts: new Map<string, PageCardQueueCounts>(), error: true };
   }
-  return counts;
+  return { counts, error: false };
 }
 
 /** Minimal PostgREST builder shape for the queue-counts select. */
@@ -690,9 +744,9 @@ async function fetchPageCardQueueCountsSupabase(
   supabase: SupabaseClient<Database>,
   workspaceId: string,
   pageIds: string[]
-): Promise<Map<string, PageCardQueueCounts>> {
+): Promise<PageCardQueueCountsResult> {
   const counts = new Map<string, PageCardQueueCounts>();
-  if (pageIds.length === 0) return counts;
+  if (pageIds.length === 0) return { counts, error: false };
   const bump = (destinationId: string, status: string): void => {
     const current =
       counts.get(destinationId) ?? { ...DEFAULT_PAGE_CARD_QUEUE_COUNTS };
@@ -737,19 +791,28 @@ async function fetchPageCardQueueCountsSupabase(
     logServerError('[pages] List queue-count query failed', err, {
       source: 'pages-list-queue-counts',
     });
-    return new Map<string, PageCardQueueCounts>();
+    return { counts: new Map<string, PageCardQueueCounts>(), error: true };
   }
-  return counts;
+  return { counts, error: false };
 }
 
 function attachPageCardQueueCounts(
   pages: MappedPage[],
-  counts: Map<string, PageCardQueueCounts>
-): Array<MappedPage & { queueCounts: PageCardQueueCounts }> {
-  return pages.map((page) => ({
-    ...page,
-    queueCounts: counts.get(page.id) ?? { ...DEFAULT_PAGE_CARD_QUEUE_COUNTS },
-  }));
+  result: PageCardQueueCountsResult
+): Array<
+  MappedPage & { queueCounts?: PageCardQueueCounts; queueCountsError?: boolean }
+> {
+  // On a counts failure the numbers are omitted entirely and the
+  // error flag is set, so the card cannot mistake them for zeros
+  // (R6). On success a page with no queue rows keeps real zeros.
+  return pages.map((page) =>
+    result.error
+      ? { ...page, queueCountsError: true }
+      : {
+          ...page,
+          queueCounts: result.counts.get(page.id) ?? { ...DEFAULT_PAGE_CARD_QUEUE_COUNTS },
+        }
+  );
 }
 
 export async function handleListPages(
@@ -864,8 +927,9 @@ export async function handleListPages(
     // fetchSupabasePagesPage): exact counts plus ranged slices per
     // attention rank group, so the returned page is exact and the
     // database round-trip never fetches the whole list — except the
-    // documented search fallback inside that function, which keeps
-    // the old full-fetch behaviour for or()-inexpressible terms.
+    // documented search fallback inside that function, which
+    // fetches or()-inexpressible terms in 1,000-row chunks (R18)
+    // and filters in memory over the full set.
     pages = res.pages;
     attentionTotal = res.attentionTotal;
     pages = attachPageCardQueueCounts(
@@ -974,6 +1038,14 @@ function mapPageRows(rows: PageListRow[]) {
       pageName: row.page_name || row.pageName,
       profilePictureUrl: extractPagePictureUrl(row),
       category: row.category ?? null,
+      // Nit: the list used to omit timezone entirely, so the
+      // contracts schema's `.default('UTC')` filled every list row
+      // with UTC — even for pages whose stored zone is Karachi.
+      // The real stored zone is returned now (UTC only when the
+      // row itself carries none, the same fallback the detail and
+      // slots paths already use). PageCard renders no timezone,
+      // so no list consumer changes behaviour.
+      timezone: typeof row.timezone === 'string' && row.timezone ? row.timezone : 'UTC',
       startingFollowers,
       currentFollowers,
       followersGained,
