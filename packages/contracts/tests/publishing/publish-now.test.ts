@@ -54,6 +54,71 @@ describe('PublishNowRequestSchema', () => {
     }
   });
 
+  it('rejects a media-type/post-type mismatch instead of failing generically at publish (N7)', () => {
+    const media = (mediaType: string) => ({
+      source: 'temp',
+      tempKey: 'temp/user-1/file.jpg',
+      url: 'https://example.com/file.jpg',
+      mediaType,
+      name: 'file.jpg',
+    });
+    // Image post carrying video media used to reach
+    // publishPhotoWithBytes and fail with a generic media error.
+    expect(
+      PublishNowRequestSchema.safeParse(
+        baseRequest({ postType: 'image', media: media('video') })
+      ).success
+    ).toBe(false);
+    expect(
+      PublishNowRequestSchema.safeParse(
+        baseRequest({ postType: 'video', media: media('image') })
+      ).success
+    ).toBe(false);
+    expect(
+      PublishNowRequestSchema.safeParse(
+        baseRequest({ postType: 'reel', media: media('image') })
+      ).success
+    ).toBe(false);
+    // A text post silently dropped attached media (the text branch
+    // never reads it) — now rejected up front.
+    expect(
+      PublishNowRequestSchema.safeParse(
+        baseRequest({ postType: 'text', media: media('image') })
+      ).success
+    ).toBe(false);
+    // Matching types still pass.
+    expect(
+      PublishNowRequestSchema.safeParse(
+        baseRequest({ postType: 'image', media: media('image') })
+      ).success
+    ).toBe(true);
+    expect(
+      PublishNowRequestSchema.safeParse(
+        baseRequest({ postType: 'reel', media: media('video') })
+      ).success
+    ).toBe(true);
+  });
+
+  it('bounds tempKey at 512 characters (N7)', () => {
+    const media = (tempKey: string) => ({
+      source: 'temp',
+      tempKey,
+      url: 'https://example.com/file.jpg',
+      mediaType: 'image',
+      name: 'file.jpg',
+    });
+    expect(
+      PublishNowRequestSchema.safeParse(
+        baseRequest({ postType: 'image', media: media('k'.repeat(512)) })
+      ).success
+    ).toBe(true);
+    expect(
+      PublishNowRequestSchema.safeParse(
+        baseRequest({ postType: 'image', media: media('k'.repeat(513)) })
+      ).success
+    ).toBe(false);
+  });
+
   it('accepts a first comment up to 8,000 characters and rejects longer', () => {
     expect(
       PublishNowRequestSchema.safeParse(
