@@ -5,7 +5,7 @@
  * accounts and feed failures create nothing, and the list filters
  * by targetPlatform=instagram.
  */
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, type Mock } from 'vitest';
 import { NextRequest } from 'next/server';
 import { encryptToken, signSessionToken } from '@fbuploadpro/contracts';
 import {
@@ -13,6 +13,7 @@ import {
   handleListMirrors,
 } from '../../src/app/api/tenant/[subdomain]/tiktok-mirrors/route';
 import { TikwmError } from '../../src/lib/server/tikwm';
+import type { publishInstagramReel } from '../../src/lib/server/instagram-reel';
 import type { DatabaseClient } from '@fbuploadpro/contracts';
 
 const TEST_SECRET = 'test-session-secret-that-is-long-enough-123456';
@@ -166,7 +167,7 @@ function feedVideo(overrides: Record<string, unknown> = {}) {
 }
 
 const createDeps = (
-  options: { publishInstagram?: ReturnType<typeof vi.fn>; feedError?: boolean } = {}
+  options: { publishInstagram?: Mock<typeof publishInstagramReel>; feedError?: boolean } = {}
 ) => ({
   fetchTikwmPosts: options.feedError
     ? vi.fn().mockRejectedValue(new TikwmError('FEED_UNAVAILABLE', 'Feed unavailable'))
@@ -181,7 +182,8 @@ const createDeps = (
     title: 'My exact caption',
   }),
   publishInstagramReel:
-    options.publishInstagram ?? vi.fn().mockResolvedValue('ig_media_123'),
+    options.publishInstagram ??
+    vi.fn<typeof publishInstagramReel>().mockResolvedValue('ig_media_123'),
 });
 
 const igBody = {
@@ -220,8 +222,7 @@ describe('POST /tiktok-mirrors (Instagram target)', () => {
     expect(body.mirror.targetExternalId).toBe(igUserId);
     expect(body.immediatePost.status).toBe('posted');
     expect(body.immediatePost.publishedPostId).toBe('ig_media_123');
-    const publish = deps.publishInstagramReel as ReturnType<typeof vi.fn>;
-    expect(publish).toHaveBeenCalledWith(
+    expect(deps.publishInstagramReel).toHaveBeenCalledWith(
       expect.objectContaining({
         igUserId,
         videoUrl: 'https://example.com/no-wm.mp4',
