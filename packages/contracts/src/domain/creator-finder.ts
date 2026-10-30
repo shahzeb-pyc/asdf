@@ -60,6 +60,7 @@ export type CreatorFinderErrorCode =
   | 'FEED_UNAVAILABLE'
   | 'BAD_RESPONSE'
   | 'HTTP_ERROR'
+  | 'UPSTREAM_ERROR'
   | 'UNREACHABLE';
 
 export class CreatorFinderError extends Error {
@@ -397,6 +398,18 @@ async function fetchTikwmJson(
     );
   }
   if (!res.ok) {
+    // A 5xx (including non-standard ones like the 531 the trending
+    // feed returned for region PK on 2026-10-31 while niche search
+    // on the same key kept working) is the provider's own trouble,
+    // not a bad request from us: say so plainly instead of quoting
+    // a meaningless status number, and never invent results to fill
+    // the gap. The page's Find button is the retry path.
+    if (res.status >= 500) {
+      throw new CreatorFinderError(
+        'UPSTREAM_ERROR',
+        'The TikTok creator service is having trouble right now. Please try again shortly, or search by niche instead.',
+      );
+    }
     throw new CreatorFinderError(
       'HTTP_ERROR',
       `TikTok creator service returned HTTP ${res.status}. Please try again.`,

@@ -198,6 +198,29 @@ describe('fetchTrendingCreators', () => {
     ).rejects.toBeInstanceOf(CreatorFinderError);
     expect(fetchFn).not.toHaveBeenCalled();
   });
+
+  it('reports an upstream 5xx plainly instead of quoting the status (launch bug 2026-10-31)', async () => {
+    // Live on prod 2026-10-31: /feed/list?region=PK returned HTTP 531
+    // while niche search on the same key kept working — the provider's
+    // own trouble, not a bad request. The user must get a plain
+    // message and the retry path, never a bare status number and
+    // never invented results.
+    const fetchFn = vi.fn().mockResolvedValue(
+      new Response('upstream failure', {
+        status: 531,
+        headers: { 'Content-Type': 'text/plain' },
+      }),
+    );
+    const err = await fetchTrendingCreators('pk', {
+      fetchFn,
+      apiKeys: ['key-1'],
+    }).catch((caught: unknown) => caught);
+    expect(err).toBeInstanceOf(CreatorFinderError);
+    expect((err as CreatorFinderError).code).toBe('UPSTREAM_ERROR');
+    expect((err as CreatorFinderError).message).toContain(
+      'having trouble right now',
+    );
+  });
 });
 
 describe('fetchCreatorsByKeyword', () => {

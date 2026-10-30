@@ -10,10 +10,12 @@ import { Button } from '@/components/shared/ui/button';
  *
  * Rebuilt on the shared/ui primitives: "Upload Files" is the surface's
  * single primary Button, "New Folder" a quiet text action, and the
- * hidden file input is retained purely as the picker mechanism. The
- * surface-local toast that used to render here is deleted — all surface
- * feedback goes through the shared/ui Toast system mounted by the
- * explorer (one toast system product-wide, UI Rule 11).
+ * rendered-but-invisible file input is retained purely as the picker
+ * mechanism (it must stay rendered — see its comment — so that
+ * showPicker() is honored). The surface-local toast that used to
+ * render here is deleted — all surface feedback goes through the
+ * shared/ui Toast system mounted by the explorer (one toast system
+ * product-wide, UI Rule 11).
  */
 
 export interface MediaLibraryHeaderProps {
@@ -33,12 +35,24 @@ export function MediaLibraryHeader({
 }: Readonly<MediaLibraryHeaderProps>) {
   return (
     <>
-      {/* Hidden File Picker */}
+      {/*
+        File picker mechanism. This input MUST stay rendered (positioned
+        1px and transparent) — never display:none. showPicker() silently
+        no-ops on a non-rendered input in spec-compliant browsers: it
+        does not throw, so the click() fallback in the explorer never
+        runs and Upload Files appears completely dead (launch bug
+        2026-10-31: no picker, no dialog, no toast, no change).
+        tabIndex -1 + aria-hidden keep it out of keyboard/AT order:
+        it is a mechanism only, never a visible control.
+      */}
       <input
         ref={fileInputRef}
         type="file"
         multiple
-        className="hidden"
+        data-testid="media-library-file-input"
+        aria-hidden="true"
+        tabIndex={-1}
+        className="pointer-events-none absolute h-px w-px opacity-0"
         onChange={(e) => {
           if (e.target.files && e.target.files.length > 0) {
             const files = Array.from(e.target.files);

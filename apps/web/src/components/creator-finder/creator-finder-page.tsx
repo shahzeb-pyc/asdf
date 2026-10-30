@@ -734,6 +734,7 @@ export function CreatorFinderPage({
                       <CreatorCard creator={creator} />
                       <Button
                         variant="outline"
+                        className="self-end"
                         onClick={() => removeSaved(creator.handle)}
                         disabled={removingHandle === creator.handle}
                       >

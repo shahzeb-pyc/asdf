@@ -139,7 +139,7 @@ describe('MediaLibraryHeader (PB-13)', () => {
     expect(onNewFolderClick).toHaveBeenCalledTimes(1);
   });
 
-  it('forwards picked files from the hidden input and resets it', () => {
+  it('forwards picked files from the picker input and resets it', () => {
     const onFileInputChange = vi.fn();
     const { container } = render(
       <MediaLibraryHeader
@@ -156,6 +156,28 @@ describe('MediaLibraryHeader (PB-13)', () => {
     Object.defineProperty(input!, 'files', { value: [file], configurable: true });
     fireEvent.change(input!);
     expect(onFileInputChange).toHaveBeenCalledWith([file]);
+  });
+
+  it('keeps the picker input rendered so showPicker() is honored (launch bug 2026-10-31)', () => {
+    render(
+      <MediaLibraryHeader
+        fileInputRef={{ current: null }}
+        onFileInputChange={vi.fn()}
+        onNewFolderClick={vi.fn()}
+        onUploadClick={vi.fn()}
+        onDownloadClick={vi.fn()}
+      />
+    );
+    // showPicker() silently no-ops on a display:none input in
+    // spec-compliant browsers — and it does not throw, so the
+    // click() fallback never runs and Upload Files looks completely
+    // dead (no picker, no dialog, no toast). The input must stay
+    // rendered (1px, transparent), never `hidden`. Fails on the old
+    // markup (class "hidden", no testid) and passes on the fix.
+    const input = screen.getByTestId('media-library-file-input');
+    expect(input).not.toHaveClass('hidden');
+    expect(input).toHaveClass('absolute');
+    expect(input).toHaveClass('opacity-0');
   });
 });
 
