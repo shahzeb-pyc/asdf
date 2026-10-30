@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import {
   encryptToken,
@@ -187,38 +187,38 @@ describe('Facebook Granular Disconnection & Multi-Tenant Governance (User Story 
   });
 
   describe('Disconnect Account (DELETE /api/tenant/[subdomain]/accounts/[accountId])', () => {
-    it('revokes Facebook access, marks the account revoked, disconnects destinations and cancels queued items — never hard-deleting (BG10)', async () => {
-      // The stored ciphertext must decrypt under the test-env key
-      // (dev fallback) so the revoke attempt actually runs.
-      const encrypted = await encryptToken(
-        'user-token',
-        getTokenEncryptionKey()
-      );
-      vi.stubGlobal(
-        'fetch',
-        vi.fn(async () => ({ ok: true }) as Response)
-      );
-      let revokedAccountParams: any[] = [];
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    // Mock Postgres client for the disconnect path. Matcher order
+    // matters: the DELETE statement also contains the substring
+    // 'FROM social_accounts', so it must be matched first.
+    const buildAccountMockDb = (status: string, encrypted: string) => {
       const mockDb = {
-        query: vi.fn().mockImplementation((sql: string, params: any[]) => {
+        query: vi.fn().mockImplementation((sql: string) => {
           if (sql.includes('FROM workspaces')) {
             return Promise.resolve([{ id: 'ws_123' }]);
           }
-          if (sql.includes('SELECT encrypted_access_token')) {
-            return Promise.resolve([{ encrypted_access_token: encrypted }]);
-          }
-          if (sql.includes("UPDATE destinations SET status = 'disconnected'")) {
-            return Promise.resolve([{ id: 'd1' }, { id: 'd2' }]);
-          }
-          if (sql.includes("UPDATE social_accounts SET status = 'revoked'")) {
-            revokedAccountParams = params;
+          if (sql.includes('DELETE FROM social_accounts')) {
             return Promise.resolve([{ id: accountId }]);
+          }
+          if (sql.includes('FROM social_accounts')) {
+            return Promise.resolve([
+              { status, encrypted_access_token: encrypted },
+            ]);
+          }
+          if (sql.includes('FROM destinations')) {
+            return Promise.resolve([{ id: 'd1' }, { id: 'd2' }]);
           }
           return Promise.resolve([]);
         }),
-      };
+      } as unknown as DatabaseClient;
+      return mockDb;
+    };
 
-      const req = new NextRequest(
+    const deleteAccountRequest = () =>
+      new NextRequest(
         `http://localhost:3000/api/tenant/acme/accounts/${accountId}`,
         {
           method: 'DELETE',
@@ -226,11 +226,27 @@ describe('Facebook Granular Disconnection & Multi-Tenant Governance (User Story 
         }
       );
 
+    const deleteStatements = (mockDb: DatabaseClient) =>
+      (mockDb as unknown as { query: { mock: { calls: Array<[string, unknown[]]> } } }).query.mock.calls
+        .filter((call) => (call[0] as string).includes('DELETE FROM social_accounts'));
+
+    it('expired account: skips the Facebook revoke call and deletes the account row', async () => {
+      // The stored ciphertext must decrypt under the test-env key
+      // so that, on the OLD code, the revoke attempt actually runs
+      // (and this test fails there on both assertions below).
+      const encrypted = await encryptToken(
+        'user-token',
+        getTokenEncryptionKey()
+      );
+      const fetchMock = vi.fn(async () => ({ ok: true }) as Response);
+      vi.stubGlobal('fetch', fetchMock);
+      const mockDb = buildAccountMockDb('expired', encrypted);
+
       const res = await handleDisconnectAccount(
-        req,
+        deleteAccountRequest(),
         'acme',
         accountId,
-        mockDb as unknown as DatabaseClient
+        mockDb
       );
       expect(res.status).toBe(200);
 
@@ -238,19 +254,163 @@ describe('Facebook Granular Disconnection & Multi-Tenant Governance (User Story 
       expect(json.success).toBe(true);
       expect(json.accountId).toBe(accountId);
       expect(json.disconnectedPagesCount).toBe(2);
-      expect(json.facebookRevoked).toBe(true);
+      // No revoke was possible (dead token) — but removal is
+      // complete regardless, with no Facebook-side step demanded.
+      expect(json.facebookRevoked).toBe(false);
+      expect(fetchMock).not.toHaveBeenCalled();
 
-      expect(revokedAccountParams[0]).toBe(accountId);
-      expect(revokedAccountParams[1]).toBe('ws_123');
-      // The old hard delete must be gone: no DELETE statement
-      // against social_accounts may run on this path.
-      const statements = mockDb.query.mock.calls.map(
-        (call) => call[0] as string
+      const deletes = deleteStatements(mockDb);
+      expect(deletes).toHaveLength(1);
+      expect(deletes[0][1]).toEqual([accountId, 'ws_123']);
+    });
+
+    it('already-disconnected (revoked) account: skips the revoke call and deletes the row', async () => {
+      const encrypted = await encryptToken(
+        'user-token',
+        getTokenEncryptionKey()
       );
-      expect(
-        statements.some((sql) => sql.includes('DELETE FROM social_accounts'))
-      ).toBe(false);
-      vi.unstubAllGlobals();
+      const fetchMock = vi.fn(async () => ({ ok: true }) as Response);
+      vi.stubGlobal('fetch', fetchMock);
+      const mockDb = buildAccountMockDb('revoked', encrypted);
+
+      const res = await handleDisconnectAccount(
+        deleteAccountRequest(),
+        'acme',
+        accountId,
+        mockDb
+      );
+      expect(res.status).toBe(200);
+
+      const json = await res.json();
+      expect(json.success).toBe(true);
+      expect(json.facebookRevoked).toBe(false);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(deleteStatements(mockDb)).toHaveLength(1);
+    });
+
+    it('active account with a successful revoke: deletes the row and reports facebookRevoked=true', async () => {
+      const encrypted = await encryptToken(
+        'user-token',
+        getTokenEncryptionKey()
+      );
+      const fetchMock = vi.fn(async () => ({ ok: true }) as Response);
+      vi.stubGlobal('fetch', fetchMock);
+      const mockDb = buildAccountMockDb('active', encrypted);
+
+      const res = await handleDisconnectAccount(
+        deleteAccountRequest(),
+        'acme',
+        accountId,
+        mockDb
+      );
+      expect(res.status).toBe(200);
+
+      const json = await res.json();
+      expect(json.success).toBe(true);
+      expect(json.facebookRevoked).toBe(true);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(deleteStatements(mockDb)).toHaveLength(1);
+    });
+
+    it('active account with a failing revoke: still deletes the row and still succeeds', async () => {
+      const encrypted = await encryptToken(
+        'user-token',
+        getTokenEncryptionKey()
+      );
+      const fetchMock = vi.fn(async () => ({ ok: false }) as Response);
+      vi.stubGlobal('fetch', fetchMock);
+      const mockDb = buildAccountMockDb('active', encrypted);
+
+      const res = await handleDisconnectAccount(
+        deleteAccountRequest(),
+        'acme',
+        accountId,
+        mockDb
+      );
+      expect(res.status).toBe(200);
+
+      const json = await res.json();
+      expect(json.success).toBe(true);
+      // Revoke failed, but the token dies with the deleted row —
+      // removal is complete and no Facebook-side step is demanded.
+      expect(json.facebookRevoked).toBe(false);
+      expect(deleteStatements(mockDb)).toHaveLength(1);
+    });
+
+    it('Supabase path: expired account deletes via the client without calling Facebook', async () => {
+      const fetchMock = vi.fn(async () => ({ ok: true }) as Response);
+      vi.stubGlobal('fetch', fetchMock);
+      const deleteSelectMock = vi.fn().mockResolvedValue({
+        data: [{ id: accountId }],
+        error: null,
+      });
+      let socialAccountsCalls = 0;
+      const mockSupabase = {
+        from: vi.fn().mockImplementation((table: string) => {
+          if (table === 'workspaces') {
+            return {
+              select: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockReturnValue({
+                    maybeSingle: vi.fn().mockResolvedValue({
+                      data: { id: 'ws_123' },
+                      error: null,
+                    }),
+                  }),
+                }),
+              }),
+            };
+          }
+          if (table === 'social_accounts') {
+            socialAccountsCalls += 1;
+            if (socialAccountsCalls === 1) {
+              // Load chain.
+              const loadChain: any = {};
+              loadChain.eq = vi.fn().mockImplementation(() => loadChain);
+              loadChain.maybeSingle = vi.fn().mockResolvedValue({
+                data: {
+                  id: accountId,
+                  status: 'expired',
+                  encrypted_access_token: 'dead-token',
+                },
+                error: null,
+              });
+              return { select: vi.fn().mockReturnValue(loadChain) };
+            }
+            // Delete chain.
+            const deleteChain: any = {};
+            deleteChain.eq = vi.fn().mockImplementation(() => deleteChain);
+            deleteChain.select = deleteSelectMock;
+            return { delete: vi.fn().mockReturnValue(deleteChain) };
+          }
+          if (table === 'destinations') {
+            const countChain: any = {};
+            countChain.eq = vi.fn().mockImplementation(() => countChain);
+            countChain.then = (resolve: any) =>
+              Promise.resolve({
+                data: [{ id: 'd1' }],
+                error: null,
+              }).then(resolve);
+            return { select: vi.fn().mockReturnValue(countChain) };
+          }
+          return {};
+        }),
+      };
+
+      const res = await handleDisconnectAccount(
+        deleteAccountRequest(),
+        'acme',
+        accountId,
+        mockSupabase as any
+      );
+      expect(res.status).toBe(200);
+
+      const json = await res.json();
+      expect(json.success).toBe(true);
+      expect(json.disconnectedPagesCount).toBe(1);
+      expect(json.facebookRevoked).toBe(false);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(deleteSelectMock).toHaveBeenCalledWith('id');
     });
 
     it('returns 404 when account does not exist or belongs to another user', async () => {

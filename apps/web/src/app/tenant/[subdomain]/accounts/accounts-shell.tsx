@@ -325,14 +325,14 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
       api.delete(buildTenantApiPath(subdomain, `/accounts/${accountId}`), {
         schema: DisconnectAccountResponseSchema,
       }),
-    onSuccess: (data) => {
+    onSuccess: () => {
       setDisconnectError(null);
-      // BG10: disconnect no longer deletes the account — it stays
-      // listed as revoked, so there is no optimistic removal here;
-      // the refetch below shows its new state. The banner must
-      // also say when Facebook-side revocation failed: the local
-      // disconnect happened, but the app authorization may still
-      // be live in the user's Facebook settings.
+      // Disconnect now hard-deletes the account row (and, via
+      // cascade, its pages and their posts): a successful
+      // disconnect is always a full removal from this app. The
+      // Facebook-side revoke is best-effort only — its outcome
+      // never changes the message, and the user is never sent
+      // to Facebook Settings to finish removing the account.
       void queryClient.invalidateQueries({ queryKey: tenant.accounts.list });
       // K9: disconnecting an account changes the Pages list too
       // (its pages leave the list) — the dedicated page-level
@@ -340,18 +340,10 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
       // must as well, or Pages keeps showing a stale grid.
       void queryClient.invalidateQueries({ queryKey: tenant.pages.list });
       setDisconnectingAccount(null);
-      setBannerNotice(
-        data.facebookRevoked
-          ? {
-              type: 'success',
-              message: 'Account disconnected.',
-            }
-          : {
-              type: 'error',
-              message:
-                'Account disconnected, but Facebook access could not be removed. Remove the app in Facebook Settings to fully disconnect.',
-            }
-      );
+      setBannerNotice({
+        type: 'success',
+        message: 'Account disconnected.',
+      });
     },
     onError: (error) => {
       const message =
