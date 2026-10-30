@@ -14,6 +14,16 @@ import {
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import { resolveSocialRouteContext } from '@/lib/connect/session';
 import {
+  claimIdempotencyResult,
+  completeIdempotencyResult,
+  lookupIdempotencyResult,
+  parseIdempotencyKeyHeader,
+  releaseIdempotencyClaim,
+  storeIdempotencyResult,
+  updateIdempotencyResult,
+  type IdempotencyScope,
+} from '@/lib/publishing/idempotency';
+import {
   bodyTooLargeResponse,
   LARGE_JSON_BODY_LIMIT_BYTES,
   readJsonBody,
@@ -49,9 +59,25 @@ import {
  * Graph calls mirror the worker's Facebook publisher shapes
  * (apps/worker/src/fb-client.ts): text → /feed, photo → /photos,
  * video → /videos, reel → 3-phase /video_reels, each publish
- * mutating call made exactly once per page (single-attempt), so a
- * retry of the whole request re-publishes successes — the UI must
- * therefore only ever retry failed pages, never the whole set.
+ * mutating call made exactly once per page (single-attempt).
+ *
+ * Audit BG16 (owner decision 2026-10-30): this route honours the
+ * `Idempotency-Key` header (action `publish-now`, same
+ * idempotency_keys pattern as PR #29). A resend with a known key
+ * returns the STORED results without re-executing, so a
+ * response-lost retry cannot duplicate already-published pages.
+ * A result is stored when at least one target published (partial
+ * success counts — that is exactly the case a retry must not
+ * re-publish); when nothing published, nothing is stored, so a
+ * fresh retry with the same key executes again. A stored result
+ * whose first comment failed is the one exception to blind replay:
+ * a resend carrying the same first comment retries ONLY the
+ * comment against the stored post id, never re-publishes the post.
+ * Absent a key, behaviour is unchanged (no replay possible) — the
+ * UI therefore sends one stable key per publish run, and a fresh
+ * key for a deliberate retry of failed pages. Account-state
+ * behaviour is unchanged by this change (Publish Now still
+ * ignores destinations/status/expiry by owner decision).
  *
  * Two deliberate divergences from the worker, both from the
  * uniform code-1 failures on the preview: (1) before attempting,
@@ -575,6 +601,24 @@ export async function POST(
   if (routeContext.errorResponse) return routeContext.errorResponse;
   const { session, workspaceId } = routeContext;
 
+  // BG16: a present-but-malformed key is a client bug — reject
+  // fail-loud before any execution, never treat it as "no key".
+  const headerKey = parseIdempotencyKeyHeader(request.headers);
+  if (headerKey.invalid) {
+    return NextResponse.json(
+      { error: 'INVALID_REQUEST', message: 'The idempotency key is invalid. Please try again.' },
+      { status: 400 }
+    );
+  }
+  const idempotencyScope: IdempotencyScope | null = headerKey.key
+    ? {
+        workspaceId,
+        userId: session.userId,
+        action: 'publish-now',
+        key: headerKey.key,
+      }
+    : null;
+
   const supabase = getSupabaseAdminClient();
   if (!supabase) {
     return NextResponse.json(
@@ -748,6 +792,140 @@ export async function POST(
     );
   }
 
+  // BG16 replay/claim: lookup runs AFTER all validation above
+  // (body, limits, media, encryption key) so a rejected request
+  // never claims a key, and BEFORE the publish loop so a resend
+  // never re-executes. A lookup failure is 500 fail-loud: the
+  // request has not executed yet, so failing it is safe.
+  let idempotencyClaimed = false;
+  if (idempotencyScope) {
+    let stored: Awaited<ReturnType<typeof lookupIdempotencyResult>>;
+    try {
+      stored = await lookupIdempotencyResult(
+        routeContext.client,
+        idempotencyScope
+      );
+    } catch {
+      return NextResponse.json(
+        { error: 'We could not verify this publish request. Please try again.' },
+        { status: 500 }
+      );
+    }
+    if (stored) {
+      const replayed = PublishNowResponseSchema.safeParse(stored.body);
+      if (!replayed.success) {
+        // Corrupt stored body: fail loud, never execute blindly
+        // (executing could duplicate the original publish).
+        logServerError(
+          '[publish-now] Stored idempotency body failed validation',
+          new Error('Stored publish-now idempotency body failed validation'),
+          {
+            source: 'publish-now',
+            subdomain,
+          }
+        );
+        return NextResponse.json(
+          { error: 'We could not verify this publish request. Please try again.' },
+          { status: 500 }
+        );
+      }
+      const replayResults = replayed.data.results;
+      // First-comment recovery only: a resend carrying the same
+      // first comment retries ONLY the failed comments against
+      // the stored post ids. Nothing here re-publishes.
+      if (trimmedFirstComment) {
+        let commentRetried = false;
+        for (const result of replayResults) {
+          if (
+            result.status !== 'published' ||
+            !result.firstCommentFailed ||
+            !result.postId
+          ) {
+            continue;
+          }
+          try {
+            const { data: account, error: accountError } = await supabase
+              .from('social_accounts')
+              .select('encrypted_access_token')
+              .eq('id', result.accountId)
+              .eq('workspace_id', workspaceId)
+              .eq('platform', 'facebook')
+              .maybeSingle();
+            if (accountError || !account?.encrypted_access_token) {
+              throw new Error('Facebook account not found.');
+            }
+            const accountToken = await decryptToken(
+              account.encrypted_access_token as string,
+              encryptionKey
+            );
+            const pages = await fetchAllFacebookPages(
+              accountToken,
+              'id,name,category,tasks,access_token,followers_count,picture{url}'
+            );
+            const page = pages.find((p) => String(p.id) === result.fbPageId);
+            const pageToken = page?.access_token;
+            if (!page || typeof pageToken !== 'string' || !pageToken) {
+              throw new Error(
+                'This page is no longer available on this Facebook account.'
+              );
+            }
+            await postFirstComment({
+              postId: result.postId,
+              pageToken,
+              message: trimmedFirstComment,
+            });
+            result.firstCommentFailed = null;
+            result.firstCommentReason = null;
+            commentRetried = true;
+          } catch (commentError) {
+            result.firstCommentReason = toGraphFailure(commentError).message.slice(
+              0,
+              500
+            );
+            logServerError('[publish-now] First-comment retry failed on replay', commentError, {
+              source: 'publish-now',
+              subdomain,
+            });
+          }
+        }
+        if (commentRetried) {
+          // Persist the corrected body best-effort (never throws);
+          // the in-band response below already carries the truth.
+          await updateIdempotencyResult(routeContext.client, idempotencyScope, {
+            status: 200,
+            body: { results: replayResults },
+          });
+        }
+      }
+      return NextResponse.json(
+        { results: replayResults },
+        { headers: { 'Idempotency-Replayed': 'true' } }
+      );
+    }
+    let claim: Awaited<ReturnType<typeof claimIdempotencyResult>>;
+    try {
+      claim = await claimIdempotencyResult(
+        routeContext.client,
+        idempotencyScope
+      );
+    } catch {
+      return NextResponse.json(
+        { error: 'We could not verify this publish request. Please try again.' },
+        { status: 500 }
+      );
+    }
+    if (claim === 'already-processing') {
+      return NextResponse.json(
+        {
+          error: 'IDEMPOTENCY_PROCESSING',
+          message: 'This publish is already in progress. Please wait for it to finish.',
+        },
+        { status: 409 }
+      );
+    }
+    idempotencyClaimed = true;
+  }
+
   const results: PublishNowResult[] = [];
   // Per-account cache for this request only: the account token,
   // its re-discovered pages, and its permission state. Previously
@@ -900,5 +1078,37 @@ export async function POST(
     }
   }
 
-  return NextResponse.json(PublishNowResponseSchema.parse({ results }));
+  const responseBody = PublishNowResponseSchema.parse({ results });
+  if (idempotencyScope) {
+    if (results.some((result) => result.status === 'published')) {
+      // Partial success counts as stored: a retry must not
+      // re-publish the pages that already went out.
+      if (idempotencyClaimed) {
+        const completed = await completeIdempotencyResult(
+          routeContext.client,
+          idempotencyScope,
+          { status: 200, body: responseBody }
+        );
+        if (!completed) {
+          // Sentinel already gone — overwrite unconditionally
+          // rather than leaving a stale processing row behind.
+          await updateIdempotencyResult(routeContext.client, idempotencyScope, {
+            status: 200,
+            body: responseBody,
+          });
+        }
+      } else {
+        await storeIdempotencyResult(routeContext.client, idempotencyScope, {
+          status: 200,
+          body: responseBody,
+        });
+      }
+    } else if (idempotencyClaimed) {
+      // Nothing published: release the claim so a fresh retry
+      // with the same key executes immediately instead of
+      // waiting out the 5-minute sentinel.
+      await releaseIdempotencyClaim(routeContext.client, idempotencyScope);
+    }
+  }
+  return NextResponse.json(responseBody);
 }

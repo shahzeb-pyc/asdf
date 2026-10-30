@@ -441,3 +441,70 @@ export async function completeIdempotencyResult(
     return false;
   }
 }
+
+/**
+ * Overwrite an ALREADY-COMPLETED stored result with a corrected
+ * body, regardless of its current status. Audit BG16 (Publish Now
+ * first-comment recovery): a replay that retried only the failed
+ * first comments must persist the corrected results, and a claim
+ * completion that returned false (sentinel already gone) must not
+ * leave a stale sentinel in place of the real result. Never
+ * throws: a failed update is logged and the caller returns the
+ * corrected body in-band — the stored copy may lag, but the
+ * client sees the truth, and the next replay re-attempts the
+ * still-failed comments rather than re-publishing.
+ */
+export async function updateIdempotencyResult(
+  client: ConnectDbClient | null | undefined,
+  scope: IdempotencyScope,
+  result: StoredIdempotencyResult
+): Promise<boolean> {
+  const expiresAt = new Date(
+    Date.now() + IDEMPOTENCY_RETENTION_SECONDS * 1000
+  ).toISOString();
+  try {
+    if (isLegacyClient(client ?? undefined)) {
+      const rows = (await (client as DatabaseClient).query(
+        `UPDATE idempotency_keys
+         SET response_status = $1, response_body = $2::jsonb, expires_at = $3
+         WHERE workspace_id = $4 AND user_id = $5 AND action = $6
+           AND idempotency_key = $7
+         RETURNING id`,
+        [
+          result.status,
+          JSON.stringify(result.body),
+          expiresAt,
+          scope.workspaceId,
+          scope.userId,
+          scope.action,
+          scope.key,
+        ]
+      )) as Array<{ id: string }>;
+      return rows.length > 0;
+    }
+    const supabase = getRouteSupabase(client ?? undefined);
+    if (!supabase) return false;
+    const { data, error } = await supabase
+      .from('idempotency_keys')
+      .update({
+        response_status: result.status,
+        response_body: result.body,
+        expires_at: expiresAt,
+      })
+      .eq('workspace_id', scope.workspaceId)
+      .eq('user_id', scope.userId)
+      .eq('action', scope.action)
+      .eq('idempotency_key', scope.key)
+      .select('id');
+    if (error) throw error;
+    return Array.isArray(data) && data.length > 0;
+  } catch (err) {
+    logServerError('[idempotency] Failed to update idempotency result', err, {
+      source: 'idempotency',
+      workspaceId: scope.workspaceId,
+      userId: scope.userId,
+      action: scope.action,
+    });
+    return false;
+  }
+}

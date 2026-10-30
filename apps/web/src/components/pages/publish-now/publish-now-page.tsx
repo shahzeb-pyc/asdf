@@ -35,9 +35,12 @@
  *     succeeds (old mechanics: POST /{postId}/comments with the
  *     page token, trimmed message). A failed post gets no
  *     comment. A failed comment never fails the row — the post
- *     DID publish — it shows as a warning line, and "Retry
- *     failed only" never re-publishes a success to retry a
- *     comment.
+ *     DID publish — it shows as a warning line with a
+ *     "Retry comment" action (audit BG16): that action resends
+ *     the run's idempotency key, and the server retries ONLY
+ *     the comment against the stored post id, never
+ *     re-publishing. "Retry failed only" never re-publishes
+ *     a success.
  *   Results panel — old History panel in layout only: this run
  *     ONLY, never saved history. Per-page tick in a green
  *     circle / cross in a red circle (never status dots),
@@ -46,8 +49,9 @@
  *     rules (retry only non-restricted failures, never
  *     successes; disabled when all failed are restricted).
  *
- * Nothing in this flow writes to the database: no queue_items,
- * destinations, idempotency_keys, publish_logs, media_items, or
+ * Nothing in this flow writes to the database except the
+ * idempotency record itself (audit BG16, action `publish-now`):
+ * no queue_items, destinations, publish_logs, media_items, or
  * history rows. Device uploads go to a TEMPORARY R2 prefix and
  * are deleted on Start over / replace / remove (kept alive
  * through the results panel so Retry can reuse them). The
@@ -67,6 +71,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   composerTextLimitForType,
   deriveDefaultCaptionFromFilename,
+  IDEMPOTENCY_KEY_HEADER,
   isFacebookAccountRestricted,
   PublishNowResponseSchema,
   PublishNowTempMediaResponseSchema,
@@ -294,6 +299,13 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
   const [isRetrying, setIsRetrying] = React.useState(false);
   const [results, setResults] = React.useState<PublishNowResultItem[]>([]);
   const [hasRun, setHasRun] = React.useState(false);
+  const [retryingCommentKey, setRetryingCommentKey] = React.useState<
+    string | null
+  >(null);
+  // BG16: the idempotency key of the run that published each page,
+  // so "Retry comment" can resend exactly that run's key and the
+  // server retries only the comment, never re-publishing.
+  const publishRunKeysRef = React.useRef<Map<string, string>>(new Map());
   const [expandedDetails, setExpandedDetails] = React.useState<Set<string>>(
     new Set()
   );
@@ -730,7 +742,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
   );
 
   const publishTargets = React.useCallback(
-    async (targets: PublishNowSelectedPage[]) => {
+    async (targets: PublishNowSelectedPage[], idempotencyKey: string) => {
       const mediaPayload = attached
         ? {
             source: attached.libraryId ? ('library' as const) : ('temp' as const),
@@ -760,9 +772,24 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
           })),
           media: mediaPayload,
         },
-        { schema: PublishNowResponseSchema }
+        {
+          schema: PublishNowResponseSchema,
+          // BG16: one stable key per run. A response-lost retry
+          // resends the same key and the server replays the
+          // stored results instead of re-publishing.
+          headers: { [IDEMPOTENCY_KEY_HEADER]: idempotencyKey },
+        }
       );
-      return response.results as PublishNowResultItem[];
+      const publishedResults = response.results as PublishNowResultItem[];
+      for (const result of publishedResults) {
+        if (result.status === 'published') {
+          publishRunKeysRef.current.set(
+            `${result.accountId}:${result.fbPageId}`,
+            idempotencyKey
+          );
+        }
+      }
+      return publishedResults;
     },
     [attached, firstComment, postType, subdomain, text]
   );
@@ -814,7 +841,10 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
     setIsPublishing(true);
     setErrorMessage(null);
     try {
-      const nextResults = await publishTargets(unpublishedSelectedPages);
+      const nextResults = await publishTargets(
+        unpublishedSelectedPages,
+        crypto.randomUUID()
+      );
       // Merge, never replace: run-1 successes must still show
       // after run 2, run-2 results update their own rows (a
       // previously failed page re-attempted here), and newly
@@ -878,7 +908,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
     setIsRetrying(true);
     setErrorMessage(null);
     try {
-      const retried = await publishTargets(failedPages);
+      const retried = await publishTargets(failedPages, crypto.randomUUID());
       setResults((prev) => {
         const byKey = new Map(
           retried.map((result) => [
@@ -902,6 +932,52 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
     }
   }, [selectedPages, results, isRetrying, publishTargets]);
 
+  /**
+   * BG16 first-comment recovery: resend the run's key for just
+   * this page. The server replays the stored publish and retries
+   * only the comment — the post itself is never re-published.
+   * The comment text comes from the composer's current first
+   * comment box, so editing it before retrying posts the edited
+   * text as the comment.
+   */
+  const handleRetryComment = React.useCallback(
+    async (result: PublishNowResultItem) => {
+      const key = `${result.accountId}:${result.fbPageId}`;
+      const runKey = publishRunKeysRef.current.get(key);
+      if (!runKey || retryingCommentKey !== null) return;
+      const page = selectedPages.find(
+        (candidate) =>
+          candidate.accountId === result.accountId &&
+          candidate.fbPageId === result.fbPageId
+      );
+      if (!page) return;
+      setRetryingCommentKey(key);
+      setErrorMessage(null);
+      try {
+        const retried = await publishTargets([page], runKey);
+        setResults((prev) => {
+          const byKey = new Map(
+            retried.map((item) => [
+              `${item.accountId}:${item.fbPageId}`,
+              item,
+            ])
+          );
+          return prev.map((item) => {
+            const itemKey = `${item.accountId}:${item.fbPageId}`;
+            return byKey.get(itemKey) ?? item;
+          });
+        });
+      } catch (error) {
+        setErrorMessage(
+          errorText(error, 'Retrying the first comment did not work. Please try again.')
+        );
+      } finally {
+        setRetryingCommentKey(null);
+      }
+    },
+    [publishTargets, retryingCommentKey, selectedPages]
+  );
+
   const handleStartOver = React.useCallback(() => {
     void deleteAllTempMedia().then((deleted) => {
       if (!deleted) {
@@ -924,6 +1000,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
       setPickerSession((prev) => prev + 1);
       setResults([]);
       setHasRun(false);
+      publishRunKeysRef.current.clear();
     });
   }, [deleteAllTempMedia]);
 
@@ -1762,7 +1839,18 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                                   {result.firstCommentReason
                                     ? `: ${result.firstCommentReason}`
                                     : '.'}{' '}
-                                  The post was published.
+                                  The post was published.{' '}
+                                  <button
+                                    type="button"
+                                    disabled={retryingCommentKey !== null}
+                                    onClick={() => void handleRetryComment(result)}
+                                    className="font-semibold text-link outline-none focus-visible:outline-2 focus-visible:outline-brand-gold disabled:opacity-50"
+                                  >
+                                    {retryingCommentKey ===
+                                    `${result.accountId}:${result.fbPageId}`
+                                      ? 'Retrying comment…'
+                                      : 'Retry comment'}
+                                  </button>
                                 </div>
                               )}
                             </div>
