@@ -429,14 +429,27 @@ export async function handleUpdatePage(
     }
     if (parsed.data.status || parsed.data.timezone) {
       // The paused marker lives in metadata, so the update is a
-      // read-modify-write of that one row.
-      const { data: current } = await supabase
+      // read-modify-write of that one row. A read failure must fail
+      // loud (B1): falling through with `current` null would skip
+      // the update and then return the unchanged page as success.
+      const { data: current, error: currentError } = await supabase
         .from('destinations')
         .select('status, metadata')
         .eq('id', pageId)
         .eq('workspace_id', workspaceId)
         .eq('platform', 'facebook')
         .maybeSingle();
+
+      if (currentError) {
+        logServerError('[pages] Page read failed before update', currentError, {
+          source: 'page-update',
+          pageId,
+        });
+        return NextResponse.json(
+          { error: 'Failed to update page' },
+          { status: 500 }
+        );
+      }
 
       const currentMetadata =
         (current?.metadata as Record<string, unknown> | null) ?? {};
@@ -472,12 +485,27 @@ export async function handleUpdatePage(
         if (parsed.data.timezone) {
           updates.timezone = parsed.data.timezone;
         }
-        await supabase
+        // B1: the update error must be checked. The old code awaited
+        // this with no error destructure and fell through to
+        // `{ success: true, page }` with the unchanged page, so a
+        // failed Pause/Resume toasted success. The SQL path throws
+        // on failure; the Supabase path now fails loud the same way.
+        const { error: updateError } = await supabase
           .from('destinations')
           .update(updates)
           .eq('id', pageId)
           .eq('workspace_id', workspaceId)
           .eq('platform', 'facebook');
+        if (updateError) {
+          logServerError('[pages] Page update failed', updateError, {
+            source: 'page-update',
+            pageId,
+          });
+          return NextResponse.json(
+            { error: 'Failed to update page' },
+            { status: 500 }
+          );
+        }
       }
     }
   }
@@ -540,13 +568,26 @@ export async function handleDisconnectPage(
       return NextResponse.json({ error: 'Database service unavailable' }, { status: 500 });
     }
 
-    const { data: existing } = await supabase
+    const { data: existing, error: existingError } = await supabase
       .from('destinations')
       .select('metadata')
       .eq('id', pageId)
       .eq('workspace_id', workspaceId)
       .eq('platform', 'facebook')
       .maybeSingle();
+
+    // A genuine database failure is not a missing page: reserve 404
+    // for a truly absent row and fail loud (500) on a fetch error.
+    if (existingError) {
+      logServerError('[pages] Page read failed before disconnect', existingError, {
+        source: 'page-disconnect',
+        pageId,
+      });
+      return NextResponse.json(
+        { error: 'Failed to disconnect page' },
+        { status: 500 }
+      );
+    }
 
     if (!existing) {
       return NextResponse.json(
@@ -559,6 +600,36 @@ export async function handleDisconnectPage(
       ...((existing.metadata as Record<string, unknown> | null) ?? {}),
     };
     delete nextMetadata[PAUSED_MARKER_KEY];
+
+    // B2 ordering: cancel queued posts FIRST, then disconnect.
+    // The old order disconnected first and ignored the cancel
+    // error, returning success while queued posts stayed queued.
+    // Cancel-first is the safe order here: a cancel failure leaves
+    // the page untouched (retry is clean, no half-done state), and
+    // the only half-done state left — cancel succeeded but the
+    // disconnect update then fails — is safe to retry, because the
+    // disconnect step does not filter on status, so a retry
+    // re-runs the (now no-op) cancel and completes the disconnect.
+    // The reverse half-done state (disconnected + still-queued)
+    // is the dangerous one: those posts could resurface if the
+    // page is re-added, and cancel-first can never produce it.
+    const { error: cancelError } = await supabase
+      .from('queue_items')
+      .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+      .eq('workspace_id', workspaceId)
+      .eq('destination_id', pageId)
+      .eq('status', 'queued');
+
+    if (cancelError) {
+      logServerError('[pages] Queue cancel failed on disconnect', cancelError, {
+        source: 'page-disconnect',
+        pageId,
+      });
+      return NextResponse.json(
+        { error: 'Failed to disconnect page' },
+        { status: 500 }
+      );
+    }
 
     const { data: updated, error } = await supabase
       .from('destinations')
@@ -573,19 +644,26 @@ export async function handleDisconnectPage(
       .eq('platform', 'facebook')
       .select('id, external_destination_id');
 
-    if (error || !updated || updated.length === 0) {
+    // Same 404 discipline as the read above: an update error is a
+    // server failure, not a missing page; only zero updated rows
+    // (row vanished between the read and the write) is a 404.
+    if (error) {
+      logServerError('[pages] Page disconnect update failed', error, {
+        source: 'page-disconnect',
+        pageId,
+      });
+      return NextResponse.json(
+        { error: 'Failed to disconnect page' },
+        { status: 500 }
+      );
+    }
+
+    if (!updated || updated.length === 0) {
       return NextResponse.json(
         { error: 'Facebook page not found' },
         { status: 404 }
       );
     }
-
-    await supabase
-      .from('queue_items')
-      .update({ status: 'cancelled', updated_at: new Date().toISOString() })
-      .eq('workspace_id', workspaceId)
-      .eq('destination_id', pageId)
-      .eq('status', 'queued');
 
   }
 
