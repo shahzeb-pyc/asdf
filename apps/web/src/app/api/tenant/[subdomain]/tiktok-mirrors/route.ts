@@ -539,11 +539,11 @@ async function resolveDestination(
   }
   const rawAccountToken = await decryptToken(encryptedAccountToken, encryptionKey);
   const fetchGraphPages = deps.fetchGraphPages ?? fetchAllFacebookPages;
-  const pages = await fetchGraphPages(
+  const fetched = await fetchGraphPages(
     rawAccountToken,
     'id,name,category,tasks,access_token,followers_count,picture{url}'
   );
-  const page = pages.find((p) => String(p.id) === targetExternalId);
+  const page = fetched.pages.find((p) => String(p.id) === targetExternalId);
   if (!page) {
     return {
       error: NextResponse.json({ error: 'Facebook page not found' }, { status: 404 }),
