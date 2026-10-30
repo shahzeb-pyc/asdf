@@ -14,13 +14,6 @@ import { api, buildTenantApiPath, isApiError } from '@/lib/api';
 import { Banner } from '@/components/shared/ui/banner';
 import { Button } from '@/components/shared/ui/button';
 import { Input } from '@/components/shared/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/shared/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shared/ui/tabs';
 import { CreatorCard } from './creator-card';
 
@@ -51,6 +44,15 @@ export function CreatorFinderPage({
 }: Readonly<{ subdomain: string }>) {
   const [tab, setTab] = React.useState<TabId>('trending');
   const [region, setRegion] = React.useState<string>('');
+  /**
+   * Country typeahead state. countryQuery is null until the user
+   * types, so the input initially shows the default country's name
+   * without any set-state-in-effect. Once the user types, only an
+   * exact name match (or a row they clicked) counts as a selected
+   * region — typing a partial name never searches the old default.
+   */
+  const [countryQuery, setCountryQuery] = React.useState<string | null>(null);
+  const [countryListOpen, setCountryListOpen] = React.useState(false);
   const [hashtag, setHashtag] = React.useState('');
   const [word, setWord] = React.useState('');
   const [username, setUsername] = React.useState('');
@@ -68,7 +70,28 @@ export function CreatorFinderPage({
 
   const regions: Region[] = regionsQuery.data?.regions ?? [];
   const defaultRegion = regionsQuery.data?.defaultRegion ?? null;
-  const effectiveRegion = region || defaultRegion || '';
+  const defaultRegionName =
+    regions.find((item) => item.code === defaultRegion)?.name ?? '';
+  const selectedRegionName =
+    region === '' ? '' : (regions.find((item) => item.code === region)?.name ?? '');
+  const countryInputValue = countryQuery ?? defaultRegionName;
+  const exactCountryMatch = regions.find(
+    (item) => item.name.toLowerCase() === countryInputValue.trim().toLowerCase(),
+  );
+  const effectiveRegion =
+    countryQuery === null
+      ? region || defaultRegion || ''
+      : selectedRegionName === countryInputValue
+        ? region
+        : (exactCountryMatch?.code ?? '');
+  const countryFilter = countryInputValue.trim().toLowerCase();
+  const filteredCountries = regions.filter(
+    (item) =>
+      countryFilter === '' ||
+      item.name.toLowerCase().includes(countryFilter) ||
+      item.code.toLowerCase().includes(countryFilter),
+  );
+  const countryListId = 'creator-finder-country-list';
 
   async function searchTrending() {
     if (!effectiveRegion) return;
@@ -213,25 +236,63 @@ export function CreatorFinderPage({
                 description="The country list could not be loaded. Please try again."
               />
             ) : null}
-            <label className="flex flex-col gap-2 text-body font-medium text-ink">
-              Country
-              <Select
-                value={effectiveRegion}
-                onValueChange={setRegion}
-                disabled={regionsQuery.isLoading || regions.length === 0}
-              >
-                <SelectTrigger className="w-full max-w-xs">
-                  <SelectValue placeholder="Pick a country" />
-                </SelectTrigger>
-                <SelectContent>
-                  {regions.map((item) => (
-                    <SelectItem key={item.code} value={item.code}>
-                      {item.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </label>
+            <div className="flex flex-col gap-2 text-body font-medium text-ink">
+              <label htmlFor="creator-finder-country">Country</label>
+              <div className="relative w-full max-w-xs">
+                <Input
+                  id="creator-finder-country"
+                  role="combobox"
+                  aria-expanded={countryListOpen}
+                  aria-controls={countryListId}
+                  autoComplete="off"
+                  value={countryInputValue}
+                  placeholder="Type a country"
+                  disabled={regionsQuery.isLoading || regions.length === 0}
+                  onFocus={() => setCountryListOpen(true)}
+                  onBlur={() => setCountryListOpen(false)}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setCountryQuery(value);
+                    if (value.trim() === '') {
+                      setRegion('');
+                    }
+                    setCountryListOpen(true);
+                  }}
+                />
+                {countryListOpen && regions.length > 0 ? (
+                  <ul
+                    id={countryListId}
+                    role="listbox"
+                    aria-label="Countries"
+                    className="absolute left-0 right-0 top-full z-overlay-top mt-1 max-h-60 overflow-y-auto rounded-md border border-line bg-panel p-1 text-ink shadow-elevated"
+                  >
+                    {filteredCountries.length === 0 ? (
+                      <li className="px-2 py-2 text-body text-ink-dim">
+                        No country matches that.
+                      </li>
+                    ) : (
+                      filteredCountries.map((item) => (
+                        <li key={item.code} role="option" aria-selected={item.code === effectiveRegion}>
+                          <button
+                            type="button"
+                            className="flex w-full items-center justify-between gap-2 rounded-sm px-2 py-2 text-left text-body text-ink hover:bg-hover"
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => {
+                              setRegion(item.code);
+                              setCountryQuery(item.name);
+                              setCountryListOpen(false);
+                            }}
+                          >
+                            <span>{item.name}</span>
+                            <span className="text-metadata text-ink-dim">{item.code}</span>
+                          </button>
+                        </li>
+                      ))
+                    )}
+                  </ul>
+                ) : null}
+              </div>
+            </div>
             <div>
               <Button onClick={searchTrending} disabled={!effectiveRegion || trending.status === 'loading'}>
                 Find trending creators
