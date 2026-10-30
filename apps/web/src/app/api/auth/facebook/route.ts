@@ -35,6 +35,15 @@ export async function handleInitiateFacebookOAuth(
       return NextResponse.redirect(loginUrl);
     }
 
+    // Audit S1: live session validation — a suspended user or a
+    // session issued before a password change cannot start a
+    // connect flow, same as an unverifiable session.
+    const { validateSessionActive } = await import('@/lib/auth/session');
+    if (!(await validateSessionActive(session))) {
+      const loginUrl = new URL('/login', request.url);
+      return NextResponse.redirect(loginUrl);
+    }
+
     // 2. Resolve workspace BYOC Facebook credentials
     const client = dbClient || getSupabaseAdminClient();
     const byocResult = await resolveWorkspaceFacebookCredentials(

@@ -78,6 +78,14 @@ export async function handleGenerateMagicLink(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  // Audit S1: live session validation — a suspended user or a
+  // session issued before a password change must not reach the
+  // tenant check or any mutation below.
+  const { validateSessionActive } = await import('@/lib/auth/session');
+  if (!(await validateSessionActive(session))) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   // 2. Tenant isolation check
   const access = canAccessTenant(session, subdomain);
   if (!access.allowed) {

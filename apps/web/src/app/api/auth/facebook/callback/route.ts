@@ -621,6 +621,15 @@ export async function handleFacebookCallback(
         destinationUrl.searchParams.set('error', 'session_mismatch');
         return NextResponse.redirect(destinationUrl);
       }
+      // Audit S1: live session validation on the DIRECT flow only.
+      // The magic flow has no session by design (the magic token
+      // is its credential, and magic links stay reusable per
+      // owner decision on BL3), so it is deliberately untouched.
+      const { validateSessionActive } = await import('@/lib/auth/session');
+      if (!(await validateSessionActive(session))) {
+        destinationUrl.searchParams.set('error', 'unauthorized');
+        return NextResponse.redirect(destinationUrl);
+      }
     } catch {
       destinationUrl.searchParams.set('error', 'unauthorized');
       return NextResponse.redirect(destinationUrl);

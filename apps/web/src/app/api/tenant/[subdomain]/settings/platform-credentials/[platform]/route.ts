@@ -48,6 +48,14 @@ async function authorizePlatformRequest(
     return { errorResponse: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) };
   }
 
+  // Audit S1: live session validation — suspension and password
+  // changes take effect immediately (this helper gates GET/PUT/
+  // DELETE alike).
+  const { validateSessionActive } = await import('@/lib/auth/session');
+  if (!(await validateSessionActive(session))) {
+    return { errorResponse: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) };
+  }
+
   const access = canAccessTenant(session, subdomain);
   if (!access.allowed) {
     return { errorResponse: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) };
