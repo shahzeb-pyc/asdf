@@ -608,6 +608,154 @@ describe('runAduTick', () => {
     expect(settled).toBeDefined();
   });
 
+  it('publishes an Instagram-destination job through the Instagram publisher', async () => {
+    const job = {
+      id: 'job-ig-1',
+      config_id: 'c1',
+      reel_id: 'reel-1',
+      publish_retries: 0,
+      graph_post_id: null,
+      adu_reels: { caption: 'hi', media_url: 'https://example.invalid/r.mp4', media_object_key: 'r.mp4' },
+    };
+    const igPublisher = fakePublisher(
+      async () => ({ status: 'published', externalPostId: 'ig-123' }),
+      'instagram',
+    );
+    const fbPublisher = fakePublisher(
+      async () => ({ status: 'published', externalPostId: 'fb-123' }),
+      'facebook',
+    );
+    const encryptedAccess = await encryptToken('access', MASTER_KEY);
+    const encryptedRefresh = await encryptToken('refresh', MASTER_KEY);
+    const registry = createPublisherRegistry();
+    registry.register(igPublisher);
+    registry.register(fbPublisher);
+    const db = makeDb((table, ops) => {
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
+        return { error: null };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'eq' && o.args[1] === 'pending_publish')) {
+        return { data: [job], error: null };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'eq' && o.args[1] === 'publishing')) {
+        return { data: [], error: null };
+      }
+      if (table === 'adu_configs' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return { data: { destination_id: 'dest-ig-1' }, error: null };
+      }
+      if (table === 'adu_configs') return { data: [], error: null };
+      if (table === 'destinations') {
+        return {
+          data: {
+            id: 'dest-ig-1',
+            account_id: 'acc-1',
+            workspace_id: 'ws-1',
+            platform: 'instagram',
+            status: 'active',
+            encrypted_destination_token: null,
+          },
+          error: null,
+        };
+      }
+      if (table === 'social_accounts') {
+        return {
+          data: {
+            id: 'acc-1',
+            status: 'active',
+            encrypted_access_token: encryptedAccess,
+            encrypted_refresh_token: encryptedRefresh,
+          },
+          error: null,
+        };
+      }
+      return { data: [], error: null };
+    });
+    const result = await runAduTick({
+      db: db as never,
+      registry,
+      masterKey: MASTER_KEY,
+      now: NOW,
+    });
+    expect(igPublisher.publish).toHaveBeenCalledTimes(1);
+    expect(fbPublisher.publish).not.toHaveBeenCalled();
+    const publishedItem = (igPublisher.publish as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]![0] as Record<string, unknown>;
+    expect(publishedItem.platform).toBe('instagram');
+    expect(publishedItem.platform_format).toBe('reel');
+    expect(result.published).toBe(1);
+  });
+
+  it('leaves a job for a platform with no registered publisher pending without calling any publisher', async () => {
+    const job = {
+      id: 'job-x-1',
+      config_id: 'c1',
+      reel_id: 'reel-1',
+      publish_retries: 0,
+      graph_post_id: null,
+      adu_reels: { caption: 'hi', media_url: 'https://example.invalid/r.mp4', media_object_key: 'r.mp4' },
+    };
+    const fbPublisher = fakePublisher(async () => ({ status: 'published', externalPostId: 'fb-123' }));
+    const igPublisher = fakePublisher(
+      async () => ({ status: 'published', externalPostId: 'ig-123' }),
+      'instagram',
+    );
+    const encryptedAccess = await encryptToken('access', MASTER_KEY);
+    const encryptedRefresh = await encryptToken('refresh', MASTER_KEY);
+    const registry = createPublisherRegistry();
+    registry.register(fbPublisher);
+    registry.register(igPublisher);
+    const db = makeDb((table, ops) => {
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
+        return { error: null };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'eq' && o.args[1] === 'pending_publish')) {
+        return { data: [job], error: null };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'eq' && o.args[1] === 'publishing')) {
+        return { data: [], error: null };
+      }
+      if (table === 'adu_configs' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return { data: { destination_id: 'dest-x-1' }, error: null };
+      }
+      if (table === 'adu_configs') return { data: [], error: null };
+      if (table === 'destinations') {
+        return {
+          data: {
+            id: 'dest-x-1',
+            account_id: 'acc-1',
+            workspace_id: 'ws-1',
+            platform: 'youtube',
+            status: 'active',
+            encrypted_destination_token: null,
+          },
+          error: null,
+        };
+      }
+      if (table === 'social_accounts') {
+        return {
+          data: {
+            id: 'acc-1',
+            status: 'active',
+            encrypted_access_token: encryptedAccess,
+            encrypted_refresh_token: encryptedRefresh,
+          },
+          error: null,
+        };
+      }
+      return { data: [], error: null };
+    });
+    const result = await runAduTick({
+      db: db as never,
+      registry,
+      masterKey: MASTER_KEY,
+      now: NOW,
+    });
+    expect(fbPublisher.publish).not.toHaveBeenCalled();
+    expect(igPublisher.publish).not.toHaveBeenCalled();
+    expect(result.retried).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(result.published).toBe(0);
+  });
+
   it('retention deletes only settled jobs older than 90 days', async () => {
     const db = emptyDb();
     await runAduTick({

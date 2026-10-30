@@ -21,7 +21,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
  * Publishing reuses the EXISTING publishers from the registry — no
  * publisher is duplicated here. The publisher is chosen per job by
  * destination platform (Facebook jobs → Facebook, Threads jobs →
- * Threads); see the Publish section below.
+ * Threads, Instagram jobs → Instagram); see the Publish section below.
  *
  * Safety: if the ADU tables do not exist yet (migration unapplied),
  * the first query fails and the tick returns { skipped: true } without
@@ -424,7 +424,7 @@ export async function runAduTick(options: {
     if (!account) {
       await supabase
         .from('adu_posting_jobs')
-        .update({ status: 'publish_error', last_error_code: 'account_missing', last_error_message: dest.platform === 'threads' ? 'Threads account not found.' : 'Facebook account not found.' })
+        .update({ status: 'publish_error', last_error_code: 'account_missing', last_error_message: dest.platform === 'threads' ? 'Threads account not found.' : dest.platform === 'instagram' ? 'Instagram account not found.' : 'Facebook account not found.' })
         .eq('id', job.id);
       result.failed += 1;
       continue;

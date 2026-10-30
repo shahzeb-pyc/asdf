@@ -173,6 +173,8 @@ export interface AduConfigView {
   destinationName: string;
   destinationExternalId: string;
   destinationAvatarUrl: string | null;
+  destinationHandle: string | null;
+  destinationPlatform: string | null;
   destinationStatus: string;
   accountName: string | null;
   accountAvatarUrl: string | null;
@@ -208,6 +210,8 @@ interface DestinationJoin {
   avatar_url: string | null;
   status: string;
   account_id: string;
+  handle: string | null;
+  platform: string | null;
   social_accounts?: { display_name: string; avatar_url: string | null } | null;
 }
 
@@ -254,7 +258,7 @@ export async function buildAduConfigView(
 ): Promise<AduConfigView> {
   const { data: destination } = await supabase
     .from('destinations')
-    .select('id, name, external_destination_id, avatar_url, status, account_id, social_accounts(display_name, avatar_url)')
+    .select('id, name, external_destination_id, avatar_url, status, account_id, handle, platform, social_accounts(display_name, avatar_url)')
     .eq('id', config.destination_id)
     .maybeSingle();
   const dest = destination as DestinationJoin | null;
@@ -293,9 +297,13 @@ export async function buildAduConfigView(
   return {
     id: config.id,
     destinationId: config.destination_id,
-    destinationName: dest?.name ?? config.display_name ?? 'Facebook Page',
+    destinationName:
+      dest?.name ?? config.display_name ??
+      (dest?.platform === 'instagram' ? 'Instagram account' : 'Facebook Page'),
     destinationExternalId: dest?.external_destination_id ?? '',
     destinationAvatarUrl: dest?.avatar_url ?? null,
+    destinationHandle: dest?.handle ?? null,
+    destinationPlatform: dest?.platform ?? null,
     destinationStatus: dest?.status ?? 'active',
     accountName: dest?.social_accounts?.display_name ?? null,
     accountAvatarUrl: dest?.social_accounts?.avatar_url ?? null,
@@ -326,6 +334,35 @@ export async function buildAduConfigView(
     pendingToday: Math.max(0, config.posts_per_day - postedToday),
     failedToday,
   };
+}
+
+/**
+ * Instagram-route guard: true only when the config belongs to the
+ * workspace AND its destination platform is instagram. Instagram
+ * routes return 404 for any other config, so a Facebook ADU config
+ * can never be read or mutated through the Instagram routes (and
+ * vice versa for the Facebook routes, which never see IG configs
+ * because their picker/list are Facebook-filtered).
+ */
+export async function isInstagramAduConfig(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  configId: string
+): Promise<boolean> {
+  const { data: config } = await supabase
+    .from('adu_configs')
+    .select('destination_id')
+    .eq('workspace_id', workspaceId)
+    .eq('id', configId)
+    .maybeSingle();
+  const destinationId = (config as { destination_id?: string } | null)?.destination_id;
+  if (!destinationId) return false;
+  const { data: destination } = await supabase
+    .from('destinations')
+    .select('platform')
+    .eq('id', destinationId)
+    .maybeSingle();
+  return (destination as { platform?: string } | null)?.platform === 'instagram';
 }
 
 export function sanitizeAduSource(
