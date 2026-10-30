@@ -149,6 +149,7 @@ function WorkspaceSidebarContent({
   const mediaHref = href('/media');
   const fdolaStudioHref = href('/fdola-studio');
   const promptsHref = href('/prompts');
+  const creatorFinderHref = href('/creator-finder');
   const accountsHref = href('/accounts');
   const pagesHref = href('/pages');
   const publishNowHref = href('/publish-now');
@@ -165,6 +166,9 @@ function WorkspaceSidebarContent({
   );
   const isPromptsActive = effectivePath.startsWith(
     normalizeTenantPath(promptsHref, subdomain)
+  );
+  const isCreatorFinderActive = effectivePath.startsWith(
+    normalizeTenantPath(creatorFinderHref, subdomain)
   );
   const isAccountsActive = effectivePath.startsWith(normalizeTenantPath(accountsHref, subdomain));
   const isPagesActive = effectivePath.startsWith(normalizeTenantPath(pagesHref, subdomain));
@@ -268,6 +272,18 @@ function WorkspaceSidebarContent({
           <path d="M9 18h6" />
           <path d="M10 22h4" />
           <path d="M12 2a7 7 0 0 0-4 12c.7.6 1 1.4 1 2h6c0-.6.3-1.4 1-2a7 7 0 0 0-4-12z" />
+        </svg>
+      ),
+    },
+    {
+      label: 'Creator Finder',
+      href: creatorFinderHref,
+      isActive: isCreatorFinderActive,
+      icon: (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="7" />
+          <path d="m21 21-4.3-4.3" />
+          <path d="M11 8.5a2.5 2.5 0 0 1 2.5 2.5" />
         </svg>
       ),
     },
