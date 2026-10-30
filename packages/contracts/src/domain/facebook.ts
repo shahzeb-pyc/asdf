@@ -395,7 +395,13 @@ export type ImportPostingTime = z.infer<typeof ImportPostingTimeSchema>;
 export const ImportPagesRequestSchema = z
   .object({
     accountId: z.string().uuid(),
-    selectedPageIds: z.array(z.string().min(1).max(100)).min(1),
+    // Audit N4: bounded — 500 matches the discover cap (BG6:
+    // 5 pages × 100), so a full discovered list can always be
+    // imported while an unbounded id list cannot be smuggled in.
+    selectedPageIds: z
+      .array(z.string().min(1).max(100))
+      .min(1)
+      .max(500, 'At most 500 pages can be imported at once.'),
     timezone: ValidatedTimezoneSchema.optional(),
     postingTimes: z
       .array(ImportPostingTimeSchema)

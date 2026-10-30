@@ -587,6 +587,56 @@ describe('Import with timezone + posting times', () => {
     expect(destinationInserts).toHaveLength(0);
   });
 
+  it('when Graph omits a page token, the import fails loud and never stores the user token as the page token (N4)', async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: 'page_1001',
+              name: 'Brand Flagship Page',
+              category: 'Retail Company',
+              followers_count: 52000,
+              tasks: ['CREATE_CONTENT'],
+              access_token: 'page_token_1001',
+              picture: { data: { url: null } },
+            },
+            {
+              id: 'page_1002',
+              name: 'Creator Vlog Page',
+              category: 'Digital Creator',
+              followers_count: 14000,
+              tasks: ['CREATE_CONTENT'],
+              // No access_token: the old fallback stored the user
+              // token here, which would read as connected and fail
+              // only at publish time.
+              picture: { data: { url: null } },
+            },
+          ],
+        }),
+        { status: 200 }
+      )
+    );
+    const { mockDb } = makeMockDb();
+    const res = await handleImportPages(
+      importRequest({
+        accountId,
+        selectedPageIds: ['page_1001', 'page_1002'],
+      }),
+      'acme',
+      mockDb
+    );
+    expect(res.status).toBe(422);
+    const json = await res.json();
+    expect(json.code).toBe('PARTIAL_IMPORT');
+    expect(json.error).toContain('page_1002');
+    expect(json.skipped).toEqual([{ fbPageId: 'page_1002' }]);
+    const destinationInserts = (
+      mockDb.query as unknown as { mock: { calls: Array<[string, unknown[]]> } }
+    ).mock.calls.filter(([sql]) => sql.includes('INSERT INTO destinations'));
+    expect(destinationInserts).toHaveLength(0);
+  });
+
   it('re-importing a paused page refreshes its token but leaves it paused (BG8)', async () => {
     mockGraphPages();
     const { mockDb } = makeMockDb({

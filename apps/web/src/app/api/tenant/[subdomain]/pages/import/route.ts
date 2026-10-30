@@ -19,7 +19,12 @@ import {
   markAccountConnectionError,
 } from '@/lib/connect/account-probe';
 import { logServerError } from '@/lib/server-analytics';
-import { enforceIpRateLimit } from '@/lib/request-body';
+import {
+  bodyTooLargeResponse,
+  enforceIpRateLimit,
+  LARGE_JSON_BODY_LIMIT_BYTES,
+  readJsonBody,
+} from '@/lib/request-body';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -58,13 +63,15 @@ export async function handleImportPages(
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  // 3. Parse request body
-  let bodyJson: unknown;
-  try {
-    bodyJson = await request.json();
-  } catch (_e) {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+  // 3. Parse request body, capped like magic-link/publish-now
+  // (Audit N4: the old raw request.json() was unbounded).
+  const bodyRead = await readJsonBody(request, LARGE_JSON_BODY_LIMIT_BYTES);
+  if (!bodyRead.ok) {
+    return bodyRead.reason === 'too-large'
+      ? bodyTooLargeResponse()
+      : NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
+  const bodyJson: unknown = bodyRead.value;
 
   const parseResult = ImportPagesRequestSchema.safeParse(bodyJson);
   if (!parseResult.success) {
@@ -227,6 +234,36 @@ export async function handleImportPages(
     );
   }
 
+  // Audit N4, fail loud like BG8: a page Graph returns WITHOUT a
+  // page token used to be imported with the USER token stored as
+  // the page token — it would read as connected and fail only at
+  // publish time, with nothing marking it as wrong. Now such
+  // pages abort BEFORE anything is written, named in the same
+  // PARTIAL_IMPORT shape as the shortfall guard above.
+  const tokenlessPages = matchedPages.filter(
+    (item) => !item.access_token
+  );
+  if (tokenlessPages.length > 0) {
+    const tokenlessIds = tokenlessPages.map((item) => String(item.id));
+    logServerError(
+      '[pages/import] Selected pages returned no page token from Graph',
+      new Error(`Graph omitted access_token for ${tokenlessPages.length} selected pages`),
+      {
+        source: 'pages-import-missing-token',
+        subdomain,
+        missing: tokenlessIds,
+      }
+    );
+    return NextResponse.json(
+      {
+        error: `These pages did not return a page token from Facebook and were not added: ${tokenlessIds.join(', ')}. Nothing was imported — if a page's token is missing, it can't publish as that page.`,
+        code: 'PARTIAL_IMPORT',
+        skipped: tokenlessIds.map((fbPageId) => ({ fbPageId })),
+      },
+      { status: 422 }
+    );
+  }
+
   // Query existing destinations before upserting via Supabase to
   // preserve starting_followers for active pages (the follower
   // baseline lives in destinations.metadata since the unified schema).
@@ -363,7 +400,15 @@ export async function handleImportPages(
   }
 
   const importPromises = matchedPages.map(async (pageItem) => {
-    const rawPageToken = pageItem.access_token || rawToken;
+    // Audit N4: the token-less guard above already returned, so
+    // a missing token here is unreachable — but it must never
+    // silently fall back to the user token again, so fail loud.
+    const rawPageToken = pageItem.access_token;
+    if (!rawPageToken) {
+      throw new Error(
+        `Refusing to import page ${String(pageItem.id)} without a page token`
+      );
+    }
     const encryptedPageToken = await encryptToken(rawPageToken, encryptionKey);
 
     const followers =
