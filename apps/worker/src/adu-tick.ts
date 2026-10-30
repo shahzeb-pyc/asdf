@@ -101,6 +101,11 @@ export async function runAduTick(options: {
   // skipped — the old code fell through with staleJobs === null and
   // skipped the reset for that tick without a trace. A missing table
   // (migration unapplied) is still a clean skip, as before.
+  // The updated_at column + set_updated_at() trigger this path reads
+  // come from migration 20261031000000_adu_posting_jobs_updated_at.sql
+  // (the original ADU table migration omitted the column): without
+  // them the stale select errors on an unknown column, so that
+  // migration must be applied together with the ADU table migrations.
   const staleAt = new Date(now.getTime() - ADU_STALE_PUBLISHING_SECONDS * 1000).toISOString();
   {
     let lastStaleId: string | null = null;
@@ -271,10 +276,19 @@ export async function runAduTick(options: {
     if (insertError) {
       // Release the claim so the reel stays intakable; without this
       // it would sit in 'processing' forever after a failed insert.
-      await supabase
+      // A failed release is logged loudly: a reel stranded in
+      // 'processing' blocks the config (intake only selects
+      // 'downloaded', and 'processing' counts as busy), so a silent
+      // release failure would wedge the config with no trace.
+      const { error: releaseError } = await supabase
         .from('adu_reels')
         .update({ status: 'downloaded' })
         .eq('id', (oldest as { id: string }).id);
+      if (releaseError) {
+        console.error(
+          `ADU intake reel claim release failed: reel=${(oldest as { id: string }).id} code=${releaseError.code ?? 'unknown'} ${releaseError.message}`,
+        );
+      }
       if (insertError.code === '23505') continue; // already intaken for this slot
       throw new InternalError(`ADU intake insert failed: ${insertError.message}`);
     }
@@ -350,7 +364,11 @@ export async function runAduTick(options: {
     // Claim-only-if-still-pending: the publish loop selects jobs and
     // then publishes them, so two ticks could otherwise select the
     // same job and publish it twice. An empty claim means another
-    // tick took it — skip, never publish from a stale row.
+    // tick took it — skip, never publish from a stale row. The claim
+    // UPDATE also refreshes updated_at via the set_updated_at()
+    // trigger (migration 20261031000000_adu_posting_jobs_updated_at),
+    // so a just-claimed job is not stale for the reset above even if
+    // its publish runs long — only a job untouched for >300s resets.
     const { data: claimed, error: claimError } = await supabase
       .from('adu_posting_jobs')
       .update({ status: 'publishing' })

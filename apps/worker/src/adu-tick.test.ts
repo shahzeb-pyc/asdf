@@ -561,6 +561,66 @@ describe('runAduTick', () => {
     expect(completion).toBeUndefined();
   });
 
+  it('intake failed-count load failure throws instead of completing the config', async () => {
+    const config = configRow('c1', ['09:00']);
+    const db = makeDb((table, ops) => {
+      if (table === 'adu_configs') return { data: [config], error: null };
+      // The failed-count query is the adu_reels select filtered to
+      // status 'download_failed' (count/head); the oldest query filters
+      // to 'downloaded' instead, so this match is exact.
+      if (
+        table === 'adu_reels' &&
+        ops.some((o) => o.kind === 'eq' && o.args[1] === 'download_failed')
+      ) {
+        return { count: null, error: { code: '500', message: 'count boom' } };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
+        return { error: null };
+      }
+      return { data: [], error: null };
+    });
+    await expect(
+      runAduTick({ db: db as never, registry: registryWith(null), masterKey: MASTER_KEY, now: NOW }),
+    ).rejects.toThrow(/ADU intake failed-count load failed/);
+    const completion = db.calls.find(
+      (c) =>
+        c.table === 'adu_configs' &&
+        c.ops.some((o) => o.kind === 'update' && (o.args[0] as Row).status === 'completed'),
+    );
+    expect(completion).toBeUndefined();
+  });
+
+  it('intake busy-job load failure throws instead of completing the config', async () => {
+    const config = configRow('c1', ['09:00']);
+    const db = makeDb((table, ops) => {
+      if (table === 'adu_configs') return { data: [config], error: null };
+      if (table === 'adu_reels' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return { data: null, error: null };
+      }
+      if (table === 'adu_reels' && ops.some((o) => o.kind === 'in')) {
+        return { data: [], error: null };
+      }
+      // The busy-job query is the adu_posting_jobs select filtered by
+      // an 'in' on status; the stale query uses eq/lt, not 'in'.
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'in')) {
+        return { data: null, error: { code: '500', message: 'busy jobs boom' } };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
+        return { error: null };
+      }
+      return { data: [], error: null };
+    });
+    await expect(
+      runAduTick({ db: db as never, registry: registryWith(null), masterKey: MASTER_KEY, now: NOW }),
+    ).rejects.toThrow(/ADU intake busy-job load failed/);
+    const completion = db.calls.find(
+      (c) =>
+        c.table === 'adu_configs' &&
+        c.ops.some((o) => o.kind === 'update' && (o.args[0] as Row).status === 'completed'),
+    );
+    expect(completion).toBeUndefined();
+  });
+
   it('intake claims the reel and releases it on a duplicate slot', async () => {
     const config = configRow('c1', ['09:00']);
     const db = makeDb((table, ops) => {
