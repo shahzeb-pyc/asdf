@@ -21,7 +21,7 @@ const USER_ID = '11111111-1111-4111-a111-111111111111';
 type Row = Record<string, unknown>;
 
 function evalCond(row: Row, cond: string): boolean {
-  const m = cond.match(/^([^.]+)\.(eq|lt|gte|is)\.(.+)$/);
+  const m = cond.match(/^([^.]+)\.(eq|lt|gt|lte|gte|is)\.(.+)$/);
   if (!m) return false;
   const [, field, op, raw] = m as [string, string, string, string];
   const value = row[field];
@@ -31,7 +31,10 @@ function evalCond(row: Row, cond: string): boolean {
   const a = Date.parse(String(value));
   const b = Date.parse(raw);
   if (Number.isNaN(a) || Number.isNaN(b)) return false;
-  return op === 'lt' ? a < b : a >= b;
+  if (op === 'lt') return a < b;
+  if (op === 'gt') return a > b;
+  if (op === 'lte') return a <= b;
+  return a >= b;
 }
 
 class FakeBuilder {
@@ -61,6 +64,21 @@ class FakeBuilder {
 
   neq(col: string, val: unknown): this {
     this.filters.push((row) => row[col] !== val);
+    return this;
+  }
+
+  in(col: string, vals: unknown[]): this {
+    this.filters.push((row) => vals.includes(row[col]));
+    return this;
+  }
+
+  gt(col: string, val: unknown): this {
+    this.filters.push((row) => evalCond(row, `${col}.gt.${String(val)}`));
+    return this;
+  }
+
+  lte(col: string, val: unknown): this {
+    this.filters.push((row) => evalCond(row, `${col}.lte.${String(val)}`));
     return this;
   }
 
@@ -232,6 +250,17 @@ function makeFake() {
         account_id: 'cccccccc-cccc-4ccc-cccc-cccccccccccc',
         workspace_id: 'ws-1',
         platform: 'threads',
+        handle: 'cedar',
+        status: 'active',
+      },
+      {
+        // Disconnected destinations do NOT count and carry no handle.
+        id: 'dest-2',
+        account_id: 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+        workspace_id: 'ws-1',
+        platform: 'threads',
+        handle: 'willow',
+        status: 'disconnected',
       },
     ],
   };
@@ -287,6 +316,66 @@ describe('Threads accounts list route', () => {
     ).toBe(false);
     // The past-token account is reported expired, not active.
     expect(json.accounts[0].status).toBe('expired');
+  });
+
+  it('returns the handle, profile link, and destination count per account', async () => {
+    const { fake } = makeFake();
+    const req = new NextRequest(
+      'http://localhost:3000/api/tenant/acme/threads/accounts',
+      { headers: { cookie } }
+    );
+    const res = await handleListThreadsAccounts(req, 'acme', fake as never);
+    const json = await res.json();
+    const cedar = json.accounts.find(
+      (a: Row) => a.displayName === 'Connected Cedar'
+    );
+    expect(cedar.handle).toBe('cedar');
+    expect(cedar.accountLink).toBe('https://threads.com/@cedar');
+    expect(cedar.connectedDestinationsCount).toBe(1);
+    // A disconnected destination carries no handle and counts as 0.
+    const willow = json.accounts.find(
+      (a: Row) => a.displayName === 'Expired Willow'
+    );
+    expect(willow.handle).toBeNull();
+    expect(willow.accountLink).toBeNull();
+    expect(willow.connectedDestinationsCount).toBe(0);
+  });
+
+  it('status=expiring_soon returns only accounts whose token dies in the next 7 days', async () => {
+    const { fake, tables } = makeFake();
+    tables.social_accounts.push({
+      id: 'ffffffff-ffff-4fff-ffff-ffffffffffff',
+      workspace_id: 'ws-1',
+      platform: 'threads',
+      external_account_id: 'th-soon',
+      display_name: 'Expiring Emma',
+      avatar_url: null,
+      status: 'active',
+      token_expires_at: new Date(Date.now() + 3 * 86400000).toISOString(),
+      created_at: '2026-10-15T10:00:00Z',
+      updated_at: '2026-10-15T10:00:00Z',
+    });
+    const req = new NextRequest(
+      'http://localhost:3000/api/tenant/acme/threads/accounts?status=expiring_soon',
+      { headers: { cookie } }
+    );
+    const res = await handleListThreadsAccounts(req, 'acme', fake as never);
+    const json = await res.json();
+    expect(json.total).toBe(1);
+    expect(json.accounts[0].displayName).toBe('Expiring Emma');
+  });
+
+  it('clamps an out-of-range ?page= to the last real page', async () => {
+    const { fake } = makeFake();
+    const req = new NextRequest(
+      'http://localhost:3000/api/tenant/acme/threads/accounts?page=999',
+      { headers: { cookie } }
+    );
+    const res = await handleListThreadsAccounts(req, 'acme', fake as never);
+    const json = await res.json();
+    expect(json.page).toBe(1);
+    expect(json.totalPages).toBe(1);
+    expect(json.accounts).toHaveLength(4);
   });
 
   it('status=expired returns only the expired bucket', async () => {

@@ -258,12 +258,11 @@ function threadsNoticeRedirect(
     request.url,
     rootDomain
   );
-  const errorParam =
-    notice === 'credentials_required'
-      ? 'credentials_required'
-      : notice === 'denied'
-        ? 'access_denied'
-        : 'connect_failed';
+  // The notice code travels verbatim (only the provider denial is
+  // renamed to the shell's `access_denied`): collapsing everything
+  // to `connect_failed` would lose `expired_link`, `missing_reply`,
+  // and `nothing_found`, which the shell and its tests distinguish.
+  const errorParam = notice === 'denied' ? 'access_denied' : notice;
   url.searchParams.set('error', errorParam);
   return NextResponse.redirect(url);
 }

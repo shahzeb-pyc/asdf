@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   DisconnectThreadsAccountResponseSchema,
   ListThreadsAccountsResponseSchema,
+  signMagicLinkToken,
   ThreadsAccountViewSchema,
+  verifyMagicLinkToken,
 } from '../src/index.js';
 
 const account = {
@@ -53,5 +55,52 @@ describe('Threads accounts contracts', () => {
         disconnectedDestinationsCount: -1,
       }).success
     ).toBe(false);
+  });
+
+  it('accepts handle, profile link, and destination count (disconnect dialog + card)', () => {
+    const parsed = ThreadsAccountViewSchema.safeParse({
+      ...account,
+      handle: 'cedar',
+      accountLink: 'https://threads.com/@cedar',
+      connectedDestinationsCount: 2,
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.handle).toBe('cedar');
+      expect(parsed.data.accountLink).toBe('https://threads.com/@cedar');
+      expect(parsed.data.connectedDestinationsCount).toBe(2);
+    }
+  });
+
+  it('defaults the destination count to 0 and accepts a bad picture URL (initials fallback, never a 500)', () => {
+    const parsed = ThreadsAccountViewSchema.safeParse({
+      ...account,
+      profilePictureUrl: 'not-a-url',
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.connectedDestinationsCount).toBe(0);
+      expect(parsed.data.profilePictureUrl).toBe('not-a-url');
+    }
+  });
+
+  it('round-trips the platform-agnostic expected account id in a magic-link token', async () => {
+    const secret = 'test-magic-link-secret';
+    const now = Math.floor(Date.now() / 1000);
+    const token = await signMagicLinkToken(
+      {
+        tenantSubdomain: 'acme',
+        userId: '11111111-1111-4111-a111-111111111111',
+        nonce: 'nonce-threads-roundtrip',
+        iat: now,
+        exp: now + 900,
+        expectedExternalAccountId: 'th-exp',
+        expectedDisplayName: 'Expired Willow',
+      },
+      secret
+    );
+    const payload = await verifyMagicLinkToken(token, secret);
+    expect(payload.expectedExternalAccountId).toBe('th-exp');
+    expect(payload.expectedDisplayName).toBe('Expired Willow');
   });
 });
