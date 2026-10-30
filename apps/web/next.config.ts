@@ -70,6 +70,14 @@ const nextConfig: NextConfig = {
   //                                converted to next/image — .invalid
   //                                is the RFC 2606 non-resolving TLD,
   //                                so this can never name a real host)
+  //   **.tiktokcdn.com              TikTok CDN — creator avatar URLs
+  //                                returned by the TikWM API (e.g.
+  //                                p16-sign-*.tiktokcdn.com) and shown
+  //                                by the Creator Finder card via
+  //                                next/image. An avatar from any
+  //                                other host fails to optimise and
+  //                                the card falls back to initials,
+  //                                exactly as for a broken image.
   // YouTube thumbnails (i.ytimg.com) are NOT listed: no surface displays
   // them today (grep: zero hits) — spec §3.5 includes the class only if
   // a surface uses it.
@@ -82,6 +90,7 @@ const nextConfig: NextConfig = {
       { protocol: 'https', hostname: 'platform-lookaside.fbsbx.com' },
       { protocol: 'https', hostname: 'graph.facebook.com' },
       { protocol: 'https', hostname: 'storage.e2e.invalid' },
+      { protocol: 'https', hostname: '**.tiktokcdn.com' },
     ],
   },
   async headers() {
