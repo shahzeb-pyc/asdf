@@ -639,6 +639,14 @@ describe('Threads accounts shell (React Query)', () => {
       }
       return Promise.resolve(listPayload([apiAccount({ displayName: 'New Nora' })]));
     });
+    await waitFor(
+      () => {
+        expect(toastSuccess).toHaveBeenCalledWith('New Nora connected', {
+          toasterId: 'threads-accounts-connect-toaster',
+        });
+      },
+      { timeout: 8000 }
+    );
   });
 
   it('stays on page 2 after clicking it (placeholder data must not snap it back)', async () => {
