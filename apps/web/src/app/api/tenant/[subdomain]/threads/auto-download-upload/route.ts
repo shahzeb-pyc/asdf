@@ -13,6 +13,7 @@ import {
   threadsAduContext,
   threadsAduMissingTable,
 } from '@/lib/server/threads-adu';
+import type { AduConfigView } from '@/lib/server/adu';
 
 function statusFilterToValue(filter: string): string | null {
   const map: Record<string, string> = {
