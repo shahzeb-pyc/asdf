@@ -492,35 +492,99 @@ describe('Connect framework (Spec 123 Part C) with a fixture platform', () => {
     expect(data.addedCount).toBe(1);
   });
 
-  it('complete returns the per-platform accounts URL for threads and x', async () => {
-    for (const [platform, path] of [
-      ['threads', 'threads'],
-      ['x', 'x'],
-    ] as const) {
-      const pending = await signPendingDestinations(
-        {
-          accountId: 'acct-1',
-          workspaceId,
-          tenantSubdomain: subdomain,
-          platform,
-          destinations: FIXTURE_DESTINATIONS,
-          exp: Math.floor(Date.now() / 1000) + 600,
-        },
-        TEST_SECRET
-      );
-      const req = new NextRequest(`http://localhost:3000/api/connect/${platform}/complete`, {
-        method: 'POST',
-        headers: {
-          cookie: `${sessionCookie}; fbup_connect_pending=${pending}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({ destinationIds: ['dest-1001'] }),
-      });
-      const res = await handleConnectComplete(req, platform, dbClient);
-      expect(res.status).toBe(200);
-      const data = (await res.json()) as { accountsUrl: string; addedCount: number };
-      expect(data.accountsUrl).toBe(`/tenant/${subdomain}/${path}/accounts`);
-    }
+  // Threads is covered by the notice-param tests below (its complete
+  // URL carries ?connected= / ?reconnected_mismatch= params), so the
+  // plain-URL per-platform assertion here applies to x only.
+  it('complete returns the per-platform accounts URL for x', async () => {
+    const platform = 'x' as const;
+    const pending = await signPendingDestinations(
+      {
+        accountId: 'acct-1',
+        workspaceId,
+        tenantSubdomain: subdomain,
+        platform,
+        destinations: FIXTURE_DESTINATIONS,
+        exp: Math.floor(Date.now() / 1000) + 600,
+      },
+      TEST_SECRET
+    );
+    const req = new NextRequest(`http://localhost:3000/api/connect/${platform}/complete`, {
+      method: 'POST',
+      headers: {
+        cookie: `${sessionCookie}; fbup_connect_pending=${pending}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ destinationIds: ['dest-1001'] }),
+    });
+    const res = await handleConnectComplete(req, platform, dbClient);
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { accountsUrl: string; addedCount: number };
+    expect(data.accountsUrl).toBe(`/tenant/${subdomain}/x/accounts`);
+  });
+
+  async function completeThreads(
+    pendingExtras: Record<string, unknown> = {}
+  ): Promise<{ status: number; data: { accountsUrl: string; addedCount: number } }> {
+    const pending = await signPendingDestinations(
+      {
+        accountId: 'acct-threads-1',
+        workspaceId,
+        tenantSubdomain: subdomain,
+        platform: 'threads',
+        destinations: [
+          {
+            externalDestinationId: 'th-dest-1',
+            name: 'Fixture Threads',
+            handle: 'fixturethreads',
+          },
+        ],
+        exp: Math.floor(Date.now() / 1000) + 900,
+        ...pendingExtras,
+      },
+      TEST_SECRET
+    );
+    const req = new NextRequest('http://localhost:3000/api/connect/threads/complete', {
+      method: 'POST',
+      headers: {
+        cookie: `${sessionCookie}; fbup_connect_pending=${pending}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ destinationIds: ['th-dest-1'] }),
+    });
+    const res = await handleConnectComplete(req, 'threads', dbClient);
+    const data = (await res.json()) as { accountsUrl: string; addedCount: number };
+    return { status: res.status, data };
+  }
+
+  it('complete lands a Threads connect on Threads accounts, never generic /accounts', async () => {
+    const { status, data } = await completeThreads();
+    expect(status).toBe(200);
+    expect(data.addedCount).toBe(1);
+    const url = new URL(data.accountsUrl, 'http://localhost:3000');
+    expect(url.pathname).toBe(`/tenant/${subdomain}/threads/accounts`);
+    expect(url.searchParams.get('connected')).toBe('1');
+    expect(url.searchParams.get('accountName')).toBe('Fixture Threads');
+  });
+
+  it('complete carries the reconnect-mismatch warning for Threads', async () => {
+    const { status, data } = await completeThreads({
+      expectedExternalAccountId: 'th-other',
+      expectedDisplayName: 'Expired Willow',
+    });
+    expect(status).toBe(200);
+    const url = new URL(data.accountsUrl, 'http://localhost:3000');
+    expect(url.pathname).toBe(`/tenant/${subdomain}/threads/accounts`);
+    expect(url.searchParams.get('reconnected_mismatch')).toBe('1');
+    expect(url.searchParams.get('newAccountName')).toBe('Fixture Threads');
+    expect(url.searchParams.get('expectedAccountName')).toBe('Expired Willow');
+  });
+
+  it('complete reports an already-connected Threads re-sign-in', async () => {
+    const { status, data } = await completeThreads({ alreadyExisted: true });
+    expect(status).toBe(200);
+    const url = new URL(data.accountsUrl, 'http://localhost:3000');
+    expect(url.searchParams.get('connected')).toBe('already');
+    expect(url.searchParams.get('accountName')).toBe('Fixture Threads');
   });
 
   it('reconnect re-binds the same social_accounts row instead of duplicating it', async () => {
@@ -612,7 +676,11 @@ describe('Connect framework (Spec 123 Part C) with a fixture platform', () => {
       `http://localhost:3000/api/connect/threads/callback?code=abc&state=${encodeURIComponent(state)}`
     );
     const res = await handleConnectCallback(req, 'threads', dbClient);
-    expect(res.headers.get('location')).toContain('notice=connect_failed');
+    // A failed Threads connect lands on Threads accounts (not the
+    // generic picker) with the failure as an `error=` param.
+    expect(res.headers.get('location')).toContain(
+      `/tenant/${subdomain}/threads/accounts?error=connect_failed`
+    );
     expect(db.accounts.size).toBe(0);
   });
 
@@ -641,7 +709,11 @@ describe('Connect framework (Spec 123 Part C) with a fixture platform', () => {
       `http://localhost:3000/api/connect/threads/callback?code=abc&state=${encodeURIComponent(state)}`
     );
     const res = await handleConnectCallback(req, 'threads', dbClient);
-    expect(res.headers.get('location')).toContain('notice=expired_link');
+    // The platform mismatch is still reported as expired_link — it
+    // is not collapsed into connect_failed — on Threads accounts.
+    expect(res.headers.get('location')).toContain(
+      `/tenant/${subdomain}/threads/accounts?error=expired_link`
+    );
   });
 
   it('reports a missing reply when the callback has no code', async () => {

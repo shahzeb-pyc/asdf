@@ -90,7 +90,7 @@ export async function persistConnectedAccount(
     platform: Platform;
     exchanged: ExchangedAccount;
   }
-): Promise<{ accountId: string }> {
+): Promise<{ accountId: string; alreadyExisted: boolean }> {
   const encryptionKey = getTokenEncryptionKey();
   const encryptedAccessToken = await encryptToken(
     input.exchanged.accessToken,
@@ -103,7 +103,21 @@ export async function persistConnectedAccount(
   const scopes = input.exchanged.scopes ?? [];
   const nowIso = new Date().toISOString();
 
+  // Whether this account row already existed before this flow:
+  // the callback reports "already connected — session refreshed"
+  // for a re-sign-in with no expected account, and a mismatch when
+  // the signed-in account differs from the expected reconnect
+  // target. The upsert itself cannot tell us, so check first.
+  // A failed check fails the persist loudly rather than guessing.
+  let alreadyExisted = false;
   if (isLegacyClient(client ?? undefined)) {
+    const existing = (await (client as DatabaseClient).query(
+      `SELECT id FROM social_accounts
+        WHERE workspace_id = $1 AND platform = $2 AND external_account_id = $3
+        LIMIT 1`,
+      [input.workspaceId, input.platform, input.exchanged.externalAccountId]
+    )) as Array<{ id: string }>;
+    alreadyExisted = (existing?.length ?? 0) > 0;
     const rows = (await (client as DatabaseClient).query(
       `INSERT INTO social_accounts (
          workspace_id, platform, external_account_id, display_name, avatar_url,
@@ -136,13 +150,26 @@ export async function persistConnectedAccount(
     if (!accountId) {
       throw new Error('Failed to persist connected account');
     }
-    return { accountId };
+    return { accountId, alreadyExisted };
   }
 
   const supabase = getRouteSupabase(client ?? undefined);
   if (!supabase) {
     throw new Error('Database service unavailable');
   }
+  const { data: existingRow, error: existingError } = await supabase
+    .from('social_accounts')
+    .select('id')
+    .eq('workspace_id', input.workspaceId)
+    .eq('platform', input.platform)
+    .eq('external_account_id', input.exchanged.externalAccountId)
+    .maybeSingle();
+  if (existingError) {
+    throw new Error(
+      `Failed to persist connected account: ${existingError.message}`
+    );
+  }
+  alreadyExisted = Boolean(existingRow);
   const { data, error } = await supabase
     .from('social_accounts')
     .upsert(
@@ -169,7 +196,7 @@ export async function persistConnectedAccount(
       `Failed to persist connected account: ${error?.message ?? 'unknown error'}`
     );
   }
-  return { accountId: data.id as string };
+  return { accountId: data.id as string, alreadyExisted };
 }
 
 /**

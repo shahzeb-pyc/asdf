@@ -202,11 +202,30 @@ export async function handleConnectInitiate(
   const clientId = resolution.clientId;
 
   const sessionSecret = getSessionSecret();
+  // Expected-account hint for a targeted reconnect: the modal (or a
+  // magic link) carries the account the user means to reconnect, so
+  // the callback can warn when a different account signs in instead
+  // of silently succeeding. Only Threads sends these today; any
+  // other platform's flow is unchanged (no fields in the state).
+  // Blank or over-long values are dropped, never trusted.
+  const expectedExternalAccountId =
+    request.nextUrl.searchParams.get('expectedExternalAccountId')?.trim() ||
+    undefined;
+  const expectedDisplayName =
+    request.nextUrl.searchParams.get('expectedDisplayName')?.trim() ||
+    undefined;
   const statePayload = createConnectStatePayload({
     workspaceId,
     tenantSubdomain: subdomain,
     userId: session.userId,
     platform,
+    ...(expectedExternalAccountId &&
+    expectedExternalAccountId.length <= 255
+      ? { expectedExternalAccountId }
+      : {}),
+    ...(expectedDisplayName && expectedDisplayName.length <= 255
+      ? { expectedDisplayName }
+      : {}),
   });
   const state = await signConnectState(statePayload, sessionSecret);
   const redirectUri = buildConnectCallbackUrl(request.url, platform);

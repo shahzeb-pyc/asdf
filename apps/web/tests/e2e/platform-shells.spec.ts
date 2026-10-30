@@ -2,11 +2,13 @@
  * Platform accounts shells (spec 131 PR-131-5, audit #12) — mobile gate
  * evidence (spec 142).
  *
- * The four remaining placeholder platform account routes (Threads,
- * TikTok, X, YouTube) render through ONE shared shell
- * (`PlatformAccountsShell`). Instagram no longer uses that shell: it is
- * a real accounts page (see the Instagram block below), so it is not
- * in the PLATFORMS list. Fixture-served per A3 discipline: the
+ * The three remaining placeholder platform account routes (TikTok,
+ * X, YouTube) render through ONE shared shell
+ * (`PlatformAccountsShell`). Instagram and Threads no longer use that
+ * shell: both are real accounts pages (see the Instagram block
+ * below), so neither is in the PLATFORMS list. Threads' mobile /
+ * real-browser check for its real page is a separate follow-up; do
+ * not re-add it here.
  * ByocGate credentials check is answered from the fixture below (details
  * present, so the gated connect links render); no production data, no
  * third-party traffic.
@@ -26,14 +28,13 @@ import { SESSION_COOKIE, TENANT } from './fixtures/tenant';
 const SUB = TENANT.subdomain;
 
 const PLATFORMS = [
-  {
-    slug: 'threads',
-    name: 'Threads',
-    heading: 'Threads Accounts',
-    description:
-      'Connect your Threads account to schedule and publish posts from one place. Your workspace uses its own Threads app details, so your accounts stay yours.',
-    connectTestId: 'threads-connect-link',
-  },
+  // Instagram and Threads are NOT in this placeholder spec anymore:
+  // both have real list pages (React Query + server prefetch +
+  // connect modal), not the shared PlatformAccountsShell placeholder
+  // this spec asserts on (testing notice, Return to Overview).
+  // Instagram's real page is asserted in the block below; Threads'
+  // mobile/real-browser check is a separate follow-up. Do not
+  // re-add either here.
   {
     slug: 'tiktok',
     name: 'TikTok',

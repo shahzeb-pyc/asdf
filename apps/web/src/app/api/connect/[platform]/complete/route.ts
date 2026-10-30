@@ -139,9 +139,42 @@ export async function handleConnectComplete(
 
   // Per-platform Accounts landing page: facebook keeps the historic
   // `/tenant/<sub>/accounts`; every other platform lands on its own
-  // accounts page (e.g. Instagram → `/tenant/<sub>/instagram/accounts`).
+  // accounts page (e.g. Instagram → `/tenant/<sub>/instagram/accounts`,
+  // Threads → `/tenant/<sub>/threads/accounts`).
+  // Threads additionally carries Facebook's connect-notice params so
+  // the Threads shell can toast / highlight / warn in place:
+  // fresh connect → `connected=1&accountName=…`, re-sign-in →
+  // `connected=already&accountName=…`, wrong-account reconnect →
+  // `reconnected_mismatch=1&newAccountName=…&expectedAccountName=…`.
+  // The account name is the picked destination's name (the Threads
+  // profile itself).
+  let accountsUrl = `/tenant/${pending.tenantSubdomain}${getPlatformAccountsPath(platform)}`;
+  if (platform === 'threads') {
+    const accountName = picked[0]?.name ?? 'Threads account';
+    const isMismatch = Boolean(
+      pending.expectedExternalAccountId &&
+        picked[0]?.externalDestinationId !== pending.expectedExternalAccountId
+    );
+    const params = new URLSearchParams();
+    if (isMismatch) {
+      params.set('reconnected_mismatch', '1');
+      params.set('newAccountName', accountName);
+      params.set(
+        'expectedAccountName',
+        pending.expectedDisplayName || 'the expired account'
+      );
+    } else if (pending.alreadyExisted && !pending.expectedExternalAccountId) {
+      params.set('connected', 'already');
+      params.set('accountName', accountName);
+    } else {
+      params.set('connected', '1');
+      params.set('accountName', accountName);
+    }
+    accountsUrl = `${accountsUrl}?${params.toString()}`;
+  }
+
   const response = NextResponse.json({
-    accountsUrl: `/tenant/${pending.tenantSubdomain}${getPlatformAccountsPath(platform)}`,
+    accountsUrl,
     addedCount: picked.length,
   });
   response.cookies.set(PENDING_COOKIE_NAME, '', {

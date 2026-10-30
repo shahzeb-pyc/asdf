@@ -103,11 +103,13 @@ describe('Per-platform accounts pages', () => {
   // list shell shipped; it cannot render under this legacy static
   // helper (the shell suspends on useSearchParams).
 
-  it('renders the gated Threads connect action', () => {
-    const { html, hasText } = render(<ThreadsAccountsPage />);
-    expect(hasText('Threads Accounts')).toBe(true);
-    expect(html).toContain('data-testid="threads-connect-link"');
-    expect(html).toContain('/api/connect/threads?subdomain=acme');
+  // The Threads page is now a server component (server prefetch +
+  // DataHydration around the React Query shell) — it cannot render
+  // through this static-markup helper. Its connect action (modal
+  // button, not a direct link) is covered live in
+  // tests/ui/threads-accounts-behaviour.test.tsx.
+  it('exports the Threads accounts page as a server component', () => {
+    expect(typeof ThreadsAccountsPage).toBe('function');
   });
 
   it('explains the YouTube connect model with no keys to paste', () => {
