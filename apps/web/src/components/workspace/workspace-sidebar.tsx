@@ -14,7 +14,8 @@
  *   Studio) → Facebook collapsible group (default open; Accounts,
  *   Pages, Publish Now, Auto Repost, Auto Download/Upload) → one collapsible
  *   group per upcoming platform, each with a single Accounts item and the
- *   testing-placeholder note → Billing collapsible group (default open;
+ *   testing-placeholder note (Threads also has an In-app Schedule item
+ *   below Accounts) → Billing collapsible group (default open;
  *   My Plan, Purchase, Payments), last → footer.
  * - Spec 110 single-click model: every leaf is a Next.js <Link> that
  *   navigates on the FIRST click; the leaf click handler only paints
@@ -405,6 +406,7 @@ function WorkspaceSidebarContent({
 
               {UPCOMING_PLATFORMS.map((platform) => {
                 const platformAccountsHref = href(`/${platform.routeSlug}/accounts`);
+                const platformScheduleHref = href(`/${platform.routeSlug}/schedule`);
                 const isPlatformActive = effectivePath.startsWith(`/${platform.routeSlug}`);
                 const isAccountsSubActive = effectivePath.startsWith(
                   normalizeTenantPath(platformAccountsHref, subdomain)
@@ -427,6 +429,9 @@ function WorkspaceSidebarContent({
                   effectivePath.startsWith(
                     normalizeTenantPath(instagramPublishNowHref, subdomain)
                   );
+                const isScheduleSubActive = effectivePath.startsWith(
+                  normalizeTenantPath(platformScheduleHref, subdomain)
+                );
                 const isOpen = openPlatforms[platform.key] ?? isPlatformActive;
                 // Instagram ADU leaf only (other Instagram leaves are
                 // owned by their own parallel branches, not this one).
@@ -460,7 +465,10 @@ function WorkspaceSidebarContent({
                     {isOpen && (
                       <SidebarMenuSub>
                         <NavSubLeaf label="Accounts" href={platformAccountsHref} isActive={isAccountsSubActive} onLeafClick={handleLeafClick} />
-{platform.key === 'threads' && (
+                        {platform.key === 'threads' ? (
+                          <NavSubLeaf label="In-app Schedule" href={platformScheduleHref} isActive={isScheduleSubActive} onLeafClick={handleLeafClick} />
+                        ) : null}
+                        {platform.key === 'threads' && (
                           <NavSubLeaf
                             label="Auto Download/Upload"
                             href={href('/threads/auto-download-upload')}

@@ -85,6 +85,20 @@ export function computeBreadcrumbs(
       }
       return [{ label: platformLabel }, { label: 'Schedule' }];
     }
+    if (first === 'threads' && segments[1]?.toLowerCase() === 'schedule') {
+      if (segments.length > 2) {
+        return [
+          { label: platformLabel },
+          {
+            label: 'In-app Schedule',
+            href: buildTenantHref(subdomain, '/threads/schedule', useCleanPaths),
+          },
+          { label: 'Details' },
+        ];
+      }
+      return [{ label: platformLabel }, { label: 'In-app Schedule' }];
+    }
+    }
     return [{ label: platformLabel }];
   }
 
