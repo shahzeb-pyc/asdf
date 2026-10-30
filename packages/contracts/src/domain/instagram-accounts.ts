@@ -33,6 +33,18 @@ export const InstagramAccountViewSchema = z.object({
   tokenExpiresAt: z.coerce.date().nullable().optional(),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
+  /**
+   * The account's publishing destinations (the `destinations` rows for this
+   * account — for Instagram the destination IS the account itself, so this
+   * is normally 1). Presentation-only: this is the real analogue of
+   * Facebook's linked-pages count on the card strip, not a fabricated
+   * pages count.
+   */
+  destinationCount: z.number().int().nonnegative().optional().default(0),
+  /** Provider-reported Instagram username, from the destination row. */
+  destinationHandle: z.string().nullable().optional().default(null),
+  /** Destination display name, from the destination row. */
+  destinationName: z.string().nullable().optional().default(null),
 });
 export type InstagramAccountView = z.infer<typeof InstagramAccountViewSchema>;
 

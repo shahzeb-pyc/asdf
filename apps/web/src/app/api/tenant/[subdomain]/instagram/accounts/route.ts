@@ -52,6 +52,12 @@ interface AccountRow {
   createdAt?: string | Date | null;
   updated_at?: string | Date | null;
   updatedAt?: string | Date | null;
+  destination_count?: number | string | null;
+  destinationCount?: number | string | null;
+  destination_handle?: string | null;
+  destinationHandle?: string | null;
+  destination_name?: string | null;
+  destinationName?: string | null;
 }
 
 /** Unified stored status → wire status (same fold as the Facebook wire map). */
@@ -85,6 +91,12 @@ function mapAccountRowToView(row: AccountRow) {
     tokenExpiresAt,
     createdAt: row.created_at ?? row.createdAt ?? new Date().toISOString(),
     updatedAt: row.updated_at ?? row.updatedAt ?? new Date().toISOString(),
+    // The account's publishing destinations (Facebook's linked-pages
+    // analogue): count + earliest destination's handle/name, or the
+    // zero/null defaults when the account has no destination row.
+    destinationCount: Number(row.destination_count ?? row.destinationCount ?? 0) || 0,
+    destinationHandle: row.destination_handle ?? row.destinationHandle ?? null,
+    destinationName: row.destination_name ?? row.destinationName ?? null,
   };
 }
 
@@ -226,7 +238,18 @@ async function fetchSqlAccountsPage(
       sa.status,
       sa.token_expires_at,
       sa.created_at,
-      sa.updated_at
+      sa.updated_at,
+      (SELECT COUNT(*)::int FROM destinations d
+        WHERE d.account_id = sa.id AND d.workspace_id = sa.workspace_id
+        AND d.platform = 'instagram') AS destination_count,
+      (SELECT d.handle FROM destinations d
+        WHERE d.account_id = sa.id AND d.workspace_id = sa.workspace_id
+        AND d.platform = 'instagram'
+        ORDER BY d.created_at ASC LIMIT 1) AS destination_handle,
+      (SELECT d.name FROM destinations d
+        WHERE d.account_id = sa.id AND d.workspace_id = sa.workspace_id
+        AND d.platform = 'instagram'
+        ORDER BY d.created_at ASC LIMIT 1) AS destination_name
     FROM social_accounts sa
     WHERE ${where}
     ORDER BY CASE WHEN ${ACCOUNT_EXPIRED_SQL} THEN 0 ELSE 1 END, sa.created_at DESC
@@ -274,17 +297,44 @@ async function fetchSupabaseAccounts(
     return { error: error.message };
   }
   const accountRows = (accountsData || []) as unknown as SupabaseAccountRow[];
+  // Destinations join (Supabase path): the earliest destination per
+  // account, mirroring the SQL subqueries above.
+  const { data: destinationData } = await supabase
+    .from('destinations')
+    .select('account_id, name, handle, created_at')
+    .eq('workspace_id', workspaceId)
+    .eq('platform', 'instagram')
+    .order('created_at', { ascending: true });
+  const destinationsByAccount = new Map<
+    string,
+    Array<{ name: string | null; handle: string | null }>
+  >();
+  for (const dest of (destinationData || []) as Array<{
+    account_id: string;
+    name: string | null;
+    handle: string | null;
+  }>) {
+    const list = destinationsByAccount.get(dest.account_id) ?? [];
+    list.push({ name: dest.name, handle: dest.handle });
+    destinationsByAccount.set(dest.account_id, list);
+  }
   return {
-    rows: accountRows.map((acc) => ({
-      id: acc.id,
-      external_account_id: acc.external_account_id,
-      display_name: acc.display_name,
-      avatar_url: acc.avatar_url,
-      status: acc.status,
-      token_expires_at: acc.token_expires_at,
-      created_at: acc.created_at,
-      updated_at: acc.updated_at,
-    })),
+    rows: accountRows.map((acc) => {
+      const dests = destinationsByAccount.get(acc.id) ?? [];
+      return {
+        id: acc.id,
+        external_account_id: acc.external_account_id,
+        display_name: acc.display_name,
+        avatar_url: acc.avatar_url,
+        status: acc.status,
+        token_expires_at: acc.token_expires_at,
+        created_at: acc.created_at,
+        updated_at: acc.updated_at,
+        destination_count: dests.length,
+        destination_handle: dests[0]?.handle ?? null,
+        destination_name: dests[0]?.name ?? null,
+      };
+    }),
   };
 }
 

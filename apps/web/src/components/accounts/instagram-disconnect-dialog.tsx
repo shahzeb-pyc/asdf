@@ -1,14 +1,15 @@
 'use client';
 
 /**
- * Instagram disconnect dialogue — mirrors Facebook's
- * `DisconnectAccountDialog` pattern (shared/ui AlertDialog, no
- * outside-click/Esc dismissal, focus starts on Cancel, confirm names
- * the verb) but with Instagram copy and NO linked-pages warning: an
- * Instagram account has no linked pages. The notice states plainly
- * what goes away — the account, its Instagram destination, and any
- * scheduled content on it — and that it can be reconnected any time.
- * The dialog stays open while disconnecting and on failure; the parent
+ * Instagram disconnect dialogue — Facebook's `DisconnectAccountDialog`
+ * structure exactly (shared/ui AlertDialog, no outside-click/Esc
+ * dismissal, focus starts on Cancel, confirm names the verb), with the
+ * Instagram analogue in the warning slot: the account's publishing
+ * destinations (normally one, the account itself) instead of linked
+ * Facebook Pages. Zero destinations → the subtle "safe to remove"
+ * notice; N > 0 → the critical "Before you disconnect" warning with
+ * the destination list and the scheduled-content consequence. The
+ * dialog stays open while disconnecting and on failure; the parent
  * closes it on success, exactly as on Facebook.
  */
 import * as React from 'react';
@@ -46,6 +47,13 @@ export function InstagramDisconnectDialog({
     await onConfirm(account.id);
   };
 
+  const destinationCount = account.destinationCount ?? 0;
+  const destinationsLabel =
+    destinationCount === 1 ? 'Instagram destination' : 'Instagram destinations';
+  const destinationLabel =
+    account.destinationName ??
+    (account.destinationHandle ? `@${account.destinationHandle}` : null);
+
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent className="sm:max-w-115">
@@ -56,15 +64,41 @@ export function InstagramDisconnectDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
 
-        <div
-          data-testid="instagram-disconnect-notice"
-          className="rounded-sm border border-signal-critical/25 bg-signal-critical/10 p-4 text-body leading-body text-ink"
-        >
-          <p className="m-0">
-            Its Instagram destination and any scheduled content on it will be
-            removed as well. You can reconnect it any time.
-          </p>
-        </div>
+        {destinationCount === 0 ? (
+          <div
+            data-testid="instagram-disconnect-zero-destinations-notice"
+            className="rounded-sm border border-line bg-subtle p-4 text-body leading-body text-ink-sub"
+          >
+            <p className="m-0">
+              No Instagram destination is linked to this account yet. It&apos;s safe to remove — you can reconnect it any time.
+            </p>
+          </div>
+        ) : (
+          <div
+            data-testid="instagram-disconnect-destinations-warning"
+            className="rounded-sm border border-signal-critical/25 bg-signal-critical/10 p-4 text-body leading-body text-ink"
+          >
+            <p className="m-0 mb-2 font-semibold text-signal-critical-on-tint">
+              Before you disconnect
+            </p>
+            <p className="m-0">
+              <strong>{destinationCount} linked {destinationsLabel}</strong> will be removed, and any scheduled content on them will be removed as well.
+            </p>
+            {destinationLabel && (
+              <ul
+                data-testid="instagram-disconnect-destinations-list"
+                className="mt-2 mb-0 pl-6 text-ink"
+              >
+                <li
+                  data-testid="instagram-disconnect-destination"
+                  className="mb-0.5"
+                >
+                  {destinationLabel}
+                </li>
+              </ul>
+            )}
+          </div>
+        )}
 
         <AlertDialogFooter>
           <AlertDialogCancel

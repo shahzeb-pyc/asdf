@@ -1,28 +1,30 @@
 'use client';
 
 /**
- * Instagram account card — modelled on Facebook's `account-card.tsx`
- * (same geometry, avatar ring, status + date line, expired alert, and
- * card actions) but Instagram-only: NO linked-pages strip, NO "View
- * profile" link, NO Pages navigation. An Instagram account's single
- * destination row is the account itself, so a pages strip would be a
- * fabrication. Status is a circle mark, never a dot: a tick in a green
- * circle for connected, a cross in a red circle for expired/error, and
- * a clock in a queued-colour circle for connected-but-expiring-soon
- * (label stays "Connected", as on Facebook).
+ * Instagram account card — Facebook's `account-card.tsx` geometry, with
+ * Instagram data in every slot. The linked-pages strip's real Instagram
+ * analogue is the account's publishing destinations (the `destinations`
+ * rows for this account — normally exactly one, the account itself):
+ * the strip shows the real destination count in the same slot, and the
+ * header's profile link points at the provider-reported Instagram
+ * handle (`instagram.com/<handle>`). There is no destinations page to
+ * navigate to, so the strip is a label, not a navigation button.
+ * Status uses the shared `StatusMark` exactly as Facebook's card does
+ * (tick / cross / clock icon + text, never a dot).
  */
 import * as React from 'react';
 import Image from 'next/image';
-import { CheckIcon, ClockIcon, TriangleAlertIcon, XIcon } from 'lucide-react';
+import { ExternalLinkIcon, TriangleAlertIcon } from 'lucide-react';
 
 import { Button } from '@/components/shared/ui/button';
+import { StatusMark, type StatusMarkKind } from '@/components/shared/ui/status-mark';
 import { getUserInitials } from '@/lib/user-initials';
 import { cn } from '@/lib/utils';
 import {
   getInstagramAccountHealth,
   getInstagramAccountHealthLabel,
+  getInstagramAccountHealthSignal,
   isInstagramTokenExpiringSoon,
-  type InstagramAccountHealth,
 } from './instagram-account-health';
 
 export interface InstagramAccountItem {
@@ -34,6 +36,12 @@ export interface InstagramAccountItem {
   tokenExpiresAt?: string | Date | null | undefined;
   createdAt: string | Date;
   updatedAt?: string | Date | undefined;
+  /** Real destination count from the list route (Facebook's pages count analogue). */
+  destinationCount?: number | undefined;
+  /** Provider-reported Instagram username, from the destination row. */
+  destinationHandle?: string | null | undefined;
+  /** Destination display name, from the destination row. */
+  destinationName?: string | null | undefined;
 }
 
 export interface InstagramAccountCardProps {
@@ -48,53 +56,31 @@ function initialsFor(name: string | null | undefined, fallback: string): string 
   return getUserInitials(name);
 }
 
-const RING_CLASSES: Record<string, string> = {
-  connected: 'border-signal-operational',
-  expiring: 'border-signal-queued',
-  expired: 'border-signal-critical',
-  error: 'border-signal-critical',
-};
+const RING_CLASSES = {
+  operational: 'border-signal-operational',
+  queued: 'border-signal-queued',
+  critical: 'border-signal-critical',
+} as const;
 
+/**
+ * Account-card status mark — the shared `StatusMark`, exactly as
+ * Facebook's card uses it (icon + text only, deliberately NOT the
+ * shared `StatusDot`, which renders a coloured dot before its icon).
+ */
 function InstagramAccountHealthMark({
-  health,
-  expiringSoon,
-}: Readonly<{ health: InstagramAccountHealth; expiringSoon: boolean }>) {
-  const label = getInstagramAccountHealthLabel(health);
-  const Icon = health === 'connected' && !expiringSoon
-    ? CheckIcon
-    : health === 'connected'
-      ? ClockIcon
-      : XIcon;
-  const circleClass =
-    health === 'connected' && !expiringSoon
-      ? 'bg-signal-operational'
-      : health === 'connected'
-        ? 'bg-signal-queued'
-        : 'bg-signal-critical';
-  const textClass =
-    health === 'connected' && !expiringSoon
-      ? 'text-signal-operational'
-      : health === 'connected'
-        ? 'text-signal-queued'
-        : 'text-signal-critical';
+  status,
+  label,
+}: Readonly<{
+  status: StatusMarkKind;
+  label: string;
+}>) {
   return (
-    <span
-      data-testid="account-health-mark"
-      role="status"
-      aria-label={label}
-      className={cn('inline-flex items-center gap-1.5 font-medium', textClass)}
-    >
-      <span
-        aria-hidden
-        className={cn(
-          'flex size-5.5 shrink-0 items-center justify-center rounded-full text-neutral-white',
-          circleClass
-        )}
-      >
-        <Icon aria-hidden className="size-3.5" />
-      </span>
-      <span>{label}</span>
-    </span>
+    <StatusMark
+      kind={status}
+      label={label}
+      testId="account-health-mark"
+      className="font-medium"
+    />
   );
 }
 
@@ -107,14 +93,21 @@ export function InstagramAccountCard({
   const health = getInstagramAccountHealth(account);
   const isExpired = health === 'expired';
   const isExpiringSoon = isInstagramTokenExpiringSoon(account);
-  const ringKey = isExpired
-    ? 'expired'
-    : health === 'error'
-      ? 'error'
-      : isExpiringSoon
-        ? 'expiring'
-        : 'connected';
-  const ringClass = RING_CLASSES[ringKey] ?? 'border-line';
+  // Facebook's signal mapping exactly: connected + expiring-soon shows
+  // the queued clock, everything else follows the health signal.
+  const statusSignal: StatusMarkKind =
+    health === 'connected' && isExpiringSoon
+      ? 'queued'
+      : getInstagramAccountHealthSignal(health);
+  const statusLabel = getInstagramAccountHealthLabel(health);
+  const ringClass = RING_CLASSES[statusSignal];
+  const destinationCount = account.destinationCount ?? 0;
+  const destinationsLabel = `${destinationCount} ${
+    destinationCount === 1 ? 'destination linked' : 'destinations linked'
+  }`;
+  const profileHref = account.destinationHandle
+    ? `https://www.instagram.com/${encodeURIComponent(account.destinationHandle)}/`
+    : null;
 
   const [failedAvatarUrl, setFailedAvatarUrl] = React.useState<string | null>(null);
 
@@ -173,18 +166,44 @@ export function InstagramAccountCard({
         )}
 
         <div className="min-w-0 flex-1">
-          <h3 data-testid="account-name" className="truncate text-body font-semibold text-ink">
-            {account.displayName}
-          </h3>
+          <div className="flex items-center gap-1 overflow-hidden">
+            <h3 data-testid="account-name" className="truncate text-body font-semibold text-ink">
+              {account.displayName}
+            </h3>
+
+            {profileHref && (
+              <a
+                href={profileHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="View Instagram Profile"
+                aria-label={`View ${account.displayName}'s Instagram Profile`}
+                data-testid="account-profile-link"
+                className="inline-flex shrink-0 items-center text-ink-dim outline-none hover:text-ink focus-visible:outline-2 focus-visible:outline-link"
+              >
+                <ExternalLinkIcon className="size-3.5" aria-hidden />
+              </a>
+            )}
+          </div>
           <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
             <span data-testid="account-health-label" className="inline-flex">
-              <InstagramAccountHealthMark health={health} expiringSoon={isExpiringSoon} />
+              <InstagramAccountHealthMark status={statusSignal} label={statusLabel} />
             </span>
             <span data-testid="account-connected-date" className="text-metadata text-ink-dim">
               · Connected {formattedDate}
             </span>
           </div>
         </div>
+      </div>
+
+      {/* Destinations strip — Facebook's linked-pages strip slot, with
+          the real Instagram analogue: the account's destination count.
+          A label, not a navigation button: there is no Instagram
+          destinations page to navigate to. */}
+      <div className="mb-4 flex items-center justify-between">
+        <span data-testid="account-destinations-count" className="px-2 py-1 text-body text-ink-dim">
+          {destinationsLabel}
+        </span>
       </div>
 
       {isExpired && (

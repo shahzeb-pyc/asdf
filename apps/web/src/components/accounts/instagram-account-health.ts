@@ -70,6 +70,25 @@ export function isInstagramTokenExpiringSoon(
   return daysRemaining > 0 && daysRemaining <= withinDays;
 }
 
+/**
+ * Theme signal for the health state, mirroring Facebook's
+ * `getAccountHealthSignal` (connected → operational, expired/error →
+ * critical). The expiring-soon queued signal is applied by the card, as
+ * on Facebook — it is not a health state.
+ */
+export function getInstagramAccountHealthSignal(
+  health: InstagramAccountHealth
+): 'operational' | 'critical' {
+  switch (health) {
+    case 'expired':
+    case 'error':
+      return 'critical';
+    case 'connected':
+    default:
+      return 'operational';
+  }
+}
+
 export function getInstagramAccountHealthLabel(
   health: InstagramAccountHealth
 ): string {
@@ -110,7 +129,19 @@ export function computeInstagramSubtitleFromCounts(
   return parts.join(' · ');
 }
 
-export type InstagramAccountStatusFilter = 'all' | 'active' | 'expired';
+/**
+ * Same filter vocabulary as Facebook (`AccountStatusFilter`):
+ * `expiring_soon` is a programmatic filter value the list route already
+ * implements server-side (IG tokens are 60-day long-lived, so a token
+ * within 7 days of expiry is real) — it is passed through to the API,
+ * never silently mapped to `all`. The filter bar itself shows only
+ * All / Active / Expired tabs, exactly as Facebook's does.
+ */
+export type InstagramAccountStatusFilter =
+  | 'all'
+  | 'active'
+  | 'expiring_soon'
+  | 'expired';
 
 /** Expired-first, then newest — the Facebook list order. */
 export function sortInstagramAccountsExpiredFirst<T extends InstagramAccountHealthInput & { createdAt: string | Date }>(
