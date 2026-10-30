@@ -1,6 +1,5 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import {
-  type Database,
   type DatabaseClient,
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
@@ -213,8 +212,8 @@ export async function handleListInstagramScheduleQueue(
       }
     } else {
       const supabase = (dbClient && 'from' in dbClient
-        ? (dbClient as SupabaseClient<Database>)
-        : getSupabaseAdminClient()) as SupabaseClient<Database> | null;
+        ? (dbClient as SupabaseClient)
+        : getSupabaseAdminClient()) as SupabaseClient | null;
       if (!supabase) {
         return NextResponse.json(
           { error: 'Database service unavailable' },

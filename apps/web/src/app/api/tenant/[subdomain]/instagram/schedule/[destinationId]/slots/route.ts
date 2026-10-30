@@ -1,6 +1,5 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import {
-  type Database,
   type DatabaseClient,
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
@@ -61,8 +60,8 @@ async function loadDestination(
     return rows[0] ?? null;
   }
   const supabase = (dbClient && 'from' in dbClient
-    ? (dbClient as SupabaseClient<Database>)
-    : getSupabaseAdminClient()) as SupabaseClient<Database> | null;
+    ? (dbClient as SupabaseClient)
+    : getSupabaseAdminClient()) as SupabaseClient | null;
   if (!supabase) return null;
   const { data, error } = await supabase
     .from('destinations')
@@ -121,8 +120,8 @@ export async function handleListInstagramScheduleSlots(
       );
     } else {
       const supabase = (dbClient && 'from' in dbClient
-        ? (dbClient as SupabaseClient<Database>)
-        : getSupabaseAdminClient()) as SupabaseClient<Database> | null;
+        ? (dbClient as SupabaseClient)
+        : getSupabaseAdminClient()) as SupabaseClient | null;
       if (!supabase) {
         return NextResponse.json(
           { error: 'Database service unavailable' },
@@ -214,8 +213,8 @@ export async function handleCreateInstagramScheduleSlot(
       );
     }
     const supabase = (dbClient && 'from' in dbClient
-      ? (dbClient as SupabaseClient<Database>)
-      : getSupabaseAdminClient()) as SupabaseClient<Database> | null;
+      ? (dbClient as SupabaseClient)
+      : getSupabaseAdminClient()) as SupabaseClient | null;
     if (!supabase) {
       return NextResponse.json(
         { error: 'Database service unavailable' },
@@ -300,8 +299,8 @@ export async function handleUpdateInstagramScheduleTimezone(
       );
     } else {
       const supabase = (dbClient && 'from' in dbClient
-        ? (dbClient as SupabaseClient<Database>)
-        : getSupabaseAdminClient()) as SupabaseClient<Database> | null;
+        ? (dbClient as SupabaseClient)
+        : getSupabaseAdminClient()) as SupabaseClient | null;
       if (!supabase) {
         return NextResponse.json(
           { error: 'Database service unavailable' },

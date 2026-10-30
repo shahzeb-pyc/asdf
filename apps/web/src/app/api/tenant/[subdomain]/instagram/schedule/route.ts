@@ -1,6 +1,5 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import {
-  type Database,
   type DatabaseClient,
 } from '@fbuploadpro/contracts';
 import { authenticateInstagramSchedule } from '@/lib/server/instagram-schedule-auth';
@@ -50,7 +49,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
  * nothing finishes on schedule failure.
  */
 
-type DbClient = DatabaseClient | SupabaseClient<Database>;
+type DbClient = DatabaseClient | SupabaseClient;
 
 interface DestinationListRow extends InstagramScheduleDestinationRow {
   account_display_name?: string | null;
@@ -187,7 +186,7 @@ async function handleListSql(
 }
 
 async function handleListSupabase(
-  supabase: SupabaseClient<Database>,
+  supabase: SupabaseClient,
   workspaceId: string,
   search: string,
   status: string,
@@ -331,8 +330,8 @@ export async function handleListInstagramSchedule(
       );
     }
     const supabase = (dbClient && 'from' in dbClient
-      ? (dbClient as SupabaseClient<Database>)
-      : getSupabaseAdminClient()) as SupabaseClient<Database> | null;
+      ? (dbClient as SupabaseClient)
+      : getSupabaseAdminClient()) as SupabaseClient | null;
     if (!supabase) {
       return NextResponse.json(
         { error: 'Database service unavailable' },
@@ -615,8 +614,8 @@ export async function handleAddInstagramSchedule(
       );
     }
     const supabase = (dbClient && 'from' in dbClient
-      ? (dbClient as SupabaseClient<Database>)
-      : getSupabaseAdminClient()) as SupabaseClient<Database> | null;
+      ? (dbClient as SupabaseClient)
+      : getSupabaseAdminClient()) as SupabaseClient | null;
     if (!supabase) {
       return NextResponse.json(
         { error: 'Database service unavailable' },
@@ -669,9 +668,10 @@ export async function handleAddInstagramSchedule(
       .eq('workspace_id', auth.workspaceId)
       .eq('platform', 'instagram');
     void scheduledCount;
-    let destinationId: string;
+    let destinationId = '';
     let destinationCreated = false;
     let previousTimezone: string | null = null;
+    const insertedSlotIds: string[] = [];
     try {
       if (existingDest) {
         destinationId = existingDest.id;
@@ -715,7 +715,6 @@ export async function handleAddInstagramSchedule(
       const existing = new Set(
         (existingSlots ?? []).map((s) => String(s.time_of_day).slice(0, 5))
       );
-      const insertedSlotIds: string[] = [];
       for (const slot of postingTimes) {
         if (existing.has(slot.time)) continue;
         const normalized = normalizeScheduleSlotFormats(slot.formats);
@@ -769,9 +768,9 @@ export async function handleAddInstagramSchedule(
           .delete()
           .in('id', insertedSlotIds);
       }
-      if (destinationCreated) {
+      if (destinationId && destinationCreated) {
         await supabase.from('destinations').delete().eq('id', destinationId);
-      } else if (existingDest) {
+      } else if (destinationId && existingDest) {
         await supabase
           .from('destinations')
           .update({

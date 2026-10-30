@@ -7,7 +7,6 @@ import {
   type InstagramScheduleDbClient,
 } from '@/lib/server/instagram-schedule-auth';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { Database } from '@fbuploadpro/contracts';
 
 /** Deletes one posting time from a scheduled Instagram destination. */
 
@@ -52,8 +51,8 @@ export async function handleDeleteInstagramScheduleSlot(
       return NextResponse.json({ deleted: true });
     }
     const supabase = (dbClient && 'from' in dbClient
-      ? (dbClient as SupabaseClient<Database>)
-      : getSupabaseAdminClient()) as SupabaseClient<Database> | null;
+      ? (dbClient as SupabaseClient)
+      : getSupabaseAdminClient()) as SupabaseClient | null;
     if (!supabase) {
       return NextResponse.json(
         { error: 'Database service unavailable' },

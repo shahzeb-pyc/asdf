@@ -3,7 +3,6 @@ import {
   canAccessTenant,
   getSessionSecret,
   verifySessionToken,
-  type Database,
   type DatabaseClient,
 } from '@fbuploadpro/contracts';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
@@ -18,7 +17,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
  */
 export type InstagramScheduleDbClient =
   | DatabaseClient
-  | SupabaseClient<Database>;
+  | SupabaseClient;
 
 export async function authenticateInstagramSchedule(
   request: NextRequest,
