@@ -228,6 +228,18 @@
         "routeSpecificGzipBytes": 11088,
         "routeSpecificRawBytes": 28099
       },
+      "/connect/instagram/error": {
+        "firstLoadGzipBytes": 152237,
+        "firstLoadRawBytes": 502437,
+        "routeSpecificGzipBytes": 11696,
+        "routeSpecificRawBytes": 28937
+      },
+      "/connect/instagram/success": {
+        "firstLoadGzipBytes": 150309,
+        "firstLoadRawBytes": 497892,
+        "routeSpecificGzipBytes": 11088,
+        "routeSpecificRawBytes": 28099
+      },
       "/forgot-password": {
         "firstLoadGzipBytes": 152720,
         "firstLoadRawBytes": 505443,
@@ -295,10 +307,10 @@
         "routeSpecificRawBytes": 83268
       },
       "/tenant/[subdomain]/instagram/accounts": {
-        "firstLoadGzipBytes": 167774,
-        "firstLoadRawBytes": 557388,
-        "routeSpecificGzipBytes": 27233,
-        "routeSpecificRawBytes": 83888
+        "firstLoadGzipBytes": 176183,
+        "firstLoadRawBytes": 586166,
+        "routeSpecificGzipBytes": 35694,
+        "routeSpecificRawBytes": 112774
       },
       "/tenant/[subdomain]/media": {
         "firstLoadGzipBytes": 166550,
@@ -339,8 +351,8 @@
       "/tenant/[subdomain]/threads/accounts": {
         "firstLoadGzipBytes": 167774,
         "firstLoadRawBytes": 557371,
-        "routeSpecificGzipBytes": 27233,
-        "routeSpecificRawBytes": 83871
+        "routeSpecificGzipBytes": 30760,
+        "routeSpecificRawBytes": 95758
       },
       "/tenant/[subdomain]/tiktok/accounts": {
         "firstLoadGzipBytes": 167374,
