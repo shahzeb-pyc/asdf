@@ -60,6 +60,20 @@ function formatDate(value: string | null): string {
   return Number.isNaN(date.getTime()) ? '—' : date.toLocaleDateString();
 }
 
+function plainQuoteError(message: string | null): string | null {
+  if (!message) return null;
+  if (
+    message ===
+    'Counts can only be increased mid-cycle. To reduce a count, wait until the current period ends.'
+  ) {
+    return 'You can only increase counts during your current month. To lower a count, wait until this month ends.';
+  }
+  if (message === 'An upgrade must cost more than the current plan.') {
+    return 'Your new plan must cost more than your current plan.';
+  }
+  return message;
+}
+
 function paymentStatusLabel(status: string): string {
   if (status === 'pending') return 'Waiting for approval';
   if (status === 'approved' || status === 'paid') return 'Paid';
@@ -72,12 +86,12 @@ function countsSummary(counts: PlatformCounts): string {
   const parts = SUBSCRIPTION_PLATFORMS.filter((p) => counts[p] > 0).map(
     (p) => `${counts[p]} ${PLATFORM_LABELS[p]} ${subscriptionUnitLabel(p)}`
   );
-  return parts.length > 0 ? parts.join(', ') : 'No pages or accounts';
+  return parts.length > 0 ? parts.join(', ') : 'No pages or accounts selected';
 }
 
 function BillingSkeleton() {
   return (
-    <div aria-busy="true" aria-label="Loading billing" className="mx-auto flex w-full flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
+    <div aria-busy="true" aria-label="Loading billing" className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
       <div className="flex flex-col gap-2">
         <Skeleton className="h-8 w-32" />
         <Skeleton className="h-4 w-72 max-w-full" />
@@ -92,7 +106,7 @@ function BillingSkeleton() {
           <Skeleton className="h-4 w-full" />
         </CardContent>
       </Card>
-      <div className="grid items-stretch gap-8 lg:grid-cols-2">
+      <div className="grid items-stretch gap-6 lg:grid-cols-2">
         <Card>
           <CardContent className="flex flex-col gap-4 pt-6">
             <Skeleton className="h-6 w-32" />
@@ -111,12 +125,10 @@ function BillingSkeleton() {
           </CardContent>
         </Card>
       </div>
-      <Card>
-        <CardContent className="flex flex-col gap-4 pt-6">
-          <Skeleton className="h-6 w-48" />
-          <Skeleton className="h-10 w-full" />
-        </CardContent>
-      </Card>
+      <div className="flex flex-col gap-4 border-t border-line pt-6">
+        <Skeleton className="h-6 w-48" />
+        <Skeleton className="h-10 w-full" />
+      </div>
     </div>
   );
 }
@@ -359,11 +371,11 @@ export function BillingView({
       return;
     }
     if (quoteError) {
-      setFormError(quoteError);
+      setFormError(plainQuoteError(quoteError));
       return;
     }
     if (!screenshot) {
-      setFormError('Attach a screenshot of your payment so it can be approved.');
+      setFormError('Add a screenshot of your payment so we can approve it.');
       return;
     }
     setBusy('bank');
@@ -400,7 +412,7 @@ export function BillingView({
       return;
     }
     if (quoteError) {
-      setFormError(quoteError);
+      setFormError(plainQuoteError(quoteError));
       return;
     }
     setBusy('crypto');
@@ -429,7 +441,7 @@ export function BillingView({
 
   if (loadError && !status) {
     return (
-      <div className="mx-auto flex w-full flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
         <h1 className="text-xl leading-heading font-semibold text-ink">Billing</h1>
         <Alert variant="destructive">
           <AlertTitle>Couldn&apos;t load billing</AlertTitle>
@@ -454,7 +466,7 @@ export function BillingView({
   const bankDisabled = checkoutDisabled || !screenshot;
   const bankDisabledReason = units === 0
     ? 'Choose at least one page or account first.'
-    : quoteError ?? (!screenshot ? 'Attach a screenshot so your payment can be approved.' : null);
+    : plainQuoteError(quoteError) ?? (!screenshot ? 'Add a screenshot of your payment so we can approve it.' : null);
 
   // Rate is stated once, in the Paid card header — not repeated on every row.
   // Included/used only shows where it matters (a non-zero included or used count);
@@ -474,8 +486,8 @@ export function BillingView({
               <p className="truncate text-body font-medium text-ink">{PLATFORM_LABELS[platform]}</p>
               <p className="truncate text-body text-ink-sub">
                 {showUsage
-                  ? `Included ${entitlement.counts[platform]} · Used ${entitlement.usage[platform]}`
-                  : subscriptionUnitLabel(platform)}
+                  ? `Included: ${entitlement.counts[platform]} · In use: ${entitlement.usage[platform]}`
+                  : 'Not included yet'}
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
@@ -521,7 +533,7 @@ export function BillingView({
     <Card>
       <CardHeader>
         <CardTitle>Order summary</CardTitle>
-        <CardDescription>What you pay for this plan.</CardDescription>
+        <CardDescription>What you will pay.</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         <dl className="flex flex-col gap-2 text-body">
@@ -549,15 +561,15 @@ export function BillingView({
           {isUpgrade && quote ? (
             <>
               <div className="flex items-baseline justify-between gap-3">
-                <dt className="text-ink-sub">Old plan total</dt>
+                <dt className="text-ink-sub">Current plan</dt>
                 <dd className="font-medium tabular-nums text-ink">{quote.oldMonthlyTotalPkr} PKR</dd>
               </div>
               <div className="flex items-baseline justify-between gap-3">
-                <dt className="text-ink-sub">Days remaining</dt>
+                <dt className="text-ink-sub">Days left on your current plan</dt>
                 <dd className="font-medium tabular-nums text-ink">{quote.daysRemaining} days</dd>
               </div>
               <div className="flex items-baseline justify-between gap-3">
-                <dt className="text-ink-sub">Credit</dt>
+                <dt className="text-ink-sub">Credit for unused days</dt>
                 <dd className="font-medium tabular-nums text-ink">−{quote.creditPkr} PKR</dd>
               </div>
               <div className="flex items-baseline justify-between gap-3 border-t border-line pt-2">
@@ -574,8 +586,8 @@ export function BillingView({
         </dl>
         <p className="text-body text-ink-sub">
           {isUpgrade
-            ? 'Upgrades only. Your new period starts from the upgrade approval.'
-            : 'Approval lasts 30 days from approval. When a period ends without renewal, posting pauses and the app becomes read-only.'}
+            ? 'Your new month starts when your upgrade is approved.'
+            : 'Your month runs for 30 days from approval. If you do not renew, posting pauses and you can only view your account until you renew.'}
         </p>
       </CardContent>
     </Card>
@@ -585,14 +597,14 @@ export function BillingView({
     <Card id="billing-payments" className="scroll-mt-20">
       <CardHeader>
         <CardTitle>Your payments</CardTitle>
-        <CardDescription>Bank payments wait for approval. Crypto payments activate on payment.</CardDescription>
+        <CardDescription>Bank payments start after we approve them. Crypto payments start as soon as we receive them.</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         {status.payments.length === 0 ? (
           <EmptyState
             type="first-use"
             title="No payments yet"
-            description="Payments you submit will appear here, with their approval status."
+            description="Payments you make will show here, with their status."
             action={
               <Button variant="link" onClick={goToPlans}>
                 Back to plans
@@ -614,7 +626,7 @@ export function BillingView({
                       : payment.bankMethod === 'nayapay'
                         ? 'Nayapay'
                         : 'UBL bank')
-                  : `Crypto (${payment.nowpaymentsNetwork === 'trc20' ? 'TRC20' : 'BEP20'})`}
+                  : `Crypto · USDT (${payment.nowpaymentsNetwork === 'trc20' ? 'TRC20' : 'BEP20'})`}
                 {payment.isUpgrade ? ' · Upgrade' : ''}
               </span>
               <span className="text-metadata text-ink-sub">{formatDate(payment.createdAt)}</span>
@@ -624,7 +636,7 @@ export function BillingView({
             ) : payment.status === 'rejected' || payment.status === 'failed' || payment.status === 'expired' ? (
               <BillingStatusMark kind="failed" label={paymentStatusLabel(payment.status)} />
             ) : (
-              <BillingStatusMark kind="pending" label="Waiting for approval" />
+              <BillingStatusMark kind="pending" label={payment.method === 'bank' ? 'Waiting for approval' : 'Waiting for payment'} />
             )}
           </div>
         ))}
@@ -638,10 +650,10 @@ export function BillingView({
       ? (confirmation.crypto.payAmount ?? confirmation.crypto.estimatedUsdt)
       : null;
     return (
-      <div className="mx-auto flex w-full flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
         <div className="flex flex-col gap-1">
           <h1 className="text-xl leading-heading font-semibold text-ink">Billing</h1>
-          <p className="text-body text-ink-sub">Your payment is on its way.</p>
+          <p className="text-body text-ink-sub">{confirmation.kind === 'bank' ? 'We have received your payment.' : 'One step left: send your payment.'}</p>
         </div>
         <StepIndicator current="confirmation" />
         <Card>
@@ -651,8 +663,8 @@ export function BillingView({
             </CardTitle>
             <CardDescription>
               {confirmation.kind === 'bank'
-                ? 'It starts once approved, for 30 days from approval.'
-                : 'Your paid period starts automatically once NOWPayments confirms the payment.'}
+                ? 'Your plan starts when we approve it, and runs for 30 days.'
+                : 'Your plan starts automatically once we receive your payment.'}
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
@@ -676,8 +688,8 @@ export function BillingView({
               </Alert>
             ) : null}
             <p className="text-body text-ink-sub">
-              Bank payments wait for an admin to approve them; crypto payments activate on
-              payment. You can view this payment in Payments.
+              Bank payments start after we approve them. Crypto payments start as soon as we
+              receive them. You can see this payment under Payments.
             </p>
             <div className="flex flex-wrap gap-2">
               <Button onClick={goToPlans}>Back to plans</Button>
@@ -694,14 +706,14 @@ export function BillingView({
   /* ---------- Checkout step ---------- */
   if (step === 'checkout') {
     return (
-      <div className="mx-auto flex w-full flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
         <div className="flex flex-col gap-1">
           <Button variant="outline" size="sm" className="self-start" onClick={goToBuild}>
             <ArrowLeftIcon aria-hidden className="size-4" /> Back to build plan
           </Button>
           <h1 className="text-xl leading-heading font-semibold text-ink">Checkout</h1>
           <p className="text-body text-ink-sub">
-            {isUpgrade ? 'Upgrade checkout. ' : ''}
+            {isUpgrade ? 'Upgrade · ' : ''}
             {countsSummary(effectiveCounts)} · {amountToPay} PKR
             {isUpgrade ? ' to pay now' : ' / month'}
           </p>
@@ -715,8 +727,8 @@ export function BillingView({
         ) : null}
         {quoteError ? (
           <Alert variant="destructive">
-            <AlertTitle>That change is not an upgrade</AlertTitle>
-            <AlertDescription>{quoteError}</AlertDescription>
+            <AlertTitle>You can only increase your plan</AlertTitle>
+            <AlertDescription>{plainQuoteError(quoteError)}</AlertDescription>
           </Alert>
         ) : null}
         <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
@@ -737,8 +749,8 @@ export function BillingView({
                   />
                   <MethodCard
                     selected={paymentType === 'crypto'}
-                    title="Crypto"
-                    description="USDT via NOWPayments"
+                    title="Crypto (USDT)"
+                    description="Pay in USDT"
                     label="Pay with crypto"
                     onClick={() => setPaymentType('crypto')}
                   />
@@ -849,14 +861,13 @@ export function BillingView({
                       {bankDisabledReason ? (
                         <p className="text-body text-ink-sub">{bankDisabledReason}</p>
                       ) : null}
-                      <p className="text-body text-ink-sub">Approval lasts 30 days from approval.</p>
+                      <p className="text-body text-ink-sub">Your plan runs for 30 days from approval.</p>
                     </div>
                   </section>
                 ) : (
                   <section aria-label="Pay with crypto" className="flex flex-col gap-4">
                     <p className="text-body text-ink-sub">
-                      USDT via NOWPayments. You pay the USDT equivalent of {amountToPay} PKR at
-                      checkout.
+                      Pay in USDT. You will pay the USDT equal to {amountToPay} PKR.
                     </p>
                     <div role="radiogroup" aria-label="Crypto network" className="grid gap-2 sm:grid-cols-2">
                       {(['trc20', 'bep20'] as const).map((network) => (
@@ -877,7 +888,7 @@ export function BillingView({
                         loading={busy === 'crypto'}
                         disabled={checkoutDisabled}
                       >
-                        Continue with NOWPayments
+                        Continue to crypto payment
                       </Button>
                       {units === 0 ? (
                         <p className="mt-2 text-body text-ink-sub">
@@ -911,33 +922,33 @@ export function BillingView({
       units === 0
         ? 'Choose at least one page or account first.'
         : isPaid && countsUnchanged
-          ? 'This matches your current plan. Change a count to upgrade.'
+          ? 'This is the same as your current plan. Increase a count to upgrade.'
           : null;
     return (
-      <div className="mx-auto flex w-full flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
         <div className="flex flex-col gap-2">
           <Button variant="outline" size="sm" className="self-start" onClick={goToPlans}>
             <ArrowLeftIcon aria-hidden className="size-4" /> Back to plans
           </Button>
           <h1 className="text-xl leading-heading font-semibold text-ink">Build your paid plan</h1>
           <p className="text-body text-ink-sub">
-            70 PKR per page or account, per month. Monthly only. Facebook counts pages; every
-            other platform counts accounts.
+            70 PKR per page or account, paid monthly. Facebook counts pages; other platforms
+            count accounts.
           </p>
         </div>
         <StepIndicator current="build" />
         {quoteError ? (
           <Alert variant="destructive">
-            <AlertTitle>That change is not an upgrade</AlertTitle>
-            <AlertDescription>{quoteError}</AlertDescription>
+            <AlertTitle>You can only increase your plan</AlertTitle>
+            <AlertDescription>{plainQuoteError(quoteError)}</AlertDescription>
           </Alert>
         ) : null}
-        <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
           <Card>
             <CardHeader>
               <CardTitle>Choose your pages and accounts</CardTitle>
               <CardDescription>
-                Connecting is unlimited — only pages and accounts you use in a feature count.
+                Connect as many accounts as you like — only the pages and accounts you actually use count towards your plan.
               </CardDescription>
             </CardHeader>
             <CardContent>{configurator}</CardContent>
@@ -965,11 +976,11 @@ export function BillingView({
   /* ---------- Payments page ---------- */
   if (step === 'payments') {
     return (
-      <div className="mx-auto flex w-full flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mx-auto flex w-full max-w-4xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
         <div className="flex flex-col gap-2">
           <h1 className="text-xl leading-heading font-semibold text-ink">Billing</h1>
           <p className="text-body text-ink-sub">
-            Every payment you have submitted, with its approval status.
+            Every payment you have made, and its status.
           </p>
         </div>
         <PageNav current="payments" onNavigate={(view) => navigateTo(view)} />
@@ -980,11 +991,11 @@ export function BillingView({
 
   /* ---------- Plans view (default) ---------- */
   return (
-    <div className="mx-auto flex w-full flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
       <div className="flex flex-col gap-1">
         <h1 className="text-xl leading-heading font-semibold text-ink">Billing</h1>
         <p className="text-body text-ink-sub">
-          Choose a plan, then check out. Paid is charged per page or account, per month.
+          Choose a plan, then pay. Paid plans cost 70 PKR per page or account, each month.
         </p>
       </div>
       <PageNav current="plans" onNavigate={(view) => navigateTo(view)} />
@@ -997,18 +1008,18 @@ export function BillingView({
       ) : null}
 
       {/* Current-plan status panel — Free is a plan, not a failure, so it
-          gets no red mark; "No paid period" replaces the bare dash. */}
+          gets no red mark; "No paid plan" replaces the bare dash. */}
       <Card>
         <CardHeader>
           <CardTitle>Your plan</CardTitle>
-          <CardDescription>What you are on right now.</CardDescription>
+          <CardDescription>Your current plan.</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div className="flex flex-col gap-1">
             <span className="text-body text-ink-sub">Plan</span>
             <span className="text-lg font-semibold text-ink">{isPaid ? 'Paid' : 'Free'}</span>
             {isPaid ? (
-              <BillingStatusMark kind="ok" label="Paid and active" />
+              <BillingStatusMark kind="ok" label="Active" />
             ) : (
               <span className="text-body text-ink-sub">Prompt Library only</span>
             )}
@@ -1016,7 +1027,7 @@ export function BillingView({
           <div className="flex flex-col gap-1">
             <span className="text-body text-ink-sub">Paid until</span>
             <span className="text-body font-medium text-ink">
-              {entitlement.periodEndsAt ? formatDate(entitlement.periodEndsAt) : 'No paid period'}
+              {entitlement.periodEndsAt ? formatDate(entitlement.periodEndsAt) : 'No paid plan'}
             </span>
           </div>
           <div className="flex flex-col gap-1">
@@ -1026,7 +1037,7 @@ export function BillingView({
             </span>
           </div>
           <div className="flex flex-col gap-1">
-            <span className="text-body text-ink-sub">Used in features</span>
+            <span className="text-body text-ink-sub">In use</span>
             <span className="text-body font-medium tabular-nums text-ink">
               {usedUnits} pages / accounts
             </span>
@@ -1036,7 +1047,7 @@ export function BillingView({
 
       {/* Pricing cards — matched pair: equal height, Free content anchored
           to the bottom instead of stranded mid-card. */}
-      <div className="grid items-stretch gap-8 lg:grid-cols-2">
+      <div className="grid items-stretch gap-6 lg:grid-cols-2">
         {/* Free card */}
         <Card className="flex flex-col">
           <CardHeader>
@@ -1063,12 +1074,12 @@ export function BillingView({
               </li>
               <li className="flex items-start gap-2">
                 <XIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-critical" />
-                <span>Paid features: schedule, auto download-upload, auto repost</span>
+                <span>Scheduling, auto download-upload and auto repost</span>
               </li>
             </ul>
             <div className="mt-auto flex flex-col gap-2">
               <p className="text-body text-ink-sub">
-                There is no free trial. Free is the starting plan.
+                There is no trial — Free is your starting plan.
               </p>
               {!isPaid ? (
                 <BillingStatusMark kind="ok" label="Current plan" />
@@ -1096,7 +1107,7 @@ export function BillingView({
               <span className="text-body text-ink-sub">per page or account, per month</span>
             </p>
             <p className="text-body text-ink-sub">
-              Monthly only. Facebook counts pages; every other platform counts accounts.
+              Paid monthly. Facebook counts pages; other platforms count accounts.
             </p>
             <ul className="flex flex-col gap-2 text-body">
               <li className="flex items-start gap-2">
@@ -1110,8 +1121,8 @@ export function BillingView({
               <li className="flex items-start gap-2">
                 <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
                 <span>
-                  Schedule, auto download-upload and auto repost, within your page and account
-                  count
+                  Scheduling, auto download-upload and auto repost, up to the pages and
+                  accounts in your plan
                 </span>
               </li>
               <li className="flex items-start gap-2">
@@ -1143,18 +1154,16 @@ export function BillingView({
         </Card>
       </div>
 
-      {/* How the limit works — bullets, not a wall of text */}
-      <Card>
-        <CardHeader>
-          <CardTitle>How the limit works</CardTitle>
-        </CardHeader>
-        <CardContent>
+      {/* How the limit works — plain section, not another box */}
+      <section className="border-t border-line pt-6">
+        <h2 className="text-lg leading-heading font-semibold text-ink">How the limit works</h2>
+        <div className="mt-4">
           <ul className="flex flex-col gap-3 text-body text-ink">
             <li className="flex items-start gap-2">
               <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
               <span>
-                <span className="font-medium">One count per platform, across all features.</span>{' '}
-                5 Facebook pages means 5 in total across schedule, auto download-upload and auto
+                <span className="font-medium">One limit per platform, across everything.</span>{' '}
+                5 Facebook pages means 5 in total for scheduling, auto download-upload and auto
                 repost — not 5 in each.
               </span>
             </li>
@@ -1162,26 +1171,26 @@ export function BillingView({
               <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
               <span>
                 <span className="font-medium">Connecting is unlimited.</span> Connecting an
-                account never counts; using it in a feature does.
+                account never counts; it only counts once you actually use it.
               </span>
             </li>
             <li className="flex items-start gap-2">
               <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
               <span>
-                <span className="font-medium">Monthly, from approval.</span> A paid period lasts
+                <span className="font-medium">Monthly, from approval.</span> Each paid month lasts
                 30 days from approval.
               </span>
             </li>
             <li className="flex items-start gap-2">
               <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
               <span>
-                <span className="font-medium">If a period ends without renewal, posting pauses</span>{' '}
-                and the app becomes read-only until you renew.
+                <span className="font-medium">If you do not renew, posting pauses</span>{' '}
+                and you can only view your account until you renew.
               </span>
             </li>
           </ul>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
     </div>
   );
 }

@@ -84,8 +84,8 @@ export function AdminApprovalsView({ subdomain }: Readonly<{ subdomain: string }
       );
       setNotice(
         decision === 'approve'
-          ? 'Approved. The paid period starts from now and runs for 30 days.'
-          : 'Rejected. No paid period started.'
+          ? 'Approved. The plan starts now and runs for 30 days.'
+          : 'Rejected. No plan started.'
       );
       await load();
     } catch (err) {
@@ -137,7 +137,7 @@ export function AdminApprovalsView({ subdomain }: Readonly<{ subdomain: string }
       <div className="flex flex-col gap-1">
         <h1 className="text-xl leading-heading font-semibold text-ink">Subscriptions approval</h1>
         <p className="text-body text-ink-sub">
-          Approve a payment to start 30 days from approval. Rejecting starts no period.
+          Approving a payment starts a 30-day plan from approval. Rejecting starts nothing.
         </p>
       </div>
 
