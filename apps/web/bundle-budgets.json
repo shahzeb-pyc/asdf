@@ -435,14 +435,14 @@
       "/tenant/[subdomain]/auto-download-upload": {
         "firstLoadGzipBytes": 173250,
         "firstLoadRawBytes": 581385,
-        "routeSpecificGzipBytes": 36562,
-        "routeSpecificRawBytes": 119518
+        "routeSpecificGzipBytes": 40131,
+        "routeSpecificRawBytes": 132720
       },
       "/tenant/[subdomain]/auto-download-upload/[id]": {
         "firstLoadGzipBytes": 170520,
         "firstLoadRawBytes": 572355,
-        "routeSpecificGzipBytes": 34335,
-        "routeSpecificRawBytes": 112303
+        "routeSpecificGzipBytes": 38035,
+        "routeSpecificRawBytes": 126450
       }
     },
     "totalClientJs": {
