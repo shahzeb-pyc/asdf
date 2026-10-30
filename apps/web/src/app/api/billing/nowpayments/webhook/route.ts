@@ -137,6 +137,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json({ received: true, ignored: true });
   } catch (err) {
+    // The dedupe row was written before activation, so a failed
+    // activation must release it — otherwise NOWPayments' retry
+    // would be swallowed as a duplicate and the payment could
+    // never activate. Successful activations keep their row.
+    // (Double activation is still guarded by the periodId check
+    // above, so releasing on failure cannot double-activate.)
+    await client
+      .from('subscription_webhook_events')
+      .delete()
+      .eq('provider', 'nowpayments')
+      .eq('event_key', eventKey);
     if (err instanceof SubscriptionGateError) {
       logServerError('[billing] webhook activation failed', err, { source: 'billing' });
       return NextResponse.json({ error: 'Activation failed' }, { status: 500 });

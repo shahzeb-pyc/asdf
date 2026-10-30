@@ -168,7 +168,11 @@ export async function POST(
       throw err;
     }
 
-    await client
+    // If this update fails, the deposit address must NOT be shown:
+    // a payment the IPN cannot match (no gateway id stored) could
+    // never activate, even if the user paid it. Mark the row failed
+    // so the user retries with a fresh checkout instead.
+    const { error: addressUpdateError } = await client
       .from('subscription_payments')
       .update({
         nowpayments_payment_id: created.paymentId,
@@ -177,6 +181,23 @@ export async function POST(
         updated_at: new Date().toISOString(),
       })
       .eq('id', paymentId);
+    if (addressUpdateError) {
+      logServerError('[billing] crypto address save failed', addressUpdateError, {
+        source: 'billing',
+        code: addressUpdateError.code,
+      });
+      await client
+        .from('subscription_payments')
+        .update({ status: 'failed', updated_at: new Date().toISOString() })
+        .eq('id', paymentId);
+      return NextResponse.json(
+        {
+          error: 'CRYPTO_CHECKOUT_FAILED',
+          message: 'Crypto checkout could not be started. Please try again, or pay by bank.',
+        },
+        { status: 502 }
+      );
+    }
 
     return NextResponse.json(
       {
