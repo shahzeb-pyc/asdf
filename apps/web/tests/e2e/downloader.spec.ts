@@ -164,7 +164,7 @@ test.describe('media library download tray', () => {
     await page.goto(`/tenant/${TENANT.subdomain}/media`);
     const tray = page.getByTestId('download-tray');
     await expect(tray).toBeVisible({ timeout: 10_000 });
-    await expect(tray).toContainText('1 failed');
+    await expect(tray).toContainText('1 download failed');
     await page.getByTestId(`download-job-retry-${JOB_ID}`).click();
     await expect(tray).toContainText('Downloading 1 file', { timeout: 10_000 });
     expect(retryCalled).toBe(true);
