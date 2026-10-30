@@ -9,6 +9,7 @@ export const OAuthStatePayloadSchema = z.object({
   exp: z.number().int(),
   isMagic: z.boolean().optional(),
   expectedFbAccountId: z.string().min(1).optional(),
+  expectedInstagramAccountId: z.string().min(1).optional(),
   expectedDisplayName: z.string().min(1).optional(),
   redirectUri: z.string().url().optional(),
 });
@@ -22,6 +23,7 @@ export const MagicLinkTokenPayloadSchema = z.object({
   iat: z.number().int(),
   exp: z.number().int(),
   expectedFbAccountId: z.string().min(1).optional(),
+  expectedInstagramAccountId: z.string().min(1).optional(),
   expectedDisplayName: z.string().min(1).optional(),
 });
 

@@ -2,9 +2,11 @@
  * Platform accounts shells (spec 131 PR-131-5, audit #12) — mobile gate
  * evidence (spec 142).
  *
- * The five platform account routes (Instagram, Threads, TikTok, X,
- * YouTube) now render through ONE shared shell
- * (`PlatformAccountsShell`). Fixture-served per A3 discipline: the
+ * The four remaining placeholder platform account routes (Threads,
+ * TikTok, X, YouTube) render through ONE shared shell
+ * (`PlatformAccountsShell`). Instagram no longer uses that shell: it is
+ * a real accounts page (see the Instagram block below), so it is not
+ * in the PLATFORMS list. Fixture-served per A3 discipline: the
  * ByocGate credentials check is answered from the fixture below (details
  * present, so the gated connect links render); no production data, no
  * third-party traffic.
@@ -24,14 +26,6 @@ import { SESSION_COOKIE, TENANT } from './fixtures/tenant';
 const SUB = TENANT.subdomain;
 
 const PLATFORMS = [
-  {
-    slug: 'instagram',
-    name: 'Instagram',
-    heading: 'Instagram Accounts',
-    description:
-      'Connect your Instagram account to schedule and publish posts from one place. Your workspace uses its own Instagram app details, so your accounts stay yours.',
-    connectTestId: 'instagram-connect-link',
-  },
   {
     slug: 'threads',
     name: 'Threads',
@@ -130,5 +124,50 @@ test.describe('platform accounts shells (one shared shell)', () => {
         await expectNoHorizontalOverflow(page);
       });
     }
+  }
+});
+
+/**
+ * Instagram accounts (real page, not a placeholder shell): the page
+ * container and title render at every mobile viewport with no
+ * horizontal overflow, and the placeholder shell markers are gone.
+ * The list content itself (empty state, load error, or cards) depends
+ * on the fixture-served accounts API, so this block asserts only the
+ * page frame that renders in every state.
+ */
+test.describe('instagram accounts real page', () => {
+  for (const width of [320, 390, 768]) {
+    test(`Instagram accounts page renders at ${width}px with no overflow`, async ({
+      page,
+      context,
+    }) => {
+      await context.addCookies([SESSION_COOKIE]);
+      const state = createFixtureState();
+      await installApiFixtures(page, state);
+      await page.route(
+        `**/api/tenant/${SUB}/settings/platform-credentials/**`,
+        (route) =>
+          route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ appId: 'fixture-app-id', hasSecret: true }),
+          })
+      );
+
+      await page.setViewportSize({ width, height: 800 });
+      await page.goto(`/tenant/${SUB}/instagram/accounts`);
+
+      await expect(page.getByTestId('instagram-accounts-page')).toBeVisible();
+      await expect(
+        page.getByTestId('instagram-accounts-page-title')
+      ).toHaveText('Instagram Accounts');
+      await expect(
+        page.getByTestId('platform-placeholder-accounts')
+      ).toHaveCount(0);
+      await expect(
+        page.getByTestId('testing-placeholder-notice')
+      ).toHaveCount(0);
+      await expectNoHorizontalOverflow(page);
+    });
   }
 });

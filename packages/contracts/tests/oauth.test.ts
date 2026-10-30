@@ -106,6 +106,43 @@ describe('Facebook OAuth Contracts & State Signing', () => {
     );
   });
 
+  it('should round-trip an Instagram magic-link token with the expected account hint', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const magicPayload = {
+      tenantSubdomain: 'agency',
+      userId: '123e4567-e89b-12d3-a456-426614174000',
+      nonce: 'instagram_magic_nonce_1234',
+      iat: now,
+      exp: now + 900,
+      expectedInstagramAccountId: 'ig_user_123',
+      expectedDisplayName: 'Sunset Bakery',
+    };
+    const signedMagic = await signMagicLinkToken(magicPayload, secret);
+    const verifiedMagic = await verifyMagicLinkToken(signedMagic, secret);
+    expect(verifiedMagic.expectedInstagramAccountId).toBe('ig_user_123');
+    expect(verifiedMagic.expectedDisplayName).toBe('Sunset Bakery');
+    // Reusable within the window: verifying the same token twice succeeds.
+    const verifiedAgain = await verifyMagicLinkToken(signedMagic, secret);
+    expect(verifiedAgain.nonce).toBe('instagram_magic_nonce_1234');
+
+    const state = await signOAuthState(
+      {
+        tenantSubdomain: 'agency',
+        userId: '123e4567-e89b-12d3-a456-426614174000',
+        nonce: 'instagram_state_nonce_1234',
+        iat: now,
+        exp: now + 600,
+        isMagic: true,
+        expectedInstagramAccountId: 'ig_user_123',
+        expectedDisplayName: 'Sunset Bakery',
+      },
+      secret
+    );
+    const verifiedState = await verifyOAuthState(state, secret);
+    expect(verifiedState.isMagic).toBe(true);
+    expect(verifiedState.expectedInstagramAccountId).toBe('ig_user_123');
+  });
+
   it('should reject expired OAuth state tokens', async () => {
     const expiredPayload = {
       ...validStatePayload,

@@ -283,7 +283,9 @@ describe('Connect data helpers', () => {
       ['dest-1'],
       noUrl as typeof fetch
     );
-    expect(fallback).toEqual({ ok: true, accountsUrl: '/tenant/acme/accounts' });
+    // Per-platform framework fallback (Gap 2): platform 'x' falls back to
+    // its own accounts page, not Facebook's, when the server returns no URL.
+    expect(fallback).toEqual({ ok: true, accountsUrl: '/tenant/acme/x/accounts' });
 
     const failing = async () => fakeResponse(false, {}, 500);
     const failed = await submitDestinationPick(

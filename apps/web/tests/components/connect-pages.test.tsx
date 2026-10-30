@@ -77,7 +77,9 @@ describe('Connect picker page', () => {
     const { html, hasText } = render(element);
     expect(hasText('Connection canceled. No changes were made.')).toBe(true);
     expect(hasText('Go to Accounts')).toBe(true);
-    expect(html).toContain('/tenant/acme/accounts');
+    // Per-platform landing page: the Instagram picker links to the
+    // Instagram accounts page, not Facebook's.
+    expect(html).toContain('/tenant/acme/instagram/accounts');
     expect(html).not.toMatch(/oauth|scope|endpoint/i);
   });
 
@@ -94,12 +96,12 @@ describe('Connect picker page', () => {
 });
 
 describe('Per-platform accounts pages', () => {
-  it('renders the gated Instagram connect action', () => {
-    const { html, hasText } = render(<InstagramAccountsPage />);
-    expect(hasText('Instagram Accounts')).toBe(true);
-    expect(html).toContain('data-testid="instagram-connect-link"');
-    expect(html).toContain('/api/connect/instagram?subdomain=acme');
-  });
+  // NOTE: the Instagram page is covered behaviourally in
+  // tests/ui/instagram-accounts-page.test.tsx. The stale assertion
+  // that lived here (placeholder ByocGate + `instagram-connect-link`)
+  // was deleted with the placeholder page when the real Instagram
+  // list shell shipped; it cannot render under this legacy static
+  // helper (the shell suspends on useSearchParams).
 
   it('renders the gated Threads connect action', () => {
     const { html, hasText } = render(<ThreadsAccountsPage />);

@@ -1,5 +1,9 @@
 import { type NextRequest, NextResponse } from 'next/server';
-import { buildTenantUrl, getSessionSecret } from '@fbuploadpro/contracts';
+import {
+  buildTenantUrl,
+  getPlatformAccountsPath,
+  getSessionSecret,
+} from '@fbuploadpro/contracts';
 // Side effect: registers the X connect config (spec 127).
 import '@/lib/connect/platforms/x';
 // Side effect: registers the Instagram + Threads connect configs (spec 124).
@@ -226,8 +230,13 @@ export async function handleConnectCallback(
   }
   const platform = platformParam;
 
+  // No-state fallbacks: the platform is known from the URL but the
+  // tenant subdomain is not (it rides in the state), so no tenant URL
+  // can be built. The fallback is therefore the platform's accounts
+  // path on the request host — per-platform, not Facebook's — with the
+  // same error param as before.
   if (!stateParam) {
-    const fallback = new URL('/accounts', request.url);
+    const fallback = new URL(getPlatformAccountsPath(platform), request.url);
     fallback.searchParams.set('error', NOTICE_CONNECT_FAILED);
     return NextResponse.redirect(fallback);
   }
@@ -237,7 +246,7 @@ export async function handleConnectCallback(
     statePayload = await verifyConnectState(stateParam, sessionSecret);
   } catch (err) {
     console.error('[connect/callback] State verification failed:', err);
-    const fallback = new URL('/accounts', request.url);
+    const fallback = new URL(getPlatformAccountsPath(platform), request.url);
     fallback.searchParams.set('error', NOTICE_CONNECT_FAILED);
     return NextResponse.redirect(fallback);
   }
