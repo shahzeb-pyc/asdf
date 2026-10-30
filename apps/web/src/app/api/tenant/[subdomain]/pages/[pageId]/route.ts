@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import {
   DisconnectPageResponseSchema,
+  evaluatePageHealth,
   FacebookPageViewSchema,
   getSessionSecret,
   verifySessionToken,
@@ -53,6 +54,7 @@ interface PageDetailRow {
   unmatched_post_types?: unknown;
   created_at: string;
   updated_at: string;
+  rate_limited_at?: string | null;
 }
 
 function formatPageRow(row: PageDetailRow) {
@@ -96,6 +98,66 @@ function formatPageRow(row: PageDetailRow) {
     updatedAt: new Date(row.updated_at as string).toISOString(),
   });
 }
+
+/**
+ * Status family 5A: the dedicated detail path must agree with the
+ * Pages list (mapPageRows applies evaluatePageHealth there). A
+ * rate-limited page past the 3-day cooldown reads as Active here
+ * too, so the detail header/banner and the list can never disagree
+ * about the same page. Other statuses pass through unchanged
+ * (evaluatePageHealth returns paused/checkpoint/expired as-is).
+ */
+function applyRateLimitCooldown<
+  T extends { status: FacebookPageStatus; updatedAt: string | Date },
+>(page: T, rateLimitedAt: string | null | undefined): T {
+  if (page.status !== 'fb_rate_limited') return page;
+  return {
+    ...page,
+    status: evaluatePageHealth({
+      status: page.status,
+      updatedAt: page.updatedAt,
+      rateLimitedAt: rateLimitedAt ?? null,
+    }),
+  };
+}
+
+/**
+ * Status family 1A/4A server gate for the status PATCH. Menu hiding
+ * alone is never trusted: the API must reject a status change the
+ * UI would never offer. Allowed transitions, by CURRENT wire status
+ * (after the 5A cooldown flip, so a page past cooldown is 'active'):
+ * - active / paused: active or paused (Pause / Resume)
+ * - page_checkpoint: active ONLY — this is the Mark Verified &
+ *   Reactivate banner path, which PATCHes 'active' and clears the
+ *   checkpoint marker. Pausing a checkpoint page is blocked: it
+ *   would overwrite the checkpoint marker with the paused marker.
+ * - invalid_token, fb_rate_limited (pre-cooldown), disconnected,
+ *   unknown: nothing. Expired pages recover by reconnecting, not by
+ *   a status PATCH; rate-limited pages wait for the cooldown; a
+ *   disconnected page is re-added, not resumed.
+ * Timezone-only updates bypass this gate (no status in the body).
+ */
+function statusTransitionAllowed(
+  current: FacebookPageStatus,
+  requested: 'active' | 'paused'
+): boolean {
+  if (current === 'active' || current === 'paused') return true;
+  if (current === 'page_checkpoint') return requested === 'active';
+  return false;
+}
+
+const STATUS_TOGGLE_BLOCKED_MESSAGES: Partial<
+  Record<FacebookPageStatus, string>
+> = {
+  invalid_token:
+    "Cannot change automation while this Page's connection has expired. Reconnect the parent Facebook account first.",
+  page_checkpoint:
+    'Cannot pause a Page waiting on a Facebook identity check. Use Mark Verified & Reactivate Page first.',
+  fb_rate_limited:
+    'Cannot resume a rate-limited Page yet. It auto-resumes after 3 days.',
+  disconnected:
+    'Cannot change automation on a disconnected Page. Add it again first.',
+};
 
 async function authenticateTenantRequest(
   request: NextRequest,
@@ -141,6 +203,7 @@ async function fetchActivePageById(
         ${DESTINATION_STATUS_TO_WIRE_SQL} AS status,
         d.metadata->'tasks' AS tasks,
         d.metadata->'unmatched_post_types' AS unmatched_post_types,
+        d.metadata->>'rate_limited_at' AS rate_limited_at,
         d.created_at,
         d.updated_at
       FROM destinations d
@@ -153,7 +216,7 @@ async function fetchActivePageById(
     if (!rows || rows.length === 0 || !rows[0]) {
       return null;
     }
-    return formatPageRow(rows[0]);
+    return applyRateLimitCooldown(formatPageRow(rows[0]), rows[0].rate_limited_at);
   }
 
   const supabase = (client && 'from' in client ? client : getSupabaseAdminClient()) as SupabaseClient | null;
@@ -194,32 +257,37 @@ async function fetchActivePageById(
     return null;
   }
 
-  return formatPageRow({
-    id: row.id,
-    facebook_account_id: row.account_id,
-    account_display_name: row.social_accounts?.display_name ?? null,
-    account_avatar_url: row.social_accounts?.avatar_url ?? null,
-    fb_page_id: row.external_destination_id,
-    page_name: row.name,
-    profile_picture_url: row.avatar_url,
-    category: typeof row.metadata?.category === 'string' ? row.metadata.category : null,
-    timezone: row.timezone,
-    starting_followers:
-      typeof row.metadata?.starting_followers === 'number'
-        ? row.metadata.starting_followers
-        : null,
-    current_followers:
-      typeof row.metadata?.current_followers === 'number'
-        ? row.metadata.current_followers
-        : null,
-    status: unifiedDestinationStatusToWire(row.status, row.metadata),
-    tasks: row.metadata?.tasks ?? [],
-    unmatched_post_types: Array.isArray(row.metadata?.unmatched_post_types)
-      ? row.metadata.unmatched_post_types
-      : [],
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-  });
+  return applyRateLimitCooldown(
+    formatPageRow({
+      id: row.id,
+      facebook_account_id: row.account_id,
+      account_display_name: row.social_accounts?.display_name ?? null,
+      account_avatar_url: row.social_accounts?.avatar_url ?? null,
+      fb_page_id: row.external_destination_id,
+      page_name: row.name,
+      profile_picture_url: row.avatar_url,
+      category: typeof row.metadata?.category === 'string' ? row.metadata.category : null,
+      timezone: row.timezone,
+      starting_followers:
+        typeof row.metadata?.starting_followers === 'number'
+          ? row.metadata.starting_followers
+          : null,
+      current_followers:
+        typeof row.metadata?.current_followers === 'number'
+          ? row.metadata.current_followers
+          : null,
+      status: unifiedDestinationStatusToWire(row.status, row.metadata),
+      tasks: row.metadata?.tasks ?? [],
+      unmatched_post_types: Array.isArray(row.metadata?.unmatched_post_types)
+        ? row.metadata.unmatched_post_types
+        : [],
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    }),
+    typeof row.metadata?.rate_limited_at === 'string'
+      ? row.metadata.rate_limited_at
+      : null
+  );
 }
 
 interface QueueStatusCounts {
@@ -399,6 +467,61 @@ export async function handleUpdatePage(
     : null;
 
   if (dbClient && 'query' in dbClient && typeof dbClient.query === 'function') {
+    // Status-family gate (SQL path): read the CURRENT row before
+    // writing. A missing row skips the gate and falls through to
+    // the existing 404 path below; a present row that may not
+    // change status is rejected with 409, never silently no-op'd.
+    if (parsed.data.status) {
+      const currentRows = (await dbClient.query(
+        `SELECT status, metadata, updated_at
+         FROM destinations
+         WHERE id = $1 AND workspace_id = $2 AND platform = 'facebook'`,
+        [pageId, workspaceId]
+      )) as Array<{
+        status: string;
+        metadata: Record<string, unknown> | string | null;
+        updated_at: string;
+      }>;
+      const currentRow = currentRows?.[0];
+      if (currentRow) {
+        const currentMetadata =
+          typeof currentRow.metadata === 'string'
+            ? (() => {
+                try {
+                  return JSON.parse(currentRow.metadata) as Record<string, unknown>;
+                } catch {
+                  return null;
+                }
+              })()
+            : currentRow.metadata;
+        const currentWire = unifiedDestinationStatusToWire(
+          currentRow.status,
+          currentMetadata
+        );
+        const effectiveCurrent =
+          currentWire === 'fb_rate_limited'
+            ? evaluatePageHealth({
+                status: currentWire,
+                updatedAt: currentRow.updated_at,
+                rateLimitedAt:
+                  typeof currentMetadata?.rate_limited_at === 'string'
+                    ? currentMetadata.rate_limited_at
+                    : null,
+              })
+            : currentWire;
+        if (!statusTransitionAllowed(effectiveCurrent, parsed.data.status)) {
+          return NextResponse.json(
+            {
+              error: 'PAGE_STATUS_NOT_ALLOWED',
+              message:
+                STATUS_TOGGLE_BLOCKED_MESSAGES[effectiveCurrent] ??
+                'This Page cannot change automation right now.',
+            },
+            { status: 409 }
+          );
+        }
+      }
+    }
     if (parsed.data.status || parsed.data.timezone) {
       await dbClient.query(
         `UPDATE destinations d
@@ -434,7 +557,7 @@ export async function handleUpdatePage(
       // the update and then return the unchanged page as success.
       const { data: current, error: currentError } = await supabase
         .from('destinations')
-        .select('status, metadata')
+        .select('status, metadata, updated_at')
         .eq('id', pageId)
         .eq('workspace_id', workspaceId)
         .eq('platform', 'facebook')
@@ -449,6 +572,42 @@ export async function handleUpdatePage(
           { error: 'Failed to update page' },
           { status: 500 }
         );
+      }
+
+      // Status-family gate (Supabase path), same rule as SQL: a
+      // present row that may not change status is rejected with
+      // 409. A missing row (current null) skips the gate and falls
+      // through to the existing 404 path below. Checkpoint ->
+      // active is allowed here — that is the Mark Verified banner.
+      if (parsed.data.status && current) {
+        const gateMetadata =
+          (current.metadata as Record<string, unknown> | null) ?? {};
+        const gateWire = unifiedDestinationStatusToWire(
+          current.status,
+          gateMetadata
+        );
+        const gateEffective =
+          gateWire === 'fb_rate_limited'
+            ? evaluatePageHealth({
+                status: gateWire,
+                updatedAt: (current as { updated_at?: string }).updated_at ?? null,
+                rateLimitedAt:
+                  typeof gateMetadata.rate_limited_at === 'string'
+                    ? gateMetadata.rate_limited_at
+                    : null,
+              })
+            : gateWire;
+        if (!statusTransitionAllowed(gateEffective, parsed.data.status)) {
+          return NextResponse.json(
+            {
+              error: 'PAGE_STATUS_NOT_ALLOWED',
+              message:
+                STATUS_TOGGLE_BLOCKED_MESSAGES[gateEffective] ??
+                'This Page cannot change automation right now.',
+            },
+            { status: 409 }
+          );
+        }
       }
 
       const currentMetadata =

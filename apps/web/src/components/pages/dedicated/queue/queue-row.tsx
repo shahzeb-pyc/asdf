@@ -57,6 +57,12 @@ export interface QueueRowProps {
   /** Queued row whose format no active posting time covers. */
   unmatched: boolean;
   pageTimezone: string;
+  /**
+   * Status-family gate: when non-null, Publish Now and Retry are
+   * disabled with this plain reason (title + aria-label) — the
+   * server gate enforces the same rule. Null = page is active.
+   */
+  publishBlockedReason?: string | null;
   /** True while any mutation for this row is in flight. */
   busy: boolean;
   canMoveUp: boolean;
@@ -75,6 +81,7 @@ export function QueueRow({
   estimate,
   unmatched,
   pageTimezone,
+  publishBlockedReason = null,
   busy,
   canMoveUp,
   canMoveDown,
@@ -220,7 +227,9 @@ export function QueueRow({
             variant="default"
             size="sm"
             data-testid="queue-row-publish-now"
-            disabled={busy}
+            disabled={busy || publishBlockedReason !== null}
+            title={publishBlockedReason ?? undefined}
+            aria-label={publishBlockedReason ?? undefined}
             onClick={onPublishNow}
           >
             Publish now
@@ -232,7 +241,9 @@ export function QueueRow({
             variant="default"
             size="sm"
             data-testid="queue-row-retry"
-            disabled={busy}
+            disabled={busy || publishBlockedReason !== null}
+            title={publishBlockedReason ?? undefined}
+            aria-label={publishBlockedReason ?? undefined}
             onClick={onRetry}
           >
             Retry

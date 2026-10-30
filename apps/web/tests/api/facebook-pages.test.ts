@@ -1093,6 +1093,18 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
             return Promise.resolve([]);
           }
           if (sql.includes('FROM destinations')) {
+            // The status gate reads the RAW destinations row (unified
+            // vocabulary: 'active' + no marker), while the final
+            // detail fetch returns the wire-formatted mockPageRow.
+            if (sql.includes('SELECT status, metadata, updated_at')) {
+              return Promise.resolve([
+                {
+                  status: 'active',
+                  metadata: {},
+                  updated_at: new Date('2026-10-01T12:00:00Z').toISOString(),
+                },
+              ]);
+            }
             return Promise.resolve([mockPageRow]);
           }
           return Promise.resolve([]);

@@ -50,6 +50,8 @@ import { Skeleton } from '@/components/shared/ui/skeleton';
 import { ListPagination } from '@/components/shared/ui/list-pagination';
 import { toast } from '@/components/shared/ui/toast';
 import type { PageSlotSummary } from '../tab-dashboard';
+import type { FacebookPageStatus } from '../../page-card';
+import { getPageStatusLabel } from '../../page-card';
 import { QueueRow } from './queue-row';
 import { QueueEditDialog } from './queue-edit-dialog';
 import { QueueDeleteConfirm } from './queue-delete-confirm';
@@ -119,6 +121,13 @@ export interface QueuePanelProps {
   subdomain: string;
   pageId: string;
   pageTimezone: string;
+  /**
+   * Status-family gate: the dedicated page's wire status. When
+   * present and not 'active', Publish Now and Retry are disabled
+   * with a plain reason. Optional only so existing renders without
+   * a page stay publishable; the shell always passes it.
+   */
+  pageStatus?: FacebookPageStatus | undefined;
   /** Active + paused posting times, from the shell's slots cache. */
   slots: PageSlotSummary[];
   onCreatePost: () => void;
@@ -128,6 +137,7 @@ export function QueuePanel({
   subdomain,
   pageId,
   pageTimezone,
+  pageStatus,
   slots,
   onCreatePost,
 }: Readonly<QueuePanelProps>) {
@@ -187,6 +197,14 @@ export function QueuePanel({
   });
 
   const items = displayQuery.data?.items ?? [];
+  // Status family 2A/3A: only an active page may Publish Now or
+  // Retry. Any other status disables both with a plain reason
+  // (the note below + each button's title/aria-label); the server
+  // gate enforces the same rule.
+  const publishBlockedReason =
+    pageStatus !== undefined && pageStatus !== 'active'
+      ? `Publish now and Retry unavailable — page is ${getPageStatusLabel(pageStatus)}`
+      : null;
   const total = displayQuery.data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_LIMIT));
   const counts = displayQuery.data;
@@ -466,6 +484,15 @@ export function QueuePanel({
         </p>
       </div>
 
+      {publishBlockedReason !== null ? (
+        <p
+          data-testid="queue-publish-blocked-note"
+          className="m-0 text-body text-ink-sub"
+        >
+          {publishBlockedReason}.
+        </p>
+      ) : null}
+
       <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter queue by status">
         {FILTERS.map((chip) => (
           <Button
@@ -535,6 +562,7 @@ export function QueuePanel({
                   estimate={isQueued ? (estimates.get(item.id) ?? null) : null}
                   unmatched={unmatched}
                   pageTimezone={pageTimezone}
+                  publishBlockedReason={publishBlockedReason}
                   busy={busy?.itemId === item.id}
                   canMoveUp={
                     isQueued && !orderTruncated && orderIndex > 0

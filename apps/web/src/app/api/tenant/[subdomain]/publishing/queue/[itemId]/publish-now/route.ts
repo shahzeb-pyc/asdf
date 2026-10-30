@@ -8,6 +8,8 @@ import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
 import type { DatabaseClient } from '@fbuploadpro/contracts';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { enforceIpRateLimit } from '@/lib/request-body';
+import { evaluatePageHealth } from '@fbuploadpro/contracts';
+import { unifiedDestinationStatusToWire } from '@/lib/server/facebook-wire';
 import { refreshDestinationUnmatchedFlag } from '@/lib/server/unmatched-flag';
 import {
   lookupIdempotencyResult,
@@ -15,6 +17,104 @@ import {
   storeIdempotencyResult,
   type IdempotencyScope,
 } from '@/lib/publishing/idempotency';
+
+/**
+ * Status family 2A: the same PAGE_NOT_PUBLISHABLE gate the enqueue
+ * route applies, with the same plain-language messages. Only an
+ * active page may Publish Now from Queue/Dashboard; every other
+ * wire status is a 409, never a fake success toast for a post that
+ * stays queued. A rate-limited page past the 3-day cooldown is
+ * treated as active, matching the detail/list cooldown flip.
+ * This gate is for Queue/Dashboard Publish Now ONLY — the separate
+ * direct Publish Now page/section is untouched.
+ */
+const PAGE_NOT_PUBLISHABLE_MESSAGES: Partial<Record<string, string>> = {
+  invalid_token:
+    'This Page’s connection has expired. Reconnect the Page, then try again.',
+  page_checkpoint:
+    'This Page is waiting on a Facebook identity check. Resolve it in Facebook, then try again.',
+  fb_rate_limited:
+    'This Page is rate-limited by Facebook right now. Wait for the limit to lift, then try again.',
+  disconnected: 'This Page is disconnected. Add it again, then try again.',
+  paused: 'This Page is paused. Resume posting, then try again.',
+};
+
+function parseDestinationMetadata(
+  raw: unknown
+): Record<string, unknown> | null {
+  if (raw && typeof raw === 'object') return raw as Record<string, unknown>;
+  if (typeof raw === 'string') {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      return parsed && typeof parsed === 'object'
+        ? (parsed as Record<string, unknown>)
+        : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+async function fetchPublishNowGate(
+  dbClient: DatabaseClient | SupabaseClient | undefined,
+  workspaceId: string,
+  destinationId: string
+): Promise<NextResponse | null> {
+  let rawStatus: string | null = null;
+  let metadata: Record<string, unknown> | null = null;
+  let updatedAt: string | null = null;
+  if (dbClient && 'query' in dbClient && typeof dbClient.query === 'function') {
+    const rows = (await dbClient.query(
+      `SELECT status, metadata, updated_at FROM destinations WHERE id = $1 AND workspace_id = $2`,
+      [destinationId, workspaceId]
+    )) as Array<{
+      status: string;
+      metadata: unknown;
+      updated_at: string;
+    }>;
+    const row = rows?.[0];
+    if (!row) return null;
+    rawStatus = row.status;
+    metadata = parseDestinationMetadata(row.metadata);
+    updatedAt = row.updated_at ?? null;
+  } else {
+    const supabase = getRouteSupabase(dbClient);
+    if (!supabase) return null;
+    const { data, error } = await supabase
+      .from('destinations')
+      .select('status, metadata, updated_at')
+      .eq('id', destinationId)
+      .eq('workspace_id', workspaceId)
+      .maybeSingle();
+    if (error || !data) return null;
+    rawStatus = (data as { status: string }).status;
+    metadata = parseDestinationMetadata((data as { metadata: unknown }).metadata);
+    updatedAt = (data as { updated_at?: string }).updated_at ?? null;
+  }
+  const wire = unifiedDestinationStatusToWire(rawStatus, metadata);
+  const effective =
+    wire === 'fb_rate_limited'
+      ? evaluatePageHealth({
+          status: wire,
+          updatedAt,
+          rateLimitedAt:
+            typeof metadata?.rate_limited_at === 'string'
+              ? metadata.rate_limited_at
+              : null,
+        })
+      : wire;
+  if (effective === 'active') return null;
+  return NextResponse.json(
+    {
+      error: 'PAGE_NOT_PUBLISHABLE',
+      message:
+        PAGE_NOT_PUBLISHABLE_MESSAGES[effective] ??
+        'This Page cannot publish right now. Fix the Page connection, then try again.',
+    },
+    { status: 409 }
+  );
+}
 
 /**
  * Publish-now for the Facebook Page section, on the unified
@@ -81,7 +181,7 @@ export async function handlePublishNow(
   if (isLegacyClient(dbClient)) {
     // Check existing item
     const existingRows = (await dbClient.query(
-      `SELECT id, status FROM queue_items WHERE id = $1 AND workspace_id = $2`,
+      `SELECT id, status, destination_id FROM queue_items WHERE id = $1 AND workspace_id = $2`,
       [itemId, workspaceId]
     )) as Record<string, unknown>[];
 
@@ -95,6 +195,18 @@ export async function handlePublishNow(
         { error: 'ALREADY_PUBLISHED', message: 'Item has already been published' },
         { status: 400 }
       );
+    }
+
+    // Status gate, after the idempotency replay above (a replayed
+    // acknowledgement is not a new dispatch) and after the
+    // published check: a non-active destination is a 409 here.
+    if (typeof existing.destination_id === 'string') {
+      const gate = await fetchPublishNowGate(
+        dbClient,
+        workspaceId,
+        existing.destination_id
+      );
+      if (gate) return gate;
     }
 
     // Update scheduled_time to now() and status to 'queued'
@@ -158,6 +270,15 @@ export async function handlePublishNow(
       { error: 'ALREADY_PUBLISHED', message: 'Item has already been published' },
       { status: 400 }
     );
+  }
+
+  if (existing.destination_id) {
+    const gate = await fetchPublishNowGate(
+      dbClient,
+      workspaceId,
+      existing.destination_id
+    );
+    if (gate) return gate;
   }
 
   const { error: updateErr } = await supabase

@@ -20,6 +20,7 @@ import { EmptyState } from '@/components/shared/ui/empty-state';
 import { StatusDot } from '@/components/shared/ui/status-dot';
 import { Tag } from '@/components/shared/ui/tag';
 import type { FacebookPageItem } from '../page-card';
+import { getPageStatusLabel } from '../page-card';
 import type { PostFormat } from '@fbuploadpro/contracts';
 import { formatSlotDisplay } from './posting-times/posting-time-utils';
 
@@ -96,6 +97,15 @@ export function PageTabDashboard({
   };
 
   const isPaused = page.status === 'paused';
+  const isDisconnected = page.status === 'disconnected';
+  // Status family 2A/4A: Publish Now is only publishable on an
+  // active page. On any other status the button is disabled with a
+  // plain status reason (title + aria-label), never hidden and
+  // never a fake success — the server gate enforces the same rule.
+  const isPublishable = page.status === 'active';
+  const publishBlockedReason = isPublishable
+    ? null
+    : `Publish now unavailable — page is ${getPageStatusLabel(page.status)}`;
   const delta = page.followersGained ?? 0;
 
   return (
@@ -155,8 +165,12 @@ export function PageTabDashboard({
           <span className={metricLabelClass}>Auto-publishing</span>
           <div className="mt-1">
             <StatusDot
-              status={isPaused ? 'queued' : 'operational'}
-              label={isPaused ? 'Paused' : 'Running'}
+              status={
+                isDisconnected ? 'critical' : isPaused ? 'queued' : 'operational'
+              }
+              label={
+                isDisconnected ? 'Disconnected' : isPaused ? 'Paused' : 'Running'
+              }
               className="text-lg font-semibold"
             />
           </div>
@@ -217,7 +231,9 @@ export function PageTabDashboard({
                     variant="outline"
                     size="sm"
                     data-testid={`publish-now-btn-${item.id}`}
-                    disabled={publishingId === item.id}
+                    disabled={publishingId === item.id || !isPublishable}
+                    title={publishBlockedReason ?? undefined}
+                    aria-label={publishBlockedReason ?? undefined}
                     onClick={() => void handlePublishClick(item.id)}
                     className="shrink-0"
                   >

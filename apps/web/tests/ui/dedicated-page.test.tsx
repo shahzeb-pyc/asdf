@@ -627,6 +627,100 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
         ).toBeNull()
       );
     });
+
+    it('hides Pause/Resume from the menu on checkpoint, expired, rate-limited, and disconnected pages', async () => {
+      const user = userEvent.setup();
+      for (const status of [
+        'page_checkpoint',
+        'invalid_token',
+        'fb_rate_limited',
+        'disconnected',
+      ] as const) {
+        const { container, unmount } = rtlRender(
+          <DedicatedPageHeader
+            page={{ ...samplePage, status }}
+            subdomain="cyberdyne"
+            onStatusToggle={vi.fn()}
+            onDisconnectRequest={vi.fn()}
+          />
+        );
+        await user.click(
+          container.querySelector('[data-testid="header-settings-dropdown-btn"]') as Element
+        );
+        // Disconnect stays in the menu; Pause/Resume must not.
+        expect(
+          document.querySelector('[data-testid="header-menu-disconnect-btn"]')
+        ).not.toBeNull();
+        expect(
+          document.querySelector('[data-testid="header-menu-pause-resume-btn"]')
+        ).toBeNull();
+        unmount();
+      }
+    });
+
+    it('renders Disconnected (not Active) for a disconnected page', () => {
+      const { container } = rtlRender(
+        <DedicatedPageHeader
+          page={{ ...samplePage, status: 'disconnected' }}
+          subdomain="cyberdyne"
+          onStatusToggle={vi.fn()}
+          onDisconnectRequest={vi.fn()}
+        />
+      );
+      expect(
+        container.querySelector('[data-testid="dedicated-page-status"]')?.textContent
+      ).toContain('Disconnected');
+    });
+
+    it('renders Needs Attention (not Active) for an unknown status', () => {
+      const { container } = rtlRender(
+        <DedicatedPageHeader
+          page={{ ...samplePage, status: 'mystery_status' as never }}
+          subdomain="cyberdyne"
+          onStatusToggle={vi.fn()}
+          onDisconnectRequest={vi.fn()}
+        />
+      );
+      expect(
+        container.querySelector('[data-testid="dedicated-page-status"]')?.textContent
+      ).toContain('Needs Attention');
+    });
+
+    it('keeps the disconnect dialogue open when disconnect fails (R22)', async () => {
+      const user = userEvent.setup();
+      const onDisconnectRequest = vi.fn().mockRejectedValue(new Error('disconnect boom'));
+
+      const { container } = rtlRender(
+        <DedicatedPageHeader
+          page={samplePage}
+          subdomain="cyberdyne"
+          onStatusToggle={vi.fn()}
+          onDisconnectRequest={onDisconnectRequest}
+        />
+      );
+
+      await user.click(
+        container.querySelector('[data-testid="header-settings-dropdown-btn"]') as Element
+      );
+      await user.click(
+        document.querySelector('[data-testid="header-menu-disconnect-btn"]') as Element
+      );
+      await user.click(
+        document.querySelector('[data-testid="header-confirm-disconnect-btn"]') as Element
+      );
+      expect(onDisconnectRequest).toHaveBeenCalledTimes(1);
+      // Failure: the dialogue stays open for a retry (old code
+      // closed it, leaving only a toast), and the button recovers
+      // from its Disconnecting state.
+      await waitFor(() =>
+        expect(
+          document.querySelector('[data-testid="header-confirm-disconnect-btn"]')?.textContent
+        ).toContain('Yes, Disconnect Page')
+      );
+      expect(
+        document.querySelector('[data-testid="header-disconnect-modal"]')
+      ).not.toBeNull();
+    });
   });
 
   /* ====================================================================
@@ -694,6 +788,27 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
       await publishBtn?.props.onClick();
 
       expect(onPublishNow).toHaveBeenCalledWith('q-item-1');
+    });
+
+    it('shows Disconnected (not Running) and disables Publish Now on a disconnected page', () => {
+      const { container } = rtlRender(
+        <PageTabDashboard
+          page={{ ...samplePage, status: 'disconnected' }}
+          queueItems={sampleQueueItems}
+          slots={sampleSlots}
+          onPublishNow={vi.fn()}
+          onSwitchTab={vi.fn()}
+        />
+      );
+
+      expect(
+        container.querySelector('[data-testid="metric-automation-status"]')?.textContent
+      ).toContain('Disconnected');
+      const publishBtn = container.querySelector(
+        '[data-testid="publish-now-btn-q-item-1"]'
+      ) as HTMLButtonElement;
+      expect(publishBtn.hasAttribute('disabled')).toBe(true);
+      expect(publishBtn.getAttribute('title')).toContain('Disconnected');
     });
 
     it('allows navigating to full queue tab from view all link', () => {

@@ -570,10 +570,24 @@ describe('Publishing Queue Actions Route Handlers (T128, T129)', () => {
           Promise.resolve(
             table === 'workspaces'
               ? { data: { id: 'ws_123' }, error: null }
-              : {
-                  data: { id: itemId, status: 'queued', destination_id: pageId },
-                  error: null,
-                }
+              : table === 'destinations'
+                ? {
+                    // The Publish Now status gate reads the RAW
+                    // destinations row (unified 'active'), not the
+                    // queue item row the old fake returned for every
+                    // table (status 'queued' would map to
+                    // 'disconnected' and wrongly 409).
+                    data: {
+                      status: 'active',
+                      metadata: {},
+                      updated_at: new Date().toISOString(),
+                    },
+                    error: null,
+                  }
+                : {
+                    data: { id: itemId, status: 'queued', destination_id: pageId },
+                    error: null,
+                  }
           );
         b.then = (onOk: (v: unknown) => unknown, onErr?: (e: unknown) => unknown) =>
           Promise.resolve({ error: null }).then(onOk, onErr);

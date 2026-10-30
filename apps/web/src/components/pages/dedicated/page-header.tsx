@@ -133,10 +133,20 @@ function resolvePageStatus(status: FacebookPageItem['status']): PageStatusDetail
     };
   }
 
+  if (status === 'disconnected') {
+    return {
+      isPaused: false,
+      statusLabel: 'Disconnected',
+      ringClass: 'ring-signal-critical',
+    };
+  }
+
+  // Unknown statuses must never read as healthy: an unexpected wire
+  // value is a needs-attention state, not 'Active'.
   return {
     isPaused: false,
-    statusLabel: 'Active',
-    ringClass: 'ring-line',
+    statusLabel: 'Needs Attention',
+    ringClass: 'ring-signal-critical',
   };
 }
 
@@ -242,15 +252,31 @@ export function DedicatedPageHeader({
   // The menu item only opens the dialogue; only the confirm click calls
   // onDisconnectRequest, and the shell owns the disconnect semantics
   // (page → disconnected, queued items cancelled, redirect on success).
+  // R22: the dialogue closes ONLY on success. On failure the shell
+  // already toasts the error, and the dialogue stays open so the user
+  // can retry without reopening menu + dialogue. The shell's
+  // disconnect handler now propagates its error (instead of swallowing
+  // it), so this catch is what distinguishes failure from success.
   const handleConfirmDisconnect = async () => {
     setIsDisconnecting(true);
     try {
       await onDisconnectRequest();
       setIsDisconnectDialogOpen(false);
+    } catch {
+      // Error toast is the shell's; keep the dialogue open for retry.
     } finally {
       setIsDisconnecting(false);
     }
   };
+
+  // Status family 1A: Pause/Resume live ONLY in the three-dots menu
+  // for active (Pause) and paused (Resume) pages. Checkpoint,
+  // expired-token, rate-limited, disconnected, and unknown pages
+  // show no Pause/Resume item at all — their recovery paths are the
+  // banners (Mark Verified, Reconnect, wait/auto-resume), not a menu
+  // Resume that would silently clear those states. The server PATCH
+  // gate enforces the same rule; this is the UI half.
+  const showStatusAction = page.status === 'active' || page.status === 'paused';
 
   return (
     <div data-testid="dedicated-page-header" className="mb-6">
@@ -499,31 +525,35 @@ export function DedicatedPageHeader({
               </Button>
             </MenuTrigger>
             <MenuContent align="end">
-              <MenuItem
-                data-testid="header-menu-pause-resume-btn"
-                disabled={isUpdatingStatus}
-                onSelect={(event) => {
-                  // Prevent Radix closing the menu on select so the
-                  // "Updating..." state stays visible until the
-                  // mutation settles (handleStatusAction closes it).
-                  event.preventDefault();
-                  void handleStatusAction();
-                }}
-              >
-                {statusInfo.isPaused ? (
-                  <PlayIcon aria-hidden />
-                ) : (
-                  <PauseIcon aria-hidden />
-                )}
-                <span>
-                  {isUpdatingStatus
-                    ? 'Updating...'
-                    : statusInfo.isPaused
-                      ? 'Resume posting'
-                      : 'Pause posting'}
-                </span>
-              </MenuItem>
-              <MenuSeparator />
+              {showStatusAction && (
+                <>
+                  <MenuItem
+                    data-testid="header-menu-pause-resume-btn"
+                    disabled={isUpdatingStatus}
+                    onSelect={(event) => {
+                      // Prevent Radix closing the menu on select so the
+                      // "Updating..." state stays visible until the
+                      // mutation settles (handleStatusAction closes it).
+                      event.preventDefault();
+                      void handleStatusAction();
+                    }}
+                  >
+                    {statusInfo.isPaused ? (
+                      <PlayIcon aria-hidden />
+                    ) : (
+                      <PauseIcon aria-hidden />
+                    )}
+                    <span>
+                      {isUpdatingStatus
+                        ? 'Updating...'
+                        : statusInfo.isPaused
+                          ? 'Resume posting'
+                          : 'Pause posting'}
+                    </span>
+                  </MenuItem>
+                  <MenuSeparator />
+                </>
+              )}
               <MenuItem
                 variant="destructive"
                 data-testid="header-menu-disconnect-btn"
