@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import { ArrowLeftIcon, CheckIcon, UploadIcon, XIcon } from 'lucide-react';
 import { apiGet, apiPost, buildTenantApiPath, getErrorMessage } from '@/lib/api';
 import {
@@ -42,7 +43,7 @@ const PLATFORM_LABELS: Record<keyof PlatformCounts, string> = {
 };
 
 type BankMethod = 'easypaisa' | 'nayapay' | 'ubl';
-type Step = 'plans' | 'checkout' | 'confirmation';
+type Step = 'plans' | 'build' | 'checkout' | 'confirmation' | 'payments';
 type PaymentType = 'bank' | 'crypto';
 
 interface ConfirmationData {
@@ -76,10 +77,14 @@ function countsSummary(counts: PlatformCounts): string {
 
 function BillingSkeleton() {
   return (
-    <div aria-busy="true" aria-label="Loading billing" className="mx-auto flex w-full flex-col gap-6 px-4 py-6 sm:px-6">
+    <div aria-busy="true" aria-label="Loading billing" className="mx-auto flex w-full flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
       <div className="flex flex-col gap-2">
         <Skeleton className="h-8 w-32" />
         <Skeleton className="h-4 w-72 max-w-full" />
+      </div>
+      <div className="flex gap-2">
+        <Skeleton className="h-8 w-20" />
+        <Skeleton className="h-8 w-24" />
       </div>
       <Card>
         <CardContent className="flex flex-col gap-3 pt-6">
@@ -87,7 +92,7 @@ function BillingSkeleton() {
           <Skeleton className="h-4 w-full" />
         </CardContent>
       </Card>
-      <div className="grid items-stretch gap-6 lg:grid-cols-[340px_minmax(0,1fr)]">
+      <div className="grid items-stretch gap-8 lg:grid-cols-2">
         <Card>
           <CardContent className="flex flex-col gap-4 pt-6">
             <Skeleton className="h-6 w-32" />
@@ -119,6 +124,7 @@ function BillingSkeleton() {
 function StepIndicator({ current }: Readonly<{ current: Step }>) {
   const steps: { id: Step; label: string }[] = [
     { id: 'plans', label: 'Plans' },
+    { id: 'build', label: 'Build plan' },
     { id: 'checkout', label: 'Checkout' },
     { id: 'confirmation', label: 'Confirmation' },
   ];
@@ -149,6 +155,39 @@ function StepIndicator({ current }: Readonly<{ current: Step }>) {
           </span>
         );
       })}
+    </nav>
+  );
+}
+
+/**
+ * Top-level Billing navigation (Plans | Payments). Used only on the two
+ * top-level pages; the flow pages (Build plan, Checkout, Confirmation)
+ * use StepIndicator instead. Navigation goes through the ?view= URL
+ * param so the sidebar group and the browser back button stay in sync.
+ */
+function PageNav({
+  current,
+  onNavigate,
+}: Readonly<{
+  current: 'plans' | 'payments';
+  onNavigate: (view: 'plans' | 'payments') => void;
+}>) {
+  return (
+    <nav aria-label="Billing pages" className="flex gap-2 border-b border-line">
+      {(['plans', 'payments'] as const).map((view) => (
+        <button
+          key={view}
+          type="button"
+          aria-current={current === view ? 'page' : undefined}
+          onClick={() => onNavigate(view)}
+          className={cn(
+            'border-b-2 px-3 py-2 text-body font-medium',
+            current === view ? 'border-ink text-ink' : 'border-transparent text-ink-sub hover:text-ink'
+          )}
+        >
+          {view === 'plans' ? 'Plans' : 'Payments'}
+        </button>
+      ))}
     </nav>
   );
 }
@@ -184,12 +223,32 @@ function MethodCard({
   );
 }
 
-export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
+export function BillingView({
+  subdomain,
+  initialStep,
+}: Readonly<{ subdomain: string; initialStep: Step }>) {
   const [status, setStatus] = React.useState<BillingStatusResponse | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [reloading, setReloading] = React.useState(false);
   const [counts, setCounts] = React.useState<PlatformCounts | null>(null);
-  const [step, setStep] = React.useState<Step>('plans');
+  const [step, setStep] = React.useState<Step>(initialStep);
+  const router = useRouter();
+  const pathname = usePathname();
+
+  /**
+   * Sidebar leaves and the browser back button navigate by ?view=, which
+   * re-renders this component with a new initialStep. Only follow the
+   * prop when it actually changes — internal flow transitions (build →
+   * checkout → confirmation) update the URL themselves via navigateTo
+   * and must not be reset by this effect.
+   */
+  const prevInitialStepRef = React.useRef<Step>(initialStep);
+  React.useEffect(() => {
+    if (prevInitialStepRef.current !== initialStep) {
+      prevInitialStepRef.current = initialStep;
+      setStep(initialStep);
+    }
+  }, [initialStep]);
   const [paymentType, setPaymentType] = React.useState<PaymentType>('bank');
   const [bankMethod, setBankMethod] = React.useState<BankMethod>('easypaisa');
   const [screenshot, setScreenshot] = React.useState<File | null>(null);
@@ -254,27 +313,35 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
     setCounts(next);
   }
 
-  function scrollToId(id: string) {
-    window.setTimeout(() => {
-      document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 50);
+  /**
+   * Every Billing page change goes through the ?view= URL param, so the
+   * sidebar group highlights the right sub-leaf and the browser back
+   * button moves between pages. Sidebar leaves themselves are plain
+   * Links; this is only for in-page actions (Back buttons, Continue,
+   * View payments).
+   */
+  function navigateTo(target: Step) {
+    setStep(target);
+    if (pathname) router.replace(`${pathname}?view=${target}`, { scroll: false });
+    window.scrollTo({ top: 0 });
+  }
+
+  function goToBuild() {
+    navigateTo('build');
   }
 
   function goToCheckout() {
     setFormError(null);
     setConfirmation(null);
-    setStep('checkout');
-    window.scrollTo({ top: 0 });
+    navigateTo('checkout');
   }
 
   function goToPlans() {
-    setStep('plans');
-    window.scrollTo({ top: 0 });
+    navigateTo('plans');
   }
 
   function goToPayments() {
-    setStep('plans');
-    scrollToId('billing-payments');
+    navigateTo('payments');
   }
 
   async function copyText(value: string, key: string) {
@@ -319,8 +386,7 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
         isUpgrade,
         crypto: null,
       });
-      setStep('confirmation');
-      window.scrollTo({ top: 0 });
+      navigateTo('confirmation');
     } catch (err) {
       setFormError(getErrorMessage(err));
     } finally {
@@ -353,8 +419,7 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
         isUpgrade,
         crypto: result,
       });
-      setStep('confirmation');
-      window.scrollTo({ top: 0 });
+      navigateTo('confirmation');
     } catch (err) {
       setFormError(getErrorMessage(err));
     } finally {
@@ -364,7 +429,7 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
 
   if (loadError && !status) {
     return (
-      <div className="mx-auto flex w-full flex-col gap-6 px-4 py-6 sm:px-6">
+      <div className="mx-auto flex w-full flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
         <h1 className="text-xl leading-heading font-semibold text-ink">Billing</h1>
         <Alert variant="destructive">
           <AlertTitle>Couldn&apos;t load billing</AlertTitle>
@@ -403,7 +468,7 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
         return (
           <div
             key={platform}
-            className="flex items-center gap-3 border-t border-line py-3 first:border-t-0 first:pt-0"
+            className="flex items-center gap-4 border-t border-line py-4 first:border-t-0 first:pt-0"
           >
             <div className="min-w-0 flex-1">
               <p className="truncate text-body font-medium text-ink">{PLATFORM_LABELS[platform]}</p>
@@ -529,8 +594,8 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
             title="No payments yet"
             description="Payments you submit will appear here, with their approval status."
             action={
-              <Button variant="link" onClick={() => scrollToId('billing-paid-card')}>
-                Back to the Paid card
+              <Button variant="link" onClick={goToPlans}>
+                Back to plans
               </Button>
             }
           />
@@ -573,7 +638,7 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
       ? (confirmation.crypto.payAmount ?? confirmation.crypto.estimatedUsdt)
       : null;
     return (
-      <div className="mx-auto flex w-full flex-col gap-6 px-4 py-6 sm:px-6">
+      <div className="mx-auto flex w-full flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
         <div className="flex flex-col gap-1">
           <h1 className="text-xl leading-heading font-semibold text-ink">Billing</h1>
           <p className="text-body text-ink-sub">Your payment is on its way.</p>
@@ -611,8 +676,8 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
               </Alert>
             ) : null}
             <p className="text-body text-ink-sub">
-              Your new payment is in Your payments below. Bank payments wait for an admin to
-              approve them; crypto payments activate on payment.
+              Bank payments wait for an admin to approve them; crypto payments activate on
+              payment. You can view this payment in Payments.
             </p>
             <div className="flex flex-wrap gap-2">
               <Button onClick={goToPlans}>Back to plans</Button>
@@ -622,7 +687,6 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
             </div>
           </CardContent>
         </Card>
-        {paymentsHistory}
       </div>
     );
   }
@@ -630,10 +694,10 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
   /* ---------- Checkout step ---------- */
   if (step === 'checkout') {
     return (
-      <div className="mx-auto flex w-full flex-col gap-6 px-4 py-6 sm:px-6">
+      <div className="mx-auto flex w-full flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
         <div className="flex flex-col gap-1">
-          <Button variant="outline" size="sm" className="self-start" onClick={goToPlans}>
-            <ArrowLeftIcon aria-hidden className="size-4" /> Back to plans
+          <Button variant="outline" size="sm" className="self-start" onClick={goToBuild}>
+            <ArrowLeftIcon aria-hidden className="size-4" /> Back to build plan
           </Button>
           <h1 className="text-xl leading-heading font-semibold text-ink">Checkout</h1>
           <p className="text-body text-ink-sub">
@@ -643,6 +707,12 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
           </p>
         </div>
         <StepIndicator current="checkout" />
+        {entitlement.reason ? (
+          <Alert variant="warning">
+            <AlertTitle>Posting is paused</AlertTitle>
+            <AlertDescription>{entitlement.reason}</AlertDescription>
+          </Alert>
+        ) : null}
         {quoteError ? (
           <Alert variant="destructive">
             <AlertTitle>That change is not an upgrade</AlertTitle>
@@ -833,16 +903,91 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
     );
   }
 
+  /* ---------- Build your plan page ---------- */
+  if (step === 'build') {
+    const buildDisabled =
+      busy !== null || units === 0 || Boolean(quoteError) || (isPaid && countsUnchanged);
+    const buildDisabledReason =
+      units === 0
+        ? 'Choose at least one page or account first.'
+        : isPaid && countsUnchanged
+          ? 'This matches your current plan. Change a count to upgrade.'
+          : null;
+    return (
+      <div className="mx-auto flex w-full flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
+        <div className="flex flex-col gap-2">
+          <Button variant="outline" size="sm" className="self-start" onClick={goToPlans}>
+            <ArrowLeftIcon aria-hidden className="size-4" /> Back to plans
+          </Button>
+          <h1 className="text-xl leading-heading font-semibold text-ink">Build your paid plan</h1>
+          <p className="text-body text-ink-sub">
+            70 PKR per page or account, per month. Monthly only. Facebook counts pages; every
+            other platform counts accounts.
+          </p>
+        </div>
+        <StepIndicator current="build" />
+        {quoteError ? (
+          <Alert variant="destructive">
+            <AlertTitle>That change is not an upgrade</AlertTitle>
+            <AlertDescription>{quoteError}</AlertDescription>
+          </Alert>
+        ) : null}
+        <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,1fr)_360px]">
+          <Card>
+            <CardHeader>
+              <CardTitle>Choose your pages and accounts</CardTitle>
+              <CardDescription>
+                Connecting is unlimited — only pages and accounts you use in a feature count.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>{configurator}</CardContent>
+          </Card>
+          <div className="flex flex-col gap-6 lg:sticky lg:top-20 lg:self-start">
+            {orderSummary}
+            <div className="flex flex-col gap-2">
+              <Button
+                variant={buildDisabled ? 'secondary' : 'default'}
+                onClick={goToCheckout}
+                disabled={buildDisabled}
+              >
+                Continue to checkout
+              </Button>
+              {buildDisabledReason ? (
+                <p className="text-body text-ink-sub">{buildDisabledReason}</p>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ---------- Payments page ---------- */
+  if (step === 'payments') {
+    return (
+      <div className="mx-auto flex w-full flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
+        <div className="flex flex-col gap-2">
+          <h1 className="text-xl leading-heading font-semibold text-ink">Billing</h1>
+          <p className="text-body text-ink-sub">
+            Every payment you have submitted, with its approval status.
+          </p>
+        </div>
+        <PageNav current="payments" onNavigate={(view) => navigateTo(view)} />
+        {paymentsHistory}
+      </div>
+    );
+  }
+
   /* ---------- Plans view (default) ---------- */
   return (
-    <div className="mx-auto flex w-full flex-col gap-6 px-4 py-6 sm:px-6">
+    <div className="mx-auto flex w-full flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
       <div className="flex flex-col gap-1">
         <h1 className="text-xl leading-heading font-semibold text-ink">Billing</h1>
         <p className="text-body text-ink-sub">
           Choose a plan, then check out. Paid is charged per page or account, per month.
         </p>
       </div>
-      <StepIndicator current="plans" />
+      <PageNav current="plans" onNavigate={(view) => navigateTo(view)} />
 
       {entitlement.reason ? (
         <Alert variant="warning">
@@ -891,7 +1036,7 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
 
       {/* Pricing cards — matched pair: equal height, Free content anchored
           to the bottom instead of stranded mid-card. */}
-      <div className="grid items-stretch gap-6 lg:grid-cols-[340px_minmax(0,1fr)]">
+      <div className="grid items-stretch gap-8 lg:grid-cols-2">
         {/* Free card */}
         <Card className="flex flex-col">
           <CardHeader>
@@ -932,14 +1077,10 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
           </CardContent>
         </Card>
 
-        {/* Paid card — featured, configurator lives here, not a fixed tier.
-            The 70 PKR rate is stated once, in the header below. On desktop
-            the builder sits beside a neutral summary panel, so the total
-            and the checkout action are reachable without scrolling all six
-            rows; on phone the summary stacks below the builder. The only
-            yellow in the card is the primary shade (Featured badge and the
-            enabled checkout button) — no yellow border, no yellow total bar. */}
-        <Card id="billing-paid-card" className="scroll-mt-20">
+        {/* Paid card — featured. No builder, no summary panel, no checkout
+            button buried here: those live on their own pages. This card
+            only presents the plan and sends the user to Build your plan. */}
+        <Card id="billing-paid-card" className="flex scroll-mt-20 flex-col">
           <CardHeader>
             <div className="flex items-baseline gap-2">
               <CardTitle>Paid</CardTitle>
@@ -949,7 +1090,7 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
             </div>
             <CardDescription>Pay only for what you manage.</CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-col gap-4">
+          <CardContent className="flex flex-1 flex-col gap-5">
             <p className="flex flex-wrap items-baseline gap-x-2 text-ink">
               <span className="text-3xl font-semibold tabular-nums">70 PKR</span>
               <span className="text-body text-ink-sub">per page or account, per month</span>
@@ -957,95 +1098,46 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
             <p className="text-body text-ink-sub">
               Monthly only. Facebook counts pages; every other platform counts accounts.
             </p>
-            <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_260px]">
-              <div>{configurator}</div>
-              <aside className="flex flex-col gap-3 rounded-md bg-subtle p-4 lg:sticky lg:top-20">
-                <h3 className="text-body font-semibold text-ink">Your plan total</h3>
-                <dl className="flex flex-col gap-2 text-body">
-                  {SUBSCRIPTION_PLATFORMS.filter((p) => effectiveCounts[p] > 0).map((platform) => (
-                    <div key={platform} className="flex items-baseline justify-between gap-3">
-                      <dt className="min-w-0 truncate text-ink-sub">
-                        {PLATFORM_LABELS[platform]} · {effectiveCounts[platform]}{' '}
-                        {subscriptionUnitLabel(platform)}
-                      </dt>
-                      <dd className="shrink-0 font-medium tabular-nums text-ink">
-                        {effectiveCounts[platform] * SUBSCRIPTION_PRICE_PKR_PER_UNIT} PKR
-                      </dd>
-                    </div>
-                  ))}
-                  {units === 0 ? (
-                    <div className="flex items-baseline justify-between gap-3">
-                      <dt className="text-ink-sub">Selected</dt>
-                      <dd className="font-medium text-ink">Nothing selected yet</dd>
-                    </div>
-                  ) : null}
-                  <div className="flex items-baseline justify-between gap-3 border-t border-line pt-2">
-                    <dt className="text-ink-sub">Monthly total</dt>
-                    <dd className="text-xl font-semibold tabular-nums text-ink">{total} PKR</dd>
-                  </div>
-                  {isUpgrade && quote ? (
-                    <>
-                      <div className="flex items-baseline justify-between gap-3">
-                        <dt className="text-ink-sub">Old plan total</dt>
-                        <dd className="font-medium tabular-nums text-ink">
-                          {quote.oldMonthlyTotalPkr} PKR
-                        </dd>
-                      </div>
-                      <div className="flex items-baseline justify-between gap-3">
-                        <dt className="text-ink-sub">Days remaining</dt>
-                        <dd className="font-medium tabular-nums text-ink">
-                          {quote.daysRemaining} days
-                        </dd>
-                      </div>
-                      <div className="flex items-baseline justify-between gap-3">
-                        <dt className="text-ink-sub">Credit</dt>
-                        <dd className="font-medium tabular-nums text-ink">
-                          −{quote.creditPkr} PKR
-                        </dd>
-                      </div>
-                      <div className="flex items-baseline justify-between gap-3 border-t border-line pt-2">
-                        <dt className="font-medium text-ink">You pay now</dt>
-                        <dd className="font-semibold tabular-nums text-ink">{amountToPay} PKR</dd>
-                      </div>
-                      <p className="text-body text-ink-sub">
-                        Your new period starts from the upgrade approval.
-                      </p>
-                    </>
-                  ) : null}
-                </dl>
+            <ul className="flex flex-col gap-2 text-body">
+              <li className="flex items-start gap-2">
+                <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
+                <span>Prompt Library</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
+                <span>Posting and scheduling</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
+                <span>
+                  Schedule, auto download-upload and auto repost, within your page and account
+                  count
+                </span>
+              </li>
+              <li className="flex items-start gap-2">
+                <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
+                <span>Connect as many accounts as you like</span>
+              </li>
+            </ul>
+            <p className="text-body text-ink-sub">
+              Example: 5 Facebook pages + 3 Instagram accounts = 560 PKR / month.
+            </p>
+            <div className="mt-auto flex flex-col gap-2">
+              {isPaid && countsUnchanged ? (
+                <BillingStatusMark kind="ok" label="Current plan" />
+              ) : null}
+              <Button onClick={goToBuild}>
+                {!isPaid
+                  ? 'Build your paid plan'
+                  : countsChanged
+                    ? 'Review your plan change'
+                    : 'Change plan'}
+              </Button>
+              {isPaid && countsChanged ? (
                 <p className="text-body text-ink-sub">
-                  Example: 5 Facebook pages + 3 Instagram accounts = 560 PKR / month.
+                  {countsSummary(effectiveCounts)} · {total} PKR / month
                 </p>
-                {quoteError ? (
-                  <Alert variant="destructive">
-                    <AlertTitle>That change is not an upgrade</AlertTitle>
-                    <AlertDescription>{quoteError}</AlertDescription>
-                  </Alert>
-                ) : null}
-                {isPaid && countsUnchanged ? (
-                  <div className="flex flex-col gap-2">
-                    <BillingStatusMark kind="ok" label="Current plan" />
-                    <Button variant="secondary" disabled>
-                      Current plan
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-2">
-                    <Button
-                      variant={units === 0 || Boolean(quoteError) ? 'secondary' : 'default'}
-                      onClick={goToCheckout}
-                      disabled={units === 0 || Boolean(quoteError)}
-                    >
-                      {isUpgrade ? 'Continue to upgrade checkout' : 'Continue to checkout'}
-                    </Button>
-                    {units === 0 ? (
-                      <p className="text-body text-ink-sub">
-                        Choose at least one page or account first.
-                      </p>
-                    ) : null}
-                  </div>
-                )}
-              </aside>
+              ) : null}
             </div>
           </CardContent>
         </Card>
@@ -1090,8 +1182,6 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
           </ul>
         </CardContent>
       </Card>
-
-      {paymentsHistory}
     </div>
   );
 }
