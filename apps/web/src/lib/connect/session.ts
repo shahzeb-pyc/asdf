@@ -67,6 +67,22 @@ export async function resolveSocialRouteContext(
       ),
     };
   }
+  // Audit S1 (owner decision 2026-10-30): a JWT verifies
+  // signature/expiry only — it stays valid for 30 days even after
+  // the user is suspended or changes their password. Every social
+  // route goes through here, so the live check lives here, not in
+  // each route: suspension and password changes take effect
+  // immediately. Mirrors authenticateTenantRoute (route-auth.ts),
+  // dynamically imported to keep this module cycle-free.
+  const { validateSessionActive } = await import('@/lib/auth/session');
+  if (!(await validateSessionActive(session))) {
+    return {
+      errorResponse: NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      ),
+    };
+  }
   if (!sessionCanAccessTenant(session, subdomain)) {
     return {
       errorResponse: NextResponse.json(
@@ -86,11 +102,17 @@ export async function resolveSocialRouteContext(
     };
   }
 
+  // Audit S2 (owner decision 2026-10-30): admins are scoped to
+  // their own workspace like everyone else on the account/social
+  // routes — session.role is deliberately NOT passed, so an admin
+  // in a workspace they do not own resolves to no workspace (404,
+  // same as the accounts list and BYOC routes already behaved).
+  // Other tenant routes that still pass a role are outside this
+  // audit's account/social scope and keep their own behaviour.
   const workspaceId = await resolveTenantWorkspaceId(
     client,
     subdomain,
-    session.userId,
-    session.role
+    session.userId
   );
   if (!workspaceId) {
     return {

@@ -1,8 +1,8 @@
 {
   "version": 1,
   "decision": "D137-3 superseded by Shahzeb on 2026-10-24: bundle budgets are enforced in CI.",
-  "measuredAt": "2026-10-24",
-  "measuredFromCommit": "fb6fbcbf30dcdf8e3fda43ba2dfa12897ddf3544",
+  "measuredAt": "2026-10-30",
+  "measuredFromCommit": "4d2f261f90536c8985029aa014c4e6fc0061bbf7",
   "measurement": "Analyzer production build (ANALYZE=true next build --webpack) of a clean .next, measured by apps/web/scripts/measure-bundle.mjs from emitted files; sizes are bytes, gzip level 9.",
   "headroomPercent": 5,
   "baseline": {
@@ -181,8 +181,8 @@
       }
     },
     "totalClientJs": {
-      "gzipBytes": 1030329,
-      "rawBytes": 3286901
+      "gzipBytes": 1083402,
+      "rawBytes": 3443584
     },
     "routeCount": 25
   },

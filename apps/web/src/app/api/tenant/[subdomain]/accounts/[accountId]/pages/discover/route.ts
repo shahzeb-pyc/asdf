@@ -4,6 +4,7 @@ import {
   decryptToken,
   DiscoverPagesResponseSchema,
   fetchAllFacebookPages,
+  fetchAllFacebookPagesWithMeta,
   getSessionSecret,
   getTokenEncryptionKey,
   verifySessionToken,
@@ -11,7 +12,12 @@ import {
   type Database,
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
+import {
+  isTokenDeadGraphStatus,
+  markAccountConnectionError,
+} from '@/lib/connect/account-probe';
 import { logServerError } from '@/lib/server-analytics';
+import { enforceIpRateLimit } from '@/lib/request-body';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -37,6 +43,14 @@ export async function handleDiscoverPages(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  // Audit S1: live session validation — a suspended user or a
+  // session issued before a password change must not reach the
+  // tenant check or any mutation below.
+  const { validateSessionActive } = await import('@/lib/auth/session');
+  if (!(await validateSessionActive(session))) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   // 2. Tenant isolation check
   const access = canAccessTenant(session, subdomain);
   if (!access.allowed) {
@@ -44,7 +58,7 @@ export async function handleDiscoverPages(
   }
 
   // 3. Resolve workspace ID scoped to user (supports admin inspection)
-  const workspaceId = await resolveTenantWorkspaceId(dbClient, subdomain, session.userId, session.role);
+  const workspaceId = await resolveTenantWorkspaceId(dbClient, subdomain, session.userId);
   if (!workspaceId) {
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
   }
@@ -80,9 +94,12 @@ export async function handleDiscoverPages(
     }
     account = accounts[0];
 
+    // Audit BG7: isImported is per-ACCOUNT, not workspace-wide —
+    // a page imported under another account must not read as
+    // imported when discovering under this one.
     importedRows = await dbClient.query<ImportedPageIdRow>(
-      "SELECT external_destination_id AS fb_page_id FROM destinations WHERE workspace_id = $1 AND platform = 'facebook' AND (status != 'disconnected' OR metadata->>'fb_status' = 'paused')",
-      [workspaceId]
+      "SELECT external_destination_id AS fb_page_id FROM destinations WHERE workspace_id = $1 AND account_id = $2 AND platform = 'facebook' AND (status != 'disconnected' OR metadata->>'fb_status' = 'paused')",
+      [workspaceId, accountId]
     );
   } else {
     const supabase = (dbClient && 'from' in dbClient ? dbClient : getSupabaseAdminClient()) as SupabaseClient<Database> | null;
@@ -106,13 +123,46 @@ export async function handleDiscoverPages(
     }
     account = accData;
 
-    const { data: pageRows } = await supabase
-      .from('destinations')
-      .select('external_destination_id, status, metadata')
-      .eq('workspace_id', workspaceId)
-      .eq('platform', 'facebook');
+    // Audit N1: page through with .range() like the accounts
+    // list — a single select would silently truncate past
+    // PostgREST's 1,000-row limit and misreport isImported.
+    // Past 10 full pages the discover fails loudly instead.
+    const DISCOVER_PAGE_SIZE = 1000;
+    const DISCOVER_MAX_PAGES = 10;
+    const pageRows: unknown[] = [];
+    for (let page = 0; page < DISCOVER_MAX_PAGES; page++) {
+      const from = page * DISCOVER_PAGE_SIZE;
+      const { data, error: pageErr } = await supabase
+        .from('destinations')
+        .select('external_destination_id, status, metadata')
+        .eq('workspace_id', workspaceId)
+        .eq('account_id', accountId)
+        .eq('platform', 'facebook')
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+        .range(from, from + DISCOVER_PAGE_SIZE - 1);
+      if (pageErr) {
+        return NextResponse.json(
+          { error: 'Failed to load imported pages' },
+          { status: 500 }
+        );
+      }
+      const slice = (data || []) as unknown[];
+      pageRows.push(...slice);
+      if (slice.length < DISCOVER_PAGE_SIZE) {
+        break;
+      }
+      if (page === DISCOVER_MAX_PAGES - 1) {
+        // A 10th full page means more rows may exist — fail
+        // loudly rather than misreport isImported on a partial set.
+        return NextResponse.json(
+          { error: 'Too many imported pages to list reliably; please contact support.' },
+          { status: 500 }
+        );
+      }
+    }
 
-    const destinationRows = (pageRows || []) as unknown as Array<{
+    const destinationRows = pageRows as unknown as Array<{
       external_destination_id: string;
       status: string;
       metadata: Record<string, unknown> | null;
@@ -151,12 +201,17 @@ export async function handleDiscoverPages(
   }
 
   // 4. Query Facebook Graph API v26.0 /me/accounts with pagination
+  // Audit BG6: the meta variant reports truncation, so a partial
+  // list is never presented as complete.
   let rawItems: Awaited<ReturnType<typeof fetchAllFacebookPages>> = [];
+  let truncated = false;
   try {
-    rawItems = await fetchAllFacebookPages(
+    const fetched = await fetchAllFacebookPagesWithMeta(
       rawToken,
       'id,name,category,tasks,access_token,followers_count,picture{url}'
     );
+    rawItems = fetched.pages;
+    truncated = fetched.truncated;
   } catch (err: unknown) {
     logServerError('[pages/discover] Facebook Graph query failed', err, {
       source: 'pages-discover',
@@ -169,6 +224,14 @@ export async function handleDiscoverPages(
       typeof err.status === 'number'
         ? err.status
         : 500;
+    // Audit BG20: discover IS the probe — an auth-class failure
+    // means the user token is dead (revoked/invalid), so the
+    // account is marked 'error' now instead of reading
+    // "Connected" until a publish fails. Transient failures
+    // leave the status untouched.
+    if (isTokenDeadGraphStatus(status)) {
+      await markAccountConnectionError(dbClient, workspaceId, accountId);
+    }
     return NextResponse.json(
       { error: 'Failed to query Facebook Graph API' },
       { status }
@@ -205,6 +268,7 @@ export async function handleDiscoverPages(
     accountDisplayName: account.display_name || account.displayName,
     pages: discoveredPages,
     total: discoveredPages.length,
+    truncated,
   });
 
   return NextResponse.json(responsePayload);
@@ -215,5 +279,8 @@ export async function GET(
   context: { params: Promise<{ subdomain: string; accountId: string }> }
 ): Promise<NextResponse> {
   const { subdomain, accountId } = await context.params;
+  // Audit S6: previously unthrottled Graph-backed call; 20/min like import.
+  const limited = await enforceIpRateLimit(request, 'tenant_account_discover', 20);
+  if (limited) return limited;
   return handleDiscoverPages(request, subdomain, accountId);
 }

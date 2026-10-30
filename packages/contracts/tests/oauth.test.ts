@@ -4,6 +4,7 @@ import {
   FacebookTokenExchangeResponseSchema,
   FacebookUserProfileResponseSchema,
   OAuthStatePayloadSchema,
+  peekOAuthStatePayload,
   signOAuthState,
   verifyOAuthState,
   signMagicLinkToken,
@@ -68,6 +69,29 @@ describe('Facebook OAuth Contracts & State Signing', () => {
     await expect(verifyOAuthState(tampered, secret)).rejects.toThrow(
       /signature/i
     );
+  });
+
+  // Audit BG13: the peek recovers the routing signal (isMagic)
+  // from an expired-but-signed state, and nothing from a
+  // tampered one — routing only, never authorization.
+  it('should peek an expired-but-signed state for routing, and null for tampered', async () => {
+    const expiredMagic = {
+      ...validStatePayload,
+      isMagic: true,
+      iat: Math.floor(Date.now() / 1000) - 1200,
+      exp: Math.floor(Date.now() / 1000) - 600,
+    };
+    const signedExpired = await signOAuthState(expiredMagic, secret);
+    await expect(verifyOAuthState(signedExpired, secret)).rejects.toThrow(
+      /expired/i
+    );
+    const peeked = await peekOAuthStatePayload(signedExpired, secret);
+    expect(peeked?.isMagic).toBe(true);
+    expect(peeked?.tenantSubdomain).toBe('acme');
+
+    const [payload, sig] = signedExpired.split('.');
+    const tampered = `${payload}.${sig.slice(0, -1)}${sig.endsWith('a') ? 'b' : 'a'}`;
+    await expect(peekOAuthStatePayload(tampered, secret)).resolves.toBeNull();
   });
 
   it('should reject invalid hex formats with UnauthorizedError', async () => {

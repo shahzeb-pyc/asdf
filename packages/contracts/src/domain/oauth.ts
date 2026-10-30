@@ -8,9 +8,11 @@ export const OAuthStatePayloadSchema = z.object({
   iat: z.number().int(),
   exp: z.number().int(),
   isMagic: z.boolean().optional(),
-  expectedFbAccountId: z.string().min(1).optional(),
-  expectedInstagramAccountId: z.string().min(1).optional(),
-  expectedDisplayName: z.string().min(1).optional(),
+  // Audit N5: hint caps unified at 255 in both flows (magic body
+  // and direct initiate both bound before signing).
+  expectedFbAccountId: z.string().min(1).max(255).optional(),
+  expectedInstagramAccountId: z.string().min(1).max(255).optional(),
+  expectedDisplayName: z.string().min(1).max(255).optional(),
   redirectUri: z.string().url().optional(),
 });
 
@@ -22,9 +24,9 @@ export const MagicLinkTokenPayloadSchema = z.object({
   nonce: z.string().min(16),
   iat: z.number().int(),
   exp: z.number().int(),
-  expectedFbAccountId: z.string().min(1).optional(),
-  expectedInstagramAccountId: z.string().min(1).optional(),
-  expectedDisplayName: z.string().min(1).optional(),
+  expectedFbAccountId: z.string().min(1).max(255).optional(),
+  expectedInstagramAccountId: z.string().min(1).max(255).optional(),
+  expectedDisplayName: z.string().min(1).max(255).optional(),
 });
 
 export type MagicLinkTokenPayload = z.infer<typeof MagicLinkTokenPayloadSchema>;
@@ -221,6 +223,31 @@ export async function verifyOAuthState(
   }
 
   return payload;
+}
+
+/**
+ * Audit BG13 — signature-verified state peek WITHOUT the expiry
+ * check, for error routing ONLY. When a callback arrives with an
+ * expired (but genuinely signed) state, verifyOAuthState throws
+ * before the payload is readable, so the old code could not tell
+ * a magic flow from a direct flow and misrouted magic users to
+ * the tenant accounts page (whose login gate then swallowed the
+ * error). Peeking recovers the explicit `isMagic` signal from
+ * the signed state so the error can go to the magic error page.
+ * This NEVER authorizes anything: a peeked payload must not be
+ * used to continue a flow, only to choose its error page.
+ * Returns null for tampered/unparseable states (no signal).
+ */
+export async function peekOAuthStatePayload(
+  token: string,
+  secret: string
+): Promise<OAuthStatePayload | null> {
+  try {
+    const parsed = await verifySignedEnvelope(token, secret, 'OAuth state');
+    return OAuthStatePayloadSchema.parse(parsed);
+  } catch {
+    return null;
+  }
 }
 
 export async function signMagicLinkToken(

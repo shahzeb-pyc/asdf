@@ -41,7 +41,9 @@ export const PublishNowMediaSchema = z
     // the source-specific requirement (library needs mediaId, temp
     // needs tempKey), so nothing safety-critical is loosened.
     mediaId: z.string().uuid().nullish(),
-    tempKey: z.string().min(1).nullish(),
+    // Audit N7: bounded — a temp key is temp/<user>/<uuid>/<name>,
+    // far under 512; the route also checks prefix + URL equality.
+    tempKey: z.string().min(1).max(512).nullish(),
     url: z.string().url(),
     mediaType: z.enum(['image', 'video']),
     aspectRatio: z.string().nullish(),
@@ -77,13 +79,49 @@ export type PublishNowMedia = z.infer<typeof PublishNowMediaSchema>;
  * page only after that page's own post succeeds, and a comment
  * failure never fails the post (see the result fields below).
  */
-export const PublishNowRequestSchema = z.object({
-  caption: z.string().max(63206),
-  postType: z.enum(['text', 'image', 'video', 'reel']),
-  firstComment: z.string().max(8000).optional(),
-  targets: z.array(PublishNowTargetSchema).min(1).max(50),
-  media: PublishNowMediaSchema.nullable(),
-});
+export const PublishNowRequestSchema = z
+  .object({
+    caption: z.string().max(63206),
+    postType: z.enum(['text', 'image', 'video', 'reel']),
+    firstComment: z.string().max(8000).optional(),
+    targets: z.array(PublishNowTargetSchema).min(1).max(50),
+    media: PublishNowMediaSchema.nullable(),
+  })
+  .superRefine((data, ctx) => {
+    // Audit N7: the route never cross-checked mediaType against
+    // postType — an image post carrying video media reached
+    // publishPhotoWithBytes and failed with a generic media-fetch
+    // error, and a text post silently dropped attached media (the
+    // text branch never reads it). Reject mismatches up front
+    // with 400. Missing media for non-text types is still the
+    // route's 400 ("This post type needs media."), unchanged.
+    if (data.postType === 'text' && data.media) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'A text post cannot carry media.',
+        path: ['media'],
+      });
+      return;
+    }
+    if (!data.media) return;
+    if (data.postType === 'image' && data.media.mediaType !== 'image') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'An image post requires image media.',
+        path: ['media', 'mediaType'],
+      });
+    }
+    if (
+      (data.postType === 'video' || data.postType === 'reel') &&
+      data.media.mediaType !== 'video'
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `A ${data.postType} post requires video media.`,
+        path: ['media', 'mediaType'],
+      });
+    }
+  });
 export type PublishNowRequest = z.infer<typeof PublishNowRequestSchema>;
 
 /** Step a Publish Now publish attempt reached, for failure diagnostics.

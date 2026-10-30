@@ -444,7 +444,7 @@ describe('Multi-Account Facebook OAuth Connection (User Story 1 - T059 & Spec 03
     // The direct-flow redirect now carries accountName so the Accounts
     // page can toast the connected account by name (Option B dialogue).
     expect(res.headers.get('location')).toBe(
-      'http://localhost:3000/tenant/acme/accounts?connected=1&accountName=John+Doe'
+      'http://localhost:3000/tenant/acme/accounts?connected=already&accountName=John+Doe'
     );
 
     // Verify all 3 linked pages had their tokens encrypted and updated

@@ -33,7 +33,6 @@ import { api, buildTenantApiPath, buildUrl, isApiError } from '@/lib/api';
 import {
   DisconnectAccountResponseSchema,
   ListFacebookAccountsResponseSchema,
-  type FacebookAccountView,
 } from '@/lib/api/schemas/accounts';
 import { ByocSettingsResponseSchema } from '@/lib/api/schemas/settings';
 import { queryKeys } from '@/lib/data/query-keys';
@@ -57,10 +56,12 @@ import {
   computeAccountsSubtitle,
   computeAccountsSubtitleFromCounts,
   isConnectGatedByMissingCredentials,
+  resolveConnectClick,
   resolveOAuthRedirectNotice,
   sortAccountsExpiredFirst,
   type AccountStatusFilter,
 } from '@/components/accounts/accounts-helpers';
+import { getAccountHealth } from '@/components/accounts/account-health';
 import { ConnectAccountModal } from '@/components/accounts/connect-account-modal';
 import { DisconnectAccountDialog } from '@/components/accounts/disconnect-account-dialog';
 
@@ -174,6 +175,11 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
   const [bannerNotice, setBannerNotice] = React.useState<{
     type: 'success' | 'error';
     message: string;
+    connectAgain?: boolean;
+    /** BL2 fix: when true, the banner offers a Reconnect action for the expected account. */
+    reconnectExpected?: boolean;
+    /** BL2 fix: display name of the account that still needs reconnecting. */
+    expectedAccountName?: string | undefined;
   } | null>(null);
 
   // Option B dialogue: a briefly gold-highlighted card for the account
@@ -206,12 +212,23 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
       type: 'success' | 'error';
       message: string;
       accountId?: string | undefined;
+      /** BL2 fix: display name of the expected account on a mismatch, when known. */
+      expectedAccountName?: string | undefined;
     }) => {
       if (notice.type === 'success') {
         toast.success(notice.message, { toasterId: ACCOUNTS_CONNECT_TOASTER_ID });
         flashHighlight(notice.accountId ?? null);
       } else {
-        setBannerNotice({ type: 'error', message: notice.message });
+        setBannerNotice({
+          type: 'error',
+          message: notice.message,
+          ...(notice.expectedAccountName
+            ? {
+                reconnectExpected: true as const,
+                expectedAccountName: notice.expectedAccountName,
+              }
+            : {}),
+        });
         flashHighlight(notice.accountId ?? null);
       }
     },
@@ -255,6 +272,10 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
     React.useState<FacebookAccountItem | null>(null);
   const [disconnectingAccount, setDisconnectingAccount] =
     React.useState<FacebookAccountItem | null>(null);
+  // Audit BG17: the failure message shown INSIDE the dialog
+  // (the dialog stays open on failure); the page banner below
+  // remains as the persistent record after it closes.
+  const [disconnectError, setDisconnectError] = React.useState<string | null>(null);
 
   // The API returns the filtered, expired-first page slice, so the
   // grid renders it directly — no client-side sort or filter anymore.
@@ -304,32 +325,38 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
       api.delete(buildTenantApiPath(subdomain, `/accounts/${accountId}`), {
         schema: DisconnectAccountResponseSchema,
       }),
-    onSuccess: (_data, accountId) => {
-      queryClient.setQueryData<{ accounts: FacebookAccountView[]; total: number }>(
-        tenant.accounts.list,
-        (prev) =>
-          prev
-            ? {
-                ...prev,
-                accounts: prev.accounts.filter((a) => a.id !== accountId),
-                total: Math.max(0, prev.total - 1),
-              }
-            : prev
-      );
+    onSuccess: (data) => {
+      setDisconnectError(null);
+      // BG10: disconnect no longer deletes the account — it stays
+      // listed as revoked, so there is no optimistic removal here;
+      // the refetch below shows its new state. The banner must
+      // also say when Facebook-side revocation failed: the local
+      // disconnect happened, but the app authorization may still
+      // be live in the user's Facebook settings.
       void queryClient.invalidateQueries({ queryKey: tenant.accounts.list });
       setDisconnectingAccount(null);
-      setBannerNotice({
-        type: 'success',
-        message: 'Account disconnected.',
-      });
+      setBannerNotice(
+        data.facebookRevoked
+          ? {
+              type: 'success',
+              message: 'Account disconnected.',
+            }
+          : {
+              type: 'error',
+              message:
+                'Account disconnected, but Facebook access could not be removed. Remove the app in Facebook Settings to fully disconnect.',
+            }
+      );
     },
     onError: (error) => {
+      const message =
+        isApiError(error) && error.kind === 'http'
+          ? "Couldn't disconnect account. Please refresh and try again."
+          : "Couldn't disconnect the account. Please try again.";
+      setDisconnectError(message);
       setBannerNotice({
         type: 'error',
-        message:
-          isApiError(error) && error.kind === 'http'
-            ? "Couldn't disconnect account. Please refresh and try again."
-            : "Couldn't disconnect the account. Please try again.",
+        message,
       });
     },
   });
@@ -351,6 +378,13 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
     if (oauthNoticeHandledRef.current) return;
     const resolved = resolveOAuthRedirectNotice(searchParams);
     if (!resolved) return;
+    // Audit UX10: a success notice's card highlight is matched
+    // against the loaded accounts. While the accounts query is
+    // still pending, do NOT mark the notice handled and do NOT
+    // flash null — wait for the next run, when accounts have
+    // arrived, so the highlight is not silently lost. Error
+    // notices need no accounts, so they proceed immediately.
+    if (resolved.notice.type === 'success' && isLoading) return;
     oauthNoticeHandledRef.current = true;
 
     if (resolved.notice.type === 'success') {
@@ -369,27 +403,66 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
       }
       window.history.replaceState({}, '', url.pathname);
     }
-  }, [searchParams, accounts, flashHighlight]);
+  }, [searchParams, accounts, flashHighlight, isLoading]);
 
-  const handleOpenNewConnect = () => {
-    if (byocStatus.isLoading) return;
-    if (!byocStatus.isConfigured) {
+  // Audit BG9: on a failed BYOC check the click retries the
+  // check and routes on the fresh result — Connect when the
+  // check now confirms credentials, the prompt only when a
+  // successful check confirms they are missing, and the retry
+  // banner stays when the check fails again. The dead-end
+  // prompt (implying missing credentials on a mere check
+  // failure) is never opened from this path.
+  const routeConnectClick = (onConfigured: () => void) => {
+    const route = resolveConnectClick(byocStatus);
+    if (route === 'connect') {
+      onConfigured();
+      return;
+    }
+    if (route === 'prompt') {
       setIsByocPromptOpen(true);
       return;
     }
-    setReconnectingAccount(null);
-    setIsConnectOpen(true);
+    void byocQuery.refetch().then((result) => {
+      if (result.isError) return;
+      const data = result.data;
+      if (data && data.fbAppId && data.hasSecret) {
+        onConfigured();
+      } else {
+        setIsByocPromptOpen(true);
+      }
+    });
+  };
+
+  const handleOpenNewConnect = () => {
+    if (byocStatus.isLoading) return;
+    routeConnectClick(() => {
+      setReconnectingAccount(null);
+      setIsConnectOpen(true);
+    });
   };
 
   // Handle Reconnect (opens ConnectAccountModal with reconnectingAccount context)
   const handleReconnect = (account: FacebookAccountItem) => {
     if (byocStatus.isLoading) return;
-    if (!byocStatus.isConfigured) {
-      setIsByocPromptOpen(true);
-      return;
+    routeConnectClick(() => {
+      setReconnectingAccount(account);
+      setIsConnectOpen(true);
+    });
+  };
+
+  // BL2 fix: banner Reconnect action for the expected account after a
+  // mismatch. Matched by display name, like the OAuth-return highlight
+  // above; if the account is not on the loaded page slice, fall back to
+  // the fresh connect entry point (BYOC gating unchanged).
+  const handleReconnectExpected = () => {
+    const expected = accounts.find(
+      (account) => account.displayName === bannerNotice?.expectedAccountName
+    );
+    if (expected) {
+      handleReconnect(expected);
+    } else {
+      handleOpenNewConnect();
     }
-    setReconnectingAccount(account);
-    setIsConnectOpen(true);
   };
 
   const handleConnectOpenChange = (open: boolean) => {
@@ -401,6 +474,7 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
 
   // Handle Disconnect confirmation
   const handleConfirmDisconnect = async (accountId: string) => {
+    setDisconnectError(null);
     try {
       await disconnectMutation.mutateAsync(accountId);
     } catch (error) {
@@ -481,6 +555,7 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
         onConnect={handleOpenNewConnect}
         isConnectDisabled={isConnectDisabled}
         credentialsMissing={isConnectGated}
+        isCheckingCredentials={byocStatus.isLoading}
         settingsHref={settingsFacebookHref}
       />
     );
@@ -516,6 +591,7 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
               account={account}
               highlighted={account.id === highlightedAccountId}
               onReconnect={handleReconnect}
+              disableReconnect={byocStatus.isLoading}
               onDisconnect={(acc) => setDisconnectingAccount(acc)}
             />
           ))}
@@ -559,20 +635,34 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
           </p>
         </div>
 
-        {total > 0 && (
+        {(total > 0 || isFiltered) && (
           <div className="flex flex-col items-end gap-1">
             <Button
               type="button"
               data-testid="header-connect-button"
               disabled={isConnectDisabled}
               aria-describedby={
-                isConnectGated ? 'header-connect-gated-reason' : undefined
+                isConnectGated
+                  ? 'header-connect-gated-reason'
+                  : byocStatus.isLoading
+                    ? 'header-connect-checking-reason'
+                    : undefined
               }
               onClick={handleOpenNewConnect}
             >
               <PlusIcon aria-hidden />
               <span>Connect Account</span>
             </Button>
+            {/* Audit UX4: same loading explanation as the empty state. */}
+            {!isConnectGated && byocStatus.isLoading && (
+              <span
+                id="header-connect-checking-reason"
+                data-testid="header-connect-checking-reason"
+                className="text-metadata leading-body text-ink-sub"
+              >
+                Checking app setup…
+              </span>
+            )}
             {isConnectGated && (
               <span
                 id="header-connect-gated-reason"
@@ -598,6 +688,13 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
         <FeedbackBanner
           notice={bannerNotice}
           onDismiss={() => setBannerNotice(null)}
+          onConnectAgain={
+            bannerNotice.connectAgain ? handleOpenNewConnect : undefined
+          }
+          onReconnectExpected={
+            bannerNotice.reconnectExpected ? handleReconnectExpected : undefined
+          }
+          expectedAccountName={bannerNotice.expectedAccountName}
         />
       )}
 
@@ -617,13 +714,22 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
       )}
 
       {/* Search & Status Filter Bar */}
-      {!isLoading && total > 0 && (
+      {/* Audit BG18: a filtered-empty state keeps the filter bar
+          (and the header Connect above) so the user can refine
+          a mistyped search in place instead of clearing and
+          starting over. Only the true-empty state (no filter)
+          hides them, where the empty state owns Connect. */}
+      {!isLoading && (total > 0 || isFiltered) && (
         <AccountsFilterBar
           searchQuery={searchQuery}
           onSearchChange={handleSearchChange}
           statusFilter={statusFilter}
           onStatusFilterChange={handleStatusFilterChange}
           attentionCount={expiredTotal}
+          errorAttentionCount={
+            healthCounts?.error ??
+            accounts.filter((a) => getAccountHealth(a) === 'error').length
+          }
         />
       )}
 
@@ -646,9 +752,15 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
       <DisconnectAccountDialog
         account={disconnectingAccount}
         open={Boolean(disconnectingAccount)}
-        onOpenChange={(open) => !open && setDisconnectingAccount(null)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDisconnectingAccount(null);
+            setDisconnectError(null);
+          }
+        }}
         onConfirm={handleConfirmDisconnect}
         isDisconnecting={disconnectMutation.isPending}
+        error={disconnectError}
       />
 
       {/* BYOC Configuration Advisory Modal */}

@@ -60,8 +60,27 @@ describe('connect error page (spec 136 §3.4, OD-136-4 default map)', () => {
     expect(getConnectErrorCopy('internal_oauth_error')).toEqual(
       getConnectErrorCopy('oauth_failed')
     );
-    // Reasons with no specific entry fall through to the default copy.
-    for (const reason of ['missing_token', 'expired_or_invalid', 'app_not_configured', null, undefined]) {
+    // BL1 fix: a failed save gets its own copy, never the permissions
+    // copy and never the expired-link fallthrough.
+    expect(getConnectErrorCopy('account_save_failed')).toEqual({
+      title: "Couldn't Save Your Facebook Account",
+      description:
+        'Facebook approved the connection, but we couldn\u2019t save the account. Nothing was connected. Please try connecting again from your FBUploadPro dashboard.',
+    });
+    // Audit UX1: distinct failures get their own copy instead of
+    // all reading as "link expired".
+    expect(getConnectErrorCopy('expired_or_invalid').title).toBe(
+      'Connection Link Expired or Invalid'
+    );
+    expect(getConnectErrorCopy('missing_token').title).toBe('Connection Link Invalid');
+    expect(getConnectErrorCopy('app_not_configured').title).toBe(
+      'Facebook App Not Configured'
+    );
+    expect(getConnectErrorCopy('credentials_required').title).toBe(
+      'Facebook App Not Configured'
+    );
+    // Only genuinely unknown reasons fall through to the default copy.
+    for (const reason of [null, undefined]) {
       expect(getConnectErrorCopy(reason).title).toBe('Connection Link Expired or Invalid');
     }
   });

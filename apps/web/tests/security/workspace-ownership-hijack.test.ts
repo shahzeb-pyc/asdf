@@ -9,6 +9,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { signSessionToken } from '@fbuploadpro/contracts';
 import * as authModule from '@/lib/auth/index';
+import * as sessionModule from '@/lib/auth/session';
 import { GET as getByocSettings } from '@/app/api/tenant/[subdomain]/settings/byoc/route';
 
 const VALID_UUID = '00000000-0000-4000-a000-000000000001';
@@ -17,6 +18,12 @@ const VICTIM_UUID = '00000000-0000-4000-a000-000000000002';
 describe('ISSUE-01: Workspace Ownership Hijack Prevention', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    // Audit S1: the BYOC test below is about workspace-ownership
+    // behaviour, not session validation (which has its own dedicated
+    // session-invalidation tests). The BYOC route now live-validates
+    // the session, and the mock supabase client here returns no user
+    // row for that lookup, so a valid session is assumed here.
+    vi.spyOn(sessionModule, 'validateSessionActive').mockResolvedValue(true);
     authModule._resetAuthStores();
     process.env.SESSION_SECRET = 'test-secret-at-least-32-chars-long-123456';
   });

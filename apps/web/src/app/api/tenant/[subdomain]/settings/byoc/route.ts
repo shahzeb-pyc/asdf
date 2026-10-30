@@ -38,6 +38,13 @@ export async function GET(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  // Audit S1: live session validation — suspension and password
+  // changes take effect immediately, including on secret reveal.
+  const { validateSessionActive } = await import('@/lib/auth/session');
+  if (!(await validateSessionActive(session))) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const access = canAccessTenant(session, subdomain);
   if (!access.allowed) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
@@ -95,6 +102,13 @@ export async function PUT(
   if (limited) return limited;
   const session = await extractSession(request);
   if (!session) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // Audit S1: live session validation — suspension and password
+  // changes take effect immediately, including on secret reveal.
+  const { validateSessionActive } = await import('@/lib/auth/session');
+  if (!(await validateSessionActive(session))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -159,6 +173,13 @@ export async function DELETE(
   const { subdomain } = await context.params;
   const session = await extractSession(request);
   if (!session) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // Audit S1: live session validation — suspension and password
+  // changes take effect immediately, including on secret reveal.
+  const { validateSessionActive } = await import('@/lib/auth/session');
+  if (!(await validateSessionActive(session))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

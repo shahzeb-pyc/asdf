@@ -344,11 +344,11 @@ describe('Multi-Tenant Publishing Security & Isolation Audit (T144)', () => {
       const destinations = new Map([
         [
           userA.pageId,
-          { id: userA.pageId, workspace_id: 'ws_a', platform: 'facebook', timezone: 'UTC', status: 'active' },
+          { id: userA.pageId, workspace_id: 'ws_a', platform: 'facebook', timezone: 'UTC', status: 'active', account_id: 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaa1', account_status: 'active', account_token_expires_at: new Date(Date.now() + 86400000).toISOString() },
         ],
         [
           userB.pageId,
-          { id: userB.pageId, workspace_id: 'ws_b', platform: 'facebook', timezone: 'UTC', status: 'active' },
+          { id: userB.pageId, workspace_id: 'ws_b', platform: 'facebook', timezone: 'UTC', status: 'active', account_id: 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbb2', account_status: 'active', account_token_expires_at: new Date(Date.now() + 86400000).toISOString() },
         ],
       ]);
       const media = new Map([

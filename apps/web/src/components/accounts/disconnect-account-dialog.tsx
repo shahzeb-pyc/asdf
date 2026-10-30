@@ -31,6 +31,12 @@ interface DisconnectAccountDialogProps {
   onOpenChange: (open: boolean) => void;
   onConfirm: (accountId: string) => Promise<void>;
   isDisconnecting?: boolean;
+  // Audit BG17: a disconnect failure must be visible INSIDE
+  // the dialog, which stays open on failure. The old code put
+  // the message only in the page-level banner, which sits
+  // behind the dialog overlay — invisible until the user
+  // cancels and notices it.
+  error?: string | null;
 }
 
 export function DisconnectAccountDialog({
@@ -39,6 +45,7 @@ export function DisconnectAccountDialog({
   onOpenChange,
   onConfirm,
   isDisconnecting = false,
+  error = null,
 }: Readonly<DisconnectAccountDialogProps>) {
   if (!account) return null;
 
@@ -56,7 +63,9 @@ export function DisconnectAccountDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Disconnect {account.displayName}?</AlertDialogTitle>
           <AlertDialogDescription>
-            This account will no longer be available
+            This account will no longer be available for publishing.
+            Disconnecting also asks Facebook to remove this app&apos;s
+            access for the account, and your published history is kept.
           </AlertDialogDescription>
         </AlertDialogHeader>
 
@@ -66,7 +75,7 @@ export function DisconnectAccountDialog({
             className="rounded-sm border border-line bg-subtle p-4 text-body leading-body text-ink-sub"
           >
             <p className="m-0">
-              No Facebook Pages are linked to this account yet. It&apos;s safe to remove — you can reconnect it any time.
+              No Facebook Pages are linked to this account yet. It&apos;s safe to disconnect — you can reconnect it any time.
             </p>
           </div>
         ) : (
@@ -78,7 +87,7 @@ export function DisconnectAccountDialog({
               Before you disconnect
             </p>
             <p className="m-0">
-              <strong>{pagesCount} linked {pagesLabel}</strong> will be removed, and any scheduled content on them will be removed as well.
+              <strong>{pagesCount} linked {pagesLabel}</strong> will be disconnected, and any scheduled content on them will be cancelled (not deleted).
             </p>
             {linkedPages.length > 0 && (
               <ul
@@ -96,6 +105,16 @@ export function DisconnectAccountDialog({
                 ))}
               </ul>
             )}
+          </div>
+        )}
+
+        {error && (
+          <div
+            role="alert"
+            data-testid="disconnect-error"
+            className="rounded-sm border border-brand-rose/25 bg-brand-rose/10 px-3 py-2 text-body text-brand-rose"
+          >
+            {error}
           </div>
         )}
 

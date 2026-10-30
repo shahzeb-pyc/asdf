@@ -3,13 +3,14 @@ import {
   buildSubdomainOAuthRedirectUri,
   buildTenantUrl,
   encryptToken,
-  fetchAllFacebookPages,
+  fetchAllFacebookPagesWithMeta,
   FacebookTokenExchangeResponseSchema,
   type FacebookUserProfileResponse,
   FacebookUserProfileResponseSchema,
   getSessionSecret,
   getTokenEncryptionKey,
   type OAuthStatePayload,
+  peekOAuthStatePayload,
   verifyOAuthState,
   verifySessionToken,
   type DatabaseClient,
@@ -18,6 +19,7 @@ import {
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import { logServerError } from '@/lib/server-analytics';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { enforceIpRateLimit } from '@/lib/request-body';
 import { resolveWorkspaceFacebookCredentials } from '@/lib/server/byoc-resolver';
 import {
   GRAPH_API_TIMEOUT_MS,
@@ -127,10 +129,32 @@ async function resolveOAuthErrorTarget(
       );
     } catch (err) {
       // Fallback to /accounts if state cannot be verified — logged
-      // (spec 139 B3), not silent.
+      // (spec 139 B3), not silent. Audit BG13: before falling
+      // back, peek the signed (possibly expired) state for the
+      // explicit magic signal — an expired magic state still
+      // routes to the magic error page instead of the tenant
+      // accounts page whose login gate would swallow the error.
+      // A tampered state peeks to null and keeps the fallback:
+      // with no signal, magic cannot be proven.
       logServerError('[FacebookOAuth] Callback state verification failed', err, {
         source: 'facebook-oauth-callback',
       });
+      const peeked = await peekOAuthStatePayload(state, sessionSecret);
+      if (peeked?.isMagic) {
+        const magicErrorUrl = buildMagicConnectUrl(
+          '/connect/facebook/error',
+          requestUrl,
+          rootDomain,
+          appUrl
+        );
+        const isCancelled =
+          error === 'access_denied' || error === 'user_cancelled';
+        magicErrorUrl.searchParams.set(
+          'reason',
+          isCancelled ? 'cancelled' : 'oauth_failed'
+        );
+        return magicErrorUrl;
+      }
     }
   }
   target.searchParams.set('error', error);
@@ -162,11 +186,54 @@ function buildOAuthStepErrorRedirect(
   return NextResponse.redirect(destinationUrl);
 }
 
+/**
+ * Hard-error redirect for a failed account save (BL1 fix). The user must
+ * never see a success page for an account that was not persisted, so a
+ * save failure redirects here instead of falling through to
+ * buildPostConnectRedirect. Magic flows land on the app-host error page
+ * with a dedicated reason; direct flows land on Accounts with a
+ * dedicated error param handled by resolveOAuthRedirectNotice. No
+ * page-token refresh runs on this path — there is no saved account to
+ * refresh for.
+ */
+function buildAccountSaveErrorRedirect(
+  requestUrl: string,
+  destinationUrl: URL,
+  isMagic: boolean | undefined,
+  rootDomain?: string,
+  appUrl?: string
+): NextResponse {
+  if (isMagic) {
+    const magicErrorUrl = buildMagicConnectUrl(
+      '/connect/facebook/error',
+      requestUrl,
+      rootDomain ?? '',
+      appUrl ?? ''
+    );
+    magicErrorUrl.searchParams.set('reason', 'account_save_failed');
+    return NextResponse.redirect(magicErrorUrl);
+  }
+  destinationUrl.searchParams.set('error', 'account_save_failed');
+  return NextResponse.redirect(destinationUrl);
+}
+
 async function fetchGraphPageTokenMap(
   longAccessToken: string
 ): Promise<Map<string, string>> {
   const tokenMap = new Map<string, string>();
-  const pages = await fetchAllFacebookPages(longAccessToken, 'id,access_token');
+  // Audit BG6: a truncated list refreshes only a subset of page
+  // tokens while the callback still reports success. The refresh
+  // stays best-effort (a partial refresh must not fail the
+  // connect), but truncation is now logged loudly instead of
+  // silently — the BG5 worker fallback covers the publish path
+  // for any page whose token stayed stale.
+  const { pages, truncated, truncationReason } =
+    await fetchAllFacebookPagesWithMeta(longAccessToken, 'id,access_token');
+  if (truncated) {
+    console.warn(
+      `[FacebookOAuth] Page token refresh truncated (${truncationReason}): refreshed ${pages.length} pages, further pages unseen — their stored tokens stay stale until the next reconnect or a publish-time BG5 re-discovery.`
+    );
+  }
   for (const item of pages) {
     if (
       typeof item?.id === 'string' &&
@@ -318,9 +385,13 @@ function buildPostConnectRedirect(
     statePayload.expectedFbAccountId &&
       meProfile.id !== statePayload.expectedFbAccountId
   );
-  const isAlreadyConnected = Boolean(
-    !statePayload.expectedFbAccountId && alreadyExisted
-  );
+  // Audit UX8: the copy must follow the outcome, not the path.
+  // Re-authorizing an account that already existed is a session
+  // refresh whether it came through a card Reconnect (expected id
+  // set) or a fresh magic link (no expected id) — the old
+  // !expectedFbAccountId condition made the same outcome read
+  // "connected" on one path and "session refreshed" on the other.
+  const isAlreadyConnected = Boolean(alreadyExisted);
 
   if (statePayload.isMagic) {
     const magicSuccessUrl = buildMagicConnectUrl(
@@ -398,13 +469,22 @@ async function upsertConnectedFacebookAccount(
   const legacyDb = db && 'query' in db && typeof db.query === 'function' ? db : null;
 
   if (supabase) {
-    const { data: existing } = await supabase
+    const { data: existing, error: existingError } = await supabase
       .from('social_accounts')
       .select('id, status, metadata')
       .eq('workspace_id', workspaceId)
       .eq('platform', 'facebook')
       .eq('external_account_id', meProfile.id)
       .maybeSingle();
+
+    // BL1 fix: a failed lookup is a hard error, not a signal to proceed
+    // with empty metadata and hope the upsert succeeds. The caller
+    // redirects to the save-error surface instead of success.
+    if (existingError) {
+      throw new Error(
+        `Failed to look up connected Facebook account: ${existingError.message}`
+      );
+    }
 
     const alreadyExisted = Boolean(existing && typeof existing.status === 'string');
     const profilePictureUrl = meProfile.picture?.data?.url ?? null;
@@ -419,7 +499,7 @@ async function upsertConnectedFacebookAccount(
     if (gender !== null) metadata.gender = gender;
     if (accountLink !== null) metadata.account_link = accountLink;
 
-    const { data: upserted } = await supabase
+    const { data: upserted, error: upsertError } = await supabase
       .from('social_accounts')
       .upsert(
         {
@@ -439,7 +519,23 @@ async function upsertConnectedFacebookAccount(
       .select('id')
       .single();
 
+    // BL1 fix: never swallow an upsert error and redirect to success.
+    // This throws into the caller's save-error handling, which logs the
+    // failure and redirects to the error surface — for a brand-new
+    // account and for an existing account whose token update failed
+    // alike. No "connected with the old token" fallback.
+    if (upsertError) {
+      throw new Error(
+        `Failed to save connected Facebook account: ${upsertError.message}`
+      );
+    }
+
     const accountRowId = upserted?.id ?? existing?.id;
+    if (!accountRowId) {
+      // An upsert that reports success but yields no row is the same
+      // failure mode: nothing was persisted, so success is a lie.
+      throw new Error('Failed to save connected Facebook account: no row returned');
+    }
     return { accountRowId, alreadyExisted };
   }
 
@@ -489,6 +585,10 @@ async function upsertConnectedFacebookAccount(
   )) as Array<{ id: string }>;
 
   const accountRowId = upsertRows?.[0]?.id ?? existingRows?.[0]?.id;
+  if (!accountRowId) {
+    // Same BL1 rule as the Supabase path: no persisted row, no success.
+    throw new Error('Failed to save connected Facebook account: no row returned');
+  }
   return { accountRowId, alreadyExisted };
 }
 
@@ -501,7 +601,6 @@ export async function handleFacebookCallback(
     encryptionKey,
     appUrl,
     rootDomain,
-    redirectUri,
   } = getCallbackEnvConfig();
 
   const searchParams = request.nextUrl.searchParams;
@@ -535,6 +634,24 @@ export async function handleFacebookCallback(
   try {
     statePayload = await verifyOAuthState(state, sessionSecret);
   } catch (_e) {
+    // Audit BG13: an expired-but-signed magic state routes to
+    // the magic error page (reason expired_or_invalid → the
+    // page's default "link expired, generate a fresh link"
+    // copy), not to the tenant accounts page whose login gate
+    // would drop the user at /login with the error lost. A
+    // tampered state peeks to null and keeps the tenant
+    // fallback — magic cannot be proven from it.
+    const peeked = await peekOAuthStatePayload(state, sessionSecret);
+    if (peeked?.isMagic) {
+      const magicErrorUrl = buildMagicConnectUrl(
+        '/connect/facebook/error',
+        request.url,
+        rootDomain,
+        appUrl
+      );
+      magicErrorUrl.searchParams.set('reason', 'expired_or_invalid');
+      return NextResponse.redirect(magicErrorUrl);
+    }
     const target = new URL('/accounts', request.url);
     target.searchParams.set('error', 'invalid_oauth_state');
     return NextResponse.redirect(target);
@@ -550,10 +667,32 @@ export async function handleFacebookCallback(
 
   // CSRF validation for direct OAuth flows (Spec Issue 8)
   if (!statePayload.isMagic) {
+    // Audit BG14: a session lost mid-flow must keep a return
+    // path. The old code sent every session failure to the
+    // tenant accounts page, which itself requires a session —
+    // so the user bounced to /login with the error lost and no
+    // way back. Expiry-like failures (missing, unverifiable, or
+    // inactive session) now go to /login directly with
+    // next=<tenant accounts path> and reason=session-expired:
+    // the login page shows the session-expired notice and
+    // returns the user to accounts after sign-in, where they
+    // can click Connect again. A session_mismatch keeps the
+    // accounts error banner: a session exists there, so the
+    // banner renders (the specific mismatch detail is only
+    // lost for the login-bound cases, where the accounts page
+    // cannot render at all).
+    const sessionLossRedirect = () => {
+      const loginUrl = new URL('/login', request.url);
+      loginUrl.searchParams.set(
+        'next',
+        `/tenant/${tenantSubdomain}/accounts`
+      );
+      loginUrl.searchParams.set('reason', 'session-expired');
+      return NextResponse.redirect(loginUrl);
+    };
     const sessionCookie = request.cookies.get('fbup_session')?.value;
     if (!sessionCookie) {
-      destinationUrl.searchParams.set('error', 'unauthorized');
-      return NextResponse.redirect(destinationUrl);
+      return sessionLossRedirect();
     }
     try {
       const session = await verifySessionToken(sessionCookie, sessionSecret);
@@ -561,9 +700,16 @@ export async function handleFacebookCallback(
         destinationUrl.searchParams.set('error', 'session_mismatch');
         return NextResponse.redirect(destinationUrl);
       }
+      // Audit S1: live session validation on the DIRECT flow only.
+      // The magic flow has no session by design (the magic token
+      // is its credential, and magic links stay reusable per
+      // owner decision on BL3), so it is deliberately untouched.
+      const { validateSessionActive } = await import('@/lib/auth/session');
+      if (!(await validateSessionActive(session))) {
+        return sessionLossRedirect();
+      }
     } catch {
-      destinationUrl.searchParams.set('error', 'unauthorized');
-      return NextResponse.redirect(destinationUrl);
+      return sessionLossRedirect();
     }
   }
 
@@ -592,13 +738,16 @@ export async function handleFacebookCallback(
 
     const { fbAppId: effectiveAppId, decryptedAppSecret: effectiveAppSecret, workspaceId } = byocResult;
 
+    // Audit N6: the fallback argument is a bare app URL, not the
+    // full redirect URI — passing redirectUri here made the local
+    // branch append /api/auth/facebook/callback a second time.
     const effectiveRedirectUri =
       statePayload.redirectUri ||
       buildSubdomainOAuthRedirectUri(
         tenantSubdomain,
         request.url,
         rootDomain,
-        redirectUri
+        appUrl
       );
 
     // 2. Exchange temporary code for short-lived token (Graph API v26.0)
@@ -697,16 +846,38 @@ export async function handleFacebookCallback(
         : 5184000; // ~60 days
     const expiresAt = new Date(Date.now() + expiresInSeconds * 1000);
 
-    // 6. Check existing & upsert into database with workspace_id isolation
-    const { accountRowId, alreadyExisted } =
-      await upsertConnectedFacebookAccount(
+    // 6. Check existing & upsert into database with workspace_id isolation.
+    // BL1 fix: a save failure is a hard error. Do not redirect to
+    // success and do not refresh page tokens on this path.
+    let accountRowId: string | undefined;
+    let alreadyExisted = false;
+    try {
+      ({ accountRowId, alreadyExisted } = await upsertConnectedFacebookAccount(
         db,
         userId,
         workspaceId,
         meProfile,
         encryptedToken,
         expiresAt
+      ));
+    } catch (err) {
+      logServerError(
+        '[FacebookOAuth] Failed to save connected Facebook account',
+        err,
+        {
+          source: 'facebook-oauth-callback',
+          workspaceId,
+          tenantSubdomain,
+        }
       );
+      return buildAccountSaveErrorRedirect(
+        request.url,
+        destinationUrl,
+        statePayload.isMagic,
+        rootDomain,
+        appUrl
+      );
+    }
 
     if (accountRowId) {
       await refreshConnectedPageTokens(
@@ -748,6 +919,10 @@ export async function handleFacebookCallback(
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  // Audit S6: previously unthrottled OAuth callback; 20/min like initiate.
+  // Over the limit the caller gets the standard JSON 429, not a redirect.
+  const limited = await enforceIpRateLimit(request, 'auth_facebook_callback', 20);
+  if (limited) return limited;
   return await handleFacebookCallback(request);
 }
 

@@ -52,6 +52,13 @@ export async function POST(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  // Audit S1: live session validation — suspension and password
+  // changes take effect immediately, including on secret reveal.
+  const { validateSessionActive } = await import('@/lib/auth/session');
+  if (!(await validateSessionActive(session))) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const access = canAccessTenant(session, subdomain);
   if (!access.allowed) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });

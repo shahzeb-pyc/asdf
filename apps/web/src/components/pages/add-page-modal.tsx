@@ -39,6 +39,7 @@ import {
 import { ListFacebookAccountsResponseSchema } from '@/lib/api/schemas/accounts';
 import { reportError } from '@/lib/report-error';
 import { buildDirectConnectUrl } from '@/components/accounts/connect-account-modal';
+import { getAccountHealth } from '@/components/accounts/account-health';
 import type { FacebookAccountItem } from '@/components/accounts/account-card';
 
 import {
@@ -103,6 +104,10 @@ export interface AddPageModalProps {
    * `undefined` = not checked yet (show no guidance claim).
    */
   facebookAppConfigured?: boolean | undefined;
+  /** Audit UX5: the app-setup check is still running. */
+  byocPending?: boolean | undefined;
+  /** Audit UX5: the app-setup check failed (not known missing). */
+  byocError?: boolean | undefined;
   onNavigateToSettingsFacebook?: (() => void) | undefined;
   onReconnectAccount?: ((account: FacebookAccountItem) => void) | undefined;
   initialStep?: AddPageStep | undefined;
@@ -122,6 +127,8 @@ async function executeDiscoverPages(subdomain: string, accountId: string) {
     return {
       success: true as const,
       pages: data.pages as DiscoveredPageItem[],
+      // Audit BG6: a truncated list is partial, never complete.
+      truncated: data.truncated,
       error: null,
     };
   } catch (error) {
@@ -129,6 +136,7 @@ async function executeDiscoverPages(subdomain: string, accountId: string) {
     return {
       success: false as const,
       pages: [] as DiscoveredPageItem[],
+      truncated: false,
       error:
         isApiError(error) && error.kind === 'http'
           ? "Couldn't load pages from this Facebook account. Please check the account connection and try again."
@@ -176,12 +184,15 @@ async function executeImportPages(
     reportError(error, { source: 'add-page-import' });
     // A schedule failure carries its own server signal and message:
     // the timezone and times are kept for retry, so the user must
-    // hear that, not the generic import failure. Anything else keeps
-    // the generic import message.
+    // hear that, not the generic import failure. A partial import
+    // (BG8) likewise names the pages that were not added, so its
+    // server message is passed through verbatim. Anything else
+    // keeps the generic import message.
     if (
       isApiError(error) &&
       error.kind === 'http' &&
-      error.code === 'SCHEDULE_FAILED'
+      (error.code === 'SCHEDULE_FAILED' ||
+        error.code === 'PARTIAL_IMPORT')
     ) {
       return {
         success: false as const,
@@ -210,6 +221,8 @@ export function AddPageModal({
   onSuccess,
   onNavigateToAccounts,
   facebookAppConfigured,
+  byocPending = false,
+  byocError = false,
   onNavigateToSettingsFacebook,
   onReconnectAccount,
   initialStep = 'select-account',
@@ -230,6 +243,9 @@ export function AddPageModal({
   const [discoveredPages, setDiscoveredPages] = React.useState<DiscoveredPageItem[]>(
     initialDiscoveredPages
   );
+  // Audit BG6: whether the discover list was truncated — shown as
+  // a warning above the page list, never silently complete.
+  const [discoveredTruncated, setDiscoveredTruncated] = React.useState(false);
   const [pageSearchQuery, setPageSearchQuery] = React.useState('');
   const [isDiscovering, setIsDiscovering] = React.useState(false);
   const [selectedPageIds, setSelectedPageIds] = React.useState<string[]>(
@@ -289,6 +305,7 @@ export function AddPageModal({
       setStep('select-account');
       setSelectedAccount(null);
       setDiscoveredPages([]);
+      setDiscoveredTruncated(false);
       setSelectedPageIds([]);
       setPageSearchQuery('');
       resetSchedule();
@@ -298,10 +315,22 @@ export function AddPageModal({
     onOpenChange(nextOpen);
   };
 
+  // Audit UX9: when discovery or import fails on an account
+  // whose connection is already expired or errored, say so and
+  // point at Reconnect — the generic message alone sends the
+  // user back out to find Reconnect elsewhere.
+  const reconnectHintFor = (account: FacebookAccountItem): string => {
+    const health = getAccountHealth(account);
+    return health === 'expired' || health === 'error'
+      ? " This account's connection may have expired — go back and use Reconnect on it, then try again."
+      : '';
+  };
+
   const handleSelectAccount = async (account: FacebookAccountItem) => {
     setSelectedAccount(account);
     setStep('select-pages');
     setDiscoveredPages([]);
+    setDiscoveredTruncated(false);
     setSelectedPageIds([]);
     setPageSearchQuery('');
     setErrorMessage(null);
@@ -309,9 +338,10 @@ export function AddPageModal({
 
     const result = await executeDiscoverPages(subdomain, account.id);
     if (!result.success) {
-      setErrorMessage(result.error);
+      setErrorMessage(result.error + reconnectHintFor(account));
     } else {
       setDiscoveredPages(result.pages);
+      setDiscoveredTruncated(result.truncated);
     }
     setIsDiscovering(false);
   };
@@ -320,6 +350,7 @@ export function AddPageModal({
     setStep('select-account');
     setSelectedAccount(null);
     setDiscoveredPages([]);
+    setDiscoveredTruncated(false);
     setSelectedPageIds([]);
     setPageSearchQuery('');
     setErrorMessage(null);
@@ -414,7 +445,10 @@ export function AddPageModal({
       // inline error, no success banner, no close. The user's
       // timezone and times are kept, so Retry re-sends the same
       // schedule and the server's slot upsert cannot duplicate it.
-      setErrorMessage(result.error);
+      // Audit UX9: same reconnect hint as discovery failures
+      // (selectedAccount is non-null here — the import call above
+      // already dereferenced it).
+      setErrorMessage(result.error + reconnectHintFor(selectedAccount));
     } else {
       onSuccess?.({
         importedCount: result.importedCount,
@@ -445,10 +479,34 @@ export function AddPageModal({
     step === 'select-account' &&
     facebookAppConfigured === false &&
     activeAccounts.length === 0;
+  // Audit UX5: the checking/failed states get their own notices so
+  // the modal never shows only "No active accounts" with no reason.
+  const showByocChecking =
+    step === 'select-account' && byocPending && activeAccounts.length === 0;
+  const showByocCheckFailed =
+    step === 'select-account' && !byocPending && byocError && activeAccounts.length === 0;
 
   const handleReconnectAccount = (account: FacebookAccountItem) => {
+    // Audit UX5: while the check runs, Reconnect is visibly
+    // disabled in the step list — this guard is only belt and
+    // braces, never the sole (silent) behaviour.
+    if (byocPending) return;
     if (onReconnectAccount) {
       onReconnectAccount(account);
+      return;
+    }
+    // Audit N8: the fallback (no parent handler) must apply the
+    // same BYOC gate the Pages shell applies — without app
+    // credentials it routes to Settings instead of sending a
+    // BYOC-less user straight into OAuth, which would fail
+    // server-side. Unknown (undefined) counts as not configured
+    // here, exactly as in the shell handler.
+    if (!facebookAppConfigured) {
+      if (onNavigateToSettingsFacebook) {
+        onNavigateToSettingsFacebook();
+      } else if (typeof window !== 'undefined') {
+        window.location.href = `/tenant/${subdomain}/settings?tab=byoc`;
+      }
       return;
     }
     if (typeof window !== 'undefined') {
@@ -548,6 +606,9 @@ export function AddPageModal({
               activeAccounts={activeAccounts}
               expiredAccounts={expiredAccounts}
               showMissingAppGuidance={showMissingAppGuidance}
+              showByocChecking={showByocChecking}
+              showByocCheckFailed={showByocCheckFailed}
+              isReconnectDisabled={byocPending}
               onSelectAccount={(account) => {
                 void handleSelectAccount(account);
               }}
@@ -555,6 +616,17 @@ export function AddPageModal({
               onGoToAccounts={handleGoToAccounts}
               onGoToSettingsFacebook={handleGoToSettingsFacebook}
             />
+          )}
+
+          {step === 'select-pages' && discoveredTruncated && (
+            <div
+              role="alert"
+              className="mb-4 rounded-sm border border-brand-gold/25 bg-brand-gold/10 px-3 py-2.5 text-body leading-body text-ink"
+            >
+              Facebook returned more pages than could be loaded, so
+              this list may be incomplete. If a page you expect is
+              missing, go back and choose the account again to retry.
+            </div>
           )}
 
           {step === 'select-pages' && (

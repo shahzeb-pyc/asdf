@@ -16,12 +16,14 @@ import {
   parsePaginationParams,
   type PaginationMeta,
 } from '@/lib/server/pagination';
-import type { PostgrestError } from '@supabase/supabase-js';
+import { enforceIpRateLimit } from '@/lib/request-body';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { propagateExpiredAccountDestinations } from '@/lib/publishing/account-expiry-propagation';
 import {
   ACCOUNT_STATUS_TO_WIRE_SQL,
   unifiedAccountStatusToWire,
 } from '@/lib/server/facebook-wire';
+import { isAccountExpiredForList } from '@/components/accounts/accounts-helpers';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 /**
@@ -84,36 +86,73 @@ function mapAccountRowToView(row: AccountRow) {
   };
 }
 
-function syncExpiredAccountStatus(
-  accountId: string,
+/**
+ * Audit N3 — workspace-wide lapsed-account sync, awaited before
+ * the list is read. The old code fired one un-awaited update per
+ * page-slice row (SQL) or per mapped row (Supabase), so the
+ * response could show `expired` while the stored row was still
+ * `active`, and sync coverage differed by path. This is a single
+ * UPDATE over the whole workspace (active rows whose token has
+ * passed), run before the fetch on both paths, so the response
+ * always reflects stored state. Propagation to destinations is
+ * still best-effort per flipped account and never fails the list.
+ */
+async function syncLapsedAccountStatus(
   workspaceId: string,
   dbClient?: DatabaseClient | SupabaseClient
-): void {
-  if (dbClient && 'query' in dbClient && typeof dbClient.query === 'function') {
-    dbClient.query(
-      `UPDATE social_accounts
-       SET status = 'expired', updated_at = now()
-       WHERE id = $1 AND workspace_id = $2`,
-      [accountId, workspaceId]
-    ).catch((err: unknown) => {
-      console.error('[handleListAccounts] Failed to persist expired account status:', err);
-    });
-    return;
-  }
+): Promise<void> {
+  const propagate = async (client: unknown, accountId: string): Promise<void> => {
+    try {
+      await propagateExpiredAccountDestinations(
+        client as Parameters<typeof propagateExpiredAccountDestinations>[0],
+        accountId
+      );
+    } catch (err: unknown) {
+      console.error(
+        '[handleListAccounts] Failed to propagate expired account destinations:',
+        err
+      );
+    }
+  };
 
-  const supabase = (dbClient && 'from' in dbClient ? dbClient : getSupabaseAdminClient()) as SupabaseClient | null;
-  if (!supabase) return;
-
-  supabase
-    .from('social_accounts')
-    .update({ status: 'expired', updated_at: new Date().toISOString() })
-    .eq('id', accountId)
-    .eq('workspace_id', workspaceId)
-    .then(({ error }: { error: PostgrestError | null }) => {
-      if (error) {
-        console.error('[handleListAccounts] Failed to persist expired account status via Supabase:', error);
+  try {
+    if (dbClient && 'query' in dbClient && typeof dbClient.query === 'function') {
+      const flipped = (await dbClient.query(
+        `UPDATE social_accounts
+         SET status = 'expired', updated_at = now()
+         WHERE workspace_id = $1 AND status = 'active' AND token_expires_at < now()
+         RETURNING id`,
+        [workspaceId]
+      )) as Array<{ id: string }>;
+      for (const row of Array.isArray(flipped) ? flipped : []) {
+        await propagate(dbClient, row.id);
       }
-    });
+      return;
+    }
+
+    const supabase = (dbClient && 'from' in dbClient ? dbClient : getSupabaseAdminClient()) as SupabaseClient | null;
+    if (!supabase) return;
+    const result = (await supabase
+      .from('social_accounts')
+      .update({ status: 'expired', updated_at: new Date().toISOString() })
+      .eq('workspace_id', workspaceId)
+      .eq('status', 'active')
+      .lt('token_expires_at', new Date().toISOString())
+      .select('id')) as unknown as { data?: unknown; error?: unknown };
+    if (result?.error) {
+      console.error(
+        '[handleListAccounts] Failed to persist expired account status via Supabase:',
+        result.error
+      );
+      return;
+    }
+    const flipped = Array.isArray(result?.data) ? result.data : [];
+    for (const row of flipped as Array<{ id: string }>) {
+      await propagate(supabase, row.id);
+    }
+  } catch (err: unknown) {
+    console.error('[handleListAccounts] Failed to sync lapsed account status:', err);
+  }
 }
 
 export interface AccountListFilters {
@@ -121,8 +160,17 @@ export interface AccountListFilters {
   status: string;
 }
 
-/** Computed-expired predicate (mirrors evaluateAccountHealth). */
-const ACCOUNT_EXPIRED_SQL = `(sa.status = 'expired' OR (sa.status = 'active' AND sa.token_expires_at < now()))`;
+/**
+ * Audit BG11 — computed-expired predicate, unified with the
+ * Supabase path and the shell's getAccountHealth: an expired
+ * wire status OR a past token is expired, regardless of the
+ * other field. The old predicate counted active+past-token but
+ * not disconnected+past-token, so a disconnected account with
+ * a past token was counted as expired yet excluded from the
+ * expired filter. This predicate is also the ORDER BY key, so
+ * sort order unifies with it.
+ */
+const ACCOUNT_EXPIRED_SQL = `((${ACCOUNT_STATUS_TO_WIRE_SQL}) = 'expired' OR sa.token_expires_at < now())`;
 
 /**
  * Full-set health buckets, mirroring the shell's getAccountHealth
@@ -149,9 +197,16 @@ function buildAccountWhere(
   const params: unknown[] = [workspaceId];
   const conditions = ['sa.workspace_id = $1', "sa.platform = 'facebook'"];
   if (filters.search) {
+    // Audit N2: escape ILIKE wildcards so a literal search for
+    // "100%" does not match more than the literal string (the
+    // Supabase path already matches literally via includes).
+    const escaped = filters.search
+      .replace(/\\/g, '\\\\')
+      .replace(/%/g, '\\%')
+      .replace(/_/g, '\\_');
     const p = `$${params.length + 1}`;
-    params.push(`%${filters.search}%`);
-    conditions.push(`sa.display_name ILIKE ${p}`);
+    params.push(`%${escaped}%`);
+    conditions.push(`sa.display_name ILIKE ${p} ESCAPE '\\'`);
   }
   if (filters.status === 'active') {
     conditions.push(
@@ -162,6 +217,14 @@ function buildAccountWhere(
   } else if (filters.status === 'expiring_soon') {
     conditions.push(
       `(sa.status = 'active' AND sa.token_expires_at > now() AND sa.token_expires_at <= now() + interval '7 days')`
+    );
+  } else if (filters.status === 'error') {
+    // Audit UX2: health 'error' is the complement of connected
+    // and expired — neither an active row with a live/absent
+    // token, nor the shared expired predicate. This keeps the
+    // error tab exactly in step with the health counts.
+    conditions.push(
+      `(NOT (sa.status = 'active' AND (sa.token_expires_at IS NULL OR sa.token_expires_at >= now())) AND NOT ${ACCOUNT_EXPIRED_SQL})`
     );
   }
   return { where: conditions.join(' AND '), params };
@@ -289,9 +352,19 @@ async function fetchSupabaseAccounts(
   supabase: SupabaseClient<Database>,
   workspaceId: string
 ): Promise<{ rows?: AccountRow[]; error?: string }> {
-  const { data: accountsData, error } = await supabase
-    .from('social_accounts')
-    .select(`
+  // Audit N1: the old single select silently truncated past
+  // PostgREST's 1,000-row limit, giving wrong totals, wrong
+  // healthCounts, and missing accounts with no error. Page
+  // through with .range() instead; past 10 full pages the list
+  // fails loudly rather than returning wrong data.
+  const SUPABASE_PAGE_SIZE = 1000;
+  const SUPABASE_MAX_PAGES = 10;
+  const accountsData: unknown[] = [];
+  for (let page = 0; page < SUPABASE_MAX_PAGES; page++) {
+    const from = page * SUPABASE_PAGE_SIZE;
+    const { data, error } = await supabase
+      .from('social_accounts')
+      .select(`
       id,
       external_account_id,
       display_name,
@@ -310,19 +383,30 @@ async function fetchSupabaseAccounts(
         metadata
       )
     `)
-    .eq('workspace_id', workspaceId)
-    .eq('platform', 'facebook')
-    .order('created_at', { ascending: false });
+      .eq('workspace_id', workspaceId)
+      .eq('platform', 'facebook')
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .range(from, from + SUPABASE_PAGE_SIZE - 1);
 
-  if (error) {
-    return { error: error.message };
+    if (error) {
+      return { error: error.message };
+    }
+    const pageRows = (data || []) as unknown[];
+    accountsData.push(...pageRows);
+    if (pageRows.length < SUPABASE_PAGE_SIZE) {
+      break;
+    }
+    if (page === SUPABASE_MAX_PAGES - 1) {
+      return { error: 'Too many accounts to list reliably; please contact support.' };
+    }
   }
 
   // The contracts Database type resolves this joined select to never[]
   // (its table entries carry no Relationships metadata for supabase-js),
   // so the result is asserted once, here at the boundary, to the row
   // shape the select actually returns.
-  const accountRows = (accountsData || []) as unknown as SupabaseAccountJoinRow[];
+  const accountRows = accountsData as unknown as SupabaseAccountJoinRow[];
   const rows: AccountRow[] = accountRows.map((acc) => {
     const activePages = (acc.destinations || []).filter(
       (p) =>
@@ -373,6 +457,14 @@ export async function handleListAccounts(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  // Audit S1: live session validation — a suspended user or a
+  // session issued before a password change must not reach the
+  // tenant check or any mutation below.
+  const { validateSessionActive } = await import('@/lib/auth/session');
+  if (!(await validateSessionActive(session))) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   // 2. Tenant isolation check
   if (!isSessionAuthorizedForSubdomain(session, subdomain)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
@@ -395,12 +487,25 @@ export async function handleListAccounts(
     search: (url.searchParams.get('search') ?? '').trim(),
     status: url.searchParams.get('status') ?? 'all',
   };
+  // Audit N2: an unknown status used to fall through to "all"
+  // silently on both paths. Reject it so a typo'd filter can
+  // never masquerade as an unfiltered list.
+  const VALID_LIST_STATUSES = ['all', 'active', 'expiring_soon', 'expired', 'error'];
+  if (!VALID_LIST_STATUSES.includes(filters.status)) {
+    return NextResponse.json(
+      { error: `Unknown status filter: ${filters.status}` },
+      { status: 400 }
+    );
+  }
 
   let accounts: ReturnType<typeof mapAccountRowToView>[];
   let meta: PaginationMeta;
   let healthCounts: AccountHealthCounts | undefined;
 
   if (dbClient && 'query' in dbClient && typeof dbClient.query === 'function') {
+    // Audit N3: lapse-sync first (awaited, workspace-wide), so
+    // the fetched page already reflects stored state.
+    await syncLapsedAccountStatus(workspaceId, dbClient);
     // Exact server-side pagination: the SQL path filters, ranks,
     // counts and ranges in the database.
     const result = await fetchSqlAccountsPage(
@@ -410,13 +515,7 @@ export async function handleListAccounts(
       requestedPage,
       limit
     );
-    accounts = result.rows.map((row) => {
-      const view = mapAccountRowToView(row);
-      if (row.status === 'active' && view.status === 'expired') {
-        syncExpiredAccountStatus(view.id, workspaceId, dbClient);
-      }
-      return view;
-    });
+    accounts = result.rows.map((row) => mapAccountRowToView(row));
     healthCounts = result.healthCounts;
     // Stable re-sort of the page slice into the documented
     // expired-first order. The database ORDER BY already produces
@@ -439,6 +538,9 @@ export async function handleListAccounts(
       return NextResponse.json({ error: 'Database service unavailable' }, { status: 500 });
     }
 
+    // Audit N3: same awaited workspace-wide lapse-sync as the SQL
+    // path, before the fetch, so both paths report stored state.
+    await syncLapsedAccountStatus(workspaceId, dbClient);
     const res = await fetchSupabaseAccounts(supabase, workspaceId);
     if (res.error) {
       return NextResponse.json({ error: res.error }, { status: 500 });
@@ -447,26 +549,16 @@ export async function handleListAccounts(
     // cannot order by the computed-expired rank, so the filtered rows
     // are mapped, filtered and sorted here and only the page slice is
     // returned to the client.
-    const mapped = (res.rows || []).map((row) => {
-      const view = mapAccountRowToView(row);
-      if (row.status === 'active' && view.status === 'expired') {
-        syncExpiredAccountStatus(view.id, workspaceId, dbClient);
-      }
-      return view;
-    });
+    const mapped = (res.rows || []).map((row) => mapAccountRowToView(row));
     const filtered = filterAndSortAccounts(mapped, filters);
     // Full-set health counts, counted BEFORE slicing, using the
-    // same health model as the shell subtitle (getAccountHealth):
-    // expired wire status or a past token is expired, disconnected
-    // with a live-or-absent token is an error, otherwise connected.
+    // same health model as the shell subtitle (getAccountHealth)
+    // via the shared BG11 predicate: expired wire status or a
+    // past token is expired, disconnected with a live-or-absent
+    // token is an error, otherwise connected.
     healthCounts = { connected: 0, expired: 0, error: 0 };
     for (const account of filtered) {
-      if (account.status === 'expired') {
-        healthCounts.expired += 1;
-      } else if (
-        account.tokenExpiresAt &&
-        new Date(account.tokenExpiresAt).getTime() <= Date.now()
-      ) {
+      if (isAccountExpiredForList(account.status, account.tokenExpiresAt)) {
         healthCounts.expired += 1;
       } else if (account.status === 'disconnected') {
         healthCounts.error += 1;
@@ -507,7 +599,20 @@ export async function handleListAccounts(
  */
 type MappedAccount = ReturnType<typeof mapAccountRowToView>;
 
-function filterAndSortAccounts(
+/**
+ * Audit BG11 — the Supabase path's filter/sort, unified with the
+ * SQL path and the shell model via isAccountExpiredForList:
+ * 'active' means connected (active wire status AND a live or
+ * absent token — the old code admitted active+past-token here);
+ * 'expired' means the shared expired predicate (the old code
+ * matched only the wire status, dropping active+past-token and
+ * disconnected+past-token rows the counts still called expired);
+ * 'expiring_soon' means active with a token 1–7 days out (the
+ * old code admitted disconnected/error accounts with soon
+ * tokens); sort is expired-first by the same predicate (the old
+ * sort used the wire status only).
+ */
+export function filterAndSortAccounts(
   accounts: MappedAccount[],
   filters: AccountListFilters
 ): MappedAccount[] {
@@ -518,11 +623,17 @@ function filterAndSortAccounts(
         query.length === 0 ||
         (account.displayName ?? '').toLowerCase().includes(query);
       let matchesStatus = true;
-      if (filters.status === 'active') matchesStatus = account.status === 'active';
+      if (filters.status === 'active')
+        matchesStatus =
+          account.status === 'active' &&
+          !isAccountExpiredForList(account.status, account.tokenExpiresAt);
       else if (filters.status === 'expired')
-        matchesStatus = account.status === 'expired';
+        matchesStatus = isAccountExpiredForList(
+          account.status,
+          account.tokenExpiresAt
+        );
       else if (filters.status === 'expiring_soon') {
-        if (account.status === 'expired' || !account.tokenExpiresAt) {
+        if (account.status !== 'active' || !account.tokenExpiresAt) {
           matchesStatus = false;
         } else {
           const days = Math.ceil(
@@ -531,12 +642,25 @@ function filterAndSortAccounts(
           );
           matchesStatus = days > 0 && days <= 7;
         }
+      } else if (filters.status === 'error') {
+        // Audit UX2: same complement as the SQL path — neither
+        // expired nor connected (active with a live/absent token).
+        const expired = isAccountExpiredForList(
+          account.status,
+          account.tokenExpiresAt
+        );
+        const connected = account.status === 'active' && !expired;
+        matchesStatus = !expired && !connected;
       }
       return matchesSearch && matchesStatus;
     })
     .sort((a, b) => {
-      const aExpired = a.status === 'expired' ? 1 : 0;
-      const bExpired = b.status === 'expired' ? 1 : 0;
+      const aExpired = isAccountExpiredForList(a.status, a.tokenExpiresAt)
+        ? 1
+        : 0;
+      const bExpired = isAccountExpiredForList(b.status, b.tokenExpiresAt)
+        ? 1
+        : 0;
       if (aExpired !== bExpired) return bExpired - aExpired;
       return (
         new Date(String(b.createdAt)).getTime() -
@@ -550,5 +674,8 @@ export async function GET(
   context: { params: Promise<{ subdomain: string }> }
 ): Promise<NextResponse> {
   const { subdomain } = await context.params;
+  // Audit S6: previously unthrottled; 60/min like the other list reads.
+  const limited = await enforceIpRateLimit(request, 'tenant_accounts_list', 60);
+  if (limited) return limited;
   return handleListAccounts(request, subdomain);
 }

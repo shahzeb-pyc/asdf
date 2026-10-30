@@ -241,9 +241,15 @@ function resolveLocalOAuthRedirectUri(
   callbackPath: string = '/api/auth/facebook/callback'
 ): string {
   if (appUrlFallback) {
-    const cleanAppUrl = appUrlFallback.endsWith('/')
+    let cleanAppUrl = appUrlFallback.endsWith('/')
       ? appUrlFallback.slice(0, -1)
       : appUrlFallback;
+    // Audit N6: idempotence — a caller that passes the full
+    // redirect URI instead of the bare app URL must not get the
+    // callback path appended a second time.
+    if (cleanAppUrl.endsWith(callbackPath)) {
+      cleanAppUrl = cleanAppUrl.slice(0, -callbackPath.length);
+    }
     return `${cleanAppUrl}${callbackPath}`;
   }
   if (requestUrl) {

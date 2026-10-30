@@ -3,11 +3,14 @@ import { NextRequest } from 'next/server';
 import {
   decryptToken,
   encryptToken,
+  signMagicLinkToken,
   signOAuthState,
   signSessionToken,
+  verifyOAuthState,
 } from '@fbuploadpro/contracts';
 import { handleInitiateFacebookOAuth as initiateFacebookOAuth } from '../../src/app/api/auth/facebook/route';
 import { handleFacebookCallback } from '../../src/app/api/auth/facebook/callback/route';
+import { handleConnectFacebook } from '../../src/app/connect/facebook/route';
 import { handleListAccounts } from '../../src/app/api/tenant/[subdomain]/accounts/route';
 import type { DatabaseClient } from '@fbuploadpro/contracts';
 
@@ -52,7 +55,12 @@ describe('Facebook OAuth Initiation & Callback Handlers (User Story 1 - T058)', 
     const res = await initiateFacebookOAuth(req);
 
     expect(res.status).toBe(307);
-    expect(res.headers.get('location')).toBe('http://localhost:3000/login');
+    // Audit BG14: the login redirect now carries the
+    // session-expired explanation (no tenant is knowable
+    // without a session, so no next parameter here).
+    const location = res.headers.get('location')!;
+    expect(location).toContain('http://localhost:3000/login');
+    expect(location).toContain('reason=session-expired');
   });
 
   it('redirects authenticated users to Facebook OAuth dialog targeting v26.0 with required scopes and workspace BYOC client_id', async () => {
@@ -510,3 +518,358 @@ describe('Facebook OAuth Initiation & Callback Handlers (User Story 1 - T058)', 
   });
 });
 
+
+describe('Facebook OAuth callback account-save failures (BL1 fix)', () => {
+  const userId = '11111111-1111-4111-a111-111111111111';
+  let validSessionCookie: string;
+  let validEncryptedFbAppSecret: string;
+
+  beforeEach(async () => {
+    process.env.SESSION_SECRET = TEST_SECRET;
+    process.env.TOKEN_ENCRYPTION_KEY = TEST_ENCRYPTION_KEY;
+    process.env.NEXT_PUBLIC_APP_URL = 'http://localhost:3000';
+    delete process.env.NEXT_PUBLIC_ROOT_DOMAIN;
+
+    validEncryptedFbAppSecret = await encryptToken(
+      'mock_fb_app_secret_value',
+      TEST_ENCRYPTION_KEY
+    );
+
+    const token = await signSessionToken(
+      {
+        userId,
+        email: 'alexander@gmail.com',
+        name: 'Alex Acme',
+        subdomain: 'acme',
+        role: 'user',
+        status: 'active',
+      },
+      TEST_SECRET
+    );
+    validSessionCookie = `fbup_session=${token}`;
+  });
+
+  function mockGraphSuccess() {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            access_token: 'short_lived_token_abc',
+            token_type: 'bearer',
+            expires_in: 7200,
+          }),
+          { status: 200 }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            access_token: 'long_lived_token_xyz_60_days',
+            token_type: 'bearer',
+            expires_in: 5184000,
+          }),
+          { status: 200 }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ id: 'fb_user_10928374', name: 'Alex Professional' }),
+          { status: 200 }
+        )
+      );
+  }
+
+  async function validState(isMagic = false) {
+    return signOAuthState(
+      {
+        tenantSubdomain: 'acme',
+        userId,
+        nonce: 'bl1_nonce_1234567890',
+        ...(isMagic ? { isMagic: true } : {}),
+        iat: Math.floor(Date.now() / 1000),
+        exp: Math.floor(Date.now() / 1000) + 600,
+      },
+      TEST_SECRET
+    );
+  }
+
+  /**
+   * Minimal chainable Supabase-shaped mock. `from()` records the table so
+   * the test can prove page-token refresh never ran (it starts by
+   * querying `destinations`), and the social_accounts branches let each
+   * test force exactly one failure mode.
+   */
+  function makeSupabaseMock(options: {
+    existing?: Record<string, unknown> | null;
+    existingError?: { message: string } | null;
+    upsertError?: { message: string } | null;
+  }) {
+    const fromCalls: string[] = [];
+    let upsertCalls = 0;
+    let currentTable = '';
+    const builder: Record<string, (...args: unknown[]) => unknown> = {};
+    builder.select = () => builder;
+    builder.eq = () => builder;
+    builder.upsert = () => {
+      upsertCalls += 1;
+      return builder;
+    };
+    builder.update = () => builder;
+    builder.maybeSingle = async () => {
+      if (currentTable === 'workspaces') {
+        return { data: { id: 'ws_123' }, error: null };
+      }
+      if (currentTable === 'platform_credentials') {
+        return {
+          data: {
+            client_id: 'fb_app_id_123',
+            encrypted_client_secret: validEncryptedFbAppSecret,
+            status: 'valid',
+          },
+          error: null,
+        };
+      }
+      if (currentTable === 'social_accounts') {
+        if (options.existingError) {
+          return { data: null, error: options.existingError };
+        }
+        return { data: options.existing ?? null, error: null };
+      }
+      return { data: null, error: null };
+    };
+    builder.single = async () => {
+      if (options.upsertError) {
+        return { data: null, error: options.upsertError };
+      }
+      return { data: { id: 'acc_123' }, error: null };
+    };
+    const client = {
+      from: (table: string) => {
+        fromCalls.push(table);
+        currentTable = table;
+        return builder;
+      },
+    };
+    return {
+      client: client as unknown as Parameters<typeof handleFacebookCallback>[1],
+      fromCalls,
+      get upsertCalls() {
+        return upsertCalls;
+      },
+    };
+  }
+
+  it('redirects to the save-error surface, not success, when a new account upsert fails — and never refreshes page tokens', async () => {
+    mockGraphSuccess();
+    const mock = makeSupabaseMock({
+      existing: null,
+      upsertError: { message: 'duplicate key violates unique constraint' },
+    });
+    const state = await validState();
+    const req = new NextRequest(
+      `http://localhost:3000/api/auth/facebook/callback?code=mock_code_123&state=${state}`,
+      { headers: { cookie: validSessionCookie } }
+    );
+
+    const res = await handleFacebookCallback(req, mock.client);
+    expect(res.status).toBe(307);
+    const location = res.headers.get('location')!;
+    expect(location).toContain('/tenant/acme/accounts?error=account_save_failed');
+    expect(location).not.toContain('connected=1');
+    expect(location).not.toContain('accountName=');
+    expect(mock.upsertCalls).toBe(1);
+    // Page-token refresh starts by querying destinations; it must not run
+    // for an account that was never saved.
+    expect(mock.fromCalls).not.toContain('destinations');
+  });
+
+  it('is a hard error, not connected-with-old-token, when an existing account update fails', async () => {
+    mockGraphSuccess();
+    const mock = makeSupabaseMock({
+      existing: { id: 'acc_existing', status: 'active', metadata: {} },
+      upsertError: { message: 'row-level security violation' },
+    });
+    const state = await validState();
+    const req = new NextRequest(
+      `http://localhost:3000/api/auth/facebook/callback?code=mock_code_123&state=${state}`,
+      { headers: { cookie: validSessionCookie } }
+    );
+
+    const res = await handleFacebookCallback(req, mock.client);
+    expect(res.status).toBe(307);
+    const location = res.headers.get('location')!;
+    expect(location).toContain('/tenant/acme/accounts?error=account_save_failed');
+    expect(location).not.toContain('connected=already');
+    expect(location).not.toContain('connected=1');
+    expect(mock.fromCalls).not.toContain('destinations');
+  });
+
+  it('is a hard error when the existing-row lookup itself fails, before any upsert', async () => {
+    mockGraphSuccess();
+    const mock = makeSupabaseMock({
+      existingError: { message: 'multiple rows returned' },
+    });
+    const state = await validState();
+    const req = new NextRequest(
+      `http://localhost:3000/api/auth/facebook/callback?code=mock_code_123&state=${state}`,
+      { headers: { cookie: validSessionCookie } }
+    );
+
+    const res = await handleFacebookCallback(req, mock.client);
+    expect(res.status).toBe(307);
+    const location = res.headers.get('location')!;
+    expect(location).toContain('/tenant/acme/accounts?error=account_save_failed');
+    expect(location).not.toContain('connected=1');
+    expect(mock.upsertCalls).toBe(0);
+    expect(mock.fromCalls).not.toContain('destinations');
+  });
+
+  it('sends magic flows to the app-host magic error page with the save-failed reason', async () => {
+    mockGraphSuccess();
+    const mock = makeSupabaseMock({
+      existing: null,
+      upsertError: { message: 'duplicate key violates unique constraint' },
+    });
+    const state = await validState(true);
+    const req = new NextRequest(
+      `http://localhost:3000/api/auth/facebook/callback?code=mock_code_123&state=${state}`
+    );
+
+    const res = await handleFacebookCallback(req, mock.client);
+    expect(res.status).toBe(307);
+    const location = res.headers.get('location')!;
+    expect(location).toBe(
+      'http://localhost:3000/connect/facebook/error?reason=account_save_failed'
+    );
+    expect(location).not.toContain('/accounts?connected');
+    expect(mock.fromCalls).not.toContain('destinations');
+  });
+});
+
+describe('Facebook OAuth window composition and error routing (BG12, BG13, BG14)', () => {
+  const userId = '11111111-1111-4111-a111-111111111111';
+
+  beforeEach(async () => {
+process.env.SESSION_SECRET = TEST_SECRET;
+    process.env.TOKEN_ENCRYPTION_KEY = TEST_ENCRYPTION_KEY;
+    process.env.NEXT_PUBLIC_APP_URL = 'http://localhost:3000';
+    delete process.env.NEXT_PUBLIC_ROOT_DOMAIN;
+  });
+
+  async function makeByocDb() {
+    const encryptedSecret = await encryptToken(
+      'mock_fb_app_secret_value',
+      TEST_ENCRYPTION_KEY
+    );
+    return {
+      query: vi.fn().mockImplementation((sql: string) => {
+        if (sql.includes('FROM workspaces')) {
+          return Promise.resolve([{ id: 'ws_123' }]);
+        }
+        if (sql.includes('FROM platform_credentials')) {
+          return Promise.resolve([
+            {
+              client_id: 'fb_app_id_byoc_workspace',
+              encrypted_client_secret: encryptedSecret,
+            },
+          ]);
+        }
+        return Promise.resolve([]);
+      }),
+    } as unknown as DatabaseClient;
+  }
+
+  async function expiredMagicState() {
+    const now = Math.floor(Date.now() / 1000);
+    return signOAuthState(
+      {
+        tenantSubdomain: 'acme',
+        userId,
+        nonce: 'expired_magic_nonce_12345',
+        iat: now - 1200,
+        exp: now - 600,
+        isMagic: true,
+      },
+      TEST_SECRET
+    );
+  }
+
+  it('BG12: a magic-flow OAuth state never outlives the magic token that admitted it', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const magicExp = now + 60;
+    const magicToken = await signMagicLinkToken(
+      {
+        tenantSubdomain: 'acme',
+        userId,
+        nonce: 'magic_nonce_string_12345',
+        iat: now,
+        exp: magicExp,
+      },
+      TEST_SECRET
+    );
+    const req = new NextRequest(
+      `http://localhost:3000/connect/facebook?token=${magicToken}`
+    );
+    const res = await handleConnectFacebook(req, await makeByocDb());
+    expect(res.status).toBe(307);
+    const location = new URL(res.headers.get('location')!);
+    expect(location.origin).toBe('https://www.facebook.com');
+    const state = location.searchParams.get('state')!;
+    const decoded = await verifyOAuthState(state, TEST_SECRET);
+    expect(decoded.isMagic).toBe(true);
+    // Bounded by the magic window, not a fresh 10 minutes.
+    expect(decoded.exp).toBe(magicExp);
+  });
+
+  it('BG13: an expired magic state on callback routes to the magic error page, not tenant accounts', async () => {
+    const state = await expiredMagicState();
+    const mockDb = { query: vi.fn() } as unknown as DatabaseClient;
+    const req = new NextRequest(
+      `http://localhost:3000/api/auth/facebook/callback?code=mock_code_123&state=${state}`
+    );
+    const res = await handleFacebookCallback(req, mockDb);
+    expect(res.status).toBe(307);
+    const location = res.headers.get('location')!;
+    expect(location).toContain('/connect/facebook/error');
+    expect(location).toContain('reason=expired_or_invalid');
+    expect(location).not.toContain('/accounts?error=');
+  });
+
+  it('BG13: an expired magic state on a Facebook error also routes to the magic error page', async () => {
+    const state = await expiredMagicState();
+    const mockDb = { query: vi.fn() } as unknown as DatabaseClient;
+    const req = new NextRequest(
+      `http://localhost:3000/api/auth/facebook/callback?error=access_denied&state=${state}`
+    );
+    const res = await handleFacebookCallback(req, mockDb);
+    expect(res.status).toBe(307);
+    const location = res.headers.get('location')!;
+    expect(location).toContain('/connect/facebook/error');
+    expect(location).toContain('reason=cancelled');
+  });
+
+  it('BG14: a direct-flow callback with no session goes to login with next + session-expired, not a bare accounts bounce', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const state = await signOAuthState(
+      {
+        tenantSubdomain: 'acme',
+        userId,
+        nonce: 'direct_nonce_string_12345',
+        iat: now,
+        exp: now + 600,
+      },
+      TEST_SECRET
+    );
+    const mockDb = { query: vi.fn() } as unknown as DatabaseClient;
+    const req = new NextRequest(
+      `http://localhost:3000/api/auth/facebook/callback?code=mock_code_123&state=${state}`
+    );
+    const res = await handleFacebookCallback(req, mockDb);
+    expect(res.status).toBe(307);
+    const location = new URL(res.headers.get('location')!);
+    expect(location.pathname).toBe('/login');
+    expect(location.searchParams.get('next')).toBe('/tenant/acme/accounts');
+    expect(location.searchParams.get('reason')).toBe('session-expired');
+  });
+});

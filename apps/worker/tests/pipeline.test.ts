@@ -532,12 +532,28 @@ describe('Publish consumers (spec 121)', () => {
     }));
     const message = fakeMessage({ itemId: item.id, platform: 'facebook', lane: 'publish-fast' });
 
-    await handlePublishBatch(fakeBatch('publish-fast', [message]) as never, {
-      db: db as never,
-      registry: registryWith(publisher),
-      masterKey: MASTER_KEY,
-      env: {},
-    });
+    // Audit BG5: a 190 now triggers a live Graph re-discovery of
+    // the page token before settling. Stub it to an empty page
+    // list here so re-discovery fails and the original 190
+    // settles unchanged — the re-discovery success path has its
+    // own dedicated tests.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ data: [] }),
+      }))
+    );
+    try {
+      await handlePublishBatch(fakeBatch('publish-fast', [message]) as never, {
+        db: db as never,
+        registry: registryWith(publisher),
+        masterKey: MASTER_KEY,
+        env: {},
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
 
     expect(settleCalls[0]).toMatchObject({
       p_outcome_status: 'failed',

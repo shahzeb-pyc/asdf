@@ -111,6 +111,9 @@ export const DiscoverPagesResponseSchema = z.object({
   accountDisplayName: z.string(),
   pages: z.array(DiscoveredPageSchema),
   total: z.number().int().nonnegative(),
+  // Mirror of the contracts field (audit BG6): true when Graph
+  // pagination was truncated — the list is partial, never complete.
+  truncated: z.boolean().optional().default(false),
 });
 export type DiscoverPagesResponse = z.infer<typeof DiscoverPagesResponseSchema>;
 

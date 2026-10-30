@@ -299,7 +299,12 @@ describe('Facebook Accounts UI Components (Spec 027, Spec 029 & Spec 031)', () =
       );
 
       expect(screen.getByText('Disconnect Sarah Connor?')).toBeTruthy();
-      expect(screen.getByText('This account will no longer be available')).toBeTruthy();
+      // Copy drift fix: the dialog's description carries two
+      // sentences (BG10 revoke + history-kept copy), so match the
+      // first sentence as a substring, not an exact element text.
+      expect(
+        screen.getByText(/This account will no longer be available for publishing/)
+      ).toBeTruthy();
       expect(screen.getByTestId('disconnect-linked-pages-warning')).toBeTruthy();
       expect(screen.getByTestId('disconnect-linked-pages-list')).toBeTruthy();
       expect(screen.getByText('3 linked Facebook pages')).toBeTruthy();
@@ -335,7 +340,7 @@ describe('Facebook Accounts UI Components (Spec 027, Spec 029 & Spec 031)', () =
       expect(screen.getByTestId('disconnect-zero-pages-notice')).toBeTruthy();
       expect(
         screen.getByText(
-          "No Facebook Pages are linked to this account yet. It's safe to remove — you can reconnect it any time."
+          "No Facebook Pages are linked to this account yet. It's safe to disconnect — you can reconnect it any time."
         )
       ).toBeTruthy();
       expect(screen.queryByText('Before you disconnect')).toBeNull();
@@ -497,8 +502,10 @@ describe('Facebook Accounts UI Components (Spec 027, Spec 029 & Spec 031)', () =
         expectedAccountName: 'John Doe',
       });
 
+      // BL2 fix: the mismatched account IS connected as a separate
+      // account — the copy must say so, not read like a failed connect.
       const mismatchMessage =
-        'You signed into Jane Smith instead of John Doe. John Doe still needs to be reconnected.';
+        'Jane Smith is now connected as a separate account. John Doe still needs to be reconnected.';
       // The magic success page now reads its params: mismatch renders
       // the cross variant with the approved message, never a success.
       const mismatchCopy = getConnectSuccessCopy({
@@ -507,7 +514,11 @@ describe('Facebook Accounts UI Components (Spec 027, Spec 029 & Spec 031)', () =
         expectedAccountName: 'John Doe',
       });
       expect(mismatchCopy.variant).toBe('error');
-      expect(`${mismatchCopy.title} ${mismatchCopy.description}`).toBe(mismatchMessage);
+      // Magic page description adds the dashboard instruction; the
+      // direct-flow banner message (mismatchMessage) does not.
+      expect(`${mismatchCopy.title} ${mismatchCopy.description}`).toBe(
+        `${mismatchMessage} Open your FBUploadPro dashboard, go to Facebook Accounts, and use Reconnect on John Doe.`
+      );
       const mismatchView = render(
         <ConnectSuccessView
           params={{
@@ -517,8 +528,16 @@ describe('Facebook Accounts UI Components (Spec 027, Spec 029 & Spec 031)', () =
           }}
         />
       );
-      expect(mismatchView.hasText('You signed into Jane Smith instead of John Doe.')).toBe(true);
+      expect(
+        mismatchView.hasText('Jane Smith is now connected as a separate account.')
+      ).toBe(true);
       expect(mismatchView.hasText('John Doe still needs to be reconnected.')).toBe(true);
+      // BL2 fix: the magic page must link back to the dashboard, where
+      // the expected account's card Reconnect lives — never a fake
+      // reconnect on the session-less device.
+      expect(
+        mismatchView.hasAttribute('data-testid', 'magic-mismatch-dashboard-link')
+      ).toBe(true);
 
       const directMismatchNotice = resolveOAuthRedirectNotice(
         new URLSearchParams({
@@ -530,6 +549,8 @@ describe('Facebook Accounts UI Components (Spec 027, Spec 029 & Spec 031)', () =
       expect(directMismatchNotice?.notice).toEqual({
         type: 'error',
         message: mismatchMessage,
+        reconnectExpected: true,
+        expectedAccountName: 'John Doe',
       });
 
       // 2. Standard Connect flow where an already-connected account has its session refreshed
@@ -767,6 +788,20 @@ describe('Facebook Accounts UI Components (Spec 027, Spec 029 & Spec 031)', () =
         'Facebook App credentials are required before connecting accounts. Please configure your App ID and Secret in Workspace Settings.'
       );
       expect(notice?.keysToRemove).toEqual(['error', 'tab']);
+    });
+
+    it('resolveOAuthRedirectNotice maps account_save_failed to a save message with a Connect-again action (BL1 fix)', () => {
+      const notice = resolveOAuthRedirectNotice(
+        new URLSearchParams({ error: 'account_save_failed' })
+      );
+
+      expect(notice).not.toBeNull();
+      expect(notice?.notice.type).toBe('error');
+      expect(notice?.notice.message).toBe(
+        'We couldn\u2019t save your Facebook account after Facebook approved the connection. Nothing was connected. Please try connecting again.'
+      );
+      expect(notice?.notice.connectAgain).toBe(true);
+      expect(notice?.keysToRemove).toEqual(['error']);
     });
   });
 });

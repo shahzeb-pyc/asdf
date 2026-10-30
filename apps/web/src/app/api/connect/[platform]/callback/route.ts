@@ -31,6 +31,7 @@ import {
   type ConnectDbClient,
 } from '@/lib/connect/persist';
 import { resolveConnectDbClient } from '@/lib/connect/session';
+import { enforceIpRateLimit } from '@/lib/request-body';
 import { mapProviderDenial, type ConnectNoticeCode } from '@/lib/connect/errors';
 // Registers the YouTube connect config (spec 125) into the framework registry.
 import '@/lib/connect/platforms/youtube';
@@ -416,5 +417,9 @@ export async function GET(
   context: { params: Promise<{ platform: string }> }
 ): Promise<NextResponse> {
   const { platform } = await context.params;
+  // Audit S6: previously unthrottled OAuth callback; 20/min like initiate.
+  // Over the limit the caller gets the standard JSON 429, not a redirect.
+  const limited = await enforceIpRateLimit(request, 'connect_platform_callback', 20);
+  if (limited) return limited;
   return handleConnectCallback(request, platform);
 }

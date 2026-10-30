@@ -4,6 +4,7 @@ import {
   decryptToken,
   encryptToken,
   fetchAllFacebookPages,
+  fetchAllFacebookPagesWithMeta,
   getSessionSecret,
   getTokenEncryptionKey,
   ImportPagesRequestSchema,
@@ -13,7 +14,17 @@ import {
   type Database,
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
+import {
+  isTokenDeadGraphStatus,
+  markAccountConnectionError,
+} from '@/lib/connect/account-probe';
 import { logServerError } from '@/lib/server-analytics';
+import {
+  bodyTooLargeResponse,
+  enforceIpRateLimit,
+  LARGE_JSON_BODY_LIMIT_BYTES,
+  readJsonBody,
+} from '@/lib/request-body';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -38,19 +49,29 @@ export async function handleImportPages(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  // Audit S1: live session validation — a suspended user or a
+  // session issued before a password change must not reach the
+  // tenant check or any mutation below.
+  const { validateSessionActive } = await import('@/lib/auth/session');
+  if (!(await validateSessionActive(session))) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   // 2. Tenant isolation check
   const access = canAccessTenant(session, subdomain);
   if (!access.allowed) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  // 3. Parse request body
-  let bodyJson: unknown;
-  try {
-    bodyJson = await request.json();
-  } catch (_e) {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+  // 3. Parse request body, capped like magic-link/publish-now
+  // (Audit N4: the old raw request.json() was unbounded).
+  const bodyRead = await readJsonBody(request, LARGE_JSON_BODY_LIMIT_BYTES);
+  if (!bodyRead.ok) {
+    return bodyRead.reason === 'too-large'
+      ? bodyTooLargeResponse()
+      : NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
+  const bodyJson: unknown = bodyRead.value;
 
   const parseResult = ImportPagesRequestSchema.safeParse(bodyJson);
   if (!parseResult.success) {
@@ -64,7 +85,7 @@ export async function handleImportPages(
     parseResult.data;
 
   // 4. Resolve workspace ID scoped to user
-  const workspaceId = await resolveTenantWorkspaceId(dbClient, subdomain, session.userId, session.role);
+  const workspaceId = await resolveTenantWorkspaceId(dbClient, subdomain, session.userId);
   if (!workspaceId) {
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
   }
@@ -137,17 +158,37 @@ export async function handleImportPages(
   }
 
   // 5. Query Facebook Graph API v26.0 /me/accounts with pagination
+  // Audit BG6: the meta variant reports truncation — a selected
+  // page missing from a truncated list is not "removed", it is
+  // unseen, and the PARTIAL_IMPORT message below says so.
   let rawItems: Awaited<ReturnType<typeof fetchAllFacebookPages>> = [];
+  let graphTruncated = false;
   try {
-    rawItems = await fetchAllFacebookPages(
+    const fetched = await fetchAllFacebookPagesWithMeta(
       rawToken,
       'id,name,category,tasks,access_token,followers_count,picture{url}'
     );
+    rawItems = fetched.pages;
+    graphTruncated = fetched.truncated;
   } catch (err) {
     logServerError('[pages/import] Facebook Graph query failed', err, {
       source: 'pages-import',
       subdomain,
     });
+    // Audit BG20: import is also an explicit probe — same rule
+    // as discover: an auth-class failure marks the account
+    // 'error' so the next list render shows it, instead of the
+    // revocation staying invisible until a publish fails.
+    const graphStatus =
+      err !== null &&
+      typeof err === 'object' &&
+      'status' in err &&
+      typeof (err as { status: unknown }).status === 'number'
+        ? (err as { status: number }).status
+        : undefined;
+    if (isTokenDeadGraphStatus(graphStatus)) {
+      await markAccountConnectionError(dbClient, workspaceId, accountId);
+    }
     return NextResponse.json(
       { error: 'Failed to query Facebook Graph API' },
       { status: 502 }
@@ -160,6 +201,68 @@ export async function handleImportPages(
   const dedupedSelectedPageIds = [...new Set(selectedPageIds)];
   const selectedSet = new Set(dedupedSelectedPageIds);
   const matchedPages = rawItems.filter((item) => selectedSet.has(String(item.id)));
+
+  // Audit BG8, fail loud (owner decision 2026-10-30): a selected
+  // page Facebook no longer returns (access removed, page
+  // deleted/renamed) used to be silently skipped on the
+  // no-schedule path while the UI reported success. Now ANY
+  // shortfall aborts BEFORE anything is written, naming the
+  // missing pages — the old schedule-only guard below is
+  // subsumed by this universal one. Nothing is imported on this
+  // path, so there is nothing to roll back.
+  if (matchedPages.length !== dedupedSelectedPageIds.length) {
+    const matchedIds = new Set(matchedPages.map((item) => String(item.id)));
+    const missing = dedupedSelectedPageIds.filter(
+      (id) => !matchedIds.has(String(id))
+    );
+    logServerError(
+      '[pages/import] Selected pages missing from Graph result',
+      new Error(`Graph returned ${matchedPages.length} of ${dedupedSelectedPageIds.length} selected pages`),
+      {
+        source: 'pages-import-partial',
+        subdomain,
+        missing,
+      }
+    );
+    return NextResponse.json(
+      {
+        error: `These pages could not be found on this Facebook account and were not added: ${missing.join(', ')}. Nothing was imported — if you removed access to a page, it can't be added.${graphTruncated ? ' Facebook also returned an incomplete page list, so a missing page may still exist — try again to load the full list.' : ''}`,
+        code: 'PARTIAL_IMPORT',
+        skipped: missing.map((fbPageId) => ({ fbPageId })),
+      },
+      { status: 422 }
+    );
+  }
+
+  // Audit N4, fail loud like BG8: a page Graph returns WITHOUT a
+  // page token used to be imported with the USER token stored as
+  // the page token — it would read as connected and fail only at
+  // publish time, with nothing marking it as wrong. Now such
+  // pages abort BEFORE anything is written, named in the same
+  // PARTIAL_IMPORT shape as the shortfall guard above.
+  const tokenlessPages = matchedPages.filter(
+    (item) => !item.access_token
+  );
+  if (tokenlessPages.length > 0) {
+    const tokenlessIds = tokenlessPages.map((item) => String(item.id));
+    logServerError(
+      '[pages/import] Selected pages returned no page token from Graph',
+      new Error(`Graph omitted access_token for ${tokenlessPages.length} selected pages`),
+      {
+        source: 'pages-import-missing-token',
+        subdomain,
+        missing: tokenlessIds,
+      }
+    );
+    return NextResponse.json(
+      {
+        error: `These pages did not return a page token from Facebook and were not added: ${tokenlessIds.join(', ')}. Nothing was imported — if a page's token is missing, it can't publish as that page.`,
+        code: 'PARTIAL_IMPORT',
+        skipped: tokenlessIds.map((fbPageId) => ({ fbPageId })),
+      },
+      { status: 422 }
+    );
+  }
 
   // Query existing destinations before upserting via Supabase to
   // preserve starting_followers for active pages (the follower
@@ -181,6 +284,11 @@ export async function handleImportPages(
   // import and must receive the new schedule, while an active (or
   // paused, etc.) row must keep its own schedule untouched.
   const preExistingStatusByFbId = new Map<string, string>();
+  // Audit BG8: a paused page is a 'disconnected' row carrying
+  // metadata.fb_status = 'paused'. It must survive a re-import
+  // paused (token refreshed, status untouched) — so the paused
+  // marker is tracked alongside status on both paths.
+  const preExistingPausedByFbId = new Map<string, boolean>();
 
   if (
     dbClient &&
@@ -192,18 +300,26 @@ export async function handleImportPages(
       external_destination_id?: string;
       externalDestinationId?: string;
       status?: string;
+      metadata?: Record<string, unknown> | null;
     }>(
-      `SELECT external_destination_id, status FROM destinations
+      `SELECT external_destination_id, status, metadata FROM destinations
        WHERE account_id = $1 AND external_destination_id = ANY($2::text[])`,
       [accountId, matchedPages.map((item) => String(item.id))]
     )) as Array<{
       external_destination_id?: string;
       externalDestinationId?: string;
       status?: string;
+      metadata?: Record<string, unknown> | null;
     }>;
     for (const row of preExistingRows ?? []) {
       const fbPageId = row.external_destination_id ?? row.externalDestinationId;
-      if (fbPageId) preExistingStatusByFbId.set(String(fbPageId), row.status ?? '');
+      if (fbPageId) {
+        preExistingStatusByFbId.set(String(fbPageId), row.status ?? '');
+        preExistingPausedByFbId.set(
+          String(fbPageId),
+          row.metadata?.fb_status === 'paused'
+        );
+      }
     }
   }
 
@@ -217,26 +333,22 @@ export async function handleImportPages(
     isSupabaseMode
       ? (existingPagesMap.get(fbPageId)?.status ?? '')
       : (preExistingStatusByFbId.get(fbPageId) ?? '');
+  const isPausedDestination = (fbPageId: string): boolean =>
+    isSupabaseMode
+      ? existingPagesMap.get(fbPageId)?.metadata?.fb_status === 'paused'
+      : (preExistingPausedByFbId.get(fbPageId) ?? false);
+  // A paused page is NOT a reactivation: it keeps its paused
+  // marker and receives no schedule, even though its stored
+  // status is also 'disconnected'.
   const isReactivatedDestination = (fbPageId: string): boolean =>
     isPreExistingDestination(fbPageId) &&
-    preExistingStatus(fbPageId) === 'disconnected';
+    preExistingStatus(fbPageId) === 'disconnected' &&
+    !isPausedDestination(fbPageId);
 
-  // When a schedule is supplied, a Graph result that returns fewer
-  // pages than selected is an error BEFORE any destination is
-  // written — otherwise a failed schedule would leave pages behind
-  // with no schedule and no success to show for them. The legacy
-  // import (no schedule) keeps its old behaviour of importing
-  // whatever matched.
-  if (
-    timezone &&
-    postingTimes &&
-    matchedPages.length !== dedupedSelectedPageIds.length
-  ) {
-    return NextResponse.json(
-      { error: "Couldn't add the selected pages. Please try again." },
-      { status: 500 }
-    );
-  }
+  // The universal BG8 guard above already rejects a short Graph
+  // result before anything is written, schedule or not — the old
+  // schedule-only guard lived here and is deleted, not kept
+  // alongside it.
 
   if (isSupabaseMode && matchedPages.length > 0) {
     const supabase = (
@@ -288,7 +400,15 @@ export async function handleImportPages(
   }
 
   const importPromises = matchedPages.map(async (pageItem) => {
-    const rawPageToken = pageItem.access_token || rawToken;
+    // Audit N4: the token-less guard above already returned, so
+    // a missing token here is unreachable — but it must never
+    // silently fall back to the user token again, so fail loud.
+    const rawPageToken = pageItem.access_token;
+    if (!rawPageToken) {
+      throw new Error(
+        `Refusing to import page ${String(pageItem.id)} without a page token`
+      );
+    }
     const encryptedPageToken = await encryptToken(rawPageToken, encryptionKey);
 
     const followers =
@@ -319,18 +439,19 @@ export async function handleImportPages(
           name = EXCLUDED.name,
           avatar_url = EXCLUDED.avatar_url,
           encrypted_destination_token = EXCLUDED.encrypted_destination_token,
-          status = 'active',
+          status = CASE WHEN $10 THEN 'disconnected' ELSE 'active' END,
           metadata = (destinations.metadata - 'fb_status')
             || jsonb_build_object(
               'category', $7::text,
               'tasks', $8::jsonb,
               'current_followers', $9::int,
               'starting_followers', CASE
-                WHEN destinations.status = 'disconnected'
+                WHEN destinations.status = 'disconnected' AND NOT $10
                   THEN $9::int
                 ELSE COALESCE((destinations.metadata->>'starting_followers')::int, $9::int)
               END
-            ),
+            )
+            || CASE WHEN $10 THEN jsonb_build_object('fb_status', 'paused') ELSE '{}'::jsonb END,
           updated_at = now()
         RETURNING id, external_destination_id AS fb_page_id, name AS page_name`,
         [
@@ -343,6 +464,8 @@ export async function handleImportPages(
           pageItem.category ?? null,
           tasksJson,
           followers,
+          // Audit BG8: $10 — paused pages stay paused on re-import.
+          isPausedDestination(String(pageItem.id)),
         ]
       )) as Record<string, unknown>[];
 
@@ -362,9 +485,12 @@ export async function handleImportPages(
       if (!supabase) return null;
 
       const existingPage = existingPagesMap.get(String(pageItem.id));
+      // Audit BG8: a paused page keeps its baseline like an active
+      // page (it is not a reactivation) and keeps its marker below.
+      const paused = isPausedDestination(String(pageItem.id));
       const preserveBaseline =
         existingPage &&
-        existingPage.status !== 'disconnected' &&
+        (existingPage.status !== 'disconnected' || paused) &&
         existingPage.starting_followers !== null &&
         existingPage.starting_followers !== undefined;
       const startingFollowersToSave = preserveBaseline
@@ -378,7 +504,12 @@ export async function handleImportPages(
         starting_followers: startingFollowersToSave,
         current_followers: followers,
       };
-      delete nextMetadata.fb_status;
+      // Only a non-paused re-import clears the marker; a paused
+      // page keeps fb_status='paused' (spread from existing
+      // metadata above) and stays 'disconnected' in the upsert.
+      if (!paused) {
+        delete nextMetadata.fb_status;
+      }
 
       const { data: upserted, error: upsertErr } = await supabase
         .from('destinations')
@@ -391,7 +522,7 @@ export async function handleImportPages(
             name: String(pageItem.name),
             avatar_url: profilePictureUrl,
             encrypted_destination_token: encryptedPageToken,
-            status: 'active',
+            status: paused ? 'disconnected' : 'active',
             metadata: nextMetadata,
             updated_at: new Date().toISOString(),
           },
@@ -920,6 +1051,42 @@ export async function handleImportPages(
     }
   }
 
+  // Audit BG8, second half: a page Graph returned but whose
+  // upsert failed (resolved null above) used to vanish from the
+  // result with success still true. This runs AFTER the schedule
+  // block on purpose: the successfully imported pages keep their
+  // requested schedule (a retry would not re-apply it to them,
+  // since they are no longer new/reactivated), and the failure is
+  // still loud, naming every page that did not save. Rolling back
+  // the successful imports is deliberately NOT done: they are
+  // valid imports, and rolling back updates to pre-existing rows
+  // would destroy their refreshed tokens.
+  const importedIds = new Set(importedList.map((page) => page.fbPageId));
+  const failedUpserts = matchedPages.filter(
+    (page) => !importedIds.has(String(page.id))
+  );
+  if (failedUpserts.length > 0) {
+    const failedNames = failedUpserts.map(
+      (page) => String(page.name ?? page.id)
+    );
+    logServerError(
+      '[pages/import] Matched pages failed to save',
+      new Error(`Failed to save ${failedUpserts.length} matched pages`),
+      { source: 'pages-import-partial', subdomain, failedNames }
+    );
+    return NextResponse.json(
+      {
+        error: `These pages could not be saved and were not added: ${failedNames.join(', ')}. The other selected pages were added.`,
+        code: 'PARTIAL_IMPORT',
+        skipped: failedUpserts.map((page) => ({
+          fbPageId: String(page.id),
+          pageName: String(page.name ?? page.id),
+        })),
+      },
+      { status: 422 }
+    );
+  }
+
   const responsePayload = ImportPagesResponseSchema.parse({
     success: true,
     importedCount: importedList.length,
@@ -934,5 +1101,8 @@ export async function POST(
   context: { params: Promise<{ subdomain: string }> }
 ): Promise<NextResponse> {
   const { subdomain } = await context.params;
+  // Audit S6: previously unthrottled Graph-backed call; 20/min like initiate.
+  const limited = await enforceIpRateLimit(request, 'tenant_pages_import', 20);
+  if (limited) return limited;
   return handleImportPages(request, subdomain);
 }

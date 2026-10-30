@@ -707,11 +707,76 @@ describe('list pagination (pages + accounts, 30 per page)', () => {
           const chain: Record<string, unknown> = {};
           chain.select = vi.fn(() => chain);
           chain.eq = vi.fn(() => chain);
-          chain.order = vi.fn(() => Promise.resolve({ data: rows, error: null }));
+          // Audit N1/N3: the list now pages with .range() and runs
+          // a workspace-wide lapse sync (.update/.lt/.select) first.
+          // Order returns the chain (as in supabase-js); the range
+          // call resolves, since it ends the query chain.
+          chain.order = vi.fn(() => chain);
+          chain.range = vi.fn(() => Promise.resolve({ data: rows, error: null }));
+          chain.update = vi.fn(() => chain);
+          chain.lt = vi.fn(() => chain);
           return chain;
         }),
       };
     }
+
+    it('pages past the 1,000-row PostgREST limit instead of silently truncating (N1)', async () => {
+      // 1,050 accounts: a single select would silently truncate at
+      // 1,000, undercounting the total. The range loop must fetch
+      // both pages so the total stays 1,050.
+      const rows = Array.from({ length: 1050 }, (_, i) => ({
+        id: `66666666-6666-4666-8666-${i.toString(16).padStart(12, '0')}`,
+        external_account_id: `fb_act_${i}`,
+        display_name: `Account ${i}`,
+        avatar_url: null,
+        metadata: {},
+        status: 'active',
+        token_expires_at: null,
+        created_at: new Date(Date.UTC(2026, 0, 1)).toISOString(),
+        updated_at: new Date(Date.UTC(2026, 0, 1)).toISOString(),
+        destinations: [],
+      }));
+      const db = {
+        from: vi.fn((table: string) => {
+          if (table === 'workspaces') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnThis(),
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { id: 'ws_123' },
+                error: null,
+              }),
+            };
+          }
+          const chain: Record<string, unknown> = {};
+          chain.select = vi.fn(() => chain);
+          chain.eq = vi.fn(() => chain);
+          chain.update = vi.fn(() => chain);
+          chain.lt = vi.fn(() => chain);
+          chain.order = vi.fn(() => chain);
+          chain.range = vi.fn((from: number, to: number) =>
+            Promise.resolve({
+              data: rows.slice(from, to + 1),
+              error: null,
+            })
+          );
+          return chain;
+        }),
+      };
+      const res = await handleListAccounts(
+        req('http://localhost:3000/api/tenant/acme/accounts?page=1&limit=50'),
+        'acme',
+        db as never
+      );
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.total).toBe(1050);
+      expect(json.healthCounts).toEqual({
+        connected: 1050,
+        expired: 0,
+        error: 0,
+      });
+    });
 
     it('counts health over the full filtered set before slicing', async () => {
       // All 35 accounts are expired, so the page-1 slice holds only

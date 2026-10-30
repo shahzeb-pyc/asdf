@@ -18,6 +18,7 @@ import {
   destinationWireStatus,
   fetchDestinationForEnqueue,
   fetchDestinationQueuedTimes,
+  isAccountExpiredForEnqueue,
   fetchDestinationSlots,
   fetchOwnedMedia,
   findQueueItemByIdempotencyKey,
@@ -207,6 +208,25 @@ export async function handleDestinationEnqueue(
         message: 'The destination belongs to a different platform than the request.',
       },
       { status: 400 }
+    );
+  }
+
+  // Expired-account gate (BG1, kept as a backup alongside expiry
+  // propagation): an account whose stored status is 'expired', or
+  // whose token has already lapsed, may not accept NEW queue items —
+  // propagation will also have flipped its active pages to 'error',
+  // but this check closes the window before propagation lands and
+  // gives the user a reconnect prompt instead of a page error.
+  // Nothing is written when this gate fires, and already-queued
+  // posts are left alone.
+  if (isAccountExpiredForEnqueue(destination)) {
+    return NextResponse.json(
+      {
+        error: 'ACCOUNT_EXPIRED',
+        message:
+          'This Facebook account’s session has expired. Reconnect the account, then queue again.',
+      },
+      { status: 409 }
     );
   }
 

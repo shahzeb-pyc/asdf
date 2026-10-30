@@ -60,7 +60,11 @@ describe('Security Audit: Zero Token & Credential Leakage (T075)', () => {
         }
         if (table === 'social_accounts') {
           const builder: any = {
-            order: vi.fn().mockResolvedValue({
+            // Audit N1: the list route now pages with chained
+            // .order().order().range(), so order must return the
+            // builder and range must resolve the page.
+            order: vi.fn(() => builder),
+            range: vi.fn().mockResolvedValue({
               data: [
                 {
                   id: accountId,
@@ -232,6 +236,10 @@ describe('Security Audit: Zero Token & Credential Leakage (T075)', () => {
           const builder: any = {
             then: (resolve: (val: any) => void) =>
               Promise.resolve({ data: [], error: null }).then(resolve),
+            // Audit N1: the discover route now pages existing pages
+            // with chained .order().range().
+            order: vi.fn(() => builder),
+            range: vi.fn().mockResolvedValue({ data: [], error: null }),
           };
           builder.eq = vi.fn(() => builder);
           return {

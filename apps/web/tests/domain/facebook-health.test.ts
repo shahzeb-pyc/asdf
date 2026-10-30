@@ -334,7 +334,11 @@ describe('Facebook Multi-Account Health Monitoring & Expiration (User Story 3 - 
           }
           if (table === 'social_accounts') {
             const builder: any = {
-              order: vi.fn().mockResolvedValue({
+              // Audit N1: the list route now pages with chained
+              // .order().order().range(), so order must return the
+              // builder and range must resolve the page.
+              order: vi.fn(() => builder),
+              range: vi.fn().mockResolvedValue({
                 data: [
                   {
                     id: '55555555-5555-5555-a555-555555555555',

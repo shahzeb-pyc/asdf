@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { decryptToken, encryptToken, getTokenEncryptionKey } from '../src/crypto/token';
+import {
+  decryptToken,
+  encryptToken,
+  getTokenEncryptionKey,
+  resolveTokenKeyRing,
+} from '../src/crypto/token';
 import { DomainError } from '../src/errors/domain-error';
 
 describe('Web Crypto AES-256-GCM Token Encryption', () => {
@@ -153,6 +158,59 @@ describe('Web Crypto AES-256-GCM Token Encryption', () => {
           TOKEN_ENCRYPTION_KEY: validKey,
         });
       }).toThrow(/DEV_FALLBACK_ENCRYPTION_KEY is forbidden in production/i);
+    });
+  });
+
+  // Audit S5 — key versioning: new payloads carry their key id,
+  // legacy bare payloads keep decrypting, and a version with no
+  // available key fails loudly naming the id.
+  describe('token key versioning (S5)', () => {
+    const oldKey =
+      '1111111111111111111111111111111111111111111111111111111111111111';
+    const newKey =
+      '2222222222222222222222222222222222222222222222222222222222222222';
+    const sample = 'EAAB-versioned-token';
+
+    it('stamps new payloads with v1 and decrypts them with the same key', async () => {
+      const encrypted = await encryptToken(sample, oldKey);
+      expect(encrypted.startsWith('v1:')).toBe(true);
+      expect(await decryptToken(encrypted, oldKey)).toBe(sample);
+    });
+
+    it('decrypts a custom key id via keysById (the rotation fallback)', async () => {
+      const encrypted = await encryptToken(sample, oldKey, { keyId: 'v2' });
+      expect(encrypted.startsWith('v2:')).toBe(true);
+      // Without the retired key it must fail loudly, naming the id…
+      await expect(decryptToken(encrypted, newKey)).rejects.toThrow(/key id v2/);
+      // …and with it, it decrypts under the old key.
+      expect(
+        await decryptToken(encrypted, newKey, { keysById: { v2: oldKey } })
+      ).toBe(sample);
+    });
+
+    it('still decrypts legacy bare iv:cipher payloads', async () => {
+      const versioned = await encryptToken(sample, oldKey);
+      const legacy = versioned.replace(/^v1:/, '');
+      expect(await decryptToken(legacy, oldKey)).toBe(sample);
+    });
+
+    it('resolves the key ring from env, and rejects a malformed previous-keys map', () => {
+      const ring = resolveTokenKeyRing({
+        NODE_ENV: 'test',
+        TOKEN_ENCRYPTION_KEY: newKey,
+        TOKEN_ENCRYPTION_KEY_ID: 'v2',
+        TOKEN_ENCRYPTION_KEYS_PREVIOUS: JSON.stringify({ v1: oldKey }),
+      });
+      expect(ring.keyId).toBe('v2');
+      expect(ring.key).toBe(newKey);
+      expect(ring.previousKeys).toEqual({ v1: oldKey });
+      expect(() =>
+        resolveTokenKeyRing({
+          NODE_ENV: 'test',
+          TOKEN_ENCRYPTION_KEY: newKey,
+          TOKEN_ENCRYPTION_KEYS_PREVIOUS: 'not-json',
+        })
+      ).toThrow(/malformed/);
     });
   });
 });

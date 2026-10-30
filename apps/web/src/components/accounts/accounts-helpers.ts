@@ -15,7 +15,7 @@ import {
 } from '@/components/accounts/account-health';
 import type { FacebookAccountItem } from '@/components/accounts/account-card';
 
-export type AccountStatusFilter = 'all' | 'active' | 'expiring_soon' | 'expired';
+export type AccountStatusFilter = 'all' | 'active' | 'expiring_soon' | 'expired' | 'error';
 
 export function sortAccountsExpiredFirst(items: FacebookAccountItem[]): FacebookAccountItem[] {
   return [...items].sort((a, b) => {
@@ -124,6 +124,33 @@ export function computeAccountsSubtitle(
 }
 
 /**
+ * Audit BG11 — the single "expired for list purposes" predicate
+ * both list paths must share (it mirrors the shell's
+ * getAccountHealth: an expired wire status OR a past token is
+ * expired, regardless of the other field). The old code let the
+ * SQL path and the Supabase path disagree: SQL counted
+ * active+past-token as expired but not disconnected+past-token,
+ * while the Supabase filter counted only the wire status — so
+ * the same filter returned different accounts per path, and a
+ * disconnected account with a past token was counted as expired
+ * but excluded from the expired filter. `status` here is the
+ * WIRE status (active/expired/disconnected).
+ */
+export function isAccountExpiredForList(
+  status: string,
+  tokenExpiresAt: string | Date | null | undefined,
+  now: Date = new Date()
+): boolean {
+  if (status === 'expired') return true;
+  if (!tokenExpiresAt) return false;
+  const expiresAt =
+    tokenExpiresAt instanceof Date
+      ? tokenExpiresAt.getTime()
+      : new Date(tokenExpiresAt).getTime();
+  return !Number.isNaN(expiresAt) && expiresAt <= now.getTime();
+}
+
+/**
  * Connect is gated only when the Facebook App ID and Secret are known to be
  * missing — not while the check is running, and not when the check failed
  * (the retry banner covers that case instead).
@@ -136,10 +163,41 @@ export function isConnectGatedByMissingCredentials(status: {
   return !status.isLoading && !status.isConfigured && !status.error;
 }
 
+/**
+ * Audit BG9 — what a Connect/Reconnect click does for each BYOC
+ * check state. The old handlers treated every !isConfigured as
+ * "credentials missing" and opened the credentials prompt — so on
+ * a FAILED check (error present, configuration unknown) the user
+ * landed on a dead-end prompt implying their App ID/Secret were
+ * missing, with no path to Connect until a retry succeeded, and
+ * the retry banner sat unreachable behind the modal. The fix:
+ * a failed check routes to 'retry' (re-run the check, then route
+ * on the fresh result — Connect when configured, the prompt only
+ * when a successful check confirms credentials are missing).
+ * Loading is handled by the caller (early return), not here.
+ */
+export function resolveConnectClick(status: {
+  isConfigured: boolean;
+  error: string | null;
+}): 'connect' | 'prompt' | 'retry' {
+  if (status.error && !status.isConfigured) return 'retry';
+  if (status.isConfigured) return 'connect';
+  return 'prompt';
+}
+
 export function resolveOAuthRedirectNotice(searchParams: {
   get: (key: string) => string | null;
 }): {
-  notice: { type: 'success' | 'error'; message: string };
+  notice: {
+    type: 'success' | 'error';
+    message: string;
+    /** BL1 fix: when true, the banner offers a Connect-again action. */
+    connectAgain?: boolean;
+    /** BL2 fix: when true, the banner offers a Reconnect action for the expected account. */
+    reconnectExpected?: boolean;
+    /** BL2 fix: display name of the account that still needs reconnecting. */
+    expectedAccountName?: string | undefined;
+  };
   /** Account name carried by the redirect, when present — used to highlight its card. */
   accountName?: string | undefined;
   keysToRemove: string[];
@@ -150,8 +208,15 @@ export function resolveOAuthRedirectNotice(searchParams: {
     const expectedAccountName = searchParams.get('expectedAccountName') || 'the expired account';
     return {
       notice: {
+        // BL2 fix: the mismatched account IS connected (auto-saved as a
+        // separate account by the callback) — the copy must say so
+        // plainly instead of reading like the connect failed, and the
+        // banner offers a Reconnect action for the expected account.
         type: 'error',
-        message: `You signed into ${newAccountName} instead of ${expectedAccountName}. ${expectedAccountName} still needs to be reconnected.`,
+        message: `${newAccountName} is now connected as a separate account. ${expectedAccountName} still needs to be reconnected.`,
+        reconnectExpected: true,
+        expectedAccountName:
+          searchParams.get('expectedAccountName') || undefined,
       },
       keysToRemove: ['reconnected_mismatch', 'newAccountName', 'expectedAccountName'],
     };
@@ -187,6 +252,20 @@ export function resolveOAuthRedirectNotice(searchParams: {
 
   const error = searchParams.get('error');
   if (error) {
+    if (error === 'account_save_failed') {
+      // BL1 fix: a failed save is not a permissions problem, so it must
+      // not fall through to the generic permissions copy below. The
+      // banner carries a Connect-again action (see accounts-shell).
+      return {
+        notice: {
+          type: 'error',
+          message:
+            'We couldn\u2019t save your Facebook account after Facebook approved the connection. Nothing was connected. Please try connecting again.',
+          connectAgain: true,
+        },
+        keysToRemove: ['error'],
+      };
+    }
     if (error === 'credentials_required') {
       return {
         notice: {
@@ -195,6 +274,28 @@ export function resolveOAuthRedirectNotice(searchParams: {
             'Facebook App credentials are required before connecting accounts. Please configure your App ID and Secret in Workspace Settings.',
         },
         keysToRemove: ['error', 'tab'],
+      };
+    }
+    // Audit UX9: session failures are not permission problems —
+    // they must not flatten into the permissions copy.
+    if (error === 'unauthorized') {
+      return {
+        notice: {
+          type: 'error',
+          message:
+            'Your session expired while connecting to Facebook. Please sign in again, then connect the account.',
+        },
+        keysToRemove: ['error'],
+      };
+    }
+    if (error === 'session_mismatch') {
+      return {
+        notice: {
+          type: 'error',
+          message:
+            'You switched accounts during the Facebook connection. Please try connecting again.',
+        },
+        keysToRemove: ['error'],
       };
     }
     const isCancelled = error === 'access_denied' || error === 'user_cancelled';

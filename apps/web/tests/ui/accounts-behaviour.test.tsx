@@ -59,6 +59,16 @@ const expiringSoonAccount: FacebookAccountItem = {
   createdAt: '2026-09-15T10:00:00Z',
 };
 
+const errorAccount: FacebookAccountItem = {
+  id: 'acc-err',
+  fbAccountId: 'fb-err',
+  displayName: 'Error Eddie',
+  profilePictureUrl: null,
+  status: 'disconnected',
+  connectedPagesCount: 1,
+  createdAt: '2026-09-15T10:00:00Z',
+};
+
 describe('AccountsFilterBar behaviour', () => {
   it('typing updates the search, Escape clears it, and the clear button clears it', () => {
     const onSearchChange = vi.fn();
@@ -116,6 +126,46 @@ describe('Accounts banners behaviour', () => {
     expect(screen.getByText('Jane Smith connected')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss banner' }));
     expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it('BL2: mismatch banner states the new account is connected and offers Reconnect for the expected account', () => {
+    const onReconnectExpected = vi.fn();
+    render(
+      <FeedbackBanner
+        notice={{
+          type: 'error',
+          message:
+            'Jane Smith is now connected as a separate account. John Doe still needs to be reconnected.',
+        }}
+        onDismiss={vi.fn()}
+        onReconnectExpected={onReconnectExpected}
+        expectedAccountName="John Doe"
+      />
+    );
+
+    // Must not render as a plain failure: the connected-as-separate
+    // message and a Reconnect action for the expected account are both
+    // required.
+    expect(
+      screen.getByText(
+        'Jane Smith is now connected as a separate account. John Doe still needs to be reconnected.'
+      )
+    ).toBeTruthy();
+    const reconnectBtn = screen.getByTestId('oauth-reconnect-expected-btn');
+    expect(reconnectBtn.textContent).toBe('Reconnect John Doe');
+    fireEvent.click(reconnectBtn);
+    expect(onReconnectExpected).toHaveBeenCalledTimes(1);
+  });
+
+  it('BL2: mismatch banner without a reconnect handler renders no reconnect action', () => {
+    render(
+      <FeedbackBanner
+        notice={{ type: 'error', message: 'Something went wrong.' }}
+        onDismiss={vi.fn()}
+      />
+    );
+
+    expect(screen.queryByTestId('oauth-reconnect-expected-btn')).toBeNull();
   });
 
   it('BYOC retry banner fires its retry action', () => {
@@ -181,7 +231,9 @@ describe('AccountCard behaviour', () => {
     render(<AccountCard account={expiringSoonAccount} />);
 
     const mark = screen.getByTestId('account-health-mark');
-    expect(mark.textContent).toContain('Connected');
+    // Audit UX: an expiring-soon account says so outright instead of
+    // showing a clock next to "Connected".
+    expect(mark.textContent).toContain('Expires soon');
     expect(mark.querySelector('[data-icon="clock"]')).toBeTruthy();
     expect(mark.querySelector('.rounded-full')).toBeNull();
   });
@@ -209,5 +261,29 @@ describe('AccountCard behaviour', () => {
 
     fireEvent.click(screen.getByTestId('account-disconnect-button'));
     expect(onDisconnect).toHaveBeenCalledWith(expiredAccount);
+  });
+
+  it('error-health card shows a cross and "Connection error", and fires reconnect/disconnect (BL4)', () => {
+    const onReconnect = vi.fn();
+    const onDisconnect = vi.fn();
+    render(
+      <AccountCard
+        account={errorAccount}
+        onReconnect={onReconnect}
+        onDisconnect={onDisconnect}
+      />
+    );
+
+    const status = screen.getByTestId('account-health-label');
+    expect(status.textContent).toContain('Connection error');
+    const mark = screen.getByTestId('account-health-mark');
+    expect(mark.querySelector('[data-icon="cross"]')).toBeTruthy();
+    expect(mark.querySelector('.rounded-full')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('account-reconnect-button'));
+    expect(onReconnect).toHaveBeenCalledWith(errorAccount);
+
+    fireEvent.click(screen.getByTestId('account-disconnect-button'));
+    expect(onDisconnect).toHaveBeenCalledWith(errorAccount);
   });
 });

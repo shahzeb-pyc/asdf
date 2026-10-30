@@ -453,6 +453,8 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
         onAddPage={() => setIsAddModalOpen(true)}
         subdomain={subdomain}
         facebookAppConfigured={facebookAppConfigured}
+        byocPending={byocQuery.isPending}
+        byocError={byocQuery.isError}
       />
     );
   } else if (pages.length === 0 && isFiltered) {
@@ -599,6 +601,8 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
         onSuccess={handlePagesImported}
         onNavigateToAccounts={() => router.push(`/tenant/${subdomain}/accounts`)}
         facebookAppConfigured={facebookAppConfigured}
+        byocPending={byocQuery.isPending}
+        byocError={byocQuery.isError}
         onNavigateToSettingsFacebook={() =>
           router.push(`/tenant/${subdomain}/settings?tab=byoc`)
         }

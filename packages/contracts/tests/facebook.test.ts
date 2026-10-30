@@ -10,6 +10,7 @@ import {
   FacebookPageStatusSchema,
   FacebookPageViewSchema,
   fetchAllFacebookPages,
+  fetchAllFacebookPagesWithMeta,
 } from '../src/domain/facebook.js';
 import { evaluateGraphApiError } from '../src/domain/facebook-health.js';
 
@@ -405,6 +406,85 @@ describe('Facebook Account & Page Domain Schemas', () => {
       await expect(
         fetchAllFacebookPages('bad-token', 'id,name', 5, mockFetch as any)
       ).rejects.toThrow('Facebook Graph API returned 401');
+    });
+  });
+
+  // Audit BG6: truncation must be reported, never silently complete.
+  describe('fetchAllFacebookPagesWithMeta truncation', () => {
+    it('reports page_limit when the cap is hit with a cursor remaining', async () => {
+      let callCount = 0;
+      const mockFetch = async () => {
+        callCount++;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: [{ id: `p${callCount}`, name: `Page ${callCount}` }],
+            paging: {
+              next: `https://graph.facebook.com/v26.0/me/accounts?after=cursor${callCount}`,
+            },
+          }),
+        } as Response;
+      };
+
+      const result = await fetchAllFacebookPagesWithMeta(
+        'test-token',
+        'id,name',
+        2,
+        mockFetch as any
+      );
+      expect(callCount).toBe(2);
+      expect(result.pages).toHaveLength(2);
+      expect(result.truncated).toBe(true);
+      expect(result.truncationReason).toBe('page_limit');
+    });
+
+    it('reports page_error when a later page fails, keeping the pages already fetched', async () => {
+      let callCount = 0;
+      const mockFetch = async () => {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              data: [{ id: 'p1', name: 'Page One' }],
+              paging: {
+                next: 'https://graph.facebook.com/v26.0/me/accounts?after=cursor1',
+              },
+            }),
+          } as Response;
+        }
+        return { ok: false, status: 500 } as Response;
+      };
+
+      const result = await fetchAllFacebookPagesWithMeta(
+        'test-token',
+        'id,name',
+        5,
+        mockFetch as any
+      );
+      expect(result.pages).toHaveLength(1);
+      expect(result.truncated).toBe(true);
+      expect(result.truncationReason).toBe('page_error');
+    });
+
+    it('reports not truncated when the last page has no cursor', async () => {
+      const mockFetch = async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ data: [{ id: 'p1', name: 'Page One' }] }),
+      });
+
+      const result = await fetchAllFacebookPagesWithMeta(
+        'test-token',
+        'id,name',
+        5,
+        mockFetch as any
+      );
+      expect(result.pages).toHaveLength(1);
+      expect(result.truncated).toBe(false);
+      expect(result.truncationReason).toBeUndefined();
     });
   });
 

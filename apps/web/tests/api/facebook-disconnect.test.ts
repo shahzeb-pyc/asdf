@@ -1,6 +1,10 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
-import { signSessionToken } from '@fbuploadpro/contracts';
+import {
+  encryptToken,
+  getTokenEncryptionKey,
+  signSessionToken,
+} from '@fbuploadpro/contracts';
 import { handleDisconnectPage } from '../../src/app/api/tenant/[subdomain]/pages/[pageId]/route';
 import { handleDisconnectAccount } from '../../src/app/api/tenant/[subdomain]/accounts/[accountId]/route';
 import type { DatabaseClient } from '@fbuploadpro/contracts';
@@ -183,23 +187,36 @@ describe('Facebook Granular Disconnection & Multi-Tenant Governance (User Story 
   });
 
   describe('Disconnect Account (DELETE /api/tenant/[subdomain]/accounts/[accountId])', () => {
-    it('deletes account under (workspace_id, accountId), cascading linked destinations, returning disconnected count', async () => {
-      let deletedAccountParams: any[] = [];
+    it('revokes Facebook access, marks the account revoked, disconnects destinations and cancels queued items — never hard-deleting (BG10)', async () => {
+      // The stored ciphertext must decrypt under the test-env key
+      // (dev fallback) so the revoke attempt actually runs.
+      const encrypted = await encryptToken(
+        'user-token',
+        getTokenEncryptionKey()
+      );
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => ({ ok: true }) as Response)
+      );
+      let revokedAccountParams: any[] = [];
       const mockDb = {
         query: vi.fn().mockImplementation((sql: string, params: any[]) => {
           if (sql.includes('FROM workspaces')) {
             return Promise.resolve([{ id: 'ws_123' }]);
           }
-          if (sql.includes('SELECT COUNT')) {
-            return Promise.resolve([{ count: 2 }]);
+          if (sql.includes('SELECT encrypted_access_token')) {
+            return Promise.resolve([{ encrypted_access_token: encrypted }]);
           }
-          if (sql.includes('DELETE FROM social_accounts')) {
-            deletedAccountParams = params;
+          if (sql.includes("UPDATE destinations SET status = 'disconnected'")) {
+            return Promise.resolve([{ id: 'd1' }, { id: 'd2' }]);
+          }
+          if (sql.includes("UPDATE social_accounts SET status = 'revoked'")) {
+            revokedAccountParams = params;
             return Promise.resolve([{ id: accountId }]);
           }
           return Promise.resolve([]);
         }),
-      } as unknown as DatabaseClient;
+      };
 
       const req = new NextRequest(
         `http://localhost:3000/api/tenant/acme/accounts/${accountId}`,
@@ -213,7 +230,7 @@ describe('Facebook Granular Disconnection & Multi-Tenant Governance (User Story 
         req,
         'acme',
         accountId,
-        mockDb
+        mockDb as unknown as DatabaseClient
       );
       expect(res.status).toBe(200);
 
@@ -221,9 +238,19 @@ describe('Facebook Granular Disconnection & Multi-Tenant Governance (User Story 
       expect(json.success).toBe(true);
       expect(json.accountId).toBe(accountId);
       expect(json.disconnectedPagesCount).toBe(2);
+      expect(json.facebookRevoked).toBe(true);
 
-      expect(deletedAccountParams[0]).toBe(accountId);
-      expect(deletedAccountParams[1]).toBe('ws_123');
+      expect(revokedAccountParams[0]).toBe(accountId);
+      expect(revokedAccountParams[1]).toBe('ws_123');
+      // The old hard delete must be gone: no DELETE statement
+      // against social_accounts may run on this path.
+      const statements = mockDb.query.mock.calls.map(
+        (call) => call[0] as string
+      );
+      expect(
+        statements.some((sql) => sql.includes('DELETE FROM social_accounts'))
+      ).toBe(false);
+      vi.unstubAllGlobals();
     });
 
     it('returns 404 when account does not exist or belongs to another user', async () => {
