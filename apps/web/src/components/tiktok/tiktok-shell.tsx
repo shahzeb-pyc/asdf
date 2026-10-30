@@ -1,9 +1,5 @@
 'use client';
 
-// Preview-retrigger note (no behaviour change): this comment exists only so
-// the branch carries a real file change for Vercel to build after the
-// rate-limited deployment; it will vanish in the squash merge.
-
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';

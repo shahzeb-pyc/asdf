@@ -61,7 +61,7 @@ import { captureWorkerError, type PostHogEnv } from './analytics.js';
 //
 // Failure discipline (fail loud, self-healing):
 //   - A failed post stays `pending` and the mirror goes to `error`
-//     with last_error; the next tick retries it.
+//     with last_error; the next tick retries the check, not the post.
 //   - A watermarked-only item gets a `skipped` row + mirror error
 //     note; it is never posted.
 //   - A tikwm failure marks the mirror `error` and continues with

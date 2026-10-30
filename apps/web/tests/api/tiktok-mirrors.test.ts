@@ -237,6 +237,7 @@ describe('POST /tiktok-mirrors', () => {
     expect(res.status).toBe(400);
     expect((await res.json()).error).toBe('TIKTOK_FEED_UNAVAILABLE');
     expect(calls.some((c) => c.sql.includes('INSERT INTO mirrors'))).toBe(false);
+    expect(calls.some((c) => c.sql.includes('INSERT INTO destinations'))).toBe(false);
   });
 
   it('returns 409 DUPLICATE_MIRROR for the same username + same page', async () => {

@@ -161,3 +161,12 @@ BEGIN
   RETURNING *;
 END;
 $$;
+
+-- RPC hardening (repo posture, cf. 20261023120000_rls_rpc_hardening.sql):
+-- SECURITY DEFINER functions default to EXECUTE TO PUBLIC, which would
+-- expose them to any anon/authenticated caller via PostgREST /rpc.
+-- Only the service role (the worker) may call them.
+REVOKE EXECUTE ON FUNCTION public.enqueue_mirror_check_jobs(JSONB) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.enqueue_mirror_check_jobs(JSONB) TO service_role;
+REVOKE EXECUTE ON FUNCTION public.claim_mirror_check_jobs(INT, TIMESTAMPTZ, INT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.claim_mirror_check_jobs(INT, TIMESTAMPTZ, INT) TO service_role;

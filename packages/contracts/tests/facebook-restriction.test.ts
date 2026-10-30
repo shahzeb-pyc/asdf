@@ -40,6 +40,20 @@ describe('isFacebookAccountRestricted', () => {
     expect(isFacebookAccountRestricted(undefined)).toBe(false);
   });
 
+  it('gates the phrase fallback on no structured code or subcode surviving', () => {
+    const phrase =
+      'For security reasons, your account has limited access to the site for a few days.';
+    // Structured data that survived but did not match must NOT be
+    // re-classified via free text.
+    expect(isFacebookAccountRestricted({ code: 1, subcode: 190, message: phrase })).toBe(false);
+    expect(isFacebookAccountRestricted({ code: 190, message: phrase })).toBe(false);
+    expect(isFacebookAccountRestricted({ code: 1, message: phrase })).toBe(false);
+    expect(isFacebookAccountRestricted({ code: 1, message: 'Something else failed' })).toBe(false);
+    expect(isFacebookAccountRestricted({ code: 1 })).toBe(false);
+    // Phrase alone, with no code or subcode at all, still counts.
+    expect(isFacebookAccountRestricted({ message: phrase })).toBe(true);
+  });
+
   it('keeps Publish Now semantics exact with messageFallback disabled', () => {
     expect(
       isFacebookAccountRestricted(

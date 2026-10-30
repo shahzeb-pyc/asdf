@@ -748,7 +748,28 @@ export async function handleCreateMirror(
   const username = parsed.data.sourceUsername;
 
   try {
-    // 1. Resolve (or create) the destination row.
+    // 1. Verify the feed with the PAID tikwmapi feed endpoint
+    //    BEFORE resolving or creating anything: a failed feed
+    //    must leave no destination row behind. Key rotation
+    //    pauses live in tikwmapi_key_pauses; the store is built
+    //    from this request's database handle (both client shapes).
+    const apiKeys = getTikwmApiKeys();
+    const pauseStore = buildTikwmPauseStore(db, isLegacyClient(db));
+    const fetchPosts = deps.fetchTikwmPosts ?? fetchTikwmUserPosts;
+    let videos;
+    try {
+      videos = await fetchPosts(username, { count: 30, apiKeys, pauseStore });
+    } catch (err) {
+      if (err instanceof TikwmError) {
+        return NextResponse.json(
+          { error: 'TIKTOK_FEED_UNAVAILABLE', message: err.message },
+          { status: 400 }
+        );
+      }
+      throw err;
+    }
+
+    // 2. Resolve (or create) the destination row.
     const resolved = await resolveDestination(
       db,
       workspaceId,
@@ -762,7 +783,7 @@ export async function handleCreateMirror(
     if ('error' in resolved) return resolved.error;
     const destination = resolved.destination;
 
-    // 2. Exact-duplicate block (same source username + same target).
+    // 3. Exact-duplicate block (same source username + same target).
     if (
       await findDuplicateMirror(
         db,
@@ -779,26 +800,6 @@ export async function handleCreateMirror(
         },
         { status: 409 }
       );
-    }
-
-    // 3. Verify the feed with the PAID tikwmapi feed endpoint
-    //    BEFORE creating anything. Key rotation pauses live in
-    //    tikwmapi_key_pauses; the store is built from this
-    //    request's database handle (both client shapes).
-    const apiKeys = getTikwmApiKeys();
-    const pauseStore = buildTikwmPauseStore(db, isLegacyClient(db));
-    const fetchPosts = deps.fetchTikwmPosts ?? fetchTikwmUserPosts;
-    let videos;
-    try {
-      videos = await fetchPosts(username, { count: 30, apiKeys, pauseStore });
-    } catch (err) {
-      if (err instanceof TikwmError) {
-        return NextResponse.json(
-          { error: 'TIKTOK_FEED_UNAVAILABLE', message: err.message },
-          { status: 400 }
-        );
-      }
-      throw err;
     }
 
     // 4. Display info (best effort; feed author fields are fallback).

@@ -53,7 +53,7 @@ function readFields(error: unknown): FacebookErrorFields {
  * the web reel client, the worker Graph client, and the Publish Now route
  * each name the field differently).
  *
- * Narrow fallback (on by default): when no structured code/subcode
+ * Narrow fallback (on by default): when neither a code nor a subcode
  * survives (an error that carries the restriction only as free text, e.g.
  * a user_message), the distinctive phrase "limited access" still counts
  * as a restriction. The phrase is specific to the account-restriction
@@ -79,6 +79,10 @@ export function isFacebookAccountRestricted(
     return true;
   }
   if (opts?.messageFallback === false) return false;
+  // The fallback runs ONLY when no structured signal survived: a code
+  // or subcode that is present but does not match is a definite
+  // non-restriction, not an invitation to re-classify via free text.
+  if (code !== undefined || subcode !== undefined) return false;
   const message = typeof fields.message === 'string' ? fields.message : '';
   return message.toLowerCase().includes('limited access');
 }
