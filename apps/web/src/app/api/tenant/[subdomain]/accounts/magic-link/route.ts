@@ -126,10 +126,14 @@ export async function handleGenerateMagicLink(
     sessionSecret
   );
 
-  // Audit N5: strip a trailing slash off the app URL (no double
+  // Audit N5: strip trailing slashes off the app URL (no double
   // slash) and encode the token — safe today only because the
   // token charset is base64url+hex, which must not be assumed.
-  const magicUrl = `${appUrl.replace(/\/+$/, '')}/connect/facebook?token=${encodeURIComponent(token)}`;
+  // Plain loop, not a /\/+$/ regex: Sonar S8786 flags the regex
+  // form for super-linear backtracking.
+  let magicBase = appUrl;
+  while (magicBase.endsWith('/')) magicBase = magicBase.slice(0, -1);
+  const magicUrl = `${magicBase}/connect/facebook?token=${encodeURIComponent(token)}`;
 
   return NextResponse.json({
     success: true,

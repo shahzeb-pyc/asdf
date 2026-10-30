@@ -102,6 +102,14 @@ test.describe('connect account', () => {
     // legacy card and the unified social list the fixtures now serve —
     // either rendering proves the account is on the page.)
     await expect(page).toHaveURL(new RegExp(`/tenant/${TENANT.subdomain}/accounts`));
+    // The OAuth chain ends in a full page load, and the success toast
+    // only fires once the fixture-served accounts query settles (the
+    // shell's OAuth-notice effect waits out its loading state). On CI
+    // runners that load alone exceeds the 5s default — the first load
+    // in this same test took ~5.4s — so wait for the grid (the same
+    // settled-data signal the toast waits on) with a longer window
+    // before asserting the toast, which is then up for its 4s life.
+    await expect(page.getByTestId('accounts-grid')).toBeVisible({ timeout: 15000 });
     await expect(page.getByText(`${CONNECTED_ACCOUNT.displayName} connected`)).toBeVisible();
     await expect(page.getByText(CONNECTED_ACCOUNT.displayName).first()).toBeVisible();
   });
