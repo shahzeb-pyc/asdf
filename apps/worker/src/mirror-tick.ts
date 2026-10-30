@@ -1,8 +1,10 @@
 import {
   decryptToken,
   fetchTikwmApiUserPosts,
+  isFacebookAccountRestricted,
   isTikwmReelItem,
   isTikwmWatermarkedOnlyItem,
+  MIRROR_FACEBOOK_RESTRICTED_MESSAGE,
   resolveTikwmVideo,
   selectNewReels,
   type TikwmApiKeyPauseStore,
@@ -410,7 +412,18 @@ export async function processMirrorCheck(
           });
           result.posted += 1;
         } catch (err) {
-          const message = errorMessage(err);
+          const rawMessage = errorMessage(err);
+          // Same rule as the setup path: a Facebook account restriction
+          // shows the approved plain-language message, never Facebook's
+          // raw text. The raw detail stays in worker logs for debugging.
+          const message = isFacebookAccountRestricted(err)
+            ? MIRROR_FACEBOOK_RESTRICTED_MESSAGE
+            : rawMessage;
+          if (message !== rawMessage) {
+            console.error(
+              `[mirror-tick] mirror=${mirror.id} publish restricted by Facebook; raw: ${rawMessage}`
+            );
+          }
           await deps.updatePost(claimedId, { status: 'pending', error: message });
           mirrorError = message;
           result.failed += 1;

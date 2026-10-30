@@ -3,6 +3,7 @@ export * from './domain/user.js';
 export * from './domain/facebook.js';
 export * from './domain/facebook-health.js';
 export * from './domain/instagram-accounts.js';
+export * from './domain/facebook-restriction.js';
 export * from './domain/oauth.js';
 export * from './domain/session.js';
 export * from './domain/routing.js';

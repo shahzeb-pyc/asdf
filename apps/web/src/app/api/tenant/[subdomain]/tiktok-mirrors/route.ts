@@ -6,7 +6,9 @@ import {
   encryptToken,
   fetchAllFacebookPages,
   getTokenEncryptionKey,
+  isFacebookAccountRestricted,
   ListMirrorsResponseSchema,
+  MIRROR_FACEBOOK_RESTRICTED_MESSAGE,
   type MirrorView,
 } from '@fbuploadpro/contracts';
 import {
@@ -1005,12 +1007,26 @@ export async function handleCreateMirror(
               error: null,
             };
           } catch (err) {
-            const message =
+            const rawMessage =
               err instanceof FacebookReelError
                 ? err.message
                 : err instanceof Error
                   ? err.message
                   : 'The latest reel could not be posted.';
+            // A Facebook account restriction must never surface as
+            // Facebook's raw text (it reads like our tool broke). Show
+            // the approved plain-language message; the raw detail stays
+            // in server logs for debugging.
+            const message = isFacebookAccountRestricted(err)
+              ? MIRROR_FACEBOOK_RESTRICTED_MESSAGE
+              : rawMessage;
+            if (message !== rawMessage) {
+              logServerError('[tiktok-mirrors] Immediate post restricted by Facebook', err, {
+                source: 'tiktok-mirrors-create',
+                subdomain,
+                mirrorId: mirror.id,
+              });
+            }
             await updatePostAndMirror(db, mirror.id, postRowId, {
               status: 'pending',
               error: message,

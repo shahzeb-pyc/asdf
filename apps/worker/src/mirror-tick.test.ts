@@ -9,6 +9,7 @@
  * and skips before this runs.)
  */
 import { describe, expect, it } from 'vitest';
+import { MIRROR_FACEBOOK_RESTRICTED_MESSAGE } from '@fbuploadpro/contracts';
 import {
   processMirrorCheck,
   type MirrorTickDeps,
@@ -145,6 +146,47 @@ describe('processMirrorCheck', () => {
     const stamp = state.mirrorUpdates[state.mirrorUpdates.length - 1];
     expect(stamp?.patch.status).toBe('error');
     expect(stamp?.patch.lastError).toContain('Graph exploded');
+  });
+
+  it('shows the plain restriction message on a restricted publish failure, post still pending', async () => {
+    const state = newState();
+    const restrictedError = Object.assign(
+      new Error(
+        'For security reasons, your account has limited access to the site for a few days.'
+      ),
+      { code: 1, errorSubcode: 2424009 }
+    );
+    const deps: MirrorTickDeps = {
+      ...fakeDeps(state, [reel('v1', 100)]),
+      publishReel: async () => {
+        throw restrictedError;
+      },
+    };
+    const result = await processMirrorCheck(deps, mirror());
+    expect(result.posted).toBe(0);
+    expect(result.failed).toBe(1);
+    const postUpdate = state.postUpdates.find((u) => u.id === 'post-v1');
+    expect(postUpdate?.patch.status).toBe('pending');
+    expect(postUpdate?.patch.error).toBe(MIRROR_FACEBOOK_RESTRICTED_MESSAGE);
+    const stamp = state.mirrorUpdates[state.mirrorUpdates.length - 1];
+    expect(stamp?.patch.status).toBe('error');
+    expect(stamp?.patch.lastError).toBe(MIRROR_FACEBOOK_RESTRICTED_MESSAGE);
+  });
+
+  it('maps a restriction carried only as free text to the plain message', async () => {
+    const state = newState();
+    const deps: MirrorTickDeps = {
+      ...fakeDeps(state, [reel('v1', 100)]),
+      publishReel: async () => {
+        throw new Error(
+          'For security reasons, your account has limited access to the site for a few days.'
+        );
+      },
+    };
+    const result = await processMirrorCheck(deps, mirror());
+    expect(result.failed).toBe(1);
+    const stamp = state.mirrorUpdates[state.mirrorUpdates.length - 1];
+    expect(stamp?.patch.lastError).toBe(MIRROR_FACEBOOK_RESTRICTED_MESSAGE);
   });
 
   it('keeps a resolve failure pending, marks the mirror error, and stops that mirror', async () => {

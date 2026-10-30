@@ -295,6 +295,37 @@ describe('POST /tiktok-mirrors', () => {
     expect(mirrorUpdate?.params).toContain('error');
   });
 
+  it('shows the plain restriction message (not Facebook raw text) when the immediate post is restricted', async () => {
+    const { db, calls } = fakeDb();
+    const restrictedError = Object.assign(
+      new Error(
+        'For security reasons, your account has limited access to the site for a few days.'
+      ),
+      { code: 1, errorSubcode: 2424009 }
+    );
+    const deps = createDeps({
+      publish: vi.fn().mockRejectedValue(restrictedError),
+    });
+    const res = await handleCreateMirror(
+      createRequest({ accountId, targetExternalId: fbPageId, sourceUsername: 'alice' }),
+      'acme',
+      db,
+      deps as never
+    );
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.immediatePost.status).toBe('pending');
+    expect(body.immediatePost.error).toBe(
+      "This Facebook page can't post right now because the connected account is temporarily restricted on Facebook. It should work again once the restriction lifts — check Facebook Account Status for details."
+    );
+    expect(body.immediatePost.error).not.toContain('limited access to the site');
+    const postUpdate = calls.find((c) => c.sql.includes('UPDATE mirror_posts'));
+    expect(postUpdate?.params).toContain(body.immediatePost.error);
+    const mirrorUpdate = calls.find((c) => c.sql.includes('UPDATE mirrors'));
+    expect(mirrorUpdate?.params).toContain('error');
+    expect(mirrorUpdate?.params).toContain(body.immediatePost.error);
+  });
+
   it('keeps the post pending and the mirror in error when video resolve fails', async () => {
     const { db, calls } = fakeDb();
     const deps = createDeps();

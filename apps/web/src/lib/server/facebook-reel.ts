@@ -18,11 +18,21 @@ const MEDIA_FETCH_TIMEOUT_MS = 300_000;
 export class FacebookReelError extends Error {
   readonly step: string;
   readonly httpStatus: number | null;
-  constructor(step: string, message: string, httpStatus: number | null = null) {
+  /** Graph error code/subcode when Facebook returned a structured error. */
+  readonly code: number | undefined;
+  readonly errorSubcode: number | undefined;
+  constructor(
+    step: string,
+    message: string,
+    httpStatus: number | null = null,
+    graph?: { code?: number | undefined; errorSubcode?: number | undefined }
+  ) {
     super(message);
     this.name = 'FacebookReelError';
     this.step = step;
     this.httpStatus = httpStatus;
+    this.code = graph?.code;
+    this.errorSubcode = graph?.errorSubcode;
   }
 }
 
@@ -50,13 +60,17 @@ async function graphPost(
     throw new FacebookReelError(step, 'Facebook could not complete this request. Please try again.');
   }
   const data = (await res.json().catch(() => ({}))) as {
-    error?: { message?: string; code?: number };
+    error?: { message?: string; code?: number; error_subcode?: number };
   };
   if (!res.ok || data.error) {
+    // Preserve code + subcode: callers classify restriction errors from
+    // them instead of the raw message (previously the subcode was dropped
+    // here, so a restriction surfaced as Facebook's raw text).
     throw new FacebookReelError(
       step,
       data.error?.message ?? 'Facebook could not complete this request. Please try again.',
-      res.status
+      res.status,
+      { code: data.error?.code, errorSubcode: data.error?.error_subcode }
     );
   }
   return data;
@@ -110,12 +124,13 @@ export async function publishFacebookReel(params: {
   } as RequestInit);
   if (!uploadRes.ok) {
     const uploadData = (await uploadRes.json().catch(() => ({}))) as {
-      error?: { message?: string };
+      error?: { message?: string; code?: number; error_subcode?: number };
     };
     throw new FacebookReelError(
       'reel-upload',
       uploadData.error?.message ?? 'The reel could not be uploaded. Please try again.',
-      uploadRes.status
+      uploadRes.status,
+      { code: uploadData.error?.code, errorSubcode: uploadData.error?.error_subcode }
     );
   }
 

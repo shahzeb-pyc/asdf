@@ -5,6 +5,7 @@ import {
   evaluateGraphApiError,
   fetchAllFacebookPages,
   getTokenEncryptionKey,
+  isFacebookAccountRestricted,
   PublishNowRequestSchema,
   PublishNowResponseSchema,
   publishNowValidationMessage,
@@ -145,11 +146,14 @@ function steppedError(message: string, step: PublishNowStep): Error {
 const ACCOUNT_RESTRICTED_MESSAGE =
   "Facebook has restricted this account from posting. Check Account Status on Facebook for the reason and to appeal — retrying won't work until the restriction is lifted.";
 
+/**
+ * Restriction detection lives in contracts (shared with Auto Repost) so
+ * the subcode list cannot drift between features. Publish Now keeps its
+ * own approved copy above and its exact historical semantics (structured
+ * codes only — no message fallback); only the detection is shared.
+ */
 function isAccountRestricted(failure: GraphFailure): boolean {
-  return (
-    failure.code === 1 &&
-    (failure.subcode === 2424009 || failure.subcode === 1404078)
-  );
+  return isFacebookAccountRestricted(failure, { messageFallback: false });
 }
 
 /** Friendly, user-facing reason for a Graph failure (never a raw dump). */
