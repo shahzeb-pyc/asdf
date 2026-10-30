@@ -777,19 +777,26 @@ export function buildMirrorTickDeps(
       };
     },
     enqueueMirrorCheckJobs: async (jobs) => {
-      const rpc = (db as unknown as { rpc?: unknown }).rpc;
-      if (typeof rpc !== 'function') {
-        throw new InternalError('Mirror check job enqueue RPC is not configured');
-      }
-      const { data, error } = await (
-        rpc as (
+      // Call rpc as a method ON the client object, never detached:
+      // supabase-js SupabaseClient.rpc reads `this.rest`, so a detached
+      // call (`const rpc = db.rpc; rpc(...)`) throws `TypeError: Cannot
+      // read properties of undefined (reading 'rest')` in production
+      // while arrow-function mocks in tests keep passing. That exact
+      // bug froze every mirror check (dispatch found the mirror due,
+      // enqueue always threw, no job was ever created).
+      const client = db as unknown as {
+        rpc?: (
           fn: string,
           args: Record<string, unknown>
         ) => Promise<{
           data: unknown;
           error: { message: string } | null;
-        }>
-      )('enqueue_mirror_check_jobs', {
+        }>;
+      };
+      if (typeof client.rpc !== 'function') {
+        throw new InternalError('Mirror check job enqueue RPC is not configured');
+      }
+      const { data, error } = await client.rpc('enqueue_mirror_check_jobs', {
         p_jobs: jobs.map((job) => ({
           mirror_id: job.mirrorId,
           available_at: job.availableAt,
@@ -806,19 +813,22 @@ export function buildMirrorTickDeps(
       return data;
     },
     claimMirrorCheckJobs: async (now, limit) => {
-      const rpc = (db as unknown as { rpc?: unknown }).rpc;
-      if (typeof rpc !== 'function') {
-        throw new InternalError('Mirror check job claim RPC is not configured');
-      }
-      const { data, error } = await (
-        rpc as (
+      // Bound call, same trap as enqueue above: a detached rpc throws
+      // `TypeError: Cannot read properties of undefined (reading
+      // 'rest')` against the real supabase-js client.
+      const client = db as unknown as {
+        rpc?: (
           fn: string,
           args: Record<string, unknown>
         ) => Promise<{
           data: unknown;
           error: { message: string } | null;
-        }>
-      )('claim_mirror_check_jobs', {
+        }>;
+      };
+      if (typeof client.rpc !== 'function') {
+        throw new InternalError('Mirror check job claim RPC is not configured');
+      }
+      const { data, error } = await client.rpc('claim_mirror_check_jobs', {
         p_limit: limit,
         p_now: now.toISOString(),
         p_stale_after_seconds: MIRROR_JOB_STALE_AFTER_SECONDS,

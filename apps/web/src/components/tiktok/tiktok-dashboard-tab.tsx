@@ -9,6 +9,7 @@ import type {
   MirrorDetailResponse,
   MirrorView,
 } from '@/lib/api/schemas/tiktok-mirrors';
+import { mapStoredMirrorErrorToDisplay } from '@fbuploadpro/contracts';
 import { mirrorStatusMark } from './tiktok-card';
 
 /**
@@ -95,7 +96,7 @@ export function TikTokDashboardTab({ mirror, posts }: Readonly<TikTokDashboardTa
         </div>
         {mirror.lastError ? (
           <p role="alert" data-testid="tiktok-detail-error" className="mt-3 text-body text-signal-critical">
-            {mirror.lastError}
+            {mapStoredMirrorErrorToDisplay(mirror.lastError)}
           </p>
         ) : null}
         <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-metadata text-ink-dim">
@@ -150,7 +151,7 @@ export function TikTokDashboardTab({ mirror, posts }: Readonly<TikTokDashboardTa
                     {post.published_post_id ? ' · Posted to Facebook' : ''}
                   </p>
                   {post.error ? (
-                    <p className="mt-1 text-metadata text-signal-critical">{post.error}</p>
+                    <p className="mt-1 text-metadata text-signal-critical">{mapStoredMirrorErrorToDisplay(post.error)}</p>
                   ) : null}
                 </div>
               </li>

@@ -6,6 +6,7 @@ import Image from 'next/image';
 import { cn } from '@/lib/utils';
 import { StatusMark, type StatusMarkKind } from '@/components/shared/ui/status-mark';
 import type { MirrorView } from '@/lib/api/schemas/tiktok-mirrors';
+import { mapStoredMirrorErrorToDisplay } from '@fbuploadpro/contracts';
 
 /**
  * TikTok mirror card — the Pages card pattern for mirrors: avatar +
@@ -95,7 +96,7 @@ export function TikTokCard({ mirror, onSelect, highlighted }: Readonly<TikTokCar
           data-testid="tiktok-mirror-error"
           className="mt-3 truncate text-metadata text-signal-critical"
         >
-          {mirror.lastError}
+          {mapStoredMirrorErrorToDisplay(mirror.lastError)}
         </p>
       ) : null}
 
