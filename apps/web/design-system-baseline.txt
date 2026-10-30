@@ -65,5 +65,6 @@ arbitrary-allow apps/web/src/components/prompts/prompt-library-client.tsx sm:h-[
 # phone-preview column beside the queue grid; no token utility expresses
 # a fixed 360px grid column, so this one class is allowlisted here.
 arbitrary-allow apps/web/src/components/auto-download-upload/adu-detail-page.tsx lg:grid-cols-[1fr_360px]
+arbitrary-allow apps/web/src/components/threads/auto-download-upload/threads-adu-detail-page.tsx lg:grid-cols-[1fr_360px]
 hex apps/web/src/components/connect/byoc-gate.tsx 2
 rgb apps/web/src/lib/component-styles.ts 1
