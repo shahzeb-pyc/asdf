@@ -425,6 +425,26 @@ export function evaluatePublishReadiness(
     };
   }
 
+  // Audit BG4 remainder: a Facebook token whose expiry date has passed
+  // is lapsed even if the refresh job has not flipped the status yet.
+  // Defer (never claim-and-fail-terminally on a Graph 190) so the
+  // item returns to the slot pool via the BG3 settle rule. Other
+  // platforms keep the status-only rule (their tokens may be
+  // refreshable), mirroring the claim RPC predicate.
+  if (
+    account.platform === 'facebook' &&
+    account.token_expires_at !== null &&
+    new Date(account.token_expires_at).getTime() <= now.getTime()
+  ) {
+    return {
+      code: DEFER_ACCOUNT_NOT_ACTIVE_CODE,
+      message:
+        `Social account ${account.id} token expired at ` +
+        `${account.token_expires_at}; deferred without publishing.`,
+      retryDelaySeconds: DEFAULT_RETRY_DELAY_SECONDS,
+    };
+  }
+
   const nextAllowedAt = destination.next_allowed_publish_at
     ? new Date(destination.next_allowed_publish_at)
     : null;
@@ -467,7 +487,11 @@ export function evaluatePublishReadiness(
  * settle RPC's `deferred` outcome (spec 139 defer outcome), so the
  * claimer re-claims the item once it is due AND eligible again (the
  * claim RPC re-applies the same eligibility test, so a still-ineligible
- * item is never hot-looped). Deliberate differences from a `retry`
+ * item is never hot-looped). Audit BG3 (owner decision 2026-10-30):
+ * for platform `facebook` the settle RPC resets `scheduled_time` to
+ * NULL on defer/retry, so the row returns to the slot pool and is
+ * picked up only by `claim_posting_slot_item` at a later posting slot
+ * — never by the due claimer at an unscheduled time. Deliberate differences from a `retry`
  * settle:
  *   - the RPC's deferred branch does NOT write `retry_count` — no
  *     publish attempt was made, so no retry budget is consumed (the
