@@ -163,6 +163,125 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
       expect(resString).not.toContain('secret');
       expect(resString).not.toContain('group_9999');
     });
+
+    it('reports truncated=true when Graph pagination hits the page cap with a cursor remaining (BG6)', async () => {
+      const mockDb = {
+        query: vi.fn().mockImplementation((sql: string) => {
+          if (sql.includes('FROM workspaces')) {
+            return Promise.resolve([{ id: 'ws_123' }]);
+          }
+          if (sql.includes('FROM social_accounts')) {
+            return Promise.resolve([
+              {
+                id: accountId,
+                userId,
+                fbAccountId: 'fb_act_123',
+                displayName: 'Alex Marketing Profile',
+                encryptedAccessToken: sampleEncryptedAccountToken,
+                status: 'active',
+              },
+            ]);
+          }
+          if (sql.includes('FROM destinations')) {
+            return Promise.resolve([]);
+          }
+          return Promise.resolve([]);
+        }),
+      } as unknown as DatabaseClient;
+
+      // Five pages, each carrying a next cursor: the fetch stops
+      // at the 5-page cap with pages still behind the cursor.
+      let callCount = 0;
+      global.fetch = vi.fn().mockImplementation(async () => {
+        callCount++;
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: `page_cap_${callCount}`,
+                name: `Cap Page ${callCount}`,
+                category: 'Retail Company',
+                tasks: ['CREATE_CONTENT'],
+              },
+            ],
+            paging: {
+              next: `https://graph.facebook.com/v26.0/me/accounts?after=cursor${callCount}`,
+            },
+          }),
+          { status: 200 }
+        );
+      });
+
+      const req = new NextRequest(
+        `http://localhost:3000/api/tenant/acme/accounts/${accountId}/pages/discover`,
+        { headers: { cookie: validSessionCookie } }
+      );
+
+      const res = await handleDiscoverPages(req, 'acme', accountId, mockDb);
+      expect(res.status).toBe(200);
+      expect(callCount).toBe(5);
+      const json = await res.json();
+      expect(json.pages).toHaveLength(5);
+      expect(json.truncated).toBe(true);
+    });
+
+    it('scopes isImported to the discovering account, not the whole workspace (BG7)', async () => {
+      const seenQueries: Array<{ sql: string; params: unknown }> = [];
+      const mockDb = {
+        query: vi.fn().mockImplementation((sql: string, params: unknown) => {
+          seenQueries.push({ sql, params });
+          if (sql.includes('FROM workspaces')) {
+            return Promise.resolve([{ id: 'ws_123' }]);
+          }
+          if (sql.includes('FROM social_accounts')) {
+            return Promise.resolve([
+              {
+                id: accountId,
+                userId,
+                fbAccountId: 'fb_act_123',
+                displayName: 'Alex Marketing Profile',
+                encryptedAccessToken: sampleEncryptedAccountToken,
+                status: 'active',
+              },
+            ]);
+          }
+          if (sql.includes('FROM destinations')) {
+            return Promise.resolve([]);
+          }
+          return Promise.resolve([]);
+        }),
+      } as unknown as DatabaseClient;
+
+      global.fetch = vi.fn().mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 'page_other_acct',
+                name: 'Other Account Page',
+                category: 'Retail Company',
+                tasks: ['CREATE_CONTENT'],
+              },
+            ],
+          }),
+          { status: 200 }
+        )
+      );
+
+      const req = new NextRequest(
+        `http://localhost:3000/api/tenant/acme/accounts/${accountId}/pages/discover`,
+        { headers: { cookie: validSessionCookie } }
+      );
+
+      const res = await handleDiscoverPages(req, 'acme', accountId, mockDb);
+      expect(res.status).toBe(200);
+      const destinationsQuery = seenQueries.find((q) =>
+        q.sql.includes('FROM destinations')
+      );
+      expect(destinationsQuery).toBeDefined();
+      expect(destinationsQuery?.sql).toContain('account_id');
+      expect(destinationsQuery?.params).toContain(accountId);
+    });
   });
 
   describe('Selective Import (POST /api/tenant/[subdomain]/pages/import)', () => {

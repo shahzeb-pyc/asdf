@@ -227,13 +227,36 @@ function facebookGraphTimeoutSignal(callerSignal?: AbortSignal): AbortSignal {
  * signal when one is supplied via the optional trailing `options` argument.
  * The trailing options argument is additive — existing callers are unaffected.
  */
-export async function fetchAllFacebookPages(
+/**
+ * Audit BG6 — paginated Graph fetch with truncation reporting.
+ *
+ * The old helper silently returned a partial list in two cases:
+ * the maxPages cap (5 × 100 = 500 pages) with more pages behind
+ * the cursor, and a failed later page (only the first-page
+ * failure threw). Callers then reported the partial list as
+ * complete — a selected page could be "missing" with no signal,
+ * and a reconnect could refresh only a subset of page tokens.
+ * The meta variant reports exactly that: `truncated` is true
+ * whenever the loop stopped while a next cursor still existed,
+ * with the reason (cap hit vs later-page error). The plain
+ * helper is kept for callers that already treat absence as a
+ * loud failure (e.g. the worker BG5 fallback, where a page
+ * missing from any list — truncated or not — means "do not
+ * retry").
+ */
+export interface FetchAllFacebookPagesResult {
+  pages: FacebookGraphPageItem[];
+  truncated: boolean;
+  truncationReason?: 'page_limit' | 'page_error';
+}
+
+export async function fetchAllFacebookPagesWithMeta(
   accessToken: string,
   fields: string,
   maxPages = 5,
   fetchFn: typeof fetch = globalThis.fetch,
   options?: { signal?: AbortSignal }
-): Promise<FacebookGraphPageItem[]> {
+): Promise<FetchAllFacebookPagesResult> {
   const allPages: FacebookGraphPageItem[] = [];
   const initialUrl = new URL('https://graph.facebook.com/v26.0/me/accounts');
   initialUrl.searchParams.set('fields', fields);
@@ -241,6 +264,8 @@ export async function fetchAllFacebookPages(
 
   let nextUrl: string | null = initialUrl.toString();
   let pagesFetched = 0;
+  let truncated = false;
+  let truncationReason: FetchAllFacebookPagesResult['truncationReason'];
 
   while (nextUrl && pagesFetched < maxPages) {
     pagesFetched++;
@@ -257,6 +282,8 @@ export async function fetchAllFacebookPages(
         (err as any).status = res.status;
         throw err;
       }
+      truncated = true;
+      truncationReason = 'page_error';
       break;
     }
 
@@ -278,7 +305,34 @@ export async function fetchAllFacebookPages(
     nextUrl = json?.paging?.next || null;
   }
 
-  return allPages;
+  // Cap hit with pages still behind the cursor: truncated, not complete.
+  if (nextUrl && pagesFetched >= maxPages) {
+    truncated = true;
+    truncationReason = 'page_limit';
+  }
+
+  return {
+    pages: allPages,
+    truncated,
+    ...(truncationReason ? { truncationReason } : {}),
+  };
+}
+
+export async function fetchAllFacebookPages(
+  accessToken: string,
+  fields: string,
+  maxPages = 5,
+  fetchFn: typeof fetch = globalThis.fetch,
+  options?: { signal?: AbortSignal }
+): Promise<FacebookGraphPageItem[]> {
+  const result = await fetchAllFacebookPagesWithMeta(
+    accessToken,
+    fields,
+    maxPages,
+    fetchFn,
+    options
+  );
+  return result.pages;
 }
 
 
@@ -301,6 +355,10 @@ export const DiscoverPagesResponseSchema = z.object({
   accountDisplayName: z.string(),
   pages: z.array(DiscoveredPageSchema),
   total: z.number().int().nonnegative(),
+  // Audit BG6: true when Graph pagination was truncated (cap or
+  // later-page error) — the list is partial, never complete.
+  // Optional with a default so older clients keep parsing.
+  truncated: z.boolean().optional().default(false),
 });
 
 export type DiscoverPagesResponse = z.infer<typeof DiscoverPagesResponseSchema>;

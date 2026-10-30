@@ -4,6 +4,7 @@ import {
   decryptToken,
   DiscoverPagesResponseSchema,
   fetchAllFacebookPages,
+  fetchAllFacebookPagesWithMeta,
   getSessionSecret,
   getTokenEncryptionKey,
   verifySessionToken,
@@ -11,6 +12,10 @@ import {
   type Database,
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
+import {
+  isTokenDeadGraphStatus,
+  markAccountConnectionError,
+} from '@/lib/connect/account-probe';
 import { logServerError } from '@/lib/server-analytics';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -88,9 +93,12 @@ export async function handleDiscoverPages(
     }
     account = accounts[0];
 
+    // Audit BG7: isImported is per-ACCOUNT, not workspace-wide —
+    // a page imported under another account must not read as
+    // imported when discovering under this one.
     importedRows = await dbClient.query<ImportedPageIdRow>(
-      "SELECT external_destination_id AS fb_page_id FROM destinations WHERE workspace_id = $1 AND platform = 'facebook' AND (status != 'disconnected' OR metadata->>'fb_status' = 'paused')",
-      [workspaceId]
+      "SELECT external_destination_id AS fb_page_id FROM destinations WHERE workspace_id = $1 AND account_id = $2 AND platform = 'facebook' AND (status != 'disconnected' OR metadata->>'fb_status' = 'paused')",
+      [workspaceId, accountId]
     );
   } else {
     const supabase = (dbClient && 'from' in dbClient ? dbClient : getSupabaseAdminClient()) as SupabaseClient<Database> | null;
@@ -118,6 +126,7 @@ export async function handleDiscoverPages(
       .from('destinations')
       .select('external_destination_id, status, metadata')
       .eq('workspace_id', workspaceId)
+      .eq('account_id', accountId)
       .eq('platform', 'facebook');
 
     const destinationRows = (pageRows || []) as unknown as Array<{
@@ -159,12 +168,17 @@ export async function handleDiscoverPages(
   }
 
   // 4. Query Facebook Graph API v26.0 /me/accounts with pagination
+  // Audit BG6: the meta variant reports truncation, so a partial
+  // list is never presented as complete.
   let rawItems: Awaited<ReturnType<typeof fetchAllFacebookPages>> = [];
+  let truncated = false;
   try {
-    rawItems = await fetchAllFacebookPages(
+    const fetched = await fetchAllFacebookPagesWithMeta(
       rawToken,
       'id,name,category,tasks,access_token,followers_count,picture{url}'
     );
+    rawItems = fetched.pages;
+    truncated = fetched.truncated;
   } catch (err: unknown) {
     logServerError('[pages/discover] Facebook Graph query failed', err, {
       source: 'pages-discover',
@@ -177,6 +191,14 @@ export async function handleDiscoverPages(
       typeof err.status === 'number'
         ? err.status
         : 500;
+    // Audit BG20: discover IS the probe — an auth-class failure
+    // means the user token is dead (revoked/invalid), so the
+    // account is marked 'error' now instead of reading
+    // "Connected" until a publish fails. Transient failures
+    // leave the status untouched.
+    if (isTokenDeadGraphStatus(status)) {
+      await markAccountConnectionError(dbClient, workspaceId, accountId);
+    }
     return NextResponse.json(
       { error: 'Failed to query Facebook Graph API' },
       { status }
@@ -213,6 +235,7 @@ export async function handleDiscoverPages(
     accountDisplayName: account.display_name || account.displayName,
     pages: discoveredPages,
     total: discoveredPages.length,
+    truncated,
   });
 
   return NextResponse.json(responsePayload);

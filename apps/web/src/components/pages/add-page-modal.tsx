@@ -122,6 +122,8 @@ async function executeDiscoverPages(subdomain: string, accountId: string) {
     return {
       success: true as const,
       pages: data.pages as DiscoveredPageItem[],
+      // Audit BG6: a truncated list is partial, never complete.
+      truncated: data.truncated,
       error: null,
     };
   } catch (error) {
@@ -129,6 +131,7 @@ async function executeDiscoverPages(subdomain: string, accountId: string) {
     return {
       success: false as const,
       pages: [] as DiscoveredPageItem[],
+      truncated: false,
       error:
         isApiError(error) && error.kind === 'http'
           ? "Couldn't load pages from this Facebook account. Please check the account connection and try again."
@@ -233,6 +236,9 @@ export function AddPageModal({
   const [discoveredPages, setDiscoveredPages] = React.useState<DiscoveredPageItem[]>(
     initialDiscoveredPages
   );
+  // Audit BG6: whether the discover list was truncated — shown as
+  // a warning above the page list, never silently complete.
+  const [discoveredTruncated, setDiscoveredTruncated] = React.useState(false);
   const [pageSearchQuery, setPageSearchQuery] = React.useState('');
   const [isDiscovering, setIsDiscovering] = React.useState(false);
   const [selectedPageIds, setSelectedPageIds] = React.useState<string[]>(
@@ -292,6 +298,7 @@ export function AddPageModal({
       setStep('select-account');
       setSelectedAccount(null);
       setDiscoveredPages([]);
+      setDiscoveredTruncated(false);
       setSelectedPageIds([]);
       setPageSearchQuery('');
       resetSchedule();
@@ -305,6 +312,7 @@ export function AddPageModal({
     setSelectedAccount(account);
     setStep('select-pages');
     setDiscoveredPages([]);
+    setDiscoveredTruncated(false);
     setSelectedPageIds([]);
     setPageSearchQuery('');
     setErrorMessage(null);
@@ -315,6 +323,7 @@ export function AddPageModal({
       setErrorMessage(result.error);
     } else {
       setDiscoveredPages(result.pages);
+      setDiscoveredTruncated(result.truncated);
     }
     setIsDiscovering(false);
   };
@@ -323,6 +332,7 @@ export function AddPageModal({
     setStep('select-account');
     setSelectedAccount(null);
     setDiscoveredPages([]);
+    setDiscoveredTruncated(false);
     setSelectedPageIds([]);
     setPageSearchQuery('');
     setErrorMessage(null);
@@ -558,6 +568,17 @@ export function AddPageModal({
               onGoToAccounts={handleGoToAccounts}
               onGoToSettingsFacebook={handleGoToSettingsFacebook}
             />
+          )}
+
+          {step === 'select-pages' && discoveredTruncated && (
+            <div
+              role="alert"
+              className="mb-4 rounded-sm border border-brand-gold/25 bg-brand-gold/10 px-3 py-2.5 text-body leading-body text-ink"
+            >
+              Facebook returned more pages than could be loaded, so
+              this list may be incomplete. If a page you expect is
+              missing, go back and choose the account again to retry.
+            </div>
           )}
 
           {step === 'select-pages' && (

@@ -11,26 +11,26 @@ const DEST = {
   id: '22222222-2222-4222-a222-222222222222',
   status: 'active',
   next_allowed_publish_at: null,
-} as never;
+};
 
 const BASE_ACCOUNT = {
   id: '11111111-1111-4111-a111-111111111111',
   platform: 'facebook',
   status: 'active',
   token_expires_at: null,
-} as never;
+};
 
 describe('evaluatePublishReadiness (BG4)', () => {
   it('defers a facebook account with a past token_expires_at despite status active', () => {
     const account = { ...BASE_ACCOUNT, token_expires_at: '2026-01-01T00:00:00.000Z' } as never;
-    const result = evaluatePublishReadiness(DEST, account, new Date('2026-10-30T00:00:00.000Z'));
+    const result = evaluatePublishReadiness(DEST as never, account, new Date('2026-10-30T00:00:00.000Z'));
     expect(result).not.toBeNull();
     expect(result?.code).toBe('account_not_active');
   });
 
   it('does not defer a facebook account with a future token_expires_at', () => {
     const account = { ...BASE_ACCOUNT, token_expires_at: '2027-01-01T00:00:00.000Z' } as never;
-    expect(evaluatePublishReadiness(DEST, account, new Date('2026-10-30T00:00:00.000Z'))).toBeNull();
+    expect(evaluatePublishReadiness(DEST as never, account, new Date('2026-10-30T00:00:00.000Z'))).toBeNull();
   });
 
   it('does not apply the date rule to non-facebook platforms', () => {
@@ -39,6 +39,6 @@ describe('evaluatePublishReadiness (BG4)', () => {
       platform: 'instagram',
       token_expires_at: '2026-01-01T00:00:00.000Z',
     } as never;
-    expect(evaluatePublishReadiness(DEST, account, new Date('2026-10-30T00:00:00.000Z'))).toBeNull();
+    expect(evaluatePublishReadiness(DEST as never, account, new Date('2026-10-30T00:00:00.000Z'))).toBeNull();
   });
 });

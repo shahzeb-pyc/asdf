@@ -3,6 +3,8 @@ import {
   DatabaseSocialAccountRowSchema,
   DatabaseUnifiedQueueItemRowSchema,
   decryptToken,
+  encryptToken,
+  fetchAllFacebookPages,
   InternalError,
   ValidationError,
   type DatabaseDestinationRow,
@@ -32,7 +34,10 @@ import type { PublishQueueMessage } from './claimer.js';
 // Consumers contain ZERO token-refresh calls (spec 121 D6): an
 // auth-classified outcome settles `failed` with the account-expired
 // cascade carried in the settle args; the separate token-refresh job is
-// the sole owner of token rotation.
+// the sole owner of token rotation. The one exception is audit BG5's
+// publish-time page-token re-discovery: a single re-fetch of a page
+// token from the live user token on a 190, which spends no refresh
+// grant and never rotates the user token.
 //
 // Error semantics: an unexpected throw (publisher bug, DB failure,
 // decrypt failure, settle failure) is NOT caught-and-acked. The message
@@ -89,6 +94,13 @@ export interface RowQueryBuilder {
   select(columns: string): RowQueryBuilder;
   eq(column: string, value: unknown): RowQueryBuilder;
   maybeSingle(): Promise<{ data: unknown; error: unknown }>;
+  // Audit BG5: the stale page-token fallback persists a
+  // re-discovered page token through the same supabase-style
+  // chain the refresh job uses (update().eq() resolves to
+  // { data, error }).
+  update(values: Record<string, unknown>): {
+    eq(column: string, value: unknown): Promise<{ data: unknown; error: unknown }>;
+  };
 }
 
 export interface ConsumerDeps {
@@ -205,6 +217,51 @@ async function loadSocialAccountRow(
   return raw
     ? validateLoadedRow(DatabaseSocialAccountRowSchema, 'social_accounts', id, raw, env)
     : null;
+}
+
+/**
+ * Audit BG5 — stale page-token re-discovery (publish-time fallback).
+ *
+ * A stored page token can go stale while the user token is still
+ * alive (page re-auth, permission change), and today that surfaces
+ * only as a failed post with a 190 that also flips the whole
+ * account to expired — even though the account itself is fine.
+ * On a 190 the consumer re-discovers the page list from the live
+ * user token and, when the page is there with a fresh token,
+ * retries the publish once with it. This is NOT a token refresh
+ * (spec 121 D6): no refresh grant is spent, the user token is
+ * never rotated, and the refresh job remains the sole owner of
+ * rotation/lapse. It is a single re-fetch of a page token from
+ * an already-valid user token.
+ *
+ * Returns null whenever re-discovery is impossible: Graph
+ * failure, the page absent from the list (including a truncated
+ * list — a partial list is never treated as "page gone"), or an
+ * empty token. Null means the original 190 failure stands and
+ * settles loudly; it is never swallowed into a retry or skip.
+ */
+export async function rediscoverFacebookPageToken(
+  userToken: string,
+  pageId: string,
+  fetchFn: typeof fetch = globalThis.fetch
+): Promise<string | null> {
+  try {
+    const pages = await fetchAllFacebookPages(
+      userToken,
+      'id,access_token',
+      5,
+      fetchFn
+    );
+    const match = pages.find((p) => String(p.id) === pageId);
+    const token = match?.access_token;
+    return typeof token === 'string' && token.length > 0 ? token : null;
+  } catch (err) {
+    console.error(
+      `[consumer] BG5 page-token re-discovery failed for page ${pageId}:`,
+      err
+    );
+    return null;
+  }
 }
 
 /** Counts-only heartbeat write; the consumer DB handle is the supabase client at runtime. */
@@ -650,7 +707,54 @@ async function processPublishMessage(
     tokenExpiresAt: account.token_expires_at ?? null,
   };
 
-  const outcome = await publisher.publish(item, destination, tokens);
+  let outcome = await publisher.publish(item, destination, tokens);
+
+  // Audit BG5: a 190 against the stored page token is retried
+  // ONCE with a token re-discovered from the live user token.
+  // Only a 190, only Facebook, only one attempt. When
+  // re-discovery fails the original failure settles unchanged
+  // (fail loud, including its account-expired cascade); when it
+  // succeeds the fresh token is persisted best-effort so the
+  // next publish does not repeat the dance, and the retry's
+  // outcome — published or failed — is what settles. A persist
+  // failure never blocks the retry: the in-memory fresh token
+  // still saves this post.
+  if (
+    item.platform === 'facebook' &&
+    outcome.status === 'failed' &&
+    outcome.error?.code === '190' &&
+    tokens.accessToken
+  ) {
+    const freshToken = await rediscoverFacebookPageToken(
+      tokens.accessToken,
+      destination.external_destination_id
+    );
+    if (freshToken) {
+      try {
+        const encrypted = await encryptToken(freshToken, masterKey);
+        const { error: updateError } = await deps.db
+          .from('destinations')
+          .update({ encrypted_destination_token: encrypted })
+          .eq('id', destination.id);
+        if (updateError) {
+          console.error(
+            `[consumer] BG5 failed to persist re-discovered page token for destination ${destination.id}:`,
+            updateError
+          );
+        }
+      } catch (err) {
+        console.error(
+          `[consumer] BG5 failed to persist re-discovered page token for destination ${destination.id}:`,
+          err
+        );
+      }
+      outcome = await publisher.publish(item, destination, {
+        ...tokens,
+        destinationToken: freshToken,
+      });
+    }
+  }
+
   await callSettleRpc(deps.db, mapPublishOutcomeToSettleArgs(item, outcome));
   return 'settled';
 }

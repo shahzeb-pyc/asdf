@@ -4,6 +4,7 @@ import {
   decryptToken,
   encryptToken,
   fetchAllFacebookPages,
+  fetchAllFacebookPagesWithMeta,
   getSessionSecret,
   getTokenEncryptionKey,
   ImportPagesRequestSchema,
@@ -13,6 +14,10 @@ import {
   type Database,
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
+import {
+  isTokenDeadGraphStatus,
+  markAccountConnectionError,
+} from '@/lib/connect/account-probe';
 import { logServerError } from '@/lib/server-analytics';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -145,17 +150,37 @@ export async function handleImportPages(
   }
 
   // 5. Query Facebook Graph API v26.0 /me/accounts with pagination
+  // Audit BG6: the meta variant reports truncation — a selected
+  // page missing from a truncated list is not "removed", it is
+  // unseen, and the PARTIAL_IMPORT message below says so.
   let rawItems: Awaited<ReturnType<typeof fetchAllFacebookPages>> = [];
+  let graphTruncated = false;
   try {
-    rawItems = await fetchAllFacebookPages(
+    const fetched = await fetchAllFacebookPagesWithMeta(
       rawToken,
       'id,name,category,tasks,access_token,followers_count,picture{url}'
     );
+    rawItems = fetched.pages;
+    graphTruncated = fetched.truncated;
   } catch (err) {
     logServerError('[pages/import] Facebook Graph query failed', err, {
       source: 'pages-import',
       subdomain,
     });
+    // Audit BG20: import is also an explicit probe — same rule
+    // as discover: an auth-class failure marks the account
+    // 'error' so the next list render shows it, instead of the
+    // revocation staying invisible until a publish fails.
+    const graphStatus =
+      err !== null &&
+      typeof err === 'object' &&
+      'status' in err &&
+      typeof (err as { status: unknown }).status === 'number'
+        ? (err as { status: number }).status
+        : undefined;
+    if (isTokenDeadGraphStatus(graphStatus)) {
+      await markAccountConnectionError(dbClient, workspaceId, accountId);
+    }
     return NextResponse.json(
       { error: 'Failed to query Facebook Graph API' },
       { status: 502 }
@@ -193,7 +218,7 @@ export async function handleImportPages(
     );
     return NextResponse.json(
       {
-        error: `These pages could not be found on this Facebook account and were not added: ${missing.join(', ')}. Nothing was imported — if you removed access to a page, it can't be added.`,
+        error: `These pages could not be found on this Facebook account and were not added: ${missing.join(', ')}. Nothing was imported — if you removed access to a page, it can't be added.${graphTruncated ? ' Facebook also returned an incomplete page list, so a missing page may still exist — try again to load the full list.' : ''}`,
         code: 'PARTIAL_IMPORT',
         skipped: missing.map((fbPageId) => ({ fbPageId })),
       },

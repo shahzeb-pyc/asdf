@@ -3,7 +3,7 @@ import {
   buildSubdomainOAuthRedirectUri,
   buildTenantUrl,
   encryptToken,
-  fetchAllFacebookPages,
+  fetchAllFacebookPagesWithMeta,
   FacebookTokenExchangeResponseSchema,
   type FacebookUserProfileResponse,
   FacebookUserProfileResponseSchema,
@@ -197,7 +197,19 @@ async function fetchGraphPageTokenMap(
   longAccessToken: string
 ): Promise<Map<string, string>> {
   const tokenMap = new Map<string, string>();
-  const pages = await fetchAllFacebookPages(longAccessToken, 'id,access_token');
+  // Audit BG6: a truncated list refreshes only a subset of page
+  // tokens while the callback still reports success. The refresh
+  // stays best-effort (a partial refresh must not fail the
+  // connect), but truncation is now logged loudly instead of
+  // silently — the BG5 worker fallback covers the publish path
+  // for any page whose token stayed stale.
+  const { pages, truncated, truncationReason } =
+    await fetchAllFacebookPagesWithMeta(longAccessToken, 'id,access_token');
+  if (truncated) {
+    console.warn(
+      `[FacebookOAuth] Page token refresh truncated (${truncationReason}): refreshed ${pages.length} pages, further pages unseen — their stored tokens stay stale until the next reconnect or a publish-time BG5 re-discovery.`
+    );
+  }
   for (const item of pages) {
     if (
       typeof item?.id === 'string' &&
