@@ -48,6 +48,19 @@ arbitrary-allow apps/web/src/components/pages/dedicated/insights-panel.tsx min-h
 # utility expresses 90dvh (h-9/10 is 90% of the fixed viewport, not dvh).
 arbitrary-allow apps/web/src/components/pages/dedicated/create-posts/create-posts-dialog.tsx h-[90dvh]
 arbitrary-allow apps/web/src/components/pages/dedicated/create-posts/create-posts-dialog.tsx max-h-[90dvh]
+# Prompt Library (PR #41): approved layout values with no token equivalent —
+# 720px is the dedicated detail column width, 480px/420px are the detail
+# preview heights, 55svh is the centred empty/error state height, and
+# leading 1.05 is the hero heading line-height. Zero UI change; these
+# values are the approved design, recorded here instead of being swapped
+# for near-but-different token sizes.
+arbitrary-allow apps/web/src/components/prompts/prompt-top-section.tsx leading-[1.05]
+arbitrary-allow apps/web/src/components/prompts/prompt-detail-section.tsx max-w-[720px]
+arbitrary-allow apps/web/src/components/prompts/prompt-detail-section.tsx max-h-[480px]
+arbitrary-allow apps/web/src/components/prompts/prompt-detail-section.tsx sm:h-[420px]
+arbitrary-allow apps/web/src/components/prompts/prompt-library-client.tsx min-h-[55svh]
+arbitrary-allow apps/web/src/components/prompts/prompt-library-client.tsx max-w-[720px]
+arbitrary-allow apps/web/src/components/prompts/prompt-library-client.tsx sm:h-[420px]
 hex apps/web/src/components/connect/byoc-gate.tsx 2
 rgb apps/web/src/components/pages/dedicated/modal-styles.ts 1
 rgb apps/web/src/lib/component-styles.ts 1

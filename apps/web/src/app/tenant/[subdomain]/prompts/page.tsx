@@ -1,55 +1,39 @@
-import type { Metadata } from 'next';
-import React from 'react';
-import { Card } from '@/components/shared/ui/card';
+import type { Metadata } from "next";
+import React from "react";
+
+import { PromptLibraryClient } from "@/components/prompts/prompt-library-client";
 
 /** Title resolves through the tenant layout's `<Section> · <Workspace>` template (§3.3.4). */
-export const metadata: Metadata = { title: 'Prompt Library' };
+export const metadata: Metadata = { title: "Prompt Library" };
 
 /**
- * Prompt Library placeholder. The full library (frontend, API, and
- * contracts) was removed; only the sidebar entry and this page remain.
- * This page fetches nothing, prefetches nothing, and calls no API —
- * it is a placeholder, not a stub for the old feature.
+ * Prompt Library — real backend wiring.
+ *
+ * Top section (heading, subtitle, search card with plain-text
+ * expandable filters) plus, below it, a grid of real catalogue
+ * cards using the decided B design (uniform size, fixed preview
+ * height, cleaner final-card layout). Search and filters refetch
+ * the list from the prompt API; clicking a card opens the
+ * dedicated section for that prompt (preview on top, master
+ * prompt in a scrollable field with Copy in its header, and a
+ * card opening the single "How to use a master prompt" guide
+ * in a popup — per-prompt how-to steps are no longer rendered
+ * there — fetched by slug; the top section is NOT rendered
+ * while a detail is open); the favourite heart persists via the
+ * API; the copy button copies the master prompt and increments
+ * the real copied count via the copy RPC.
+ *
+ * The catalogue is admin-only: prompts are never uploaded by
+ * users, and there is no "add prompt" UI here — admins add prompts
+ * via the backend API (see docs/prompt-library-admin.md). Until
+ * an admin adds the first prompt, the page shows "No prompts yet"
+ * — no mock cards, no fake counts.
  */
-export default function TenantPromptLibraryPage() {
-  return (
-    <div
-      data-slot="prompt-library-placeholder"
-      data-testid="prompt-library-placeholder"
-      className="flex flex-col items-center justify-center px-6 py-12"
-    >
-      <Card className="w-full max-w-120 items-center gap-4 px-6 py-8 text-center">
-        {/* Prompt Library Icon Container (same lightbulb as the sidebar entry) */}
-        <div
-          data-slot="prompt-library-placeholder-icon"
-          data-testid="prompt-library-placeholder-icon"
-          className="flex size-12 items-center justify-center rounded-md border border-line bg-active text-primary"
-        >
-          <svg
-            width="24"
-            height="24"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <path d="M9 18h6" />
-            <path d="M10 22h4" />
-            <path d="M12 2a7 7 0 0 0-4 12c.7.6 1 1.4 1 2h6c0-.6.3-1.4 1-2a7 7 0 0 0-4-12z" />
-          </svg>
-        </div>
-
-        {/* Title & Coming Soon Notice */}
-        <div className="flex flex-col gap-1">
-          <h1 className="text-xl leading-heading font-semibold text-ink">Prompt Library</h1>
-          <p data-testid="prompt-library-coming-soon" className="max-w-96 text-body text-ink-sub">
-            Coming soon.
-          </p>
-        </div>
-      </Card>
-    </div>
-  );
+export default async function TenantPromptLibraryPage({
+  params,
+}: {
+  params: Promise<{ subdomain: string }>;
+}) {
+  const { subdomain } = await params;
+  return <PromptLibraryClient subdomain={subdomain} />;
 }

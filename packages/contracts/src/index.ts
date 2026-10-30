@@ -8,6 +8,7 @@ export * from './domain/routing.js';
 export * from './domain/rbac.js';
 export * from './crypto/token.js';
 export * from './domain/media.js';
+export * from './domain/prompt-library.js';
 export * from './domain/folder.js';
 export * from './domain/storage.js';
 export * from './domain/downloader.js';
