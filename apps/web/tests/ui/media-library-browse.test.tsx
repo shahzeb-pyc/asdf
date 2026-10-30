@@ -108,18 +108,26 @@ describe('MediaLibraryHeader (PB-13)', () => {
     const user = userEvent.setup();
     const onUploadClick = vi.fn();
     const onNewFolderClick = vi.fn();
+    const onDownloadClick = vi.fn();
     render(
       <MediaLibraryHeader
         fileInputRef={{ current: null }}
         onFileInputChange={vi.fn()}
         onNewFolderClick={onNewFolderClick}
         onUploadClick={onUploadClick}
+        onDownloadClick={onDownloadClick}
       />
     );
 
     const upload = screen.getByTestId('upload-files-btn');
     expect(upload).toHaveAttribute('data-variant', 'default');
     expect(screen.getByTestId('new-folder-link')).toHaveAttribute('data-variant', 'link');
+    // Spec 149: Download sits beside Upload as a secondary button —
+    // Upload stays the surface's single primary.
+    const download = screen.getByTestId('download-files-btn');
+    expect(download).toHaveAttribute('data-variant', 'outline');
+    await user.click(download);
+    expect(onDownloadClick).toHaveBeenCalledTimes(1);
     expect(screen.getByRole('heading', { name: 'Media Library' })).toBeInTheDocument();
     expect(
       screen.getByText('Upload, organize, and caption your media for publishing queues.')
@@ -139,6 +147,7 @@ describe('MediaLibraryHeader (PB-13)', () => {
         onFileInputChange={onFileInputChange}
         onNewFolderClick={vi.fn()}
         onUploadClick={vi.fn()}
+        onDownloadClick={vi.fn()}
       />
     );
     const input = container.querySelector('input[type="file"]');

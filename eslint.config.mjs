@@ -35,7 +35,9 @@ export default [
           // (Keep patterns narrow — wide globs and ** are rejected.)
           allowDefaultProject: [
             "apps/worker/vitest.config.ts",
+            "apps/download-worker/vitest.config.ts",
             "packages/contracts/vitest.config.ts",
+            "packages/downloader-engine/vitest.config.ts",
             "vitest.config.ts",
             "vitest.workspace.ts",
           ],

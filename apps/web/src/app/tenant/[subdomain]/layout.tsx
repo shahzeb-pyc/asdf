@@ -12,6 +12,7 @@ import { Toaster } from '@/components/shared/ui/toast';
 import { WorkspaceSidebar } from '@/components/workspace/workspace-sidebar';
 import { WorkspaceBreadcrumb } from '@/components/workspace/workspace-breadcrumb';
 import { CommandPaletteHost } from '@/components/shell/command-palette-host';
+import { DownloadTray } from '@/components/shell/download-tray';
 import { WorkspaceLifecycleGuard } from '@/components/workspace/workspace-lifecycle-guard';
 import { getServerSessionContext } from '@/lib/auth';
 import { DataProvider } from '@/lib/data/provider';
@@ -148,6 +149,12 @@ export default async function TenantLayout({ params, children }: Readonly<Tenant
           bottom offset (24px desktop / 16px mobile) against the top
           safe-area inset, so toasts never hug the very edge.
         */}
+        {/*
+          Download tray (spec 149): shell-level, mounted on every
+          tenant page so progress survives section navigation. It
+          reads only the jobs endpoint — no page props needed.
+        */}
+        <DownloadTray subdomain={subdomain} useCleanPaths={useCleanPaths} />
         <Toaster
           position="top-right"
           offset={{ top: 'max(24px, env(safe-area-inset-top))' }}

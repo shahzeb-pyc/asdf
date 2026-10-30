@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { FolderPlusIcon, UploadIcon } from 'lucide-react';
+import { DownloadIcon, FolderPlusIcon, UploadIcon } from 'lucide-react';
 
 import { Button } from '@/components/shared/ui/button';
 
@@ -21,6 +21,7 @@ export interface MediaLibraryHeaderProps {
   onFileInputChange: (files: File[]) => void;
   onNewFolderClick: () => void;
   onUploadClick: () => void;
+  onDownloadClick: () => void;
 }
 
 export function MediaLibraryHeader({
@@ -28,6 +29,7 @@ export function MediaLibraryHeader({
   onFileInputChange,
   onNewFolderClick,
   onUploadClick,
+  onDownloadClick,
 }: Readonly<MediaLibraryHeaderProps>) {
   return (
     <>
@@ -57,7 +59,7 @@ export function MediaLibraryHeader({
           </p>
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-4">
           {/* Quiet New Folder action */}
           <Button
             type="button"
@@ -72,7 +74,18 @@ export function MediaLibraryHeader({
 
           {/* Single Primary Button: Upload Files (UI Rule 1).
               44px at every width — the surface's primary touch target
-              (spec 142 gate). */}
+              (spec 142 gate). Download stays secondary: one primary
+              per surface, so it is the outline button beside Upload. */}
+          <Button
+            type="button"
+            variant="outline"
+            data-testid="download-files-btn"
+            onClick={onDownloadClick}
+            className="h-11"
+          >
+            <DownloadIcon aria-hidden />
+            <span>Download</span>
+          </Button>
           <Button
             type="button"
             data-testid="upload-files-btn"

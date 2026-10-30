@@ -23,7 +23,6 @@ export interface BreadcrumbSegment {
 
 const SIMPLE_TOP_LEVEL_LABELS: Record<string, string> = {
   media: 'Media Library',
-  downloader: 'Downloader',
   'fdola-studio': 'Fdola Studio',
   settings: 'Settings',
 };

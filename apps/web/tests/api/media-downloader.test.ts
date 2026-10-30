@@ -1,442 +1,596 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+/**
+ * Download jobs API tests (spec 149): POST submits jobs, GET reports
+ * open jobs for the tray, retry/cancel mutate job state. The database
+ * is an in-memory Supabase-shaped fake — no live Supabase, no engine
+ * runs, no media is downloaded. Auth uses a real signed session
+ * cookie against the test SESSION_SECRET, exactly like production.
+ */
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { signSessionToken } from '@fbuploadpro/contracts';
-import type { DatabaseClient } from '@fbuploadpro/contracts';
-import { handleDownloadMediaFromUrl } from '../../src/app/api/tenant/[subdomain]/downloader/route';
-import { MockStorageProvider } from '../helpers/mock-storage';
-import { normalizeCloudDriveUrl } from '../../src/lib/media-downloader';
+import {
+  handleCancelDownloadJob,
+  handleGetDownloadJobs,
+  handleRetryDownloadJob,
+  handleSubmitDownloadJobs,
+} from '../../src/app/api/tenant/[subdomain]/downloader/route';
+import { POST as retryPost } from '../../src/app/api/tenant/[subdomain]/downloader/retry/route';
+import { POST as cancelPost } from '../../src/app/api/tenant/[subdomain]/downloader/cancel/route';
 
 const TEST_SECRET = 'super-secret-session-signing-key-minimum-32-chars-long';
+const USER_ID = '11111111-1111-4111-a111-111111111111';
+const FOLDER_ID = '33333333-3333-4333-a333-333333333333';
+const SUBDOMAIN = 'acme';
 
-describe('Cloud Media Downloader Endpoint (POST /api/tenant/[subdomain]/downloader)', () => {
-  const userId = '11111111-1111-4111-a111-111111111111';
-  const downloadsFolderId = '33333333-3333-4333-a333-333333333333';
-  let validSessionCookie: string;
-  let mockStorage: MockStorageProvider;
+type Row = Record<string, unknown>;
+
+function fakeUuid(n: number): string {
+  return `10000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+}
+
+class FakeBuilder {
+  private mode: 'select' | 'insert' | 'update' = 'select';
+  private insertRows: Row[] = [];
+  private updateValues: Row = {};
+  private filters: Array<(row: Row) => boolean> = [];
+  private limitN: number | null = null;
+
+  constructor(
+    private readonly tables: Map<string, Row[]>,
+    private readonly table: string,
+    private readonly nextId: () => string
+  ) {}
+
+  select(): this {
+    return this;
+  }
+
+  insert(rows: Row[]): this {
+    this.mode = 'insert';
+    this.insertRows = rows;
+    return this;
+  }
+
+  update(values: Row): this {
+    this.mode = 'update';
+    this.updateValues = values;
+    return this;
+  }
+
+  eq(key: string, value: unknown): this {
+    this.filters.push((row) => row[key] === value);
+    return this;
+  }
+
+  in(key: string, values: unknown[]): this {
+    this.filters.push((row) => values.includes(row[key]));
+    return this;
+  }
+
+  order(): this {
+    return this;
+  }
+
+  limit(n: number): this {
+    this.limitN = n;
+    return this;
+  }
+
+  async maybeSingle(): Promise<{ data: Row | null; error: null }> {
+    const { data } = this.execute();
+    return { data: data[0] ?? null, error: null };
+  }
+
+  /** Allows `await builder` for list queries (GET, insert-select). */
+  then<TResult1 = { data: Row[]; error: null }, TResult2 = never>(
+    onfulfilled?: ((value: { data: Row[]; error: null }) => TResult1 | PromiseLike<TResult1>) | null,
+    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
+  ): Promise<TResult1 | TResult2> {
+    return Promise.resolve(this.execute()).then(onfulfilled, onrejected);
+  }
+
+  private rows(): Row[] {
+    if (!this.tables.has(this.table)) this.tables.set(this.table, []);
+    return this.tables.get(this.table) as Row[];
+  }
+
+  private execute(): { data: Row[]; error: null } {
+    if (this.mode === 'insert') {
+      const now = new Date().toISOString();
+      const written = this.insertRows.map((row) => ({
+        ...row,
+        id: this.nextId(),
+        created_at: now,
+        updated_at: now,
+      }));
+      this.rows().push(...written);
+      return { data: written, error: null };
+    }
+    if (this.mode === 'update') {
+      const matched = this.rows().filter((row) => this.filters.every((f) => f(row)));
+      for (const row of matched) Object.assign(row, this.updateValues);
+      return { data: matched, error: null };
+    }
+    let matched = this.rows().filter((row) => this.filters.every((f) => f(row)));
+    if (this.limitN !== null) matched = matched.slice(0, this.limitN);
+    return { data: matched, error: null };
+  }
+}
+
+function fakeSupabase() {
+  const tables = new Map<string, Row[]>();
+  let counter = 1;
+  const nextId = () => fakeUuid(counter++);
+  tables.set('media_folders', [{ id: FOLDER_ID, user_id: USER_ID }]);
+  tables.set('media_download_jobs', []);
+  const client = {
+    from: (table: string) => new FakeBuilder(tables, table, nextId),
+  };
+  return { client: client as never, tables };
+}
+
+async function sessionCookie(): Promise<string> {
+  const token = await signSessionToken(
+    {
+      userId: USER_ID,
+      email: 'alexander@gmail.com',
+      name: 'Alex Acme',
+      subdomain: SUBDOMAIN,
+      role: 'user',
+      status: 'active',
+    },
+    TEST_SECRET
+  );
+  return `fbup_session=${token}`;
+}
+
+function requestWithCookie(cookie: string, url: string, body?: unknown): NextRequest {
+  return new NextRequest(url, {
+    method: body === undefined ? 'GET' : 'POST',
+    headers: { cookie, 'content-type': 'application/json' },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  });
+}
+
+const JOBS_URL = `http://localhost/api/tenant/${SUBDOMAIN}/downloader`;
+
+function jobRow(id: string, status: string, userId: string = USER_ID): Row {
+  const now = new Date().toISOString();
+  return {
+    id,
+    user_id: userId,
+    source_url: 'https://example.com/x.mp4',
+    source_platform: 'direct',
+    target_folder_id: null,
+    status,
+    progress_percent: status === 'failed' ? 40 : 0,
+    total_bytes: null,
+    downloaded_bytes: status === 'failed' ? 40 : 0,
+    media_id: status === 'done' ? fakeUuid(99) : null,
+    error_code: status === 'failed' ? 'DOWNLOAD_FAILED' : null,
+    error_message: status === 'failed' ? 'boom' : null,
+    attempts: 1,
+    claimed_at: null,
+    claimed_by: null,
+    created_at: now,
+    updated_at: now,
+  };
+}
+
+describe('Download jobs API (spec 149)', () => {
+  let cookie: string;
 
   beforeEach(async () => {
     process.env.SESSION_SECRET = TEST_SECRET;
     delete process.env.DOWNLOADER_EXTRACTOR_API_URL;
-
-    const token = await signSessionToken(
-      {
-        userId,
-        email: 'alexander@gmail.com',
-        name: 'Alex Acme',
-        subdomain: 'acme',
-        role: 'user',
-        status: 'active',
-      },
-      TEST_SECRET
-    );
-    validSessionCookie = `fbup_session=${token}`;
-    mockStorage = new MockStorageProvider();
+    cookie = await sessionCookie();
   });
 
-  function createMockDb(options?: { validFolderIds?: string[] }): {
-    db: DatabaseClient;
-    insertedParamsList: unknown[][];
-  } {
-    const validFolders = new Set(options?.validFolderIds ?? [downloadsFolderId]);
-    const insertedParamsList: unknown[][] = [];
-
-    const handleSql = async (sql: string, params: unknown[] = []) => {
-      if (sql.includes('SELECT id FROM media_folders')) {
-        const requestedFolderId = String(params[0] ?? '');
-        const requestedUserId = String(params[1] ?? '');
-        if (requestedUserId === userId && validFolders.has(requestedFolderId)) {
-          return { rows: [{ id: requestedFolderId }], rowCount: 1 };
-        }
-        return { rows: [], rowCount: 0 };
-      }
-
-      if (sql.includes('INSERT INTO media_items')) {
-        insertedParamsList.push(params);
-        const now = new Date('2026-10-11T08:45:00.000Z');
-        return {
-          rows: [
-            {
-              id: params[0],
-              user_id: params[1],
-              folder_id: params[2],
-              name: params[3],
-              file_size: String(params[4]),
-              mime_type: params[5],
-              media_type: params[6],
-              storage_key: params[7],
-              url: params[8],
-              thumbnail_key: params[9],
-              thumbnail_url: params[10],
-              duration_seconds: params[11] !== null ? String(params[11]) : null,
-              aspect_ratio: params[12] ?? 'unknown',
-              caption_text: params[13],
-              created_at: now,
-              updated_at: now,
-            },
-          ],
-          rowCount: 1,
-        };
-      }
-
-      return { rows: [], rowCount: 0 };
-    };
-
-    const db: Partial<DatabaseClient> = {
-      query: vi.fn().mockImplementation(async (sql: string, params?: unknown[]) => {
-        const res = await handleSql(sql, params);
-        return res.rows;
+  it('POST submits jobs: dedupes, skips invalid links, returns 201', async () => {
+    const { client } = fakeSupabase();
+    const res = await handleSubmitDownloadJobs(
+      requestWithCookie(cookie, JOBS_URL, {
+        links: [
+          'https://example.com/a.mp4',
+          'https://example.com/a.mp4',
+          'not-a-link',
+          'https://example.com/b.mp4',
+        ],
+        folderId: FOLDER_ID,
       }),
-      withTransaction: vi.fn().mockImplementation(async (callback) => {
-        const txClient = {
-          query: vi.fn().mockImplementation((sql: string, params?: unknown[]) =>
-            handleSql(sql, params)
-          ),
-        };
-        return callback(txClient as never);
-      }),
+      SUBDOMAIN,
+      client
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as {
+      jobs: Array<{ sourceUrl: string; status: string }>;
+      skippedDuplicates: number;
+      invalidLinks: string[];
     };
+    expect(body.jobs).toHaveLength(2);
+    expect(body.jobs.every((job) => job.status === 'queued')).toBe(true);
+    expect(body.skippedDuplicates).toBe(1);
+    expect(body.invalidLinks).toContain('not-a-link');
+  });
 
-    return { db: db as DatabaseClient, insertedParamsList };
-  }
+  it('POST rejects an unknown destination folder with 404', async () => {
+    const { client } = fakeSupabase();
+    const res = await handleSubmitDownloadJobs(
+      requestWithCookie(cookie, JOBS_URL, {
+        links: ['https://example.com/a.mp4'],
+        folderId: '99999999-9999-4999-8999-999999999999',
+      }),
+      SUBDOMAIN,
+      client
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it('POST with zero valid links returns 400 and writes nothing', async () => {
+    const { client, tables } = fakeSupabase();
+    const res = await handleSubmitDownloadJobs(
+      requestWithCookie(cookie, JOBS_URL, { links: ['not-a-link'] }),
+      SUBDOMAIN,
+      client
+    );
+    expect(res.status).toBe(400);
+    expect(tables.get('media_download_jobs')).toHaveLength(0);
+  });
+
+  it('GET reports only open jobs for the signed-in user', async () => {
+    const { client, tables } = fakeSupabase();
+    const jobs = tables.get('media_download_jobs') as Row[];
+    jobs.push(
+      jobRow(fakeUuid(10), 'done'),
+      jobRow(fakeUuid(12), 'queued'),
+      jobRow(fakeUuid(13), 'queued', '22222222-2222-4222-a222-222222222222')
+    );
+    const res = await handleGetDownloadJobs(requestWithCookie(cookie, JOBS_URL), SUBDOMAIN, client);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { jobs: Array<{ sourceUrl: string }> };
+    expect(body.jobs).toHaveLength(1);
+    expect(body.jobs[0]?.sourceUrl).toBe('https://example.com/x.mp4');
+  });
+
+  it('retry re-queues a failed job and refuses a queued job with 409', async () => {
+    const { client, tables } = fakeSupabase();
+    const jobs = tables.get('media_download_jobs') as Row[];
+    const failedId = fakeUuid(20);
+    const queuedId = fakeUuid(21);
+    jobs.push(jobRow(failedId, 'failed'), jobRow(queuedId, 'queued'));
+
+    const retried = await handleRetryDownloadJob(
+      requestWithCookie(cookie, JOBS_URL, { jobId: failedId }),
+      SUBDOMAIN,
+      client
+    );
+    expect(retried.status).toBe(200);
+    const retriedBody = (await retried.json()) as { job: { status: string; errorCode: string | null } };
+    expect(retriedBody.job.status).toBe('queued');
+    expect(retriedBody.job.errorCode).toBeNull();
+
+    const refused = await handleRetryDownloadJob(
+      requestWithCookie(cookie, JOBS_URL, { jobId: queuedId }),
+      SUBDOMAIN,
+      client
+    );
+    expect(refused.status).toBe(409);
+  });
+
+  it('cancel moves an active job to cancelled and refuses a done job', async () => {
+    const { client, tables } = fakeSupabase();
+    const jobs = tables.get('media_download_jobs') as Row[];
+    const activeId = fakeUuid(30);
+    const doneId = fakeUuid(31);
+    jobs.push(jobRow(activeId, 'downloading'), jobRow(doneId, 'done'));
+
+    const cancelled = await handleCancelDownloadJob(
+      requestWithCookie(cookie, JOBS_URL, { jobId: activeId }),
+      SUBDOMAIN,
+      client
+    );
+    expect(cancelled.status).toBe(200);
+    const cancelledBody = (await cancelled.json()) as { job: { status: string } };
+    expect(cancelledBody.job.status).toBe('cancelled');
+
+    const refused = await handleCancelDownloadJob(
+      requestWithCookie(cookie, JOBS_URL, { jobId: doneId }),
+      SUBDOMAIN,
+      client
+    );
+    expect(refused.status).toBe(409);
+  });
+
+  it('retry of another user’s job returns 404', async () => {
+    const { client, tables } = fakeSupabase();
+    const jobs = tables.get('media_download_jobs') as Row[];
+    jobs.push(
+      jobRow(fakeUuid(40), 'failed', '22222222-2222-4222-a222-222222222222')
+    );
+    const res = await handleRetryDownloadJob(
+      requestWithCookie(cookie, JOBS_URL, { jobId: fakeUuid(40) }),
+      SUBDOMAIN,
+      client
+    );
+    expect(res.status).toBe(404);
+  });
 
   it('rejects unauthenticated requests with 401 and cross-tenant requests with 403', async () => {
-    const unauthReq = new NextRequest('http://localhost:3000/api/tenant/acme/downloader', {
-      method: 'POST',
-      body: JSON.stringify({ url: 'https://cdn.example.com/reel.mp4' }),
-    });
-    const unauthRes = await handleDownloadMediaFromUrl(unauthReq, 'acme');
+    const { client } = fakeSupabase();
+    const unauthRes = await handleGetDownloadJobs(
+      new NextRequest(JOBS_URL),
+      SUBDOMAIN,
+      client
+    );
     expect(unauthRes.status).toBe(401);
 
-    const crossTenantReq = new NextRequest(
-      'http://localhost:3000/api/tenant/other-workspace/downloader',
-      {
-        method: 'POST',
-        headers: { cookie: validSessionCookie },
-        body: JSON.stringify({ url: 'https://cdn.example.com/reel.mp4' }),
-      }
+    const crossTenantRes = await handleGetDownloadJobs(
+      requestWithCookie(cookie, `http://localhost/api/tenant/other-workspace/downloader`),
+      'other-workspace',
+      client
     );
-    const crossTenantRes = await handleDownloadMediaFromUrl(crossTenantReq, 'other-workspace');
     expect(crossTenantRes.status).toBe(403);
   });
 
-  it('streams a direct MP4 link directly into R2 and defaults captionText to the stripped filename', async () => {
-    const { db, insertedParamsList } = createMockDb();
-    const fakeVideoBytes = new Uint8Array([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70]);
+  it('the retry and cancel route files export POST handlers', () => {
+    expect(typeof retryPost).toBe('function');
+    expect(typeof cancelPost).toBe('function');
+  });
+});
 
-    const mockFetch = vi.fn().mockResolvedValue(
-      new Response(fakeVideoBytes, {
+describe('Download jobs API — Cloudflare consumer handoff (spec 149 backend revision)', () => {
+  const CONSUMER_URL = 'https://consumer.example.test';
+  const ENQUEUE_SECRET = 'enqueue-secret-123';
+  let cookie: string;
+
+  beforeEach(async () => {
+    process.env.SESSION_SECRET = TEST_SECRET;
+    delete process.env.DOWNLOADER_EXTRACTOR_API_URL;
+    cookie = await sessionCookie();
+  });
+
+  afterEach(() => {
+    delete process.env.DOWNLOAD_CONSUMER_URL;
+    delete process.env.DOWNLOAD_ENQUEUE_SECRET;
+    vi.unstubAllGlobals();
+  });
+
+  function stubEnqueueFetch(): ReturnType<typeof vi.fn> {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ enqueued: 2 }), {
         status: 200,
-        headers: {
-          'content-type': 'video/mp4',
-          'content-length': String(fakeVideoBytes.byteLength),
-        },
+        headers: { 'Content-Type': 'application/json' },
       })
     );
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
 
-    const req = new NextRequest('http://localhost:3000/api/tenant/acme/downloader', {
-      method: 'POST',
-      headers: { cookie: validSessionCookie },
-      body: JSON.stringify({
-        url: 'https://cdn.example.com/assets/Summer_Launch_Reel.mp4',
-        folderId: downloadsFolderId,
+  it('submit notifies the consumer with the inserted job ids', async () => {
+    process.env.DOWNLOAD_CONSUMER_URL = CONSUMER_URL;
+    process.env.DOWNLOAD_ENQUEUE_SECRET = ENQUEUE_SECRET;
+    const fetchMock = stubEnqueueFetch();
+    const { client } = fakeSupabase();
+    const res = await handleSubmitDownloadJobs(
+      requestWithCookie(cookie, JOBS_URL, {
+        links: ['https://example.com/a.mp4', 'https://example.com/b.mp4'],
+        folderId: FOLDER_ID,
       }),
-    });
-
-    const res = await handleDownloadMediaFromUrl(
-      req,
-      'acme',
-      db,
-      mockStorage,
-      mockFetch as unknown as typeof fetch
+      SUBDOMAIN,
+      client
     );
-
     expect(res.status).toBe(201);
-    const payload = await res.json();
-    expect(payload.platform).toBe('direct');
-    expect(payload.items).toHaveLength(1);
-    expect(payload.items[0].name).toBe('Summer_Launch_Reel.mp4');
-    expect(payload.items[0].fileSize).toBe(fakeVideoBytes.byteLength);
-    expect(payload.items[0].mimeType).toBe('video/mp4');
-    expect(payload.items[0].mediaType).toBe('video');
-    expect(payload.items[0].folderId).toBe(downloadsFolderId);
-    expect(payload.items[0].captionText).toBe('Summer_Launch_Reel');
-    expect(insertedParamsList).toHaveLength(1);
-    expect(mockStorage.uploadedObjects.get(payload.items[0].storageKey)).toEqual({
-      contentType: 'video/mp4',
-      byteLength: fakeVideoBytes.byteLength,
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${CONSUMER_URL}/enqueue`);
+    expect(init.method).toBe('POST');
+    expect((init.headers as Record<string, string>)['x-download-enqueue-secret']).toBe(
+      ENQUEUE_SECRET
+    );
+    expect(JSON.parse(String(init.body)) as { jobIds: string[] }).toEqual({
+      jobIds: [fakeUuid(1), fakeUuid(2)],
     });
   });
 
-  it('extracts video, thumbnail, and original post caption from an OpenGraph social post', async () => {
-    const { db } = createMockDb();
-    const htmlPage = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <meta property="og:title" content="Creator Studio Reel" />
-          <meta property="og:description" content="Morning routine for high output days &amp; focus #productivity" />
-          <meta property="og:video:secure_url" content="https://v16.tiktokcdn.com/stream/morning_routine.mp4" />
-          <meta property="og:image" content="https://p16.tiktokcdn.com/thumbs/morning_cover.jpeg" />
-        </head>
-        <body></body>
-      </html>
-    `;
-    const videoBytes = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-    const thumbBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xe0]);
-
-    const mockFetch = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
-      const targetUrl = String(input);
-      if (targetUrl.includes('tiktok.com/@creator/video')) {
-        return new Response(htmlPage, {
-          status: 200,
-          headers: { 'content-type': 'text/html; charset=utf-8' },
-        });
-      }
-      if (targetUrl.includes('morning_routine.mp4')) {
-        return new Response(videoBytes, {
-          status: 200,
-          headers: { 'content-type': 'video/mp4' },
-        });
-      }
-      if (targetUrl.includes('morning_cover.jpeg')) {
-        return new Response(thumbBytes, {
-          status: 200,
-          headers: { 'content-type': 'image/jpeg' },
-        });
-      }
-      return new Response('Not Found', { status: 404 });
-    });
-
-    const req = new NextRequest('http://localhost:3000/api/tenant/acme/downloader', {
-      method: 'POST',
-      headers: { cookie: validSessionCookie },
-      body: JSON.stringify({
-        url: 'https://www.tiktok.com/@creator/video/7123456789',
-        folderId: downloadsFolderId,
+  it('submit still returns 201 when the consumer cannot be reached', async () => {
+    process.env.DOWNLOAD_CONSUMER_URL = CONSUMER_URL;
+    process.env.DOWNLOAD_ENQUEUE_SECRET = ENQUEUE_SECRET;
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('consumer down')));
+    const { client } = fakeSupabase();
+    const res = await handleSubmitDownloadJobs(
+      requestWithCookie(cookie, JOBS_URL, {
+        links: ['https://example.com/a.mp4', 'https://example.com/b.mp4'],
+        folderId: FOLDER_ID,
       }),
-    });
-
-    const res = await handleDownloadMediaFromUrl(
-      req,
-      'acme',
-      db,
-      mockStorage,
-      mockFetch as unknown as typeof fetch
+      SUBDOMAIN,
+      client
     );
-
     expect(res.status).toBe(201);
-    const payload = await res.json();
-    expect(payload.platform).toBe('tiktok');
-    expect(payload.items).toHaveLength(1);
-    const item = payload.items[0];
-    expect(item.captionText).toBe('Morning routine for high output days & focus #productivity');
-    expect(item.thumbnailKey).toContain(`users/${userId}/thumbnails/${item.id}.jpeg`);
-    expect(item.thumbnailUrl).toContain(`users/${userId}/thumbnails/${item.id}.jpeg`);
-    expect(mockStorage.uploadedObjects.has(item.storageKey)).toBe(true);
-    expect(mockStorage.uploadedObjects.has(item.thumbnailKey)).toBe(true);
+    const body = (await res.json()) as { jobs: unknown[] };
+    expect(body.jobs).toHaveLength(2);
   });
 
-  it('ingests all supported media assets from a multi-item carousel post via pluggable extractor or FxTwitter', async () => {
-    const { db, insertedParamsList } = createMockDb();
-    const clipBytes = new Uint8Array([11, 22, 33, 44]);
-    const photoBytes = new Uint8Array([55, 66, 77, 88, 99]);
-
-    const mockFetch = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
-      const targetUrl = String(input);
-      if (targetUrl === 'https://extractor.example.com/api/extract') {
-        return new Response(
-          JSON.stringify({
-            caption: 'Carousel launch thread with video + poster',
-            picker: [
-              {
-                type: 'video',
-                url: 'https://video.twimg.com/ext_tw_video/101/pu/vid/clip_1.mp4',
-              },
-              {
-                type: 'photo',
-                url: 'https://pbs.twimg.com/media/poster_2.webp',
-              },
-            ],
-          }),
-          {
-            status: 200,
-            headers: { 'content-type': 'application/json' },
-          }
-        );
-      }
-      if (targetUrl.includes('clip_1.mp4')) {
-        return new Response(clipBytes, {
-          status: 200,
-          headers: { 'content-type': 'video/mp4' },
-        });
-      }
-      if (targetUrl.includes('poster_2.webp')) {
-        return new Response(photoBytes, {
-          status: 200,
-          headers: { 'content-type': 'image/webp' },
-        });
-      }
-      return new Response('Not Found', { status: 404 });
-    });
-
-    const req = new NextRequest('http://localhost:3000/api/tenant/acme/downloader', {
-      method: 'POST',
-      headers: { cookie: validSessionCookie },
-      body: JSON.stringify({
-        url: 'https://x.com/creator/status/1800000000000000000',
-        folderId: downloadsFolderId,
+  it('submit does not call the consumer when no consumer URL is configured', async () => {
+    const fetchMock = stubEnqueueFetch();
+    const { client } = fakeSupabase();
+    const res = await handleSubmitDownloadJobs(
+      requestWithCookie(cookie, JOBS_URL, {
+        links: ['https://example.com/a.mp4'],
+        folderId: FOLDER_ID,
       }),
-    });
-
-    const res = await handleDownloadMediaFromUrl(
-      req,
-      'acme',
-      db,
-      mockStorage,
-      mockFetch as unknown as typeof fetch,
-      'https://extractor.example.com/api/extract'
+      SUBDOMAIN,
+      client
     );
-
     expect(res.status).toBe(201);
-    const payload = await res.json();
-    expect(payload.platform).toBe('x');
-    expect(payload.items).toHaveLength(2);
-    expect(insertedParamsList).toHaveLength(2);
-
-    expect(payload.items[0].mediaType).toBe('video');
-    expect(payload.items[0].captionText).toBe('Carousel launch thread with video + poster');
-    expect(payload.items[1].mediaType).toBe('image');
-    expect(payload.items[1].mimeType).toBe('image/webp');
-    expect(payload.items[1].thumbnailUrl).toBe(payload.items[1].url);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('normalizes Google Drive and Dropbox share URLs into direct download stream URLs', () => {
-    const gdriveUrl = new URL(
-      'https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUvWxYz/view?usp=sharing'
-    );
-    expect(normalizeCloudDriveUrl(gdriveUrl)).toBe(
-      'https://drive.google.com/uc?export=download&id=1AbCdEfGhIjKlMnOpQrStUvWxYz'
-    );
+  it('retry of a transient failure keeps its checkpoint and re-notifies', async () => {
+    process.env.DOWNLOAD_CONSUMER_URL = CONSUMER_URL;
+    process.env.DOWNLOAD_ENQUEUE_SECRET = ENQUEUE_SECRET;
+    const fetchMock = stubEnqueueFetch();
+    const { client, tables } = fakeSupabase();
+    const jobs = tables.get('media_download_jobs') as Row[];
+    const failedId = fakeUuid(50);
+    const row = jobRow(failedId, 'failed');
+    Object.assign(row, {
+      pending_media_id: fakeUuid(51),
+      r2_upload_id: 'upload-x',
+      checkpoint_parts: [{ partNumber: 1, etag: 'etag-1' }],
+      checkpoint_bytes: 40,
+      checkpoint_stream_url: 'https://cdn.example.com/x.mp4',
+      last_progress_at: new Date().toISOString(),
+    });
+    jobs.push(row);
 
-    const dropboxUrl = new URL('https://www.dropbox.com/s/abc123xyz/campaign_reel.mp4?dl=0');
-    expect(normalizeCloudDriveUrl(dropboxUrl)).toBe(
-      'https://www.dropbox.com/s/abc123xyz/campaign_reel.mp4?dl=1'
+    const res = await handleRetryDownloadJob(
+      requestWithCookie(cookie, JOBS_URL, { jobId: failedId }),
+      SUBDOMAIN,
+      client
     );
+    expect(res.status).toBe(200);
+    const retried = jobs[0] as Row;
+    expect(retried['status']).toBe('queued');
+    expect(retried['error_code']).toBeNull();
+    // Transient: progress and checkpoint survive, so the next
+    // attempt resumes instead of restarting from byte 0.
+    expect(retried['progress_percent']).toBe(40);
+    expect(retried['downloaded_bytes']).toBe(40);
+    expect(retried['r2_upload_id']).toBe('upload-x');
+    expect(retried['checkpoint_bytes']).toBe(40);
+    expect(retried['checkpoint_stream_url']).toBe('https://cdn.example.com/x.mp4');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(init.body)) as { jobIds: string[] }).toEqual({
+      jobIds: [failedId],
+    });
   });
 
-  it('blocks SSRF attempts targeting localhost, private IPs, or unsafe og:video redirect targets with 400 UNSAFE_URL', async () => {
-    const { db } = createMockDb();
-    const mockFetch = vi.fn();
+});
 
-    const privateIpReq = new NextRequest(
-      'http://localhost:3000/api/tenant/acme/downloader',
+describe('Download jobs API — consumer health reporting', () => {
+  const CONSUMER_URL = 'https://consumer.example.test';
+  const ENQUEUE_SECRET = 'enqueue-secret-123';
+  let cookie: string;
+
+  beforeEach(async () => {
+    process.env.SESSION_SECRET = TEST_SECRET;
+    delete process.env.DOWNLOADER_EXTRACTOR_API_URL;
+    cookie = await sessionCookie();
+  });
+
+  afterEach(() => {
+    delete process.env.DOWNLOAD_CONSUMER_URL;
+    delete process.env.DOWNLOAD_ENQUEUE_SECRET;
+    vi.unstubAllGlobals();
+  });
+
+  function stubEnqueueFetch(): ReturnType<typeof vi.fn> {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ enqueued: 2 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  it('retry of a terminal failure clears its checkpoint and resets progress', async () => {
+    process.env.DOWNLOAD_CONSUMER_URL = CONSUMER_URL;
+    process.env.DOWNLOAD_ENQUEUE_SECRET = ENQUEUE_SECRET;
+    stubEnqueueFetch();
+    const { client, tables } = fakeSupabase();
+    const jobs = tables.get('media_download_jobs') as Row[];
+    const failedId = fakeUuid(60);
+    const row = jobRow(failedId, 'failed');
+    Object.assign(row, {
+      error_code: 'FILE_TOO_LARGE',
+      error_message: 'This file exceeds the 500 MB maximum size limit.',
+      pending_media_id: fakeUuid(61),
+      r2_upload_id: 'upload-y',
+      checkpoint_parts: [{ partNumber: 1, etag: 'etag-1' }],
+      checkpoint_bytes: 40,
+      checkpoint_stream_url: 'https://cdn.example.com/x.mp4',
+      last_progress_at: new Date().toISOString(),
+    });
+    jobs.push(row);
+
+    const res = await handleRetryDownloadJob(
+      requestWithCookie(cookie, JOBS_URL, { jobId: failedId }),
+      SUBDOMAIN,
+      client
+    );
+    expect(res.status).toBe(200);
+    const retried = jobs[0] as Row;
+    expect(retried['status']).toBe('queued');
+    expect(retried['progress_percent']).toBe(0);
+    expect(retried['downloaded_bytes']).toBe(0);
+    expect(retried['total_bytes']).toBeNull();
+    expect(retried['r2_upload_id']).toBeNull();
+    expect(retried['checkpoint_parts']).toEqual([]);
+    expect(retried['checkpoint_bytes']).toBe(0);
+    expect(retried['checkpoint_stream_url']).toBeNull();
+    expect(retried['last_progress_at']).toBeNull();
+  });
+
+  it('GET reports consumerHealthy true with a fresh heartbeat', async () => {
+    const { client, tables } = fakeSupabase();
+    tables.set('download_worker_heartbeats', [
+      { worker_id: 'cf-download-consumer', heartbeat_at: new Date().toISOString() },
+    ]);
+    const res = await handleGetDownloadJobs(requestWithCookie(cookie, JOBS_URL), SUBDOMAIN, client);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { consumerHealthy?: boolean };
+    expect(body.consumerHealthy).toBe(true);
+  });
+
+  it('GET reports consumerHealthy false with a stale or missing heartbeat', async () => {
+    const { client, tables } = fakeSupabase();
+    tables.set('download_worker_heartbeats', [
       {
-        method: 'POST',
-        headers: { cookie: validSessionCookie },
-        body: JSON.stringify({
-          url: 'http://169.254.169.254/latest/meta-data/iam',
-          folderId: null,
-        }),
-      }
+        worker_id: 'cf-download-consumer',
+        heartbeat_at: new Date(Date.now() - 10 * 60_000).toISOString(),
+      },
+    ]);
+    const stale = await handleGetDownloadJobs(
+      requestWithCookie(cookie, JOBS_URL),
+      SUBDOMAIN,
+      client
     );
+    expect(((await stale.json()) as { consumerHealthy?: boolean }).consumerHealthy).toBe(false);
 
-    const privateIpRes = await handleDownloadMediaFromUrl(
-      privateIpReq,
-      'acme',
-      db,
-      mockStorage,
-      mockFetch as unknown as typeof fetch
+    const { client: emptyClient } = fakeSupabase();
+    const missing = await handleGetDownloadJobs(
+      requestWithCookie(cookie, JOBS_URL),
+      SUBDOMAIN,
+      emptyClient
     );
-    expect(privateIpRes.status).toBe(400);
-    const errBody = await privateIpRes.json();
-    expect(errBody.error).toBe('UNSAFE_URL');
-    expect(mockFetch).not.toHaveBeenCalled();
-
-    // Also block if a public HTML page embeds an internal loopback og:video URL
-    const maliciousHtmlFetch = vi.fn().mockResolvedValue(
-      new Response(
-        '<html><head><meta property="og:video" content="http://127.0.0.1:8080/internal.mp4" /></head></html>',
-        { status: 200, headers: { 'content-type': 'text/html' } }
-      )
-    );
-    const ssrfHopReq = new NextRequest('http://localhost:3000/api/tenant/acme/downloader', {
-      method: 'POST',
-      headers: { cookie: validSessionCookie },
-      body: JSON.stringify({
-        url: 'https://public-blog.example.com/post',
-        folderId: null,
-      }),
-    });
-    const ssrfHopRes = await handleDownloadMediaFromUrl(
-      ssrfHopReq,
-      'acme',
-      db,
-      mockStorage,
-      maliciousHtmlFetch as unknown as typeof fetch
-    );
-    expect(ssrfHopRes.status).toBe(400);
-    const hopBody = await ssrfHopRes.json();
-    expect(hopBody.error).toBe('UNSAFE_URL');
+    expect(((await missing.json()) as { consumerHealthy?: boolean }).consumerHealthy).toBe(false);
   });
 
-  it('rejects files exceeding the 500 MB limit with 400 FILE_TOO_LARGE', async () => {
-    const { db } = createMockDb();
-    const oversizedFetch = vi.fn().mockResolvedValue(
-      new Response(new Uint8Array([1, 2, 3]), {
-        status: 200,
-        headers: {
-          'content-type': 'video/mp4',
-          'content-length': '524288001', // 500 MB + 1 byte
-        },
-      })
+  it('GET omits consumerHealthy when the heartbeat cannot be read', async () => {
+    const { client } = fakeSupabase();
+    const throwingClient = {
+      from: (table: string) => {
+        if (table === 'download_worker_heartbeats') {
+          return {
+            select: () => {
+              throw new Error('db down');
+            },
+          };
+        }
+        return (client as { from: (t: string) => unknown }).from(table);
+      },
+    } as never;
+    const res = await handleGetDownloadJobs(
+      requestWithCookie(cookie, JOBS_URL),
+      SUBDOMAIN,
+      throwingClient
     );
-
-    const req = new NextRequest('http://localhost:3000/api/tenant/acme/downloader', {
-      method: 'POST',
-      headers: { cookie: validSessionCookie },
-      body: JSON.stringify({
-        url: 'https://cdn.example.com/huge_raw_video.mp4',
-        folderId: downloadsFolderId,
-      }),
-    });
-
-    const res = await handleDownloadMediaFromUrl(
-      req,
-      'acme',
-      db,
-      mockStorage,
-      oversizedFetch as unknown as typeof fetch
-    );
-    expect(res.status).toBe(400);
-    const errBody = await res.json();
-    expect(errBody.error).toBe('FILE_TOO_LARGE');
-    expect(mockStorage.uploadedObjects.size).toBe(0);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect('consumerHealthy' in body).toBe(false);
   });
-
-  it('rejects unknown or cross-tenant folderId with 404 FOLDER_NOT_FOUND', async () => {
-    const { db } = createMockDb({ validFolderIds: [downloadsFolderId] });
-    const mockFetch = vi.fn();
-
-    const req = new NextRequest('http://localhost:3000/api/tenant/acme/downloader', {
-      method: 'POST',
-      headers: { cookie: validSessionCookie },
-      body: JSON.stringify({
-        url: 'https://cdn.example.com/video.mp4',
-        folderId: '99999999-9999-4999-a999-999999999999',
-      }),
-    });
-
-    const res = await handleDownloadMediaFromUrl(
-      req,
-      'acme',
-      db,
-      mockStorage,
-      mockFetch as unknown as typeof fetch
-    );
-    expect(res.status).toBe(404);
-    const errBody = await res.json();
-    expect(errBody.error).toBe('FOLDER_NOT_FOUND');
-    expect(mockFetch).not.toHaveBeenCalled();
-  });
-
 });

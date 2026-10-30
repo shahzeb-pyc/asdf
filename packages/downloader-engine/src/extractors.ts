@@ -1,11 +1,21 @@
+/**
+ * External-extractor and FxTwitter resolution — the canonical location,
+ * imported by the web orchestrator and the Cloudflare download consumer
+ * alike. JSON bodies are read through a 10 MB bounded reader, never
+ * unbounded response.json() (spec 149 backend revision §3.4); the
+ * timeout helper is the local ./http.js, so no web '@/lib/http' alias
+ * and no Node API is needed.
+ */
 import {
+  DOWNLOAD_RESOLVE_BODY_MAX_BYTES,
   parseJsonPayloadCandidates,
   type RemoteMediaCandidate,
 } from '@fbuploadpro/contracts';
 import {
   MEDIA_FETCH_TIMEOUT_MS,
   fetchWithTimeout,
-} from '@/lib/http/fetch-with-timeout';
+  readBoundedJson,
+} from './http.js';
 
 export async function tryResolveFromFxTwitter(
   sourceUrl: URL,
@@ -25,7 +35,8 @@ export async function tryResolveFromFxTwitter(
     if (!fxRes.ok) {
       return [];
     }
-    const fxJson: unknown = await fxRes.json();
+    const fxJson = await readBoundedJson(fxRes, DOWNLOAD_RESOLVE_BODY_MAX_BYTES);
+    if (fxJson === null) return [];
     return parseJsonPayloadCandidates(fxJson);
   } catch {
     // Fallback quietly when FxTwitter API is unreachable
@@ -58,7 +69,8 @@ export async function tryResolveViaExternalExtractor(
     if (!extRes.ok) {
       return [];
     }
-    const extJson: unknown = await extRes.json();
+    const extJson = await readBoundedJson(extRes, DOWNLOAD_RESOLVE_BODY_MAX_BYTES);
+    if (extJson === null) return [];
     return parseJsonPayloadCandidates(extJson);
   } catch {
     // Fall back to built-in serverless resolver if external extractor is unreachable

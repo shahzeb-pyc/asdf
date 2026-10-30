@@ -1,3 +1,9 @@
+/**
+ * Mime + filename logic — the canonical location, imported by the web
+ * orchestrator and the Cloudflare download consumer alike. Pure
+ * string/regex logic; no DOM, no filesystem, no Node APIs, so it
+ * bundles in a Worker without nodejs_compat.
+ */
 import {
   AllowedMediaMimeTypes,
 } from '@fbuploadpro/contracts';
@@ -78,7 +84,6 @@ export function resolveAllowedMimeType(
     }
   } catch (_e) {
     // Ignore URL parse error and fall through to mediaTypeHint
-    void _e;
   }
 
   if (
@@ -143,6 +148,8 @@ export function sanitizeFileNameWithExtension(
     const dotIdx = cleaned.lastIndexOf('.');
     const ext = cleaned.slice(dotIdx);
     cleaned = `${cleaned.slice(0, 200)}${ext}`;
+  } else {
+    // Valid extension and within length: the name is already safe.
   }
 
   return cleaned;
@@ -161,7 +168,6 @@ export function deriveFileNameFromUrl(urlStr: string, index: number): string {
     }
   } catch (_e) {
     // Use fallback name below
-    void _e;
   }
   return index === 0 ? 'cloud_media' : `cloud_media_${index + 1}`;
 }

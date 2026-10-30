@@ -152,8 +152,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
 
-      - name: Build contracts (web build dependency)
-        run: pnpm --filter @fbuploadpro/contracts build
+      - name: Build contracts + downloader engine (web build dependencies)
+        run: pnpm --filter @fbuploadpro/contracts --filter @fbuploadpro/downloader-engine build
 
       - name: Webpack build with bundle analyzer
         # The analyzer needs a webpack build; production stays on
@@ -229,8 +229,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
 
-      - name: Build contracts (web build dependency)
-        run: pnpm --filter @fbuploadpro/contracts build
+      - name: Build contracts + downloader engine (web build dependencies)
+        run: pnpm --filter @fbuploadpro/contracts --filter @fbuploadpro/downloader-engine build
 
       # Cache the downloaded Chromium build (spec 139 DX fix): the
       # uncached `playwright install --with-deps` step swung this job

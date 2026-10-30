@@ -103,7 +103,6 @@ describe('WorkspaceSidebar (spec 130 rebuild on shared/ui Sidebar)', () => {
     const expected: Array<[string, string]> = [
       ['Home', '/tenant/acme/'],
       ['Media Library', '/tenant/acme/media'],
-      ['Downloader', '/tenant/acme/downloader'],
       ['Fdola Studio', '/tenant/acme/fdola-studio'],
       ['Accounts', '/tenant/acme/accounts'],
       ['Pages', '/tenant/acme/pages'],
@@ -113,16 +112,17 @@ describe('WorkspaceSidebar (spec 130 rebuild on shared/ui Sidebar)', () => {
       expect(link, label).toHaveAttribute('href', href);
       expect(link, label).toHaveAttribute('data-next-link', 'true');
     }
-    // Order: Home -> Media Library -> Downloader -> Fdola Studio.
+    // Spec 149: the Downloader leaf is deleted — downloads live in the
+    // Media Library now, so no sidebar link may mention it.
+    expect(screen.queryByRole('link', { name: /^Downloader/ })).toBeNull();
+    // Order: Home -> Media Library -> Fdola Studio.
     const links = screen.getAllByRole('link');
     const labels = links.map((l) => l.textContent || '');
     const homeIdx = labels.findIndex((t) => t.includes('Home'));
     const mediaIdx = labels.findIndex((t) => t.includes('Media Library'));
-    const downloaderIdx = labels.findIndex((t) => t.includes('Downloader'));
     const fdolaIdx = labels.findIndex((t) => t.includes('Fdola Studio'));
     expect(mediaIdx).toBeGreaterThan(homeIdx);
-    expect(downloaderIdx).toBeGreaterThan(mediaIdx);
-    expect(fdolaIdx).toBeGreaterThan(downloaderIdx);
+    expect(fdolaIdx).toBeGreaterThan(mediaIdx);
   });
 
   it('spec 110: a single click on a leaf paints it active without router.push or preventDefault', () => {

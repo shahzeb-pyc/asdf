@@ -886,56 +886,7 @@ export const DownloaderIngestResponseSchema = z.object({
 
 export type DownloaderIngestResponse = z.infer<typeof DownloaderIngestResponseSchema>;
 
-export const DownloadJobStatusValues = [
-  'queued',
-  'downloading',
-  'processing',
-  'completed',
-  'failed',
-  'cancelled',
-] as const;
-
-export const DownloadJobStatusSchema = z.enum(DownloadJobStatusValues);
-
-export type DownloadJobStatus = z.infer<typeof DownloadJobStatusSchema>;
-
-export const EnqueueDownloadJobRequestSchema = z.object({
-  url: z
-    .string()
-    .trim()
-    .url('Please enter a valid link starting with http:// or https://.')
-    .max(2048, 'Link must be 2048 characters or fewer.'),
-  folderId: z.string().uuid().nullable().optional(),
-  customFilename: z.string().trim().max(255).optional(),
-});
-
-export type EnqueueDownloadJobRequest = z.infer<typeof EnqueueDownloadJobRequestSchema>;
-
-export const DownloadJobResponseSchema = z.object({
-  id: z.string().uuid(),
-  userId: z.string().uuid(),
-  sourceUrl: z.string().url(),
-  sourcePlatform: DownloaderSourcePlatformSchema,
-  targetFolderId: z.string().uuid().nullable().optional(),
-  customFilename: z.string().nullable().optional(),
-  status: DownloadJobStatusSchema,
-  progressPercent: z.number().int().min(0).max(100),
-  totalBytes: z.number().nullable().optional(),
-  downloadedBytes: z.number().min(0),
-  mediaId: z.string().uuid().nullable().optional(),
-  errorCode: z.string().nullable().optional(),
-  errorMessage: z.string().nullable().optional(),
-  metadata: z.record(z.unknown()).default({}),
-  createdAt: z.string(),
-  updatedAt: z.string(),
-});
-
-export type DownloadJobResponse = z.infer<typeof DownloadJobResponseSchema>;
-
-export const EnqueueDownloadJobResponseSchema = z.object({
-  success: z.boolean(),
-  job: DownloadJobResponseSchema,
-});
-
-export type EnqueueDownloadJobResponse = z.infer<typeof EnqueueDownloadJobResponseSchema>;
+// Persistent download-job contracts live in ./download-jobs.js (spec 149).
+// This file keeps only the resolve/ingest engine contracts; the job shapes
+// moved there so there is exactly one jobs model.
 

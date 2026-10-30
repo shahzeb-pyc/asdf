@@ -228,8 +228,7 @@ export function CommandPalette({
     };
     const pool: PaletteItem[] = [
       { id: 'go-home', group: 'Go to', label: 'Home', keywords: 'home dashboard workspace', run: navigate('/') },
-      { id: 'go-media', group: 'Go to', label: 'Media Library', keywords: 'media library files uploads', run: navigate('/media') },
-      { id: 'go-downloader', group: 'Go to', label: 'Downloader', keywords: 'downloader download social media', run: navigate('/downloader') },
+      { id: 'go-media', group: 'Go to', label: 'Media Library', keywords: 'media library files uploads downloads', run: navigate('/media') },
       { id: 'go-fdola', group: 'Go to', label: 'Fdola Studio', keywords: 'fdola studio', run: navigate('/fdola-studio') },
       { id: 'go-accounts', group: 'Go to', label: 'Accounts', detail: 'Facebook', keywords: 'facebook accounts connect', run: navigate('/accounts') },
       { id: 'go-pages', group: 'Go to', label: 'Pages', detail: 'Facebook', keywords: 'facebook pages', run: navigate('/pages') },

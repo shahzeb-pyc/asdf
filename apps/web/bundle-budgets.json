@@ -17,12 +17,6 @@
         "routeSpecificGzipBytes": 71748,
         "routeSpecificRawBytes": 251700
       },
-      "/tenant/[subdomain]/downloader": {
-        "firstLoadGzipBytes": 170567,
-        "firstLoadRawBytes": 569390,
-        "routeSpecificGzipBytes": 36719,
-        "routeSpecificRawBytes": 118438
-      },
       "/tenant/[subdomain]/accounts": {
         "firstLoadGzipBytes": 169039,
         "firstLoadRawBytes": 563318,
@@ -32,14 +26,14 @@
       "/tenant/[subdomain]/pages": {
         "firstLoadGzipBytes": 167314,
         "firstLoadRawBytes": 565150,
-        "routeSpecificGzipBytes": 33466,
-        "routeSpecificRawBytes": 114198
+        "routeSpecificGzipBytes": 36747,
+        "routeSpecificRawBytes": 118688
       },
       "/tenant/[subdomain]/publish-now": {
         "firstLoadGzipBytes": 164262,
         "firstLoadRawBytes": 549141,
-        "routeSpecificGzipBytes": 30471,
-        "routeSpecificRawBytes": 98304
+        "routeSpecificGzipBytes": 34323,
+        "routeSpecificRawBytes": 110722
       },
       "/tenant/[subdomain]/destinations/[destinationId]": {
         "firstLoadGzipBytes": 163912,
@@ -50,14 +44,14 @@
       "/tenant/[subdomain]/settings": {
         "firstLoadGzipBytes": 162138,
         "firstLoadRawBytes": 538626,
-        "routeSpecificGzipBytes": 30670,
-        "routeSpecificRawBytes": 94442
+        "routeSpecificGzipBytes": 33117,
+        "routeSpecificRawBytes": 101968
       },
       "/tenant/[subdomain]/connect/[platform]": {
         "firstLoadGzipBytes": 160057,
         "firstLoadRawBytes": 531438,
-        "routeSpecificGzipBytes": 27670,
-        "routeSpecificRawBytes": 86500
+        "routeSpecificGzipBytes": 30245,
+        "routeSpecificRawBytes": 92870
       },
       "/tenant/[subdomain]/instagram/accounts": {
         "firstLoadGzipBytes": 159784,
@@ -80,14 +74,14 @@
       "/tenant/[subdomain]/tiktok/accounts": {
         "firstLoadGzipBytes": 159403,
         "firstLoadRawBytes": 529620,
-        "routeSpecificGzipBytes": 25555,
-        "routeSpecificRawBytes": 78668
+        "routeSpecificGzipBytes": 27408,
+        "routeSpecificRawBytes": 84957
       },
       "/tenant/[subdomain]/youtube/accounts": {
         "firstLoadGzipBytes": 159402,
         "firstLoadRawBytes": 529624,
-        "routeSpecificGzipBytes": 25554,
-        "routeSpecificRawBytes": 78672
+        "routeSpecificGzipBytes": 27408,
+        "routeSpecificRawBytes": 84959
       },
       "/tenant/[subdomain]/fdola-studio": {
         "firstLoadGzipBytes": 159269,
@@ -96,16 +90,16 @@
         "routeSpecificRawBytes": 79302
       },
       "/tenant/[subdomain]/media": {
-        "firstLoadGzipBytes": 158619,
-        "firstLoadRawBytes": 528145,
-        "routeSpecificGzipBytes": 26052,
-        "routeSpecificRawBytes": 77193
+        "firstLoadGzipBytes": 177374,
+        "firstLoadRawBytes": 598095,
+        "routeSpecificGzipBytes": 43578,
+        "routeSpecificRawBytes": 147246
       },
       "/tenant/[subdomain]/x/accounts": {
         "firstLoadGzipBytes": 158447,
         "firstLoadRawBytes": 527373,
-        "routeSpecificGzipBytes": 25741,
-        "routeSpecificRawBytes": 80495
+        "routeSpecificGzipBytes": 27317,
+        "routeSpecificRawBytes": 84704
       },
       "/tenant/[subdomain]": {
         "firstLoadGzipBytes": 158328,
@@ -273,20 +267,14 @@
       "/tenant/[subdomain]/connect/[platform]": {
         "firstLoadGzipBytes": 168060,
         "firstLoadRawBytes": 558010,
-        "routeSpecificGzipBytes": 29054,
-        "routeSpecificRawBytes": 90825
+        "routeSpecificGzipBytes": 31758,
+        "routeSpecificRawBytes": 97514
       },
       "/tenant/[subdomain]/destinations/[destinationId]": {
         "firstLoadGzipBytes": 172108,
         "firstLoadRawBytes": 569531,
         "routeSpecificGzipBytes": 31568,
         "routeSpecificRawBytes": 101611
-      },
-      "/tenant/[subdomain]/downloader": {
-        "firstLoadGzipBytes": 179096,
-        "firstLoadRawBytes": 597860,
-        "routeSpecificGzipBytes": 38555,
-        "routeSpecificRawBytes": 124360
       },
       "/tenant/[subdomain]/fdola-studio": {
         "firstLoadGzipBytes": 167233,
@@ -301,16 +289,16 @@
         "routeSpecificRawBytes": 83888
       },
       "/tenant/[subdomain]/media": {
-        "firstLoadGzipBytes": 166550,
-        "firstLoadRawBytes": 554553,
-        "routeSpecificGzipBytes": 27355,
-        "routeSpecificRawBytes": 81053
+        "firstLoadGzipBytes": 186243,
+        "firstLoadRawBytes": 628000,
+        "routeSpecificGzipBytes": 45757,
+        "routeSpecificRawBytes": 154609
       },
       "/tenant/[subdomain]/pages": {
         "firstLoadGzipBytes": 175680,
         "firstLoadRawBytes": 593408,
-        "routeSpecificGzipBytes": 35140,
-        "routeSpecificRawBytes": 119908
+        "routeSpecificGzipBytes": 38585,
+        "routeSpecificRawBytes": 124623
       },
       "/tenant/[subdomain]/pages/[pageId]": {
         "firstLoadGzipBytes": 210662,
@@ -327,14 +315,14 @@
       "/tenant/[subdomain]/publish-now": {
         "firstLoadGzipBytes": 172476,
         "firstLoadRawBytes": 576599,
-        "routeSpecificGzipBytes": 31995,
-        "routeSpecificRawBytes": 103220
+        "routeSpecificGzipBytes": 36040,
+        "routeSpecificRawBytes": 116259
       },
       "/tenant/[subdomain]/settings": {
         "firstLoadGzipBytes": 170245,
         "firstLoadRawBytes": 565558,
-        "routeSpecificGzipBytes": 32204,
-        "routeSpecificRawBytes": 99164
+        "routeSpecificGzipBytes": 34773,
+        "routeSpecificRawBytes": 107067
       },
       "/tenant/[subdomain]/threads/accounts": {
         "firstLoadGzipBytes": 167774,
@@ -345,20 +333,20 @@
       "/tenant/[subdomain]/tiktok/accounts": {
         "firstLoadGzipBytes": 167374,
         "firstLoadRawBytes": 556101,
-        "routeSpecificGzipBytes": 26833,
-        "routeSpecificRawBytes": 82602
+        "routeSpecificGzipBytes": 28779,
+        "routeSpecificRawBytes": 89205
       },
       "/tenant/[subdomain]/x/accounts": {
         "firstLoadGzipBytes": 166370,
         "firstLoadRawBytes": 553742,
-        "routeSpecificGzipBytes": 27029,
-        "routeSpecificRawBytes": 84520
+        "routeSpecificGzipBytes": 28683,
+        "routeSpecificRawBytes": 88940
       },
       "/tenant/[subdomain]/youtube/accounts": {
         "firstLoadGzipBytes": 167373,
         "firstLoadRawBytes": 556106,
-        "routeSpecificGzipBytes": 26832,
-        "routeSpecificRawBytes": 82606
+        "routeSpecificGzipBytes": 28779,
+        "routeSpecificRawBytes": 89207
       }
     },
     "totalClientJs": {

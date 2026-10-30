@@ -7,24 +7,58 @@ import {
   type RemoteMediaCandidate,
 } from '@fbuploadpro/contracts';
 import {
-  extractFilenameFromContentDisposition,
   deriveFileNameFromUrl,
+  DownloadAbortedError,
+  extractFilenameFromContentDisposition,
+  fetchCandidateResponse,
+  MediaDownloaderError,
   resolveAllowedMimeType,
   sanitizeFileNameWithExtension,
-} from './mime';
-import {
-  MediaDownloaderError,
-  fetchCandidateResponse,
   validateAndNormalizeStreamUrl,
-} from './resolvers';
+} from '@fbuploadpro/downloader-engine';
 import type { UploadedDownloadedMediaItem } from './index';
 import {
   MEDIA_FETCH_TIMEOUT_MS,
   fetchWithTimeoutToHeaders,
-} from '@/lib/http/fetch-with-timeout';
+} from '@fbuploadpro/downloader-engine';
 
 const MAX_THUMBNAIL_BYTES = 10 * 1024 * 1024; // 10 MB
 const MAX_CAPTION_LENGTH = 5000;
+
+/**
+ * Thrown when a stream is abandoned because the caller cancelled it
+ * (the worker's cancel watcher). Distinct from MediaDownloaderError so
+ * the worker can tell "user cancelled" apart from "download failed"
+ * without parsing messages: a cancelled job keeps its `cancelled`
+ * status instead of being re-marked failed.
+ */
+// Single definition lives in @fbuploadpro/downloader-engine; re-exported
+// here so the existing `from './storage-upload'` import site keeps working.
+export { DownloadAbortedError } from '@fbuploadpro/downloader-engine';
+
+export interface DownloadProgress {
+  downloadedBytes: number;
+  totalBytes: number | null;
+}
+
+/**
+ * Destination for streamed media bytes (spec 149). The engine never
+ * buffers a whole file: chunks flow from the remote response through
+ * the sink as they arrive, so a 500 MB file costs one chunk of memory,
+ * not 500 MB. The VPS worker supplies an S3 multipart sink; thumbnails
+ * (≤10 MB) still use the bounded buffered read below.
+ */
+export interface MediaStreamSink {
+  write(chunk: Uint8Array): Promise<void>;
+  finish(): Promise<{ key: string; byteLength: number; publicUrl: string }>;
+  abort(): Promise<void>;
+}
+
+export interface StreamDownloadOptions {
+  onProgress?: ((progress: DownloadProgress) => void) | undefined;
+  signal?: AbortSignal | undefined;
+  createSink: (key: string, contentType: string) => MediaStreamSink;
+}
 
 function assertContentLengthWithinLimit(response: Response, maxBytes: number): void {
   const contentLengthHeader = response.headers.get('content-length');
@@ -103,6 +137,125 @@ async function readResponseBytesWithLimit(
   }
 
   return concatUint8Chunks(chunks, totalBytes);
+}
+
+/**
+ * Streams a remote response body through a sink, chunk by chunk. The
+ * 500 MB cap is enforced twice: up front when the server declares a
+ * content-length over the cap, and mid-stream the moment the running
+ * total crosses it — in both cases the partial upload is aborted, so
+ * no oversized or partial object survives. Cancellation is checked
+ * per chunk; the sink is always aborted on the way out of a failure.
+ */
+// A body-less response has no stream to forward; it can only be a
+// tiny (or empty) payload, so the bounded read is safe here.
+async function streamEmptyBodyToSink(
+  response: Response,
+  sink: MediaStreamSink,
+  options: StreamDownloadOptions,
+  totalBytes: number | null
+): Promise<{ key: string; byteLength: number; publicUrl: string }> {
+  const buffer = await response.arrayBuffer();
+  if (buffer.byteLength === 0) {
+    throw new MediaDownloaderError(
+      'UNSUPPORTED_MEDIA',
+      'The remote media file was empty and could not be saved.',
+      400
+    );
+  }
+  if (buffer.byteLength > MAX_MEDIA_DOWNLOAD_BYTES) {
+    throw new MediaDownloaderError(
+      'FILE_TOO_LARGE',
+      'This file exceeds the 500 MB maximum size limit.',
+      400
+    );
+  }
+  const bytes = new Uint8Array(buffer);
+  try {
+    await sink.write(bytes);
+    options.onProgress?.({ downloadedBytes: bytes.byteLength, totalBytes });
+    return await sink.finish();
+  } catch (err) {
+    await sink.abort().catch(() => undefined);
+    throw err;
+  }
+}
+
+// Forwards a streaming body chunk by chunk, checking cancellation
+// per chunk and the 500 MB cap the moment the running total crosses
+// it. Returns the streamed byte count; the caller owns finish/abort.
+async function streamBodyToSink(
+  response: Response,
+  sink: MediaStreamSink,
+  options: StreamDownloadOptions,
+  totalBytes: number | null
+): Promise<number> {
+  const reader = response.body?.getReader();
+  if (!reader) return 0;
+  let downloadedBytes = 0;
+  try {
+    while (true) {
+      if (options.signal?.aborted) {
+        throw new DownloadAbortedError();
+      }
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      if (value) {
+        downloadedBytes += value.byteLength;
+        if (downloadedBytes > MAX_MEDIA_DOWNLOAD_BYTES) {
+          throw new MediaDownloaderError(
+            'FILE_TOO_LARGE',
+            'This file exceeds the 500 MB maximum size limit.',
+            400
+          );
+        }
+        await sink.write(value);
+        options.onProgress?.({ downloadedBytes, totalBytes });
+      }
+    }
+  } catch (err) {
+    await sink.abort().catch(() => undefined);
+    throw err;
+  } finally {
+    reader.releaseLock();
+  }
+  return downloadedBytes;
+}
+
+async function streamResponseToSink(
+  response: Response,
+  sink: MediaStreamSink,
+  options: StreamDownloadOptions
+): Promise<{ key: string; byteLength: number; publicUrl: string }> {
+  assertContentLengthWithinLimit(response, MAX_MEDIA_DOWNLOAD_BYTES);
+
+  const totalHeader = response.headers.get('content-length');
+  const parsedTotal = totalHeader ? Number.parseInt(totalHeader, 10) : Number.NaN;
+  const totalBytes = Number.isNaN(parsedTotal) ? null : parsedTotal;
+
+  if (!response.body) {
+    return streamEmptyBodyToSink(response, sink, options, totalBytes);
+  }
+
+  const downloadedBytes = await streamBodyToSink(response, sink, options, totalBytes);
+
+  if (downloadedBytes === 0) {
+    await sink.abort().catch(() => undefined);
+    throw new MediaDownloaderError(
+      'UNSUPPORTED_MEDIA',
+      'The remote media file was empty and could not be saved.',
+      400
+    );
+  }
+
+  try {
+    return await sink.finish();
+  } catch (err) {
+    await sink.abort().catch(() => undefined);
+    throw err;
+  }
 }
 
 function classifyThumbnailFormat(
@@ -198,8 +351,23 @@ export async function downloadAndStoreSingleCandidate(
   userId: string,
   storage: IStorageService,
   fetchFn: typeof fetch,
-  prefetchedResponse?: Response
+  prefetchedResponse?: Response,
+  streamOptions?: StreamDownloadOptions
 ): Promise<UploadedDownloadedMediaItem> {
+  if (streamOptions?.signal?.aborted) {
+    throw new DownloadAbortedError();
+  }
+  if (!streamOptions) {
+    // The media-bytes path streams by design (spec 149): a caller that
+    // cannot supply a sink has no way to receive the bytes. Thumbnails
+    // still use `storage.putObject` directly (bounded, ≤10 MB).
+    throw new MediaDownloaderError(
+      'DOWNLOAD_FAILED',
+      'Streaming upload is required to save this media.',
+      502
+    );
+  }
+
   const normalizedStreamUrl = validateAndNormalizeStreamUrl(candidate.streamUrl);
   const response = await fetchCandidateResponse(
     normalizedStreamUrl,
@@ -229,25 +397,16 @@ export async function downloadAndStoreSingleCandidate(
     );
   }
 
-  const bytes = await readResponseBytesWithLimit(response, MAX_MEDIA_DOWNLOAD_BYTES);
-  if (bytes.byteLength === 0) {
-    throw new MediaDownloaderError(
-      'UNSUPPORTED_MEDIA',
-      'The remote media file was empty and could not be saved.',
-      400
-    );
-  }
-
   const mediaId = randomUUID();
   const fallbackBase = index === 0 ? 'downloaded_media' : `downloaded_media_${index + 1}`;
   const sanitizedFileName = sanitizeFileNameWithExtension(rawFileName, mimeType, fallbackBase);
   const storageKey = `users/${userId}/media/${mediaId}/${sanitizedFileName}`;
 
-  const uploadRes = await storage.putObject({
-    key: storageKey,
-    body: bytes,
-    contentType: mimeType,
-  });
+  const uploadRes = await streamResponseToSink(
+    response,
+    streamOptions.createSink(storageKey, mimeType),
+    streamOptions
+  );
 
   const mediaType: 'video' | 'image' = mimeType.startsWith('video/') ? 'video' : 'image';
   const thumbResult =

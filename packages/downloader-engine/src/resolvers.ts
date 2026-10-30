@@ -7,33 +7,32 @@ import {
   type DownloaderSourcePlatform,
   type RemoteMediaCandidate,
 } from '@fbuploadpro/contracts';
+/**
+ * Built-in resolvers — the canonical location, imported by the web
+ * orchestrator and the Cloudflare download consumer alike. Resolve
+ * bodies are read through a 10 MB bounded reader, never unbounded
+ * response.text()/.json() (spec 149 backend revision §3.4); the
+ * timeout helper is the local ./http.js, so no web '@/lib/http' alias
+ * and no Node API is needed.
+ */
+import {
+  DOWNLOAD_RESOLVE_BODY_MAX_BYTES,
+} from '@fbuploadpro/contracts';
 import {
   extractFilenameFromContentDisposition,
   resolveAllowedMimeType,
-} from './mime';
-import { tryResolveFromFxTwitter } from './extractors';
+} from './mime.js';
+import { tryResolveFromFxTwitter } from './extractors.js';
 import {
   MEDIA_FETCH_TIMEOUT_MS,
   fetchWithTimeoutToHeaders,
-} from '@/lib/http/fetch-with-timeout';
-
-export type DownloaderErrorCode =
-  | 'UNSAFE_URL'
-  | 'UNSUPPORTED_MEDIA'
-  | 'FILE_TOO_LARGE'
-  | 'DOWNLOAD_FAILED';
-
-export class MediaDownloaderError extends Error {
-  public readonly code: DownloaderErrorCode;
-  public readonly statusCode: 400 | 502;
-
-  constructor(code: DownloaderErrorCode, message: string, statusCode: 400 | 502 = 400) {
-    super(message);
-    this.name = 'MediaDownloaderError';
-    this.code = code;
-    this.statusCode = statusCode;
-  }
-}
+  readBoundedJson,
+  readBoundedText,
+} from './http.js';
+// Single error definition lives in ./errors.js (imported for internal
+// use here; import sites take the error types from './errors.js' or
+// the package root, never from this module).
+import { MediaDownloaderError } from './errors.js';
 
 export function validateAndNormalizeStreamUrl(rawStreamUrl: string): string {
   const safeCheck = validateSafeRemoteUrl(rawStreamUrl);
@@ -148,16 +147,19 @@ async function parseOkInitialResponse(
   }
 
   if (lowerContentType.includes('application/json') || lowerContentType.includes('text/json')) {
-    try {
-      const jsonData: unknown = await initialResponse.json();
-      return { candidates: parseJsonPayloadCandidates(jsonData) };
-    } catch {
-      // Return empty candidates when JSON response body cannot be parsed
+    const jsonData = await readBoundedJson(initialResponse, DOWNLOAD_RESOLVE_BODY_MAX_BYTES);
+    if (jsonData === null) {
+      // Over-cap or unparseable JSON: cannot resolve, never buffered whole.
       return { candidates: [] };
     }
+    return { candidates: parseJsonPayloadCandidates(jsonData) };
   }
 
-  const htmlText = await initialResponse.text();
+  const htmlText = await readBoundedText(initialResponse, DOWNLOAD_RESOLVE_BODY_MAX_BYTES);
+  if (htmlText === null) {
+    // Page too large to resolve (§3.4): treat as unresolvable, not as a crash.
+    return { candidates: [] };
+  }
   const parsedHtml = parseHtmlMediaCandidates(htmlText, effectiveUrl);
   if (parsedHtml.candidates.length === 0 && platform === 'x') {
     return { candidates: await tryResolveFromFxTwitter(sourceUrl, fetchFn) };

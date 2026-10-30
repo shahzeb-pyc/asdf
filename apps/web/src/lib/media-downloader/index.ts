@@ -4,21 +4,31 @@ import {
   type DownloaderSourcePlatform,
   type IStorageService,
 } from '@fbuploadpro/contracts';
-import { tryResolveViaExternalExtractor } from './extractors';
 import {
   MediaDownloaderError,
   resolveCandidatesBuiltIn,
-} from './resolvers';
+  tryResolveViaExternalExtractor,
+} from '@fbuploadpro/downloader-engine';
 import { downloadAndStoreSingleCandidate } from './storage-upload';
-import type { AllowedMediaMime } from './mime';
+import type { AllowedMediaMime } from '@fbuploadpro/downloader-engine';
 
 export type { RemoteMediaCandidate } from '@fbuploadpro/contracts';
 
 export { normalizeCloudDriveUrl } from '@fbuploadpro/contracts';
 
-export { resolveAllowedMimeType, type AllowedMediaMime } from './mime';
+export {
+  resolveAllowedMimeType,
+  type AllowedMediaMime,
+  MediaDownloaderError,
+  type DownloaderErrorCode,
+} from '@fbuploadpro/downloader-engine';
 
-export { MediaDownloaderError, type DownloaderErrorCode } from './resolvers';
+export {
+  DownloadAbortedError,
+  type DownloadProgress,
+  type MediaStreamSink,
+  type StreamDownloadOptions,
+} from './storage-upload';
 
 export interface UploadedDownloadedMediaItem {
   mediaId: string;
@@ -41,6 +51,19 @@ export interface ResolveAndUploadMediaParams {
   storage: IStorageService;
   fetchImpl?: typeof fetch | undefined;
   extractorApiUrl?: string | null | undefined;
+  /**
+   * Live byte progress for the caller (the worker maps it onto the job
+   * row). For multi-item links this reports the item currently
+   * streaming; single-item links — the overwhelmingly common case —
+   * report exact progress.
+   */
+  onProgress?: ((progress: import('./storage-upload').DownloadProgress) => void) | undefined;
+  signal?: AbortSignal | undefined;
+  /** Sink for the streamed media bytes (spec 149: never buffered whole). */
+  createSink: (
+    key: string,
+    contentType: string
+  ) => import('./storage-upload').MediaStreamSink;
 }
 
 export interface ResolveAndUploadMediaResult {
@@ -98,7 +121,12 @@ export async function resolveAndUploadMediaFromUrl(
         params.userId,
         params.storage,
         fetchFn,
-        idx === 0 ? prefetchedBinaryResponse : undefined
+        idx === 0 ? prefetchedBinaryResponse : undefined,
+        {
+          onProgress: params.onProgress,
+          signal: params.signal,
+          createSink: params.createSink,
+        }
       )
     )
   );
@@ -115,16 +143,13 @@ export async function resolveAndUploadMediaFromUrl(
   }
 
   if (firstError || successfulItems.length === 0) {
+    // Cleanup failures must not mask the original download error, so
+    // each delete swallows its own failure (best effort per object).
     await Promise.all(
       successfulItems.map(async (item) => {
-        try {
-          await params.storage.deleteObject(item.storageKey);
-          if (item.thumbnailKey) {
-            await params.storage.deleteObject(item.thumbnailKey);
-          }
-        } catch (_e) {
-          // ignore cleanup errors
-          void _e;
+        await params.storage.deleteObject(item.storageKey).catch(() => undefined);
+        if (item.thumbnailKey) {
+          await params.storage.deleteObject(item.thumbnailKey).catch(() => undefined);
         }
       })
     );

@@ -46,6 +46,31 @@ importers:
         specifier: ^4.0.0
         version: 4.1.12(@types/node@22.20.5)(@vitest/coverage-v8@4.1.12)(jsdom@30.1.3)(vite@7.3.7(@types/node@22.20.5)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.15))
 
+  apps/download-worker:
+    dependencies:
+      '@fbuploadpro/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@fbuploadpro/downloader-engine':
+        specifier: workspace:*
+        version: link:../../packages/downloader-engine
+      '@supabase/supabase-js':
+        specifier: ^2.117.3
+        version: 2.118.0
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20250224.0
+        version: 4.20260702.1
+      '@vitest/coverage-v8':
+        specifier: ^4.0.0
+        version: 4.1.12(vitest@4.1.12)
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^4.0.0
+        version: 4.1.12(@types/node@22.20.5)(@vitest/coverage-v8@4.1.12)(jsdom@30.1.3)(vite@7.3.7(@types/node@22.20.5)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.15))
+
   apps/extension:
     dependencies:
       '@fbuploadpro/contracts':
@@ -70,6 +95,9 @@ importers:
       '@fbuploadpro/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@fbuploadpro/downloader-engine':
+        specifier: workspace:*
+        version: link:../../packages/downloader-engine
       '@hookform/resolvers':
         specifier: ^6.0.0
         version: 6.0.0(@standard-schema/spec@1.1.0)(react-hook-form@7.90.0(@types/react@19.3.0)(react@19.3.1))(zod@3.25.76)
@@ -223,6 +251,22 @@ importers:
         specifier: ^3.24.2
         version: 3.25.76
     devDependencies:
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^4.0.0
+        version: 4.1.12(@types/node@22.20.5)(@vitest/coverage-v8@4.1.12)(jsdom@30.1.3)(vite@7.3.7(@types/node@22.20.5)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.15))
+
+  packages/downloader-engine:
+    dependencies:
+      '@fbuploadpro/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      '@vitest/coverage-v8':
+        specifier: ^4.0.0
+        version: 4.1.12(vitest@4.1.12)
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
