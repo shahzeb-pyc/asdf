@@ -133,4 +133,16 @@ describe('NOWPayments IPN signature', () => {
       b: 1,
     });
   });
+
+  it('sorts by code unit, not locale order — the provider signs that form', () => {
+    // Code-unit order: 'A' (65) < '_x' (95) < 'a' (97) < 'b' (98).
+    // Locale order would differ (punctuation/case are locale-aware),
+    // so this order is load-bearing for IPN verification, not display.
+    expect(Object.keys(sortObjectForNowPaymentsSignature({ b: 1, a: 2, _x: 3, A: 4 }) as object)).toEqual([
+      'A',
+      '_x',
+      'a',
+      'b',
+    ]);
+  });
 });

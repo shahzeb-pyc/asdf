@@ -30,7 +30,11 @@ import { mintSessionToken, SESSION_COOKIE, TENANT } from './fixtures/tenant';
  */
 const USER_SESSION_COOKIE = {
   ...SESSION_COOKIE,
-  value: mintSessionToken('user'),
+  // A plain user token can only open its own subdomain; the switch
+  // step below navigates to beta, so the token names beta as an
+  // allowed subdomain (the admin bypass must not be relied on here,
+  // since admins see the approvals-only sidebar).
+  value: mintSessionToken('user', ['beta']),
 };
 
 const WORKSPACES = [

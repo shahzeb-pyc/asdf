@@ -353,7 +353,12 @@ export function sortObjectForNowPaymentsSignature(
   if (value !== null && typeof value === 'object') {
     const record = value as Record<string, unknown>;
     const sorted: Record<string, unknown> = {};
-    for (const key of Object.keys(record).sort()) {
+    // Byte order, NOT locale order: NOWPayments computes its IPN
+    // signature over keys sorted by code unit (its ksort / default
+    // sort), so localeCompare would canonicalise differently and
+    // break verification. NOSONAR (typescript:S2871) — this sort is
+    // signing input, not display text.
+    for (const key of Object.keys(record).sort()) { // NOSONAR
       sorted[key] = sortObjectForNowPaymentsSignature(record[key]);
     }
     return sorted;
