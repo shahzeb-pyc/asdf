@@ -31,6 +31,17 @@ export interface ConnectStatePayload {
   nonce: string;
   iat: number;
   exp: number;
+  /**
+   * Optional expected-account hint, carried only when the flow was
+   * started as a reconnect (or a magic link) for a specific account.
+   * The callback compares the signed-in account against it and
+   * reports a mismatch instead of silently succeeding. Additive:
+   * flows that do not send these fields behave exactly as before.
+   */
+  expectedExternalAccountId?: string | undefined;
+  expectedDisplayName?: string | undefined;
+  /** True when this flow started from a magic link (no session). */
+  isMagic?: boolean | undefined;
 }
 
 export interface PkceCookiePayload {
@@ -47,6 +58,18 @@ export interface PendingDestinationsPayload {
   platform: Platform;
   destinations: DiscoveredDestination[];
   exp: number;
+  /**
+   * Connect outcome, computed by the callback from the signed
+   * connect state: whether this account already existed before
+   * this flow, and whether the signed-in account differs from the
+   * expected reconnect target. The complete route turns these into
+   * the landing page's notice params. Additive: flows that do not
+   * set them land exactly as before.
+   */
+  alreadyExisted?: boolean | undefined;
+  expectedExternalAccountId?: string | undefined;
+  expectedDisplayName?: string | undefined;
+  isMagic?: boolean | undefined;
 }
 
 function base64UrlEncode(str: string): string {
@@ -209,6 +232,9 @@ export function createConnectStatePayload(input: {
   tenantSubdomain: string;
   userId: string;
   platform: Platform;
+  expectedExternalAccountId?: string | undefined;
+  expectedDisplayName?: string | undefined;
+  isMagic?: boolean | undefined;
 }): ConnectStatePayload {
   const now = Math.floor(Date.now() / 1000);
   return {

@@ -27,12 +27,14 @@ import {
 } from '@/lib/connect/state';
 import {
   persistConnectedAccount,
+  persistPickedDestinations,
   resolvePlatformClientCredentials,
   type ConnectDbClient,
 } from '@/lib/connect/persist';
 import { resolveConnectDbClient } from '@/lib/connect/session';
 import { enforceIpRateLimit } from '@/lib/request-body';
 import { mapProviderDenial, type ConnectNoticeCode } from '@/lib/connect/errors';
+import { buildMagicConnectUrl } from '@/lib/connect/magic-url';
 // Registers the YouTube connect config (spec 125) into the framework registry.
 import '@/lib/connect/platforms/youtube';
 // Registers the TikTok connect config (spec 126) into the framework registry.
@@ -105,6 +107,11 @@ type ExchangeOutcome =
   | { notice: ConnectNoticeCode }
   | {
       accountId: string;
+      /** The signed-in account, for mismatch / already-connected checks. */
+      externalAccountId: string;
+      displayName: string;
+      /** True when this account row existed before this flow. */
+      alreadyExisted: boolean;
       destinations: NonNullable<
         Awaited<ReturnType<PlatformConnectConfig['fetchDestinations']>>
       >;
@@ -157,14 +164,13 @@ async function exchangePersistAndDiscover(args: ExchangeArgs): Promise<ExchangeO
     return { notice: NOTICE_CONNECT_FAILED };
   }
 
-  let accountId: string;
+  let persisted: { accountId: string; alreadyExisted: boolean };
   try {
-    const persisted = await persistConnectedAccount(client, {
+    persisted = await persistConnectedAccount(client, {
       workspaceId: statePayload.workspaceId,
       platform,
       exchanged,
     });
-    accountId = persisted.accountId;
   } catch (err) {
     console.error('[connect/callback] Failed to persist account:', err);
     return { notice: NOTICE_CONNECT_FAILED };
@@ -175,7 +181,13 @@ async function exchangePersistAndDiscover(args: ExchangeArgs): Promise<ExchangeO
       exchanged.accessToken,
       exchanged
     );
-    return { accountId, destinations: destinations ?? [] };
+    return {
+      accountId: persisted.accountId,
+      externalAccountId: exchanged.externalAccountId,
+      displayName: exchanged.displayName,
+      alreadyExisted: persisted.alreadyExisted,
+      destinations: destinations ?? [],
+    };
   } catch (err) {
     console.error(
       `[connect/callback] Destination discovery failed for platform "${platform}":`,
@@ -204,6 +216,75 @@ function pickerRedirect(
     url.searchParams.set('notice', notice);
   }
   return NextResponse.redirect(url);
+}
+
+/**
+ * Threads notice redirect (Facebook parity for the Threads page):
+ * a failed Threads connect does not land on the generic picker —
+ * it lands on Threads accounts with Facebook's `?error=` notice
+ * shape, so the Threads shell shows the same banner Facebook's
+ * shell shows. A magic-link Threads connect, whose browser holds
+ * no session, lands on the public `/connect/threads/error` page
+ * instead (same as Facebook's magic error page). Every other
+ * platform keeps the picker redirect exactly as before.
+ */
+function threadsNoticeRedirect(
+  request: NextRequest,
+  subdomain: string,
+  rootDomain: string,
+  notice: ConnectNoticeCode,
+  isMagic: boolean
+): NextResponse {
+  if (isMagic) {
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    const errorUrl = buildMagicConnectUrl(
+      '/connect/threads/error',
+      request.url,
+      rootDomain,
+      appUrl
+    );
+    const reason =
+      notice === 'denied'
+        ? 'cancelled'
+        : notice === 'credentials_required'
+          ? 'app_not_configured'
+          : 'oauth_failed';
+    errorUrl.searchParams.set('reason', reason);
+    return NextResponse.redirect(errorUrl);
+  }
+  const url = buildTenantUrl(
+    subdomain,
+    '/threads/accounts',
+    request.url,
+    rootDomain
+  );
+  const errorParam =
+    notice === 'credentials_required'
+      ? 'credentials_required'
+      : notice === 'denied'
+        ? 'access_denied'
+        : 'connect_failed';
+  url.searchParams.set('error', errorParam);
+  return NextResponse.redirect(url);
+}
+
+/**
+ * Notice redirect for a verified connect state: Threads flows use
+ * the Threads notice redirect above; every other platform uses
+ * the picker redirect, unchanged.
+ */
+function connectNoticeRedirect(
+  request: NextRequest,
+  subdomain: string,
+  platform: Platform,
+  rootDomain: string,
+  notice: ConnectNoticeCode,
+  isMagic: boolean
+): NextResponse {
+  if (platform === 'threads') {
+    return threadsNoticeRedirect(request, subdomain, rootDomain, notice, isMagic);
+  }
+  return pickerRedirect(request, subdomain, platform, rootDomain, notice);
 }
 
 /**
@@ -253,32 +334,35 @@ export async function handleConnectCallback(
   }
 
   if (statePayload.platform !== platform) {
-    return pickerRedirect(
+    return connectNoticeRedirect(
       request,
       statePayload.tenantSubdomain,
       platform,
       rootDomain,
-      'expired_link'
+      'expired_link',
+      statePayload.isMagic ?? false
     );
   }
 
   if (errorParam) {
-    return pickerRedirect(
+    return connectNoticeRedirect(
       request,
       statePayload.tenantSubdomain,
       platform,
       rootDomain,
-      mapProviderDenial(errorParam)
+      mapProviderDenial(errorParam),
+      statePayload.isMagic ?? false
     );
   }
 
   if (!code) {
-    return pickerRedirect(
+    return connectNoticeRedirect(
       request,
       statePayload.tenantSubdomain,
       platform,
       rootDomain,
-      'missing_reply'
+      'missing_reply',
+      statePayload.isMagic ?? false
     );
   }
 
@@ -287,12 +371,13 @@ export async function handleConnectCallback(
     console.error(
       `[connect/callback] No connect config registered for platform "${platform}".`
     );
-    return pickerRedirect(
+    return connectNoticeRedirect(
       request,
       statePayload.tenantSubdomain,
       platform,
       rootDomain,
-      NOTICE_CONNECT_FAILED
+      NOTICE_CONNECT_FAILED,
+      statePayload.isMagic ?? false
     );
   }
 
@@ -315,12 +400,13 @@ export async function handleConnectCallback(
       sessionSecret
     );
     if (!codeVerifier) {
-      return pickerRedirect(
+      return connectNoticeRedirect(
         request,
         statePayload.tenantSubdomain,
         platform,
         rootDomain,
-        'expired_link'
+        'expired_link',
+        statePayload.isMagic ?? false
       );
     }
   }
@@ -332,12 +418,13 @@ export async function handleConnectCallback(
     statePayload.workspaceId
   );
   if (!credentials) {
-    return pickerRedirect(
+    return connectNoticeRedirect(
       request,
       statePayload.tenantSubdomain,
       platform,
       rootDomain,
-      'credentials_required'
+      'credentials_required',
+      statePayload.isMagic ?? false
     );
   }
   const { clientId, clientSecret } = credentials;
@@ -356,24 +443,85 @@ export async function handleConnectCallback(
     clientSecret,
   });
   if ('notice' in outcome) {
-    return pickerRedirect(
+    return connectNoticeRedirect(
       request,
       statePayload.tenantSubdomain,
       platform,
       rootDomain,
-      outcome.notice
+      outcome.notice,
+      statePayload.isMagic ?? false
     );
   }
   const { accountId, destinations } = outcome;
 
   if (!destinations || destinations.length === 0) {
-    return pickerRedirect(
+    return connectNoticeRedirect(
       request,
       statePayload.tenantSubdomain,
       platform,
       rootDomain,
-      'nothing_found'
+      'nothing_found',
+      statePayload.isMagic ?? false
     );
+  }
+
+  // Mismatch / already-connected, Facebook semantics: the signed-in
+  // account is persisted either way (a wrong-account reconnect
+  // auto-saves as a NEW account; the expected account stays
+  // expired) — the warning travels with the redirect instead of
+  // silently succeeding.
+  const expectedExternalAccountId = statePayload.expectedExternalAccountId;
+  const expectedDisplayName =
+    statePayload.expectedDisplayName || 'the expired account';
+  const isMismatch = Boolean(
+    expectedExternalAccountId &&
+      outcome.externalAccountId !== expectedExternalAccountId
+  );
+  const isAlreadyConnected = Boolean(
+    !expectedExternalAccountId && outcome.alreadyExisted
+  );
+
+  // Magic Threads flow (Facebook magic parity): the browser that
+  // opened the link holds no session, so there is no picker to
+  // show it — the single Threads destination is confirmed
+  // server-side here and the flow finishes on the public magic
+  // success page (app host, same host rule as Facebook's).
+  if (statePayload.isMagic && platform === 'threads') {
+    try {
+      await persistPickedDestinations(client, {
+        workspaceId: statePayload.workspaceId,
+        accountId,
+        platform,
+        destinations,
+      });
+    } catch (err) {
+      console.error('[connect/callback] Failed to persist magic destinations:', err);
+      return threadsNoticeRedirect(
+        request,
+        statePayload.tenantSubdomain,
+        rootDomain,
+        NOTICE_CONNECT_FAILED,
+        true
+      );
+    }
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    const successUrl = buildMagicConnectUrl(
+      '/connect/threads/success',
+      request.url,
+      rootDomain,
+      appUrl
+    );
+    if (isMismatch) {
+      successUrl.searchParams.set('reconnected_mismatch', '1');
+      successUrl.searchParams.set('newAccountName', outcome.displayName);
+      successUrl.searchParams.set('expectedAccountName', expectedDisplayName);
+    } else if (isAlreadyConnected) {
+      successUrl.searchParams.set('already_connected', '1');
+      successUrl.searchParams.set('accountName', outcome.displayName);
+    } else {
+      successUrl.searchParams.set('accountName', outcome.displayName);
+    }
+    return NextResponse.redirect(successUrl);
   }
 
   const now = Math.floor(Date.now() / 1000);
@@ -385,6 +533,12 @@ export async function handleConnectCallback(
       platform,
       destinations,
       exp: now + CONNECT_PENDING_TTL_SECONDS,
+      alreadyExisted: outcome.alreadyExisted,
+      ...(expectedExternalAccountId ? { expectedExternalAccountId } : {}),
+      ...(statePayload.expectedDisplayName
+        ? { expectedDisplayName: statePayload.expectedDisplayName }
+        : {}),
+      ...(statePayload.isMagic ? { isMagic: true } : {}),
     },
     sessionSecret
   );

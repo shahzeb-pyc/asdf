@@ -33,6 +33,25 @@ export const queryKeys = {
           [...tenantRoot, 'accounts', accountId] as const,
       },
 
+      /**
+       * Threads accounts list. A SEPARATE namespace from Facebook's
+       * `accounts` keys on purpose: the two lists share the same
+       * params shape, so reusing the Facebook key would serve
+       * Facebook rows to the Threads page (and vice versa) from
+       * the cache.
+       */
+      threadsAccounts: {
+        all: [...tenantRoot, 'threads', 'accounts'] as const,
+        list: [...tenantRoot, 'threads', 'accounts', 'list'] as const,
+        /** Paginated list key: page + limit + filters, so each page caches separately. */
+        listPage: (params: {
+          page: number;
+          limit: number;
+          search: string;
+          status: string;
+        }) => [...tenantRoot, 'threads', 'accounts', 'list', params] as const,
+      },
+
       pages: {
         all: [...tenantRoot, 'pages'] as const,
         list: [...tenantRoot, 'pages', 'list'] as const,

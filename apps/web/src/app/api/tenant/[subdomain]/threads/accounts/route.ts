@@ -55,7 +55,32 @@ interface ThreadsAccountRow {
  * caller chains eq/ilike/or/order/range on the inferred builder.
  */
 
-function mapRowToView(row: ThreadsAccountRow): ThreadsAccountView {
+/**
+ * Threads profile address for a stored @handle. The host is the
+ * Threads web host from the connect config
+ * (`lib/connect/platforms/threads.ts`: authorize `threads.com`);
+ * the handle itself comes from the account's destination row
+ * (`destinations.handle` = the Threads username), never from the
+ * display name. Null handle → null link.
+ */
+export function buildThreadsProfileUrl(handle: string | null): string | null {
+  if (!handle || !handle.trim()) return null;
+  return `https://threads.com/@${encodeURIComponent(handle.trim())}`;
+}
+
+export interface ThreadsDestinationInfo {
+  handle: string | null;
+  connectedDestinationsCount: number;
+}
+
+function mapRowToView(
+  row: ThreadsAccountRow,
+  destinationInfo?: ThreadsDestinationInfo
+): ThreadsAccountView {
+  // Facebook's UI health model (getAccountHealth parity): a past
+  // token means expired regardless of the stored status; an unknown
+  // stored status reads as disconnected (Facebook's wire map does
+  // the same: unifiedAccountStatusToWire → 'disconnected').
   const tokenPast =
     row.token_expires_at !== null &&
     Date.parse(row.token_expires_at) <= Date.now();
@@ -65,11 +90,16 @@ function mapRowToView(row: ThreadsAccountRow): ThreadsAccountView {
       : row.status === 'active'
         ? 'active'
         : 'disconnected';
+  const handle = destinationInfo?.handle ?? null;
   return {
     id: row.id,
     threadsAccountId: row.external_account_id,
     displayName: row.display_name,
     profilePictureUrl: row.avatar_url ?? null,
+    handle,
+    accountLink: buildThreadsProfileUrl(handle),
+    connectedDestinationsCount:
+      destinationInfo?.connectedDestinationsCount ?? 0,
     status,
     tokenExpiresAt: row.token_expires_at
       ? new Date(row.token_expires_at)
@@ -150,17 +180,25 @@ export async function handleListThreadsAccounts(
   const search = (url.searchParams.get('search') ?? '').trim();
   const statusParam = url.searchParams.get('status') ?? 'all';
   const statusFilter =
-    statusParam === 'active' || statusParam === 'expired'
+    statusParam === 'active' ||
+    statusParam === 'expired' ||
+    statusParam === 'expiring_soon'
       ? statusParam
       : 'all';
 
   const nowIso = new Date().toISOString();
+  const soonIso = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
   const liveTokenOr = `token_expires_at.is.null,token_expires_at.gte.${nowIso}`;
 
   try {
-    // Full-set counts over the search-filtered set (status filter is
-    // NOT applied to the counts, so the subtitle reports workspace
-    // totals; the filtered view reports its own total instead).
+    // Health counts over the SEARCH + STATUS filtered set, Facebook
+    // semantics: Facebook's list SQL counts its health buckets over
+    // the same WHERE (search + status) as the page, so the Expired
+    // filter badge hides on the Active tab (0 within that set)
+    // instead of reporting the workspace total. The three buckets
+    // partition the filtered set exactly (connected = active with a
+    // live-or-absent token; expired = stored expired or a past
+    // token; error = disconnected with a live-or-absent token).
     const baseCount = () =>
       supabase
         .from('social_accounts')
@@ -187,7 +225,17 @@ export async function handleListThreadsAccounts(
     if (errorRes.error) throw new Error(errorRes.error.message);
     const errorCount = errorRes.count ?? 0;
 
-    const healthCounts = {
+    // Expiring-soon (Facebook parity: active + token in the next
+    // 7 days). No UI tab sends it yet, same as Facebook — the API
+    // accepts it so the filter is real, not a silent collapse to all.
+    const expiringSoonRes = await withSearch(baseCount())
+      .eq('status', 'active')
+      .gt('token_expires_at', nowIso)
+      .lte('token_expires_at', soonIso);
+    if (expiringSoonRes.error) throw new Error(expiringSoonRes.error.message);
+    const expiringSoon = expiringSoonRes.count ?? 0;
+
+    const searchCounts = {
       connected,
       expired: Math.max(0, total - connected - errorCount),
       error: errorCount,
@@ -196,12 +244,23 @@ export async function handleListThreadsAccounts(
     // The filtered total differs from the search-only total when a
     // status filter is applied: it comes from the same buckets, so the
     // page is clamped against the filtered set, not the search set.
+    // healthCounts follow the same filtered set (see above).
     const filteredTotal =
       statusFilter === 'active'
-        ? healthCounts.connected
+        ? searchCounts.connected
         : statusFilter === 'expired'
-          ? healthCounts.expired
-          : total;
+          ? searchCounts.expired
+          : statusFilter === 'expiring_soon'
+            ? expiringSoon
+            : total;
+    const healthCounts =
+      statusFilter === 'active'
+        ? { connected: searchCounts.connected, expired: 0, error: 0 }
+        : statusFilter === 'expired'
+          ? { connected: 0, expired: searchCounts.expired, error: 0 }
+          : statusFilter === 'expiring_soon'
+            ? { connected: expiringSoon, expired: 0, error: 0 }
+            : searchCounts;
     const meta = paginateMeta(filteredTotal, requestedPage, limit);
     const offset = (meta.page - 1) * limit;
 
@@ -211,7 +270,7 @@ export async function handleListThreadsAccounts(
     let rows: ThreadsAccountRow[] = [];
     if (total > 0) {
       const fetchSlice = async (
-        kind: 'expired' | 'rest' | 'active',
+        kind: 'expired' | 'rest' | 'active' | 'expiring_soon',
         from: number,
         to: number
       ): Promise<ThreadsAccountRow[]> => {
@@ -228,6 +287,11 @@ export async function handleListThreadsAccounts(
           q = q.or(`status.eq.expired,token_expires_at.lt.${nowIso}`);
         } else if (kind === 'rest') {
           q = q.neq('status', 'expired').or(liveTokenOr);
+        } else if (kind === 'expiring_soon') {
+          q = q
+            .eq('status', 'active')
+            .gt('token_expires_at', nowIso)
+            .lte('token_expires_at', soonIso);
         } else {
           q = q.eq('status', 'active').or(liveTokenOr);
         }
@@ -240,6 +304,8 @@ export async function handleListThreadsAccounts(
         rows = await fetchSlice('active', offset, offset + limit - 1);
       } else if (statusFilter === 'expired') {
         rows = await fetchSlice('expired', offset, offset + limit - 1);
+      } else if (statusFilter === 'expiring_soon') {
+        rows = await fetchSlice('expiring_soon', offset, offset + limit - 1);
       } else {
         // Expired-first across pages: expired slice first, then the
         // rest (connected + error) to fill the page.
@@ -270,8 +336,43 @@ export async function handleListThreadsAccounts(
       syncExpiredStatus(supabase, row, workspaceId);
     }
 
+    // Per-account destination info (bounded to the page slice):
+    // the @handle for the profile link and the destination count
+    // the disconnect dialog shows. Facebook's list returns
+    // connectedPagesCount from a join; Threads returns the
+    // destination equivalent. Non-disconnected destinations only.
+    const destinationInfoByAccount = new Map<string, ThreadsDestinationInfo>();
+    if (rows.length > 0) {
+      const destRes = await supabase
+        .from('destinations')
+        .select('account_id,handle')
+        .eq('workspace_id', workspaceId)
+        .eq('platform', 'threads')
+        .neq('status', 'disconnected')
+        .in(
+          'account_id',
+          rows.map((row) => row.id)
+        );
+      if (destRes.error) throw new Error(destRes.error.message);
+      for (const dest of (destRes.data ?? []) as Array<{
+        account_id: string;
+        handle: string | null;
+      }>) {
+        const prev = destinationInfoByAccount.get(dest.account_id) ?? {
+          handle: null,
+          connectedDestinationsCount: 0,
+        };
+        destinationInfoByAccount.set(dest.account_id, {
+          handle: prev.handle ?? dest.handle ?? null,
+          connectedDestinationsCount: prev.connectedDestinationsCount + 1,
+        });
+      }
+    }
+
     const parsed = ListThreadsAccountsResponseSchema.safeParse({
-      accounts: rows.map(mapRowToView),
+      accounts: rows.map((row) =>
+        mapRowToView(row, destinationInfoByAccount.get(row.id))
+      ),
       total: filteredTotal,
       page: meta.page,
       limit: meta.limit,

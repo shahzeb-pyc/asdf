@@ -26,6 +26,14 @@ export const MagicLinkTokenPayloadSchema = z.object({
   exp: z.number().int(),
   expectedFbAccountId: z.string().min(1).max(255).optional(),
   expectedInstagramAccountId: z.string().min(1).max(255).optional(),
+  /**
+   * Platform-agnostic expected-account hint (Threads magic links
+   * carry the Threads-scoped external account id here; Facebook
+   * keeps using expectedFbAccountId above). Optional and additive:
+   * older tokens without it still verify.
+   * Capped at 255 like the other hints per Facebook audit N5.
+   */
+  expectedExternalAccountId: z.string().min(1).max(255).optional(),
   expectedDisplayName: z.string().min(1).max(255).optional(),
 });
 

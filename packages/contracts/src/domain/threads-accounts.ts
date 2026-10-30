@@ -23,7 +23,31 @@ export const ThreadsAccountViewSchema = z.object({
   id: z.string().uuid(),
   threadsAccountId: z.string().min(1).max(100),
   displayName: z.string().min(1).max(255),
-  profilePictureUrl: z.string().url().nullable().optional().default(null),
+  /**
+   * Plain string, Facebook parity: a non-URL avatar string must fall
+   * back to initials in the card, never fail the whole list with a
+   * 500 (the previous z.string().url() did exactly that).
+   */
+  profilePictureUrl: z.string().nullable().optional().default(null),
+  /**
+   * The Threads @handle, from the account's destination row
+   * (destinations.handle = the Threads username). Null when the
+   * account has no destination yet.
+   */
+  handle: z.string().nullable().optional().default(null),
+  /**
+   * Public Threads profile address for the handle, or null when
+   * there is no handle. Built by the list route from the stored
+   * handle; never guessed from the display name.
+   */
+  accountLink: z.string().nullable().optional().default(null),
+  /**
+   * Destinations linked to this account (Threads: the profile
+   * itself, normally 1). Facebook's list returns
+   * connectedPagesCount; Threads returns this instead — the
+   * disconnect dialog shows it.
+   */
+  connectedDestinationsCount: z.number().int().nonnegative().default(0),
   status: ThreadsAccountStatusSchema,
   tokenExpiresAt: z.coerce.date().nullable().optional(),
   createdAt: z.coerce.date(),
