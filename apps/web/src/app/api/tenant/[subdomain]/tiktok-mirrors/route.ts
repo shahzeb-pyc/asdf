@@ -497,7 +497,7 @@ async function resolveDestination(
 ): Promise<{ destination: DestinationRow } | { error: NextResponse }> {
   const encryptionKey = getTokenEncryptionKey();
   if (input.targetDestinationId) {
-    const dest = await loadDestinationById(db, input.targetDestinationId);
+    const dest = await loadDestinationById(db, input.targetDestinationId, workspaceId);
     if (!dest) {
       return {
         error: NextResponse.json({ error: 'Facebook page not found' }, { status: 404 }),
@@ -690,19 +690,22 @@ async function resolveDestination(
 }
 
 /**
- * Load one destination row by id (used when the create request
- * names an existing destination; the mirror itself never stores
- * this id — it stores the target platform + external id).
+ * Load one destination row by id, scoped to the caller's workspace
+ * (used when the create request names an existing destination; the
+ * mirror itself never stores this id — it stores the target platform
+ * + external id). A foreign-workspace id must read as not found, so a
+ * mirror can never be created against another workspace's page.
  */
 export async function loadDestinationById(
   db: Db,
-  id: string
+  id: string,
+  workspaceId: string
 ): Promise<DestinationRow | null> {
   if (isLegacyClient(db)) {
     const rows = (await db.query(
       `SELECT id, account_id, external_destination_id, name, avatar_url, encrypted_destination_token, status
-       FROM destinations WHERE id = $1 LIMIT 1`,
-      [id]
+       FROM destinations WHERE id = $1 AND workspace_id = $2 LIMIT 1`,
+      [id, workspaceId]
     )) as unknown[];
     return asDestinationRow(rows[0]);
   }
@@ -711,6 +714,7 @@ export async function loadDestinationById(
     .from('destinations')
     .select('id, account_id, external_destination_id, name, avatar_url, encrypted_destination_token, status')
     .eq('id', id)
+    .eq('workspace_id', workspaceId)
     .maybeSingle();
   if (error) throw new Error(`Failed to load destination: ${error.message}`);
   return asDestinationRow(data);
