@@ -9,6 +9,7 @@ import { sanitizeAuthErrorMessage } from '@/lib/auth-errors';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import type { DatabaseClient } from '@fbuploadpro/contracts';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { enforceIpRateLimit } from '@/lib/request-body';
 import { resolveWorkspaceFacebookCredentials } from '@/lib/server/byoc-resolver';
 
 export async function handleInitiateFacebookOAuth(
@@ -82,10 +83,22 @@ export async function handleInitiateFacebookOAuth(
     );
 
     // 3. Generate signed OAuth state
-    const expectedFbAccountId =
-      request.nextUrl.searchParams.get('expectedFbAccountId')?.trim() || undefined;
-    const expectedDisplayName =
-      request.nextUrl.searchParams.get('expectedDisplayName')?.trim() || undefined;
+    // Audit N5: query-param hints are bounded to the same 255
+    // chars as the magic body before signing (the token schemas
+    // now enforce it, so an unbounded hint would throw here).
+    // Truncation is the safe direction: a >255 account id can
+    // never be a real Facebook id, so the truncated value still
+    // mismatches and warns; a truncated display name is cosmetic.
+    const boundHint = (value: string | null): string | undefined => {
+      const trimmed = value?.trim();
+      return trimmed ? trimmed.slice(0, 255) : undefined;
+    };
+    const expectedFbAccountId = boundHint(
+      request.nextUrl.searchParams.get('expectedFbAccountId')
+    );
+    const expectedDisplayName = boundHint(
+      request.nextUrl.searchParams.get('expectedDisplayName')
+    );
     const now = Math.floor(Date.now() / 1000);
     const nonce = crypto.randomUUID().replaceAll('-', '');
     const state = await signOAuthState(
@@ -129,5 +142,9 @@ export async function handleInitiateFacebookOAuth(
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  // Audit N9 (see also S6): the direct initiate was the last
+  // unthrottled OAuth entry; 20/min like the connect initiate.
+  const limited = await enforceIpRateLimit(request, 'auth_facebook_initiate', 20);
+  if (limited) return limited;
   return handleInitiateFacebookOAuth(request);
 }

@@ -601,7 +601,6 @@ export async function handleFacebookCallback(
     encryptionKey,
     appUrl,
     rootDomain,
-    redirectUri,
   } = getCallbackEnvConfig();
 
   const searchParams = request.nextUrl.searchParams;
@@ -739,13 +738,16 @@ export async function handleFacebookCallback(
 
     const { fbAppId: effectiveAppId, decryptedAppSecret: effectiveAppSecret, workspaceId } = byocResult;
 
+    // Audit N6: the fallback argument is a bare app URL, not the
+    // full redirect URI — passing redirectUri here made the local
+    // branch append /api/auth/facebook/callback a second time.
     const effectiveRedirectUri =
       statePayload.redirectUri ||
       buildSubdomainOAuthRedirectUri(
         tenantSubdomain,
         request.url,
         rootDomain,
-        redirectUri
+        appUrl
       );
 
     // 2. Exchange temporary code for short-lived token (Graph API v26.0)

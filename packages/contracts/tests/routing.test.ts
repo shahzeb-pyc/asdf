@@ -259,6 +259,16 @@ describe('Tenant Subdomain Routing Contracts', () => {
       );
       expect(redirectUri).toBe('http://localhost:3000/api/auth/facebook/callback');
     });
+
+    it('does not double-append the callback path when the fallback is already a full redirect URI (N6)', () => {
+      const redirectUri = buildSubdomainOAuthRedirectUri(
+        'acme',
+        'http://localhost:3000/api/auth/facebook',
+        'localhost:3000',
+        'http://localhost:3000/api/auth/facebook/callback'
+      );
+      expect(redirectUri).toBe('http://localhost:3000/api/auth/facebook/callback');
+    });
   });
 
   describe('buildSubdomainOAuthRedirectUriForCallback', () => {
