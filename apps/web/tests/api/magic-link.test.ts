@@ -7,7 +7,7 @@ import {
   signSessionToken,
   verifyOAuthState,
 } from '@fbuploadpro/contracts';
-import { POST as generateMagicLink } from '../../src/app/api/tenant/[subdomain]/accounts/magic-link/route';
+import { POST as generateMagicLink, handleGenerateMagicLink } from '../../src/app/api/tenant/[subdomain]/accounts/magic-link/route';
 import { GET as forwardMagicLink } from '../../src/app/connect/facebook/route';
 import { handleFacebookCallback } from '../../src/app/api/auth/facebook/callback/route';
 import * as authModule from '@/lib/auth/clients';
@@ -203,6 +203,36 @@ describe('Magic Link Facebook Connection Endpoints (Spec 027)', () => {
         expect(data.magicUrl).not.toContain('localhost:3000//connect');
       } finally {
         process.env.NEXT_PUBLIC_APP_URL = 'http://localhost:3000';
+      }
+    });
+
+    it('fails loud in production when the app URL is unset instead of minting a localhost magic link (P1-7)', async () => {
+      const prevAppUrl = process.env.NEXT_PUBLIC_APP_URL;
+      delete process.env.NEXT_PUBLIC_APP_URL;
+      // NODE_ENV is read-only in the Node types, so stub it through
+      // vitest instead of assigning to process.env directly.
+      // The handler (not the POST export) is called directly here:
+      // the POST wrapper's production rate limiter fails closed
+      // without Redis, which would 429 before the handler runs.
+      vi.stubEnv('NODE_ENV', 'production');
+      try {
+        const req = new NextRequest(
+          'http://localhost:3000/api/tenant/acme/accounts/magic-link',
+          {
+            method: 'POST',
+            headers: { cookie: validSessionCookie },
+          }
+        );
+        const res = await handleGenerateMagicLink(req, 'acme');
+
+        expect(res.status).toBe(500);
+        const data = await res.json();
+        expect(data.error).toBe('APP_URL_NOT_CONFIGURED');
+        expect(data.magicUrl).toBeUndefined();
+      } finally {
+        if (prevAppUrl === undefined) delete process.env.NEXT_PUBLIC_APP_URL;
+        else process.env.NEXT_PUBLIC_APP_URL = prevAppUrl;
+        vi.unstubAllEnvs();
       }
     });
   });

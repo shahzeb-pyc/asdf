@@ -196,6 +196,8 @@ describe('POST …/publishing/queue/reorder', () => {
     class FakeSupabaseQuery {
       private filters: Array<[string, unknown]> = [];
       private patch: Row | null = null;
+      private from = 0;
+      private to: number | null = null;
       constructor(
         private store: { rows: Row[] },
         private table: string
@@ -205,6 +207,14 @@ describe('POST …/publishing/queue/reorder', () => {
       }
       eq(col: string, val: unknown): this {
         this.filters.push([col, val]);
+        return this;
+      }
+      order(): this {
+        return this;
+      }
+      range(from: number, to: number): this {
+        this.from = from;
+        this.to = to;
         return this;
       }
       update(patch: Row): this {
@@ -220,7 +230,10 @@ describe('POST …/publishing/queue/reorder', () => {
           for (const row of this.applyFilters()) Object.assign(row, this.patch);
           resolve({ error: null });
         } else {
-          resolve({ data: this.applyFilters(), error: null });
+          const all = this.applyFilters();
+          const sliced =
+            this.to === null ? all : all.slice(this.from, this.to + 1);
+          resolve({ data: sliced, error: null });
         }
       }
       private applyFilters(): Row[] {
@@ -288,6 +301,42 @@ describe('POST …/publishing/queue/reorder', () => {
       );
       expect(incomplete.status).toBe(400);
       expect((await incomplete.json()).error).toBe('INCOMPLETE_ORDER');
+    });
+
+    it('validates against the full queued set past the first 1,000-row page (P1-6)', async () => {
+      const ids = Array.from(
+        { length: 1001 },
+        (_, i) => `11111111-1111-4111-8111-${i.toString(16).padStart(12, '0')}`
+      );
+      const store = storeWith(ids.map((id, index) => ({ id, queue_seq: index + 1 })));
+      const fake = new FakeSupabase(store);
+      const reversed = [...ids].reverse();
+      const res = await handleReorderQueueItems(
+        reorderRequest({ pageId, itemIds: reversed }),
+        'acme',
+        fake as never
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ success: true, itemIds: reversed });
+      const byId = new Map(store.rows.map((row) => [row.id as string, row]));
+      expect(byId.get(reversed[0])?.queue_seq).toBe(1);
+      expect(byId.get(reversed[1000])?.queue_seq).toBe(1001);
+    });
+
+    it('fails loud past 10 full pages instead of validating a truncated set (P1-6)', async () => {
+      const ids = Array.from(
+        { length: 10001 },
+        (_, i) => `11111111-1111-4111-8111-${i.toString(16).padStart(12, '0')}`
+      );
+      const store = storeWith(ids.map((id, index) => ({ id, queue_seq: index + 1 })));
+      const fake = new FakeSupabase(store);
+      const res = await handleReorderQueueItems(
+        reorderRequest({ pageId, itemIds: ids }),
+        'acme',
+        fake as never
+      );
+      expect(res.status).toBe(500);
+      expect((await res.json()).error).toBe('QUEUE_TOO_LARGE');
     });
   });
 });

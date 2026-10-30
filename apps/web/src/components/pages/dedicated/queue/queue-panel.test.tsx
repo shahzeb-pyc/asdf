@@ -584,6 +584,64 @@ describe('QueuePanel', () => {
     expect(toast.success).not.toHaveBeenCalled();
   });
 
+  it('retries the newest order when the first sync fails while a newer click is pending (P1-6)', async () => {
+    const user = userEvent.setup();
+    seed = [
+      item({ id: ID_A, caption: 'First queued post', postFormat: 'text', status: 'queued' }),
+      item({ id: ID_B, caption: 'Second queued post', postFormat: 'text', status: 'queued' }),
+      item({ id: ID_C, caption: 'Third queued post', postFormat: 'text', status: 'queued' }),
+    ];
+    let rejectFirst: (() => void) | null = null;
+    let reorderCalls = 0;
+    apiPost.mockImplementation(async (path: string, body: { itemIds?: unknown }) => {
+      if (String(path).includes('/publishing/queue/reorder')) {
+        reorderCalls += 1;
+        const ids = body.itemIds as string[];
+        const byId = new Map(seed.map((row) => [row.id, row]));
+        seed = [
+          ...ids.map((id) => byId.get(id)!).filter(Boolean),
+          ...seed.filter((row) => !ids.includes(row.id)),
+        ];
+        if (reorderCalls === 1) {
+          return new Promise((_, reject) => {
+            rejectFirst = () => reject(new Error(''));
+          });
+        }
+        return {};
+      }
+      return {};
+    });
+    renderPanel();
+    await waitFor(() => expect(screen.getByTestId(`queue-row-${ID_A}`)).toBeTruthy());
+    const panel = screen.getByTestId('queue-panel');
+    const positionOf = (id: string) =>
+      within(screen.getByTestId(`queue-row-${id}`)).getByTestId('queue-row-position')
+        .textContent;
+    // First click: A moves down, sync starts and stays in flight.
+    await user.click(
+      within(screen.getByTestId(`queue-row-${ID_A}`)).getByTestId('queue-row-move-down')
+    );
+    await waitFor(() => expect(positionOf(ID_A)).toContain('#2'));
+    // Second click while the first sync is in flight: A moves down
+    // again, and the newest order becomes pending.
+    await user.click(
+      within(screen.getByTestId(`queue-row-${ID_A}`)).getByTestId('queue-row-move-down')
+    );
+    await waitFor(() => expect(positionOf(ID_A)).toContain('#3'));
+    expect(rejectFirst).not.toBeNull();
+    // The first sync fails — but the pending newest order is
+    // retried instead of discarded, so there is no error toast and
+    // the final order sticks after convergence.
+    rejectFirst!();
+    await waitFor(() => expect(reorderCalls).toBe(2));
+    await waitFor(() =>
+      expect(panel.querySelectorAll('ul > li').item(0).textContent).toContain('Second queued post')
+    );
+    await waitFor(() => expect(positionOf(ID_A)).toContain('#3'));
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
   it('filters by status and resets to the first page', async () => {
     const user = userEvent.setup();
     renderPanel();

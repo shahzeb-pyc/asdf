@@ -284,36 +284,106 @@ async function fetchSupabaseAccounts(
   supabase: SupabaseClient<Database>,
   workspaceId: string
 ): Promise<{ rows?: AccountRow[]; error?: string }> {
-  const { data: accountsData, error } = await supabase
-    .from('social_accounts')
-    .select(
-      'id, external_account_id, display_name, avatar_url, status, token_expires_at, created_at, updated_at'
-    )
-    .eq('workspace_id', workspaceId)
-    .eq('platform', 'instagram')
-    .order('created_at', { ascending: false });
-
-  if (error) {
-    return { error: error.message };
+  // Audit P1-1: the old single selects silently truncated past
+  // PostgREST's 1,000-row limit, giving wrong totals and missing
+  // accounts with no error, and a destinations error was ignored
+  // entirely (accounts rendered without destinations). Page through
+  // with .range() like the Facebook accounts route; past 10 full
+  // pages the list fails loudly rather than returning wrong data.
+  // The id tiebreakers make paging stable when created_at ties.
+  const SUPABASE_PAGE_SIZE = 1000;
+  const SUPABASE_MAX_PAGES = 10;
+  async function fetchAllPages<T>(
+    fetchPage: (
+      from: number,
+      to: number
+    ) => Promise<{
+      data: T[] | null;
+      error: { message: string } | null;
+    }>,
+    tooManyMessage: string
+  ): Promise<{ rows?: T[]; error?: string }> {
+    const rows: T[] = [];
+    for (let page = 0; page < SUPABASE_MAX_PAGES; page++) {
+      const from = page * SUPABASE_PAGE_SIZE;
+      const { data, error } = await fetchPage(
+        from,
+        from + SUPABASE_PAGE_SIZE - 1
+      );
+      if (error) {
+        return { error: error.message };
+      }
+      const pageRows = data ?? [];
+      rows.push(...pageRows);
+      if (pageRows.length < SUPABASE_PAGE_SIZE) {
+        break;
+      }
+      if (page === SUPABASE_MAX_PAGES - 1) {
+        return { error: tooManyMessage };
+      }
+    }
+    return { rows };
   }
-  const accountRows = (accountsData || []) as unknown as SupabaseAccountRow[];
+
+  const accountsRes = await fetchAllPages<SupabaseAccountRow>(
+    async (from, to) => {
+      const { data, error } = await supabase
+        .from('social_accounts')
+        .select(
+          'id, external_account_id, display_name, avatar_url, status, token_expires_at, created_at, updated_at'
+        )
+        .eq('workspace_id', workspaceId)
+        .eq('platform', 'instagram')
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+        .range(from, to);
+      return {
+        data: data as unknown as SupabaseAccountRow[] | null,
+        error: error ? { message: error.message } : null,
+      };
+    },
+    'Too many accounts to list reliably; please contact support.'
+  );
+  if (accountsRes.error) {
+    return { error: accountsRes.error };
+  }
+  const accountRows = accountsRes.rows ?? [];
   // Destinations join (Supabase path): the earliest destination per
   // account, mirroring the SQL subqueries above.
-  const { data: destinationData } = await supabase
-    .from('destinations')
-    .select('account_id, name, handle, created_at')
-    .eq('workspace_id', workspaceId)
-    .eq('platform', 'instagram')
-    .order('created_at', { ascending: true });
+  const destinationsRes = await fetchAllPages<{
+    account_id: string;
+    name: string | null;
+    handle: string | null;
+  }>(
+    async (from, to) => {
+      const { data, error } = await supabase
+        .from('destinations')
+        .select('account_id, name, handle, created_at')
+        .eq('workspace_id', workspaceId)
+        .eq('platform', 'instagram')
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, to);
+      return {
+        data: data as unknown as Array<{
+          account_id: string;
+          name: string | null;
+          handle: string | null;
+        }> | null,
+        error: error ? { message: error.message } : null,
+      };
+    },
+    'Too many destinations to list reliably; please contact support.'
+  );
+  if (destinationsRes.error) {
+    return { error: destinationsRes.error };
+  }
+  const destinationData = destinationsRes.rows ?? [];
   const destinationsByAccount = new Map<
     string,
     Array<{ name: string | null; handle: string | null }>
   >();
-  for (const dest of (destinationData || []) as Array<{
-    account_id: string;
-    name: string | null;
-    handle: string | null;
-  }>) {
+  for (const dest of destinationData) {
     const list = destinationsByAccount.get(dest.account_id) ?? [];
     list.push({ name: dest.name, handle: dest.handle });
     destinationsByAccount.set(dest.account_id, list);

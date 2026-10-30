@@ -26,7 +26,11 @@ import type { SupabaseClient } from '@supabase/supabase-js';
  * UPDATE inside a transaction; the Supabase path has no raw-SQL
  * transaction, so it updates in two passes — first to large offset
  * values (unique, order-preserving), then to dense values — so a
- * failure can never leave duplicate queue_seq values behind.
+ * failure can never leave duplicate queue_seq values behind, and
+ * re-running the same order converges (the client retries the newest
+ * order after a failed sync). The Supabase validation select is
+ * range-paged (P1-6): an unpaged select would silently truncate past
+ * 1,000 queued posts and reject a correct full reorder.
  * No migration: `queue_seq` already exists (PR #24).
  * No idempotency key: queue management, not publishing.
  */
@@ -176,16 +180,43 @@ export async function handleReorderQueueItems(
     return NextResponse.json({ error: 'Database service unavailable' }, { status: 500 });
   }
 
-  const { data: queuedRows, error: queuedError } = await supabase
-    .from('queue_items')
-    .select('id')
-    .eq('workspace_id', workspaceId)
-    .eq('destination_id', pageId)
-    .eq('status', 'queued');
-  if (queuedError) {
-    return NextResponse.json({ error: 'Failed to reorder queue' }, { status: 500 });
+  // P1-6: the old single select silently truncated past PostgREST's
+  // 1,000-row limit, so validation ran against a partial queued set
+  // and a full reorder failed outright past 1,000 queued posts.
+  // Page through with .range() (id order is total, so paging is
+  // stable; validation itself is set-based, order does not matter)
+  // and fail loudly past 10 full pages instead of validating wrong.
+  const REORDER_PAGE_SIZE = 1000;
+  const REORDER_MAX_PAGES = 10;
+  const queuedIds: string[] = [];
+  for (let page = 0; page < REORDER_MAX_PAGES; page++) {
+    const from = page * REORDER_PAGE_SIZE;
+    const { data: pageRows, error: pageError } = await supabase
+      .from('queue_items')
+      .select('id')
+      .eq('workspace_id', workspaceId)
+      .eq('destination_id', pageId)
+      .eq('status', 'queued')
+      .order('id', { ascending: true })
+      .range(from, from + REORDER_PAGE_SIZE - 1);
+    if (pageError) {
+      return NextResponse.json({ error: 'Failed to reorder queue' }, { status: 500 });
+    }
+    const pageIds = (pageRows as Array<{ id: string }>).map((row) => row.id);
+    queuedIds.push(...pageIds);
+    if (pageIds.length < REORDER_PAGE_SIZE) {
+      break;
+    }
+    if (page === REORDER_MAX_PAGES - 1) {
+      return NextResponse.json(
+        {
+          error: 'QUEUE_TOO_LARGE',
+          message: 'This page has too many queued posts to reorder reliably; please contact support.',
+        },
+        { status: 500 }
+      );
+    }
   }
-  const queuedIds = (queuedRows as Array<{ id: string }>).map((row) => row.id);
 
   const invalid = validateReorderList(queuedIds, itemIds);
   if (invalid) return invalid;

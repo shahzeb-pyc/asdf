@@ -54,8 +54,6 @@ export async function handleGenerateMagicLink(
   dbClient?: DatabaseClient | SupabaseClient
 ): Promise<NextResponse> {
   const sessionSecret = getSessionSecret();
-  const appUrl =
-    process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 
   // 1. Session auth guard
   const sessionCookie = request.cookies.get('fbup_session')?.value;
@@ -83,6 +81,27 @@ export async function handleGenerateMagicLink(
   if (!access.allowed) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
+
+  // P1-7: the app URL must never fall back to localhost outside
+  // development — a signed URL minted against localhost silently
+  // breaks connect in production. Fail loud (500, no URL, no token
+  // minted) when the variable is unset in production; development
+  // keeps the localhost fallback. This check runs after auth and
+  // the tenant check (so unauthenticated callers learn nothing
+  // about configuration) but before the BYOC pre-check and any
+  // token minting: a missing deployment URL is the more
+  // fundamental misconfiguration and must surface first.
+  const configuredAppUrl = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  if (!configuredAppUrl && process.env.NODE_ENV === 'production') {
+    return NextResponse.json(
+      {
+        error: 'APP_URL_NOT_CONFIGURED',
+        message: 'The app URL is not configured; magic links cannot be generated.',
+      },
+      { status: 500 }
+    );
+  }
+  const appUrl = configuredAppUrl || 'http://localhost:3000';
 
   // 3. Pre-check that Facebook BYOC is configured for this workspace
   const client = dbClient || getSupabaseAdminClient();

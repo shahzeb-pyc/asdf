@@ -417,6 +417,19 @@ export function QueuePanel({
               queryClient.setQueryData(queryKey, data);
             }
           }
+          // P1-6: a newer order clicked during the failed sync is
+          // the user's latest intent, not stale state — retry it
+          // instead of discarding it. It is a full order for the
+          // same queued set, so re-running it converges; only when
+          // no newer order exists does the failure surface as a
+          // toast and a rollback.
+          if (state.pending && !sameOrder(state.pending, current)) {
+            current = state.pending;
+            state.pending = null;
+            state.snapshot = snapshotQueueCache();
+            state.active = true;
+            continue;
+          }
           state.snapshot = null;
           state.active = false;
           state.pending = null;
@@ -486,8 +499,27 @@ export function QueuePanel({
   // sync the new order in the background. Buttons are deliberately
   // NOT put into the shared busy state here — consecutive clicks
   // keep working while a sync is in flight.
+  //
+  // P1-6: the move is computed from the live estimates cache, not
+  // from the render-scope list — rapid clicks must compose on the
+  // newest optimistic order even if a re-render has not landed yet,
+  // otherwise a second click computed from a stale list silently
+  // undoes the first move.
+  const readCachedQueuedOrder = (): string[] | null => {
+    const data = queryClient.getQueryData([
+      ...tenant.queue.items(pageId),
+      'panel',
+      'estimates',
+    ]) as ListQueueItemsResponse | undefined;
+    if (data && Array.isArray(data.items)) {
+      return data.items.map((queued) => queued.id);
+    }
+    return null;
+  };
+
   const handleMove = (item: QueueItem, direction: -1 | 1) => {
-    const order = queuedList.map((queued) => queued.id);
+    const order =
+      readCachedQueuedOrder() ?? queuedList.map((queued) => queued.id);
     const index = order.indexOf(item.id);
     const target = index + direction;
     if (index === -1 || target < 0 || target >= order.length) return;
