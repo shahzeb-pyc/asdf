@@ -50,6 +50,15 @@ export const queryKeys = {
           [...tenantRoot, 'pages', pageId, 'slots'] as const,
       },
 
+      tiktokMirrors: {
+        all: [...tenantRoot, 'tiktok-mirrors'] as const,
+        list: [...tenantRoot, 'tiktok-mirrors', 'list'] as const,
+        listPage: (params: { page: number }) =>
+          [...tenantRoot, 'tiktok-mirrors', 'list', params] as const,
+        detail: (mirrorId: string) =>
+          [...tenantRoot, 'tiktok-mirrors', mirrorId] as const,
+      },
+
       destinations: {
         all: [...tenantRoot, 'destinations'] as const,
         detail: (destinationId: string) =>

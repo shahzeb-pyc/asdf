@@ -135,6 +135,7 @@ export function WorkspaceSidebar({
   const accountsHref = href('/accounts');
   const pagesHref = href('/pages');
   const publishNowHref = href('/publish-now');
+  const tiktokMirrorsHref = href('/tiktok-mirrors');
 
   const isHomeActive = effectivePath === normalizeTenantPath(homeHref, subdomain);
   const isMediaActive = effectivePath.startsWith(normalizeTenantPath(mediaHref, subdomain));
@@ -148,6 +149,9 @@ export function WorkspaceSidebar({
   const isPagesActive = effectivePath.startsWith(normalizeTenantPath(pagesHref, subdomain));
   const isPublishNowActive = effectivePath.startsWith(
     normalizeTenantPath(publishNowHref, subdomain)
+  );
+  const isTiktokMirrorsActive = effectivePath.startsWith(
+    normalizeTenantPath(tiktokMirrorsHref, subdomain)
   );
 
   const handleNavigate = (targetHref: string) => {
@@ -283,8 +287,8 @@ export function WorkspaceSidebar({
             <SidebarMenu>
               <SidebarMenuItem>
                 <SidebarMenuButton
-                  tooltip="Facebook — Accounts, Pages & Publish Now"
-                  isActive={isCollapsed && (isAccountsActive || isPagesActive || isPublishNowActive)}
+                  tooltip="Facebook — Accounts, Pages, Publish Now & Auto Repost"
+                  isActive={isCollapsed && (isAccountsActive || isPagesActive || isPublishNowActive || isTiktokMirrorsActive)}
                   aria-expanded={isCollapsed ? undefined : isFacebookOpen}
                   onClick={() => {
                     if (isCollapsed) {
@@ -307,6 +311,7 @@ export function WorkspaceSidebar({
                     <NavSubLeaf label="Accounts" href={accountsHref} isActive={isAccountsActive} onLeafClick={handleLeafClick} />
                     <NavSubLeaf label="Pages" href={pagesHref} isActive={isPagesActive} onLeafClick={handleLeafClick} />
                     <NavSubLeaf label="Publish Now" href={publishNowHref} isActive={isPublishNowActive} onLeafClick={handleLeafClick} />
+                    <NavSubLeaf label="Auto Repost" href={tiktokMirrorsHref} isActive={isTiktokMirrorsActive} onLeafClick={handleLeafClick} />
                   </SidebarMenuSub>
                 )}
               </SidebarMenuItem>

@@ -67,6 +67,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   composerTextLimitForType,
   deriveDefaultCaptionFromFilename,
+  isFacebookAccountRestricted,
   PublishNowResponseSchema,
   PublishNowTempMediaResponseSchema,
   type ComposerMedia,
@@ -188,17 +189,20 @@ function errorText(error: unknown, fallback: string): string {
 }
 
 /**
- * A failed result is a Meta active account restriction when Facebook
- * returned code 1 with subcode 2424009 or 1404078. The restriction is
+ * A failed result is a Meta active account restriction. The restriction is
  * account-level and non-retryable while it stands, so such rows are
- * never re-attempted by "Retry failed only". Derived from the
- * diagnostics fields the route already returns — no schema change.
+ * never re-attempted by "Retry failed only". Detection lives in contracts
+ * (shared with Auto Repost); this keeps the failed-status gate and the
+ * exact historical semantics (structured codes only) from the diagnostics
+ * fields the route already returns — no schema change.
  */
 function isRestrictedResult(result: PublishNowResultItem): boolean {
   return (
     result.status === 'failed' &&
-    result.graphCode === 1 &&
-    (result.graphSubcode === 2424009 || result.graphSubcode === 1404078)
+    isFacebookAccountRestricted(
+      { code: result.graphCode, subcode: result.graphSubcode },
+      { messageFallback: false }
+    )
   );
 }
 

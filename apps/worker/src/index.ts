@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { InternalError, type PublisherRegistry } from '@fbuploadpro/contracts';
+import { InternalError, parseTikwmApiKeys, type PublisherRegistry } from '@fbuploadpro/contracts';
 import {
   runClaimTick,
   type ClaimerDbClient,
@@ -7,6 +7,12 @@ import {
   type PublishQueueMessage,
 } from './claimer.js';
 import { runSlotClaimTick } from './slot-claim.js';
+import {
+  buildMirrorTickDeps,
+  MIRROR_DISPATCH_CRON,
+  runMirrorDispatch,
+  runMirrorJobTick,
+} from './mirror-tick.js';
 import { handleQueueBatch, type ConsumerDbClient } from './consumers.js';
 import {
   isTokenEncryptionKeyWellFormed,
@@ -77,6 +83,15 @@ export interface Env {
   __TEST_DB__?: unknown;
   POSTHOG_KEY?: string;
   POSTHOG_HOST?: string;
+  /**
+   * Paid tikwmapi keys for TikTok mirror feed discovery
+   * (comma-separated list, plus singular fallback — see
+   * contracts parseTikwmApiKeys). Worker secret, set via
+   * wrangler secret; never committed. Empty = every mirror
+   * feed fetch fails loudly as a per-mirror error.
+   */
+  TIKWMAPI_KEYS?: string;
+  TIKWMAPI_KEY?: string;
   /** Post for Me API key (specs 125/126) — provider-managed YouTube/TikTok. Worker env only, via GitHub Secrets. */
   POST_FOR_ME_API_KEY?: string;
   /** X global-app client ID (spec 127, D7) — GitHub Secrets → worker env only, never the database. */
@@ -220,6 +235,44 @@ export async function handleScheduled(
     return;
   }
 
+  // Mirror dispatcher cron (TikTok mirrors, scaled): every 10
+  // minutes the dispatcher runs ONLY the dispatch job (same
+  // pattern as retention) — it scans due mirrors and inserts
+  // one mirror-check job per mirror into the mirror_check_jobs
+  // database queue. The actual checks run in the every-minute
+  // tick below (the queue consumer), never in the cron itself,
+  // so one slow mirror cannot hold up the others. A
+  // dispatch-level failure (scan query, enqueue RPC) is
+  // captured here and rethrown like the refresh cycle;
+  // per-mirror failures live in the job consumer.
+  if (controller.cron === MIRROR_DISPATCH_CRON) {
+    try {
+      const tickDeps = buildMirrorTickDeps(db, masterKey, {
+        now: options?.now ?? new Date(controller.scheduledTime),
+        env,
+        waitUntil,
+        tikwmApiKeys: parseTikwmApiKeys(env.TIKWMAPI_KEYS, env.TIKWMAPI_KEY),
+      });
+      await runMirrorDispatch({
+        listDueMirrorIds: tickDeps.listDueMirrorIds,
+        enqueueMirrorCheckJobs: tickDeps.enqueueMirrorCheckJobs,
+        advanceMirrorCheck: (mirrorId, nextCheckAt) =>
+          tickDeps.updateMirror(mirrorId, { nextCheckAt }),
+        now: options?.now ?? new Date(controller.scheduledTime),
+      });
+    } catch (err) {
+      console.error('[Scheduled] mirror dispatch failed:', err);
+      captureWorkerError(
+        env,
+        err,
+        { site: 'handleScheduled', kind: 'mirror_dispatch_failed' },
+        waitUntil
+      );
+      throw err;
+    }
+    return;
+  }
+
   try {
     const result = await runClaimTick({
       db,
@@ -257,6 +310,37 @@ export async function handleScheduled(
       console.error('[handleScheduled] slot claim tick failed; continuing:', slotErr);
     }
 
+    // Mirror-check jobs (TikTok mirrors, database queue): the
+    // every-minute tick is the consumer — it claims due jobs
+    // from mirror_check_jobs and runs one mirror check per job.
+    // Isolated like the slot claim: a failure here never breaks
+    // the claimer, the slot claim, or the heartbeat below —
+    // unclaimed jobs simply wait for the next minute, and the
+    // job tick itself never throws (see runMirrorJobTick).
+    try {
+      const tickDeps = buildMirrorTickDeps(db, masterKey, {
+        env,
+        waitUntil,
+        tikwmApiKeys: parseTikwmApiKeys(env.TIKWMAPI_KEYS, env.TIKWMAPI_KEY),
+      });
+      await runMirrorJobTick({
+        check: tickDeps,
+        claimJobs: tickDeps.claimMirrorCheckJobs,
+        fetchMirror: tickDeps.fetchMirror,
+        completeJob: tickDeps.completeMirrorCheckJob,
+        failJob: tickDeps.failMirrorCheckJob,
+        now: options?.now ?? new Date(controller.scheduledTime),
+      });
+    } catch (jobErr) {
+      captureWorkerError(
+        env,
+        jobErr,
+        { site: 'handleScheduled', kind: 'mirror_job_tick_failed' },
+        waitUntil
+      );
+      console.error('[handleScheduled] mirror job tick failed; continuing:', jobErr);
+    }
+
     await recordHeartbeat(db, {
       success: true,
       claimed: result.claimed,
@@ -278,7 +362,9 @@ export async function handleScheduled(
 /**
  * Queue handler (spec 121 consumers): dispatches by queue name to the
  * publish consumers or the DLQ consumers. See consumers.ts for the
- * ack/retry semantics.
+ * ack/retry semantics. (Mirror checks no longer use Cloudflare
+ * Queues — they run on the mirror_check_jobs database queue,
+ * consumed by the every-minute tick in handleScheduled.)
  */
 export async function handleQueue(
   batch: MessageBatch<PublishQueueMessage>,
@@ -291,7 +377,7 @@ export async function handleQueue(
     throw new InternalError('Database client is not configured; cannot consume queue batch');
   }
   const registry = options?.registry ?? createWorkerPublisherRegistry(env);
-  await handleQueueBatch(batch, {
+  await handleQueueBatch(batch as MessageBatch<PublishQueueMessage>, {
     db,
     registry,
     masterKey: env.TOKEN_ENCRYPTION_KEY,
