@@ -190,11 +190,10 @@ function fetchWithTimeout(
   options?: RequestInit
 ): Promise<Response> {
   const timeout = AbortSignal.timeout(SUPABASE_REQUEST_TIMEOUT_MS);
-  const signal = options?.signal
-    ? typeof AbortSignal.any === 'function'
-      ? AbortSignal.any([options.signal, timeout])
-      : timeout
-    : timeout;
+  let signal = timeout;
+  if (options?.signal && typeof AbortSignal.any === 'function') {
+    signal = AbortSignal.any([options.signal, timeout]);
+  }
   return fetch(url, { ...options, signal });
 }
 

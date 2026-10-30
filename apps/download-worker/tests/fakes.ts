@@ -1,5 +1,4 @@
 import type { IStorageService } from '@fbuploadpro/contracts';
-import type { CheckpointPart } from '../src/r2-sink.js';
 import type {
   DownloadJobRecord,
   JobPatch,

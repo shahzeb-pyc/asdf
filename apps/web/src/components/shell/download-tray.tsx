@@ -62,6 +62,171 @@ function formatMegabytes(bytes: number): string {
   return `${(bytes / 1_048_576).toFixed(1)} MB`;
 }
 
+function trayTitle(
+  successFlash: boolean,
+  activeJobs: DownloadJob[],
+  failedJobs: DownloadJob[]
+): string {
+  if (successFlash) return '✓ Downloaded';
+  if (activeJobs.length > 0) {
+    const noun = activeJobs.length === 1 ? 'file' : 'files';
+    return `⬇ Downloading ${activeJobs.length} ${noun}`;
+  }
+  const noun = failedJobs.length === 1 ? 'download' : 'downloads';
+  return `${failedJobs.length} ${noun} failed`;
+}
+
+interface TrayStateAdjustmentArgs {
+  activeCount: number;
+  failedCount: number;
+  dismissed: boolean;
+  successFlash: boolean;
+  prevActiveCount: number;
+  setDismissed: (value: boolean) => void;
+  setMinimized: (value: boolean) => void;
+  setSuccessFlash: (value: boolean) => void;
+  setPrevActiveCount: (value: number) => void;
+}
+
+// Render-phase adjustments (the documented React pattern for
+// deriving state from new data — not effects), factored out of the
+// component so its own complexity stays readable: new activity
+// re-opens the tray expanded; work finishing cleanly flashes
+// success; the flash and the tray never linger past new work.
+function applyTrayStateAdjustments(args: TrayStateAdjustmentArgs): void {
+  const hasOpenJobs = args.activeCount > 0 || args.failedCount > 0;
+  if (hasOpenJobs && args.dismissed) {
+    args.setDismissed(false);
+    args.setMinimized(false);
+    args.setSuccessFlash(false);
+  }
+  if (hasOpenJobs && args.successFlash) {
+    args.setSuccessFlash(false);
+  }
+  if (args.prevActiveCount !== args.activeCount) {
+    if (
+      args.activeCount === 0 &&
+      args.failedCount === 0 &&
+      args.prevActiveCount > 0 &&
+      !args.dismissed
+    ) {
+      args.setSuccessFlash(true);
+    }
+    args.setPrevActiveCount(args.activeCount);
+  }
+}
+
+interface DownloadJobRowProps {
+  job: DownloadJob;
+  onRetry: (jobId: string) => void;
+  onCancel: (job: DownloadJob) => void;
+}
+
+function DownloadJobRow({ job, onRetry, onCancel }: Readonly<DownloadJobRowProps>) {
+  return (
+    <div data-testid={`download-job-row-${job.id}`} className="flex flex-col gap-1">
+      <div className="flex items-center gap-2">
+        <span className="min-w-0 flex-1 truncate text-body text-ink">
+          {displayNameForJob(job)}
+        </span>
+        {job.status === 'failed' ? (
+          <Button
+            type="button"
+            data-testid={`download-job-retry-${job.id}`}
+            onClick={() => onRetry(job.id)}
+            className="h-8 shrink-0"
+          >
+            Retry
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            variant="ghost"
+            data-testid={`download-job-cancel-${job.id}`}
+            onClick={() => onCancel(job)}
+            className="h-8 shrink-0 px-2"
+          >
+            Cancel
+          </Button>
+        )}
+      </div>
+      {job.status === 'failed' ? (
+        <p className="text-metadata text-signal-critical">
+          <span aria-hidden>✕ </span>
+          {reasonForJob(job)}
+        </p>
+      ) : (
+        <div className="flex items-center gap-2">
+          <Progress
+            value={job.progressPercent}
+            aria-label={`Download progress for ${displayNameForJob(job)}`}
+            className="flex-1"
+          />
+          <span className="w-20 shrink-0 text-right text-metadata tabular-nums text-ink-sub">
+            {job.status === 'queued' && 'Queued'}
+            {job.status === 'resolving' && 'Resolving…'}
+            {job.status === 'downloading' &&
+              (job.totalBytes
+                ? `${job.progressPercent}%`
+                : `${formatMegabytes(job.downloadedBytes)} downloaded`)}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface TrayPillProps {
+  failedCount: number;
+  aggregatePercent: number;
+  onExpand: () => void;
+}
+
+// New files in the grid: a job id that disappears from the open
+// list without being user-cancelled finished, so the media list
+// refetches. (Cancelled ids are recorded by the cancel handlers and
+// skipped here; a spurious refetch is harmless either way.)
+function trackFinishedJobs(
+  jobs: DownloadJob[],
+  prevOpen: { current: Map<string, DownloadJob> },
+  userCancelled: { current: Set<string> },
+  lastCompletedFolder: { current: string | null },
+  queryClient: ReturnType<typeof useQueryClient>,
+  subdomain: string
+): void {
+  const current = new Map(jobs.map((job) => [job.id, job]));
+  let finished = false;
+  for (const [id, prevJob] of prevOpen.current) {
+    if (!current.has(id) && !userCancelled.current.has(id)) {
+      finished = true;
+      lastCompletedFolder.current = prevJob.targetFolderId;
+    }
+  }
+  prevOpen.current = current;
+  if (finished) {
+    void invalidateMediaList(queryClient, subdomain);
+  }
+}
+
+function TrayPill({ failedCount, aggregatePercent, onExpand }: Readonly<TrayPillProps>) {
+  return (
+    <button
+      type="button"
+      data-testid="download-tray-pill"
+      onClick={onExpand}
+      className="fixed right-4 bottom-4 z-dialog rounded-full bg-primary px-4 py-2 text-metadata font-semibold text-on-primary shadow-modal"
+    >
+      {failedCount > 0 ? (
+        <span className="text-brand-rose">
+          {failedCount} failed — tap to view
+        </span>
+      ) : (
+        <span>⬇ {aggregatePercent}%</span>
+      )}
+    </button>
+  );
+}
+
 export interface DownloadTrayProps {
   subdomain: string;
   useCleanPaths?: boolean;
@@ -85,29 +250,17 @@ export function DownloadTray({ subdomain, useCleanPaths = false }: Readonly<Down
   const activeJobs = jobs.filter(isDownloadJobActive);
   const failedJobs = jobs.filter((job) => job.status === 'failed');
 
-  // Render-phase adjustments (the documented React pattern for
-  // deriving state from new data — not effects): new activity
-  // re-opens the tray expanded; work finishing cleanly flashes
-  // success; the flash and the tray never linger past new work.
-  if ((activeJobs.length > 0 || failedJobs.length > 0) && dismissed) {
-    setDismissed(false);
-    setMinimized(false);
-    setSuccessFlash(false);
-  }
-  if ((activeJobs.length > 0 || failedJobs.length > 0) && successFlash) {
-    setSuccessFlash(false);
-  }
-  if (prevActiveCount !== activeJobs.length) {
-    if (
-      activeJobs.length === 0 &&
-      failedJobs.length === 0 &&
-      prevActiveCount > 0 &&
-      !dismissed
-    ) {
-      setSuccessFlash(true);
-    }
-    setPrevActiveCount(activeJobs.length);
-  }
+  applyTrayStateAdjustments({
+    activeCount: activeJobs.length,
+    failedCount: failedJobs.length,
+    dismissed,
+    successFlash,
+    prevActiveCount,
+    setDismissed,
+    setMinimized,
+    setSuccessFlash,
+    setPrevActiveCount,
+  });
 
   // The success flash hides itself (deferred timer, the same shape as
   // the library's debounce timer — never a synchronous state sync).
@@ -120,26 +273,18 @@ export function DownloadTray({ subdomain, useCleanPaths = false }: Readonly<Down
     return () => clearTimeout(timer);
   }, [successFlash]);
 
-  // New files in the grid: a job id that disappears from the open
-  // list without being user-cancelled finished, so the media list
-  // refetches. (Cancelled ids are recorded by the cancel handlers and
-  // skipped here; a spurious refetch is harmless either way.)
   const prevOpenIdsRef = useRef<Map<string, DownloadJob>>(new Map());
   const userCancelledIdsRef = useRef<Set<string>>(new Set());
   const lastCompletedFolderRef = useRef<string | null>(null);
   useEffect(() => {
-    const current = new Map(jobs.map((job) => [job.id, job]));
-    let finished = false;
-    for (const [id, prevJob] of prevOpenIdsRef.current) {
-      if (!current.has(id) && !userCancelledIdsRef.current.has(id)) {
-        finished = true;
-        lastCompletedFolderRef.current = prevJob.targetFolderId;
-      }
-    }
-    prevOpenIdsRef.current = current;
-    if (finished) {
-      void invalidateMediaList(queryClient, subdomain);
-    }
+    trackFinishedJobs(
+      jobs,
+      prevOpenIdsRef,
+      userCancelledIdsRef,
+      lastCompletedFolderRef,
+      queryClient,
+      subdomain
+    );
   }, [jobs, queryClient, subdomain]);
 
   const showTray = !dismissed && (activeJobs.length > 0 || failedJobs.length > 0 || successFlash);
@@ -173,20 +318,11 @@ export function DownloadTray({ subdomain, useCleanPaths = false }: Readonly<Down
 
   if (minimized) {
     return (
-      <button
-        type="button"
-        data-testid="download-tray-pill"
-        onClick={() => setMinimized(false)}
-        className="fixed right-4 bottom-4 z-dialog rounded-full bg-primary px-4 py-2 text-metadata font-semibold text-on-primary shadow-modal"
-      >
-        {failedJobs.length > 0 ? (
-          <span className="text-brand-rose">
-            {failedJobs.length} failed — tap to view
-          </span>
-        ) : (
-          <span>⬇ {aggregatePercent}%</span>
-        )}
-      </button>
+      <TrayPill
+        failedCount={failedJobs.length}
+        aggregatePercent={aggregatePercent}
+        onExpand={() => setMinimized(false)}
+      />
     );
   }
 
@@ -201,11 +337,7 @@ export function DownloadTray({ subdomain, useCleanPaths = false }: Readonly<Down
 
       <div className="mb-2 flex items-center gap-2">
         <h2 className="flex-1 text-body font-semibold text-ink">
-          {successFlash
-            ? '✓ Downloaded'
-            : activeJobs.length > 0
-              ? `⬇ Downloading ${activeJobs.length} ${activeJobs.length === 1 ? 'file' : 'files'}`
-              : `${failedJobs.length} ${failedJobs.length === 1 ? 'download' : 'downloads'} failed`}
+          {trayTitle(successFlash, activeJobs, failedJobs)}
         </h2>
         <Button
           type="button"
@@ -247,55 +379,12 @@ export function DownloadTray({ subdomain, useCleanPaths = false }: Readonly<Down
       ) : (
         <div className="flex flex-col gap-3">
           {jobs.map((job) => (
-            <div key={job.id} data-testid={`download-job-row-${job.id}`} className="flex flex-col gap-1">
-              <div className="flex items-center gap-2">
-                <span className="min-w-0 flex-1 truncate text-body text-ink">
-                  {displayNameForJob(job)}
-                </span>
-                {job.status === 'failed' ? (
-                  <Button
-                    type="button"
-                    data-testid={`download-job-retry-${job.id}`}
-                    onClick={() => retryJob.mutate(job.id)}
-                    className="h-8 shrink-0"
-                  >
-                    Retry
-                  </Button>
-                ) : (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    data-testid={`download-job-cancel-${job.id}`}
-                    onClick={() => handleCancelOne(job)}
-                    className="h-8 shrink-0 px-2"
-                  >
-                    Cancel
-                  </Button>
-                )}
-              </div>
-              {job.status === 'failed' ? (
-                <p className="text-metadata text-signal-critical">
-                  <span aria-hidden>✕ </span>
-                  {reasonForJob(job)}
-                </p>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <Progress
-                    value={job.progressPercent}
-                    aria-label={`Download progress for ${displayNameForJob(job)}`}
-                    className="flex-1"
-                  />
-                  <span className="w-20 shrink-0 text-right text-metadata tabular-nums text-ink-sub">
-                    {job.status === 'queued' && 'Queued'}
-                    {job.status === 'resolving' && 'Resolving…'}
-                    {job.status === 'downloading' &&
-                      (job.totalBytes
-                        ? `${job.progressPercent}%`
-                        : `${formatMegabytes(job.downloadedBytes)} downloaded`)}
-                  </span>
-                </div>
-              )}
-            </div>
+            <DownloadJobRow
+              key={job.id}
+              job={job}
+              onRetry={(jobId) => retryJob.mutate(jobId)}
+              onCancel={handleCancelOne}
+            />
           ))}
         </div>
       )}

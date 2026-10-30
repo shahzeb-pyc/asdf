@@ -263,6 +263,61 @@ async function streamToSink(
   }
 }
 
+// Resumes a checkpointed stream: Range request, redirect safety
+// re-check, and the 500 MB cap against remaining + already-stored
+// bytes. A 200 means the source refuses Range — the caller restarts
+// from byte 0 once (ResumeUnsupportedError).
+async function fetchResumeResponse(
+  normalizedStreamUrl: string,
+  resumeBytes: number,
+  fetchFn: typeof fetch
+): Promise<{ response: Response; startByte: number }> {
+  let response: Response;
+  try {
+    response = await fetchWithTimeoutToHeaders(
+      normalizedStreamUrl,
+      {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; FBUploadProMediaBot/1.0)',
+          Accept: '*/*',
+          Range: `bytes=${resumeBytes}-`,
+        },
+        redirect: 'follow',
+      },
+      MEDIA_FETCH_TIMEOUT_MS,
+      fetchFn
+    );
+  } catch {
+    throw new MediaDownloaderError(
+      'DOWNLOAD_FAILED',
+      'Could not connect to the remote media server. Please try again.',
+      502
+    );
+  }
+  if (response.url) {
+    const redirectSafety = validateSafeRemoteUrl(response.url);
+    if (!redirectSafety.valid) {
+      throw new MediaDownloaderError(
+        'UNSAFE_URL',
+        redirectSafety.reason ?? 'Redirected to an unsafe network address.',
+        400
+      );
+    }
+  }
+  if (response.status === 200) {
+    throw new ResumeUnsupportedError();
+  }
+  if (!response.ok) {
+    throw new MediaDownloaderError(
+      'DOWNLOAD_FAILED',
+      `Remote server returned status ${response.status} while downloading media.`,
+      502
+    );
+  }
+  assertWithinCap(parseContentLength(response), resumeBytes);
+  return { response, startByte: resumeBytes };
+}
+
 export async function downloadAndStoreCandidate(
   options: StreamCandidateOptions
 ): Promise<DownloadedItem> {
@@ -277,51 +332,11 @@ export async function downloadAndStoreCandidate(
   let response: Response;
   let startByte = 0;
   if (resumeApplies && resume) {
-    startByte = resume.bytes;
-    try {
-      response = await fetchWithTimeoutToHeaders(
-        normalizedStreamUrl,
-        {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (compatible; FBUploadProMediaBot/1.0)',
-            Accept: '*/*',
-            Range: `bytes=${resume.bytes}-`,
-          },
-          redirect: 'follow',
-        },
-        MEDIA_FETCH_TIMEOUT_MS,
-        fetchFn
-      );
-    } catch {
-      throw new MediaDownloaderError(
-        'DOWNLOAD_FAILED',
-        'Could not connect to the remote media server. Please try again.',
-        502
-      );
-    }
-    if (response.url) {
-      const redirectSafety = validateSafeRemoteUrl(response.url);
-      if (!redirectSafety.valid) {
-        throw new MediaDownloaderError(
-          'UNSAFE_URL',
-          redirectSafety.reason ?? 'Redirected to an unsafe network address.',
-          400
-        );
-      }
-    }
-    if (response.status === 200) {
-      // Source refuses Range: the caller restarts from byte 0 once.
-      throw new ResumeUnsupportedError();
-    }
-    if (!response.ok) {
-      throw new MediaDownloaderError(
-        'DOWNLOAD_FAILED',
-        `Remote server returned status ${response.status} while downloading media.`,
-        502
-      );
-    }
-    const remaining = parseContentLength(response);
-    assertWithinCap(remaining, startByte);
+    ({ response, startByte } = await fetchResumeResponse(
+      normalizedStreamUrl,
+      resume.bytes,
+      fetchFn
+    ));
   } else {
     response = await fetchCandidateResponse(
       normalizedStreamUrl,

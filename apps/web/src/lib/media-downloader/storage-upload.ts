@@ -147,47 +147,51 @@ async function readResponseBytesWithLimit(
  * no oversized or partial object survives. Cancellation is checked
  * per chunk; the sink is always aborted on the way out of a failure.
  */
-async function streamResponseToSink(
+// A body-less response has no stream to forward; it can only be a
+// tiny (or empty) payload, so the bounded read is safe here.
+async function streamEmptyBodyToSink(
   response: Response,
   sink: MediaStreamSink,
-  options: StreamDownloadOptions
+  options: StreamDownloadOptions,
+  totalBytes: number | null
 ): Promise<{ key: string; byteLength: number; publicUrl: string }> {
-  assertContentLengthWithinLimit(response, MAX_MEDIA_DOWNLOAD_BYTES);
-
-  const totalHeader = response.headers.get('content-length');
-  const parsedTotal = totalHeader ? Number.parseInt(totalHeader, 10) : Number.NaN;
-  const totalBytes = Number.isNaN(parsedTotal) ? null : parsedTotal;
-
-  if (!response.body) {
-    // A body-less response has no stream to forward; it can only be a
-    // tiny (or empty) payload, so the bounded read is safe here.
-    const buffer = await response.arrayBuffer();
-    if (buffer.byteLength === 0) {
-      throw new MediaDownloaderError(
-        'UNSUPPORTED_MEDIA',
-        'The remote media file was empty and could not be saved.',
-        400
-      );
-    }
-    if (buffer.byteLength > MAX_MEDIA_DOWNLOAD_BYTES) {
-      throw new MediaDownloaderError(
-        'FILE_TOO_LARGE',
-        'This file exceeds the 500 MB maximum size limit.',
-        400
-      );
-    }
-    const bytes = new Uint8Array(buffer);
-    try {
-      await sink.write(bytes);
-      options.onProgress?.({ downloadedBytes: bytes.byteLength, totalBytes });
-      return await sink.finish();
-    } catch (err) {
-      await sink.abort().catch(() => undefined);
-      throw err;
-    }
+  const buffer = await response.arrayBuffer();
+  if (buffer.byteLength === 0) {
+    throw new MediaDownloaderError(
+      'UNSUPPORTED_MEDIA',
+      'The remote media file was empty and could not be saved.',
+      400
+    );
   }
+  if (buffer.byteLength > MAX_MEDIA_DOWNLOAD_BYTES) {
+    throw new MediaDownloaderError(
+      'FILE_TOO_LARGE',
+      'This file exceeds the 500 MB maximum size limit.',
+      400
+    );
+  }
+  const bytes = new Uint8Array(buffer);
+  try {
+    await sink.write(bytes);
+    options.onProgress?.({ downloadedBytes: bytes.byteLength, totalBytes });
+    return await sink.finish();
+  } catch (err) {
+    await sink.abort().catch(() => undefined);
+    throw err;
+  }
+}
 
-  const reader = response.body.getReader();
+// Forwards a streaming body chunk by chunk, checking cancellation
+// per chunk and the 500 MB cap the moment the running total crosses
+// it. Returns the streamed byte count; the caller owns finish/abort.
+async function streamBodyToSink(
+  response: Response,
+  sink: MediaStreamSink,
+  options: StreamDownloadOptions,
+  totalBytes: number | null
+): Promise<number> {
+  const reader = response.body?.getReader();
+  if (!reader) return 0;
   let downloadedBytes = 0;
   try {
     while (true) {
@@ -218,6 +222,25 @@ async function streamResponseToSink(
   } finally {
     reader.releaseLock();
   }
+  return downloadedBytes;
+}
+
+async function streamResponseToSink(
+  response: Response,
+  sink: MediaStreamSink,
+  options: StreamDownloadOptions
+): Promise<{ key: string; byteLength: number; publicUrl: string }> {
+  assertContentLengthWithinLimit(response, MAX_MEDIA_DOWNLOAD_BYTES);
+
+  const totalHeader = response.headers.get('content-length');
+  const parsedTotal = totalHeader ? Number.parseInt(totalHeader, 10) : Number.NaN;
+  const totalBytes = Number.isNaN(parsedTotal) ? null : parsedTotal;
+
+  if (!response.body) {
+    return streamEmptyBodyToSink(response, sink, options, totalBytes);
+  }
+
+  const downloadedBytes = await streamBodyToSink(response, sink, options, totalBytes);
 
   if (downloadedBytes === 0) {
     await sink.abort().catch(() => undefined);

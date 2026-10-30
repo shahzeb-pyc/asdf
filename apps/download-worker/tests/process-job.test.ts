@@ -377,7 +377,7 @@ describe('processClaimedJob edge paths', () => {
     const progressWrites = store.updateCalls.filter(
       (call) => call.patch.status === 'downloading'
     );
-    expect(progressWrites.length).toBe(1);
+    expect(progressWrites).toHaveLength(1);
   });
 
   it('cancels after resolve without saving, and tolerates a failing cleanup delete', async () => {
