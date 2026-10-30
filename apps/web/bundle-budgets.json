@@ -172,6 +172,12 @@
         "firstLoadRawBytes": 470654,
         "routeSpecificGzipBytes": 7864,
         "routeSpecificRawBytes": 19799
+      },
+      "/tenant/[subdomain]/billing": {
+        "firstLoadGzipBytes": 168074,
+        "firstLoadRawBytes": 571123,
+        "routeSpecificGzipBytes": 34276,
+        "routeSpecificRawBytes": 120274
       }
     },
     "totalClientJs": {
@@ -371,6 +377,12 @@
         "firstLoadRawBytes": 562176,
         "routeSpecificGzipBytes": 33215,
         "routeSpecificRawBytes": 105666
+      },
+      "/tenant/[subdomain]/billing": {
+        "firstLoadGzipBytes": 176478,
+        "firstLoadRawBytes": 599680,
+        "routeSpecificGzipBytes": 35990,
+        "routeSpecificRawBytes": 126288
       }
     },
     "totalClientJs": {

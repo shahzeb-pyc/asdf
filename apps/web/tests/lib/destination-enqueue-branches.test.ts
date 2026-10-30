@@ -28,6 +28,7 @@ function baseDestination(overrides: Partial<DestinationForEnqueue> = {}): Destin
     platform: 'facebook',
     timezone: 'UTC',
     status: 'active',
+    externalDestinationId: null,
     metadata: null,
     ...overrides,
   };

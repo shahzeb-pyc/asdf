@@ -20,7 +20,22 @@
 
 import { test, expect, type Page } from '@playwright/test';
 import { createFixtureState, installApiFixtures } from './fixtures/api';
-import { SESSION_COOKIE, TENANT } from './fixtures/tenant';
+import { mintSessionToken, SESSION_COOKIE, TENANT } from './fixtures/tenant';
+
+/**
+ * Shell navigation is a regular-user behaviour. The shared fixture
+ * session is role 'admin', and since the subscription feature an
+ * admin sees only the Subscriptions approval sidebar — no user
+ * leaves at all — so these tests sign in as a regular user instead.
+ */
+const USER_SESSION_COOKIE = {
+  ...SESSION_COOKIE,
+  // A plain user token can only open its own subdomain; the switch
+  // step below navigates to beta, so the token names beta as an
+  // allowed subdomain (the admin bypass must not be relied on here,
+  // since admins see the approvals-only sidebar).
+  value: mintSessionToken('user', ['beta']),
+};
 
 const WORKSPACES = [
   {
@@ -67,7 +82,7 @@ async function installShellFixtures(page: Page): Promise<void> {
 }
 
 async function signInToTenantHome(page: Page): Promise<void> {
-  await page.context().addCookies([SESSION_COOKIE]);
+  await page.context().addCookies([USER_SESSION_COOKIE]);
   await installShellFixtures(page);
   await page.goto(`/tenant/${TENANT.subdomain}`);
   await expect(

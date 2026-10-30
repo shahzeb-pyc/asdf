@@ -29,6 +29,10 @@ vi.mock('next/navigation', () => ({
     replace: vi.fn(),
     prefetch: mockPrefetch,
   }),
+  // The sidebar reads ?view= for the Billing sub-leaves (added with
+  // the subscription feature); no test here sets a query string, so
+  // the search params are empty and Billing defaults to My Plan.
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 // Render next/link as a plain anchor tagged with data-next-link, so

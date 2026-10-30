@@ -20,12 +20,18 @@ import {
 } from '@/lib/request-body';
 import { getR2Config } from '@/lib/storage';
 import { logServerError } from '@/lib/server-analytics';
+import {
+  assertCanPost,
+  registerUsage,
+  SubscriptionGateError,
+} from '@/lib/billing/entitlement';
 
 /**
  * POST /api/tenant/[subdomain]/publishing/publish-now
  *
  * Direct, synchronous, multi-page Facebook publish that saves
- * NOTHING to the database. It deliberately does NOT use
+ * NOTHING to the database except subscription usage rows (the
+ * across-features cap registry — see the gate below). It deliberately does NOT use
  * destination-queue (which inserts queue_items), does NOT use the
  * publish-now re-time routes (which never call Facebook), and does
  * NOT write idempotency, publish-log, destination, media, or
@@ -600,6 +606,38 @@ export async function POST(
     );
   }
   const { caption, postType, firstComment, targets, media } = parsed.data;
+
+  // Subscription gate, server-side, before any Facebook call:
+  // a paid period must be active and every target page must fit
+  // the across-features Facebook cap. Registering here counts a
+  // page once even if it is also queued via destination-queue.
+  // Admins are not gated. A gate failure fails the whole request
+  // so a partial publish can never slip past the cap.
+  // Pre-check every target first: registering one by one means a
+  // cap failure on page 3 would leave pages 1-2 permanently
+  // registered even though nothing was published. A gate failure
+  // in the pre-check registers nothing.
+  if (session.role !== 'admin') {
+    const distinctPageIds = Array.from(new Set(targets.map((target) => target.fbPageId)));
+    try {
+      for (const fbPageId of distinctPageIds) {
+        await assertCanPost(supabase, session.userId, 'facebook', fbPageId);
+      }
+      for (const fbPageId of distinctPageIds) {
+        await registerUsage(supabase, session.userId, 'facebook', fbPageId, 'publish-now', null);
+      }
+    } catch (err) {
+      if (err instanceof SubscriptionGateError) {
+        const status =
+          err.code === 'SUBSCRIPTION_CAP_REACHED' || err.code === 'SUBSCRIPTION_REQUIRED'
+            ? 403
+            : 500;
+        return NextResponse.json({ error: err.code, message: err.message }, { status });
+      }
+      throw err;
+    }
+  }
+
   const trimmedFirstComment = firstComment?.trim() || undefined;
 
   // Explicit type decides emptiness: text needs caption, every

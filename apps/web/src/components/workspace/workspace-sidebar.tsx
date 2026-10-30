@@ -13,7 +13,8 @@
  *   Home) → primary group (Home, Media Library, Fdola
  *   Studio) → Facebook collapsible group (default open; Accounts,
  *   Pages, Publish Now) → one collapsible group per upcoming platform, each with a
- *   single Accounts item and the testing-placeholder note → footer.
+ *   single Accounts item and the testing-placeholder note → Billing collapsible
+ *   group (default open; My Plan, Purchase, Payments), last → footer.
  * - Spec 110 single-click model: every leaf is a Next.js <Link> that
  *   navigates on the FIRST click; the leaf click handler only paints
  *   the active state optimistically and closes the mobile drawer — it
@@ -26,7 +27,7 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   Sidebar,
   SidebarHeader,
@@ -55,6 +56,12 @@ export interface WorkspaceSidebarProps {
   subdomain: string;
   /** True when on the tenant's own subdomain: use clean paths (/accounts). */
   useCleanPaths?: boolean | undefined;
+  /**
+   * Admin-only shell: when an admin logs in, the sidebar contains
+   * ONLY the Subscriptions approval section, not the user sections.
+   * The approval view lives on the Billing route for admins.
+   */
+  adminOnly?: boolean | undefined;
   /** Server-resolved display name — avoids flashing the internal slug. */
   workspaceName?: string | undefined;
   /** Always present in the tenant frame: the layout redirects to
@@ -95,6 +102,13 @@ interface NavLeaf {
   onLeafClick: (href: string) => void;
 }
 
+/** Read a ?view= value out of a full href (optimistic pathname included). */
+function viewFromHref(href: string | null): string | null {
+  if (!href) return null;
+  const match = href.match(/[?&]view=([^&]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 function NavSubLeaf({ label, href, isActive, onLeafClick }: Readonly<NavLeaf>) {
   return (
     <SidebarMenuSubItem>
@@ -107,17 +121,20 @@ function NavSubLeaf({ label, href, isActive, onLeafClick }: Readonly<NavLeaf>) {
   );
 }
 
-export function WorkspaceSidebar({
+function WorkspaceSidebarContent({
   subdomain,
   useCleanPaths = false,
   workspaceName,
   user,
+  adminOnly = false,
 }: Readonly<WorkspaceSidebarProps>) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const router = useRouter();
   const { state, isMobile, setOpenMobile } = useSidebar();
   const isCollapsed = !isMobile && state === 'collapsed';
   const [isFacebookOpen, setIsFacebookOpen] = useState(true);
+  const [isBillingOpen, setIsBillingOpen] = useState(true);
   const [openPlatforms, setOpenPlatforms] = useState<Record<string, boolean>>({});
   const [optimisticPathname, setOptimisticPathname] = useState<string | null>(null);
 
@@ -136,6 +153,10 @@ export function WorkspaceSidebar({
   const pagesHref = href('/pages');
   const publishNowHref = href('/publish-now');
   const tiktokMirrorsHref = href('/tiktok-mirrors');
+  const billingHref = href('/billing');
+  const billingMyPlanHref = href('/billing?view=my-plan');
+  const billingPurchaseHref = href('/billing?view=purchase');
+  const billingPaymentsHref = href('/billing?view=payments');
 
   const isHomeActive = effectivePath === normalizeTenantPath(homeHref, subdomain);
   const isMediaActive = effectivePath.startsWith(normalizeTenantPath(mediaHref, subdomain));
@@ -153,6 +174,23 @@ export function WorkspaceSidebar({
   const isTiktokMirrorsActive = effectivePath.startsWith(
     normalizeTenantPath(tiktokMirrorsHref, subdomain)
   );
+  const isBillingActive = effectivePath.startsWith(
+    normalizeTenantPath(billingHref, subdomain)
+  );
+
+  /**
+   * Billing sub-leaf active state. The Billing sections live behind
+   * one route, selected by ?view=, so the view comes from the
+   * optimistic leaf href on click (for the immediate paint) or the
+   * live search params otherwise. No view means My Plan (the
+   * Billing default). Purchase-internal steps are not ?view=
+   * values, so a user inside Purchase always highlights Purchase.
+   */
+  const billingView = viewFromHref(optimisticPathname) ?? searchParams.get('view');
+  const isMyPlanActive =
+    isBillingActive && (billingView === null || billingView === 'my-plan');
+  const isPurchaseActive = isBillingActive && billingView === 'purchase';
+  const isPaymentsActive = isBillingActive && billingView === 'payments';
 
   const handleNavigate = (targetHref: string) => {
     setOptimisticPathname(targetHref);
@@ -261,6 +299,26 @@ export function WorkspaceSidebar({
         </Link>
       </SidebarHeader>
 
+      {adminOnly ? (
+        <SidebarContent>
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={isBillingActive} tooltip="Subscriptions approval">
+                    <Link href={billingHref} onClick={() => handleLeafClick(billingHref)}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M20 6 9 17l-5-5" />
+                      </svg>
+                      <span>Subscriptions approval</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        </SidebarContent>
+      ) : (
       <SidebarContent>
         <SidebarGroup>
           <SidebarGroupContent>
@@ -367,7 +425,47 @@ export function WorkspaceSidebar({
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+
+        <SidebarSeparator />
+
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  tooltip="Billing — My Plan, Purchase & Payments"
+                  isActive={isCollapsed && isBillingActive}
+                  aria-expanded={isCollapsed ? undefined : isBillingOpen}
+                  onClick={() => {
+                    if (isCollapsed) {
+                      handleNavigate(billingMyPlanHref);
+                    } else {
+                      setIsBillingOpen((prev) => !prev);
+                    }
+                  }}
+                  onMouseEnter={() => handlePrefetch(billingMyPlanHref)}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="shrink-0">
+                    <rect width="20" height="14" x="2" y="5" rx="2" />
+                    <line x1="2" x2="22" y1="10" y2="10" />
+                  </svg>
+                  <span className="flex-1 truncate">Billing</span>
+                  <ChevronIcon open={isBillingOpen} />
+                </SidebarMenuButton>
+
+                {isBillingOpen && (
+                  <SidebarMenuSub>
+                    <NavSubLeaf label="My Plan" href={billingMyPlanHref} isActive={isMyPlanActive} onLeafClick={handleLeafClick} />
+                    <NavSubLeaf label="Purchase" href={billingPurchaseHref} isActive={isPurchaseActive} onLeafClick={handleLeafClick} />
+                    <NavSubLeaf label="Payments" href={billingPaymentsHref} isActive={isPaymentsActive} onLeafClick={handleLeafClick} />
+                  </SidebarMenuSub>
+                )}
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
       </SidebarContent>
+      )}
 
       <SidebarFooter>
         <WorkspaceStudioFooter
@@ -381,5 +479,20 @@ export function WorkspaceSidebar({
 
       <SidebarRail />
     </Sidebar>
+  );
+}
+
+/**
+ * Public sidebar export. The content reads ?view= (useSearchParams),
+ * which Next requires inside a Suspense boundary, so the wrapper
+ * provides one here and the tenant layout needs no change. The admin
+ * shell is unaffected: adminOnly still renders only the
+ * "Subscriptions approval" leaf inside the content component.
+ */
+export function WorkspaceSidebar(props: Readonly<WorkspaceSidebarProps>) {
+  return (
+    <React.Suspense fallback={null}>
+      <WorkspaceSidebarContent {...props} />
+    </React.Suspense>
   );
 }

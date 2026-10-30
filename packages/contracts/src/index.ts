@@ -42,3 +42,4 @@ export * from './publishing/destination-enqueue.js';
 export * from './publishing/idempotency.js';
 export * from './publishing/create-posts-composer.js';
 export * from './publishing/publish-now.js';
+export * from './domain/subscription.js';

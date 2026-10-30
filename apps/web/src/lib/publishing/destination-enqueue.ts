@@ -22,6 +22,8 @@ export interface DestinationForEnqueue {
   platform: Platform;
   timezone: string;
   status: string;
+  /** Provider-side id (Facebook page id, or the platform account id). */
+  externalDestinationId: string | null;
   /** Raw destinations.metadata (carries fb_status: 'paused'/'checkpoint'). */
   metadata: Record<string, unknown> | null;
 }
@@ -86,6 +88,7 @@ type DestinationRowRaw = {
   platform: string;
   timezone?: string | null;
   status: string;
+  external_destination_id?: string | null;
   metadata?: Record<string, unknown> | string | null;
 };
 
@@ -106,6 +109,8 @@ function toDestination(row: DestinationRowRaw): DestinationForEnqueue {
     platform: row.platform as Platform,
     timezone: row.timezone || 'UTC',
     status: row.status,
+    externalDestinationId:
+      typeof row.external_destination_id === 'string' ? row.external_destination_id : null,
     metadata,
   };
 }
@@ -137,7 +142,7 @@ export async function fetchDestinationForEnqueue(
 ): Promise<DestinationForEnqueue | null> {
   if (isLegacyClient(client)) {
     const rows = (await (client as DatabaseClient).query(
-      `SELECT id, platform, timezone, status, metadata
+      `SELECT id, platform, timezone, status, external_destination_id, metadata
        FROM destinations
        WHERE id = $1 AND workspace_id = $2
        LIMIT 1`,
@@ -150,7 +155,7 @@ export async function fetchDestinationForEnqueue(
   if (!supabase) return null;
   const { data, error } = await supabase
     .from('destinations')
-    .select('id, platform, timezone, status, metadata')
+    .select('id, platform, timezone, status, external_destination_id, metadata')
     .eq('id', destinationId)
     .eq('workspace_id', workspaceId)
     .maybeSingle();

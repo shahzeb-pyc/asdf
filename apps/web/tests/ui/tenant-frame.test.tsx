@@ -25,6 +25,10 @@ vi.mock('../../src/app/tenant/[subdomain]/workspace-display-name', () => ({
 vi.mock('next/navigation', () => ({
   usePathname: () => '/tenant/acme',
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), prefetch: vi.fn() }),
+  // The tenant layout renders the sidebar, which reads ?view= for
+  // its Billing leaves (subscription feature); no frame test sets
+  // a query string, so the search params are empty.
+  useSearchParams: () => new URLSearchParams(),
   redirect: (url: string) => {
     throw new Error(`NEXT_REDIRECT:${url}`);
   },
