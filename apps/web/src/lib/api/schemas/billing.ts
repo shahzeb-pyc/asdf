@@ -6,6 +6,7 @@
 export {
   AdminDecisionRequestSchema,
   AdminPaymentsResponseSchema,
+  BillingPaymentItemSchema,
   BillingStatusResponseSchema,
   CreateBankPaymentRequestSchema,
   CreateCryptoCheckoutRequestSchema,

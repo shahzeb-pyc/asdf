@@ -110,6 +110,7 @@ export default async function TenantLayout({ params, children }: Readonly<Tenant
           useCleanPaths={useCleanPaths}
           user={user}
           workspaceName={workspaceName ?? undefined}
+          adminOnly={session.role === 'admin'}
         />
         <SidebarInset id="tenant-content" tabIndex={-1} className="scroll-mt-11">
             <header

@@ -25,6 +25,11 @@ import {
   type OwnedMediaRow,
 } from '@/lib/publishing/destination-enqueue';
 import { refreshDestinationUnmatchedFlag } from '@/lib/server/unmatched-flag';
+import { getRouteSupabase } from '@/lib/route-auth';
+import {
+  registerUsage,
+  SubscriptionGateError,
+} from '@/lib/billing/entitlement';
 import {
   claimIdempotencyResult,
   completeIdempotencyResult,
@@ -232,6 +237,39 @@ export async function handleDestinationEnqueue(
       },
       { status: 409 }
     );
+  }
+
+  // Subscription gate, server-side: a paid period must be active
+  // and the destination must fit the across-features cap. Using a
+  // destination here registers it in the usage registry, so the
+  // same destination in a second feature counts once. Admins are
+  // not gated (they approve subscriptions; they do not subscribe).
+  // The legacy SQL test harness has no Supabase client, so the
+  // gate runs only when one is present; in production the route
+  // context client IS the Supabase admin client, so it always runs.
+  if (session.role !== 'admin') {
+    const billingClient = getRouteSupabase(client);
+    if (billingClient) {
+      try {
+        await registerUsage(
+          billingClient,
+          session.userId,
+          destination.platform,
+          destination.externalDestinationId ?? destination.id,
+          'destination-queue',
+          destination.id
+        );
+      } catch (err) {
+        if (err instanceof SubscriptionGateError) {
+          const status =
+            err.code === 'SUBSCRIPTION_CAP_REACHED' || err.code === 'SUBSCRIPTION_REQUIRED'
+              ? 403
+              : 500;
+          return NextResponse.json({ error: err.code, message: err.message }, { status });
+        }
+        throw err;
+      }
+    }
   }
 
   // Media ownership + kind compatibility. The row stores the primary

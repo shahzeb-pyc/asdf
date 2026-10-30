@@ -55,6 +55,12 @@ export interface WorkspaceSidebarProps {
   subdomain: string;
   /** True when on the tenant's own subdomain: use clean paths (/accounts). */
   useCleanPaths?: boolean | undefined;
+  /**
+   * Admin-only shell: when an admin logs in, the sidebar contains
+   * ONLY the Subscriptions approval section, not the user sections.
+   * The approval view lives on the Billing route for admins.
+   */
+  adminOnly?: boolean | undefined;
   /** Server-resolved display name — avoids flashing the internal slug. */
   workspaceName?: string | undefined;
   /** Always present in the tenant frame: the layout redirects to
@@ -112,6 +118,7 @@ export function WorkspaceSidebar({
   useCleanPaths = false,
   workspaceName,
   user,
+  adminOnly = false,
 }: Readonly<WorkspaceSidebarProps>) {
   const pathname = usePathname();
   const router = useRouter();
@@ -136,6 +143,7 @@ export function WorkspaceSidebar({
   const pagesHref = href('/pages');
   const publishNowHref = href('/publish-now');
   const tiktokMirrorsHref = href('/tiktok-mirrors');
+  const billingHref = href('/billing');
 
   const isHomeActive = effectivePath === normalizeTenantPath(homeHref, subdomain);
   const isMediaActive = effectivePath.startsWith(normalizeTenantPath(mediaHref, subdomain));
@@ -152,6 +160,9 @@ export function WorkspaceSidebar({
   );
   const isTiktokMirrorsActive = effectivePath.startsWith(
     normalizeTenantPath(tiktokMirrorsHref, subdomain)
+  );
+  const isBillingActive = effectivePath.startsWith(
+    normalizeTenantPath(billingHref, subdomain)
   );
 
   const handleNavigate = (targetHref: string) => {
@@ -261,6 +272,26 @@ export function WorkspaceSidebar({
         </Link>
       </SidebarHeader>
 
+      {adminOnly ? (
+        <SidebarContent>
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={isBillingActive} tooltip="Subscriptions approval">
+                    <Link href={billingHref} onClick={() => handleLeafClick(billingHref)}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M20 6 9 17l-5-5" />
+                      </svg>
+                      <span>Subscriptions approval</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        </SidebarContent>
+      ) : (
       <SidebarContent>
         <SidebarGroup>
           <SidebarGroupContent>
@@ -367,7 +398,28 @@ export function WorkspaceSidebar({
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+
+        <SidebarSeparator />
+
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={isBillingActive} tooltip="Billing">
+                  <Link href={billingHref} onClick={() => handleLeafClick(billingHref)}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <rect width="20" height="14" x="2" y="5" rx="2" />
+                      <line x1="2" x2="22" y1="10" y2="10" />
+                    </svg>
+                    <span>Billing</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
       </SidebarContent>
+      )}
 
       <SidebarFooter>
         <WorkspaceStudioFooter
