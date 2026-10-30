@@ -1089,28 +1089,35 @@ export async function handleCreateMirror(
     // 2. Resolve (or create) the destination row. Instagram targets
     //    take the Instagram branch (account IS the destination);
     //    Facebook targets take the existing Graph-discovery branch.
+    //    The branches are written out (not a ternary over the two
+    //    resolvers) so the Instagram account token stays typed as
+    //    string | null instead of collapsing through a union.
     const targetPlatform = parsed.data.targetPlatform ?? 'facebook';
-    const resolved =
-      targetPlatform === 'instagram'
-        ? await resolveInstagramDestination(db, workspaceId, {
-            targetDestinationId: parsed.data.targetDestinationId,
-            accountId: parsed.data.accountId,
-            targetExternalId: parsed.data.targetExternalId,
-          })
-        : await resolveDestination(
-            db,
-            workspaceId,
-            {
-              targetDestinationId: parsed.data.targetDestinationId,
-              accountId: parsed.data.accountId,
-              targetExternalId: parsed.data.targetExternalId,
-            },
-            deps
-          );
-    if ('error' in resolved) return resolved.error;
-    const destination = resolved.destination;
-    const instagramAccountToken =
-      'accountToken' in resolved ? resolved.accountToken : null;
+    let destination: DestinationRow;
+    let instagramAccountToken: string | null = null;
+    if (targetPlatform === 'instagram') {
+      const resolved = await resolveInstagramDestination(db, workspaceId, {
+        targetDestinationId: parsed.data.targetDestinationId,
+        accountId: parsed.data.accountId,
+        targetExternalId: parsed.data.targetExternalId,
+      });
+      if ('error' in resolved) return resolved.error;
+      destination = resolved.destination;
+      instagramAccountToken = resolved.accountToken;
+    } else {
+      const resolved = await resolveDestination(
+        db,
+        workspaceId,
+        {
+          targetDestinationId: parsed.data.targetDestinationId,
+          accountId: parsed.data.accountId,
+          targetExternalId: parsed.data.targetExternalId,
+        },
+        deps
+      );
+      if ('error' in resolved) return resolved.error;
+      destination = resolved.destination;
+    }
 
     // 3. Exact-duplicate block (same source username + same target).
     if (

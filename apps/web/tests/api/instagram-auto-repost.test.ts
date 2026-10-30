@@ -165,9 +165,11 @@ function feedVideo(overrides: Record<string, unknown> = {}) {
   };
 }
 
-const createDeps = (options: { publishInstagram?: unknown; feedError?: boolean } = {}) => ({
+const createDeps = (
+  options: { publishInstagram?: ReturnType<typeof vi.fn>; feedError?: boolean } = {}
+) => ({
   fetchTikwmPosts: options.feedError
-    ? vi.fn().mockRejectedValue(new TikwmError('Feed unavailable'))
+    ? vi.fn().mockRejectedValue(new TikwmError('FEED_UNAVAILABLE', 'Feed unavailable'))
     : vi.fn().mockResolvedValue([feedVideo()]),
   fetchTikwmInfo: vi.fn().mockResolvedValue({
     unique_id: 'alice',
