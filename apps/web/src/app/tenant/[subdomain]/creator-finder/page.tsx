@@ -5,10 +5,12 @@ import { CreatorFinderPage } from '@/components/creator-finder/creator-finder-pa
 export const metadata: Metadata = { title: 'Creator Finder' };
 
 /**
- * Creator Finder — find TikTok creators only. Three ways in, one
+ * Creator Finder — find TikTok creators only. Four tabs in, one
  * result shape out: trending creators by country, creators by
- * niche/words, and similar creators expanded from a known creator.
- * Nothing here contacts, publishes, mirrors, or saves a creator.
+ * niche/words, similar creators expanded from a known creator,
+ * and saved creators. Every search result is saved automatically
+ * to the Saved tab (and exportable as CSV); nothing here contacts,
+ * publishes, or mirrors a creator.
  */
 export default async function TenantCreatorFinderPage({
   params,

@@ -194,9 +194,26 @@ export async function saveCreatorsToDb(
 }
 
 /**
+ * One Supabase page for the Saved-list fetch. PostgREST silently
+ * truncates an unbounded select at 1,000 rows, so a single select
+ * can never be trusted for a list auto-save can grow past that
+ * (one Similar search alone can save ~520 creators).
+ */
+const SAVED_CREATORS_PAGE_SIZE = 1000;
+
+/**
  * Saved creators for this user + workspace, newest first.
+ * Pages the Supabase fetch with .range() in a loop until a short
+ * page, so the result is the true full list — never a silently
+ * truncated first 1,000 rows. The Saved route's paging and the
+ * CSV export both read through here, so both see every row.
  * Returns null on any database failure so the route can fail loud
- * instead of showing an empty list as if nothing were saved.
+ * instead of showing an empty list (or a partial list) as if
+ * nothing were saved. A paged-fetch error returns null too —
+ * never a partial list as success.
+ * Ordering is updated_at desc with handle asc as the tie-break:
+ * a whole search batch shares one updated_at, so without the
+ * tie-break rows could be duplicated or missed across pages.
  */
 export async function listSavedCreators(
   supabase: SupabaseClient | null,
@@ -205,22 +222,30 @@ export async function listSavedCreators(
 ): Promise<SavedCreator[] | null> {
   if (!supabase) return null;
   try {
-    const { data, error } = await supabase
-      .from(SAVED_CREATORS_TABLE)
-      .select('*')
-      .eq('workspace_id', workspaceId)
-      .eq('user_id', userId)
-      .order('updated_at', { ascending: false });
-    if (error) {
-      logCreatorFinderDbError('listSavedCreators', error);
-      return null;
-    }
     const creators: SavedCreator[] = [];
-    for (const row of data ?? []) {
-      const creator = savedCreatorFromRow(
-        row as Record<string, unknown>,
-      );
-      if (creator) creators.push(creator);
+    let from = 0;
+    for (;;) {
+      const { data, error } = await supabase
+        .from(SAVED_CREATORS_TABLE)
+        .select('*')
+        .eq('workspace_id', workspaceId)
+        .eq('user_id', userId)
+        .order('updated_at', { ascending: false })
+        .order('handle', { ascending: true })
+        .range(from, from + SAVED_CREATORS_PAGE_SIZE - 1);
+      if (error) {
+        logCreatorFinderDbError('listSavedCreators', error);
+        return null;
+      }
+      const rows = data ?? [];
+      for (const row of rows) {
+        const creator = savedCreatorFromRow(
+          row as Record<string, unknown>,
+        );
+        if (creator) creators.push(creator);
+      }
+      if (rows.length < SAVED_CREATORS_PAGE_SIZE) break;
+      from += SAVED_CREATORS_PAGE_SIZE;
     }
     return creators;
   } catch (err) {
