@@ -6,9 +6,16 @@
  * when the key is not configured, so the app runs fine without PostHog.
  */
 import { PostHog } from 'posthog-node';
+import type {
+  AnalyticsEventName,
+  AnalyticsEventProps,
+} from './analytics-events';
+import { normalizePostHogHost } from './posthog-host';
 
 const POSTHOG_KEY = process.env.POSTHOG_KEY;
-const POSTHOG_HOST = process.env.POSTHOG_HOST || 'https://us.i.posthog.com';
+// Normalized, never verbatim: a bare "US" host used to become request
+// host `US` and silently 404 every analytics call (see posthog-host).
+const POSTHOG_HOST = normalizePostHogHost(process.env.POSTHOG_HOST);
 
 let client: PostHog | null = null;
 
@@ -127,4 +134,35 @@ export function logServerError(
   console.error(message, error ?? '');
   const info = error !== undefined ? toErrorInfo(error) : { message };
   void captureServerException(info, { log_message: message, ...context });
+}
+
+/**
+ * Capture one taxonomy product event server-side (route handlers call
+ * this at the authoritative success point — the insert/upsert that
+ * actually landed). Only events from lib/analytics-events.ts
+ * type-check here. `distinctId` is the stable session user id, so
+ * server events join with the browser's identified pageviews.
+ *
+ * Fire-and-forget like logServerError: callers `void` this and return
+ * their response without waiting — the flush is awaited inside this
+ * function, and any failure is swallowed so telemetry never breaks a
+ * request or inflates its latency. No-op entirely when no key is set.
+ */
+export async function trackServerEvent<Name extends AnalyticsEventName>(
+  event: Name,
+  distinctId: string,
+  properties: AnalyticsEventProps<Name>
+): Promise<void> {
+  const ph = getClient();
+  if (!ph) return;
+  try {
+    ph.capture({
+      distinctId,
+      event,
+      properties: properties as Record<string, unknown>,
+    });
+    await ph.flush();
+  } catch {
+    // Never let telemetry break the request.
+  }
 }

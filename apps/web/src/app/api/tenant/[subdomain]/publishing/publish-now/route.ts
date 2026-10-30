@@ -29,7 +29,7 @@ import {
   readJsonBody,
 } from '@/lib/request-body';
 import { getR2Config } from '@/lib/storage';
-import { logServerError } from '@/lib/server-analytics';
+import { logServerError, trackServerEvent } from '@/lib/server-analytics';
 import {
   assertCanPost,
   registerUsage,
@@ -1113,5 +1113,19 @@ export async function POST(
       await releaseIdempotencyClaim(routeContext.client, idempotencyScope);
     }
   }
+  // Analytics: only when at least one page actually published — an
+  // all-failed run is not a publish. Fire-and-forget — never blocks
+  // the response.
+  const publishedCount = results.filter(
+    (result) => result.status === 'published'
+  ).length;
+  if (publishedCount > 0) {
+    void trackServerEvent('post_published_now', session.userId, {
+      platform: 'facebook',
+      page_count: results.length,
+      published_count: publishedCount,
+    });
+  }
+
   return NextResponse.json(responseBody);
 }

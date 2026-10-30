@@ -17,7 +17,7 @@ import {
   type Database,
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
-import { logServerError } from '@/lib/server-analytics';
+import { logServerError, trackServerEvent } from '@/lib/server-analytics';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { enforceIpRateLimit } from '@/lib/request-body';
 import { resolveWorkspaceFacebookCredentials } from '@/lib/server/byoc-resolver';
@@ -842,6 +842,14 @@ export async function handleFacebookCallback(
         encryptionKey
       );
     }
+
+    // Analytics: the account row landed (token refresh above is
+    // best-effort and does not gate the connect). Fire-and-forget —
+    // never blocks the redirect.
+    void trackServerEvent('account_connected', userId, {
+      platform: 'facebook',
+      reconnected: alreadyExisted,
+    });
 
     return buildPostConnectRedirect(
       request.url,

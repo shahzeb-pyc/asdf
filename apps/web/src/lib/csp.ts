@@ -35,7 +35,7 @@ export function buildContentSecurityPolicy(nonce: string): string {
     `script-src 'self' 'nonce-${nonce}'`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: https:",
-    "connect-src 'self' https://*.supabase.co https://us.i.posthog.com",
+    "connect-src 'self' https://*.supabase.co https://us.i.posthog.com https://eu.i.posthog.com",
     "font-src 'self' data:",
     "frame-ancestors 'none'",
     "form-action 'self'",
