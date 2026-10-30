@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { TIKWMAPI_BASE_URL } from './tikwmapi.js';
 
 /**
  * Creator Finder — TikTok creator discovery via the paid tikwmapi
@@ -36,7 +37,6 @@ import { z } from 'zod';
  * omitted, never fabricated.
  */
 
-export const TIKWMAPI_BASE_URL = 'https://api.tikwmapi.com';
 export const TRENDING_COUNT_MAX = 20;
 export const CHALLENGE_COUNT_MAX = 30;
 export const SEARCH_COUNT_MAX = 30;
