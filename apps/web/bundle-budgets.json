@@ -84,10 +84,10 @@
         "routeSpecificRawBytes": 84959
       },
       "/tenant/[subdomain]/fdola-studio": {
-        "firstLoadGzipBytes": 160399,
-        "firstLoadRawBytes": 534802,
-        "routeSpecificGzipBytes": 26601,
-        "routeSpecificRawBytes": 83953
+        "firstLoadGzipBytes": 159269,
+        "firstLoadRawBytes": 530254,
+        "routeSpecificGzipBytes": 25421,
+        "routeSpecificRawBytes": 79302
       },
       "/tenant/[subdomain]/media": {
         "firstLoadGzipBytes": 177374,
@@ -102,10 +102,10 @@
         "routeSpecificRawBytes": 84704
       },
       "/tenant/[subdomain]": {
-        "firstLoadGzipBytes": 159414,
-        "firstLoadRawBytes": 531377,
-        "routeSpecificGzipBytes": 25616,
-        "routeSpecificRawBytes": 80528
+        "firstLoadGzipBytes": 158328,
+        "firstLoadRawBytes": 527303,
+        "routeSpecificGzipBytes": 24480,
+        "routeSpecificRawBytes": 76351
       },
       "/signup": {
         "firstLoadGzipBytes": 148930,
@@ -271,17 +271,10 @@
         "routeSpecificRawBytes": 43088
       },
       "/tenant/[subdomain]": {
-<<<<<<< HEAD
         "firstLoadGzipBytes": 166245,
         "firstLoadRawBytes": 553669,
         "routeSpecificGzipBytes": 28323,
         "routeSpecificRawBytes": 89333
-=======
-        "firstLoadGzipBytes": 167385,
-        "firstLoadRawBytes": 557946,
-        "routeSpecificGzipBytes": 26897,
-        "routeSpecificRawBytes": 84555
->>>>>>> 37bd3148 (chore: bundle budgets for the new billing route and sidebar growth)
       },
       "/tenant/[subdomain]/accounts": {
         "firstLoadGzipBytes": 177491,
@@ -302,17 +295,10 @@
         "routeSpecificRawBytes": 101611
       },
       "/tenant/[subdomain]/fdola-studio": {
-<<<<<<< HEAD
         "firstLoadGzipBytes": 167233,
         "firstLoadRawBytes": 556767,
         "routeSpecificGzipBytes": 29270,
         "routeSpecificRawBytes": 92347
-=======
-        "firstLoadGzipBytes": 168419,
-        "firstLoadRawBytes": 561543,
-        "routeSpecificGzipBytes": 27932,
-        "routeSpecificRawBytes": 88151
->>>>>>> 37bd3148 (chore: bundle budgets for the new billing route and sidebar growth)
       },
       "/tenant/[subdomain]/instagram/accounts": {
         "firstLoadGzipBytes": 176183,
@@ -377,7 +363,6 @@
       "/tenant/[subdomain]/youtube/accounts": {
         "firstLoadGzipBytes": 167373,
         "firstLoadRawBytes": 556106,
-<<<<<<< HEAD
         "routeSpecificGzipBytes": 30988,
         "routeSpecificRawBytes": 97209
       },
@@ -392,16 +377,12 @@
         "firstLoadRawBytes": 562176,
         "routeSpecificGzipBytes": 33215,
         "routeSpecificRawBytes": 105666
-=======
-        "routeSpecificGzipBytes": 28779,
-        "routeSpecificRawBytes": 89207
       },
       "/tenant/[subdomain]/billing": {
         "firstLoadGzipBytes": 176478,
         "firstLoadRawBytes": 599680,
         "routeSpecificGzipBytes": 35990,
         "routeSpecificRawBytes": 126288
->>>>>>> 37bd3148 (chore: bundle budgets for the new billing route and sidebar growth)
       }
     },
     "totalClientJs": {
