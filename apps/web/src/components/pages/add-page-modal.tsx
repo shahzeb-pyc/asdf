@@ -495,6 +495,20 @@ export function AddPageModal({
       onReconnectAccount(account);
       return;
     }
+    // Audit N8: the fallback (no parent handler) must apply the
+    // same BYOC gate the Pages shell applies — without app
+    // credentials it routes to Settings instead of sending a
+    // BYOC-less user straight into OAuth, which would fail
+    // server-side. Unknown (undefined) counts as not configured
+    // here, exactly as in the shell handler.
+    if (!facebookAppConfigured) {
+      if (onNavigateToSettingsFacebook) {
+        onNavigateToSettingsFacebook();
+      } else if (typeof window !== 'undefined') {
+        window.location.href = `/tenant/${subdomain}/settings?tab=byoc`;
+      }
+      return;
+    }
     if (typeof window !== 'undefined') {
       window.location.href = buildDirectConnectUrl({
         id: account.id,
