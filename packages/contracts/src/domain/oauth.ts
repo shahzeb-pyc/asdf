@@ -8,9 +8,11 @@ export const OAuthStatePayloadSchema = z.object({
   iat: z.number().int(),
   exp: z.number().int(),
   isMagic: z.boolean().optional(),
-  expectedFbAccountId: z.string().min(1).optional(),
-  expectedInstagramAccountId: z.string().min(1).optional(),
-  expectedDisplayName: z.string().min(1).optional(),
+  // Audit N5: hint caps unified at 255 in both flows (magic body
+  // and direct initiate both bound before signing).
+  expectedFbAccountId: z.string().min(1).max(255).optional(),
+  expectedInstagramAccountId: z.string().min(1).max(255).optional(),
+  expectedDisplayName: z.string().min(1).max(255).optional(),
   redirectUri: z.string().url().optional(),
 });
 
@@ -22,9 +24,9 @@ export const MagicLinkTokenPayloadSchema = z.object({
   nonce: z.string().min(16),
   iat: z.number().int(),
   exp: z.number().int(),
-  expectedFbAccountId: z.string().min(1).optional(),
-  expectedInstagramAccountId: z.string().min(1).optional(),
-  expectedDisplayName: z.string().min(1).optional(),
+  expectedFbAccountId: z.string().min(1).max(255).optional(),
+  expectedInstagramAccountId: z.string().min(1).max(255).optional(),
+  expectedDisplayName: z.string().min(1).max(255).optional(),
 });
 
 export type MagicLinkTokenPayload = z.infer<typeof MagicLinkTokenPayloadSchema>;

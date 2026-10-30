@@ -13,42 +13,34 @@ import { z } from 'zod';
 import { bodyTooLargeResponse, enforceIpRateLimit, readJsonBody } from '@/lib/request-body';
 
 /**
- * Body schema for the magic-link request (spec 139 Wave B, audit C2:
- * this body was previously read with no validation at all). Both fields
- * are optional hints about the account the user expects to connect;
- * a field of the wrong type or blank is dropped (`.catch(undefined)`),
- * exactly matching the previous ignore-it behaviour.
+ * Body schema for the magic-link request (spec 139 Wave B, audit C2).
+ * Both fields are optional hints about the account the user expects
+ * to connect. Audit N5: a field of the wrong type, blank, or over
+ * 255 chars is a 400 now — the old `.catch(undefined)` silently
+ * dropped malformed hints, which also silently lost the BL2
+ * mismatch warning they carried. An absent/empty body still means
+ * "no hints" (the modal posts no body for a fresh connect).
  */
 const MagicLinkRequestBodySchema = z.object({
-  expectedFbAccountId: z
-    .string()
-    .trim()
-    .min(1)
-    .max(255)
-    .optional()
-    .catch(undefined),
-  expectedDisplayName: z
-    .string()
-    .trim()
-    .min(1)
-    .max(255)
-    .optional()
-    .catch(undefined),
+  expectedFbAccountId: z.string().trim().min(1).max(255).optional(),
+  expectedDisplayName: z.string().trim().min(1).max(255).optional(),
 });
 
 async function extractExpectedAccountFromBody(request: NextRequest): Promise<{
   expectedFbAccountId?: string | undefined;
   expectedDisplayName?: string | undefined;
   bodyTooLarge?: boolean;
+  bodyInvalid?: boolean;
 }> {
   const bodyResult = await readJsonBody(request);
   if (!bodyResult.ok) {
     if (bodyResult.reason === 'too-large') return { bodyTooLarge: true };
+    // No/unreadable body: no hints, not an error.
     return {};
   }
   const parsed = MagicLinkRequestBodySchema.safeParse(bodyResult.value);
   if (!parsed.success) {
-    return {};
+    return { bodyInvalid: true };
   }
   return {
     expectedFbAccountId: parsed.data.expectedFbAccountId,
@@ -106,9 +98,15 @@ export async function handleGenerateMagicLink(
   }
 
   // 4. Generate 15-minute cryptographically signed magic token
-  const { expectedFbAccountId, expectedDisplayName, bodyTooLarge } =
+  const { expectedFbAccountId, expectedDisplayName, bodyTooLarge, bodyInvalid } =
     await extractExpectedAccountFromBody(request);
   if (bodyTooLarge) return bodyTooLargeResponse();
+  if (bodyInvalid) {
+    return NextResponse.json(
+      { error: 'Invalid request payload: expectedFbAccountId and expectedDisplayName must be non-empty strings of at most 255 characters.' },
+      { status: 400 }
+    );
+  }
 
   const now = Math.floor(Date.now() / 1000);
   const nonce = crypto.randomUUID().replaceAll('-', '');
@@ -128,7 +126,10 @@ export async function handleGenerateMagicLink(
     sessionSecret
   );
 
-  const magicUrl = `${appUrl}/connect/facebook?token=${token}`;
+  // Audit N5: strip a trailing slash off the app URL (no double
+  // slash) and encode the token — safe today only because the
+  // token charset is base64url+hex, which must not be assumed.
+  const magicUrl = `${appUrl.replace(/\/+$/, '')}/connect/facebook?token=${encodeURIComponent(token)}`;
 
   return NextResponse.json({
     success: true,

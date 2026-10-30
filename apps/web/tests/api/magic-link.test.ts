@@ -57,6 +57,27 @@ describe('Magic Link Facebook Connection Endpoints (Spec 027)', () => {
             }),
           };
         }
+        if (table === 'users') {
+          // Audit S1: live session validation looks the user up
+          // before any tenant work, so the mock must return an
+          // active user or every authenticated call 401s.
+          return {
+            select: vi.fn().mockReturnThis(),
+            or: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: {
+                  id: userId,
+                  email: 'alexander@gmail.com',
+                  name: 'Alex Acme',
+                  role: 'user',
+                  status: 'active',
+                  password_updated_at: null,
+                },
+                error: null,
+              }),
+            }),
+          };
+        }
         if (table === 'platform_credentials') {
           return {
             select: vi.fn().mockReturnThis(),
@@ -139,6 +160,50 @@ describe('Magic Link Facebook Connection Endpoints (Spec 027)', () => {
       expect(data.magicUrl).toContain('http://localhost:3000/connect/facebook?token=');
       expect(data.expiresInSeconds).toBe(900);
       expect(data.expiresAt).toBeDefined();
+    });
+
+    it('returns 400 on a malformed hints body instead of silently dropping the hints (N5)', async () => {
+      const req = new NextRequest(
+        'http://localhost:3000/api/tenant/acme/accounts/magic-link',
+        {
+          method: 'POST',
+          headers: {
+            cookie: validSessionCookie,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({ expectedFbAccountId: 12345 }),
+        }
+      );
+      const res = await generateMagicLink(req, {
+        params: Promise.resolve({ subdomain: 'acme' }),
+      });
+
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toContain('expectedFbAccountId');
+    });
+
+    it('does not double-slash the magic URL when the app URL has a trailing slash (N5)', async () => {
+      process.env.NEXT_PUBLIC_APP_URL = 'http://localhost:3000/';
+      try {
+        const req = new NextRequest(
+          'http://localhost:3000/api/tenant/acme/accounts/magic-link',
+          {
+            method: 'POST',
+            headers: { cookie: validSessionCookie },
+          }
+        );
+        const res = await generateMagicLink(req, {
+          params: Promise.resolve({ subdomain: 'acme' }),
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.magicUrl).toContain('http://localhost:3000/connect/facebook?token=');
+        expect(data.magicUrl).not.toContain('localhost:3000//connect');
+      } finally {
+        process.env.NEXT_PUBLIC_APP_URL = 'http://localhost:3000';
+      }
     });
   });
 
