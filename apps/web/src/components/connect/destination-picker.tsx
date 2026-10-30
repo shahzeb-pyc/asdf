@@ -19,6 +19,7 @@
 import React, { useMemo, useState } from 'react';
 import Image from 'next/image';
 
+import { getPlatformAccountsPath } from '@fbuploadpro/contracts';
 import { formatPageIdSuffix } from '@/components/pages/page-card';
 import {
   PLATFORM_LABELS,
@@ -49,7 +50,11 @@ export async function submitDestinationPick(
     const data = (await res.json()) as { accountsUrl?: string };
     return {
       ok: true,
-      accountsUrl: data.accountsUrl ?? `/tenant/${subdomain}/accounts`,
+      // Fallback only when the complete route omits the URL (it does
+      // not today): per-platform Accounts page, not Facebook's.
+      accountsUrl:
+        data.accountsUrl ??
+        `/tenant/${subdomain}${getPlatformAccountsPath(platform)}`,
     };
   } catch {
     return { ok: false, error: "Couldn't save your choices. Please try again." };

@@ -1,5 +1,9 @@
 import { type NextRequest, NextResponse } from 'next/server';
-import { buildTenantUrl, getSessionSecret } from '@fbuploadpro/contracts';
+import {
+  buildPlatformAccountsUrl,
+  buildTenantUrl,
+  getSessionSecret,
+} from '@fbuploadpro/contracts';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
 import { enforceIpRateLimit } from '@/lib/request-body';
 // Side effect: registers the X connect config (spec 127).
@@ -135,9 +139,13 @@ export async function handleConnectInitiate(
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  const accountsUrl = buildTenantUrl(
+  // Per-platform Accounts landing page (facebook → `/accounts`,
+  // instagram → `/instagram/accounts`, …). Unknown platforms fall back
+  // to `/accounts`, as before — this URL is only used for error
+  // redirects when the platform is unknown or has no client id.
+  const accountsUrl = buildPlatformAccountsUrl(
     subdomain,
-    '/accounts',
+    platformParam,
     request.url,
     rootDomain
   );

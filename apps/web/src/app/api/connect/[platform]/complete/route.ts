@@ -1,5 +1,8 @@
 import { type NextRequest, NextResponse } from 'next/server';
-import { getSessionSecret } from '@fbuploadpro/contracts';
+import {
+  getPlatformAccountsPath,
+  getSessionSecret,
+} from '@fbuploadpro/contracts';
 import { z } from 'zod';
 import { bodyTooLargeResponse, enforceIpRateLimit, readJsonBody } from '@/lib/request-body';
 import { isKnownPlatform } from '@/lib/connect/registry';
@@ -134,8 +137,11 @@ export async function handleConnectComplete(
     );
   }
 
+  // Per-platform Accounts landing page: facebook keeps the historic
+  // `/tenant/<sub>/accounts`; every other platform lands on its own
+  // accounts page (e.g. Instagram → `/tenant/<sub>/instagram/accounts`).
   const response = NextResponse.json({
-    accountsUrl: `/tenant/${pending.tenantSubdomain}/accounts`,
+    accountsUrl: `/tenant/${pending.tenantSubdomain}${getPlatformAccountsPath(platform)}`,
     addedCount: picked.length,
   });
   response.cookies.set(PENDING_COOKIE_NAME, '', {

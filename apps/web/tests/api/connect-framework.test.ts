@@ -408,6 +408,18 @@ describe('Connect framework (Spec 123 Part C) with a fixture platform', () => {
     expect(res.headers.get('location')).toBe('http://localhost:3000/login');
   });
 
+  it('initiate redirects an unknown platform to the Facebook accounts URL with an error', async () => {
+    const req = new NextRequest(
+      `http://localhost:3000/api/connect/myspace?subdomain=${subdomain}`,
+      { headers: { cookie: sessionCookie } }
+    );
+    const res = await handleConnectInitiate(req, 'myspace', dbClient);
+    expect(res.status).toBe(307);
+    expect(res.headers.get('location')).toBe(
+      `http://localhost:3000/tenant/${subdomain}/accounts?error=connect_failed`
+    );
+  });
+
   it('callback persists the account with encrypted tokens and redirects to the picker', async () => {
     const { state } = await initiateInstagram();
     const res = await runCallback(state);
@@ -446,10 +458,69 @@ describe('Connect framework (Spec 123 Part C) with a fixture platform', () => {
     const res = await handleConnectComplete(req, 'instagram', dbClient);
     expect(res.status).toBe(200);
     const data = (await res.json()) as { accountsUrl: string; addedCount: number };
-    expect(data.accountsUrl).toBe(`/tenant/${subdomain}/accounts`);
+    // Per-platform landing page: Instagram lands on its own accounts page.
+    expect(data.accountsUrl).toBe(`/tenant/${subdomain}/instagram/accounts`);
     expect(data.addedCount).toBe(2);
     const storedIds = [...db.destinations.values()].map((d) => d.external_destination_id);
     expect(storedIds.sort((a, b) => a.localeCompare(b))).toEqual(['dest-1001', 'dest-3003']);
+  });
+
+  it('complete returns the Facebook accounts URL for facebook (unchanged)', async () => {
+    const pending = await signPendingDestinations(
+      {
+        accountId: 'acct-1',
+        workspaceId,
+        tenantSubdomain: subdomain,
+        platform: 'facebook',
+        destinations: FIXTURE_DESTINATIONS,
+        exp: Math.floor(Date.now() / 1000) + 600,
+      },
+      TEST_SECRET
+    );
+    const req = new NextRequest('http://localhost:3000/api/connect/facebook/complete', {
+      method: 'POST',
+      headers: {
+        cookie: `${sessionCookie}; fbup_connect_pending=${pending}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ destinationIds: ['dest-1001'] }),
+    });
+    const res = await handleConnectComplete(req, 'facebook', dbClient);
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { accountsUrl: string; addedCount: number };
+    expect(data.accountsUrl).toBe(`/tenant/${subdomain}/accounts`);
+    expect(data.addedCount).toBe(1);
+  });
+
+  it('complete returns the per-platform accounts URL for threads and x', async () => {
+    for (const [platform, path] of [
+      ['threads', 'threads'],
+      ['x', 'x'],
+    ] as const) {
+      const pending = await signPendingDestinations(
+        {
+          accountId: 'acct-1',
+          workspaceId,
+          tenantSubdomain: subdomain,
+          platform,
+          destinations: FIXTURE_DESTINATIONS,
+          exp: Math.floor(Date.now() / 1000) + 600,
+        },
+        TEST_SECRET
+      );
+      const req = new NextRequest(`http://localhost:3000/api/connect/${platform}/complete`, {
+        method: 'POST',
+        headers: {
+          cookie: `${sessionCookie}; fbup_connect_pending=${pending}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ destinationIds: ['dest-1001'] }),
+      });
+      const res = await handleConnectComplete(req, platform, dbClient);
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as { accountsUrl: string; addedCount: number };
+      expect(data.accountsUrl).toBe(`/tenant/${subdomain}/${path}/accounts`);
+    }
   });
 
   it('reconnect re-binds the same social_accounts row instead of duplicating it', async () => {
@@ -988,7 +1059,9 @@ describe('Connect framework (Spec 123 Part C) with a fixture platform', () => {
       new NextRequest('http://localhost:3000/api/connect/instagram/callback'),
       { params: Promise.resolve({ platform: 'instagram' }) }
     );
-    expect(callbackFallback.headers.get('location')).toContain('/accounts?error=connect_failed');
+    expect(callbackFallback.headers.get('location')).toContain(
+      '/instagram/accounts?error=connect_failed'
+    );
 
     const completeRes = await completePOST(
       new NextRequest('http://localhost:3000/api/connect/instagram/complete', {

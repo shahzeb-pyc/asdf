@@ -2,7 +2,10 @@ import type { Metadata } from 'next';
 import React from 'react';
 import Link from 'next/link';
 import { cookies } from 'next/headers';
-import { getSessionSecret } from '@fbuploadpro/contracts';
+import {
+  getPlatformAccountsPath,
+  getSessionSecret,
+} from '@fbuploadpro/contracts';
 import { DestinationPicker } from '@/components/connect/destination-picker';
 // Side effect: registers the X connect config (spec 127) so its picker mode resolves.
 import '@/lib/connect/platforms/x';
@@ -112,7 +115,8 @@ export default async function ConnectPickerPage({
   const { notice } = await searchParams;
   const platform = isKnownPlatform(platformParam) ? platformParam : null;
   const platformName = platform ? PLATFORM_LABELS[platform] : 'Platform';
-  const accountsHref = `/tenant/${subdomain}/accounts`;
+  // Per-platform Accounts landing page (facebook keeps `/accounts`).
+  const accountsHref = `/tenant/${subdomain}${getPlatformAccountsPath(platform ?? '')}`;
 
   let pending: PendingDestinations | null = null;
   if (platform && !notice) {
