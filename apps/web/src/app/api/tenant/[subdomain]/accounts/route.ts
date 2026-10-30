@@ -23,6 +23,7 @@ import {
   ACCOUNT_STATUS_TO_WIRE_SQL,
   unifiedAccountStatusToWire,
 } from '@/lib/server/facebook-wire';
+import { isAccountExpiredForList } from '@/components/accounts/accounts-helpers';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 /**
@@ -145,8 +146,17 @@ export interface AccountListFilters {
   status: string;
 }
 
-/** Computed-expired predicate (mirrors evaluateAccountHealth). */
-const ACCOUNT_EXPIRED_SQL = `(sa.status = 'expired' OR (sa.status = 'active' AND sa.token_expires_at < now()))`;
+/**
+ * Audit BG11 — computed-expired predicate, unified with the
+ * Supabase path and the shell's getAccountHealth: an expired
+ * wire status OR a past token is expired, regardless of the
+ * other field. The old predicate counted active+past-token but
+ * not disconnected+past-token, so a disconnected account with
+ * a past token was counted as expired yet excluded from the
+ * expired filter. This predicate is also the ORDER BY key, so
+ * sort order unifies with it.
+ */
+const ACCOUNT_EXPIRED_SQL = `((${ACCOUNT_STATUS_TO_WIRE_SQL}) = 'expired' OR sa.token_expires_at < now())`;
 
 /**
  * Full-set health buckets, mirroring the shell's getAccountHealth
@@ -488,17 +498,13 @@ export async function handleListAccounts(
     });
     const filtered = filterAndSortAccounts(mapped, filters);
     // Full-set health counts, counted BEFORE slicing, using the
-    // same health model as the shell subtitle (getAccountHealth):
-    // expired wire status or a past token is expired, disconnected
-    // with a live-or-absent token is an error, otherwise connected.
+    // same health model as the shell subtitle (getAccountHealth)
+    // via the shared BG11 predicate: expired wire status or a
+    // past token is expired, disconnected with a live-or-absent
+    // token is an error, otherwise connected.
     healthCounts = { connected: 0, expired: 0, error: 0 };
     for (const account of filtered) {
-      if (account.status === 'expired') {
-        healthCounts.expired += 1;
-      } else if (
-        account.tokenExpiresAt &&
-        new Date(account.tokenExpiresAt).getTime() <= Date.now()
-      ) {
+      if (isAccountExpiredForList(account.status, account.tokenExpiresAt)) {
         healthCounts.expired += 1;
       } else if (account.status === 'disconnected') {
         healthCounts.error += 1;
@@ -539,7 +545,20 @@ export async function handleListAccounts(
  */
 type MappedAccount = ReturnType<typeof mapAccountRowToView>;
 
-function filterAndSortAccounts(
+/**
+ * Audit BG11 — the Supabase path's filter/sort, unified with the
+ * SQL path and the shell model via isAccountExpiredForList:
+ * 'active' means connected (active wire status AND a live or
+ * absent token — the old code admitted active+past-token here);
+ * 'expired' means the shared expired predicate (the old code
+ * matched only the wire status, dropping active+past-token and
+ * disconnected+past-token rows the counts still called expired);
+ * 'expiring_soon' means active with a token 1–7 days out (the
+ * old code admitted disconnected/error accounts with soon
+ * tokens); sort is expired-first by the same predicate (the old
+ * sort used the wire status only).
+ */
+export function filterAndSortAccounts(
   accounts: MappedAccount[],
   filters: AccountListFilters
 ): MappedAccount[] {
@@ -550,11 +569,17 @@ function filterAndSortAccounts(
         query.length === 0 ||
         (account.displayName ?? '').toLowerCase().includes(query);
       let matchesStatus = true;
-      if (filters.status === 'active') matchesStatus = account.status === 'active';
+      if (filters.status === 'active')
+        matchesStatus =
+          account.status === 'active' &&
+          !isAccountExpiredForList(account.status, account.tokenExpiresAt);
       else if (filters.status === 'expired')
-        matchesStatus = account.status === 'expired';
+        matchesStatus = isAccountExpiredForList(
+          account.status,
+          account.tokenExpiresAt
+        );
       else if (filters.status === 'expiring_soon') {
-        if (account.status === 'expired' || !account.tokenExpiresAt) {
+        if (account.status !== 'active' || !account.tokenExpiresAt) {
           matchesStatus = false;
         } else {
           const days = Math.ceil(
@@ -567,8 +592,12 @@ function filterAndSortAccounts(
       return matchesSearch && matchesStatus;
     })
     .sort((a, b) => {
-      const aExpired = a.status === 'expired' ? 1 : 0;
-      const bExpired = b.status === 'expired' ? 1 : 0;
+      const aExpired = isAccountExpiredForList(a.status, a.tokenExpiresAt)
+        ? 1
+        : 0;
+      const bExpired = isAccountExpiredForList(b.status, b.tokenExpiresAt)
+        ? 1
+        : 0;
       if (aExpired !== bExpired) return bExpired - aExpired;
       return (
         new Date(String(b.createdAt)).getTime() -

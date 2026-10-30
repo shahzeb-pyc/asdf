@@ -56,6 +56,7 @@ import {
   computeAccountsSubtitle,
   computeAccountsSubtitleFromCounts,
   isConnectGatedByMissingCredentials,
+  resolveConnectClick,
   resolveOAuthRedirectNotice,
   sortAccountsExpiredFirst,
   type AccountStatusFilter,
@@ -389,25 +390,49 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
     }
   }, [searchParams, accounts, flashHighlight]);
 
-  const handleOpenNewConnect = () => {
-    if (byocStatus.isLoading) return;
-    if (!byocStatus.isConfigured) {
+  // Audit BG9: on a failed BYOC check the click retries the
+  // check and routes on the fresh result — Connect when the
+  // check now confirms credentials, the prompt only when a
+  // successful check confirms they are missing, and the retry
+  // banner stays when the check fails again. The dead-end
+  // prompt (implying missing credentials on a mere check
+  // failure) is never opened from this path.
+  const routeConnectClick = (onConfigured: () => void) => {
+    const route = resolveConnectClick(byocStatus);
+    if (route === 'connect') {
+      onConfigured();
+      return;
+    }
+    if (route === 'prompt') {
       setIsByocPromptOpen(true);
       return;
     }
-    setReconnectingAccount(null);
-    setIsConnectOpen(true);
+    void byocQuery.refetch().then((result) => {
+      if (result.isError) return;
+      const data = result.data;
+      if (data && data.fbAppId && data.hasSecret) {
+        onConfigured();
+      } else {
+        setIsByocPromptOpen(true);
+      }
+    });
+  };
+
+  const handleOpenNewConnect = () => {
+    if (byocStatus.isLoading) return;
+    routeConnectClick(() => {
+      setReconnectingAccount(null);
+      setIsConnectOpen(true);
+    });
   };
 
   // Handle Reconnect (opens ConnectAccountModal with reconnectingAccount context)
   const handleReconnect = (account: FacebookAccountItem) => {
     if (byocStatus.isLoading) return;
-    if (!byocStatus.isConfigured) {
-      setIsByocPromptOpen(true);
-      return;
-    }
-    setReconnectingAccount(account);
-    setIsConnectOpen(true);
+    routeConnectClick(() => {
+      setReconnectingAccount(account);
+      setIsConnectOpen(true);
+    });
   };
 
   // BL2 fix: banner Reconnect action for the expected account after a
