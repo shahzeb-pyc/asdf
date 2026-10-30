@@ -3,7 +3,7 @@ import {
   DisconnectThreadsAccountResponseSchema,
   ListThreadsAccountsResponseSchema,
   ThreadsAccountViewSchema,
-} from '../../src/index.js';
+} from '../src/index.js';
 
 const account = {
   id: '11111111-1111-4111-a111-111111111111',

@@ -249,7 +249,7 @@ describe('Threads accounts list route', () => {
     const token = await signSessionToken(
       {
         userId: USER_ID,
-        email: 'alex@example.com',
+        email: 'alexander@gmail.com',
         name: 'Alex Acme',
         subdomain: 'acme',
         role: 'user',

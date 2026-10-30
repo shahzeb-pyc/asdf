@@ -48,25 +48,16 @@ interface ThreadsAccountRow {
   updated_at: string;
 }
 
-type ThreadsQuery = ReturnType<SupabaseClient['from']>;
-
-function applyBaseFilters(
-  query: ThreadsQuery,
-  workspaceId: string,
-  search: string
-): ThreadsQuery {
-  let q = query
-    .eq('workspace_id', workspaceId)
-    .eq('platform', 'threads');
-  if (search) {
-    q = q.ilike('display_name', `%${search}%`);
-  }
-  return q;
-}
+/**
+ * Fresh base builders. The return types are left inferred: Supabase's
+ * filter-builder type carries the table's row shape, and spelling it
+ * by hand (PostgrestQueryBuilder) drops the filter methods. Each
+ * caller chains eq/ilike/or/order/range on the inferred builder.
+ */
 
 function mapRowToView(row: ThreadsAccountRow): ThreadsAccountView {
   const tokenPast =
-    Boolean(row.token_expires_at) &&
+    row.token_expires_at !== null &&
     Date.parse(row.token_expires_at) <= Date.now();
   const status: ThreadsAccountView['status'] =
     row.status === 'expired' || tokenPast
@@ -170,38 +161,27 @@ export async function handleListThreadsAccounts(
     // Full-set counts over the search-filtered set (status filter is
     // NOT applied to the counts, so the subtitle reports workspace
     // totals; the filtered view reports its own total instead).
-    const totalRes = await applyBaseFilters(
-      supabase.from('social_accounts').select('id', {
-        count: 'exact',
-        head: true,
-      }),
-      workspaceId,
-      search
-    );
+    const baseCount = () =>
+      supabase
+        .from('social_accounts')
+        .select('id', { count: 'exact', head: true })
+        .eq('workspace_id', workspaceId)
+        .eq('platform', 'threads');
+    const withSearch = <T extends { ilike: (c: string, p: string) => T }>(
+      q: T
+    ): T => (search ? q.ilike('display_name', `%${search}%`) : q);
+
+    const totalRes = await withSearch(baseCount());
     if (totalRes.error) throw new Error(totalRes.error.message);
     const total = totalRes.count ?? 0;
 
-    const connectedRes = await applyBaseFilters(
-      supabase.from('social_accounts').select('id', {
-        count: 'exact',
-        head: true,
-      }),
-      workspaceId,
-      search
-    )
+    const connectedRes = await withSearch(baseCount())
       .eq('status', 'active')
       .or(liveTokenOr);
     if (connectedRes.error) throw new Error(connectedRes.error.message);
     const connected = connectedRes.count ?? 0;
 
-    const errorRes = await applyBaseFilters(
-      supabase.from('social_accounts').select('id', {
-        count: 'exact',
-        head: true,
-      }),
-      workspaceId,
-      search
-    )
+    const errorRes = await withSearch(baseCount())
       .eq('status', 'disconnected')
       .or(liveTokenOr);
     if (errorRes.error) throw new Error(errorRes.error.message);
@@ -236,18 +216,16 @@ export async function handleListThreadsAccounts(
         to: number
       ): Promise<ThreadsAccountRow[]> => {
         if (from > to) return [];
-        let q = applyBaseFilters(
+        let q = withSearch(
           supabase
             .from('social_accounts')
             .select(columns)
-            .order('created_at', { ascending: false }),
-          workspaceId,
-          search
+            .eq('workspace_id', workspaceId)
+            .eq('platform', 'threads')
+            .order('created_at', { ascending: false })
         );
         if (kind === 'expired') {
-          q = q.or(
-            `status.eq.expired,token_expires_at.lt.${nowIso}`
-          );
+          q = q.or(`status.eq.expired,token_expires_at.lt.${nowIso}`);
         } else if (kind === 'rest') {
           q = q.neq('status', 'expired').or(liveTokenOr);
         } else {
