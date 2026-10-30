@@ -192,6 +192,10 @@ export function MediaLibraryExplorer({
 
   // Open the file picker reliably: showPicker() is the programmatic opener
   // that browsers honor; fall back to click() where it is unavailable.
+  // This only works because the header's file input stays rendered
+  // (1px, transparent) — showPicker() silently no-ops on a display:none
+  // input without throwing, so the fallback below would never run.
+  // Never re-hide that input with `hidden` / display:none.
   const handleUploadClick = useCallback(() => {
     const input = fileInputRef.current;
     if (!input) return;

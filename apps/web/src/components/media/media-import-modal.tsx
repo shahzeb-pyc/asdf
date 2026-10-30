@@ -584,13 +584,20 @@ export function MediaImportModal({
           )}
         </div>
 
-        {/* Hidden file input for "+ Add more" */}
+        {/*
+          File input for "+ Add more". Same rule as the library header's
+          picker input: it stays rendered (1px, transparent), never
+          display:none, so programmatic opening is honored in every
+          browser. Pure mechanism — out of keyboard/AT order.
+        */}
         <input
           ref={fileInputRef}
           type="file"
           multiple
           accept={AllowedMediaMimeTypes.join(',')}
-          className="hidden"
+          aria-hidden="true"
+          tabIndex={-1}
+          className="pointer-events-none absolute h-px w-px opacity-0"
           onChange={(e) => {
             if (e.target.files) {
               const newFiles = Array.from(e.target.files);
