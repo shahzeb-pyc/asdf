@@ -25,6 +25,8 @@ import {
 } from './media-library-helpers';
 import {
   invalidateMediaAll,
+  MEDIA_LIST_LIMIT,
+  toMediaItemResponse,
   useBatchCaptionMedia,
   useBatchDeleteMedia,
   useBatchMoveMedia,
@@ -39,6 +41,9 @@ import {
 } from './media-data';
 import { useQueryClient } from '@tanstack/react-query';
 import { reportError } from '@/lib/report-error';
+import { api, buildTenantApiPath } from '@/lib/api';
+import { MediaListResponseSchema } from '@/lib/api/schemas/media';
+import { Button } from '@/components/shared/ui/button';
 import { setPreference, preferences } from '@/lib/storage/preferences';
 export { MEDIA_VIEW_MODE_STORAGE_KEY } from './media-library-helpers';
 export type { MoveTargetState, MediaLibraryExplorerProps } from './media-library-helpers';
@@ -97,10 +102,67 @@ export function MediaLibraryExplorer({
   const foldersQuery = useMediaFolders(subdomain, { initialFolders });
   const itemsQuery = useMediaItems(subdomain, { initialItems: initialMediaItems });
   const folders = useMemo<MediaFolder[]>(() => foldersQuery.data ?? [], [foldersQuery.data]);
-  const mediaItems = useMemo<MediaItemResponse[]>(
-    () => itemsQuery.data ?? [],
-    [itemsQuery.data]
-  );
+  // Load more (P1-15): the shared list query fetches only the first
+  // MEDIA_LIST_LIMIT items, so libraries past 500 were silently
+  // truncated in this view. Extra pages are fetched here with
+  // offset paging (the picker's pattern) and appended to the base
+  // page; client-side folder/search/type filtering then runs over
+  // everything loaded, and over the full set once every page is
+  // loaded. The shared query shape is deliberately unchanged: the
+  // picker spreads mediaListQuery into useQuery and the server
+  // hydrates the same key with the first page.
+  const [extraMediaItems, setExtraMediaItems] = useState<MediaItemResponse[]>([]);
+  const [extraTotal, setExtraTotal] = useState<number | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const mediaItems = useMemo<MediaItemResponse[]>(() => {
+    const base = itemsQuery.data ?? [];
+    if (extraMediaItems.length === 0) return base;
+    const seen = new Set(base.map((m) => m.id));
+    return [...base, ...extraMediaItems.filter((m) => !seen.has(m.id))];
+  }, [itemsQuery.data, extraMediaItems]);
+  // Extra pages belong to the base page they extend: whenever the
+  // base list refetches (mutation, refresh, focus), the offsets
+  // shift, so extras are dropped and re-loaded from the new base.
+  // Load-more fetches below never touch itemsQuery, so they never
+  // trigger this reset.
+  const itemsUpdatedAtRef = useRef<number | null>(null);
+  useEffect(() => {
+    const updatedAt = itemsQuery.dataUpdatedAt;
+    if (itemsUpdatedAtRef.current === null) {
+      itemsUpdatedAtRef.current = updatedAt;
+      return;
+    }
+    if (updatedAt !== itemsUpdatedAtRef.current) {
+      itemsUpdatedAtRef.current = updatedAt;
+      setExtraMediaItems([]);
+      setExtraTotal(null);
+    }
+  }, [itemsQuery.dataUpdatedAt]);
+  const handleLoadMore = useCallback(async () => {
+    if (loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const res = await api.get(buildTenantApiPath(subdomain, '/media'), {
+        schema: MediaListResponseSchema,
+        query: {
+          limit: MEDIA_LIST_LIMIT,
+          offset: MEDIA_LIST_LIMIT + extraMediaItems.length,
+        },
+      });
+      setExtraTotal(res.total);
+      setExtraMediaItems((prev) => {
+        const seen = new Set(prev.map((item) => item.id));
+        const fresh = res.items
+          .map(toMediaItemResponse)
+          .filter((item) => !seen.has(item.id));
+        return [...prev, ...fresh];
+      });
+    } catch (error) {
+      reportError(error, { source: 'media-library-load-more' });
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, subdomain, extraMediaItems.length]);
   const isLoading = itemsQuery.isPending || foldersQuery.isPending;
 
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(
@@ -480,6 +542,15 @@ export function MediaLibraryExplorer({
     sortOption,
   ]);
 
+  // Load-more visibility: the route's total once known (extraTotal
+  // after the first extra page, or the seed prop in tests); before
+  // any total is known, a full first page means there may be more.
+  const knownTotalMediaCount = extraTotal ?? initialTotalMediaCount;
+  const canLoadMore =
+    knownTotalMediaCount !== undefined
+      ? mediaItems.length < knownTotalMediaCount
+      : (itemsQuery.data ?? []).length >= MEDIA_LIST_LIMIT;
+
   // Selection handlers
   const handleToggleSelect = (
     mediaId: string,
@@ -695,13 +766,25 @@ export function MediaLibraryExplorer({
         showToast={showToast}
       />
 
-      {/* Infinite Scroll & Total Media Count Test Anchor */}
-      {initialTotalMediaCount !== undefined && initialTotalMediaCount > displayedMediaItems.length && (
-        <div className="hidden" aria-hidden="true">
-          <div data-testid="infinite-scroll-sentinel" />
-          <button type="button" data-testid="load-more-media-btn">
-            Load more (Showing {displayedMediaItems.length} of {initialTotalMediaCount})
-          </button>
+      {/* Load more: real offset paging past the shared 500-item
+          first page (P1-15). The button shows while the loaded set
+          is smaller than the route's total, and loads the next page
+          on tap; the previous hidden test-only anchor never loaded
+          anything. */}
+      {canLoadMore && (
+        <div className="flex justify-center py-4">
+          <div data-testid="infinite-scroll-sentinel" aria-hidden="true" />
+          <Button
+            type="button"
+            variant="outline"
+            data-testid="load-more-media-btn"
+            onClick={() => void handleLoadMore()}
+            disabled={loadingMore}
+          >
+            {knownTotalMediaCount !== undefined
+              ? `Load more (Showing ${displayedMediaItems.length} of ${knownTotalMediaCount})`
+              : 'Load more'}
+          </Button>
         </div>
       )}
 

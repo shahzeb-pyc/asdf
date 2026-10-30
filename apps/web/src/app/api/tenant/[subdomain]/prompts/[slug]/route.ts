@@ -188,6 +188,10 @@ export async function PATCH(
     if (input.media) {
       // Replace the whole gallery, restoring the previous one if
       // the replacement fails — same pattern as the steps below.
+      // The restore itself is checked too: a failed restore used
+      // to fall through to the generic 500 below, leaving the
+      // prompt media-less with nothing distinguishing that loss
+      // from an ordinary insert failure.
       const previousMedia = await loadMedia(client, prompt.id);
       const { error: deleteMediaError } = await client
         .from('prompt_library_media')
@@ -198,17 +202,29 @@ export async function PATCH(
         .from('prompt_library_media')
         .insert(toPromptMediaInsertRows(input.media, prompt.id));
       if (insertMediaError) {
-        await client.from('prompt_library_media').insert(
-          previousMedia.map((mediaRow) => ({
-            prompt_id: prompt.id,
-            position: mediaRow.position,
-            media_type: mediaRow.media_type,
-            storage_key: mediaRow.storage_key,
-            poster_key: mediaRow.poster_key,
-            duration_seconds: mediaRow.duration_seconds,
-            is_main: mediaRow.is_main,
-          })),
-        );
+        const { error: restoreMediaError } = await client
+          .from('prompt_library_media')
+          .insert(
+            previousMedia.map((mediaRow) => ({
+              prompt_id: prompt.id,
+              position: mediaRow.position,
+              media_type: mediaRow.media_type,
+              storage_key: mediaRow.storage_key,
+              poster_key: mediaRow.poster_key,
+              duration_seconds: mediaRow.duration_seconds,
+              is_main: mediaRow.is_main,
+            })),
+          );
+        if (restoreMediaError) {
+          logPromptError(
+            '[prompt-library] Media restore failed after failed replacement — prompt left media-less',
+            restoreMediaError,
+          );
+          return NextResponse.json(
+            { error: 'MEDIA_RESTORE_FAILED' },
+            { status: 500 },
+          );
+        }
         throw insertMediaError;
       }
     }
@@ -232,14 +248,29 @@ export async function PATCH(
         );
       if (insertError) {
         // Restore the previous steps rather than leaving none.
-        await client.from('prompt_library_how_to_steps').insert(
-          previousSteps.map((step) => ({
-            prompt_id: prompt.id,
-            position: step.position,
-            title: step.title,
-            body: step.body,
-          })),
-        );
+        // A failed restore is reported distinctly (see media
+        // above): silently returning the generic 500 hid the
+        // step-less state from operators.
+        const { error: restoreStepsError } = await client
+          .from('prompt_library_how_to_steps')
+          .insert(
+            previousSteps.map((step) => ({
+              prompt_id: prompt.id,
+              position: step.position,
+              title: step.title,
+              body: step.body,
+            })),
+          );
+        if (restoreStepsError) {
+          logPromptError(
+            '[prompt-library] Steps restore failed after failed replacement — prompt left step-less',
+            restoreStepsError,
+          );
+          return NextResponse.json(
+            { error: 'STEPS_RESTORE_FAILED' },
+            { status: 500 },
+          );
+        }
         throw insertError;
       }
     }

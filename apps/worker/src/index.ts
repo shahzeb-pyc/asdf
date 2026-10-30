@@ -275,6 +275,15 @@ export async function handleScheduled(
     return;
   }
 
+  // First sub-tick failure across the slot, mirror-job, and ADU
+  // ticks below. It never fails the tick itself, but it DOES fail
+  // the tick's heartbeat (see the heartbeat write at the end).
+  let firstSubTickFailure:
+    | 'slot_claim_tick_failed'
+    | 'mirror_job_tick_failed'
+    | 'adu_tick_failed'
+    | null = null;
+
   try {
     const result = await runClaimTick({
       db,
@@ -289,11 +298,12 @@ export async function handleScheduled(
     // on the same tick, isolated from the due-based claim above.
     // Per-slot failures are captured inside runSlotClaimTick; a
     // tick-level failure (list RPC, missing queue binding) is
-    // captured here and must not fail the tick or its heartbeat —
-    // slot claims simply retry next tick (a slot whose window has
-    // passed by then is lost, exactly like a publisher outage).
-    // The heartbeat still reports the due-based claim counts only;
-    // slot claims report through their own log line (slot-claim.ts).
+    // captured here and must not fail the tick — slot claims simply
+    // retry next tick (a slot whose window has passed by then is
+    // lost, exactly like a publisher outage). It DOES fail the
+    // tick's heartbeat (see firstSubTickFailure below): a tick whose
+    // slot claim failed is not a successful tick, and the health
+    // tier must not report it as one.
     try {
       await runSlotClaimTick({
         db,
@@ -310,15 +320,17 @@ export async function handleScheduled(
         waitUntil
       );
       console.error('[handleScheduled] slot claim tick failed; continuing:', slotErr);
+      firstSubTickFailure ??= 'slot_claim_tick_failed';
     }
 
     // Mirror-check jobs (TikTok mirrors, database queue): the
     // every-minute tick is the consumer — it claims due jobs
     // from mirror_check_jobs and runs one mirror check per job.
     // Isolated like the slot claim: a failure here never breaks
-    // the claimer, the slot claim, or the heartbeat below —
+    // the claimer, the slot claim, or the tick itself —
     // unclaimed jobs simply wait for the next minute, and the
-    // job tick itself never throws (see runMirrorJobTick).
+    // job tick itself never throws (see runMirrorJobTick). A
+    // failure here DOES fail the tick's heartbeat (below).
     try {
       const tickDeps = buildMirrorTickDeps(db, masterKey, {
         env,
@@ -341,12 +353,14 @@ export async function handleScheduled(
         waitUntil
       );
       console.error('[handleScheduled] mirror job tick failed; continuing:', jobErr);
+      firstSubTickFailure ??= 'mirror_job_tick_failed';
     }
 
     // ADU tick: schedule intake + reel publish, isolated like slot
     // claims. A missing ADU migration returns skipped (never throws),
     // and any other failure is captured and never fails the claim
-    // tick or its heartbeat — ADU jobs simply retry next minute.
+    // tick itself — ADU jobs simply retry next minute. A failure
+    // here DOES fail the tick's heartbeat (below).
     try {
       await runAduTick({
         db: db as unknown as Parameters<typeof runAduTick>[0]['db'],
@@ -362,10 +376,19 @@ export async function handleScheduled(
         waitUntil
       );
       console.error('[handleScheduled] ADU tick failed; continuing:', aduErr);
+      firstSubTickFailure ??= 'adu_tick_failed';
     }
 
+    // Sub-tick failures fail the heartbeat, not the tick: the tick
+    // completed and every subsystem retries next minute, but
+    // reporting success:true here would keep last_success_at fresh
+    // while a pipeline is broken — exactly the health theatre this
+    // heartbeat exists to prevent. skipReason carries the first
+    // failure in slot → mirror → ADU order; every failure is also
+    // in the structured error log above.
     await recordHeartbeat(db, {
-      success: true,
+      success: firstSubTickFailure === null,
+      skipReason: firstSubTickFailure,
       claimed: result.claimed,
       enqueuedFast: result.enqueuedFast,
       enqueuedHeavy: result.enqueuedHeavy,

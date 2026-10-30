@@ -113,12 +113,18 @@ function makeClient() {
         // Distinguish the two favourites queries by call order is
         // fragile; instead return a builder whose .eq() resolves for
         // the list query and whose .in() resolves for the flag query.
-        // The route calls .select().eq() for the list query and
-        // .select().eq().in() for the flag query — so .eq() must
-        // return an object that is both awaitable (list query) and
-        // has .in() (flag query). A thenable builder does both.
-        const flagBuilder = {
+        // The route calls .select().eq().order().range() for the paged
+        // list query and .select().eq().in() for the flag query — so
+        // .eq() must return an object that is both awaitable (via
+        // .range(), list query) and has .in() (flag query).
+        const flagBuilder: Record<string, unknown> = {};
+        Object.assign(flagBuilder, {
           in: vi.fn(async () => ({
+            data: [{ prompt_id: FAV_ID }],
+            error: null,
+          })),
+          order: vi.fn(() => flagBuilder),
+          range: vi.fn(async () => ({
             data: [{ prompt_id: FAV_ID }],
             error: null,
           })),
@@ -129,7 +135,7 @@ function makeClient() {
             Promise.resolve({ data: [{ prompt_id: FAV_ID }], error: null })
               .then(resolve, reject);
           },
-        };
+        });
         return {
           select: vi.fn(() => ({
             eq: vi.fn(() => flagBuilder),

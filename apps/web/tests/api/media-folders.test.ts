@@ -111,12 +111,14 @@ describe('Nested Media Folders CRUD, Reparenting & Cascading Deletion', () => {
             return {
               select: vi.fn((columns: unknown, options?: unknown) => {
                 selectCalls.push({ table, columns, options });
+                // Chain mirrors the paged list query:
+                // .eq().order(name).order(id).range()
+                const page: any = {
+                  range: vi.fn().mockResolvedValue({ data: folders, error: null }),
+                };
+                page.order = vi.fn().mockReturnValue(page);
                 return {
-                  eq: vi.fn().mockReturnValue({
-                    order: vi.fn().mockReturnValue({
-                      limit: vi.fn().mockResolvedValue({ data: folders, error: null }),
-                    }),
-                  }),
+                  eq: vi.fn().mockReturnValue(page),
                 };
               }),
             };
@@ -125,11 +127,17 @@ describe('Nested Media Folders CRUD, Reparenting & Cascading Deletion', () => {
             return {
               select: vi.fn((columns: unknown, options?: unknown) => {
                 selectCalls.push({ table, columns, options });
-                return {
-                  eq: vi.fn().mockResolvedValue({
+                // Chain mirrors the paged tally query:
+                // .eq().order(id).range()
+                const page: any = {
+                  range: vi.fn().mockResolvedValue({
                     data: itemFolderIds.map((folder_id) => ({ folder_id })),
                     error: null,
                   }),
+                };
+                page.order = vi.fn().mockReturnValue(page);
+                return {
+                  eq: vi.fn().mockReturnValue(page),
                 };
               }),
             };
@@ -503,5 +511,201 @@ describe('Nested Media Folders CRUD, Reparenting & Cascading Deletion', () => {
 
       expect(res.status).toBe(404);
     });
+  });
+});
+
+/**
+ * Supabase-path paging (P1-14, P1-18): PostgREST silently caps an
+ * unpaged select at 1,000 rows. This mock mirrors that cap — an
+ * unpaged select returns at most 1,000 rows — while .range() pages
+ * return the exact window, so tests past 1,000 rows fail against
+ * the old unpaged fetches and pass against the paged ones.
+ */
+type MockRow = Record<string, unknown>;
+
+function createCappedSupabaseMock(tables: Record<string, MockRow[]>) {
+  function applyFilters(
+    rows: MockRow[],
+    eqs: [string, unknown][],
+    ins: [string, unknown[]][],
+    orders: [string, boolean][],
+  ): MockRow[] {
+    let out = [...rows];
+    for (const [col, val] of eqs) out = out.filter((r) => r[col] === val);
+    for (const [col, vals] of ins) out = out.filter((r) => vals.includes(r[col]));
+    for (const [col, asc] of orders) {
+      out = [...out].sort((a, b) => {
+        const cmp = String(a[col] ?? '').localeCompare(String(b[col] ?? ''));
+        return asc ? cmp : -cmp;
+      });
+    }
+    return out;
+  }
+
+  function builder(table: string) {
+    const eqs: [string, unknown][] = [];
+    const ins: [string, unknown[]][] = [];
+    const orders: [string, boolean][] = [];
+    let range: [number, number] | null = null;
+    let limit: number | null = null;
+    let isDelete = false;
+    const chain: any = {
+      select: () => chain,
+      eq: ((col: string, val: unknown) => {
+        eqs.push([col, val]);
+        return chain;
+      }) as (...args: never[]) => unknown,
+      in: ((col: string, vals: unknown[]) => {
+        ins.push([col, vals]);
+        return chain;
+      }) as (...args: never[]) => unknown,
+      order: ((col: string, opts: { ascending: boolean }) => {
+        orders.push([col, opts.ascending]);
+        return chain;
+      }) as (...args: never[]) => unknown,
+      limit: ((n: number) => {
+        limit = n;
+        return chain;
+      }) as (...args: never[]) => unknown,
+      range: (from: number, to: number) => {
+        range = [from, to];
+        const rows = applyFilters(tables[table] ?? [], eqs, ins, orders);
+        return Promise.resolve({
+          data: rows.slice(from, to + 1),
+          error: null,
+        });
+      },
+      maybeSingle: () => {
+        const rows = applyFilters(tables[table] ?? [], eqs, ins, orders);
+        return Promise.resolve({ data: rows[0] ?? null, error: null });
+      },
+      delete: () => {
+        isDelete = true;
+        return chain;
+      },
+      then: (resolve: (v: unknown) => void) => {
+        const rows = applyFilters(tables[table] ?? [], eqs, ins, orders);
+        if (isDelete) {
+          const doomed = new Set(rows);
+          tables[table] = (tables[table] ?? []).filter((r) => !doomed.has(r));
+          resolve({ data: null, error: null });
+          return;
+        }
+        const page =
+          range !== null
+            ? rows.slice(range[0], range[1] + 1)
+            : rows.slice(0, limit ?? 1000);
+        resolve({ data: page, error: null });
+      },
+    };
+    return chain;
+  }
+
+  return { from: (table: string) => builder(table) };
+}
+
+describe('Supabase-path folder paging past the 1,000-row cap', () => {
+  const userId = '11111111-1111-4111-a111-111111111111';
+  const folderId = '22222222-2222-4222-a222-222222222222';
+  const childFolderId = '33333333-3333-4333-a333-333333333333';
+  let validSessionCookie: string;
+  let mockStorage: MockStorageProvider;
+
+  beforeEach(async () => {
+    process.env.SESSION_SECRET = TEST_SECRET;
+    mockStorage = new MockStorageProvider();
+    const token = await signSessionToken(
+      {
+        userId,
+        email: 'alexander@gmail.com',
+        name: 'Alex Acme',
+        subdomain: 'acme',
+        role: 'user',
+        status: 'active',
+      },
+      TEST_SECRET
+    );
+    validSessionCookie = `fbup_session=${token}`;
+  });
+
+  function folderRow(id: string, parentId: string | null, name: string): MockRow {
+    return {
+      id,
+      user_id: userId,
+      parent_id: parentId,
+      name,
+      created_at: '2026-10-07T10:00:00.000Z',
+      updated_at: '2026-10-07T10:00:00.000Z',
+    };
+  }
+
+  it('counts folder items in full past 1,000 items', async () => {
+    const items: MockRow[] = Array.from({ length: 1050 }, (_, i) => ({
+      id: `aaaaaaaa-0000-4000-8000-${String(i).padStart(12, '0')}`,
+      user_id: userId,
+      folder_id: folderId,
+    }));
+    const supabase = createCappedSupabaseMock({
+      media_folders: [folderRow(folderId, null, 'Big')],
+      media_items: items,
+    });
+    const req = new NextRequest('http://localhost:3000/api/tenant/acme/media/folders', {
+      headers: { cookie: validSessionCookie },
+    });
+    const res = await handleListFolders(req, 'acme', supabase as never);
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.folders).toHaveLength(1);
+    expect(data.folders[0].itemCount).toBe(1050);
+    expect(data.unorganizedCount).toBe(0);
+  });
+
+  it('lists folders in full past 1,000 folders', async () => {
+    const folders: MockRow[] = Array.from({ length: 1002 }, (_, i) =>
+      folderRow(`bbbbbbbb-0000-4000-8000-${String(i).padStart(12, '0')}`, null, `Folder ${i}`),
+    );
+    const supabase = createCappedSupabaseMock({
+      media_folders: folders,
+      media_items: [],
+    });
+    const req = new NextRequest('http://localhost:3000/api/tenant/acme/media/folders', {
+      headers: { cookie: validSessionCookie },
+    });
+    const res = await handleListFolders(req, 'acme', supabase as never);
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.folders).toHaveLength(1002);
+  });
+
+  it('purges R2 keys for every item in a subtree past 1,000 items', async () => {
+    const items: MockRow[] = Array.from({ length: 1050 }, (_, i) => ({
+      id: `cccccccc-0000-4000-8000-${String(i).padStart(12, '0')}`,
+      user_id: userId,
+      folder_id: i % 2 === 0 ? folderId : childFolderId,
+      storage_key: `users/${userId}/media/${i}.jpg`,
+      thumbnail_key: i % 3 === 0 ? `users/${userId}/thumbs/${i}.webp` : null,
+    }));
+    const supabase = createCappedSupabaseMock({
+      media_folders: [
+        folderRow(folderId, null, 'Root'),
+        folderRow(childFolderId, folderId, 'Child'),
+      ],
+      media_items: items,
+    });
+    const req = new NextRequest(`http://localhost:3000/api/tenant/acme/media/folders/${folderId}`, {
+      method: 'DELETE',
+      headers: { cookie: validSessionCookie },
+    });
+    const res = await handleDeleteFolder(req, 'acme', folderId, supabase as never, mockStorage);
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.deletedItemsCount).toBe(1050);
+    expect(data.deletedSubfoldersCount).toBe(1);
+    for (let i = 0; i < 1050; i++) {
+      expect(mockStorage.deletedKeys.has(`users/${userId}/media/${i}.jpg`)).toBe(true);
+      if (i % 3 === 0) {
+        expect(mockStorage.deletedKeys.has(`users/${userId}/thumbs/${i}.webp`)).toBe(true);
+      }
+    }
   });
 });

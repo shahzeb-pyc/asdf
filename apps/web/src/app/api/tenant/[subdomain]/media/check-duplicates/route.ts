@@ -132,29 +132,46 @@ async function querySupabaseDuplicates(
   const hasNullFolder = folderIds.includes(null);
   const nonNullFolders = folderIds.filter((id): id is string => id !== null);
 
-  let queryBuilder = supabase
-    .from('media_items')
-    .select(
-      'id, user_id, folder_id, name, file_size, mime_type, media_type, storage_key, url, thumbnail_key, thumbnail_url, duration_seconds, aspect_ratio, caption_text, width, height, created_at, updated_at'
-    )
-    .eq('user_id', userId);
-
-  if (hasNullFolder && nonNullFolders.length > 0) {
-    queryBuilder = queryBuilder.or(`folder_id.is.null,folder_id.in.(${nonNullFolders.join(',')})`);
-  } else if (hasNullFolder) {
-    queryBuilder = queryBuilder.is('folder_id', null);
-  } else if (nonNullFolders.length > 0) {
-    queryBuilder = queryBuilder.in('folder_id', nonNullFolders);
-  }
-
   const fileSizes = entries.map((e) => e.fileSize);
-  queryBuilder = queryBuilder.in('file_size', fileSizes);
+  // Paged, never truncated: PostgREST silently caps an unpaged
+  // select at 1,000 rows, so past 1,000 same-size rows in these
+  // folders the name match in JS below would silently miss the
+  // duplicate. Pages are ordered by id so paging is stable.
+  const rows: MediaItemRow[] = [];
+  {
+    const pageSize = 1000;
+    let from = 0;
+    for (;;) {
+      let pageBuilder = supabase
+        .from('media_items')
+        .select(
+          'id, user_id, folder_id, name, file_size, mime_type, media_type, storage_key, url, thumbnail_key, thumbnail_url, duration_seconds, aspect_ratio, caption_text, width, height, created_at, updated_at'
+        )
+        .eq('user_id', userId);
 
-  const { data: rows, error } = await queryBuilder;
-  if (error) {
-    return { error: error.message };
+      if (hasNullFolder && nonNullFolders.length > 0) {
+        pageBuilder = pageBuilder.or(`folder_id.is.null,folder_id.in.(${nonNullFolders.join(',')})`);
+      } else if (hasNullFolder) {
+        pageBuilder = pageBuilder.is('folder_id', null);
+      } else if (nonNullFolders.length > 0) {
+        pageBuilder = pageBuilder.in('folder_id', nonNullFolders);
+      }
+
+      pageBuilder = pageBuilder.in('file_size', fileSizes);
+
+      const { data: pageRows, error } = await pageBuilder
+        .order('id', { ascending: true })
+        .range(from, from + pageSize - 1);
+      if (error) {
+        return { error: error.message };
+      }
+      const page = (pageRows || []) as MediaItemRow[];
+      rows.push(...page);
+      if (page.length < pageSize) break;
+      from += pageSize;
+    }
   }
-  return { rows: (rows || []) as MediaItemRow[] };
+  return { rows };
 }
 
 export async function handleCheckDuplicates(

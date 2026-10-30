@@ -54,7 +54,7 @@ function authedRequest(url: string, init?: ConstructorParameters<typeof NextRequ
 describe('C1 — media/check-duplicates no longer leaks the PostgREST error', () => {
   it('returns the generic 500 shape and logs the provider detail server-side', async () => {
     const builder: Record<string, unknown> = {};
-    for (const method of ['select', 'eq', 'or', 'is', 'in']) {
+    for (const method of ['select', 'eq', 'or', 'is', 'in', 'order', 'range']) {
       builder[method] = vi.fn(() => builder);
     }
     builder.then = (

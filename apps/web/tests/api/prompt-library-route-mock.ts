@@ -37,6 +37,10 @@ export type Store = {
   favourites: Row[];
   rpcCount: number;
   fail: Record<string, Error>;
+  /** Failures that fire on EVERY matching call (never consumed) —
+   * for paths that must fail twice in a row, e.g. a replacement
+   * insert that fails AND its restore insert that fails too. */
+  failAlways: Record<string, Error>;
   calls: { op: string; table: string; payload?: unknown }[];
 };
 
@@ -101,6 +105,7 @@ export function newStore(overrides: Partial<Store> = {}): Store {
     favourites: [],
     rpcCount: 13,
     fail: {},
+    failAlways: {},
     calls: [],
     ...overrides,
   };
@@ -115,8 +120,12 @@ function unescapeIlike(term: string): string {
  * failure, and lets the routes' restore-after-failure paths
  * (PATCH media/steps replacement) actually restore instead of
  * tripping over the same injected failure a second time.
+ * `failAlways` entries are checked first and never consumed, for
+ * the opposite case: a restore/rollback that must fail too.
  */
 function consumeFail(store: Store, key: string): Error | null {
+  const always: Error | undefined = store.failAlways[key];
+  if (always) return always;
   const error: Error | undefined = store.fail[key];
   if (error) delete store.fail[key];
   return error ?? null;
@@ -235,6 +244,10 @@ class QueryBuilder {
 
   // Thenable: queries awaited directly (favourites list/flag, media
   // and steps loads via .order()) resolve to the filtered rows.
+  // PostgREST-realistic cap: an unpaged select silently truncates
+  // at 1,000 rows — the mock mirrors that so paging fixes are
+  // actually exercised (a favourites list past 1,000 must page,
+  // not rely on an uncapped mock).
   then( // NOSONAR - intentional thenable: routes await this builder directly, mirroring Supabase PostgREST builders
     resolve: (value: { data: Row[]; count: number; error: Error | null }) => void,
     reject: (reason: unknown) => void,
@@ -245,7 +258,8 @@ class QueryBuilder {
       return;
     }
     const rows = applyFilters(this.store, this.table, this);
-    Promise.resolve({ data: rows, count: rows.length, error: null }).then(
+    const page = rows.slice(0, 1000);
+    Promise.resolve({ data: page, count: rows.length, error: null }).then(
       resolve,
       reject,
     );

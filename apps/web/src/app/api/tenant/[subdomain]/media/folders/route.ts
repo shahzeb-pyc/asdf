@@ -89,48 +89,74 @@ export async function handleListFolders(
     return NextResponse.json({ error: 'Database service unavailable' }, { status: 500 });
   }
 
-  const foldersRes = await supabase
-    .from('media_folders')
-    .select('id, user_id, parent_id, name, created_at, updated_at')
-    .eq('user_id', session.userId)
-    .order('name', { ascending: true })
-    // Generous bound: folders per user are bounded by product use, but
-    // the list must never be an unbounded query (spec 139).
-    .limit(1000);
-
-  if (foldersRes.error) {
-    return NextResponse.json({ error: 'INTERNAL_ERROR', message: 'Failed to list folders' }, { status: 500 });
+  // Paged, never truncated: PostgREST silently caps an unpaged
+  // select at 1,000 rows, so both the folder list and the item
+  // tally below are fetched in 1,000-row pages (facets pattern).
+  // The legacy-SQL branch above is already a single grouped query
+  // with no such cap.
+  const folderRows: Array<{
+    id: string;
+    user_id: string;
+    parent_id: string | null;
+    name: string;
+    created_at: string;
+    updated_at: string;
+  }> = [];
+  {
+    const pageSize = 1000;
+    let from = 0;
+    for (;;) {
+      const pageRes = await supabase
+        .from('media_folders')
+        .select('id, user_id, parent_id, name, created_at, updated_at')
+        .eq('user_id', session.userId)
+        .order('name', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, from + pageSize - 1);
+      if (pageRes.error) {
+        return NextResponse.json({ error: 'INTERNAL_ERROR', message: 'Failed to list folders' }, { status: 500 });
+      }
+      const page = (pageRes.data || []) as typeof folderRows;
+      folderRows.push(...page);
+      if (page.length < pageSize) break;
+      from += pageSize;
+    }
   }
 
-  const folderRows = foldersRes.data || [];
-
-  // Grouped counts in O(1) requests (spec 139): a single query for the
-  // folder_id of every media item owned by the user, tallied in JS.
-  // This mirrors the fallback pattern used for queue status counts
-  // (single select of the grouping column + in-memory tally in
-  // pages/[pageId]) and replaces the previous 1 + N pattern, which
-  // issued one { count: 'exact', head: true } query per folder.
+  // Grouped counts in O(1) requests (spec 139): one folder_id per
+  // media item owned by the user, tallied in JS — fetched in pages
+  // so libraries past 1,000 items are counted in full instead of
+  // silently undercounting at the PostgREST cap. This mirrors the
+  // fallback pattern used for queue status counts (single select of
+  // the grouping column + in-memory tally in pages/[pageId]).
   // Follow-up: for libraries with very large item counts, a grouped
   // RPC would avoid transferring one folder_id row per item; that
-  // requires a migration and is out of scope for this PR. This
-  // approach is bounded by item count and issues a constant number of
-  // requests regardless of folder count.
-  const itemFolderRes = await supabase
-    .from('media_items')
-    .select('folder_id')
-    .eq('user_id', session.userId);
-
-  if (itemFolderRes.error) {
-    return NextResponse.json({ error: 'INTERNAL_ERROR', message: 'Failed to list folders' }, { status: 500 });
-  }
-
+  // requires a migration and is out of scope for this PR.
   let unorganizedCount = 0;
   const itemCounts = new Map<string, number>();
-  for (const row of (itemFolderRes.data || []) as Array<{ folder_id: string | null }>) {
-    if (row.folder_id == null) {
-      unorganizedCount++;
-    } else {
-      itemCounts.set(row.folder_id, (itemCounts.get(row.folder_id) || 0) + 1);
+  {
+    const pageSize = 1000;
+    let from = 0;
+    for (;;) {
+      const pageRes = await supabase
+        .from('media_items')
+        .select('folder_id')
+        .eq('user_id', session.userId)
+        .order('id', { ascending: true })
+        .range(from, from + pageSize - 1);
+      if (pageRes.error) {
+        return NextResponse.json({ error: 'INTERNAL_ERROR', message: 'Failed to list folders' }, { status: 500 });
+      }
+      const page = (pageRes.data || []) as Array<{ folder_id: string | null }>;
+      for (const row of page) {
+        if (row.folder_id == null) {
+          unorganizedCount++;
+        } else {
+          itemCounts.set(row.folder_id, (itemCounts.get(row.folder_id) || 0) + 1);
+        }
+      }
+      if (page.length < pageSize) break;
+      from += pageSize;
     }
   }
 

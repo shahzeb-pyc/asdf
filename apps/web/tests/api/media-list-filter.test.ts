@@ -378,6 +378,76 @@ describe('Media Items Listing & Filtering (GET /api/tenant/[subdomain]/media)', 
       expect(body.items).toHaveLength(1);
       expect(body.nextCursor).toBe('2026-10-14T23:50:00.000Z|44444444-4444-4444-a444-444444444444');
     });
+
+    it('applies the (created_at, id) keyset tie-break on the Supabase cursor path', async () => {
+      // Same-timestamp rows: the old Supabase branch filtered only
+      // on created_at, so a page boundary inside one timestamp
+      // skipped or repeated rows. The fix ports the legacy branch's
+      // (created_at, id) keyset condition.
+      const cursorVal = '2026-10-15T00:00:00.000Z|33333333-3333-4333-a333-333333333333';
+      let capturedOrFilter = '';
+      const capturedOrders: [string, boolean][] = [];
+      let capturedLimit: number | null = null;
+      const row = {
+        id: '44444444-4444-4444-a444-444444444444',
+        user_id: userId,
+        folder_id: null,
+        name: 'next_item.mp4',
+        file_size: '5242880',
+        mime_type: 'video/mp4',
+        media_type: 'video',
+        storage_key: `users/${userId}/media/44444444/next_item.mp4`,
+        url: 'https://example.com/next_item.mp4',
+        thumbnail_key: null,
+        thumbnail_url: null,
+        duration_seconds: '15.0',
+        aspect_ratio: '9:16',
+        caption_text: 'Next caption',
+        width: 1080,
+        height: 1920,
+        created_at: '2026-10-14T23:50:00.000Z',
+        updated_at: '2026-10-14T23:50:00.000Z',
+      };
+      const mockQueryBuilder: any = {
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        lt: vi.fn().mockReturnThis(),
+        or: vi.fn().mockImplementation((filter: string) => {
+          capturedOrFilter = filter;
+          return mockQueryBuilder;
+        }),
+        order: vi.fn().mockImplementation((col: string, opts: { ascending: boolean }) => {
+          capturedOrders.push([col, opts.ascending]);
+          return mockQueryBuilder;
+        }),
+        limit: vi.fn().mockImplementation((n: number) => {
+          capturedLimit = n;
+          return mockQueryBuilder;
+        }),
+        then: (resolve: (v: unknown) => void) => {
+          resolve({ data: [row], count: 1, error: null });
+        },
+      };
+      const mockSupabase = { from: vi.fn().mockReturnValue(mockQueryBuilder) };
+
+      const req = new NextRequest(
+        `http://localhost:3000/api/tenant/acme/media?cursor=${encodeURIComponent(cursorVal)}&limit=1`,
+        { headers: { cookie: validSessionCookie } }
+      );
+      const res = await handleListMedia(req, 'acme', mockSupabase as never);
+      expect(res.status).toBe(200);
+      expect(capturedOrFilter).toBe(
+        'created_at.lt.2026-10-15T00:00:00.000Z,and(created_at.eq.2026-10-15T00:00:00.000Z,id.lt.33333333-3333-4333-a333-333333333333)'
+      );
+      expect(capturedOrders).toEqual([
+        ['created_at', false],
+        ['id', false],
+      ]);
+      expect(capturedLimit).toBe(1);
+      const body = await res.json();
+      expect(body.items).toHaveLength(1);
+      expect(body.nextCursor).toBe('2026-10-14T23:50:00.000Z|44444444-4444-4444-a444-444444444444');
+    });
   });
 
   describe('Pre-Upload Duplicate Detection (POST /api/tenant/[subdomain]/media/check-duplicates)', () => {

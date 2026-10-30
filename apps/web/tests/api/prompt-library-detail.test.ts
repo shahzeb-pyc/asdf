@@ -276,6 +276,46 @@ describe("PATCH /api/tenant/[subdomain]/prompts/[slug]", () => {
     expect(steps[0].body).toBe("Open your video tool.");
   });
 
+  it("reports MEDIA_RESTORE_FAILED when the media restore also fails", async () => {
+    // Persistent media-insert failure: the replacement insert fails
+    // AND the restore insert fails too. The old code returned the
+    // generic 500, hiding that the prompt was left media-less.
+    const store = basePromptStore();
+    store.failAlways["prompt_library_media:insert"] = new Error("media down");
+    const { res, body } = await callPatch(
+      "puppy-first-bath",
+      {
+        media: [
+          {
+            position: 1,
+            mediaType: "image",
+            storageKey: "prompts/new/shot.jpg",
+            isMain: true,
+          },
+        ],
+      },
+      store,
+      adminCookie,
+    );
+    expect(res.status).toBe(500);
+    expect(body.error).toBe("MEDIA_RESTORE_FAILED");
+    expect(store.media.filter((m) => m.prompt_id === P1)).toHaveLength(0);
+  });
+
+  it("reports STEPS_RESTORE_FAILED when the steps restore also fails", async () => {
+    const store = basePromptStore();
+    store.failAlways["prompt_library_how_to_steps:insert"] = new Error("steps down");
+    const { res, body } = await callPatch(
+      "puppy-first-bath",
+      { steps: [{ position: 1, body: "Replacement step." }] },
+      store,
+      adminCookie,
+    );
+    expect(res.status).toBe(500);
+    expect(body.error).toBe("STEPS_RESTORE_FAILED");
+    expect(store.steps.filter((s) => s.prompt_id === P1)).toHaveLength(0);
+  });
+
   it("returns 500 when the steps delete fails", async () => {
     const store = basePromptStore();
     store.fail["prompt_library_how_to_steps:delete"] = new Error("delete down");
