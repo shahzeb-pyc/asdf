@@ -2,23 +2,13 @@
 
 import React, { Suspense, useEffect, type ReactNode } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
-import { capturePageview, identifyUser, initPostHog } from '@/lib/posthog';
+import { capturePageview, initPostHog } from '@/lib/posthog';
 
 interface PostHogProviderProps {
   /** Server-provided PostHog project API key (from POSTHOG_KEY env). */
   apiKey: string | undefined;
   /** Server-provided PostHog host (from POSTHOG_HOST env). */
   host: string | undefined;
-  /**
-   * Signed-in user id, from the server session — the stable identify
-   * key. Undefined when logged out. Never an email or name.
-   */
-  userId: string | undefined;
-  /**
-   * Tenant subdomain, from the server session — the stable workspace
-   * identifier attached to identify. Undefined when logged out.
-   */
-  tenantId: string | undefined;
   children: ReactNode;
 }
 
@@ -44,25 +34,21 @@ function PageviewTracker(): null {
 
 /**
  * Initializes client-side PostHog once on mount (key/host from server
- * env via props — never from NEXT_PUBLIC_ vars), identifies the
- * signed-in user when a session exists, and tracks pageviews.
+ * env via props — never from NEXT_PUBLIC_ vars) and tracks pageviews.
+ * Identify lives separately in PostHogIdentify, mounted by the tenant
+ * shell (which already holds the session) — keeping this root layout
+ * synchronous, which the legacy static-markup layout suite requires.
  * Analytics failure never breaks the page: every helper here is a
  * no-op until init succeeds, and logs instead of throwing.
  */
 export function PostHogProvider({
   apiKey,
   host,
-  userId,
-  tenantId,
   children,
 }: Readonly<PostHogProviderProps>) {
   useEffect(() => {
     initPostHog(apiKey, host);
   }, [apiKey, host]);
-
-  useEffect(() => {
-    if (userId) identifyUser(userId, tenantId);
-  }, [userId, tenantId]);
 
   return (
     <>

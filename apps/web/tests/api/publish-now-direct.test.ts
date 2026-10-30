@@ -22,6 +22,7 @@ vi.mock('@/lib/connect/session', () => ({
 
 vi.mock('@/lib/server-analytics', () => ({
   logServerError: vi.fn(),
+  trackServerEvent: vi.fn(),
 }));
 
 vi.mock('@/lib/storage', () => ({

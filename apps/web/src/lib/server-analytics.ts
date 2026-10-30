@@ -145,8 +145,10 @@ export function logServerError(
  *
  * Fire-and-forget like logServerError: callers `void` this and return
  * their response without waiting — the flush is awaited inside this
- * function, and any failure is swallowed so telemetry never breaks a
- * request or inflates its latency. No-op entirely when no key is set.
+ * function. A failed capture is logged loudly (never swallowed: the
+ * repo's silent-failure guardrail bans comment-only catch blocks),
+ * but it never breaks a request or inflates its latency. No-op
+ * entirely when no key is set.
  */
 export async function trackServerEvent<Name extends AnalyticsEventName>(
   event: Name,
@@ -162,7 +164,7 @@ export async function trackServerEvent<Name extends AnalyticsEventName>(
       properties: properties as Record<string, unknown>,
     });
     await ph.flush();
-  } catch {
-    // Never let telemetry break the request.
+  } catch (error) {
+    console.error('[posthog] analytics event failed', error);
   }
 }

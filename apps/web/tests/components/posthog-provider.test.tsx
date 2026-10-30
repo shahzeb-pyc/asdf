@@ -3,10 +3,11 @@ import { render } from '@testing-library/react';
 import React from 'react';
 
 /**
- * PostHogProvider suite: init once with server props, identify for a
- * signed-in user only, and a $pageview on mount and on navigation.
- * The SDK module and next/navigation are mocked; the provider's own
- * wiring (effects, Suspense boundary, prop passing) is what's tested.
+ * PostHogProvider suite: init once with server props and a $pageview
+ * on mount and on navigation. The SDK module and next/navigation are
+ * mocked; the provider's own wiring (effects, Suspense boundary, prop
+ * passing) is what's tested. Identify is NOT the provider's job — it
+ * lives in PostHogIdentify (see posthog-identify.test.tsx).
  */
 
 const posthogMocks = vi.hoisted(() => ({
@@ -36,30 +37,20 @@ beforeEach(() => {
 });
 
 describe('PostHogProvider', () => {
-  it('inits, identifies a signed-in user, and captures the initial pageview', () => {
+  it('inits and captures the initial pageview', () => {
     render(
-      <PostHogProvider
-        apiKey="test-key"
-        host="US"
-        userId="user-123"
-        tenantId="acme"
-      >
+      <PostHogProvider apiKey="test-key" host="US">
         <div>child</div>
       </PostHogProvider>
     );
     expect(posthogMocks.initPostHog).toHaveBeenCalledWith('test-key', 'US');
-    expect(posthogMocks.identifyUser).toHaveBeenCalledWith('user-123', 'acme');
     expect(posthogMocks.capturePageview).toHaveBeenCalledWith('/pages');
+    expect(posthogMocks.identifyUser).not.toHaveBeenCalled();
   });
 
   it('captures a new pageview when the route changes', () => {
     const { rerender } = render(
-      <PostHogProvider
-        apiKey="test-key"
-        host="US"
-        userId="user-123"
-        tenantId="acme"
-      >
+      <PostHogProvider apiKey="test-key" host="US">
         <div>child</div>
       </PostHogProvider>
     );
@@ -67,33 +58,12 @@ describe('PostHogProvider', () => {
     navState.pathname = '/pages';
     navState.search = 'tab=queue';
     rerender(
-      <PostHogProvider
-        apiKey="test-key"
-        host="US"
-        userId="user-123"
-        tenantId="acme"
-      >
+      <PostHogProvider apiKey="test-key" host="US">
         <div>child</div>
       </PostHogProvider>
     );
     expect(posthogMocks.capturePageview).toHaveBeenCalledWith(
       '/pages?tab=queue'
     );
-  });
-
-  it('does not identify when logged out', () => {
-    render(
-      <PostHogProvider
-        apiKey="test-key"
-        host="US"
-        userId={undefined}
-        tenantId={undefined}
-      >
-        <div>child</div>
-      </PostHogProvider>
-    );
-    expect(posthogMocks.initPostHog).toHaveBeenCalled();
-    expect(posthogMocks.identifyUser).not.toHaveBeenCalled();
-    expect(posthogMocks.capturePageview).toHaveBeenCalledWith('/pages');
   });
 });

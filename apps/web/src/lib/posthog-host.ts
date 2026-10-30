@@ -28,6 +28,18 @@ const REGION_HOSTS: Record<string, string> = {
   EU: 'https://eu.i.posthog.com',
 };
 
+/**
+ * A malformed host is warned about at the point it is rejected — the
+ * warning is a real statement, not a comment, because the repo's
+ * silent-failure guardrail counts comment-only catch blocks as empty.
+ */
+function warnMalformedHost(raw: string): void {
+  console.warn(
+    `[posthog] Ignoring malformed POSTHOG_HOST value ${JSON.stringify(raw)}; ` +
+      `using ${POSTHOG_DEFAULT_HOST}. Set POSTHOG_HOST to "US", "EU", or a full ingest URL.`
+  );
+}
+
 export function normalizePostHogHost(input: string | undefined | null): string {
   const raw = (input ?? '').trim();
   if (!raw) return POSTHOG_DEFAULT_HOST;
@@ -39,10 +51,7 @@ export function normalizePostHogHost(input: string | undefined | null): string {
   // input, not a hostname to prefix — prefixing it would produce a
   // nonsense host like https://ftp://… that fails requests opaquely.
   if (raw.includes('://') && !/^https?:\/\//i.test(raw)) {
-    console.warn(
-      `[posthog] Ignoring malformed POSTHOG_HOST value ${JSON.stringify(raw)}; ` +
-        `using ${POSTHOG_DEFAULT_HOST}. Set POSTHOG_HOST to "US", "EU", or a full ingest URL.`
-    );
+    warnMalformedHost(raw);
     return POSTHOG_DEFAULT_HOST;
   }
 
@@ -56,12 +65,11 @@ export function normalizePostHogHost(input: string | undefined | null): string {
       return url.toString().replace(/\/+$/, '');
     }
   } catch {
-    // Fall through to the warned default below.
+    // Unparseable: warned below, same as the parsed-but-unusable case.
+    warnMalformedHost(raw);
+    return POSTHOG_DEFAULT_HOST;
   }
 
-  console.warn(
-    `[posthog] Ignoring malformed POSTHOG_HOST value ${JSON.stringify(raw)}; ` +
-      `using ${POSTHOG_DEFAULT_HOST}. Set POSTHOG_HOST to "US", "EU", or a full ingest URL.`
-  );
+  warnMalformedHost(raw);
   return POSTHOG_DEFAULT_HOST;
 }

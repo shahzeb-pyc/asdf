@@ -15,6 +15,14 @@ vi.mock('@vercel/analytics/next', () => ({
   ),
 }));
 
+// Mock next/navigation: the PostHog provider tracks pageviews via
+// usePathname/useSearchParams, which throw outside a mounted App
+// Router. The provider renders null in static markup either way.
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/',
+  useSearchParams: () => new URLSearchParams(),
+}));
+
 // Mock next/font/google: it is a Next.js build-time loader, not runnable in jsdom,
 // so importing the root layout would otherwise crash with "Inter is not a function".
 // The real Inter loading is still asserted by tests/fonts.test.ts (source check on layout).
