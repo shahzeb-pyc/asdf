@@ -75,6 +75,16 @@ export function computeBreadcrumbs(
     if (segments[1]?.toLowerCase() === 'accounts') {
       return [{ label: platformLabel }, { label: 'Accounts' }];
     }
+    if (first === 'instagram' && segments[1]?.toLowerCase() === 'schedule') {
+      if (segments.length > 2) {
+        return [
+          { label: platformLabel },
+          { label: 'Schedule', href: buildTenantHref(subdomain, '/instagram/schedule', useCleanPaths) },
+          { label: 'Details' },
+        ];
+      }
+      return [{ label: platformLabel }, { label: 'Schedule' }];
+    }
     return [{ label: platformLabel }];
   }
 

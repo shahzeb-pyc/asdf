@@ -409,6 +409,17 @@ function WorkspaceSidebarContent({
                 const isAccountsSubActive = effectivePath.startsWith(
                   normalizeTenantPath(platformAccountsHref, subdomain)
                 );
+                // Instagram Schedule leaf (other Instagram leaves are
+                // added by their own builders, in order, after this one).
+                const instagramScheduleHref =
+                  platform.key === 'instagram'
+                    ? href('/instagram/schedule')
+                    : null;
+                const isInstagramScheduleActive =
+                  instagramScheduleHref !== null &&
+                  effectivePath.startsWith(
+                    normalizeTenantPath(instagramScheduleHref, subdomain)
+                  );
                 const isOpen = openPlatforms[platform.key] ?? isPlatformActive;
 
                 return (
@@ -445,6 +456,9 @@ function WorkspaceSidebarContent({
                             )}
                             onLeafClick={handleLeafClick}
                           />
+                        )}
+                        {instagramScheduleHref && (
+                          <NavSubLeaf label="Schedule" href={instagramScheduleHref} isActive={isInstagramScheduleActive} onLeafClick={handleLeafClick} />
                         )}
                         {platform.isTesting && (
                           <SidebarMenuSubItem>

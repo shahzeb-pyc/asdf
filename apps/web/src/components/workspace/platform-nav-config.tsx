@@ -116,7 +116,7 @@ export const UPCOMING_PLATFORMS: PlatformNavItemConfig[] = [
   {
     key: 'instagram',
     label: 'Instagram',
-    tooltip: 'Instagram — Accounts',
+    tooltip: 'Instagram — Accounts & Schedule',
     routeSlug: 'instagram',
     isTesting: false,
     icon: <InstagramIcon />,

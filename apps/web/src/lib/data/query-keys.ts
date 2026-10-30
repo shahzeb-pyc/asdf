@@ -77,6 +77,27 @@ export const queryKeys = {
           [...tenantRoot, 'pages', pageId, 'slots'] as const,
       },
 
+      /** Instagram Schedule: a separate namespace from Instagram
+       * Accounts, so schedule rows never collide with account rows
+       * in the cache. */
+      instagramSchedule: {
+        all: [...tenantRoot, 'instagram', 'schedule'] as const,
+        list: [...tenantRoot, 'instagram', 'schedule', 'list'] as const,
+        listPage: (params: {
+          page: number;
+          limit: number;
+          search: string;
+          status: string;
+          account: string;
+        }) => [...tenantRoot, 'instagram', 'schedule', 'list', params] as const,
+        detail: (destinationId: string) =>
+          [...tenantRoot, 'instagram', 'schedule', destinationId] as const,
+        slots: (destinationId: string) =>
+          [...tenantRoot, 'instagram', 'schedule', destinationId, 'slots'] as const,
+        queue: (destinationId: string, params: Record<string, string>) =>
+          [...tenantRoot, 'instagram', 'schedule', destinationId, 'queue', params] as const,
+      },
+
       tiktokMirrors: {
         all: [...tenantRoot, 'tiktok-mirrors'] as const,
         list: [...tenantRoot, 'tiktok-mirrors', 'list'] as const,
