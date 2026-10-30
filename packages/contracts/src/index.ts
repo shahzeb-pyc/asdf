@@ -44,6 +44,7 @@ export * from './publishing/destination-enqueue.js';
 export * from './publishing/idempotency.js';
 export * from './publishing/create-posts-composer.js';
 export * from './publishing/publish-now.js';
+export * from './publishing/instagram-publish-now.js';
 export * from './domain/subscription.js';
 export * from './domain/creator-finder.js';
 export * from './domain/adu.js';

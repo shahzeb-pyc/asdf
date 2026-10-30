@@ -420,6 +420,13 @@ function WorkspaceSidebarContent({
                   effectivePath.startsWith(
                     normalizeTenantPath(instagramScheduleHref, subdomain)
                   );
+                // Instagram Publish Now leaf, after the Schedule leaf.
+                const instagramPublishNowHref = href('/instagram/publish-now');
+                const isInstagramPublishNowActive =
+                  platform.key === 'instagram' &&
+                  effectivePath.startsWith(
+                    normalizeTenantPath(instagramPublishNowHref, subdomain)
+                  );
                 const isOpen = openPlatforms[platform.key] ?? isPlatformActive;
 
                 return (
@@ -459,6 +466,9 @@ function WorkspaceSidebarContent({
                         )}
                         {instagramScheduleHref && (
                           <NavSubLeaf label="Schedule" href={instagramScheduleHref} isActive={isInstagramScheduleActive} onLeafClick={handleLeafClick} />
+                        )}
+                        {platform.key === 'instagram' && (
+                          <NavSubLeaf label="Publish Now" href={instagramPublishNowHref} isActive={isInstagramPublishNowActive} onLeafClick={handleLeafClick} />
                         )}
                         {platform.isTesting && (
                           <SidebarMenuSubItem>
