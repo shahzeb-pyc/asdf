@@ -122,6 +122,22 @@ describe('TikTok list', () => {
     expect(await screen.findByTestId('list-pagination')).toBeTruthy();
     expect(screen.getByTestId('pagination-page-3')).toBeTruthy();
   });
+
+  it('shows the plain-language message for a stored raw restriction error on a card', async () => {
+    const raw =
+      'For security reasons, your account has limited access to the site for a few days.';
+    apiGetMock.mockResolvedValue({
+      mirrors: [mirrorView({ status: 'error', lastError: raw })],
+      total: 1,
+      page: 1,
+      limit: 30,
+      totalPages: 1,
+    });
+    renderWithQuery(<TikTokShell subdomain="acme" />);
+    const errorEl = await screen.findByTestId('tiktok-mirror-error');
+    expect(errorEl.textContent).toContain("can't post right now");
+    expect(screen.queryByText(raw)).toBeNull();
+  });
 });
 
 describe('TikTok dedicated view', () => {
@@ -141,8 +157,8 @@ describe('TikTok dedicated view', () => {
         cover_url: null,
         source_created_at: '2026-10-29T10:00:00.000Z',
         status: 'posted',
-        published_post_id: 'fb_post_1',
-        error: null,
+        published_post_id: 'fb_post_1' as string | null,
+        error: null as string | null,
         created_at: '2026-10-29T10:00:00.000Z',
       },
     ],
@@ -186,5 +202,44 @@ describe('TikTok dedicated view', () => {
     );
     expect(await screen.findByTestId('tiktok-detail-error')).toBeTruthy();
     expect(screen.getByText('tikwm is down')).toBeTruthy();
+  });
+
+  it('shows the plain-language message for a stored raw restriction error', async () => {
+    const raw =
+      'For security reasons, your account has limited access to the site for a few days.';
+    apiGetMock.mockResolvedValue(
+      detailResponse({
+        status: 'error',
+        lastError: raw,
+      })
+    );
+    renderWithQuery(
+      <TikTokDetailShell subdomain="acme" mirrorId="44444444-4444-4444-a444-444444444444" />
+    );
+    const errorEl = await screen.findByTestId('tiktok-detail-error');
+    expect(errorEl).toBeTruthy();
+    expect(errorEl.textContent).toContain("can't post right now");
+    expect(errorEl.textContent).not.toContain('limited access');
+  });
+
+  it('shows the plain-language message for a stored raw restriction on a history post', async () => {
+    const raw =
+      'For security reasons, your account has limited access to the site for a few days.';
+    const response = detailResponse({ status: 'error', lastError: null });
+    response.posts = [
+      {
+        ...response.posts[0],
+        status: 'pending',
+        published_post_id: null,
+        error: raw,
+      },
+    ];
+    apiGetMock.mockResolvedValue(response);
+    renderWithQuery(
+      <TikTokDetailShell subdomain="acme" mirrorId="44444444-4444-4444-a444-444444444444" />
+    );
+    expect(await screen.findByTestId('tiktok-detail-page')).toBeTruthy();
+    expect(screen.getByText(/can't post right now/)).toBeTruthy();
+    expect(screen.queryByText(raw)).toBeNull();
   });
 });

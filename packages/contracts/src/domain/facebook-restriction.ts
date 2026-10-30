@@ -86,3 +86,26 @@ export function isFacebookAccountRestricted(
   const message = typeof fields.message === 'string' ? fields.message : '';
   return message.toLowerCase().includes('limited access');
 }
+
+/**
+ * Display-time mapping for a STORED error string (mirror `last_error` or
+ * mirror-post `error`) — never a rewrite of the stored row, and never a
+ * change to record-time behaviour.
+ *
+ * Errors recorded before the plain-language restriction message shipped
+ * (e.g. the Oct 30 setup failure) still carry Facebook's raw text in the
+ * database. A stored string carries no structured code or subcode, so the
+ * narrow phrase fallback above is the correct gate: a stored restriction
+ * notice renders as the approved plain-language message, everything else
+ * renders unchanged, and the already-plain message passes through
+ * untouched (it contains no "limited access" phrase). The raw detail
+ * stays in the stored row and in server/worker logs for debugging.
+ */
+export function mapStoredMirrorErrorToDisplay(
+  error: string | null | undefined
+): string | null {
+  if (!error) return error ?? null;
+  return isFacebookAccountRestricted({ message: error })
+    ? MIRROR_FACEBOOK_RESTRICTED_MESSAGE
+    : error;
+}

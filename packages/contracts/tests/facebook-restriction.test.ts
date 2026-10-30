@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   FACEBOOK_ACCOUNT_RESTRICTION_SUBCODES,
   isFacebookAccountRestricted,
+  mapStoredMirrorErrorToDisplay,
   MIRROR_FACEBOOK_RESTRICTED_MESSAGE,
 } from '../src/domain/facebook-restriction.js';
 
@@ -75,5 +76,36 @@ describe('MIRROR_FACEBOOK_RESTRICTED_MESSAGE', () => {
     expect(MIRROR_FACEBOOK_RESTRICTED_MESSAGE).toBe(
       "This Facebook page can't post right now because the connected account is temporarily restricted on Facebook. It should work again once the restriction lifts — check Facebook Account Status for details."
     );
+  });
+});
+
+describe('mapStoredMirrorErrorToDisplay', () => {
+  const RAW_RESTRICTION =
+    'For security reasons, your account has limited access to the site for a few days. If you have any questions, please contact our Help Center.';
+
+  it('maps a stored raw restriction notice to the plain-language message', () => {
+    expect(mapStoredMirrorErrorToDisplay(RAW_RESTRICTION)).toBe(
+      MIRROR_FACEBOOK_RESTRICTED_MESSAGE
+    );
+  });
+
+  it('maps the phrase regardless of case', () => {
+    expect(
+      mapStoredMirrorErrorToDisplay('Your account has LIMITED ACCESS to the site.')
+    ).toBe(MIRROR_FACEBOOK_RESTRICTED_MESSAGE);
+  });
+
+  it('leaves the already-plain message and unrelated errors unchanged', () => {
+    expect(mapStoredMirrorErrorToDisplay(MIRROR_FACEBOOK_RESTRICTED_MESSAGE)).toBe(
+      MIRROR_FACEBOOK_RESTRICTED_MESSAGE
+    );
+    expect(mapStoredMirrorErrorToDisplay('tikwm is down')).toBe('tikwm is down');
+    expect(mapStoredMirrorErrorToDisplay('Graph exploded')).toBe('Graph exploded');
+  });
+
+  it('passes null/undefined/empty through', () => {
+    expect(mapStoredMirrorErrorToDisplay(null)).toBeNull();
+    expect(mapStoredMirrorErrorToDisplay(undefined)).toBeNull();
+    expect(mapStoredMirrorErrorToDisplay('')).toBe('');
   });
 });

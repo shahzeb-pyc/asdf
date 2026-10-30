@@ -14,7 +14,10 @@ import {
   MIRROR_FACEBOOK_RESTRICTED_MESSAGE,
 } from '@fbuploadpro/contracts';
 import {
+  buildMirrorTickDeps,
+  MIRROR_JOB_STALE_AFTER_SECONDS,
   processMirrorCheck,
+  runMirrorDispatch,
   type MirrorTickDeps,
   type MirrorTickMirror,
 } from './mirror-tick.js';
@@ -304,5 +307,104 @@ describe('processMirrorCheck', () => {
     expect(stamp?.patch.status).toBe('error');
     expect(stamp?.patch.catchUpPending).toBeUndefined();
     expect(stamp?.patch.lastCheckedAt).toBeUndefined();
+  });
+});
+
+describe('buildMirrorTickDeps job RPCs (bound receiver)', () => {
+  /**
+   * Fake client shaped exactly like the real supabase-js client: `rpc`
+   * is a method that delegates through `this.rest`. The old code
+   * detached `rpc` (`const rpc = db.rpc; rpc(...)`), which throws
+   * `TypeError: Cannot read properties of undefined (reading 'rest')`
+   * in production — the bug that froze every mirror check while
+   * arrow-function mocks kept the old tests green. These tests fail
+   * on the old code (TypeError) and pass on the fixed code.
+   */
+  class RestDelegatingClient {
+    calls: Array<{ fn: string; args: Record<string, unknown> }> = [];
+    rest = {
+      rpc: async (fn: string, args: Record<string, unknown>) => {
+        this.calls.push({ fn, args });
+        if (fn === 'enqueue_mirror_check_jobs') return { data: 1, error: null };
+        if (fn === 'claim_mirror_check_jobs') return { data: [], error: null };
+        throw new InternalError(`unexpected rpc ${fn}`);
+      },
+    };
+    async rpc(fn: string, args: Record<string, unknown>) {
+      return this.rest.rpc(fn, args);
+    }
+  }
+
+  function depsWith(client: unknown) {
+    return buildMirrorTickDeps(
+      client as unknown as Parameters<typeof buildMirrorTickDeps>[0],
+      'test-master-key'
+    );
+  }
+
+  it('enqueues through the bound client rpc', async () => {
+    const client = new RestDelegatingClient();
+    const deps = depsWith(client);
+    await expect(
+      deps.enqueueMirrorCheckJobs([
+        { mirrorId: 'm1', availableAt: '2026-10-29T12:00:00.000Z' },
+      ])
+    ).resolves.toBe(1);
+    expect(client.calls).toEqual([
+      {
+        fn: 'enqueue_mirror_check_jobs',
+        args: {
+          p_jobs: [{ mirror_id: 'm1', available_at: '2026-10-29T12:00:00.000Z' }],
+        },
+      },
+    ]);
+  });
+
+  it('claims through the bound client rpc', async () => {
+    const client = new RestDelegatingClient();
+    const deps = depsWith(client);
+    await expect(
+      deps.claimMirrorCheckJobs(new Date('2026-10-29T12:00:00.000Z'), 200)
+    ).resolves.toEqual([]);
+    expect(client.calls).toEqual([
+      {
+        fn: 'claim_mirror_check_jobs',
+        args: {
+          p_limit: 200,
+          p_now: '2026-10-29T12:00:00.000Z',
+          p_stale_after_seconds: MIRROR_JOB_STALE_AFTER_SECONDS,
+        },
+      },
+    ]);
+  });
+
+  it('dispatches through the real enqueue function', async () => {
+    const client = new RestDelegatingClient();
+    const deps = depsWith(client);
+    const advanced: Array<{ mirrorId: string; nextCheckAt: string }> = [];
+    const result = await runMirrorDispatch({
+      listDueMirrorIds: async () => ['m1'],
+      enqueueMirrorCheckJobs: deps.enqueueMirrorCheckJobs,
+      advanceMirrorCheck: async (mirrorId, nextCheckAt) => {
+        advanced.push({ mirrorId, nextCheckAt });
+      },
+      now: new Date('2026-10-29T12:00:00.000Z'),
+    });
+    expect(result).toEqual({ dispatched: 1, failed: 0, due: 1 });
+    expect(advanced).toEqual([
+      { mirrorId: 'm1', nextCheckAt: '2026-10-29T13:00:00.000Z' },
+    ]);
+  });
+
+  it('still reports a client without rpc as not configured', async () => {
+    const deps = depsWith({});
+    await expect(
+      deps.enqueueMirrorCheckJobs([
+        { mirrorId: 'm1', availableAt: '2026-10-29T12:00:00.000Z' },
+      ])
+    ).rejects.toThrow('Mirror check job enqueue RPC is not configured');
+    await expect(
+      deps.claimMirrorCheckJobs(new Date('2026-10-29T12:00:00.000Z'), 200)
+    ).rejects.toThrow('Mirror check job claim RPC is not configured');
   });
 });
