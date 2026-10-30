@@ -1,311 +1,311 @@
-/**
- * process-job behaviour tests (spec 149). The store, storage, sink,
- * and resolver are all fakes — these tests prove the job-state
- * machine (done / failed / cancelled / idempotent retry), not the
- * engine, which is covered by the web's own suites.
- */
-
-import { describe, expect, it, vi } from 'vitest';
-import type { IStorageService } from '@fbuploadpro/contracts';
-import {
-  DownloadAbortedError,
-  MediaDownloaderError,
-  type MediaStreamSink,
-  type UploadedDownloadedMediaItem,
-} from '@/lib/media-downloader';
+import { describe, expect, it } from 'vitest';
 import { processClaimedJob } from '../src/process-job.js';
-import type {
-  DownloadJobRecord,
-  JobPatch,
-  JobStore,
-  MediaItemInsert,
-} from '../src/db.js';
+import { R2MultipartSink } from '../src/r2-sink.js';
+import type { ResolveCandidatesResult } from '../src/engine/index.js';
+import {
+  FakeBucket,
+  FakeStorage,
+  FakeStore,
+  JOB_ID,
+  MB,
+  USER_ID,
+  makeJob,
+  makeMediaFetch,
+} from './fakes.js';
 
-function baseJob(overrides: Partial<DownloadJobRecord> = {}): DownloadJobRecord {
+const BASE = 'https://media.example.test';
+const STREAM_URL = 'https://cdn.example.com/video.mp4';
+
+function resolveFake(streamUrl: string = STREAM_URL) {
+  return async (): Promise<ResolveCandidatesResult> => ({
+    sourceUrl: 'https://example.com/video.mp4',
+    platform: 'direct',
+    candidates: [{ streamUrl }],
+    prefetchedBinaryResponse: undefined,
+  });
+}
+
+function depsFor(store: FakeStore, bucket: FakeBucket, fetchFn: typeof fetch) {
+  const storage = new FakeStorage(BASE);
   return {
-    id: 'job-1',
-    userId: 'user-1',
-    sourceUrl: 'https://example.com/clip.mp4',
-    sourcePlatform: 'direct',
-    targetFolderId: null,
-    status: 'resolving',
-    progressPercent: 0,
-    totalBytes: null,
-    downloadedBytes: 0,
-    mediaId: null,
-    errorCode: null,
-    errorMessage: null,
-    attempts: 1,
-    claimedAt: new Date().toISOString(),
-    claimedBy: 'worker-test',
-    ...overrides,
-  };
-}
-
-function sampleItem(overrides: Partial<UploadedDownloadedMediaItem> = {}): UploadedDownloadedMediaItem {
-  return {
-    mediaId: 'media-1',
-    name: 'clip.mp4',
-    fileSize: 1024,
-    mimeType: 'video/mp4',
-    mediaType: 'video',
-    storageKey: 'media/user-1/clip.mp4',
-    url: 'https://cdn.example.com/media/user-1/clip.mp4',
-    thumbnailKey: null,
-    thumbnailUrl: null,
-    durationSeconds: null,
-    aspectRatio: '16:9',
-    captionText: 'hello',
-    ...overrides,
-  };
-}
-
-class FakeStore implements JobStore {
-  record: DownloadJobRecord;
-  readonly updates: JobPatch[] = [];
-  inserted: MediaItemInsert[] = [];
-  insertError: Error | null = null;
-  /** After this many fetchJob calls, report the job as cancelled. */
-  cancelAfterFetches: number | null = null;
-  /** After this many fetchJob calls, report an existing media_id. */
-  mediaIdAfterFetches: number | null = null;
-  private fetches = 0;
-
-  constructor(record: DownloadJobRecord) {
-    this.record = { ...record };
-  }
-
-  async fetchJob(): Promise<DownloadJobRecord | null> {
-    this.fetches += 1;
-    const copy = { ...this.record };
-    if (this.cancelAfterFetches !== null && this.fetches >= this.cancelAfterFetches) {
-      copy.status = 'cancelled';
-    }
-    if (this.mediaIdAfterFetches !== null && this.fetches >= this.mediaIdAfterFetches) {
-      copy.mediaId = 'media-existing';
-    }
-    return copy;
-  }
-
-  async updateJob(_jobId: string, patch: JobPatch): Promise<void> {
-    this.updates.push(patch);
-    Object.assign(this.record, {
-      ...(patch.status !== undefined ? { status: patch.status } : {}),
-      ...(patch.mediaId !== undefined ? { mediaId: patch.mediaId } : {}),
-      ...(patch.progressPercent !== undefined ? { progressPercent: patch.progressPercent } : {}),
-      ...(patch.errorCode !== undefined ? { errorCode: patch.errorCode } : {}),
-    });
-  }
-
-  async insertMediaItems(items: MediaItemInsert[]): Promise<void> {
-    if (this.insertError) throw this.insertError;
-    this.inserted = items;
-  }
-
-  async usersWithQueuedJobs(): Promise<string[]> {
-    return [];
-  }
-
-  async claimJobs(): Promise<DownloadJobRecord[]> {
-    return [];
-  }
-
-  async upsertHeartbeat(): Promise<void> {}
-
-  async staleWorkerIds(): Promise<string[]> {
-    return [];
-  }
-
-  async reclaimStaleClaims(): Promise<number> {
-    return 0;
-  }
-}
-
-function fakeStorage(): { storage: IStorageService; deleted: string[] } {
-  const deleted: string[] = [];
-  const storage: IStorageService = {
-    getPresignedUploadUrl: async () => {
-      throw new Error('not used');
-    },
-    putObject: async (params) => ({
-      key: params.key,
-      publicUrl: `https://cdn.example.com/${params.key}`,
-      byteLength: params.body.byteLength,
-    }),
-    deleteObject: async (key: string) => {
-      deleted.push(key);
-    },
-    getPublicUrl: (key: string) => `https://cdn.example.com/${key}`,
-  };
-  return { storage, deleted };
-}
-
-function fakeSink(): MediaStreamSink {
-  return {
-    write: async () => {},
-    finish: async () => ({ key: 'k', byteLength: 0, publicUrl: '' }),
-    abort: async () => {},
+    store,
+    storage,
+    createSink: (key: string, contentType: string, resume: unknown, onPart: unknown) =>
+      new R2MultipartSink(bucket as unknown as R2Bucket, key, contentType, BASE, {
+        resumeUploadId: (resume as { uploadId?: string | null } | undefined)?.uploadId ?? undefined,
+        resumeParts: (resume as { parts?: Array<{ partNumber: number; etag: string }> } | undefined)?.parts ?? undefined,
+        initialBytes: (resume as { initialBytes?: number } | undefined)?.initialBytes ?? undefined,
+        onPart: onPart as ((info: {
+          partNumber: number;
+          etag: string;
+          totalBytes: number;
+          parts: Array<{ partNumber: number; etag: string }>;
+        }) => Promise<void>) | undefined,
+      }),
+    resolve: resolveFake(),
+    fetchFn,
+    progressUpdateMinIntervalMs: 0,
+    log: () => undefined,
   };
 }
 
 describe('processClaimedJob', () => {
-  it('marks done and inserts exactly one library row on success', async () => {
-    const store = new FakeStore(baseJob());
-    const { storage } = fakeStorage();
-    const outcome = await processClaimedJob(store.record, {
-      store,
-      storage,
-      createSink: fakeSink,
-      cancelPollMs: 60_000,
-      resolve: async () => ({
-        sourceUrl: 'https://example.com/clip.mp4',
-        platform: 'direct',
-        items: [sampleItem()],
-      }),
-    });
+  it('streams a job to done with the pending media id as the library id', async () => {
+    const pendingId = '33333333-3333-4333-a333-333333333333';
+    const job = makeJob({ pendingMediaId: pendingId, attempts: 1 });
+    const store = new FakeStore([job]);
+    const bucket = new FakeBucket();
+    const outcome = await processClaimedJob(
+      job,
+      depsFor(store, bucket, makeMediaFetch(20 * MB))
+    );
     expect(outcome).toBe('done');
-    expect(store.inserted).toHaveLength(1);
-    expect(store.inserted[0]?.id).toBe('media-1');
-    expect(store.inserted[0]?.userId).toBe('user-1');
-    const done = store.updates.find((u) => u.status === 'done');
-    expect(done?.mediaId).toBe('media-1');
-    expect(done?.progressPercent).toBe(100);
+    const row = await store.fetchJob(JOB_ID);
+    expect(row?.status).toBe('done');
+    expect(row?.progressPercent).toBe(100);
+    expect(row?.mediaId).toBe(pendingId);
+    expect(row?.checkpoint).toBeNull();
+    expect(store.mediaItems).toHaveLength(1);
+    expect(store.mediaItems[0]?.id).toBe(pendingId);
+    const upload = [...bucket.uploads.values()][0];
+    expect(upload?.completed?.partNumbers).toEqual([1, 2, 3]);
   });
 
-  it('never calls resolve when the job already has a media_id (idempotent retry)', async () => {
-    const store = new FakeStore(baseJob({ mediaId: 'media-existing' }));
-    const { storage } = fakeStorage();
-    const resolve = vi.fn();
-    const outcome = await processClaimedJob(store.record, {
-      store,
-      storage,
-      createSink: fakeSink,
-      cancelPollMs: 60_000,
-      resolve: resolve as never,
-    });
-    expect(outcome).toBe('done');
-    expect(resolve).not.toHaveBeenCalled();
-    expect(store.inserted).toHaveLength(0);
-    expect(store.updates.find((u) => u.status === 'done')?.mediaId).toBe('media-existing');
-  });
-
-  it('drops the fresh upload when another attempt already saved the file', async () => {
-    const store = new FakeStore(baseJob());
-    // First fetch (pre-resolve) sees no media_id; the post-resolve
-    // fetch sees one — a duplicate attempt won the race.
-    store.mediaIdAfterFetches = 2;
-    const { storage, deleted } = fakeStorage();
-    const outcome = await processClaimedJob(store.record, {
-      store,
-      storage,
-      createSink: fakeSink,
-      cancelPollMs: 60_000,
-      resolve: async () => ({
-        sourceUrl: 'https://example.com/clip.mp4',
-        platform: 'direct',
-        items: [sampleItem()],
-      }),
-    });
-    expect(outcome).toBe('done');
-    expect(store.inserted).toHaveLength(0);
-    expect(deleted).toContain('media/user-1/clip.mp4');
-    expect(store.updates.find((u) => u.status === 'done')?.mediaId).toBe('media-existing');
-  });
-
-  it('maps engine errors onto the job row', async () => {
-    const store = new FakeStore(baseJob());
-    const { storage } = fakeStorage();
-    const outcome = await processClaimedJob(store.record, {
-      store,
-      storage,
-      createSink: fakeSink,
-      cancelPollMs: 60_000,
+  it('a job that already has a media id marks done without streaming again', async () => {
+    const mediaId = '44444444-4444-4444-a444-444444444444';
+    const job = makeJob({ mediaId, status: 'downloading' });
+    const store = new FakeStore([job]);
+    const bucket = new FakeBucket();
+    let resolveCalls = 0;
+    const deps = depsFor(store, bucket, makeMediaFetch(20 * MB));
+    const outcome = await processClaimedJob(job, {
+      ...deps,
       resolve: async () => {
-        throw new MediaDownloaderError('UNSAFE_URL', 'That link is not allowed.', 400);
+        resolveCalls += 1;
+        return resolveFake()();
       },
     });
-    expect(outcome).toBe('failed');
-    const failed = store.updates.find((u) => u.status === 'failed');
-    expect(failed?.errorCode).toBe('UNSAFE_URL');
+    expect(outcome).toBe('done');
+    expect(resolveCalls).toBe(0);
+    expect(bucket.uploads.size).toBe(0);
+    expect((await store.fetchJob(JOB_ID))?.mediaId).toBe(mediaId);
   });
 
-  it('deletes partial uploads and fails when the library insert fails', async () => {
-    const store = new FakeStore(baseJob());
-    store.insertError = new Error('db down');
-    const { storage, deleted } = fakeStorage();
-    const outcome = await processClaimedJob(store.record, {
-      store,
-      storage,
-      createSink: fakeSink,
-      cancelPollMs: 60_000,
-      resolve: async () => ({
-        sourceUrl: 'https://example.com/clip.mp4',
-        platform: 'direct',
-        items: [sampleItem()],
-      }),
+  it('a crash between media insert and done-marking still yields exactly one library row', async () => {
+    const pendingId = '55555555-5555-4555-a555-555555555555';
+    const job = makeJob({ pendingMediaId: pendingId, mediaId: null, attempts: 2 });
+    const store = new FakeStore([job]);
+    // The previous attempt already inserted the row, then crashed.
+    store.mediaItems.push({
+      id: pendingId,
+      userId: USER_ID,
+      folderId: null,
+      name: 'file.mp4',
+      fileSize: 20 * MB,
+      mimeType: 'video/mp4',
+      mediaType: 'video',
+      storageKey: 'users/x/media/y/file.mp4',
+      url: `${BASE}/users/x/media/y/file.mp4`,
+      thumbnailKey: null,
+      thumbnailUrl: null,
+      durationSeconds: null,
+      aspectRatio: 'unknown',
+      captionText: null,
     });
-    expect(outcome).toBe('failed');
-    expect(deleted).toContain('media/user-1/clip.mp4');
-    expect(store.updates.find((u) => u.status === 'failed')?.errorCode).toBe('DOWNLOAD_FAILED');
+    const bucket = new FakeBucket();
+    const outcome = await processClaimedJob(job, depsFor(store, bucket, makeMediaFetch(20 * MB)));
+    expect(outcome).toBe('done');
+    expect(store.mediaItems).toHaveLength(1);
+    expect(store.mediaItems[0]?.id).toBe(pendingId);
+    expect((await store.fetchJob(JOB_ID))?.mediaId).toBe(pendingId);
   });
 
-  it('keeps a cancelled row cancelled and saves nothing', async () => {
-    const store = new FakeStore(baseJob());
-    const { storage, deleted } = fakeStorage();
-    // The cancel watcher polls every 10 ms; flip the row to cancelled
-    // on the watcher's first read (fetch #2: #1 is the pre-resolve read).
-    store.cancelAfterFetches = 2;
-    const outcome = await processClaimedJob(store.record, {
-      store,
-      storage,
-      createSink: fakeSink,
-      cancelPollMs: 10,
-      resolve: async ({ signal }) => {
-        // Wait until the watcher aborts, then surface the abort.
-        await new Promise<void>((resolvePromise, rejectPromise) => {
-          if (signal?.aborted) {
-            rejectPromise(new DownloadAbortedError());
-            return;
-          }
-          signal?.addEventListener(
-            'abort',
-            () => rejectPromise(new DownloadAbortedError()),
-            { once: true }
-          );
-        });
-        return {
-          sourceUrl: 'https://example.com/clip.mp4',
-          platform: 'direct' as const,
-          items: [sampleItem()],
-        };
-      },
-    });
+  it('cancel between parts aborts the upload, keeps cancelled, saves nothing', async () => {
+    const job = makeJob({ attempts: 1 });
+    const store = new FakeStore([job]);
+    // Call 1 = initial read (resolving). Every later read = cancelled.
+    store.fetchJobOverride = (_jobId, call) =>
+      call === 1 ? { ...job } : { ...job, status: 'cancelled' };
+    const bucket = new FakeBucket();
+    const outcome = await processClaimedJob(job, depsFor(store, bucket, makeMediaFetch(20 * MB)));
     expect(outcome).toBe('cancelled');
-    expect(store.inserted).toHaveLength(0);
-    expect(deleted).toHaveLength(0);
-    expect(store.updates.some((u) => u.status === 'failed')).toBe(false);
+    const upload = [...bucket.uploads.values()][0];
+    expect(upload?.aborted).toBe(true);
+    expect(upload?.completed).toBeNull();
+    expect(store.mediaItems).toHaveLength(0);
+    // The row was cancelled by the user path; the processor must not
+    // overwrite it with a failure. (The fake's override keeps it
+    // cancelled; the assertion that matters is no failed update.)
+    expect(store.updateCalls.some((call) => call.patch.status === 'failed')).toBe(false);
   });
 
-  it('throttles progress writes to at most one per interval', async () => {
-    const store = new FakeStore(baseJob());
-    const { storage } = fakeStorage();
-    await processClaimedJob(store.record, {
-      store,
-      storage,
-      createSink: fakeSink,
-      cancelPollMs: 60_000,
-      progressUpdateMinIntervalMs: 60_000,
-      resolve: async ({ onProgress }) => {
-        onProgress?.({ downloadedBytes: 100, totalBytes: 1000 });
-        onProgress?.({ downloadedBytes: 200, totalBytes: 1000 });
-        onProgress?.({ downloadedBytes: 300, totalBytes: 1000 });
-        return {
-          sourceUrl: 'https://example.com/clip.mp4',
-          platform: 'direct' as const,
-          items: [sampleItem()],
-        };
+  it('a declared over-cap file fails before streaming, with nothing saved', async () => {
+    const job = makeJob({ attempts: 1 });
+    const store = new FakeStore([job]);
+    const bucket = new FakeBucket();
+    const fetchFn = makeMediaFetch(600 * MB, { chunkSize: MB });
+    // The fake media fetch would serve 600 MB if asked; the cap must
+    // fire on the declared content-length before any part uploads.
+    // Guard: serve the header but an empty body stream is enough —
+    // the cap check runs on the header first.
+    const outcome = await processClaimedJob(job, depsFor(store, bucket, fetchFn));
+    expect(outcome).toBe('failed');
+    const row = await store.fetchJob(JOB_ID);
+    expect(row?.status).toBe('failed');
+    expect(row?.errorCode).toBe('FILE_TOO_LARGE');
+    expect(bucket.uploads.size).toBe(0);
+    expect(store.mediaItems).toHaveLength(0);
+  });
+
+  it('an unsafe source URL fails as UNSAFE_URL before any byte streams', async () => {
+    const job = makeJob({ sourceUrl: 'http://127.0.0.1/secret.mp4', attempts: 1 });
+    const store = new FakeStore([job]);
+    const bucket = new FakeBucket();
+    const outcome = await processClaimedJob(job, {
+      ...depsFor(store, bucket, makeMediaFetch(10 * MB)),
+      // Real resolver: unsafe validation must fire before fetch.
+      resolve: undefined as never,
+    });
+    expect(outcome).toBe('failed');
+    expect((await store.fetchJob(JOB_ID))?.errorCode).toBe('UNSAFE_URL');
+    expect(bucket.uploads.size).toBe(0);
+  });
+
+  it('a tampered checkpoint URL is never fetched (non-match means no resume)', async () => {
+    const job = makeJob({
+      attempts: 1,
+      checkpoint: {
+        uploadId: 'upload-99',
+        parts: [{ partNumber: 1, etag: 'etag-1' }],
+        bytes: 8 * MB,
+        streamUrl: 'http://169.254.1.1/evil.mp4',
       },
     });
-    expect(store.updates.filter((u) => u.status === 'downloading')).toHaveLength(1);
+    const store = new FakeStore([job]);
+    const bucket = new FakeBucket();
+    const requestedUrls: string[] = [];
+    const fetchFn = makeMediaFetch(20 * MB, { requestedUrls });
+    const outcome = await processClaimedJob(job, depsFor(store, bucket, fetchFn));
+    expect(outcome).toBe('done');
+    expect(requestedUrls).toEqual([STREAM_URL]);
+    expect(requestedUrls.some((url) => url.includes('169.254'))).toBe(false);
+  });
+
+  it('resume with a Range-supporting source uploads only the remaining parts', async () => {
+    const bucket = new FakeBucket();
+    // Seed part 1 (8 MB) under upload-1 in the fake bucket.
+    const seed = new R2MultipartSink(bucket as unknown as R2Bucket, 'k', 'video/mp4', BASE);
+    await seed.write(new Uint8Array(8 * MB));
+    const uploadId = seed.currentUploadId;
+    expect(uploadId).not.toBeNull();
+
+    const job = makeJob({
+      attempts: 2,
+      checkpoint: {
+        uploadId,
+        parts: [{ partNumber: 1, etag: 'etag-1' }],
+        bytes: 8 * MB,
+        streamUrl: STREAM_URL,
+      },
+    });
+    const store = new FakeStore([job]);
+    const served = { total: 0 };
+    const requestedRanges: Array<string | null> = [];
+    const fetchFn = makeMediaFetch(20 * MB, {
+      rangeSupported: true,
+      servedBytes: served,
+      requestedRanges,
+    });
+    const outcome = await processClaimedJob(job, depsFor(store, bucket, fetchFn));
+    expect(outcome).toBe('done');
+    expect(requestedRanges).toEqual([`bytes=${8 * MB}-`]);
+    expect(served.total).toBe(12 * MB);
+    const upload = bucket.uploads.get(uploadId ?? '');
+    expect(upload?.completed?.partNumbers).toEqual([1, 2, 3]);
+    expect((await store.fetchJob(JOB_ID))?.checkpoint).toBeNull();
+  });
+
+  it('a Range-refusing source restarts cleanly from byte 0 once', async () => {
+    const bucket = new FakeBucket();
+    const job = makeJob({
+      attempts: 2,
+      checkpoint: {
+        uploadId: 'upload-stale',
+        parts: [{ partNumber: 1, etag: 'etag-1' }],
+        bytes: 8 * MB,
+        streamUrl: STREAM_URL,
+      },
+    });
+    const store = new FakeStore([job]);
+    const requestedRanges: Array<string | null> = [];
+    const fetchFn = makeMediaFetch(12 * MB, {
+      rangeSupported: false,
+      requestedRanges,
+    });
+    const outcome = await processClaimedJob(job, depsFor(store, bucket, fetchFn));
+    expect(outcome).toBe('done');
+    // First attempt carried a Range header, the restart did not.
+    expect(requestedRanges).toEqual([`bytes=${8 * MB}-`, null]);
+    // The stale upload was abandoned; the finished object is a fresh one.
+    const completed = [...bucket.uploads.values()].filter((u) => u.completed !== null);
+    expect(completed).toHaveLength(1);
+    expect((await store.fetchJob(JOB_ID))?.checkpoint).toBeNull();
+  });
+
+  it('at the attempts cap a failure clears the checkpoint; below it, it is kept', async () => {
+    const failingFetch = (async (): Promise<Response> =>
+      new Response('nope', { status: 500, headers: { 'content-type': 'text/plain' } })) as unknown as typeof fetch;
+
+    const atCap = makeJob({
+      attempts: 5,
+      checkpoint: {
+        uploadId: 'upload-cap',
+        parts: [{ partNumber: 1, etag: 'etag-1' }],
+        bytes: 8 * MB,
+        streamUrl: STREAM_URL,
+      },
+    });
+    const storeCap = new FakeStore([atCap]);
+    const outcomeCap = await processClaimedJob(
+      atCap,
+      depsFor(storeCap, new FakeBucket(), failingFetch)
+    );
+    expect(outcomeCap).toBe('failed');
+    expect((await storeCap.fetchJob(JOB_ID))?.checkpoint).toBeNull();
+
+    const belowCap = makeJob({
+      attempts: 2,
+      checkpoint: {
+        uploadId: 'upload-keep',
+        parts: [{ partNumber: 1, etag: 'etag-1' }],
+        bytes: 8 * MB,
+        streamUrl: STREAM_URL,
+      },
+    });
+    const storeBelow = new FakeStore([belowCap]);
+    const outcomeBelow = await processClaimedJob(
+      belowCap,
+      depsFor(storeBelow, new FakeBucket(), failingFetch)
+    );
+    expect(outcomeBelow).toBe('failed');
+    expect((await storeBelow.fetchJob(JOB_ID))?.checkpoint).not.toBeNull();
+  });
+
+  it('a terminal failure clears the checkpoint even below the attempts cap', async () => {
+    const job = makeJob({
+      attempts: 1,
+      checkpoint: {
+        uploadId: 'upload-term',
+        parts: [{ partNumber: 1, etag: 'etag-1' }],
+        bytes: 8 * MB,
+        streamUrl: STREAM_URL,
+      },
+    });
+    const store = new FakeStore([job]);
+    const overCap = makeMediaFetch(600 * MB, { chunkSize: MB });
+    const outcome = await processClaimedJob(job, depsFor(store, new FakeBucket(), overCap));
+    expect(outcome).toBe('failed');
+    expect((await store.fetchJob(JOB_ID))?.errorCode).toBe('FILE_TOO_LARGE');
+    expect((await store.fetchJob(JOB_ID))?.checkpoint).toBeNull();
   });
 });

@@ -68,7 +68,10 @@ export interface DownloadTrayProps {
 
 export function DownloadTray({ subdomain, useCleanPaths = false }: Readonly<DownloadTrayProps>) {
   const { data: jobsData } = useDownloadJobs(subdomain);
-  const jobs = jobsData ?? [];
+  const jobs = jobsData?.jobs ?? [];
+  // Consumer health (§7.1): only an explicit false shows the paused
+  // state — a missing value means unknown, never paused.
+  const consumerHealthy = jobsData?.consumerHealthy;
   const retryJob = useRetryDownloadJob(subdomain);
   const cancelJob = useCancelDownloadJob(subdomain);
   const queryClient = useQueryClient();
@@ -229,6 +232,12 @@ export function DownloadTray({ subdomain, useCleanPaths = false }: Readonly<Down
           </Button>
         )}
       </div>
+
+      {consumerHealthy === false && activeJobs.length > 0 && (
+        <p data-testid="download-tray-paused" className="mb-2 text-metadata text-signal-critical">
+          Downloads are paused — the download service isn&apos;t responding.
+        </p>
+      )}
 
       {successFlash ? (
         <p className="text-metadata text-ink-sub">

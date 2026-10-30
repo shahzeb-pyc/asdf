@@ -1,0 +1,46 @@
+# Download consumer Worker (spec 149, Cloudflare backend revision).
+# One deployment, three entry points: fetch (/enqueue), queue (consumer
+# + DLQ consumer), scheduled (cron heartbeat + sweep + stale reclaim).
+#
+# NO secrets in this file. Worker secrets (SUPABASE_URL,
+# SUPABASE_SERVICE_ROLE_KEY, DOWNLOAD_ENQUEUE_SECRET) are set with
+# `wrangler secret put`. R2_PUBLIC_URL is a non-secret var: set it in
+# the dashboard (or here) to the public host that serves the media
+# bucket, e.g. the host the web app already uses for library media.
+# The Worker fails loudly at entry if it is missing.
+#
+# Queues and the cron trigger are declared here and created by deploy.
+# The account must allow Queues and Cron triggers; if it does not,
+# that is a deployment blocker to report, not a reason to fall back
+# to polling from the web app.
+
+name = "fbuploadpro-download-consumer"
+main = "src/index.ts"
+compatibility_date = "2026-10-30"
+
+# NOTE: no nodejs_compat flag, deliberately. This Worker is
+# Workers-native (global fetch, global crypto, R2 binding, no Node
+# APIs) so it works without the compat flag.
+
+[[r2_buckets]]
+binding = "MEDIA_BUCKET"
+bucket_name = "fbuploadpro-media-prod"
+
+[[queues.producers]]
+queue = "download-jobs"
+binding = "DOWNLOAD_QUEUE"
+
+[[queues.consumers]]
+queue = "download-jobs"
+max_batch_size = 5
+max_batch_timeout = 5
+max_retries = 3
+dead_letter_queue = "download-jobs-dlq"
+
+[[queues.consumers]]
+queue = "download-jobs-dlq"
+max_batch_size = 10
+max_batch_timeout = 5
+
+[triggers]
+crons = ["*/1 * * * *"]

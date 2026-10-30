@@ -1,49 +1,84 @@
-import type { IStorageService } from '@fbuploadpro/contracts';
 import {
-  DownloadAbortedError,
+  DOWNLOAD_JOB_ATTEMPTS_CAP,
+  DOWNLOAD_JOB_PROGRESS_UPDATE_MIN_INTERVAL_MS,
+  isTerminalDownloadErrorCode,
+  type IStorageService,
+} from '@fbuploadpro/contracts';
+import {
+  downloadAndStoreCandidate,
+  JobCancelledError,
   MediaDownloaderError,
-  resolveAndUploadMediaFromUrl,
+  resolveCandidates,
+  ResumeUnsupportedError,
+  validateAndNormalizeStreamUrl,
+  type DownloadedItem,
   type MediaStreamSink,
-  type UploadedDownloadedMediaItem,
-} from '@/lib/media-downloader';
+  type ResolveCandidatesResult,
+} from './engine/index.js';
+import type { CheckpointPart } from './r2-sink.js';
 import type {
   DownloadJobRecord,
   JobStore,
   MediaItemInsert,
-} from './db.js';
+} from './store.js';
 
 /**
- * One claimed download job, end to end (spec 149).
+ * One claimed download job, end to end (spec 149 backend revision).
  *
- * - Streams through the web engine's resolver by import — the worker
- *   owns scheduling and persistence, never download logic.
- * - Idempotent: a job that already has a media_id (a previous attempt
- *   inserted rows but crashed before marking done) never inserts a
- *   second copy; a retry after insert marks done with the existing id.
- * - Cancellation is honoured at every boundary: the watcher polls the
- *   job row, aborts the stream, and a cancelled row is never
- *   overwritten by a later failure update.
- * - Partial uploads are deleted on every failure path, so a failed or
- *   cancelled job leaves nothing in the library or in storage.
+ * Differences from the retired VPS worker, all required by the
+ * Cloudflare revision:
+ * - No cancel-watcher timer: cancellation is checked between parts
+ *   (the sink's onPart callback re-reads the job row) and before
+ *   work, and a cancelled row is never overwritten by a failure.
+ * - Deterministic media id (§4.1): the consumer (or this module as
+ *   a fallback) writes pending_media_id to the job row BEFORE any
+ *   byte streams, the first library row uses that id, and inserts
+ *   are ON CONFLICT DO NOTHING — so a crash between media insert
+ *   and the done update can never create a second library copy.
+ * - Checkpoint/resume (§6.3): each completed part writes its ETag
+ *   to the job row; a re-claimed job resumes the same multipart
+ *   upload from its checkpoint instead of re-downloading it.
+ * - Attempts cap (§8.1): a job failing at or beyond 5 attempts has
+ *   its checkpoint cleared with the failure — no more retries.
  */
 
 export type ProcessJobOutcome = 'done' | 'failed' | 'cancelled';
 
+export interface ResumableSink extends MediaStreamSink {
+  currentUploadId: string | null;
+  currentParts: CheckpointPart[];
+  currentTotalBytes: number;
+}
+
+export interface ResumeSinkState {
+  uploadId: string | null;
+  parts: CheckpointPart[];
+  initialBytes: number;
+}
+
 export interface ProcessJobDeps {
   store: JobStore;
   storage: IStorageService;
-  createSink: (key: string, contentType: string) => MediaStreamSink;
-  resolve?: typeof resolveAndUploadMediaFromUrl;
-  extractorApiUrl?: string | null;
+  createSink: (
+    key: string,
+    contentType: string,
+    resume?: ResumeSinkState | undefined,
+    onPart?: (() => Promise<void>) | undefined
+  ) => ResumableSink;
+  resolve?: (
+    sourceUrl: string,
+    fetchFn: typeof fetch,
+    extractorApiUrl: string | null
+  ) => Promise<ResolveCandidatesResult>;
+  fetchFn?: typeof fetch | undefined;
+  extractorApiUrl?: string | null | undefined;
   /** Minimum gap between progress-row writes (default 1000 ms). */
-  progressUpdateMinIntervalMs?: number;
-  /** How often the cancel watcher re-reads the job row (default 1000 ms). */
-  cancelPollMs?: number;
-  log?: (message: string, context?: Record<string, unknown>) => void;
+  progressUpdateMinIntervalMs?: number | undefined;
+  log?: ((message: string, context?: Record<string, unknown>) => void) | undefined;
 }
 
 function toMediaItemInsert(
-  item: UploadedDownloadedMediaItem,
+  item: DownloadedItem,
   userId: string,
   folderId: string | null
 ): MediaItemInsert {
@@ -71,9 +106,10 @@ export async function processClaimedJob(
 ): Promise<ProcessJobOutcome> {
   const log = deps.log ?? (() => {});
   const store = deps.store;
-  const resolve = deps.resolve ?? resolveAndUploadMediaFromUrl;
-  const progressMinInterval = deps.progressUpdateMinIntervalMs ?? 1000;
-  const cancelPollMs = deps.cancelPollMs ?? 1000;
+  const resolve = deps.resolve ?? resolveCandidates;
+  const fetchFn = deps.fetchFn ?? globalThis.fetch;
+  const progressMinInterval =
+    deps.progressUpdateMinIntervalMs ?? DOWNLOAD_JOB_PROGRESS_UPDATE_MIN_INTERVAL_MS;
 
   const fresh = await store.fetchJob(job.id);
   if (!fresh) {
@@ -91,37 +127,58 @@ export async function processClaimedJob(
     return 'done';
   }
 
-  const controller = new AbortController();
-  let watcherInFlight = false;
-  const watcher = setInterval(() => {
-    if (watcherInFlight) return;
-    watcherInFlight = true;
-    void store
-      .fetchJob(job.id)
-      .then((current) => {
-        if (current?.status === 'cancelled') controller.abort();
-      })
-      .catch((error: unknown) => {
-        log('cancel watcher read failed', { jobId: job.id, error: String(error) });
-      })
-      .finally(() => {
-        watcherInFlight = false;
-      });
-  }, cancelPollMs);
+  // §4.1: the media id is fixed BEFORE any byte streams. The
+  // consumer normally writes it at claim time; this is the fallback
+  // for direct calls (and keeps the invariant even if the consumer
+  // path changes): the same id is reused on every retry.
+  const pendingMediaId = fresh.pendingMediaId ?? crypto.randomUUID();
+  if (!fresh.pendingMediaId) {
+    await store.updateJob(job.id, { pendingMediaId });
+  }
 
   let lastProgressWrite = 0;
-  const onProgress = (progress: { downloadedBytes: number; totalBytes: number | null }) => {
+  let lastPercent = -1;
+  let currentSink: ResumableSink | null = null;
+  let currentStreamUrl: string | null = null;
+
+  const writeCheckpoint = async (): Promise<void> => {
+    if (!currentSink || !currentStreamUrl) return;
+    await store.updateJob(job.id, {
+      checkpoint: {
+        uploadId: currentSink.currentUploadId,
+        parts: currentSink.currentParts,
+        bytes: currentSink.currentTotalBytes,
+        streamUrl: currentStreamUrl,
+      },
+      lastProgressAt: new Date().toISOString(),
+    });
+  };
+
+  // Cancel is observed between parts, never by a timer: after every
+  // uploaded part the checkpoint is written and the row re-read.
+  const onPart = async (): Promise<void> => {
+    await writeCheckpoint();
+    const current = await store.fetchJob(job.id);
+    if (current?.status === 'cancelled') {
+      throw new JobCancelledError();
+    }
+  };
+
+  const onProgress = (progress: { downloadedBytes: number; totalBytes: number | null }): void => {
+    const percent = progress.totalBytes
+      ? Math.min(99, Math.floor((progress.downloadedBytes / progress.totalBytes) * 100))
+      : 0;
     const now = Date.now();
-    if (now - lastProgressWrite < progressMinInterval) return;
+    if (now - lastProgressWrite < progressMinInterval || percent === lastPercent) return;
     lastProgressWrite = now;
+    lastPercent = percent;
     void store
       .updateJob(job.id, {
         status: 'downloading',
-        progressPercent: progress.totalBytes
-          ? Math.min(99, Math.floor((progress.downloadedBytes / progress.totalBytes) * 100))
-          : 0,
+        progressPercent: percent,
         downloadedBytes: progress.downloadedBytes,
         totalBytes: progress.totalBytes,
+        lastProgressAt: new Date().toISOString(),
       })
       .catch((error: unknown) => {
         // A lost progress write must never kill the download itself.
@@ -129,18 +186,108 @@ export async function processClaimedJob(
       });
   };
 
-  try {
-    const result = await resolve({
-      sourceUrl: fresh.sourceUrl,
-      userId: fresh.userId,
-      storage: deps.storage,
-      extractorApiUrl: deps.extractorApiUrl ?? null,
-      onProgress,
-      signal: controller.signal,
-      createSink: deps.createSink,
+  const failJob = async (
+    errorCode: string,
+    errorMessage: string
+  ): Promise<void> => {
+    await store.updateJob(job.id, {
+      status: 'failed',
+      errorCode,
+      errorMessage,
+      // At the attempts cap there are no more retries, so a
+      // checkpoint would only ever be stale state.
+      ...(fresh.attempts >= DOWNLOAD_JOB_ATTEMPTS_CAP ||
+      isTerminalDownloadErrorCode(errorCode)
+        ? { checkpoint: null }
+        : {}),
     });
+  };
 
-    if (result.items.length === 0) {
+  try {
+    const resolved = await resolve(fresh.sourceUrl, fetchFn, deps.extractorApiUrl ?? null);
+    if (resolved.candidates.length === 0) {
+      throw new MediaDownloaderError(
+        'UNSUPPORTED_MEDIA',
+        'No downloadable video or image was found at this link.',
+        400
+      );
+    }
+
+    const items: DownloadedItem[] = [];
+    // Candidates run SEQUENTIALLY (§3.2): one invocation has 6
+    // simultaneous outgoing connections and 128 MB memory.
+    for (let idx = 0; idx < resolved.candidates.length; idx += 1) {
+      const candidate = resolved.candidates[idx];
+      if (!candidate) continue;
+      const normalizedStreamUrl = validateAndNormalizeStreamUrl(candidate.streamUrl);
+      let resumeForCandidate =
+        fresh.checkpoint !== null &&
+        fresh.checkpoint.streamUrl === normalizedStreamUrl &&
+        fresh.checkpoint.bytes > 0
+          ? {
+              streamUrl: normalizedStreamUrl,
+              bytes: fresh.checkpoint.bytes,
+            }
+          : undefined;
+      let restartDone = false;
+
+      const runCandidate = async (): Promise<DownloadedItem> => {
+        const createSink = (key: string, contentType: string): MediaStreamSink => {
+          const sink = deps.createSink(
+            key,
+            contentType,
+            resumeForCandidate && fresh.checkpoint
+              ? {
+                  uploadId: fresh.checkpoint.uploadId,
+                  parts: fresh.checkpoint.parts,
+                  initialBytes: fresh.checkpoint.bytes,
+                }
+              : undefined,
+            onPart
+          );
+          currentSink = sink;
+          currentStreamUrl = normalizedStreamUrl;
+          return sink;
+        };
+        return downloadAndStoreCandidate({
+          candidate,
+          index: idx,
+          userId: fresh.userId,
+          storage: deps.storage,
+          fetchFn,
+          prefetchedResponse:
+            idx === 0 && !resumeForCandidate ? resolved.prefetchedBinaryResponse : undefined,
+          forcedMediaId: idx === 0 ? pendingMediaId : undefined,
+          resume: resumeForCandidate,
+          onProgress,
+          createSink,
+        });
+      };
+
+      let item: DownloadedItem;
+      try {
+        item = await runCandidate();
+      } catch (error) {
+        if (error instanceof ResumeUnsupportedError && !restartDone) {
+          // Source refuses Range: clear the checkpoint and restart
+          // this candidate from byte 0 once, in the same attempt.
+          restartDone = true;
+          resumeForCandidate = undefined;
+          await store.updateJob(job.id, { checkpoint: null });
+          fresh.checkpoint = null;
+          currentSink = null;
+          currentStreamUrl = null;
+          item = await runCandidate();
+        } else {
+          throw error;
+        }
+      }
+      items.push(item);
+      currentSink = null;
+      currentStreamUrl = null;
+    }
+
+    if (items.length === 0) {
       throw new MediaDownloaderError(
         'DOWNLOAD_FAILED',
         'The download finished without saving any file.',
@@ -155,12 +302,12 @@ export async function processClaimedJob(
       return 'failed';
     }
     if (afterResolve.status === 'cancelled') {
-      await deleteItems(deps.storage, result.items, log, job.id);
+      await deleteItems(deps.storage, items, log, job.id);
       return 'cancelled';
     }
     if (afterResolve.mediaId) {
       // A duplicate attempt already saved this file: drop ours.
-      await deleteItems(deps.storage, result.items, log, job.id);
+      await deleteItems(deps.storage, items, log, job.id);
       await store.updateJob(job.id, {
         status: 'done',
         progressPercent: 100,
@@ -169,7 +316,7 @@ export async function processClaimedJob(
       return 'done';
     }
 
-    const inserts = result.items.map((item) =>
+    const inserts = items.map((item) =>
       toMediaItemInsert(item, fresh.userId, fresh.targetFolderId)
     );
     try {
@@ -179,22 +326,22 @@ export async function processClaimedJob(
         jobId: job.id,
         error: String(error),
       });
-      await deleteItems(deps.storage, result.items, log, job.id);
-      await store.updateJob(job.id, {
-        status: 'failed',
-        errorCode: 'DOWNLOAD_FAILED',
-        errorMessage: 'The download finished but could not be saved to your library.',
-      });
+      await deleteItems(deps.storage, items, log, job.id);
+      await failJob(
+        'DOWNLOAD_FAILED',
+        'The download finished but could not be saved to your library.'
+      );
       return 'failed';
     }
 
-    const totalBytes = result.items.reduce((sum, item) => sum + item.fileSize, 0);
+    const totalBytes = items.reduce((sum, item) => sum + item.fileSize, 0);
     await store.updateJob(job.id, {
       status: 'done',
       progressPercent: 100,
       downloadedBytes: totalBytes,
       totalBytes,
-      mediaId: result.items[0]?.mediaId ?? null,
+      mediaId: items[0]?.mediaId ?? pendingMediaId,
+      checkpoint: null,
     });
     return 'done';
   } catch (error) {
@@ -202,37 +349,23 @@ export async function processClaimedJob(
     const current = await store.fetchJob(job.id).catch(() => null);
     if (current?.status === 'cancelled') return 'cancelled';
 
-    if (error instanceof DownloadAbortedError) {
-      await store.updateJob(job.id, {
-        status: 'failed',
-        errorCode: 'DOWNLOAD_FAILED',
-        errorMessage: 'The download was interrupted.',
-      });
-      return 'failed';
+    if (error instanceof JobCancelledError) {
+      // The row was cancelled (onPart saw it); nothing to overwrite.
+      return 'cancelled';
     }
     if (error instanceof MediaDownloaderError) {
-      await store.updateJob(job.id, {
-        status: 'failed',
-        errorCode: error.code,
-        errorMessage: error.message,
-      });
+      await failJob(error.code, error.message);
       return 'failed';
     }
     log('unexpected download error', { jobId: job.id, error: String(error) });
-    await store.updateJob(job.id, {
-      status: 'failed',
-      errorCode: 'DOWNLOAD_FAILED',
-      errorMessage: 'The download failed. Please try again.',
-    });
+    await failJob('DOWNLOAD_FAILED', 'The download failed. Please try again.');
     return 'failed';
-  } finally {
-    clearInterval(watcher);
   }
 }
 
 async function deleteItems(
   storage: IStorageService,
-  items: UploadedDownloadedMediaItem[],
+  items: DownloadedItem[],
   log: (message: string, context?: Record<string, unknown>) => void,
   jobId: string
 ): Promise<void> {

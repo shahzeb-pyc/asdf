@@ -1,6 +1,8 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import {
   CancelDownloadJobRequestSchema,
+  DOWNLOAD_CONSUMER_HEALTHY_MINUTES,
+  DOWNLOAD_CONSUMER_WORKER_ID,
   DownloadJobActionResponseSchema,
   DownloadJobsStatusResponseSchema,
   RetryDownloadJobRequestSchema,
@@ -8,6 +10,7 @@ import {
   SubmitDownloadJobsResponseSchema,
   deduplicateBatchUrls,
   detectSourcePlatform,
+  isTerminalDownloadErrorCode,
   parseDownloadJobRow,
   type DownloadJob,
   type SessionPayload,
@@ -21,9 +24,17 @@ import { logServerError } from '@/lib/server-analytics';
  * Download jobs API (spec 149). The browser NEVER downloads media
  * itself anymore: POST only validates links and writes job rows, GET
  * reports open jobs for the tray, and retry/cancel mutate job state.
- * The VPS worker owns resolving, streaming, and library-row creation.
+ * The Cloudflare Queue consumer owns resolving, streaming, and
+ * library-row creation (backend revision, see
+ * specs/149-downloader-rebuild/cloudflare-backend-spec.md).
  * The old single-link ingest path (resolve + upload inside the request)
  * is deleted, not kept alongside this one.
+ *
+ * Web → Queue bridge (§5): after inserting rows, the route
+ * best-effort notifies the consumer Worker's /enqueue endpoint. The
+ * notification must NEVER fail a submit: if the Worker is unreachable
+ * the route still returns 201 and the Cron sweeper picks the job up
+ * within a minute.
  */
 
 const OPEN_JOB_STATUSES = ['queued', 'resolving', 'downloading', 'failed'] as const;
@@ -54,6 +65,61 @@ function toWireJobs(rows: unknown[]): { jobs: DownloadJob[]; skipped: number } {
     }
   }
   return { jobs, skipped };
+}
+
+/**
+ * Best-effort /enqueue notification (spec §5). Never throws and
+ * never blocks a submit beyond a short timeout: the Cron sweeper is
+ * the backstop for any failure here. Server-only env vars, never
+ * NEXT_PUBLIC_ — the shared secret must not reach the browser.
+ */
+async function notifyDownloadConsumer(jobIds: string[], subdomain: string): Promise<void> {
+  const consumerUrl = process.env.DOWNLOAD_CONSUMER_URL;
+  const secret = process.env.DOWNLOAD_ENQUEUE_SECRET;
+  if (!consumerUrl || !secret || jobIds.length === 0) return;
+  try {
+    const response = await fetch(`${consumerUrl.replace(/\/+$/, '')}/enqueue`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-download-enqueue-secret': secret,
+      },
+      body: JSON.stringify({ jobIds }),
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!response.ok) {
+      logServerError('[downloader] Enqueue notification rejected', new Error(`status ${response.status}`), {
+        source: 'downloader-enqueue',
+        subdomain,
+      });
+    }
+  } catch (error) {
+    logServerError('[downloader] Enqueue notification failed (sweeper will retry)', error, {
+      source: 'downloader-enqueue',
+      subdomain,
+    });
+  }
+}
+
+/** Consumer health from the Cron heartbeat (§7.1). Undefined = unreadable (unknown, not paused). */
+async function readConsumerHealthy(
+  supabase: SupabaseClient
+): Promise<boolean | undefined> {
+  try {
+    const { data, error } = await supabase
+      .from('download_worker_heartbeats')
+      .select('heartbeat_at')
+      .eq('worker_id', DOWNLOAD_CONSUMER_WORKER_ID)
+      .maybeSingle();
+    if (error) return undefined;
+    if (!data) return false;
+    const heartbeatAt = (data as { heartbeat_at?: unknown })['heartbeat_at'];
+    if (typeof heartbeatAt !== 'string') return false;
+    const ageMs = Date.now() - new Date(heartbeatAt).getTime();
+    return ageMs < DOWNLOAD_CONSUMER_HEALTHY_MINUTES * 60_000;
+  } catch {
+    return undefined;
+  }
 }
 
 async function verifyFolderOwnership(
@@ -224,6 +290,11 @@ export async function handleSubmitDownloadJobs(
     skippedDuplicates: deduped.duplicateCount,
     invalidLinks: deduped.invalidUrls,
   });
+  // Best-effort only: a failed notification never fails the submit.
+  await notifyDownloadConsumer(
+    jobs.map((job) => job.id),
+    subdomain
+  );
   return NextResponse.json(payload, { status: 201 });
 }
 
@@ -261,7 +332,11 @@ export async function handleGetDownloadJobs(
       });
     }
 
-    const payload = DownloadJobsStatusResponseSchema.parse({ jobs });
+    const consumerHealthy = await readConsumerHealthy(supabase);
+    const payload = DownloadJobsStatusResponseSchema.parse({
+      jobs,
+      ...(consumerHealthy !== undefined ? { consumerHealthy } : {}),
+    });
     return NextResponse.json(payload, { status: 200 });
   } catch (err: unknown) {
     logServerError('[downloader] Failed to fetch download jobs', err, {
@@ -297,17 +372,34 @@ export async function handleRetryDownloadJob(
     );
   }
 
+  // Retry checkpoint rule (§8.1, encoded explicitly): a terminal
+  // failure (bad link, unsupported media, over size) can never
+  // resume, so its checkpoint is cleared and progress resets. Any
+  // other failure keeps its checkpoint — and the progress that goes
+  // with it — so the next attempt resumes instead of restarting.
+  const terminalFailure = isTerminalDownloadErrorCode(
+    typeof fetched.row['error_code'] === 'string' ? fetched.row['error_code'] : null
+  );
   const { data: updated, error: updateErr } = await supabase
     .from('media_download_jobs')
     .update({
       status: 'queued',
       error_code: null,
       error_message: null,
-      progress_percent: 0,
-      downloaded_bytes: 0,
-      total_bytes: null,
       claimed_at: null,
       claimed_by: null,
+      ...(terminalFailure
+        ? {
+            progress_percent: 0,
+            downloaded_bytes: 0,
+            total_bytes: null,
+            r2_upload_id: null,
+            checkpoint_parts: [],
+            checkpoint_bytes: 0,
+            checkpoint_stream_url: null,
+            last_progress_at: null,
+          }
+        : {}),
     })
     .eq('id', body.jobId)
     .eq('user_id', userId)
@@ -322,6 +414,9 @@ export async function handleRetryDownloadJob(
   if (!job) {
     return NextResponse.json({ error: 'Failed to retry job' }, { status: 500 });
   }
+  // Best-effort only: a failed notification never fails the retry;
+  // the Cron sweeper picks the job up within a minute.
+  await notifyDownloadConsumer([job.id], subdomain);
   return NextResponse.json(DownloadJobActionResponseSchema.parse({ job }), { status: 200 });
 }
 

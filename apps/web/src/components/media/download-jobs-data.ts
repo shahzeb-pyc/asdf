@@ -35,12 +35,15 @@ export function downloadJobsQuery(subdomain: string) {
   const tenant = queryKeys.tenant(subdomain);
   return {
     queryKey: tenant.downloader.jobs,
-    queryFn: async ({ signal }: { signal: AbortSignal }): Promise<DownloadJob[]> => {
+    queryFn: async ({ signal }: { signal: AbortSignal }): Promise<{
+      jobs: DownloadJob[];
+      consumerHealthy?: boolean | undefined;
+    }> => {
       const data = await api.get(buildTenantApiPath(subdomain, '/downloader'), {
         schema: DownloadJobsStatusResponseSchema,
         signal,
       });
-      return data.jobs;
+      return { jobs: data.jobs, consumerHealthy: data.consumerHealthy };
     },
   };
 }
@@ -54,7 +57,7 @@ export function useDownloadJobs(subdomain: string) {
     // site the tray still restores promptly, without polling hot
     // forever when nothing is downloading.
     refetchInterval: (query) => {
-      const jobs = query.state.data as DownloadJob[] | undefined;
+      const jobs = query.state.data?.jobs;
       const hasActive = jobs?.some(isDownloadJobActive) ?? false;
       return hasActive ? DOWNLOAD_JOBS_ACTIVE_POLL_MS : DOWNLOAD_JOBS_IDLE_POLL_MS;
     },

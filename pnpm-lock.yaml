@@ -48,12 +48,6 @@ importers:
 
   apps/download-worker:
     dependencies:
-      '@aws-sdk/client-s3':
-        specifier: ^3.1147.0
-        version: 3.1152.0
-      '@aws-sdk/s3-request-presigner':
-        specifier: ^3.1147.0
-        version: 3.1152.0
       '@fbuploadpro/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -61,12 +55,9 @@ importers:
         specifier: ^2.117.3
         version: 2.118.0
     devDependencies:
-      '@types/node':
-        specifier: ^22.13.4
-        version: 22.20.5
-      tsx:
-        specifier: ^4.23.15
-        version: 4.23.15
+      '@cloudflare/workers-types':
+        specifier: ^4.20250224.0
+        version: 4.20260702.1
       typescript:
         specifier: ^5.7.0
         version: 5.9.3

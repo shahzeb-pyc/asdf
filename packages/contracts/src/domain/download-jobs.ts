@@ -5,11 +5,13 @@ import { DownloaderSourcePlatformSchema } from './downloader.js';
 /**
  * Persistent download jobs (spec 149). One row per pasted link in the
  * pre-existing `media_download_jobs` table — this module is the wire
- * truth for the submit / status / retry / cancel API and for the VPS
- * worker that claims and processes the rows. It does not create a
- * second jobs model: the table already existed (spec 140), and the
- * spec-149 migration only extends it (claim lease, attempts, the
- * `resolving` state, `done` replacing the legacy `completed` label).
+ * truth for the submit / status / retry / cancel API and for the
+ * Cloudflare Queue consumer that claims and processes the rows
+ * (backend revision: cloudflare-backend-spec.md). It does not create
+ * a second jobs model: the table already existed (spec 140), and the
+ * spec-149 migrations only extend it (claim lease, attempts, the
+ * `resolving` state, `done` replacing the legacy `completed` label,
+ * and the Cloudflare checkpoint columns).
  */
 
 // ---------------------------------------------------------------------------
@@ -22,20 +24,54 @@ export const DOWNLOAD_JOBS_PER_WORKSPACE_CONCURRENCY = 3;
 /** Links accepted in one submit batch. */
 export const DOWNLOAD_JOBS_MAX_LINKS_PER_SUBMIT = 50;
 
-/** Minimum gap between progress writes for one job (worker-side throttle). */
+/** Minimum gap between progress writes for one job (consumer-side throttle). */
 export const DOWNLOAD_JOB_PROGRESS_UPDATE_MIN_INTERVAL_MS = 1000;
 
-/** Worker poll interval for new / stale work. */
-export const DOWNLOAD_WORKER_POLL_INTERVAL_MS = 5000;
-
-/** A claim older than this with no live worker heartbeat may be reclaimed. */
-export const DOWNLOAD_WORKER_STALE_CLAIM_MINUTES = 10;
-
-/** A worker heartbeat older than this counts the worker as down. */
-export const DOWNLOAD_WORKER_HEARTBEAT_STALE_MINUTES = 2;
-
-/** Hard cap enforced mid-stream by the worker (500 MB). */
+/** Hard cap enforced mid-stream by the consumer (500 MB). */
 export const DOWNLOAD_JOB_MAX_BYTES = 524_288_000;
+
+/** R2 multipart part size for the Cloudflare consumer (8 MB). */
+export const DOWNLOAD_MULTIPART_PART_SIZE_BYTES = 8 * 1024 * 1024;
+
+/** Cap on a single resolve body (HTML page / JSON payload, §3.4). */
+export const DOWNLOAD_RESOLVE_BODY_MAX_BYTES = 10 * 1024 * 1024;
+
+/** Cloudflare Queue consumer: messages per batch (sequential processing). */
+export const DOWNLOAD_QUEUE_MAX_BATCH_SIZE = 5;
+
+/** Cloudflare Queue consumer: deliveries before a message goes to the DLQ. */
+export const DOWNLOAD_QUEUE_MAX_RETRIES = 3;
+
+/** Job attempts cap: a job failing this many times is marked failed. */
+export const DOWNLOAD_JOB_ATTEMPTS_CAP = 5;
+
+/** Cron sweeper: jobs triggered per run at most. */
+export const DOWNLOAD_CRON_SWEEP_LIMIT = 50;
+
+/** A job with no progress update for this long is reclaimed (checkpoint kept). */
+export const DOWNLOAD_STALE_PROGRESS_MINUTES = 30;
+
+/** Worker id written to the download_worker_heartbeats table by the Cron handler. */
+export const DOWNLOAD_CONSUMER_WORKER_ID = 'cf-download-consumer';
+
+/** A heartbeat younger than this counts the consumer as healthy. */
+export const DOWNLOAD_CONSUMER_HEALTHY_MINUTES = 5;
+
+/**
+ * Error codes for which resuming a download is pointless: the stream
+ * itself is rejected, so a retry must start clean (checkpoint cleared).
+ * Every other failure keeps its checkpoint so the next attempt resumes.
+ */
+export const DOWNLOAD_TERMINAL_ERROR_CODES = [
+  'UNSAFE_URL',
+  'UNSUPPORTED_MEDIA',
+  'FILE_TOO_LARGE',
+] as const;
+
+export function isTerminalDownloadErrorCode(code: string | null): boolean {
+  if (!code) return false;
+  return (DOWNLOAD_TERMINAL_ERROR_CODES as readonly string[]).includes(code);
+}
 
 // ---------------------------------------------------------------------------
 // Status
@@ -168,7 +204,39 @@ export type SubmitDownloadJobsResponse = z.infer<typeof SubmitDownloadJobsRespon
 
 export const DownloadJobsStatusResponseSchema = z.object({
   jobs: z.array(DownloadJobSchema),
+  /**
+   * Cloudflare consumer health (spec 149 backend revision §7.1):
+   * true when the consumer heartbeat is fresh, false when it is stale
+   * or has never been written. Omitted when the heartbeat cannot be
+   * read at all — the tray treats a missing value as unknown, never
+   * as a paused state.
+   */
+  consumerHealthy: z.boolean().optional(),
 });
+
+// ---------------------------------------------------------------------------
+// Cloudflare Queue message contract (spec 149 backend revision §5.1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Queue message — the ONLY payload the consumer trusts blindly is the
+ * id. Everything else is re-read from the job row. Validated with Zod
+ * at the consumer boundary; a malformed message goes to the DLQ
+ * without touching any job row.
+ */
+export const DownloadQueueMessageSchema = z.object({
+  jobId: z.string().uuid(),
+  userId: z.string().uuid(),
+});
+
+export type DownloadQueueMessage = z.infer<typeof DownloadQueueMessageSchema>;
+
+/** Web → Worker /enqueue request: job ids to trigger (best-effort). */
+export const DownloadEnqueueRequestSchema = z.object({
+  jobIds: z.array(z.string().uuid()).min(1).max(50),
+});
+
+export type DownloadEnqueueRequest = z.infer<typeof DownloadEnqueueRequestSchema>;
 
 export type DownloadJobsStatusResponse = z.infer<typeof DownloadJobsStatusResponseSchema>;
 
