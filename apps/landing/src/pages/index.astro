@@ -171,30 +171,27 @@ const signin = 'https://app.fbuploadpro.com/login';
       </div>
     </section>
 
-    <!-- Section 5: footer, LAYOUT copied from the reference
+    <!-- Section 5: footer, LAYOUT from the reference
          footer screenshot (structure only — never its content,
-         branding, or links). Black, seamless from section 4
+         branding, or links), MINUS email. CORRECTION (Shahzeb):
+         DO NOT ASK FOR EMAIL — no email input, no arrow button,
+         no signup heading, no spam line, no not-connected
+         message, no form, no validation logic. The footer asks
+         visitors for NOTHING. Black, seamless from section 4
          (dark-to-dark, no fade, no gradient, no divider, no
          rounding at the join; the screenshot's rounded card +
          thin blue frame is the screenshot tool's frame, NOT
          footer design, so no blue border and no rounded card
          here). Content height only — deliberately NOT
          full-height, so the page ends shortly after the bottom
-         bar. Top row: logo + wordmark. Left: email capture.
-         Right: two link columns with NO headings. Divider, then
-         bottom row: copyright left, circular social icons right.
-         REPLACES the old-footer 4-column grid, its tagline, its
-         Contact card, and its previous bottom line —
-         the old footer's WhatsApp/Facebook URLs survive only as
-         the two bottom-row circular icons. EMAIL FORM HONESTY:
-         there is no newsletter backend or list in this codebase,
-         so the form never pretends to subscribe anyone: on valid
-         submit it hides the form and shows the not-connected
-         message below, storing/sending nothing. The inline
-         onsubmit="return false" is the no-JS guard (button does
-         nothing harmful without JS: no navigation, no fake
-         success); with JS the module handler below shows the
-         honest message. -->
+         bar. Top row: logo + wordmark. Below: a short brand
+         line on the left (approved hero line, short form, no
+         new copy), two heading-less link columns on the right.
+         Divider, then bottom row: copyright left, circular
+         social icons right. REPLACES the old-footer 4-column
+         grid, its tagline, its Contact card, and its previous
+         bottom line — the old footer's WhatsApp/Facebook URLs
+         survive only as the two bottom-row circular icons. -->
     <section id="section-5" class="relative bg-[#0b0e11] px-5 py-20 sm:px-8 lg:px-12" aria-label="Footer">
       <div class="s5-content relative z-10 mx-auto w-full max-w-6xl">
         <a href="#section-1" class="inline-flex items-center gap-3 no-underline">
@@ -202,14 +199,7 @@ const signin = 'https://app.fbuploadpro.com/login';
         </a>
         <div class="mt-12 grid gap-10 lg:grid-cols-[1.4fr_1fr_1fr]">
           <div>
-            <p class="mb-5 text-base font-semibold text-white">Get FBUploadPro updates.</p>
-            <form class="s5-form relative w-full max-w-md" onsubmit="return false;">
-              <label class="sr-only" for="s5-email">Email address</label>
-              <input id="s5-email" name="email" type="email" required placeholder="Email address" autocomplete="email" class="min-h-12 w-full rounded-xl border border-white/20 bg-[#111418] pr-14 pl-4 text-base text-white placeholder:text-white/40 focus:outline-none" />
-              <button type="submit" aria-label="Submit email" class="absolute top-1/2 right-2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-lg border border-white/30 text-base font-semibold text-white no-underline">&gt;</button>
-            </form>
-            <p class="s5-form-message mt-4 hidden max-w-md text-sm leading-relaxed text-white/70">Thanks — newsletter signup isn't connected yet. Email support@fbuploadpro.com and we'll add you.</p>
-            <p class="mt-4 text-sm text-white/50">Product updates only. No spam.</p>
+            <p class="max-w-md text-base leading-relaxed text-white/70">Your accounts, posting themselves — 100% in the cloud</p>
           </div>
           <div>
             <ul class="space-y-3 text-sm text-white/60">
@@ -473,26 +463,6 @@ const signin = 'https://app.fbuploadpro.com/login';
           lenis.scrollTo(target, { duration: 1.2 });
         });
       });
-
-      /* Footer email form — HONEST PLACEHOLDER, not a signup.
-         There is no newsletter backend or list in this codebase,
-         so a valid submit must never claim success, store the
-         address, or send it anywhere: it hides the form and
-         shows the not-connected message in its place. Invalid
-         input never reaches this handler (native validation
-         blocks the submit first); the check below is a guard.
-         Without this module the form's inline onsubmit guard
-         already stops navigation, so nothing harmful happens. */
-      var s5Form = document.querySelector('.s5-form');
-      if (s5Form) {
-        s5Form.addEventListener('submit', function (ev) {
-          ev.preventDefault();
-          if (!s5Form.checkValidity()) { s5Form.reportValidity(); return; }
-          var msg = document.querySelector('.s5-form-message');
-          if (msg) { msg.hidden = false; }
-          s5Form.hidden = true;
-        });
-      }
 
       /* Scroll parallax, scrubbed, so scrolling back moves
          everything back along the same path. Applied to parent
