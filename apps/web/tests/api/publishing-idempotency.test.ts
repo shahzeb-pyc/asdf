@@ -324,7 +324,13 @@ class FakeDb {
         const row = this.queueItems.find(
           (q) => q.id === params[0] && q.workspace_id === params[1]
         );
-        return row ? [{ id: row.id, status: row.status }] : [];
+        // SEND BACK fix for PR #44: the real Publish Now query
+        // selects destination_id too, and the gate now requires it.
+        // The old mock dropped it, which made the caller skip the
+        // gate entirely — the fail-open the fix removes.
+        return row
+          ? [{ id: row.id, status: row.status, destination_id: row.destination_id }]
+          : [];
       }
       if (params.length === 3) {
         const row = this.queueItems.find(

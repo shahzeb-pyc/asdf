@@ -102,6 +102,7 @@ function renderPanel(overrides: Record<string, unknown> = {}) {
       subdomain="acme"
       pageId={PAGE_ID}
       pageTimezone="UTC"
+      pageStatus={overrides.pageStatus as 'active' | 'paused' | 'fb_rate_limited' | 'page_checkpoint' | 'invalid_token' | 'disconnected' | undefined}
       slots={(overrides.slots as typeof allFormatsSlot[] | undefined) ?? [allFormatsSlot]}
       onCreatePost={(overrides.onCreatePost as (() => void) | undefined) ?? vi.fn()}
     />,
@@ -294,6 +295,21 @@ describe('QueuePanel', () => {
     expect(row.getByTestId('queue-row-edit')).toBeTruthy();
     expect(row.getByTestId('queue-row-delete')).toBeTruthy();
     expect(row.queryByTestId('queue-row-menu')).toBeNull();
+  });
+
+  it('disables Publish Now and Retry with a plain reason on a paused page', async () => {
+    renderPanel({ pageStatus: 'paused' });
+    await waitFor(() => expect(screen.getByTestId(`queue-row-${ID_A}`)).toBeTruthy());
+    expect(screen.getByTestId('queue-publish-blocked-note').textContent).toContain('Paused');
+    const queuedRow = within(screen.getByTestId(`queue-row-${ID_A}`));
+    const publishBtn = queuedRow.getByTestId('queue-row-publish-now') as HTMLButtonElement;
+    expect(publishBtn.disabled).toBe(true);
+    expect(publishBtn.getAttribute('title')).toContain('Paused');
+    const failedRow = within(screen.getByTestId(`queue-row-${ID_C}`));
+    const retryBtn = failedRow.getByTestId('queue-row-retry') as HTMLButtonElement;
+    expect(retryBtn.disabled).toBe(true);
+    expect(retryBtn.getAttribute('title')).toContain('Paused');
+    expect(apiPost).not.toHaveBeenCalled();
   });
 
   it('shows Retry as the primary action on failed rows, no Publish now', async () => {

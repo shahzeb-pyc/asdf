@@ -104,7 +104,9 @@ export function getPageStatusLabel(status: FacebookPageStatus): string {
     case 'disconnected':
       return 'Disconnected';
     default:
-      return 'Active';
+      // Unknown statuses must never read as healthy: an unexpected
+      // wire value is a needs-attention state, not 'Active'.
+      return 'Needs Attention';
   }
 }
 

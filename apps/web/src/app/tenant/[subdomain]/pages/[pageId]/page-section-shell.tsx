@@ -634,6 +634,10 @@ export default function TenantDedicatedPageView({
     mutationFn: () =>
       api.delete(pagePath, { schema: DisconnectPageResponseSchema }),
     onSuccess: () => {
+      // R23: invalidate the Pages list (like statusMutation does),
+      // so the just-disconnected page does not linger in the list
+      // cache for up to 60s after the redirect.
+      invalidatePage();
       router.push(`/tenant/${subdomain}/pages`);
     },
     onError: (error) => {
@@ -642,8 +646,12 @@ export default function TenantDedicatedPageView({
       );
     },
   });
+  // R22: propagate the error (no .catch(() => undefined) here) so
+  // the header's disconnect dialogue can stay open on failure
+  // instead of closing as if disconnect had succeeded. The header
+  // catches it; the toast above is the failure signal.
   const handleDisconnectPage = React.useCallback(async () => {
-    await disconnectMutation.mutateAsync().catch(() => undefined);
+    await disconnectMutation.mutateAsync();
   }, [disconnectMutation]);
 
   const pagesListHref = `/tenant/${subdomain}/pages`;
@@ -866,6 +874,7 @@ export default function TenantDedicatedPageView({
                   subdomain={subdomain}
                   pageId={pageId}
                   pageTimezone={pageTimezone}
+                  pageStatus={page.status}
                   slots={slots}
                   onCreatePost={() => setIsCreatePostsOpen(true)}
                 />

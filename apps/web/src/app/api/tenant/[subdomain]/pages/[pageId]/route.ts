@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import {
   DisconnectPageResponseSchema,
+  evaluatePageHealth,
   FacebookPageViewSchema,
   getSessionSecret,
   verifySessionToken,
@@ -53,6 +54,7 @@ interface PageDetailRow {
   unmatched_post_types?: unknown;
   created_at: string;
   updated_at: string;
+  rate_limited_at?: string | null;
 }
 
 function formatPageRow(row: PageDetailRow) {
@@ -96,6 +98,66 @@ function formatPageRow(row: PageDetailRow) {
     updatedAt: new Date(row.updated_at as string).toISOString(),
   });
 }
+
+/**
+ * Status family 5A: the dedicated detail path must agree with the
+ * Pages list (mapPageRows applies evaluatePageHealth there). A
+ * rate-limited page past the 3-day cooldown reads as Active here
+ * too, so the detail header/banner and the list can never disagree
+ * about the same page. Other statuses pass through unchanged
+ * (evaluatePageHealth returns paused/checkpoint/expired as-is).
+ */
+function applyRateLimitCooldown<
+  T extends { status: FacebookPageStatus; updatedAt: string | Date },
+>(page: T, rateLimitedAt: string | null | undefined): T {
+  if (page.status !== 'fb_rate_limited') return page;
+  return {
+    ...page,
+    status: evaluatePageHealth({
+      status: page.status,
+      updatedAt: page.updatedAt,
+      rateLimitedAt: rateLimitedAt ?? null,
+    }),
+  };
+}
+
+/**
+ * Status family 1A/4A server gate for the status PATCH. Menu hiding
+ * alone is never trusted: the API must reject a status change the
+ * UI would never offer. Allowed transitions, by CURRENT wire status
+ * (after the 5A cooldown flip, so a page past cooldown is 'active'):
+ * - active / paused: active or paused (Pause / Resume)
+ * - page_checkpoint: active ONLY — this is the Mark Verified &
+ *   Reactivate banner path, which PATCHes 'active' and clears the
+ *   checkpoint marker. Pausing a checkpoint page is blocked: it
+ *   would overwrite the checkpoint marker with the paused marker.
+ * - invalid_token, fb_rate_limited (pre-cooldown), disconnected,
+ *   unknown: nothing. Expired pages recover by reconnecting, not by
+ *   a status PATCH; rate-limited pages wait for the cooldown; a
+ *   disconnected page is re-added, not resumed.
+ * Timezone-only updates bypass this gate (no status in the body).
+ */
+function statusTransitionAllowed(
+  current: FacebookPageStatus,
+  requested: 'active' | 'paused'
+): boolean {
+  if (current === 'active' || current === 'paused') return true;
+  if (current === 'page_checkpoint') return requested === 'active';
+  return false;
+}
+
+const STATUS_TOGGLE_BLOCKED_MESSAGES: Partial<
+  Record<FacebookPageStatus, string>
+> = {
+  invalid_token:
+    "Cannot change automation while this Page's connection has expired. Reconnect the parent Facebook account first.",
+  page_checkpoint:
+    'Cannot pause a Page waiting on a Facebook identity check. Use Mark Verified & Reactivate Page first.',
+  fb_rate_limited:
+    'Cannot resume a rate-limited Page yet. It auto-resumes after 3 days.',
+  disconnected:
+    'Cannot change automation on a disconnected Page. Add it again first.',
+};
 
 async function authenticateTenantRequest(
   request: NextRequest,
@@ -141,6 +203,7 @@ async function fetchActivePageById(
         ${DESTINATION_STATUS_TO_WIRE_SQL} AS status,
         d.metadata->'tasks' AS tasks,
         d.metadata->'unmatched_post_types' AS unmatched_post_types,
+        d.metadata->>'rate_limited_at' AS rate_limited_at,
         d.created_at,
         d.updated_at
       FROM destinations d
@@ -153,7 +216,7 @@ async function fetchActivePageById(
     if (!rows || rows.length === 0 || !rows[0]) {
       return null;
     }
-    return formatPageRow(rows[0]);
+    return applyRateLimitCooldown(formatPageRow(rows[0]), rows[0].rate_limited_at);
   }
 
   const supabase = (client && 'from' in client ? client : getSupabaseAdminClient()) as SupabaseClient | null;
@@ -194,32 +257,37 @@ async function fetchActivePageById(
     return null;
   }
 
-  return formatPageRow({
-    id: row.id,
-    facebook_account_id: row.account_id,
-    account_display_name: row.social_accounts?.display_name ?? null,
-    account_avatar_url: row.social_accounts?.avatar_url ?? null,
-    fb_page_id: row.external_destination_id,
-    page_name: row.name,
-    profile_picture_url: row.avatar_url,
-    category: typeof row.metadata?.category === 'string' ? row.metadata.category : null,
-    timezone: row.timezone,
-    starting_followers:
-      typeof row.metadata?.starting_followers === 'number'
-        ? row.metadata.starting_followers
-        : null,
-    current_followers:
-      typeof row.metadata?.current_followers === 'number'
-        ? row.metadata.current_followers
-        : null,
-    status: unifiedDestinationStatusToWire(row.status, row.metadata),
-    tasks: row.metadata?.tasks ?? [],
-    unmatched_post_types: Array.isArray(row.metadata?.unmatched_post_types)
-      ? row.metadata.unmatched_post_types
-      : [],
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-  });
+  return applyRateLimitCooldown(
+    formatPageRow({
+      id: row.id,
+      facebook_account_id: row.account_id,
+      account_display_name: row.social_accounts?.display_name ?? null,
+      account_avatar_url: row.social_accounts?.avatar_url ?? null,
+      fb_page_id: row.external_destination_id,
+      page_name: row.name,
+      profile_picture_url: row.avatar_url,
+      category: typeof row.metadata?.category === 'string' ? row.metadata.category : null,
+      timezone: row.timezone,
+      starting_followers:
+        typeof row.metadata?.starting_followers === 'number'
+          ? row.metadata.starting_followers
+          : null,
+      current_followers:
+        typeof row.metadata?.current_followers === 'number'
+          ? row.metadata.current_followers
+          : null,
+      status: unifiedDestinationStatusToWire(row.status, row.metadata),
+      tasks: row.metadata?.tasks ?? [],
+      unmatched_post_types: Array.isArray(row.metadata?.unmatched_post_types)
+        ? row.metadata.unmatched_post_types
+        : [],
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    }),
+    typeof row.metadata?.rate_limited_at === 'string'
+      ? row.metadata.rate_limited_at
+      : null
+  );
 }
 
 interface QueueStatusCounts {
@@ -399,6 +467,68 @@ export async function handleUpdatePage(
     : null;
 
   if (dbClient && 'query' in dbClient && typeof dbClient.query === 'function') {
+    // Status-family gate (SQL path): read the CURRENT row before
+    // writing. A missing row skips the gate and falls through to
+    // the existing 404 path below; a present row that may not
+    // change status is rejected with 409, never silently no-op'd.
+    if (parsed.data.status) {
+      const currentRows = (await dbClient.query(
+        `SELECT status, metadata, updated_at
+         FROM destinations
+         WHERE id = $1 AND workspace_id = $2 AND platform = 'facebook'`,
+        [pageId, workspaceId]
+      )) as Array<{
+        status: string;
+        metadata: Record<string, unknown> | string | null;
+        updated_at: string;
+      }>;
+      const currentRow = currentRows?.[0];
+      if (currentRow) {
+        // Invalid stored metadata JSON is treated as no metadata for
+        // the status gate (assignment in the catch, not a bare return,
+        // per the silent-failure guardrail).
+        const currentMetadata: Record<string, unknown> | null =
+          typeof currentRow.metadata === 'string'
+            ? (() => {
+                let parsed: Record<string, unknown> | null = null;
+                try {
+                  parsed = JSON.parse(
+                    currentRow.metadata
+                  ) as Record<string, unknown>;
+                } catch {
+                  parsed = null;
+                }
+                return parsed;
+              })()
+            : currentRow.metadata;
+        const currentWire = unifiedDestinationStatusToWire(
+          currentRow.status,
+          currentMetadata
+        );
+        const effectiveCurrent =
+          currentWire === 'fb_rate_limited'
+            ? evaluatePageHealth({
+                status: currentWire,
+                updatedAt: currentRow.updated_at,
+                rateLimitedAt:
+                  typeof currentMetadata?.rate_limited_at === 'string'
+                    ? currentMetadata.rate_limited_at
+                    : null,
+              })
+            : currentWire;
+        if (!statusTransitionAllowed(effectiveCurrent, parsed.data.status)) {
+          return NextResponse.json(
+            {
+              error: 'PAGE_STATUS_NOT_ALLOWED',
+              message:
+                STATUS_TOGGLE_BLOCKED_MESSAGES[effectiveCurrent] ??
+                'This Page cannot change automation right now.',
+            },
+            { status: 409 }
+          );
+        }
+      }
+    }
     if (parsed.data.status || parsed.data.timezone) {
       await dbClient.query(
         `UPDATE destinations d
@@ -429,14 +559,63 @@ export async function handleUpdatePage(
     }
     if (parsed.data.status || parsed.data.timezone) {
       // The paused marker lives in metadata, so the update is a
-      // read-modify-write of that one row.
-      const { data: current } = await supabase
+      // read-modify-write of that one row. A read failure must fail
+      // loud (B1): falling through with `current` null would skip
+      // the update and then return the unchanged page as success.
+      const { data: current, error: currentError } = await supabase
         .from('destinations')
-        .select('status, metadata')
+        .select('status, metadata, updated_at')
         .eq('id', pageId)
         .eq('workspace_id', workspaceId)
         .eq('platform', 'facebook')
         .maybeSingle();
+
+      if (currentError) {
+        logServerError('[pages] Page read failed before update', currentError, {
+          source: 'page-update',
+          pageId,
+        });
+        return NextResponse.json(
+          { error: 'Failed to update page' },
+          { status: 500 }
+        );
+      }
+
+      // Status-family gate (Supabase path), same rule as SQL: a
+      // present row that may not change status is rejected with
+      // 409. A missing row (current null) skips the gate and falls
+      // through to the existing 404 path below. Checkpoint ->
+      // active is allowed here — that is the Mark Verified banner.
+      if (parsed.data.status && current) {
+        const gateMetadata =
+          (current.metadata as Record<string, unknown> | null) ?? {};
+        const gateWire = unifiedDestinationStatusToWire(
+          current.status,
+          gateMetadata
+        );
+        const gateEffective =
+          gateWire === 'fb_rate_limited'
+            ? evaluatePageHealth({
+                status: gateWire,
+                updatedAt: (current as { updated_at?: string }).updated_at ?? null,
+                rateLimitedAt:
+                  typeof gateMetadata.rate_limited_at === 'string'
+                    ? gateMetadata.rate_limited_at
+                    : null,
+              })
+            : gateWire;
+        if (!statusTransitionAllowed(gateEffective, parsed.data.status)) {
+          return NextResponse.json(
+            {
+              error: 'PAGE_STATUS_NOT_ALLOWED',
+              message:
+                STATUS_TOGGLE_BLOCKED_MESSAGES[gateEffective] ??
+                'This Page cannot change automation right now.',
+            },
+            { status: 409 }
+          );
+        }
+      }
 
       const currentMetadata =
         (current?.metadata as Record<string, unknown> | null) ?? {};
@@ -472,12 +651,27 @@ export async function handleUpdatePage(
         if (parsed.data.timezone) {
           updates.timezone = parsed.data.timezone;
         }
-        await supabase
+        // B1: the update error must be checked. The old code awaited
+        // this with no error destructure and fell through to
+        // `{ success: true, page }` with the unchanged page, so a
+        // failed Pause/Resume toasted success. The SQL path throws
+        // on failure; the Supabase path now fails loud the same way.
+        const { error: updateError } = await supabase
           .from('destinations')
           .update(updates)
           .eq('id', pageId)
           .eq('workspace_id', workspaceId)
           .eq('platform', 'facebook');
+        if (updateError) {
+          logServerError('[pages] Page update failed', updateError, {
+            source: 'page-update',
+            pageId,
+          });
+          return NextResponse.json(
+            { error: 'Failed to update page' },
+            { status: 500 }
+          );
+        }
       }
     }
   }
@@ -540,13 +734,26 @@ export async function handleDisconnectPage(
       return NextResponse.json({ error: 'Database service unavailable' }, { status: 500 });
     }
 
-    const { data: existing } = await supabase
+    const { data: existing, error: existingError } = await supabase
       .from('destinations')
       .select('metadata')
       .eq('id', pageId)
       .eq('workspace_id', workspaceId)
       .eq('platform', 'facebook')
       .maybeSingle();
+
+    // A genuine database failure is not a missing page: reserve 404
+    // for a truly absent row and fail loud (500) on a fetch error.
+    if (existingError) {
+      logServerError('[pages] Page read failed before disconnect', existingError, {
+        source: 'page-disconnect',
+        pageId,
+      });
+      return NextResponse.json(
+        { error: 'Failed to disconnect page' },
+        { status: 500 }
+      );
+    }
 
     if (!existing) {
       return NextResponse.json(
@@ -559,6 +766,36 @@ export async function handleDisconnectPage(
       ...((existing.metadata as Record<string, unknown> | null) ?? {}),
     };
     delete nextMetadata[PAUSED_MARKER_KEY];
+
+    // B2 ordering: cancel queued posts FIRST, then disconnect.
+    // The old order disconnected first and ignored the cancel
+    // error, returning success while queued posts stayed queued.
+    // Cancel-first is the safe order here: a cancel failure leaves
+    // the page untouched (retry is clean, no half-done state), and
+    // the only half-done state left — cancel succeeded but the
+    // disconnect update then fails — is safe to retry, because the
+    // disconnect step does not filter on status, so a retry
+    // re-runs the (now no-op) cancel and completes the disconnect.
+    // The reverse half-done state (disconnected + still-queued)
+    // is the dangerous one: those posts could resurface if the
+    // page is re-added, and cancel-first can never produce it.
+    const { error: cancelError } = await supabase
+      .from('queue_items')
+      .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+      .eq('workspace_id', workspaceId)
+      .eq('destination_id', pageId)
+      .eq('status', 'queued');
+
+    if (cancelError) {
+      logServerError('[pages] Queue cancel failed on disconnect', cancelError, {
+        source: 'page-disconnect',
+        pageId,
+      });
+      return NextResponse.json(
+        { error: 'Failed to disconnect page' },
+        { status: 500 }
+      );
+    }
 
     const { data: updated, error } = await supabase
       .from('destinations')
@@ -573,19 +810,26 @@ export async function handleDisconnectPage(
       .eq('platform', 'facebook')
       .select('id, external_destination_id');
 
-    if (error || !updated || updated.length === 0) {
+    // Same 404 discipline as the read above: an update error is a
+    // server failure, not a missing page; only zero updated rows
+    // (row vanished between the read and the write) is a 404.
+    if (error) {
+      logServerError('[pages] Page disconnect update failed', error, {
+        source: 'page-disconnect',
+        pageId,
+      });
+      return NextResponse.json(
+        { error: 'Failed to disconnect page' },
+        { status: 500 }
+      );
+    }
+
+    if (!updated || updated.length === 0) {
       return NextResponse.json(
         { error: 'Facebook page not found' },
         { status: 404 }
       );
     }
-
-    await supabase
-      .from('queue_items')
-      .update({ status: 'cancelled', updated_at: new Date().toISOString() })
-      .eq('workspace_id', workspaceId)
-      .eq('destination_id', pageId)
-      .eq('status', 'queued');
 
   }
 

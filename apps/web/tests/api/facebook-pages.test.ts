@@ -860,6 +860,127 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
       expect(pageDisconnected).toBe(true);
       expect(queueSkipped).toBe(true);
     });
+
+    it('fails loud (not success) when cancelling queued posts fails via Supabase, and never disconnects first (B2)', async () => {
+      let queueCancelAttempted = false;
+      let destinationUpdateAttempted = false;
+
+      const workspacesChain: any = {
+        eq: vi.fn(() => workspacesChain),
+        maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'ws_123' }, error: null }),
+      };
+      const destinationsSelectChain: any = {
+        eq: vi.fn(() => destinationsSelectChain),
+        maybeSingle: vi.fn().mockResolvedValue({ data: { metadata: {} }, error: null }),
+      };
+      const queueChain: any = {
+        eq: vi.fn(() => queueChain),
+        then: (resolve: any) =>
+          Promise.resolve({ data: null, error: { message: 'cancel boom' } }).then(resolve),
+      };
+
+      const mockSupabase = {
+        from: vi.fn((table: string) => {
+          if (table === 'workspaces') {
+            return { select: vi.fn(() => workspacesChain) };
+          }
+          if (table === 'destinations') {
+            return {
+              select: vi.fn(() => destinationsSelectChain),
+              update: vi.fn(() => {
+                destinationUpdateAttempted = true;
+                const builder: any = {
+                  eq: vi.fn(() => builder),
+                  select: vi.fn().mockResolvedValue({
+                    data: [{ id: pageId, external_destination_id: 'page_1001' }],
+                    error: null,
+                  }),
+                };
+                return builder;
+              }),
+            };
+          }
+          if (table === 'queue_items') {
+            return {
+              update: vi.fn(() => {
+                queueCancelAttempted = true;
+                return queueChain;
+              }),
+            };
+          }
+          return {};
+        }),
+      };
+
+      const req = new NextRequest(`http://localhost:3000/api/tenant/acme/pages/${pageId}`, {
+        method: 'DELETE',
+        headers: { cookie: validSessionCookie },
+      });
+
+      const res = await handleDisconnectPage(req, 'acme', pageId, mockSupabase as any);
+      expect(res.status).toBe(500);
+      const json = await res.json();
+      expect(json.success).not.toBe(true);
+      expect(queueCancelAttempted).toBe(true);
+      // Cancel-first ordering: the destination must not be marked
+      // disconnected when the cancel fails — the old code
+      // disconnected first, then ignored the cancel error.
+      expect(destinationUpdateAttempted).toBe(false);
+    });
+
+    it('returns 500, not 404, when the Supabase disconnect update itself fails (B2 error mapping)', async () => {
+      const workspacesChain: any = {
+        eq: vi.fn(() => workspacesChain),
+        maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'ws_123' }, error: null }),
+      };
+      const destinationsSelectChain: any = {
+        eq: vi.fn(() => destinationsSelectChain),
+        maybeSingle: vi.fn().mockResolvedValue({ data: { metadata: {} }, error: null }),
+      };
+      const queueChain: any = {
+        eq: vi.fn(() => queueChain),
+        then: (resolve: any) =>
+          Promise.resolve({ data: null, error: null }).then(resolve),
+      };
+
+      const mockSupabase = {
+        from: vi.fn((table: string) => {
+          if (table === 'workspaces') {
+            return { select: vi.fn(() => workspacesChain) };
+          }
+          if (table === 'destinations') {
+            return {
+              select: vi.fn(() => destinationsSelectChain),
+              update: vi.fn(() => {
+                const builder: any = {
+                  eq: vi.fn(() => builder),
+                  select: vi.fn().mockResolvedValue({
+                    data: null,
+                    error: { message: 'disconnect boom' },
+                  }),
+                };
+                return builder;
+              }),
+            };
+          }
+          if (table === 'queue_items') {
+            return { update: vi.fn(() => queueChain) };
+          }
+          return {};
+        }),
+      };
+
+      const req = new NextRequest(`http://localhost:3000/api/tenant/acme/pages/${pageId}`, {
+        method: 'DELETE',
+        headers: { cookie: validSessionCookie },
+      });
+
+      const res = await handleDisconnectPage(req, 'acme', pageId, mockSupabase as any);
+      expect(res.status).toBe(500);
+      const json = await res.json();
+      expect(json.success).not.toBe(true);
+      expect(json.error).not.toBe('Facebook page not found');
+    });
   });
 
   describe('Get Page (GET /api/tenant/[subdomain]/pages/[pageId])', () => {
@@ -972,6 +1093,18 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
             return Promise.resolve([]);
           }
           if (sql.includes('FROM destinations')) {
+            // The status gate reads the RAW destinations row (unified
+            // vocabulary: 'active' + no marker), while the final
+            // detail fetch returns the wire-formatted mockPageRow.
+            if (sql.includes('SELECT status, metadata, updated_at')) {
+              return Promise.resolve([
+                {
+                  status: 'active',
+                  metadata: {},
+                  updated_at: new Date('2026-10-01T12:00:00Z').toISOString(),
+                },
+              ]);
+            }
             return Promise.resolve([mockPageRow]);
           }
           return Promise.resolve([]);
@@ -1048,6 +1181,80 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
       );
       expect(updateCall).toBeDefined();
       expect(updateCall?.[1]).toEqual(['active', null, pageId, false, 'ws_123']);
+    });
+
+    it('fails loud (not success) when the Supabase Pause update fails (B1)', async () => {
+      const workspacesChain: any = {
+        eq: vi.fn(() => workspacesChain),
+        maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'ws_123' }, error: null }),
+      };
+      const readChain: any = {
+        eq: vi.fn(() => readChain),
+        maybeSingle: vi.fn().mockResolvedValue({
+          data: { status: 'active', metadata: {} },
+          error: null,
+        }),
+      };
+      const detailChain: any = {
+        eq: vi.fn(() => detailChain),
+        maybeSingle: vi.fn().mockResolvedValue({
+          data: {
+            id: pageId,
+            account_id: accountId,
+            external_destination_id: 'fb_page_999',
+            name: 'Acme Brand',
+            avatar_url: null,
+            timezone: 'UTC',
+            metadata: {
+              category: 'Brand',
+              tasks: ['CREATE_CONTENT'],
+              starting_followers: 100,
+              current_followers: 150,
+            },
+            status: 'active',
+            created_at: new Date('2026-10-01T12:00:00Z').toISOString(),
+            updated_at: new Date('2026-10-01T12:00:00Z').toISOString(),
+            social_accounts: { display_name: 'Alex Acme Account', avatar_url: null },
+          },
+          error: null,
+        }),
+      };
+      const updateBuilder: any = {
+        eq: vi.fn(() => updateBuilder),
+        then: (resolve: any) =>
+          Promise.resolve({ data: null, error: { message: 'update boom' } }).then(resolve),
+      };
+
+      const mockSupabase = {
+        from: vi.fn((table: string) => {
+          if (table === 'workspaces') {
+            return { select: vi.fn(() => workspacesChain) };
+          }
+          if (table === 'destinations') {
+            return {
+              select: vi.fn((fields: string) =>
+                fields.includes('social_accounts') ? detailChain : readChain
+              ),
+              update: vi.fn(() => updateBuilder),
+            };
+          }
+          return {};
+        }),
+      };
+
+      const req = new NextRequest(`http://localhost:3000/api/tenant/acme/pages/${pageId}`, {
+        method: 'PATCH',
+        headers: { cookie: validSessionCookie, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'paused' }),
+      });
+
+      const res = await handleUpdatePage(req, 'acme', pageId, mockSupabase as any);
+      // The old code ignored the update error and returned the
+      // unchanged page with success: true, so the shell toasted
+      // "Automation has been paused." for a pause that never happened.
+      expect(res.status).toBe(500);
+      const json = await res.json();
+      expect(json.success).not.toBe(true);
     });
   });
 });

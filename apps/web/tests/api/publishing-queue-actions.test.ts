@@ -536,6 +536,16 @@ describe('Publishing Queue Actions Route Handlers (T128, T129)', () => {
               },
             ]);
           }
+          if (sql.includes('FROM destinations')) {
+            // SEND BACK fix for PR #44: the gate must not proceed on
+            // a missing destination row. This happy-path test
+            // previously relied on that fail-open (its mock returned
+            // no destination row); it now models an active
+            // destination explicitly. Test intent unchanged.
+            return Promise.resolve([
+              { status: 'active', metadata: {}, updated_at: new Date().toISOString() },
+            ]);
+          }
           if (sql.includes('UPDATE queue_items') && sql.includes("status = 'queued'")) {
             updateExecutedWithNow = true;
             return Promise.resolve([{ id: itemId }]);
@@ -570,10 +580,24 @@ describe('Publishing Queue Actions Route Handlers (T128, T129)', () => {
           Promise.resolve(
             table === 'workspaces'
               ? { data: { id: 'ws_123' }, error: null }
-              : {
-                  data: { id: itemId, status: 'queued', destination_id: pageId },
-                  error: null,
-                }
+              : table === 'destinations'
+                ? {
+                    // The Publish Now status gate reads the RAW
+                    // destinations row (unified 'active'), not the
+                    // queue item row the old fake returned for every
+                    // table (status 'queued' would map to
+                    // 'disconnected' and wrongly 409).
+                    data: {
+                      status: 'active',
+                      metadata: {},
+                      updated_at: new Date().toISOString(),
+                    },
+                    error: null,
+                  }
+                : {
+                    data: { id: itemId, status: 'queued', destination_id: pageId },
+                    error: null,
+                  }
           );
         b.then = (onOk: (v: unknown) => unknown, onErr?: (e: unknown) => unknown) =>
           Promise.resolve({ error: null }).then(onOk, onErr);
