@@ -58,6 +58,7 @@ export const IdempotencyActionSchema = z.enum([
   'instagram-publish-now',
   'destination-publish-now',
   'destination-retry',
+  'threads-publish-now',
 ]);
 
 export type IdempotencyAction = z.infer<typeof IdempotencyActionSchema>;

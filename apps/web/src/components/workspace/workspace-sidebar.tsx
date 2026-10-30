@@ -407,6 +407,13 @@ function WorkspaceSidebarContent({
               {UPCOMING_PLATFORMS.map((platform) => {
                 const platformAccountsHref = href(`/${platform.routeSlug}/accounts`);
                 const platformScheduleHref = href(`/${platform.routeSlug}/schedule`);
+                // Threads Publish Now (feat/threads-publish-now):
+                // Threads accounts are the destinations, so the
+                // section lives directly under Threads. The
+                // In-app Schedule leaf sits above it when the
+                // Schedule branch merges; this leaf is the only
+                // Threads Publish Now change in this file.
+                const platformPublishNowHref = href(`/${platform.routeSlug}/publish-now`);
                 const isPlatformActive = effectivePath.startsWith(`/${platform.routeSlug}`);
                 const isAccountsSubActive = effectivePath.startsWith(
                   normalizeTenantPath(platformAccountsHref, subdomain)
@@ -432,6 +439,11 @@ function WorkspaceSidebarContent({
                 const isScheduleSubActive = effectivePath.startsWith(
                   normalizeTenantPath(platformScheduleHref, subdomain)
                 );
+                const isPublishNowSubActive =
+                  platform.key === 'threads' &&
+                  effectivePath.startsWith(
+                    normalizeTenantPath(platformPublishNowHref, subdomain)
+                  );
                 const isOpen = openPlatforms[platform.key] ?? isPlatformActive;
                 // Instagram ADU leaf only (other Instagram leaves are
                 // owned by their own parallel branches, not this one).
@@ -468,6 +480,9 @@ function WorkspaceSidebarContent({
                         {platform.key === 'threads' ? (
                           <NavSubLeaf label="In-app Schedule" href={platformScheduleHref} isActive={isScheduleSubActive} onLeafClick={handleLeafClick} />
                         ) : null}
+                        {platform.key === 'threads' && (
+                          <NavSubLeaf label="Publish Now" href={platformPublishNowHref} isActive={isPublishNowSubActive} onLeafClick={handleLeafClick} />
+                        )}
                         {platform.key === 'threads' && (
                           <NavSubLeaf
                             label="Auto Download/Upload"
