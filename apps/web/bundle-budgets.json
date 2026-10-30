@@ -62,14 +62,14 @@
       "/tenant/[subdomain]/threads/accounts": {
         "firstLoadGzipBytes": 159784,
         "firstLoadRawBytes": 530829,
-        "routeSpecificGzipBytes": 25936,
-        "routeSpecificRawBytes": 79877
+        "routeSpecificGzipBytes": 33723,
+        "routeSpecificRawBytes": 105863
       },
       "/tenant/[subdomain]/prompts": {
         "firstLoadGzipBytes": 159582,
         "firstLoadRawBytes": 529526,
-        "routeSpecificGzipBytes": 27353,
-        "routeSpecificRawBytes": 84964
+        "routeSpecificGzipBytes": 42080,
+        "routeSpecificRawBytes": 142045
       },
       "/tenant/[subdomain]/tiktok/accounts": {
         "firstLoadGzipBytes": 159403,
@@ -130,6 +130,18 @@
         "firstLoadRawBytes": 478511,
         "routeSpecificGzipBytes": 11139,
         "routeSpecificRawBytes": 27559
+      },
+      "/connect/threads/success": {
+        "firstLoadGzipBytes": 144331,
+        "firstLoadRawBytes": 477168,
+        "routeSpecificGzipBytes": 10536,
+        "routeSpecificRawBytes": 26319
+      },
+      "/connect/threads/error": {
+        "firstLoadGzipBytes": 144179,
+        "firstLoadRawBytes": 476598,
+        "routeSpecificGzipBytes": 10384,
+        "routeSpecificRawBytes": 25749
       },
       "/reset-password": {
         "firstLoadGzipBytes": 144081,
@@ -240,6 +252,18 @@
         "routeSpecificGzipBytes": 11088,
         "routeSpecificRawBytes": 28099
       },
+      "/connect/threads/success": {
+        "firstLoadGzipBytes": 151548,
+        "firstLoadRawBytes": 501026,
+        "routeSpecificGzipBytes": 11063,
+        "routeSpecificRawBytes": 27635
+      },
+      "/connect/threads/error": {
+        "firstLoadGzipBytes": 151388,
+        "firstLoadRawBytes": 500428,
+        "routeSpecificGzipBytes": 10903,
+        "routeSpecificRawBytes": 27036
+      },
       "/forgot-password": {
         "firstLoadGzipBytes": 152720,
         "firstLoadRawBytes": 505443,
@@ -273,8 +297,8 @@
       "/tenant/[subdomain]": {
         "firstLoadGzipBytes": 166245,
         "firstLoadRawBytes": 553669,
-        "routeSpecificGzipBytes": 30042,
-        "routeSpecificRawBytes": 95710
+        "routeSpecificGzipBytes": 28323,
+        "routeSpecificRawBytes": 89333
       },
       "/tenant/[subdomain]/accounts": {
         "firstLoadGzipBytes": 177491,
@@ -283,10 +307,10 @@
         "routeSpecificRawBytes": 127422
       },
       "/tenant/[subdomain]/connect/[platform]": {
-        "firstLoadGzipBytes": 176595,
-        "firstLoadRawBytes": 587357,
-        "routeSpecificGzipBytes": 36107,
-        "routeSpecificRawBytes": 111838
+        "firstLoadGzipBytes": 168060,
+        "firstLoadRawBytes": 558010,
+        "routeSpecificGzipBytes": 33980,
+        "routeSpecificRawBytes": 105451
       },
       "/tenant/[subdomain]/destinations/[destinationId]": {
         "firstLoadGzipBytes": 172108,
@@ -297,20 +321,20 @@
       "/tenant/[subdomain]/fdola-studio": {
         "firstLoadGzipBytes": 167233,
         "firstLoadRawBytes": 556767,
-        "routeSpecificGzipBytes": 30973,
-        "routeSpecificRawBytes": 98770
+        "routeSpecificGzipBytes": 29270,
+        "routeSpecificRawBytes": 92347
       },
       "/tenant/[subdomain]/instagram/accounts": {
         "firstLoadGzipBytes": 176183,
         "firstLoadRawBytes": 586166,
-        "routeSpecificGzipBytes": 39412,
-        "routeSpecificRawBytes": 127004
+        "routeSpecificGzipBytes": 35694,
+        "routeSpecificRawBytes": 112774
       },
       "/tenant/[subdomain]/media": {
         "firstLoadGzipBytes": 186243,
         "firstLoadRawBytes": 628000,
         "routeSpecificGzipBytes": 48178,
-        "routeSpecificRawBytes": 171803
+        "routeSpecificRawBytes": 163373
       },
       "/tenant/[subdomain]/pages": {
         "firstLoadGzipBytes": 175680,
@@ -327,50 +351,44 @@
       "/tenant/[subdomain]/prompts": {
         "firstLoadGzipBytes": 177217,
         "firstLoadRawBytes": 596576,
-        "routeSpecificGzipBytes": 44325,
-        "routeSpecificRawBytes": 149461
+        "routeSpecificGzipBytes": 44184,
+        "routeSpecificRawBytes": 149147
       },
       "/tenant/[subdomain]/publish-now": {
-        "firstLoadGzipBytes": 181133,
-        "firstLoadRawBytes": 606703,
-        "routeSpecificGzipBytes": 40645,
-        "routeSpecificRawBytes": 131184
-      },
-      "/tenant/[subdomain]/creator-finder": {
-        "firstLoadGzipBytes": 178098,
-        "firstLoadRawBytes": 597803,
-        "routeSpecificGzipBytes": 37611,
-        "routeSpecificRawBytes": 124412
+        "firstLoadGzipBytes": 172476,
+        "firstLoadRawBytes": 576599,
+        "routeSpecificGzipBytes": 38254,
+        "routeSpecificRawBytes": 124267
       },
       "/tenant/[subdomain]/settings": {
-        "firstLoadGzipBytes": 179345,
-        "firstLoadRawBytes": 595592,
-        "routeSpecificGzipBytes": 39384,
-        "routeSpecificRawBytes": 122201
+        "firstLoadGzipBytes": 170245,
+        "firstLoadRawBytes": 565558,
+        "routeSpecificGzipBytes": 37141,
+        "routeSpecificRawBytes": 115768
       },
       "/tenant/[subdomain]/threads/accounts": {
         "firstLoadGzipBytes": 167774,
         "firstLoadRawBytes": 557371,
-        "routeSpecificGzipBytes": 34289,
-        "routeSpecificRawBytes": 108978
+        "routeSpecificGzipBytes": 35409,
+        "routeSpecificRawBytes": 111156
       },
       "/tenant/[subdomain]/tiktok/accounts": {
         "firstLoadGzipBytes": 167374,
         "firstLoadRawBytes": 556101,
-        "routeSpecificGzipBytes": 32683,
-        "routeSpecificRawBytes": 103481
+        "routeSpecificGzipBytes": 30991,
+        "routeSpecificRawBytes": 97207
       },
       "/tenant/[subdomain]/x/accounts": {
         "firstLoadGzipBytes": 166370,
         "firstLoadRawBytes": 553742,
-        "routeSpecificGzipBytes": 32586,
-        "routeSpecificRawBytes": 103215
+        "routeSpecificGzipBytes": 30894,
+        "routeSpecificRawBytes": 96942
       },
       "/tenant/[subdomain]/youtube/accounts": {
         "firstLoadGzipBytes": 167373,
         "firstLoadRawBytes": 556106,
-        "routeSpecificGzipBytes": 32681,
-        "routeSpecificRawBytes": 103483
+        "routeSpecificGzipBytes": 30988,
+        "routeSpecificRawBytes": 97209
       },
       "/tenant/[subdomain]/tiktok-mirrors": {
         "firstLoadGzipBytes": 169899,
@@ -379,21 +397,21 @@
         "routeSpecificRawBytes": 107564
       },
       "/tenant/[subdomain]/tiktok-mirrors/[mirrorId]": {
-        "firstLoadGzipBytes": 177225,
-        "firstLoadRawBytes": 590781,
-        "routeSpecificGzipBytes": 36231,
-        "routeSpecificRawBytes": 117389
+        "firstLoadGzipBytes": 168696,
+        "firstLoadRawBytes": 562176,
+        "routeSpecificGzipBytes": 33215,
+        "routeSpecificRawBytes": 105666
       },
       "/tenant/[subdomain]/billing": {
         "firstLoadGzipBytes": 176478,
         "firstLoadRawBytes": 599680,
-        "routeSpecificGzipBytes": 39617,
-        "routeSpecificRawBytes": 139524
+        "routeSpecificGzipBytes": 35990,
+        "routeSpecificRawBytes": 126288
       }
     },
     "totalClientJs": {
-      "gzipBytes": 1139131,
-      "rawBytes": 3679213
+      "gzipBytes": 1081845,
+      "rawBytes": 3451246
     }
   }
 }
