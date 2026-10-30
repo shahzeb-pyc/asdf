@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   CreatorFinderError,
+  CreatorSchema,
   dedupeCreators,
   fetchCreatorsByKeyword,
   fetchRegionList,
@@ -395,7 +396,7 @@ describe('fetchSimilarCreators', () => {
           code: 0,
           data: {
             followings: [
-              { unique_id: 'alice', nickname: 'Alice' },
+              { unique_id: 'alice', nickname: 'Alice', follower_count: 12400, verified: true },
               { unique_id: 'bob', nickname: 'Bob' },
               { unique_id: 'seed', nickname: 'Seed' },
             ],
@@ -407,7 +408,7 @@ describe('fetchSimilarCreators', () => {
           code: 0,
           data: {
             followers: [
-              { unique_id: 'bob', nickname: 'Bob' },
+              { unique_id: 'bob', nickname: 'Bob', follower_count: 850, verified: false },
               { unique_id: 'carol', nickname: 'Carol' },
             ],
           },
@@ -423,6 +424,7 @@ describe('fetchSimilarCreators', () => {
                   uniqueId: 'dave',
                   nickname: 'Dave',
                   avatarThumb: 'https://cdn.example/dave.jpg',
+                  verified: true,
                 },
                 stats: { followerCount: 5 },
               },
@@ -487,6 +489,26 @@ describe('fetchSimilarCreators', () => {
     expect(result.creators.find((c) => c.handle === 'dave')?.avatarUrl).toBe(
       'https://cdn.example/dave.jpg',
     );
+    // Similar-only fields, mapped from the data actually returned:
+    // alice from following, bob filled in from followers (his
+    // following entry carried neither field), dave from search stats.
+    expect(result.creators.find((c) => c.handle === 'alice')).toMatchObject({
+      followerCount: 12400,
+      verified: true,
+    });
+    expect(result.creators.find((c) => c.handle === 'bob')).toMatchObject({
+      followerCount: 850,
+      verified: false,
+    });
+    expect(result.creators.find((c) => c.handle === 'dave')).toMatchObject({
+      followerCount: 5,
+      verified: true,
+    });
+    // Hashtag-only creators carry neither field — never fabricated.
+    expect(result.creators.find((c) => c.handle === 'erin')?.followerCount).toBeUndefined();
+    expect(result.creators.find((c) => c.handle === 'erin')?.verified).toBeUndefined();
+    expect(result.creators.find((c) => c.handle === 'frank')?.followerCount).toBeUndefined();
+    expect(result.creators.find((c) => c.handle === 'carol')?.followerCount).toBeUndefined();
     const urls = fetchFn.mock.calls.map((call) => String(call[0]));
     expect(urls).toContain('/user/following?user_id=107955&count=200');
     expect(urls).toContain('/user/followers?user_id=107955&count=200');
@@ -494,6 +516,27 @@ describe('fetchSimilarCreators', () => {
     expect(urls).toContain('/user/posts?unique_id=seed&count=30');
     expect(urls).toContain('/challenge/info?challenge_name=fitness');
     expect(urls).toContain('/challenge/posts?challenge_id=1&count=30');
+  });
+
+  it('keeps followerCount and verified optional: trending/niche-style creators parse without them', async () => {
+    const base = {
+      handle: 'plain',
+      displayName: 'Plain',
+      avatarUrl: null,
+      latestVideoTitle: null,
+      latestVideoCover: null,
+      profileUrl: 'https://www.tiktok.com/@plain',
+    };
+    expect(CreatorSchema.safeParse(base).success).toBe(true);
+    expect(CreatorSchema.safeParse({ ...base, followerCount: 12400, verified: true }).success).toBe(true);
+    expect(CreatorSchema.safeParse({ ...base, followerCount: -1 }).success).toBe(false);
+    // Trending creators carry neither field: dedupe of feed videos
+    // must not invent them.
+    const [creator] = dedupeCreators([
+      { author: { unique_id: 'plain', nickname: 'Plain' } },
+    ]);
+    expect(creator?.followerCount).toBeUndefined();
+    expect(creator?.verified).toBeUndefined();
   });
 
   it('skips a private followers source and still shows the rest', async () => {

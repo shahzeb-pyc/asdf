@@ -27,9 +27,13 @@ import { z } from 'zod';
  * 10430 quota exhausted. There is no fallback to the free tikwm
  * service or any other source: a failed call fails loud.
  *
- * Creator fields are only what the API returns. Follower counts,
- * bios, and other fields are deliberately not in the schema: a
- * field that is not returned is omitted, never fabricated.
+ * Creator fields are only what the API returns. Follower count
+ * and verified are optional and carried ONLY by similar sources
+ * (following/followers items and user-search items), which actually
+ * return them; trending and niche creators carry neither field, so
+ * their cards look exactly as before. Bios and other fields are
+ * deliberately not in the schema: a field that is not returned is
+ * omitted, never fabricated.
  */
 
 export const TIKWMAPI_BASE_URL = 'https://api.tikwmapi.com';
@@ -92,6 +96,10 @@ export const CreatorSchema = z.object({
   latestVideoTitle: z.string().nullable(),
   latestVideoCover: z.string().nullable(),
   profileUrl: z.string().url(),
+  /** Similar sources only; absent for trending/niche creators. */
+  followerCount: z.number().int().nonnegative().optional(),
+  /** Similar sources only; absent for trending/niche creators. */
+  verified: z.boolean().optional(),
 });
 export type Creator = z.infer<typeof CreatorSchema>;
 
@@ -178,6 +186,43 @@ function pickAvatar(record: Record<string, unknown> | null): string | null {
   );
 }
 
+function asNonnegativeInt(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 0) {
+    return value;
+  }
+  if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+    return Number(value.trim());
+  }
+  return undefined;
+}
+
+function asBoolean(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+/**
+ * Follower count from a people/search record, accepting the field
+ * variants the API uses: follower_count (following/followers
+ * items) and followerCount (user-search stats). Returns undefined
+ * when the record carries no usable count — never a fabricated 0.
+ */
+function pickFollowerCount(
+  record: Record<string, unknown> | null,
+): number | undefined {
+  if (!record) return undefined;
+  return (
+    asNonnegativeInt(record.follower_count) ??
+    asNonnegativeInt(record.followerCount)
+  );
+}
+
+function pickVerified(
+  record: Record<string, unknown> | null,
+): boolean | undefined {
+  if (!record) return undefined;
+  return asBoolean(record.verified);
+}
+
 function creatorFromAuthor(
   author: Record<string, unknown> | null,
   video: Record<string, unknown> | null,
@@ -223,7 +268,7 @@ export function creatorFromFollowingEntry(
 ): Creator | null {
   const handle = asString(entry.unique_id);
   if (!handle) return null;
-  return {
+  const creator: Creator = {
     handle,
     displayName: asString(entry.nickname),
     avatarUrl: pickAvatar(entry),
@@ -231,6 +276,11 @@ export function creatorFromFollowingEntry(
     latestVideoCover: null,
     profileUrl: `https://www.tiktok.com/@${handle}`,
   };
+  const followerCount = pickFollowerCount(entry);
+  if (followerCount !== undefined) creator.followerCount = followerCount;
+  const verified = pickVerified(entry);
+  if (verified !== undefined) creator.verified = verified;
+  return creator;
 }
 
 type FetchFn = typeof fetch;
@@ -614,10 +664,20 @@ function peopleFromData(
 
 /** A user-search item is either a bare user record or a wrapper
  *  around one ({user, stats}). Either way it maps through the same
- *  author mapping, so avatar variants carry over. */
+ *  author mapping, so avatar variants carry over. Follower count
+ *  comes from stats.followerCount (falling back to the user record)
+ *  and verified from the user record — both similar-only fields. */
 function creatorFromSearchItem(item: Record<string, unknown>): Creator | null {
   const user = asRecord(item.user) ?? item;
-  return creatorFromAuthor(user, null);
+  const base = creatorFromAuthor(user, null);
+  if (!base) return null;
+  const stats = asRecord(item.stats);
+  const followerCount =
+    pickFollowerCount(stats) ?? pickFollowerCount(user);
+  if (followerCount !== undefined) base.followerCount = followerCount;
+  const verified = pickVerified(user);
+  if (verified !== undefined) base.verified = verified;
+  return base;
 }
 
 /**
@@ -699,6 +759,21 @@ function mergeSimilarCreators(
         if (!seenInSource.has(key)) {
           existing.sourceCount += 1;
           seenInSource.add(key);
+        }
+        // Fill similar-only fields the first source did not carry
+        // (e.g. a hashtag creator later seen in user search): only
+        // undefined fields are filled, never overwritten.
+        if (
+          existing.creator.followerCount === undefined &&
+          creator.followerCount !== undefined
+        ) {
+          existing.creator.followerCount = creator.followerCount;
+        }
+        if (
+          existing.creator.verified === undefined &&
+          creator.verified !== undefined
+        ) {
+          existing.creator.verified = creator.verified;
         }
       } else {
         byHandle.set(key, { creator, sourceCount: 1, firstIndex: index });
