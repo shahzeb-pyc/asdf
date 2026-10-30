@@ -143,62 +143,83 @@ const signin = 'https://app.fbuploadpro.com/login';
       </div>
     </section>
 
-    <!-- Section 3: Prompt Library showcase. White, content-height,
-         contiguous with the Muse section above — no fade, no
-         gradient strip, no divider at the join. Heading +
-         description centred, then one dark library panel: a
-         static search-bar visual, static filter pills (showcase
-         only, not wired filtering), and three prompt cards.
-         Cards are labelled "Sample": illustrative samples, NOT
-         claimed real library entries. Only Copy is functional. -->
+    <!-- Section 3: Prompt Library showcase, in the REAL library's
+         structure (prompt-library-top-section branch): light-first,
+         centred heading + description, then a wide white search
+         card (search row, divider, plain-text filter row), then a
+         3-card grid in the real B design — uniform cards, fixed
+         preview height, NO master prompt text on cards, NO Copy
+         button on cards (Copy lives in the detail section in the
+         real app). Cards are labelled "Sample": illustrative
+         layout samples, NOT claimed real catalogue entries, NO
+         fake copied counts, NO fake preview media — the preview
+         area is a neutral placeholder panel with a play glyph.
+         Real taxonomy only: tools Dola AI / Veo 3 / Google Flow,
+         categories Animals / Comedy / Cinematic / UGC / Tutorial /
+         Unboxing, languages English / Urdu / Hindi. -->
     <section id="section-3" class="relative bg-white px-5 py-20 sm:px-8 sm:py-24 lg:px-12" aria-label="Prompt Library">
       <div class="s3-content mx-auto w-full max-w-[1240px]">
         <h2 class="mx-auto mb-6 max-w-3xl text-center text-[36px] leading-[1.15] font-bold tracking-tight sm:text-5xl lg:text-[56px]">
           A library of prompts,<br /><span class="section-highlight">ready to use.</span>
         </h2>
         <p class="mx-auto mb-12 max-w-2xl text-center text-base leading-relaxed text-ink-sub sm:text-lg">
-          Find a prompt, copy it, and create your next post — no starting from a blank page.
+          Browse prompts for Dola AI, Veo 3, and Google Flow — search by category, tool, or language, copy the master prompt, and create.
         </p>
-        <div class="rounded-3xl bg-[#0b0e11] px-5 py-6 text-white sm:px-8 sm:py-8">
-          <div class="mb-5 flex items-center gap-3 rounded-full border border-white/15 bg-white/5 px-4 py-3" aria-hidden="true">
+        <div class="s3-panel rounded-3xl border border-line bg-white px-5 py-5 shadow-[0_20px_45px_rgba(17,17,17,0.12)] sm:px-8 sm:py-6">
+          <div class="flex items-center gap-3 px-1 py-2" aria-hidden="true">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
-            <span class="text-sm text-white/50">Search prompts…</span>
+            <span class="text-sm text-ink-sub">Search prompts…</span>
           </div>
-          <div class="mb-8 flex flex-wrap items-center gap-2" aria-hidden="true">
-            <span class="inline-flex items-center rounded-full bg-gold px-3.5 py-1.5 text-sm font-semibold text-ink">All</span>
-            <span class="inline-flex items-center rounded-full border border-white/20 px-3.5 py-1.5 text-sm text-white/70">Posts</span>
-            <span class="inline-flex items-center rounded-full border border-white/20 px-3.5 py-1.5 text-sm text-white/70">Reels</span>
-            <span class="inline-flex items-center rounded-full border border-white/20 px-3.5 py-1.5 text-sm text-white/70">Captions</span>
+          <div class="my-3 border-t border-line" aria-hidden="true"></div>
+          <div class="flex flex-wrap items-center gap-x-6 gap-y-2 px-1 py-1" aria-hidden="true">
+            <span class="text-sm font-medium text-ink-sub">Category</span>
+            <span class="text-sm font-medium text-ink-sub">Tool</span>
+            <span class="text-sm font-medium text-ink-sub">Language</span>
+            <span class="text-sm font-medium text-ink-sub">Length</span>
+            <span class="text-sm font-medium text-ink-sub">Sort</span>
+            <span class="text-sm font-medium text-ink-sub">My favorites</span>
           </div>
-          <div class="grid gap-5 md:grid-cols-3">
-            <article class="flex flex-col rounded-2xl border border-white/10 bg-white/5 p-5">
+        </div>
+        <div class="mt-8 grid gap-5 md:grid-cols-3">
+          <article class="overflow-hidden rounded-2xl border border-line bg-white shadow-[0_12px_28px_rgba(17,17,17,0.10)]">
+            <div class="flex h-[180px] items-center justify-center bg-[#e9ebef]" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="32" height="32" fill="#111111" aria-hidden="true"><path d="M8 5v14l11-7z" /></svg>
+            </div>
+            <div class="p-5">
               <div class="mb-4 flex items-center justify-between gap-3">
                 <span class="inline-flex items-center rounded-full bg-gold px-2.5 py-0.5 text-xs font-semibold text-ink">Sample</span>
-                <span class="text-xs text-white/50">Post</span>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" /></svg>
               </div>
-              <h3 class="mb-3 text-lg font-semibold">Product launch post</h3>
-              <p class="s3-excerpt mb-5 font-mono text-sm leading-relaxed text-white/80">Write a short, upbeat launch post for [product], with one clear call to action and three hashtags.</p>
-              <button type="button" class="s3-copy mt-auto inline-flex min-h-10 w-fit items-center rounded-full bg-gold px-4 text-sm font-semibold text-ink">Copy</button>
-            </article>
-            <article class="flex flex-col rounded-2xl border border-white/10 bg-white/5 p-5">
+              <h3 class="mb-2 text-lg font-semibold">Cinematic animal scene</h3>
+              <p class="text-sm text-ink-sub">Cinematic · Veo 3 · English</p>
+            </div>
+          </article>
+          <article class="overflow-hidden rounded-2xl border border-line bg-white shadow-[0_12px_28px_rgba(17,17,17,0.10)]">
+            <div class="flex h-[180px] items-center justify-center bg-[#e9ebef]" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="32" height="32" fill="#111111" aria-hidden="true"><path d="M8 5v14l11-7z" /></svg>
+            </div>
+            <div class="p-5">
               <div class="mb-4 flex items-center justify-between gap-3">
                 <span class="inline-flex items-center rounded-full bg-gold px-2.5 py-0.5 text-xs font-semibold text-ink">Sample</span>
-                <span class="text-xs text-white/50">Reel</span>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" /></svg>
               </div>
-              <h3 class="mb-3 text-lg font-semibold">Behind-the-scenes reel</h3>
-              <p class="s3-excerpt mb-5 font-mono text-sm leading-relaxed text-white/80">Turn this clip into a 15-second behind-the-scenes reel: a hook in the first 2 seconds, captions throughout, and end on the finished result.</p>
-              <button type="button" class="s3-copy mt-auto inline-flex min-h-10 w-fit items-center rounded-full bg-gold px-4 text-sm font-semibold text-ink">Copy</button>
-            </article>
-            <article class="flex flex-col rounded-2xl border border-white/10 bg-white/5 p-5">
+              <h3 class="mb-2 text-lg font-semibold">Comedy unboxing clip</h3>
+              <p class="text-sm text-ink-sub">Comedy · Dola AI · English</p>
+            </div>
+          </article>
+          <article class="overflow-hidden rounded-2xl border border-line bg-white shadow-[0_12px_28px_rgba(17,17,17,0.10)]">
+            <div class="flex h-[180px] items-center justify-center bg-[#e9ebef]" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="32" height="32" fill="#111111" aria-hidden="true"><path d="M8 5v14l11-7z" /></svg>
+            </div>
+            <div class="p-5">
               <div class="mb-4 flex items-center justify-between gap-3">
                 <span class="inline-flex items-center rounded-full bg-gold px-2.5 py-0.5 text-xs font-semibold text-ink">Sample</span>
-                <span class="text-xs text-white/50">Carousel</span>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" /></svg>
               </div>
-              <h3 class="mb-3 text-lg font-semibold">Weekly tips carousel</h3>
-              <p class="s3-excerpt mb-5 font-mono text-sm leading-relaxed text-white/80">Turn these 5 tips into a swipeable carousel: one tip per slide, a short headline, and one line of explanation.</p>
-              <button type="button" class="s3-copy mt-auto inline-flex min-h-10 w-fit items-center rounded-full bg-gold px-4 text-sm font-semibold text-ink">Copy</button>
-            </article>
-          </div>
+              <h3 class="mb-2 text-lg font-semibold">Tutorial walkthrough</h3>
+              <p class="text-sm text-ink-sub">Tutorial · Google Flow · English</p>
+            </div>
+          </article>
         </div>
       </div>
     </section>
@@ -487,7 +508,7 @@ const signin = 'https://app.fbuploadpro.com/login';
       })
         .from('#section-3 h2', { opacity: 0, y: 24, duration: 0.7 })
         .from('#section-3 > div > p', { opacity: 0, y: 24, duration: 0.7 }, '-=0.3')
-        .from('#section-3 .rounded-3xl', { opacity: 0, y: 24, duration: 0.9 }, '-=0.3');
+        .from('#section-3 .s3-panel', { opacity: 0, y: 24, duration: 0.9 }, '-=0.3');
 
       /* Section 5 reveal, SCRUBBED (same forward/backward rule:
          top 90% -> top 45%, no stepped replay). Calm fade+rise
@@ -554,39 +575,5 @@ const signin = 'https://app.fbuploadpro.com/login';
 
       window.addEventListener('load', function () { ScrollTrigger.refresh(); });
     }
-  </script>
-  <!-- Prompt Library Copy: standalone plain JS (no GSAP, no
-       animation) so the Copy buttons work even if the motion
-       module above ever fails to load. -->
-  <script>
-    document.querySelectorAll('.s3-copy').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        var card = btn.closest('article');
-        var excerpt = card ? card.querySelector('.s3-excerpt') : null;
-        var text = excerpt ? excerpt.textContent : '';
-        if (!text) return;
-        var done = function () {
-          var original = btn.textContent;
-          btn.textContent = 'Copied';
-          window.setTimeout(function () { btn.textContent = original; }, 2000);
-        };
-        var fallback = function () {
-          var ta = document.createElement('textarea');
-          ta.value = text;
-          ta.style.position = 'fixed';
-          ta.style.opacity = '0';
-          document.body.appendChild(ta);
-          ta.select();
-          try { document.execCommand('copy'); } catch (e) {}
-          document.body.removeChild(ta);
-          done();
-        };
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(text).then(done, fallback);
-        } else {
-          fallback();
-        }
-      });
-    });
   </script>
 </Layout>
