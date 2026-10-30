@@ -43,7 +43,7 @@
 import * as React from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
-import { ArrowLeftIcon, Loader2, SearchIcon, SendIcon } from 'lucide-react';
+import { Loader2, SearchIcon, SendIcon } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import {
   countThreadsLinks,
@@ -121,7 +121,7 @@ function validationDetailsMessage(cause: unknown): string | null {
     key: 'File',
   };
   const lastSegment = path.split('.').pop() ?? path;
-  const label = labelMap[lastSegment] ?? labelMap[path] ?? 'This request';
+  const label = labelMap[lastSegment] ?? 'This request';
   const raw = messages[0] ?? '';
   if (/required/i.test(raw) || /at least 1/i.test(raw)) return `${label} is missing.`;
   if (/too long|at most|maximum/i.test(raw)) return `${label} is too long.`;
