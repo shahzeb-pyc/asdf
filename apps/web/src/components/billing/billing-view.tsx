@@ -946,28 +946,6 @@ export function BillingView({
             </div>
           </div>
         </div>
-        {/* What you are buying, in short — this explanation lives in
-            Purchase only, not on My Plan or Payments. */}
-        <section className="border-t border-line pt-6">
-          <h2 className="text-lg leading-heading font-semibold text-ink">How the limit works</h2>
-          <ul className="mt-4 flex flex-col gap-3 text-body text-ink">
-            <li className="flex items-start gap-2">
-              <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
-              <span>
-                <span className="font-medium">One limit per platform, across everything.</span>{' '}
-                5 Facebook pages means 5 in total for scheduling, auto download-upload and auto
-                repost — not 5 in each.
-              </span>
-            </li>
-            <li className="flex items-start gap-2">
-              <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
-              <span>
-                <span className="font-medium">Connecting is unlimited.</span> Connecting an
-                account never counts; it only counts once you actually use it.
-              </span>
-            </li>
-          </ul>
-        </section>
       </div>
     );
   }
