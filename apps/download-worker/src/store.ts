@@ -100,29 +100,34 @@ export interface JobStore {
   reclaimStaleJobs(staleMinutes: number): Promise<number>;
 }
 
+function asStringOrNull(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
+function asNumberOr(value: unknown, fallback: number): number {
+  return typeof value === 'number' ? value : fallback;
+}
+
+// Malformed checkpoint parts are dropped, never trusted blindly.
+function parseCheckpointParts(value: unknown): CheckpointPart[] {
+  if (!Array.isArray(value)) return [];
+  return (value as Array<Record<string, unknown>>)
+    .filter(
+      (part) =>
+        typeof part['partNumber'] === 'number' && typeof part['etag'] === 'string'
+    )
+    .map((part) => ({
+      partNumber: part['partNumber'] as number,
+      etag: part['etag'] as string,
+    }));
+}
+
 function toRecord(row: Record<string, unknown>): DownloadJobRecord | null {
   const parsed = parseDownloadJobRow(row);
   if (!parsed) return null;
-  const attempts = row['attempts'];
-  const claimedAt = row['claimed_at'];
-  const claimedBy = row['claimed_by'];
-  const pendingMediaId = row['pending_media_id'];
   const r2UploadId = row['r2_upload_id'];
-  const checkpointParts = row['checkpoint_parts'];
   const checkpointBytes = row['checkpoint_bytes'];
-  const checkpointStreamUrl = row['checkpoint_stream_url'];
-  const lastProgressAt = row['last_progress_at'];
-  const parts: CheckpointPart[] = Array.isArray(checkpointParts)
-    ? (checkpointParts as Array<Record<string, unknown>>)
-        .filter(
-          (part) =>
-            typeof part['partNumber'] === 'number' && typeof part['etag'] === 'string'
-        )
-        .map((part) => ({
-          partNumber: part['partNumber'] as number,
-          etag: part['etag'] as string,
-        }))
-    : [];
+  const parts = parseCheckpointParts(row['checkpoint_parts']);
   const hasCheckpoint =
     typeof r2UploadId === 'string' ||
     parts.length > 0 ||
@@ -140,34 +145,44 @@ function toRecord(row: Record<string, unknown>): DownloadJobRecord | null {
     mediaId: parsed.mediaId,
     errorCode: parsed.errorCode,
     errorMessage: parsed.errorMessage,
-    attempts: typeof attempts === 'number' ? attempts : 0,
-    claimedAt: typeof claimedAt === 'string' ? claimedAt : null,
-    claimedBy: typeof claimedBy === 'string' ? claimedBy : null,
-    pendingMediaId: typeof pendingMediaId === 'string' ? pendingMediaId : null,
+    attempts: asNumberOr(row['attempts'], 0),
+    claimedAt: asStringOrNull(row['claimed_at']),
+    claimedBy: asStringOrNull(row['claimed_by']),
+    pendingMediaId: asStringOrNull(row['pending_media_id']),
     checkpoint: hasCheckpoint
       ? {
-          uploadId: typeof r2UploadId === 'string' ? r2UploadId : null,
+          uploadId: asStringOrNull(r2UploadId),
           parts,
-          bytes: typeof checkpointBytes === 'number' ? checkpointBytes : 0,
-          streamUrl: typeof checkpointStreamUrl === 'string' ? checkpointStreamUrl : null,
+          bytes: asNumberOr(checkpointBytes, 0),
+          streamUrl: asStringOrNull(row['checkpoint_stream_url']),
         }
       : null,
-    lastProgressAt: typeof lastProgressAt === 'string' ? lastProgressAt : null,
+    lastProgressAt: asStringOrNull(row['last_progress_at']),
   };
 }
 
+// Patch field -> row column for the scalar fields (checkpoint is special:
+// clearing it nulls four columns, so it is handled separately below).
+const ROW_PATCH_COLUMNS = [
+  ['status', 'status'],
+  ['progressPercent', 'progress_percent'],
+  ['totalBytes', 'total_bytes'],
+  ['downloadedBytes', 'downloaded_bytes'],
+  ['mediaId', 'media_id'],
+  ['errorCode', 'error_code'],
+  ['errorMessage', 'error_message'],
+  ['claimedAt', 'claimed_at'],
+  ['claimedBy', 'claimed_by'],
+  ['pendingMediaId', 'pending_media_id'],
+  ['lastProgressAt', 'last_progress_at'],
+] as const;
+
 function toRowPatch(patch: JobPatch): Record<string, unknown> {
   const row: Record<string, unknown> = {};
-  if (patch.status !== undefined) row['status'] = patch.status;
-  if (patch.progressPercent !== undefined) row['progress_percent'] = patch.progressPercent;
-  if (patch.totalBytes !== undefined) row['total_bytes'] = patch.totalBytes;
-  if (patch.downloadedBytes !== undefined) row['downloaded_bytes'] = patch.downloadedBytes;
-  if (patch.mediaId !== undefined) row['media_id'] = patch.mediaId;
-  if (patch.errorCode !== undefined) row['error_code'] = patch.errorCode;
-  if (patch.errorMessage !== undefined) row['error_message'] = patch.errorMessage;
-  if (patch.claimedAt !== undefined) row['claimed_at'] = patch.claimedAt;
-  if (patch.claimedBy !== undefined) row['claimed_by'] = patch.claimedBy;
-  if (patch.pendingMediaId !== undefined) row['pending_media_id'] = patch.pendingMediaId;
+  for (const [field, column] of ROW_PATCH_COLUMNS) {
+    const value = patch[field];
+    if (value !== undefined) row[column] = value;
+  }
   if (patch.checkpoint !== undefined) {
     if (patch.checkpoint === null) {
       row['r2_upload_id'] = null;
@@ -181,7 +196,6 @@ function toRowPatch(patch: JobPatch): Record<string, unknown> {
       row['checkpoint_stream_url'] = patch.checkpoint.streamUrl;
     }
   }
-  if (patch.lastProgressAt !== undefined) row['last_progress_at'] = patch.lastProgressAt;
   return row;
 }
 

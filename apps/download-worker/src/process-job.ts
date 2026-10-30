@@ -296,16 +296,24 @@ function toMediaItemInsert(
   };
 }
 
+// Defaultable deps, resolved once so the main flow reads straight-line.
+function resolveJobDeps(deps: ProcessJobDeps) {
+  return {
+    log: deps.log ?? (() => {}),
+    resolve: deps.resolve ?? resolveCandidates,
+    fetchFn: deps.fetchFn ?? globalThis.fetch,
+    progressMinInterval:
+      deps.progressUpdateMinIntervalMs ?? DOWNLOAD_JOB_PROGRESS_UPDATE_MIN_INTERVAL_MS,
+    extractorApiUrl: deps.extractorApiUrl ?? null,
+  };
+}
+
 export async function processClaimedJob(
   job: DownloadJobRecord,
   deps: ProcessJobDeps
 ): Promise<ProcessJobOutcome> {
-  const log = deps.log ?? (() => {});
+  const { log, resolve, fetchFn, progressMinInterval, extractorApiUrl } = resolveJobDeps(deps);
   const store = deps.store;
-  const resolve = deps.resolve ?? resolveCandidates;
-  const fetchFn = deps.fetchFn ?? globalThis.fetch;
-  const progressMinInterval =
-    deps.progressUpdateMinIntervalMs ?? DOWNLOAD_JOB_PROGRESS_UPDATE_MIN_INTERVAL_MS;
 
   const fresh = await store.fetchJob(job.id);
   if (!fresh) {
@@ -399,7 +407,7 @@ export async function processClaimedJob(
   };
 
   try {
-    const resolved = await resolve(fresh.sourceUrl, fetchFn, deps.extractorApiUrl ?? null);
+    const resolved = await resolve(fresh.sourceUrl, fetchFn, extractorApiUrl);
     if (resolved.candidates.length === 0) {
       throw new MediaDownloaderError(
         'UNSUPPORTED_MEDIA',

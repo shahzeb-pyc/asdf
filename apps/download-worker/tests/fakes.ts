@@ -16,6 +16,35 @@ import type {
 export const USER_ID = '11111111-1111-4111-a111-111111111111';
 export const JOB_ID = '22222222-2222-4222-a222-222222222222';
 
+// Scalar job fields copied verbatim from a patch (checkpoint is special:
+// it deep-copies its parts, so it is handled separately in updateJob).
+const SCALAR_JOB_FIELDS = [
+  'status',
+  'progressPercent',
+  'totalBytes',
+  'downloadedBytes',
+  'mediaId',
+  'errorCode',
+  'errorMessage',
+  'claimedAt',
+  'claimedBy',
+  'pendingMediaId',
+  'lastProgressAt',
+] as const;
+
+// Mirrors the real store's stale rule: an active job is stale when its
+// last progress write is older than the cutoff, or when it never wrote
+// progress and its claim is older than the cutoff.
+function isStaleJob(job: DownloadJobRecord, cutoff: number): boolean {
+  if (job.status !== 'resolving' && job.status !== 'downloading') return false;
+  const progressTime = job.lastProgressAt ? new Date(job.lastProgressAt).getTime() : Number.NaN;
+  const claimTime = job.claimedAt ? new Date(job.claimedAt).getTime() : Number.NaN;
+  const progressStale = !Number.isNaN(progressTime) && progressTime < cutoff;
+  const claimStale =
+    Number.isNaN(progressTime) && !Number.isNaN(claimTime) && claimTime < cutoff;
+  return progressStale || claimStale;
+}
+
 export function makeJob(overrides: Partial<DownloadJobRecord> = {}): DownloadJobRecord {
   return {
     id: JOB_ID,
@@ -66,23 +95,20 @@ export class FakeStore implements JobStore {
     this.updateCalls.push({ jobId, patch });
     const job = this.jobs.get(jobId);
     if (!job) return;
-    if (patch.status !== undefined) job.status = patch.status;
-    if (patch.progressPercent !== undefined) job.progressPercent = patch.progressPercent;
-    if (patch.totalBytes !== undefined) job.totalBytes = patch.totalBytes;
-    if (patch.downloadedBytes !== undefined) job.downloadedBytes = patch.downloadedBytes;
-    if (patch.mediaId !== undefined) job.mediaId = patch.mediaId;
-    if (patch.errorCode !== undefined) job.errorCode = patch.errorCode;
-    if (patch.errorMessage !== undefined) job.errorMessage = patch.errorMessage;
-    if (patch.claimedAt !== undefined) job.claimedAt = patch.claimedAt;
-    if (patch.claimedBy !== undefined) job.claimedBy = patch.claimedBy;
-    if (patch.pendingMediaId !== undefined) job.pendingMediaId = patch.pendingMediaId;
+    for (const field of SCALAR_JOB_FIELDS) {
+      const value = patch[field];
+      if (value !== undefined) {
+        // Union-keyed writes resolve to never (field value types differ),
+        // so assign through a record view; the value comes from the typed patch.
+        (job as unknown as Record<(typeof SCALAR_JOB_FIELDS)[number], unknown>)[field] = value;
+      }
+    }
     if (patch.checkpoint !== undefined) {
       job.checkpoint =
         patch.checkpoint === null
           ? null
           : { ...patch.checkpoint, parts: [...patch.checkpoint.parts] };
     }
-    if (patch.lastProgressAt !== undefined) job.lastProgressAt = patch.lastProgressAt;
   }
 
   async insertMediaItems(items: MediaItemInsert[]): Promise<void> {
@@ -142,14 +168,7 @@ export class FakeStore implements JobStore {
     const cutoff = Date.now() - staleMinutes * 60_000;
     let count = 0;
     for (const job of this.jobs.values()) {
-      if (job.status !== 'resolving' && job.status !== 'downloading') continue;
-      const progressTime = job.lastProgressAt ? new Date(job.lastProgressAt).getTime() : Number.NaN;
-      const claimTime = job.claimedAt ? new Date(job.claimedAt).getTime() : Number.NaN;
-      const progressStale = !Number.isNaN(progressTime) && progressTime < cutoff;
-      const claimStale =
-        Number.isNaN(progressTime) && !Number.isNaN(claimTime) && claimTime < cutoff;
-      const stale = progressStale || claimStale;
-      if (stale) {
+      if (isStaleJob(job, cutoff)) {
         job.status = 'queued';
         job.claimedAt = null;
         job.claimedBy = null;
@@ -299,6 +318,21 @@ export interface MediaFetchOptions {
  * header so tests can prove a resume fetched only the remaining
  * bytes (Range) or restarted (no Range).
  */
+function readRangeHeader(init?: RequestInit): string | null {
+  const headers = init?.headers;
+  if (headers instanceof Headers) return headers.get('Range');
+  if (Array.isArray(headers)) {
+    const entry = headers.find(([k]) => k.toLowerCase() === 'range');
+    return entry ? entry[1] : null;
+  }
+  if (headers && typeof headers === 'object') {
+    const record = headers as Record<string, string>;
+    const key = Object.keys(record).find((k) => k.toLowerCase() === 'range');
+    return key ? (record[key] ?? null) : null;
+  }
+  return null;
+}
+
 export function makeMediaFetch(
   totalBytes: number,
   options: MediaFetchOptions = {}
@@ -309,20 +343,7 @@ export function makeMediaFetch(
   return (async (input: unknown, init?: RequestInit): Promise<Response> => {
     const url = String(input);
     options.requestedUrls?.push(url);
-    let rangeHeader: string | null = null;
-    const headers = init?.headers;
-    if (headers instanceof Headers) {
-      rangeHeader = headers.get('Range');
-    } else if (Array.isArray(headers)) {
-      const entry = headers.find(([k]) => k.toLowerCase() === 'range');
-      rangeHeader = entry ? entry[1] : null;
-    } else if (headers && typeof headers === 'object') {
-      const record = headers as Record<string, string>;
-      const key = Object.keys(record).find((k) => k.toLowerCase() === 'range');
-      rangeHeader = key ? (record[key] ?? null) : null;
-    } else {
-      rangeHeader = null;
-    }
+    const rangeHeader = readRangeHeader(init);
     options.requestedRanges?.push(rangeHeader);
 
     let start = 0;

@@ -320,45 +320,58 @@ async function fetchResumeResponse(
   return { response, startByte: resumeBytes };
 }
 
-export async function downloadAndStoreCandidate(
-  options: StreamCandidateOptions
-): Promise<DownloadedItem> {
-  const fetchFn = options.fetchFn ?? globalThis.fetch;
-  const normalizedStreamUrl = validateAndNormalizeStreamUrl(options.candidate.streamUrl);
-  const resume = options.resume;
+async function fetchStreamResponse(
+  normalizedStreamUrl: string,
+  resume: ResumeState | undefined,
+  fetchFn: typeof fetch,
+  prefetchedResponse: Response | undefined
+): Promise<{ response: Response; startByte: number; resumeApplies: boolean }> {
   const resumeApplies =
     resume !== undefined &&
     resume.streamUrl === normalizedStreamUrl &&
     resume.bytes > 0;
-
-  let response: Response;
-  let startByte = 0;
   if (resumeApplies && resume) {
-    ({ response, startByte } = await fetchResumeResponse(
+    const { response, startByte } = await fetchResumeResponse(
       normalizedStreamUrl,
       resume.bytes,
       fetchFn
-    ));
-  } else {
-    response = await fetchCandidateResponse(
-      normalizedStreamUrl,
-      fetchFn,
-      options.prefetchedResponse
     );
-    assertWithinCap(parseContentLength(response), 0);
+    return { response, startByte, resumeApplies };
   }
+  const response = await fetchCandidateResponse(
+    normalizedStreamUrl,
+    fetchFn,
+    prefetchedResponse
+  );
+  assertWithinCap(parseContentLength(response), 0);
+  return { response, startByte: 0, resumeApplies };
+}
 
+function resolveMediaIdentity(
+  response: Response,
+  normalizedStreamUrl: string,
+  candidate: StreamCandidateOptions['candidate'],
+  index: number,
+  userId: string,
+  forcedMediaId: string | undefined
+): {
+  mimeType: AllowedMediaMime;
+  mediaId: string;
+  sanitizedFileName: string;
+  storageKey: string;
+  mediaType: 'video' | 'image';
+} {
   const effectiveUrl = response.url || normalizedStreamUrl;
   const dispositionName = extractFilenameFromContentDisposition(
     response.headers.get('content-disposition')
   );
   const rawFileName =
-    options.candidate.fileName ?? dispositionName ?? deriveFileNameFromUrl(effectiveUrl, options.index);
+    candidate.fileName ?? dispositionName ?? deriveFileNameFromUrl(effectiveUrl, index);
   const mimeType = resolveAllowedMimeType(
     response.headers.get('content-type'),
     effectiveUrl,
     rawFileName,
-    options.candidate.mediaTypeHint
+    candidate.mediaTypeHint
   );
   if (!mimeType) {
     throw new MediaDownloaderError(
@@ -367,11 +380,41 @@ export async function downloadAndStoreCandidate(
       400
     );
   }
-
-  const mediaId = options.forcedMediaId ?? crypto.randomUUID();
-  const fallbackBase = options.index === 0 ? 'downloaded_media' : `downloaded_media_${options.index + 1}`;
+  const mediaId = forcedMediaId ?? crypto.randomUUID();
+  const fallbackBase = index === 0 ? 'downloaded_media' : `downloaded_media_${index + 1}`;
   const sanitizedFileName = sanitizeFileNameWithExtension(rawFileName, mimeType, fallbackBase);
-  const storageKey = `users/${options.userId}/media/${mediaId}/${sanitizedFileName}`;
+  const storageKey = `users/${userId}/media/${mediaId}/${sanitizedFileName}`;
+  const mediaType: 'video' | 'image' = mimeType.startsWith('video/') ? 'video' : 'image';
+  return { mimeType, mediaId, sanitizedFileName, storageKey, mediaType };
+}
+
+function resolveCaption(caption: string | null | undefined, sanitizedFileName: string): string {
+  const trimmedCaption = caption?.trim() ?? '';
+  return trimmedCaption.length > 0
+    ? trimmedCaption.slice(0, MAX_CAPTION_LENGTH)
+    : deriveDefaultCaptionFromFilename(sanitizedFileName);
+}
+
+export async function downloadAndStoreCandidate(
+  options: StreamCandidateOptions
+): Promise<DownloadedItem> {
+  const fetchFn = options.fetchFn ?? globalThis.fetch;
+  const normalizedStreamUrl = validateAndNormalizeStreamUrl(options.candidate.streamUrl);
+  const { response, startByte, resumeApplies } = await fetchStreamResponse(
+    normalizedStreamUrl,
+    options.resume,
+    fetchFn,
+    options.prefetchedResponse
+  );
+  const { mimeType, mediaId, sanitizedFileName, storageKey, mediaType } =
+    resolveMediaIdentity(
+      response,
+      normalizedStreamUrl,
+      options.candidate,
+      options.index,
+      options.userId,
+      options.forcedMediaId
+    );
 
   const uploadRes = await streamToSink(
     response,
@@ -385,7 +428,6 @@ export async function downloadAndStoreCandidate(
     options.onProgress
   );
 
-  const mediaType: 'video' | 'image' = mimeType.startsWith('video/') ? 'video' : 'image';
   const thumbResult =
     mediaType === 'image'
       ? { thumbnailKey: null, thumbnailUrl: uploadRes.publicUrl }
@@ -396,12 +438,6 @@ export async function downloadAndStoreCandidate(
           options.storage,
           fetchFn
         );
-
-  const trimmedCaption = options.candidate.caption?.trim() ?? '';
-  const captionText =
-    trimmedCaption.length > 0
-      ? trimmedCaption.slice(0, MAX_CAPTION_LENGTH)
-      : deriveDefaultCaptionFromFilename(sanitizedFileName);
 
   return {
     mediaId,
@@ -415,6 +451,6 @@ export async function downloadAndStoreCandidate(
     thumbnailUrl: thumbResult.thumbnailUrl,
     durationSeconds: options.candidate.durationSeconds ?? null,
     aspectRatio: options.candidate.aspectRatio ?? 'unknown',
-    captionText,
+    captionText: resolveCaption(options.candidate.caption, sanitizedFileName),
   };
 }

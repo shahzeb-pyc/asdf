@@ -88,6 +88,17 @@ interface TrayStateAdjustmentArgs {
   setPrevActiveCount: (value: number) => void;
 }
 
+// Work finished cleanly: nothing active or failed, after having had
+// active work, and the user did not dismiss the tray meanwhile.
+function finishedCleanly(args: TrayStateAdjustmentArgs): boolean {
+  return (
+    args.activeCount === 0 &&
+    args.failedCount === 0 &&
+    args.prevActiveCount > 0 &&
+    !args.dismissed
+  );
+}
+
 // Render-phase adjustments (the documented React pattern for
 // deriving state from new data — not effects), factored out of the
 // component so its own complexity stays readable: new activity
@@ -104,16 +115,103 @@ function applyTrayStateAdjustments(args: TrayStateAdjustmentArgs): void {
     args.setSuccessFlash(false);
   }
   if (args.prevActiveCount !== args.activeCount) {
-    if (
-      args.activeCount === 0 &&
-      args.failedCount === 0 &&
-      args.prevActiveCount > 0 &&
-      !args.dismissed
-    ) {
+    if (finishedCleanly(args)) {
       args.setSuccessFlash(true);
     }
     args.setPrevActiveCount(args.activeCount);
   }
+}
+
+function shouldShowTray(
+  dismissed: boolean,
+  activeCount: number,
+  failedCount: number,
+  successFlash: boolean
+): boolean {
+  return !dismissed && (activeCount > 0 || failedCount > 0 || successFlash);
+}
+
+interface TrayHeaderProps {
+  successFlash: boolean;
+  activeJobs: DownloadJob[];
+  failedJobs: DownloadJob[];
+  onMinimize: () => void;
+  onDismiss: () => void;
+}
+
+function TrayHeader({ successFlash, activeJobs, failedJobs, onMinimize, onDismiss }: Readonly<TrayHeaderProps>) {
+  return (
+    <div className="mb-2 flex items-center gap-2">
+      <h2 className="flex-1 text-body font-semibold text-ink">
+        {trayTitle(successFlash, activeJobs, failedJobs)}
+      </h2>
+      <Button
+        type="button"
+        variant="ghost"
+        data-testid="download-tray-minimize"
+        onClick={onMinimize}
+        className="h-8 px-2"
+        aria-label="Minimize downloads"
+      >
+        –
+      </Button>
+      {activeJobs.length === 0 && (
+        <Button
+          type="button"
+          variant="ghost"
+          data-testid="download-tray-dismiss"
+          onClick={onDismiss}
+          className="h-8 px-2"
+          aria-label="Dismiss downloads"
+        >
+          ×
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function TrayPausedBanner({
+  consumerHealthy,
+  activeCount,
+}: Readonly<{ consumerHealthy: boolean | undefined; activeCount: number }>) {
+  if (consumerHealthy !== false || activeCount === 0) return null;
+  return (
+    <p data-testid="download-tray-paused" className="mb-2 text-metadata text-signal-critical">
+      Downloads are paused — the download service isn&apos;t responding.
+    </p>
+  );
+}
+
+interface TrayFooterProps {
+  activeCount: number;
+  libraryHref: string;
+  onCancelAll: () => void;
+}
+
+function TrayFooter({ activeCount, libraryHref, onCancelAll }: Readonly<TrayFooterProps>) {
+  return (
+    <div className="mt-3 flex items-center gap-2">
+      {activeCount > 0 && (
+        <Button
+          type="button"
+          variant="ghost"
+          data-testid="download-tray-cancel-all"
+          onClick={onCancelAll}
+          className="h-8 px-2"
+        >
+          Cancel all
+        </Button>
+      )}
+      <Link
+        href={libraryHref}
+        data-testid="download-tray-view-library"
+        className="ml-auto text-body font-medium text-link underline-offset-4 hover:underline"
+      >
+        View in library
+      </Link>
+    </div>
+  );
 }
 
 interface DownloadJobRowProps {
@@ -287,7 +385,7 @@ export function DownloadTray({ subdomain, useCleanPaths = false }: Readonly<Down
     );
   }, [jobs, queryClient, subdomain]);
 
-  const showTray = !dismissed && (activeJobs.length > 0 || failedJobs.length > 0 || successFlash);
+  const showTray = shouldShowTray(dismissed, activeJobs.length, failedJobs.length, successFlash);
   if (!showTray) {
     return null;
   }
@@ -335,42 +433,18 @@ export function DownloadTray({ subdomain, useCleanPaths = false }: Readonly<Down
       {/* Drag handle (mobile sheet affordance; minimize is the – button). */}
       <div aria-hidden className="mx-auto mb-2 hidden h-1 w-10 rounded-full bg-line max-sm:block" />
 
-      <div className="mb-2 flex items-center gap-2">
-        <h2 className="flex-1 text-body font-semibold text-ink">
-          {trayTitle(successFlash, activeJobs, failedJobs)}
-        </h2>
-        <Button
-          type="button"
-          variant="ghost"
-          data-testid="download-tray-minimize"
-          onClick={() => setMinimized(true)}
-          className="h-8 px-2"
-          aria-label="Minimize downloads"
-        >
-          –
-        </Button>
-        {activeJobs.length === 0 && (
-          <Button
-            type="button"
-            variant="ghost"
-            data-testid="download-tray-dismiss"
-            onClick={() => {
-              setDismissed(true);
-              setSuccessFlash(false);
-            }}
-            className="h-8 px-2"
-            aria-label="Dismiss downloads"
-          >
-            ×
-          </Button>
-        )}
-      </div>
+      <TrayHeader
+        successFlash={successFlash}
+        activeJobs={activeJobs}
+        failedJobs={failedJobs}
+        onMinimize={() => setMinimized(true)}
+        onDismiss={() => {
+          setDismissed(true);
+          setSuccessFlash(false);
+        }}
+      />
 
-      {consumerHealthy === false && activeJobs.length > 0 && (
-        <p data-testid="download-tray-paused" className="mb-2 text-metadata text-signal-critical">
-          Downloads are paused — the download service isn&apos;t responding.
-        </p>
-      )}
+      <TrayPausedBanner consumerHealthy={consumerHealthy} activeCount={activeJobs.length} />
 
       {successFlash ? (
         <p className="text-metadata text-ink-sub">
@@ -389,26 +463,11 @@ export function DownloadTray({ subdomain, useCleanPaths = false }: Readonly<Down
         </div>
       )}
 
-      <div className="mt-3 flex items-center gap-2">
-        {activeJobs.length > 0 && (
-          <Button
-            type="button"
-            variant="ghost"
-            data-testid="download-tray-cancel-all"
-            onClick={handleCancelAll}
-            className="h-8 px-2"
-          >
-            Cancel all
-          </Button>
-        )}
-        <Link
-          href={libraryHref}
-          data-testid="download-tray-view-library"
-          className="ml-auto text-body font-medium text-link underline-offset-4 hover:underline"
-        >
-          View in library
-        </Link>
-      </div>
+      <TrayFooter
+        activeCount={activeJobs.length}
+        libraryHref={libraryHref}
+        onCancelAll={handleCancelAll}
+      />
     </section>
   );
 }
