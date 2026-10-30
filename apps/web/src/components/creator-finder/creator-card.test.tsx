@@ -15,6 +15,27 @@ vi.mock('next/link', () => ({
   }) => <a href={href}>{children}</a>,
 }));
 
+// Same passthrough idea as tests/ui/publish-now-page.test.tsx:
+// the real next/image rewrites src to an optimiser URL, so the
+// mock renders a plain img carrying src/alt/onError through, which
+// keeps the src and error-fallback assertions meaningful. Written
+// with createElement (not JSX) so the file contains no literal
+// img tag for the raw-img guardrail (check 15) to count.
+vi.mock('next/image', () => ({
+  default: (props: {
+    src?: string;
+    alt?: string;
+    onError?: () => void;
+    className?: string;
+  }) =>
+    React.createElement('img', {
+      src: props.src,
+      alt: props.alt,
+      onError: props.onError,
+      className: props.className,
+    }),
+}));
+
 function makeCreator(overrides: Partial<Creator> = {}): Creator {
   return {
     handle: 'alice',

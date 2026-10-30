@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { useState } from 'react';
+import Image from 'next/image';
 import Link from 'next/link';
 import { CheckIcon } from 'lucide-react';
 import type { Creator } from '@fbuploadpro/contracts';
@@ -39,10 +40,12 @@ function formatCompactCount(count: number): string {
  * name (verified === true only, never a cross or placeholder) and
  * a follower count under the handle. Trending and niche creators
  * carry neither field, so their cards look exactly as before.
- * No video title, no bio. The photo is a plain <img> (not
- * next/image, so TikTok's image host needs no allowlist entry)
- * and falls back to initials when there is no avatar URL or the
- * photo fails to load.
+ * No video title, no bio. The photo goes through next/image
+ * (spec 137 §3.5: no new raw img elements — the TikTok CDN host is
+ * allowlisted in next.config.ts) and falls back to initials when
+ * there is no avatar URL or the photo fails to load. Because the
+ * browser requests our own image optimiser, not TikTok's CDN
+ * directly, no referrer reaches the CDN.
  */
 export function CreatorCard({ creator }: Readonly<{ creator: Creator }>) {
   const [imageFailed, setImageFailed] = useState(false);
@@ -60,11 +63,12 @@ export function CreatorCard({ creator }: Readonly<{ creator: Creator }>) {
     <Card className="py-6">
       <CardContent className="flex flex-col items-center text-center">
         {showPhoto ? (
-          <img
+          <Image
             src={creator.avatarUrl ?? ''}
             alt={`${displayName} profile photo`}
+            width={64}
+            height={64}
             loading="lazy"
-            referrerPolicy="no-referrer"
             onError={() => setImageFailed(true)}
             className="size-16 shrink-0 rounded-full border border-line object-cover"
           />
