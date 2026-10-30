@@ -171,36 +171,63 @@ const signin = 'https://app.fbuploadpro.com/login';
       </div>
     </section>
 
-    <!-- Section 5: footer. Black, seamless from section 4
-         (dark-to-dark, no fade, no divider, no rounding at the
-         join). Content height only — deliberately NOT full-height,
-         so the page ends shortly after the copyright row instead
-         of trailing off into another empty black void. Copy is
-         reused approved headline copy only; links are real only:
-         in-page anchors to sections 2–4 and the hero's proposed
-         app targets. No social links, no Privacy/Terms, no form. -->
-    <section id="section-5" class="relative bg-[#0b0e11] px-5 pt-20 pb-10 text-center sm:pt-24 sm:pb-12" aria-label="Footer">
-      <div class="s5-content relative z-10 mx-auto flex max-w-3xl flex-col items-center">
-        <h2 class="text-[clamp(28px,8vw,56px)] leading-[1.1] font-bold tracking-tight text-white">
-          Your Accounts, posting themselves —<br /><span class="hero-highlight inline-block">100% in the cloud</span>
-        </h2>
-        <div class="mt-8 flex flex-col items-center gap-1">
-          <a href={signup} class="inline-flex min-h-12 items-center gap-2 rounded-full bg-[#f0b90b] px-8 text-base font-semibold text-[#111111] no-underline">
-            Get started
-            <span aria-hidden="true">→</span>
-          </a>
-          <a href={signin} class="inline-flex min-h-10 items-center text-base font-medium text-white/70 no-underline hover:text-white">Sign in</a>
+    <!-- Section 5: footer, OLD footer structure adapted to the
+         new page (source: old-fbuploadpro webapp footer-section).
+         Black, seamless from section 4 (dark-to-dark, no fade,
+         no gradient, no divider, no rounding at the join).
+         Content height only — deliberately NOT full-height, so
+         the page ends shortly after the bottom bar instead of
+         trailing off into another empty black void. 4 columns
+         (Brand / Product / Company / Contact) + bottom bar.
+         Adaptations vs the old footer: light theme -> black;
+         old /logo.svg -> official BrandMark (that file does not
+         exist on this site); brand link / -> #section-1 ("/"
+         would leave the interim GitHub Pages site); Product
+         anchors How it works / Calculator do not exist here, so
+         they are replaced with this page's actual sections
+         (Muse / Community / Pricing); Company /privacy and
+         /terms become app-domain targets (proposed, unverified);
+         the big closing headline + Get started / Sign in block
+         from the previous Section 5 are removed — old footer
+         has neither, and Shahzeb said "footer only". -->
+    <section id="section-5" class="relative bg-[#0b0e11] px-5 py-20 sm:px-8 lg:px-12" aria-label="Footer">
+      <div class="s5-content relative z-10 mx-auto w-full max-w-6xl">
+        <div class="grid gap-10 sm:grid-cols-2 lg:grid-cols-4">
+          <div class="space-y-5">
+            <a href="#section-1" class="inline-flex items-center gap-3 no-underline">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="32" height="32" fill="none" role="img" aria-label="FBUploadPro" class="h-8 w-8 shrink-0"><path d="M24 11L12 23L17 28L20 25V51L28 45V23H45L53 15H28L24 11Z" fill="#fcd535" /><path d="M24 11L12 23L13.2 24.2L24 13.4L28 17.4H50.6L53 15H28L24 11Z" fill="#ffffff" fill-opacity="0.35" /><path d="M32 30H48L40 38H32V30Z" fill="#f0b90b" /><path d="M32 43H41L35 49H32V43Z" fill="#766018" /></svg><span class="text-xl font-bold tracking-tight text-white">FBUploadPro</span>
+            </a>
+            <p class="text-sm leading-relaxed text-white/70">A reliable distribution platform for agencies running Facebook growth workflows.</p>
+          </div>
+          <div>
+            <h4 class="mb-5 text-xs font-semibold uppercase tracking-[0.12em] text-white">Product</h4>
+            <ul class="space-y-3 text-sm text-white/70">
+              <li><a href="#section-2" class="inline-flex min-h-10 items-center no-underline hover:text-white">Muse</a></li>
+              <li><a href="#section-3" class="inline-flex min-h-10 items-center no-underline hover:text-white">Community</a></li>
+              <li><a href="#section-4" class="inline-flex min-h-10 items-center no-underline hover:text-white">Pricing</a></li>
+            </ul>
+          </div>
+          <div>
+            <h4 class="mb-5 text-xs font-semibold uppercase tracking-[0.12em] text-white">Company</h4>
+            <ul class="space-y-3 text-sm text-white/70">
+              <li><a href="https://app.fbuploadpro.com/privacy" class="inline-flex min-h-10 items-center no-underline hover:text-white">Privacy Policy</a></li>
+              <li><a href="https://app.fbuploadpro.com/terms" class="inline-flex min-h-10 items-center no-underline hover:text-white">Terms of Service</a></li>
+              <li><a href="mailto:support@fbuploadpro.com" class="inline-flex min-h-10 items-center no-underline hover:text-white">support@fbuploadpro.com</a></li>
+            </ul>
+          </div>
+          <div>
+            <h4 class="mb-5 text-xs font-semibold uppercase tracking-[0.12em] text-white">Contact</h4>
+            <div class="space-y-3 rounded-2xl border border-white/15 bg-white/5 p-5">
+              <p class="font-semibold text-white">Shahzeb Malik</p>
+              <p class="text-xs text-white/70">Founder</p>
+              <a href="https://wa.me/923278644204" target="_blank" rel="noopener noreferrer" class="flex min-h-11 w-full items-center justify-center rounded-lg bg-[#f0b90b] px-4 py-2.5 text-center text-sm font-semibold text-[#111111] no-underline">WhatsApp</a>
+              <a href="https://www.facebook.com/shahzaib.pyc" target="_blank" rel="noopener noreferrer" class="flex min-h-11 w-full items-center justify-center rounded-lg border border-white/25 px-4 py-2.5 text-center text-sm font-semibold text-white no-underline">Facebook</a>
+            </div>
+          </div>
         </div>
-        <nav class="mt-10 flex flex-wrap items-center justify-center gap-3" aria-label="Footer">
-          <a href="#section-2" class="inline-flex min-h-10 items-center rounded-full border border-white/25 px-5 text-sm font-medium text-white/80 no-underline hover:text-white">Muse</a>
-          <a href="#section-3" class="inline-flex min-h-10 items-center rounded-full border border-white/25 px-5 text-sm font-medium text-white/80 no-underline hover:text-white">Community</a>
-          <a href="#section-4" class="inline-flex min-h-10 items-center rounded-full border border-white/25 px-5 text-sm font-medium text-white/80 no-underline hover:text-white">Pricing</a>
-        </nav>
-        <div class="mt-12 flex flex-col items-center gap-3">
-          <span class="inline-flex items-center gap-2 text-base font-bold tracking-tight text-white">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="28" height="28" fill="none" role="img" aria-label="FBUploadPro" class="h-7 w-7 shrink-0"><path d="M24 11L12 23L17 28L20 25V51L28 45V23H45L53 15H28L24 11Z" fill="#fcd535" /><path d="M24 11L12 23L13.2 24.2L24 13.4L28 17.4H50.6L53 15H28L24 11Z" fill="#ffffff" fill-opacity="0.35" /><path d="M32 30H48L40 38H32V30Z" fill="#f0b90b" /><path d="M32 43H41L35 49H32V43Z" fill="#766018" /></svg><span>FBUploadPro</span>
-          </span>
-          <p class="text-sm text-white/50">© 2026 FBUploadPro</p>
+        <div class="mt-14 flex flex-col items-center justify-between gap-4 border-t border-white/15 pt-6 text-xs text-white/50 md:flex-row">
+          <span>© 2026 FBUploadPro</span>
+          <span>Secure operations • Encrypted workflows • Automated publishing</span>
         </div>
       </div>
     </section>
