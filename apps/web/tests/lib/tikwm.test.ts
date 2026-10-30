@@ -13,6 +13,7 @@ import {
   TikTokUsernameSchema,
 } from '@fbuploadpro/contracts';
 import {
+  buildTikwmPauseStore,
   fetchTikwmUserInfo,
   fetchTikwmUserPosts,
   getTikwmApiKeys,
@@ -252,5 +253,114 @@ describe('resolveTikwmVideo (free tikwm POST)', () => {
         fetchFn: mockFetch({ code: -1, msg: 'Url parsing is failed!' }) as never,
       })
     ).rejects.toBeInstanceOf(TikwmError);
+  });
+});
+
+describe('buildTikwmPauseStore', () => {
+  it('reads and writes pauses through the legacy database client', async () => {
+    const query = vi.fn(async (sql: string) => {
+      if (sql.trimStart().startsWith('SELECT')) {
+        return [{ paused_until: '2030-01-02T03:04:05.000Z' }];
+      }
+      return [];
+    });
+    const store = buildTikwmPauseStore({ query } as never, true);
+    await expect(store.getPausedUntil('fp1')).resolves.toEqual(
+      new Date('2030-01-02T03:04:05.000Z')
+    );
+    const calls = query.mock.calls as unknown as [string, unknown[]][];
+    expect(calls[0][0]).toContain('tikwmapi_key_pauses');
+    expect(calls[0][1]).toEqual(['fp1']);
+
+    const until = new Date('2030-06-01T00:00:00.000Z');
+    await store.setPaused('fp2', until, 'QUOTA_EXHAUSTED');
+    const insertCall = calls[1];
+    expect(insertCall[0]).toContain('INSERT INTO tikwmapi_key_pauses');
+    expect(insertCall[1]).toEqual(['fp2', until.toISOString(), 'QUOTA_EXHAUSTED']);
+  });
+
+  it('returns null for empty, non-string, and invalid legacy pause values', async () => {
+    const values: unknown[] = [[], [{ paused_until: 123 }], [{ paused_until: 'not-a-date' }]];
+    for (const rows of values) {
+      const query = vi.fn(async () => rows);
+      const store = buildTikwmPauseStore({ query } as never, true);
+      await expect(store.getPausedUntil('fp')).resolves.toBeNull();
+    }
+  });
+
+  it('reads and writes pauses through the Supabase client', async () => {
+    const upsert = vi.fn(async () => ({ error: null }));
+    const maybeSingle = vi.fn(async () => ({
+      data: { paused_until: '2030-01-02T03:04:05.000Z' },
+      error: null,
+    }));
+    const eq = vi.fn(() => ({ maybeSingle }));
+    const select = vi.fn(() => ({ eq }));
+    const from = vi.fn(() => ({ select, upsert }));
+    const store = buildTikwmPauseStore({ from } as never, false);
+    await expect(store.getPausedUntil('fp1')).resolves.toEqual(
+      new Date('2030-01-02T03:04:05.000Z')
+    );
+    expect(from).toHaveBeenCalledWith('tikwmapi_key_pauses');
+    expect(select).toHaveBeenCalledWith('paused_until');
+    expect(eq).toHaveBeenCalledWith('key_fingerprint', 'fp1');
+
+    const until = new Date('2030-06-01T00:00:00.000Z');
+    await store.setPaused('fp2', until, 'INVALID_KEY');
+    expect(upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key_fingerprint: 'fp2',
+        paused_until: until.toISOString(),
+        reason: 'INVALID_KEY',
+      }),
+      { onConflict: 'key_fingerprint' }
+    );
+  });
+
+  it('returns null for empty, non-string, and invalid Supabase pause values', async () => {
+    const datas: unknown[] = [null, { paused_until: 123 }, { paused_until: 'not-a-date' }];
+    for (const data of datas) {
+      const maybeSingle = vi.fn(async () => ({ data, error: null }));
+      const eq = vi.fn(() => ({ maybeSingle }));
+      const select = vi.fn(() => ({ eq }));
+      const from = vi.fn(() => ({ select }));
+      const store = buildTikwmPauseStore({ from } as never, false);
+      await expect(store.getPausedUntil('fp')).resolves.toBeNull();
+    }
+  });
+
+  it('throws loud errors when the Supabase pause store fails', async () => {
+    const maybeSingle = vi.fn(async () => ({ data: null, error: { message: 'boom' } }));
+    const eq = vi.fn(() => ({ maybeSingle }));
+    const select = vi.fn(() => ({ eq }));
+    const upsert = vi.fn(async () => ({ error: { message: 'kaboom' } }));
+    const from = vi.fn(() => ({ select, upsert }));
+    const store = buildTikwmPauseStore({ from } as never, false);
+    await expect(store.getPausedUntil('fp')).rejects.toThrow('Failed to read key pause: boom');
+    await expect(
+      store.setPaused('fp', new Date('2030-06-01T00:00:00.000Z'), 'QUOTA_EXHAUSTED')
+    ).rejects.toThrow('Failed to persist key pause: kaboom');
+  });
+});
+
+describe('feed/info key fallback', () => {
+  it('falls back to the env key list when apiKeys is not passed', async () => {
+    const prevList = process.env.TIKWMAPI_KEYS;
+    const prevSingle = process.env.TIKWMAPI_KEY;
+    delete process.env.TIKWMAPI_KEYS;
+    delete process.env.TIKWMAPI_KEY;
+    try {
+      await expect(
+        fetchTikwmUserPosts('alice', { fetchFn: mockFetch({}) as never })
+      ).rejects.toMatchObject({ code: 'NO_KEYS_CONFIGURED' });
+      await expect(
+        fetchTikwmUserInfo('alice', { fetchFn: mockFetch({}) as never })
+      ).resolves.toBeNull();
+    } finally {
+      if (prevList === undefined) delete process.env.TIKWMAPI_KEYS;
+      else process.env.TIKWMAPI_KEYS = prevList;
+      if (prevSingle === undefined) delete process.env.TIKWMAPI_KEY;
+      else process.env.TIKWMAPI_KEY = prevSingle;
+    }
   });
 });
