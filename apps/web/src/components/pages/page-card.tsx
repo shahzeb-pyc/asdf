@@ -34,7 +34,7 @@ export type FacebookPageStatus =
 export interface FacebookPageItem {
   id: string;
   facebookAccountId: string;
-  accountDisplayName?: string | undefined;
+  accountDisplayName?: string | null | undefined;
   accountPictureUrl?: string | null | undefined;
   fbPageId: string;
   pageName: string;

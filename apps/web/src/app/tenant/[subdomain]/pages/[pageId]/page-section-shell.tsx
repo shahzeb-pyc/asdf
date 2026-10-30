@@ -46,6 +46,7 @@ import {
 import {
   DisconnectPageResponseSchema,
   ListFacebookPagesResponseSchema,
+  type ListFacebookPagesResponse,
   PageDetailResponseSchema,
   UpdatePageResponseSchema,
   type FacebookPageView,
@@ -199,11 +200,48 @@ export default function TenantDedicatedPageView({
     enabled: Boolean(subdomain && pageId) && !initialPage,
   });
   const detailFailed = detailQuery.isError;
+  // R20: the list route paginates (30/page by default, max 50), so
+  // the old single unparameterised fetch only ever saw page 1 — a
+  // real page beyond it fell through to a false Not Found. Walk
+  // pages at max size until the page is found, the reported total
+  // is covered, or the walk cap is hit. Cap: 200 pages x 50 =
+  // 10,000 pages (the destination-redirector precedent); a walk
+  // stops at the first short page / totalPages boundary, so a
+  // typical workspace costs one or two requests, never the cap.
+  // staleTime 0 matters: the route server-prefetches page 1 into
+  // this key, and without it that fresh page-1 slice would satisfy
+  // the fallback without ever walking. refetchOnWindowFocus is off
+  // here — this is an error-path search, not live data, and a focus
+  // refetch would re-walk on every window focus while failed.
   const listQuery = useQuery({
     queryKey: tenant.pages.list,
-    queryFn: ({ signal }) =>
-      api.get(pagesListPath, { schema: ListFacebookPagesResponseSchema, signal }),
+    queryFn: async ({ signal }) => {
+      const all: ListFacebookPagesResponse['pages'] = [];
+      let total = 0;
+      let totalPages = 0;
+      for (let pageCount = 1; pageCount <= 200; pageCount += 1) {
+        const res = await api.get(pagesListPath, {
+          schema: ListFacebookPagesResponseSchema,
+          query: { page: pageCount, limit: 50 },
+          signal,
+        });
+        all.push(...res.pages);
+        total = res.total;
+        totalPages = res.totalPages ?? 0;
+        if (all.length >= total || res.pages.length < 50) break;
+        if (totalPages > 0 && pageCount >= totalPages) break;
+      }
+      return {
+        pages: all,
+        total,
+        page: 1,
+        limit: 50,
+        totalPages: totalPages > 0 ? totalPages : undefined,
+      };
+    },
     enabled: Boolean(subdomain) && !initialPage && detailFailed,
+    staleTime: 0,
+    refetchOnWindowFocus: false,
   });
 
   const page: FacebookPageItem | null = React.useMemo(() => {
@@ -221,20 +259,85 @@ export default function TenantDedicatedPageView({
     return null;
   }, [initialPage, detailQuery.data, detailFailed, detailQuery.isPending, listQuery.data, listQuery.isError, pageId, pageNameProp]);
 
-  const pageError =
-    !page && !initialPage && detailFailed && (listQuery.isError || listQuery.isSuccess)
-      ? "Couldn't locate the requested Facebook Page."
-      : null;
+  // R19: the old code rendered every failure as "Page Not Found"
+  // with no retry, whatever actually failed. Branch on the HTTP
+  // status where the error shape allows it — ApiError carries it
+  // (see lib/api/errors.ts); a non-ApiError failure has no status
+  // and falls to the generic load-failure branch, never to a
+  // misdiagnosed "couldn't locate". The error state waits until
+  // the fallback list walk has settled (isFetching false), so a
+  // page beyond page 1 is not flashed as Not Found mid-walk.
+  // Only a proven absence — detail 404 AND a settled list walk
+  // without the page — is "Page Not Found", and only that branch
+  // omits Retry. A disconnected page lands here too: detail
+  // returns null for it and the list excludes it.
+  function apiStatus(error: unknown): number | undefined {
+    return isApiError(error) ? error.status : undefined;
+  }
+  type PageErrorState = {
+    title: string;
+    message: string;
+    showRetry: boolean;
+  };
+  const pageError: PageErrorState | null = (() => {
+    if (page || initialPage || !detailFailed) return null;
+    if (listQuery.isFetching) return null;
+    if (!listQuery.isError && !listQuery.isSuccess) return null;
+    const detailStatus = apiStatus(detailQuery.error);
+    const listStatus = apiStatus(listQuery.error);
+    if (detailStatus === 401 || listStatus === 401) {
+      return {
+        title: 'Session Expired',
+        message: 'Your session has expired. Sign in again, then try again.',
+        showRetry: true,
+      };
+    }
+    if (detailStatus === 403 || listStatus === 403) {
+      return {
+        title: 'Access Denied',
+        message: "You don't have access to this Facebook Page.",
+        showRetry: true,
+      };
+    }
+    if (detailStatus === 500 || listStatus === 500) {
+      return {
+        title: 'Something Went Wrong',
+        message:
+          'The page could not be loaded because of a server error. Please try again.',
+        showRetry: true,
+      };
+    }
+    if (detailStatus === 404 && listQuery.isSuccess) {
+      return {
+        title: 'Page Not Found',
+        message: "Couldn't locate the requested Facebook Page.",
+        showRetry: false,
+      };
+    }
+    return {
+      title: "Couldn't Load This Page",
+      message: 'Check your connection and try again.',
+      showRetry: true,
+    };
+  })();
   const isLoadingPage = !page && !pageError;
 
   // --- frame-level summaries: queue items + slots (shared cache) -------
   // Slots resolve BEFORE the dashboard estimates below: the estimate
   // computation reads slots, so the declaration order matters (TDZ).
+  // K11: gated on the page existing, not just subdomain+pageId —
+  // for a not-found page these used to fire (and fail) alongside
+  // the detail/list failure. Panels only mount when `page` exists,
+  // so this gate is also what keeps their data from firing early.
+  // refetchOnWindowFocus only while a slots/queue-consuming tab is
+  // active: Insights uses neither, so a focus event on Insights
+  // must not refetch frame queue/slots data for hidden panels.
   const slotsQuery = useQuery({
     queryKey: tenant.pages.slots(pageId),
     queryFn: ({ signal }) =>
       api.get(slotsPath, { schema: ListQueueSlotsResponseSchema, signal }),
-    enabled: Boolean(subdomain && pageId),
+    enabled: Boolean(subdomain && pageId && page),
+    refetchOnWindowFocus: activeTab !== 'insights',
   });
   const slots: PageSlotSummary[] = React.useMemo(
     () =>
@@ -281,7 +384,8 @@ export default function TenantDedicatedPageView({
       }
       return { items: all, total, limit: 100, offset: 0 };
     },
-    enabled: Boolean(subdomain && pageId),
+    enabled: Boolean(subdomain && pageId && page),
+    refetchOnWindowFocus: activeTab !== 'insights',
   });
   const queueItems = React.useMemo(
     () => queueQuery.data?.items ?? [],
@@ -349,10 +453,21 @@ export default function TenantDedicatedPageView({
   );
 
   // --- mutations (named invalidation per mutation, §8.1) ---------------
-  const invalidatePage = React.useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: tenant.pages.detail(pageId) });
-    void queryClient.invalidateQueries({ queryKey: tenant.pages.list });
+  // Awaitable (not void): the status mutation awaits it before
+  // toasting, so the success toast fires after the header refetch
+  // has settled (K11 toast-before-refetch), not before it. Other
+  // call sites keep the `void` prefix — awaiting is opt-in.
+  const invalidatePage = React.useCallback(async () => {
+    await queryClient.invalidateQueries({ queryKey: tenant.pages.detail(pageId) });
+    await queryClient.invalidateQueries({ queryKey: tenant.pages.list });
   }, [queryClient, tenant.pages, pageId]);
+
+  // R19 retry for the page error state: re-run detail, and the
+  // list fallback re-walks if detail fails again (its `enabled`
+  // follows detailFailed).
+  const handleRetryPage = React.useCallback(() => {
+    void invalidatePage();
+  }, [invalidatePage]);
 
   const invalidateQueue = React.useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: tenant.queue.all });
@@ -369,15 +484,30 @@ export default function TenantDedicatedPageView({
     void queryClient.invalidateQueries({ queryKey: tenant.pages.slots(pageId) });
   }, [queryClient, tenant.queue, tenant.pages, pageId]);
 
+  // K11: the toast fires only after the page refetch settles, so
+  // the header the toast describes already shows the new state.
+  // The header's own "Updating…" feedback is untouched: it stays
+  // up until this mutation (now including its refetch) settles.
+  // `source` distinguishes the checkpoint banner's Mark Verified
+  // from a plain menu Resume — same endpoint, same mutation, but
+  // the success toast must not claim a plain resume happened when
+  // the user just verified a checkpoint (and vice versa).
   const statusMutation = useMutation({
-    mutationFn: (nextStatus: 'active' | 'paused') =>
+    mutationFn: ({
+      nextStatus,
+    }: {
+      nextStatus: 'active' | 'paused';
+      source?: 'menu' | 'reactivate';
+    }) =>
       api.patch(pagePath, { status: nextStatus }, { schema: UpdatePageResponseSchema }),
-    onSuccess: (_data, nextStatus) => {
-      invalidatePage();
+    onSuccess: async (_data, variables) => {
+      await invalidatePage().catch(() => undefined);
       toast.success(
-        nextStatus === 'paused'
-          ? 'Automation has been paused.'
-          : 'Automation has been resumed.'
+        variables.source === 'reactivate'
+          ? 'Page marked verified and automation resumed.'
+          : variables.nextStatus === 'paused'
+            ? 'Automation has been paused.'
+            : 'Automation has been resumed.'
       );
     },
     onError: (error) => {
@@ -388,10 +518,17 @@ export default function TenantDedicatedPageView({
   });
   const handleStatusToggle = React.useCallback(
     async (nextStatus: 'active' | 'paused') => {
-      await statusMutation.mutateAsync(nextStatus).catch(() => undefined);
+      await statusMutation
+        .mutateAsync({ nextStatus, source: 'menu' })
+        .catch(() => undefined);
     },
     [statusMutation]
   );
+  const handleMarkVerified = React.useCallback(async () => {
+    await statusMutation
+      .mutateAsync({ nextStatus: 'active', source: 'reactivate' })
+      .catch(() => undefined);
+  }, [statusMutation]);
 
   const publishNowMutation = useMutation({
     // One fresh idempotency key per tap: a retried request whose
@@ -436,7 +573,7 @@ export default function TenantDedicatedPageView({
     onSuccess: () => {
       invalidateSlots();
       // Slot changes can move the unmatched-posts flag on the page.
-      invalidatePage();
+      void invalidatePage();
       toast.success('Posting time added.');
     },
     onError: (error) => {
@@ -483,7 +620,7 @@ export default function TenantDedicatedPageView({
       ),
     onSuccess: () => {
       invalidateSlots();
-      invalidatePage();
+      void invalidatePage();
       toast.success('Posting time updated.');
     },
     onError: (error) => {
@@ -517,7 +654,7 @@ export default function TenantDedicatedPageView({
     onSuccess: (_data, newTimezone) => {
       invalidateSlots();
       invalidateQueue();
-      invalidatePage();
+      void invalidatePage();
       // No realigned count anymore: queued posts store no times, so
       // a timezone change rewrites nothing — times simply fire in
       // the new zone and queue estimates update.
@@ -590,7 +727,7 @@ export default function TenantDedicatedPageView({
     },
     onSettled: () => {
       invalidateSlots();
-      invalidatePage();
+      void invalidatePage();
     },
   });
   const handleToggleSlot = React.useCallback(
@@ -639,7 +776,7 @@ export default function TenantDedicatedPageView({
     },
     onSettled: () => {
       invalidateSlots();
-      invalidatePage();
+      void invalidatePage();
     },
   });
   const handleDeleteSlot = React.useCallback(
@@ -656,7 +793,7 @@ export default function TenantDedicatedPageView({
       // R23: invalidate the Pages list (like statusMutation does),
       // so the just-disconnected page does not linger in the list
       // cache for up to 60s after the redirect.
-      invalidatePage();
+      void invalidatePage();
       router.push(`/tenant/${subdomain}/pages`);
     },
     onError: (error) => {
@@ -740,6 +877,30 @@ export default function TenantDedicatedPageView({
     [handleTabChange]
   );
 
+  // R27: a deep-linked or back-navigated later tab must be visible
+  // on narrow screens, where the tab row scrolls horizontally. On
+  // mount and on every ?tab= change (click, push, or popstate —
+  // all funnel through activeTab), scroll just the active trigger
+  // into view, inline-nearest: a no-op when it is already fully
+  // visible, and it never scrolls on any other render — page?.id
+  // (not the page object) is the dependency, so refetches that
+  // replace the page object do not re-scroll. The scroll event
+  // itself re-runs the edge-fade computation, so the fades stay
+  // truthful after a programmatic scroll.
+  React.useEffect(() => {
+    if (!page) return;
+    const list = tabListRef.current;
+    if (!list) return;
+    const trigger = list.querySelector(`[data-testid="tab-${activeTab}-btn"]`);
+    if (
+      trigger &&
+      typeof (trigger as HTMLElement).scrollIntoView === 'function'
+    ) {
+      (trigger as HTMLElement).scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+    updateTabScrollEdges();
+  }, [activeTab, page?.id, updateTabScrollEdges]);
+
 
   return (
     <div
@@ -782,17 +943,30 @@ export default function TenantDedicatedPageView({
         </div>
       )}
 
-      {/* Page load error */}
+      {/* Page load error (R19: branched by failure kind, not a
+          blanket Not Found — only a proven absence omits Retry). */}
       {pageError && !page && (
         <div
           data-testid="page-error-state"
           className="flex flex-col items-center gap-4 rounded-md border border-signal-critical/40 bg-panel px-6 py-12 text-center"
         >
-          <h3 className="m-0 text-lg font-semibold text-signal-critical">Page Not Found</h3>
-          <p className="m-0 text-body text-ink-sub">{pageError}</p>
-          <Button type="button" onClick={() => router.push(pagesListHref)}>
-            Return to Pages
-          </Button>
+          <h3 className="m-0 text-lg font-semibold text-signal-critical">{pageError.title}</h3>
+          <p className="m-0 text-body text-ink-sub">{pageError.message}</p>
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            {pageError.showRetry && (
+              <Button type="button" data-testid="page-error-retry-btn" onClick={handleRetryPage}>
+                Retry
+              </Button>
+            )}
+            <Button
+              type="button"
+              variant={pageError.showRetry ? 'secondary' : undefined}
+              data-testid="page-error-return-btn"
+              onClick={() => router.push(pagesListHref)}
+            >
+              Return to Pages
+            </Button>
+          </div>
         </div>
       )}
 
@@ -803,6 +977,7 @@ export default function TenantDedicatedPageView({
             page={page}
             subdomain={subdomain}
             onStatusToggle={handleStatusToggle}
+            onMarkVerified={handleMarkVerified}
             onDisconnectRequest={handleDisconnectPage}
             onCreatePosts={() => setIsCreatePostsOpen(true)}
           />
@@ -891,6 +1066,17 @@ export default function TenantDedicatedPageView({
               </TabsContent>
             )}
 
+            {/* Tab-panel DOM order matches tab order (Dashboard,
+                Insights, Queue, Calendar View, Posting Times) —
+                Radix matches panels by value, so reordering the
+                blocks changes nothing about mount-on-first-visit:
+                each panel still mounts only once visited. */}
+            {visitedTabs.has('insights') && (
+              <TabsContent value="insights" forceMount className="data-[state=inactive]:hidden">
+                <PageTabInsights page={page} subdomain={subdomain} />
+              </TabsContent>
+            )}
+
             {visitedTabs.has('queue') && (
               <TabsContent value="queue" forceMount className="data-[state=inactive]:hidden">
                 <QueuePanel
@@ -902,6 +1088,7 @@ export default function TenantDedicatedPageView({
                   slotsError={slotsError}
                   onRetrySlots={invalidateSlots}
                   onCreatePost={() => setIsCreatePostsOpen(true)}
+                  isActive={activeTab === 'queue'}
                 />
               </TabsContent>
             )}
@@ -913,6 +1100,7 @@ export default function TenantDedicatedPageView({
                   pageId={pageId}
                   pageTimezone={pageTimezone}
                   slots={slots}
+                  isActive={activeTab === 'calendar-view'}
                 />
               </TabsContent>
             )}
@@ -932,12 +1120,6 @@ export default function TenantDedicatedPageView({
                   onToggleSlot={handleToggleSlot}
                   onDeleteSlot={handleDeleteSlot}
                 />
-              </TabsContent>
-            )}
-
-            {visitedTabs.has('insights') && (
-              <TabsContent value="insights" forceMount className="data-[state=inactive]:hidden">
-                <PageTabInsights page={page} subdomain={subdomain} />
               </TabsContent>
             )}
 

@@ -319,6 +319,44 @@ describe('Facebook Account & Page Domain Schemas', () => {
     });
   });
 
+  // K11: the detail path passes `?? null` for a missing account
+  // row and a stored avatar that is not a URL — neither may throw
+  // the whole view parse (old code: accountDisplayName was
+  // optional-only, so null threw; profilePictureUrl was .url(),
+  // so a non-URL threw).
+  describe('K11 detail-view null/non-URL fallbacks', () => {
+    const baseView = {
+      id: pageId,
+      facebookAccountId: accountId,
+      fbPageId: 'page_1092837465',
+      pageName: 'Engineering Insights',
+      status: 'active' as const,
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+      updatedAt: new Date('2026-01-01T00:00:00Z'),
+    };
+    it('accepts a null accountDisplayName (missing account row)', () => {
+      const parsed = FacebookPageViewSchema.parse({
+        ...baseView,
+        accountDisplayName: null,
+      });
+      expect(parsed.accountDisplayName).toBeNull();
+    });
+    it('falls back a non-URL profilePictureUrl to null instead of throwing', () => {
+      const parsed = FacebookPageViewSchema.parse({
+        ...baseView,
+        profilePictureUrl: 'not-a-url',
+      });
+      expect(parsed.profilePictureUrl).toBeNull();
+    });
+    it('still keeps a valid profilePictureUrl', () => {
+      const parsed = FacebookPageViewSchema.parse({
+        ...baseView,
+        profilePictureUrl: 'https://example.com/pic.jpg',
+      });
+      expect(parsed.profilePictureUrl).toBe('https://example.com/pic.jpg');
+    });
+  });
+
   describe('fetchAllFacebookPages helper', () => {
     it('fetches a single page of results with limit=100', async () => {
       const mockFetch = async (input: RequestInfo | URL, init?: RequestInit) => {

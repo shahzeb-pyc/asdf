@@ -133,11 +133,18 @@ export type PageCardQueueCounts = z.infer<typeof PageCardQueueCountsSchema>;
 export const FacebookPageViewSchema = z.object({
   id: z.string().uuid(),
   facebookAccountId: z.string().uuid(),
-  accountDisplayName: z.string().optional(),
+  // K11: nullable, not merely optional — the detail path's LEFT JOIN
+  // passes `?? null` for a missing account row (and the list mapper
+  // coerces the same case), so an optional-only field threw in
+  // .parse() and turned a page with no account row into a 500.
+  accountDisplayName: z.string().nullable().optional(),
   accountPictureUrl: z.string().nullable().optional().default(null),
   fbPageId: z.string().min(1).max(100),
   pageName: z.string().min(1).max(255),
-  profilePictureUrl: z.string().url().nullable().optional().default(null),
+  // K11: a stored non-URL avatar must fall back to null, not throw
+  // the whole detail/list parse (and with it the page) — .catch
+  // converts any invalid value to the no-picture fallback.
+  profilePictureUrl: z.string().url().nullable().optional().default(null).catch(null),
   category: z.string().nullable().optional(),
   timezone: z.string().default('UTC'),
   startingFollowers: z.number().int().nonnegative().default(0),

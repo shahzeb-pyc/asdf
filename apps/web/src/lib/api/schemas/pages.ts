@@ -35,7 +35,10 @@ export type PageCardQueueCounts = z.infer<typeof PageCardQueueCountsSchema>;
 export const FacebookPageViewSchema = z.object({
   id: z.string().uuid(),
   facebookAccountId: z.string().uuid(),
-  accountDisplayName: z.string().optional(),
+  // K11: mirrors the contracts view schema — nullable, so a detail
+  // payload whose account row is missing (null) parses client-side
+  // instead of failing the whole detail fetch as a parse error.
+  accountDisplayName: z.string().nullable().optional(),
   accountPictureUrl: z.string().nullable().optional(),
   fbPageId: z.string().min(1),
   pageName: z.string().min(1),

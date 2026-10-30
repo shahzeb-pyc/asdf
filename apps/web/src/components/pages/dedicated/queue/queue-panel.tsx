@@ -147,6 +147,14 @@ export interface QueuePanelProps {
    * row as unmatched — and a slots-error banner shows instead.
    */
   slotsError?: boolean;
+  /**
+   * K11: whether this panel is the active tab. Visited panels stay
+   * mounted (hidden) so their state survives tab switches — but a
+   * hidden panel must not refetch on window focus. Defaults to
+   * true so panel-only renders keep the previous behaviour; the
+   * shell passes false for every non-active tab.
+   */
+  isActive?: boolean;
   /** Re-runs the shell's slots fetch. */
   onRetrySlots?: () => void;
   onCreatePost: () => void;
@@ -161,6 +169,7 @@ export function QueuePanel({
   slotsError = false,
   onRetrySlots,
   onCreatePost,
+  isActive = true,
 }: Readonly<QueuePanelProps>) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -201,6 +210,7 @@ export function QueuePanel({
         signal,
       }),
     enabled: Boolean(subdomain && pageId),
+    refetchOnWindowFocus: isActive,
   });
 
   // Full queued list in queue order, for estimates + reorder. The
@@ -233,6 +243,7 @@ export function QueuePanel({
       return { items: all, total, limit: ESTIMATES_LIMIT, offset: 0 };
     },
     enabled: Boolean(subdomain && pageId),
+    refetchOnWindowFocus: isActive,
   });
 
   const items = displayQuery.data?.items ?? [];

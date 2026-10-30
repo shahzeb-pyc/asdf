@@ -377,3 +377,23 @@ describe('CreatePostsDialog draft confirmation', () => {
     expect(screen.getByDisplayValue('unsaved draft')).not.toBeNull();
   });
 });
+
+describe('CreatePostsDialog K8 pages-cache invalidation', () => {
+  it('invalidates tenant.pages.list + tenant.pages.detail as well as tenant.queue.all on queue success', async () => {
+    const { onOpenChange, queryClient } = renderDialog();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    typePost('hello');
+    fireEvent.click(queueButton());
+    await waitFor(() => {
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
+    const keys = invalidateSpy.mock.calls.map(
+      (call) => (call[0] as { queryKey?: unknown }).queryKey
+    );
+    // Queue cache (existing behaviour) plus the pages caches whose
+    // list counters / unmatched flags a new queued post moves.
+    expect(keys).toContainEqual(['tenant', 'acme', 'queue']);
+    expect(keys).toContainEqual(['tenant', 'acme', 'pages', 'list']);
+    expect(keys).toContainEqual(['tenant', 'acme', 'pages', PAGE_ID]);
+  });
+});

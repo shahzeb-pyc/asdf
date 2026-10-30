@@ -102,6 +102,12 @@ export interface CalendarViewPanelProps {
   pageTimezone: string;
   /** Active + paused posting times, from the shell's slots cache. */
   slots: PageSlotSummary[];
+  /**
+   * K11: same hidden-panel rule as the queue panel — a visited
+   * panel stays mounted but must not refetch on window focus
+   * while hidden. Defaults to true; the shell passes the tab state.
+   */
+  isActive?: boolean;
 }
 
 export function CalendarViewPanel({
@@ -109,6 +115,7 @@ export function CalendarViewPanel({
   pageId,
   pageTimezone,
   slots,
+  isActive = true,
 }: Readonly<CalendarViewPanelProps>) {
   const queryClient = useQueryClient();
   const tenant = queryKeys.tenant(subdomain);
@@ -133,6 +140,7 @@ export function CalendarViewPanel({
         signal,
       }),
     enabled: Boolean(subdomain && pageId),
+    refetchOnWindowFocus: isActive,
   });
 
   // Full queued list in queue order, for estimates — same query the
@@ -147,6 +155,7 @@ export function CalendarViewPanel({
         signal,
       }),
     enabled: Boolean(subdomain && pageId),
+    refetchOnWindowFocus: isActive,
   });
 
   const items = itemsQuery.data?.items ?? [];

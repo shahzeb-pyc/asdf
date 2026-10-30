@@ -25,10 +25,10 @@
  *   card about the same page.
  * - The header holds NO fetch of its own; reactivation and pause/resume
  *   go through the frame's status mutation via `onStatusToggle`.
- * - Account picture: `FacebookPageItem` carries no account picture field
- *   (only `accountDisplayName`), so the connected account renders an
- *   initials avatar. Surfacing a real account picture is a follow-up
- *   that needs an API/contract field — it is NOT expanded here.
+ * - Account picture: when `accountPictureUrl` is present the
+ *   connected account renders the real picture, falling back to an
+ *   initials avatar when it is absent or fails to load (the old
+ *   initials-only note above is stale and was corrected here).
  * - Create Posts opens the Create Posts dialogue (wired by the shell);
  *   `onCreatePosts` is optional only so the header can render without
  *   a handler in tests.
@@ -81,6 +81,10 @@ export interface DedicatedPageHeaderProps {
   page: FacebookPageItem;
   subdomain: string;
   onStatusToggle: (nextStatus: 'active' | 'paused') => Promise<void>;
+  /** Checkpoint banner path, when the shell supplies it: the shell
+   *  then toasts "marked verified" instead of a plain resume.
+   *  Optional so header-only renders keep calling onStatusToggle. */
+  onMarkVerified?: (() => Promise<void>) | undefined;
   onDisconnectRequest: () => void | Promise<void>;
   /** Opens the Create Posts dialogue; optional only for test renders. */
   onCreatePosts?: (() => void) | undefined;
@@ -188,6 +192,7 @@ export function DedicatedPageHeader({
   page,
   subdomain,
   onStatusToggle,
+  onMarkVerified,
   onDisconnectRequest,
   onCreatePosts,
 }: Readonly<DedicatedPageHeaderProps>) {
@@ -242,7 +247,11 @@ export function DedicatedPageHeader({
   const handleReactivate = async () => {
     setIsUpdatingStatus(true);
     try {
-      await onStatusToggle('active');
+      if (onMarkVerified) {
+        await onMarkVerified();
+      } else {
+        await onStatusToggle('active');
+      }
     } finally {
       setIsUpdatingStatus(false);
     }
@@ -308,7 +317,7 @@ export function DedicatedPageHeader({
               <Button
                 type="button"
                 data-testid="reactivate-page-btn"
-                disabled={isUpdatingStatus}
+                disabled={isUpdatingStatus || isDisconnecting}
                 onClick={() => void handleReactivate()}
               >
                 {isUpdatingStatus ? 'Reactivating...' : 'Mark Verified & Reactivate Page'}
@@ -530,9 +539,16 @@ export function DedicatedPageHeader({
             <MenuContent align="end">
               {showStatusAction && (
                 <>
+                  {/* K11 mutual guard: Pause/Resume is disabled
+                      while a disconnect is running, and Disconnect
+                      below is disabled while a status update runs,
+                      so the two mutations (and their toasts) can
+                      never run at once. The server already no-ops a
+                      late pause after disconnect — this is feedback
+                      only, no data change. */}
                   <MenuItem
                     data-testid="header-menu-pause-resume-btn"
-                    disabled={isUpdatingStatus}
+                    disabled={isUpdatingStatus || isDisconnecting}
                     onSelect={(event) => {
                       // Prevent Radix closing the menu on select so the
                       // "Updating..." state stays visible until the
@@ -560,6 +576,7 @@ export function DedicatedPageHeader({
               <MenuItem
                 variant="destructive"
                 data-testid="header-menu-disconnect-btn"
+                disabled={isUpdatingStatus || isDisconnecting}
                 onSelect={() => setIsDisconnectDialogOpen(true)}
               >
                 <PowerIcon aria-hidden />
@@ -579,7 +596,7 @@ export function DedicatedPageHeader({
           <AlertDialogHeader>
             <AlertDialogTitle>Disconnect {page.pageName}?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will disconnect the Facebook Page from your workspace. Any queued posts will be cancelled.
+              This disconnects only this Facebook Page, not the Facebook account — other pages from the same account stay connected, and the access token for this page is cleared. Queued posts are cancelled, but posts already publishing are untouched and will finish.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -588,7 +605,7 @@ export function DedicatedPageHeader({
             </AlertDialogCancel>
             <AlertDialogAction
               data-testid="header-confirm-disconnect-btn"
-              disabled={isDisconnecting}
+              disabled={isDisconnecting || isUpdatingStatus}
               onClick={(event) => {
                 // Keep the dialogue open until the disconnect settles
                 // (facebook-disconnect-dialog pattern): without this,

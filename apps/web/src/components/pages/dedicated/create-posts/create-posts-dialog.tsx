@@ -655,6 +655,21 @@ export function CreatePostsDialog({
       toast.info('Queueing stopped — no posts were added.');
       return;
     }
+    // K8: queue mutations move list counters and unmatched flags,
+    // so the pages list + this page's detail must not sit stale
+    // for up to 60s behind the queue cache (same refresh the queue
+    // panel and calendar panel already do for their mutations).
+    const invalidateQueueAndPages = async () => {
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.tenant(subdomain).queue.all,
+      });
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.tenant(subdomain).pages.list,
+      });
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.tenant(subdomain).pages.detail(page.id),
+      });
+    };
     let queued = 0;
     try {
       // Sequential, in order: each enqueue resolves the next vacant
@@ -732,9 +747,7 @@ export function CreatePostsDialog({
             const next = prev.filter((block) => !queuedIds.has(block.id));
             return next.length === 0 ? [newEmptyBlock()] : next;
           });
-          await queryClient.invalidateQueries({
-            queryKey: queryKeys.tenant(subdomain).queue.all,
-          });
+          await invalidateQueueAndPages();
           toast.info(
             `Stopped — ${queued} post${queued === 1 ? '' : 's'} added to queue. The rest are still here.`
           );
@@ -742,9 +755,7 @@ export function CreatePostsDialog({
           toast.info('Queueing stopped — no posts were added.');
         }
       } else {
-        await queryClient.invalidateQueries({
-          queryKey: queryKeys.tenant(subdomain).queue.all,
-        });
+        await invalidateQueueAndPages();
         toast.success(
           queued === 1 ? 'Post added to queue.' : `${queued} posts added to queue.`
         );
@@ -783,9 +794,7 @@ export function CreatePostsDialog({
       // — never as a duplicate).
       if (abortReasonRef.current === 'stop') {
         if (queued > 0) {
-          await queryClient.invalidateQueries({
-            queryKey: queryKeys.tenant(subdomain).queue.all,
-          });
+          await invalidateQueueAndPages();
           toast.info(
             `Stopped — ${queued} post${queued === 1 ? '' : 's'} added to queue. The rest are still here.`
           );
@@ -794,9 +803,7 @@ export function CreatePostsDialog({
         }
       } else if (abortReasonRef.current === 'timeout') {
         if (queued > 0) {
-          await queryClient.invalidateQueries({
-            queryKey: queryKeys.tenant(subdomain).queue.all,
-          });
+          await invalidateQueueAndPages();
         }
         toast.error(
           queued > 0
