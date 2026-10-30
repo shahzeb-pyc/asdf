@@ -138,10 +138,6 @@ export function AddScheduleModal({
     [onOpenChange, reset]
   );
 
-  const selectedAccount = (accountsQuery.data ?? []).find(
-    (account) => account.id === accountId
-  );
-
   const timesError = validateInstagramScheduleSlots(times);
 
   const handleSubmit = React.useCallback(async () => {

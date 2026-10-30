@@ -40,7 +40,6 @@ import {
   DialogTitle,
 } from '@/components/shared/ui/dialog';
 import { EmptyState } from '@/components/shared/ui/empty-state';
-import { Input } from '@/components/shared/ui/input';
 import { ListPagination } from '@/components/shared/ui/list-pagination';
 import {
   Select,

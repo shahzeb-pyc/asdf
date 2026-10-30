@@ -157,10 +157,6 @@ function stringField(value: unknown, fallback: string): string {
   return typeof value === 'string' && value.length > 0 ? value : fallback;
 }
 
-function nullableString(value: unknown): string | null {
-  return typeof value === 'string' ? value : null;
-}
-
 function isoField(value: unknown): string {
   if (typeof value === 'string') return value;
   if (value instanceof Date) return value.toISOString();

@@ -9,7 +9,6 @@ import {
   paginateMeta,
   parsePaginationParams,
 } from '@/lib/server/pagination';
-import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
 import {
   AddInstagramScheduleRequestSchema,
   ListInstagramScheduleResponseSchema,
