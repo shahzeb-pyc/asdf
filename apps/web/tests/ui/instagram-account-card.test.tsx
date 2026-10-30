@@ -18,7 +18,6 @@ import {
 
 vi.mock('next/image', () => ({
   default: (props: Record<string, unknown>) => {
-    // eslint-disable-next-line @next/next/no-img-element
     return <img alt={String(props.alt ?? '')} data-testid={String(props['data-testid'] ?? '')} />;
   },
 }));

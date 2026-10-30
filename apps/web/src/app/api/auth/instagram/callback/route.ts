@@ -10,7 +10,6 @@ import {
   type DatabaseClient,
   type OAuthStatePayload,
 } from '@fbuploadpro/contracts';
-import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import { logServerError } from '@/lib/server-analytics';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
