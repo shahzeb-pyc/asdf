@@ -307,10 +307,10 @@
         "routeSpecificRawBytes": 264285
       },
       "/tenant/[subdomain]/prompts": {
-        "firstLoadGzipBytes": 167561,
-        "firstLoadRawBytes": 556002,
-        "routeSpecificGzipBytes": 28721,
-        "routeSpecificRawBytes": 89213
+        "firstLoadGzipBytes": 177217,
+        "firstLoadRawBytes": 596576,
+        "routeSpecificGzipBytes": 36726,
+        "routeSpecificRawBytes": 123184
       },
       "/tenant/[subdomain]/publish-now": {
         "firstLoadGzipBytes": 172476,

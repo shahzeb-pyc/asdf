@@ -889,7 +889,7 @@ describe("PromptLibraryClient (real API wiring)", () => {
     fireEvent.click(screen.getByTestId("prompt-detail-copy"));
     const note = await screen.findByTestId("prompt-detail-copy-error");
     expect(note.getAttribute("role")).toBe("alert");
-    expect(note.className).toContain("border-brand-rose");
+    expect(note.className).toContain("border-signal-critical");
     expect(
       screen.getByText(
         "Copying failed. Please try again — the count was not changed.",
