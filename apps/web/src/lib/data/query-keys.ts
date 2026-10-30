@@ -107,6 +107,20 @@ export const queryKeys = {
           [...tenantRoot, 'tiktok-mirrors', mirrorId] as const,
       },
 
+      /**
+       * Instagram Auto Repost mirrors. A separate key family from
+       * tiktokMirrors (which carries no platform): reusing it would
+       * collide the Facebook and Instagram list caches.
+       */
+      instagramAutoRepost: {
+        all: [...tenantRoot, 'instagram-auto-repost'] as const,
+        list: [...tenantRoot, 'instagram-auto-repost', 'list'] as const,
+        listPage: (params: { page: number }) =>
+          [...tenantRoot, 'instagram-auto-repost', 'list', params] as const,
+        detail: (mirrorId: string) =>
+          [...tenantRoot, 'instagram-auto-repost', mirrorId] as const,
+      },
+
       destinations: {
         all: [...tenantRoot, 'destinations'] as const,
         detail: (destinationId: string) =>
