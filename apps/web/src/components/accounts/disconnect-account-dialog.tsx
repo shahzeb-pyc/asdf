@@ -56,7 +56,9 @@ export function DisconnectAccountDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Disconnect {account.displayName}?</AlertDialogTitle>
           <AlertDialogDescription>
-            This account will no longer be available
+            This account will no longer be available for publishing.
+            Disconnecting also asks Facebook to remove this app&apos;s
+            access for the account, and your published history is kept.
           </AlertDialogDescription>
         </AlertDialogHeader>
 
@@ -66,7 +68,7 @@ export function DisconnectAccountDialog({
             className="rounded-sm border border-line bg-subtle p-4 text-body leading-body text-ink-sub"
           >
             <p className="m-0">
-              No Facebook Pages are linked to this account yet. It&apos;s safe to remove — you can reconnect it any time.
+              No Facebook Pages are linked to this account yet. It&apos;s safe to disconnect — you can reconnect it any time.
             </p>
           </div>
         ) : (
@@ -78,7 +80,7 @@ export function DisconnectAccountDialog({
               Before you disconnect
             </p>
             <p className="m-0">
-              <strong>{pagesCount} linked {pagesLabel}</strong> will be removed, and any scheduled content on them will be removed as well.
+              <strong>{pagesCount} linked {pagesLabel}</strong> will be disconnected, and any scheduled content on them will be cancelled (not deleted).
             </p>
             {linkedPages.length > 0 && (
               <ul

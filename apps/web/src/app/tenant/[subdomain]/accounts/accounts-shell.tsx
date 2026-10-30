@@ -33,7 +33,6 @@ import { api, buildTenantApiPath, buildUrl, isApiError } from '@/lib/api';
 import {
   DisconnectAccountResponseSchema,
   ListFacebookAccountsResponseSchema,
-  type FacebookAccountView,
 } from '@/lib/api/schemas/accounts';
 import { ByocSettingsResponseSchema } from '@/lib/api/schemas/settings';
 import { queryKeys } from '@/lib/data/query-keys';
@@ -320,24 +319,27 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
       api.delete(buildTenantApiPath(subdomain, `/accounts/${accountId}`), {
         schema: DisconnectAccountResponseSchema,
       }),
-    onSuccess: (_data, accountId) => {
-      queryClient.setQueryData<{ accounts: FacebookAccountView[]; total: number }>(
-        tenant.accounts.list,
-        (prev) =>
-          prev
-            ? {
-                ...prev,
-                accounts: prev.accounts.filter((a) => a.id !== accountId),
-                total: Math.max(0, prev.total - 1),
-              }
-            : prev
-      );
+    onSuccess: (data) => {
+      // BG10: disconnect no longer deletes the account — it stays
+      // listed as revoked, so there is no optimistic removal here;
+      // the refetch below shows its new state. The banner must
+      // also say when Facebook-side revocation failed: the local
+      // disconnect happened, but the app authorization may still
+      // be live in the user's Facebook settings.
       void queryClient.invalidateQueries({ queryKey: tenant.accounts.list });
       setDisconnectingAccount(null);
-      setBannerNotice({
-        type: 'success',
-        message: 'Account disconnected.',
-      });
+      setBannerNotice(
+        data.facebookRevoked
+          ? {
+              type: 'success',
+              message: 'Account disconnected.',
+            }
+          : {
+              type: 'error',
+              message:
+                'Account disconnected, but Facebook access could not be removed. Remove the app in Facebook Settings to fully disconnect.',
+            }
+      );
     },
     onError: (error) => {
       setBannerNotice({

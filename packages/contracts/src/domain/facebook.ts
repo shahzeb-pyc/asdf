@@ -392,6 +392,12 @@ export const DisconnectAccountResponseSchema = z.object({
   success: z.boolean(),
   accountId: z.string().uuid(),
   disconnectedPagesCount: z.number().int().nonnegative(),
+  // Audit BG10: whether the Facebook-side authorization was
+  // actually revoked (DELETE /me/permissions). False means the
+  // local disconnect still happened, but the app authorization
+  // may still be live in the user's Facebook settings — the UI
+  // must say so, never imply it was removed.
+  facebookRevoked: z.boolean(),
 });
 
 export type DisconnectAccountResponse = z.infer<
