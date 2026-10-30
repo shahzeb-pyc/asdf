@@ -55,3 +55,59 @@ describe('markAccountConnectionError', () => {
     ).resolves.toBeUndefined();
   });
 });
+
+describe('markAccountConnectionError Supabase path', () => {
+  // Minimal thenable-free chain: from().update().eq().eq().eq().in()
+  // returns the { error } object the helper destructures.
+  function supabaseClient(error: unknown) {
+    const seen: {
+      table: string | null;
+      payload: unknown;
+      eqs: Array<[string, unknown]>;
+      ins: Array<[string, unknown[]]>;
+    } = { table: null, payload: null, eqs: [], ins: [] };
+    const chain: Record<string, (...args: never[]) => unknown> = {};
+    chain.update = ((payload: unknown) => {
+      seen.payload = payload;
+      return chain;
+    }) as (...args: never[]) => unknown;
+    chain.eq = ((column: string, value: unknown) => {
+      seen.eqs.push([column, value]);
+      return chain;
+    }) as (...args: never[]) => unknown;
+    chain.in = ((column: string, values: unknown[]) => {
+      seen.ins.push([column, values]);
+      return { error };
+    }) as (...args: never[]) => unknown;
+    const client = {
+      from: (table: string) => {
+        seen.table = table;
+        return chain;
+      },
+    };
+    return { client: client as never, seen };
+  }
+
+  it('marks via the Supabase client and scopes by id/workspace/platform/status', async () => {
+    const { client, seen } = supabaseClient(null);
+    await expect(
+      markAccountConnectionError(client, 'ws-1', 'acct-1')
+    ).resolves.toBeUndefined();
+    expect(seen.table).toBe('social_accounts');
+    expect(seen.payload).toMatchObject({ status: 'error' });
+    expect(seen.eqs).toEqual([
+      ['id', 'acct-1'],
+      ['workspace_id', 'ws-1'],
+      ['platform', 'facebook'],
+    ]);
+    expect(seen.ins).toEqual([['status', ['active', 'expired']]]);
+  });
+
+  it('never throws when the Supabase update reports an error', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { client } = supabaseClient(new Error('update failed'));
+    await expect(
+      markAccountConnectionError(client, 'ws-1', 'acct-1')
+    ).resolves.toBeUndefined();
+  });
+});

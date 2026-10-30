@@ -16,6 +16,7 @@ import {
   fetchDestinationForEnqueue,
   findQueueItemByIdempotencyKey,
   insertDestinationQueueItem,
+  isAccountExpiredForEnqueue,
   type DestinationForEnqueue,
 } from '@/lib/publishing/destination-enqueue';
 
@@ -118,6 +119,57 @@ describe('fetchDestinationForEnqueue', () => {
     const empty = { from: () => chainable(() => Promise.resolve({ data: null, error: null })) };
     expect(await fetchDestinationForEnqueue(empty as never, WS, DEST)).toBeNull();
     expect(await fetchDestinationForEnqueue({} as never, WS, DEST)).toBeNull();
+  });
+});
+
+describe('fetchDestinationForEnqueue Supabase account fetch (BG1)', () => {
+  // from() dispatches on table: the destinations row carries account_id,
+  // the social_accounts row carries the gate fields.
+  function supabaseWithAccount(account: unknown, accountError: unknown) {
+    const destRow = {
+      id: DEST,
+      platform: 'facebook',
+      timezone: null,
+      status: 'active',
+      metadata: {},
+      account_id: 'acct-1',
+    };
+    return {
+      from: (table: string) =>
+        table === 'destinations'
+          ? chainable(() => Promise.resolve({ data: destRow, error: null }))
+          : chainable(() => Promise.resolve({ data: account, error: accountError })),
+    };
+  }
+
+  it('maps the fetched account status and token expiry onto the destination', async () => {
+    const client = supabaseWithAccount(
+      { status: 'expired', token_expires_at: '2020-01-01T00:00:00.000Z' },
+      null
+    );
+    const dest = await fetchDestinationForEnqueue(client as never, WS, DEST);
+    expect(dest?.accountId).toBe('acct-1');
+    expect(dest?.accountStatus).toBe('expired');
+    expect(dest?.accountTokenExpiresAt).toBe('2020-01-01T00:00:00.000Z');
+    expect(dest && isAccountExpiredForEnqueue(dest)).toBe(true);
+  });
+
+  it('leaves account fields null when the account fetch errors or finds nothing', async () => {
+    const errClient = supabaseWithAccount(null, new Error('boom'));
+    const errDest = await fetchDestinationForEnqueue(errClient as never, WS, DEST);
+    expect(errDest?.accountStatus).toBeNull();
+    expect(errDest?.accountTokenExpiresAt).toBeNull();
+    const emptyClient = supabaseWithAccount(null, null);
+    const emptyDest = await fetchDestinationForEnqueue(emptyClient as never, WS, DEST);
+    expect(emptyDest?.accountStatus).toBeNull();
+    expect(emptyDest?.accountTokenExpiresAt).toBeNull();
+  });
+
+  it('falls back to null for null account fields', async () => {
+    const client = supabaseWithAccount({ status: null, token_expires_at: null }, null);
+    const dest = await fetchDestinationForEnqueue(client as never, WS, DEST);
+    expect(dest?.accountStatus).toBeNull();
+    expect(dest?.accountTokenExpiresAt).toBeNull();
   });
 });
 
