@@ -2,7 +2,7 @@
   "version": 1,
   "decision": "D137-3 superseded by Shahzeb on 2026-10-24: bundle budgets are enforced in CI.",
   "measuredAt": "2026-10-30",
-  "measuredFromCommit": "4d2f261f90536c8985029aa014c4e6fc0061bbf7",
+  "measuredFromCommit": "f8e9296e4cbe8b7a10f8b1f6dd607972850ba453",
   "measurement": "Analyzer production build (ANALYZE=true next build --webpack) of a clean .next, measured by apps/web/scripts/measure-bundle.mjs from emitted files; sizes are bytes, gzip level 9.",
   "headroomPercent": 5,
   "baseline": {
@@ -60,10 +60,10 @@
         "routeSpecificRawBytes": 79893
       },
       "/tenant/[subdomain]/threads/accounts": {
-        "firstLoadGzipBytes": 159784,
-        "firstLoadRawBytes": 530829,
-        "routeSpecificGzipBytes": 33723,
-        "routeSpecificRawBytes": 105863
+        "firstLoadGzipBytes": 167931,
+        "firstLoadRawBytes": 558729,
+        "routeSpecificGzipBytes": 35465,
+        "routeSpecificRawBytes": 113252
       },
       "/tenant/[subdomain]/prompts": {
         "firstLoadGzipBytes": 159582,
@@ -190,11 +190,17 @@
         "firstLoadRawBytes": 571123,
         "routeSpecificGzipBytes": 34276,
         "routeSpecificRawBytes": 120274
+      },
+      "/tenant/[subdomain]/creator-finder": {
+        "firstLoadGzipBytes": 166832,
+        "firstLoadRawBytes": 559792,
+        "routeSpecificGzipBytes": 33036,
+        "routeSpecificRawBytes": 108943
       }
     },
     "totalClientJs": {
-      "gzipBytes": 1083402,
-      "rawBytes": 3443584
+      "gzipBytes": 1097121,
+      "rawBytes": 3479528
     },
     "routeCount": 25
   },
@@ -367,10 +373,10 @@
         "routeSpecificRawBytes": 115768
       },
       "/tenant/[subdomain]/threads/accounts": {
-        "firstLoadGzipBytes": 167774,
-        "firstLoadRawBytes": 557371,
-        "routeSpecificGzipBytes": 35409,
-        "routeSpecificRawBytes": 111156
+        "firstLoadGzipBytes": 176328,
+        "firstLoadRawBytes": 586665,
+        "routeSpecificGzipBytes": 37238,
+        "routeSpecificRawBytes": 118915
       },
       "/tenant/[subdomain]/tiktok/accounts": {
         "firstLoadGzipBytes": 167374,
@@ -407,11 +413,17 @@
         "firstLoadRawBytes": 599680,
         "routeSpecificGzipBytes": 35990,
         "routeSpecificRawBytes": 126288
+      },
+      "/tenant/[subdomain]/creator-finder": {
+        "firstLoadGzipBytes": 175174,
+        "firstLoadRawBytes": 587782,
+        "routeSpecificGzipBytes": 34688,
+        "routeSpecificRawBytes": 114390
       }
     },
     "totalClientJs": {
-      "gzipBytes": 1081845,
-      "rawBytes": 3451246
+      "gzipBytes": 1151977,
+      "rawBytes": 3653504
     }
   }
 }
