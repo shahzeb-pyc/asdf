@@ -26,6 +26,18 @@ import { cn } from '@/lib/utils';
 
 import type { PageStatusFilter } from './pages-helpers';
 
+/**
+ * One account filter option (R16): the VALUE is the account id, so
+ * two accounts sharing a display name never collapse into one
+ * option; the LABEL is what the user reads. A display-name value
+ * survives only as a legacy fallback for page-slice accounts the
+ * accounts list does not carry (see pages-shell).
+ */
+export interface PageAccountFilterOption {
+  value: string;
+  label: string;
+}
+
 export interface PagesScaleToolbarProps {
   searchQuery: string;
   onSearchChange: (value: string) => void;
@@ -33,7 +45,7 @@ export interface PagesScaleToolbarProps {
   onStatusFilterChange: (value: PageStatusFilter) => void;
   accountFilter: string;
   onAccountFilterChange: (value: string) => void;
-  accountOptions: string[];
+  accountOptions: PageAccountFilterOption[];
   attentionCount?: number | undefined;
 }
 
@@ -146,9 +158,9 @@ export function PagesScaleToolbar({
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All accounts</SelectItem>
-            {accountOptions.map((accountName) => (
-              <SelectItem key={accountName} value={accountName}>
-                {accountName}
+            {accountOptions.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
               </SelectItem>
             ))}
           </SelectContent>

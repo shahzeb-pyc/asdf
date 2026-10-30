@@ -140,6 +140,11 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
       const json = await res.json();
       expect(json.accountId).toBe(accountId);
       expect(json.pages).toHaveLength(3); // strictly pages, group filtered out
+      // K9/R14: the drop is counted and surfaced, not silent; this
+      // fetch was neither capped nor mid-list failed.
+      expect(json.droppedCount).toBe(1);
+      expect(json.truncated).toBe(false);
+      expect(json.partial).toBe(false);
 
       const page1 = json.pages.find((p: { fbPageId: string }) => p.fbPageId === 'page_1001');
       const page2 = json.pages.find((p: { fbPageId: string }) => p.fbPageId === 'page_1002');

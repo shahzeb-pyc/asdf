@@ -112,9 +112,18 @@ export const DiscoverPagesResponseSchema = z.object({
   accountDisplayName: z.string(),
   pages: z.array(DiscoveredPageSchema),
   total: z.number().int().nonnegative(),
-  // Mirror of the contracts field (audit BG6): true when Graph
-  // pagination was truncated — the list is partial, never complete.
-  truncated: z.boolean().optional().default(false),
+  // Mirrors the contracts DiscoverPagesResponseSchema (R14/K9):
+  // the list is never silently partial. Payload `truncated` is
+  // cap-only (500-page Graph cap hit — the modal's capped-list
+  // text names the cap specifically); `partial` is a mid-list
+  // Graph failure; `droppedCount` counts nodes the discover
+  // filter removed. Defaults keep old payloads (and old tests)
+  // parsing. NOTE: this payload `truncated` is NOT the helper's
+  // either-cause flag — the discover route translates
+  // truncationReason === 'page_limit' into it.
+  truncated: z.boolean().default(false),
+  partial: z.boolean().default(false),
+  droppedCount: z.number().int().nonnegative().default(0),
 });
 export type DiscoverPagesResponse = z.infer<typeof DiscoverPagesResponseSchema>;
 

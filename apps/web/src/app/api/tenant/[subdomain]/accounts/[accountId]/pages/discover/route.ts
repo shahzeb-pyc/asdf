@@ -4,7 +4,6 @@ import {
   decryptToken,
   DiscoverPagesResponseSchema,
   fetchAllFacebookPages,
-  fetchAllFacebookPagesWithMeta,
   getSessionSecret,
   getTokenEncryptionKey,
   verifySessionToken,
@@ -201,17 +200,15 @@ export async function handleDiscoverPages(
   }
 
   // 4. Query Facebook Graph API v26.0 /me/accounts with pagination
-  // Audit BG6: the meta variant reports truncation, so a partial
-  // list is never presented as complete.
-  let rawItems: Awaited<ReturnType<typeof fetchAllFacebookPages>> = [];
-  let truncated = false;
+  // BG6 + R14: the unified helper reports truncation, so a partial
+  // list is never presented as complete. The payload splits it
+  // into capped (truncated) vs mid-list-failed (partial) below.
+  let fetched: Awaited<ReturnType<typeof fetchAllFacebookPages>>;
   try {
-    const fetched = await fetchAllFacebookPagesWithMeta(
+    fetched = await fetchAllFacebookPages(
       rawToken,
       'id,name,category,tasks,access_token,followers_count,picture{url}'
     );
-    rawItems = fetched.pages;
-    truncated = fetched.truncated;
   } catch (err: unknown) {
     logServerError('[pages/discover] Facebook Graph query failed', err, {
       source: 'pages-discover',
@@ -244,8 +241,19 @@ export async function handleDiscoverPages(
   );
 
   // 6. Strictly filter for authentic Facebook Pages (ignore groups or malformed nodes)
+  // K9: this filter exists because /me/accounts can return non-page
+  // nodes (the pinned case is a group node with an id and a name but
+  // no category and no tasks). A real page with neither a category
+  // nor tasks would be dropped by it too, and the two cannot be told
+  // apart from the Graph payload — so the drop is COUNTED and
+  // surfaced (droppedCount) instead of silently disappearing, and
+  // the Add Page flow shows that count next to the list.
+  const rawItems = fetched.pages;
+  const isDiscoverablePage = (item: (typeof rawItems)[number]): boolean =>
+    Boolean(item.id && item.name && (item.category || item.tasks));
+  const droppedCount = rawItems.filter((item) => !isDiscoverablePage(item)).length;
   const discoveredPages = rawItems
-    .filter((item) => item.id && item.name && (item.category || item.tasks))
+    .filter(isDiscoverablePage)
     .map((item) => {
       const followers =
         typeof item.followers_count === 'number'
@@ -268,7 +276,14 @@ export async function handleDiscoverPages(
     accountDisplayName: account.display_name || account.displayName,
     pages: discoveredPages,
     total: discoveredPages.length,
-    truncated,
+    // R14: never present a capped or mid-list-failed fetch as the
+    // account's complete page list — the modal warns on both flags.
+    // Payload `truncated` is cap-only (reason 'page_limit'), NOT
+    // the helper's either-cause flag: the modal's capped-list text
+    // names the 500 cap specifically.
+    truncated: fetched.truncationReason === 'page_limit',
+    partial: fetched.partial,
+    droppedCount,
   });
 
   return NextResponse.json(responsePayload);

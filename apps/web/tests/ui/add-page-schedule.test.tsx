@@ -329,6 +329,8 @@ describe('AddPageModal steps 3–4', () => {
       expect(onSuccess).toHaveBeenCalledWith({
         importedCount: 1,
         importedPageIds: ['44444444-4444-4444-8444-444444444444'],
+        // K9: the shell lands the list on the imported account.
+        accountId: activeAccount.id,
       })
     );
     expect(onOpenChange).toHaveBeenCalledWith(false);

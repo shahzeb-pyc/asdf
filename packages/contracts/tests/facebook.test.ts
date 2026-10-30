@@ -338,10 +338,12 @@ describe('Facebook Account & Page Domain Schemas', () => {
         } as Response;
       };
 
-      const pages = await fetchAllFacebookPages('test-token', 'id,name', 5, mockFetch as any);
-      expect(pages).toHaveLength(2);
-      expect(pages[0]?.id).toBe('p1');
-      expect(pages[1]?.id).toBe('p2');
+      const result = await fetchAllFacebookPages('test-token', 'id,name', 5, mockFetch as any);
+      expect(result.pages).toHaveLength(2);
+      expect(result.pages[0]?.id).toBe('p1');
+      expect(result.pages[1]?.id).toBe('p2');
+      expect(result.truncated).toBe(false);
+      expect(result.partial).toBe(false);
     });
 
     it('follows cursor pagination paging.next across multiple pages', async () => {
@@ -369,10 +371,12 @@ describe('Facebook Account & Page Domain Schemas', () => {
         } as Response;
       };
 
-      const pages = await fetchAllFacebookPages('test-token', 'id,name', 5, mockFetch as any);
+      const result = await fetchAllFacebookPages('test-token', 'id,name', 5, mockFetch as any);
       expect(callCount).toBe(2);
-      expect(pages).toHaveLength(2);
-      expect(pages.map((p) => p.id)).toEqual(['p1', 'p2']);
+      expect(result.pages).toHaveLength(2);
+      expect(result.pages.map((p) => p.id)).toEqual(['p1', 'p2']);
+      expect(result.truncated).toBe(false);
+      expect(result.partial).toBe(false);
     });
 
     it('stops after maxPages limit is reached', async () => {
@@ -391,9 +395,13 @@ describe('Facebook Account & Page Domain Schemas', () => {
         } as Response;
       };
 
-      const pages = await fetchAllFacebookPages('test-token', 'id,name', 2, mockFetch as any);
+      const result = await fetchAllFacebookPages('test-token', 'id,name', 2, mockFetch as any);
       expect(callCount).toBe(2);
-      expect(pages).toHaveLength(2);
+      expect(result.pages).toHaveLength(2);
+      // R14: the cap stopped us while Facebook still had another
+      // page waiting, so the list must say it is truncated.
+      expect(result.truncated).toBe(true);
+      expect(result.partial).toBe(false);
     });
 
     it('throws when graph API returns an error response', async () => {
@@ -406,6 +414,39 @@ describe('Facebook Account & Page Domain Schemas', () => {
       await expect(
         fetchAllFacebookPages('bad-token', 'id,name', 5, mockFetch as any)
       ).rejects.toThrow('Facebook Graph API returned 401');
+    });
+
+    it('reports a partial list (not a throw, not a complete list) when a mid-list page fails', async () => {
+      let callCount = 0;
+      const mockFetch = async () => {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              data: [{ id: 'p1', name: 'Page One' }],
+              paging: {
+                next: 'https://graph.facebook.com/v26.0/me/accounts?after=cursor1',
+              },
+            }),
+          } as Response;
+        }
+        return {
+          ok: false,
+          status: 500,
+          statusText: 'Server Error',
+        } as Response;
+      };
+
+      const result = await fetchAllFacebookPages('test-token', 'id,name', 5, mockFetch as any);
+      expect(callCount).toBe(2);
+      expect(result.pages).toHaveLength(1);
+      expect(result.pages[0]?.id).toBe('p1');
+      // R14: the fetched prefix is kept, but it must not present
+      // as the account's complete list.
+      expect(result.partial).toBe(true);
+      expect(result.truncated).toBe(false);
     });
   });
 

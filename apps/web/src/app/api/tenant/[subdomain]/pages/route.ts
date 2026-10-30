@@ -117,6 +117,23 @@ const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
+ * Escapes a user search term for LIKE/ILIKE patterns (K9): % and _
+ * must match literally, and a literal backslash must not escape
+ * the next character. Same backslash convention as the prompts
+ * route's escapeIlikePattern (PostgREST passes ilike patterns
+ * straight to Postgres ILIKE, whose default escape is backslash);
+ * the SQL path states ESCAPE '\' explicitly so the SQL, Supabase
+ * or(), and in-memory (.includes, already literal) search paths
+ * all agree on what a wildcard character means: nothing special.
+ */
+function escapeLikePattern(input: string): string {
+  return input
+    .replaceAll('\\', '\\\\')
+    .replaceAll('%', '\\%')
+    .replaceAll('_', '\\_');
+}
+
+/**
  * The attention-first rank the shell sorts by (pages-helpers
  * sortPagesAttentionFirst), expressed in SQL so pagination can be a
  * real range: attention (0), paused (1), active (2), other (3). A
@@ -161,10 +178,12 @@ function buildPageWhere(
   ];
   const nextParam = () => `$${params.length + 1}`;
   if (filters.search) {
-    const like = `%${filters.search}%`;
+    const like = `%${escapeLikePattern(filters.search)}%`;
     const p = nextParam();
     params.push(like);
-    conditions.push(`(d.name ILIKE ${p} OR d.metadata->>'category' ILIKE ${p})`);
+    conditions.push(
+      `(d.name ILIKE ${p} ESCAPE '\\' OR d.metadata->>'category' ILIKE ${p} ESCAPE '\\')`
+    );
   }
   if (filters.status === 'needs_attention') {
     conditions.push(PAGE_NEEDS_ATTENTION_SQL);
@@ -401,8 +420,13 @@ function buildSupabasePageQuery(
     .eq('platform', 'facebook');
   query = applySupabasePageGroup(query, group, freshThresholdIso);
   if (filters.search) {
+    // Terms containing PostgREST or() metacharacters (, ( ) ")
+    // never reach here — they take the chunked fallback in
+    // fetchSupabasePagesPage — so the escaped pattern below cannot
+    // break the or() syntax.
+    const pattern = `%${escapeLikePattern(filters.search)}%`;
     query = query.or(
-      `name.ilike.%${filters.search}%,metadata->>category.ilike.%${filters.search}%`
+      `name.ilike.${pattern},metadata->>category.ilike.${pattern}`
     );
   }
   if (filters.account && filters.account !== 'all') {
@@ -476,23 +500,34 @@ async function fetchSupabasePagesPage(
   error?: string;
 }> {
   // Search terms containing PostgREST or() metacharacters cannot be
-  // expressed as a single or() filter — keep the previous full-fetch
-  // behaviour for those requests instead of returning wrong results.
+  // expressed as a single or() filter — keep the in-memory
+  // filter/sort/paginate behaviour for those requests instead of
+  // returning wrong results, but fetch in 1,000-row chunks (R18):
+  // the previous single fetch silently truncated at PostgREST's
+  // 1,000-row cap, so a metacharacter search over a large
+  // workspace searched only the newest 1,000 pages.
   if (/[,()"]/.test(filters.search)) {
-    const { data: pageData, error } = await supabase
-      .from('destinations')
-      .select(SUPABASE_PAGE_COLUMNS)
-      .eq('workspace_id', workspaceId)
-      .eq('platform', 'facebook')
-      .order('created_at', { ascending: false });
-    if (error) {
-      return { pages: [], total: 0, page, attentionTotal: 0, error: error.message };
+    const CHUNK_SIZE = 1000;
+    const pageRows: SupabaseDestinationJoinRow[] = [];
+    for (let from = 0; ; from += CHUNK_SIZE) {
+      const { data: chunkData, error } = await supabase
+        .from('destinations')
+        .select(SUPABASE_PAGE_COLUMNS)
+        .eq('workspace_id', workspaceId)
+        .eq('platform', 'facebook')
+        .order('created_at', { ascending: false })
+        .range(from, from + CHUNK_SIZE - 1);
+      if (error) {
+        return { pages: [], total: 0, page, attentionTotal: 0, error: error.message };
+      }
+      // The contracts Database type resolves this joined select to never[]
+      // (no Relationships metadata for supabase-js), so the result is
+      // asserted once, here at the boundary, to the shape the select
+      // actually returns.
+      const chunkRows = (chunkData || []) as unknown as SupabaseDestinationJoinRow[];
+      pageRows.push(...chunkRows);
+      if (chunkRows.length < CHUNK_SIZE) break;
     }
-    // The contracts Database type resolves this joined select to never[]
-    // (no Relationships metadata for supabase-js), so the result is
-    // asserted once, here at the boundary, to the shape the select
-    // actually returns.
-    const pageRows = (pageData || []) as unknown as SupabaseDestinationJoinRow[];
     const mapped = mapPageRows(mapSupabaseDestinationRows(pageRows));
     const filtered = filterAndSortPages(mapped, filters);
     const attentionTotal = filtered.filter((p) =>
@@ -888,8 +923,9 @@ export async function handleListPages(
     // fetchSupabasePagesPage): exact counts plus ranged slices per
     // attention rank group, so the returned page is exact and the
     // database round-trip never fetches the whole list — except the
-    // documented search fallback inside that function, which keeps
-    // the old full-fetch behaviour for or()-inexpressible terms.
+    // documented search fallback inside that function, which
+    // fetches or()-inexpressible terms in 1,000-row chunks (R18)
+    // and filters in memory over the full set.
     pages = res.pages;
     attentionTotal = res.attentionTotal;
     pages = attachPageCardQueueCounts(

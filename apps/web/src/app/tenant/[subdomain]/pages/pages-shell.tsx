@@ -32,12 +32,19 @@
  *
  * ?account= contract (Accounts card "pages linked" link): the shell
  * initialises its account filter from the `account` URL param on
- * arrival — a display name (what the card link sends) or an account
- * id — and syncs toolbar changes back to the URL with
- * router.replace, so the filtered view is shareable and
- * refresh-stable. An unknown param falls back to 'all'. The shell
- * already renders inside the route's Suspense boundary (page.tsx),
- * so useSearchParams needs no new boundary here.
+ * arrival — an account id (what the card link sends since R16) or,
+ * for old/bookmarked links, a display name — and syncs toolbar
+ * changes back to the URL with router.replace, so the filtered view
+ * is shareable and refresh-stable. An unknown param falls back to
+ * 'all'. The shell already renders inside the route's Suspense
+ * boundary (page.tsx), so useSearchParams needs no new boundary
+ * here.
+ *
+ * R16: the account filter's values are account ids, never display
+ * names, so two accounts sharing a name never collapse into one
+ * option; the accounts list behind the options is the COMPLETE
+ * set (paged through under the hood), not page 1 plus the current
+ * 30-row page slice.
  */
 import * as React from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -49,6 +56,7 @@ import { ListFacebookAccountsResponseSchema } from '@/lib/api/schemas/accounts';
 import { ListFacebookPagesResponseSchema } from '@/lib/api/schemas/pages';
 import { ByocSettingsResponseSchema } from '@/lib/api/schemas/settings';
 import { queryKeys } from '@/lib/data/query-keys';
+import { useDebouncedValue } from '@/lib/use-debounced-value';
 import { Toast, toast } from '@/components/shared/ui/toast';
 import { DEFAULT_PAGE_SIZE } from '@/lib/server/pagination';
 import { Button } from '@/components/shared/ui/button';
@@ -61,7 +69,10 @@ import {
   type FacebookPageItem,
 } from '@/components/pages/page-card';
 import { PagesEmptyState } from '@/components/pages/pages-empty-state';
-import { PagesScaleToolbar } from '@/components/pages/pages-toolbar';
+import {
+  PagesScaleToolbar,
+  type PageAccountFilterOption,
+} from '@/components/pages/pages-toolbar';
 import {
   computeSituationalSubtitle,
   sortPagesAttentionFirst,
@@ -112,6 +123,9 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
   // Filter/search state lives here; changing any of them resets to
   // page 1 (the filtered result's first page).
   const [searchQuery, setSearchQuery] = React.useState('');
+  // K9: the list query runs on the debounced search, not on every
+  // keystroke; the toolbar input itself stays immediate.
+  const debouncedSearchQuery = useDebouncedValue(searchQuery);
   const [statusFilter, setStatusFilter] =
     React.useState<PageStatusFilter>('all');
   const [accountFilter, setAccountFilter] = React.useState('all');
@@ -120,7 +134,7 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
     queryKey: tenant.pages.listPage({
       page,
       limit: DEFAULT_PAGE_SIZE,
-      search: searchQuery.trim(),
+      search: debouncedSearchQuery.trim(),
       status: statusFilter,
       account: accountFilter,
     }),
@@ -129,7 +143,9 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
         buildUrl(buildTenantApiPath(subdomain, '/pages'), {
           page,
           limit: DEFAULT_PAGE_SIZE,
-          ...(searchQuery.trim() ? { search: searchQuery.trim() } : {}),
+          ...(debouncedSearchQuery.trim()
+            ? { search: debouncedSearchQuery.trim() }
+            : {}),
           ...(statusFilter !== 'all' ? { status: statusFilter } : {}),
           ...(accountFilter !== 'all' ? { account: accountFilter } : {}),
         }),
@@ -139,27 +155,46 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
         }
       ),
   });
-  // The accounts read here only feeds the account-filter options and
-  // the expired banner, so it takes the largest page (50) rather than
-  // the paginated accounts view.
+  // R16: the accounts read here feeds the account-filter options,
+  // so it pages through the WHOLE accounts list (limit 50, the
+  // server max, until the reported total is covered) instead of
+  // taking only page 1. A repeated id or an empty page ends the
+  // loop defensively, so a concurrent mutation mid-loop cannot
+  // spin it forever.
   const accountsQuery = useQuery({
-    queryKey: tenant.accounts.listPage({
-      page: 1,
-      limit: 50,
-      search: '',
-      status: 'all',
-    }),
-    queryFn: ({ signal }) =>
-      api.get(
-        buildUrl(buildTenantApiPath(subdomain, '/accounts'), {
-          page: 1,
-          limit: 50,
-        }),
-        {
-          schema: ListFacebookAccountsResponseSchema,
-          signal,
+    queryKey: tenant.accounts.listAll,
+    queryFn: async ({ signal }) => {
+      const all: FacebookAccountItem[] = [];
+      const seenIds = new Set<string>();
+      let page = 1;
+      let total = Number.POSITIVE_INFINITY;
+      while (all.length < total) {
+        const data = await api.get(
+          buildUrl(buildTenantApiPath(subdomain, '/accounts'), {
+            page,
+            limit: 50,
+          }),
+          {
+            schema: ListFacebookAccountsResponseSchema,
+            signal,
+          }
+        );
+        const batch = data.accounts as FacebookAccountItem[];
+        if (batch.length === 0) break;
+        let added = false;
+        for (const account of batch) {
+          if (account.id && !seenIds.has(account.id)) {
+            seenIds.add(account.id);
+            all.push(account);
+            added = true;
+          }
         }
-      ),
+        if (!added) break;
+        total = data.total;
+        page += 1;
+      }
+      return { accounts: all, total: all.length };
+    },
   });
   const byocQuery = useQuery({
     queryKey: tenant.settings.byoc,
@@ -346,19 +381,46 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
     [byocQuery.isPending, facebookAppConfigured, router, subdomain]
   );
 
-  const accountOptions = React.useMemo(() => {
-    const names = new Set<string>();
-    for (const p of pages) {
-      if (p.accountDisplayName) {
-        names.add(p.accountDisplayName);
+  // R16: filter values are account ids; labels are display names,
+  // with an id suffix only where two accounts share a name (so the
+  // two options stay distinguishable, never collapsed). A
+  // page-slice account the accounts list does not carry keeps a
+  // legacy display-name option, so its pages stay filterable —
+  // the server matches a non-UUID filter by display_name.
+  const accountOptions = React.useMemo<PageAccountFilterOption[]>(() => {
+    const options: PageAccountFilterOption[] = [];
+    const seenIds = new Set<string>();
+    const nameCounts = new Map<string, number>();
+    for (const a of accounts) {
+      if (a.displayName) {
+        nameCounts.set(
+          a.displayName,
+          (nameCounts.get(a.displayName) ?? 0) + 1
+        );
       }
     }
     for (const a of accounts) {
-      if (a.displayName) {
-        names.add(a.displayName);
-      }
+      if (!a.id || seenIds.has(a.id)) continue;
+      seenIds.add(a.id);
+      const sharedName = (nameCounts.get(a.displayName) ?? 0) > 1;
+      options.push({
+        value: a.id,
+        label: sharedName
+          ? `${a.displayName} · …${a.id.slice(-6)}`
+          : a.displayName,
+      });
     }
-    return Array.from(names);
+    const knownNames = new Set(accounts.map((a) => a.displayName));
+    for (const p of pages) {
+      if (!p.accountDisplayName || knownNames.has(p.accountDisplayName)) {
+        continue;
+      }
+      options.push({
+        value: p.accountDisplayName,
+        label: p.accountDisplayName,
+      });
+    }
+    return options;
   }, [pages, accounts]);
 
   // Page-slice attention count: only a fallback for payloads that
@@ -373,7 +435,9 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
   const attentionTotal = pagesQuery.data?.attentionTotal ?? attentionCount;
 
   const isFiltered =
-    searchQuery.trim().length > 0 || statusFilter !== 'all' || accountFilter !== 'all';
+    debouncedSearchQuery.trim().length > 0 ||
+    statusFilter !== 'all' ||
+    accountFilter !== 'all';
 
   // The subtitle counts from the API total and the full-set
   // attention total; the pagination line below ("Showing X–Y of Z")
@@ -395,6 +459,7 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
   const handlePagesImported = (result: {
     importedCount: number;
     importedPageIds: string[];
+    accountId?: string | undefined;
   }) => {
     // Sonner toasts carry role="status" / aria-live, so no extra live
     // region is needed; the toast text names the count, so the
@@ -406,13 +471,27 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
       { toasterId: PAGES_IMPORT_TOASTER_ID }
     );
     flashHighlight(result.importedPageIds);
+    // K9: the imported cards must actually be visible — a filter
+    // or page the user was sitting on used to strand them
+    // off-slice with only a toast to show for it. Clear the
+    // search/status filters and land on the imported account's
+    // first page (all accounts when the account is unknown).
+    // Residual limit, stated honestly: with more than one page of
+    // results the imported card can still sit beyond page 1
+    // (attention-first order); jumping straight to it would need
+    // a server-side position lookup, which this does not add.
+    setSearchQuery('');
+    setStatusFilter('all');
+    handleAccountFilterChange(result.accountId ?? 'all');
     void queryClient.invalidateQueries({ queryKey: tenant.pages.list });
     void queryClient.invalidateQueries({ queryKey: tenant.accounts.list });
   };
 
   const activeFilterLabels = React.useMemo(() => {
     const labels: string[] = [];
-    if (searchQuery.trim()) labels.push(`Search: ${searchQuery.trim()}`);
+    if (debouncedSearchQuery.trim()) {
+      labels.push(`Search: ${debouncedSearchQuery.trim()}`);
+    }
     if (statusFilter !== 'all') {
       labels.push(
         statusFilter === 'needs_attention'
@@ -420,9 +499,25 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
           : `Status: ${statusFilter.charAt(0).toUpperCase()}${statusFilter.slice(1)}`
       );
     }
-    if (accountFilter !== 'all') labels.push(`Account: ${accountFilter}`);
+    if (accountFilter !== 'all') {
+      const option = accountOptions.find((o) => o.value === accountFilter);
+      labels.push(`Account: ${option?.label ?? accountFilter}`);
+    }
     return labels;
-  }, [searchQuery, statusFilter, accountFilter]);
+  }, [debouncedSearchQuery, statusFilter, accountFilter, accountOptions]);
+
+  // K9: a failed accounts/BYOC read must not leave a stale grid
+  // (or an empty filter list) unexplained. isRefetchError covers
+  // the stale-grid case — a background refetch that fails while
+  // old data is still shown — where isError alone stays false.
+  // The grid itself keeps rendering; this notice only explains
+  // that the account side of it may be out of date, with a Retry
+  // that refetches just the failed queries.
+  const secondaryQueryFailed =
+    accountsQuery.isError ||
+    accountsQuery.isRefetchError ||
+    byocQuery.isError ||
+    byocQuery.isRefetchError;
 
   let contentNode: React.ReactNode;
   if (isLoading) {
@@ -570,6 +665,34 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
         }}
       />
 
+      {/* Secondary-query failure notice (K9): the grid below keeps
+          showing, but account filters / app-config guidance may be
+          stale or missing until these queries succeed again. */}
+      {secondaryQueryFailed && (
+        <div
+          data-testid="pages-secondary-error"
+          role="alert"
+          className="mb-4 flex flex-wrap items-center justify-between gap-4 rounded-sm border border-link/25 bg-link/10 px-3 py-2.5 text-body leading-body text-ink"
+        >
+          <span>
+            Account information couldn&apos;t be refreshed, so account
+            filters may be incomplete.
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            data-testid="pages-secondary-retry-btn"
+            onClick={() => {
+              void accountsQuery.refetch();
+              void byocQuery.refetch();
+            }}
+          >
+            Retry
+          </Button>
+        </div>
+      )}
+
       {/* Scale Toolbar — always visible, at any page count. The old >4
           gate cannot survive pagination — its input was the unfiltered
           client-side list length, which no longer exists — and
@@ -598,6 +721,7 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
         open={isAddModalOpen}
         onOpenChange={setIsAddModalOpen}
         accounts={accounts}
+        accountsPending={accountsQuery.isPending}
         onSuccess={handlePagesImported}
         onNavigateToAccounts={() => router.push(`/tenant/${subdomain}/accounts`)}
         facebookAppConfigured={facebookAppConfigured}

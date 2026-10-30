@@ -49,6 +49,7 @@ import {
   createAddPagePostingTime,
   findFreeAddPagePostingTime,
   getActiveAccounts,
+  getErrorAccounts,
   getExpiredAccounts,
   isAddPageScheduleValid,
   sortAddPageFormats,
@@ -80,6 +81,7 @@ export {
   filterDiscoveredPages,
   findFreeAddPagePostingTime,
   getActiveAccounts,
+  getErrorAccounts,
   getExpiredAccounts,
   getSelectablePageIds,
   isAddPageScheduleValid,
@@ -94,8 +96,22 @@ export interface AddPageModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   accounts?: FacebookAccountItem[] | undefined;
+  /**
+   * R17: whether the parent's accounts read is still pending. The
+   * shell passes an (initially empty) accounts array, so without
+   * this flag the modal cannot tell "loading" from "none" and
+   * renders the dead-end "No active Facebook accounts connected"
+   * notice while accounts are still loading. The modal's own
+   * fallback fetch respects the same flag via the combined
+   * loading state below.
+   */
+  accountsPending?: boolean | undefined;
   onSuccess?:
-    | ((result: { importedCount: number; importedPageIds: string[] }) => void)
+    | ((result: {
+        importedCount: number;
+        importedPageIds: string[];
+        accountId?: string | undefined;
+      }) => void)
     | undefined;
   onNavigateToAccounts?: (() => void) | undefined;
   /**
@@ -127,8 +143,17 @@ async function executeDiscoverPages(subdomain: string, accountId: string) {
     return {
       success: true as const,
       pages: data.pages as DiscoveredPageItem[],
-      // Audit BG6: a truncated list is partial, never complete.
+      // R14/K9: a capped or mid-list-failed fetch is still a
+      // successful response — but the list it carries is not the
+      // account's complete list, and the step must say so. The
+      // capped/partial/dropped warnings render inside
+      // SelectPagesStep (listTruncated/listPartial/droppedCount);
+      // the old generic BG6 banner above the step was removed as
+      // superseded by those specific warnings (same coverage:
+      // a warning shows whenever the list is incomplete).
       truncated: data.truncated,
+      partial: data.partial,
+      droppedCount: data.droppedCount,
       error: null,
     };
   } catch (error) {
@@ -137,6 +162,8 @@ async function executeDiscoverPages(subdomain: string, accountId: string) {
       success: false as const,
       pages: [] as DiscoveredPageItem[],
       truncated: false,
+      partial: false,
+      droppedCount: 0,
       error:
         isApiError(error) && error.kind === 'http'
           ? "Couldn't load pages from this Facebook account. Please check the account connection and try again."
@@ -218,6 +245,7 @@ export function AddPageModal({
   open,
   onOpenChange,
   accounts,
+  accountsPending = false,
   onSuccess,
   onNavigateToAccounts,
   facebookAppConfigured,
@@ -243,11 +271,17 @@ export function AddPageModal({
   const [discoveredPages, setDiscoveredPages] = React.useState<DiscoveredPageItem[]>(
     initialDiscoveredPages
   );
-  // Audit BG6: whether the discover list was truncated — shown as
-  // a warning above the page list, never silently complete.
-  const [discoveredTruncated, setDiscoveredTruncated] = React.useState(false);
   const [pageSearchQuery, setPageSearchQuery] = React.useState('');
   const [isDiscovering, setIsDiscovering] = React.useState(false);
+  // K9: a failed discover keeps its own error state (with Retry),
+  // separate from the modal-wide error banner — so step 2 never
+  // shows the misleading "no discovered pages" empty state
+  // alongside an error. The R14/K9 list-completeness flags travel
+  // with the last successful discover.
+  const [discoverError, setDiscoverError] = React.useState<string | null>(null);
+  const [discoverTruncated, setDiscoverTruncated] = React.useState(false);
+  const [discoverPartial, setDiscoverPartial] = React.useState(false);
+  const [discoverDroppedCount, setDiscoverDroppedCount] = React.useState(0);
   const [selectedPageIds, setSelectedPageIds] = React.useState<string[]>(
     initialSelectedPageIds
   );
@@ -270,6 +304,13 @@ export function AddPageModal({
   const effectiveAccounts = fetchedAccounts ?? accounts ?? [];
   const activeAccounts = getActiveAccounts(effectiveAccounts);
   const expiredAccounts = getExpiredAccounts(effectiveAccounts);
+  const errorAccounts = getErrorAccounts(effectiveAccounts);
+  // R17: the step's loading state is the parent's pending flag OR
+  // the modal's own fallback fetch — never just the fallback. The
+  // shell passes accounts=[] while its query is pending, so the
+  // fallback never runs there; without this combination the step
+  // would show the dead-end notice during that window.
+  const accountsLoading = isLoadingAccounts || accountsPending;
 
   const fetchAccountsIfNeeded = React.useCallback(async () => {
     if (!subdomain || accounts !== undefined) return;
@@ -305,11 +346,14 @@ export function AddPageModal({
       setStep('select-account');
       setSelectedAccount(null);
       setDiscoveredPages([]);
-      setDiscoveredTruncated(false);
       setSelectedPageIds([]);
       setPageSearchQuery('');
       resetSchedule();
       setErrorMessage(null);
+      setDiscoverError(null);
+      setDiscoverTruncated(false);
+      setDiscoverPartial(false);
+      setDiscoverDroppedCount(0);
       setIsSubmitting(false);
     }
     onOpenChange(nextOpen);
@@ -330,18 +374,50 @@ export function AddPageModal({
     setSelectedAccount(account);
     setStep('select-pages');
     setDiscoveredPages([]);
-    setDiscoveredTruncated(false);
     setSelectedPageIds([]);
     setPageSearchQuery('');
     setErrorMessage(null);
+    setDiscoverError(null);
+    setDiscoverTruncated(false);
+    setDiscoverPartial(false);
+    setDiscoverDroppedCount(0);
     setIsDiscovering(true);
 
     const result = await executeDiscoverPages(subdomain, account.id);
     if (!result.success) {
+      // Both surfaces: the top alert (BG6/UX9, with the reconnect
+      // hint for expired/error accounts) and the in-step error
+      // (K9, with Retry). They carry the same message; Retry
+      // clears both. Neither surface alone covers both audits'
+      // asserted behaviour, so neither is dropped here.
       setErrorMessage(result.error + reconnectHintFor(account));
+      setDiscoverError(result.error + reconnectHintFor(account));
     } else {
       setDiscoveredPages(result.pages);
-      setDiscoveredTruncated(result.truncated);
+      setDiscoverTruncated(result.truncated);
+      setDiscoverPartial(result.partial);
+      setDiscoverDroppedCount(result.droppedCount);
+    }
+    setIsDiscovering(false);
+  };
+
+  // K9 step 2 retry: re-runs discover for the already-selected
+  // account, replacing the error (or the partial list) in place.
+  // Clears both error surfaces; a failed retry sets both again.
+  const handleRetryDiscover = async () => {
+    if (!selectedAccount || isDiscovering) return;
+    setIsDiscovering(true);
+    setErrorMessage(null);
+    setDiscoverError(null);
+    const result = await executeDiscoverPages(subdomain, selectedAccount.id);
+    if (!result.success) {
+      setErrorMessage(result.error + reconnectHintFor(selectedAccount));
+      setDiscoverError(result.error + reconnectHintFor(selectedAccount));
+    } else {
+      setDiscoveredPages(result.pages);
+      setDiscoverTruncated(result.truncated);
+      setDiscoverPartial(result.partial);
+      setDiscoverDroppedCount(result.droppedCount);
     }
     setIsDiscovering(false);
   };
@@ -350,10 +426,13 @@ export function AddPageModal({
     setStep('select-account');
     setSelectedAccount(null);
     setDiscoveredPages([]);
-    setDiscoveredTruncated(false);
     setSelectedPageIds([]);
     setPageSearchQuery('');
     setErrorMessage(null);
+    setDiscoverError(null);
+    setDiscoverTruncated(false);
+    setDiscoverPartial(false);
+    setDiscoverDroppedCount(0);
   };
 
   // Back between steps 2, 3 and 4 preserves the page selection, the
@@ -453,6 +532,9 @@ export function AddPageModal({
       onSuccess?.({
         importedCount: result.importedCount,
         importedPageIds: result.importedPageIds,
+        // K9: the shell lands the list on this account so the
+        // imported cards are actually visible.
+        accountId: selectedAccount.id,
       });
       handleDialogOpenChange(false);
     }
@@ -602,9 +684,10 @@ export function AddPageModal({
           {step === 'select-account' && (
             <SelectAccountStep
               subdomain={subdomain}
-              isLoadingAccounts={isLoadingAccounts}
+              isLoadingAccounts={accountsLoading}
               activeAccounts={activeAccounts}
               expiredAccounts={expiredAccounts}
+              errorAccounts={errorAccounts}
               showMissingAppGuidance={showMissingAppGuidance}
               showByocChecking={showByocChecking}
               showByocCheckFailed={showByocCheckFailed}
@@ -618,17 +701,6 @@ export function AddPageModal({
             />
           )}
 
-          {step === 'select-pages' && discoveredTruncated && (
-            <div
-              role="alert"
-              className="mb-4 rounded-sm border border-brand-gold/25 bg-brand-gold/10 px-3 py-2.5 text-body leading-body text-ink"
-            >
-              Facebook returned more pages than could be loaded, so
-              this list may be incomplete. If a page you expect is
-              missing, go back and choose the account again to retry.
-            </div>
-          )}
-
           {step === 'select-pages' && (
             <SelectPagesStep
               isDiscovering={isDiscovering}
@@ -638,6 +710,13 @@ export function AddPageModal({
               onPageSearchChange={setPageSearchQuery}
               onTogglePage={handleTogglePage}
               onSelectAll={handleSelectAll}
+              discoverError={discoverError}
+              onRetryDiscover={() => {
+                void handleRetryDiscover();
+              }}
+              listTruncated={discoverTruncated}
+              listPartial={discoverPartial}
+              droppedCount={discoverDroppedCount}
             />
           )}
 

@@ -287,7 +287,11 @@ export function AccountCard({
       return;
     }
     if (currentSubdomain) {
-      router.push(`/tenant/${currentSubdomain}/pages?account=${encodeURIComponent(account.displayName)}`);
+      // R16: link by account id, not display name — two accounts
+      // sharing a name used to land on an ambiguous filter. The
+      // Pages route still resolves a legacy display-name param, so
+      // old links keep working.
+      router.push(`/tenant/${currentSubdomain}/pages?account=${encodeURIComponent(account.id)}`);
     } else {
       setIsPagesExpanded((prev) => !prev);
     }

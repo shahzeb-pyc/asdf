@@ -934,7 +934,7 @@ export async function POST(
   // list — and the publish-rights checks below need the same
   // data. Nothing here is stored beyond the request.
   interface CachedAccount {
-    pages: Awaited<ReturnType<typeof fetchAllFacebookPages>>;
+    pages: Awaited<ReturnType<typeof fetchAllFacebookPages>>['pages'];
     permissionsDeclined: boolean;
   }
   const accountCache = new Map<string, CachedAccount>();
@@ -970,14 +970,17 @@ export async function POST(
         }
         // Transient tokens: re-discovered now, used only in memory.
         loopStep = 'discover';
-        const [pages, permissionsDeclined] = await Promise.all([
+        const [fetched, permissionsDeclined] = await Promise.all([
           fetchAllFacebookPages(
             accountToken,
             'id,name,category,tasks,access_token,followers_count,picture{url}'
           ),
           pagesManagePostsDeclined(accountToken),
         ]);
-        cached = { pages, permissionsDeclined };
+        // A truncated/partial re-discovery can only fail to find a
+        // target page, which surfaces as "no longer available" below
+        // — it never publishes to the wrong page.
+        cached = { pages: fetched.pages, permissionsDeclined };
         accountCache.set(target.accountId, cached);
       }
       const page = cached.pages.find((p) => String(p.id) === target.fbPageId);

@@ -230,14 +230,29 @@ function facebookGraphTimeoutSignal(callerSignal?: AbortSignal): AbortSignal {
 }
 
 /**
- * Shared helper for fetching all Facebook Pages via /me/accounts with limit=100
- * and following cursor pagination (paging.next) up to maxPages (default: 5 = 500 pages max).
- * Each Graph request is bounded by a 30s timeout, composed with the caller's
- * signal when one is supplied via the optional trailing `options` argument.
- * The trailing options argument is additive — existing callers are unaffected.
+ * Result of fetching all Facebook Pages via /me/accounts with
+ * limit=100 and following cursor pagination (paging.next) up to
+ * maxPages (default: 5 = 500 pages max). The list is NEVER
+ * presented as complete when it is not:
+ * - `truncated` — the cap was hit while Facebook still had another
+ *   page of results (paging.next present after the last fetch).
+ * - `partial` — a mid-list Graph request failed, so the pages after
+ *   the failure are missing. A first-page failure still throws, as
+ *   before; only later pages degrade to a partial list, and callers
+ *   must surface that (R14).
+ * Each Graph request is bounded by a 30s timeout, composed with the
+ * caller's signal when one is supplied via the optional trailing
+ * `options` argument. The trailing options argument is additive —
+ * existing callers are unaffected.
+ * The default cap is deliberately NOT raised: every extra Graph
+ * page adds up to another 30s of user-waiting latency to every
+ * caller (discover, import, OAuth callback, publish-now), and the
+ * warning above is the fix for accounts past 500 pages.
  */
 /**
- * Audit BG6 — paginated Graph fetch with truncation reporting.
+ * Unified paginated Graph fetch with truncation reporting (BG6 +
+ * R14 merged — one implementation, one result type; the previous
+ * parallel helpers are gone).
  *
  * The old helper silently returned a partial list in two cases:
  * the maxPages cap (5 × 100 = 500 pages) with more pages behind
@@ -245,21 +260,28 @@ function facebookGraphTimeoutSignal(callerSignal?: AbortSignal): AbortSignal {
  * failure threw). Callers then reported the partial list as
  * complete — a selected page could be "missing" with no signal,
  * and a reconnect could refresh only a subset of page tokens.
- * The meta variant reports exactly that: `truncated` is true
- * whenever the loop stopped while a next cursor still existed,
- * with the reason (cap hit vs later-page error). The plain
- * helper is kept for callers that already treat absence as a
- * loud failure (e.g. the worker BG5 fallback, where a page
- * missing from any list — truncated or not — means "do not
- * retry").
+ * This helper reports exactly that:
+ * - `truncated` is true whenever the loop stopped early, cap or
+ *   later-page error (the BG6 flag import/callback warnings use);
+ * - `truncationReason` says which one ('page_limit' vs
+ *   'page_error'), absent when the list is complete;
+ * - `partial` is true exactly on a later-page error (the R14
+ *   flag discover splits out for its distinct error warning).
+ * A capped list is `truncated` with reason 'page_limit' and
+ * `partial` false. NOTE: this `truncated` (either cause) is NOT
+ * the discover payload's `truncated` (cap only) — the discover
+ * route translates reason === 'page_limit' into the payload
+ * field, because the modal's capped-list text names the 500
+ * cap specifically.
  */
 export interface FetchAllFacebookPagesResult {
   pages: FacebookGraphPageItem[];
   truncated: boolean;
   truncationReason?: 'page_limit' | 'page_error';
+  partial: boolean;
 }
 
-export async function fetchAllFacebookPagesWithMeta(
+export async function fetchAllFacebookPages(
   accessToken: string,
   fields: string,
   maxPages = 5,
@@ -273,7 +295,6 @@ export async function fetchAllFacebookPagesWithMeta(
 
   let nextUrl: string | null = initialUrl.toString();
   let pagesFetched = 0;
-  let truncated = false;
   let truncationReason: FetchAllFacebookPagesResult['truncationReason'];
 
   while (nextUrl && pagesFetched < maxPages) {
@@ -291,8 +312,13 @@ export async function fetchAllFacebookPagesWithMeta(
         (err as any).status = res.status;
         throw err;
       }
-      truncated = true;
+      // Mid-list failure: keep what was fetched, but say so — a
+      // silent partial list would present itself as complete (R14).
+      // nextUrl is cleared so the cap check below cannot overwrite
+      // this 'page_error' reason with 'page_limit' when the failure
+      // lands on the last allowed page.
       truncationReason = 'page_error';
+      nextUrl = null;
       break;
     }
 
@@ -315,33 +341,18 @@ export async function fetchAllFacebookPagesWithMeta(
   }
 
   // Cap hit with pages still behind the cursor: truncated, not complete.
+  // (A list that ended naturally is complete, not truncated.)
   if (nextUrl && pagesFetched >= maxPages) {
-    truncated = true;
     truncationReason = 'page_limit';
   }
 
   return {
     pages: allPages,
-    truncated,
+    truncated: truncationReason !== undefined,
     ...(truncationReason ? { truncationReason } : {}),
+    partial: truncationReason === 'page_error',
   };
 }
-
-export async function fetchAllFacebookPages(
-  accessToken: string,
-  fields: string,
-  maxPages = 5,
-  fetchFn: typeof fetch = globalThis.fetch,
-  options?: { signal?: AbortSignal }
-): Promise<FacebookGraphPageItem[]> {
-  const result = await fetchAllFacebookPagesWithMeta(
-    accessToken,
-    fields,
-    maxPages,
-    fetchFn,
-    options
-  );
-  return result.pages;
 }
 
 
@@ -364,10 +375,25 @@ export const DiscoverPagesResponseSchema = z.object({
   accountDisplayName: z.string(),
   pages: z.array(DiscoveredPageSchema),
   total: z.number().int().nonnegative(),
-  // Audit BG6: true when Graph pagination was truncated (cap or
-  // later-page error) — the list is partial, never complete.
-  // Optional with a default so older clients keep parsing.
-  truncated: z.boolean().optional().default(false),
+  /**
+   * R14/BG6: the discover list is never silently partial.
+   * `truncated` here is the PAYLOAD field and means ONLY the
+   * 500-page Graph cap was hit with more pages waiting — it is
+   * NOT the helper's either-cause `truncated` (see
+   * FetchAllFacebookPagesResult); the discover route translates
+   * truncationReason === 'page_limit' into this field, because
+   * the modal's capped-list text names the 500 cap specifically.
+   * `partial` means a mid-list Graph request failed.
+   * `droppedCount` counts Graph nodes the id+name+(category|tasks)
+   * filter removed (see the discover route: the filter exists to
+   * exclude non-page nodes such as groups, but a real page with
+   * neither a category nor tasks would be dropped by it too, so
+   * the count is surfaced instead of silently dropping).
+   * Defaults keep old payloads (and old tests) parsing.
+   */
+  truncated: z.boolean().default(false),
+  partial: z.boolean().default(false),
+  droppedCount: z.number().int().nonnegative().default(0),
 });
 
 export type DiscoverPagesResponse = z.infer<typeof DiscoverPagesResponseSchema>;

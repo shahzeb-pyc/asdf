@@ -75,22 +75,33 @@ export default async function TenantPagesPage({
         ),
     },
     {
-      queryKey: tenant.accounts.listPage({
-        page: 1,
-        limit: 50,
-        search: '',
-        status: 'all',
-      }),
-      queryFn: () =>
-        serverApiFetch(
-          buildUrl(buildTenantApiPath(subdomain, '/accounts'), {
-            page: 1,
-            limit: 50,
-          }),
-          {
-            schema: ListFacebookAccountsResponseSchema,
-          }
-        ),
+      // R16: the shell reads the complete accounts set (listAll),
+      // so the prefetch pages through the accounts API the same
+      // way the shell's client query does — a page-1 prefetch
+      // would not hydrate the shell's key at all.
+      queryKey: tenant.accounts.listAll,
+      queryFn: async () => {
+        const all: unknown[] = [];
+        let page = 1;
+        let total = Number.POSITIVE_INFINITY;
+        while (all.length < total) {
+          const data = await serverApiFetch(
+            buildUrl(buildTenantApiPath(subdomain, '/accounts'), {
+              page,
+              limit: 50,
+            }),
+            {
+              schema: ListFacebookAccountsResponseSchema,
+            }
+          );
+          const batch = data.accounts as unknown[];
+          if (batch.length === 0) break;
+          all.push(...batch);
+          total = data.total;
+          page += 1;
+        }
+        return { accounts: all, total: all.length };
+      },
     },
     {
       queryKey: tenant.settings.byoc,

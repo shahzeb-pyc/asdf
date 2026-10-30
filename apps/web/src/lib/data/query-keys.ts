@@ -21,6 +21,14 @@ export const queryKeys = {
       accounts: {
         all: [...tenantRoot, 'accounts'] as const,
         list: [...tenantRoot, 'accounts', 'list'] as const,
+        /**
+         * R16: the Pages shell's filter options need EVERY account,
+         * not page 1 of the paginated accounts view. This key holds
+         * that complete set (fetched page by page under the hood);
+         * it stays under `list`, so accounts-list invalidation
+         * (e.g. disconnect) refreshes it too.
+         */
+        listAll: [...tenantRoot, 'accounts', 'list', 'all'] as const,
         /** Paginated list key: page + limit + filters, so each page caches separately. */
         listPage: (params: {
           page: number;
