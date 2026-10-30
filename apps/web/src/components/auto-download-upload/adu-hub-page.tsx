@@ -1,5 +1,6 @@
 'use client';
 
+// Vercel rebuild trigger (comment only, no behaviour change) — PR #43, new Vercel account.
 import * as React from 'react';
 import Link from 'next/link';
 import { PlusIcon } from 'lucide-react';
