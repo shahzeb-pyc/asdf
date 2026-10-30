@@ -49,6 +49,46 @@ describe('dedupeCreators', () => {
     expect(creators[0]).not.toHaveProperty('followers');
     expect(creators[0]).not.toHaveProperty('bio');
   });
+
+  it('passes the author avatar through, preferring avatar over variants', () => {
+    const creators = dedupeCreators([
+      {
+        author: {
+          unique_id: 'alice',
+          nickname: 'Alice',
+          avatar: 'https://cdn.example/alice.jpg',
+          avatar_thumb: 'https://cdn.example/alice-thumb.jpg',
+        },
+        title: 'First',
+      },
+      {
+        author: {
+          unique_id: 'bob',
+          nickname: 'Bob',
+          avatarThumb: 'https://cdn.example/bob-thumb.jpg',
+        },
+        title: 'Bob video',
+      },
+      {
+        author: {
+          unique_id: 'carol',
+          nickname: 'Carol',
+          avatarMedium: 'https://cdn.example/carol-medium.jpg',
+        },
+        title: 'Carol video',
+      },
+    ]);
+    expect(creators[0]?.avatarUrl).toBe('https://cdn.example/alice.jpg');
+    expect(creators[1]?.avatarUrl).toBe('https://cdn.example/bob-thumb.jpg');
+    expect(creators[2]?.avatarUrl).toBe('https://cdn.example/carol-medium.jpg');
+  });
+
+  it('keeps avatarUrl null when the author has no avatar field', () => {
+    const creators = dedupeCreators([
+      { author: { unique_id: 'alice', nickname: 'Alice' }, title: 'First' },
+    ]);
+    expect(creators[0]?.avatarUrl).toBeNull();
+  });
 });
 
 describe('fetchRegionList', () => {
@@ -114,6 +154,31 @@ describe('fetchTrendingCreators', () => {
     expect(fetchFn.mock.calls[0]?.[0]).toContain(
       '/feed/list?region=PK&count=20',
     );
+  });
+
+  it('passes the trending author avatar through to the creator', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(
+      jsonResponse({
+        code: 0,
+        data: {
+          items: [
+            {
+              author: {
+                unique_id: 'alice',
+                nickname: 'Alice',
+                avatar: 'https://cdn.example/alice.jpg',
+              },
+              title: 'A',
+            },
+          ],
+        },
+      }),
+    );
+    const result = await fetchTrendingCreators('pk', {
+      fetchFn,
+      apiKeys: ['key-1'],
+    });
+    expect(result.creators[0]?.avatarUrl).toBe('https://cdn.example/alice.jpg');
   });
 
   it('rejects a malformed region instead of calling the API', async () => {
@@ -205,6 +270,40 @@ describe('fetchSimilarCreators', () => {
     expect(fetchFn.mock.calls[1]?.[0]).toContain(
       '/user/following?user_id=107955&count=200',
     );
+  });
+
+  it('passes following-entry avatar variants through to the creator', async () => {
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          code: 0,
+          data: { user: { id: '107955', unique_id: 'seed', nickname: 'Seed' } },
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          code: 0,
+          data: {
+            followings: [
+              {
+                unique_id: 'alice',
+                nickname: 'Alice',
+                avatarMedium: 'https://cdn.example/alice-medium.jpg',
+              },
+              { unique_id: 'bob', nickname: 'Bob' },
+            ],
+          },
+        }),
+      );
+    const result = await fetchSimilarCreators('@seed', {
+      fetchFn,
+      apiKeys: ['key-1'],
+    });
+    expect(result.creators[0]?.avatarUrl).toBe(
+      'https://cdn.example/alice-medium.jpg',
+    );
+    expect(result.creators[1]?.avatarUrl).toBeNull();
   });
 
   it('tries the next key on an invalid key, then succeeds', async () => {

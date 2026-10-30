@@ -117,6 +117,10 @@ const RawAuthorSchema = z
     unique_id: NullableString,
     nickname: NullableString,
     avatar: NullableString,
+    avatar_thumb: NullableString,
+    avatarThumb: NullableString,
+    avatarMedium: NullableString,
+    avatarLarger: NullableString,
   })
   .passthrough();
 
@@ -139,6 +143,22 @@ function asStringArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
+/**
+ * Avatar URL from a record, accepting the field variants the API
+ * uses across endpoints. Preference order: avatar, avatar_thumb,
+ * avatarThumb, avatarMedium, avatarLarger.
+ */
+function pickAvatar(record: Record<string, unknown> | null): string | null {
+  if (!record) return null;
+  return (
+    asString(record.avatar) ??
+    asString(record.avatar_thumb) ??
+    asString(record.avatarThumb) ??
+    asString(record.avatarMedium) ??
+    asString(record.avatarLarger)
+  );
+}
+
 function creatorFromAuthor(
   author: Record<string, unknown> | null,
   video: Record<string, unknown> | null,
@@ -149,7 +169,7 @@ function creatorFromAuthor(
     asString(video?.unique_id);
   if (!handle) return null;
   const displayName = asString(author?.nickname) ?? asString(video?.nickname);
-  const avatarUrl = asString(author?.avatar) ?? asString(video?.avatar);
+  const avatarUrl = pickAvatar(author) ?? pickAvatar(video);
   const title =
     asString(video?.title) ?? asString(video?.content_desc) ?? null;
   const cover = asString(video?.cover) ?? null;
@@ -186,7 +206,7 @@ export function creatorFromFollowingEntry(
   return {
     handle,
     displayName: asString(entry.nickname),
-    avatarUrl: asString(entry.avatar),
+    avatarUrl: pickAvatar(entry),
     latestVideoTitle: null,
     latestVideoCover: null,
     profileUrl: `https://www.tiktok.com/@${handle}`,
