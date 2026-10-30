@@ -200,4 +200,159 @@ describe('Instagram accounts API', () => {
       expect(res.status).toBe(401);
     });
   });
+
+  describe('GET Supabase path — range paging (P1-1)', () => {
+    type Row = Record<string, unknown>;
+    const ranges: Array<{ table: string; from: number; to: number }> = [];
+    class FakeQuery {
+      private filters: Array<[string, unknown]> = [];
+      private from = 0;
+      private to: number | null = null;
+      constructor(
+        private rows: Row[],
+        private table: string,
+        private destinationsError?: string
+      ) {}
+      select(): this {
+        return this;
+      }
+      eq(col: string, val: unknown): this {
+        this.filters.push([col, val]);
+        return this;
+      }
+      order(): this {
+        return this;
+      }
+      range(from: number, to: number): this {
+        this.from = from;
+        this.to = to;
+        ranges.push({ table: this.table, from, to });
+        return this;
+      }
+      async maybeSingle(): Promise<{ data: Row | null; error: null }> {
+        const found = this.apply();
+        return { data: found[0] ?? null, error: null };
+      }
+      then(resolve: (v: { data: Row[] | null; error: { message: string } | null }) => void): void {
+        if (this.table === 'destinations' && this.destinationsError) {
+          resolve({ data: null, error: { message: this.destinationsError } });
+          return;
+        }
+        const all = this.apply();
+        const sliced = this.to === null ? all : all.slice(this.from, this.to + 1);
+        resolve({ data: sliced, error: null });
+      }
+      private apply(): Row[] {
+        return this.rows.filter((row) =>
+          this.filters.every(([col, val]) => row[col] === val)
+        );
+      }
+    }
+    class FakeSupabase {
+      constructor(
+        private tables: Record<string, Row[]>,
+        private destinationsError?: string
+      ) {}
+      from(table: string): FakeQuery {
+        return new FakeQuery(this.tables[table] ?? [], table, this.destinationsError);
+      }
+    }
+
+    function uuidFor(i: number): string {
+      return `22222222-2222-4222-8222-${i.toString(16).padStart(12, '0')}`;
+    }
+    function accountRow(id: string, createdAt: string): Row {
+      return {
+        id,
+        external_account_id: `ig-${id.slice(0, 8)}`,
+        display_name: `Account ${id.slice(0, 8)}`,
+        avatar_url: null,
+        status: 'active',
+        token_expires_at: '2027-01-01T00:00:00Z',
+        created_at: createdAt,
+        updated_at: createdAt,
+        workspace_id: 'ws_123',
+        platform: 'instagram',
+      };
+    }
+    function supabaseWith(accountRows: Row[], destinations: Row[], destinationsError?: string) {
+      return new FakeSupabase(
+        {
+          workspaces: [{ id: 'ws_123', subdomain: 'acme', owner_id: USER_ID }],
+          social_accounts: accountRows,
+          destinations,
+        },
+        destinationsError
+      );
+    }
+    function listRequest() {
+      return new NextRequest(
+        'http://localhost:3000/api/tenant/acme/instagram/accounts',
+        { headers: { cookie: validSessionCookie } }
+      );
+    }
+
+    it('lists accounts with destinations through the range-paged Supabase path', async () => {
+      ranges.length = 0;
+      const fake = supabaseWith(
+        [accountRow(ACCOUNT_ID, '2026-10-12T00:00:00Z')],
+        [
+          {
+            account_id: ACCOUNT_ID,
+            name: 'Sunset Bakery',
+            handle: 'sunset.bakery',
+            created_at: '2026-10-12T00:00:00Z',
+            workspace_id: 'ws_123',
+            platform: 'instagram',
+          },
+        ]
+      );
+      const res = await handleListInstagramAccounts(listRequest(), 'acme', fake as never);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.total).toBe(1);
+      expect(json.accounts[0].destinationHandle).toBe('sunset.bakery');
+      // Both selects went through .range().
+      expect(ranges.some((r) => r.table === 'social_accounts')).toBe(true);
+      expect(ranges.some((r) => r.table === 'destinations')).toBe(true);
+    });
+
+    it('fetches past the first 1,000-row page instead of truncating', async () => {
+      ranges.length = 0;
+      const rows = Array.from({ length: 1001 }, (_, i) =>
+        accountRow(uuidFor(i), '2026-10-12T00:00:00Z')
+      );
+      const fake = supabaseWith(rows, []);
+      const res = await handleListInstagramAccounts(listRequest(), 'acme', fake as never);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.total).toBe(1001);
+      const accountRanges = ranges.filter((r) => r.table === 'social_accounts');
+      expect(accountRanges).toHaveLength(2);
+      expect(accountRanges[1]).toEqual({ table: 'social_accounts', from: 1000, to: 1999 });
+    });
+
+    it('fails loud past 10 full pages instead of returning wrong totals', async () => {
+      const rows = Array.from({ length: 10001 }, (_, i) =>
+        accountRow(uuidFor(i), '2026-10-12T00:00:00Z')
+      );
+      const fake = supabaseWith(rows, []);
+      const res = await handleListInstagramAccounts(listRequest(), 'acme', fake as never);
+      expect(res.status).toBe(500);
+      expect((await res.json()).error).toBe(
+        'Too many accounts to list reliably; please contact support.'
+      );
+    });
+
+    it('surfaces a destinations error instead of rendering accounts without destinations', async () => {
+      const fake = supabaseWith(
+        [accountRow(ACCOUNT_ID, '2026-10-12T00:00:00Z')],
+        [],
+        'destinations boom'
+      );
+      const res = await handleListInstagramAccounts(listRequest(), 'acme', fake as never);
+      expect(res.status).toBe(500);
+      expect((await res.json()).error).toBe('destinations boom');
+    });
+  });
 });

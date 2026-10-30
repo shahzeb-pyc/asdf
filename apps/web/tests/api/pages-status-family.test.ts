@@ -249,6 +249,165 @@ describe('Pages status family', () => {
     });
   });
 
+  describe('timezone PATCH on a disconnected page (P1-5)', () => {
+    function capturingSqlMock(
+      gateRow: Record<string, unknown> | null,
+      detailRow: Record<string, unknown> | null
+    ) {
+      const capturedSql: string[] = [];
+      const db = {
+        query: vi.fn().mockImplementation((sql: string) => {
+          capturedSql.push(sql);
+          if (sql.includes('FROM workspaces')) {
+            return Promise.resolve([{ id: 'ws_123' }]);
+          }
+          if (sql.includes('SELECT status, metadata, updated_at')) {
+            return Promise.resolve(gateRow ? [gateRow] : []);
+          }
+          if (sql.includes('UPDATE destinations')) {
+            return Promise.resolve([]);
+          }
+          if (sql.includes('FROM destinations')) {
+            return Promise.resolve(detailRow ? [detailRow] : []);
+          }
+          return Promise.resolve([]);
+        }),
+      } as unknown as DatabaseClient;
+      return { db, capturedSql };
+    }
+
+    function supabaseMockP15(readRow: Record<string, unknown> | null) {
+      const workspacesChain: Record<string, unknown> = {
+        eq: vi.fn(() => workspacesChain),
+        maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'ws_123' }, error: null }),
+      };
+      const readChain: Record<string, unknown> = {
+        eq: vi.fn(() => readChain),
+        maybeSingle: vi.fn().mockResolvedValue({ data: readRow, error: null }),
+      };
+      const detailChain: Record<string, unknown> = {
+        eq: vi.fn(() => detailChain),
+        maybeSingle: vi.fn().mockResolvedValue({
+          data: readRow
+            ? {
+                id: pageId,
+                account_id: accountId,
+                external_destination_id: 'fb_page_999',
+                name: 'Acme Brand',
+                avatar_url: null,
+                timezone: 'UTC',
+                metadata: { category: 'Brand', ...(readRow.metadata as Record<string, unknown>) },
+                status: readRow.status,
+                created_at: new Date('2026-10-01T12:00:00Z').toISOString(),
+                updated_at: new Date('2026-10-01T12:00:00Z').toISOString(),
+                social_accounts: { display_name: 'Alex Acme Account', avatar_url: null },
+              }
+            : null,
+          error: null,
+        }),
+      };
+      const updateBuilder: Record<string, unknown> = {
+        eq: vi.fn(() => updateBuilder),
+        then: (resolve: (v: unknown) => unknown) =>
+          Promise.resolve({ data: null, error: null }).then(resolve),
+      };
+      const updateSpy = vi.fn(() => updateBuilder);
+      return {
+        updateSpy,
+        mock: {
+          from: vi.fn((table: string) => {
+            if (table === 'workspaces') return { select: vi.fn(() => workspacesChain) };
+            if (table === 'destinations') {
+              return {
+                select: vi.fn((fields: string) =>
+                  fields.includes('social_accounts') ? detailChain : readChain
+                ),
+                update: updateSpy,
+              };
+            }
+            return {};
+          }),
+        },
+      };
+    }
+
+    it('rejects a timezone-only PATCH on a plain disconnected page via SQL (409, update never runs)', async () => {
+      const { db, capturedSql } = capturingSqlMock(
+        { status: 'disconnected', metadata: {}, updated_at: new Date().toISOString() },
+        wireDetailRow()
+      );
+      const res = await handleUpdatePage(
+        patchRequest({ timezone: 'Asia/Karachi' }),
+        'acme',
+        pageId,
+        db
+      );
+      expect(res.status).toBe(409);
+      expect((await res.json()).error).toBe('PAGE_NOT_EDITABLE');
+      expect(capturedSql.some((sql) => sql.includes('UPDATE destinations'))).toBe(false);
+    });
+
+    it('still 404s a timezone-only PATCH on a missing page via SQL', async () => {
+      const { db } = capturingSqlMock(null, null);
+      const res = await handleUpdatePage(
+        patchRequest({ timezone: 'Asia/Karachi' }),
+        'acme',
+        pageId,
+        db
+      );
+      expect(res.status).toBe(404);
+    });
+
+    it('applies a timezone-only PATCH on a visible page via SQL (200)', async () => {
+      const { db } = capturingSqlMock(
+        { status: 'active', metadata: {}, updated_at: new Date().toISOString() },
+        wireDetailRow()
+      );
+      const res = await handleUpdatePage(
+        patchRequest({ timezone: 'Asia/Karachi' }),
+        'acme',
+        pageId,
+        db
+      );
+      expect(res.status).toBe(200);
+      expect((await res.json()).success).toBe(true);
+    });
+
+    it('rejects a timezone-only PATCH on a plain disconnected page via Supabase (409, update never runs)', async () => {
+      const { mock, updateSpy } = supabaseMockP15({
+        status: 'disconnected',
+        metadata: {},
+        updated_at: new Date().toISOString(),
+      });
+      const res = await handleUpdatePage(
+        patchRequest({ timezone: 'Asia/Karachi' }),
+        'acme',
+        pageId,
+        mock as never
+      );
+      expect(res.status).toBe(409);
+      expect((await res.json()).error).toBe('PAGE_NOT_EDITABLE');
+      expect(updateSpy).not.toHaveBeenCalled();
+    });
+
+    it('applies a timezone-only PATCH on a visible page via Supabase (200)', async () => {
+      const { mock, updateSpy } = supabaseMockP15({
+        status: 'active',
+        metadata: {},
+        updated_at: new Date().toISOString(),
+      });
+      const res = await handleUpdatePage(
+        patchRequest({ timezone: 'Asia/Karachi' }),
+        'acme',
+        pageId,
+        mock as never
+      );
+      expect(res.status).toBe(200);
+      expect((await res.json()).success).toBe(true);
+      expect(updateSpy).toHaveBeenCalled();
+    });
+  });
+
   describe('dedicated detail rate-limit cooldown flip (5A)', () => {
     it('reads a rate-limited page past cooldown as Active via SQL', async () => {
       const past = new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString();

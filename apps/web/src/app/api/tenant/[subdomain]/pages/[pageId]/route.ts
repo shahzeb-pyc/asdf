@@ -471,7 +471,11 @@ export async function handleUpdatePage(
     // writing. A missing row skips the gate and falls through to
     // the existing 404 path below; a present row that may not
     // change status is rejected with 409, never silently no-op'd.
-    if (parsed.data.status) {
+    // The same read covers timezone-only PATCHes: a plain
+    // disconnected page would otherwise match zero rows in the
+    // UPDATE's visibility WHERE clause and surface as a confusing
+    // 404 for a page that exists, so it is rejected with 409 here.
+    if (parsed.data.status || parsed.data.timezone) {
       const currentRows = (await dbClient.query(
         `SELECT status, metadata, updated_at
          FROM destinations
@@ -501,31 +505,47 @@ export async function handleUpdatePage(
                 return parsed;
               })()
             : currentRow.metadata;
-        const currentWire = unifiedDestinationStatusToWire(
-          currentRow.status,
-          currentMetadata
-        );
-        const effectiveCurrent =
-          currentWire === 'fb_rate_limited'
-            ? evaluatePageHealth({
-                status: currentWire,
-                updatedAt: currentRow.updated_at,
-                rateLimitedAt:
-                  typeof currentMetadata?.rate_limited_at === 'string'
-                    ? currentMetadata.rate_limited_at
-                    : null,
-              })
-            : currentWire;
-        if (!statusTransitionAllowed(effectiveCurrent, parsed.data.status)) {
-          return NextResponse.json(
-            {
-              error: 'PAGE_STATUS_NOT_ALLOWED',
-              message:
-                STATUS_TOGGLE_BLOCKED_MESSAGES[effectiveCurrent] ??
-                'This Page cannot change automation right now.',
-            },
-            { status: 409 }
+        if (parsed.data.status) {
+          const currentWire = unifiedDestinationStatusToWire(
+            currentRow.status,
+            currentMetadata
           );
+          const effectiveCurrent =
+            currentWire === 'fb_rate_limited'
+              ? evaluatePageHealth({
+                  status: currentWire,
+                  updatedAt: currentRow.updated_at,
+                  rateLimitedAt:
+                    typeof currentMetadata?.rate_limited_at === 'string'
+                      ? currentMetadata.rate_limited_at
+                      : null,
+                })
+              : currentWire;
+          if (!statusTransitionAllowed(effectiveCurrent, parsed.data.status)) {
+            return NextResponse.json(
+              {
+                error: 'PAGE_STATUS_NOT_ALLOWED',
+                message:
+                  STATUS_TOGGLE_BLOCKED_MESSAGES[effectiveCurrent] ??
+                  'This Page cannot change automation right now.',
+              },
+              { status: 409 }
+            );
+          }
+        } else {
+          const visible =
+            currentRow.status !== 'disconnected' ||
+            currentMetadata?.[PAUSED_MARKER_KEY] === PAUSED_MARKER_VALUE;
+          if (!visible) {
+            return NextResponse.json(
+              {
+                error: 'PAGE_NOT_EDITABLE',
+                message:
+                  'Cannot change settings on a disconnected Page. Add it again first.',
+              },
+              { status: 409 }
+            );
+          }
         }
       }
     }
@@ -623,6 +643,23 @@ export async function handleUpdatePage(
         current !== null &&
         (current.status !== 'disconnected' ||
           currentMetadata[PAUSED_MARKER_KEY] === PAUSED_MARKER_VALUE);
+
+      // P1-5: a present-but-plain-disconnected page must not fall
+      // through to a success response with its settings unchanged
+      // (the status gate above only runs when a status is in the
+      // body, so a timezone-only PATCH would otherwise skip the
+      // update and report success). A missing row still falls
+      // through to the 404 path below.
+      if (current !== null && !visible) {
+        return NextResponse.json(
+          {
+            error: 'PAGE_NOT_EDITABLE',
+            message:
+              'Cannot change settings on a disconnected Page. Add it again first.',
+          },
+          { status: 409 }
+        );
+      }
 
       if (visible) {
         const updates: {
