@@ -84,7 +84,6 @@ export function resolveAllowedMimeType(
     }
   } catch (_e) {
     // Ignore URL parse error and fall through to mediaTypeHint
-    void _e;
   }
 
   if (
@@ -167,7 +166,6 @@ export function deriveFileNameFromUrl(urlStr: string, index: number): string {
     }
   } catch (_e) {
     // Use fallback name below
-    void _e;
   }
   return index === 0 ? 'cloud_media' : `cloud_media_${index + 1}`;
 }

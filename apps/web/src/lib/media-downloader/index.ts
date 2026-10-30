@@ -152,7 +152,6 @@ export async function resolveAndUploadMediaFromUrl(
           }
         } catch (_e) {
           // ignore cleanup errors
-          void _e;
         }
       })
     );
