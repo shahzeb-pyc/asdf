@@ -176,12 +176,15 @@ async function executeImportPages(
     reportError(error, { source: 'add-page-import' });
     // A schedule failure carries its own server signal and message:
     // the timezone and times are kept for retry, so the user must
-    // hear that, not the generic import failure. Anything else keeps
-    // the generic import message.
+    // hear that, not the generic import failure. A partial import
+    // (BG8) likewise names the pages that were not added, so its
+    // server message is passed through verbatim. Anything else
+    // keeps the generic import message.
     if (
       isApiError(error) &&
       error.kind === 'http' &&
-      error.code === 'SCHEDULE_FAILED'
+      (error.code === 'SCHEDULE_FAILED' ||
+        error.code === 'PARTIAL_IMPORT')
     ) {
       return {
         success: false as const,

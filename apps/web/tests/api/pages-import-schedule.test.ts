@@ -88,7 +88,11 @@ describe('Import with timezone + posting times', () => {
     failTimezoneFor?: string;
     missingTimezoneRow?: boolean;
     preExistingFbIds?: string[];
-    preExisting?: Array<{ fbPageId: string; status: string }>;
+    preExisting?: Array<{
+      fbPageId: string;
+      status: string;
+      metadata?: Record<string, unknown>;
+    }>;
     oldTimezone?: string;
     oldSlots?: Array<{
       time_of_day: string;
@@ -101,7 +105,11 @@ describe('Import with timezone + posting times', () => {
     const slotInserts: unknown[][] = [];
     const deleteQueries: string[] = [];
     const deleteCalls: Array<[string, unknown[]]> = [];
-    const preExistingEntries: Array<{ fbPageId: string; status: string }> = [
+    const preExistingEntries: Array<{
+      fbPageId: string;
+      status: string;
+      metadata?: Record<string, unknown>;
+    }> = [
       ...(options?.preExistingFbIds ?? []).map((fbPageId) => ({
         fbPageId,
         status: 'active',
@@ -127,6 +135,7 @@ describe('Import with timezone + posting times', () => {
             preExistingEntries.map((entry) => ({
               external_destination_id: entry.fbPageId,
               status: entry.status,
+              metadata: entry.metadata ?? null,
             }))
           );
         }
@@ -540,7 +549,7 @@ describe('Import with timezone + posting times', () => {
     ]);
   });
 
-  it('when Graph returns fewer pages than selected, a scheduled import writes nothing', async () => {
+  it('when Graph returns fewer pages than selected, a scheduled import writes nothing and names the missing page (BG8)', async () => {
     global.fetch = vi.fn().mockResolvedValueOnce(
       new Response(
         JSON.stringify({
@@ -565,7 +574,84 @@ describe('Import with timezone + posting times', () => {
       'acme',
       mockDb
     );
-    expect(res.status).toBe(500);
+    // BG8: loud, not silent — 422 naming the missing page, and
+    // still nothing written.
+    expect(res.status).toBe(422);
+    const json = await res.json();
+    expect(json.code).toBe('PARTIAL_IMPORT');
+    expect(json.error).toContain('page_1002');
+    expect(json.skipped).toEqual([{ fbPageId: 'page_1002' }]);
+    const destinationInserts = (
+      mockDb.query as unknown as { mock: { calls: Array<[string, unknown[]]> } }
+    ).mock.calls.filter(([sql]) => sql.includes('INSERT INTO destinations'));
+    expect(destinationInserts).toHaveLength(0);
+  });
+
+  it('re-importing a paused page refreshes its token but leaves it paused (BG8)', async () => {
+    mockGraphPages();
+    const { mockDb } = makeMockDb({
+      preExisting: [
+        {
+          fbPageId: 'page_1001',
+          status: 'disconnected',
+          metadata: { fb_status: 'paused' },
+        },
+      ],
+    });
+    const res = await handleImportPages(
+      importRequest({
+        accountId,
+        selectedPageIds: ['page_1001'],
+      }),
+      'acme',
+      mockDb
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.importedCount).toBe(1);
+    const upserts = (
+      mockDb.query as unknown as { mock: { calls: Array<[string, unknown[]]> } }
+    ).mock.calls.filter(([sql]) => sql.includes('INSERT INTO destinations'));
+    expect(upserts).toHaveLength(1);
+    // $10 = paused: the upsert keeps status 'disconnected' and
+    // re-adds the fb_status marker instead of activating.
+    expect(upserts[0][1][9]).toBe(true);
+    expect(upserts[0][0]).toContain("WHEN $10 THEN 'disconnected'");
+    expect(upserts[0][0]).toContain("jsonb_build_object('fb_status', 'paused')");
+  });
+
+  it('when Graph returns fewer pages than selected, a no-schedule import also fails loud instead of silently succeeding (BG8)', async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: 'page_1001',
+              name: 'Brand Flagship Page',
+              category: 'Retail Company',
+              followers_count: 52000,
+              tasks: ['CREATE_CONTENT'],
+              access_token: 'page_token_1001',
+              picture: { data: { url: null } },
+            },
+          ],
+        }),
+        { status: 200 }
+      )
+    );
+    const { mockDb } = makeMockDb();
+    const res = await handleImportPages(
+      importRequest({
+        accountId,
+        selectedPageIds: ['page_1001', 'page_1002'],
+      }),
+      'acme',
+      mockDb
+    );
+    expect(res.status).toBe(422);
+    const json = await res.json();
+    expect(json.code).toBe('PARTIAL_IMPORT');
+    expect(json.error).toContain('page_1002');
     const destinationInserts = (
       mockDb.query as unknown as { mock: { calls: Array<[string, unknown[]]> } }
     ).mock.calls.filter(([sql]) => sql.includes('INSERT INTO destinations'));
