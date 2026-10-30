@@ -218,17 +218,26 @@ export function PageTabInsights({ page, subdomain }: Readonly<PageTabInsightsPro
   const [data, setData] = React.useState<PageInsightsResponse | null>(null);
   const [status, setStatus] = React.useState<'loading' | 'ready' | 'error'>('loading');
   const [syncing, setSyncing] = React.useState(false);
+  // R9: a forced sync (Sync / Retry) that fails while data for the
+  // CURRENT range is already on screen must not hide that data —
+  // the banner promises it stays available for one hour. `data`
+  // in the catch closure would be stale, so a ref tracks it.
+  const [syncError, setSyncError] = React.useState(false);
+  const dataRef = React.useRef<PageInsightsResponse | null>(null);
 
   const load = React.useCallback(
     async (targetRange: PageInsightsRange, force: boolean): Promise<void> => {
       if (!force) {
         const cached = readCachedInsights(page.id, targetRange);
         if (cached) {
+          dataRef.current = cached;
           setData(cached);
           setStatus('ready');
+          setSyncError(false);
           return;
         }
       }
+      setSyncError(false);
       if (force) setSyncing(true);
       else setStatus('loading');
       try {
@@ -240,10 +249,21 @@ export function PageTabInsights({ page, subdomain }: Readonly<PageTabInsightsPro
         const checked = PageInsightsResponseSchema.safeParse(json);
         if (!checked.success) throw new Error('Insights response failed validation');
         writeCachedInsights(checked.data);
+        dataRef.current = checked.data;
         setData(checked.data);
         setStatus('ready');
       } catch {
-        setStatus('error');
+        // Forced sync with current-range data on screen: keep the
+        // data (status stays 'ready') and show the sync-error banner
+        // below. Any other failure — initial load, or a range
+        // change whose old data belongs to a different range — is
+        // the plain error state with no data shown.
+        if (force && dataRef.current !== null) {
+          setSyncError(true);
+          setStatus('ready');
+        } else {
+          setStatus('error');
+        }
       } finally {
         setSyncing(false);
       }
@@ -346,6 +366,19 @@ export function PageTabInsights({ page, subdomain }: Readonly<PageTabInsightsPro
           variant="critical"
           title="Couldn't load insights"
           description="Facebook didn't return fresh numbers. Your last loaded data, if any, is still in this browser for one hour."
+          action={
+            <Button variant="outline" size="sm" onClick={handleSync} disabled={syncing}>
+              {syncing ? 'Retrying…' : 'Retry'}
+            </Button>
+          }
+        />
+      )}
+
+      {syncError && data && (
+        <Banner
+          variant="critical"
+          title="Couldn't load insights"
+          description="Facebook didn't return fresh numbers. Your last loaded data is still in this browser for one hour."
           action={
             <Button variant="outline" size="sm" onClick={handleSync} disabled={syncing}>
               {syncing ? 'Retrying…' : 'Retry'}

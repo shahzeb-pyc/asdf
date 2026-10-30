@@ -165,4 +165,17 @@ describe('PageTabPostingTimes (rebuilt, spec 134)', () => {
     expect(screen.getByTestId('calendar-loading')).toBeInTheDocument();
     expect(screen.queryByTestId('slots-grid')).not.toBeInTheDocument();
   });
+
+  it('shows an error state with Retry, not the first-use empty state, when slots fail (R4)', async () => {
+    const user = userEvent.setup();
+    const onRetrySlots = vi.fn();
+    renderTab({ slots: [], slotsError: true, onRetrySlots });
+    // An empty slots array on failure must not read as "no posting
+    // times": no empty state, no slot grid, error banner instead.
+    expect(screen.queryByTestId('calendar-empty-state')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('slots-grid')).not.toBeInTheDocument();
+    expect(screen.getByText("Couldn't load posting times")).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(onRetrySlots).toHaveBeenCalledTimes(1);
+  });
 });

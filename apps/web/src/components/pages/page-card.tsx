@@ -68,6 +68,11 @@ export interface FacebookPageItem {
         failed: number;
       }
     | undefined;
+  /**
+   * True when the Pages list counts query failed for this card's
+   * slice (R6): the card shows dashes, not zeros, for the counts.
+   */
+  queueCountsError?: boolean | undefined;
   createdAt: string;
   updatedAt?: string | undefined;
 }
@@ -412,7 +417,9 @@ export function PageCard({
           label below it. Numbers use the design-system signal
           colours — queued gold, posted green, failed red — labels
           stay muted. Zeros are always shown; a missing queueCounts
-          (other consumers) renders zeros, never a hidden row. */}
+          (other consumers) renders zeros, never a hidden row. On a
+          counts failure (queueCountsError, R6) the numbers are
+          dashes with an "unavailable" note — never fake zeros. */}
       <div aria-hidden className="pt-3">
         <div className="border-t border-line" />
       </div>
@@ -428,7 +435,9 @@ export function PageCard({
             data-testid="page-queued-count"
             className="text-xxl font-bold tabular-nums text-signal-queued"
           >
-            {(page.queueCounts?.queued ?? 0).toLocaleString('en-US')}
+            {page.queueCountsError
+              ? '—'
+              : (page.queueCounts?.queued ?? 0).toLocaleString('en-US')}
           </span>
           <span className="mt-1 text-metadata text-ink-sub">Queued</span>
         </span>
@@ -440,7 +449,9 @@ export function PageCard({
             data-testid="page-posted-count"
             className="text-xxl font-bold tabular-nums text-signal-operational"
           >
-            {(page.queueCounts?.posted ?? 0).toLocaleString('en-US')}
+            {page.queueCountsError
+              ? '—'
+              : (page.queueCounts?.posted ?? 0).toLocaleString('en-US')}
           </span>
           <span className="mt-1 text-metadata text-ink-sub">Posted</span>
         </span>
@@ -452,11 +463,21 @@ export function PageCard({
             data-testid="page-failed-count"
             className="text-xxl font-bold tabular-nums text-signal-critical"
           >
-            {(page.queueCounts?.failed ?? 0).toLocaleString('en-US')}
+            {page.queueCountsError
+              ? '—'
+              : (page.queueCounts?.failed ?? 0).toLocaleString('en-US')}
           </span>
           <span className="mt-1 text-metadata text-ink-sub">Failed</span>
         </span>
       </div>
+      {page.queueCountsError ? (
+        <p
+          data-testid="page-queue-counts-error"
+          className="m-0 mt-2 text-center text-metadata text-ink-sub"
+        >
+          Queue counts unavailable
+        </p>
+      ) : null}
 
       {/* Needs-attention mark (no dot — clock icon + text, like the
           status marks): queued posts wait for a posting time that

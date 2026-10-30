@@ -107,6 +107,28 @@ describe('rebuilt insights panel (local 1-hour cache + Sync)', () => {
     await waitFor(() => expect(screen.getByText('4,242')).toBeInTheDocument());
   });
 
+  it('keeps cached numbers on screen, with the error banner, when Sync fails (R9)', async () => {
+    localStorage.setItem(
+      insightsCacheKey('page-1', '28d'),
+      JSON.stringify(livePayload(new Date().toISOString(), 500)),
+    );
+    const fetchMock = vi.fn(async (): Promise<{
+      ok: boolean;
+      status: number;
+      json: () => Promise<unknown>;
+    }> => ({ ok: false, status: 502, json: async () => ({}) }));
+    vi.stubGlobal('fetch', fetchMock);
+    renderPanel();
+    expect(await screen.findByTestId('insights-kpi-grid')).toBeInTheDocument();
+    expect(screen.getByText('500')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('insights-sync-btn'));
+    // The banner appears, but the cached KPI grid must NOT vanish:
+    // the banner itself promises the last data stays for one hour.
+    expect(await screen.findByText(/Couldn't load insights/)).toBeInTheDocument();
+    expect(screen.getByTestId('insights-kpi-grid')).toBeInTheDocument();
+    expect(screen.getByText('500')).toBeInTheDocument();
+  });
+
   it('empty state says honestly that no data came back, with Sync as its only action and no link or duplicate Insights heading', async () => {
     localStorage.setItem(
       insightsCacheKey('page-1', '28d'),

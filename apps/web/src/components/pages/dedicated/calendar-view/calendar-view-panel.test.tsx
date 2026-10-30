@@ -139,6 +139,7 @@ describe('CalendarViewPanel', () => {
         failedCount: seed.filter((row) => row.status === 'failed').length,
         cancelledCount: 0,
         skippedCount: 0,
+        publishingCount: seed.filter((row) => row.status === 'publishing').length,
       };
     });
     apiPatch.mockImplementation(async (_path: string, body: unknown) => ({
@@ -412,5 +413,29 @@ describe('CalendarViewPanel', () => {
     expect(screen.getByTestId('calendar-month-label').textContent).toBe('January 2027');
     await user.click(screen.getByTestId('calendar-prev-btn'));
     expect(screen.getByTestId('calendar-month-label').textContent).toBe('December 2026');
+  });
+
+  it('keeps the All count identical under any filter while a post is publishing (R11)', async () => {
+    const user = userEvent.setup();
+    seed.push(
+      item({
+        id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+        caption: 'Publishing post',
+        status: 'publishing',
+        updatedAt: '2026-10-28T10:00:00.000Z',
+      }),
+    );
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId('calendar-filter-all')).toBeTruthy(),
+    );
+    // 2 queued + 1 publishing + 1 failed + 1 published = 5, under
+    // every filter — identical rule to the queue panel.
+    expect(screen.getByTestId('calendar-filter-all')).toHaveTextContent('All (5)');
+    expect(screen.getByTestId('calendar-filter-publishing')).toHaveTextContent('Publishing (1)');
+    await user.click(screen.getByTestId('calendar-filter-queued'));
+    await waitFor(() =>
+      expect(screen.getByTestId('calendar-filter-all')).toHaveTextContent('All (5)'),
+    );
   });
 });

@@ -45,6 +45,7 @@ import {
   type QueueItem,
 } from '@/lib/api/schemas/queue';
 import { queryKeys } from '@/lib/data/query-keys';
+import { Banner } from '@/components/shared/ui/banner';
 import { Button } from '@/components/shared/ui/button';
 import { Skeleton } from '@/components/shared/ui/skeleton';
 import { ListPagination } from '@/components/shared/ui/list-pagination';
@@ -60,14 +61,23 @@ import { QueueDeleteConfirm } from './queue-delete-confirm';
 const AckSchema = z.object({}).passthrough();
 
 const PAGE_LIMIT = 30;
-/** The list API caps limit at 100: estimates + reorder order cover at most this many queued posts. */
+/**
+ * R10: estimates are fetched in 100-item pages, up to 100 pages
+ * (10,000 queued posts) — the same cap shape as the shell's
+ * dashboard fetch. Past that cap the capped note below says so;
+ * rows are never left pill-less silently. Reorder stays limited
+ * to the first 100 queued posts (see orderTruncated), as before.
+ */
 const ESTIMATES_LIMIT = 100;
+const ESTIMATES_MAX_PAGES = 100;
+const ESTIMATES_MAX_TOTAL = ESTIMATES_LIMIT * ESTIMATES_MAX_PAGES;
 
-type QueueFilter = 'all' | 'queued' | 'failed' | 'published';
+type QueueFilter = 'all' | 'queued' | 'publishing' | 'failed' | 'published';
 
 const FILTERS: Array<{ id: QueueFilter; label: string }> = [
   { id: 'all', label: 'All' },
   { id: 'queued', label: 'Queued' },
+  { id: 'publishing', label: 'Publishing' },
   { id: 'failed', label: 'Failed' },
   { id: 'published', label: 'Published' },
 ];
@@ -130,6 +140,15 @@ export interface QueuePanelProps {
   pageStatus?: FacebookPageStatus | undefined;
   /** Active + paused posting times, from the shell's slots cache. */
   slots: PageSlotSummary[];
+  /**
+   * R4: the shell's slots fetch failed. Unmatched flags derive
+   * from the slots list, so with a failed fetch they must be
+   * suppressed — an empty slots list must not flag every queued
+   * row as unmatched — and a slots-error banner shows instead.
+   */
+  slotsError?: boolean;
+  /** Re-runs the shell's slots fetch. */
+  onRetrySlots?: () => void;
   onCreatePost: () => void;
 }
 
@@ -139,6 +158,8 @@ export function QueuePanel({
   pageTimezone,
   pageStatus,
   slots,
+  slotsError = false,
+  onRetrySlots,
   onCreatePost,
 }: Readonly<QueuePanelProps>) {
   const router = useRouter();
@@ -185,14 +206,32 @@ export function QueuePanel({
   // Full queued list in queue order, for estimates + reorder. The
   // display query alone cannot feed estimates: a row on page 2 must
   // keep the estimate its queue position earns, not restart at zero.
+  // R10: page through the whole queued set (bounded at
+  // ESTIMATES_MAX_TOTAL) instead of fetching only the first 100 —
+  // rows past the first 100 previously had no estimate pill and no
+  // note saying why.
   const estimatesQuery = useQuery({
     queryKey: [...tenant.queue.items(pageId), 'panel', 'estimates'] as const,
-    queryFn: ({ signal }) =>
-      api.get(queuePath, {
-        schema: ListQueueItemsResponseSchema,
-        query: { pageId, status: 'queued', limit: ESTIMATES_LIMIT, offset: 0 },
-        signal,
-      }),
+    queryFn: async ({ signal }) => {
+      const all: ListQueueItemsResponse['items'] = [];
+      let total = 0;
+      for (let pageCount = 0; pageCount < ESTIMATES_MAX_PAGES; pageCount += 1) {
+        const res = await api.get(queuePath, {
+          schema: ListQueueItemsResponseSchema,
+          query: {
+            pageId,
+            status: 'queued',
+            limit: ESTIMATES_LIMIT,
+            offset: pageCount * ESTIMATES_LIMIT,
+          },
+          signal,
+        });
+        all.push(...res.items);
+        total = res.total;
+        if (all.length >= total || res.items.length < ESTIMATES_LIMIT) break;
+      }
+      return { items: all, total, limit: ESTIMATES_LIMIT, offset: 0 };
+    },
     enabled: Boolean(subdomain && pageId),
   });
 
@@ -459,13 +498,25 @@ export function QueuePanel({
   const failedCount = counts?.failedCount ?? 0;
   const cancelledCount = counts?.cancelledCount ?? 0;
   const skippedCount = counts?.skippedCount ?? 0;
+  const publishingCount = counts?.publishingCount ?? 0;
+  // R11: All is ALWAYS the sum of every per-status count,
+  // including publishing. The old formula used `total` when
+  // unfiltered (which includes publishing) but the sum without
+  // publishing when filtered — so the All chip's number changed
+  // with the active filter whenever a post was publishing. The
+  // Publishing chip exists for the same reason: a publishing post
+  // previously appeared under no chip but All.
   const allCount =
-    filter === 'all'
-      ? total
-      : queuedCount + publishedCount + failedCount + cancelledCount + skippedCount;
+    queuedCount +
+    publishedCount +
+    failedCount +
+    cancelledCount +
+    skippedCount +
+    publishingCount;
   const filterCounts: Record<QueueFilter, number> = {
     all: allCount,
     queued: queuedCount,
+    publishing: publishingCount,
     failed: failedCount,
     published: publishedCount,
   };
@@ -491,6 +542,34 @@ export function QueuePanel({
         >
           {publishBlockedReason}.
         </p>
+      ) : null}
+
+      {slotsError ? (
+        <Banner
+          variant="critical"
+          title="Couldn't load posting times"
+          description="Estimates and unmatched warnings are unavailable until posting times load again."
+          action={
+            onRetrySlots ? (
+              <Button type="button" variant="outline" size="sm" onClick={onRetrySlots}>
+                Retry
+              </Button>
+            ) : undefined
+          }
+        />
+      ) : null}
+
+      {estimatesQuery.isError ? (
+        <Banner
+          variant="critical"
+          title="Couldn't load estimates"
+          description="Queued posts have no estimated times until estimates load again."
+          action={
+            <Button type="button" variant="outline" size="sm" onClick={() => void estimatesQuery.refetch()}>
+              Retry
+            </Button>
+          }
+        />
       ) : null}
 
       <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter queue by status">
@@ -549,6 +628,7 @@ export function QueuePanel({
               const orderIndex = queuedOrder.indexOf(item.id);
               const unmatched =
                 isQueued &&
+                !slotsError &&
                 !slots.some(
                   (slot) =>
                     slot.isActive &&
@@ -591,6 +671,12 @@ export function QueuePanel({
           {orderTruncated ? (
             <p className="m-0 text-metadata text-ink-sub">
               Reorder is unavailable while more than 100 posts are queued.
+            </p>
+          ) : null}
+          {totalQueued > ESTIMATES_MAX_TOTAL ? (
+            <p data-testid="queue-estimates-capped-note" className="m-0 text-metadata text-ink-sub">
+              Estimates shown for the first 10,000 queued posts — later queued posts have
+              no estimate pill.
             </p>
           ) : null}
           <ListPagination

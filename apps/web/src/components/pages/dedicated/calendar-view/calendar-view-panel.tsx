@@ -66,11 +66,12 @@ import {
 /** The list API caps limit at 100 — same cap discipline as the queue. */
 const ITEMS_LIMIT = 100;
 
-type CalendarFilter = 'all' | 'queued' | 'failed' | 'published';
+type CalendarFilter = 'all' | 'queued' | 'publishing' | 'failed' | 'published';
 
 const FILTERS: Array<{ id: CalendarFilter; label: string }> = [
   { id: 'all', label: 'All' },
   { id: 'queued', label: 'Queued' },
+  { id: 'publishing', label: 'Publishing' },
   { id: 'failed', label: 'Failed' },
   { id: 'published', label: 'Published' },
 ];
@@ -159,13 +160,21 @@ export function CalendarViewPanel({
   const failedCount = counts?.failedCount ?? 0;
   const cancelledCount = counts?.cancelledCount ?? 0;
   const skippedCount = counts?.skippedCount ?? 0;
+  const publishingCount = counts?.publishingCount ?? 0;
+  // R11, identical to the queue panel: All is ALWAYS the sum of
+  // every per-status count, including publishing, so its number
+  // cannot vary with the active filter while a post is publishing.
   const allCount =
-    filter === 'all'
-      ? itemsTotal
-      : queuedCount + publishedCount + failedCount + cancelledCount + skippedCount;
+    queuedCount +
+    publishedCount +
+    failedCount +
+    cancelledCount +
+    skippedCount +
+    publishingCount;
   const filterCounts: Record<CalendarFilter, number> = {
     all: allCount,
     queued: queuedCount,
+    publishing: publishingCount,
     failed: failedCount,
     published: publishedCount,
   };

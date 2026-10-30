@@ -287,6 +287,18 @@ export default function TenantDedicatedPageView({
     () => queueQuery.data?.items ?? [],
     [queueQuery.data]
   );
+  // R4/R5: failure is carried as state, never as an empty list.
+  // The dashboard, posting-times, and queue tabs branch on these
+  // instead of rendering first-use empty states for a failed fetch.
+  const queueError = queueQuery.isError;
+  const slotsError = slotsQuery.isError;
+  // R10: the shell's dashboard fetch caps at 100 pages x 100 items.
+  // When the accumulated list is shorter than the reported total,
+  // the cap bit — the dashboard says so instead of implying the
+  // estimates cover the whole queue.
+  const dashboardQueueTruncated = queueQuery.data
+    ? queueQuery.data.items.length < queueQuery.data.total
+    : false;
   const pageTimezone = page?.timezone ?? 'UTC';
   // Queue times are DERIVED estimates, never stored times: the
   // estimate for each queued post is computed from its queue
@@ -349,6 +361,13 @@ export default function TenantDedicatedPageView({
   const invalidateSlots = React.useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: tenant.pages.slots(pageId) });
   }, [queryClient, tenant.pages, pageId]);
+
+  // Retry for the dashboard/posting-times error states: re-run both
+  // fetches (queue + slots) so one tap recovers either failure.
+  const handleRetryData = React.useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: tenant.queue.all });
+    void queryClient.invalidateQueries({ queryKey: tenant.pages.slots(pageId) });
+  }, [queryClient, tenant.queue, tenant.pages, pageId]);
 
   const statusMutation = useMutation({
     mutationFn: (nextStatus: 'active' | 'paused') =>
@@ -864,6 +883,10 @@ export default function TenantDedicatedPageView({
                   slots={slots}
                   onPublishNow={handlePublishNow}
                   onSwitchTab={switchTab}
+                  queueError={queueError}
+                  slotsError={slotsError}
+                  queueTruncated={dashboardQueueTruncated}
+                  onRetryData={handleRetryData}
                 />
               </TabsContent>
             )}
@@ -876,6 +899,8 @@ export default function TenantDedicatedPageView({
                   pageTimezone={pageTimezone}
                   pageStatus={page.status}
                   slots={slots}
+                  slotsError={slotsError}
+                  onRetrySlots={invalidateSlots}
                   onCreatePost={() => setIsCreatePostsOpen(true)}
                 />
               </TabsContent>
@@ -898,6 +923,8 @@ export default function TenantDedicatedPageView({
                   page={page}
                   slots={slots}
                   isLoading={slotsQuery.isPending}
+                  slotsError={slotsError}
+                  onRetrySlots={invalidateSlots}
                   queuedCount={queuedCount}
                   onAddSlot={handleAddSlot}
                   onUpdateSlot={handleUpdateSlot}

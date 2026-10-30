@@ -104,6 +104,8 @@ function renderPanel(overrides: Record<string, unknown> = {}) {
       pageTimezone="UTC"
       pageStatus={overrides.pageStatus as 'active' | 'paused' | 'fb_rate_limited' | 'page_checkpoint' | 'invalid_token' | 'disconnected' | undefined}
       slots={(overrides.slots as typeof allFormatsSlot[] | undefined) ?? [allFormatsSlot]}
+      slotsError={(overrides.slotsError as boolean | undefined) ?? false}
+      onRetrySlots={(overrides.onRetrySlots as (() => void) | undefined) ?? vi.fn()}
       onCreatePost={(overrides.onCreatePost as (() => void) | undefined) ?? vi.fn()}
     />,
     { wrapper }
@@ -167,6 +169,7 @@ describe('QueuePanel', () => {
         failedCount: seed.filter((row) => row.status === 'failed').length,
         cancelledCount: 0,
         skippedCount: 0,
+        publishingCount: seed.filter((row) => row.status === 'publishing').length,
       };
     });
     apiPatch.mockImplementation(async () => seed[0]);
@@ -602,5 +605,113 @@ describe('QueuePanel', () => {
     const user = userEvent.setup();
     await user.click(screen.getByTestId('queue-create-post-btn'));
     expect(onCreatePost).toHaveBeenCalled();
+  });
+
+  it('keeps the All count identical under any filter while a post is publishing (R11)', async () => {
+    const user = userEvent.setup();
+    seed.push(
+      item({
+        id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+        caption: 'Publishing post',
+        status: 'publishing',
+      }),
+    );
+    renderPanel();
+    await waitFor(() => expect(screen.getByTestId(`queue-row-${ID_A}`)).toBeTruthy());
+    // 2 queued + 1 publishing + 1 failed + 1 published = 5, under
+    // every filter. The old formula dropped publishing when
+    // filtered, so All read 4 under Queued and 5 under All.
+    expect(screen.getByTestId('queue-filter-all')).toHaveTextContent('All (5)');
+    expect(screen.getByTestId('queue-filter-publishing')).toHaveTextContent('Publishing (1)');
+    await user.click(screen.getByTestId('queue-filter-queued'));
+    await waitFor(() =>
+      expect(screen.getByTestId('queue-filter-all')).toHaveTextContent('All (5)'),
+    );
+    await user.click(screen.getByTestId('queue-filter-publishing'));
+    await waitFor(() =>
+      expect(screen.getByTestId('queue-filter-all')).toHaveTextContent('All (5)'),
+    );
+  });
+
+  it('suppresses unmatched flags and shows a slots error banner when slots fail (R4)', async () => {
+    // No active slot allows 'text' here, so with working slots the
+    // queued text row would be flagged unmatched. With a failed
+    // slots fetch it must not be.
+    renderPanel({
+      slots: [
+        {
+          id: 'slot-1',
+          slotTime: '09:00',
+          timezone: 'UTC',
+          isActive: true,
+          allowedFormats: ['image'],
+        },
+      ],
+      slotsError: true,
+      onRetrySlots: vi.fn(),
+    });
+    await waitFor(() => expect(screen.getByTestId(`queue-row-${ID_A}`)).toBeTruthy());
+    expect(screen.getByText("Couldn't load posting times")).toBeInTheDocument();
+    expect(screen.queryByText(/No posting time matches this post type/)).not.toBeInTheDocument();
+  });
+
+  it('gives estimate pills to queued rows past the first 100 (R10)', async () => {
+    // 105 queued posts: the old single-fetch estimates covered
+    // only the first 100, so rows 101+ were pill-less. Page 4 of
+    // the list (rows 91-105) must show a pill on every row.
+    seed = Array.from({ length: 105 }, (_, i) =>
+      item({
+        id: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+        caption: `Queued post ${i + 1}`,
+        postFormat: 'text',
+        status: 'queued',
+      }),
+    );
+    mockQuery = 'page=4';
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getAllByTestId('queue-row-estimate')).toHaveLength(15),
+    );
+  });
+
+  it('notes the cap when the queued set exceeds the estimates fetch cap (R10)', async () => {
+    // Estimates fetches report a total above the 10,000 cap while
+    // returning short pages, so the panel stops paging and says so.
+    let estimatesCalls = 0;
+    apiGet.mockImplementation(async (_path: string, options: ApiFetchOptions) => {
+      const q = options.query ?? {};
+      if (q.status === 'queued' && q.limit === 100) {
+        estimatesCalls += 1;
+        if (estimatesCalls === 1) {
+          return {
+            items: seed.filter((row) => row.status === 'queued').slice(0, 100),
+            total: 20000,
+            limit: 100,
+            offset: 0,
+          };
+        }
+        return { items: [], total: 20000, limit: 100, offset: 100 };
+      }
+      let items = [...seed];
+      if (q.status) items = items.filter((row) => row.status === q.status);
+      const offset = typeof q.offset === 'number' ? q.offset : 0;
+      const limit = typeof q.limit === 'number' ? q.limit : 50;
+      return {
+        items: items.slice(offset, offset + limit),
+        total: items.length,
+        limit,
+        offset,
+        queuedCount: seed.filter((row) => row.status === 'queued').length,
+        publishedCount: seed.filter((row) => row.status === 'published').length,
+        failedCount: seed.filter((row) => row.status === 'failed').length,
+        cancelledCount: 0,
+        skippedCount: 0,
+        publishingCount: seed.filter((row) => row.status === 'publishing').length,
+      };
+    });
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId('queue-estimates-capped-note')).toBeInTheDocument(),
+    );
   });
 });

@@ -18,6 +18,8 @@
 import * as React from 'react';
 import dynamic from 'next/dynamic';
 
+import { Banner } from '@/components/shared/ui/banner';
+import { Button } from '@/components/shared/ui/button';
 import { Skeleton } from '@/components/shared/ui/skeleton';
 import type { FacebookPageItem } from '../../page-card';
 import type { PageSlotSummary } from '../tab-dashboard';
@@ -53,6 +55,15 @@ export interface PageTabPostingTimesProps {
   slots: PageSlotSummary[];
   isLoading?: boolean;
   /**
+   * R4: the slots fetch failed. An empty `slots` array then means
+   * "unknown", never "no posting times": the first-use empty state
+   * must not render, and no unmatched warnings may be derived from
+   * the failed fetch. Shows an error state with Retry instead.
+   */
+  slotsError?: boolean;
+  /** Re-runs the shell's slots fetch. */
+  onRetrySlots?: () => void;
+  /**
    * All queued posts. Under publisher-driven scheduling there are no
    * slot links and no stored times to realign — the timezone review
    * shows this count with copy saying estimates update, not that
@@ -82,6 +93,8 @@ export function PageTabPostingTimes({
   page,
   slots,
   isLoading = false,
+  slotsError = false,
+  onRetrySlots,
   queuedCount = 0,
   onAddSlot,
   onUpdateSlot,
@@ -175,11 +188,26 @@ export function PageTabPostingTimes({
         </div>
       )}
 
-      {!isLoading && slots.length === 0 && (
+      {!isLoading && slotsError && (
+        <Banner
+          variant="critical"
+          title="Couldn't load posting times"
+          description="Your posting times are unavailable until they load again — this does not mean you have none."
+          action={
+            onRetrySlots ? (
+              <Button type="button" variant="outline" size="sm" onClick={onRetrySlots}>
+                Retry
+              </Button>
+            ) : undefined
+          }
+        />
+      )}
+
+      {!isLoading && !slotsError && slots.length === 0 && (
         <PostingTimesEmptyState onOpenAddModal={handleOpenAdd} />
       )}
 
-      {!isLoading && slots.length > 0 && (
+      {!isLoading && !slotsError && slots.length > 0 && (
         <div data-testid="slots-grid" className="flex flex-col">
           {slots.map((slot) => (
             <PostingTimeRow
