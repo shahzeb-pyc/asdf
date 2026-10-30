@@ -18,13 +18,19 @@ import { cn } from '@/lib/utils';
 
 import type { AccountStatusFilter } from './accounts-helpers';
 
-export interface AccountsFilterBarProps {
+export interface AccountsFilterBarProps<TFilter extends string = AccountStatusFilter> {
   searchQuery: string;
   onSearchChange: (value: string) => void;
-  statusFilter: AccountStatusFilter;
-  onStatusFilterChange: (value: AccountStatusFilter) => void;
+  statusFilter: TFilter;
+  onStatusFilterChange: (value: TFilter) => void;
   attentionCount?: number | undefined;
   errorAttentionCount?: number | undefined;
+  /**
+   * Tab subset to render. Defaults to the full Facebook set below.
+   * Instagram passes its own four tabs: its list API has no error
+   * filter, so an Error tab there would silently match everything.
+   */
+  tabs?: Array<{ value: TFilter; label: string; testId: string }> | undefined;
 }
 
 // Audit UX2: the expiring-soon filter existed in the API but had
@@ -37,14 +43,15 @@ const FILTER_TABS: Array<{ value: AccountStatusFilter; label: string; testId: st
   { value: 'error', label: 'Error', testId: 'accounts-filter-error' },
 ];
 
-export function AccountsFilterBar({
+export function AccountsFilterBar<TFilter extends string = AccountStatusFilter>({
   searchQuery,
   onSearchChange,
   statusFilter,
   onStatusFilterChange,
   attentionCount = 0,
   errorAttentionCount = 0,
-}: Readonly<AccountsFilterBarProps>) {
+  tabs = FILTER_TABS as Array<{ value: TFilter; label: string; testId: string }>,
+}: Readonly<AccountsFilterBarProps<TFilter>>) {
   return (
     <div
       data-testid="accounts-filter-bar"
@@ -84,7 +91,7 @@ export function AccountsFilterBar({
 
       {/* Pure Typographic Flat Filter Tabs */}
       <div role="tablist" aria-label="Filter accounts by status" className="flex items-center gap-4">
-        {FILTER_TABS.map((tab) => {
+        {tabs.map((tab) => {
           const isActive = statusFilter === tab.value;
           const badgeCount =
             tab.value === 'expired'

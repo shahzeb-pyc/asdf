@@ -28,6 +28,10 @@ function baseDestination(
     platform: 'facebook',
     timezone: 'UTC',
     status: 'active',
+    // Main's DestinationForEnqueue now requires this field (it was
+    // optional on the branch base); production toDestination always
+    // sets it (null when absent).
+    externalDestinationId: null,
     metadata: null,
     accountId: ACCOUNT_ID,
     accountStatus: 'active',

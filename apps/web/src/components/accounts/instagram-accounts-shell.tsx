@@ -626,6 +626,15 @@ export function InstagramAccountsShell({ subdomain }: Readonly<InstagramAccounts
           statusFilter={statusFilter}
           onStatusFilterChange={handleStatusFilterChange}
           attentionCount={expiredTotal}
+          // Instagram's list API has no error filter (unlike
+          // Facebook's, which gained an Error tab in the audit
+          // branch), so only the four tabs it can honour are shown.
+          tabs={[
+            { value: 'all', label: 'All', testId: 'accounts-filter-all' },
+            { value: 'active', label: 'Active', testId: 'accounts-filter-active' },
+            { value: 'expiring_soon', label: 'Expiring soon', testId: 'accounts-filter-expiring-soon' },
+            { value: 'expired', label: 'Expired', testId: 'accounts-filter-expired' },
+          ]}
         />
       )}
 
