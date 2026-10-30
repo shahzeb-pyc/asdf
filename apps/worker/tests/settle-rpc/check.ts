@@ -436,6 +436,9 @@ async function sectionDeferred(pool: Pool): Promise<void> {
 
   // Defer #1 — the caller deliberately passes an inflated count (99):
   // the deferred branch must ignore it for the stored count.
+  // `before` anchors the cooldown assertion below (destination
+  // next_allowed_publish_at must be >= before + ~3590s).
+  const before = new Date();
   const r1 = await settle(pool, {
     outcome: 'deferred', retryCount: 99, errorCode: 'publishing_limit_reached',
     errorMessage: 'This account has reached its publishing limit for now.',
