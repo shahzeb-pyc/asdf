@@ -59,13 +59,13 @@ import {
   deriveDefaultCaptionFromFilename,
   IDEMPOTENCY_KEY_HEADER,
   InstagramPublishNowResponseSchema,
+  ListInstagramAccountsResponseSchema,
   PublishNowTempMediaResponseSchema,
   isFacebookAccountRestricted,
   type ComposerMedia,
   type InstagramAccountView,
 } from '@fbuploadpro/contracts';
 import { api, buildTenantApiPath, isApiError } from '@/lib/api';
-import { ListInstagramAccountsResponseSchema } from '@fbuploadpro/contracts';
 import { Button } from '@/components/shared/ui/button';
 import { Checkbox } from '@/components/shared/ui/checkbox';
 import { Input } from '@/components/shared/ui/input';
