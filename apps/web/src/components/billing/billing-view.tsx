@@ -29,7 +29,6 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/shared/ui/aler
 import { Button } from '@/components/shared/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/shared/ui/card';
 import { EmptyState } from '@/components/shared/ui/empty-state';
-import { Input } from '@/components/shared/ui/input';
 import { Skeleton } from '@/components/shared/ui/skeleton';
 import { BillingStatusMark } from './billing-status-mark';
 
@@ -461,45 +460,44 @@ export function BillingView({
             key={platform}
             className="flex items-center gap-4 border-t border-line py-4 first:border-t-0 first:pt-0"
           >
-            <div className="min-w-0 flex-1">
+            <div className="w-40 shrink-0 sm:w-48">
               <p className="truncate text-body font-medium text-ink">{PLATFORM_LABELS[platform]}</p>
               <p className="truncate text-body text-ink-sub">
                 {platform === 'facebook' ? 'Pages' : 'Accounts'}
               </p>
             </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <Button
-                variant="outline"
-                size="icon-lg"
-                aria-label={`Decrease ${PLATFORM_LABELS[platform]}`}
-                onClick={() => setCount(platform, count - 1)}
-                disabled={count <= 0}
-                className="text-lg disabled:opacity-100 disabled:text-ink-sub"
-              >
-                −
-              </Button>
-              <Input
-                type="number"
-                inputMode="numeric"
-                min={0}
-                value={count}
-                aria-label={`${PLATFORM_LABELS[platform]} ${subscriptionUnitLabel(platform)}`}
-                className="h-10 w-16 text-center tabular-nums"
-                onChange={(event) => setCount(platform, Number(event.target.value))}
-              />
-              <Button
-                variant="outline"
-                size="icon-lg"
-                aria-label={`Increase ${PLATFORM_LABELS[platform]}`}
-                onClick={() => setCount(platform, count + 1)}
-                className="text-lg"
-              >
-                +
-              </Button>
+            <div className="flex shrink-0 items-center gap-3">
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="icon-lg"
+                  aria-label={`Decrease ${PLATFORM_LABELS[platform]}`}
+                  onClick={() => setCount(platform, count - 1)}
+                  disabled={count <= 0}
+                  className="text-lg disabled:opacity-100 disabled:text-ink-sub"
+                >
+                  −
+                </Button>
+                <span
+                  aria-label={`${PLATFORM_LABELS[platform]} ${subscriptionUnitLabel(platform)}`}
+                  className="flex h-10 w-12 items-center justify-center text-body font-medium tabular-nums text-ink"
+                >
+                  {count}
+                </span>
+                <Button
+                  variant="outline"
+                  size="icon-lg"
+                  aria-label={`Increase ${PLATFORM_LABELS[platform]}`}
+                  onClick={() => setCount(platform, count + 1)}
+                  className="text-lg"
+                >
+                  +
+                </Button>
+              </div>
+              <span className="w-20 shrink-0 text-right text-body font-medium tabular-nums text-ink">
+                {count * SUBSCRIPTION_PRICE_PKR_PER_UNIT} PKR
+              </span>
             </div>
-            <span className="w-20 shrink-0 text-right text-body font-medium tabular-nums text-ink">
-              {count * SUBSCRIPTION_PRICE_PKR_PER_UNIT} PKR
-            </span>
           </div>
         );
       })}
@@ -922,10 +920,13 @@ export function BillingView({
         <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
           <Card>
             <CardHeader>
-              <CardTitle>Choose your pages and accounts</CardTitle>
-              <CardDescription>
-                Connect as many accounts as you like — only the pages and accounts you actually use count towards your plan.
-              </CardDescription>
+              <div className="flex flex-col gap-1">
+                <CardTitle>Choose your pages and accounts</CardTitle>
+                <CardDescription>
+                  70 PKR per page or account, paid monthly. Connect as many accounts as you
+                  like — only the pages and accounts you actually use count towards your plan.
+                </CardDescription>
+              </div>
             </CardHeader>
             <CardContent>{configurator}</CardContent>
           </Card>
@@ -990,6 +991,44 @@ export function BillingView({
      Only information about the plan the user is currently on. No
      pricing cards, no builder, no checkout, no payment methods, no
      payments history here — just one link to Purchase. */
+  if (!isPaid) {
+    /* Free only: no summary-card stats and no per-platform list
+       (all zeros, useless for Free) — just what Free includes, what
+       it does not, and the upgrade button. Paid falls through to the
+       full summary below, unchanged. */
+    return (
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-xl leading-heading font-semibold text-ink">My plan</h1>
+          <p className="text-body text-ink-sub">What your current plan includes.</p>
+        </div>
+        <Card>
+          <CardHeader>
+            <CardTitle>Free</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ul className="flex flex-col gap-3 text-body">
+              <li>
+                <BillingStatusMark kind="ok" label="Prompt Library" />
+              </li>
+              <li>
+                <BillingStatusMark kind="failed" label="Posting and scheduling" />
+              </li>
+              <li>
+                <BillingStatusMark kind="failed" label="Auto download-upload" />
+              </li>
+              <li>
+                <BillingStatusMark kind="failed" label="Auto repost" />
+              </li>
+            </ul>
+          </CardContent>
+        </Card>
+        <div>
+          <Button onClick={goToPurchase}>Buy or upgrade</Button>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
       <div className="flex flex-col gap-1">
@@ -997,24 +1036,20 @@ export function BillingView({
         <p className="text-body text-ink-sub">What your current plan includes.</p>
       </div>
 
-      {entitlement.reason ? (
-        <Alert variant="warning">
-          <AlertTitle>Posting is paused</AlertTitle>
-          <AlertDescription>{entitlement.reason}</AlertDescription>
-        </Alert>
-      ) : null}
-
-      {/* Current-plan status — Free is a plan, not a failure, so it
-          gets no red mark; "No paid plan" replaces the bare dash. */}
+      {/* Current-plan summary — plan identity on the left, facts as a
+          compact divided metric group on the right. Free is a plan,
+          not a failure, so it gets no red mark; "No paid plan"
+          replaces the bare dash. The counts share one unit label
+          instead of repeating "pages / accounts" per column. */}
       <Card>
         <CardHeader>
           <CardTitle>Your plan</CardTitle>
-          <CardDescription>Your current plan.</CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <CardContent className="flex flex-col gap-6 sm:flex-row sm:flex-wrap sm:items-start sm:gap-10">
           <div className="flex flex-col gap-1">
-            <span className="text-body text-ink-sub">Plan</span>
-            <span className="text-lg font-semibold text-ink">{isPaid ? 'Paid' : 'Free'}</span>
+            <span className="text-2xl leading-heading font-semibold text-ink">
+              {isPaid ? 'Paid' : 'Free'}
+            </span>
             {isPaid ? (
               <BillingStatusMark kind="ok" label="Active" />
             ) : (
@@ -1028,16 +1063,21 @@ export function BillingView({
             </span>
           </div>
           <div className="flex flex-col gap-1">
-            <span className="text-body text-ink-sub">Included</span>
-            <span className="text-body font-medium tabular-nums text-ink">
-              {includedUnits} pages / accounts
-            </span>
-          </div>
-          <div className="flex flex-col gap-1">
-            <span className="text-body text-ink-sub">In use</span>
-            <span className="text-body font-medium tabular-nums text-ink">
-              {usedUnits} pages / accounts
-            </span>
+            <span className="text-metadata text-ink-sub">Pages / accounts</span>
+            <div className="flex divide-x divide-line">
+              <div className="flex flex-col gap-1 pr-4">
+                <span className="text-body text-ink-sub">Included</span>
+                <span className="text-lg leading-heading font-semibold tabular-nums text-ink">
+                  {includedUnits}
+                </span>
+              </div>
+              <div className="flex flex-col gap-1 pl-4">
+                <span className="text-body text-ink-sub">In use</span>
+                <span className="text-lg leading-heading font-semibold tabular-nums text-ink">
+                  {usedUnits}
+                </span>
+              </div>
+            </div>
           </div>
         </CardContent>
       </Card>
