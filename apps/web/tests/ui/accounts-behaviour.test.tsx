@@ -231,7 +231,9 @@ describe('AccountCard behaviour', () => {
     render(<AccountCard account={expiringSoonAccount} />);
 
     const mark = screen.getByTestId('account-health-mark');
-    expect(mark.textContent).toContain('Connected');
+    // Audit UX: an expiring-soon account says so outright instead of
+    // showing a clock next to "Connected".
+    expect(mark.textContent).toContain('Expires soon');
     expect(mark.querySelector('[data-icon="clock"]')).toBeTruthy();
     expect(mark.querySelector('.rounded-full')).toBeNull();
   });

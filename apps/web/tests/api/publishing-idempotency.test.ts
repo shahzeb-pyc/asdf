@@ -123,6 +123,9 @@ class FakeDb {
       rate_usage_pct: number;
       next_allowed_publish_at: string | null;
       metadata: Record<string, unknown> | null;
+      account_id: string;
+      account_status: string;
+      account_token_expires_at: string | null;
     }
   >();
   queueItems: QueueItemRow[] = [];
@@ -363,6 +366,13 @@ function seed() {
     rate_usage_pct: 0,
     next_allowed_publish_at: null,
     metadata: null,
+    // Audit BG1: the enqueue account gate fails closed when the
+    // destination carries no account, so the fixture account must
+    // be present, active, and unexpired for these idempotency
+    // tests to reach the code under test.
+    account_id: '88888888-8888-4888-a888-888888888888',
+    account_status: 'active',
+    account_token_expires_at: new Date(Date.now() + 86400000).toISOString(),
   });
   db.queueItems.push(fullQueueItemRow({}));
 }

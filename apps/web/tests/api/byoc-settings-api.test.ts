@@ -4,6 +4,7 @@ import { encryptToken, signSessionToken } from '@fbuploadpro/contracts';
 import { GET as getBYOC, PUT as saveBYOC, DELETE as deleteBYOC } from '@/app/api/tenant/[subdomain]/settings/byoc/route';
 import { POST as revealBYOCSecret } from '@/app/api/tenant/[subdomain]/settings/byoc/reveal/route';
 import * as authModule from '@/lib/auth/clients';
+import * as sessionModule from '@/lib/auth/session';
 
 const TEST_SECRET = 'super-secret-session-signing-key-minimum-32-chars-long';
 const TEST_ENCRYPTION_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
@@ -38,6 +39,12 @@ describe('Facebook BYOC Settings API Routes', () => {
 
   beforeEach(async () => {
     vi.restoreAllMocks();
+    // Audit S1: these route tests are about BYOC behaviour, not session
+    // validation (which has its own dedicated session-invalidation
+    // tests). The routes now live-validate the session, and the
+    // per-test supabase mocks below do not stub the users lookup that
+    // validation needs, so a valid session is assumed here.
+    vi.spyOn(sessionModule, 'validateSessionActive').mockResolvedValue(true);
     process.env.SESSION_SECRET = TEST_SECRET;
     process.env.TOKEN_ENCRYPTION_KEY = TEST_ENCRYPTION_KEY;
 

@@ -80,6 +80,9 @@ describe('accounts schemas', () => {
         success: true,
         accountId: UUID,
         disconnectedPagesCount: 2,
+        // Audit BG10: disconnect now reports whether the Facebook
+        // authorization itself was revoked.
+        facebookRevoked: true,
       }).disconnectedPagesCount
     ).toBe(2);
     const social = ListSocialAccountsResponseSchema.parse({
