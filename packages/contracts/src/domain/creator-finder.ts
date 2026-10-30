@@ -11,6 +11,10 @@ import { z } from 'zod';
  * - GET /user/following — user_id required, count optional, max 200.
  * - GET /challenge/info — challenge_id or challenge_name.
  * - GET /challenge/posts — challenge_id required, count optional, max 30.
+ * - GET /challenge/search — keywords required, count optional, max 30.
+ * - GET /feed/search — keywords required, count optional, max 30;
+ *   region, publish_time, and sort_type are optional but the niche
+ *   search deliberately sends none of them (no filters in the UI).
  * Every call sends `x-tikwmapi-key` and returns {code, msg, data}.
  * Codes: 0 success, 10401 invalid/missing key, 10429 rate limit,
  * 10430 quota exhausted. There is no fallback to the free tikwm
@@ -24,7 +28,10 @@ import { z } from 'zod';
 export const TIKWMAPI_BASE_URL = 'https://api.tikwmapi.com';
 export const TRENDING_COUNT_MAX = 20;
 export const CHALLENGE_COUNT_MAX = 30;
+export const SEARCH_COUNT_MAX = 30;
 export const FOLLOWING_COUNT_MAX = 200;
+/** Niche search fetches posts for at most this many top hashtags. */
+export const NICHE_HASHTAG_TOP = 3;
 const FETCH_TIMEOUT_MS = 30_000;
 
 export type CreatorFinderErrorCode =
@@ -99,8 +106,7 @@ export const TrendingResponseSchema = CreatorListResponseSchema.extend({
 export type TrendingResponse = z.infer<typeof TrendingResponseSchema>;
 
 export const NicheResponseSchema = CreatorListResponseSchema.extend({
-  hashtag: z.string().min(1),
-  word: z.string().nullable(),
+  keyword: z.string().min(1),
 });
 export type NicheResponse = z.infer<typeof NicheResponseSchema>;
 
@@ -419,56 +425,163 @@ function challengeIdFromData(data: Record<string, unknown>): string | null {
   );
 }
 
-export async function fetchCreatorsByHashtag(
-  hashtag: string,
-  word: string | null,
+function challengesFromData(
+  data: Record<string, unknown>,
+): Record<string, unknown>[] {
+  for (const key of ['challenges', 'hashtags', 'items', 'list']) {
+    const parsed = asStringArray(data[key])
+      .map((item) => asRecord(item))
+      .filter((item): item is Record<string, unknown> => item !== null);
+    if (parsed.length > 0) return parsed;
+  }
+  const single = asRecord(data.challenge);
+  return single ? [single] : [];
+}
+
+function challengeIdFromSearchItem(
+  item: Record<string, unknown>,
+): string | null {
+  return (
+    asString(item.id) ??
+    asString(item.challenge_id) ??
+    asString(item.cid) ??
+    asString(asRecord(item.challenge)?.id)
+  );
+}
+
+function challengeNameFromSearchItem(
+  item: Record<string, unknown>,
+): string | null {
+  return (
+    asString(item.cha_name) ??
+    asString(item.challenge_name) ??
+    asString(item.name)
+  );
+}
+
+/**
+ * Niche keyword search, one merged list. Flow, in order:
+ * 1. In parallel: GET /challenge/search and GET /feed/search, both
+ *    with keywords and count 30, no region/publish_time/sort_type.
+ * 2. From the hashtag search, take the top 3 hashtags in
+ *    API-returned order and fetch GET /challenge/posts for each.
+ *    GET /challenge/info is used ONLY when a search item carries
+ *    no usable id, to resolve that item's name to an id.
+ * 3. Merge: video-search creators first (in video order, so a
+ *    creator found both ways naturally comes first), then
+ *    hashtag-only creators in hashtag order, deduped by handle.
+ * A single hashtag's posts failing for a hashtag-level reason
+ * (not found / bad shape / generic feed error) contributes
+ * nothing; key, quota, rate-limit, HTTP, and reachability errors
+ * fail the whole search loudly. No per-creator /user/info calls.
+ */
+export async function fetchCreatorsByKeyword(
+  keyword: string,
   options: CreatorFinderCallOptions = {},
 ): Promise<NicheResponse> {
   const fetchFn = options.fetchFn ?? fetch;
-  const cleanTag = hashtag.trim().replace(/^#+/, '').toLowerCase();
-  if (cleanTag.length === 0) {
-    throw new CreatorFinderError('BAD_RESPONSE', 'Enter a hashtag or word to search.');
-  }
-  const cleanWord = word?.trim().toLowerCase() || null;
-  const challengeId = await callWithKeys(options.apiKeys ?? [], async (key) => {
-    const body = await fetchTikwmJson(
-      `/challenge/info?challenge_name=${encodeURIComponent(cleanTag)}`,
-      key,
-      fetchFn,
-    );
-    const data = unwrapData(body);
-    const id = challengeIdFromData(data);
-    if (!id) {
-      throw new CreatorFinderError(
-        'NOT_FOUND',
-        `No hashtag was found for "${cleanTag}". Check the spelling and try again.`,
-      );
-    }
-    return id;
-  });
-  const data = await callWithKeys(options.apiKeys ?? [], async (key) => {
-    const body = await fetchTikwmJson(
-      `/challenge/posts?challenge_id=${encodeURIComponent(challengeId)}&count=${CHALLENGE_COUNT_MAX}`,
-      key,
-      fetchFn,
-    );
-    return unwrapData(body);
-  });
-  let videos = videosFromData(data);
-  if (cleanWord) {
-    videos = videos.filter((video) => {
-      const text = `${asString(video.title) ?? ''} ${asString(video.content_desc) ?? ''}`.toLowerCase();
-      return text.includes(cleanWord);
-    });
-  }
-  const creators = dedupeCreators(videos);
-  if (videos.length > 0 && creators.length === 0) {
+  const cleanKeyword = keyword.trim();
+  if (cleanKeyword.length === 0) {
     throw new CreatorFinderError(
       'BAD_RESPONSE',
-      'Hashtag videos came back without creator details, so no creator list can be shown.',
+      'Enter a niche or keyword to search.',
     );
   }
-  return { hashtag: cleanTag, word: cleanWord, creators, videosSeen: videos.length };
+  const encoded = encodeURIComponent(cleanKeyword);
+  const [hashtagSearchData, videoSearchData] = await Promise.all([
+    callWithKeys(options.apiKeys ?? [], async (key) => {
+      const body = await fetchTikwmJson(
+        `/challenge/search?keywords=${encoded}&count=${SEARCH_COUNT_MAX}`,
+        key,
+        fetchFn,
+      );
+      return unwrapData(body);
+    }),
+    callWithKeys(options.apiKeys ?? [], async (key) => {
+      const body = await fetchTikwmJson(
+        `/feed/search?keywords=${encoded}&count=${SEARCH_COUNT_MAX}`,
+        key,
+        fetchFn,
+      );
+      return unwrapData(body);
+    }),
+  ]);
+  const videoVideos = videosFromData(videoSearchData);
+  const videoCreators = dedupeCreators(videoVideos);
+
+  const topHashtags = challengesFromData(hashtagSearchData).slice(
+    0,
+    NICHE_HASHTAG_TOP,
+  );
+  let hashtagVideosSeen = 0;
+  const hashtagCreators: Creator[] = [];
+  for (const item of topHashtags) {
+    try {
+      let challengeId = challengeIdFromSearchItem(item);
+      if (!challengeId) {
+        // Id-resolution fallback only: the search item did not
+        // already carry a usable id.
+        const name = challengeNameFromSearchItem(item);
+        if (!name) continue;
+        challengeId = await callWithKeys(options.apiKeys ?? [], async (key) => {
+          const body = await fetchTikwmJson(
+            `/challenge/info?challenge_name=${encodeURIComponent(name)}`,
+            key,
+            fetchFn,
+          );
+          const data = unwrapData(body);
+          const id = challengeIdFromData(data);
+          if (!id) {
+            throw new CreatorFinderError(
+              'NOT_FOUND',
+              `No hashtag was found for "${name}".`,
+            );
+          }
+          return id;
+        });
+      }
+      const data = await callWithKeys(options.apiKeys ?? [], async (key) => {
+        const body = await fetchTikwmJson(
+          `/challenge/posts?challenge_id=${encodeURIComponent(challengeId)}&count=${CHALLENGE_COUNT_MAX}`,
+          key,
+          fetchFn,
+        );
+        return unwrapData(body);
+      });
+      const videos = videosFromData(data);
+      hashtagVideosSeen += videos.length;
+      hashtagCreators.push(...dedupeCreators(videos));
+    } catch (err) {
+      // One hashtag failing for a hashtag-level reason contributes
+      // nothing; key/quota/rate/HTTP/reachability errors fail loud.
+      if (
+        err instanceof CreatorFinderError &&
+        (err.code === 'NOT_FOUND' ||
+          err.code === 'FEED_UNAVAILABLE' ||
+          err.code === 'BAD_RESPONSE')
+      ) {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  const seen = new Set<string>();
+  const creators: Creator[] = [];
+  for (const creator of [...videoCreators, ...hashtagCreators]) {
+    if (!seen.has(creator.handle)) {
+      seen.add(creator.handle);
+      creators.push(creator);
+    }
+  }
+  const videosSeen = videoVideos.length + hashtagVideosSeen;
+  if (videosSeen > 0 && creators.length === 0) {
+    throw new CreatorFinderError(
+      'BAD_RESPONSE',
+      'Search results came back without creator details, so no creator list can be shown.',
+    );
+  }
+  return { keyword: cleanKeyword, creators, videosSeen };
 }
 
 export async function fetchSimilarCreators(

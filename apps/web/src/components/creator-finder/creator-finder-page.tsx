@@ -53,8 +53,7 @@ export function CreatorFinderPage({
    */
   const [countryQuery, setCountryQuery] = React.useState<string | null>(null);
   const [countryListOpen, setCountryListOpen] = React.useState(false);
-  const [hashtag, setHashtag] = React.useState('');
-  const [word, setWord] = React.useState('');
+  const [keyword, setKeyword] = React.useState('');
   const [username, setUsername] = React.useState('');
   const [trending, setTrending] = React.useState<SearchState>(IDLE_STATE);
   const [niche, setNiche] = React.useState<SearchState>(IDLE_STATE);
@@ -131,7 +130,7 @@ export function CreatorFinderPage({
         buildTenantApiPath(subdomain, '/creator-finder/niche'),
         {
           schema: NicheResponseSchema,
-          query: { hashtag, word: word.trim() || undefined },
+          query: { keyword },
         },
       );
       setNiche({
@@ -139,9 +138,9 @@ export function CreatorFinderPage({
         creators: result.creators,
         message:
           result.creators.length === 0
-            ? `No creators were found for #${result.hashtag}${result.word ? ` matching "${result.word}"` : ''}.`
+            ? `No creators were found for ${result.keyword}.`
             : null,
-        heading: `Creators for #${result.hashtag}`,
+        heading: `Creators for ${result.keyword}`,
       });
     } catch (err) {
       setNiche({ status: 'error', creators: [], message: errorMessage(err), heading: null });
@@ -305,20 +304,12 @@ export function CreatorFinderPage({
         <TabsContent value="niche">
           <form onSubmit={searchNiche} className="flex flex-col gap-3">
             <label className="flex flex-col gap-2 text-body font-medium text-ink">
-              Hashtag or niche word
+              Niche or keyword
               <Input
-                value={hashtag}
-                onChange={(event) => setHashtag(event.target.value)}
+                value={keyword}
+                onChange={(event) => setKeyword(event.target.value)}
                 placeholder="e.g. fitness"
                 required
-              />
-            </label>
-            <label className="flex flex-col gap-2 text-body font-medium text-ink">
-              Filter by word in video titles (optional)
-              <Input
-                value={word}
-                onChange={(event) => setWord(event.target.value)}
-                placeholder="e.g. workout"
               />
             </label>
             <div>

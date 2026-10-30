@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import {
-  fetchCreatorsByHashtag,
+  fetchCreatorsByKeyword,
   NicheResponseSchema,
 } from '@fbuploadpro/contracts';
 import {
@@ -16,16 +16,15 @@ export async function GET(
   const { subdomain } = await params;
   const authError = await requireTenantSession(request, subdomain);
   if (authError) return authError;
-  const hashtag = request.nextUrl.searchParams.get('hashtag');
-  if (!hashtag?.trim()) {
+  const keyword = request.nextUrl.searchParams.get('keyword');
+  if (!keyword?.trim()) {
     return NextResponse.json(
-      { error: 'INVALID_REQUEST', message: 'Enter a hashtag or word to search.' },
+      { error: 'INVALID_REQUEST', message: 'Enter a niche or keyword to search.' },
       { status: 400 },
     );
   }
-  const word = request.nextUrl.searchParams.get('word');
   try {
-    const result = await fetchCreatorsByHashtag(hashtag, word, {
+    const result = await fetchCreatorsByKeyword(keyword, {
       apiKeys: getCreatorFinderKeys(),
     });
     return NextResponse.json(NicheResponseSchema.parse(result));

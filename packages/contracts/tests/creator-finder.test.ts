@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   CreatorFinderError,
   dedupeCreators,
-  fetchCreatorsByHashtag,
+  fetchCreatorsByKeyword,
   fetchRegionList,
   fetchSimilarCreators,
   fetchTrendingCreators,
@@ -190,53 +190,193 @@ describe('fetchTrendingCreators', () => {
   });
 });
 
-describe('fetchCreatorsByHashtag', () => {
-  it('resolves a hashtag name to an id, then dedupes its video authors', async () => {
+describe('fetchCreatorsByKeyword', () => {
+  function video(handle: string, title: string) {
+    return { author: { unique_id: handle, nickname: handle }, title };
+  }
+
+  it('searches hashtags and videos in parallel, then merges video creators first, deduped', async () => {
     const fetchFn = vi
       .fn()
-      .mockResolvedValueOnce(
-        jsonResponse({ code: 0, data: { challenge: { id: '33380' } } }),
-      )
+      // 1. challenge/search, 2. feed/search (parallel, initiated in this order)
       .mockResolvedValueOnce(
         jsonResponse({
           code: 0,
           data: {
-            videos: [
-              {
-                author: { unique_id: 'alice' },
-                title: 'morning workout',
-                content_desc: '',
-              },
-              {
-                author: { unique_id: 'bob' },
-                title: 'cooking show',
-                content_desc: '',
-              },
+            challenges: [
+              { id: '111', cha_name: 'fitness' },
+              { id: '222', cha_name: 'gym' },
             ],
           },
         }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          code: 0,
+          data: { videos: [video('alice', 'A'), video('bob', 'B')] },
+        }),
+      )
+      // 3. posts for hashtag 111, 4. posts for hashtag 222
+      .mockResolvedValueOnce(
+        jsonResponse({
+          code: 0,
+          data: { videos: [video('bob', 'B2'), video('carol', 'C')] },
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          code: 0,
+          data: { videos: [video('dave', 'D')] },
+        }),
       );
-    const result = await fetchCreatorsByHashtag('fitness', 'workout', {
+    const result = await fetchCreatorsByKeyword('fitness', {
       fetchFn,
       apiKeys: ['key-1'],
     });
-    expect(result.hashtag).toBe('fitness');
-    expect(result.creators.map((c) => c.handle)).toEqual(['alice']);
+    expect(result.keyword).toBe('fitness');
+    // Video-search order first (bob found both ways comes first via
+    // the video side), then hashtag-only creators in hashtag order.
+    expect(result.creators.map((c) => c.handle)).toEqual([
+      'alice',
+      'bob',
+      'carol',
+      'dave',
+    ]);
+    expect(result.videosSeen).toBe(5);
     expect(fetchFn.mock.calls[0]?.[0]).toContain(
-      '/challenge/info?challenge_name=fitness',
+      '/challenge/search?keywords=fitness&count=30',
     );
     expect(fetchFn.mock.calls[1]?.[0]).toContain(
+      '/feed/search?keywords=fitness&count=30',
+    );
+    expect(fetchFn.mock.calls[2]?.[0]).toContain(
+      '/challenge/posts?challenge_id=111&count=30',
+    );
+    expect(fetchFn.mock.calls[3]?.[0]).toContain(
+      '/challenge/posts?challenge_id=222&count=30',
+    );
+    // No info call: both search items already carried an id.
+    expect(fetchFn).toHaveBeenCalledTimes(4);
+  });
+
+  it('caps hashtag posts at the top 3 hashtags', async () => {
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          code: 0,
+          data: {
+            challenges: [
+              { id: '1', cha_name: 'a' },
+              { id: '2', cha_name: 'b' },
+              { id: '3', cha_name: 'c' },
+              { id: '4', cha_name: 'd' },
+            ],
+          },
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ code: 0, data: { videos: [] } }))
+      .mockResolvedValueOnce(
+        jsonResponse({ code: 0, data: { videos: [video('one', '1')] } }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ code: 0, data: { videos: [video('two', '2')] } }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ code: 0, data: { videos: [video('three', '3')] } }),
+      );
+    const result = await fetchCreatorsByKeyword('fitness', {
+      fetchFn,
+      apiKeys: ['key-1'],
+    });
+    expect(result.creators.map((c) => c.handle)).toEqual([
+      'one',
+      'two',
+      'three',
+    ]);
+    expect(fetchFn).toHaveBeenCalledTimes(5);
+    expect(fetchFn.mock.calls.map((call) => call[0])).not.toContain(
+      expect.stringContaining('challenge_id=4'),
+    );
+  });
+
+  it('skips one failing hashtag and keeps the others', async () => {
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          code: 0,
+          data: {
+            challenges: [
+              { id: '111', cha_name: 'fitness' },
+              { id: '222', cha_name: 'gone' },
+            ],
+          },
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ code: 0, data: { videos: [] } }))
+      .mockResolvedValueOnce(
+        jsonResponse({ code: 0, data: { videos: [video('alice', 'A')] } }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ code: -1, msg: 'challenge not found' }),
+      );
+    const result = await fetchCreatorsByKeyword('fitness', {
+      fetchFn,
+      apiKeys: ['key-1'],
+    });
+    expect(result.creators.map((c) => c.handle)).toEqual(['alice']);
+  });
+
+  it('uses challenge/info only when a search item carries no id', async () => {
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          code: 0,
+          data: { challenges: [{ cha_name: 'fitness' }] },
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ code: 0, data: { videos: [] } }))
+      .mockResolvedValueOnce(
+        jsonResponse({ code: 0, data: { challenge: { id: '33380' } } }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ code: 0, data: { videos: [video('alice', 'A')] } }),
+      );
+    const result = await fetchCreatorsByKeyword('fitness', {
+      fetchFn,
+      apiKeys: ['key-1'],
+    });
+    expect(result.creators.map((c) => c.handle)).toEqual(['alice']);
+    expect(fetchFn.mock.calls[2]?.[0]).toContain(
+      '/challenge/info?challenge_name=fitness',
+    );
+    expect(fetchFn.mock.calls[3]?.[0]).toContain(
       '/challenge/posts?challenge_id=33380&count=30',
     );
   });
 
-  it('fails loud with NOT_FOUND when the hashtag has no id', async () => {
-    const fetchFn = vi.fn().mockResolvedValue(
-      jsonResponse({ code: 0, data: {} }),
-    );
+  it('fails the whole search loudly on a quota error', async () => {
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({ code: 0, data: { challenges: [] } }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ code: 10430, msg: 'quota exhausted' }),
+      );
     await expect(
-      fetchCreatorsByHashtag('nosuchhashtag', null, { fetchFn, apiKeys: ['k'] }),
-    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      fetchCreatorsByKeyword('fitness', { fetchFn, apiKeys: ['key-1'] }),
+    ).rejects.toMatchObject({ code: 'QUOTA_EXHAUSTED' });
+  });
+
+  it('rejects an empty keyword instead of calling the API', async () => {
+    const fetchFn = vi.fn();
+    await expect(
+      fetchCreatorsByKeyword('   ', { fetchFn, apiKeys: ['key-1'] }),
+    ).rejects.toBeInstanceOf(CreatorFinderError);
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 });
 
