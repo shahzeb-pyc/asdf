@@ -1,0 +1,10 @@
+# Pinned exact versions (Sonar S8544): ranges (>=) resolve to
+# whatever is newest at build time, which is exactly the unpinned
+# dependency surface Sonar's SCA gate flags. Pins were taken from
+# PyPI latest on 2026-10-30; bump them deliberately, not by range.
+boto3==1.43.122
+python-dotenv==1.2.4
+supabase==2.33.0
+pycryptodomex==3.24.1
+yt-dlp-get-pot==0.3.0
+yt-dlp[default,curl-cffi]==2026.10.26

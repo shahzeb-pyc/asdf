@@ -1,0 +1,13 @@
+services:
+  downloader:
+    build: .
+    container_name: fbuploadpro-downloader
+    restart: always
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    env_file:
+      - .env
+    volumes:
+      - ./cache:/app/cache
+      - ./logs:/app/logs

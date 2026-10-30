@@ -1,0 +1,1 @@
+{"compilerOptions":{"allowImportingTsExtensions":true,"lib":["ES2022"],"module":"ESNext","moduleResolution":"Bundler","noEmit":true,"target":"ES2022","types":["node","@cloudflare/workers-types"]},"extends":"../../../../tsconfig.base.json","include":["./**/*.ts"]}

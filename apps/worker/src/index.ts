@@ -13,6 +13,7 @@ import {
   runMirrorDispatch,
   runMirrorJobTick,
 } from './mirror-tick.js';
+import { runAduTick } from './adu-tick.js';
 import { handleQueueBatch, type ConsumerDbClient } from './consumers.js';
 import {
   isTokenEncryptionKeyWellFormed,
@@ -340,6 +341,27 @@ export async function handleScheduled(
         waitUntil
       );
       console.error('[handleScheduled] mirror job tick failed; continuing:', jobErr);
+    }
+
+    // ADU tick: schedule intake + reel publish, isolated like slot
+    // claims. A missing ADU migration returns skipped (never throws),
+    // and any other failure is captured and never fails the claim
+    // tick or its heartbeat — ADU jobs simply retry next minute.
+    try {
+      await runAduTick({
+        db: db as unknown as Parameters<typeof runAduTick>[0]['db'],
+        registry,
+        masterKey,
+        now: options?.now ?? new Date(controller.scheduledTime),
+      });
+    } catch (aduErr) {
+      captureWorkerError(
+        env,
+        aduErr,
+        { site: 'handleScheduled', kind: 'adu_tick_failed' },
+        waitUntil
+      );
+      console.error('[handleScheduled] ADU tick failed; continuing:', aduErr);
     }
 
     await recordHeartbeat(db, {

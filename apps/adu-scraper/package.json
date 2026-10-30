@@ -1,0 +1,17 @@
+{
+  "name": "@fbuploadpro/adu-scraper",
+  "version": "1.0.0",
+  "description": "ADU reels scraper for fbuploadpro (yt-dlp + Puppeteer, VPS only)",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "lint": "node --check index.js && node --check config.js && node --check discovery/ytdlp.js && node --check discovery/ytdlp-args.js && node --check discovery/profile-urls.js && node --check discovery/extract-ids.js",
+    "test": "node --test discovery/*.test.js"
+  },
+  "dependencies": {
+    "dotenv": "18.0.9",
+    "puppeteer": "25.16.0",
+    "@supabase/supabase-js": "2.118.0"
+  }
+}

@@ -196,6 +196,18 @@
         "firstLoadRawBytes": 559792,
         "routeSpecificGzipBytes": 33036,
         "routeSpecificRawBytes": 108943
+      },
+      "/tenant/[subdomain]/auto-download-upload": {
+        "firstLoadGzipBytes": 165000,
+        "firstLoadRawBytes": 553700,
+        "routeSpecificGzipBytes": 34400,
+        "routeSpecificRawBytes": 113400
+      },
+      "/tenant/[subdomain]/auto-download-upload/[id]": {
+        "firstLoadGzipBytes": 162400,
+        "firstLoadRawBytes": 545100,
+        "routeSpecificGzipBytes": 31700,
+        "routeSpecificRawBytes": 104800
       }
     },
     "totalClientJs": {
@@ -419,11 +431,23 @@
         "firstLoadRawBytes": 587782,
         "routeSpecificGzipBytes": 34688,
         "routeSpecificRawBytes": 114390
+      },
+      "/tenant/[subdomain]/auto-download-upload": {
+        "firstLoadGzipBytes": 173250,
+        "firstLoadRawBytes": 581385,
+        "routeSpecificGzipBytes": 40131,
+        "routeSpecificRawBytes": 132720
+      },
+      "/tenant/[subdomain]/auto-download-upload/[id]": {
+        "firstLoadGzipBytes": 170520,
+        "firstLoadRawBytes": 572355,
+        "routeSpecificGzipBytes": 38035,
+        "routeSpecificRawBytes": 126450
       }
     },
     "totalClientJs": {
       "gzipBytes": 1151977,
-      "rawBytes": 3653504
+      "rawBytes": 3679213
     }
   }
 }

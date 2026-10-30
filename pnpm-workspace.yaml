@@ -1,3 +1,8 @@
 packages:
   - "apps/*"
   - "packages/*"
+  # ADU scraper is a standalone VPS service (yt-dlp + Puppeteer), NOT
+  # part of the monorepo: it must never be installed by Vercel or the
+  # web/worker builds (puppeteer downloads Chromium), and its deps
+  # are installed with plain `npm install` on the VPS host instead.
+  - "!apps/adu-scraper"
