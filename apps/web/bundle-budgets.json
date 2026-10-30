@@ -443,11 +443,23 @@
         "firstLoadRawBytes": 572355,
         "routeSpecificGzipBytes": 38035,
         "routeSpecificRawBytes": 126450
+      },
+      "/tenant/[subdomain]/threads/auto-download-upload": {
+        "firstLoadGzipBytes": 190000,
+        "firstLoadRawBytes": 640000,
+        "routeSpecificGzipBytes": 44000,
+        "routeSpecificRawBytes": 146000
+      },
+      "/tenant/[subdomain]/threads/auto-download-upload/[id]": {
+        "firstLoadGzipBytes": 188000,
+        "firstLoadRawBytes": 630000,
+        "routeSpecificGzipBytes": 42000,
+        "routeSpecificRawBytes": 139000
       }
     },
     "totalClientJs": {
-      "gzipBytes": 1151977,
-      "rawBytes": 3679213
+      "gzipBytes": 1240000,
+      "rawBytes": 3970000
     }
   }
 }
