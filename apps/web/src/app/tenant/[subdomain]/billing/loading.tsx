@@ -11,37 +11,36 @@ export default function BillingLoading() {
         <Skeleton className="h-4 w-72 max-w-full" />
       </div>
       <Card>
-        <CardContent className="flex flex-col gap-4 pt-6">
+        <CardContent className="flex flex-col gap-3 pt-6">
           <Skeleton className="h-6 w-48" />
           <Skeleton className="h-4 w-full" />
-          <Skeleton className="h-10 w-full" />
         </CardContent>
       </Card>
-      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="flex flex-col gap-6">
-          <Card>
-            <CardContent className="flex flex-col gap-4 pt-6">
-              <Skeleton className="h-6 w-48" />
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-10 w-full" />
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="flex flex-col gap-4 pt-6">
-              <Skeleton className="h-6 w-48" />
-              <Skeleton className="h-10 w-full" />
-            </CardContent>
-          </Card>
-        </div>
+      <div className="grid items-start gap-6 md:grid-cols-2">
         <Card>
           <CardContent className="flex flex-col gap-4 pt-6">
-            <Skeleton className="h-6 w-40" />
+            <Skeleton className="h-6 w-32" />
+            <Skeleton className="h-10 w-24" />
             <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-full" />
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="flex flex-col gap-4 pt-6">
+            <Skeleton className="h-6 w-32" />
+            <Skeleton className="h-10 w-24" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
             <Skeleton className="h-10 w-full" />
           </CardContent>
         </Card>
       </div>
+      <Card>
+        <CardContent className="flex flex-col gap-4 pt-6">
+          <Skeleton className="h-6 w-48" />
+          <Skeleton className="h-10 w-full" />
+        </CardContent>
+      </Card>
     </div>
   );
 }
