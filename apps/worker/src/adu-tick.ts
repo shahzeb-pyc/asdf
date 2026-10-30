@@ -122,10 +122,18 @@ export async function runAduTick(options: {
       }
       const batch = (staleBatch ?? []) as Array<{ id: string }>;
       for (const job of batch) {
+        // Guarded reset: between the stale select and this update the
+        // job may have settled (published/failed) or been re-touched
+        // by a publish still running past 300s. Resetting it blindly
+        // would flip a settled job back to pending_publish and have
+        // it published a second time. Only reset a job that is STILL
+        // publishing and STILL stale.
         const { error: resetError } = await supabase
           .from('adu_posting_jobs')
           .update({ status: 'pending_publish' })
-          .eq('id', job.id);
+          .eq('id', job.id)
+          .eq('status', 'publishing')
+          .lt('updated_at', staleAt);
         if (resetError) {
           console.error(
             `ADU stale reset failed: job=${job.id} code=${resetError.code ?? 'unknown'}`,
@@ -174,19 +182,28 @@ export async function runAduTick(options: {
     if (config.posts_per_day <= 0) continue;
     const localTime = localTimeInTimezone(now, config.timezone);
     if (!config.posting_times.includes(localTime)) continue;
-    // Skip rule: >10 download failures in the last 24h.
+    // Skip rule: >10 download failures in the last 24h. Every intake
+    // query error is checked: the old code destructured data only, so
+    // a transient database error read as an empty result — a config
+    // with nothing "busy" was then marked completed permanently, and
+    // a failed-count error silently disabled the >10-failures guard.
     const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
-    const { count: failed24h } = await supabase
+    const { count: failed24h, error: failedCountError } = await supabase
       .from('adu_reels')
       .select('id', { count: 'exact', head: true })
       .eq('config_id', config.id)
       .eq('status', 'download_failed')
       .gte('created_at', dayAgo);
+    if (failedCountError) {
+      throw new InternalError(
+        `ADU intake failed-count load failed: ${failedCountError.code ?? 'unknown'} ${failedCountError.message}`,
+      );
+    }
     if ((failed24h ?? 0) > ADU_SKIP_FAILED_24H) continue;
 
     const slotAt = new Date(now);
     slotAt.setSeconds(0, 0);
-    const { data: oldest } = await supabase
+    const { data: oldest, error: oldestError } = await supabase
       .from('adu_reels')
       .select('*')
       .eq('config_id', config.id)
@@ -196,19 +213,31 @@ export async function runAduTick(options: {
       .order('created_at', { ascending: true })
       .limit(1)
       .maybeSingle();
+    if (oldestError) {
+      throw new InternalError(`ADU intake oldest load failed: ${oldestError.code ?? 'unknown'} ${oldestError.message}`);
+    }
     if (!oldest) {
-      const { data: busy } = await supabase
+      const { data: busy, error: busyError } = await supabase
         .from('adu_reels')
         .select('id')
         .eq('config_id', config.id)
         .in('status', ['pending', 'processing'])
         .limit(1);
-      const { data: busyJobs } = await supabase
+      if (busyError) {
+        throw new InternalError(`ADU intake busy load failed: ${busyError.code ?? 'unknown'} ${busyError.message}`);
+      }
+      const { data: busyJobs, error: busyJobsError } = await supabase
         .from('adu_posting_jobs')
         .select('id')
         .eq('config_id', config.id)
         .in('status', ['pending_publish', 'publishing'])
         .limit(1);
+      if (busyJobsError) {
+        throw new InternalError(`ADU intake busy-job load failed: ${busyJobsError.code ?? 'unknown'} ${busyJobsError.message}`);
+      }
+      // Only mark completed on a VERIFIED empty result: all three
+      // queries succeeded and found nothing downloadable and nothing
+      // busy. An error above throws instead of completing.
       if ((!busy || busy.length === 0) && (!busyJobs || busyJobs.length === 0)) {
         await supabase
           .from('adu_configs')
@@ -218,6 +247,21 @@ export async function runAduTick(options: {
       }
       continue;
     }
+    // Claim the reel BEFORE inserting the job: the old post-insert
+    // status update was unchecked, so when it failed the reel stayed
+    // 'downloaded' and the next slot intaken it again (same video
+    // posted twice). A lost claim (0 rows) means another tick took
+    // this reel — skip, never insert a second job for it.
+    const { data: claimedReel, error: claimReelError } = await supabase
+      .from('adu_reels')
+      .update({ status: 'processing' })
+      .eq('id', (oldest as { id: string }).id)
+      .eq('status', 'downloaded')
+      .select('id');
+    if (claimReelError) {
+      throw new InternalError(`ADU intake reel claim failed: ${claimReelError.code ?? 'unknown'} ${claimReelError.message}`);
+    }
+    if (!claimedReel || claimedReel.length === 0) continue;
     const { error: insertError } = await supabase.from('adu_posting_jobs').insert({
       config_id: config.id,
       reel_id: (oldest as { id: string }).id,
@@ -225,13 +269,15 @@ export async function runAduTick(options: {
       status: 'pending_publish',
     });
     if (insertError) {
+      // Release the claim so the reel stays intakable; without this
+      // it would sit in 'processing' forever after a failed insert.
+      await supabase
+        .from('adu_reels')
+        .update({ status: 'downloaded' })
+        .eq('id', (oldest as { id: string }).id);
       if (insertError.code === '23505') continue; // already intaken for this slot
       throw new InternalError(`ADU intake insert failed: ${insertError.message}`);
     }
-    await supabase
-      .from('adu_reels')
-      .update({ status: 'processing' })
-      .eq('id', (oldest as { id: string }).id);
     result.intakeJobsCreated += 1;
   }
   }
@@ -301,10 +347,20 @@ export async function runAduTick(options: {
       result.published += 1;
       continue;
     }
-    await supabase
+    // Claim-only-if-still-pending: the publish loop selects jobs and
+    // then publishes them, so two ticks could otherwise select the
+    // same job and publish it twice. An empty claim means another
+    // tick took it — skip, never publish from a stale row.
+    const { data: claimed, error: claimError } = await supabase
       .from('adu_posting_jobs')
       .update({ status: 'publishing' })
-      .eq('id', job.id);
+      .eq('id', job.id)
+      .eq('status', 'pending_publish')
+      .select('id');
+    if (claimError) {
+      throw new InternalError(`ADU publish claim failed: ${claimError.code ?? 'unknown'} ${claimError.message}`);
+    }
+    if (!claimed || claimed.length === 0) continue;
     const { data: configRow } = await supabase
       .from('adu_configs')
       .select('destination_id')

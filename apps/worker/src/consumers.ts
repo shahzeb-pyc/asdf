@@ -291,6 +291,41 @@ export type SettleArgsWithDetail = SettleQueueItemOutcomeUnifiedArgs & {
   p_detail?: Record<string, unknown> | null;
 };
 
+/**
+ * Persists a published post's platform ids on the queue row the moment
+ * the publish succeeds, BEFORE the settle RPC runs. The settle RPC is
+ * the only other place the ids land, so a settle failure today leaves
+ * a published post with no stored id — and the queue retry then
+ * publishes it a second time, because the idempotency guard at the top
+ * of processPublishMessage (which settles from the stored id instead
+ * of re-publishing) has nothing to read. A persist failure is logged
+ * loudly but never blocks the settle: the settle carries the same
+ * ids, so a single failure still lands them; only a double failure
+ * (persist + settle) re-opens the retry double-post window, and that
+ * is loud in both places. This mirrors what the ADU publish loop
+ * already does correctly with graph_post_id.
+ */
+export async function persistPublishedPostId(
+  db: ConsumerDbClient,
+  itemId: string,
+  externalPostId: string,
+  externalCommentId: string | null,
+): Promise<void> {
+  const { error } = await db
+    .from('queue_items')
+    .update({
+      external_post_id: externalPostId,
+      external_comment_id: externalCommentId,
+    })
+    .eq('id', itemId);
+  if (error) {
+    console.error(
+      `[consumer] failed to persist published post id for item ${itemId}:`,
+      error,
+    );
+  }
+}
+
 async function callSettleRpc(
   db: ConsumerDbClient,
   args: SettleArgsWithDetail
@@ -760,6 +795,14 @@ async function processPublishMessage(
     }
   }
 
+  if (outcome.status === 'published' && outcome.externalPostId) {
+    await persistPublishedPostId(
+      deps.db,
+      item.id,
+      outcome.externalPostId,
+      outcome.externalCommentId ?? null,
+    );
+  }
   await callSettleRpc(deps.db, mapPublishOutcomeToSettleArgs(item, outcome));
   return 'settled';
 }

@@ -60,6 +60,113 @@ export function aduMissingTable(error: { code?: string } | null | undefined): bo
   return error?.code === '42P01';
 }
 
+/**
+ * True when an ADU RPC/table is missing because its migration was never
+ * applied. PostgREST reports a missing RPC as PGRST202 ("Could not find
+ * the function"), NOT Postgres 42883 — a route that only checks 42P01 /
+ * 42883 turns an unapplied ADU migration into a bare "Failed to load
+ * pages." instead of the migration-missing banner that names the fix.
+ */
+export function aduRpcMissing(error: { code?: string } | null | undefined): boolean {
+  return error?.code === '42P01' || error?.code === '42883' || error?.code === 'PGRST202';
+}
+
+export interface AduOptionsLists {
+  accounts: Array<Record<string, unknown>>;
+  pages: Array<Record<string, unknown>>;
+  configured: Array<Record<string, unknown>>;
+  migrationMissing: boolean;
+}
+
+interface PageResult<T> {
+  data: T[] | null;
+  error: { message?: string; code?: string } | null;
+}
+
+/**
+ * PostgREST silently truncates an unbounded select at 1,000 rows, so a
+ * picker that loads "all" accounts/pages/configs drops rows past 1,000
+ * with no error. Range pages (deterministic order, 1,000/page) keep
+ * every row reachable at any workspace size.
+ */
+async function selectAllPages<T>(
+  page: (from: number, to: number) => PromiseLike<PageResult<T>>,
+): Promise<{ rows: T[]; error: PageResult<T>['error'] }> {
+  const rows: T[] = [];
+  const PAGE_SIZE = 1000;
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await page(from, from + PAGE_SIZE - 1);
+    if (error) return { rows, error };
+    const batch = data ?? [];
+    rows.push(...batch);
+    if (batch.length < PAGE_SIZE) return { rows, error: null };
+  }
+}
+
+/**
+ * Accounts + managed Facebook pages + already-configured ADU rows for
+ * the Add Page picker. Throws on any fatal load failure (the route
+ * turns it into a 500) — a transient database error must never render
+ * as an empty picker that invites duplicate configs. A missing
+ * adu_configs table is NOT fatal: the picker still shows accounts and
+ * pages, flagged with migrationMissing, so the UI can say why adding
+ * is unavailable instead of failing the whole picker.
+ */
+export async function loadAduOptionsLists(
+  supabase: SupabaseClient,
+  workspaceId: string,
+): Promise<AduOptionsLists> {
+  const accounts = await selectAllPages<Record<string, unknown>>((from, to) =>
+    supabase
+      .from('social_accounts')
+      .select('id, external_account_id, display_name, avatar_url, status')
+      .eq('workspace_id', workspaceId)
+      .eq('platform', 'facebook')
+      .order('display_name')
+      .range(from, to),
+  );
+  if (accounts.error) {
+    throw new Error(accounts.error.message ?? 'Could not load Facebook accounts.');
+  }
+  const pages = await selectAllPages<Record<string, unknown>>((from, to) =>
+    supabase
+      .from('destinations')
+      .select('id, account_id, external_destination_id, name, avatar_url, status, metadata')
+      .eq('workspace_id', workspaceId)
+      .eq('platform', 'facebook')
+      .order('name')
+      .range(from, to),
+  );
+  if (pages.error) {
+    throw new Error(pages.error.message ?? 'Could not load Facebook pages.');
+  }
+  const configured = await selectAllPages<Record<string, unknown>>((from, to) =>
+    supabase
+      .from('adu_configs')
+      .select('destination_id, source_platform, source_username')
+      .eq('workspace_id', workspaceId)
+      .order('destination_id')
+      .range(from, to),
+  );
+  if (configured.error) {
+    if (aduMissingTable(configured.error)) {
+      return {
+        accounts: accounts.rows,
+        pages: pages.rows,
+        configured: [],
+        migrationMissing: true,
+      };
+    }
+    throw new Error(configured.error.message ?? 'Could not load configured pages.');
+  }
+  return {
+    accounts: accounts.rows,
+    pages: pages.rows,
+    configured: configured.rows,
+    migrationMissing: false,
+  };
+}
+
 export interface AduConfigView {
   id: string;
   destinationId: string;

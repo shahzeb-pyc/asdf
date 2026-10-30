@@ -11,7 +11,7 @@
  */
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { InternalError } from '@fbuploadpro/contracts';
-import { handlePublishBatch } from './consumers.js';
+import { handlePublishBatch, persistPublishedPostId } from './consumers.js';
 
 const ITEM_ID = '11111111-1111-4111-a111-111111111111';
 const DEST_ID = '22222222-2222-4222-a222-222222222222';
@@ -117,6 +117,49 @@ describe('settle unmatched-flag refresh failures', () => {
     expect(ack).toHaveBeenCalled();
     expect(errSpy).toHaveBeenCalledWith(
       expect.stringContaining('unmatched-flag refresh threw'),
+      expect.anything()
+    );
+  });
+});
+
+describe('persistPublishedPostId', () => {
+  function makeUpdateDb(result: { error: unknown }) {
+    const calls: Array<{ table: string; values: unknown; id: unknown }> = [];
+    return {
+      calls,
+      from: (table: string) => ({
+        update: (values: Record<string, unknown>) => ({
+          eq: (_column: string, id: unknown) => {
+            calls.push({ table, values, id });
+            return Promise.resolve({ data: null, error: result.error });
+          },
+        }),
+      }),
+    };
+  }
+
+  it('writes the platform ids onto the queue row', async () => {
+    const db = makeUpdateDb({ error: null });
+    await persistPublishedPostId(db as never, ITEM_ID, 'fb_post_999', 'fb_comment_1');
+    expect(db.calls).toEqual([
+      {
+        table: 'queue_items',
+        values: { external_post_id: 'fb_post_999', external_comment_id: 'fb_comment_1' },
+        id: ITEM_ID,
+      },
+    ]);
+  });
+
+  it('logs loudly but does not throw when the persist fails', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const db = makeUpdateDb({ error: new Error('persist boom') });
+    // The settle RPC carries the same ids, so a single persist failure
+    // must not fail the publish — but it must never pass silently.
+    await expect(
+      persistPublishedPostId(db as never, ITEM_ID, 'fb_post_999', null),
+    ).resolves.toBeUndefined();
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining('failed to persist published post id'),
       expect.anything()
     );
   });

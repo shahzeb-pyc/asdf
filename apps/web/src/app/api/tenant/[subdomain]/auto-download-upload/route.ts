@@ -11,6 +11,7 @@ import {
 import {
   aduContext,
   aduMissingTable,
+  aduRpcMissing,
   buildAduConfigView,
   type AduConfigView,
 } from '@/lib/server/adu';
@@ -62,9 +63,12 @@ export async function GET(
     p_offset: (page - 1) * pageSize,
   });
   if (error) {
-    // 42P01 = ADU tables missing; 42883 = the RPC itself missing, which
-    // also means the ADU migrations have not been applied yet.
-    if (aduMissingTable(error) || error.code === '42883') {
+    // 42P01 = ADU tables missing; 42883 / PGRST202 = the RPC itself
+    // missing, which also means the ADU migrations have not been
+    // applied yet. PGRST202 is the case PostgREST actually returns
+    // for a missing RPC — without it, an unapplied migration renders
+    // as a bare "Failed to load pages." with no migration banner.
+    if (aduRpcMissing(error)) {
       return NextResponse.json({ configs: [], total: 0, page: 1, migrationMissing: true });
     }
     console.error(`ADU hub list failed: code=${error.code ?? 'unknown'}`);

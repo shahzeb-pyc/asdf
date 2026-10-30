@@ -15,6 +15,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import {
+  ADU_STALE_PUBLISHING_SECONDS,
   createPublisherRegistry,
   encryptToken,
   InternalError,
@@ -426,5 +427,183 @@ describe('runAduTick', () => {
       NOW.getTime() - ADU_JOB_RETENTION_DAYS * 24 * 60 * 60 * 1000,
     ).toISOString();
     expect(ltOp?.args[1]).toBe(cutoff);
+  });
+
+  it('stale reset only resets jobs still publishing and still stale', async () => {
+    const staleJob = { id: 'job-stale', updated_at: '2026-10-30T08:00:00.000Z' };
+    const db = makeDb((table, ops) => {
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'eq' && o.args[1] === 'publishing')) {
+        return { data: [staleJob], error: null };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
+        return { error: null };
+      }
+      return { data: [], error: null };
+    });
+    await runAduTick({
+      db: db as never,
+      registry: registryWith(null),
+      masterKey: MASTER_KEY,
+      now: NOW,
+    });
+    const reset = db.calls.find(
+      (c) =>
+        c.table === 'adu_posting_jobs' &&
+        c.ops.some((o) => o.kind === 'update' && (o.args[0] as Row).status === 'pending_publish'),
+    );
+    expect(reset).toBeDefined();
+    // The guard that stops a job settled (or re-touched) between the
+    // stale select and this update from being flipped back to
+    // pending_publish and published a second time.
+    expect(reset!.ops.find((o) => o.kind === 'eq' && o.args[0] === 'status')?.args[1]).toBe(
+      'publishing',
+    );
+    const staleAt = new Date(
+      NOW.getTime() - ADU_STALE_PUBLISHING_SECONDS * 1000,
+    ).toISOString();
+    expect(reset!.ops.find((o) => o.kind === 'lt')?.args[1]).toBe(staleAt);
+  });
+
+  it('publish claim lost to another tick skips without publishing', async () => {
+    const job = {
+      id: 'job-1',
+      config_id: 'c1',
+      reel_id: 'reel-1',
+      publish_retries: 0,
+      graph_post_id: null,
+      adu_reels: { caption: 'hi', media_url: 'https://example.invalid/r.mp4' },
+    };
+    const publisher = fakePublisher(async () => ({ status: 'published', externalPostId: 'g1' }));
+    const db = makeDb((table, ops) => {
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
+        return { error: null };
+      }
+      // The claim update (update + still-pending guard) finds nothing:
+      // another tick claimed this job first.
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'update')) {
+        return { data: [], error: null };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'eq' && o.args[1] === 'pending_publish')) {
+        return { data: [job], error: null };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'eq' && o.args[1] === 'publishing')) {
+        return { data: [], error: null };
+      }
+      if (table === 'adu_configs') return { data: [], error: null };
+      return { data: [], error: null };
+    });
+    const result = await runAduTick({
+      db: db as never,
+      registry: registryWith(publisher),
+      masterKey: MASTER_KEY,
+      now: NOW,
+    });
+    expect(publisher.publish).not.toHaveBeenCalled();
+    expect(result.published).toBe(0);
+    expect(result.failed).toBe(0);
+    const claim = db.calls.find(
+      (c) =>
+        c.table === 'adu_posting_jobs' &&
+        c.ops.some((o) => o.kind === 'update' && (o.args[0] as Row).status === 'publishing'),
+    );
+    expect(claim).toBeDefined();
+    expect(claim!.ops.find((o) => o.kind === 'eq' && o.args[0] === 'status')?.args[1]).toBe(
+      'pending_publish',
+    );
+  });
+
+  it('intake oldest load failure throws instead of completing the config', async () => {
+    const config = configRow('c1', ['09:00']);
+    const db = makeDb((table, ops) => {
+      if (table === 'adu_configs') return { data: [config], error: null };
+      if (table === 'adu_reels' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return { data: null, error: { code: '57014', message: 'query cancelled' } };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
+        return { error: null };
+      }
+      return { data: [], error: null };
+    });
+    await expect(
+      runAduTick({ db: db as never, registry: registryWith(null), masterKey: MASTER_KEY, now: NOW }),
+    ).rejects.toThrow(/ADU intake oldest load failed: 57014|query cancelled/);
+    const completion = db.calls.find(
+      (c) =>
+        c.table === 'adu_configs' &&
+        c.ops.some((o) => o.kind === 'update' && (o.args[0] as Row).status === 'completed'),
+    );
+    expect(completion).toBeUndefined();
+  });
+
+  it('intake busy load failure throws instead of completing the config', async () => {
+    const config = configRow('c1', ['09:00']);
+    const db = makeDb((table, ops) => {
+      if (table === 'adu_configs') return { data: [config], error: null };
+      if (table === 'adu_reels' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return { data: null, error: null };
+      }
+      if (table === 'adu_reels' && ops.some((o) => o.kind === 'in')) {
+        return { data: null, error: { code: '500', message: 'busy boom' } };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
+        return { error: null };
+      }
+      return { data: [], error: null };
+    });
+    await expect(
+      runAduTick({ db: db as never, registry: registryWith(null), masterKey: MASTER_KEY, now: NOW }),
+    ).rejects.toThrow(/ADU intake busy load failed/);
+    const completion = db.calls.find(
+      (c) =>
+        c.table === 'adu_configs' &&
+        c.ops.some((o) => o.kind === 'update' && (o.args[0] as Row).status === 'completed'),
+    );
+    expect(completion).toBeUndefined();
+  });
+
+  it('intake claims the reel and releases it on a duplicate slot', async () => {
+    const config = configRow('c1', ['09:00']);
+    const db = makeDb((table, ops) => {
+      if (table === 'adu_configs') return { data: [config], error: null };
+      if (table === 'adu_reels' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return {
+          data: { id: 'reel-1', media_url: 'https://example.invalid/r.mp4' },
+          error: null,
+        };
+      }
+      if (table === 'adu_reels' && ops.some((o) => o.kind === 'update')) {
+        return { data: [{ id: 'reel-1' }], error: null };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'insert')) {
+        return { error: { code: '23505', message: 'duplicate slot' } };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
+        return { error: null };
+      }
+      return { data: [], error: null };
+    });
+    const result = await runAduTick({
+      db: db as never,
+      registry: registryWith(null),
+      masterKey: MASTER_KEY,
+      now: NOW,
+    });
+    expect(result.intakeJobsCreated).toBe(0);
+    const claim = db.calls.find(
+      (c) =>
+        c.table === 'adu_reels' &&
+        c.ops.some((o) => o.kind === 'update' && (o.args[0] as Row).status === 'processing'),
+    );
+    expect(claim).toBeDefined();
+    expect(claim!.ops.find((o) => o.kind === 'eq' && o.args[0] === 'status')?.args[1]).toBe(
+      'downloaded',
+    );
+    // The failed insert releases the claim so the reel stays intakable.
+    const release = db.calls.find(
+      (c) =>
+        c.table === 'adu_reels' &&
+        c.ops.some((o) => o.kind === 'update' && (o.args[0] as Row).status === 'downloaded'),
+    );
+    expect(release).toBeDefined();
   });
 });
