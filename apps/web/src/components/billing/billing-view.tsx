@@ -702,8 +702,8 @@ export function BillingView({
             <AlertDescription>{plainQuoteError(quoteError)}</AlertDescription>
           </Alert>
         ) : null}
-        <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="order-2 flex min-w-0 flex-col gap-6 lg:order-1">
+        <div className="flex flex-col items-start gap-6 lg:flex-row">
+          <div className="order-2 flex min-w-0 flex-1 flex-col gap-6 lg:order-1">
             <Card>
               <CardHeader>
                 <CardTitle>Choose how to pay</CardTitle>
@@ -879,7 +879,7 @@ export function BillingView({
               </CardContent>
             </Card>
           </div>
-          <div className="order-1 lg:order-2 lg:sticky lg:top-20 lg:self-start">{orderSummary}</div>
+          <div className="order-1 w-full shrink-0 lg:order-2 lg:sticky lg:top-20 lg:w-90 lg:self-start">{orderSummary}</div>
         </div>
       </div>
     );
@@ -917,8 +917,8 @@ export function BillingView({
             <AlertDescription>{plainQuoteError(quoteError)}</AlertDescription>
           </Alert>
         ) : null}
-        <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-          <Card>
+        <div className="flex flex-col items-start gap-6 lg:flex-row">
+          <Card className="min-w-0 flex-1">
             <CardHeader>
               <div className="flex flex-col gap-1">
                 <CardTitle>Choose your pages and accounts</CardTitle>
@@ -930,7 +930,7 @@ export function BillingView({
             </CardHeader>
             <CardContent>{configurator}</CardContent>
           </Card>
-          <div className="flex flex-col gap-6 lg:sticky lg:top-20 lg:self-start">
+          <div className="flex w-full shrink-0 flex-col gap-6 lg:sticky lg:top-20 lg:w-90 lg:self-start">
             {orderSummary}
             <div className="flex flex-col gap-2">
               <Button

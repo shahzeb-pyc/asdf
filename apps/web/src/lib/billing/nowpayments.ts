@@ -5,6 +5,7 @@ import {
   nowPaymentsPayCurrency,
   type CryptoNetwork,
 } from '@fbuploadpro/contracts';
+import { logServerError } from '@/lib/server-analytics';
 
 /**
  * NOWPayments integration (official API, api.nowpayments.io/v1).
@@ -142,7 +143,13 @@ export async function minimumUsdt(
     const parsed = NowPaymentsMinAmountResponseSchema.safeParse(body);
     if (!parsed.success || !(parsed.data.min_amount > 0)) return null;
     return parsed.data.min_amount;
-  } catch {
+  } catch (err) {
+    // Best-effort only: the minimum is surfaced, never swallowed
+    // silently — payment creation still enforces the minimum and
+    // reports its refusal plainly if the total is too small.
+    logServerError('[billing] nowpayments minimum unavailable', err, {
+      source: 'billing',
+    });
     return null;
   }
 }

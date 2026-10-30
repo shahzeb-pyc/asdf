@@ -71,10 +71,41 @@ function graphResponse(ok: boolean, status: number, data: unknown) {
   } as unknown as Response;
 }
 
-function supabaseBuilder(table: string) {
-  const builder = {
+/**
+ * Subscription fixtures for the publish-now posting gate (added
+ * with the subscription feature): the route registers each target
+ * page in the usage registry before any Facebook call, so the fake
+ * client must answer the entitlement queries the gate makes —
+ * an active paid period with room for the test pages, and no
+ * destinations used yet. Without these, the gate's query chain
+ * (.is/.lte/.gt/.order/.limit) hits a builder that has none of
+ * them and every publish-now test fails before Facebook is called.
+ */
+type SupabaseChain = {
+  select: () => SupabaseChain;
+  eq: () => SupabaseChain;
+  is: () => SupabaseChain;
+  lte: () => SupabaseChain;
+  gt: () => SupabaseChain;
+  order: () => SupabaseChain;
+  limit: () => SupabaseChain;
+  insert: () => SupabaseChain;
+  maybeSingle: () => Promise<unknown>;
+  data?: unknown;
+  count?: number;
+  error?: unknown;
+};
+
+function supabaseBuilder(table: string): SupabaseChain {
+  const builder: SupabaseChain = {
     select: () => builder,
     eq: () => builder,
+    is: () => builder,
+    lte: () => builder,
+    gt: () => builder,
+    order: () => builder,
+    limit: () => builder,
+    insert: () => builder,
     maybeSingle: async () => {
       if (table === 'media_items') {
         return { data: mediaRow, error: null };
@@ -85,6 +116,29 @@ function supabaseBuilder(table: string) {
       };
     },
   };
+  if (table === 'subscription_periods') {
+    builder.data = [
+      {
+        id: 'period-1',
+        user_id: 'user-1',
+        facebook_count: 10,
+        instagram_count: 10,
+        threads_count: 10,
+        x_count: 10,
+        tiktok_count: 10,
+        youtube_count: 10,
+        starts_at: '2020-01-01T00:00:00.000Z',
+        ends_at: '2099-01-01T00:00:00.000Z',
+        superseded_at: null,
+      },
+    ];
+    builder.error = null;
+  }
+  if (table === 'subscription_usage') {
+    builder.data = [];
+    builder.count = 0;
+    builder.error = null;
+  }
   return builder;
 }
 

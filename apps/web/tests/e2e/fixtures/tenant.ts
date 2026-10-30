@@ -128,7 +128,9 @@ function base64Url(input: Buffer | string): string {
  * Mints a session token in the app's own format (HS256 JWT — see
  * @fbuploadpro/contracts signSessionToken) for the disposable tenant.
  */
-export function mintSessionToken(): string {
+export function mintSessionToken(
+  role: 'admin' | 'user' | 'seller' = 'admin'
+): string {
   const now = Math.floor(Date.now() / 1000);
   const header = base64Url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
   const payload = base64Url(
@@ -137,7 +139,7 @@ export function mintSessionToken(): string {
       email: TENANT.email,
       name: TENANT.name,
       subdomain: TENANT.subdomain,
-      role: 'admin',
+      role,
       status: 'active',
       iat: now,
       exp: now + 3600,
