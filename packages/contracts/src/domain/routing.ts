@@ -237,23 +237,24 @@ function extractUrlProtocol(urlInput?: string | URL | null): string {
 
 function resolveLocalOAuthRedirectUri(
   requestUrl?: string | URL | null,
-  appUrlFallback?: string | null
+  appUrlFallback?: string | null,
+  callbackPath: string = '/api/auth/facebook/callback'
 ): string {
   if (appUrlFallback) {
     const cleanAppUrl = appUrlFallback.endsWith('/')
       ? appUrlFallback.slice(0, -1)
       : appUrlFallback;
-    return `${cleanAppUrl}/api/auth/facebook/callback`;
+    return `${cleanAppUrl}${callbackPath}`;
   }
   if (requestUrl) {
     try {
       const parsed = typeof requestUrl === 'string' ? new URL(requestUrl) : requestUrl;
-      return `${parsed.origin}/api/auth/facebook/callback`;
+      return `${parsed.origin}${callbackPath}`;
     } catch {
       // Fall through to default local
     }
   }
-  return 'http://localhost:3000/api/auth/facebook/callback';
+  return `http://localhost:3000${callbackPath}`;
 }
 
 /**
@@ -269,13 +270,79 @@ export function buildSubdomainOAuthRedirectUri(
   rootDomain?: string | null,
   appUrlFallback?: string | null
 ): string {
+  return buildSubdomainOAuthRedirectUriForCallback(
+    subdomain,
+    '/api/auth/facebook/callback',
+    requestUrl,
+    rootDomain,
+    appUrlFallback
+  );
+}
+
+/**
+ * Generic form of `buildSubdomainOAuthRedirectUri` for a platform OAuth
+ * callback path (e.g. `/api/auth/instagram/callback`). The Facebook
+ * helper above delegates to this with its own path, so Facebook output
+ * is unchanged. `callbackPath` must be an absolute path.
+ */
+export function buildSubdomainOAuthRedirectUriForCallback(
+  subdomain: string,
+  callbackPath: string,
+  requestUrl?: string | URL | null,
+  rootDomain?: string | null,
+  appUrlFallback?: string | null
+): string {
   const cleanRoot = (rootDomain || '').trim().toLowerCase().split(':')[0] || '';
   if (!cleanRoot || isLocalHostname(cleanRoot)) {
-    return resolveLocalOAuthRedirectUri(requestUrl, appUrlFallback);
+    return resolveLocalOAuthRedirectUri(requestUrl, appUrlFallback, callbackPath);
   }
 
   const protocol = extractUrlProtocol(requestUrl);
-  return `${protocol}//${subdomain}.${cleanRoot}/api/auth/facebook/callback`;
+  return `${protocol}//${subdomain}.${cleanRoot}${callbackPath}`;
+}
+
+/**
+ * Per-platform Accounts landing path (no tenant prefix — callers add
+ * `/tenant/<subdomain>` via `buildTenantUrl` / `buildPlatformAccountsUrl`).
+ * Facebook keeps the historic `/accounts`; every other platform has its
+ * own accounts page. Unknown platforms fall back to Facebook's path,
+ * exactly as the framework did before this mapping existed.
+ */
+export function getPlatformAccountsPath(platform: string): string {
+  switch (platform) {
+    case 'instagram':
+      return '/instagram/accounts';
+    case 'threads':
+      return '/threads/accounts';
+    case 'tiktok':
+      return '/tiktok/accounts';
+    case 'x':
+      return '/x/accounts';
+    case 'youtube':
+      return '/youtube/accounts';
+    default:
+      return '/accounts';
+  }
+}
+
+/**
+ * Tenant Accounts landing URL for a platform, following the same
+ * host rules as `buildTenantUrl` (localhost/preview keep the request
+ * origin with a `/tenant/<subdomain>` prefix; production uses the
+ * workspace subdomain host).
+ */
+export function buildPlatformAccountsUrl(
+  subdomain: string,
+  platform: string,
+  requestUrl: string | URL,
+  rootDomain?: string | null
+): URL {
+  return buildTenantUrl(
+    subdomain,
+    getPlatformAccountsPath(platform),
+    requestUrl,
+    rootDomain
+  );
 }
 
 

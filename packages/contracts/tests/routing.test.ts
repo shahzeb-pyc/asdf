@@ -1,9 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildCentralAppUrl,
+  buildPlatformAccountsUrl,
   buildSubdomainOAuthRedirectUri,
+  buildSubdomainOAuthRedirectUriForCallback,
   buildTenantUrl,
   extractSubdomain,
+  getPlatformAccountsPath,
   getTenantRewriteUrl,
 } from '../src/domain/routing';
 
@@ -255,6 +258,76 @@ describe('Tenant Subdomain Routing Contracts', () => {
         undefined
       );
       expect(redirectUri).toBe('http://localhost:3000/api/auth/facebook/callback');
+    });
+  });
+
+  describe('buildSubdomainOAuthRedirectUriForCallback', () => {
+    it('builds the Instagram callback URI on a custom production domain', () => {
+      const redirectUri = buildSubdomainOAuthRedirectUriForCallback(
+        'acme',
+        '/api/auth/instagram/callback',
+        'https://acme.vinsmokemedia.online/api/auth/instagram',
+        'vinsmokemedia.online'
+      );
+      expect(redirectUri).toBe(
+        'https://acme.vinsmokemedia.online/api/auth/instagram/callback'
+      );
+    });
+
+    it('falls back to appUrlFallback on localhost', () => {
+      const redirectUri = buildSubdomainOAuthRedirectUriForCallback(
+        'acme',
+        '/api/auth/instagram/callback',
+        'http://localhost:3000/api/auth/instagram',
+        'localhost:3000',
+        'http://localhost:3000'
+      );
+      expect(redirectUri).toBe('http://localhost:3000/api/auth/instagram/callback');
+    });
+  });
+
+  describe('getPlatformAccountsPath', () => {
+    it.each([
+      ['facebook', '/accounts'],
+      ['instagram', '/instagram/accounts'],
+      ['threads', '/threads/accounts'],
+      ['tiktok', '/tiktok/accounts'],
+      ['x', '/x/accounts'],
+      ['youtube', '/youtube/accounts'],
+      ['myspace', '/accounts'],
+      ['', '/accounts'],
+    ])('maps %s to %s', (platform, expected) => {
+      expect(getPlatformAccountsPath(platform)).toBe(expected);
+    });
+  });
+
+  describe('buildPlatformAccountsUrl', () => {
+    it('builds the Instagram tenant accounts URL on localhost', () => {
+      const url = buildPlatformAccountsUrl(
+        'acme',
+        'instagram',
+        'http://localhost:3000/api/connect/instagram'
+      );
+      expect(url.toString()).toBe('http://localhost:3000/tenant/acme/instagram/accounts');
+    });
+
+    it('keeps the Facebook tenant accounts URL unchanged', () => {
+      const url = buildPlatformAccountsUrl(
+        'acme',
+        'facebook',
+        'http://localhost:3000/api/connect/facebook'
+      );
+      expect(url.toString()).toBe('http://localhost:3000/tenant/acme/accounts');
+    });
+
+    it('builds the workspace-subdomain host URL in production', () => {
+      const url = buildPlatformAccountsUrl(
+        'acme',
+        'threads',
+        'https://acme.fbuploadpro.com/api/connect/threads',
+        'fbuploadpro.com'
+      );
+      expect(url.toString()).toBe('https://acme.fbuploadpro.com/threads/accounts');
     });
   });
 });
