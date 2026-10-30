@@ -39,6 +39,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import { PlusIcon } from 'lucide-react';
 
 import { api, buildTenantApiPath, buildUrl, isApiError } from '@/lib/api';
+import { useDebouncedValue } from '@/lib/use-debounced-value';
 import {
   DisconnectThreadsAccountResponseSchema,
   ListThreadsAccountsResponseSchema,
@@ -129,6 +130,11 @@ export function ThreadsAccountsShell({
 
   const [page, setPage] = React.useState(initialPage);
   const [searchQuery, setSearchQuery] = React.useState('');
+  // Perf: the list query runs on the debounced search, not on
+  // every keystroke — the toolbar input itself stays immediate.
+  // (Pages already did this; the account shells did not, so each
+  // keystroke fired its own API request.)
+  const debouncedSearchQuery = useDebouncedValue(searchQuery);
   const [statusFilter, setStatusFilter] =
     React.useState<AccountStatusFilter>('all');
 
@@ -136,7 +142,7 @@ export function ThreadsAccountsShell({
     queryKey: tenant.threadsAccounts.listPage({
       page,
       limit: DEFAULT_PAGE_SIZE,
-      search: searchQuery.trim(),
+      search: debouncedSearchQuery.trim(),
       status: statusFilter,
     }),
     queryFn: ({ signal }) =>
@@ -144,7 +150,9 @@ export function ThreadsAccountsShell({
         buildUrl(accountsPath, {
           page,
           limit: DEFAULT_PAGE_SIZE,
-          ...(searchQuery.trim() ? { search: searchQuery.trim() } : {}),
+          ...(debouncedSearchQuery.trim()
+            ? { search: debouncedSearchQuery.trim() }
+            : {}),
           ...(statusFilter !== 'all' ? { status: statusFilter } : {}),
         }),
         { schema: ListThreadsAccountsResponseSchema, signal }
@@ -251,15 +259,20 @@ export function ThreadsAccountsShell({
   // An out-of-range ?page= is clamped by the API; sync state (and the
   // URL, via the effect below) to the page that actually came back —
   // a stale ?page=999 can never render "Showing 29941–90 of 90".
+  // Placeholder data is excluded on purpose: while page 2 loads,
+  // keepPreviousData serves the page-1 payload, and syncing to its
+  // page (1) would drag the user back to page 1 (a real snap-back
+  // bug). Only a settled, non-placeholder response may clamp.
   React.useEffect(() => {
     if (
+      !accountsQuery.isPlaceholderData &&
       accountsQuery.data &&
       accountsQuery.data.page !== undefined &&
       accountsQuery.data.page !== page
     ) {
       setPage(accountsQuery.data.page);
     }
-  }, [accountsQuery.data, page]);
+  }, [accountsQuery.data, accountsQuery.isPlaceholderData, page]);
 
   // Keep ?page= in the URL in step with state (page 1 omits the param).
   React.useEffect(() => {

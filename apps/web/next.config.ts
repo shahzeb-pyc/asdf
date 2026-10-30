@@ -32,6 +32,27 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // Router-cache reuse for back/forward navigation (perf launch
+  // pass): Next's default `dynamic: 0` re-fetches the RSC payload
+  // — and re-runs every server prefetch — on EVERY client
+  // navigation, even when the React Query cache already holds
+  // fresh data. A 30s dynamic window makes back/forward within
+  // it instant with zero server calls, while data freshness is
+  // still governed by the query staleTimes (60s reference / 15s
+  // queue / 5min insights) plus background revalidation — never
+  // frozen data. Mutations invalidate query keys, so a mutated
+  // list refetches on next view regardless of this window. The
+  // only lag this introduces is server-rendered frame text (the
+  // workspace name in the layout) showing a up-to-30s-old value
+  // on a rapid revisit after a rename. Static segments reuse
+  // for 180s (Next's own default is 30s; static content here
+  // changes only on deploy).
+  experimental: {
+    staleTimes: {
+      dynamic: 30,
+      static: 180,
+    },
+  },
   // Analyzer builds only: webpack builds run Next's route-export type
   // validator, which rejects the test-exported route handlers that
   // exist across the API surface (pre-existing state; the Turbopack

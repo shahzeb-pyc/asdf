@@ -48,7 +48,7 @@
  */
 import * as React from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PlusIcon } from 'lucide-react';
 
 import { api, buildTenantApiPath, buildUrl } from '@/lib/api';
@@ -154,6 +154,10 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
           signal,
         }
       ),
+    // Perf: keep the previous page visible while the next one
+    // loads instead of flashing the skeleton on every page,
+    // search, or filter change.
+    placeholderData: keepPreviousData,
   });
   // R16: the accounts read here feeds the account-filter options,
   // so it pages through the WHOLE accounts list (limit 50, the
@@ -263,11 +267,15 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
 
   // An out-of-range ?page= is clamped by the API; sync the state (and
   // the URL, via the effect below) to the page that actually came back.
+  // Placeholder data is excluded on purpose: while a new page
+  // loads, keepPreviousData serves the previous payload, and
+  // syncing to its page would drag the user back (the Threads
+  // snap-back bug). Only a settled response may clamp.
   React.useEffect(() => {
-    if (pagesQuery.data && pagesQuery.data.page !== undefined && pagesQuery.data.page !== page) {
+    if (!pagesQuery.isPlaceholderData && pagesQuery.data && pagesQuery.data.page !== undefined && pagesQuery.data.page !== page) {
       setPage(pagesQuery.data.page);
     }
-  }, [pagesQuery.data, page]);
+  }, [pagesQuery.data, pagesQuery.isPlaceholderData, page]);
 
   // Keep ?page= in the URL in step with state (page 1 omits the param).
   // A query-only replace resolves against the current pathname, so no

@@ -648,4 +648,88 @@ describe('Threads accounts shell (React Query)', () => {
       { timeout: 8000 }
     );
   });
+
+  it('stays on page 2 after clicking it (placeholder data must not snap it back)', async () => {
+    // Perf regression: with keepPreviousData, the page-1 payload is
+    // served as placeholder while page 2 loads. The out-of-range
+    // clamp effect must ignore placeholder data, or it reads
+    // data.page (1) !== page (2) and drags the user back to page 1.
+    const pageOne = [
+      apiAccount(),
+      apiAccount({
+        id: 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+        threadsAccountId: 'th-exp',
+        displayName: 'Expired Willow',
+        handle: null,
+        accountLink: null,
+        connectedDestinationsCount: 0,
+        status: 'expired',
+        tokenExpiresAt: '2020-01-01T00:00:00Z',
+      }),
+    ];
+    const pageTwo = [
+      apiAccount({
+        id: 'dddddddd-dddd-4ddd-dddd-dddddddddddd',
+        threadsAccountId: 'th-two',
+        displayName: 'Page Two Pat',
+        handle: 'pat',
+        connectedDestinationsCount: 0,
+        status: 'active',
+      }),
+    ];
+    apiGet.mockImplementation((url: string) => {
+      if (String(url).includes('/settings/platform-credentials/')) {
+        return Promise.resolve(credentialsPayload);
+      }
+      const params = new URL(String(url), 'http://test.invalid').searchParams;
+      if (params.get('page') === '2') {
+        return Promise.resolve(
+          listPayload(pageTwo, { total: 90, totalPages: 3, page: 2 })
+        );
+      }
+      return Promise.resolve(
+        listPayload(pageOne, { total: 90, totalPages: 3, page: 1 })
+      );
+    });
+    renderShell();
+    await screen.findByText('Connected Cedar');
+    fireEvent.click(screen.getByTestId('pagination-page-2'));
+    await screen.findByText('Page Two Pat');
+    // Must STAY on page 2 once loaded — no snap-back to page 1.
+    await waitFor(() => {
+      expect(screen.getByText('Page Two Pat')).toBeTruthy();
+    });
+    expect(screen.queryByText('Connected Cedar')).toBeNull();
+    expect(apiGet).toHaveBeenCalledWith(
+      expect.stringContaining('page=2'),
+      expect.anything()
+    );
+  });
+
+  it('debounces search: typing does not fire a request per keystroke', async () => {
+    renderShell();
+    await screen.findByText('Connected Cedar');
+    apiGet.mockClear();
+    const input = screen.getByTestId(
+      'accounts-search-input'
+    ) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'c' } });
+    fireEvent.change(input, { target: { value: 'ce' } });
+    // The final term's request arrives after the 250ms debounce.
+    await waitFor(
+      () => {
+        expect(apiGet).toHaveBeenCalledWith(
+          expect.stringContaining('search=ce'),
+          expect.anything()
+        );
+      },
+      { timeout: 3000 }
+    );
+    const searches = apiGet.mock.calls.map(
+      ([url]) =>
+        new URL(String(url), 'http://test.invalid').searchParams.get('search')
+    );
+    expect(searches).not.toContain('c');
+    expect(searches).toContain('ce');
+  });
 });

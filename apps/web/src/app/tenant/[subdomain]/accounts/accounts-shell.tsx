@@ -26,10 +26,11 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PlusIcon } from 'lucide-react';
 
 import { api, buildTenantApiPath, buildUrl, isApiError } from '@/lib/api';
+import { useDebouncedValue } from '@/lib/use-debounced-value';
 import {
   DisconnectAccountResponseSchema,
   ListFacebookAccountsResponseSchema,
@@ -135,12 +136,17 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
   // page 1 (the filtered result's first page).
   const [searchQuery, setSearchQuery] = React.useState('');
   const [statusFilter, setStatusFilter] = React.useState<AccountStatusFilter>('all');
+  // Perf: the list query runs on the debounced search, not on
+  // every keystroke — the toolbar input itself stays immediate.
+  // (Pages already did this; this shell did not, so each keystroke
+  // fired its own API request.)
+  const debouncedSearchQuery = useDebouncedValue(searchQuery);
 
   const accountsQuery = useQuery({
     queryKey: tenant.accounts.listPage({
       page,
       limit: DEFAULT_PAGE_SIZE,
-      search: searchQuery.trim(),
+      search: debouncedSearchQuery.trim(),
       status: statusFilter,
     }),
     queryFn: ({ signal }) =>
@@ -148,11 +154,15 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
         buildUrl(accountsPath, {
           page,
           limit: DEFAULT_PAGE_SIZE,
-          ...(searchQuery.trim() ? { search: searchQuery.trim() } : {}),
+          ...(debouncedSearchQuery.trim() ? { search: debouncedSearchQuery.trim() } : {}),
           ...(statusFilter !== 'all' ? { status: statusFilter } : {}),
         }),
         { schema: ListFacebookAccountsResponseSchema, signal }
       ),
+    // Perf: keep the previous page visible while the next one
+    // loads instead of flashing the skeleton on every page,
+    // search, or filter change.
+    placeholderData: keepPreviousData,
   });
   const byocQuery = useQuery({
     queryKey: tenant.settings.byoc,
@@ -284,11 +294,15 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
 
   // An out-of-range ?page= is clamped by the API; sync state (and the
   // URL, via the effect below) to the page that actually came back.
+  // Placeholder data is excluded on purpose: while a new page
+  // loads, keepPreviousData serves the previous payload, and
+  // syncing to its page would drag the user back (the Threads
+  // snap-back bug). Only a settled response may clamp.
   React.useEffect(() => {
-    if (accountsQuery.data && accountsQuery.data.page !== undefined && accountsQuery.data.page !== page) {
+    if (!accountsQuery.isPlaceholderData && accountsQuery.data && accountsQuery.data.page !== undefined && accountsQuery.data.page !== page) {
       setPage(accountsQuery.data.page);
     }
-  }, [accountsQuery.data, page]);
+  }, [accountsQuery.data, accountsQuery.isPlaceholderData, page]);
 
   // Keep ?page= in the URL in step with state (page 1 omits the param).
   // A query-only replace resolves against the current pathname. This
