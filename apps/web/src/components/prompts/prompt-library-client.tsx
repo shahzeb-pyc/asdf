@@ -295,10 +295,17 @@ export function PromptLibraryClient({
     [subdomain, query, filters, favoritesOnly, fetchNonce],
   );
 
+  // The first list fetch runs immediately on mount; only later
+  // search/filter changes wait out the 250ms debounce. The old
+  // effect debounced the mount fetch too, so every visit to the
+  // library paid 250ms before its first request even started.
+  const firstListFetchRef = React.useRef(true);
   React.useEffect(() => {
+    const delay = firstListFetchRef.current ? 0 : 250;
+    firstListFetchRef.current = false;
     const timer = setTimeout(() => {
       void fetchPage(1, false);
-    }, 250);
+    }, delay);
     return () => clearTimeout(timer);
   }, [fetchPage]);
 

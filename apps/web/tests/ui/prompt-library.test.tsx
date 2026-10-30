@@ -1170,4 +1170,25 @@ describe("PromptLibraryClient (real API wiring)", () => {
     fireEvent.click(screen.getByRole("button", { name: /Category: All/ }));
     expect(screen.getByRole("option", { name: "Animals" })).toBeTruthy();
   });
+
+  it("fetches the first page immediately on mount, without the 250ms typing debounce", async () => {
+    // Perf regression: the list effect used to debounce every run
+    // including mount, so each visit paid 250ms before its first
+    // request even started. Only later search/filter changes wait
+    // out the debounce. Advancing 0ms must already have fired the
+    // mount fetch; the old code would need 250ms.
+    const fetchMock = mockFetch((url) => {
+      if (url.includes("/prompts?")) {
+        return okJson({ items: [listItem], total: 1, page: 1, pageSize: 50 });
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response;
+    });
+    render(<PromptLibraryClient subdomain="test" />);
+    await act(async () => {
+      vi.advanceTimersByTime(0);
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/prompts?"),
+    );
+  });
 });
