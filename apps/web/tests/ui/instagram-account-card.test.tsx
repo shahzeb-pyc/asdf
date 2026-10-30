@@ -1,9 +1,11 @@
 /**
  * Instagram account card — behavioural tests. The card must show the
- * circle status mark (never a dot), the verbatim expired alert, and
+ * shared status mark (never a dot), the verbatim expired alert, and
  * Reconnect only on expired/expiring cards; Disconnect must call back
  * with the account (the shell owns the confirmation dialogue, so the
- * card itself must not delete anything).
+ * card itself must not delete anything). Parity with Facebook's card:
+ * the destinations strip (the linked-pages analogue) and the profile
+ * link from the provider-reported handle must both render.
  */
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
@@ -33,7 +35,7 @@ const baseAccount = (overrides: Partial<InstagramAccountItem> = {}): InstagramAc
 });
 
 describe('InstagramAccountCard', () => {
-  it('shows a connected account with a green-circle tick mark and its connected date', () => {
+  it('shows a connected account with a shared tick mark and its connected date', () => {
     render(<InstagramAccountCard account={baseAccount()} />);
     expect(screen.getByTestId('account-name').textContent).toBe('Sunset Bakery');
     const mark = screen.getByTestId('account-health-mark');
@@ -66,10 +68,25 @@ describe('InstagramAccountCard', () => {
     );
   });
 
-  it('shows no linked-pages strip — an Instagram card has no pages section', () => {
-    const { container } = render(<InstagramAccountCard account={baseAccount()} />);
-    expect(container.textContent).not.toContain('pages linked');
-    expect(container.textContent).not.toContain('page linked');
+  it('shows the destinations strip (the linked-pages analogue) and the profile link from the handle', () => {
+    render(
+      <InstagramAccountCard
+        account={baseAccount({ destinationCount: 1, destinationHandle: 'sunset.bakery' })}
+      />
+    );
+    expect(screen.getByTestId('account-destinations-count').textContent).toBe(
+      '1 destination linked'
+    );
+    const link = screen.getByTestId('account-profile-link');
+    expect(link.getAttribute('href')).toBe('https://www.instagram.com/sunset.bakery/');
+  });
+
+  it('shows zero destinations linked when the account has no destination row', () => {
+    render(<InstagramAccountCard account={baseAccount()} />);
+    expect(screen.getByTestId('account-destinations-count').textContent).toBe(
+      '0 destinations linked'
+    );
+    expect(screen.queryByTestId('account-profile-link')).toBeNull();
   });
 
   it('calls onDisconnect with the account when Disconnect is clicked, and never deletes on its own', async () => {

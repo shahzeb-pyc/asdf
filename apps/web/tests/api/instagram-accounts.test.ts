@@ -32,6 +32,9 @@ const listRows = [
     token_expires_at: '2027-01-01T00:00:00Z',
     created_at: '2026-10-12T00:00:00Z',
     updated_at: '2026-10-12T00:00:00Z',
+    destination_count: 1,
+    destination_handle: 'sunset.bakery',
+    destination_name: 'Sunset Bakery',
   },
   {
     id: EXPIRED_ID,
@@ -99,6 +102,12 @@ describe('Instagram accounts API', () => {
       expect(json.accounts[0].status).toBe('expired');
       expect(json.accounts[1].status).toBe('active');
       expect(json.healthCounts).toEqual({ connected: 1, expired: 1, error: 0 });
+      // Destinations join: the connected account carries its real
+      // destination count + handle (the linked-pages analogue).
+      const connected = json.accounts.find((a: { id: string }) => a.id === ACCOUNT_ID);
+      expect(connected.destinationCount).toBe(1);
+      expect(connected.destinationHandle).toBe('sunset.bakery');
+      expect(connected.destinationName).toBe('Sunset Bakery');
       // No token material ever leaves the route.
       expect(JSON.stringify(json)).not.toContain('encrypted');
       expect(capturedSql.some((sql) => sql.includes("platform = 'instagram'"))).toBe(true);
