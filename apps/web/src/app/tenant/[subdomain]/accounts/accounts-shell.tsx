@@ -271,6 +271,10 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
     React.useState<FacebookAccountItem | null>(null);
   const [disconnectingAccount, setDisconnectingAccount] =
     React.useState<FacebookAccountItem | null>(null);
+  // Audit BG17: the failure message shown INSIDE the dialog
+  // (the dialog stays open on failure); the page banner below
+  // remains as the persistent record after it closes.
+  const [disconnectError, setDisconnectError] = React.useState<string | null>(null);
 
   // The API returns the filtered, expired-first page slice, so the
   // grid renders it directly — no client-side sort or filter anymore.
@@ -321,6 +325,7 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
         schema: DisconnectAccountResponseSchema,
       }),
     onSuccess: (data) => {
+      setDisconnectError(null);
       // BG10: disconnect no longer deletes the account — it stays
       // listed as revoked, so there is no optimistic removal here;
       // the refetch below shows its new state. The banner must
@@ -343,12 +348,14 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
       );
     },
     onError: (error) => {
+      const message =
+        isApiError(error) && error.kind === 'http'
+          ? "Couldn't disconnect account. Please refresh and try again."
+          : "Couldn't disconnect the account. Please try again.";
+      setDisconnectError(message);
       setBannerNotice({
         type: 'error',
-        message:
-          isApiError(error) && error.kind === 'http'
-            ? "Couldn't disconnect account. Please refresh and try again."
-            : "Couldn't disconnect the account. Please try again.",
+        message,
       });
     },
   });
@@ -459,6 +466,7 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
 
   // Handle Disconnect confirmation
   const handleConfirmDisconnect = async (accountId: string) => {
+    setDisconnectError(null);
     try {
       await disconnectMutation.mutateAsync(accountId);
     } catch (error) {
@@ -617,7 +625,7 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
           </p>
         </div>
 
-        {total > 0 && (
+        {(total > 0 || isFiltered) && (
           <div className="flex flex-col items-end gap-1">
             <Button
               type="button"
@@ -682,7 +690,12 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
       )}
 
       {/* Search & Status Filter Bar */}
-      {!isLoading && total > 0 && (
+      {/* Audit BG18: a filtered-empty state keeps the filter bar
+          (and the header Connect above) so the user can refine
+          a mistyped search in place instead of clearing and
+          starting over. Only the true-empty state (no filter)
+          hides them, where the empty state owns Connect. */}
+      {!isLoading && (total > 0 || isFiltered) && (
         <AccountsFilterBar
           searchQuery={searchQuery}
           onSearchChange={handleSearchChange}
@@ -711,9 +724,15 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
       <DisconnectAccountDialog
         account={disconnectingAccount}
         open={Boolean(disconnectingAccount)}
-        onOpenChange={(open) => !open && setDisconnectingAccount(null)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDisconnectingAccount(null);
+            setDisconnectError(null);
+          }
+        }}
         onConfirm={handleConfirmDisconnect}
         isDisconnecting={disconnectMutation.isPending}
+        error={disconnectError}
       />
 
       {/* BYOC Configuration Advisory Modal */}

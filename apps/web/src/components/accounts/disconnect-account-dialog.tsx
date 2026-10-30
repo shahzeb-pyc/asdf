@@ -31,6 +31,12 @@ interface DisconnectAccountDialogProps {
   onOpenChange: (open: boolean) => void;
   onConfirm: (accountId: string) => Promise<void>;
   isDisconnecting?: boolean;
+  // Audit BG17: a disconnect failure must be visible INSIDE
+  // the dialog, which stays open on failure. The old code put
+  // the message only in the page-level banner, which sits
+  // behind the dialog overlay — invisible until the user
+  // cancels and notices it.
+  error?: string | null;
 }
 
 export function DisconnectAccountDialog({
@@ -39,6 +45,7 @@ export function DisconnectAccountDialog({
   onOpenChange,
   onConfirm,
   isDisconnecting = false,
+  error = null,
 }: Readonly<DisconnectAccountDialogProps>) {
   if (!account) return null;
 
@@ -98,6 +105,16 @@ export function DisconnectAccountDialog({
                 ))}
               </ul>
             )}
+          </div>
+        )}
+
+        {error && (
+          <div
+            role="alert"
+            data-testid="disconnect-error"
+            className="rounded-sm border border-brand-rose/25 bg-brand-rose/10 px-3 py-2 text-body text-brand-rose"
+          >
+            {error}
           </div>
         )}
 
