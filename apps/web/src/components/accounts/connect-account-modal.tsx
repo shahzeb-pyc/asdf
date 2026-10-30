@@ -31,18 +31,23 @@ import {
 import { reportError } from '@/lib/report-error';
 import { cn } from '@/lib/utils';
 
-export interface AccountStateRecord {
-  status?: string | undefined;
-  updatedAt?: string | undefined;
-}
-
-export interface AccountSnapshot {
-  id: string;
-  fbAccountId?: string | undefined;
-  displayName?: string | undefined;
-  status?: string | undefined;
-  updatedAt?: string | undefined;
-}
+// Audit BG15/BG19: the pure poll helpers live in ./connect-poll
+// (unit-testable without mounting the dialog) and are re-exported
+// here so existing imports keep working.
+import {
+  evaluateAccountConnectionPoll,
+  fetchAllAccountsForPoll,
+  type AccountSnapshot,
+  type AccountStateRecord,
+} from '@/components/accounts/connect-poll';
+export {
+  evaluateAccountConnectionPoll,
+  isAccountConnectionEvent,
+  type AccountSnapshot,
+  type AccountStateRecord,
+  type PollOutcome,
+  type ReconnectingAccount,
+} from '@/components/accounts/connect-poll';
 
 export interface ConnectAccountModalProps {
   subdomain: string;
@@ -68,131 +73,12 @@ export interface ConnectAccountModalProps {
   initialAccounts?: AccountSnapshot[];
 }
 
-export type PollOutcome =
-  | { matched: false }
-  | {
-      matched: true;
-      kind: 'connected';
-      accountId: string;
-      accountName?: string | undefined;
-    }
-  | {
-      matched: true;
-      kind: 'already_connected';
-      accountId: string;
-      accountName: string;
-    }
-  | {
-      matched: true;
-      kind: 'reconnected_mismatch';
-      accountId: string;
-      newAccountName: string;
-      expectedAccountName: string;
-    };
-
 function formatTimer(totalSeconds: number): string {
   const mins = Math.floor(totalSeconds / 60);
   const secs = totalSeconds % 60;
   return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
 }
 
-function isAccountUpdatedInSnapshot(
-  acc: AccountSnapshot,
-  initialIds: Set<string>,
-  initialStates: Map<string, AccountStateRecord>
-): boolean {
-  if (!initialIds.has(acc.id)) {
-    return true;
-  }
-  const prevState = initialStates.get(acc.id);
-  if (!prevState) {
-    return false;
-  }
-  if (prevState.status === 'expired' && acc.status === 'active') {
-    return true;
-  }
-  return Boolean(acc.updatedAt && prevState.updatedAt && acc.updatedAt !== prevState.updatedAt);
-}
-
-function isTargetReconnected(
-  acc: AccountSnapshot,
-  reconnectingAccount: NonNullable<ConnectAccountModalProps['reconnectingAccount']>,
-  initialStates: Map<string, AccountStateRecord>
-): boolean {
-  const isMatchingId =
-    acc.id === reconnectingAccount.id ||
-    Boolean(reconnectingAccount.fbAccountId && acc.fbAccountId === reconnectingAccount.fbAccountId);
-  if (!isMatchingId) {
-    return false;
-  }
-  const prevState = initialStates.get(acc.id);
-  const prevStatus = prevState?.status ?? reconnectingAccount.status ?? 'expired';
-  if (prevStatus === 'expired' && acc.status === 'active') {
-    return true;
-  }
-  const prevUpdatedAt = prevState?.updatedAt ?? reconnectingAccount.updatedAt;
-  return Boolean(acc.updatedAt && prevUpdatedAt && acc.updatedAt !== prevUpdatedAt);
-}
-
-export function evaluateAccountConnectionPoll(
-  accounts: AccountSnapshot[],
-  initialIds: Set<string>,
-  initialStates: Map<string, AccountStateRecord>,
-  reconnectingAccount?: ConnectAccountModalProps['reconnectingAccount']
-): PollOutcome {
-  if (reconnectingAccount) {
-    const targetAcc = accounts.find((acc) =>
-      isTargetReconnected(acc, reconnectingAccount, initialStates)
-    );
-    if (targetAcc) {
-      return {
-        matched: true,
-        kind: 'connected',
-        accountId: targetAcc.id,
-        accountName: targetAcc.displayName,
-      };
-    }
-    const differentAcc = accounts.find(
-      (acc) =>
-        acc.id !== reconnectingAccount.id &&
-        isAccountUpdatedInSnapshot(acc, initialIds, initialStates)
-    );
-    if (differentAcc) {
-      return {
-        matched: true,
-        kind: 'reconnected_mismatch',
-        accountId: differentAcc.id,
-        newAccountName: differentAcc.displayName || 'another account',
-        expectedAccountName: reconnectingAccount.displayName,
-      };
-    }
-    return { matched: false };
-  }
-
-  const newAcc = accounts.find((acc) => !initialIds.has(acc.id));
-  if (newAcc) {
-    return {
-      matched: true,
-      kind: 'connected',
-      accountId: newAcc.id,
-      accountName: newAcc.displayName,
-    };
-  }
-
-  const refreshedAcc = accounts.find((acc) =>
-    isAccountUpdatedInSnapshot(acc, initialIds, initialStates)
-  );
-  if (refreshedAcc) {
-    return {
-      matched: true,
-      kind: 'already_connected',
-      accountId: refreshedAcc.id,
-      accountName: refreshedAcc.displayName || 'Account',
-    };
-  }
-
-  return { matched: false };
-}
 export function buildDirectConnectUrl(
   reconnectingAccount?: ConnectAccountModalProps['reconnectingAccount']
 ): string {
@@ -357,6 +243,9 @@ export function ConnectAccountModal({
 
   const wasOpenRef = useRef(false);
   const initialAccountIdsRef = useRef<Set<string>>(new Set(existingAccountIds));
+  // Audit BG15: whether the full-list poll baseline has been
+  // established for this open (reset in the open effect below).
+  const baselineReadyRef = useRef(false);
   const initialAccountStatesRef = useRef<Map<string, AccountStateRecord>>(
     new Map()
   );
@@ -386,6 +275,10 @@ export function ConnectAccountModal({
       }
       initialAccountIdsRef.current = ids;
       initialAccountStatesRef.current = stateMap;
+      // Audit BG15: the full-list baseline is (re)established
+      // on the first magic-view tick of this open, never reused
+      // from a previous open.
+      baselineReadyRef.current = false;
     }
     wasOpenRef.current = open;
   }, [open, existingAccountIds, initialAccounts, reconnectingAccount]);
@@ -454,13 +347,44 @@ export function ConnectAccountModal({
     return () => clearInterval(interval);
   }, [view, open, isLinkExpired]);
 
+  // Audit BG15: the poll sees the WHOLE list, not just page 1,
+  // and its baseline is the full list too. The shell's
+  // initialAccounts prop is only its current page slice, so a
+  // page-2 account would otherwise read as "newly connected"
+  // on the first tick. The first tick in magic view therefore
+  // only establishes the full baseline and never matches: a
+  // connection landing in the open→first-tick window is
+  // absorbed into the baseline (a seconds-long window, versus
+  // the old always-broken >30-account case), and every later
+  // tick evaluates the full list against it.
   // Check for newly connected or reconnected account
   const pollAccounts = useCallback(async () => {
     try {
-      const data = await api.get(buildTenantApiPath(subdomain, '/accounts'), {
-        schema: ListFacebookAccountsResponseSchema,
-      });
-      const accounts: AccountSnapshot[] = data.accounts || [];
+      const accounts: AccountSnapshot[] = await fetchAllAccountsForPoll(
+        async (page, limit) => {
+          const data = await api.get(
+            buildTenantApiPath(subdomain, `/accounts?limit=${limit}&page=${page}`),
+            { schema: ListFacebookAccountsResponseSchema }
+          );
+          return {
+            accounts: data.accounts as AccountSnapshot[],
+            totalPages: data.totalPages ?? 1,
+          };
+        }
+      );
+
+      if (!baselineReadyRef.current) {
+        const ids = new Set<string>(initialAccountIdsRef.current);
+        const stateMap = new Map(initialAccountStatesRef.current);
+        for (const acc of accounts) {
+          ids.add(acc.id);
+          stateMap.set(acc.id, { status: acc.status, updatedAt: acc.updatedAt });
+        }
+        initialAccountIdsRef.current = ids;
+        initialAccountStatesRef.current = stateMap;
+        baselineReadyRef.current = true;
+        return;
+      }
 
       const outcome = evaluateAccountConnectionPoll(
         accounts,
