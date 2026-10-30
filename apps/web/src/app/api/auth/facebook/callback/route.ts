@@ -385,9 +385,13 @@ function buildPostConnectRedirect(
     statePayload.expectedFbAccountId &&
       meProfile.id !== statePayload.expectedFbAccountId
   );
-  const isAlreadyConnected = Boolean(
-    !statePayload.expectedFbAccountId && alreadyExisted
-  );
+  // Audit UX8: the copy must follow the outcome, not the path.
+  // Re-authorizing an account that already existed is a session
+  // refresh whether it came through a card Reconnect (expected id
+  // set) or a fresh magic link (no expected id) — the old
+  // !expectedFbAccountId condition made the same outcome read
+  // "connected" on one path and "session refreshed" on the other.
+  const isAlreadyConnected = Boolean(alreadyExisted);
 
   if (statePayload.isMagic) {
     const magicSuccessUrl = buildMagicConnectUrl(

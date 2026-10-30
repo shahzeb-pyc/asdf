@@ -24,12 +24,18 @@ export interface PagesEmptyStateProps {
    * `false` = known missing (show guidance); `undefined` = not checked yet.
    */
   facebookAppConfigured?: boolean | undefined;
+  /** Audit UX5: the app-setup check is still running. */
+  byocPending?: boolean | undefined;
+  /** Audit UX5: the app-setup check failed (not known missing). */
+  byocError?: boolean | undefined;
 }
 
 export function PagesEmptyState({
   onAddPage,
   subdomain,
   facebookAppConfigured,
+  byocPending = false,
+  byocError = false,
 }: Readonly<PagesEmptyStateProps>) {
   const showMissingAppGuidance =
     facebookAppConfigured === false && Boolean(subdomain);
@@ -51,6 +57,25 @@ export function PagesEmptyState({
         description="Choose one of your connected Facebook accounts and select the pages you want to manage and publish posts to — text, photos, videos, reels, and stories."
       />
       <div className="flex flex-col items-center px-6 pb-16">
+        {/* Audit UX5: checking/failed states get a notice too, so
+            the empty state never silently implies missing setup. */}
+        {byocPending && (
+          <div
+            data-testid="pages-empty-byoc-checking"
+            className="mb-6 w-full max-w-105 rounded-sm border border-brand-gold/25 bg-brand-gold/10 px-3 py-2.5 text-center text-body leading-body text-ink"
+          >
+            Checking your Facebook app setup…
+          </div>
+        )}
+        {!byocPending && byocError && (
+          <div
+            data-testid="pages-empty-byoc-check-failed"
+            className="mb-6 w-full max-w-105 rounded-sm border border-brand-gold/25 bg-brand-gold/10 px-3 py-2.5 text-center text-body leading-body text-ink"
+          >
+            Couldn’t check your Facebook app setup. Open Facebook Accounts
+            to check the connection there.
+          </div>
+        )}
         {showMissingAppGuidance && (
           <div
             data-testid="pages-empty-facebook-app-guidance"

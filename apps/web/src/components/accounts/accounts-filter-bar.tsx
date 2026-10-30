@@ -24,12 +24,17 @@ export interface AccountsFilterBarProps {
   statusFilter: AccountStatusFilter;
   onStatusFilterChange: (value: AccountStatusFilter) => void;
   attentionCount?: number | undefined;
+  errorAttentionCount?: number | undefined;
 }
 
+// Audit UX2: the expiring-soon filter existed in the API but had
+// no tab, and error accounts had no filter at all.
 const FILTER_TABS: Array<{ value: AccountStatusFilter; label: string; testId: string }> = [
   { value: 'all', label: 'All', testId: 'accounts-filter-all' },
   { value: 'active', label: 'Active', testId: 'accounts-filter-active' },
+  { value: 'expiring_soon', label: 'Expiring soon', testId: 'accounts-filter-expiring-soon' },
   { value: 'expired', label: 'Expired', testId: 'accounts-filter-expired' },
+  { value: 'error', label: 'Error', testId: 'accounts-filter-error' },
 ];
 
 export function AccountsFilterBar({
@@ -38,6 +43,7 @@ export function AccountsFilterBar({
   statusFilter,
   onStatusFilterChange,
   attentionCount = 0,
+  errorAttentionCount = 0,
 }: Readonly<AccountsFilterBarProps>) {
   return (
     <div
@@ -80,7 +86,12 @@ export function AccountsFilterBar({
       <div role="tablist" aria-label="Filter accounts by status" className="flex items-center gap-4">
         {FILTER_TABS.map((tab) => {
           const isActive = statusFilter === tab.value;
-          const isAttention = tab.value === 'expired';
+          const badgeCount =
+            tab.value === 'expired'
+              ? attentionCount
+              : tab.value === 'error'
+                ? errorAttentionCount
+                : 0;
           return (
             <button
               key={tab.value}
@@ -97,9 +108,9 @@ export function AccountsFilterBar({
               )}
             >
               <span>{tab.label}</span>
-              {isAttention && attentionCount > 0 && (
+              {badgeCount > 0 && (
                 <span className="text-metadata font-semibold text-signal-critical">
-                  ({attentionCount})
+                  ({badgeCount})
                 </span>
               )}
             </button>

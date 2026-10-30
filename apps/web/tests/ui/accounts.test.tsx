@@ -299,7 +299,12 @@ describe('Facebook Accounts UI Components (Spec 027, Spec 029 & Spec 031)', () =
       );
 
       expect(screen.getByText('Disconnect Sarah Connor?')).toBeTruthy();
-      expect(screen.getByText('This account will no longer be available')).toBeTruthy();
+      // Copy drift fix: the dialog's description carries two
+      // sentences (BG10 revoke + history-kept copy), so match the
+      // first sentence as a substring, not an exact element text.
+      expect(
+        screen.getByText(/This account will no longer be available for publishing/)
+      ).toBeTruthy();
       expect(screen.getByTestId('disconnect-linked-pages-warning')).toBeTruthy();
       expect(screen.getByTestId('disconnect-linked-pages-list')).toBeTruthy();
       expect(screen.getByText('3 linked Facebook pages')).toBeTruthy();
@@ -335,7 +340,7 @@ describe('Facebook Accounts UI Components (Spec 027, Spec 029 & Spec 031)', () =
       expect(screen.getByTestId('disconnect-zero-pages-notice')).toBeTruthy();
       expect(
         screen.getByText(
-          "No Facebook Pages are linked to this account yet. It's safe to remove — you can reconnect it any time."
+          "No Facebook Pages are linked to this account yet. It's safe to disconnect — you can reconnect it any time."
         )
       ).toBeTruthy();
       expect(screen.queryByText('Before you disconnect')).toBeNull();

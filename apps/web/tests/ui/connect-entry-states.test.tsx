@@ -67,8 +67,20 @@ describe('connect error page (spec 136 §3.4, OD-136-4 default map)', () => {
       description:
         'Facebook approved the connection, but we couldn\u2019t save the account. Nothing was connected. Please try connecting again from your FBUploadPro dashboard.',
     });
-    // Reasons with no specific entry fall through to the default copy.
-    for (const reason of ['missing_token', 'expired_or_invalid', 'app_not_configured', null, undefined]) {
+    // Audit UX1: distinct failures get their own copy instead of
+    // all reading as "link expired".
+    expect(getConnectErrorCopy('expired_or_invalid').title).toBe(
+      'Connection Link Expired or Invalid'
+    );
+    expect(getConnectErrorCopy('missing_token').title).toBe('Connection Link Invalid');
+    expect(getConnectErrorCopy('app_not_configured').title).toBe(
+      'Facebook App Not Configured'
+    );
+    expect(getConnectErrorCopy('credentials_required').title).toBe(
+      'Facebook App Not Configured'
+    );
+    // Only genuinely unknown reasons fall through to the default copy.
+    for (const reason of [null, undefined]) {
       expect(getConnectErrorCopy(reason).title).toBe('Connection Link Expired or Invalid');
     }
   });

@@ -15,7 +15,7 @@ import {
 } from '@/components/accounts/account-health';
 import type { FacebookAccountItem } from '@/components/accounts/account-card';
 
-export type AccountStatusFilter = 'all' | 'active' | 'expiring_soon' | 'expired';
+export type AccountStatusFilter = 'all' | 'active' | 'expiring_soon' | 'expired' | 'error';
 
 export function sortAccountsExpiredFirst(items: FacebookAccountItem[]): FacebookAccountItem[] {
   return [...items].sort((a, b) => {
@@ -274,6 +274,28 @@ export function resolveOAuthRedirectNotice(searchParams: {
             'Facebook App credentials are required before connecting accounts. Please configure your App ID and Secret in Workspace Settings.',
         },
         keysToRemove: ['error', 'tab'],
+      };
+    }
+    // Audit UX9: session failures are not permission problems —
+    // they must not flatten into the permissions copy.
+    if (error === 'unauthorized') {
+      return {
+        notice: {
+          type: 'error',
+          message:
+            'Your session expired while connecting to Facebook. Please sign in again, then connect the account.',
+        },
+        keysToRemove: ['error'],
+      };
+    }
+    if (error === 'session_mismatch') {
+      return {
+        notice: {
+          type: 'error',
+          message:
+            'You switched accounts during the Facebook connection. Please try connecting again.',
+        },
+        keysToRemove: ['error'],
       };
     }
     const isCancelled = error === 'access_denied' || error === 'user_cancelled';

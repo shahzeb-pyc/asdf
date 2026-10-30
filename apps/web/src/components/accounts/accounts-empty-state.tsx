@@ -20,6 +20,8 @@ interface AccountsEmptyStateProps {
   isConnectDisabled?: boolean | undefined;
   /** The workspace's Facebook App ID and Secret are known to be missing. */
   credentialsMissing?: boolean | undefined;
+  /** The credentials check is still running (button disabled, reason shown). */
+  isCheckingCredentials?: boolean | undefined;
   /** Where to add the missing App ID and Secret (Settings → Facebook). */
   settingsHref?: string | undefined;
 }
@@ -28,6 +30,7 @@ export function AccountsEmptyState({
   onConnect,
   isConnectDisabled = false,
   credentialsMissing = false,
+  isCheckingCredentials = false,
   settingsHref,
 }: Readonly<AccountsEmptyStateProps>) {
   const isDisabled = isConnectDisabled || credentialsMissing;
@@ -54,7 +57,11 @@ export function AccountsEmptyState({
             onClick={onConnect}
             disabled={isDisabled}
             aria-describedby={
-              credentialsMissing ? 'empty-connect-disabled-reason' : undefined
+              credentialsMissing
+                ? 'empty-connect-disabled-reason'
+                : isCheckingCredentials
+                  ? 'empty-connect-checking-reason'
+                  : undefined
             }
           >
             <PlusIcon aria-hidden />
@@ -63,6 +70,17 @@ export function AccountsEmptyState({
         }
       />
       <div className="flex flex-col items-center px-6 pb-12 text-center">
+        {/* Audit UX4: while the check is loading the button is
+            disabled with no explanation at all — say so. */}
+        {!credentialsMissing && isCheckingCredentials && (
+          <p
+            id="empty-connect-checking-reason"
+            data-testid="empty-connect-checking-reason"
+            className="-mt-8 max-w-105 text-body leading-body text-ink-sub"
+          >
+            Checking your Facebook app setup…
+          </p>
+        )}
         {credentialsMissing && (
           <p
             id="empty-connect-disabled-reason"

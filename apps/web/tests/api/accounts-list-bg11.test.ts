@@ -81,6 +81,16 @@ describe('filterAndSortAccounts (BG11, Supabase path)', () => {
       ['ActivePast', 'DisconnectedPast', 'ExpiredWire'].sort()
     );
   });
+
+  it("filters 'error' to the complement of expired and connected (UX2)", () => {
+    const names = filterAndSortAccounts(rows, { search: '', status: 'error' }).map(
+      (a) => (a as { displayName: string }).displayName
+    );
+    // Neither expired (live/soon token, non-expired wire) nor
+    // connected (not active): both disconnected rows with a
+    // non-past token are health 'error'.
+    expect(names).toEqual(['DisconnectedLive', 'DisconnectedSoon']);
+  });
 });
 
 describe('SQL expired filter text (BG11)', () => {
@@ -132,5 +142,34 @@ process.env.SESSION_SECRET = TEST_SECRET;
     // no active-only restriction on the token half.
     expect(dataQuery).toContain("sa.token_expires_at < now()");
     expect(dataQuery).not.toContain("sa.status = 'active' AND sa.token_expires_at < now()");
+  });
+
+  it("filters 'error' as neither connected nor expired (UX2)", async () => {
+    const seenSql: string[] = [];
+    const db = {
+      query: vi.fn().mockImplementation((sql: string) => {
+        seenSql.push(sql);
+        if (sql.includes('FROM workspaces')) {
+          return Promise.resolve([{ id: 'ws_123' }]);
+        }
+        if (sql.includes('SELECT COUNT(*)')) {
+          return Promise.resolve([{ total: 0 }]);
+        }
+        return Promise.resolve([]);
+      }),
+    } as unknown as DatabaseClient;
+
+    const req = new NextRequest(
+      'http://localhost:3000/api/tenant/acme/accounts?status=error',
+      { headers: { cookie: validSessionCookie } }
+    );
+    const res = await handleListAccounts(req, 'acme', db);
+    expect(res.status).toBe(200);
+    const dataQuery = seenSql.find(
+      (sql) => sql.includes('FROM social_accounts sa') && sql.includes('LIMIT')
+    );
+    expect(dataQuery).toBeDefined();
+    expect(dataQuery).toContain('NOT (sa.status = ');
+    expect(dataQuery).toContain("sa.token_expires_at < now()");
   });
 });

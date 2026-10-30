@@ -111,6 +111,12 @@ export interface SelectAccountStepProps {
   activeAccounts: FacebookAccountItem[];
   expiredAccounts: FacebookAccountItem[];
   showMissingAppGuidance: boolean;
+  /** Audit UX5: the app-setup check is still running. */
+  showByocChecking?: boolean | undefined;
+  /** Audit UX5: the app-setup check failed (not known missing). */
+  showByocCheckFailed?: boolean | undefined;
+  /** Audit UX5: Reconnect must look disabled while the check runs. */
+  isReconnectDisabled?: boolean | undefined;
   onSelectAccount: (account: FacebookAccountItem) => void;
   onReconnectAccount: (account: FacebookAccountItem) => void;
   onGoToAccounts: () => void;
@@ -123,6 +129,9 @@ export function SelectAccountStep({
   activeAccounts,
   expiredAccounts,
   showMissingAppGuidance,
+  showByocChecking = false,
+  showByocCheckFailed = false,
+  isReconnectDisabled = false,
   onSelectAccount,
   onReconnectAccount,
   onGoToAccounts,
@@ -151,6 +160,38 @@ export function SelectAccountStep({
             className="font-semibold text-link underline"
           >
             Add App ID and Secret in Settings
+          </Link>
+        </div>
+      )}
+
+      {/* Audit UX5: while the app-setup check runs or has failed,
+          the modal must say so instead of showing only "No active
+          accounts" with no guidance. A failed check is not a
+          known-missing claim — it points at Accounts, not Settings. */}
+      {showByocChecking && (
+        <div
+          data-testid="byoc-checking-notice"
+          className="mb-4 rounded-sm border border-brand-gold/25 bg-brand-gold/10 px-3 py-2.5 text-body leading-body text-ink"
+        >
+          Checking your Facebook app setup…
+        </div>
+      )}
+      {showByocCheckFailed && (
+        <div
+          data-testid="byoc-check-failed-notice"
+          className="mb-4 rounded-sm border border-brand-gold/25 bg-brand-gold/10 px-3 py-2.5 text-body leading-body text-ink"
+        >
+          <p className="mb-1">
+            Couldn’t check your Facebook app setup. Open Facebook Accounts
+            to check the connection there.
+          </p>
+          <Link
+            href={accountsHref}
+            data-testid="byoc-check-failed-accounts-link"
+            onClick={onGoToAccounts}
+            className="font-semibold text-link underline"
+          >
+            Go to Facebook Accounts
           </Link>
         </div>
       )}
@@ -252,9 +293,11 @@ export function SelectAccountStep({
                 size="sm"
                 data-testid={`reconnect-account-${account.id}`}
                 onClick={() => onReconnectAccount(account)}
+                disabled={isReconnectDisabled}
+                title={isReconnectDisabled ? 'Checking app setup…' : undefined}
                 className="shrink-0 border-signal-critical/35 font-semibold text-signal-critical hover:bg-signal-critical/10 hover:text-signal-critical-on-tint"
               >
-                Reconnect
+                {isReconnectDisabled ? 'Checking…' : 'Reconnect'}
               </Button>
             </div>
           ))}

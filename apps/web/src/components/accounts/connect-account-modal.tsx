@@ -23,7 +23,7 @@ import {
 } from '@/components/shared/ui/dialog';
 import { Button } from '@/components/shared/ui/button';
 import { Input } from '@/components/shared/ui/input';
-import { api, buildTenantApiPath } from '@/lib/api';
+import { api, buildTenantApiPath, isApiError } from '@/lib/api';
 import {
   ListFacebookAccountsResponseSchema,
   MagicLinkResponseSchema,
@@ -153,6 +153,11 @@ interface MagicLinkViewProps {
   isGeneratingMagic: boolean;
   onCopyLink: () => void;
   onRegenerateLink: () => void;
+  /** Audit UX3: visible poll-failure surface, when present. */
+  pollNotice?:
+    | { kind: 'transient' | 'signed-out'; message: string }
+    | null
+    | undefined;
 }
 
 export function MagicLinkView({
@@ -162,6 +167,7 @@ export function MagicLinkView({
   isGeneratingMagic,
   onCopyLink,
   onRegenerateLink,
+  pollNotice,
 }: Readonly<MagicLinkViewProps>) {
   const isExpired = remainingSeconds <= 0;
 
@@ -211,6 +217,23 @@ export function MagicLinkView({
           {isExpired ? 'Link expired' : `Link expires in ${formatTimer(remainingSeconds)}`}
         </span>
       </div>
+
+      {/* Audit UX3: poll failures used to be silent — a signed-out
+          session or repeated check failures now say so in the open
+          modal instead of waiting unexplained until minute 15. */}
+      {pollNotice ? (
+        <div
+          role={pollNotice.kind === 'signed-out' ? 'alert' : 'status'}
+          data-testid="magic-poll-notice"
+          className={
+            pollNotice.kind === 'signed-out'
+              ? 'rounded-sm border border-brand-rose/25 bg-brand-rose/10 px-3 py-2 text-body text-brand-rose'
+              : 'rounded-sm border border-brand-gold/25 bg-brand-gold/10 px-3 py-2 text-body text-ink-dim'
+          }
+        >
+          {pollNotice.message}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -240,6 +263,15 @@ export function ConnectAccountModal({
   const [copySuccess, setCopySuccess] = useState(false);
   const [remainingSeconds, setRemainingSeconds] = useState(900); // 15 minutes
   const [magicError, setMagicError] = useState<string | null>(null);
+  // Audit UX3: visible poll-failure surface. A 401 stops polling
+  // (the session is gone; retrying cannot succeed), while repeated
+  // transient failures warn but keep waiting.
+  const [pollNotice, setPollNotice] = useState<{
+    kind: 'transient' | 'signed-out';
+    message: string;
+  } | null>(null);
+  const [pollStopped, setPollStopped] = useState(false);
+  const pollFailuresRef = useRef(0);
 
   const wasOpenRef = useRef(false);
   const initialAccountIdsRef = useRef<Set<string>>(new Set(existingAccountIds));
@@ -259,6 +291,10 @@ export function ConnectAccountModal({
       setCopySuccess(false);
       setRemainingSeconds(900);
       setMagicError(null);
+      // Audit UX3: a fresh open clears any stale poll notice/stop.
+      setPollNotice(null);
+      setPollStopped(false);
+      pollFailuresRef.current = 0;
 
       const ids = new Set<string>(existingAccountIds);
       const stateMap = new Map<string, AccountStateRecord>();
@@ -307,10 +343,22 @@ export function ConnectAccountModal({
       );
       setMagicUrl(data.magicUrl);
       setRemainingSeconds(data.expiresInSeconds);
+      // Audit UX3: a fresh link resets the poll-failure surface.
+      setPollNotice(null);
+      setPollStopped(false);
+      pollFailuresRef.current = 0;
       setView('magic');
     } catch (error) {
       reportError(error, { source: 'connect-account-magic-link' });
-      setMagicError("Couldn't generate the magic link. Please try again.");
+      // Audit UX6: a BYOC failure must keep its reason and its
+      // Settings pointer — the API's 422 message already names
+      // both, so surface it verbatim instead of the generic copy
+      // (which is what the direct flow's Settings redirect gives).
+      setMagicError(
+        isApiError(error) && error.status === 422 && error.message
+          ? error.message
+          : "Couldn't generate the magic link. Please try again."
+      );
     } finally {
       setIsGeneratingMagic(false);
     }
@@ -360,6 +408,8 @@ export function ConnectAccountModal({
   // Check for newly connected or reconnected account
   const pollAccounts = useCallback(async () => {
     try {
+      // A signed-out poll stays stopped until a fresh link is made.
+      if (pollStopped) return;
       const accounts: AccountSnapshot[] = await fetchAllAccountsForPoll(
         async (page, limit) => {
           const data = await api.get(
@@ -372,6 +422,10 @@ export function ConnectAccountModal({
           };
         }
       );
+
+      // A successful tick clears the transient-failure surface.
+      pollFailuresRef.current = 0;
+      setPollNotice(null);
 
       if (!baselineReadyRef.current) {
         const ids = new Set<string>(initialAccountIdsRef.current);
@@ -427,21 +481,43 @@ export function ConnectAccountModal({
         onOpenChange(false);
       }
     } catch (error) {
-      // Polling failures are reported and retried on the next cycle.
+      // Audit UX3: poll failures are no longer silent. A 401 means
+      // the session died (logout in another tab, session revoked)
+      // — polling cannot recover, so it stops with an explicit
+      // signed-out notice instead of waiting until minute 15.
+      // Transient failures warn after the second consecutive miss
+      // but keep polling; a later success clears the warning.
       reportError(error, { source: 'connect-account-poll' });
+      if (isApiError(error) && error.status === 401) {
+        setPollNotice({
+          kind: 'signed-out',
+          message:
+            'Your session ended, so this window can no longer check for the new connection. Please sign in again, then reopen this dialog.',
+        });
+        setPollStopped(true);
+      } else {
+        pollFailuresRef.current += 1;
+        if (pollFailuresRef.current >= 2) {
+          setPollNotice({
+            kind: 'transient',
+            message:
+              'Having trouble checking for the new connection — still waiting. Check your connection and keep this dialog open.',
+          });
+        }
+      }
     }
-  }, [subdomain, onAccountConnected, onConnectionNotice, onOpenChange, reconnectingAccount]);
+  }, [subdomain, onAccountConnected, onConnectionNotice, onOpenChange, reconnectingAccount, pollStopped]);
 
   // Pure automatic polling every 3 seconds while in magic view and link is not expired
   useEffect(() => {
-    if (view !== 'magic' || !open || isLinkExpired) return;
+    if (view !== 'magic' || !open || isLinkExpired || pollStopped) return;
 
     const pollInterval = setInterval(() => {
       void pollAccounts();
     }, MAGIC_LINK_POLL_INTERVAL_MS);
 
     return () => clearInterval(pollInterval);
-  }, [view, open, isLinkExpired, pollAccounts]);
+  }, [view, open, isLinkExpired, pollAccounts, pollStopped]);
 
   const modalTitle = reconnectingAccount
     ? `Reconnect ${reconnectingAccount.displayName}`
@@ -503,6 +579,7 @@ export function ConnectAccountModal({
               onRegenerateLink={() => {
                 void handleStartMagicLink();
               }}
+              pollNotice={pollNotice}
             />
           )}
 

@@ -198,6 +198,14 @@ function buildAccountWhere(
     conditions.push(
       `(sa.status = 'active' AND sa.token_expires_at > now() AND sa.token_expires_at <= now() + interval '7 days')`
     );
+  } else if (filters.status === 'error') {
+    // Audit UX2: health 'error' is the complement of connected
+    // and expired — neither an active row with a live/absent
+    // token, nor the shared expired predicate. This keeps the
+    // error tab exactly in step with the health counts.
+    conditions.push(
+      `(NOT (sa.status = 'active' AND (sa.token_expires_at IS NULL OR sa.token_expires_at >= now())) AND NOT ${ACCOUNT_EXPIRED_SQL})`
+    );
   }
   return { where: conditions.join(' AND '), params };
 }
@@ -589,6 +597,15 @@ export function filterAndSortAccounts(
           );
           matchesStatus = days > 0 && days <= 7;
         }
+      } else if (filters.status === 'error') {
+        // Audit UX2: same complement as the SQL path — neither
+        // expired nor connected (active with a live/absent token).
+        const expired = isAccountExpiredForList(
+          account.status,
+          account.tokenExpiresAt
+        );
+        const connected = account.status === 'active' && !expired;
+        matchesStatus = !expired && !connected;
       }
       return matchesSearch && matchesStatus;
     })

@@ -127,11 +127,15 @@ export function evaluateAccountConnectionPoll(
       isTargetReconnected(acc, reconnectingAccount, initialStates)
     );
     if (targetAcc) {
+      // Audit UX8: a reconnect target already existed, so its
+      // outcome is a refreshed session — the same copy the
+      // callback uses for an already-connected account, not a
+      // fresh "connected".
       return {
         matched: true,
-        kind: 'connected',
+        kind: 'already_connected',
         accountId: targetAcc.id,
-        accountName: targetAcc.displayName,
+        accountName: targetAcc.displayName || 'Account',
       };
     }
     const differentAcc = accounts.find(

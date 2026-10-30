@@ -39,6 +39,7 @@ import {
 import { ListFacebookAccountsResponseSchema } from '@/lib/api/schemas/accounts';
 import { reportError } from '@/lib/report-error';
 import { buildDirectConnectUrl } from '@/components/accounts/connect-account-modal';
+import { getAccountHealth } from '@/components/accounts/account-health';
 import type { FacebookAccountItem } from '@/components/accounts/account-card';
 
 import {
@@ -103,6 +104,10 @@ export interface AddPageModalProps {
    * `undefined` = not checked yet (show no guidance claim).
    */
   facebookAppConfigured?: boolean | undefined;
+  /** Audit UX5: the app-setup check is still running. */
+  byocPending?: boolean | undefined;
+  /** Audit UX5: the app-setup check failed (not known missing). */
+  byocError?: boolean | undefined;
   onNavigateToSettingsFacebook?: (() => void) | undefined;
   onReconnectAccount?: ((account: FacebookAccountItem) => void) | undefined;
   initialStep?: AddPageStep | undefined;
@@ -216,6 +221,8 @@ export function AddPageModal({
   onSuccess,
   onNavigateToAccounts,
   facebookAppConfigured,
+  byocPending = false,
+  byocError = false,
   onNavigateToSettingsFacebook,
   onReconnectAccount,
   initialStep = 'select-account',
@@ -308,6 +315,17 @@ export function AddPageModal({
     onOpenChange(nextOpen);
   };
 
+  // Audit UX9: when discovery or import fails on an account
+  // whose connection is already expired or errored, say so and
+  // point at Reconnect — the generic message alone sends the
+  // user back out to find Reconnect elsewhere.
+  const reconnectHintFor = (account: FacebookAccountItem): string => {
+    const health = getAccountHealth(account);
+    return health === 'expired' || health === 'error'
+      ? " This account's connection may have expired — go back and use Reconnect on it, then try again."
+      : '';
+  };
+
   const handleSelectAccount = async (account: FacebookAccountItem) => {
     setSelectedAccount(account);
     setStep('select-pages');
@@ -320,7 +338,7 @@ export function AddPageModal({
 
     const result = await executeDiscoverPages(subdomain, account.id);
     if (!result.success) {
-      setErrorMessage(result.error);
+      setErrorMessage(result.error + reconnectHintFor(account));
     } else {
       setDiscoveredPages(result.pages);
       setDiscoveredTruncated(result.truncated);
@@ -427,7 +445,10 @@ export function AddPageModal({
       // inline error, no success banner, no close. The user's
       // timezone and times are kept, so Retry re-sends the same
       // schedule and the server's slot upsert cannot duplicate it.
-      setErrorMessage(result.error);
+      // Audit UX9: same reconnect hint as discovery failures
+      // (selectedAccount is non-null here — the import call above
+      // already dereferenced it).
+      setErrorMessage(result.error + reconnectHintFor(selectedAccount));
     } else {
       onSuccess?.({
         importedCount: result.importedCount,
@@ -458,8 +479,18 @@ export function AddPageModal({
     step === 'select-account' &&
     facebookAppConfigured === false &&
     activeAccounts.length === 0;
+  // Audit UX5: the checking/failed states get their own notices so
+  // the modal never shows only "No active accounts" with no reason.
+  const showByocChecking =
+    step === 'select-account' && byocPending && activeAccounts.length === 0;
+  const showByocCheckFailed =
+    step === 'select-account' && !byocPending && byocError && activeAccounts.length === 0;
 
   const handleReconnectAccount = (account: FacebookAccountItem) => {
+    // Audit UX5: while the check runs, Reconnect is visibly
+    // disabled in the step list — this guard is only belt and
+    // braces, never the sole (silent) behaviour.
+    if (byocPending) return;
     if (onReconnectAccount) {
       onReconnectAccount(account);
       return;
@@ -561,6 +592,9 @@ export function AddPageModal({
               activeAccounts={activeAccounts}
               expiredAccounts={expiredAccounts}
               showMissingAppGuidance={showMissingAppGuidance}
+              showByocChecking={showByocChecking}
+              showByocCheckFailed={showByocCheckFailed}
+              isReconnectDisabled={byocPending}
               onSelectAccount={(account) => {
                 void handleSelectAccount(account);
               }}

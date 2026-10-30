@@ -61,6 +61,7 @@ import {
   sortAccountsExpiredFirst,
   type AccountStatusFilter,
 } from '@/components/accounts/accounts-helpers';
+import { getAccountHealth } from '@/components/accounts/account-health';
 import { ConnectAccountModal } from '@/components/accounts/connect-account-modal';
 import { DisconnectAccountDialog } from '@/components/accounts/disconnect-account-dialog';
 
@@ -377,6 +378,13 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
     if (oauthNoticeHandledRef.current) return;
     const resolved = resolveOAuthRedirectNotice(searchParams);
     if (!resolved) return;
+    // Audit UX10: a success notice's card highlight is matched
+    // against the loaded accounts. While the accounts query is
+    // still pending, do NOT mark the notice handled and do NOT
+    // flash null — wait for the next run, when accounts have
+    // arrived, so the highlight is not silently lost. Error
+    // notices need no accounts, so they proceed immediately.
+    if (resolved.notice.type === 'success' && isLoading) return;
     oauthNoticeHandledRef.current = true;
 
     if (resolved.notice.type === 'success') {
@@ -395,7 +403,7 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
       }
       window.history.replaceState({}, '', url.pathname);
     }
-  }, [searchParams, accounts, flashHighlight]);
+  }, [searchParams, accounts, flashHighlight, isLoading]);
 
   // Audit BG9: on a failed BYOC check the click retries the
   // check and routes on the fresh result — Connect when the
@@ -547,6 +555,7 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
         onConnect={handleOpenNewConnect}
         isConnectDisabled={isConnectDisabled}
         credentialsMissing={isConnectGated}
+        isCheckingCredentials={byocStatus.isLoading}
         settingsHref={settingsFacebookHref}
       />
     );
@@ -582,6 +591,7 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
               account={account}
               highlighted={account.id === highlightedAccountId}
               onReconnect={handleReconnect}
+              disableReconnect={byocStatus.isLoading}
               onDisconnect={(acc) => setDisconnectingAccount(acc)}
             />
           ))}
@@ -632,13 +642,27 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
               data-testid="header-connect-button"
               disabled={isConnectDisabled}
               aria-describedby={
-                isConnectGated ? 'header-connect-gated-reason' : undefined
+                isConnectGated
+                  ? 'header-connect-gated-reason'
+                  : byocStatus.isLoading
+                    ? 'header-connect-checking-reason'
+                    : undefined
               }
               onClick={handleOpenNewConnect}
             >
               <PlusIcon aria-hidden />
               <span>Connect Account</span>
             </Button>
+            {/* Audit UX4: same loading explanation as the empty state. */}
+            {!isConnectGated && byocStatus.isLoading && (
+              <span
+                id="header-connect-checking-reason"
+                data-testid="header-connect-checking-reason"
+                className="text-metadata leading-body text-ink-sub"
+              >
+                Checking app setup…
+              </span>
+            )}
             {isConnectGated && (
               <span
                 id="header-connect-gated-reason"
@@ -702,6 +726,10 @@ export function AccountsShell({ subdomain }: Readonly<AccountsShellProps>) {
           statusFilter={statusFilter}
           onStatusFilterChange={handleStatusFilterChange}
           attentionCount={expiredTotal}
+          errorAttentionCount={
+            healthCounts?.error ??
+            accounts.filter((a) => getAccountHealth(a) === 'error').length
+          }
         />
       )}
 

@@ -8,11 +8,16 @@ import { ConnectStatusLayout } from '@/components/accounts/connect-status-layout
 import { Button } from '@/components/shared/ui/button';
 
 /**
- * Reason → copy mapping (spec 136 §3.4, preserved verbatim — OD-136-4
- * default: keep the existing map). Reasons the entry route emits that
- * have no specific entry here (`missing_token`, `expired_or_invalid`,
- * `app_not_configured`) fall through to the default expired/invalid
- * copy, exactly as before this rebuild.
+ * Reason → copy mapping (spec 136 §3.4, OD-136-4 default: keep the
+ * existing map for the reasons it covers).
+ *
+ * Audit UX1: distinct failures must not all read as "link
+ * expired" — a BYOC-misconfiguration failure sent users into a
+ * generate → fail → "expired" loop. `app_not_configured` and
+ * `credentials_required` get their own copy pointing at the
+ * workspace's Facebook app setup, `missing_token` gets its own
+ * invalid-link copy, and only genuinely unknown reasons fall
+ * through to the expired/invalid default.
  */
 export function getConnectErrorCopy(reason?: string | null): {
   title: string;
@@ -41,6 +46,27 @@ export function getConnectErrorCopy(reason?: string | null): {
         'Facebook approved the connection, but we couldn\u2019t save the account. Nothing was connected. Please try connecting again from your FBUploadPro dashboard.',
     };
   }
+  if (reason === 'app_not_configured' || reason === 'credentials_required') {
+    // Audit UX1: the workspace has no Facebook App ID/Secret (or
+    // they were removed between link generation and callback). A
+    // fresh link cannot fix this — the workspace owner must add
+    // them in Workspace Settings → Facebook first.
+    return {
+      title: 'Facebook App Not Configured',
+      description:
+        'This workspace doesn’t have a Facebook App ID and Secret configured yet, so the connection can’t be completed. Ask the workspace owner to add them in Workspace Settings → Facebook, then generate a fresh link.',
+    };
+  }
+  if (reason === 'missing_token') {
+    // Audit UX1: a link with no token is invalid, not expired —
+    // saying "expired" sends the user to regenerate a link that
+    // was never valid in the first place.
+    return {
+      title: 'Connection Link Invalid',
+      description:
+        'This link is missing its authorization token and can’t be used. Please generate a fresh link from your FBUploadPro dashboard.',
+    };
+  }
   return {
     title: 'Connection Link Expired or Invalid',
     description:
@@ -60,17 +86,18 @@ export function ConnectErrorView({
       title={title}
       description={description}
     >
-      {reason === 'account_save_failed' ? (
-        // BL1 fix: the magic error page previously had no action at all.
-        // This device holds no session, so it cannot restart the connect
-        // itself — the back action returns the user to FBUploadPro, where
-        // they can connect again from Accounts.
+      {reason === 'cancelled' ? null : (
+        // Audit UX1: every failure except an explicit cancel gets a
+        // way forward. This device holds no session, so it cannot
+        // restart the connect itself — the back action returns the
+        // user to FBUploadPro, where they can connect again from
+        // Accounts (BL1 established this pattern for save failures).
         <Button asChild data-testid="magic-connect-error-back">
           <Link href={process.env.NEXT_PUBLIC_APP_URL || '/'}>
             Back to FBUploadPro
           </Link>
         </Button>
-      ) : null}
+      )}
     </ConnectStatusLayout>
   );
 }

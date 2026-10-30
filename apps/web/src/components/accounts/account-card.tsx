@@ -53,6 +53,8 @@ export interface AccountCardProps {
   account: FacebookAccountItem;
   subdomain?: string | undefined;
   onReconnect?: ((account: FacebookAccountItem) => void) | undefined;
+  /** Audit UX5: Reconnect looks disabled while the app-setup check runs. */
+  disableReconnect?: boolean | undefined;
   onDisconnect?: ((account: FacebookAccountItem) => void) | undefined;
   onViewPages?: ((account: FacebookAccountItem) => void) | undefined;
   defaultPagesExpanded?: boolean | undefined;
@@ -223,6 +225,7 @@ export function AccountCard({
   account,
   subdomain,
   onReconnect,
+  disableReconnect = false,
   onDisconnect,
   onViewPages,
   defaultPagesExpanded = false,
@@ -241,7 +244,12 @@ export function AccountCard({
     health === 'connected' && isExpiringSoon
       ? 'queued'
       : getAccountHealthSignal(health);
-  const statusLabel = getAccountHealthLabel(health);
+  // Audit UX2: a connected account whose token expires soon
+  // must say so, not just show a clock next to "Connected".
+  const statusLabel =
+    health === 'connected' && isExpiringSoon
+      ? 'Expires soon'
+      : getAccountHealthLabel(health);
   const ringClass = RING_CLASSES[statusSignal];
 
   const [failedAvatarUrl, setFailedAvatarUrl] = React.useState<string | null>(
@@ -374,8 +382,16 @@ export function AccountCard({
             data-testid="account-reconnect-button"
             variant={isExpired || isError ? 'default' : 'outline'}
             onClick={() => onReconnect?.(account)}
+            disabled={disableReconnect}
+            title={disableReconnect ? 'Checking app setup…' : undefined}
           >
-            <span>{isExpired || isError ? 'Reconnect account' : 'Refresh connection'}</span>
+            <span>
+              {disableReconnect
+                ? 'Checking…'
+                : isExpired || isError
+                  ? 'Reconnect account'
+                  : 'Refresh connection'}
+            </span>
           </Button>
         ) : (
           <div className="flex-1" />

@@ -71,6 +71,17 @@ export function ConnectSuccessView({
       <div className="rounded-sm bg-subtle px-3.5 py-2.5 text-metadata text-ink-dim">
         Linked to FBUploadPro via Facebook.
       </div>
+      {/* Audit UX1: if the original tab was closed, "close this tab
+          and return" leaves the user to navigate manually — offer
+          the dashboard link on every success variant, not just the
+          mismatch one. */}
+      {!params.reconnectedMismatch ? (
+        <Button asChild variant="outline" className="mt-4">
+          <Link href="/" data-testid="magic-success-dashboard-link">
+            Back to FBUploadPro dashboard
+          </Link>
+        </Button>
+      ) : null}
       {params.reconnectedMismatch ? (
         // BL2 fix: this device holds no session, so it cannot reconnect
         // the expected account itself — link back to the dashboard,

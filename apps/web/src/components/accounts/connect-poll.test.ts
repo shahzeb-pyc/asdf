@@ -102,7 +102,9 @@ describe('evaluateAccountConnectionPoll reconnect branch (BG19)', () => {
     const outcome = evaluateAccountConnectionPoll(accounts, ids, states, TARGET);
     expect(outcome).toMatchObject({
       matched: true,
-      kind: 'connected',
+      // Audit UX8: a reconnect target already existed, so its
+      // outcome reads as a refreshed session, not a fresh connect.
+      kind: 'already_connected',
       accountId: 'target-1',
     });
   });
