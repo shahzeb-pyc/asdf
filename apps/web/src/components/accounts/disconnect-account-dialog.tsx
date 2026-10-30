@@ -63,9 +63,13 @@ export function DisconnectAccountDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Disconnect {account.displayName}?</AlertDialogTitle>
           <AlertDialogDescription>
-            This account will no longer be available for publishing.
-            Disconnecting also asks Facebook to remove this app&apos;s
-            access for the account, and your published history is kept.
+            This account and its linked Facebook pages will be removed
+            from this app, along with their queued posts and post
+            history. Posts already published on Facebook stay on
+            Facebook. Disconnecting also asks Facebook to remove this
+            app&apos;s access when the account&apos;s token can still
+            be used — an expired account has nothing left to revoke,
+            so it is removed right away.
           </AlertDialogDescription>
         </AlertDialogHeader>
 
@@ -87,7 +91,7 @@ export function DisconnectAccountDialog({
               Before you disconnect
             </p>
             <p className="m-0">
-              <strong>{pagesCount} linked {pagesLabel}</strong> will be disconnected, and any scheduled content on them will be cancelled (not deleted).
+              <strong>{pagesCount} linked {pagesLabel}</strong> will be removed, and their queued posts and post history will be deleted from this app.
             </p>
             {linkedPages.length > 0 && (
               <ul

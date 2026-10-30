@@ -57,28 +57,45 @@ export async function handleDisconnectAccount(
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
   }
 
-  // Audit BG10: disconnect is a status change + revocation +
-  // retention, NOT a hard delete. The account row stays (status
-  // 'revoked' — the wire maps it to 'disconnected', so cards show
-  // error health with Reconnect), its destinations become
-  // 'disconnected', queued items become 'cancelled' (archived,
-  // never deleted), and publish logs are untouched. No migration
-  // was needed: 'revoked' / 'disconnected' / 'cancelled' are all
-  // already allowed by the unified-schema CHECK constraints.
+  // Launch-prep fix (expired-account removal): disconnect is a hard
+  // DELETE of the account row. Deleting the row cascades (ON DELETE
+  // CASCADE) to its destinations, and from there to their posting
+  // slots, queue items (queued, published and failed alike) and
+  // publish logs — so disconnecting an account removes its pages
+  // and their posts from this app entirely. This replaces the old
+  // BG10 retention behaviour (row kept as 'revoked', destinations
+  // merely disconnected, queue items cancelled): the owner must be
+  // able to remove an account from the app without any
+  // Facebook-side step, and an expired token cannot revoke
+  // anything at Facebook anyway.
   //
-  // Revoke failure deliberately does NOT block the disconnect:
-  // disconnect is the safety action, and blocking it would strand
-  // the token the user wants gone. It is logged loudly and
-  // surfaced as facebookRevoked=false so the UI can say the
-  // authorization may still be live in Facebook settings.
-  // A revoke failure also never leaves a publishable token
-  // behind in practice: the revoked-status account and
-  // disconnected destinations fail both claim gates (the due
-  // claimer requires sa.status='active' AND d.status='active').
+  // The Facebook-side revocation is best-effort and NEVER gates
+  // the local delete:
+  // - The token is dead for 'expired' accounts (Facebook rejects
+  //   a dead token) and for 'revoked' accounts (already
+  //   disconnected), so the revoke call is skipped outright for
+  //   those statuses.
+  // - For any other status the revoke is attempted, and any
+  //   failure (bad token, transient Graph/network failure,
+  //   undecryptable token) is logged loudly server-side — and
+  //   the delete still proceeds. Deleting the row also deletes
+  //   the token itself, so a failed revoke can never leave a
+  //   usable token behind in this app.
+  // The response still reports facebookRevoked truthfully (true
+  // only when DELETE /me/permissions actually succeeded), but it
+  // is informational only: false never implies the user must do
+  // anything in Facebook Settings — local removal is complete
+  // either way.
+  const DEAD_TOKEN_STATUSES = new Set(['expired', 'revoked']);
+
   const attemptRevoke = async (
-    encryptedToken: string | null
+    encryptedToken: string | null,
+    accountStatus: string | null
   ): Promise<boolean> => {
     if (!encryptedToken) return false;
+    if (accountStatus !== null && DEAD_TOKEN_STATUSES.has(accountStatus)) {
+      return false;
+    }
     let userToken: string;
     try {
       userToken = await decryptToken(
@@ -87,7 +104,7 @@ export async function handleDisconnectAccount(
       );
     } catch (error) {
       logServerError(
-        '[disconnect] Could not decrypt account token for revocation',
+        '[disconnect] Could not decrypt account token for revocation; local delete proceeds',
         error,
         { source: 'disconnect', accountId }
       );
@@ -96,7 +113,7 @@ export async function handleDisconnectAccount(
     const revoked = await revokeFacebookAuthorization(userToken);
     if (!revoked) {
       logServerError(
-        '[disconnect] Facebook authorization revocation failed; local disconnect proceeds but the app may still be authorized in Facebook settings',
+        '[disconnect] Facebook authorization revocation failed; local delete proceeds and the token is deleted with the account',
         new Error('DELETE /me/permissions did not succeed'),
         { source: 'disconnect', accountId }
       );
@@ -111,38 +128,39 @@ export async function handleDisconnectAccount(
     // 4. Load the account row (a 404 here is a genuinely missing
     // account, never a masked DB failure).
     const accountRows = (await dbClient.query(
-      "SELECT encrypted_access_token FROM social_accounts WHERE id = $1 AND workspace_id = $2 AND platform = 'facebook'",
+      "SELECT status, encrypted_access_token FROM social_accounts WHERE id = $1 AND workspace_id = $2 AND platform = 'facebook'",
       [accountId, workspaceId]
-    )) as Array<{ encrypted_access_token?: unknown }>;
+    )) as Array<{ status?: unknown; encrypted_access_token?: unknown }>;
     if (!accountRows || accountRows.length === 0) {
       return NextResponse.json(
         { error: 'Facebook account not found' },
         { status: 404 }
       );
     }
+    const accountStatus =
+      typeof accountRows[0]?.status === 'string'
+        ? accountRows[0].status
+        : null;
     const encryptedToken = accountRows[0]?.encrypted_access_token;
     facebookRevoked = await attemptRevoke(
-      typeof encryptedToken === 'string' ? encryptedToken : null
+      typeof encryptedToken === 'string' ? encryptedToken : null,
+      accountStatus
     );
 
-    // 5. Disconnect destinations first, then cancel their queued
-    // items, then mark the account revoked. Every step is in the
-    // safe direction if a later one fails (a disconnected
-    // destination or a revoked account can no longer publish).
-    const disconnectedRows = (await dbClient.query(
-      "UPDATE destinations SET status = 'disconnected', updated_at = now() WHERE account_id = $1 AND workspace_id = $2 AND platform = 'facebook' AND status <> 'disconnected' RETURNING id",
+    // 5. Count the account's pages before deleting (the cascade
+    // removes them with the account row), then hard-delete the
+    // account. The single DELETE is atomic: either the row and
+    // everything cascaded from it goes, or nothing does.
+    const pageRows = (await dbClient.query(
+      "SELECT id FROM destinations WHERE account_id = $1 AND workspace_id = $2 AND platform = 'facebook'",
       [accountId, workspaceId]
     )) as Record<string, unknown>[];
-    disconnectedPagesCount = disconnectedRows?.length ?? 0;
-    await dbClient.query(
-      "UPDATE queue_items SET status = 'cancelled', updated_at = now() WHERE status = 'queued' AND destination_id IN (SELECT id FROM destinations WHERE account_id = $1 AND workspace_id = $2 AND platform = 'facebook')",
-      [accountId, workspaceId]
-    );
-    const revokedRows = (await dbClient.query(
-      "UPDATE social_accounts SET status = 'revoked', updated_at = now() WHERE id = $1 AND workspace_id = $2 AND platform = 'facebook' RETURNING id",
+    disconnectedPagesCount = pageRows?.length ?? 0;
+    const deletedRows = (await dbClient.query(
+      "DELETE FROM social_accounts WHERE id = $1 AND workspace_id = $2 AND platform = 'facebook' RETURNING id",
       [accountId, workspaceId]
     )) as Record<string, unknown>[];
-    if (!revokedRows || revokedRows.length === 0) {
+    if (!deletedRows || deletedRows.length === 0) {
       return NextResponse.json(
         { error: 'Facebook account not found' },
         { status: 404 }
@@ -160,7 +178,7 @@ export async function handleDisconnectAccount(
 
     const { data: account, error: accountErr } = await supabase
       .from('social_accounts')
-      .select('id, encrypted_access_token')
+      .select('id, status, encrypted_access_token')
       .eq('id', accountId)
       .eq('workspace_id', workspaceId)
       .eq('platform', 'facebook')
@@ -184,62 +202,21 @@ export async function handleDisconnectAccount(
     facebookRevoked = await attemptRevoke(
       typeof account.encrypted_access_token === 'string'
         ? account.encrypted_access_token
-        : null
+        : null,
+      typeof account.status === 'string' ? account.status : null
     );
 
-    const { data: disconnected, error: disconnectErr } = await supabase
-      .from('destinations')
-      .update({ status: 'disconnected', updated_at: new Date().toISOString() })
-      .eq('account_id', accountId)
-      .eq('workspace_id', workspaceId)
-      .eq('platform', 'facebook')
-      .neq('status', 'disconnected')
-      .select('id');
-    if (disconnectErr) {
-      logServerError('[disconnect] Failed to disconnect destinations', disconnectErr, {
-        source: 'disconnect',
-        accountId,
-      });
-      return NextResponse.json(
-        { error: 'Something went wrong. Please try again.' },
-        { status: 500 }
-      );
-    }
-    disconnectedPagesCount = disconnected?.length ?? 0;
-
-    const { data: destinationIds } = await supabase
+    // Count the account's pages before deleting (the cascade
+    // removes them with the account row). A count failure fails
+    // loud before any delete — never report a fabricated count.
+    const { data: pages, error: pagesErr } = await supabase
       .from('destinations')
       .select('id')
       .eq('account_id', accountId)
       .eq('workspace_id', workspaceId)
       .eq('platform', 'facebook');
-    const destinationIdList = (destinationIds ?? []).map((row) => row.id);
-    if (destinationIdList.length > 0) {
-      // Best-effort with the claim gates as backstop (see above):
-      // a failed cancel leaves queued rows on disconnected
-      // destinations, which neither claimer will ever pick up.
-      const { error: cancelErr } = await supabase
-        .from('queue_items')
-        .update({ status: 'cancelled', updated_at: new Date().toISOString() })
-        .eq('status', 'queued')
-        .in('destination_id', destinationIdList);
-      if (cancelErr) {
-        logServerError('[disconnect] Failed to cancel queued items for disconnected account', cancelErr, {
-          source: 'disconnect',
-          accountId,
-        });
-      }
-    }
-
-    const { data: revoked, error: revokeErr } = await supabase
-      .from('social_accounts')
-      .update({ status: 'revoked', updated_at: new Date().toISOString() })
-      .eq('id', accountId)
-      .eq('workspace_id', workspaceId)
-      .eq('platform', 'facebook')
-      .select('id');
-    if (revokeErr) {
-      logServerError('[disconnect] Failed to mark account revoked', revokeErr, {
+    if (pagesErr) {
+      logServerError('[disconnect] Failed to count pages for disconnect', pagesErr, {
         source: 'disconnect',
         accountId,
       });
@@ -248,7 +225,26 @@ export async function handleDisconnectAccount(
         { status: 500 }
       );
     }
-    if (!revoked || revoked.length === 0) {
+    disconnectedPagesCount = pages?.length ?? 0;
+
+    const { data: deleted, error: deleteErr } = await supabase
+      .from('social_accounts')
+      .delete()
+      .eq('id', accountId)
+      .eq('workspace_id', workspaceId)
+      .eq('platform', 'facebook')
+      .select('id');
+    if (deleteErr) {
+      logServerError('[disconnect] Failed to delete account', deleteErr, {
+        source: 'disconnect',
+        accountId,
+      });
+      return NextResponse.json(
+        { error: 'Something went wrong. Please try again.' },
+        { status: 500 }
+      );
+    }
+    if (!deleted || deleted.length === 0) {
       return NextResponse.json(
         { error: 'Facebook account not found' },
         { status: 404 }

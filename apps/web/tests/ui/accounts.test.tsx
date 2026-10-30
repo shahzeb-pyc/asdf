@@ -299,12 +299,15 @@ describe('Facebook Accounts UI Components (Spec 027, Spec 029 & Spec 031)', () =
       );
 
       expect(screen.getByText('Disconnect Sarah Connor?')).toBeTruthy();
-      // Copy drift fix: the dialog's description carries two
-      // sentences (BG10 revoke + history-kept copy), so match the
-      // first sentence as a substring, not an exact element text.
+      // Removal copy: disconnect now hard-deletes the account and
+      // its pages from this app (expired-account fix) — the old
+      // BG10 "no longer available for publishing / history kept"
+      // copy is gone by design, so assert the new wording and
+      // the absence of the old promise.
       expect(
-        screen.getByText(/This account will no longer be available for publishing/)
+        screen.getByText(/will be removed from this app/)
       ).toBeTruthy();
+      expect(screen.queryByText(/published history is kept/)).toBeNull();
       expect(screen.getByTestId('disconnect-linked-pages-warning')).toBeTruthy();
       expect(screen.getByTestId('disconnect-linked-pages-list')).toBeTruthy();
       expect(screen.getByText('3 linked Facebook pages')).toBeTruthy();
