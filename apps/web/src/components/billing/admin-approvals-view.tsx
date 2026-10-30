@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { ImageIcon } from 'lucide-react';
 import { apiGet, apiPost, buildTenantApiPath, getErrorMessage } from '@/lib/api';
 import {
   AdminPaymentsResponseSchema,
@@ -10,6 +11,8 @@ import { SUBSCRIPTION_PLATFORMS, subscriptionUnitLabel } from '@fbuploadpro/cont
 import { Alert, AlertDescription, AlertTitle } from '@/components/shared/ui/alert';
 import { Button } from '@/components/shared/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/shared/ui/card';
+import { EmptyState } from '@/components/shared/ui/empty-state';
+import { Skeleton } from '@/components/shared/ui/skeleton';
 import { BillingStatusMark } from './billing-status-mark';
 
 function countsSummary(counts: AdminPaymentsResponse['payments'][number]['counts']): string {
@@ -33,10 +36,17 @@ function methodLabel(payment: AdminPaymentsResponse['payments'][number]): string
   return 'UBL bank';
 }
 
+function formatDate(value: string | null | undefined): string {
+  if (!value) return '—';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleDateString();
+}
+
 export function AdminApprovalsView({ subdomain }: Readonly<{ subdomain: string }>) {
   const [data, setData] = React.useState<AdminPaymentsResponse | null>(null);
   const [error, setError] = React.useState<string | null>(null);
-  const [busyId, setBusyId] = React.useState<string | null>(null);
+  const [reloading, setReloading] = React.useState(false);
+  const [busy, setBusy] = React.useState<{ id: string; decision: 'approve' | 'reject' } | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
 
   const load = React.useCallback(async () => {
@@ -55,8 +65,17 @@ export function AdminApprovalsView({ subdomain }: Readonly<{ subdomain: string }
     void load();
   }, [load]);
 
+  async function handleRetry() {
+    setReloading(true);
+    try {
+      await load();
+    } finally {
+      setReloading(false);
+    }
+  }
+
   async function decide(paymentId: string, decision: 'approve' | 'reject') {
-    setBusyId(paymentId);
+    setBusy({ id: paymentId, decision });
     setNotice(null);
     try {
       await apiPost(
@@ -72,34 +91,68 @@ export function AdminApprovalsView({ subdomain }: Readonly<{ subdomain: string }
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
-      setBusyId(null);
+      setBusy(null);
     }
   }
 
   if (error && !data) {
     return (
-      <Alert variant="destructive">
-        <AlertTitle>Couldn&apos;t load payments</AlertTitle>
-        <AlertDescription>{error}</AlertDescription>
-      </Alert>
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6">
+        <h1 className="text-xl leading-heading font-semibold text-ink">Subscriptions approval</h1>
+        <Alert variant="destructive">
+          <AlertTitle>Couldn&apos;t load payments</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+        <div>
+          <Button onClick={() => void handleRetry()} loading={reloading}>
+            Try again
+          </Button>
+        </div>
+      </div>
     );
   }
   if (!data) {
-    return <p className="text-body text-ink-sub">Loading payments…</p>;
+    return (
+      <div aria-busy="true" aria-label="Loading payments" className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6">
+        <div className="flex flex-col gap-2">
+          <Skeleton className="h-8 w-56" />
+          <Skeleton className="h-4 w-72 max-w-full" />
+        </div>
+        <Card>
+          <CardContent className="flex flex-col gap-4 pt-6">
+            <Skeleton className="h-6 w-48" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-32" />
+          </CardContent>
+        </Card>
+      </div>
+    );
   }
 
   const pending = data.payments.filter((payment) => payment.status === 'pending');
   const decided = data.payments.filter((payment) => payment.status !== 'pending');
 
   return (
-    <div className="flex flex-col gap-6 px-6 py-6">
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6">
       <div className="flex flex-col gap-1">
         <h1 className="text-xl leading-heading font-semibold text-ink">Subscriptions approval</h1>
         <p className="text-body text-ink-sub">
-          Approve a payment to start a paid period of 30 days from approval. Rejecting starts no
-          period.
+          Approve a payment to start 30 days from approval. Rejecting starts no period.
         </p>
       </div>
+
+      <Card>
+        <CardContent className="grid gap-4 pt-6 sm:grid-cols-2">
+          <div className="flex flex-col gap-1">
+            <span className="text-metadata text-ink-sub">Waiting for approval</span>
+            <span className="text-lg font-semibold tabular-nums text-ink">{pending.length}</span>
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className="text-metadata text-ink-sub">Already decided</span>
+            <span className="text-lg font-semibold tabular-nums text-ink">{decided.length}</span>
+          </div>
+        </CardContent>
+      </Card>
 
       {notice ? (
         <Alert variant="success">
@@ -119,73 +172,92 @@ export function AdminApprovalsView({ subdomain }: Readonly<{ subdomain: string }
           Waiting for approval ({pending.length})
         </h2>
         {pending.length === 0 ? (
-          <Card>
-            <CardContent>
-              <p className="text-body text-ink-sub">Nothing is waiting for approval.</p>
-            </CardContent>
-          </Card>
+          <EmptyState
+            type="cleared"
+            title="Nothing waiting for approval"
+            description="New bank payments will appear here for you to approve or reject."
+          />
         ) : null}
-        {pending.map((payment) => (
-          <Card key={payment.id}>
-            <CardHeader>
-              <CardTitle>{payment.userEmail ?? 'Unknown user'}</CardTitle>
-              <CardDescription>
-                {countsSummary(payment.counts)} · {payment.amountPkr} PKR · {methodLabel(payment)}
-                {payment.isUpgrade ? ' · Upgrade' : ''}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-4">
-              {payment.screenshotStorageKey ? (
-                <a
-                  href={buildTenantApiPath(
-                    subdomain,
-                    `/billing/admin/payments/${payment.id}/screenshot`
-                  )}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-body text-link underline-offset-4 hover:underline"
-                >
-                  View payment screenshot
-                </a>
-              ) : payment.nowpaymentsPaymentId ? (
-                <p className="text-body text-ink-sub">
-                  Crypto payment {payment.nowpaymentsPaymentId}
-                  {payment.nowpaymentsPayAddress ? ` · ${payment.nowpaymentsPayAddress}` : ''}
-                </p>
-              ) : (
-                <p className="text-body text-ink-sub">No screenshot attached.</p>
-              )}
-              <div className="flex gap-2">
-                <Button
-                  onClick={() => void decide(payment.id, 'approve')}
-                  loading={busyId === payment.id}
-                  disabled={busyId !== null}
-                >
-                  Approve payment
-                </Button>
-                <Button
-                  variant="destructive"
-                  onClick={() => void decide(payment.id, 'reject')}
-                  disabled={busyId !== null}
-                >
-                  Reject payment
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
+        {pending.map((payment) => {
+          const isBusy = busy?.id === payment.id;
+          return (
+            <Card key={payment.id}>
+              <CardHeader>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="flex min-w-0 flex-col gap-1">
+                    <CardTitle className="truncate">{payment.userEmail ?? 'Unknown user'}</CardTitle>
+                    <CardDescription>
+                      {countsSummary(payment.counts)} · {methodLabel(payment)}
+                      {payment.isUpgrade ? ' · Upgrade' : ''} · {formatDate(payment.createdAt)}
+                    </CardDescription>
+                  </div>
+                  <span className="text-lg font-semibold tabular-nums text-ink">
+                    {payment.amountPkr} PKR
+                  </span>
+                </div>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-4">
+                {payment.screenshotStorageKey ? (
+                  <a
+                    href={buildTenantApiPath(
+                      subdomain,
+                      `/billing/admin/payments/${payment.id}/screenshot`
+                    )}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-3 rounded-md border border-line bg-panel px-4 py-3 transition-colors hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link"
+                  >
+                    <ImageIcon aria-hidden className="size-5 shrink-0 text-ink-sub" />
+                    <span className="flex min-w-0 flex-col">
+                      <span className="text-body font-medium text-ink">View payment screenshot</span>
+                      <span className="text-metadata text-ink-sub">Opens in a new tab</span>
+                    </span>
+                  </a>
+                ) : payment.nowpaymentsPaymentId ? (
+                  <p className="text-body text-ink-sub">
+                    Crypto payment {payment.nowpaymentsPaymentId}
+                    {payment.nowpaymentsPayAddress ? ` · ${payment.nowpaymentsPayAddress}` : ''}
+                  </p>
+                ) : (
+                  <p className="text-body text-ink-sub">No screenshot attached.</p>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    onClick={() => void decide(payment.id, 'approve')}
+                    loading={isBusy && busy?.decision === 'approve'}
+                    disabled={isBusy}
+                  >
+                    Approve payment
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => void decide(payment.id, 'reject')}
+                    loading={isBusy && busy?.decision === 'reject'}
+                    disabled={isBusy}
+                  >
+                    Reject payment
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
       </section>
 
       <section aria-label="Recently decided payments" className="flex flex-col gap-4">
         <h2 className="text-lg leading-heading font-semibold text-ink">Recently decided</h2>
         {decided.length === 0 ? (
-          <p className="text-body text-ink-sub">No decided payments yet.</p>
+          <EmptyState
+            type="first-use"
+            title="No decided payments yet"
+            description="Payments you approve or reject will appear here."
+          />
         ) : null}
         {decided.map((payment) => (
           <Card key={payment.id}>
-            <CardContent className="flex flex-wrap items-center justify-between gap-4">
-              <div className="flex flex-col gap-1">
-                <span className="text-body font-medium text-ink">
+            <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
+              <div className="flex min-w-0 flex-col gap-1">
+                <span className="truncate text-body font-medium text-ink">
                   {payment.userEmail ?? 'Unknown user'}
                 </span>
                 <span className="text-metadata text-ink-sub">

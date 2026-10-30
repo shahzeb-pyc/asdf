@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { CheckIcon, XIcon } from 'lucide-react';
+import { CheckIcon, ClockIcon, XIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 /**
@@ -10,8 +10,8 @@ import { cn } from '@/lib/utils';
 export function BillingStatusMark({
   kind,
   label,
-}: Readonly<{ kind: 'ok' | 'failed'; label: string }>) {
-  const Icon = kind === 'ok' ? CheckIcon : XIcon;
+}: Readonly<{ kind: 'ok' | 'failed' | 'pending'; label: string }>) {
+  const Icon = kind === 'ok' ? CheckIcon : kind === 'pending' ? ClockIcon : XIcon;
   return (
     <span role="status" aria-label={label} className="inline-flex items-center gap-1.5 text-metadata">
       <span
@@ -20,13 +20,21 @@ export function BillingStatusMark({
           'flex size-5 shrink-0 items-center justify-center rounded-full',
           kind === 'ok'
             ? 'bg-signal-operational/15 text-signal-operational'
-            : 'bg-signal-critical/15 text-signal-critical'
+            : kind === 'pending'
+              ? 'bg-subtle text-ink-sub'
+              : 'bg-signal-critical/15 text-signal-critical'
         )}
       >
         <Icon className="size-3.5" />
       </span>
       <span
-        className={kind === 'ok' ? 'text-signal-operational' : 'text-signal-critical'}
+        className={
+          kind === 'ok'
+            ? 'text-signal-operational'
+            : kind === 'pending'
+              ? 'text-ink-sub'
+              : 'text-signal-critical'
+        }
       >
         {label}
       </span>
