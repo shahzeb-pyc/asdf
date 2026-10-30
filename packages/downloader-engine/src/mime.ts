@@ -148,6 +148,8 @@ export function sanitizeFileNameWithExtension(
     const dotIdx = cleaned.lastIndexOf('.');
     const ext = cleaned.slice(dotIdx);
     cleaned = `${cleaned.slice(0, 200)}${ext}`;
+  } else {
+    // Valid extension and within length: the name is already safe.
   }
 
   return cleaned;

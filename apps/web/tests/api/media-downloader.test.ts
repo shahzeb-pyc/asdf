@@ -467,6 +467,36 @@ describe('Download jobs API — Cloudflare consumer handoff (spec 149 backend re
     });
   });
 
+});
+
+describe('Download jobs API — consumer health reporting', () => {
+  const CONSUMER_URL = 'https://consumer.example.test';
+  const ENQUEUE_SECRET = 'enqueue-secret-123';
+  let cookie: string;
+
+  beforeEach(async () => {
+    process.env.SESSION_SECRET = TEST_SECRET;
+    delete process.env.DOWNLOADER_EXTRACTOR_API_URL;
+    cookie = await sessionCookie();
+  });
+
+  afterEach(() => {
+    delete process.env.DOWNLOAD_CONSUMER_URL;
+    delete process.env.DOWNLOAD_ENQUEUE_SECRET;
+    vi.unstubAllGlobals();
+  });
+
+  function stubEnqueueFetch(): ReturnType<typeof vi.fn> {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ enqueued: 2 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
   it('retry of a terminal failure clears its checkpoint and resets progress', async () => {
     process.env.DOWNLOAD_CONSUMER_URL = CONSUMER_URL;
     process.env.DOWNLOAD_ENQUEUE_SECRET = ENQUEUE_SECRET;

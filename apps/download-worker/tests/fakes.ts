@@ -143,11 +143,12 @@ export class FakeStore implements JobStore {
     let count = 0;
     for (const job of this.jobs.values()) {
       if (job.status !== 'resolving' && job.status !== 'downloading') continue;
-      const progressTime = job.lastProgressAt ? new Date(job.lastProgressAt).getTime() : NaN;
-      const claimTime = job.claimedAt ? new Date(job.claimedAt).getTime() : NaN;
-      const stale =
-        (!Number.isNaN(progressTime) && progressTime < cutoff) ||
-        (Number.isNaN(progressTime) && !Number.isNaN(claimTime) && claimTime < cutoff);
+      const progressTime = job.lastProgressAt ? new Date(job.lastProgressAt).getTime() : Number.NaN;
+      const claimTime = job.claimedAt ? new Date(job.claimedAt).getTime() : Number.NaN;
+      const progressStale = !Number.isNaN(progressTime) && progressTime < cutoff;
+      const claimStale =
+        Number.isNaN(progressTime) && !Number.isNaN(claimTime) && claimTime < cutoff;
+      const stale = progressStale || claimStale;
       if (stale) {
         job.status = 'queued';
         job.claimedAt = null;
@@ -312,10 +313,15 @@ export function makeMediaFetch(
     const headers = init?.headers;
     if (headers instanceof Headers) {
       rangeHeader = headers.get('Range');
+    } else if (Array.isArray(headers)) {
+      const entry = headers.find(([k]) => k.toLowerCase() === 'range');
+      rangeHeader = entry ? entry[1] : null;
     } else if (headers && typeof headers === 'object') {
       const record = headers as Record<string, string>;
       const key = Object.keys(record).find((k) => k.toLowerCase() === 'range');
       rangeHeader = key ? (record[key] ?? null) : null;
+    } else {
+      rangeHeader = null;
     }
     options.requestedRanges?.push(rangeHeader);
 

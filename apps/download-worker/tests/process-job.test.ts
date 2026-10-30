@@ -190,7 +190,9 @@ describe('processClaimedJob', () => {
     expect(requestedUrls).toEqual([STREAM_URL]);
     expect(requestedUrls.some((url) => url.includes('169.254'))).toBe(false);
   });
+});
 
+describe('processClaimedJob resume and attempts paths', () => {
   it('resume with a Range-supporting source uploads only the remaining parts', async () => {
     const bucket = new FakeBucket();
     // Seed part 1 (8 MB) under upload-1 in the fake bucket.

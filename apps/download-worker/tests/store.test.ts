@@ -259,6 +259,17 @@ describe('SupabaseJobStore over stubbed fetch', () => {
       p_limit: 3,
     });
   });
+});
+
+describe('SupabaseJobStore sweep, reclaim, and errors', () => {
+  let restore: () => void = () => undefined;
+  beforeEach(() => {
+    restore = () => undefined;
+  });
+  afterEach(() => {
+    restore();
+    vi.unstubAllGlobals();
+  });
 
   it('upsertHeartbeat writes the worker id, sweep returns oldest queued, count reads exact', async () => {
     const seen: CapturedRequest[] = [];

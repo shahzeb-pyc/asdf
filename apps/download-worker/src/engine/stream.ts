@@ -121,13 +121,14 @@ async function readBoundedBytes(response: Response, maxBytes: number): Promise<U
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      if (!value) continue;
-      total += value.byteLength;
-      if (total > maxBytes) {
-        await reader.cancel().catch(() => undefined);
-        throw new MediaDownloaderError('FILE_TOO_LARGE', 'This file exceeds the 500 MB maximum size limit.', 400);
+      if (value) {
+        total += value.byteLength;
+        if (total > maxBytes) {
+          await reader.cancel().catch(() => undefined);
+          throw new MediaDownloaderError('FILE_TOO_LARGE', 'This file exceeds the 500 MB maximum size limit.', 400);
+        }
+        chunks.push(value);
       }
-      chunks.push(value);
     }
   } finally {
     reader.releaseLock();
@@ -229,13 +230,14 @@ async function streamToSink(
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      if (!value) continue;
-      streamed += value.byteLength;
-      if (startByte + streamed > DOWNLOAD_JOB_MAX_BYTES) {
-        throw new MediaDownloaderError('FILE_TOO_LARGE', 'This file exceeds the 500 MB maximum size limit.', 400);
+      if (value) {
+        streamed += value.byteLength;
+        if (startByte + streamed > DOWNLOAD_JOB_MAX_BYTES) {
+          throw new MediaDownloaderError('FILE_TOO_LARGE', 'This file exceeds the 500 MB maximum size limit.', 400);
+        }
+        await sink.write(value);
+        onProgress?.({ downloadedBytes: startByte + streamed, totalBytes });
       }
-      await sink.write(value);
-      onProgress?.({ downloadedBytes: startByte + streamed, totalBytes });
     }
   } catch (err) {
     await sink.abort().catch(() => undefined);

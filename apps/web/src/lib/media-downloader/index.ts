@@ -143,15 +143,13 @@ export async function resolveAndUploadMediaFromUrl(
   }
 
   if (firstError || successfulItems.length === 0) {
+    // Cleanup failures must not mask the original download error, so
+    // each delete swallows its own failure (best effort per object).
     await Promise.all(
       successfulItems.map(async (item) => {
-        try {
-          await params.storage.deleteObject(item.storageKey);
-          if (item.thumbnailKey) {
-            await params.storage.deleteObject(item.thumbnailKey);
-          }
-        } catch (_e) {
-          // ignore cleanup errors
+        await params.storage.deleteObject(item.storageKey).catch(() => undefined);
+        if (item.thumbnailKey) {
+          await params.storage.deleteObject(item.thumbnailKey).catch(() => undefined);
         }
       })
     );

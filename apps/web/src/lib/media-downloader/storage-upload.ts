@@ -202,19 +202,18 @@ async function streamBodyToSink(
       if (done) {
         break;
       }
-      if (!value) {
-        continue;
+      if (value) {
+        downloadedBytes += value.byteLength;
+        if (downloadedBytes > MAX_MEDIA_DOWNLOAD_BYTES) {
+          throw new MediaDownloaderError(
+            'FILE_TOO_LARGE',
+            'This file exceeds the 500 MB maximum size limit.',
+            400
+          );
+        }
+        await sink.write(value);
+        options.onProgress?.({ downloadedBytes, totalBytes });
       }
-      downloadedBytes += value.byteLength;
-      if (downloadedBytes > MAX_MEDIA_DOWNLOAD_BYTES) {
-        throw new MediaDownloaderError(
-          'FILE_TOO_LARGE',
-          'This file exceeds the 500 MB maximum size limit.',
-          400
-        );
-      }
-      await sink.write(value);
-      options.onProgress?.({ downloadedBytes, totalBytes });
     }
   } catch (err) {
     await sink.abort().catch(() => undefined);

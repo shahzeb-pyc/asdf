@@ -55,6 +55,9 @@ export async function fetchWithTimeoutToHeaders(
         () => controller.abort(callerSignal.reason),
         { once: true }
       );
+    } else {
+      // A signal-like object without addEventListener cannot notify us;
+      // the timeout below still bounds the fetch.
     }
   }
   const timer = setTimeout(() => {
@@ -97,13 +100,14 @@ export async function readBoundedText(
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      if (!value) continue;
-      total += value.byteLength;
-      if (total > maxBytes) {
-        await reader.cancel().catch(() => undefined);
-        return null;
+      if (value) {
+        total += value.byteLength;
+        if (total > maxBytes) {
+          await reader.cancel().catch(() => undefined);
+          return null;
+        }
+        chunks.push(value);
       }
-      chunks.push(value);
     }
   } finally {
     reader.releaseLock();
