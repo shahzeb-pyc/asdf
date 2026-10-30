@@ -18,8 +18,10 @@ import type { SupabaseClient } from '@supabase/supabase-js';
  * This is deliberately separate from the unified queue claimer: ADU
  * jobs live in adu_posting_jobs (not queue_items), with their own
  * schedule-slot dedupe, retry budget (max 5) and Graph-ID recording.
- * Publishing reuses the EXISTING Facebook publisher from the registry
- * — no publisher is duplicated here.
+ * Publishing reuses the EXISTING publishers from the registry — no
+ * publisher is duplicated here. The publisher is chosen per job by
+ * destination platform (Facebook jobs → Facebook, Threads jobs →
+ * Threads); see the Publish section below.
  *
  * Safety: if the ADU tables do not exist yet (migration unapplied),
  * the first query fails and the tick returns { skipped: true } without
@@ -258,8 +260,15 @@ export async function runAduTick(options: {
   }
 
   // --- Publish --------------------------------------------------------
-  const publisher = registry.get('facebook');
-  if (!publisher) return result;
+  // Publisher dispatch is PER JOB, by the job's destination platform.
+  // Facebook ADU jobs keep the Facebook publisher; Threads ADU jobs
+  // (a Threads destination, from the Threads section) use the Threads
+  // publisher already registered in the worker registry. The old code
+  // hard-coded Facebook here, which would have published every Threads
+  // job through the Facebook publisher. A job whose platform has no
+  // registered publisher is left pending with a loud error instead of
+  // being dropped or mis-published (handled below, after the
+  // destination is loaded).
   const { data: jobs, error: jobError } = await supabase
     .from('adu_posting_jobs')
     .select('*, adu_reels(*)')
@@ -341,12 +350,21 @@ export async function runAduTick(options: {
     if (!account) {
       await supabase
         .from('adu_posting_jobs')
-        .update({ status: 'publish_error', last_error_code: 'account_missing', last_error_message: 'Facebook account not found.' })
+        .update({ status: 'publish_error', last_error_code: 'account_missing', last_error_message: dest.platform === 'threads' ? 'Threads account not found.' : 'Facebook account not found.' })
         .eq('id', job.id);
       result.failed += 1;
       continue;
     }
     const acc = account as unknown as DatabaseSocialAccountRow;
+    const publisher = registry.get(dest.platform);
+    if (!publisher) {
+      await supabase
+        .from('adu_posting_jobs')
+        .update({ status: 'pending_publish', last_error_code: 'publisher_not_registered', last_error_message: `No publisher is registered for ${dest.platform}.` })
+        .eq('id', job.id);
+      result.retried += 1;
+      continue;
+    }
     if (acc.status !== 'active' || dest.status === 'disconnected' || dest.status === 'error') {
       await supabase
         .from('adu_posting_jobs')
@@ -360,9 +378,13 @@ export async function runAduTick(options: {
       id: job.id,
       workspace_id: dest.workspace_id,
       destination_id: destinationId,
-      platform: 'facebook',
+      platform: dest.platform,
       kind: 'video',
-      platform_format: 'reel',
+      // Facebook reels keep 'reel'; Threads has no reel format — a
+      // Threads video post is format 'video' (the Threads publisher
+      // keys off kind, not this field, but the stored item must not
+      // claim a Facebook format).
+      platform_format: dest.platform === 'threads' ? 'video' : 'reel',
       caption: typeof reel.caption === 'string' ? reel.caption : '',
       title: null,
       first_comment: null,

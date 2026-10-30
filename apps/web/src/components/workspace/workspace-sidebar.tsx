@@ -436,6 +436,16 @@ function WorkspaceSidebarContent({
                     {isOpen && (
                       <SidebarMenuSub>
                         <NavSubLeaf label="Accounts" href={platformAccountsHref} isActive={isAccountsSubActive} onLeafClick={handleLeafClick} />
+                        {platform.key === 'threads' && (
+                          <NavSubLeaf
+                            label="Auto Download/Upload"
+                            href={href('/threads/auto-download-upload')}
+                            isActive={effectivePath.startsWith(
+                              normalizeTenantPath(href('/threads/auto-download-upload'), subdomain)
+                            )}
+                            onLeafClick={handleLeafClick}
+                          />
+                        )}
                         {platform.isTesting && (
                           <SidebarMenuSubItem>
                             <div
