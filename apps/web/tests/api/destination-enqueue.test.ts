@@ -26,6 +26,9 @@ interface DestinationRow {
   platform: string;
   timezone: string;
   status: string;
+  account_id: string;
+  account_status: string;
+  account_token_expires_at: string;
 }
 
 interface MediaRow {
@@ -139,6 +142,9 @@ function seed() {
     platform: 'instagram',
     timezone: 'UTC',
     status: 'active',
+    account_id: 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+    account_status: 'active',
+    account_token_expires_at: '2999-01-01T00:00:00.000Z',
   });
   db.destinations.set(ttDestinationId, {
     id: ttDestinationId,
@@ -146,6 +152,9 @@ function seed() {
     platform: 'tiktok',
     timezone: 'UTC',
     status: 'active',
+    account_id: 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+    account_status: 'active',
+    account_token_expires_at: '2999-01-01T00:00:00.000Z',
   });
   db.destinations.set(ytDestinationId, {
     id: ytDestinationId,
@@ -153,6 +162,9 @@ function seed() {
     platform: 'youtube',
     timezone: 'UTC',
     status: 'active',
+    account_id: 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+    account_status: 'active',
+    account_token_expires_at: '2999-01-01T00:00:00.000Z',
   });
   db.destinations.set(foreignDestinationId, {
     id: foreignDestinationId,
@@ -160,6 +172,9 @@ function seed() {
     platform: 'instagram',
     timezone: 'UTC',
     status: 'active',
+    account_id: 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+    account_status: 'active',
+    account_token_expires_at: '2999-01-01T00:00:00.000Z',
   });
   db.media.set(imageMediaId, {
     id: imageMediaId,
@@ -475,6 +490,9 @@ describe('destination enqueue — facebook publisher-driven intents', () => {
       platform: 'facebook',
       timezone: 'UTC',
       status: 'active',
+      account_id: 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb',
+      account_status: 'active',
+      account_token_expires_at: '2999-01-01T00:00:00.000Z',
     });
   }
 
@@ -531,5 +549,64 @@ describe('destination enqueue — facebook publisher-driven intents', () => {
     expect(res.status).toBe(201);
     const payload = (await res.json()) as { scheduledTime: string };
     expect(new Date(payload.scheduledTime).getTime()).toBeGreaterThanOrEqual(before - 1000);
+  });
+});
+
+describe('destination enqueue — expired-account gate (BG1)', () => {
+  const expiredDestinationId = 'dddddddd-dddd-4ddd-dddd-dddddddddddd';
+  const lapsedDestinationId = 'eeeeeeee-eeee-4eee-eeee-eeeeeeeeeeee';
+
+  function seedExpired() {
+    db.destinations.set(expiredDestinationId, {
+      id: expiredDestinationId,
+      workspace_id: workspaceId,
+      platform: 'instagram',
+      timezone: 'UTC',
+      status: 'active',
+      account_id: 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      account_status: 'expired',
+      account_token_expires_at: '2020-01-01T00:00:00.000Z',
+    });
+    db.destinations.set(lapsedDestinationId, {
+      id: lapsedDestinationId,
+      workspace_id: workspaceId,
+      platform: 'instagram',
+      timezone: 'UTC',
+      status: 'active',
+      account_id: 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      account_status: 'active',
+      account_token_expires_at: '2020-01-01T00:00:00.000Z',
+    });
+  }
+
+  it('rejects queueing to a stored-expired account and writes nothing', async () => {
+    seedExpired();
+    const res = await enqueue({
+      platform: 'instagram',
+      destinationId: expiredDestinationId,
+      kind: 'image',
+      mediaItemIds: [imageMediaId],
+      caption: 'x',
+      intent: 'now',
+    });
+    const payload = (await res.json()) as { error: string; message: string };
+    expect(res.status).toBe(409);
+    expect(payload.error).toBe('ACCOUNT_EXPIRED');
+    expect(payload.message).toMatch(/Reconnect/);
+    expect(db.queueItems).toHaveLength(0);
+  });
+
+  it('rejects queueing when the token has lapsed even though the stored status is still active', async () => {
+    seedExpired();
+    const res = await enqueue({
+      platform: 'instagram',
+      destinationId: lapsedDestinationId,
+      kind: 'image',
+      mediaItemIds: [imageMediaId],
+      caption: 'x',
+      intent: 'now',
+    });
+    expect(res.status).toBe(409);
+    expect(db.queueItems).toHaveLength(0);
   });
 });

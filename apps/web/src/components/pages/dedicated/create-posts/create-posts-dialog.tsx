@@ -84,6 +84,7 @@ import {
 import { api, buildTenantApiPath, isApiError } from '@/lib/api';
 import { ListQueueSlotsResponseSchema } from '@/lib/api/schemas/queue';
 import { queryKeys } from '@/lib/data/query-keys';
+import Link from 'next/link';
 import { Button } from '@/components/shared/ui/button';
 import {
   AlertDialog,
@@ -936,7 +937,24 @@ export function CreatePostsDialog({
             </div>
 
             {statusGate.message ? (
-              <p className="pt-3 text-body text-ink-sub">{statusGate.message}</p>
+              <div className="flex flex-wrap items-center gap-3 pt-3">
+                <p className="text-body text-ink-sub">{statusGate.message}</p>
+                {/* BG1 upfront disable: queueing is already blocked
+                    for this page (footer button disabled); for an
+                    expired connection, offer the fix in place —
+                    Accounts, where the account's Reconnect lives —
+                    instead of leaving the user with a dead end. */}
+                {page.status === 'invalid_token' ? (
+                  <Button asChild variant="outline" size="sm">
+                    <Link
+                      href={`/tenant/${subdomain}/accounts`}
+                      data-testid="composer-reconnect-account-btn"
+                    >
+                      Reconnect account
+                    </Link>
+                  </Button>
+                ) : null}
+              </div>
             ) : null}
           </div>
 

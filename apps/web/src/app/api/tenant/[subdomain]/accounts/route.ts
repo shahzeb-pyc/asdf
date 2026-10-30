@@ -18,6 +18,7 @@ import {
 } from '@/lib/server/pagination';
 import type { PostgrestError } from '@supabase/supabase-js';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { propagateExpiredAccountDestinations } from '@/lib/publishing/account-expiry-propagation';
 import {
   ACCOUNT_STATUS_TO_WIRE_SQL,
   unifiedAccountStatusToWire,
@@ -89,15 +90,36 @@ function syncExpiredAccountStatus(
   workspaceId: string,
   dbClient?: DatabaseClient | SupabaseClient
 ): void {
+  // Propagation is best-effort here and never fails the list call:
+  // the account flip itself is what the trigger (once applied) also
+  // keys off, so a propagation failure is logged and the trigger
+  // pass makes it a no-op on retry.
+  const propagate = (client: unknown): void => {
+    propagateExpiredAccountDestinations(
+      client as Parameters<typeof propagateExpiredAccountDestinations>[0],
+      accountId
+    ).catch((err: unknown) => {
+      console.error(
+        '[handleListAccounts] Failed to propagate expired account destinations:',
+        err
+      );
+    });
+  };
+
   if (dbClient && 'query' in dbClient && typeof dbClient.query === 'function') {
-    dbClient.query(
-      `UPDATE social_accounts
+    dbClient
+      .query(
+        `UPDATE social_accounts
        SET status = 'expired', updated_at = now()
        WHERE id = $1 AND workspace_id = $2`,
-      [accountId, workspaceId]
-    ).catch((err: unknown) => {
-      console.error('[handleListAccounts] Failed to persist expired account status:', err);
-    });
+        [accountId, workspaceId]
+      )
+      .then(() => {
+        propagate(dbClient);
+      })
+      .catch((err: unknown) => {
+        console.error('[handleListAccounts] Failed to persist expired account status:', err);
+      });
     return;
   }
 
@@ -112,7 +134,9 @@ function syncExpiredAccountStatus(
     .then(({ error }: { error: PostgrestError | null }) => {
       if (error) {
         console.error('[handleListAccounts] Failed to persist expired account status via Supabase:', error);
+        return;
       }
+      propagate(supabase);
     });
 }
 

@@ -388,6 +388,47 @@ async function releaseLease(
   );
 }
 
+/**
+ * Expiry propagation (Facebook Accounts audit, BG2/BG4): flip an
+ * expired account's 'active' destinations to 'error' — the existing
+ * destination status for a broken token, so no new page status is
+ * introduced. Idempotent (active-only), so re-running it is safe, and
+ * paused (disconnected + fb_status marker), plain disconnected,
+ * already-'error', and 'rate_limited' destinations are untouched by
+ * construction. Best-effort by design: a failure here is logged and
+ * never thrown, because the database trigger (companion migration)
+ * fires on the account flip itself and makes the same flip — this
+ * helper exists so propagation also happens before that migration
+ * is applied, and so the job's own tests can observe it.
+ */
+export async function propagateExpiredDestinations(
+  db: RefreshDbClient,
+  accountId: string
+): Promise<number> {
+  const { data, error } = await db
+    .from('destinations')
+    .update({ status: 'error' })
+    .eq('account_id', accountId)
+    .eq('status', 'active')
+    .select('id');
+  if (error) throw dbError(error);
+  return Array.isArray(data) ? data.length : 0;
+}
+
+async function propagateExpiredDestinationsBestEffort(
+  db: RefreshDbClient,
+  accountId: string
+): Promise<void> {
+  try {
+    await propagateExpiredDestinations(db, accountId);
+  } catch (err) {
+    console.error(
+      `[refresh] failed to propagate expired destinations for account ${accountId}:`,
+      err
+    );
+  }
+}
+
 /** Flips a lease-holding account to `expired` and releases the lease in one update. */
 async function markExpiredHoldingLease(
   db: RefreshDbClient,
@@ -401,6 +442,7 @@ async function markExpiredHoldingLease(
       .eq('refresh_lease_owner', runId)
       .select('id')
   );
+  await propagateExpiredDestinationsBestEffort(db, accountId);
 }
 
 /**
@@ -411,6 +453,9 @@ async function markFacebookLapsed(db: RefreshDbClient, accountId: string): Promi
   const rows = await runUpdate(db, (table) =>
     table.update({ status: 'expired' }).eq('id', accountId).eq('status', 'active').select('id')
   );
+  if (rows.length > 0) {
+    await propagateExpiredDestinationsBestEffort(db, accountId);
+  }
   return rows.length > 0;
 }
 

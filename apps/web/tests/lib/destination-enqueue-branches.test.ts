@@ -30,6 +30,9 @@ function baseDestination(overrides: Partial<DestinationForEnqueue> = {}): Destin
     status: 'active',
     externalDestinationId: null,
     metadata: null,
+    accountId: 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+    accountStatus: 'active',
+    accountTokenExpiresAt: '2999-01-01T00:00:00.000Z',
     ...overrides,
   };
 }

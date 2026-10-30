@@ -171,6 +171,18 @@ describe('CreatePostsDialog rendering and blocks', () => {
     typePost('hello');
     expect(queueButton().disabled).toBe(true);
   });
+
+  it('blocks queueing on an expired-connection page and offers Reconnect (BG1)', () => {
+    renderDialog(makePage({ status: 'invalid_token' }));
+    expect(screen.getByText(/queueing is turned off for this Page/)).not.toBeNull();
+    const reconnect = screen.getByTestId(
+      'composer-reconnect-account-btn'
+    ) as HTMLAnchorElement;
+    expect(reconnect.textContent).toBe('Reconnect account');
+    expect(reconnect.getAttribute('href')).toBe('/tenant/acme/accounts');
+    typePost('hello');
+    expect(queueButton().disabled).toBe(true);
+  });
 });
 
 describe('CreatePostsDialog queueing', () => {

@@ -26,6 +26,10 @@ export interface DestinationForEnqueue {
   externalDestinationId: string | null;
   /** Raw destinations.metadata (carries fb_status: 'paused'/'checkpoint'). */
   metadata: Record<string, unknown> | null;
+  /** Owning social_accounts row, for the expired-account queue gate (BG1). */
+  accountId: string;
+  accountStatus: string | null;
+  accountTokenExpiresAt: string | null;
 }
 
 export interface OwnedMediaRow {
@@ -90,6 +94,9 @@ type DestinationRowRaw = {
   status: string;
   external_destination_id?: string | null;
   metadata?: Record<string, unknown> | string | null;
+  account_id?: string | null;
+  account_status?: string | null;
+  account_token_expires_at?: string | null;
 };
 
 function toDestination(row: DestinationRowRaw): DestinationForEnqueue {
@@ -112,7 +119,33 @@ function toDestination(row: DestinationRowRaw): DestinationForEnqueue {
     externalDestinationId:
       typeof row.external_destination_id === 'string' ? row.external_destination_id : null,
     metadata,
+    accountId: row.account_id ?? '',
+    accountStatus: row.account_status ?? null,
+    accountTokenExpiresAt: row.account_token_expires_at ?? null,
   };
+}
+
+/**
+ * Whether the destination's owning account is expired, for the BG1
+ * queue gate: the stored status, or a token expiry date that has
+ * already passed. A missing account row (accountId empty) is treated
+ * as expired rather than trusted — the destination cannot be
+ * published through an account the route cannot see.
+ */
+export function isAccountExpiredForEnqueue(
+  destination: DestinationForEnqueue,
+  now: Date = new Date()
+): boolean {
+  if (!destination.accountId) return true;
+  if (destination.accountStatus === 'expired') return true;
+  if (
+    destination.accountStatus === 'active' &&
+    destination.accountTokenExpiresAt
+  ) {
+    const expiresMs = new Date(destination.accountTokenExpiresAt).getTime();
+    if (!Number.isNaN(expiresMs) && expiresMs <= now.getTime()) return true;
+  }
+  return false;
 }
 
 /**
@@ -142,9 +175,12 @@ export async function fetchDestinationForEnqueue(
 ): Promise<DestinationForEnqueue | null> {
   if (isLegacyClient(client)) {
     const rows = (await (client as DatabaseClient).query(
-      `SELECT id, platform, timezone, status, external_destination_id, metadata
-       FROM destinations
-       WHERE id = $1 AND workspace_id = $2
+      `SELECT d.id, d.platform, d.timezone, d.status, d.external_destination_id, d.metadata,
+              d.account_id, sa.status AS account_status,
+              sa.token_expires_at AS account_token_expires_at
+       FROM destinations d
+       LEFT JOIN social_accounts sa ON sa.id = d.account_id
+       WHERE d.id = $1 AND d.workspace_id = $2
        LIMIT 1`,
       [destinationId, workspaceId]
     )) as DestinationRowRaw[];
@@ -155,12 +191,35 @@ export async function fetchDestinationForEnqueue(
   if (!supabase) return null;
   const { data, error } = await supabase
     .from('destinations')
-    .select('id, platform, timezone, status, external_destination_id, metadata')
+    .select('id, platform, timezone, status, external_destination_id, metadata, account_id')
     .eq('id', destinationId)
     .eq('workspace_id', workspaceId)
     .maybeSingle();
   if (error || !data) return null;
-  return toDestination(data as DestinationRowRaw);
+  // The account row is fetched separately: PostgREST cannot join
+  // social_accounts into this shape, and the queue gate must see the
+  // account's stored status and token expiry, not just the page's.
+  const accountId = (data as DestinationRowRaw).account_id ?? null;
+  let accountStatus: string | null = null;
+  let accountTokenExpiresAt: string | null = null;
+  if (accountId) {
+    const { data: account, error: accountError } = await supabase
+      .from('social_accounts')
+      .select('status, token_expires_at')
+      .eq('id', accountId)
+      .maybeSingle();
+    if (!accountError && account) {
+      accountStatus = (account as { status?: string | null }).status ?? null;
+      accountTokenExpiresAt =
+        (account as { token_expires_at?: string | null }).token_expires_at ??
+        null;
+    }
+  }
+  return toDestination({
+    ...(data as DestinationRowRaw),
+    account_status: accountStatus,
+    account_token_expires_at: accountTokenExpiresAt,
+  });
 }
 
 /**
