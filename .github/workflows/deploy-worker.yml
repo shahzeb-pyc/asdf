@@ -55,7 +55,11 @@ jobs:
       # automatically when the secrets land. The Post for Me key
       # (specs 125/126) follows the same rule: it does not exist until
       # Shahzeb creates the provider account, and YouTube/TikTok light
-      # up automatically once it is set.
+      # up automatically once it is set. The TikTok mirror key
+      # (TIKWMAPI_KEYS) follows the same rule: it is uploaded only
+      # once set, so mirror feed checks light up automatically once
+      # it lands — without it, every TikTok feed fetch fails loudly
+      # with an empty key list.
       - name: Build worker secret list
         id: worker-secrets
         if: steps.check-credentials.outputs.has_token == 'true'
@@ -63,6 +67,7 @@ jobs:
           X_CLIENT_ID: ${{ secrets.X_CLIENT_ID }}
           X_CLIENT_SECRET: ${{ secrets.X_CLIENT_SECRET }}
           POST_FOR_ME_API_KEY: ${{ secrets.POST_FOR_ME_API_KEY }}
+          TIKWMAPI_KEYS: ${{ secrets.TIKWMAPI_KEYS }}
         run: |
           {
             echo "list<<EOF"
@@ -84,6 +89,11 @@ jobs:
             else
               echo "Post for Me API key is not set yet; deploying without it (YouTube/TikTok publishing stays dormant)." >&2
             fi
+            if [ -n "$TIKWMAPI_KEYS" ]; then
+              echo "TIKWMAPI_KEYS"
+            else
+              echo "TikWM API key is not set yet; deploying without it (TikTok mirror feed checks stay dormant)." >&2
+            fi
             echo "EOF"
           } >> $GITHUB_OUTPUT
 
@@ -103,6 +113,7 @@ jobs:
           POSTHOG_KEY: ${{ secrets.POSTHOG_KEY }}
           POSTHOG_HOST: ${{ secrets.POSTHOG_HOST }}
           POST_FOR_ME_API_KEY: ${{ secrets.POST_FOR_ME_API_KEY }}
+          TIKWMAPI_KEYS: ${{ secrets.TIKWMAPI_KEYS }}
           X_CLIENT_ID: ${{ secrets.X_CLIENT_ID }}
           X_CLIENT_SECRET: ${{ secrets.X_CLIENT_SECRET }}
 
