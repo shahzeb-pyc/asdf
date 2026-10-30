@@ -188,13 +188,13 @@ describe('WorkspaceSidebar (spec 130 rebuild on shared/ui Sidebar)', () => {
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
 
-  it('opening a still-testing platform shows its Accounts leaf and the testing note, while Instagram shows no testing note', () => {
+  it('opening Threads shows its Accounts leaf with no testing note, while a still-testing platform shows the note', () => {
     mockPathname = '/tenant/acme/threads/accounts';
     render(<Shell />);
-    // The active platform group opens by default.
-    expect(screen.getByTestId('sidebar-testing-note-threads')).toHaveTextContent(
-      'Being tested — not available for public use'
-    );
+    // The active platform group opens by default. Threads is no longer
+    // testing: opening it shows its Accounts leaf with no testing note
+    // underneath, like Instagram.
+    expect(screen.queryByTestId('sidebar-testing-note-threads')).not.toBeInTheDocument();
     const threadsLeaves = screen
       .getAllByRole('link', { name: /^Accounts/ })
       .map((l) => l.getAttribute('href'));
@@ -204,6 +204,12 @@ describe('WorkspaceSidebar (spec 130 rebuild on shared/ui Sidebar)', () => {
     // with no testing note underneath.
     fireEvent.click(screen.getByRole('button', { name: /Instagram/ }));
     expect(screen.queryByTestId('sidebar-testing-note-instagram')).not.toBeInTheDocument();
+
+    // A platform that is still testing (X) keeps showing the note.
+    fireEvent.click(screen.getByRole('button', { name: /X \(Twitter\)/ }));
+    expect(screen.getByTestId('sidebar-testing-note-x')).toHaveTextContent(
+      'Being tested — not available for public use'
+    );
     const accountsLeaves = screen
       .getAllByRole('link', { name: /^Accounts/ })
       .map((l) => l.getAttribute('href'));

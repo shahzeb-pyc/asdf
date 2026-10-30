@@ -126,7 +126,7 @@ export const UPCOMING_PLATFORMS: PlatformNavItemConfig[] = [
     label: 'Threads',
     tooltip: 'Threads — Being tested',
     routeSlug: 'threads',
-    isTesting: true,
+    isTesting: false,
     icon: <ThreadsIcon />,
   },
   {
