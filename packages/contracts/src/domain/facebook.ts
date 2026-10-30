@@ -360,7 +360,6 @@ export async function fetchAllFacebookPages(
     partial: truncationReason === 'page_error',
   };
 }
-}
 
 
 // In-memory representation of pages discovered from Graph API /me/accounts

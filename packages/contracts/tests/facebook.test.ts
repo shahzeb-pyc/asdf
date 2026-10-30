@@ -10,7 +10,6 @@ import {
   FacebookPageStatusSchema,
   FacebookPageViewSchema,
   fetchAllFacebookPages,
-  fetchAllFacebookPagesWithMeta,
 } from '../src/domain/facebook.js';
 import { evaluateGraphApiError } from '../src/domain/facebook-health.js';
 
@@ -482,14 +481,19 @@ describe('Facebook Account & Page Domain Schemas', () => {
       expect(result.pages).toHaveLength(1);
       expect(result.pages[0]?.id).toBe('p1');
       // R14: the fetched prefix is kept, but it must not present
-      // as the account's complete list.
+      // as the account's complete list. Unified semantics: the
+      // error case is BOTH truncated (either-cause flag) and
+      // partial (error-only flag) — the discover payload splits
+      // them back into capped vs error warnings.
       expect(result.partial).toBe(true);
-      expect(result.truncated).toBe(false);
+      expect(result.truncated).toBe(true);
+      expect(result.truncationReason).toBe('page_error');
     });
   });
 
-  // Audit BG6: truncation must be reported, never silently complete.
-  describe('fetchAllFacebookPagesWithMeta truncation', () => {
+  // Unified helper (BG6 + R14 merged): truncation must be
+  // reported, never silently complete.
+  describe('fetchAllFacebookPages truncation', () => {
     it('reports page_limit when the cap is hit with a cursor remaining', async () => {
       let callCount = 0;
       const mockFetch = async () => {
@@ -506,7 +510,7 @@ describe('Facebook Account & Page Domain Schemas', () => {
         } as Response;
       };
 
-      const result = await fetchAllFacebookPagesWithMeta(
+      const result = await fetchAllFacebookPages(
         'test-token',
         'id,name',
         2,
@@ -516,6 +520,7 @@ describe('Facebook Account & Page Domain Schemas', () => {
       expect(result.pages).toHaveLength(2);
       expect(result.truncated).toBe(true);
       expect(result.truncationReason).toBe('page_limit');
+      expect(result.partial).toBe(false);
     });
 
     it('reports page_error when a later page fails, keeping the pages already fetched', async () => {
@@ -537,7 +542,7 @@ describe('Facebook Account & Page Domain Schemas', () => {
         return { ok: false, status: 500 } as Response;
       };
 
-      const result = await fetchAllFacebookPagesWithMeta(
+      const result = await fetchAllFacebookPages(
         'test-token',
         'id,name',
         5,
@@ -546,6 +551,7 @@ describe('Facebook Account & Page Domain Schemas', () => {
       expect(result.pages).toHaveLength(1);
       expect(result.truncated).toBe(true);
       expect(result.truncationReason).toBe('page_error');
+      expect(result.partial).toBe(true);
     });
 
     it('reports not truncated when the last page has no cursor', async () => {
@@ -555,7 +561,7 @@ describe('Facebook Account & Page Domain Schemas', () => {
         json: async () => ({ data: [{ id: 'p1', name: 'Page One' }] }),
       });
 
-      const result = await fetchAllFacebookPagesWithMeta(
+      const result = await fetchAllFacebookPages(
         'test-token',
         'id,name',
         5,
@@ -564,6 +570,7 @@ describe('Facebook Account & Page Domain Schemas', () => {
       expect(result.pages).toHaveLength(1);
       expect(result.truncated).toBe(false);
       expect(result.truncationReason).toBeUndefined();
+      expect(result.partial).toBe(false);
     });
   });
 

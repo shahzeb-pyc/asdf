@@ -683,10 +683,15 @@ describe('Import with timezone + posting times', () => {
       mockDb.query as unknown as { mock: { calls: Array<[string, unknown[]]> } }
     ).mock.calls.filter(([sql]) => sql.includes('INSERT INTO destinations'));
     expect(upserts).toHaveLength(1);
-    // $10 = paused: the upsert keeps status 'disconnected' and
-    // re-adds the fb_status marker instead of activating.
-    expect(upserts[0][1][9]).toBe(true);
-    expect(upserts[0][0]).toContain("WHEN $10 THEN 'disconnected'");
+    // Merged shape (K9/BG8): the pause guard is SQL-level, not a
+    // $10 parameter — #48's $10 shape was superseded in the merge
+    // because the SQL CASE holds even if the pre-existing load
+    // disagreed with the stored row. Behaviour asserted is the
+    // same: status stays 'disconnected', marker re-added.
+    expect(upserts[0][1]).toHaveLength(9);
+    expect(upserts[0][0]).toContain(
+      "WHEN destinations.status = 'disconnected' AND destinations.metadata->>'fb_status' = 'paused'"
+    );
     expect(upserts[0][0]).toContain("jsonb_build_object('fb_status', 'paused')");
   });
 

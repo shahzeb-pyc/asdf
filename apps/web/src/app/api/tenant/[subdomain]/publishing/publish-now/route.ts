@@ -858,7 +858,7 @@ export async function POST(
               account.encrypted_access_token as string,
               encryptionKey
             );
-            const pages = await fetchAllFacebookPages(
+            const { pages } = await fetchAllFacebookPages(
               accountToken,
               'id,name,category,tasks,access_token,followers_count,picture{url}'
             );

@@ -628,6 +628,11 @@ describe('destination enqueue — facebook format gates (K6, K7)', () => {
       platform: 'facebook',
       timezone: 'UTC',
       status: 'active',
+      // BG1 gate: the account must be live, or the enqueue is
+      // refused 409 before the K6 format validation ever runs.
+      account_id: 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      account_status: 'active',
+      account_token_expires_at: '2999-01-01T00:00:00.000Z',
     });
     db.media.set(longVideoId, {
       id: longVideoId,
@@ -759,3 +764,4 @@ describe('destination enqueue — facebook format gates (K6, K7)', () => {
     expect(res.status).toBe(201);
     expect(db.queueItems).toHaveLength(1);
   });
+});
