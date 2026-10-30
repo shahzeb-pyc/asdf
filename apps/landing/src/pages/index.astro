@@ -143,83 +143,74 @@ const signin = 'https://app.fbuploadpro.com/login';
       </div>
     </section>
 
-    <!-- Section 3: Prompt Library showcase, in the REAL library's
-         structure (prompt-library-top-section branch): light-first,
-         centred heading + description, then a wide white search
-         card (search row, divider, plain-text filter row), then a
-         3-card grid in the real B design — uniform cards, fixed
-         preview height, NO master prompt text on cards, NO Copy
-         button on cards (Copy lives in the detail section in the
-         real app). Cards are labelled "Sample": illustrative
-         layout samples, NOT claimed real catalogue entries, NO
-         fake copied counts, NO fake preview media — the preview
-         area is a neutral placeholder panel with a play glyph.
-         Real taxonomy only: tools Dola AI / Veo 3 / Google Flow,
-         categories Animals / Comedy / Cinematic / UGC / Tutorial /
-         Unboxing, languages English / Urdu / Hindi. -->
+    <!-- Section 3: Prompt Library showcase, mockup B "Editorial,
+         featured first" (~/workspace/mockups/prompt-library-section-
+         professional.html, B only). Two columns on desktop: text
+         left, featured card + two compact rows right; stacked on
+         phones. The wide white search card and the Category/Tool/
+         Language/Length/Sort/My favorites filter row from the
+         previous version are DELIBERATELY REMOVED in B — the section
+         showcases the library through its cards, not its search UI.
+         Cards are labelled "Sample": illustrative layout samples,
+         NOT claimed real catalogue entries, NO fake copied counts,
+         NO fake preview media — preview areas are abstract gradient
+         placeholders with a play glyph. NO master prompt text on
+         cards, NO Copy button on cards (Copy lives in the detail
+         section in the real app). Heading gold is TEXT ONLY via
+         the existing gold-deep token — the heavy gold highlight
+         box is removed from this section. -->
     <section id="section-3" class="relative bg-white px-5 py-20 sm:px-8 sm:py-24 lg:px-12" aria-label="Prompt Library">
-      <div class="s3-content mx-auto w-full max-w-[1240px]">
-        <h2 class="mx-auto mb-6 max-w-3xl text-center text-[36px] leading-[1.15] font-bold tracking-tight sm:text-5xl lg:text-[56px]">
-          A library of prompts,<br /><span class="section-highlight">ready to use.</span>
-        </h2>
-        <p class="mx-auto mb-12 max-w-2xl text-center text-base leading-relaxed text-ink-sub sm:text-lg">
-          Browse prompts for Dola AI, Veo 3, and Google Flow — search by category, tool, or language, copy the master prompt, and create.
-        </p>
-        <div class="s3-panel rounded-3xl border border-line bg-white px-5 py-5 shadow-[0_20px_45px_rgba(17,17,17,0.12)] sm:px-8 sm:py-6">
-          <div class="flex items-center gap-3 px-1 py-2" aria-hidden="true">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
-            <span class="text-sm text-ink-sub">Search prompts…</span>
-          </div>
-          <div class="my-3 border-t border-line" aria-hidden="true"></div>
-          <div class="flex flex-wrap items-center gap-x-6 gap-y-2 px-1 py-1" aria-hidden="true">
-            <span class="text-sm font-medium text-ink-sub">Category</span>
-            <span class="text-sm font-medium text-ink-sub">Tool</span>
-            <span class="text-sm font-medium text-ink-sub">Language</span>
-            <span class="text-sm font-medium text-ink-sub">Length</span>
-            <span class="text-sm font-medium text-ink-sub">Sort</span>
-            <span class="text-sm font-medium text-ink-sub">My favorites</span>
-          </div>
+      <div class="s3-content mx-auto grid w-full max-w-[1240px] items-start gap-10 lg:grid-cols-[1fr_1.2fr]">
+        <div class="s3-anim">
+          <span class="mb-4 inline-flex items-center rounded-full border border-gold bg-gold/20 px-3 py-1.5 text-xs font-bold tracking-[0.12em] text-ink uppercase">Prompt Library</span>
+          <h2 class="text-[36px] leading-[1.08] font-bold tracking-tight sm:text-5xl lg:text-[52px]">
+            A library of prompts,<br /><span class="text-gold-deep">ready to use.</span>
+          </h2>
+          <p class="mt-5 max-w-xl text-base leading-relaxed text-ink-sub sm:text-lg">
+            Browse prompts for Dola AI, Veo 3, and Google Flow — search by category, tool, or language, copy the master prompt, and create.
+          </p>
+          <a href="https://app.fbuploadpro.com/signup" class="mt-7 inline-block font-bold text-ink underline decoration-gold decoration-2 underline-offset-4">Browse the library →</a>
         </div>
-        <div class="mt-8 grid gap-5 md:grid-cols-3">
-          <article class="overflow-hidden rounded-2xl border border-line bg-white shadow-[0_12px_28px_rgba(17,17,17,0.10)]">
-            <div class="flex h-[180px] items-center justify-center bg-[#e9ebef]" aria-hidden="true">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="32" height="32" fill="#111111" aria-hidden="true"><path d="M8 5v14l11-7z" /></svg>
-            </div>
+        <div>
+          <article class="s3-anim overflow-hidden rounded-2xl border border-line bg-white shadow-[0_12px_32px_rgba(17,17,17,0.10)]">
+            <div class="flex h-[240px] items-center justify-center bg-[linear-gradient(135deg,#fde68a,#f0b90b_55%,#92400e)]" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="32" height="32" fill="#111111" aria-hidden="true"><path d="M8 5v14l11-7z" /></svg></div>
             <div class="p-5">
               <div class="mb-4 flex items-center justify-between gap-3">
-                <span class="inline-flex items-center rounded-full bg-gold px-2.5 py-0.5 text-xs font-semibold text-ink">Sample</span>
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" /></svg>
+                <span class="inline-flex items-center rounded-full bg-gold px-2.5 py-0.5 text-xs font-semibold text-ink">Sample · Featured</span>
+                <span aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" /></svg></span>
               </div>
-              <h3 class="mb-2 text-lg font-semibold">Cinematic animal scene</h3>
-              <p class="text-sm text-ink-sub">Cinematic · Veo 3 · English</p>
+              <h3 class="mb-3 text-lg font-semibold">Cinematic animal scene</h3>
+              <div class="flex flex-wrap gap-1.5">
+                <span class="inline-flex items-center rounded-full border border-line bg-[#f4f4f5] px-2.5 py-1 text-xs text-ink-sub">Cinematic</span>
+                <span class="inline-flex items-center rounded-full border border-line bg-[#f4f4f5] px-2.5 py-1 text-xs text-ink-sub">Veo 3</span>
+                <span class="inline-flex items-center rounded-full border border-line bg-[#f4f4f5] px-2.5 py-1 text-xs text-ink-sub">English</span>
+              </div>
             </div>
           </article>
-          <article class="overflow-hidden rounded-2xl border border-line bg-white shadow-[0_12px_28px_rgba(17,17,17,0.10)]">
-            <div class="flex h-[180px] items-center justify-center bg-[#e9ebef]" aria-hidden="true">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="32" height="32" fill="#111111" aria-hidden="true"><path d="M8 5v14l11-7z" /></svg>
-            </div>
-            <div class="p-5">
-              <div class="mb-4 flex items-center justify-between gap-3">
-                <span class="inline-flex items-center rounded-full bg-gold px-2.5 py-0.5 text-xs font-semibold text-ink">Sample</span>
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" /></svg>
+          <div class="s3-anim mt-5 grid gap-3.5">
+            <div class="flex items-center gap-4 rounded-xl border border-line bg-white p-3">
+              <div class="flex h-14 w-[72px] shrink-0 items-center justify-center rounded-lg bg-[linear-gradient(135deg,#e0e7ff,#a5b4fc_55%,#312e81)]" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="32" height="32" fill="#111111" aria-hidden="true"><path d="M8 5v14l11-7z" /></svg></div>
+              <div class="min-w-0 flex-1">
+                <div class="flex flex-wrap items-center gap-2">
+                  <h3 class="text-[15px] font-semibold">Comedy unboxing clip</h3>
+                  <span class="inline-flex items-center rounded-full bg-gold px-2 py-0.5 text-[11px] font-semibold text-ink">Sample</span>
+                </div>
+                <p class="mt-1 text-sm text-ink-sub">Comedy · Dola AI · English</p>
               </div>
-              <h3 class="mb-2 text-lg font-semibold">Comedy unboxing clip</h3>
-              <p class="text-sm text-ink-sub">Comedy · Dola AI · English</p>
+              <span class="shrink-0" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" /></svg></span>
             </div>
-          </article>
-          <article class="overflow-hidden rounded-2xl border border-line bg-white shadow-[0_12px_28px_rgba(17,17,17,0.10)]">
-            <div class="flex h-[180px] items-center justify-center bg-[#e9ebef]" aria-hidden="true">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="32" height="32" fill="#111111" aria-hidden="true"><path d="M8 5v14l11-7z" /></svg>
-            </div>
-            <div class="p-5">
-              <div class="mb-4 flex items-center justify-between gap-3">
-                <span class="inline-flex items-center rounded-full bg-gold px-2.5 py-0.5 text-xs font-semibold text-ink">Sample</span>
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" /></svg>
+            <div class="flex items-center gap-4 rounded-xl border border-line bg-white p-3">
+              <div class="flex h-14 w-[72px] shrink-0 items-center justify-center rounded-lg bg-[linear-gradient(135deg,#dcfce7,#86efac_55%,#14532d)]" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="32" height="32" fill="#111111" aria-hidden="true"><path d="M8 5v14l11-7z" /></svg></div>
+              <div class="min-w-0 flex-1">
+                <div class="flex flex-wrap items-center gap-2">
+                  <h3 class="text-[15px] font-semibold">Tutorial walkthrough</h3>
+                  <span class="inline-flex items-center rounded-full bg-gold px-2 py-0.5 text-[11px] font-semibold text-ink">Sample</span>
+                </div>
+                <p class="mt-1 text-sm text-ink-sub">Tutorial · Google Flow · English</p>
               </div>
-              <h3 class="mb-2 text-lg font-semibold">Tutorial walkthrough</h3>
-              <p class="text-sm text-ink-sub">Tutorial · Google Flow · English</p>
+              <span class="shrink-0" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" /></svg></span>
             </div>
-          </article>
+          </div>
         </div>
       </div>
     </section>
@@ -506,9 +497,7 @@ const signin = 'https://app.fbuploadpro.com/login';
         scrollTrigger: { trigger: '#section-3', start: 'top 90%', end: 'top 45%', scrub: 1 },
         defaults: { ease: 'none' },
       })
-        .from('#section-3 h2', { opacity: 0, y: 24, duration: 0.7 })
-        .from('#section-3 > div > p', { opacity: 0, y: 24, duration: 0.7 }, '-=0.3')
-        .from('#section-3 .s3-panel', { opacity: 0, y: 24, duration: 0.9 }, '-=0.3');
+        .from('#section-3 .s3-anim', { opacity: 0, y: 24, duration: 0.7, stagger: 0.12 });
 
       /* Section 5 reveal, SCRUBBED (same forward/backward rule:
          top 90% -> top 45%, no stepped replay). Calm fade+rise
