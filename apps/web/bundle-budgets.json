@@ -208,7 +208,7 @@
         "firstLoadRawBytes": 545100,
         "routeSpecificGzipBytes": 31700,
         "routeSpecificRawBytes": 104800
-      },
+      }
     },
     "totalClientJs": {
       "gzipBytes": 1097121,
