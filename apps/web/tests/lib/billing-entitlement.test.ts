@@ -8,8 +8,9 @@ import {
   createPeriodForPayment,
   getActivePeriod,
   getEntitlement,
+  getUsageCount,
   getUsageCounts,
-  getUsedDestinationKeys,
+  isDestinationUsed,
   paymentFromRow,
   periodFromRow,
   pricePurchase,
@@ -274,7 +275,15 @@ class FakeBuilder {
     if (err) return { data: null, error: err, count: null };
     if (this.headCount) {
       const platform = this.filters.find((f) => f.col === 'platform')?.val as string;
-      return { count: this.state.usageCounts[platform] ?? 0, error: null };
+      const override = this.state.usageCounts[platform];
+      if (override !== undefined) return { count: override, error: null };
+      // No override: derive the count from the registry rows, as a
+      // real count query would (tests that set rows but no map).
+      let rows = [...this.state.usageRows];
+      for (const f of this.filters) {
+        if (f.op === 'eq') rows = rows.filter((row) => row[f.col] === f.val);
+      }
+      return { count: rows.length, error: null };
     }
     let rows =
       this.table === 'subscription_periods'
@@ -399,10 +408,15 @@ describe('getActivePeriod', () => {
     await expect(getActivePeriod(fakeClient(state), 'user-1', NOW)).rejects.toMatchObject({
       code: 'ENTITLEMENT_UNAVAILABLE',
     });
+    expect(mockedLogServerError).toHaveBeenCalledWith(
+      '[billing] active period query failed',
+      expect.anything(),
+      { source: 'billing' }
+    );
   });
 });
 
-describe('getUsageCounts / getUsedDestinationKeys', () => {
+describe('getUsageCounts / getUsageCount / isDestinationUsed', () => {
   it('counts per platform, defaulting missing platforms to zero', async () => {
     const state = baseState({ usageCounts: { facebook: 2, instagram: 1 } });
     await expect(getUsageCounts(fakeClient(state), 'user-1')).resolves.toEqual({
@@ -412,29 +426,60 @@ describe('getUsageCounts / getUsedDestinationKeys', () => {
     });
   });
 
-  it('fails closed when a usage count query errors', async () => {
+  it('counts one platform exactly, without fetching its keys', async () => {
+    const state = baseState({
+      usageRows: [
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-a' },
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-b' },
+        { user_id: 'user-1', platform: 'instagram', destination_key: 'acct-c' },
+      ],
+    });
+    await expect(getUsageCount(fakeClient(state), 'user-1', 'facebook')).resolves.toBe(2);
+    await expect(getUsageCount(fakeClient(state), 'user-1', 'threads')).resolves.toBe(0);
+  });
+
+  it('checks one destination by existence, not by listing keys', async () => {
+    const state = baseState({
+      usageRows: [
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-a' },
+      ],
+    });
+    await expect(
+      isDestinationUsed(fakeClient(state), 'user-1', 'facebook', 'page-a')
+    ).resolves.toBe(true);
+    await expect(
+      isDestinationUsed(fakeClient(state), 'user-1', 'facebook', 'page-b')
+    ).resolves.toBe(false);
+  });
+
+  it('fails closed when a usage query errors', async () => {
     const state = baseState({
       selectErrors: { subscription_usage: { message: 'db down' } },
     });
     await expect(getUsageCounts(fakeClient(state), 'user-1')).rejects.toBeInstanceOf(
       SubscriptionGateError
     );
-    await expect(getUsedDestinationKeys(fakeClient(state), 'user-1', 'facebook')).rejects.toMatchObject({
+    await expect(getUsageCount(fakeClient(state), 'user-1', 'facebook')).rejects.toMatchObject({
       code: 'ENTITLEMENT_UNAVAILABLE',
     });
-  });
-
-  it('lists destination keys, skipping rows without a string key', async () => {
-    const state = baseState({
-      usageRows: [
-        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-a' },
-        { user_id: 'user-1', platform: 'facebook', destination_key: 42 },
-        { user_id: 'user-1', platform: 'instagram', destination_key: 'acct-b' },
-      ],
-    });
     await expect(
-      getUsedDestinationKeys(fakeClient(state), 'user-1', 'facebook')
-    ).resolves.toEqual(['page-a']);
+      isDestinationUsed(fakeClient(state), 'user-1', 'facebook', 'page-a')
+    ).rejects.toMatchObject({ code: 'ENTITLEMENT_UNAVAILABLE' });
+    expect(mockedLogServerError).toHaveBeenCalledWith(
+      '[billing] usage counts query failed',
+      expect.anything(),
+      { source: 'billing' }
+    );
+    expect(mockedLogServerError).toHaveBeenCalledWith(
+      '[billing] usage count query failed',
+      expect.anything(),
+      { source: 'billing' }
+    );
+    expect(mockedLogServerError).toHaveBeenCalledWith(
+      '[billing] destination existence query failed',
+      expect.anything(),
+      { source: 'billing' }
+    );
   });
 });
 
@@ -479,6 +524,7 @@ describe('assertCanPost', () => {
   it('refuses a new destination at the cap, naming pages for Facebook', async () => {
     const state = baseState({
       periods: [periodRow({ facebook_count: 1 })],
+      usageCounts: { facebook: 1 },
       usageRows: [{ user_id: 'user-1', platform: 'facebook', destination_key: 'page-a' }],
     });
     await expect(
@@ -495,6 +541,7 @@ describe('assertCanPost', () => {
   it('names accounts for non-Facebook platforms at the cap', async () => {
     const state = baseState({
       periods: [periodRow({ instagram_count: 1 })],
+      usageCounts: { instagram: 1 },
       usageRows: [{ user_id: 'user-1', platform: 'instagram', destination_key: 'acct-a' }],
     });
     try {
@@ -609,6 +656,11 @@ describe('createPeriodForPayment', () => {
     await expect(
       createPeriodForPayment(fakeClient(state), paymentObject(), startsAt)
     ).rejects.toMatchObject({ code: 'ENTITLEMENT_UNAVAILABLE' });
+    expect(mockedLogServerError).toHaveBeenCalledWith(
+      '[billing] period supersede failed',
+      expect.anything(),
+      { source: 'billing' }
+    );
   });
 
   it('fails closed when the period insert errors', async () => {
@@ -616,6 +668,11 @@ describe('createPeriodForPayment', () => {
     await expect(
       createPeriodForPayment(fakeClient(state), paymentObject(), startsAt)
     ).rejects.toMatchObject({ code: 'ENTITLEMENT_UNAVAILABLE' });
+    expect(mockedLogServerError).toHaveBeenCalledWith(
+      '[billing] period insert failed',
+      expect.anything(),
+      { source: 'billing' }
+    );
   });
 
   it('fails closed when the insert returns no row', async () => {
@@ -710,6 +767,11 @@ describe('approvePayment', () => {
     await expect(approvePayment(fakeClient(state), 'payment-1', 'admin-1', now)).rejects.toMatchObject({
       code: 'ENTITLEMENT_UNAVAILABLE',
     });
+    expect(mockedLogServerError).toHaveBeenCalledWith(
+      '[billing] payment approve update failed',
+      expect.anything(),
+      { source: 'billing' }
+    );
   });
 });
 
@@ -745,6 +807,11 @@ describe('rejectPayment', () => {
     await expect(rejectPayment(fakeClient(state), 'payment-1', now)).rejects.toMatchObject({
       code: 'ENTITLEMENT_UNAVAILABLE',
     });
+    expect(mockedLogServerError).toHaveBeenCalledWith(
+      '[billing] payment reject update failed',
+      expect.anything(),
+      { source: 'billing' }
+    );
   });
 });
 
@@ -756,6 +823,30 @@ describe('pricePurchase', () => {
       isUpgrade: false,
       quote: null,
     });
+  });
+
+  it('refuses a downgrade as a plain gate error, not a server failure', () => {
+    const oldCounts = { ...ZERO_COUNTS, facebook: 20 };
+    const newCounts = { ...ZERO_COUNTS, facebook: 10 };
+    const activePeriod = {
+      id: 'period-1',
+      userId: 'user-1',
+      counts: oldCounts,
+      startsAt: new Date('2026-05-02T00:00:00.000Z'),
+      endsAt: new Date('2026-06-11T00:00:00.000Z'),
+      supersededAt: null,
+    };
+    let caught: unknown = null;
+    try {
+      pricePurchase(newCounts, activePeriod, NOW);
+    } catch (err) {
+      caught = err;
+    }
+    // The checkout routes turn SubscriptionGateError into a plain
+    // 400; a raw DomainError would have fallen through to a 500.
+    expect(caught).toBeInstanceOf(SubscriptionGateError);
+    expect(caught).toMatchObject({ code: 'INVALID_REQUEST' });
+    expect((caught as Error).message).toContain('Counts can only be increased');
   });
 
   it('prices the 10-to-20 upgrade with 10 days left as credit 233, pay 1167', () => {

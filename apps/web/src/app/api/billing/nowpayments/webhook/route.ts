@@ -77,23 +77,28 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // falling back to the NOWPayments payment id.
     let paymentRow: Record<string, unknown> | null = null;
     if (typeof payload.order_id === 'string' && payload.order_id.length > 0) {
-      const { data } = await client
+      const { data, error: lookupError } = await client
         .from('subscription_payments')
         .select(
           'id,user_id,method,bank_method,status,facebook_count,instagram_count,threads_count,x_count,tiktok_count,youtube_count,amount_pkr,is_upgrade,screenshot_storage_key,nowpayments_payment_id,nowpayments_pay_address,nowpayments_pay_amount,nowpayments_network,period_id,approved_at,created_at'
         )
         .eq('id', payload.order_id)
         .maybeSingle();
+      // A lookup failure is not an unknown payment: throwing here
+      // releases the dedupe row (see catch) so the retry reprocesses
+      // instead of being swallowed as a duplicate forever.
+      if (lookupError) throw lookupError;
       if (data) paymentRow = data as Record<string, unknown>;
     }
     if (!paymentRow) {
-      const { data } = await client
+      const { data, error: lookupError } = await client
         .from('subscription_payments')
         .select(
           'id,user_id,method,bank_method,status,facebook_count,instagram_count,threads_count,x_count,tiktok_count,youtube_count,amount_pkr,is_upgrade,screenshot_storage_key,nowpayments_payment_id,nowpayments_pay_address,nowpayments_pay_amount,nowpayments_network,period_id,approved_at,created_at'
         )
         .eq('nowpayments_payment_id', providerPaymentId)
         .maybeSingle();
+      if (lookupError) throw lookupError;
       if (data) paymentRow = data as Record<string, unknown>;
     }
     if (!paymentRow) {
@@ -111,10 +116,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (payment.periodId) {
       return NextResponse.json({ received: true, alreadyActivated: true });
     }
+    // A payment an admin rejected must never activate, even if the
+    // user pays it afterwards. Rejection is terminal: the dedupe
+    // row stays, so a retry of the same notification is still a
+    // duplicate and still rejected.
+    if (status === 'finished' && payment.status === 'rejected') {
+      return NextResponse.json({ received: true, rejected: true });
+    }
 
     if (status === 'finished') {
       const period = await createPeriodForPayment(client, payment);
-      await client
+      // Never report activated when the persist failed: throwing
+      // releases the dedupe row so the provider retry reprocesses
+      // (createPeriodForPayment supersedes the first period, so
+      // the retry cannot double-activate).
+      const { error: markPaidError } = await client
         .from('subscription_payments')
         .update({
           status: 'paid',
@@ -122,15 +138,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           updated_at: new Date().toISOString(),
         })
         .eq('id', payment.id);
+      if (markPaidError) throw markPaidError;
       return NextResponse.json({ received: true, activated: true });
     }
 
     if (status === 'failed' || status === 'expired') {
       if (payment.status === 'pending') {
-        await client
+        const { error: markStatusError } = await client
           .from('subscription_payments')
           .update({ status, updated_at: new Date().toISOString() })
           .eq('id', payment.id);
+        if (markStatusError) throw markStatusError;
       }
       return NextResponse.json({ received: true, updated: true });
     }

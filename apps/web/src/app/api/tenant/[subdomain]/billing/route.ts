@@ -13,6 +13,8 @@ import {
  * The signed-in user's entitlement plus their own payment history.
  * Admins use the admin payments route instead; this route never
  * returns another user's payments.
+ * Bounded: 50 rows per page, `?page=` (default 1) pages through
+ * them — the full table is never returned in one response.
  */
 export async function GET(
   request: NextRequest,
@@ -31,6 +33,10 @@ export async function GET(
     );
   }
 
+  const pageParam = Number(request.nextUrl.searchParams.get('page'));
+  const page = Number.isInteger(pageParam) && pageParam >= 1 ? pageParam : 1;
+  const PAGE_SIZE = 50;
+
   try {
     const entitlement = await getEntitlement(client, session.userId);
     const { data, error } = await client
@@ -40,7 +46,7 @@ export async function GET(
       )
       .eq('user_id', session.userId)
       .order('created_at', { ascending: false })
-      .limit(50);
+      .range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1);
     if (error) throw error;
     const payments = (Array.isArray(data) ? data : [])
       .map((row) => paymentFromRow(row as Record<string, unknown>))
@@ -49,6 +55,7 @@ export async function GET(
     return NextResponse.json({
       entitlement: mapEntitlementToResponse(entitlement),
       payments,
+      page,
     });
   } catch (err) {
     logServerError('[billing] status failed', err, { source: 'billing' });

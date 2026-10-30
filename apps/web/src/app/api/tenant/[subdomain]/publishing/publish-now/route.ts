@@ -21,6 +21,7 @@ import {
 import { getR2Config } from '@/lib/storage';
 import { logServerError } from '@/lib/server-analytics';
 import {
+  assertCanPost,
   registerUsage,
   SubscriptionGateError,
 } from '@/lib/billing/entitlement';
@@ -612,9 +613,16 @@ export async function POST(
   // page once even if it is also queued via destination-queue.
   // Admins are not gated. A gate failure fails the whole request
   // so a partial publish can never slip past the cap.
+  // Pre-check every target first: registering one by one means a
+  // cap failure on page 3 would leave pages 1-2 permanently
+  // registered even though nothing was published. A gate failure
+  // in the pre-check registers nothing.
   if (session.role !== 'admin') {
     const distinctPageIds = Array.from(new Set(targets.map((target) => target.fbPageId)));
     try {
+      for (const fbPageId of distinctPageIds) {
+        await assertCanPost(supabase, session.userId, 'facebook', fbPageId);
+      }
       for (const fbPageId of distinctPageIds) {
         await registerUsage(supabase, session.userId, 'facebook', fbPageId, 'publish-now', null);
       }

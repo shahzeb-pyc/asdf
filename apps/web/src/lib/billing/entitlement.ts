@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
-  canUseDestination,
+  DomainError,
   isPeriodActive,
   quoteUpgrade,
   totalPricePkr,
@@ -174,6 +174,10 @@ export async function getActivePeriod(
     .order('ends_at', { ascending: false })
     .limit(1);
   if (error) {
+    // Log at the site that sees the database error: callers turn
+    // this into a plain user message without logging, so without
+    // this line a database outage would leave no reason in the logs.
+    logServerError('[billing] active period query failed', error, { source: 'billing' });
     throw new SubscriptionGateError(
       'ENTITLEMENT_UNAVAILABLE',
       'Your plan could not be checked right now. Please try again.'
@@ -202,6 +206,7 @@ export async function getUsageCounts(
       .eq('user_id', userId)
       .eq('platform', platform);
     if (error) {
+      logServerError('[billing] usage counts query failed', error, { source: 'billing' });
       throw new SubscriptionGateError(
         'ENTITLEMENT_UNAVAILABLE',
         'Your plan could not be checked right now. Please try again.'
@@ -212,31 +217,55 @@ export async function getUsageCounts(
   return usage;
 }
 
-export async function getUsedDestinationKeys(
+/**
+ * Exact usage count for one platform, via a count query — never a
+ * row list. A row list would silently truncate at PostgREST's
+ * 1,000-row limit and under-report usage; the count query does not.
+ */
+export async function getUsageCount(
   client: SupabaseClient,
   userId: string,
   platform: SubscriptionPlatform
-): Promise<string[]> {
-  const { data, error } = await client
+): Promise<number> {
+  const { count, error } = await client
     .from('subscription_usage')
-    .select('destination_key')
+    .select('id', { count: 'exact', head: true })
     .eq('user_id', userId)
     .eq('platform', platform);
   if (error) {
+    logServerError('[billing] usage count query failed', error, { source: 'billing' });
     throw new SubscriptionGateError(
       'ENTITLEMENT_UNAVAILABLE',
       'Your plan could not be checked right now. Please try again.'
     );
   }
-  const keys: string[] = [];
-  if (Array.isArray(data)) {
-    for (const item of data) {
-      const row = asRow(item);
-      const key = row ? stringField(row, 'destination_key') : null;
-      if (key) keys.push(key);
-    }
+  return typeof count === 'number' ? count : 0;
+}
+
+/** Single-row existence check for one destination in the registry. */
+export async function isDestinationUsed(
+  client: SupabaseClient,
+  userId: string,
+  platform: SubscriptionPlatform,
+  destinationKey: string
+): Promise<boolean> {
+  const { data, error } = await client
+    .from('subscription_usage')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('platform', platform)
+    .eq('destination_key', destinationKey)
+    .limit(1);
+  if (error) {
+    logServerError('[billing] destination existence query failed', error, {
+      source: 'billing',
+    });
+    throw new SubscriptionGateError(
+      'ENTITLEMENT_UNAVAILABLE',
+      'Your plan could not be checked right now. Please try again.'
+    );
   }
-  return keys;
+  return Array.isArray(data) && data.length > 0;
 }
 
 export async function getEntitlement(
@@ -299,9 +328,16 @@ export async function assertCanPost(
         'Posting is paused. Your paid period has ended — renew it to post again.'
     );
   }
-  const usedKeys = await getUsedDestinationKeys(client, userId, platform);
   const allowed = entitlement.counts[platform];
-  if (!canUseDestination(usedKeys, destinationKey, allowed)) {
+  // The gate must never decide from a full keys list: PostgREST
+  // silently truncates at 1,000 rows, which would under-report
+  // usage and fail the cap open. Decide from the exact count
+  // (already fetched with the entitlement) plus a single-row
+  // existence check for this destination instead.
+  if (await isDestinationUsed(client, userId, platform, destinationKey)) {
+    return entitlement.period;
+  }
+  if (entitlement.usage[platform] >= allowed) {
     throw new SubscriptionGateError(
       'SUBSCRIPTION_CAP_REACHED',
       `You have reached your limit of ${allowed} ${platform === 'facebook' ? 'pages' : 'accounts'} on ${platform}. Upgrade your plan to use more.`
@@ -325,9 +361,8 @@ export async function registerUsage(
   now: Date = new Date()
 ): Promise<{ alreadyUsed: boolean; usedCount: number }> {
   await assertCanPost(client, userId, platform, destinationKey, now);
-  const usedBefore = await getUsedDestinationKeys(client, userId, platform);
-  if (usedBefore.includes(destinationKey)) {
-    return { alreadyUsed: true, usedCount: usedBefore.length };
+  if (await isDestinationUsed(client, userId, platform, destinationKey)) {
+    return { alreadyUsed: true, usedCount: await getUsageCount(client, userId, platform) };
   }
   const { error } = await client.from('subscription_usage').insert({
     user_id: userId,
@@ -340,8 +375,7 @@ export async function registerUsage(
     // 23505 = unique violation: another request registered this
     // destination in the meantime. That is a success, not a failure.
     if (error.code === '23505') {
-      const usedAfter = await getUsedDestinationKeys(client, userId, platform);
-      return { alreadyUsed: true, usedCount: usedAfter.length };
+      return { alreadyUsed: true, usedCount: await getUsageCount(client, userId, platform) };
     }
     logServerError('[billing] usage insert failed', error, { source: 'billing' });
     throw new SubscriptionGateError(
@@ -349,8 +383,7 @@ export async function registerUsage(
       'Your plan could not be checked right now. Please try again.'
     );
   }
-  const usedAfter = await getUsedDestinationKeys(client, userId, platform);
-  return { alreadyUsed: false, usedCount: usedAfter.length };
+  return { alreadyUsed: false, usedCount: await getUsageCount(client, userId, platform) };
 }
 
 /** Supersede the user's current periods and start a fresh 30-day period for a payment. */
@@ -367,6 +400,7 @@ export async function createPeriodForPayment(
     .is('superseded_at', null)
     .gt('ends_at', startsAt.toISOString());
   if (supersedeError) {
+    logServerError('[billing] period supersede failed', supersedeError, { source: 'billing' });
     throw new SubscriptionGateError(
       'ENTITLEMENT_UNAVAILABLE',
       'Your paid period could not be started right now. Please try again.'
@@ -389,6 +423,11 @@ export async function createPeriodForPayment(
     .select(`id,user_id,${COUNT_COLUMNS},starts_at,ends_at,superseded_at`)
     .single();
   if (error || !data) {
+    // No branch on error here: the untyped client's single() types
+    // make the linter misread error/data nullability, and a branch
+    // would only add a warning. The PostgREST error (when present)
+    // carries code/message; a missing row still records the site.
+    logServerError('[billing] period insert failed', error, { source: 'billing' });
     throw new SubscriptionGateError(
       'ENTITLEMENT_UNAVAILABLE',
       'Your paid period could not be started right now. Please try again.'
@@ -396,6 +435,11 @@ export async function createPeriodForPayment(
   }
   const period = periodFromRow(asRow(data) ?? {});
   if (!period) {
+    logServerError(
+      '[billing] period insert returned unreadable row',
+      new Error('Period insert returned unreadable row'),
+      { source: 'billing' }
+    );
     throw new SubscriptionGateError(
       'ENTITLEMENT_UNAVAILABLE',
       'Your paid period could not be started right now. Please try again.'
@@ -457,6 +501,9 @@ export async function approvePayment(
     .eq('id', payment.id)
     .eq('status', 'pending');
   if (updateError) {
+    logServerError('[billing] payment approve update failed', updateError, {
+      source: 'billing',
+    });
     throw new SubscriptionGateError(
       'ENTITLEMENT_UNAVAILABLE',
       'That payment could not be approved right now. Please try again.'
@@ -499,6 +546,9 @@ export async function rejectPayment(
     .eq('id', payment.id)
     .eq('status', 'pending');
   if (updateError) {
+    logServerError('[billing] payment reject update failed', updateError, {
+      source: 'billing',
+    });
     throw new SubscriptionGateError(
       'ENTITLEMENT_UNAVAILABLE',
       'That payment could not be rejected right now. Please try again.'
@@ -519,6 +569,19 @@ export function pricePurchase(
   const daysRemaining = Math.ceil(
     Math.max(0, activePeriod.endsAt.getTime() - now.getTime()) / 86_400_000
   );
-  const quote = quoteUpgrade(activePeriod.counts, counts, daysRemaining);
+  let quote: ReturnType<typeof quoteUpgrade>;
+  try {
+    quote = quoteUpgrade(activePeriod.counts, counts, daysRemaining);
+  } catch (err) {
+    // Boundary conversion: the checkout routes turn a
+    // SubscriptionGateError into a plain 400, but a raw DomainError
+    // (downgrade, per-platform decrease, same-total change) would
+    // fall through to a misleading 500. Convert here so both
+    // checkout routes refuse a downgrade with the plain message.
+    if (err instanceof DomainError) {
+      throw new SubscriptionGateError('INVALID_REQUEST', err.message);
+    }
+    throw err;
+  }
   return { amountPkr: quote.amountToPayPkr, isUpgrade: true, quote };
 }

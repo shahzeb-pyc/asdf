@@ -11,6 +11,8 @@ import {
  * GET /api/tenant/[subdomain]/billing/admin/payments
  * Admin only, fail closed: non-admins get 403 and no data.
  * Pending payments first, then the most recent decided ones.
+ * Bounded: 100 rows per page, `?page=` (default 1) pages through
+ * them — the full table is never returned in one response.
  */
 export async function GET(
   request: NextRequest,
@@ -31,6 +33,10 @@ export async function GET(
     );
   }
 
+  const pageParam = Number(request.nextUrl.searchParams.get('page'));
+  const page = Number.isInteger(pageParam) && pageParam >= 1 ? pageParam : 1;
+  const PAGE_SIZE = 100;
+
   try {
     const { data, error } = await client
       .from('subscription_payments')
@@ -38,7 +44,7 @@ export async function GET(
         'id,user_id,method,bank_method,status,facebook_count,instagram_count,threads_count,x_count,tiktok_count,youtube_count,amount_pkr,is_upgrade,screenshot_storage_key,nowpayments_payment_id,nowpayments_pay_address,nowpayments_pay_amount,nowpayments_network,period_id,approved_at,created_at'
       )
       .order('created_at', { ascending: false })
-      .limit(100);
+      .range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1);
     if (error) throw error;
     const payments = (Array.isArray(data) ? data : [])
       .map((row) => paymentFromRow(row as Record<string, unknown>))
@@ -75,6 +81,7 @@ export async function GET(
         userId: payment.userId,
         userEmail: emails.get(payment.userId) ?? null,
       })),
+      page,
     });
   } catch (err) {
     logServerError('[billing] admin payments failed', err, { source: 'billing' });

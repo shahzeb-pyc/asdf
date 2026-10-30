@@ -142,6 +142,21 @@ export async function POST(
       .select('id')
       .single();
     if (insertError || !inserted || typeof inserted.id !== 'string') {
+      // Same rule as the bank route: never discard the database
+      // error — log its code and message server-side, then throw
+      // the plain message the user sees.
+      if (insertError) {
+        logServerError('[billing] crypto payment insert failed', insertError, {
+          source: 'billing',
+          code: insertError.code,
+        });
+      } else {
+        logServerError(
+          '[billing] crypto payment insert failed',
+          new Error('Crypto payment insert returned no usable row'),
+          { source: 'billing' }
+        );
+      }
       throw new Error('Crypto payment record could not be created');
     }
     const paymentId = inserted.id as string;
@@ -158,10 +173,19 @@ export async function POST(
         config.apiKey
       );
     } catch (err) {
-      await client
+      // Best-effort compensation: the checkout already failed, so
+      // the user sees the 502 either way — but a failed mark-failed
+      // update must still be logged, never silently dropped.
+      const { error: markFailedError } = await client
         .from('subscription_payments')
         .update({ status: 'failed', updated_at: new Date().toISOString() })
         .eq('id', paymentId);
+      if (markFailedError) {
+        logServerError('[billing] crypto mark failed update failed', markFailedError, {
+          source: 'billing',
+          code: markFailedError.code,
+        });
+      }
       if (err instanceof NowPaymentsError) {
         return NextResponse.json({ error: 'CRYPTO_CHECKOUT_FAILED', message: err.message }, { status: 502 });
       }
@@ -186,10 +210,16 @@ export async function POST(
         source: 'billing',
         code: addressUpdateError.code,
       });
-      await client
+      const { error: markFailedError } = await client
         .from('subscription_payments')
         .update({ status: 'failed', updated_at: new Date().toISOString() })
         .eq('id', paymentId);
+      if (markFailedError) {
+        logServerError('[billing] crypto mark failed update failed', markFailedError, {
+          source: 'billing',
+          code: markFailedError.code,
+        });
+      }
       return NextResponse.json(
         {
           error: 'CRYPTO_CHECKOUT_FAILED',
