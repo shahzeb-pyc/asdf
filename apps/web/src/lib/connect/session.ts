@@ -102,11 +102,17 @@ export async function resolveSocialRouteContext(
     };
   }
 
+  // Audit S2 (owner decision 2026-10-30): admins are scoped to
+  // their own workspace like everyone else on the account/social
+  // routes — session.role is deliberately NOT passed, so an admin
+  // in a workspace they do not own resolves to no workspace (404,
+  // same as the accounts list and BYOC routes already behaved).
+  // Other tenant routes that still pass a role are outside this
+  // audit's account/social scope and keep their own behaviour.
   const workspaceId = await resolveTenantWorkspaceId(
     client,
     subdomain,
-    session.userId,
-    session.role
+    session.userId
   );
   if (!workspaceId) {
     return {

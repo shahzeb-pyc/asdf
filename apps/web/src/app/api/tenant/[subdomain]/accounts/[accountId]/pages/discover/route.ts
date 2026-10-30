@@ -52,7 +52,7 @@ export async function handleDiscoverPages(
   }
 
   // 3. Resolve workspace ID scoped to user (supports admin inspection)
-  const workspaceId = await resolveTenantWorkspaceId(dbClient, subdomain, session.userId, session.role);
+  const workspaceId = await resolveTenantWorkspaceId(dbClient, subdomain, session.userId);
   if (!workspaceId) {
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
   }

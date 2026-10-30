@@ -72,7 +72,7 @@ export async function handleImportPages(
     parseResult.data;
 
   // 4. Resolve workspace ID scoped to user
-  const workspaceId = await resolveTenantWorkspaceId(dbClient, subdomain, session.userId, session.role);
+  const workspaceId = await resolveTenantWorkspaceId(dbClient, subdomain, session.userId);
   if (!workspaceId) {
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
   }
