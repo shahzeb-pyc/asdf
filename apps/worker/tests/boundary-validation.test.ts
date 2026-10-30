@@ -230,6 +230,18 @@ async function makeConsumerDb(opts: {
           data: tables[table]?.get(eqValue as string) ?? null,
           error: null,
         }),
+        // The publish path persists the platform post id on the queue
+        // row before settling: update().eq() resolves after eq supplies
+        // the id, mirroring the real RowQueryBuilder chain.
+        update: (values: Record<string, unknown>) => ({
+          eq: async (_col: string, value: unknown) => {
+            const row = tables[table]?.get(value as string) as
+              | Record<string, unknown>
+              | undefined;
+            if (row) Object.assign(row, values);
+            return { data: null, error: null };
+          },
+        }),
       };
       return builder;
     }),

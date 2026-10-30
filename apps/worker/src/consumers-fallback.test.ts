@@ -220,10 +220,17 @@ describe('BG5 publish fallback in handlePublishBatch', () => {
       expect.anything(),
       expect.objectContaining({ destinationToken: 'fresh_page_token' })
     );
-    expect(updates).toHaveLength(1);
+    // Two persists: the re-discovered page token (BG5, before the
+    // retry) and the published post id (before settling, so a settle
+    // failure cannot cause a retry double-post).
+    expect(updates).toHaveLength(2);
     expect(updates[0]?.table).toBe('destinations');
     const persisted = String(updates[0]?.values['encrypted_destination_token']);
     expect(await decryptToken(persisted, MASTER_KEY)).toBe('fresh_page_token');
+    expect(updates[1]).toMatchObject({
+      table: 'queue_items',
+      values: { external_post_id: 'fb_new_post', external_comment_id: null },
+    });
     expect(settles).toHaveLength(1);
     expect(settles[0]).toMatchObject({
       p_outcome_status: 'published',

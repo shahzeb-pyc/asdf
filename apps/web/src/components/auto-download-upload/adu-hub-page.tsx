@@ -64,6 +64,33 @@ interface PickerAccount { id: string; external_account_id: string; display_name:
 interface PickerPage { id: string; account_id: string; external_destination_id: string; name: string; avatar_url: string | null; status: string; metadata: Record<string, unknown> | null; }
 interface Configured { destination_id: string; source_platform: string; source_username: string; }
 
+/**
+ * Loads the Add Page picker data. Throws on any non-OK response: the
+ * old dialog code parsed the body without checking `response.ok`, so
+ * a 500 error body rendered as an empty picker — "0 Connected" with
+ * no error shown — while the same picker on a later, successful load
+ * showed the real accounts. A failed load must say so, never render
+ * as an empty list.
+ */
+export async function fetchAduOptions(subdomain: string): Promise<{
+  accounts: PickerAccount[];
+  pages: PickerPage[];
+  configured: Configured[];
+  migrationMissing: boolean;
+}> {
+  const response = await fetch(buildTenantApiPath(subdomain, '/auto-download-upload/options'));
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(body.error ?? 'Could not load Facebook accounts and pages.');
+  }
+  return {
+    accounts: body.accounts ?? [],
+    pages: body.pages ?? [],
+    configured: body.configured ?? [],
+    migrationMissing: Boolean(body.migrationMissing),
+  };
+}
+
 function pageAge(createdAt: string): string {
   const days = Math.max(0, Math.floor((Date.now() - new Date(createdAt).getTime()) / 86_400_000));
   if (days < 1) return 'today';
@@ -153,6 +180,8 @@ export function AduHubPage({ subdomain }: { subdomain: string }) {
 
       {loading ? (
         <p className="text-body text-ink-sub">Loading pages…</p>
+      ) : migrationMissing ? (
+        <p className="text-body text-ink-sub">ADU pages cannot be listed or added until the tables are created — see the warning above.</p>
       ) : configs.length === 0 ? (
         hasActiveFilter ? (
           <EmptyState type="no-results" title="No pages match your search or filters." action={<Button type="button" variant="outline" onClick={() => { setSearchQuery(''); setStatusFilter('All Statuses'); setPage(1); }}>Clear filters</Button>} />
@@ -251,18 +280,22 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [result, setResult] = React.useState<string | null>(null);
+  const [optionsMigrationMissing, setOptionsMigrationMissing] = React.useState(false);
+  const [optionsLoading, setOptionsLoading] = React.useState(false);
 
   React.useEffect(() => {
     if (!open) return;
-    setStep(1); setError(null); setResult(null);
-    void fetch(buildTenantApiPath(subdomain, '/auto-download-upload/options'))
-      .then((r) => r.json())
+    setStep(1); setError(null); setResult(null); setOptionsMigrationMissing(false);
+    setOptionsLoading(true);
+    void fetchAduOptions(subdomain)
       .then((body) => {
-        setAccounts(body.accounts ?? []);
-        setPages(body.pages ?? []);
-        setConfigured(body.configured ?? []);
+        setAccounts(body.accounts);
+        setPages(body.pages);
+        setConfigured(body.configured);
+        setOptionsMigrationMissing(body.migrationMissing);
       })
-      .catch(() => setError('Could not load Facebook accounts and pages.'));
+      .catch((err) => setError(err instanceof Error ? err.message : 'Could not load Facebook accounts and pages.'))
+      .finally(() => setOptionsLoading(false));
   }, [open, subdomain]);
 
   const totalSteps = mode === 'single' ? 2 : 3;
@@ -410,11 +443,21 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
           ))}
         </div>
         <p className="text-body text-ink-sub">{selectedPages.length} pages selected</p>
+        {optionsMigrationMissing ? (
+          <Banner variant="warning" title="ADU tables are not created yet" description="Apply migration 20261030120000_adu.sql to the database, then refresh this page. Until then, no ADU pages can be added." />
+        ) : null}
         {error ? <Banner variant="critical" title="Could not add pages" description={error} /> : null}
         {result ? <Banner variant="success" title="Done" description={result} /> : null}
 
         {step === 1 ? (
           <div className="flex flex-col gap-4">
+            {optionsLoading ? (
+              // Never render "0 Connected" while the picker data is
+              // still loading: the count line only means something
+              // once the fetch has resolved (or failed loudly above).
+              <p className="text-body text-ink-sub">Loading accounts and pages…</p>
+            ) : (
+              <>
             <div>
               <h3 className="font-medium">Select Facebook Account</h3>
               <p className="text-metadata text-ink-dim">{accounts.length} Connected</p>
@@ -471,6 +514,8 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
                 </div>
               ) : null}
             </div>
+              </>
+            )}
             <Button type="button" disabled={selectedPages.length === 0} onClick={() => setStep(2)}>Next</Button>
           </div>
         ) : null}

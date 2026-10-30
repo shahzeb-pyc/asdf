@@ -385,6 +385,7 @@ async function makeConsumerDb(opts: {
   };
   const settleCalls: Record<string, unknown>[] = [];
   const upserts: Record<string, unknown>[] = [];
+  const updates: Array<{ table: string; id: unknown; values: Record<string, unknown> }> = [];
   const db = {
     rpc: vi.fn(async (fn: string, args?: Record<string, unknown>) => {
       if (fn === 'settle_queue_item_outcome') {
@@ -415,11 +416,25 @@ async function makeConsumerDb(opts: {
           data: tables[table]?.get(eqValue as string) ?? null,
           error: null,
         }),
+        // The publish path persists the platform post id on the queue
+        // row before settling (persistPublishedPostId): update().eq()
+        // resolves only after eq supplies the id, mirroring the real
+        // RowQueryBuilder chain.
+        update: (values: Record<string, unknown>) => ({
+          eq: async (_col: string, value: unknown) => {
+            const row = tables[table]?.get(value as string) as
+              | Record<string, unknown>
+              | undefined;
+            if (row) Object.assign(row, values);
+            updates.push({ table, id: value, values });
+            return { data: null, error: null };
+          },
+        }),
       };
       return builder;
     }),
   };
-  return { db, settleCalls, upserts, destination, account };
+  return { db, settleCalls, upserts, updates, destination, account };
 }
 
 function registryWith(publisher: Publisher) {
@@ -431,7 +446,7 @@ function registryWith(publisher: Publisher) {
 describe('Publish consumers (spec 121)', () => {
   it('settles a published outcome via the unified RPC and acks', async () => {
     const item = await makeItem();
-    const { db, settleCalls, upserts } = await makeConsumerDb({ item });
+    const { db, settleCalls, upserts, updates } = await makeConsumerDb({ item });
     let seenTokens: unknown;
     const publisher = fakePublisher('facebook', async (_item, _dest, tokens) => {
       seenTokens = tokens;
@@ -460,6 +475,14 @@ describe('Publish consumers (spec 121)', () => {
       p_external_post_id: 'post-42',
       p_external_comment_id: 'comment-7',
       p_retry_count: 0,
+    });
+    // The platform ids are persisted on the queue row before settling,
+    // so a settle failure cannot leave a published post with no stored
+    // id for the queue retry to double-post.
+    expect(updates).toContainEqual({
+      table: 'queue_items',
+      id: ITEM_ID,
+      values: { external_post_id: 'post-42', external_comment_id: 'comment-7' },
     });
     // Tokens were decrypted before the publisher saw them.
     expect(seenTokens).toMatchObject({
