@@ -95,7 +95,9 @@ export function BillingView({ subdomain }: Readonly<{ subdomain: string }>) {
       quoteError = err instanceof Error ? err.message : 'That change is not an upgrade.';
     }
   }
-  const isUpgrade = Boolean(entitlement?.periodEndsAt) && total > totalPricePkr(entitlement.counts);
+  const isUpgrade = Boolean(
+    entitlement && entitlement.periodEndsAt && total > totalPricePkr(entitlement.counts)
+  );
 
   function setCount(platform: keyof PlatformCounts, value: number) {
     const next = { ...effectiveCounts, [platform]: Math.max(0, Math.floor(value) || 0) };
