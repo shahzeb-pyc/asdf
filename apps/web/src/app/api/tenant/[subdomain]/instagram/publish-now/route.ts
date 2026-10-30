@@ -420,12 +420,6 @@ export async function POST(
   }
   const { caption, postType, firstComment, targets, media } = parsed.data;
 
-  if (postType !== 'photo' && postType !== 'reel') {
-    return NextResponse.json(
-      { error: 'INVALID_REQUEST', message: 'This post type is not supported on Instagram.' },
-      { status: 400 }
-    );
-  }
   if (!media) {
     return NextResponse.json(
       { error: 'INVALID_REQUEST', message: 'This post type needs media.' },
@@ -527,7 +521,7 @@ export async function POST(
   let libraryFileSize: number | null = null;
   let libraryWidth: number | null = null;
   let libraryHeight: number | null = null;
-  if (media?.source === 'library' && media.mediaId) {
+  if (media.source === 'library' && media.mediaId) {
     const { data, error } = await supabase
       .from('media_items')
       .select('id, media_type, url, mime_type, file_size, width, height')
@@ -545,7 +539,7 @@ export async function POST(
     libraryFileSize = typeof data.file_size === 'number' ? data.file_size : null;
     libraryWidth = typeof data.width === 'number' ? data.width : null;
     libraryHeight = typeof data.height === 'number' ? data.height : null;
-  } else if (media?.source === 'temp' && media.tempKey) {
+  } else if (media.source === 'temp' && media.tempKey) {
     const config = getR2Config();
     let publicBase: string | null = null;
     if (config) {
@@ -612,7 +606,7 @@ export async function POST(
     }
     const width = media.width ?? libraryWidth;
     const height = media.height ?? libraryHeight;
-    if (width !== null && width !== undefined && height !== null && height !== undefined && height > 0) {
+    if (width !== null && height !== null && height > 0) {
       const ratio = width / height;
       if (ratio < INSTAGRAM_PHOTO_MIN_ASPECT || ratio > INSTAGRAM_PHOTO_MAX_ASPECT) {
         return NextResponse.json(
@@ -718,7 +712,7 @@ export async function POST(
   const results: InstagramPublishNowResult[] = [];
   // Sequential, one account at a time, continuing on failure.
   for (const target of targets) {
-    let loopStep: InstagramPublishNowStep = 'account';
+    const loopStep: InstagramPublishNowStep = 'account';
     try {
       const cached = accountCache.get(target.accountId);
       if (!cached) {

@@ -183,7 +183,7 @@ function Avatar({
         alt={name}
         width={size === 'lg' ? 48 : 36}
         height={size === 'lg' ? 48 : 36}
-        onError={() => setFailedUrl(pictureUrl ?? '__error__')}
+        onError={() => setFailedUrl(pictureUrl || '__error__')}
         className={cn(
           sizeClass,
           'shrink-0 rounded-full border border-line object-cover'
