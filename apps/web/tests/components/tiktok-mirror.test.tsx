@@ -84,7 +84,13 @@ describe('TikTok list', () => {
   });
 
   it('renders mirror cards with username and linked page', async () => {
-    apiGetMock.mockResolvedValue({ mirrors: [mirrorView()] });
+    apiGetMock.mockResolvedValue({
+      mirrors: [mirrorView()],
+      total: 1,
+      page: 1,
+      limit: 30,
+      totalPages: 1,
+    });
     renderWithQuery(<TikTokShell subdomain="acme" />);
     expect(await screen.findByTestId('tiktok-mirrors-grid')).toBeTruthy();
     expect(screen.getByText('@alice')).toBeTruthy();
@@ -92,7 +98,13 @@ describe('TikTok list', () => {
   });
 
   it('renders the empty state when there are no mirrors', async () => {
-    apiGetMock.mockResolvedValue({ mirrors: [] });
+    apiGetMock.mockResolvedValue({
+      mirrors: [],
+      total: 0,
+      page: 1,
+      limit: 30,
+      totalPages: 0,
+    });
     renderWithQuery(<TikTokShell subdomain="acme" />);
     expect(await screen.findByTestId('tiktok-empty-state')).toBeTruthy();
     expect(screen.getByText('No mirrors yet')).toBeTruthy();

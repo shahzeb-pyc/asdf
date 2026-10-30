@@ -51,7 +51,13 @@ async function installMirrorRoutes(page: import('@playwright/test').Page) {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ mirrors: [mirrorView()] }),
+        body: JSON.stringify({
+          mirrors: [mirrorView()],
+          total: 1,
+          page: 1,
+          limit: 30,
+          totalPages: 1,
+        }),
       });
     }
   );
