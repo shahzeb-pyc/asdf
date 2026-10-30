@@ -10,6 +10,14 @@ import type { ConnectDbClient } from '@/lib/connect/persist';
  * platform receives the standard confirmation response pointing at the
  * Accounts page, where the workspace owner manages connected accounts.
  * Platform-specific deletion handling belongs to spec 124+.
+ *
+ * Audit S4: a confirmation code is issued ONLY when verification
+ * actually ran and revoked a row (updated > 0). A workspace with
+ * no app secret, a bad signature, or no matching account gets no
+ * confirmation — previously it got a fresh code for a deletion
+ * that deleted nothing. The unverifiable case is logged (the
+ * revocation path logs the reason) and answered 400, so the
+ * platform does not treat it as a completed deletion.
  */
 export async function handleConnectDataDeletion(
   request: NextRequest,
@@ -20,16 +28,28 @@ export async function handleConnectDataDeletion(
     return NextResponse.json({ error: 'Unknown platform' }, { status: 404 });
   }
 
-  const confirmationCode = crypto
-    .randomUUID()
-    .replaceAll('-', '')
-    .slice(0, 16);
-  const { externalAccountId } = await processPlatformRevocation(
+  const { externalAccountId, updated } = await processPlatformRevocation(
     request,
     platformParam,
     'data-deletion',
     dbClient
   );
+  if (updated === 0) {
+    console.warn('[connect/data-deletion] Confirmation withheld: no verified revocation', {
+      platform: platformParam,
+      identified: Boolean(externalAccountId),
+      updated,
+    });
+    return NextResponse.json(
+      { error: 'Could not verify this deletion request; nothing was deleted.' },
+      { status: 400 }
+    );
+  }
+
+  const confirmationCode = crypto
+    .randomUUID()
+    .replaceAll('-', '')
+    .slice(0, 16);
   console.info('[connect/data-deletion] Confirmation issued', {
     platform: platformParam,
     identified: Boolean(externalAccountId),

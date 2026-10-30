@@ -835,6 +835,27 @@ describe('Connect framework (Spec 123 Part C) with a fixture platform', () => {
     expect([...db.accounts.values()][0].status).toBe('revoked');
   });
 
+  it('data-deletion withholds confirmation for a non-BYOC workspace (S4)', async () => {
+    const { state } = await initiateInstagram();
+    await runCallback(state);
+    expect([...db.accounts.values()][0].status).toBe('active');
+
+    // No app secret on file: the signed request cannot be verified,
+    // so nothing is revoked and no confirmation code is issued.
+    db.credentials.delete('instagram');
+    const req = new NextRequest('http://localhost:3000/api/connect/instagram/data-deletion', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: signedBodyForFixtureAccount(),
+    });
+    const res = await handleConnectDataDeletion(req, 'instagram', dbClient);
+    expect(res.status).toBe(400);
+    const data = (await res.json()) as { confirmation_code?: string; error?: string };
+    expect(data.confirmation_code).toBeUndefined();
+    expect(data.error).toMatch(/nothing was deleted/i);
+    expect([...db.accounts.values()][0].status).toBe('active');
+  });
+
   it('social accounts API returns accounts across platforms, each with destinations', async () => {
     const { state } = await initiateInstagram();
     const callbackRes = await runCallback(state);
@@ -1083,6 +1104,7 @@ describe('Connect framework (Spec 123 Part C) with a fixture platform', () => {
     );
     expect(deauthRes.status).toBe(200);
 
+    // Audit S4: an unverifiable deletion body gets no confirmation.
     const deletionRes = await dataDeletionPOST(
       new NextRequest('http://localhost:3000/api/connect/instagram/data-deletion', {
         method: 'POST',
@@ -1091,7 +1113,7 @@ describe('Connect framework (Spec 123 Part C) with a fixture platform', () => {
       }),
       { params: Promise.resolve({ platform: 'instagram' }) }
     );
-    expect(deletionRes.status).toBe(200);
+    expect(deletionRes.status).toBe(400);
 
     const listRes = await socialListGET(
       new NextRequest(`http://localhost:3000/api/tenant/${subdomain}/accounts/social`),
