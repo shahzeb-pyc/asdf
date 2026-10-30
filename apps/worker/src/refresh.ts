@@ -15,6 +15,7 @@ import {
   type RefreshedTokenSet,
 } from '@fbuploadpro/contracts';
 import { captureWorkerError, captureWorkerEvent, type PostHogEnv } from './analytics.js';
+import { resolveWorkerMasterKey } from './master-key.js';
 
 // ==========================================
 // Token refresh job (spec 121 Scope 9, D6 DECIDED)
@@ -209,6 +210,8 @@ function saneBound(value: number | undefined, fallback: number): number {
 
 export interface RefreshEnv extends PostHogEnv {
   TOKEN_ENCRYPTION_KEY?: string;
+  /** Worker production signal, bridged to the contracts key rule (S3). */
+  ENVIRONMENT?: string;
 }
 
 /** One DB result from the refresh job's Supabase-shaped client. */
@@ -617,10 +620,10 @@ export async function runRefreshCycle(
   now: Date = new Date(),
   options: RefreshCycleOptions = {}
 ): Promise<RefreshCycleResult> {
-  const masterKey = env.TOKEN_ENCRYPTION_KEY;
-  if (!masterKey) {
-    throw new InternalError('TOKEN_ENCRYPTION_KEY is not configured; cannot run token refresh cycle');
-  }
+  // Audit S3: resolve through the production fail-closed rules
+  // (a production dev-fallback key throws here instead of
+  // silently encrypting/decrypting real tokens with it).
+  const masterKey = resolveWorkerMasterKey(env);
 
   const result: RefreshCycleResult = {
     scanned: 0,

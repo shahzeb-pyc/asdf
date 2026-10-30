@@ -31,6 +31,7 @@ import {
   type RefreshDbClient,
 } from './refresh.js';
 import { captureWorkerError } from './analytics.js';
+import { resolveWorkerMasterKey } from './master-key.js';
 
 /**
  * Derive a `waitUntil` callback from an ExecutionContext (spec 139).
@@ -380,7 +381,9 @@ export async function handleQueue(
   await handleQueueBatch(batch as MessageBatch<PublishQueueMessage>, {
     db,
     registry,
-    masterKey: env.TOKEN_ENCRYPTION_KEY,
+    // Audit S3: production fail-closed key rules, same as web —
+    // a production dev-fallback key throws instead of decrypting.
+    masterKey: resolveWorkerMasterKey(env),
     env,
   });
 }
@@ -532,10 +535,19 @@ export async function probeWorkerHealth(
 ): Promise<{ statusCode: number; payload: WorkerHealthPayload }> {
   const timestamp = now.toISOString();
   const supabaseUrl = env.SUPABASE_URL || env.NEXT_PUBLIC_SUPABASE_URL;
+  // Audit S3: the config check also refuses a production
+  // dev-fallback key (resolve throws for it); the shape check
+  // is kept so a missing key still reports unhealthy in
+  // non-production, where the resolver would fall back.
+  let keyUsable = false;
+  try {
+    resolveWorkerMasterKey(env);
+    keyUsable = isTokenEncryptionKeyWellFormed(env.TOKEN_ENCRYPTION_KEY);
+  } catch {
+    keyUsable = false;
+  }
   const config = Boolean(
-    supabaseUrl &&
-      env.SUPABASE_SERVICE_ROLE_KEY &&
-      isTokenEncryptionKeyWellFormed(env.TOKEN_ENCRYPTION_KEY)
+    supabaseUrl && env.SUPABASE_SERVICE_ROLE_KEY && keyUsable
   );
 
   const testDb =
