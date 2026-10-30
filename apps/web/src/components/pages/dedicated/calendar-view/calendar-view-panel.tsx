@@ -123,6 +123,14 @@ export function CalendarViewPanel({
 
   const [filter, setFilter] = React.useState<CalendarFilter>('all');
   const [month, setMonth] = React.useState(() => currentYearMonth(pageTimezone));
+  // Nit: the month used to freeze at the first render's zone — a
+  // timezone change left the calendar showing the old zone's
+  // current month. Re-derive it whenever the page zone changes
+  // (a user-navigated month is only reset by a zone change, which
+  // is exactly when the "current month" itself moves).
+  React.useEffect(() => {
+    setMonth(currentYearMonth(pageTimezone));
+  }, [pageTimezone]);
   const [itemToEdit, setItemToEdit] = React.useState<QueueItem | null>(null);
   const [isSaving, setIsSaving] = React.useState(false);
 
@@ -438,7 +446,14 @@ export function CalendarViewPanel({
                           // K1: publishing entries are not
                           // clickable either — the row is
                           // immutable until the worker settles it.
+                          // Nit: cancelled entries join them — a
+                          // cancelled post is terminal, so no edit
+                          // is offered for it (the server PATCH
+                          // guard added with this fix rejects
+                          // cancelled too, so the UI and server
+                          // agree even for API callers).
                           const isPublishing = entry.item.status === 'publishing';
+                          const isCancelled = entry.item.status === 'cancelled';
                           const inner = (
                             <>
                               <span className="shrink-0 text-ink-sub">
@@ -458,17 +473,19 @@ export function CalendarViewPanel({
                               </span>
                             </>
                           );
-                          // Published (and publishing) posts keep
-                          // edit disabled, same as the list: their
-                          // entries are not clickable.
-                          return isPublished || isPublishing ? (
+                          // Published, publishing, and cancelled
+                          // posts keep edit disabled, same as the
+                          // list: their entries are not clickable.
+                          return isPublished || isPublishing || isCancelled ? (
                             <div
                               key={entry.item.id}
                               data-testid={`calendar-entry-${entry.item.id}`}
                               title={
                                 isPublishing
                                   ? "Publishing posts can't be edited"
-                                  : "Published posts can't be edited"
+                                  : isCancelled
+                                    ? "Cancelled posts can't be edited"
+                                    : "Published posts can't be edited"
                               }
                               className="flex min-w-0 items-start gap-1 rounded-lg border border-line bg-canvas p-1.5 text-left text-metadata leading-tight opacity-70"
                             >

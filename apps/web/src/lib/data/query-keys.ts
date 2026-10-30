@@ -71,9 +71,9 @@ export const queryKeys = {
         all: [...tenantRoot, 'destinations'] as const,
         detail: (destinationId: string) =>
           [...tenantRoot, 'destinations', destinationId] as const,
-        /** Unified queue list for one destination (spec 134 PR-134-3). */
-        queue: (destinationId: string) =>
-          [...tenantRoot, 'destinations', destinationId, 'queue'] as const,
+        // K10: the destinations queue key was deleted with the
+        // destinations queue-list route it invalidated — no UI
+        // queried that list (the Pages section uses queue.items).
         /** Unified posting slots for one destination (spec 134 PR-134-3). */
         slots: (destinationId: string) =>
           [...tenantRoot, 'destinations', destinationId, 'posting-slots'] as const,

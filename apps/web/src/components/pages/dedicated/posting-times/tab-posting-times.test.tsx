@@ -93,9 +93,12 @@ describe('PageTabPostingTimes (rebuilt, spec 134)', () => {
     await waitFor(() =>
       expect(props.onUpdateSlot).toHaveBeenCalledWith(
         'slot-2',
-        expect.objectContaining({ slotTime: '15:00', timezone: 'UTC' })
+        expect.objectContaining({ slotTime: '15:00' })
       )
     );
+    // Nit: the update shape carries no dead timezone field.
+    const updateArg = (props.onUpdateSlot as unknown as { mock: { calls: Array<[string, Record<string, unknown>]> } }).mock.calls[0]?.[1];
+    expect(updateArg).not.toHaveProperty('timezone');
   });
 
   it('deletes through the AlertDialog confirm with the verb-named action', async () => {

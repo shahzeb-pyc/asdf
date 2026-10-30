@@ -184,6 +184,18 @@ export function PageTabDashboard({
               </span>
             )}
           </div>
+          {/*
+            K4: this figure is the STORED follower count, not a
+            live one — the stored row is written only at import
+            (pages/import writes current_followers from Graph at
+            import time; no refresh job, sync, or insights fetch
+            ever updates it). Insights' "Followers" is the live
+            total, so the two can legitimately differ. The note
+            says so instead of inventing a live call or faking
+            agreement; there is no stored timestamp to show, so
+            no "last updated" date is claimed.
+          */}
+          <span className="mt-1 block text-body text-ink-dim">At last import</span>
         </div>
 
         <div data-testid="metric-queued-count" className={cardClass}>

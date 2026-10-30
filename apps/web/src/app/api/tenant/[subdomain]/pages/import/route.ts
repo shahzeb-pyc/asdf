@@ -523,6 +523,9 @@ export async function handleImportPages(
     // Audit N4: the token-less guard above already returned, so
     // a missing token here is unreachable — but it must never
     // silently fall back to the user token again, so fail loud.
+    // (The R14/K9 per-page skip this replaced is superseded: the
+    // upfront guard aborts before anything is written, so this
+    // throw can only fire if that guard is ever bypassed.)
     const rawPageToken = pageItem.access_token;
     if (!rawPageToken) {
       throw new Error(

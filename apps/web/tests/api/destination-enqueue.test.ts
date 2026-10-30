@@ -37,6 +37,9 @@ interface MediaRow {
   media_type: string;
   url: string;
   storage_key: string | null;
+  file_size?: number | null;
+  duration_seconds?: number | null;
+  aspect_ratio?: string | null;
 }
 
 interface SlotRow {
@@ -610,3 +613,149 @@ describe('destination enqueue — expired-account gate (BG1)', () => {
     expect(db.queueItems).toHaveLength(0);
   });
 });
+
+describe('destination enqueue — facebook format gates (K6, K7)', () => {
+  const fbDestinationId = 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb';
+  const longVideoId = '10101010-1010-4101-a010-101010101010';
+  const shortVideoId = '20202020-2020-4202-a020-202020202020';
+  const bigImageId = '30303030-3030-4303-a030-303030303030';
+  const longStoryVideoId = '40404040-4040-4404-a040-404040404040';
+
+  function seedFacebookMedia() {
+    db.destinations.set(fbDestinationId, {
+      id: fbDestinationId,
+      workspace_id: workspaceId,
+      platform: 'facebook',
+      timezone: 'UTC',
+      status: 'active',
+    });
+    db.media.set(longVideoId, {
+      id: longVideoId,
+      user_id: userId,
+      media_type: 'video',
+      url: 'https://cdn.example.com/long.mp4',
+      storage_key: 'media/long.mp4',
+      duration_seconds: 120,
+      aspect_ratio: '9:16',
+    });
+    db.media.set(shortVideoId, {
+      id: shortVideoId,
+      user_id: userId,
+      media_type: 'video',
+      url: 'https://cdn.example.com/short.mp4',
+      storage_key: 'media/short.mp4',
+      duration_seconds: 45,
+      aspect_ratio: '9:16',
+    });
+    db.media.set(bigImageId, {
+      id: bigImageId,
+      user_id: userId,
+      media_type: 'image',
+      url: 'https://cdn.example.com/big.jpg',
+      storage_key: 'media/big.jpg',
+      file_size: 11 * 1024 * 1024,
+    });
+    db.media.set(longStoryVideoId, {
+      id: longStoryVideoId,
+      user_id: userId,
+      media_type: 'video',
+      url: 'https://cdn.example.com/story-long.mp4',
+      storage_key: 'media/story-long.mp4',
+      duration_seconds: 61,
+    });
+  }
+
+  it('K7: refuses a Facebook carousel at enqueue with the worker error', async () => {
+    seedFacebookMedia();
+    const res = await enqueue({
+      platform: 'facebook',
+      destinationId: fbDestinationId,
+      kind: 'carousel',
+      caption: 'Carousel',
+      mediaItemIds: [imageMediaId],
+      intent: 'queue',
+    });
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(await res.json())).toContain('Unsupported post format: carousel');
+    expect(db.queueItems).toHaveLength(0);
+  });
+
+  it('K6: refuses a reel over 90 seconds at enqueue', async () => {
+    seedFacebookMedia();
+    const res = await enqueue({
+      platform: 'facebook',
+      destinationId: fbDestinationId,
+      kind: 'video',
+      platformFormat: 'reel',
+      caption: 'Too long reel',
+      mediaItemIds: [longVideoId],
+      intent: 'queue',
+    });
+    expect(res.status).toBe(400);
+    const payload = (await res.json()) as { error: string; message: string };
+    expect(payload.error).toBe('INVALID_FORMAT');
+    expect(payload.message).toContain('90 seconds');
+    expect(db.queueItems).toHaveLength(0);
+  });
+
+  it('K6: accepts a reel within 90 seconds', async () => {
+    seedFacebookMedia();
+    const res = await enqueue({
+      platform: 'facebook',
+      destinationId: fbDestinationId,
+      kind: 'video',
+      platformFormat: 'reel',
+      caption: 'Short reel',
+      mediaItemIds: [shortVideoId],
+      intent: 'queue',
+    });
+    expect(res.status).toBe(201);
+    expect(db.queueItems).toHaveLength(1);
+  });
+
+  it('K6: refuses a story photo over 10 MB at enqueue', async () => {
+    seedFacebookMedia();
+    const res = await enqueue({
+      platform: 'facebook',
+      destinationId: fbDestinationId,
+      kind: 'story',
+      caption: 'Big story',
+      mediaItemIds: [bigImageId],
+      intent: 'queue',
+    });
+    expect(res.status).toBe(400);
+    const payload = (await res.json()) as { error: string };
+    expect(payload.error).toBe('INVALID_FORMAT');
+    expect(db.queueItems).toHaveLength(0);
+  });
+
+  it('K6: refuses a story video over 60 seconds at enqueue', async () => {
+    seedFacebookMedia();
+    const res = await enqueue({
+      platform: 'facebook',
+      destinationId: fbDestinationId,
+      kind: 'story',
+      caption: 'Long story',
+      mediaItemIds: [longStoryVideoId],
+      intent: 'queue',
+    });
+    expect(res.status).toBe(400);
+    const payload = (await res.json()) as { error: string };
+    expect(payload.error).toBe('INVALID_FORMAT');
+    expect(db.queueItems).toHaveLength(0);
+  });
+
+  it('K6: unknown media facts do not fail a post (validator semantics)', async () => {
+    seedFacebookMedia();
+    const res = await enqueue({
+      platform: 'facebook',
+      destinationId: fbDestinationId,
+      kind: 'video',
+      platformFormat: 'reel',
+      caption: 'Unknown duration reel',
+      mediaItemIds: [videoMediaId],
+      intent: 'queue',
+    });
+    expect(res.status).toBe(201);
+    expect(db.queueItems).toHaveLength(1);
+  });

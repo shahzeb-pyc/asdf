@@ -3,6 +3,7 @@ import {
   DestinationEnqueueRequestSchema,
   DestinationEnqueueResponseSchema,
   resolveDestinationPlatformOptions,
+  validatePostFormatEligibility,
   type DestinationEnqueueKind,
 } from '@fbuploadpro/contracts';
 import { resolveSocialRouteContext } from '@/lib/connect/session';
@@ -312,6 +313,55 @@ export async function handleDestinationEnqueue(
             error: 'INVALID_FORMAT',
             message: `The selected media is a ${mediaKind}, which does not match a ${data.kind} post.`,
           },
+          { status: 400 }
+        );
+      }
+    }
+
+    // K6: repo-defined media limits, checked at enqueue for
+    // Facebook only — the only limits applied are the ones the
+    // repo already defines in validatePostFormatEligibility
+    // (reel > 90s, story photo > 10 MB, story video > 60s).
+    // No Facebook limit is invented here: unknown facts (null
+    // duration/size on the library row) pass, exactly as the
+    // validator's own semantics treat them. Other platforms keep
+    // their own rules; this gate never touches them. The PATCH
+    // path needs no equivalent: it cannot change a post's media,
+    // and its caption/format rules (reel 2,200, story comment)
+    // are already enforced there.
+    if (destination.platform === 'facebook' && primaryMedia) {
+      const postFormat =
+        data.platformFormat === 'reel'
+          ? 'reel'
+          : data.kind === 'text' || data.kind === 'image' || data.kind === 'video' || data.kind === 'story'
+            ? data.kind
+            : null;
+      if (postFormat === null) {
+        return NextResponse.json(
+          { error: 'INVALID_FORMAT', message: 'Unsupported post format: carousel' },
+          { status: 400 }
+        );
+      }
+      const eligibility = validatePostFormatEligibility({
+        postFormat,
+        caption: data.caption,
+        firstComment: data.firstComment ?? null,
+        linkUrl: data.linkUrl ?? null,
+        media: {
+          mediaType: primaryMedia.media_type === 'video' ? 'video' : 'image',
+          fileSize:
+            typeof primaryMedia.file_size === 'number' ? primaryMedia.file_size : null,
+          durationSeconds:
+            primaryMedia.duration_seconds === null ||
+            primaryMedia.duration_seconds === undefined
+              ? null
+              : Number(primaryMedia.duration_seconds),
+          aspectRatio: primaryMedia.aspect_ratio ?? null,
+        },
+      });
+      if (!eligibility.valid) {
+        return NextResponse.json(
+          { error: 'INVALID_FORMAT', message: eligibility.error ?? 'This media does not fit the post format.' },
           { status: 400 }
         );
       }

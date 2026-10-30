@@ -201,6 +201,40 @@ describe('Publishing Queue Actions Route Handlers (T128, T129)', () => {
       expect(json.error).toBe('CANNOT_UPDATE_PUBLISHING_ITEM');
     });
 
+    it('returns 400 Bad Request if trying to update a cancelled queue item (nit: cancelled is terminal)', async () => {
+      const mockDb: Partial<DatabaseClient> = {
+        query: vi.fn().mockImplementation((sql: string) => {
+          if (sql.includes('FROM workspaces')) {
+            return Promise.resolve([{ id: 'ws_123' }]);
+          }
+          if (sql.includes('SELECT') && sql.includes('FROM queue_items')) {
+            return Promise.resolve([
+              {
+                id: itemId,
+                user_id: userId,
+                status: 'cancelled',
+              },
+            ]);
+          }
+          return Promise.resolve([]);
+        }),
+      };
+
+      const req = new NextRequest(`http://localhost:3000/api/tenant/acme/publishing/queue/${itemId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ caption: 'New caption' }),
+        headers: {
+          cookie: validSessionCookie,
+          'content-type': 'application/json',
+        },
+      });
+
+      const res = await handleUpdateQueueItem(req, 'acme', itemId, mockDb as DatabaseClient);
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toBe('CANNOT_UPDATE_CANCELLED_ITEM');
+    });
+
     it('returns 400 Bad Request for a reel caption over 2,200 on an existing reel (R13)', async () => {
       const mockDb: Partial<DatabaseClient> = {
         query: vi.fn().mockImplementation((sql: string) => {

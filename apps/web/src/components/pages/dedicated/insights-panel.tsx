@@ -41,6 +41,8 @@ const InsightsChart = dynamic(
 export interface PageTabInsightsProps {
   page: Pick<FacebookPageItem, 'id'>;
   subdomain: string;
+  /** Page timezone (K3): window + trend labels follow it, not UTC. */
+  pageTimezone?: string;
 }
 
 const RANGES: Array<{ value: PageInsightsRange; label: string }> = [
@@ -106,32 +108,36 @@ function formatFetchedAt(fetchedAt: string): string {
   }).format(date);
 }
 
-function formatDayMonth(iso: string): string {
-  const date = new Date(`${iso}T00:00:00Z`);
+/** K3: trend dates are calendar dates in the page timezone, so their
+ * labels render in that zone — never UTC. The date is already a
+ * zone-local calendar day; formatting it at noon UTC in the page
+ * zone cannot shift it across a boundary. */
+function formatDayMonth(iso: string, timeZone: string): string {
+  const date = new Date(`${iso}T12:00:00Z`);
   if (Number.isNaN(date.getTime())) return iso;
-  return new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' }).format(date);
+  return new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', timeZone }).format(date);
 }
 
-function formatDayMonthYear(iso: string): string {
-  const date = new Date(`${iso}T00:00:00Z`);
+function formatDayMonthYear(iso: string, timeZone: string): string {
+  const date = new Date(`${iso}T12:00:00Z`);
   if (Number.isNaN(date.getTime())) return iso;
   return new Intl.DateTimeFormat('en-GB', {
     day: 'numeric',
     month: 'short',
     year: 'numeric',
-    timeZone: 'UTC',
+    timeZone,
   }).format(date);
 }
 
 /** "1 Oct – 27 Oct 2026" for a window of daily ISO dates (oldest first). */
-function formatRangeLabel(dates: string[]): string {
+function formatRangeLabel(dates: string[], timeZone: string): string {
   const first = dates[0];
   const last = dates[dates.length - 1];
   if (!first || !last) return '';
-  if (first === last) return formatDayMonthYear(last);
+  if (first === last) return formatDayMonthYear(last, timeZone);
   const firstYear = first.slice(0, 4);
   const lastYear = last.slice(0, 4);
-  return `${firstYear === lastYear ? formatDayMonth(first) : formatDayMonthYear(first)} – ${formatDayMonthYear(last)}`;
+  return `${firstYear === lastYear ? formatDayMonth(first, timeZone) : formatDayMonthYear(first, timeZone)} – ${formatDayMonthYear(last, timeZone)}`;
 }
 
 function isFirstUse(data: PageInsightsResponse): boolean {
@@ -213,11 +219,19 @@ function ShareBar({
   );
 }
 
-export function PageTabInsights({ page, subdomain }: Readonly<PageTabInsightsProps>): React.ReactElement {
+export function PageTabInsights({ page, subdomain, pageTimezone = 'UTC' }: Readonly<PageTabInsightsProps>): React.ReactElement {
   const [range, setRange] = React.useState<PageInsightsRange>('28d');
   const [data, setData] = React.useState<PageInsightsResponse | null>(null);
   const [status, setStatus] = React.useState<'loading' | 'ready' | 'error'>('loading');
   const [syncing, setSyncing] = React.useState(false);
+  // K2: every load() call takes a sequence number; a response is
+  // applied ONLY if its number is still the latest. Without this, a
+  // slow fetch for range A (or a Sync) that resolves after the user
+  // switched to range B overwrote B's data — including a cache hit
+  // for B, which the old effect-cleanup flag never guarded because
+  // it was checked only before the await, never after. The flag
+  // below is checked after every await, in success and in catch.
+  const loadIdRef = React.useRef(0);
   // R9: a forced sync (Sync / Retry) that fails while data for the
   // CURRENT range is already on screen must not hide that data —
   // the banner promises it stays available for one hour. `data`
@@ -227,9 +241,17 @@ export function PageTabInsights({ page, subdomain }: Readonly<PageTabInsightsPro
 
   const load = React.useCallback(
     async (targetRange: PageInsightsRange, force: boolean): Promise<void> => {
+      // K2: claim this load's sequence number up front; any later
+      // load (range switch, Sync) supersedes it, and its response
+      // must then be dropped wholesale — cache hits included,
+      // because a cache hit for the superseded range is also stale
+      // for the range now on screen.
+      const myId = ++loadIdRef.current;
+      const isCurrent = () => myId === loadIdRef.current;
       if (!force) {
         const cached = readCachedInsights(page.id, targetRange);
         if (cached) {
+          if (!isCurrent()) return;
           dataRef.current = cached;
           setData(cached);
           setStatus('ready');
@@ -248,11 +270,16 @@ export function PageTabInsights({ page, subdomain }: Readonly<PageTabInsightsPro
         const json: unknown = await res.json();
         const checked = PageInsightsResponseSchema.safeParse(json);
         if (!checked.success) throw new Error('Insights response failed validation');
+        // K2: the stale-range check AFTER the await — this is the
+        // line the old code was missing. A losing fetch never
+        // writes the cache, the ref, or the state.
+        if (!isCurrent()) return;
         writeCachedInsights(checked.data);
         dataRef.current = checked.data;
         setData(checked.data);
         setStatus('ready');
       } catch {
+        if (!isCurrent()) return;
         // Forced sync with current-range data on screen: keep the
         // data (status stays 'ready') and show the sync-error banner
         // below. Any other failure — initial load, or a range
@@ -265,20 +292,20 @@ export function PageTabInsights({ page, subdomain }: Readonly<PageTabInsightsPro
           setStatus('error');
         }
       } finally {
-        setSyncing(false);
+        // Only the current load may clear the spinner: a stale
+        // load finishing must not switch off a newer Sync's spinner.
+        if (isCurrent()) setSyncing(false);
       }
     },
     [page.id, subdomain],
   );
 
   React.useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      if (cancelled) return;
-      await load(range, false);
-    })();
+    void load(range, false);
+    // Unmount supersedes the in-flight load, exactly like a range
+    // switch does: its response is dropped by the id check.
     return () => {
-      cancelled = true;
+      loadIdRef.current += 1;
     };
   }, [load, range]);
 
@@ -290,10 +317,14 @@ export function PageTabInsights({ page, subdomain }: Readonly<PageTabInsightsPro
   const allZeroActivity = data !== null && !firstUse && isAllZeroActivity(data);
   const netGrowth = data?.kpis.netFollowerGrowth ?? 0;
   // The loaded trend dates are the window; before any load, the window for
-  // the selected range is. Both come from the same window function.
-  const windowDates = React.useMemo(() => insightsWindow(range).dates, [range]);
+  // the selected range is. Both come from the same window function,
+  // in the page timezone (K3).
+  const windowDates = React.useMemo(
+    () => insightsWindow(range, undefined, pageTimezone).dates,
+    [range, pageTimezone],
+  );
   const rangeDates = data && data.trend.length > 0 ? data.trend.map((p) => p.date) : windowDates;
-  const rangeLabel = formatRangeLabel(rangeDates);
+  const rangeLabel = formatRangeLabel(rangeDates, pageTimezone);
   const fetchedLabel = data ? formatFetchedAt(data.fetchedAt) : '';
 
   // Header Sync and empty-state Sync are the same action and styling; each

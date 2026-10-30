@@ -75,11 +75,14 @@ export interface PageTabPostingTimesProps {
     timezone: string;
     allowedFormats?: string[];
   }) => Promise<void>;
+  // Nit: no timezone on the update shape — slots have no per-slot
+  // timezone, and the shell's update mutation never sent it (the
+  // form's timezone belongs to the add path only). The tab strips
+  // it in handleSaveModal so a dead field stops travelling.
   onUpdateSlot?: (
     slotId: string,
     data: {
       slotTime?: string;
-      timezone?: string;
       isActive?: boolean;
       allowedFormats?: string[];
     }
@@ -113,9 +116,22 @@ export function PageTabPostingTimes({
   const activeTimezone = page.timezone || slots[0]?.timezone || fallbackTimezone;
 
   const handleTimezoneChange = async (newTz: string) => {
+    // Nit: the old code set the fallback BEFORE awaiting and never
+    // rolled back, so a failed change left the header showing a
+    // zone the server never stored. Roll back to the previous
+    // fallback on failure (the shell's mutation toast reports the
+    // failure itself). In practice page.timezone is truthy, so the
+    // fallback is rarely the displayed value — but when it is, it
+    // must be the stored one.
+    const previousFallback = fallbackTimezone;
     setFallbackTimezone(newTz);
     if (onUpdateTimezone) {
-      await onUpdateTimezone(newTz);
+      try {
+        await onUpdateTimezone(newTz);
+      } catch (err) {
+        setFallbackTimezone(previousFallback);
+        throw err;
+      }
     }
   };
 
@@ -150,7 +166,12 @@ export function PageTabPostingTimes({
   }) => {
     if (editingSlot) {
       if (onUpdateSlot) {
-        await onUpdateSlot(editingSlot.id, data);
+        // Dead timezone stripped: the update shape carries no
+        // timezone (see onUpdateSlot above).
+        await onUpdateSlot(editingSlot.id, {
+          slotTime: data.slotTime,
+          allowedFormats: data.allowedFormats,
+        });
       } else {
         await onDeleteSlot(editingSlot.id);
         await onAddSlot(data);

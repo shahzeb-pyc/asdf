@@ -51,13 +51,8 @@ describe('queryKeys factory (spec 137 §3.2.3)', () => {
       'destinations',
       'dest-1',
     ]);
-    expect(tenant.destinations.queue('dest-1')).toEqual([
-      'tenant',
-      'acme',
-      'destinations',
-      'dest-1',
-      'queue',
-    ]);
+    // K10: destinations.queue was deleted with the destinations
+    // queue-list route (the Pages section uses queue.items).
     expect(tenant.destinations.slots('dest-1')).toEqual([
       'tenant',
       'acme',

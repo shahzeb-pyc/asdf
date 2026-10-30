@@ -206,7 +206,7 @@ export function DedicatedPageHeader({
 
   const statusInfo = resolvePageStatus(page.status);
   const monogram = (page.pageName || 'P').slice(0, 2).toUpperCase();
-  const fbPageUrl = `https://facebook.com/${page.fbPageId}`;
+  const fbPageUrl = `https://facebook.com/${encodeURIComponent(page.fbPageId)}`;
 
   const isCheckpoint =
     page.status === 'page_checkpoint' ||

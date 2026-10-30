@@ -576,11 +576,9 @@ export default function TenantDedicatedPageView({
       void invalidatePage();
       toast.success('Posting time added.');
     },
-    onError: (error) => {
-      toast.error(
-        errorMessage(error, "Couldn't add the posting time. Please try again.")
-      );
-    },
+    // No onError toast: the posting-time form shows the failure
+    // inline (serverError) and keeps the modal open — a toast here
+    // duplicated every save failure (nit: slot error duplication).
   });
   const handleAddSlot = React.useCallback(
     async (slotData: { slotTime: string; timezone: string; allowedFormats?: string[] }) => {
@@ -596,6 +594,12 @@ export default function TenantDedicatedPageView({
   // fallback. (Queued posts carry no slot link under
   // publisher-driven scheduling — the id matters to the slot
   // itself, e.g. its once-per-day claim row.)
+  // Nit: the update path carries NO timezone — slots have no
+  // per-slot timezone column (the page timezone lives on the
+  // destination; the slot route answers it per slot). The form
+  // still sends one for the add path; the tab strips it before
+  // calling onUpdateSlot, so this mutation never forwards a dead
+  // field the server would silently ignore.
   const updateSlotMutation = useMutation({
     mutationFn: ({
       slotId,
@@ -604,7 +608,6 @@ export default function TenantDedicatedPageView({
       slotId: string;
       data: {
         slotTime?: string;
-        timezone?: string;
         isActive?: boolean;
         allowedFormats?: string[];
       };
@@ -623,18 +626,14 @@ export default function TenantDedicatedPageView({
       void invalidatePage();
       toast.success('Posting time updated.');
     },
-    onError: (error) => {
-      toast.error(
-        errorMessage(error, "Couldn't update the posting time. Please try again.")
-      );
-    },
+    // No onError toast: same duplication rule as add — the form's
+    // inline serverError is the failure surface, modal stays open.
   });
   const handleUpdateSlot = React.useCallback(
     async (
       slotId: string,
       data: {
         slotTime?: string;
-        timezone?: string;
         isActive?: boolean;
         allowedFormats?: string[];
       }
@@ -828,6 +827,22 @@ export default function TenantDedicatedPageView({
       return copy;
     });
   }, [urlTab]);
+
+  // Nit: an unknown ?tab= (?tab=bogus, ?tab=settings) falls back
+  // to the current tab in state but used to leave the bogus value
+  // in the URL — a copied link then re-triggered the fallback on
+  // every open. Normalise with replace (never push: a bogus value
+  // is not a history entry, and valid tabs keep push-history).
+  // Other query params are preserved; a missing ?tab= is already
+  // clean and is left alone.
+  React.useEffect(() => {
+    if (urlTab === null || TAB_IDS.has(urlTab) || !subdomain || !pageId) return;
+    const nextParams = new URLSearchParams(searchParams.toString());
+    nextParams.set('tab', activeTabRef.current);
+    router.replace(`/tenant/${subdomain}/pages/${pageId}?${nextParams.toString()}`, {
+      scroll: false,
+    });
+  }, [urlTab, router, searchParams, subdomain, pageId]);
 
   const updateTabScrollEdges = React.useCallback(() => {
     const el = tabListRef.current;
@@ -1073,7 +1088,7 @@ export default function TenantDedicatedPageView({
                 each panel still mounts only once visited. */}
             {visitedTabs.has('insights') && (
               <TabsContent value="insights" forceMount className="data-[state=inactive]:hidden">
-                <PageTabInsights page={page} subdomain={subdomain} />
+                <PageTabInsights page={page} subdomain={subdomain} pageTimezone={pageTimezone} />
               </TabsContent>
             )}
 

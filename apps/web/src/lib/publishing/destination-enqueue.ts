@@ -37,6 +37,12 @@ export interface OwnedMediaRow {
   media_type: string;
   url: string;
   storage_key: string | null;
+  /** K6: media facts for enqueue format validation (repo-defined
+   * limits only — see validatePostFormatEligibility). Null when the
+   * library row carries no value; unknown facts never fail a post. */
+  file_size?: number | null;
+  duration_seconds?: number | null;
+  aspect_ratio?: string | null;
 }
 
 export interface DestinationSlotRow {
@@ -235,7 +241,7 @@ export async function fetchOwnedMedia(
   if (mediaIds.length === 0) return [];
   if (isLegacyClient(client)) {
     const rows = (await (client as DatabaseClient).query(
-      `SELECT id, media_type, url, storage_key
+      `SELECT id, media_type, url, storage_key, file_size, duration_seconds, aspect_ratio
        FROM media_items
        WHERE user_id = $1 AND id = ANY($2::uuid[])`,
       [userId, mediaIds]
@@ -247,7 +253,7 @@ export async function fetchOwnedMedia(
   if (!supabase) return [];
   const { data, error } = await supabase
     .from('media_items')
-    .select('id, media_type, url, storage_key')
+    .select('id, media_type, url, storage_key, file_size, duration_seconds, aspect_ratio')
     .eq('user_id', userId)
     .in('id', mediaIds);
   if (error || !data) return [];

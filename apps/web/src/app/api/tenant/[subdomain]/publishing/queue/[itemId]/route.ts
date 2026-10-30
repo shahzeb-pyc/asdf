@@ -255,6 +255,17 @@ export async function handleUpdateQueueItem(
       );
     }
 
+    // Nit: cancelled rows are terminal, like published ones — the
+    // calendar used to offer caption edit on them (and the queue
+    // panel's edit dialog is the same PATCH). Reject with a clear
+    // error so UI and server agree even for direct API callers.
+    if (existing.status === 'cancelled') {
+      return NextResponse.json(
+        { error: 'CANNOT_UPDATE_CANCELLED_ITEM', message: 'Cancelled queue items cannot be modified' },
+        { status: 400 }
+      );
+    }
+
     const ownerId = (await fetchWorkspaceOwnerId(dbClient, workspaceId)) ?? session.userId;
 
     // Compute updated values
@@ -383,6 +394,14 @@ export async function handleUpdateQueueItem(
   if (existing.status === 'publishing') {
     return NextResponse.json(
       { error: 'CANNOT_UPDATE_PUBLISHING_ITEM', message: 'Publishing queue items cannot be modified while they are being published' },
+      { status: 400 }
+    );
+  }
+
+  // Nit: cancelled rows are terminal (see the legacy branch).
+  if (existing.status === 'cancelled') {
+    return NextResponse.json(
+      { error: 'CANNOT_UPDATE_CANCELLED_ITEM', message: 'Cancelled queue items cannot be modified' },
       { status: 400 }
     );
   }

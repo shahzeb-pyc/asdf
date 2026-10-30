@@ -223,14 +223,41 @@ describe('CreatePostsDialog queueing', () => {
     expect(toastError.mock.calls[0][0]).toContain('No posting times set yet');
   });
 
-  it('falls through to the queue attempt when the slots check fails', async () => {
-    const { onOpenChange } = renderDialog();
+  it('K5: stops with a clear error when the slots check fails (no blind fall-through)', async () => {
+    renderDialog();
     apiGet.mockRejectedValue(new Error('slots down'));
     typePost('hello');
     fireEvent.click(queueButton());
     await waitFor(() => {
+      expect(toastError).toHaveBeenCalled();
+    });
+    expect(apiPost).not.toHaveBeenCalled();
+    expect(toastError.mock.calls[0][0]).toContain("Couldn't check posting times");
+  });
+
+  it('K5: refuses a text post when the only active time allows images', async () => {
+    renderDialog();
+    apiGet.mockResolvedValue({
+      slots: [{ id: 'slot-1', isActive: true, allowedFormats: ['image'] }],
+    });
+    typePost('hello');
+    fireEvent.click(queueButton());
+    await waitFor(() => {
+      expect(toastError).toHaveBeenCalled();
+    });
+    expect(apiPost).not.toHaveBeenCalled();
+    expect(toastError.mock.calls[0][0]).toContain('will wait for a matching posting time');
+  });
+
+  it('K5: queues a text post when an active time allows text', async () => {
+    renderDialog();
+    apiGet.mockResolvedValue({
+      slots: [{ id: 'slot-1', isActive: true, allowedFormats: ['text'] }],
+    });
+    typePost('hello');
+    fireEvent.click(queueButton());
+    await waitFor(() => {
       expect(apiPost).toHaveBeenCalledTimes(1);
-      expect(onOpenChange).toHaveBeenCalledWith(false);
     });
   });
 

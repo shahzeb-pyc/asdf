@@ -58,6 +58,7 @@ interface PageListRow {
   tasks?: unknown;
   unmatched_post_types?: unknown;
   unmatchedPostTypes?: unknown;
+  timezone?: string | null;
   rate_limited_at?: string | Date | null;
   rateLimitedAt?: string | Date | null;
   created_at?: string | Date | null;
@@ -257,6 +258,7 @@ async function fetchSqlPagesPage(
       d.external_destination_id AS fb_page_id,
       d.name AS page_name,
       d.avatar_url AS profile_picture_url,
+      d.timezone,
       d.metadata->>'category' AS category,
       (d.metadata->>'starting_followers')::int AS starting_followers,
       (d.metadata->>'current_followers')::int AS current_followers,
@@ -292,6 +294,7 @@ interface SupabaseDestinationJoinRow {
   external_destination_id: string;
   name: string;
   avatar_url: string | null;
+  timezone?: string | null;
   metadata: Record<string, unknown> | null;
   status: string;
   created_at: string;
@@ -300,9 +303,9 @@ interface SupabaseDestinationJoinRow {
 }
 
 const SUPABASE_PAGE_COLUMNS =
-  'id, account_id, external_destination_id, name, avatar_url, metadata, status, created_at, updated_at, social_accounts(display_name, avatar_url)';
+  'id, account_id, external_destination_id, name, avatar_url, timezone, metadata, status, created_at, updated_at, social_accounts(display_name, avatar_url)';
 const SUPABASE_PAGE_COLUMNS_INNER =
-  'id, account_id, external_destination_id, name, avatar_url, metadata, status, created_at, updated_at, social_accounts!inner(display_name, avatar_url)';
+  'id, account_id, external_destination_id, name, avatar_url, timezone, metadata, status, created_at, updated_at, social_accounts!inner(display_name, avatar_url)';
 
 /**
  * The attention-first rank groups, in order. PostgREST cannot ORDER BY
@@ -455,6 +458,7 @@ function mapSupabaseDestinationRows(
     fb_page_id: p.external_destination_id,
     page_name: p.name,
     profile_picture_url: p.avatar_url,
+    timezone: p.timezone ?? null,
     category: typeof p.metadata?.category === 'string' ? p.metadata.category : null,
     starting_followers:
       typeof p.metadata?.starting_followers === 'number'
@@ -1034,6 +1038,14 @@ function mapPageRows(rows: PageListRow[]) {
       pageName: row.page_name || row.pageName,
       profilePictureUrl: extractPagePictureUrl(row),
       category: row.category ?? null,
+      // Nit: the list used to omit timezone entirely, so the
+      // contracts schema's `.default('UTC')` filled every list row
+      // with UTC — even for pages whose stored zone is Karachi.
+      // The real stored zone is returned now (UTC only when the
+      // row itself carries none, the same fallback the detail and
+      // slots paths already use). PageCard renders no timezone,
+      // so no list consumer changes behaviour.
+      timezone: typeof row.timezone === 'string' && row.timezone ? row.timezone : 'UTC',
       startingFollowers,
       currentFollowers,
       followersGained,

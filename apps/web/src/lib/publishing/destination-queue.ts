@@ -153,36 +153,6 @@ function normalizeQueueItemRow(row: DestinationQueueItemRow): DestinationQueueIt
   };
 }
 
-/** Every queue item for the destination, in claim order. */
-export async function fetchDestinationQueueItems(
-  client: ConnectDbClient,
-  workspaceId: string,
-  destinationId: string
-): Promise<DestinationQueueItemRow[]> {
-  if (isLegacyClient(client)) {
-    const rows = (await (client as DatabaseClient).query(
-      `SELECT ${QUEUE_ITEM_COLUMNS}
-       FROM queue_items
-       WHERE workspace_id = $1 AND destination_id = $2
-       ORDER BY scheduled_time ASC, created_at ASC`,
-      [workspaceId, destinationId]
-    )) as DestinationQueueItemRow[];
-    return (rows ?? []).map(normalizeQueueItemRow);
-  }
-
-  const supabase = getRouteSupabase(client as SupabaseClient);
-  if (!supabase) return [];
-  const { data, error } = await supabase
-    .from('queue_items')
-    .select(QUEUE_ITEM_COLUMNS)
-    .eq('workspace_id', workspaceId)
-    .eq('destination_id', destinationId)
-    .order('scheduled_time', { ascending: true })
-    .order('created_at', { ascending: true });
-  if (error || !data) return [];
-  return (data as DestinationQueueItemRow[]).map(normalizeQueueItemRow);
-}
-
 /** One queue item, only when it belongs to the workspace + destination. */
 export async function fetchDestinationQueueItem(
   client: ConnectDbClient,
@@ -314,32 +284,6 @@ export async function updateDestinationQueueItem(
     .single();
   if (error || !data) return null;
   return normalizeQueueItemRow(data as DestinationQueueItemRow);
-}
-
-export async function deleteDestinationQueueItem(
-  client: ConnectDbClient,
-  workspaceId: string,
-  destinationId: string,
-  itemId: string
-): Promise<boolean> {
-  if (isLegacyClient(client)) {
-    await (client as DatabaseClient).query(
-      `DELETE FROM queue_items
-       WHERE id = $1 AND workspace_id = $2 AND destination_id = $3`,
-      [itemId, workspaceId, destinationId]
-    );
-    return true;
-  }
-
-  const supabase = getRouteSupabase(client as SupabaseClient);
-  if (!supabase) return false;
-  const { error } = await supabase
-    .from('queue_items')
-    .delete()
-    .eq('id', itemId)
-    .eq('workspace_id', workspaceId)
-    .eq('destination_id', destinationId);
-  return !error;
 }
 
 /** Maps a stored row to the client view (lib/api/schemas/unified-queue).
