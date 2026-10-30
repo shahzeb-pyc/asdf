@@ -237,7 +237,11 @@ export function CalendarViewPanel({
 
   const invalidateQueue = React.useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: tenant.queue.all });
-  }, [queryClient, tenant.queue]);
+    // K8: same pages-cache refresh as the queue panel — an edit
+    // here must not leave list counters and unmatched flags stale.
+    void queryClient.invalidateQueries({ queryKey: tenant.pages.list });
+    void queryClient.invalidateQueries({ queryKey: tenant.pages.detail(pageId) });
+  }, [queryClient, tenant.queue, tenant.pages, pageId]);
 
   const editMutation = useMutation({
     mutationFn: ({ itemId, caption }: { itemId: string; caption: string }) =>
@@ -253,19 +257,23 @@ export function CalendarViewPanel({
     },
   });
 
+  // R24: the dialog closes only on success, like the
+  // posting-time form — a failed save used to clear the draft in
+  // `finally`, losing the caption the user had just typed.
   const handleSaveEdit = React.useCallback(
     async (caption: string) => {
       if (!itemToEdit) return;
       setIsSaving(true);
       try {
         await editMutation.mutateAsync({ itemId: itemToEdit.id, caption });
+        setItemToEdit(null);
       } catch (error) {
         // The mutation's onError already surfaced the failure via
-        // toast; log it so the failure is never silent.
+        // toast; log it so the failure is never silent. The dialog
+        // stays open with the draft intact for a retry.
         console.error('Calendar edit save failed:', error);
       } finally {
         setIsSaving(false);
-        setItemToEdit(null);
       }
     },
     [editMutation, itemToEdit]
@@ -418,6 +426,10 @@ export function CalendarViewPanel({
                       <div className="max-h-24 flex-1 space-y-1 overflow-y-auto pr-0.5">
                         {dayEntries.map((entry) => {
                           const isPublished = entry.item.status === 'published';
+                          // K1: publishing entries are not
+                          // clickable either — the row is
+                          // immutable until the worker settles it.
+                          const isPublishing = entry.item.status === 'publishing';
                           const inner = (
                             <>
                               <span className="shrink-0 text-ink-sub">
@@ -437,13 +449,18 @@ export function CalendarViewPanel({
                               </span>
                             </>
                           );
-                          // Published posts keep edit disabled, same as
-                          // the list: their entries are not clickable.
-                          return isPublished ? (
+                          // Published (and publishing) posts keep
+                          // edit disabled, same as the list: their
+                          // entries are not clickable.
+                          return isPublished || isPublishing ? (
                             <div
                               key={entry.item.id}
                               data-testid={`calendar-entry-${entry.item.id}`}
-                              title="Published posts can't be edited"
+                              title={
+                                isPublishing
+                                  ? "Publishing posts can't be edited"
+                                  : "Published posts can't be edited"
+                              }
                               className="flex min-w-0 items-start gap-1 rounded-lg border border-line bg-canvas p-1.5 text-left text-metadata leading-tight opacity-70"
                             >
                               {inner}

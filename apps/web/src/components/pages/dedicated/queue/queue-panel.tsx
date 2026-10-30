@@ -267,7 +267,12 @@ export function QueuePanel({
 
   const invalidateQueue = React.useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: tenant.queue.all });
-  }, [queryClient, tenant.queue]);
+    // K8: queue mutations move list counters and unmatched flags,
+    // so the pages list + this page's detail must not sit stale
+    // for up to 60s behind the queue cache.
+    void queryClient.invalidateQueries({ queryKey: tenant.pages.list });
+    void queryClient.invalidateQueries({ queryKey: tenant.pages.detail(pageId) });
+  }, [queryClient, tenant.queue, tenant.pages, pageId]);
 
   const deleteMutation = useMutation({
     mutationFn: (itemId: string) =>
@@ -441,10 +446,14 @@ export function QueuePanel({
     []
   );
 
+  // R24: the dialogs close only on success, like the
+  // posting-time form — a failed save/delete keeps the draft and
+  // its dialog open (the error toast already fired), so the user
+  // can fix and retry instead of retyping the caption.
   const handleDelete = React.useCallback(
     async (item: QueueItem) => {
-      await runMutation('delete', item.id, () => deleteMutation.mutateAsync(item.id));
-      setItemToDelete(null);
+      const ok = await runMutation('delete', item.id, () => deleteMutation.mutateAsync(item.id));
+      if (ok) setItemToDelete(null);
     },
     [runMutation, deleteMutation]
   );
@@ -452,10 +461,10 @@ export function QueuePanel({
   const handleSaveEdit = React.useCallback(
     async (caption: string) => {
       if (!itemToEdit) return;
-      await runMutation('edit', itemToEdit.id, () =>
+      const ok = await runMutation('edit', itemToEdit.id, () =>
         editMutation.mutateAsync({ itemId: itemToEdit.id, caption })
       );
-      setItemToEdit(null);
+      if (ok) setItemToEdit(null);
     },
     [runMutation, editMutation, itemToEdit]
   );
@@ -602,6 +611,24 @@ export function QueuePanel({
           <p className="m-0 text-body text-ink-sub">Couldn't load the queue.</p>
           <Button type="button" onClick={() => void displayQuery.refetch()}>
             Retry
+          </Button>
+        </div>
+      ) : items.length === 0 && total > 0 ? (
+        // R26: a successful fetch with an empty page but a
+        // nonzero total means the page itself is past the end
+        // (a shared/deep link, or back navigation — filter changes
+        // already reset to page 1). This is NOT the first-use
+        // empty state: no Create button, just a way back to a
+        // valid page.
+        <div
+          data-testid="queue-page-empty-state"
+          className="flex flex-col items-center gap-4 rounded-md border border-line bg-panel px-6 py-12 text-center"
+        >
+          <p className="m-0 text-body text-ink-sub">
+            No posts on this page.
+          </p>
+          <Button type="button" data-testid="queue-page-empty-first-btn" onClick={() => pushPageParam(1)}>
+            Go to first page
           </Button>
         </div>
       ) : items.length === 0 ? (

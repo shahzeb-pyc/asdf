@@ -97,19 +97,22 @@ function renderPanel(overrides: Record<string, unknown> = {}) {
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
   );
-  return render(
-    <QueuePanel
-      subdomain="acme"
-      pageId={PAGE_ID}
-      pageTimezone="UTC"
-      pageStatus={overrides.pageStatus as 'active' | 'paused' | 'fb_rate_limited' | 'page_checkpoint' | 'invalid_token' | 'disconnected' | undefined}
-      slots={(overrides.slots as typeof allFormatsSlot[] | undefined) ?? [allFormatsSlot]}
-      slotsError={(overrides.slotsError as boolean | undefined) ?? false}
-      onRetrySlots={(overrides.onRetrySlots as (() => void) | undefined) ?? vi.fn()}
-      onCreatePost={(overrides.onCreatePost as (() => void) | undefined) ?? vi.fn()}
-    />,
-    { wrapper }
-  );
+  return {
+    ...render(
+      <QueuePanel
+        subdomain="acme"
+        pageId={PAGE_ID}
+        pageTimezone="UTC"
+        pageStatus={overrides.pageStatus as 'active' | 'paused' | 'fb_rate_limited' | 'page_checkpoint' | 'invalid_token' | 'disconnected' | undefined}
+        slots={(overrides.slots as typeof allFormatsSlot[] | undefined) ?? [allFormatsSlot]}
+        slotsError={(overrides.slotsError as boolean | undefined) ?? false}
+        onRetrySlots={(overrides.onRetrySlots as (() => void) | undefined) ?? vi.fn()}
+        onCreatePost={(overrides.onCreatePost as (() => void) | undefined) ?? vi.fn()}
+      />,
+      { wrapper }
+    ),
+    client,
+  };
 }
 
 function defaultSeed() {
@@ -671,6 +674,86 @@ describe('QueuePanel', () => {
     renderPanel();
     await waitFor(() =>
       expect(screen.getAllByTestId('queue-row-estimate')).toHaveLength(15),
+    );
+  });
+
+  it('keeps the edit dialog open with the draft intact when the save fails (R24)', async () => {
+    const user = userEvent.setup();
+    apiPatch.mockRejectedValueOnce(new Error('Server exploded'));
+    renderPanel();
+    await waitFor(() => expect(screen.getByTestId(`queue-row-${ID_A}`)).toBeTruthy());
+    const row = within(screen.getByTestId(`queue-row-${ID_A}`));
+    await user.click(row.getByTestId('queue-row-edit'));
+    const textarea = screen.getByTestId('queue-edit-caption') as HTMLTextAreaElement;
+    await user.clear(textarea);
+    await user.type(textarea, 'Edited caption');
+    await user.click(screen.getByTestId('queue-edit-save-btn'));
+    await waitFor(() => expect(apiPatch).toHaveBeenCalled());
+    // The error toast fired, but the dialog — and the draft — stay
+    // for a retry instead of closing and losing the caption.
+    expect(screen.getByTestId('queue-edit-dialog')).toBeTruthy();
+    expect((screen.getByTestId('queue-edit-caption') as HTMLTextAreaElement).value).toBe(
+      'Edited caption'
+    );
+  });
+
+  it('keeps the delete confirmation open when the delete fails (R24)', async () => {
+    const user = userEvent.setup();
+    apiDelete.mockRejectedValueOnce(new Error('Server exploded'));
+    renderPanel();
+    await waitFor(() => expect(screen.getByTestId(`queue-row-${ID_C}`)).toBeTruthy());
+    const row = within(screen.getByTestId(`queue-row-${ID_C}`));
+    await user.click(row.getByTestId('queue-row-delete'));
+    await user.click(screen.getByTestId('queue-delete-confirm-btn'));
+    await waitFor(() => expect(apiDelete).toHaveBeenCalled());
+    expect(screen.getByTestId('queue-delete-confirm')).toBeTruthy();
+  });
+
+  it('shows a past-the-end page state, not the first-use empty state (R26)', async () => {
+    // Page 2 of a 4-item queue (30 per page): the fetch succeeds
+    // with an empty page but a nonzero total — a shared link or
+    // back navigation, since filter changes reset to page 1.
+    mockQuery = 'page=2';
+    renderPanel();
+    await waitFor(() => expect(screen.getByTestId('queue-page-empty-state')).toBeTruthy());
+    expect(screen.getByText('No posts on this page.')).toBeTruthy();
+    expect(screen.queryByTestId('queue-empty-state')).toBeNull();
+    expect(screen.queryByTestId('queue-create-post-btn')).toBeNull();
+    expect(screen.getByTestId('queue-page-empty-first-btn')).toBeTruthy();
+  });
+
+  it('disables edit and delete on publishing rows (K1)', async () => {
+    seed = [
+      item({
+        id: ID_A,
+        caption: 'Publishing post',
+        postFormat: 'text',
+        status: 'publishing',
+      }),
+    ];
+    renderPanel();
+    await waitFor(() => expect(screen.getByTestId(`queue-row-${ID_A}`)).toBeTruthy());
+    const row = within(screen.getByTestId(`queue-row-${ID_A}`));
+    expect((row.getByTestId('queue-row-edit') as HTMLButtonElement).disabled).toBe(true);
+    expect((row.getByTestId('queue-row-delete') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('invalidates the pages list and detail on a queue mutation (K8)', async () => {
+    const user = userEvent.setup();
+    const { client } = renderPanel();
+    const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
+    await waitFor(() => expect(screen.getByTestId(`queue-row-${ID_C}`)).toBeTruthy());
+    const row = within(screen.getByTestId(`queue-row-${ID_C}`));
+    await user.click(row.getByTestId('queue-row-delete'));
+    await user.click(screen.getByTestId('queue-delete-confirm-btn'));
+    await waitFor(() => expect(apiDelete).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(invalidateSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ queryKey: ['tenant', 'acme', 'pages', 'list'] })
+      )
+    );
+    expect(invalidateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: ['tenant', 'acme', 'pages', PAGE_ID] })
     );
   });
 
