@@ -6,7 +6,10 @@ import {
 import {
   creatorFinderErrorResponse,
   getCreatorFinderKeys,
-  requireTenantSession,
+  getCreatorFinderSession,
+  getCreatorFinderSupabase,
+  getCreatorFinderWorkspaceId,
+  saveCreatorsToDb,
 } from '../lib';
 
 export async function GET(
@@ -14,8 +17,11 @@ export async function GET(
   { params }: { params: Promise<{ subdomain: string }> },
 ) {
   const { subdomain } = await params;
-  const authError = await requireTenantSession(request, subdomain);
-  if (authError) return authError;
+  const { session, errorResponse } = await getCreatorFinderSession(
+    request,
+    subdomain,
+  );
+  if (errorResponse) return errorResponse;
   const region = request.nextUrl.searchParams.get('region');
   if (!region) {
     return NextResponse.json(
@@ -27,7 +33,34 @@ export async function GET(
     const result = await fetchTrendingCreators(region, {
       apiKeys: getCreatorFinderKeys(),
     });
-    return NextResponse.json(TrendingResponseSchema.parse(result));
+    // Auto-save: results still render if the save fails; the
+    // response carries saveFailed so the page warns visibly.
+    let saveFailed = false;
+    try {
+      const supabase = getCreatorFinderSupabase();
+      const workspaceId = await getCreatorFinderWorkspaceId(
+        supabase,
+        subdomain,
+        session,
+      );
+      if (!supabase || !workspaceId) {
+        saveFailed = true;
+      } else {
+        saveFailed = !(await saveCreatorsToDb(
+          supabase,
+          workspaceId,
+          session.userId,
+          result.creators,
+          'trending',
+          result.region,
+        ));
+      }
+    } catch {
+      saveFailed = true;
+    }
+    return NextResponse.json(
+      TrendingResponseSchema.parse({ ...result, saveFailed }),
+    );
   } catch (err) {
     return creatorFinderErrorResponse(err);
   }

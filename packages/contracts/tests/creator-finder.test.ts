@@ -8,6 +8,10 @@ import {
   fetchSimilarCreators,
   fetchTrendingCreators,
   parseCreatorFinderKeys,
+  savedCreatorFromRow,
+  savedCreatorsToCsv,
+  savedCreatorUpsertRow,
+  TrendingResponseSchema,
 } from '../src/domain/creator-finder.js';
 
 function jsonResponse(body: unknown): Response {
@@ -608,5 +612,112 @@ describe('fetchSimilarCreators', () => {
       fetchSimilarCreators('  @ ', { fetchFn, apiKeys: ['key-1'] }),
     ).rejects.toBeInstanceOf(CreatorFinderError);
     expect(fetchFn).not.toHaveBeenCalled();
+  });
+});
+
+describe('saved creators', () => {
+  const baseCreator = {
+    handle: 'alice',
+    displayName: 'Alice, "The" Creator\nSecond line',
+    avatarUrl: 'https://example.com/a.jpg',
+    latestVideoTitle: null,
+    latestVideoCover: null,
+    profileUrl: 'https://www.tiktok.com/@alice',
+  };
+
+  it('upsert row fills only undefined fields and never overwrites with null', () => {
+    const row = savedCreatorUpsertRow(
+      'ws-1',
+      'user-1',
+      { ...baseCreator, followerCount: undefined, verified: undefined },
+      'similar',
+      'seed',
+      { followerCount: 850, verified: false },
+      '2026-10-30T08:00:00.000Z',
+    );
+    expect(row.follower_count).toBe(850);
+    expect(row.verified).toBe(false);
+    expect(row.updated_at).toBe('2026-10-30T08:00:00.000Z');
+    const fresh = savedCreatorUpsertRow(
+      'ws-1',
+      'user-1',
+      { ...baseCreator, followerCount: 1200, verified: true },
+      'niche',
+      'fitness',
+      { followerCount: 850, verified: false },
+      '2026-10-30T09:00:00.000Z',
+    );
+    expect(fresh.follower_count).toBe(1200);
+    expect(fresh.verified).toBe(true);
+    expect(fresh.source).toBe('niche');
+  });
+
+  it('maps a database row back to a saved creator, and skips unusable rows', () => {
+    const creator = savedCreatorFromRow({
+      handle: 'alice',
+      display_name: 'Alice',
+      avatar_url: 'https://example.com/a.jpg',
+      profile_url: 'https://www.tiktok.com/@alice',
+      follower_count: 850,
+      verified: true,
+      source: 'similar',
+      search_term: 'seed',
+      updated_at: '2026-10-30T08:00:00.000Z',
+    });
+    expect(creator).toMatchObject({
+      handle: 'alice',
+      followerCount: 850,
+      verified: true,
+      source: 'similar',
+      searchTerm: 'seed',
+      savedAt: '2026-10-30T08:00:00.000Z',
+    });
+    expect(savedCreatorFromRow({ handle: '', source: 'similar', search_term: 'x', updated_at: 't' })).toBeNull();
+    expect(savedCreatorFromRow({ handle: 'bob', source: 'bogus', search_term: 'x', updated_at: 't' })).toBeNull();
+  });
+
+  it('CSV uses the fixed column order and RFC 4180 escaping', () => {
+    const csv = savedCreatorsToCsv([
+      {
+        ...baseCreator,
+        source: 'niche',
+        searchTerm: 'fitness',
+        savedAt: '2026-10-30T08:00:00.000Z',
+      },
+      {
+        handle: 'bob',
+        displayName: null,
+        avatarUrl: null,
+        latestVideoTitle: null,
+        latestVideoCover: null,
+        profileUrl: 'https://www.tiktok.com/@bob',
+        source: 'trending',
+        searchTerm: 'PK',
+        savedAt: '2026-10-30T08:01:00.000Z',
+      },
+    ]);
+    // Note: the first creator's display name itself contains a
+    // newline, so the CSV is asserted on the raw string, not split
+    // into lines — a split would cut inside the quoted field.
+    expect(csv).toContain(
+      'handle,display_name,avatar_url,profile_url,follower_count,verified,source,search_term,saved_at\n',
+    );
+    expect(csv).toContain(
+      'alice,"Alice, ""The"" Creator\nSecond line",https://example.com/a.jpg,https://www.tiktok.com/@alice,,,niche,fitness,2026-10-30T08:00:00.000Z',
+    );
+    expect(csv).toContain(
+      'bob,,,https://www.tiktok.com/@bob,,,trending,PK,2026-10-30T08:01:00.000Z',
+    );
+  });
+
+  it('search responses accept an optional saveFailed flag', () => {
+    expect(
+      TrendingResponseSchema.parse({
+        region: 'PK',
+        creators: [],
+        videosSeen: 0,
+        saveFailed: true,
+      }).saveFailed,
+    ).toBe(true);
   });
 });

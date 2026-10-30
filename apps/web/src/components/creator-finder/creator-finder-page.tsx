@@ -5,10 +5,13 @@ import { useQuery } from '@tanstack/react-query';
 import {
   NicheResponseSchema,
   RegionListResponseSchema,
+  SavedCreatorDeleteResponseSchema,
+  SavedCreatorListResponseSchema,
   SimilarResponseSchema,
   TrendingResponseSchema,
   type Creator,
   type Region,
+  type SavedCreator,
 } from '@fbuploadpro/contracts';
 import { api, buildTenantApiPath, isApiError } from '@/lib/api';
 import { Banner } from '@/components/shared/ui/banner';
@@ -17,13 +20,14 @@ import { Input } from '@/components/shared/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shared/ui/tabs';
 import { CreatorCard } from './creator-card';
 
-type TabId = 'trending' | 'niche' | 'similar';
+type TabId = 'trending' | 'niche' | 'similar' | 'saved';
 
 interface SearchState {
   status: 'idle' | 'loading' | 'done' | 'error';
   creators: Creator[];
   message: string | null;
   heading: string | null;
+  saveFailed?: boolean | undefined;
 }
 
 const IDLE_STATE: SearchState = {
@@ -31,6 +35,7 @@ const IDLE_STATE: SearchState = {
   creators: [],
   message: null,
   heading: null,
+  saveFailed: false,
 };
 
 function errorMessage(err: unknown): string {
@@ -58,6 +63,63 @@ export function CreatorFinderPage({
   const [trending, setTrending] = React.useState<SearchState>(IDLE_STATE);
   const [niche, setNiche] = React.useState<SearchState>(IDLE_STATE);
   const [similar, setSimilar] = React.useState<SearchState>(IDLE_STATE);
+  const [removingHandle, setRemovingHandle] = React.useState<string | null>(null);
+  const [exporting, setExporting] = React.useState(false);
+  const [exportError, setExportError] = React.useState<string | null>(null);
+
+  const savedQuery = useQuery({
+    queryKey: ['creator-finder', 'saved', subdomain],
+    queryFn: () =>
+      api.get(buildTenantApiPath(subdomain, '/creator-finder/saved'), {
+        schema: SavedCreatorListResponseSchema,
+      }),
+  });
+  const savedCreators: SavedCreator[] = savedQuery.data?.creators ?? [];
+
+  async function removeSaved(handle: string) {
+    setRemovingHandle(handle);
+    try {
+      await api.delete(
+        buildTenantApiPath(subdomain, '/creator-finder/saved'),
+        {
+          schema: SavedCreatorDeleteResponseSchema,
+          query: { handle },
+        },
+      );
+      await savedQuery.refetch();
+    } catch (err) {
+      setExportError(errorMessage(err));
+    } finally {
+      setRemovingHandle(null);
+    }
+  }
+
+  async function exportSavedCsv() {
+    setExporting(true);
+    setExportError(null);
+    try {
+      const response = await fetch(
+        buildTenantApiPath(subdomain, '/creator-finder/saved/export'),
+        { credentials: 'include' },
+      );
+      if (!response.ok) {
+        throw new Error('Saved creators could not be exported. Please try again.');
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'saved-creators.csv';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setExportError(errorMessage(err));
+    } finally {
+      setExporting(false);
+    }
+  }
 
   const regionsQuery = useQuery({
     queryKey: ['creator-finder', 'regions', subdomain],
@@ -111,7 +173,9 @@ export function CreatorFinderPage({
             ? 'No trending creators were found for this country right now.'
             : null,
         heading: `Trending creators in ${effectiveRegion}`,
+        saveFailed: result.saveFailed ?? false,
       });
+      void savedQuery.refetch();
     } catch (err) {
       setTrending({
         status: 'error',
@@ -141,7 +205,9 @@ export function CreatorFinderPage({
             ? `No creators were found for ${result.keyword}.`
             : null,
         heading: `Creators for ${result.keyword}`,
+        saveFailed: result.saveFailed ?? false,
       });
+      void savedQuery.refetch();
     } catch (err) {
       setNiche({ status: 'error', creators: [], message: errorMessage(err), heading: null });
     }
@@ -166,7 +232,9 @@ export function CreatorFinderPage({
             ? `No similar creators were found for @${result.username}.`
             : null,
         heading: `Similar to @${result.username}`,
+        saveFailed: result.saveFailed ?? false,
       });
+      void savedQuery.refetch();
     } catch (err) {
       setSimilar({ status: 'error', creators: [], message: errorMessage(err), heading: null });
     }
@@ -188,6 +256,15 @@ export function CreatorFinderPage({
     if (state.status === 'done') {
       return (
         <div>
+          {state.saveFailed ? (
+            <div className="mb-3">
+              <Banner
+                variant="warning"
+                title="Couldn't save creators"
+                description="Search results could not be saved. Please try searching again."
+              />
+            </div>
+          ) : null}
           {state.heading ? (
             <h2 className="mb-3 text-lg font-semibold text-ink">{state.heading}</h2>
           ) : null}
@@ -212,7 +289,8 @@ export function CreatorFinderPage({
         <h1 className="text-xl font-bold text-ink">Creator Finder</h1>
         <p className="mt-1 text-body text-ink-sub">
           Find TikTok creators by what is trending, by niche, or by a creator you
-          already know. Finding only — nothing is contacted, published, or saved.
+          already know. Creators you find are saved automatically — nothing is
+          contacted or published.
         </p>
       </div>
 
@@ -224,6 +302,7 @@ export function CreatorFinderPage({
           <TabsTrigger value="trending">Trending by country</TabsTrigger>
           <TabsTrigger value="niche">By niche / words</TabsTrigger>
           <TabsTrigger value="similar">Similar creators</TabsTrigger>
+          <TabsTrigger value="saved">Saved</TabsTrigger>
         </TabsList>
 
         <TabsContent value="trending">
@@ -339,6 +418,55 @@ export function CreatorFinderPage({
             </div>
           </form>
           <div className="mt-4">{renderResults(similar)}</div>
+        </TabsContent>
+
+        <TabsContent value="saved">
+          <div className="flex flex-col gap-3">
+            <div>
+              <Button
+                onClick={exportSavedCsv}
+                disabled={exporting || savedCreators.length === 0}
+              >
+                {exporting ? 'Exporting…' : 'Export CSV'}
+              </Button>
+            </div>
+            {exportError ? (
+              <Banner
+                variant="critical"
+                title="Couldn't update saved creators"
+                description={exportError}
+              />
+            ) : null}
+            {savedQuery.isLoading ? (
+              <p className="text-body text-ink-sub">Loading saved creators…</p>
+            ) : savedQuery.isError ? (
+              <Banner
+                variant="critical"
+                title="Couldn't load saved creators"
+                description="Saved creators could not be loaded. Please try again."
+              />
+            ) : savedCreators.length === 0 ? (
+              <p className="text-body text-ink-sub">
+                No saved creators yet. Search trending, niche, or similar creators
+                and they will be saved automatically.
+              </p>
+            ) : (
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {savedCreators.map((creator) => (
+                  <div key={creator.handle} className="flex flex-col gap-2">
+                    <CreatorCard creator={creator} />
+                    <Button
+                      variant="outline"
+                      onClick={() => removeSaved(creator.handle)}
+                      disabled={removingHandle === creator.handle}
+                    >
+                      {removingHandle === creator.handle ? 'Removing…' : 'Remove'}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </TabsContent>
       </Tabs>
     </div>

@@ -118,8 +118,39 @@ export type RegionListResponse = z.infer<typeof RegionListResponseSchema>;
 export const CreatorListResponseSchema = z.object({
   creators: z.array(CreatorSchema),
   videosSeen: z.number().int().nonnegative(),
+  /**
+   * True when the search succeeded but its automatic save to the
+   * database failed. Results still render; the page shows a
+   * warning banner. Never silently dropped, never a search error.
+   */
+  saveFailed: z.boolean().optional(),
 });
 export type CreatorListResponse = z.infer<typeof CreatorListResponseSchema>;
+
+/** A creator as saved in the database, with where it came from. */
+export const SavedCreatorSchema = CreatorSchema.extend({
+  source: z.enum(['trending', 'niche', 'similar']),
+  searchTerm: z.string().min(1),
+  /** Last saved time (the row's updated_at), ISO timestamp. */
+  savedAt: z.string().min(1),
+});
+export type SavedCreator = z.infer<typeof SavedCreatorSchema>;
+
+export const SavedCreatorListResponseSchema = z.object({
+  creators: z.array(SavedCreatorSchema),
+});
+export type SavedCreatorListResponse = z.infer<
+  typeof SavedCreatorListResponseSchema
+>;
+
+export const SavedCreatorDeleteResponseSchema = z.object({
+  removed: z.boolean(),
+});
+export type SavedCreatorDeleteResponse = z.infer<
+  typeof SavedCreatorDeleteResponseSchema
+>;
+
+export type SavedCreatorSource = SavedCreator['source'];
 
 export const TrendingResponseSchema = CreatorListResponseSchema.extend({
   region: z.string().min(1),
@@ -972,6 +1003,134 @@ export async function fetchSimilarCreators(
     creators,
     videosSeen: postsVideosSeen + hashtagVideosSeen,
   };
+}
+
+/**
+ * Saved-creator database row (snake_case, as stored in
+ * creator_finder_saved_creators). savedAt maps to updated_at: the
+ * last time this creator was saved, which is also the "newest
+ * first" ordering key for the Saved tab.
+ */
+export interface SavedCreatorRow {
+  workspace_id: string;
+  user_id: string;
+  handle: string;
+  display_name: string | null;
+  avatar_url: string | null;
+  profile_url: string | null;
+  follower_count: number | null;
+  verified: boolean | null;
+  source: SavedCreatorSource;
+  search_term: string;
+  updated_at: string | null;
+}
+
+/** Map a database row to a SavedCreator, or null if unusable. */
+export function savedCreatorFromRow(
+  row: Record<string, unknown>,
+): SavedCreator | null {
+  const handle = asString(row.handle);
+  const savedAt = asString(row.updated_at) ?? asString(row.created_at);
+  const source = row.source;
+  if (
+    !handle ||
+    !savedAt ||
+    (source !== 'trending' && source !== 'niche' && source !== 'similar')
+  ) {
+    return null;
+  }
+  const searchTerm = asString(row.search_term);
+  if (!searchTerm) return null;
+  const creator: SavedCreator = {
+    handle,
+    displayName: asString(row.display_name),
+    avatarUrl: asString(row.avatar_url),
+    latestVideoTitle: null,
+    latestVideoCover: null,
+    profileUrl:
+      asString(row.profile_url) ?? `https://www.tiktok.com/@${handle}`,
+    source,
+    searchTerm,
+    savedAt,
+  };
+  const followerCount = pickFollowerCount(row);
+  if (followerCount !== undefined) creator.followerCount = followerCount;
+  const verified = pickVerified(row);
+  if (verified !== undefined) creator.verified = verified;
+  return creator;
+}
+
+/**
+ * Build the database row for upserting one creator, merging with
+ * an existing row so a later source that lacks follower_count or
+ * verified never overwrites a value an earlier source supplied.
+ * Only undefined fields are filled from the existing row; a
+ * present value (including verified === false) is never replaced
+ * by null. Display fields always come from the newest save.
+ */
+export function savedCreatorUpsertRow(
+  workspaceId: string,
+  userId: string,
+  creator: Creator,
+  source: SavedCreatorSource,
+  searchTerm: string,
+  existing: {
+    followerCount?: number | undefined;
+    verified?: boolean | undefined;
+  } | null,
+  savedAt: string,
+): SavedCreatorRow {
+  return {
+    workspace_id: workspaceId,
+    user_id: userId,
+    handle: creator.handle,
+    display_name: creator.displayName,
+    avatar_url: creator.avatarUrl,
+    profile_url: creator.profileUrl,
+    follower_count: creator.followerCount ?? existing?.followerCount ?? null,
+    verified: creator.verified ?? existing?.verified ?? null,
+    source,
+    search_term: searchTerm,
+    updated_at: savedAt,
+  };
+}
+
+function csvEscape(value: string): string {
+  if (/[",\n\r]/.test(value)) {
+    return `"${value.replaceAll('"', '""')}"`;
+  }
+  return value;
+}
+
+/**
+ * Saved creators as CSV (RFC 4180 escaping: fields containing a
+ * comma, quote, or newline are quoted, quotes doubled). Column
+ * order is fixed: handle, display_name, avatar_url, profile_url,
+ * follower_count, verified, source, search_term, saved_at.
+ */
+export function savedCreatorsToCsv(
+  creators: ReadonlyArray<SavedCreator>,
+): string {
+  const header =
+    'handle,display_name,avatar_url,profile_url,follower_count,verified,source,search_term,saved_at';
+  const lines = creators.map((creator) =>
+    [
+      creator.handle,
+      creator.displayName ?? '',
+      creator.avatarUrl ?? '',
+      creator.profileUrl,
+      creator.followerCount !== undefined
+        ? String(creator.followerCount)
+        : '',
+      creator.verified !== undefined ? String(creator.verified) : '',
+      creator.source,
+      creator.searchTerm,
+      creator.savedAt,
+    ]
+      .map(csvEscape)
+      .join(','),
+  );
+  return [header, ...lines].join('\n') + '\n';
 }
 
 // Referenced so the permissive raw shapes stay part of the contract
