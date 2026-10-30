@@ -283,9 +283,9 @@
         "routeSpecificRawBytes": 127422
       },
       "/tenant/[subdomain]/connect/[platform]": {
-        "firstLoadGzipBytes": 168060,
-        "firstLoadRawBytes": 558010,
-        "routeSpecificGzipBytes": 33980,
+        "firstLoadGzipBytes": 176595,
+        "firstLoadRawBytes": 587357,
+        "routeSpecificGzipBytes": 36107,
         "routeSpecificRawBytes": 111838
       },
       "/tenant/[subdomain]/destinations/[destinationId]": {
@@ -310,7 +310,7 @@
         "firstLoadGzipBytes": 186243,
         "firstLoadRawBytes": 628000,
         "routeSpecificGzipBytes": 48178,
-        "routeSpecificRawBytes": 163373
+        "routeSpecificRawBytes": 171803
       },
       "/tenant/[subdomain]/pages": {
         "firstLoadGzipBytes": 175680,
@@ -331,9 +331,9 @@
         "routeSpecificRawBytes": 149461
       },
       "/tenant/[subdomain]/publish-now": {
-        "firstLoadGzipBytes": 172476,
-        "firstLoadRawBytes": 576599,
-        "routeSpecificGzipBytes": 38254,
+        "firstLoadGzipBytes": 181133,
+        "firstLoadRawBytes": 606703,
+        "routeSpecificGzipBytes": 40645,
         "routeSpecificRawBytes": 131184
       },
       "/tenant/[subdomain]/creator-finder": {
@@ -345,7 +345,7 @@
       "/tenant/[subdomain]/settings": {
         "firstLoadGzipBytes": 179345,
         "firstLoadRawBytes": 595592,
-        "routeSpecificGzipBytes": 37141,
+        "routeSpecificGzipBytes": 39384,
         "routeSpecificRawBytes": 122201
       },
       "/tenant/[subdomain]/threads/accounts": {
@@ -379,7 +379,7 @@
         "routeSpecificRawBytes": 107564
       },
       "/tenant/[subdomain]/tiktok-mirrors/[mirrorId]": {
-        "firstLoadGzipBytes": 168696,
+        "firstLoadGzipBytes": 177225,
         "firstLoadRawBytes": 590781,
         "routeSpecificGzipBytes": 36231,
         "routeSpecificRawBytes": 117389
@@ -387,13 +387,13 @@
       "/tenant/[subdomain]/billing": {
         "firstLoadGzipBytes": 176478,
         "firstLoadRawBytes": 599680,
-        "routeSpecificGzipBytes": 35990,
-        "routeSpecificRawBytes": 126288
+        "routeSpecificGzipBytes": 39617,
+        "routeSpecificRawBytes": 139524
       }
     },
     "totalClientJs": {
       "gzipBytes": 1139131,
-      "rawBytes": 3451246
+      "rawBytes": 3679213
     }
   }
 }
