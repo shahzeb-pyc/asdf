@@ -118,7 +118,7 @@ export const UPCOMING_PLATFORMS: PlatformNavItemConfig[] = [
     label: 'Instagram',
     tooltip: 'Instagram — Being tested',
     routeSlug: 'instagram',
-    isTesting: true,
+    isTesting: false,
     icon: <InstagramIcon />,
   },
   {

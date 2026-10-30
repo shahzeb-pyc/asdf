@@ -360,14 +360,16 @@ export function WorkspaceSidebar({
                     {isOpen && (
                       <SidebarMenuSub>
                         <NavSubLeaf label="Accounts" href={platformAccountsHref} isActive={isAccountsSubActive} onLeafClick={handleLeafClick} />
-                        <SidebarMenuSubItem>
-                          <div
-                            data-testid={`sidebar-testing-note-${platform.key}`}
-                            className="px-2 py-1 text-metadata leading-normal tracking-body text-ink-dim select-none"
-                          >
-                            {TESTING_PLACEHOLDER_TEXT}
-                          </div>
-                        </SidebarMenuSubItem>
+                        {platform.isTesting && (
+                          <SidebarMenuSubItem>
+                            <div
+                              data-testid={`sidebar-testing-note-${platform.key}`}
+                              className="px-2 py-1 text-metadata leading-normal tracking-body text-ink-dim select-none"
+                            >
+                              {TESTING_PLACEHOLDER_TEXT}
+                            </div>
+                          </SidebarMenuSubItem>
+                        )}
                       </SidebarMenuSub>
                     )}
                   </SidebarMenuItem>
