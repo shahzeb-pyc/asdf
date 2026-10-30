@@ -16,7 +16,10 @@ import {
   isAccountExpiredForEnqueue,
   type DestinationForEnqueue,
 } from '@/lib/publishing/destination-enqueue';
-import { propagateExpiredAccountDestinations } from '@/lib/publishing/account-expiry-propagation';
+import {
+  propagateExpiredAccountDestinations,
+  propagateRevokedAccount,
+} from '@/lib/publishing/account-expiry-propagation';
 
 const ACCOUNT_ID = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
 
@@ -208,5 +211,151 @@ describe('SQL surfaces that cannot run in this environment', () => {
       '20261027130000_publisher_driven_posting_times.sql'
     );
     expect(sql).toContain("d.status = 'active'");
+  });
+
+  it('the P0-2 slot-claim migration also requires an active owning account', () => {
+    const sql = readMigration(
+      '20261031030000_slot_claim_require_active_account.sql'
+    );
+    expect(sql).toContain('claim_posting_slot_item');
+    expect(sql).toContain('list_active_facebook_posting_slots');
+    // Both functions gate on the owning account, not just the page.
+    expect(sql.match(/sa\.status = 'active'/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(sql).toContain("v_account_status IS DISTINCT FROM 'active'");
+  });
+});
+
+describe('isAccountExpiredForEnqueue (revoked, P0-2)', () => {
+  it('rejects a revoked account the same way it rejects an expired one', () => {
+    expect(
+      isAccountExpiredForEnqueue(baseDestination({ accountStatus: 'revoked' }))
+    ).toBe(true);
+  });
+});
+
+describe('propagateRevokedAccount (legacy SQL path)', () => {
+  it('flips only active destinations to error and cancels only their queued items', async () => {
+    type DestRow = { id: string; account_id: string; status: string };
+    type ItemRow = { id: string; destination_id: string; status: string };
+    const dests: DestRow[] = [
+      { id: 'd-active', account_id: ACCOUNT_ID, status: 'active' },
+      { id: 'd-paused', account_id: ACCOUNT_ID, status: 'disconnected' },
+      { id: 'd-error', account_id: ACCOUNT_ID, status: 'error' },
+      { id: 'd-rate-limited', account_id: ACCOUNT_ID, status: 'rate_limited' },
+      { id: 'd-other-account', account_id: 'cccccccc-cccc-4ccc-cccc-cccccccccccc', status: 'active' },
+    ];
+    const items: ItemRow[] = [
+      { id: 'q-on-flipped', destination_id: 'd-active', status: 'queued' },
+      { id: 'q-published', destination_id: 'd-active', status: 'published' },
+      { id: 'q-on-paused', destination_id: 'd-paused', status: 'queued' },
+      { id: 'q-on-other', destination_id: 'd-other-account', status: 'queued' },
+    ];
+    const seen: string[] = [];
+    const legacy = {
+      query: async (sql: string, params: unknown[]) => {
+        seen.push(sql);
+        if (sql.includes('UPDATE destinations')) {
+          // Simulate the UPDATE predicate, not just the call.
+          const flipped: Array<{ id: string }> = [];
+          for (const row of dests) {
+            if (row.account_id === params[0] && row.status === 'active') {
+              row.status = 'error';
+              flipped.push({ id: row.id });
+            }
+          }
+          return flipped;
+        }
+        if (sql.includes('UPDATE queue_items')) {
+          const cancelled: Array<{ id: string }> = [];
+          const targets = new Set(params[0] as string[]);
+          for (const row of items) {
+            if (row.status === 'queued' && targets.has(row.destination_id)) {
+              row.status = 'cancelled';
+              cancelled.push({ id: row.id });
+            }
+          }
+          return cancelled;
+        }
+        return [];
+      },
+    };
+    const result = await propagateRevokedAccount(legacy as never, ACCOUNT_ID);
+    expect(result).toEqual({ destinationsFlipped: 1, itemsCancelled: 1 });
+    expect(dests.find((r) => r.id === 'd-active')?.status).toBe('error');
+    expect(dests.find((r) => r.id === 'd-paused')?.status).toBe('disconnected');
+    expect(dests.find((r) => r.id === 'd-error')?.status).toBe('error');
+    expect(dests.find((r) => r.id === 'd-rate-limited')?.status).toBe('rate_limited');
+    expect(dests.find((r) => r.id === 'd-other-account')?.status).toBe('active');
+    expect(items.find((r) => r.id === 'q-on-flipped')?.status).toBe('cancelled');
+    expect(items.find((r) => r.id === 'q-published')?.status).toBe('published');
+    expect(items.find((r) => r.id === 'q-on-paused')?.status).toBe('queued');
+    expect(items.find((r) => r.id === 'q-on-other')?.status).toBe('queued');
+    expect(seen.join('\n')).toContain("status = 'error'");
+    expect(seen.join('\n')).toContain("status = 'cancelled'");
+    // Re-running is a no-op: nothing is active anymore.
+    expect(await propagateRevokedAccount(legacy as never, ACCOUNT_ID)).toEqual({
+      destinationsFlipped: 0,
+      itemsCancelled: 0,
+    });
+  });
+});
+
+describe('propagateRevokedAccount (Supabase path)', () => {
+  function supabaseMock(destRows: Array<{ id: string }>, itemRows: Array<{ id: string }>) {
+    const calls: Array<{ table: string; filters: Array<[string, unknown]>; inFilters: Array<[string, unknown[]]> }> = [];
+    const supabase = {
+      from: (table: string) => {
+        const entry = { table, filters: [] as Array<[string, unknown]>, inFilters: [] as Array<[string, unknown[]]> };
+        calls.push(entry);
+        const builder: Record<string, unknown> = {};
+        builder.update = () => builder;
+        builder.eq = (column: string, value: unknown) => {
+          entry.filters.push([column, value]);
+          return builder;
+        };
+        builder.in = (column: string, values: unknown[]) => {
+          entry.inFilters.push([column, values]);
+          return builder;
+        };
+        builder.select = () =>
+          Promise.resolve({
+            data: table === 'destinations' ? destRows : itemRows,
+            error: null,
+          });
+        return builder;
+      },
+    };
+    return { supabase, calls };
+  }
+
+  it('updates only active destinations and cancels only their queued items', async () => {
+    const { supabase, calls } = supabaseMock(
+      [{ id: 'd-active' }],
+      [{ id: 'q-1' }, { id: 'q-2' }]
+    );
+    const result = await propagateRevokedAccount(supabase as never, ACCOUNT_ID);
+    expect(result).toEqual({ destinationsFlipped: 1, itemsCancelled: 2 });
+    expect(calls[0]?.table).toBe('destinations');
+    expect(calls[0]?.filters).toContainEqual(['account_id', ACCOUNT_ID]);
+    expect(calls[0]?.filters).toContainEqual(['status', 'active']);
+    expect(calls[1]?.table).toBe('queue_items');
+    expect(calls[1]?.filters).toContainEqual(['status', 'queued']);
+    expect(calls[1]?.inFilters).toContainEqual([ 'destination_id', ['d-active'] ]);
+  });
+
+  it('throws on a database error instead of silently succeeding', async () => {
+    const supabase = {
+      from: () => {
+        const builder: Record<string, unknown> = {};
+        builder.update = () => builder;
+        builder.eq = () => builder;
+        builder.select = () =>
+          Promise.resolve({ data: null, error: new Error('boom') });
+        return builder;
+      },
+    };
+    await expect(
+      propagateRevokedAccount(supabase as never, ACCOUNT_ID)
+    ).rejects.toThrow('boom');
   });
 });

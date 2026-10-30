@@ -219,13 +219,18 @@ export async function handleDestinationEnqueue(
   // but this check closes the window before propagation lands and
   // gives the user a reconnect prompt instead of a page error.
   // Nothing is written when this gate fires, and already-queued
-  // posts are left alone.
+  // posts are left alone. A 'revoked' account (launch prep, P0-2:
+  // the user removed the app on the platform's side) is gated the
+  // same way, reported distinctly so the user is not told a removed
+  // app merely "expired".
   if (isAccountExpiredForEnqueue(destination)) {
+    const revoked = destination.accountStatus === 'revoked';
     return NextResponse.json(
       {
-        error: 'ACCOUNT_EXPIRED',
-        message:
-          'This Facebook account’s session has expired. Reconnect the account, then queue again.',
+        error: revoked ? 'ACCOUNT_REVOKED' : 'ACCOUNT_EXPIRED',
+        message: revoked
+          ? 'This Facebook account was disconnected on Facebook’s side. Reconnect the account, then queue again.'
+          : 'This Facebook account’s session has expired. Reconnect the account, then queue again.',
       },
       { status: 409 }
     );

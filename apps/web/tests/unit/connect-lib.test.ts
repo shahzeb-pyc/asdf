@@ -244,6 +244,48 @@ describe('Persistence edge cases (legacy client)', () => {
     expect(result.updated).toBe(0);
   });
 
+  it('propagates a revocation to destinations, queued items, and tokens (P0-2)', async () => {
+    const seen: string[] = [];
+    const client = makeLegacyClient((sql) => {
+      seen.push(sql);
+      if (sql.includes("SET status = 'revoked'")) return [{ id: 'acct-1' }];
+      if (sql.includes('UPDATE destinations')) return [{ id: 'd-1' }];
+      if (sql.includes('UPDATE queue_items')) return [{ id: 'q-1' }];
+      if (sql.includes('encrypted_access_token')) return [];
+      return [];
+    });
+    const result = await markSocialAccountRevoked(client, 'facebook', 'ext-1');
+    expect(result).toEqual({ updated: 1, propagationFailed: 0 });
+    const joined = seen.join('\n');
+    expect(joined).toContain("SET status = 'revoked'");
+    expect(joined).toContain('UPDATE destinations');
+    expect(joined).toContain("status = 'error'");
+    expect(joined).toContain('UPDATE queue_items');
+    expect(joined).toContain("status = 'cancelled'");
+    expect(joined).toContain('encrypted_access_token');
+  });
+
+  it('still lands the revocation and nulls tokens when propagation fails (P0-2)', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const seen: string[] = [];
+      const client = makeLegacyClient((sql) => {
+        seen.push(sql);
+        if (sql.includes("SET status = 'revoked'")) return [{ id: 'acct-1' }];
+        if (sql.includes('UPDATE destinations')) {
+          throw new Error('destinations down');
+        }
+        if (sql.includes('encrypted_access_token')) return [];
+        return [];
+      });
+      const result = await markSocialAccountRevoked(client, 'facebook', 'ext-1');
+      expect(result).toEqual({ updated: 1, propagationFailed: 1 });
+      expect(seen.join('\n')).toContain('encrypted_access_token');
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
   it('returns null for a missing destination and missing credentials', async () => {
     const client = makeLegacyClient(() => []);
     expect(await fetchDestinationDetail(client, workspaceId, 'missing')).toBeNull();

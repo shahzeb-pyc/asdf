@@ -21,6 +21,7 @@ import {
 } from '@fbuploadpro/contracts';
 import { getRouteSupabase, isLegacyClient } from '@/lib/route-auth';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { propagateRevokedAccount } from '@/lib/publishing/account-expiry-propagation';
 import type {
   DiscoveredDestination,
   ExchangedAccount,
@@ -371,13 +372,25 @@ export async function findSocialAccountsByExternalId(
  * callbacks). When a workspaceId is given, only that workspace's row is
  * revoked — public callbacks must pass it so one workspace's verified
  * notice can never change another workspace's account.
+ *
+ * Revocation propagates (launch prep, P0-2): for every revoked account,
+ * its currently-'active' destinations flip to 'error' and the queued
+ * items on those destinations become 'cancelled', so a revoked
+ * account can neither accept new queueing (the enqueue gate also
+ * blocks 'revoked') nor loop already-queued items through the slot
+ * claimer forever. The account's encrypted tokens are nulled — a
+ * revoked token must not be retained, let alone refreshed. Propagation
+ * and token-nulling are best-effort-loud, not gating: platform
+ * callbacks must still answer 200, so a failure is logged loudly and
+ * counted in `propagationFailed` rather than failing the revocation
+ * itself (the status flip, which every gate reads, always lands).
  */
 export async function markSocialAccountRevoked(
   client: ConnectDbClient | null | undefined,
   platform: Platform,
   externalAccountId: string,
   workspaceId?: string
-): Promise<{ updated: number }> {
+): Promise<{ updated: number; propagationFailed: number }> {
   if (isLegacyClient(client ?? undefined)) {
     const rows = (await (client as DatabaseClient).query(
       workspaceId
@@ -393,11 +406,18 @@ export async function markSocialAccountRevoked(
         ? [platform, externalAccountId, workspaceId]
         : [platform, externalAccountId]
     )) as Array<{ id: string }>;
-    return { updated: Array.isArray(rows) ? rows.length : 0 };
+    const accountIds = Array.isArray(rows)
+      ? rows.map((row) => row.id).filter(Boolean)
+      : [];
+    const propagationFailed = await propagateRevocationSideEffects(
+      client as DatabaseClient,
+      accountIds
+    );
+    return { updated: accountIds.length, propagationFailed };
   }
 
   const supabase = getRouteSupabase(client ?? undefined);
-  if (!supabase) return { updated: 0 };
+  if (!supabase) return { updated: 0, propagationFailed: 0 };
   let updateQuery = supabase
     .from('social_accounts')
     .update({ status: 'revoked', updated_at: new Date().toISOString() })
@@ -409,9 +429,69 @@ export async function markSocialAccountRevoked(
   const { data, error } = await updateQuery.select('id');
   if (error) {
     console.error('[connect] Failed to mark account revoked:', error.message);
-    return { updated: 0 };
+    return { updated: 0, propagationFailed: 0 };
   }
-  return { updated: Array.isArray(data) ? data.length : 0 };
+  const accountIds = Array.isArray(data)
+    ? (data as Array<{ id: string }>).map((row) => row.id).filter(Boolean)
+    : [];
+  const propagationFailed = await propagateRevocationSideEffects(
+    supabase,
+    accountIds
+  );
+  return { updated: accountIds.length, propagationFailed };
+}
+
+/**
+ * Per-revoked-account side effects: destination/queue propagation plus
+ * token nulling. Each account's side effects are independent, so one
+ * account's failure never blocks another's — failures are logged
+ * loudly with the account id and counted, never thrown (platform
+ * callbacks must still answer 200).
+ */
+async function propagateRevocationSideEffects(
+  client: DatabaseClient | SupabaseClient,
+  accountIds: string[]
+): Promise<number> {
+  let propagationFailed = 0;
+  for (const accountId of accountIds) {
+    try {
+      await propagateRevokedAccount(client, accountId);
+    } catch (err) {
+      propagationFailed++;
+      console.error(
+        '[connect] Failed to propagate revocation for account:',
+        accountId,
+        err instanceof Error ? err.message : err
+      );
+    }
+    try {
+      if ('query' in client && typeof client.query === 'function') {
+        await (client as DatabaseClient).query(
+          `UPDATE social_accounts
+           SET encrypted_access_token = NULL, encrypted_refresh_token = NULL, updated_at = now()
+           WHERE id = $1`,
+          [accountId]
+        );
+      } else {
+        const { error } = await (client as SupabaseClient)
+          .from('social_accounts')
+          .update({
+            encrypted_access_token: null,
+            encrypted_refresh_token: null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', accountId);
+        if (error) throw new Error(error.message);
+      }
+    } catch (err) {
+      console.error(
+        '[connect] Failed to null revoked account tokens:',
+        accountId,
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
+  return propagationFailed;
 }
 
 /**
