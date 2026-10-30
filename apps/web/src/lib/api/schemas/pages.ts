@@ -53,6 +53,7 @@ export const FacebookPageViewSchema = z.object({
   rateLimitedAt: z.string().nullable().optional(),
   unmatchedPostTypes: z.array(z.string()).optional(),
   queueCounts: PageCardQueueCountsSchema.optional(),
+  queueCountsError: z.boolean().optional(),
 });
 export type FacebookPageView = z.infer<typeof FacebookPageViewSchema>;
 

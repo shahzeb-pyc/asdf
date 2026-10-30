@@ -131,4 +131,50 @@ describe('Pages list card queue counts', () => {
       failed: 0,
     });
   });
+
+  it('flags a counts failure instead of rendering fake zeros (R6)', async () => {
+    const mockDb = {
+      query: vi.fn().mockImplementation((sql: string) => {
+        if (sql.includes('FROM workspaces')) {
+          return Promise.resolve([{ id: 'ws_123' }]);
+        }
+        if (sql.includes('FROM queue_items')) {
+          return Promise.reject(new Error('counts boom'));
+        }
+        if (sql.includes('FROM destinations')) {
+          return Promise.resolve([
+            {
+              id: pageAId,
+              facebook_account_id: accountId,
+              account_display_name: 'Alex Marketing',
+              fb_page_id: 'page_a',
+              page_name: 'Counted Page',
+              profile_picture_url: null,
+              category: 'Community',
+              starting_followers: 1000,
+              current_followers: 1000,
+              status: 'active',
+              tasks: ['CREATE_CONTENT'],
+              created_at: '2026-10-09T10:00:00.000Z',
+              updated_at: '2026-10-09T10:00:00.000Z',
+            },
+          ]);
+        }
+        return Promise.resolve([]);
+      }),
+    } as unknown as DatabaseClient;
+
+    const req = new NextRequest('http://localhost:3000/api/tenant/acme/pages', {
+      headers: { cookie: validSessionCookie },
+    });
+    const res = await handleListPages(req, 'acme', mockDb);
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.pages).toHaveLength(1);
+    // No numbers at all, plus the error flag — a page with a
+    // failed counts query must be distinguishable from a page
+    // that genuinely has zero queued/posted/failed posts.
+    expect(json.pages[0].queueCounts).toBeUndefined();
+    expect(json.pages[0].queueCountsError).toBe(true);
+  });
 });

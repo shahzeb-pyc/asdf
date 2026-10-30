@@ -123,6 +123,7 @@ interface StatusCounts {
   failedCount: number;
   skippedCount: number;
   cancelledCount: number;
+  publishingCount: number;
 }
 
 const EMPTY_COUNTS: StatusCounts = {
@@ -131,6 +132,7 @@ const EMPTY_COUNTS: StatusCounts = {
   failedCount: 0,
   skippedCount: 0,
   cancelledCount: 0,
+  publishingCount: 0,
 };
 
 export async function handleListQueueItems(
@@ -274,6 +276,7 @@ export async function handleListQueueItems(
         else if (row.status === 'published') counts.publishedCount = cnt;
         else if (row.status === 'failed') counts.failedCount = cnt;
         else if (row.status === 'cancelled') counts.cancelledCount = cnt;
+        else if (row.status === 'publishing') counts.publishingCount = cnt;
       }
     } catch (err) {
       // Non-fatal counter fallback — counts stay at zero, but the
@@ -300,20 +303,58 @@ export async function handleListQueueItems(
     return NextResponse.json({ error: 'Database service unavailable' }, { status: 500 });
   }
 
-  const [{ data: workspacePages }, { data: workspaceRow }] = await Promise.all([
-    supabase
+  // R7: the destinations fetch gates the whole list. Its failure
+  // used to fall through to `workspacePages || []` and answer
+  // items:[] total:0 with HTTP 200 — indistinguishable from an
+  // empty queue. Fail loud instead. The fetch is also paged in
+  // 1,000-row chunks (PostgREST's default cap), so a workspace
+  // with more than 1,000 destinations does not silently lose the
+  // queue rows of the destinations past the cap.
+  const workspaceRowPromise = supabase
+    .from('workspaces')
+    .select('owner_id')
+    .eq('id', workspaceId)
+    .maybeSingle();
+  const allWorkspacePages: Array<{
+    id: string;
+    status: string;
+    metadata: Record<string, unknown> | null;
+  }> = [];
+  const DESTINATIONS_CHUNK = 1000;
+  let destinationsError: { message: string } | null = null;
+  for (let from = 0; ; from += DESTINATIONS_CHUNK) {
+    const { data, error } = await supabase
       .from('destinations')
       .select('id, status, metadata')
       .eq('workspace_id', workspaceId)
-      .eq('platform', 'facebook'),
-    supabase.from('workspaces').select('owner_id').eq('id', workspaceId).maybeSingle(),
-  ]);
+      .eq('platform', 'facebook')
+      .range(from, from + DESTINATIONS_CHUNK - 1);
+    if (error) {
+      destinationsError = error;
+      break;
+    }
+    const page = (data || []) as Array<{
+      id: string;
+      status: string;
+      metadata: Record<string, unknown> | null;
+    }>;
+    allWorkspacePages.push(...page);
+    if (page.length < DESTINATIONS_CHUNK) break;
+  }
+  if (destinationsError) {
+    logServerError('[publishing/queue] destinations fetch failed', destinationsError, {
+      source: 'publishing-queue-list',
+      subdomain,
+    });
+    return NextResponse.json({ error: 'Failed to list queue items' }, { status: 500 });
+  }
+  const { data: workspaceRow } = await workspaceRowPromise;
 
   const ownerId = workspaceRow?.owner_id ?? session.userId;
 
   // Visible destinations: everything not disconnected, plus paused
   // pages (stored as disconnected + the fb_status marker).
-  const workspacePageIds = (workspacePages || [])
+  const workspacePageIds = allWorkspacePages
     .filter(
       (p) =>
         p.status !== 'disconnected' ||
@@ -378,7 +419,13 @@ export async function handleListQueueItems(
   // stays zero.
   const counts: StatusCounts = { ...EMPTY_COUNTS };
   try {
-    const QUEUE_LIST_COUNT_STATUSES = ['queued', 'published', 'failed', 'cancelled'] as const;
+    const QUEUE_LIST_COUNT_STATUSES = [
+      'queued',
+      'published',
+      'failed',
+      'cancelled',
+      'publishing',
+    ] as const;
     const perStatus = await Promise.all(
       QUEUE_LIST_COUNT_STATUSES.map(async (countStatus) => {
         let countQuery = supabase
@@ -393,11 +440,15 @@ export async function handleListQueueItems(
         return [countStatus, count ?? 0] as const;
       })
     );
+    const COUNT_FIELDS = {
+      queued: 'queuedCount',
+      published: 'publishedCount',
+      failed: 'failedCount',
+      cancelled: 'cancelledCount',
+      publishing: 'publishingCount',
+    } as const;
     for (const [countStatus, count] of perStatus) {
-      if (countStatus === 'queued') counts.queuedCount = count;
-      else if (countStatus === 'published') counts.publishedCount = count;
-      else if (countStatus === 'failed') counts.failedCount = count;
-      else if (countStatus === 'cancelled') counts.cancelledCount = count;
+      counts[COUNT_FIELDS[countStatus]] = count;
     }
   } catch (err) {
     // Counts stay at zero, as before — logged (spec 139 B19).

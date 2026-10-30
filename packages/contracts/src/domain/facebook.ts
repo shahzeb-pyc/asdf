@@ -161,6 +161,15 @@ export const FacebookPageViewSchema = z.object({
    * card renders zeros rather than hiding the row.
    */
   queueCounts: PageCardQueueCountsSchema.optional(),
+  /**
+   * True when the Pages list counts query failed for this page's
+   * slice (R6). The counts failure is slice-wide, not per-page, so
+   * every page in the slice carries it; the card then omits the
+   * numbers (dashes + an "unavailable" note) instead of rendering
+   * fake zeros. Absent/false means the counts are real — including
+   * genuine zeros for a page with no queue rows.
+   */
+  queueCountsError: z.boolean().optional(),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
   rateLimitedAt: z.coerce.date().nullable().optional(),

@@ -255,6 +255,13 @@ export const ListQueueItemsResponseSchema = z.object({
   failedCount: z.number().int().nonnegative().optional(),
   skippedCount: z.number().int().nonnegative().optional(),
   cancelledCount: z.number().int().nonnegative().optional(),
+  /**
+   * In-flight posts. Previously absent, so a publishing post was
+   * counted in `total` (and in the All chip when unfiltered) but in
+   * no per-status count — the All chip's number then varied with
+   * the active filter (R11). Optional so older payloads still parse.
+   */
+  publishingCount: z.number().int().nonnegative().optional(),
 });
 
 export type ListQueueItemsResponse = z.infer<typeof ListQueueItemsResponseSchema>;

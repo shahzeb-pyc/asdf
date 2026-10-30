@@ -73,6 +73,7 @@ export const ListQueueItemsResponseSchema = z.object({
   failedCount: z.number().int().nonnegative().optional(),
   skippedCount: z.number().int().nonnegative().optional(),
   cancelledCount: z.number().int().nonnegative().optional(),
+  publishingCount: z.number().int().nonnegative().optional(),
 });
 export type ListQueueItemsResponse = z.infer<typeof ListQueueItemsResponseSchema>;
 

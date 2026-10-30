@@ -586,8 +586,9 @@ async function fetchSupabasePagesPage(
  *
  * `posted` is the all-time `published` total, renamed at this
  * boundary. `publishing`, `skipped` and `cancelled` are never
- * counted here. A page with no queue rows — or a failed counts
- * query, logged below — gets zeros, never a hidden row.
+ * counted here. A page with no queue rows gets zeros, never a
+ * hidden row. A failed counts query gets NO numbers at all plus
+ * `queueCountsError` (R6) — never zeros.
  */
 export interface PageCardQueueCounts {
   queued: number;
@@ -614,12 +615,24 @@ function toCount(value: unknown): number {
  * dropped with the legacy schema (20261024130000) and its last
  * definition still read the dropped legacy_queue_items table.
  */
+/**
+ * Counts result, with the failure carried alongside the map (R6):
+ * a failed counts query is slice-wide, not per-page, so no page in
+ * the slice can be told apart from a genuinely empty page by its
+ * counts alone. Callers must surface `error` on the card instead of
+ * rendering the map's zeros.
+ */
+interface PageCardQueueCountsResult {
+  counts: Map<string, PageCardQueueCounts>;
+  error: boolean;
+}
+
 async function fetchPageCardQueueCountsSql(
   dbClient: DatabaseClient,
   pageIds: string[]
-): Promise<Map<string, PageCardQueueCounts>> {
+): Promise<PageCardQueueCountsResult> {
   const counts = new Map<string, PageCardQueueCounts>();
-  if (pageIds.length === 0) return counts;
+  if (pageIds.length === 0) return { counts, error: false };
   try {
     const rows = await dbClient.query<{
       destination_id?: unknown;
@@ -645,13 +658,15 @@ async function fetchPageCardQueueCountsSql(
       });
     }
   } catch (err) {
-    // The list still serves (with zeros), but the failure is logged
-    // — queue counters must not silently zero (spec 139 B19).
+    // The list still serves, but the failure is logged AND carried
+    // to the caller (R6) — queue counters must not silently zero
+    // (spec 139 B19). The card omits the numbers on error.
     logServerError('[pages] List queue-count query failed', err, {
       source: 'pages-list-queue-counts',
     });
+    return { counts: new Map<string, PageCardQueueCounts>(), error: true };
   }
-  return counts;
+  return { counts, error: false };
 }
 
 /** Minimal PostgREST builder shape for the queue-counts select. */
@@ -690,9 +705,9 @@ async function fetchPageCardQueueCountsSupabase(
   supabase: SupabaseClient<Database>,
   workspaceId: string,
   pageIds: string[]
-): Promise<Map<string, PageCardQueueCounts>> {
+): Promise<PageCardQueueCountsResult> {
   const counts = new Map<string, PageCardQueueCounts>();
-  if (pageIds.length === 0) return counts;
+  if (pageIds.length === 0) return { counts, error: false };
   const bump = (destinationId: string, status: string): void => {
     const current =
       counts.get(destinationId) ?? { ...DEFAULT_PAGE_CARD_QUEUE_COUNTS };
@@ -737,19 +752,28 @@ async function fetchPageCardQueueCountsSupabase(
     logServerError('[pages] List queue-count query failed', err, {
       source: 'pages-list-queue-counts',
     });
-    return new Map<string, PageCardQueueCounts>();
+    return { counts: new Map<string, PageCardQueueCounts>(), error: true };
   }
-  return counts;
+  return { counts, error: false };
 }
 
 function attachPageCardQueueCounts(
   pages: MappedPage[],
-  counts: Map<string, PageCardQueueCounts>
-): Array<MappedPage & { queueCounts: PageCardQueueCounts }> {
-  return pages.map((page) => ({
-    ...page,
-    queueCounts: counts.get(page.id) ?? { ...DEFAULT_PAGE_CARD_QUEUE_COUNTS },
-  }));
+  result: PageCardQueueCountsResult
+): Array<
+  MappedPage & { queueCounts?: PageCardQueueCounts; queueCountsError?: boolean }
+> {
+  // On a counts failure the numbers are omitted entirely and the
+  // error flag is set, so the card cannot mistake them for zeros
+  // (R6). On success a page with no queue rows keeps real zeros.
+  return pages.map((page) =>
+    result.error
+      ? { ...page, queueCountsError: true }
+      : {
+          ...page,
+          queueCounts: result.counts.get(page.id) ?? { ...DEFAULT_PAGE_CARD_QUEUE_COUNTS },
+        }
+  );
 }
 
 export async function handleListPages(
