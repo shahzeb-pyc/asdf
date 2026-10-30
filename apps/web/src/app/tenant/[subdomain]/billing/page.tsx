@@ -13,20 +13,23 @@ interface BillingPageProps {
   searchParams?: Promise<{ view?: string }>;
 }
 
-type BillingViewName = 'plans' | 'build' | 'checkout' | 'confirmation' | 'payments';
+type BillingSectionName = 'my-plan' | 'purchase' | 'payments';
 
-const BILLING_VIEWS: BillingViewName[] = ['plans', 'build', 'checkout', 'confirmation', 'payments'];
+const BILLING_SECTIONS: BillingSectionName[] = ['my-plan', 'purchase', 'payments'];
 
 /**
  * Billing route. Admins do not see the user billing page: when an
  * admin logs in, this same route renders the subscriptions
  * approval view, matching the admin-only sidebar.
  *
- * For users, Billing is five pages behind one route, selected by
- * ?view= (plans | build | checkout | confirmation | payments) so the
- * sidebar group leaves are plain first-click Links and the browser
- * back button moves between pages. Checkout and Confirmation are
- * flow-only: they are reached from Build plan, never from the sidebar.
+ * For users, Billing is exactly three sections behind one route,
+ * selected by ?view= (my-plan | purchase | payments, default
+ * my-plan) so the sidebar group leaves are plain first-click Links
+ * and the browser back button moves between sections. Purchase's
+ * internal steps (builder → checkout → confirmation) are view
+ * state inside Purchase, not ?view= values and not sidebar leaves.
+ * Old ?view= values (plans, build, checkout, confirmation) are no
+ * longer accepted and fall back to My Plan.
  */
 export default async function TenantBillingPage({
   params,
@@ -41,9 +44,9 @@ export default async function TenantBillingPage({
     return <AdminApprovalsView subdomain={subdomain} />;
   }
   const rawView = (await searchParams)?.view;
-  const initialStep: BillingViewName =
-    rawView !== undefined && (BILLING_VIEWS as string[]).includes(rawView)
-      ? (rawView as BillingViewName)
-      : 'plans';
-  return <BillingView subdomain={subdomain} initialStep={initialStep} />;
+  const initialSection: BillingSectionName =
+    rawView !== undefined && (BILLING_SECTIONS as string[]).includes(rawView)
+      ? (rawView as BillingSectionName)
+      : 'my-plan';
+  return <BillingView subdomain={subdomain} initialSection={initialSection} />;
 }

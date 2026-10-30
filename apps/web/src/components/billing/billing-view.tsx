@@ -43,7 +43,9 @@ const PLATFORM_LABELS: Record<keyof PlatformCounts, string> = {
 };
 
 type BankMethod = 'easypaisa' | 'nayapay' | 'ubl';
-type Step = 'plans' | 'build' | 'checkout' | 'confirmation' | 'payments';
+/** Billing's three sections. Purchase-internal steps are separate, below. */
+type Section = 'my-plan' | 'purchase' | 'payments';
+type PurchaseStep = 'builder' | 'checkout' | 'confirmation';
 type PaymentType = 'bank' | 'crypto';
 
 interface ConfirmationData {
@@ -89,6 +91,7 @@ function countsSummary(counts: PlatformCounts): string {
   return parts.length > 0 ? parts.join(', ') : 'No pages or accounts selected';
 }
 
+/** Skeleton for the My Plan section (the Billing default view). */
 function BillingSkeleton() {
   return (
     <div aria-busy="true" aria-label="Loading billing" className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
@@ -96,47 +99,41 @@ function BillingSkeleton() {
         <Skeleton className="h-8 w-32" />
         <Skeleton className="h-4 w-72 max-w-full" />
       </div>
-      <div className="flex gap-2">
-        <Skeleton className="h-8 w-20" />
-        <Skeleton className="h-8 w-24" />
-      </div>
       <Card>
         <CardContent className="flex flex-col gap-3 pt-6">
           <Skeleton className="h-6 w-48" />
           <Skeleton className="h-4 w-full" />
         </CardContent>
       </Card>
-      <div className="grid items-stretch gap-6 lg:grid-cols-2">
-        <Card>
-          <CardContent className="flex flex-col gap-4 pt-6">
-            <Skeleton className="h-6 w-32" />
-            <Skeleton className="h-10 w-24" />
-            <Skeleton className="h-4 w-full" />
-            <Skeleton className="h-4 w-full" />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex flex-col gap-4 pt-6">
-            <Skeleton className="h-6 w-32" />
-            <Skeleton className="h-10 w-24" />
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-          </CardContent>
-        </Card>
-      </div>
-      <div className="flex flex-col gap-4 border-t border-line pt-6">
-        <Skeleton className="h-6 w-48" />
-        <Skeleton className="h-10 w-full" />
-      </div>
+      <Card>
+        <CardContent className="flex flex-col gap-4 pt-6">
+          <Skeleton className="h-6 w-48" />
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-full" />
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent className="flex flex-col gap-4 pt-6">
+          <Skeleton className="h-6 w-48" />
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-full" />
+        </CardContent>
+      </Card>
     </div>
   );
 }
 
-function StepIndicator({ current }: Readonly<{ current: Step }>) {
-  const steps: { id: Step; label: string }[] = [
-    { id: 'plans', label: 'Plans' },
-    { id: 'build', label: 'Build plan' },
+/**
+ * Steps inside the Purchase section only (builder → checkout →
+ * confirmation). These are view state inside Purchase, not sidebar
+ * leaves and not ?view= values; the sidebar navigates between the
+ * three sections, and Back controls inside Purchase move between
+ * these steps.
+ */
+function PurchaseStepIndicator({ current }: Readonly<{ current: PurchaseStep }>) {
+  const steps: { id: PurchaseStep; label: string }[] = [
+    { id: 'builder', label: 'Build plan' },
     { id: 'checkout', label: 'Checkout' },
     { id: 'confirmation', label: 'Confirmation' },
   ];
@@ -167,39 +164,6 @@ function StepIndicator({ current }: Readonly<{ current: Step }>) {
           </span>
         );
       })}
-    </nav>
-  );
-}
-
-/**
- * Top-level Billing navigation (Plans | Payments). Used only on the two
- * top-level pages; the flow pages (Build plan, Checkout, Confirmation)
- * use StepIndicator instead. Navigation goes through the ?view= URL
- * param so the sidebar group and the browser back button stay in sync.
- */
-function PageNav({
-  current,
-  onNavigate,
-}: Readonly<{
-  current: 'plans' | 'payments';
-  onNavigate: (view: 'plans' | 'payments') => void;
-}>) {
-  return (
-    <nav aria-label="Billing pages" className="flex gap-2 border-b border-line">
-      {(['plans', 'payments'] as const).map((view) => (
-        <button
-          key={view}
-          type="button"
-          aria-current={current === view ? 'page' : undefined}
-          onClick={() => onNavigate(view)}
-          className={cn(
-            'border-b-2 px-3 py-2 text-body font-medium',
-            current === view ? 'border-ink text-ink' : 'border-transparent text-ink-sub hover:text-ink'
-          )}
-        >
-          {view === 'plans' ? 'Plans' : 'Payments'}
-        </button>
-      ))}
     </nav>
   );
 }
@@ -237,30 +201,33 @@ function MethodCard({
 
 export function BillingView({
   subdomain,
-  initialStep,
-}: Readonly<{ subdomain: string; initialStep: Step }>) {
+  initialSection,
+}: Readonly<{ subdomain: string; initialSection: Section }>) {
   const [status, setStatus] = React.useState<BillingStatusResponse | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [reloading, setReloading] = React.useState(false);
   const [counts, setCounts] = React.useState<PlatformCounts | null>(null);
-  const [step, setStep] = React.useState<Step>(initialStep);
+  const [section, setSection] = React.useState<Section>(initialSection);
+  const [purchaseStep, setPurchaseStep] = React.useState<PurchaseStep>('builder');
   const router = useRouter();
   const pathname = usePathname();
 
   /**
    * Sidebar leaves and the browser back button navigate by ?view=, which
-   * re-renders this component with a new initialStep. Only follow the
-   * prop when it actually changes — internal flow transitions (build →
-   * checkout → confirmation) update the URL themselves via navigateTo
-   * and must not be reset by this effect.
+   * re-renders this component with a new initialSection. Only follow
+   * the prop when it actually changes — Purchase-internal steps
+   * (builder → checkout → confirmation) are view state only and must
+   * not be reset by this effect. Landing on a section always starts
+   * Purchase at its builder step.
    */
-  const prevInitialStepRef = React.useRef<Step>(initialStep);
+  const prevInitialSectionRef = React.useRef<Section>(initialSection);
   React.useEffect(() => {
-    if (prevInitialStepRef.current !== initialStep) {
-      prevInitialStepRef.current = initialStep;
-      setStep(initialStep);
+    if (prevInitialSectionRef.current !== initialSection) {
+      prevInitialSectionRef.current = initialSection;
+      setSection(initialSection);
+      setPurchaseStep('builder');
     }
-  }, [initialStep]);
+  }, [initialSection]);
   const [paymentType, setPaymentType] = React.useState<PaymentType>('bank');
   const [bankMethod, setBankMethod] = React.useState<BankMethod>('easypaisa');
   const [screenshot, setScreenshot] = React.useState<File | null>(null);
@@ -326,34 +293,46 @@ export function BillingView({
   }
 
   /**
-   * Every Billing page change goes through the ?view= URL param, so the
-   * sidebar group highlights the right sub-leaf and the browser back
-   * button moves between pages. Sidebar leaves themselves are plain
-   * Links; this is only for in-page actions (Back buttons, Continue,
-   * View payments).
+   * Moving between Billing's three sections goes through the ?view=
+   * URL param with a push (not replace), so the sidebar group
+   * highlights the right sub-leaf and the browser back button moves
+   * between sections. Sidebar leaves themselves are plain Links;
+   * this is only for in-page actions (Buy or upgrade, View payments,
+   * Back buttons).
    */
-  function navigateTo(target: Step) {
-    setStep(target);
-    if (pathname) router.replace(`${pathname}?view=${target}`, { scroll: false });
+  function navigateToSection(target: Section) {
+    setSection(target);
+    setPurchaseStep('builder');
+    if (pathname) router.push(`${pathname}?view=${target}`, { scroll: false });
     window.scrollTo({ top: 0 });
   }
 
-  function goToBuild() {
-    navigateTo('build');
+  function goToMyPlan() {
+    navigateToSection('my-plan');
+  }
+
+  function goToPurchase() {
+    navigateToSection('purchase');
+  }
+
+  function goToPayments() {
+    navigateToSection('payments');
+  }
+
+  /** Steps inside Purchase only — no URL change, no section change. */
+  function goToPurchaseStep(target: PurchaseStep) {
+    setPurchaseStep(target);
+    window.scrollTo({ top: 0 });
+  }
+
+  function goToBuilder() {
+    goToPurchaseStep('builder');
   }
 
   function goToCheckout() {
     setFormError(null);
     setConfirmation(null);
-    navigateTo('checkout');
-  }
-
-  function goToPlans() {
-    navigateTo('plans');
-  }
-
-  function goToPayments() {
-    navigateTo('payments');
+    goToPurchaseStep('checkout');
   }
 
   async function copyText(value: string, key: string) {
@@ -398,7 +377,7 @@ export function BillingView({
         isUpgrade,
         crypto: null,
       });
-      navigateTo('confirmation');
+      goToPurchaseStep('confirmation');
     } catch (err) {
       setFormError(getErrorMessage(err));
     } finally {
@@ -431,7 +410,7 @@ export function BillingView({
         isUpgrade,
         crypto: result,
       });
-      navigateTo('confirmation');
+      goToPurchaseStep('confirmation');
     } catch (err) {
       setFormError(getErrorMessage(err));
     } finally {
@@ -468,15 +447,15 @@ export function BillingView({
     ? 'Choose at least one page or account first.'
     : plainQuoteError(quoteError) ?? (!screenshot ? 'Add a screenshot of your payment so we can approve it.' : null);
 
-  // Rate is stated once, in the Paid card header — not repeated on every row.
-  // Included/used only shows where it matters (a non-zero included or used count);
-  // otherwise the row just names the unit, so a Free workspace is not six
-  // identical "Included 0, used 0" lines.
+  // Purchase rows name the unit only. Included/in-use counts belong
+  // to My Plan and are deliberately NOT shown here — the stepper
+  // value itself is the count being bought (starting from the current
+  // plan's counts for a Paid user). Rate is stated once, in the
+  // Purchase header — not repeated on every row.
   const configurator = (
     <div className="flex flex-col">
       {SUBSCRIPTION_PLATFORMS.map((platform) => {
         const count = effectiveCounts[platform];
-        const showUsage = entitlement.counts[platform] > 0 || entitlement.usage[platform] > 0;
         return (
           <div
             key={platform}
@@ -485,9 +464,7 @@ export function BillingView({
             <div className="min-w-0 flex-1">
               <p className="truncate text-body font-medium text-ink">{PLATFORM_LABELS[platform]}</p>
               <p className="truncate text-body text-ink-sub">
-                {showUsage
-                  ? `Included: ${entitlement.counts[platform]} · In use: ${entitlement.usage[platform]}`
-                  : 'Not included yet'}
+                {platform === 'facebook' ? 'Pages' : 'Accounts'}
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
@@ -606,8 +583,8 @@ export function BillingView({
             title="No payments yet"
             description="Payments you make will show here, with their status."
             action={
-              <Button variant="link" onClick={goToPlans}>
-                Back to plans
+              <Button variant="link" onClick={goToPurchase}>
+                Buy or upgrade
               </Button>
             }
           />
@@ -644,18 +621,18 @@ export function BillingView({
     </Card>
   );
 
-  /* ---------- Confirmation step ---------- */
-  if (step === 'confirmation' && confirmation) {
+  /* ---------- Confirmation step (inside Purchase) ---------- */
+  if (section === 'purchase' && purchaseStep === 'confirmation' && confirmation) {
     const cryptoAmount = confirmation.crypto
       ? (confirmation.crypto.payAmount ?? confirmation.crypto.estimatedUsdt)
       : null;
     return (
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
         <div className="flex flex-col gap-1">
-          <h1 className="text-xl leading-heading font-semibold text-ink">Billing</h1>
+          <h1 className="text-xl leading-heading font-semibold text-ink">Purchase</h1>
           <p className="text-body text-ink-sub">{confirmation.kind === 'bank' ? 'We have received your payment.' : 'One step left: send your payment.'}</p>
         </div>
-        <StepIndicator current="confirmation" />
+        <PurchaseStepIndicator current="confirmation" />
         <Card>
           <CardHeader>
             <CardTitle>
@@ -692,7 +669,7 @@ export function BillingView({
               receive them. You can see this payment under Payments.
             </p>
             <div className="flex flex-wrap gap-2">
-              <Button onClick={goToPlans}>Back to plans</Button>
+              <Button onClick={goToMyPlan}>Back to My Plan</Button>
               <Button variant="outline" onClick={goToPayments}>
                 View payments
               </Button>
@@ -703,12 +680,12 @@ export function BillingView({
     );
   }
 
-  /* ---------- Checkout step ---------- */
-  if (step === 'checkout') {
+  /* ---------- Checkout step (inside Purchase) ---------- */
+  if (section === 'purchase' && purchaseStep === 'checkout') {
     return (
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
         <div className="flex flex-col gap-1">
-          <Button variant="outline" size="sm" className="self-start" onClick={goToBuild}>
+          <Button variant="outline" size="sm" className="self-start" onClick={goToBuilder}>
             <ArrowLeftIcon aria-hidden className="size-4" /> Back to build plan
           </Button>
           <h1 className="text-xl leading-heading font-semibold text-ink">Checkout</h1>
@@ -718,13 +695,9 @@ export function BillingView({
             {isUpgrade ? ' to pay now' : ' / month'}
           </p>
         </div>
-        <StepIndicator current="checkout" />
-        {entitlement.reason ? (
-          <Alert variant="warning">
-            <AlertTitle>Posting is paused</AlertTitle>
-            <AlertDescription>{entitlement.reason}</AlertDescription>
-          </Alert>
-        ) : null}
+        <PurchaseStepIndicator current="checkout" />
+        {/* The posting-paused warning belongs to My Plan only, so it is
+            deliberately not repeated here. */}
         {quoteError ? (
           <Alert variant="destructive">
             <AlertTitle>You can only increase your plan</AlertTitle>
@@ -914,8 +887,8 @@ export function BillingView({
     );
   }
 
-  /* ---------- Build your plan page ---------- */
-  if (step === 'build') {
+  /* ---------- Purchase: builder step ---------- */
+  if (section === 'purchase' && purchaseStep === 'builder') {
     const buildDisabled =
       busy !== null || units === 0 || Boolean(quoteError) || (isPaid && countsUnchanged);
     const buildDisabledReason =
@@ -927,16 +900,19 @@ export function BillingView({
     return (
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
         <div className="flex flex-col gap-2">
-          <Button variant="outline" size="sm" className="self-start" onClick={goToPlans}>
-            <ArrowLeftIcon aria-hidden className="size-4" /> Back to plans
+          <Button variant="outline" size="sm" className="self-start" onClick={goToMyPlan}>
+            <ArrowLeftIcon aria-hidden className="size-4" /> Back to My Plan
           </Button>
-          <h1 className="text-xl leading-heading font-semibold text-ink">Build your paid plan</h1>
+          <h1 className="text-xl leading-heading font-semibold text-ink">Purchase</h1>
           <p className="text-body text-ink-sub">
             70 PKR per page or account, paid monthly. Facebook counts pages; other platforms
             count accounts.
           </p>
+          <p className="text-body text-ink-sub">
+            Example: 5 Facebook pages + 3 Instagram accounts = 560 PKR / month.
+          </p>
         </div>
-        <StepIndicator current="build" />
+        <PurchaseStepIndicator current="builder" />
         {quoteError ? (
           <Alert variant="destructive">
             <AlertTitle>You can only increase your plan</AlertTitle>
@@ -969,36 +945,57 @@ export function BillingView({
             </div>
           </div>
         </div>
+        {/* What you are buying, in short — this explanation lives in
+            Purchase only, not on My Plan or Payments. */}
+        <section className="border-t border-line pt-6">
+          <h2 className="text-lg leading-heading font-semibold text-ink">How the limit works</h2>
+          <ul className="mt-4 flex flex-col gap-3 text-body text-ink">
+            <li className="flex items-start gap-2">
+              <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
+              <span>
+                <span className="font-medium">One limit per platform, across everything.</span>{' '}
+                5 Facebook pages means 5 in total for scheduling, auto download-upload and auto
+                repost — not 5 in each.
+              </span>
+            </li>
+            <li className="flex items-start gap-2">
+              <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
+              <span>
+                <span className="font-medium">Connecting is unlimited.</span> Connecting an
+                account never counts; it only counts once you actually use it.
+              </span>
+            </li>
+          </ul>
+        </section>
       </div>
     );
   }
 
-  /* ---------- Payments page ---------- */
-  if (step === 'payments') {
+  /* ---------- Payments section ---------- */
+  if (section === 'payments') {
     return (
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
         <div className="flex flex-col gap-2">
-          <h1 className="text-xl leading-heading font-semibold text-ink">Billing</h1>
+          <h1 className="text-xl leading-heading font-semibold text-ink">Payments</h1>
           <p className="text-body text-ink-sub">
             Every payment you have made, and its status.
           </p>
         </div>
-        <PageNav current="payments" onNavigate={(view) => navigateTo(view)} />
         {paymentsHistory}
       </div>
     );
   }
 
-  /* ---------- Plans view (default) ---------- */
+  /* ---------- My Plan section (default) ----------
+     Only information about the plan the user is currently on. No
+     pricing cards, no builder, no checkout, no payment methods, no
+     payments history here — just one link to Purchase. */
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
       <div className="flex flex-col gap-1">
-        <h1 className="text-xl leading-heading font-semibold text-ink">Billing</h1>
-        <p className="text-body text-ink-sub">
-          Choose a plan, then pay. Paid plans cost 70 PKR per page or account, each month.
-        </p>
+        <h1 className="text-xl leading-heading font-semibold text-ink">My plan</h1>
+        <p className="text-body text-ink-sub">What your current plan includes.</p>
       </div>
-      <PageNav current="plans" onNavigate={(view) => navigateTo(view)} />
 
       {entitlement.reason ? (
         <Alert variant="warning">
@@ -1007,7 +1004,7 @@ export function BillingView({
         </Alert>
       ) : null}
 
-      {/* Current-plan status panel — Free is a plan, not a failure, so it
+      {/* Current-plan status — Free is a plan, not a failure, so it
           gets no red mark; "No paid plan" replaces the bare dash. */}
       <Card>
         <CardHeader>
@@ -1045,152 +1042,71 @@ export function BillingView({
         </CardContent>
       </Card>
 
-      {/* Pricing cards — matched pair: equal height, Free content anchored
-          to the bottom instead of stranded mid-card. */}
-      <div className="grid items-stretch gap-6 lg:grid-cols-2">
-        {/* Free card */}
-        <Card className="flex flex-col">
-          <CardHeader>
-            <CardTitle>Free</CardTitle>
-            <CardDescription>Start with the Prompt Library.</CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-1 flex-col gap-4">
-            <p className="text-body text-ink">
-              <span className="text-3xl font-semibold tabular-nums">0 PKR</span>
-              <span className="text-ink-sub"> / month</span>
-            </p>
-            <ul className="flex flex-col gap-2 text-body">
-              <li className="flex items-start gap-2">
-                <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
-                <span>Prompt Library</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
-                <span>Connect as many accounts as you like</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <XIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-critical" />
-                <span>Posting and scheduling</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <XIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-critical" />
-                <span>Scheduling, auto download-upload and auto repost</span>
-              </li>
-            </ul>
-            <div className="mt-auto flex flex-col gap-2">
-              <p className="text-body text-ink-sub">
-                There is no trial — Free is your starting plan.
-              </p>
-              {!isPaid ? (
-                <BillingStatusMark kind="ok" label="Current plan" />
-              ) : null}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Paid card — featured. No builder, no summary panel, no checkout
-            button buried here: those live on their own pages. This card
-            only presents the plan and sends the user to Build your plan. */}
-        <Card id="billing-paid-card" className="flex scroll-mt-20 flex-col">
-          <CardHeader>
-            <div className="flex items-baseline gap-2">
-              <CardTitle>Paid</CardTitle>
-              <span className="rounded-sm bg-primary px-2 py-0.5 text-metadata font-medium text-on-primary">
-                Featured
-              </span>
-            </div>
-            <CardDescription>Pay only for what you manage.</CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-1 flex-col gap-5">
-            <p className="flex flex-wrap items-baseline gap-x-2 text-ink">
-              <span className="text-3xl font-semibold tabular-nums">70 PKR</span>
-              <span className="text-body text-ink-sub">per page or account, per month</span>
-            </p>
-            <p className="text-body text-ink-sub">
-              Paid monthly. Facebook counts pages; other platforms count accounts.
-            </p>
-            <ul className="flex flex-col gap-2 text-body">
-              <li className="flex items-start gap-2">
-                <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
-                <span>Prompt Library</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
-                <span>Posting and scheduling</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
-                <span>
-                  Scheduling, auto download-upload and auto repost, up to the pages and
-                  accounts in your plan
-                </span>
-              </li>
-              <li className="flex items-start gap-2">
-                <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
-                <span>Connect as many accounts as you like</span>
-              </li>
-            </ul>
-            <p className="text-body text-ink-sub">
-              Example: 5 Facebook pages + 3 Instagram accounts = 560 PKR / month.
-            </p>
-            <div className="mt-auto flex flex-col gap-2">
-              {isPaid && countsUnchanged ? (
-                <BillingStatusMark kind="ok" label="Current plan" />
-              ) : null}
-              <Button onClick={goToBuild}>
-                {!isPaid
-                  ? 'Build your paid plan'
-                  : countsChanged
-                    ? 'Review your plan change'
-                    : 'Change plan'}
-              </Button>
-              {isPaid && countsChanged ? (
-                <p className="text-body text-ink-sub">
-                  {countsSummary(effectiveCounts)} · {total} PKR / month
-                </p>
-              ) : null}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* How the limit works — plain section, not another box */}
-      <section className="border-t border-line pt-6">
-        <h2 className="text-lg leading-heading font-semibold text-ink">How the limit works</h2>
-        <div className="mt-4">
-          <ul className="flex flex-col gap-3 text-body text-ink">
+      {/* What this plan covers, in plain language. */}
+      <Card>
+        <CardHeader>
+          <CardTitle>What your plan covers</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ul className="flex flex-col gap-2 text-body">
             <li className="flex items-start gap-2">
               <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
-              <span>
-                <span className="font-medium">One limit per platform, across everything.</span>{' '}
-                5 Facebook pages means 5 in total for scheduling, auto download-upload and auto
-                repost — not 5 in each.
-              </span>
+              <span>Prompt Library</span>
             </li>
-            <li className="flex items-start gap-2">
-              <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
-              <span>
-                <span className="font-medium">Connecting is unlimited.</span> Connecting an
-                account never counts; it only counts once you actually use it.
-              </span>
-            </li>
-            <li className="flex items-start gap-2">
-              <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
-              <span>
-                <span className="font-medium">Monthly, from approval.</span> Each paid month lasts
-                30 days from approval.
-              </span>
-            </li>
-            <li className="flex items-start gap-2">
-              <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
-              <span>
-                <span className="font-medium">If you do not renew, posting pauses</span>{' '}
-                and you can only view your account until you renew.
-              </span>
-            </li>
+            {isPaid ? (
+              <>
+                <li className="flex items-start gap-2">
+                  <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
+                  <span>Posting and scheduling</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
+                  <span>
+                    Scheduling, auto download-upload and auto repost, up to the pages and
+                    accounts in your plan
+                  </span>
+                </li>
+              </>
+            ) : (
+              <>
+                <li className="flex items-start gap-2">
+                  <XIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-critical" />
+                  <span>Posting and scheduling</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <XIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-critical" />
+                  <span>Scheduling, auto download-upload and auto repost</span>
+                </li>
+              </>
+            )}
           </ul>
-        </div>
-      </section>
+        </CardContent>
+      </Card>
+
+      {/* Included and in-use counts, per platform. Read-only — no
+          steppers, no prices, no purchasing controls on this page. */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Pages and accounts by platform</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col">
+          {SUBSCRIPTION_PLATFORMS.map((platform) => (
+            <div
+              key={platform}
+              className="flex flex-wrap items-baseline justify-between gap-3 border-t border-line py-3 first:border-t-0 first:pt-0"
+            >
+              <span className="text-body font-medium text-ink">{PLATFORM_LABELS[platform]}</span>
+              <span className="text-body tabular-nums text-ink-sub">
+                Included: {entitlement.counts[platform]} · In use: {entitlement.usage[platform]}
+              </span>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+
+      <div>
+        <Button onClick={goToPurchase}>Buy or upgrade</Button>
+      </div>
     </div>
   );
 }
