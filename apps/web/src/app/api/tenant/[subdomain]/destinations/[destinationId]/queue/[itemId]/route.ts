@@ -86,6 +86,20 @@ export async function handleUpdateDestinationQueueItem(
     );
   }
 
+  // K1: fail closed on publishing rows too. The worker's outcome
+  // for an in-flight post is not traceable from here, so an edit
+  // racing it could publish stale content or lose the edit — the
+  // row is immutable until it settles, exactly like a published one.
+  if (existing.status === 'publishing') {
+    return NextResponse.json(
+      {
+        error: 'CANNOT_UPDATE_PUBLISHING_ITEM',
+        message: 'Publishing queue items cannot be modified while they are being published',
+      },
+      { status: 400 }
+    );
+  }
+
   const bodyResult = await readJsonBody(request);
   if (!bodyResult.ok) {
     if (bodyResult.reason === 'too-large') return bodyTooLargeResponse();
@@ -165,6 +179,36 @@ export async function handleUpdateDestinationQueueItem(
     }
   }
 
+  // R13, server-side half: the schema cap (63,206) cannot know
+  // the platform, so the per-platform cap is enforced here —
+  // Facebook feed 63,206, Facebook reels 2,200, every other
+  // platform its creation cap of 5,000. The schema's reel guard
+  // covers format-changing edits; this covers edits that leave
+  // the format untouched on an existing reel.
+  const newCaptionForCap = data.caption ?? existing.caption ?? '';
+  const newPlatformFormatForCap =
+    data.platformFormat !== undefined
+      ? data.platformFormat
+      : existing.platform_format;
+  const captionCap =
+    destination.platform === 'facebook'
+      ? newKind === 'video' && newPlatformFormatForCap === 'reel'
+        ? 2200
+        : 63206
+      : 5000;
+  if (newCaptionForCap.length > captionCap) {
+    return NextResponse.json(
+      {
+        error: 'INVALID_REQUEST',
+        message:
+          captionCap === 2200
+            ? 'Reel captions are limited to 2,200 characters'
+            : `Captions are limited to ${captionCap.toLocaleString('en-US')} characters`,
+      },
+      { status: 400 }
+    );
+  }
+
   const newStatus = data.status ?? existing.status;
   const updated = await updateDestinationQueueItem(
     client,
@@ -192,6 +236,12 @@ export async function handleUpdateDestinationQueueItem(
       status: newStatus,
       // Requeueing clears the claim marker; any other edit preserves it.
       claimedAt: newStatus === 'queued' ? null : existing.claimed_at,
+      // R12: requeueing a failed item resets its retry budget; any
+      // other edit preserves the stored count.
+      retryCount:
+        newStatus === 'queued' && existing.status === 'failed'
+          ? 0
+          : existing.retry_count,
     }
   );
 
@@ -247,6 +297,18 @@ export async function handleDeleteDestinationQueueItem(
       {
         error: 'CANNOT_DELETE_PUBLISHED_ITEM',
         message: 'Published queue items cannot be deleted',
+      },
+      { status: 400 }
+    );
+  }
+
+  // K1: same fail-closed rule as the update path — a publishing
+  // row is immutable until the worker settles it.
+  if (existing.status === 'publishing') {
+    return NextResponse.json(
+      {
+        error: 'CANNOT_DELETE_PUBLISHING_ITEM',
+        message: 'Publishing queue items cannot be deleted while they are being published',
       },
       { status: 400 }
     );

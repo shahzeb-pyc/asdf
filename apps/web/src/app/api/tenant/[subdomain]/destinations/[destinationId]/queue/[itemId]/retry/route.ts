@@ -240,6 +240,12 @@ export async function handleDestinationRetry(
       slotId,
       status: 'queued',
       claimedAt: null,
+      // R12: a retried post gets a fresh retry budget — the failed
+      // item's exhausted count must not carry into its new life,
+      // or the next failure would immediately exceed the ceiling.
+      // The Queue row's "Retry N of 3" reads retryCount, so it
+      // follows the reset on the next fetch.
+      retryCount: 0,
     }
   );
 

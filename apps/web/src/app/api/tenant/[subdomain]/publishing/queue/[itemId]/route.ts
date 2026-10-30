@@ -10,6 +10,7 @@ import {
   type PostFormat,
 } from '@fbuploadpro/contracts';
 import { isLegacyClient, getRouteSupabase } from '@/lib/route-auth';
+import { refreshDestinationUnmatchedFlag } from '@/lib/server/unmatched-flag';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
 import {
   unifiedQueueRowToPostFormat,
@@ -244,12 +245,31 @@ export async function handleUpdateQueueItem(
       );
     }
 
+    // K1: fail closed on publishing rows too — the worker outcome
+    // is not traceable from here, so an edit racing it could
+    // publish stale content or lose the edit.
+    if (existing.status === 'publishing') {
+      return NextResponse.json(
+        { error: 'CANNOT_UPDATE_PUBLISHING_ITEM', message: 'Publishing queue items cannot be modified while they are being published' },
+        { status: 400 }
+      );
+    }
+
     const ownerId = (await fetchWorkspaceOwnerId(dbClient, workspaceId)) ?? session.userId;
 
     // Compute updated values
     const existingFormat = unifiedQueueRowToPostFormat(existing.kind, existing.platform_format);
     const newCaption = parsed.data.caption ?? existing.caption ?? '';
     const newPostFormat = (parsed.data.postFormat ?? existingFormat) as PostFormat;
+    // R13, resolved-format half: the schema guard covers edits
+    // that change the format to reel; this covers edits that leave
+    // the format untouched on an existing reel.
+    if (newPostFormat === 'reel' && newCaption.length > 2200) {
+      return NextResponse.json(
+        { error: 'INVALID_REQUEST', message: 'Reel captions are limited to 2,200 characters' },
+        { status: 400 }
+      );
+    }
     let newFirstComment = parsed.data.firstComment !== undefined ? parsed.data.firstComment : (existing.first_comment ?? null);
     if (newPostFormat === 'story') {
       if (parsed.data.firstComment && parsed.data.firstComment.trim().length > 0) {
@@ -280,6 +300,13 @@ export async function handleUpdateQueueItem(
       ? wireFormatToUnifiedKind(parsed.data.postFormat)
       : null;
 
+    // R12: requeueing a failed item resets its retry budget; any
+    // other edit preserves the stored count.
+    const newRetryCount =
+      newStatus === 'queued' && existing.status === 'failed'
+        ? 0
+        : Number(existing.retry_count ?? 0);
+
     const updateRows = (await dbClient.query(
       `UPDATE queue_items
        SET caption = $1,
@@ -289,8 +316,9 @@ export async function handleUpdateQueueItem(
            kind = COALESCE($5, kind),
            platform_format = CASE WHEN $5 IS NOT NULL THEN $6 ELSE platform_format END,
            link_url = $7,
+           retry_count = $8,
            updated_at = now()
-       WHERE id = $8 AND workspace_id = $9
+       WHERE id = $9 AND workspace_id = $10
        RETURNING ${UNIFIED_ITEM_SQL_COLUMNS}`,
       [
         newCaption,
@@ -300,6 +328,7 @@ export async function handleUpdateQueueItem(
         formatWrite?.kind ?? null,
         formatWrite?.platformFormat ?? null,
         newLinkUrl,
+        newRetryCount,
         itemId,
         workspaceId,
       ]
@@ -318,6 +347,10 @@ export async function handleUpdateQueueItem(
       );
       mediaRecord = mediaRows?.[0] ?? null;
     }
+
+    // R25: an edit or requeue can cover or uncover queued formats.
+    // Best-effort/log-loud inside the helper; never fails the edit.
+    await refreshDestinationUnmatchedFlag(dbClient, updated.destination_id);
 
     const validated = buildQueueItemResponse(updated, ownerId, mediaRecord, newPostFormat);
     return NextResponse.json(validated, { status: 200 });
@@ -346,11 +379,26 @@ export async function handleUpdateQueueItem(
     );
   }
 
+  // K1: fail closed on publishing rows too (see the legacy branch).
+  if (existing.status === 'publishing') {
+    return NextResponse.json(
+      { error: 'CANNOT_UPDATE_PUBLISHING_ITEM', message: 'Publishing queue items cannot be modified while they are being published' },
+      { status: 400 }
+    );
+  }
+
   const ownerId = (await fetchWorkspaceOwnerId(supabase, workspaceId)) ?? session.userId;
 
   const existingFormat = unifiedQueueRowToPostFormat(existing.kind, existing.platform_format);
   const newCaption = parsed.data.caption ?? existing.caption ?? '';
   const newPostFormat = (parsed.data.postFormat ?? existingFormat) as PostFormat;
+  // R13, resolved-format half (see the legacy branch).
+  if (newPostFormat === 'reel' && newCaption.length > 2200) {
+    return NextResponse.json(
+      { error: 'INVALID_REQUEST', message: 'Reel captions are limited to 2,200 characters' },
+      { status: 400 }
+    );
+  }
   let newFirstComment = parsed.data.firstComment !== undefined ? parsed.data.firstComment : (existing.first_comment ?? null);
   if (newPostFormat === 'story') {
     if (parsed.data.firstComment && parsed.data.firstComment.trim().length > 0) {
@@ -381,6 +429,7 @@ export async function handleUpdateQueueItem(
     scheduled_time: string;
     status: string;
     link_url: string | null;
+    retry_count: number;
     kind?: string;
     platform_format?: string | null;
     updated_at: string;
@@ -390,6 +439,11 @@ export async function handleUpdateQueueItem(
     scheduled_time: newScheduledTime,
     status: newStatus,
     link_url: newLinkUrl,
+    // R12: requeueing a failed item resets its retry budget.
+    retry_count:
+      newStatus === 'queued' && existing.status === 'failed'
+        ? 0
+        : Number(existing.retry_count ?? 0),
     updated_at: new Date().toISOString(),
   };
   if (parsed.data.postFormat) {
@@ -421,6 +475,9 @@ export async function handleUpdateQueueItem(
     mediaRecord = mediaData;
   }
 
+  // R25: see the legacy branch — best-effort, never fails the edit.
+  await refreshDestinationUnmatchedFlag(supabase, updated.destination_id);
+
   const validated = buildQueueItemResponse(
     updated as UnifiedItemRow,
     ownerId,
@@ -448,7 +505,7 @@ export async function handleDeleteQueueItem(
   if (isLegacyClient(dbClient)) {
     // Check existing item
     const existingRows = (await dbClient.query(
-      `SELECT id, status FROM queue_items WHERE id = $1 AND workspace_id = $2`,
+      `SELECT id, status, destination_id FROM queue_items WHERE id = $1 AND workspace_id = $2`,
       [itemId, workspaceId]
     )) as Record<string, unknown>[];
 
@@ -464,11 +521,26 @@ export async function handleDeleteQueueItem(
       );
     }
 
+    // K1: fail closed on publishing rows too (see the update path).
+    if (existing.status === 'publishing') {
+      return NextResponse.json(
+        { error: 'CANNOT_DELETE_PUBLISHING_ITEM', message: 'Publishing queue items cannot be deleted while they are being published' },
+        { status: 400 }
+      );
+    }
+
     // Delete item
     await dbClient.query(
       `DELETE FROM queue_items WHERE id = $1 AND workspace_id = $2`,
       [itemId, workspaceId]
     );
+
+    // R25: deleting a queued post can clear the unmatched flag
+    // (e.g. the only unmatched post is gone). Best-effort/log-loud
+    // inside the helper; never fails the delete.
+    if (typeof existing.destination_id === 'string' && existing.destination_id) {
+      await refreshDestinationUnmatchedFlag(dbClient, existing.destination_id);
+    }
 
     return NextResponse.json({ success: true, itemId }, { status: 200 });
   }
@@ -480,7 +552,7 @@ export async function handleDeleteQueueItem(
 
   const { data: existing, error: existErr } = await supabase
     .from('queue_items')
-    .select('id, status')
+    .select('id, status, destination_id')
     .eq('id', itemId)
     .eq('workspace_id', workspaceId)
     .maybeSingle();
@@ -496,6 +568,14 @@ export async function handleDeleteQueueItem(
     );
   }
 
+  // K1: fail closed on publishing rows too (see the update path).
+  if (existing.status === 'publishing') {
+    return NextResponse.json(
+      { error: 'CANNOT_DELETE_PUBLISHING_ITEM', message: 'Publishing queue items cannot be deleted while they are being published' },
+      { status: 400 }
+    );
+  }
+
   const { error: deleteErr } = await supabase
     .from('queue_items')
     .delete()
@@ -504,6 +584,11 @@ export async function handleDeleteQueueItem(
 
   if (deleteErr) {
     return NextResponse.json({ error: 'Failed to delete queue item' }, { status: 500 });
+  }
+
+  // R25: see the legacy branch — best-effort, never fails the delete.
+  if (existing.destination_id) {
+    await refreshDestinationUnmatchedFlag(supabase, existing.destination_id);
   }
 
   return NextResponse.json({ success: true, itemId }, { status: 200 });

@@ -123,11 +123,13 @@ class FakeDb {
       return row ? [row] : [];
     }
     if (sql.includes('UPDATE queue_items')) {
+      // R12: updateDestinationQueueItem now writes retry_count as
+      // $12, shifting the WHERE params to $13/$14/$15.
       const row = this.queueItems.find(
         (q) =>
-          q.id === params[11] &&
-          q.workspace_id === params[12] &&
-          q.destination_id === params[13]
+          q.id === params[12] &&
+          q.workspace_id === params[13] &&
+          q.destination_id === params[14]
       );
       if (!row) return [];
       row.caption = String(params[0]);
@@ -143,6 +145,7 @@ class FakeDb {
       row.slot_id = (params[8] as string | null) ?? null;
       row.status = String(params[9]);
       row.claimed_at = (params[10] as string | null) ?? null;
+      row.retry_count = Number(params[11]);
       row.updated_at = new Date().toISOString();
       return [row];
     }
@@ -390,6 +393,98 @@ describe('destination queue item PATCH (edit-save)', () => {
     expect(body.error).toBe('CANNOT_UPDATE_PUBLISHED_ITEM');
   });
 
+  it('refuses to modify a publishing item (K1 fail-closed)', async () => {
+    const item = makeItem({ status: 'publishing' });
+    db.queueItems.push(item);
+    const res = await handleUpdateDestinationQueueItem(
+      request('PATCH', { caption: 'Nope' }),
+      subdomain,
+      igDestinationId,
+      item.id,
+      dbClient
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('CANNOT_UPDATE_PUBLISHING_ITEM');
+    expect(db.queueItems[0]?.caption).toBe('A post');
+  });
+
+  it('resets the retry budget when requeueing a failed item on edit-save (R12)', async () => {
+    const item = makeItem({ status: 'failed', retry_count: 2 });
+    db.queueItems.push(item);
+    const res = await handleUpdateDestinationQueueItem(
+      request('PATCH', { status: 'queued', scheduledTime: '2999-06-01T09:00:00.000Z' }),
+      subdomain,
+      igDestinationId,
+      item.id,
+      dbClient
+    );
+    expect(res.status).toBe(200);
+    expect(db.queueItems[0]?.retry_count).toBe(0);
+    const body = (await res.json()) as { retryCount: number };
+    expect(body.retryCount).toBe(0);
+  });
+
+  it('preserves the retry count on a caption-only edit of a failed item (R12)', async () => {
+    const item = makeItem({ status: 'failed', retry_count: 2 });
+    db.queueItems.push(item);
+    const res = await handleUpdateDestinationQueueItem(
+      request('PATCH', { caption: 'Still failed, still counted' }),
+      subdomain,
+      igDestinationId,
+      item.id,
+      dbClient
+    );
+    expect(res.status).toBe(200);
+    expect(db.queueItems[0]?.status).toBe('failed');
+    expect(db.queueItems[0]?.retry_count).toBe(2);
+  });
+
+  it('accepts a long Facebook caption on edit (R13) but holds reels to 2,200', async () => {
+    const feed = makeItem({ destination_id: fbDestinationId, platform: 'facebook' });
+    db.queueItems.push(feed);
+    const ok = await handleUpdateDestinationQueueItem(
+      request('PATCH', { caption: 'L'.repeat(60000) }),
+      subdomain,
+      fbDestinationId,
+      feed.id,
+      dbClient
+    );
+    expect(ok.status).toBe(200);
+
+    const reel = makeItem({
+      destination_id: fbDestinationId,
+      platform: 'facebook',
+      kind: 'video',
+      platform_format: 'reel',
+    });
+    db.queueItems.push(reel);
+    const tooLong = await handleUpdateDestinationQueueItem(
+      request('PATCH', { caption: 'R'.repeat(2201) }),
+      subdomain,
+      fbDestinationId,
+      reel.id,
+      dbClient
+    );
+    expect(tooLong.status).toBe(400);
+    const body = (await tooLong.json()) as { message: string };
+    expect(body.message).toBe('Reel captions are limited to 2,200 characters');
+  });
+
+  it('keeps the 5,000 cap for non-Facebook platforms on edit (R13)', async () => {
+    const item = makeItem({});
+    db.queueItems.push(item);
+    const res = await handleUpdateDestinationQueueItem(
+      request('PATCH', { caption: 'L'.repeat(5001) }),
+      subdomain,
+      igDestinationId,
+      item.id,
+      dbClient
+    );
+    expect(res.status).toBe(400);
+    expect(db.queueItems[0]?.caption).toBe('A post');
+  });
+
   it('rejects a first comment on a story (legacy rule)', async () => {
     const item = makeItem({ kind: 'story' });
     db.queueItems.push(item);
@@ -496,6 +591,22 @@ describe('destination queue item DELETE', () => {
     expect(db.queueItems).toHaveLength(1);
   });
 
+  it('refuses to delete a publishing item (K1 fail-closed)', async () => {
+    const item = makeItem({ status: 'publishing' });
+    db.queueItems.push(item);
+    const res = await handleDeleteDestinationQueueItem(
+      request('DELETE'),
+      subdomain,
+      igDestinationId,
+      item.id,
+      dbClient
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('CANNOT_DELETE_PUBLISHING_ITEM');
+    expect(db.queueItems).toHaveLength(1);
+  });
+
   it('deletes a Facebook post and refreshes the unmatched flag', async () => {
     const item = makeItem({ destination_id: fbDestinationId, platform: 'facebook' });
     db.queueItems.push(item);
@@ -550,6 +661,35 @@ describe('destination queue publish-now', () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe('ALREADY_PUBLISHED');
+  });
+
+  it('resets the retry budget when publishing now a failed item (R12)', async () => {
+    const item = makeItem({ status: 'failed', retry_count: 3 });
+    db.queueItems.push(item);
+    const res = await handleDestinationPublishNow(
+      request('POST'),
+      subdomain,
+      igDestinationId,
+      item.id,
+      dbClient
+    );
+    expect(res.status).toBe(200);
+    expect(db.queueItems[0]?.status).toBe('queued');
+    expect(db.queueItems[0]?.retry_count).toBe(0);
+  });
+
+  it('preserves the retry count when publishing now a queued item (R12)', async () => {
+    const item = makeItem({ status: 'queued', retry_count: 0 });
+    db.queueItems.push(item);
+    const res = await handleDestinationPublishNow(
+      request('POST'),
+      subdomain,
+      igDestinationId,
+      item.id,
+      dbClient
+    );
+    expect(res.status).toBe(200);
+    expect(db.queueItems[0]?.retry_count).toBe(0);
   });
 });
 
@@ -606,6 +746,30 @@ describe('destination queue retry', () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe('ITEM_NOT_FAILED');
+  });
+
+  it('resets the retry budget on retry, so the row reads Retry 0 of 3 (R12)', async () => {
+    const item = makeItem({
+      status: 'failed',
+      retry_count: 2,
+      scheduled_time: '2000-01-01T09:00:00.000Z',
+      slot_id: slotId,
+      claimed_at: '2000-01-01T09:00:00.000Z',
+    });
+    db.queueItems.push(item);
+    const res = await handleDestinationRetry(
+      request('POST'),
+      subdomain,
+      igDestinationId,
+      item.id,
+      dbClient
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { status: string; retryCount: number; maxRetries: number };
+    expect(body.status).toBe('queued');
+    expect(body.retryCount).toBe(0);
+    expect(body.maxRetries).toBe(3);
+    expect(db.queueItems[0]?.retry_count).toBe(0);
   });
 
   it('returns a plain-language 400 when no slot covers the post', async () => {

@@ -285,12 +285,14 @@ class FakeDb {
     }
     if (sql.includes('UPDATE queue_items')) {
       if (sql.includes('SET caption')) {
-        // updateDestinationQueueItem: params[9]=status, [11]=id.
-        const row = this.queueItems.find((q) => q.id === params[11]);
+        // updateDestinationQueueItem: params[9]=status, [12]=id
+        // (R12: retry_count is $12, shifting the WHERE params).
+        const row = this.queueItems.find((q) => q.id === params[12]);
         if (!row) return [];
         row.caption = String(params[0]);
         row.status = String(params[9]);
         row.scheduled_time = params[7] == null ? null : String(params[7]);
+        row.retry_count = Number(params[11]);
         return [row];
       }
       // Publish-now legacy update: params[0]=id, [1]=workspace.

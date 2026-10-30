@@ -13,6 +13,7 @@ import {
   fetchDestinationQueueItem,
   updateDestinationQueueItem,
 } from '@/lib/publishing/destination-queue';
+import { refreshDestinationUnmatchedFlag } from '@/lib/server/unmatched-flag';
 
 /**
  * POST /api/tenant/[subdomain]/destinations/[destinationId]/queue/[itemId]/publish-now
@@ -119,11 +120,22 @@ export async function handleDestinationPublishNow(
       slotId: existing.slot_id,
       status: 'queued',
       claimedAt: null,
+      // R12: publish-now of a failed item is a re-queue, so it
+      // gets the same fresh retry budget as a retry. Any other
+      // status keeps its stored count.
+      retryCount: existing.status === 'failed' ? 0 : existing.retry_count,
     }
   );
 
   if (!updated) {
     return NextResponse.json({ error: 'Failed to publish queue item' }, { status: 500 });
+  }
+
+  // R25: a failed item re-entering the queue can set the unmatched
+  // flag, like the retry and legacy publish-now paths already do.
+  // Best-effort/log-loud inside the helper; never fails this ack.
+  if (destination.platform === 'facebook') {
+    await refreshDestinationUnmatchedFlag(client, destination.id);
   }
 
   if (idempotencyScope) {

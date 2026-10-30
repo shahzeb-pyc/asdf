@@ -271,12 +271,16 @@ export async function handlePublishNow(
       if (gate) return gate;
     }
 
-    // Update scheduled_time to now() and status to 'queued'
+    // Update scheduled_time to now() and status to 'queued'.
+    // R12: publish-now of a failed item is a re-queue, so it gets
+    // a fresh retry budget; the CASE reads the pre-update status,
+    // so any other status keeps its stored count.
     await dbClient.query(
       `UPDATE queue_items
        SET scheduled_time = now(),
            status = 'queued',
            claimed_at = NULL,
+           retry_count = CASE WHEN status = 'failed' THEN 0 ELSE retry_count END,
            updated_at = now()
        WHERE id = $1 AND workspace_id = $2`,
       [itemId, workspaceId]
@@ -354,6 +358,8 @@ export async function handlePublishNow(
       scheduled_time: new Date().toISOString(),
       status: 'queued',
       claimed_at: null,
+      // R12: same failed-only fresh budget as the SQL branch.
+      ...(existing.status === 'failed' ? { retry_count: 0 } : {}),
       updated_at: new Date().toISOString(),
     })
     .eq('id', itemId)

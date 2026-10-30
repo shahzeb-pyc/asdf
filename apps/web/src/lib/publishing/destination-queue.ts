@@ -231,6 +231,15 @@ export interface DestinationQueueItemState {
   status: string;
   /** Null clears a stale claim marker when an item is requeued. */
   claimedAt: string | null;
+  /**
+   * R12: the full-state write carries the retry budget too, so a
+   * re-queue can reset it. Callers pass the stored count to
+   * preserve it, or 0 when the item re-enters the queue after a
+   * failure (retry, publish-now of a failed item, failed→queued
+   * requeue) — a retried post gets a fresh budget of maxRetries,
+   * instead of failing again against an exhausted count.
+   */
+  retryCount: number;
 }
 
 export async function updateDestinationQueueItem(
@@ -254,8 +263,9 @@ export async function updateDestinationQueueItem(
            slot_id = $9,
            status = $10,
            claimed_at = $11,
+           retry_count = $12,
            updated_at = now()
-       WHERE id = $12 AND workspace_id = $13 AND destination_id = $14
+       WHERE id = $13 AND workspace_id = $14 AND destination_id = $15
        RETURNING ${QUEUE_ITEM_COLUMNS}`,
       [
         state.caption,
@@ -269,6 +279,7 @@ export async function updateDestinationQueueItem(
         state.slotId,
         state.status,
         state.claimedAt,
+        state.retryCount,
         itemId,
         workspaceId,
         destinationId,
@@ -293,6 +304,7 @@ export async function updateDestinationQueueItem(
       slot_id: state.slotId,
       status: state.status,
       claimed_at: state.claimedAt,
+      retry_count: state.retryCount,
       updated_at: new Date().toISOString(),
     })
     .eq('id', itemId)

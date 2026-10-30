@@ -135,8 +135,14 @@ export type ListDestinationQueueResponse = z.infer<
  * lifecycle control a client may request: requeue (`queued`) or
  * cancel (`cancelled`) — publishing outcomes are the worker's alone.
  */
-export const UpdateDestinationQueueItemRequestSchema = z.object({
-  caption: z.string().max(5000).optional(),
+export const UpdateDestinationQueueItemRequestSchema = z
+  .object({
+    // R13 (unified companion to the legacy PATCH cap): the schema
+    // cap matches Facebook creation (63,206); the route handler
+    // then enforces the per-platform cap — 2,200 for reels, 5,000
+    // for non-Facebook platforms — so raising the schema cap never
+    // weakens another platform's guard.
+    caption: z.string().max(63206).optional(),
   title: z.string().max(500).nullable().optional(),
   firstComment: z.string().max(2000).nullable().optional(),
   linkUrl: z.string().url().nullable().optional(),
@@ -146,7 +152,21 @@ export const UpdateDestinationQueueItemRequestSchema = z.object({
   scheduledTime: z.string().datetime({ offset: true }).optional(),
   slotId: z.string().uuid().nullable().optional(),
   status: z.enum(['queued', 'cancelled']).optional(),
-});
+})
+  .superRefine((val, ctx) => {
+    if (
+      val.kind === 'video' &&
+      val.platformFormat === 'reel' &&
+      val.caption !== undefined &&
+      val.caption.length > 2200
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Reel captions are limited to 2,200 characters',
+        path: ['caption'],
+      });
+    }
+  });
 export type UpdateDestinationQueueItemRequest = z.infer<
   typeof UpdateDestinationQueueItemRequestSchema
 >;
