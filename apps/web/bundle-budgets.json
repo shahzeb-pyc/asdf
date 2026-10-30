@@ -359,6 +359,18 @@
         "firstLoadRawBytes": 556106,
         "routeSpecificGzipBytes": 28779,
         "routeSpecificRawBytes": 89207
+      },
+      "/tenant/[subdomain]/tiktok-mirrors": {
+        "firstLoadGzipBytes": 169899,
+        "firstLoadRawBytes": 563323,
+        "routeSpecificGzipBytes": 29410,
+        "routeSpecificRawBytes": 89932
+      },
+      "/tenant/[subdomain]/tiktok-mirrors/[mirrorId]": {
+        "firstLoadGzipBytes": 168696,
+        "firstLoadRawBytes": 562176,
+        "routeSpecificGzipBytes": 28207,
+        "routeSpecificRawBytes": 88784
       }
     },
     "totalClientJs": {

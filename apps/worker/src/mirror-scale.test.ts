@@ -24,6 +24,7 @@
  *   move from loop tick to job consumer unchanged.
  */
 import { describe, expect, it } from 'vitest';
+import { InternalError } from '@fbuploadpro/contracts';
 import {
   buildMirrorTickDeps,
   MIRROR_DISPATCH_BATCH_SIZE,
@@ -148,7 +149,7 @@ function checkDeps(
       state.mirrorUpdates.push({ id, patch: patch as Record<string, unknown> });
     },
     fetchFeed: async (username: string) => {
-      if (failFeedFor.has(username)) throw new Error('tikwm down');
+      if (failFeedFor.has(username)) throw new InternalError('tikwm down');
       return (feedByUsername[username] ?? []) as never;
     },
     resolveVideo: async ({ videoId }) => ({
@@ -242,14 +243,14 @@ class FakeJobStore {
   }
 
   complete(jobId: string): void {
-    if (this.failCompleteFor.has(jobId)) throw new Error('completion write down');
+    if (this.failCompleteFor.has(jobId)) throw new InternalError('completion write down');
     this.jobs = this.jobs.filter((job) => job.id !== jobId);
     this.completed.push(jobId);
   }
 
   fail(job: MirrorCheckJob, error: string, now: Date): 'retried' | 'exhausted' {
     const row = this.jobs.find((j) => j.id === job.id);
-    if (!row) throw new Error('job not found');
+    if (!row) throw new InternalError('job not found');
     if (job.attempts >= MIRROR_JOB_MAX_ATTEMPTS) {
       row.status = 'exhausted';
       row.error = error;
@@ -274,7 +275,7 @@ function jobTickDeps(
     check,
     claimJobs: async (now: Date, limit: number) => store.claim(now, limit),
     fetchMirror: async (mirrorId: string) => {
-      if (failFetchFor.has(mirrorId)) throw new Error('db down');
+      if (failFetchFor.has(mirrorId)) throw new InternalError('db down');
       return mirrors[mirrorId] ?? null;
     },
     completeJob: async (jobId: string) => {
@@ -381,7 +382,7 @@ describe('dispatcher pacing, cap, and cadence', () => {
       listDueMirrorIds: async () => ids,
       enqueueMirrorCheckJobs: async (jobs) => {
         calls += 1;
-        if (calls === 2) throw new Error('insert down');
+        if (calls === 2) throw new InternalError('insert down');
         return jobs.length;
       },
       advanceMirrorCheck: async (id) => {
@@ -666,7 +667,7 @@ describe('job-tick isolation, retries, and exhaustion', () => {
         {}
       ),
       claimJobs: async () => {
-        throw new Error('claim RPC down');
+        throw new InternalError('claim RPC down');
       },
       fetchMirror: async () => null,
       completeJob: async () => {},

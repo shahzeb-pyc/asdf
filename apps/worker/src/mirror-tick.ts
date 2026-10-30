@@ -1,6 +1,7 @@
 import {
   decryptToken,
   fetchTikwmApiUserPosts,
+  InternalError,
   isFacebookAccountRestricted,
   isTikwmReelItem,
   isTikwmWatermarkedOnlyItem,
@@ -492,7 +493,7 @@ export function buildWorkerTikwmPauseStore(db: SupabaseLike): TikwmApiKeyPauseSt
         .select('paused_until')
         .eq('key_fingerprint', fingerprint)
         .maybeSingle();
-      if (error) throw new Error(`Failed to read key pause: ${error.message}`);
+      if (error) throw new InternalError(`Failed to read key pause: ${error.message}`);
       const value = (data as { paused_until?: unknown } | null)?.paused_until;
       if (typeof value !== 'string') return null;
       const date = new Date(value);
@@ -519,7 +520,7 @@ export function buildWorkerTikwmPauseStore(db: SupabaseLike): TikwmApiKeyPauseSt
           },
           { onConflict: 'key_fingerprint' }
         );
-      if (error) throw new Error(`Failed to persist key pause: ${error.message}`);
+      if (error) throw new InternalError(`Failed to persist key pause: ${error.message}`);
     },
   };
 }
@@ -672,7 +673,7 @@ export function buildMirrorTickDeps(
       .from('mirrors')
       .update(values)
       .eq('id', mirrorId);
-    if (error) throw new Error(`Failed to update mirror: ${error.message}`);
+    if (error) throw new InternalError(`Failed to update mirror: ${error.message}`);
   };
   return {
     env: options?.env,
@@ -690,7 +691,7 @@ export function buildMirrorTickDeps(
           .order('next_check_at', { ascending: true, nullsFirst: true })
           .order('id', { ascending: true })
           .range(offset, offset + MIRROR_DISPATCH_BATCH_SIZE - 1);
-        if (error) throw new Error(`Failed to list due mirrors: ${error.message}`);
+        if (error) throw new InternalError(`Failed to list due mirrors: ${error.message}`);
         const rows = ((data ?? []) as unknown[]).filter(isRecord) as Record<
           string,
           unknown
@@ -723,7 +724,7 @@ export function buildMirrorTickDeps(
         )
         .eq('id', mirrorId)
         .maybeSingle();
-      if (error) throw new Error(`Failed to fetch mirror: ${error.message}`);
+      if (error) throw new InternalError(`Failed to fetch mirror: ${error.message}`);
       if (!isRecord(data)) return null;
       const row = data as Record<string, unknown>;
       if (
@@ -746,7 +747,7 @@ export function buildMirrorTickDeps(
         .eq('platform', row.target_platform)
         .eq('external_destination_id', row.target_external_id)
         .limit(10);
-      if (destError) throw new Error(`Failed to list destinations: ${destError.message}`);
+      if (destError) throw new InternalError(`Failed to list destinations: ${destError.message}`);
       const destRows = ((destData ?? []) as unknown[]).filter(isRecord) as Record<
         string,
         unknown
@@ -778,7 +779,7 @@ export function buildMirrorTickDeps(
     enqueueMirrorCheckJobs: async (jobs) => {
       const rpc = (db as unknown as { rpc?: unknown }).rpc;
       if (typeof rpc !== 'function') {
-        throw new Error('Mirror check job enqueue RPC is not configured');
+        throw new InternalError('Mirror check job enqueue RPC is not configured');
       }
       const { data, error } = await (
         rpc as (
@@ -795,10 +796,10 @@ export function buildMirrorTickDeps(
         })),
       });
       if (error) {
-        throw new Error(`Failed to enqueue mirror check jobs: ${error.message}`);
+        throw new InternalError(`Failed to enqueue mirror check jobs: ${error.message}`);
       }
       if (typeof data !== 'number') {
-        throw new Error(
+        throw new InternalError(
           'enqueue_mirror_check_jobs returned a non-number payload'
         );
       }
@@ -807,7 +808,7 @@ export function buildMirrorTickDeps(
     claimMirrorCheckJobs: async (now, limit) => {
       const rpc = (db as unknown as { rpc?: unknown }).rpc;
       if (typeof rpc !== 'function') {
-        throw new Error('Mirror check job claim RPC is not configured');
+        throw new InternalError('Mirror check job claim RPC is not configured');
       }
       const { data, error } = await (
         rpc as (
@@ -823,10 +824,10 @@ export function buildMirrorTickDeps(
         p_stale_after_seconds: MIRROR_JOB_STALE_AFTER_SECONDS,
       });
       if (error) {
-        throw new Error(`Failed to claim mirror check jobs: ${error.message}`);
+        throw new InternalError(`Failed to claim mirror check jobs: ${error.message}`);
       }
       if (!Array.isArray(data)) {
-        throw new Error('claim_mirror_check_jobs returned a non-array payload');
+        throw new InternalError('claim_mirror_check_jobs returned a non-array payload');
       }
       const jobs: MirrorCheckJob[] = [];
       for (const row of data) {
@@ -855,7 +856,7 @@ export function buildMirrorTickDeps(
         .delete()
         .eq('id', jobId);
       if (error) {
-        throw new Error(`Failed to complete mirror check job: ${error.message}`);
+        throw new InternalError(`Failed to complete mirror check job: ${error.message}`);
       }
     },
     failMirrorCheckJob: async (job, errorMessage, now) => {
@@ -873,7 +874,7 @@ export function buildMirrorTickDeps(
           .update({ status: 'exhausted', error: errorMessage, updated_at: now.toISOString() })
           .eq('id', job.id);
         if (error) {
-          throw new Error(`Failed to exhaust mirror check job: ${error.message}`);
+          throw new InternalError(`Failed to exhaust mirror check job: ${error.message}`);
         }
         // Best-effort mirror stamp: the exhausted row itself
         // records the failure even if this stamp fails.
@@ -913,7 +914,7 @@ export function buildMirrorTickDeps(
         })
         .eq('id', job.id);
       if (error) {
-        throw new Error(`Failed to retry mirror check job: ${error.message}`);
+        throw new InternalError(`Failed to retry mirror check job: ${error.message}`);
       }
       return 'retried';
     },
@@ -924,7 +925,7 @@ export function buildMirrorTickDeps(
         .eq('mirror_id', mirrorId)
         .order('created_at', { ascending: false })
         .limit(200);
-      if (error) throw new Error(`Failed to list known source posts: ${error.message}`);
+      if (error) throw new InternalError(`Failed to list known source posts: ${error.message}`);
       const ids = new Set<string>();
       for (const row of (data ?? []) as unknown[]) {
         if (isRecord(row) && typeof row.source_post_id === 'string') {
@@ -962,7 +963,7 @@ export function buildMirrorTickDeps(
         .single();
       if (error) {
         if (error.code === '23505') return null; // Claimed by an overlapping tick.
-        throw new Error(`Failed to claim mirror post: ${error.message}`);
+        throw new InternalError(`Failed to claim mirror post: ${error.message}`);
       }
       const id = (data as Record<string, unknown> | null)?.id;
       return typeof id === 'string' ? id : null;
@@ -984,7 +985,7 @@ export function buildMirrorTickDeps(
           error: patch.error ?? null,
         })
         .eq('id', postId);
-      if (error) throw new Error(`Failed to update mirror post: ${error.message}`);
+      if (error) throw new InternalError(`Failed to update mirror post: ${error.message}`);
     },
     updateMirror: updateMirrorRow,
     fetchFeed: (username: string) =>

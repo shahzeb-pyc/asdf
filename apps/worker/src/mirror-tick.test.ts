@@ -9,7 +9,10 @@
  * and skips before this runs.)
  */
 import { describe, expect, it } from 'vitest';
-import { MIRROR_FACEBOOK_RESTRICTED_MESSAGE } from '@fbuploadpro/contracts';
+import {
+  InternalError,
+  MIRROR_FACEBOOK_RESTRICTED_MESSAGE,
+} from '@fbuploadpro/contracts';
 import {
   processMirrorCheck,
   type MirrorTickDeps,
@@ -77,7 +80,7 @@ function fakeDeps(state: FakeState, feed: unknown[]): MirrorTickDeps {
     }),
     publishReel: async (params) => {
       if (state.publishFailsFor.has(params.videoUrl)) {
-        throw new Error('Graph exploded');
+        throw new InternalError('Graph exploded');
       }
       state.published.push(params);
       return `fb_${params.videoUrl}`;
@@ -178,7 +181,7 @@ describe('processMirrorCheck', () => {
     const deps: MirrorTickDeps = {
       ...fakeDeps(state, [reel('v1', 100)]),
       publishReel: async () => {
-        throw new Error(
+        throw new InternalError(
           'For security reasons, your account has limited access to the site for a few days.'
         );
       },
@@ -193,7 +196,7 @@ describe('processMirrorCheck', () => {
     const state = newState();
     const deps = fakeDeps(state, [reel('v1', 100), reel('v2', 200)]);
     deps.resolveVideo = async () => {
-      throw new Error('Could not resolve video');
+      throw new InternalError('Could not resolve video');
     };
     const result = await processMirrorCheck(deps, mirror());
     expect(result.posted).toBe(0);
@@ -226,7 +229,7 @@ describe('processMirrorCheck', () => {
     const state = newState();
     const deps = fakeDeps(state, []);
     deps.fetchFeed = async (username: string) => {
-      if (username === 'alice') throw new Error('tikwm down');
+      if (username === 'alice') throw new InternalError('tikwm down');
       return [];
     };
     await processMirrorCheck(deps, mirror({ id: 'm1' }));
@@ -294,7 +297,7 @@ describe('processMirrorCheck', () => {
     const state = newState();
     const deps = fakeDeps(state, []);
     deps.fetchFeed = async () => {
-      throw new Error('tikwm down');
+      throw new InternalError('tikwm down');
     };
     await processMirrorCheck(deps, mirror({ catchUpPending: true }));
     const stamp = state.mirrorUpdates[state.mirrorUpdates.length - 1];
