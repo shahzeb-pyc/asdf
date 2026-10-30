@@ -14,7 +14,7 @@
  *   Studio) → Facebook collapsible group (default open; Accounts,
  *   Pages, Publish Now) → one collapsible group per upcoming platform, each with a
  *   single Accounts item and the testing-placeholder note → Billing collapsible
- *   group (default open; Plans, Build plan, Payments), last → footer.
+ *   group (default open; My Plan, Purchase, Payments), last → footer.
  * - Spec 110 single-click model: every leaf is a Next.js <Link> that
  *   navigates on the FIRST click; the leaf click handler only paints
  *   the active state optimistically and closes the mobile drawer — it
@@ -154,8 +154,8 @@ function WorkspaceSidebarContent({
   const publishNowHref = href('/publish-now');
   const tiktokMirrorsHref = href('/tiktok-mirrors');
   const billingHref = href('/billing');
-  const billingPlansHref = href('/billing?view=plans');
-  const billingBuildHref = href('/billing?view=build');
+  const billingMyPlanHref = href('/billing?view=my-plan');
+  const billingPurchaseHref = href('/billing?view=purchase');
   const billingPaymentsHref = href('/billing?view=payments');
 
   const isHomeActive = effectivePath === normalizeTenantPath(homeHref, subdomain);
@@ -179,19 +179,17 @@ function WorkspaceSidebarContent({
   );
 
   /**
-   * Billing sub-leaf active state. The Billing pages live behind one
-   * route, selected by ?view=, so the view comes from the optimistic
-   * leaf href on click (for the immediate paint) or the live search
-   * params otherwise. No view means Plans (the Billing default).
-   * Checkout and Confirmation are flow-only pages reached from Build
-   * plan, so they highlight the Build plan leaf.
+   * Billing sub-leaf active state. The Billing sections live behind
+   * one route, selected by ?view=, so the view comes from the
+   * optimistic leaf href on click (for the immediate paint) or the
+   * live search params otherwise. No view means My Plan (the
+   * Billing default). Purchase-internal steps are not ?view=
+   * values, so a user inside Purchase always highlights Purchase.
    */
   const billingView = viewFromHref(optimisticPathname) ?? searchParams.get('view');
-  const isPlansActive =
-    isBillingActive && (billingView === null || billingView === 'plans');
-  const isBuildActive =
-    isBillingActive &&
-    (billingView === 'build' || billingView === 'checkout' || billingView === 'confirmation');
+  const isMyPlanActive =
+    isBillingActive && (billingView === null || billingView === 'my-plan');
+  const isPurchaseActive = isBillingActive && billingView === 'purchase';
   const isPaymentsActive = isBillingActive && billingView === 'payments';
 
   const handleNavigate = (targetHref: string) => {
@@ -435,17 +433,17 @@ function WorkspaceSidebarContent({
             <SidebarMenu>
               <SidebarMenuItem>
                 <SidebarMenuButton
-                  tooltip="Billing — Plans, Build plan & Payments"
+                  tooltip="Billing — My Plan, Purchase & Payments"
                   isActive={isCollapsed && isBillingActive}
                   aria-expanded={isCollapsed ? undefined : isBillingOpen}
                   onClick={() => {
                     if (isCollapsed) {
-                      handleNavigate(billingPlansHref);
+                      handleNavigate(billingMyPlanHref);
                     } else {
                       setIsBillingOpen((prev) => !prev);
                     }
                   }}
-                  onMouseEnter={() => handlePrefetch(billingPlansHref)}
+                  onMouseEnter={() => handlePrefetch(billingMyPlanHref)}
                 >
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="shrink-0">
                     <rect width="20" height="14" x="2" y="5" rx="2" />
@@ -457,8 +455,8 @@ function WorkspaceSidebarContent({
 
                 {isBillingOpen && (
                   <SidebarMenuSub>
-                    <NavSubLeaf label="Plans" href={billingPlansHref} isActive={isPlansActive} onLeafClick={handleLeafClick} />
-                    <NavSubLeaf label="Build plan" href={billingBuildHref} isActive={isBuildActive} onLeafClick={handleLeafClick} />
+                    <NavSubLeaf label="My Plan" href={billingMyPlanHref} isActive={isMyPlanActive} onLeafClick={handleLeafClick} />
+                    <NavSubLeaf label="Purchase" href={billingPurchaseHref} isActive={isPurchaseActive} onLeafClick={handleLeafClick} />
                     <NavSubLeaf label="Payments" href={billingPaymentsHref} isActive={isPaymentsActive} onLeafClick={handleLeafClick} />
                   </SidebarMenuSub>
                 )}
