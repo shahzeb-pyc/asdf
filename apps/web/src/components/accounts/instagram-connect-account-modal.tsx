@@ -3,30 +3,25 @@
 /**
  * Instagram connect account modal — Facebook's `ConnectAccountModal`
  * pattern exactly (shared/ui `Dialog`, choose view with two option
- * buttons, polling of the accounts list, and connected /
- * already-connected / reconnected-mismatch notices with the same
- * Option-B dialogue: no success view, no auto-close timer — the modal
- * closes at once and the shell confirms via toast (success) or a
- * persistent banner (mismatch), with the account name in every message,
- * and the just-connected card flash-highlighted).
+ * buttons, magic view with copy + countdown, polling of the accounts
+ * list, and connected / already-connected / reconnected-mismatch
+ * notices with the same Option-B dialogue: no success view, no
+ * auto-close timer — the modal closes at once and the shell confirms
+ * via toast (success) or a persistent banner (mismatch), with the
+ * account name in every message, and the just-connected card
+ * flash-highlighted).
  *
- * Instagram adaptations, all honest, none silent:
- * - Direct view navigates to the existing Instagram initiate route
- *   (`/api/connect/instagram?subdomain=…`). The framework initiate
- *   ignores Facebook-style `expected*` params, so none are appended:
- *   mismatch detection is by polling (target id + status/updatedAt),
- *   not by a server-carried expected id.
- * - Magic link: NO Instagram magic-link route exists (searched
- *   `apps/web/src/app/api` — only Facebook's
- *   `/accounts/magic-link` exists), and building one is a new OAuth
- *   flow, not a UI port. The option is therefore shown DISABLED with
- *   the reason in its own text ("Magic link isn't available for
- *   Instagram yet — use This Browser for now"), preserving the
- *   choose-view layout without faking a link.
- * - Polling runs while the modal is open (Facebook polls only in its
- *   magic view, which Instagram has no equivalent of): if an account
- *   appears or refreshes while the modal is open — e.g. completed in
- *   another tab — the modal closes with the matching notice.
+ * Instagram adaptations:
+ * - Direct view navigates to the dedicated Instagram initiate route
+ *   (`/api/auth/instagram`), Facebook's `/api/auth/facebook`
+ *   equivalent: session + BYOC + signed OAuth state, no picker.
+ * - Magic view generates a 15-minute Instagram magic link
+ *   (`POST /instagram/accounts/magic-link`) and polls while the link
+ *   is live, exactly like Facebook's magic view.
+ * - Polling also runs while the modal is open in the choose view: if
+ *   an account appears or refreshes while the modal is open — e.g.
+ *   completed in another tab — the modal closes with the matching
+ *   notice.
  */
 import * as React from 'react';
 import { useState, useEffect, useRef, useCallback } from 'react';
@@ -41,9 +36,12 @@ import {
   DialogTitle,
 } from '@/components/shared/ui/dialog';
 import { Button } from '@/components/shared/ui/button';
+import { Input } from '@/components/shared/ui/input';
 import { api, buildTenantApiPath } from '@/lib/api';
 import { ListInstagramAccountsResponseSchema } from '@fbuploadpro/contracts';
+import { MagicLinkResponseSchema } from '@/lib/api/schemas/accounts';
 import { reportError } from '@/lib/report-error';
+import { cn } from '@/lib/utils';
 
 export interface InstagramAccountStateRecord {
   status?: string | undefined;
@@ -203,8 +201,99 @@ export function evaluateInstagramConnectionPoll(
   return { matched: false };
 }
 
+function formatTimer(totalSeconds: number): string {
+  const mins = Math.floor(totalSeconds / 60);
+  const secs = totalSeconds % 60;
+  return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+}
+
+export function buildInstagramDirectConnectUrl(
+  reconnectingAccount?: InstagramConnectAccountModalProps['reconnectingAccount']
+): string {
+  if (!reconnectingAccount) {
+    return '/api/auth/instagram';
+  }
+  const params = new URLSearchParams();
+  if (reconnectingAccount.externalAccountId) {
+    params.set('expectedInstagramAccountId', reconnectingAccount.externalAccountId);
+  }
+  params.set('expectedDisplayName', reconnectingAccount.displayName);
+  return `/api/auth/instagram?${params.toString()}`;
+}
+
+interface InstagramMagicLinkViewProps {
+  magicUrl: string | null;
+  remainingSeconds: number;
+  copySuccess: boolean;
+  isGeneratingMagic: boolean;
+  onCopyLink: () => void;
+  onRegenerateLink: () => void;
+}
+
+export function InstagramMagicLinkView({
+  magicUrl,
+  remainingSeconds,
+  copySuccess,
+  isGeneratingMagic,
+  onCopyLink,
+  onRegenerateLink,
+}: Readonly<InstagramMagicLinkViewProps>) {
+  const isExpired = remainingSeconds <= 0;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <p className="m-0 text-body leading-body text-ink-sub">
+        Open this link in the browser or mobile window where your Instagram account is currently logged in. Once you approve access there, this window will update automatically.
+      </p>
+
+      {isExpired ? (
+        <Button
+          type="button"
+          data-testid="instagram-magic-regenerate-button"
+          disabled={isGeneratingMagic}
+          onClick={onRegenerateLink}
+          className="w-full"
+        >
+          {isGeneratingMagic ? 'Generating Magic Link...' : 'Link expired — Generate a new link'}
+        </Button>
+      ) : (
+        <div className="flex items-center gap-1">
+          <Input
+            type="text"
+            readOnly
+            data-testid="instagram-magic-url-input"
+            value={magicUrl ?? ''}
+            onClick={onCopyLink}
+            className="flex-1 cursor-pointer bg-canvas font-mono"
+          />
+
+          <Button
+            type="button"
+            data-testid="instagram-magic-copy-button"
+            onClick={onCopyLink}
+            className={cn(copySuccess && 'bg-brand-emerald hover:bg-brand-emerald')}
+          >
+            {copySuccess ? 'Copied!' : 'Copy Link'}
+          </Button>
+        </div>
+      )}
+
+      {/* Countdown & Status — text only, no status dot (no-dots rule). */}
+      <div className="flex items-center justify-between rounded-sm bg-subtle px-3.5 py-2.5 text-metadata text-ink-dim">
+        <span>{isExpired ? 'Magic link expired' : 'Waiting for Instagram approval...'}</span>
+
+        <span data-testid="instagram-magic-countdown" className="font-medium">
+          {isExpired ? 'Link expired' : `Link expires in ${formatTimer(remainingSeconds)}`}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 const EMPTY_IDS: string[] = [];
 const EMPTY_ACCOUNTS: InstagramAccountSnapshot[] = [];
+/** How long the "copied" feedback stays visible on copy buttons. */
+const COPY_FEEDBACK_DURATION_MS = 2000;
 /** How often to poll for a connection completed while the modal is open. */
 const INSTAGRAM_POLL_INTERVAL_MS = 3000;
 
@@ -271,7 +360,13 @@ export function InstagramConnectAccountModal({
   reconnectingAccount = null,
   initialAccounts = EMPTY_ACCOUNTS,
 }: Readonly<InstagramConnectAccountModalProps>) {
+  const [view, setView] = useState<'choose' | 'magic'>('choose');
   const [isDirectConnecting, setIsDirectConnecting] = useState(false);
+  const [magicUrl, setMagicUrl] = useState<string | null>(null);
+  const [isGeneratingMagic, setIsGeneratingMagic] = useState(false);
+  const [copySuccess, setCopySuccess] = useState(false);
+  const [remainingSeconds, setRemainingSeconds] = useState(900); // 15 minutes
+  const [magicError, setMagicError] = useState<string | null>(null);
 
   const wasOpenRef = useRef(false);
   const initialAccountIdsRef = useRef<Set<string>>(new Set(existingAccountIds));
@@ -283,7 +378,12 @@ export function InstagramConnectAccountModal({
   // accounts present at open so polling can tell new/refreshed apart.
   useEffect(() => {
     if (open && !wasOpenRef.current) {
+      setView('choose');
       setIsDirectConnecting(false);
+      setMagicUrl(null);
+      setCopySuccess(false);
+      setRemainingSeconds(900);
+      setMagicError(null);
 
       const ids = new Set<string>(existingAccountIds);
       const stateMap = new Map<string, InstagramAccountStateRecord>();
@@ -304,11 +404,70 @@ export function InstagramConnectAccountModal({
     wasOpenRef.current = open;
   }, [open, existingAccountIds, initialAccounts, reconnectingAccount]);
 
-  // Handle Direct Connection redirect (existing Instagram flow).
+  // Handle Direct Connection redirect (dedicated Instagram OAuth
+  // initiate, Facebook's `/api/auth/facebook` equivalent).
   const handleDirectConnect = () => {
     setIsDirectConnecting(true);
-    window.location.href = `/api/connect/instagram?subdomain=${encodeURIComponent(subdomain)}`;
+    window.location.href = buildInstagramDirectConnectUrl(reconnectingAccount);
   };
+
+  // Generate Magic Link
+  const handleStartMagicLink = async () => {
+    setIsGeneratingMagic(true);
+    setMagicError(null);
+    try {
+      const body = reconnectingAccount
+        ? {
+            expectedInstagramAccountId: reconnectingAccount.externalAccountId,
+            expectedDisplayName: reconnectingAccount.displayName,
+          }
+        : undefined;
+      const data = await api.post(
+        buildTenantApiPath(subdomain, '/instagram/accounts/magic-link'),
+        body,
+        { schema: MagicLinkResponseSchema }
+      );
+      setMagicUrl(data.magicUrl);
+      setRemainingSeconds(data.expiresInSeconds);
+      setView('magic');
+    } catch (error) {
+      reportError(error, { source: 'instagram-connect-account-magic-link' });
+      setMagicError("Couldn't generate the magic link. Please try again.");
+    } finally {
+      setIsGeneratingMagic(false);
+    }
+  };
+
+  // Copy to clipboard
+  const handleCopyLink = async () => {
+    if (!magicUrl) return;
+    try {
+      await navigator.clipboard.writeText(magicUrl);
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), COPY_FEEDBACK_DURATION_MS);
+    } catch {
+      // Clipboard write failure falls back to manual link selection.
+      setCopySuccess(false);
+    }
+  };
+
+  const isLinkExpired = remainingSeconds <= 0;
+
+  // Live countdown timer for Magic Link
+  useEffect(() => {
+    if (view !== 'magic' || !open || isLinkExpired) return;
+    const interval = setInterval(() => {
+      setRemainingSeconds((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [view, open, isLinkExpired]);
 
   // Check for newly connected or reconnected account.
   const pollAccounts = useCallback(async () => {
@@ -381,35 +540,72 @@ export function InstagramConnectAccountModal({
         <DialogHeader>
           <DialogTitle>{modalTitle}</DialogTitle>
           <DialogDescription>
-            Choose where your Instagram account is currently logged in:
+            {view === 'choose' && 'Choose where your Instagram account is currently logged in:'}
+            {view === 'magic' && 'Open this link in the browser or mobile device where you are logged into Instagram.'}
           </DialogDescription>
         </DialogHeader>
 
         <div>
-          <div className="flex flex-col gap-4">
-            <InstagramConnectOptionButton
-              testId="instagram-connect-option-direct"
-              disabled={isDirectConnecting}
-              onClick={handleDirectConnect}
-              title={isDirectConnecting ? 'Redirecting to Instagram...' : 'This Browser'}
-              description="Choose this if you are already logged into Instagram in this browser window."
-              actionHint="Direct Instagram authorization in this window"
-              icon={<MonitorIcon className="size-5.5" aria-hidden />}
-            />
+          {magicError && (
+            <div className="mb-4 rounded-sm border border-signal-critical/25 bg-signal-critical/10 px-3 py-2 text-body text-signal-critical-on-tint">
+              {magicError}
+            </div>
+          )}
 
-            <InstagramConnectOptionButton
-              testId="instagram-connect-option-magic"
-              disabled
-              onClick={() => undefined}
-              title="Different Browser or Phone"
-              description="Choose this if your Instagram account is open in another browser, private window, or on your mobile device."
-              actionHint="Magic link isn't available for Instagram yet — use This Browser for now."
-              icon={<LinkIcon className="size-5.5" aria-hidden />}
+          {view === 'choose' && (
+            <div className="flex flex-col gap-4">
+              <InstagramConnectOptionButton
+                testId="instagram-connect-option-direct"
+                disabled={isDirectConnecting}
+                onClick={handleDirectConnect}
+                title={isDirectConnecting ? 'Redirecting to Instagram...' : 'This Browser'}
+                description="Choose this if you are already logged into Instagram in this browser window."
+                actionHint="Direct Instagram authorization in this window"
+                icon={<MonitorIcon className="size-5.5" aria-hidden />}
+              />
+
+              <InstagramConnectOptionButton
+                testId="instagram-connect-option-magic"
+                disabled={isGeneratingMagic}
+                onClick={() => {
+                  void handleStartMagicLink();
+                }}
+                title={isGeneratingMagic ? 'Generating Secure Link...' : 'Different Browser or Phone'}
+                description="Choose this if your Instagram account is open in another browser, private window, or on your mobile device."
+                actionHint="Generates a secure link you can open on any device (valid for 15 minutes)"
+                icon={<LinkIcon className="size-5.5" aria-hidden />}
+              />
+            </div>
+          )}
+
+          {view === 'magic' && (
+            <InstagramMagicLinkView
+              magicUrl={magicUrl}
+              remainingSeconds={remainingSeconds}
+              copySuccess={copySuccess}
+              isGeneratingMagic={isGeneratingMagic}
+              onCopyLink={() => {
+                void handleCopyLink();
+              }}
+              onRegenerateLink={() => {
+                void handleStartMagicLink();
+              }}
             />
-          </div>
+          )}
         </div>
 
         <DialogFooter>
+          {view === 'magic' && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setView('choose')}
+              className="mr-auto"
+            >
+              Back
+            </Button>
+          )}
+
           <Button
             type="button"
             variant="outline"
