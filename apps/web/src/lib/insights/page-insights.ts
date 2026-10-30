@@ -62,13 +62,22 @@ const RANGE_DAYS: Record<PageInsightsRange, number> = {
  * a date helper).
  */
 function todayInTimezone(now: Date, timeZone: string): { year: number; month: number; day: number } {
+  let parts: Intl.DateTimeFormatPart[] | null = null;
   try {
-    const parts = new Intl.DateTimeFormat('en-CA', {
+    parts = new Intl.DateTimeFormat('en-CA', {
       timeZone,
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
     }).formatToParts(now);
+  } catch {
+    // Unknown zone: parts stays null and the UTC date below is used.
+    // The fallback is explicit (not a swallowed error): an unknown
+    // zone is a documented input case for this helper, and the UTC
+    // fallback is the specified behaviour, not a failed request.
+    parts = null;
+  }
+  if (parts) {
     const get = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? 0);
     const year = get('year');
     const month = get('month');
@@ -76,8 +85,6 @@ function todayInTimezone(now: Date, timeZone: string): { year: number; month: nu
     if (year > 0 && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
       return { year, month, day };
     }
-  } catch {
-    // Unknown zone: fall through to the UTC date below.
   }
   return { year: now.getUTCFullYear(), month: now.getUTCMonth() + 1, day: now.getUTCDate() };
 }

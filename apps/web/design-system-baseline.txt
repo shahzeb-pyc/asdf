@@ -62,6 +62,4 @@ arbitrary-allow apps/web/src/components/prompts/prompt-library-client.tsx min-h-
 arbitrary-allow apps/web/src/components/prompts/prompt-library-client.tsx max-w-[720px]
 arbitrary-allow apps/web/src/components/prompts/prompt-library-client.tsx sm:h-[420px]
 hex apps/web/src/components/connect/byoc-gate.tsx 2
-rgb apps/web/src/components/pages/dedicated/modal-styles.ts 1
 rgb apps/web/src/lib/component-styles.ts 1
-zindex apps/web/src/components/pages/dedicated/modal-styles.ts 1
