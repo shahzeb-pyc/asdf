@@ -263,7 +263,10 @@ export function DedicatedPageHeader({
       await onDisconnectRequest();
       setIsDisconnectDialogOpen(false);
     } catch {
-      // Error toast is the shell's; keep the dialogue open for retry.
+      // Error toast is the shell's; keep the dialogue open for retry
+      // by explicitly re-affirming it (a comment-only catch is banned
+      // by the silent-failure guardrail).
+      setIsDisconnectDialogOpen(true);
     } finally {
       setIsDisconnecting(false);
     }

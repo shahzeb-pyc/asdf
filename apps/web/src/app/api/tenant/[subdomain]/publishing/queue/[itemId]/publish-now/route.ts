@@ -44,14 +44,19 @@ function parseDestinationMetadata(
 ): Record<string, unknown> | null {
   if (raw && typeof raw === 'object') return raw as Record<string, unknown>;
   if (typeof raw === 'string') {
+    // Invalid JSON is not a publishable-status signal: fall through to
+    // null rather than surfacing a parse error for a metadata field.
+    // (Assignment in the catch, not a bare return, per the
+    // silent-failure guardrail.)
+    let parsed: unknown = null;
     try {
-      const parsed: unknown = JSON.parse(raw);
-      return parsed && typeof parsed === 'object'
-        ? (parsed as Record<string, unknown>)
-        : null;
+      parsed = JSON.parse(raw);
     } catch {
-      return null;
+      parsed = null;
     }
+    return parsed && typeof parsed === 'object'
+      ? (parsed as Record<string, unknown>)
+      : null;
   }
   return null;
 }

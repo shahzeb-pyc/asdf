@@ -484,14 +484,21 @@ export async function handleUpdatePage(
       }>;
       const currentRow = currentRows?.[0];
       if (currentRow) {
-        const currentMetadata =
+        // Invalid stored metadata JSON is treated as no metadata for
+        // the status gate (assignment in the catch, not a bare return,
+        // per the silent-failure guardrail).
+        const currentMetadata: Record<string, unknown> | null =
           typeof currentRow.metadata === 'string'
             ? (() => {
+                let parsed: Record<string, unknown> | null = null;
                 try {
-                  return JSON.parse(currentRow.metadata) as Record<string, unknown>;
+                  parsed = JSON.parse(
+                    currentRow.metadata
+                  ) as Record<string, unknown>;
                 } catch {
-                  return null;
+                  parsed = null;
                 }
+                return parsed;
               })()
             : currentRow.metadata;
         const currentWire = unifiedDestinationStatusToWire(
