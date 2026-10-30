@@ -267,20 +267,20 @@
       "/tenant/[subdomain]": {
         "firstLoadGzipBytes": 166245,
         "firstLoadRawBytes": 553669,
-        "routeSpecificGzipBytes": 25704,
-        "routeSpecificRawBytes": 80169
+        "routeSpecificGzipBytes": 28323,
+        "routeSpecificRawBytes": 89333
       },
       "/tenant/[subdomain]/accounts": {
         "firstLoadGzipBytes": 177491,
         "firstLoadRawBytes": 591484,
-        "routeSpecificGzipBytes": 36951,
-        "routeSpecificRawBytes": 117985
+        "routeSpecificGzipBytes": 39771,
+        "routeSpecificRawBytes": 127422
       },
       "/tenant/[subdomain]/connect/[platform]": {
         "firstLoadGzipBytes": 168060,
         "firstLoadRawBytes": 558010,
-        "routeSpecificGzipBytes": 31758,
-        "routeSpecificRawBytes": 97514
+        "routeSpecificGzipBytes": 33980,
+        "routeSpecificRawBytes": 105451
       },
       "/tenant/[subdomain]/destinations/[destinationId]": {
         "firstLoadGzipBytes": 172108,
@@ -291,8 +291,8 @@
       "/tenant/[subdomain]/fdola-studio": {
         "firstLoadGzipBytes": 167233,
         "firstLoadRawBytes": 556767,
-        "routeSpecificGzipBytes": 26693,
-        "routeSpecificRawBytes": 83268
+        "routeSpecificGzipBytes": 29270,
+        "routeSpecificRawBytes": 92347
       },
       "/tenant/[subdomain]/instagram/accounts": {
         "firstLoadGzipBytes": 176183,
@@ -303,8 +303,8 @@
       "/tenant/[subdomain]/media": {
         "firstLoadGzipBytes": 186243,
         "firstLoadRawBytes": 628000,
-        "routeSpecificGzipBytes": 45757,
-        "routeSpecificRawBytes": 154609
+        "routeSpecificGzipBytes": 48178,
+        "routeSpecificRawBytes": 163373
       },
       "/tenant/[subdomain]/pages": {
         "firstLoadGzipBytes": 175680,
@@ -327,14 +327,14 @@
       "/tenant/[subdomain]/publish-now": {
         "firstLoadGzipBytes": 172476,
         "firstLoadRawBytes": 576599,
-        "routeSpecificGzipBytes": 36040,
-        "routeSpecificRawBytes": 116259
+        "routeSpecificGzipBytes": 38254,
+        "routeSpecificRawBytes": 124267
       },
       "/tenant/[subdomain]/settings": {
         "firstLoadGzipBytes": 170245,
         "firstLoadRawBytes": 565558,
-        "routeSpecificGzipBytes": 34773,
-        "routeSpecificRawBytes": 107067
+        "routeSpecificGzipBytes": 37141,
+        "routeSpecificRawBytes": 115768
       },
       "/tenant/[subdomain]/threads/accounts": {
         "firstLoadGzipBytes": 167774,
@@ -345,32 +345,32 @@
       "/tenant/[subdomain]/tiktok/accounts": {
         "firstLoadGzipBytes": 167374,
         "firstLoadRawBytes": 556101,
-        "routeSpecificGzipBytes": 28779,
-        "routeSpecificRawBytes": 89205
+        "routeSpecificGzipBytes": 30991,
+        "routeSpecificRawBytes": 97207
       },
       "/tenant/[subdomain]/x/accounts": {
         "firstLoadGzipBytes": 166370,
         "firstLoadRawBytes": 553742,
-        "routeSpecificGzipBytes": 28683,
-        "routeSpecificRawBytes": 88940
+        "routeSpecificGzipBytes": 30894,
+        "routeSpecificRawBytes": 96942
       },
       "/tenant/[subdomain]/youtube/accounts": {
         "firstLoadGzipBytes": 167373,
         "firstLoadRawBytes": 556106,
-        "routeSpecificGzipBytes": 28779,
-        "routeSpecificRawBytes": 89207
+        "routeSpecificGzipBytes": 30988,
+        "routeSpecificRawBytes": 97209
       },
       "/tenant/[subdomain]/tiktok-mirrors": {
         "firstLoadGzipBytes": 169899,
         "firstLoadRawBytes": 563323,
-        "routeSpecificGzipBytes": 29410,
-        "routeSpecificRawBytes": 89932
+        "routeSpecificGzipBytes": 34623,
+        "routeSpecificRawBytes": 107564
       },
       "/tenant/[subdomain]/tiktok-mirrors/[mirrorId]": {
         "firstLoadGzipBytes": 168696,
         "firstLoadRawBytes": 562176,
-        "routeSpecificGzipBytes": 28207,
-        "routeSpecificRawBytes": 88784
+        "routeSpecificGzipBytes": 33215,
+        "routeSpecificRawBytes": 105666
       }
     },
     "totalClientJs": {
