@@ -279,10 +279,10 @@
      844px phone screen instead of running 64px over it. */
   #section-3 {
     padding-top: 64px;
-    padding-bottom: 64px;
+    padding-bottom: 56px;
   }
   #section-3 .s3-content {
-    gap: 32px;
+    gap: 28px;
   }
   .s2-grid {
     gap: 32px;
@@ -367,6 +367,7 @@
 .faq-card summary::marker {
   content: "";
 }
+
 
 /* Phone fit compression (owner order: every section must fit one
    phone screen). Phone-only (max-width 767px), so desktop rules
@@ -460,4 +461,154 @@
   #section-7 .grid li { font-size: 12.5px; line-height: 1.35; }
   #section-7 .grid p.mt-4 { margin-top: 8px; }
   #section-8 { padding-top: 40px; padding-bottom: 40px; }
+}
+
+/* Fit tuning, tablet only (768–1023px): S3 + S7 desktop/tablet
+   compression. Scoped so desktop (≥1024) and phone (<768)
+   rules are untouched. Spacing first, image size second,
+   secondary text last. */
+@media (min-width: 768px) and (max-width: 1023px) {
+  /* S3: padding 96→64 each side (-64), gap 40→24 (-16), card
+     capped at 600px wide so the 1.5-ratio image drops
+     469→400px tall (-69). Total ≈ -149. */
+  #section-3 {
+    padding-top: 64px;
+    padding-bottom: 64px;
+  }
+  #section-3 .s3-content {
+    gap: 24px;
+  }
+  #section-3 article {
+    max-width: 600px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  /* S7: panel padding 112/64→64/48 (-64), grid margin 56→32
+     (-24), card padding 36→24 each side, stacked (-48),
+     feature gaps 14→10 (-24), list bottom margin 32→20,
+     stacked (-24), dividers 24→16 each side, stacked (-32),
+     buttons 56→48 tall, stacked (-16), refund margin 16→12
+     (-4), gold rule margin 24→16 (-8), feature leading
+     1.6→1.5 (≈-18). Total ≈ -262. */
+  #section-7 .dark-panel {
+    padding-top: 64px;
+    padding-bottom: 48px;
+  }
+  #section-7 .dark-panel .grid {
+    margin-top: 32px;
+  }
+  #section-7 .dark-panel .grid > div {
+    padding: 24px;
+  }
+  #section-7 ul {
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+  #section-7 .h-px {
+    margin-top: 16px;
+    margin-bottom: 16px;
+  }
+  #section-7 .dark-panel .grid > div > a {
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+  #section-7 .dark-panel .grid > div > p {
+    margin-top: 12px;
+  }
+  #section-7 h2 .my-3 {
+    margin-top: 8px;
+    margin-bottom: 8px;
+  }
+  #section-7 ul li {
+    line-height: 1.5;
+  }
+}
+
+/* Short-phone fit, S2 only: phone widths AND ≤700px viewport
+   height, so normal phones (844px tall) and desktop are
+   untouched. Orbit 290→190 (-100), section padding 76/36→
+   56/24 (-32), grid gap 32→20 (-12), heading margin 16→8 +
+   leading 1.1→1.05 (-14), description leading 1.6→1.5 +
+   margin 32→16 (-30). Total ≈ -188. */
+@media (max-width: 767px) and (max-height: 700px) {
+  #section-2 {
+    padding-top: 56px;
+    padding-bottom: 24px;
+  }
+  .s2-grid {
+    gap: 20px;
+  }
+  .s2-heading {
+    margin-bottom: 8px;
+    line-height: 1.05;
+  }
+  .s2-text {
+    line-height: 1.5;
+    margin-bottom: 16px;
+  }
+  .s2-orbit {
+    width: 190px;
+    height: 190px;
+  }
+  .s2-centre {
+    width: 112px;
+    height: 112px;
+  }
+  .s2-centre svg {
+    width: 64px;
+  }
+  .orbit-badge {
+    width: 46px;
+    height: 46px;
+  }
+  .orbit-badge svg {
+    width: 24px;
+    height: 24px;
+  }
+}
+
+/* Short-phone fit, S3 only: same scoping as S2 above.
+   Padding 64/56→32/32 (-56), gap 28→20 (-12), image capped
+   at 260px wide so its height drops 233→173 (-60), link
+   margin 28→16 (-12), description margin 20→12 (-8) and
+   size 16→14px (-10), card padding 20→16 (-8), heart row
+   margin 16→8 (-8), title margin 12→8 (-4), heading
+   36→32px (-9), label margin 16→12 (-4). Total ≈ -191
+   on top of the -8 phone padding-bottom cut above. */
+@media (max-width: 767px) and (max-height: 700px) {
+  #section-3 {
+    padding-top: 32px;
+    padding-bottom: 32px;
+  }
+  #section-3 .s3-content {
+    gap: 20px;
+  }
+  #section-3 article {
+    max-width: 260px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  #section-3 .s3-anim a {
+    margin-top: 16px;
+  }
+  #section-3 .s3-anim p.mt-5 {
+    margin-top: 12px;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  #section-3 article .p-5 {
+    padding: 16px;
+  }
+  #section-3 article .mb-4 {
+    margin-bottom: 8px;
+  }
+  #section-3 article h3 {
+    margin-bottom: 8px;
+  }
+  #section-3 .s3-anim h2 {
+    font-size: 32px;
+  }
+  #section-3 .s3-anim p.mb-4 {
+    margin-bottom: 12px;
+  }
 }
