@@ -9,8 +9,6 @@
  * so failure paths (cancel failure, slot failure, duplicate slot)
  * can be exercised deterministically.
  */
-import { vi } from 'vitest';
-
 export type Row = Record<string, unknown>;
 
 export interface FakeCall {
@@ -292,5 +290,3 @@ export function queueRow(overrides: Partial<Row> = {}): Row {
     ...overrides,
   };
 }
-
-export const mockLog = vi.fn();
