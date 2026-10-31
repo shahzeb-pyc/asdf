@@ -113,7 +113,14 @@ export function RefundSection({ subdomain }: Readonly<{ subdomain: string }>) {
     );
   }
 
-  const { eligibility, requests } = data;
+  // A malformed refunds response must never crash the whole Billing page
+  // (e.g. a future server change returning an unexpected shape): fail
+  // closed and render nothing, same as the fetch-error path above.
+  const eligibility = data.eligibility;
+  const requests = data.requests ?? [];
+  if (!eligibility) {
+    return null;
+  }
   const destinationType = eligibility.destinationType;
 
   // Nothing to show: no eligibility and no request history. My Plan

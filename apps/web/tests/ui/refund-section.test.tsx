@@ -146,4 +146,14 @@ describe('RefundSection', () => {
       )
     );
   });
+
+  it('renders nothing instead of crashing on a malformed refunds response', async () => {
+    // Regression: a pre-existing billing fixture (no eligibility field)
+    // once crashed the whole Billing page via an unguarded dereference.
+    // A malformed response must fail closed — render nothing.
+    mockedApiGet.mockResolvedValue({ requests: [] });
+    const { container } = render(<RefundSection subdomain="acme" />);
+    await waitFor(() => expect(container.querySelector('[aria-busy]')).toBeNull());
+    expect(container.textContent).toBe('');
+  });
 });
