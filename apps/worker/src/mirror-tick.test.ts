@@ -143,7 +143,7 @@ describe('processMirrorCheck', () => {
     const state = newState();
     const deps = fakeDeps(state, [reel('v1', 100)]);
     deps.checkEntitlement = async () => {
-      throw new Error('db down');
+      throw new InternalError('db down');
     };
     const result = await processMirrorCheck(deps, mirror());
     expect(result.posted).toBe(0);

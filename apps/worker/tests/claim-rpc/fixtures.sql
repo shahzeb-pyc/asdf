@@ -28,6 +28,11 @@ BEGIN
   TRUNCATE public.publish_logs, public.queue_items, public.destinations,
            public.social_accounts, public.workspaces, public.users CASCADE;
   TRUNCATE public.destination_claim_limits;
+  -- periods.user_id carries no FK, so the users CASCADE above does
+  -- not clear it — but payments FK to periods, so truncate them
+  -- together (CASCADE covers redemptions/refunds). Dedicated rig
+  -- DB only; this never runs anywhere else.
+  TRUNCATE public.subscription_periods, public.subscription_payments CASCADE;
   INSERT INTO public.destination_claim_limits (platform, metric, cap, window_seconds) VALUES
     ('instagram', 'published', 100, 86400),
     ('instagram', 'calls',      25,  3600),
@@ -38,6 +43,18 @@ BEGIN
   INSERT INTO public.workspaces (id, owner_id, name, subdomain)
   VALUES (public.claim138_test_id('ws', 1), public.claim138_test_id('user', 1),
           'Claim RPC Rig WS', 'claim138-ws');
+  -- Billing audit fix 2026-11-01: the claim RPCs skip items whose
+  -- workspace owner has no active, non-superseded period. The parity
+  -- cases assert claim semantics, so the rig owner is seeded entitled
+  -- (an active period, wide window). This row is invisible to the
+  -- pre-fix RPCs, so the parity contract (same suite passes pre-fix
+  -- and post-fix) still holds; the entitlement predicate itself is
+  -- covered by the worker's entitlement unit tests.
+  INSERT INTO public.subscription_periods
+    (id, user_id, facebook_count, instagram_count, threads_count,
+     x_count, tiktok_count, youtube_count, starts_at, ends_at, superseded_at)
+  VALUES (public.claim138_test_id('period', 1), public.claim138_test_id('user', 1),
+          5, 5, 5, 5, 5, 5, now() - INTERVAL '1 day', now() + INTERVAL '29 days', NULL);
 END;
 $$;
 

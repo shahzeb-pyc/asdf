@@ -81,12 +81,17 @@ export function AdminWebhookIssuesView({ subdomain }: Readonly<{ subdomain: stri
       </section>
     );
   }
-  if (data.issues.length === 0) return null;
+  // Defensive: a malformed payload must never crash the whole admin
+  // page — the section hides instead. (The schema-validated fetch
+  // guarantees the shape in production; a loose mock or a future
+  // shape drift degrades to hidden, not to a white page.)
+  const issues = Array.isArray(data.issues) ? data.issues : [];
+  if (issues.length === 0) return null;
 
   return (
     <section aria-label="Webhook issues" className="flex flex-col gap-4">
       <h2 className="text-lg leading-heading font-semibold text-ink">
-        Webhook issues ({data.issues.length})
+        Webhook issues ({issues.length})
       </h2>
       <p className="text-body text-ink-sub">
         Crypto payments the automatic confirmation could not activate. Check each one
@@ -104,7 +109,7 @@ export function AdminWebhookIssuesView({ subdomain }: Readonly<{ subdomain: stri
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       ) : null}
-      {data.issues.map((issue) => (
+      {issues.map((issue) => (
         <Card key={issue.id}>
           <CardContent className="flex flex-col gap-4 py-4">
             <div className="flex min-w-0 flex-col gap-1">
