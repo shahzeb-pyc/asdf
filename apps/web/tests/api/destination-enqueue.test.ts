@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { signSessionToken, IDEMPOTENCY_KEY_HEADER, type DatabaseClient } from '@fbuploadpro/contracts';
 import { handleDestinationEnqueue } from '@/app/api/tenant/[subdomain]/publishing/destination-queue/route';
+import { postStagingKeyPrefix } from '@/lib/publishing/post-owned-media';
 import { MockStorageProvider } from '../helpers/mock-storage';
 
 const TEST_SECRET = ['destination', 'enqueue', 'test', 'secret', 'value'].join('-');
@@ -687,6 +688,47 @@ describe('destination enqueue — facebook publisher-driven intents', () => {
     expect(res.status).toBe(201);
     const payload = (await res.json()) as { scheduledTime: string };
     expect(new Date(payload.scheduledTime).getTime()).toBeGreaterThanOrEqual(before - 1000);
+  });
+
+  it('a keep-set fetch failure deletes nothing: the sweep is skipped, the enqueue still succeeds', async () => {
+    seedFacebook();
+    // An old staged upload past the 24h retention window. Under the
+    // old fail-open behaviour (empty keep set on error) the sweep
+    // would delete exactly this key; with a throwing fetch the
+    // caller's catch skips the sweep entirely.
+    const stagedKey = `${postStagingKeyPrefix(userId)}aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa/staged.mp4`;
+    storage.uploadedObjects.set(stagedKey, {
+      contentType: 'video/mp4',
+      byteLength: 10,
+      uploadedAt: new Date(Date.now() - 25 * 60 * 60 * 1000),
+    });
+    // Only the keep-set query fails; every other query works.
+    const realQuery = db.query;
+    db.query = vi.fn(async (sql: string, params: unknown[] = []) => {
+      if (sql.includes('media_storage_key LIKE')) {
+        throw new Error('keep-set DB down');
+      }
+      return realQuery(sql, params);
+    });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await enqueue({
+      platform: 'facebook',
+      destinationId: fbDestinationId,
+      kind: 'text',
+      caption: 'Hello',
+      intent: 'queue',
+      slotId,
+    });
+    expect(res.status).toBe(201);
+    // The sweep runs fire-and-forget: wait until its failure is
+    // logged, proving the catch path ran instead of a sweep.
+    await vi.waitFor(() =>
+      expect(errorSpy).toHaveBeenCalledWith(
+        'Staged upload sweep failed:',
+        expect.anything()
+      )
+    );
+    expect(storage.uploadedObjects.has(stagedKey)).toBe(true);
   });
 });
 

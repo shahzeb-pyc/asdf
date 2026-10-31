@@ -326,7 +326,16 @@ export async function fetchReferencedStagedKeys(
   }
 
   const supabase = getRouteSupabase(client as SupabaseClient);
-  if (!supabase) return new Set();
+  // Fail closed, like the legacy branch (whose query throws on a
+  // DB error): an empty set here would be indistinguishable from
+  // "nothing referenced", and the sweep would then delete every
+  // old staged key — including live queued posts. The caller
+  // catches a throw and skips the sweep instead.
+  if (!supabase) {
+    throw new Error(
+      'Cannot fetch referenced staged keys: no Supabase client available'
+    );
+  }
   const keys = new Set<string>();
   let lastId = NIL_UUID;
   for (;;) {
@@ -339,7 +348,9 @@ export async function fetchReferencedStagedKeys(
       .gt('id', lastId)
       .order('id', { ascending: true })
       .limit(REFERENCED_STAGED_KEYS_PAGE);
-    if (error) return new Set();
+    if (error) {
+      throw new Error(`Failed to fetch referenced staged keys: ${error.message}`);
+    }
     const page = data as Array<{ id: string; media_storage_key?: string | null }>;
     for (const r of page) {
       if (typeof r.media_storage_key === 'string' && r.media_storage_key.length > 0) {

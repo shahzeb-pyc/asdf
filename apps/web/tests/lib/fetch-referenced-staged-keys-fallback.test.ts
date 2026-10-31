@@ -5,9 +5,12 @@ import { postStagingKeyPrefix } from '@/lib/publishing/post-owned-media';
 /**
  * fetchReferencedStagedKeys fallback branches (PR #74 Sonar gate):
  * the main keep-set suite covers the happy paging paths; these
- * cover the guards around them — no Supabase client available,
- * a Supabase error, and rows carrying a null/empty key, which the
- * keep set must skip rather than keep.
+ * cover the guards around them. The Supabase branch FAILS CLOSED
+ * (round-2 verification): no client, or a page error, throws —
+ * it must never return an empty set, because the caller cannot
+ * tell that apart from "nothing referenced" and the sweep would
+ * then delete every old staged key. Rows carrying a null/empty
+ * key are still skipped rather than kept.
  */
 vi.mock('@/lib/route-auth', async (importOriginal) => {
   const original = await importOriginal<typeof import('@/lib/route-auth')>();
@@ -46,19 +49,34 @@ function makeSupabase(result: {
 }
 
 describe('fetchReferencedStagedKeys fallbacks', () => {
-  it('returns an empty keep set when no Supabase client is available', async () => {
-    const keys = await fetchReferencedStagedKeys({} as never, workspaceId, userId);
-    expect(keys).toEqual(new Set());
+  it('throws when no Supabase client is available (never an empty set)', async () => {
+    await expect(
+      fetchReferencedStagedKeys({} as never, workspaceId, userId)
+    ).rejects.toThrow(/no Supabase client available/);
   });
 
-  it('returns an empty keep set when the Supabase page errors', async () => {
+  it('throws when the Supabase page errors (never an empty set)', async () => {
     const supabase = makeSupabase({ data: null, error: { message: 'boom' } });
+    await expect(
+      fetchReferencedStagedKeys(supabase as never, workspaceId, userId)
+    ).rejects.toThrow(/Failed to fetch referenced staged keys: boom/);
+  });
+
+  it('still returns an empty set when the fetch genuinely succeeds with no rows', async () => {
+    const supabase = makeSupabase({ data: [], error: null });
     const keys = await fetchReferencedStagedKeys(
       supabase as never,
       workspaceId,
       userId
     );
     expect(keys).toEqual(new Set());
+    const legacy = { query: vi.fn(async () => []) };
+    const legacyKeys = await fetchReferencedStagedKeys(
+      legacy as never,
+      workspaceId,
+      userId
+    );
+    expect(legacyKeys).toEqual(new Set());
   });
 
   it('skips null and empty keys on the Supabase path', async () => {
