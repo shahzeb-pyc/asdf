@@ -47,13 +47,11 @@
   }
 }
 
-/* Hero only: #section-1 fills a viewport at minimum (100dvh
+/* Every section fills a viewport at minimum (100dvh
    where supported), and grows instead of clipping if its
-   content is ever taller. All other sections size to their
-   content (audit M9/M1, 2026-11-01): forcing every section to
-   full height produced oversized, airy sections at middle
-   widths and short phones. Sections are direct siblings, full
-   width, with zero gap. */
+   content is ever taller (owner order 2026-11-01: full-screen
+   sections, content vertically centered top-to-bottom).
+   Sections are direct siblings, full width, with zero gap. */
 .section-full {
   min-height: 100vh;
 }
@@ -185,9 +183,10 @@
 }
 
 /* Dark panels: the panel is the section, full
-   width, sizing to its content (audit M9, 2026-11-01: the
-   old 100vh min-height is deleted, like section-full above),
-   content centred inside it.
+   width, filling a viewport at minimum (100vh/100dvh,
+   restored on owner order 2026-11-01), growing instead of
+   clipping if its content is taller, content centred
+   inside it.
    Section 6 (Community) transition, INVERTED (owner-corrected
    2026-10-31): the WHITE section above (Section 5) ends with
    rounded BOTTOM corners, and Section 6 is pulled up behind it
@@ -201,6 +200,12 @@
    its white covers the panel everywhere except the cut corners. */
 .dark-panel {
   width: 100%;
+  min-height: 100vh;
+}
+@supports (height: 100dvh) {
+  .dark-panel {
+    min-height: 100dvh;
+  }
 }
 #section-5 {
   border-bottom-left-radius: 48px;
@@ -255,9 +260,10 @@
 }
 
 /* Phone layout: section 2 stacked layout. Phones stack text plus
-   orbit, and the section sizes to its content (audit M9,
-   2026-11-01), growing instead of clipping if its content is
-   taller. The orbit is the visual anchor again at 300px (it fits
+   orbit; the section fills the viewport at minimum (owner
+   order 2026-11-01) and grows instead of clipping if its
+   content is taller, and its content is vertically centered
+   by the flex items-center on the section itself. The orbit is the visual anchor again at 300px (it fits
    a 320px screen: the orbit box sits 10px into the section
    padding each side, badges reach 17px–303px, badge halo
    included, so nothing is clipped by the screen edge — no
@@ -265,7 +271,6 @@
    desktop two-column layout is untouched. */
 @media (max-width: 767px) {
   #section-2 {
-    align-items: flex-start;
     padding-top: 76px;
     padding-bottom: 36px;
   }
