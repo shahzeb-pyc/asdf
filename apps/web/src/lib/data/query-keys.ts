@@ -41,6 +41,12 @@ export const queryKeys = {
           [...tenantRoot, 'accounts', accountId] as const,
       },
 
+      /** Billing entitlement (plan, cap, usage) shared by the feature-cap displays. */
+      billing: {
+        all: [...tenantRoot, 'billing'] as const,
+        entitlement: [...tenantRoot, 'billing', 'entitlement'] as const,
+      },
+
       /**
        * Threads accounts list. A SEPARATE namespace from Facebook's
        * `accounts` keys on purpose: the two lists share the same

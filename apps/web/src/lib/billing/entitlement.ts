@@ -386,6 +386,66 @@ export async function registerUsage(
   return { alreadyUsed: false, usedCount: await getUsageCount(client, userId, platform) };
 }
 
+/**
+ * Cap check for feature-section "add" actions (Add Page, Add Auto
+ * Repost, Add to Schedule, Add ADU config). Unlike registerUsage it
+ * writes NOTHING: adding a destination does not consume the cap —
+ * only using it in a feature does (queue/publish). The check refuses
+ * the add when the destinations it would newly expose (keys not
+ * already in the registry) would push usage past the purchased
+ * count. Already-registered destinations always pass, and a request
+ * that adds only already-registered destinations never fails the
+ * cap. Admins are not gated — callers skip this check for role
+ * 'admin', exactly like the posting gates.
+ */
+export async function assertFeatureAddWithinCap(
+  client: SupabaseClient,
+  userId: string,
+  platform: SubscriptionPlatform,
+  destinationKeys: string[],
+  now: Date = new Date()
+): Promise<{ allowed: number; used: number; newCount: number }> {
+  const entitlement = await getEntitlement(client, userId, now);
+  if (!entitlement.period || !entitlement.canPost) {
+    throw new SubscriptionGateError(
+      'SUBSCRIPTION_REQUIRED',
+      entitlement.reason ??
+        'Posting is paused. Your paid period has ended — renew it to post again.'
+    );
+  }
+  const allowed = entitlement.counts[platform];
+  const uniqueKeys = [...new Set(destinationKeys.filter((key) => key.length > 0))];
+  let newCount = uniqueKeys.length;
+  if (uniqueKeys.length > 0) {
+    const { data, error } = await client
+      .from('subscription_usage')
+      .select('destination_key')
+      .eq('user_id', userId)
+      .eq('platform', platform)
+      .in('destination_key', uniqueKeys);
+    if (error) {
+      logServerError('[billing] feature-add cap check failed', error, { source: 'billing' });
+      throw new SubscriptionGateError(
+        'ENTITLEMENT_UNAVAILABLE',
+        'Your plan could not be checked right now. Please try again.'
+      );
+    }
+    const alreadyUsed = new Set(
+      (Array.isArray(data) ? data : [])
+        .map((row) => asRow(row)?.destination_key)
+        .filter((key): key is string => typeof key === 'string')
+    );
+    newCount = uniqueKeys.filter((key) => !alreadyUsed.has(key)).length;
+  }
+  if (entitlement.usage[platform] + newCount > allowed) {
+    throw new SubscriptionGateError(
+      'SUBSCRIPTION_CAP_REACHED',
+      `You have reached your limit of ${allowed} ${platform === 'facebook' ? 'pages' : 'accounts'} on ${platform}. Upgrade your plan to use more.`
+    );
+  }
+  return { allowed, used: entitlement.usage[platform], newCount };
+}
+
 /** Supersede the user's current periods and start a fresh 30-day period for a payment. */
 export async function createPeriodForPayment(
   client: SupabaseClient,

@@ -92,6 +92,26 @@ function baseDb(overrides: Partial<Record<string, Row[]>> = {}): Record<string, 
     queue_items: [queueRow()],
     publish_logs: [],
     idempotency_keys: [],
+    // The plan-cap gate on Add reads the billing tables through the
+    // same fake client, so the seed carries an active period with a
+    // generous cap and zero usage — otherwise every Add would fail
+    // at the gate instead of exercising the schedule logic.
+    subscription_periods: [
+      {
+        id: 'period-1',
+        user_id: '11111111-1111-4111-a111-111111111111',
+        facebook_count: 10,
+        instagram_count: 10,
+        threads_count: 10,
+        x_count: 10,
+        tiktok_count: 10,
+        youtube_count: 10,
+        starts_at: '2026-01-01T00:00:00.000Z',
+        ends_at: '2027-01-01T00:00:00.000Z',
+        superseded_at: null,
+      },
+    ],
+    subscription_usage: [],
     ...overrides,
   };
 }

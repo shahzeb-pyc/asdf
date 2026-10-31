@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   approvePayment,
   assertCanPost,
+  assertFeatureAddWithinCap,
   countsFromRow,
   createPeriodForPayment,
   getActivePeriod,
@@ -157,7 +158,7 @@ function baseState(overrides: Partial<FakeState> = {}): FakeState {
   };
 }
 
-type Filter = { op: 'eq' | 'is' | 'lte' | 'gt'; col: string; val: unknown };
+type Filter = { op: 'eq' | 'is' | 'lte' | 'gt' | 'in'; col: string; val: unknown };
 
 class FakeBuilder {
   private filters: Filter[] = [];
@@ -184,6 +185,11 @@ class FakeBuilder {
 
   is(col: string, val: unknown): this {
     this.filters.push({ op: 'is', col, val });
+    return this;
+  }
+
+  in(col: string, vals: unknown[]): this {
+    this.filters.push({ op: 'in', col, val: vals });
     return this;
   }
 
@@ -297,6 +303,7 @@ class FakeBuilder {
         if (f.op === 'eq') return v === f.val;
         if (f.op === 'is') return f.val === null ? v == null : v === f.val;
         if (f.op === 'lte') return String(v) <= String(f.val);
+        if (f.op === 'in') return Array.isArray(f.val) && f.val.includes(v);
         return String(v) > String(f.val);
       });
     }
@@ -565,6 +572,121 @@ describe('assertCanPost', () => {
     const state = baseState({ periods: [periodRow()] });
     const period = await assertCanPost(fakeClient(state), 'user-1', 'facebook', 'page-a', NOW);
     expect(period.id).toBe('period-1');
+  });
+});
+
+describe('assertFeatureAddWithinCap', () => {
+  it('refuses a Free user', async () => {
+    const state = baseState();
+    await expect(
+      assertFeatureAddWithinCap(fakeClient(state), 'user-1', 'facebook', ['page-a'], NOW)
+    ).rejects.toMatchObject({ code: 'SUBSCRIPTION_REQUIRED' });
+  });
+
+  it('allows new destinations under the cap and reports the new count', async () => {
+    const state = baseState({
+      periods: [periodRow({ facebook_count: 5 })],
+      usageRows: [
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-a' },
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-b' },
+      ],
+    });
+    const result = await assertFeatureAddWithinCap(
+      fakeClient(state),
+      'user-1',
+      'facebook',
+      ['page-c', 'page-d'],
+      NOW
+    );
+    expect(result).toEqual({ allowed: 5, used: 2, newCount: 2 });
+  });
+
+  it('does not count already-registered destinations against the cap', async () => {
+    const state = baseState({
+      periods: [periodRow({ facebook_count: 5 })],
+      usageRows: [
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-a' },
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-b' },
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-c' },
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-d' },
+      ],
+    });
+    const result = await assertFeatureAddWithinCap(
+      fakeClient(state),
+      'user-1',
+      'facebook',
+      ['page-a', 'page-e'],
+      NOW
+    );
+    expect(result).toEqual({ allowed: 5, used: 4, newCount: 1 });
+  });
+
+  it('dedupes repeated keys in one request', async () => {
+    const state = baseState({
+      periods: [periodRow({ facebook_count: 5 })],
+      usageRows: [
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-a' },
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-b' },
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-c' },
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-d' },
+      ],
+    });
+    const result = await assertFeatureAddWithinCap(
+      fakeClient(state),
+      'user-1',
+      'facebook',
+      ['page-e', 'page-e'],
+      NOW
+    );
+    expect(result.newCount).toBe(1);
+  });
+
+  it('refuses when new destinations would push usage past the cap', async () => {
+    const state = baseState({
+      periods: [periodRow({ facebook_count: 5 })],
+      usageRows: [
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-a' },
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-b' },
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-c' },
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-d' },
+      ],
+    });
+    await expect(
+      assertFeatureAddWithinCap(fakeClient(state), 'user-1', 'facebook', ['page-e', 'page-f'], NOW)
+    ).rejects.toMatchObject({ code: 'SUBSCRIPTION_CAP_REACHED' });
+  });
+
+  it('allows an add of only already-registered destinations even at the cap', async () => {
+    const state = baseState({
+      periods: [periodRow({ facebook_count: 1 })],
+      usageRows: [{ user_id: 'user-1', platform: 'facebook', destination_key: 'page-a' }],
+    });
+    const result = await assertFeatureAddWithinCap(
+      fakeClient(state),
+      'user-1',
+      'facebook',
+      ['page-a'],
+      NOW
+    );
+    expect(result).toEqual({ allowed: 1, used: 1, newCount: 0 });
+  });
+
+  it('allows an empty add even at the cap', async () => {
+    const state = baseState({
+      periods: [periodRow({ facebook_count: 1 })],
+      usageRows: [{ user_id: 'user-1', platform: 'facebook', destination_key: 'page-a' }],
+    });
+    const result = await assertFeatureAddWithinCap(fakeClient(state), 'user-1', 'facebook', [], NOW);
+    expect(result.newCount).toBe(0);
+  });
+
+  it('writes nothing to the registry', async () => {
+    const state = baseState({
+      periods: [periodRow({ facebook_count: 5 })],
+      usageRows: [{ user_id: 'user-1', platform: 'facebook', destination_key: 'page-a' }],
+    });
+    await assertFeatureAddWithinCap(fakeClient(state), 'user-1', 'facebook', ['page-b'], NOW);
+    expect(state.inserted.filter((entry) => entry.table === 'subscription_usage')).toEqual([]);
   });
 });
 

@@ -13,6 +13,11 @@ import {
   type Database,
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
+import { assertFeatureAddWithinCap } from '@/lib/billing/entitlement';
+import {
+  getBillingAdminClient,
+  subscriptionGateResponse,
+} from '@/lib/billing/route-helpers';
 import {
   isTokenDeadGraphStatus,
   markAccountConnectionError,
@@ -82,6 +87,32 @@ export async function handleImportPages(
 
   const { accountId, selectedPageIds, timezone, postingTimes } =
     parseResult.data;
+
+  // 3b. Plan cap gate: importing a page registers it against the
+  // Facebook page cap, so an over-cap import is rejected here, before
+  // any Graph fetch or destination write. Admins are never gated, and
+  // a missing billing client skips the gate (same rule as the
+  // destination-queue gate) rather than failing a valid import. The
+  // gate always uses the admin client, never the route's working
+  // client — in production they are the same client, and in tests the
+  // working client is a fake that must not answer billing queries.
+  if (session.role !== 'admin') {
+    const billingClient = getBillingAdminClient();
+    if (billingClient) {
+      try {
+        await assertFeatureAddWithinCap(
+          billingClient,
+          session.userId,
+          'facebook',
+          selectedPageIds
+        );
+      } catch (err) {
+        const gateResponse = subscriptionGateResponse(err);
+        if (gateResponse) return gateResponse;
+        throw err;
+      }
+    }
+  }
 
   // 4. Resolve workspace ID scoped to user
   const workspaceId = await resolveTenantWorkspaceId(dbClient, subdomain, session.userId);

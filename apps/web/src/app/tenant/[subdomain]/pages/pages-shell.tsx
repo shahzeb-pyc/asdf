@@ -79,6 +79,7 @@ import {
   type PageStatusFilter,
 } from '@/components/pages/pages-helpers';
 import { AddPageModal } from '@/components/pages/add-page-modal';
+import { FeatureCapText, useFeatureCap } from '@/components/billing/feature-cap';
 import type { FacebookAccountItem } from '@/components/accounts/account-card';
 import { buildDirectConnectUrl } from '@/components/accounts/connect-account-modal';
 
@@ -109,6 +110,10 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const tenant = queryKeys.tenant(subdomain);
+  // Plan cap for the feature display: used/remaining Facebook pages
+  // from the entitlement endpoint; the Add Page button disables at
+  // the cap, and the server import route enforces the same cap.
+  const { cap: facebookCap } = useFeatureCap(subdomain, 'facebook');
 
   // Pagination state lives in the URL (?page=) so refresh and a shared
   // link land on the same page; an unparseable value falls back to 1.
@@ -554,6 +559,8 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
     contentNode = (
       <PagesEmptyState
         onAddPage={() => setIsAddModalOpen(true)}
+        addDisabled={facebookCap?.atCap ?? false}
+        cap={facebookCap}
         subdomain={subdomain}
         facebookAppConfigured={facebookAppConfigured}
         byocPending={byocQuery.isPending}
@@ -628,12 +635,16 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
           <p data-testid="pages-page-subtitle" className="m-0 text-body text-ink-sub">
             {situationalSubtitle}
           </p>
+          {facebookCap ? (
+            <FeatureCapText cap={facebookCap} platform="facebook" />
+          ) : null}
         </div>
 
         <Button
           type="button"
           data-testid="header-add-page-btn"
           onClick={() => setIsAddModalOpen(true)}
+          disabled={facebookCap?.atCap ?? false}
         >
           <PlusIcon aria-hidden />
           <span>Add Page</span>

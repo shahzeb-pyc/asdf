@@ -1,3 +1,4 @@
+import { NextResponse } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type {
   BillingPaymentItem,
@@ -7,12 +8,32 @@ import type {
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import {
   paymentFromRow,
+  SubscriptionGateError,
   type Entitlement,
   type SubscriptionPaymentRow,
 } from './entitlement';
 
 export function getBillingAdminClient(): SupabaseClient | null {
   return getSupabaseAdminClient() as SupabaseClient | null;
+}
+
+/**
+ * Maps a thrown SubscriptionGateError to its HTTP response, or null for
+ * any other error (which the caller rethrows / handles as a 500). Add
+ * routes use this so the cap error shape stays uniform: 403 with the
+ * machine-readable code, never a silent skip or a bare 500.
+ */
+export function subscriptionGateResponse(err: unknown): NextResponse | null {
+  if (!(err instanceof SubscriptionGateError)) return null;
+  const status =
+    err.code === 'SUBSCRIPTION_CAP_REACHED' ||
+    err.code === 'SUBSCRIPTION_REQUIRED'
+      ? 403
+      : 500;
+  return NextResponse.json(
+    { error: err.code, message: err.message },
+    { status }
+  );
 }
 
 export function mapPaymentToItem(payment: SubscriptionPaymentRow): BillingPaymentItem {

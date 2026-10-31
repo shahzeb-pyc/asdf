@@ -24,7 +24,7 @@ export async function authenticateInstagramSchedule(
   subdomain: string,
   dbClient?: InstagramScheduleDbClient
 ): Promise<
-  | { session: { userId: string }; workspaceId: string }
+  | { session: { userId: string; role: string }; workspaceId: string }
   | { error: NextResponse }
 > {
   const sessionCookie = request.cookies.get('fbup_session')?.value;

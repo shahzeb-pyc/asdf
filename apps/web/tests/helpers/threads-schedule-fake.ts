@@ -19,7 +19,7 @@ export interface FakeCall {
 }
 
 interface Filter {
-  op: 'eq' | 'in' | 'gte' | 'lt' | 'gt';
+  op: 'eq' | 'in' | 'gte' | 'lt' | 'gt' | 'lte' | 'is';
   col: string;
   val: unknown;
 }
@@ -32,6 +32,8 @@ function matches(row: Row, filters: Filter[]): boolean {
     if (f.op === 'gte') return String(value) >= String(f.val);
     if (f.op === 'lt') return String(value) < String(f.val);
     if (f.op === 'gt') return String(value) > String(f.val);
+    if (f.op === 'lte') return String(value) <= String(f.val);
+    if (f.op === 'is') return f.val === null ? value == null : value === f.val;
     return true;
   });
 }
@@ -58,6 +60,7 @@ export class FakeBuilder extends Promise<unknown> {
   private selectAfterInsert = false;
   private rangeFrom: number | null = null;
   private rangeTo: number | null = null;
+  private limitN: number | null = null;
   private orderCol: string | null = null;
   private orderAsc = true;
   private pendingInsert: Row[] | null = null;
@@ -143,6 +146,18 @@ export class FakeBuilder extends Promise<unknown> {
     return this;
   }
 
+  lte(col: string, val: unknown) {
+    this.schedule();
+    this.filters.push({ op: 'lte', col, val });
+    return this;
+  }
+
+  is(col: string, val: unknown) {
+    this.schedule();
+    this.filters.push({ op: 'is', col, val });
+    return this;
+  }
+
   order(col: string, opts?: { ascending?: boolean }) {
     this.schedule();
     this.orderCol = col;
@@ -154,6 +169,12 @@ export class FakeBuilder extends Promise<unknown> {
     this.schedule();
     this.rangeFrom = from;
     this.rangeTo = to;
+    return this;
+  }
+
+  limit(n: number) {
+    this.schedule();
+    this.limitN = n;
     return this;
   }
 
@@ -262,6 +283,9 @@ export class FakeBuilder extends Promise<unknown> {
     }
     if (this.rangeFrom !== null && this.rangeTo !== null) {
       rows = rows.slice(this.rangeFrom, this.rangeTo + 1);
+    }
+    if (this.limitN !== null) {
+      rows = rows.slice(0, this.limitN);
     }
     if (this.head) {
       return { count: rows.length, error: null };
