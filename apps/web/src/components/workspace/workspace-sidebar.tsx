@@ -17,6 +17,10 @@
  *   testing-placeholder note (Threads also has an In-app Schedule item
  *   below Accounts) → Billing collapsible group (default open;
  *   My Plan, Purchase, Payments), last → footer.
+ * - Testing platforms (platform.isTesting, currently X, TikTok, YouTube)
+ *   are the exception: their group shows ONLY the testing-placeholder
+ *   note — no Accounts leaf — and the group header never navigates to
+ *   an accounts route; clicking it only expands/collapses the group.
  * - Spec 110 single-click model: every leaf is a Next.js <Link> that
  *   navigates on the FIRST click; the leaf click handler only paints
  *   the active state optimistically and closes the mobile drawer — it
@@ -463,13 +467,19 @@ function WorkspaceSidebarContent({
                       isActive={isCollapsed && isPlatformActive}
                       aria-expanded={isCollapsed ? undefined : isOpen}
                       onClick={() => {
-                        if (isCollapsed) {
+                        // Testing platforms have no Accounts leaf, so
+                        // their header must never navigate to an
+                        // accounts route — it only expands/collapses
+                        // the group to reveal the testing note.
+                        if (isCollapsed && !platform.isTesting) {
                           handleNavigate(platformAccountsHref);
                         } else {
                           setOpenPlatforms((prev) => ({ ...prev, [platform.key]: !isOpen }));
                         }
                       }}
-                      onMouseEnter={() => handlePrefetch(platformAccountsHref)}
+                      onMouseEnter={() => {
+                        if (!platform.isTesting) handlePrefetch(platformAccountsHref);
+                      }}
                     >
                       <span className="inline-flex shrink-0 items-center justify-center">
                         {platform.icon}
@@ -480,7 +490,9 @@ function WorkspaceSidebarContent({
 
                     {isOpen && (
                       <SidebarMenuSub>
-                        <NavSubLeaf label="Accounts" href={platformAccountsHref} isActive={isAccountsSubActive} onLeafClick={handleLeafClick} />
+                        {!platform.isTesting && (
+                          <NavSubLeaf label="Accounts" href={platformAccountsHref} isActive={isAccountsSubActive} onLeafClick={handleLeafClick} />
+                        )}
                         {platform.key === 'threads' ? (
                           <NavSubLeaf label="In-app Schedule" href={platformScheduleHref} isActive={isScheduleSubActive} onLeafClick={handleLeafClick} />
                         ) : null}
