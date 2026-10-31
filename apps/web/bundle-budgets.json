@@ -1,8 +1,8 @@
 {
   "version": 1,
   "decision": "D137-3 superseded by Shahzeb on 2026-10-24: bundle budgets are enforced in CI.",
-  "measuredAt": "2026-10-31",
-  "measuredFromCommit": "14e40dad",
+  "measuredAt": "2026-11-01",
+  "measuredFromCommit": "53d67343",
   "measurement": "Analyzer production build (ANALYZE=true next build --webpack) of a clean .next, measured by apps/web/scripts/measure-bundle.mjs from emitted files; sizes are bytes, gzip level 9.",
   "headroomPercent": 5,
   "baseline": {
@@ -557,11 +557,29 @@
         "firstLoadRawBytes": 555000,
         "routeSpecificGzipBytes": 34000,
         "routeSpecificRawBytes": 110000
+      },
+      "/seller": {
+        "firstLoadGzipBytes": 159900,
+        "firstLoadRawBytes": 535070,
+        "routeSpecificGzipBytes": 19364,
+        "routeSpecificRawBytes": 61598
+      },
+      "/tenant/[subdomain]/sellers": {
+        "firstLoadGzipBytes": 171879,
+        "firstLoadRawBytes": 577976,
+        "routeSpecificGzipBytes": 31343,
+        "routeSpecificRawBytes": 104504
+      },
+      "/tenant/[subdomain]/sellers/[sellerId]": {
+        "firstLoadGzipBytes": 171052,
+        "firstLoadRawBytes": 574746,
+        "routeSpecificGzipBytes": 30516,
+        "routeSpecificRawBytes": 101274
       }
     },
     "totalClientJs": {
-      "gzipBytes": 1407196,
-      "rawBytes": 4468605
+      "gzipBytes": 1485990,
+      "rawBytes": 4720834
     }
   }
 }
