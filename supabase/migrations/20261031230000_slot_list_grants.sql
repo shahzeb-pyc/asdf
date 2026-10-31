@@ -1,0 +1,24 @@
+-- Grant lockdown for list_active_facebook_posting_slots (slot-list lock).
+--
+-- The function is SECURITY DEFINER and takes no arguments: it returns
+-- EVERY tenant's active Facebook posting schedules (destination/slot
+-- ids, times, timezones, post kinds — no tokens or page names). It was
+-- introduced without a REVOKE/GRANT, so by default it was executable
+-- by PUBLIC (anon/authenticated) once applied, letting any holder of
+-- the public anon key enumerate all tenants' posting schedules.
+-- Lock it to service_role only, like the claim function next to it
+-- (20261030150000_claim_slot_item_grants.sql).
+--
+-- The only production caller is the worker's slot-claim tick
+-- (apps/worker/src/slot-claim.ts), whose Supabase client is built
+-- with SUPABASE_SERVICE_ROLE_KEY (apps/worker/src/index.ts), so no
+-- legitimate caller loses access. There is no caller in apps/web.
+--
+-- NOTE: prod was already locked manually on 2026-10-31 (REVOKE FROM
+-- PUBLIC, anon, authenticated — revoking PUBLIC alone did NOT
+-- suffice, because anon/authenticated held DIRECT grants). This file
+-- is the repo record so a fresh database built from migrations does
+-- not reopen it. Merging needs NO further prod action; re-applying
+-- these same REVOKEs would be harmless but is not needed.
+
+REVOKE EXECUTE ON FUNCTION public.list_active_facebook_posting_slots() FROM PUBLIC, anon, authenticated;
