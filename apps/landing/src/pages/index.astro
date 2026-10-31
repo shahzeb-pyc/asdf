@@ -202,15 +202,20 @@ const signin = 'https://app.fbuploadpro.com/login';
     </section>
 
     <!-- Section 4: Creator Finder, direction C (Split editorial)
-         from the owner-picked mockup. Light section, text on one
-         side and a single large abstract preview panel on the
-         other; stacked on phones. Copy is the feature's own
-         in-app copy, verbatim. NO links in this section: no CTA
-         has been approved, and a placeholder must not link out.
-         The preview panel is abstract shapes only — no photo,
-         no creator identity, no names, no handles, no counts,
-         no stats. TikTok only; nothing is contacted or
-         published; no feed into any other feature. -->
+         from the owner-picked mockup, with the owner-picked
+         panel direction A (Tabbed mini UI) in the panel.
+         Light section, text on one side and a tabbed mini UI
+         panel on the other; stacked on phones. Copy is the
+         feature's own in-app copy, verbatim. NO links in this
+         section: no CTA has been approved, and a placeholder
+         must not link out — tabs, search row, and view
+         elements are static spans, not links or buttons.
+         Panel creators are placeholders only: abstract
+         circles, the word Creator, and the literal string
+         @handle — no names, no real handles, no counts,
+         no verified ticks, no stats. TikTok only; nothing
+         is contacted or published; no feed into any other
+         feature. -->
     <section id="section-4" class="section-full relative flex items-center bg-white px-5 py-24 sm:px-8 lg:px-12" aria-label="Creator Finder">
       <div class="mx-auto grid w-full max-w-[1240px] items-center gap-10 lg:grid-cols-2">
         <div>
@@ -231,13 +236,32 @@ const signin = 'https://app.fbuploadpro.com/login';
             <li class="border-t border-b border-line py-2.5 text-[15px] leading-[1.55] text-ink-sub"><strong class="text-ink">Saved</strong> — your automatically saved creators, with CSV export.</li>
           </ul>
         </div>
-        <div aria-hidden="true" class="rounded-2xl border border-line bg-[#f4f4f5] p-7 shadow-[0_8px_24px_rgba(0,0,0,0.06)]">
-          <div class="mb-3.5 h-3.5 rounded-full bg-[#e4e4e7]"></div>
-          <div class="mb-3.5 h-3.5 w-3/5 rounded-full bg-[#e4e4e7]"></div>
-          <div class="mb-3.5 h-[150px] rounded-xl bg-[#d4d4d8]"></div>
-          <div class="flex items-center gap-3">
-            <span class="h-9 w-9 shrink-0 rounded-full bg-[#e4e4e7]"></span>
-            <span class="h-3.5 flex-1 rounded-full bg-[#e4e4e7]"></span>
+        <div class="rounded-2xl border border-line bg-[#fafafa] p-7 shadow-[0_8px_24px_rgba(0,0,0,0.06)]">
+          <div class="mb-5 flex flex-wrap gap-2">
+            <span class="rounded-full border border-[#111111] bg-[#111111] px-3 py-2 text-[13px] font-bold text-white">Trending by country</span>
+            <span class="rounded-full border border-[#d4d4d8] bg-white px-3 py-2 text-[13px] font-bold text-[#52525b]">By niche / words</span>
+            <span class="rounded-full border border-[#d4d4d8] bg-white px-3 py-2 text-[13px] font-bold text-[#52525b]">Similar creators</span>
+            <span class="rounded-full border border-[#d4d4d8] bg-white px-3 py-2 text-[13px] font-bold text-[#52525b]">Saved</span>
+          </div>
+          <div class="mb-5 flex flex-col gap-2.5 sm:flex-row">
+            <span class="flex-1 rounded-xl border border-[#d4d4d8] bg-white px-3.5 py-3 text-sm text-[#a1a1aa]">Type a country</span>
+            <span class="rounded-full bg-[#f0b90b] px-4 py-3 text-sm font-bold whitespace-nowrap text-[#111111]">Find trending creators</span>
+          </div>
+          <div class="flex items-center gap-3.5 border-t border-line py-3.5">
+            <span class="h-12 w-12 shrink-0 rounded-full bg-[#e4e4e7]"></span>
+            <span class="min-w-0 flex-1">
+              <span class="block text-[15px] font-bold">Creator</span>
+              <span class="block text-[13px] text-[#71717a]">@handle</span>
+            </span>
+            <span class="rounded-full bg-[#f0b90b] px-3.5 py-2 text-[13px] font-bold whitespace-nowrap text-[#111111]">View on TikTok ↗</span>
+          </div>
+          <div class="flex items-center gap-3.5 border-t border-b border-line py-3.5">
+            <span class="h-12 w-12 shrink-0 rounded-full bg-[#e4e4e7]"></span>
+            <span class="min-w-0 flex-1">
+              <span class="block text-[15px] font-bold">Creator</span>
+              <span class="block text-[13px] text-[#71717a]">@handle</span>
+            </span>
+            <span class="rounded-full bg-[#f0b90b] px-3.5 py-2 text-[13px] font-bold whitespace-nowrap text-[#111111]">View on TikTok ↗</span>
           </div>
         </div>
       </div>
