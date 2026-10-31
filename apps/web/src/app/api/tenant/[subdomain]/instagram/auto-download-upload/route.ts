@@ -118,7 +118,6 @@ export async function GET(
     });
   }
 
-  let filtered: Array<Record<string, unknown>>;
   if (!search) {
     // DB-side page: status filter + sort + range, like Facebook's RPC.
     let query = supabase
@@ -197,7 +196,7 @@ export async function GET(
     return NextResponse.json({ error: 'Failed to load accounts.' }, { status: 500 });
   }
   const lowered = search.toLowerCase();
-  filtered = ((allRows ?? []) as Array<Record<string, unknown>>).filter(
+  const filtered = ((allRows ?? []) as Array<Record<string, unknown>>).filter(
     (row) =>
       nameMatchedIds.has(String(row.destination_id)) ||
       String(row.source_username ?? '').toLowerCase().includes(lowered)

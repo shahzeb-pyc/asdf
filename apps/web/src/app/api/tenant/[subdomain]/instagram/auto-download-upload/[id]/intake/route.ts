@@ -6,9 +6,8 @@ import { aduContext, isInstagramAduConfig } from '@/lib/server/adu';
  * Schedule intake for one config (the worker tick runs the same rule
  * for all configs on the minute tick). A config is due only when it is
  * active, synced, has posts_per_day > 0, and one of its posting times
- * falls in the current minute in its own timezone. One job per page
- * per slot, deduped by the unique (config_id, schedule_slot_at) index:
- * a duplicate insert is ignored, never double-created. If a due page
+ * falls in the current minute in its own timezone. One job per account per slot, deduped by the unique (config_id, schedule_slot_at) index:
+ * a duplicate insert is ignored, never double-created. If a due account
  * has no downloadable reel left and nothing pending/processing/
  * publishing, it flips to completed.
  */
@@ -27,6 +26,9 @@ export async function POST(
     .eq('id', id)
     .maybeSingle();
   if (!config) return NextResponse.json({ error: 'Account not found.' }, { status: 404 });
+  if (!(await isInstagramAduConfig(supabase, workspaceId, id))) {
+    return NextResponse.json({ error: 'Account not found.' }, { status: 404 });
+  }
   if (config.status !== 'active' || config.sync_status !== 'synced' || config.posts_per_day <= 0) {
     return NextResponse.json({ due: false, reason: 'Config is not active and synced.' });
   }
