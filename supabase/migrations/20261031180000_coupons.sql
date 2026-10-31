@@ -50,12 +50,14 @@ CREATE INDEX IF NOT EXISTS idx_coupons_status_created
 CREATE TABLE IF NOT EXISTS public.coupon_redemptions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   coupon_id uuid NOT NULL REFERENCES public.coupons (id) ON DELETE RESTRICT,
+  coupon_kind text NOT NULL CHECK (coupon_kind IN ('percent_once', 'percent_multi', 'balance')),
   user_id uuid NOT NULL,
   payment_id uuid REFERENCES public.subscription_payments (id) ON DELETE SET NULL,
   period_id uuid REFERENCES public.subscription_periods (id) ON DELETE SET NULL,
   amount_pkr integer NOT NULL CHECK (amount_pkr >= 0),
   status text NOT NULL DEFAULT 'held'
     CHECK (status IN ('held', 'applied', 'released')),
+  balance_restored boolean NOT NULL DEFAULT false,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
