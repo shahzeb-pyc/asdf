@@ -14,6 +14,7 @@ import { WorkspaceBreadcrumb } from '@/components/workspace/workspace-breadcrumb
 import { CommandPaletteHost } from '@/components/shell/command-palette-host';
 import { DownloadTray } from '@/components/shell/download-tray';
 import { WorkspaceLifecycleGuard } from '@/components/workspace/workspace-lifecycle-guard';
+import { FreePlanGate } from '@/components/billing/free-plan-gate';
 import { PostHogIdentify } from '@/components/posthog-identify';
 import { getServerSessionContext } from '@/lib/auth';
 import { DataProvider } from '@/lib/data/provider';
@@ -142,7 +143,13 @@ export default async function TenantLayout({ params, children }: Readonly<Tenant
               banner is raised at baseline.
             */}
             <div id="tenant-banner-slot" data-slot="tenant-banner-slot" />
-            {children}
+            <FreePlanGate
+              subdomain={subdomain}
+              useCleanPaths={useCleanPaths}
+              isAdmin={session.role === 'admin'}
+            >
+              {children}
+            </FreePlanGate>
         </SidebarInset>
         {/*
           Tenant toasts sit top-right (not the shared default
