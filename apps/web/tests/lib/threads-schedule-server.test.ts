@@ -335,6 +335,16 @@ describe('handleThreadsQueueItemAction', () => {
     expect(wrongRetry.status).toBe(409);
   });
 
+  it('fails loud with 500 when the queue update itself fails, and does not claim success', async () => {
+    const db = dbWith();
+    const fake = fakeSupabase(db, { 'queue_items:update': { message: 'update boom' } });
+    const res = await handleThreadsQueueItemAction(
+      fake as never, 'ws-1', 'user-1', 'dest-1', 'item-1', 'publish-now', req()
+    );
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe('Failed to process this post');
+  });
+
   it('fails loud with 500 when the idempotency store cannot be read, and does not execute', async () => {
     const db = dbWith();
     const fake = fakeSupabase(db, { 'idempotency_keys:select': { message: 'store boom' } });
