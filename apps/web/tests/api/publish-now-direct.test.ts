@@ -27,6 +27,19 @@ vi.mock('@/lib/server-analytics', () => ({
 
 vi.mock('@/lib/storage', () => ({
   getR2Config: () => null,
+  // Post-owned keys resolve to media.example.com so the fetch
+  // mock below serves their bytes, exactly as R2's public URL
+  // would in production.
+  getStorageService: () => ({
+    listObjects: async ({ prefix }: { prefix: string }) =>
+      existingStorageKeys.has(prefix) ? [{ key: prefix }] : [],
+    getPublicUrl: (key: string) =>
+      `https://media.example.com/${key.split('/').pop()}`,
+    deleteObject: async (key: string) => {
+      deletedStorageKeys.push(key);
+      existingStorageKeys.delete(key);
+    },
+  }),
 }));
 
 vi.mock('@fbuploadpro/contracts', async (importOriginal) => {
@@ -63,6 +76,8 @@ let mediaRow: { id: string; media_type: string; url: string } | null = {
 };
 let mediaFetchShouldFail = false;
 let headShouldFail = false;
+let existingStorageKeys = new Set<string>();
+let deletedStorageKeys: string[] = [];
 
 function graphResponse(ok: boolean, status: number, data: unknown) {
   return {
@@ -174,6 +189,12 @@ beforeEach(() => {
   };
   mediaFetchShouldFail = false;
   headShouldFail = false;
+  existingStorageKeys = new Set([
+    POST_OWNED_PHOTO_KEY,
+    POST_OWNED_CLIP_KEY,
+    POST_OWNED_STAGED_KEY,
+  ]);
+  deletedStorageKeys = [];
 
   vi.stubGlobal(
     'fetch',
@@ -273,6 +294,28 @@ beforeEach(() => {
 });
 
 const ACCOUNT_ID = '11111111-1111-4111-a111-111111111111';
+
+const POST_OWNED_PHOTO_KEY =
+  'users/user-1/post-media/aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa/photo.jpg';
+const POST_OWNED_CLIP_KEY =
+  'users/user-1/post-media/bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb/clip.mp4';
+const POST_OWNED_STAGED_KEY =
+  'users/user-1/post-staging/cccccccc-cccc-4ccc-cccc-cccccccccccc/photo.jpg';
+
+function postOwnedMedia(key: string, mediaType: 'image' | 'video') {
+  return {
+    source: 'post-owned' as const,
+    mediaId: null,
+    tempKey: null,
+    postOwnedKey: key,
+    url: `https://media.example.com/${key.split('/').pop()}`,
+    mediaType,
+    aspectRatio: null,
+    width: null,
+    height: null,
+    name: key.split('/').pop()!,
+  };
+}
 
 function target(fbPageId: string, pageName: string) {
   return { accountId: ACCOUNT_ID, fbPageId, pageName };
@@ -417,17 +460,7 @@ describe('POST publish-now', () => {
       caption: 'x'.repeat(2201),
       postType: 'reel',
       targets: [target('111', 'Page One')],
-      media: {
-        source: 'library',
-        mediaId: '22222222-2222-4222-a222-222222222222',
-        tempKey: null,
-        url: 'https://media.example.com/clip.mp4',
-        mediaType: 'video',
-        aspectRatio: null,
-        width: null,
-        height: null,
-        name: 'clip.mp4',
-      },
+      media: postOwnedMedia(POST_OWNED_CLIP_KEY, 'video'),
     });
     expect(longReel.status).toBe(400);
     expect(longReel.body.message).toBe(
@@ -435,76 +468,61 @@ describe('POST publish-now', () => {
     );
   });
 
-  it('publishes a photo by uploading its bytes, not a Facebook-fetched URL', async () => {
+  it('publishes a photo from its post-owned copy and cleans the bytes up', async () => {
     const { status, body } = await callPost({
       caption: 'Hello',
       postType: 'image',
       targets: [target('111', 'Page One')],
-      media: {
-        source: 'library',
-        mediaId: '22222222-2222-4222-a222-222222222222',
-        tempKey: null,
-        url: 'https://media.example.com/photo.jpg',
-        mediaType: 'image',
-        aspectRatio: null,
-        width: null,
-        height: null,
-        name: 'photo.jpg',
-      },
+      media: postOwnedMedia(POST_OWNED_PHOTO_KEY, 'image'),
     });
     expect(status).toBe(200);
     expect(body.results[0]).toMatchObject({
       status: 'published',
       postId: 'photo-post-111',
     });
+    // Fully successful run: Facebook holds the post, so the
+    // post-owned bytes are removed, never left lingering.
+    expect(deletedStorageKeys).toContain(POST_OWNED_PHOTO_KEY);
   });
 
-  it('fails a photo with a media-fetch step when its bytes cannot be fetched', async () => {
+  it('publishes a photo from staged bytes, not a library row', async () => {
+    const { status, body } = await callPost({
+      caption: 'Hello',
+      postType: 'image',
+      targets: [target('111', 'Page One')],
+      media: postOwnedMedia(POST_OWNED_STAGED_KEY, 'image'),
+    });
+    expect(status).toBe(200);
+    expect(body.results[0]).toMatchObject({
+      status: 'published',
+      postId: 'photo-post-111',
+    });
+    expect(deletedStorageKeys).toContain(POST_OWNED_STAGED_KEY);
+  });
+
+  it('fails a photo with a media-fetch step when its bytes cannot be fetched, and keeps the bytes for retry', async () => {
     mediaFetchShouldFail = true;
     const { status, body } = await callPost({
       caption: 'Hello',
       postType: 'image',
       targets: [target('111', 'Page One')],
-      media: {
-        source: 'library',
-        mediaId: '22222222-2222-4222-a222-222222222222',
-        tempKey: null,
-        url: 'https://media.example.com/photo.jpg',
-        mediaType: 'image',
-        aspectRatio: null,
-        width: null,
-        height: null,
-        name: 'photo.jpg',
-      },
+      media: postOwnedMedia(POST_OWNED_PHOTO_KEY, 'image'),
     });
     expect(status).toBe(200);
     expect(body.results[0]).toMatchObject({
       status: 'failed',
       step: 'media-fetch',
     });
+    // Failed run: the bytes stay so "Retry failed only" can reuse them.
+    expect(deletedStorageKeys).not.toContain(POST_OWNED_PHOTO_KEY);
   });
 
   it('publishes a video after the reachability guard passes', async () => {
-    mediaRow = {
-      id: '22222222-2222-4222-a222-222222222222',
-      media_type: 'video',
-      url: 'https://media.example.com/clip.mp4',
-    };
     const { status, body } = await callPost({
       caption: 'Hello',
       postType: 'video',
       targets: [target('111', 'Page One')],
-      media: {
-        source: 'library',
-        mediaId: '22222222-2222-4222-a222-222222222222',
-        tempKey: null,
-        url: 'https://media.example.com/clip.mp4',
-        mediaType: 'video',
-        aspectRatio: null,
-        width: null,
-        height: null,
-        name: 'clip.mp4',
-      },
+      media: postOwnedMedia(POST_OWNED_CLIP_KEY, 'video'),
     });
     expect(status).toBe(200);
     expect(body.results[0]).toMatchObject({
@@ -515,52 +533,22 @@ describe('POST publish-now', () => {
 
   it('rejects a video outright when its URL is not reachable', async () => {
     headShouldFail = true;
-    mediaRow = {
-      id: '22222222-2222-4222-a222-222222222222',
-      media_type: 'video',
-      url: 'https://media.example.com/clip.mp4',
-    };
     const { status, body } = await callPost({
       caption: 'Hello',
       postType: 'video',
       targets: [target('111', 'Page One')],
-      media: {
-        source: 'library',
-        mediaId: '22222222-2222-4222-a222-222222222222',
-        tempKey: null,
-        url: 'https://media.example.com/clip.mp4',
-        mediaType: 'video',
-        aspectRatio: null,
-        width: null,
-        height: null,
-        name: 'clip.mp4',
-      },
+      media: postOwnedMedia(POST_OWNED_CLIP_KEY, 'video'),
     });
     expect(status).toBe(400);
     expect(body.message).toContain('Please re-attach the video');
   });
 
   it('publishes a reel through start, upload, and finish', async () => {
-    mediaRow = {
-      id: '22222222-2222-4222-a222-222222222222',
-      media_type: 'video',
-      url: 'https://media.example.com/clip.mp4',
-    };
     const { status, body } = await callPost({
       caption: 'Hello',
       postType: 'reel',
       targets: [target('111', 'Page One')],
-      media: {
-        source: 'library',
-        mediaId: '22222222-2222-4222-a222-222222222222',
-        tempKey: null,
-        url: 'https://media.example.com/clip.mp4',
-        mediaType: 'video',
-        aspectRatio: null,
-        width: null,
-        height: null,
-        name: 'clip.mp4',
-      },
+      media: postOwnedMedia(POST_OWNED_CLIP_KEY, 'video'),
     });
     expect(status).toBe(200);
     expect(body.results[0]).toMatchObject({
@@ -589,8 +577,7 @@ describe('POST publish-now', () => {
     );
   });
 
-  it('rejects a library media id with no stored row', async () => {
-    mediaRow = null;
+  it('rejects a library media reference outright — the publish path never reads library rows', async () => {
     const { status, body } = await callPost({
       caption: 'Hello',
       postType: 'image',
@@ -608,7 +595,35 @@ describe('POST publish-now', () => {
       },
     });
     expect(status).toBe(400);
-    expect(body.message).toContain('was not found');
+    expect(body.message).toContain('pick it again');
+  });
+
+  it('rejects a post-owned key that no longer exists in storage', async () => {
+    const { status, body } = await callPost({
+      caption: 'Hello',
+      postType: 'image',
+      targets: [target('111', 'Page One')],
+      media: postOwnedMedia(
+        'users/user-1/post-media/dddddddd-dddd-4ddd-dddd-dddddddddddd/gone.jpg',
+        'image'
+      ),
+    });
+    expect(status).toBe(400);
+    expect(body.message).toContain('no longer available');
+  });
+
+  it('rejects a post-owned key outside the caller’s own prefix', async () => {
+    const { status, body } = await callPost({
+      caption: 'Hello',
+      postType: 'image',
+      targets: [target('111', 'Page One')],
+      media: postOwnedMedia(
+        'users/user-2/post-media/eeeeeeee-eeee-4eee-eeee-eeeeeeeeeeee/photo.jpg',
+        'image'
+      ),
+    });
+    expect(status).toBe(400);
+    expect(body.message).toContain('could not be verified');
   });
 
   it('rejects temp media whose key does not verify', async () => {

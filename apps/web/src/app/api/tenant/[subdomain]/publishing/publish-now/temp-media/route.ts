@@ -11,6 +11,9 @@ import { extractConnectSession } from '@/lib/connect/session';
 import { canAccessTenant } from '@fbuploadpro/contracts';
 import { bodyTooLargeResponse, readJsonBody } from '@/lib/request-body';
 import { getStorageService } from '@/lib/storage';
+import {
+  isPostOwnedStorageKey,
+} from '@/lib/publishing/post-owned-media';
 import { logServerError } from '@/lib/server-analytics';
 
 /**
@@ -25,8 +28,11 @@ import { logServerError } from '@/lib/server-analytics';
  * after the results screen) and keeps it alive through the
  * results screen so "Retry failed only" can reuse it.
  *
- * DELETE only ever deletes keys under the caller's own temp
- * prefix — a key outside that prefix is rejected, never deleted.
+ * DELETE only ever deletes keys under the caller's own run-scoped
+ * prefixes — the publish-now-temp prefix, or the post-owned
+ * prefixes (post-media copies, post-staging device uploads) — a
+ * key outside those prefixes is rejected, never deleted. The
+ * composer uses this one endpoint for all run-end cleanup.
  */
 
 function tempPrefix(userId: string): string {
@@ -145,7 +151,10 @@ export async function DELETE(
     );
   }
   const { key } = parsed.data;
-  if (!key.startsWith(tempPrefix(session.userId)) || key.includes('..')) {
+  const deletable =
+    key.startsWith(tempPrefix(session.userId)) ||
+    isPostOwnedStorageKey(session.userId, key);
+  if (!deletable || key.includes('..')) {
     return NextResponse.json(
       { error: 'INVALID_REQUEST', message: 'This file cannot be deleted here.' },
       { status: 400 }

@@ -459,8 +459,20 @@ describe('PublishNowPage wizard', () => {
 
   it('attaches library media, prefills its caption, and clears it on type switch', { timeout: 15000 }, async () => {
     const publishCalls: Array<{ path: string; body: unknown }> = [];
+    const copyKey =
+      'users/user-1/post-media/aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa/photo.jpg';
+    // Library picks are copied server-side before attaching, so
+    // the copy endpoint must answer with a post-owned key.
     (api.post as unknown as { mockImplementation: (fn: unknown) => void })
       .mockImplementation(async (path: string, body: unknown) => {
+        if (typeof path === 'string' && path.includes('copy-library-media')) {
+          return {
+            storageKey: copyKey,
+            url: `https://media.example.com/${copyKey}`,
+            mediaType: 'image',
+            thumbnailUrl: null,
+          };
+        }
         publishCalls.push({ path, body });
         return {
           results: [
@@ -482,6 +494,9 @@ describe('PublishNowPage wizard', () => {
           ],
         };
       });
+    // Run cleanup (Remove / replace) fires a DELETE fetch for the
+    // post-owned key; the test answers it as deleted.
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true })));
 
     await reachComposer();
     fireEvent.click(screen.getByRole('button', { name: 'Image' }));
@@ -489,7 +504,8 @@ describe('PublishNowPage wizard', () => {
       screen.getByRole('button', { name: 'Attach from Media Library' })
     );
     fireEvent.click(screen.getByRole('button', { name: 'Attach test photo' }));
-    expect(screen.getByText('photo.jpg')).toBeTruthy();
+    // The attach awaits the server-side copy, so it lands async.
+    await waitFor(() => expect(screen.getByText('photo.jpg')).toBeTruthy());
     expect(screen.getByText(/from Media Library/)).toBeTruthy();
     // The library caption prefills an empty composer.
     expect(
@@ -507,26 +523,31 @@ describe('PublishNowPage wizard', () => {
       screen.getByRole('button', { name: 'Attach from Media Library' })
     );
     fireEvent.click(screen.getByRole('button', { name: 'Attach test photo' }));
+    await waitFor(() => expect(screen.getByText('photo.jpg')).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: 'Video' }));
     expect(screen.queryByText('photo.jpg')).toBeNull();
 
-    // Re-attach as an image and publish: the request carries library media.
+    // Re-attach as an image and publish: the request carries
+    // post-owned media, never a library row reference.
     fireEvent.click(screen.getByRole('button', { name: 'Image' }));
     fireEvent.click(
       screen.getByRole('button', { name: 'Attach from Media Library' })
     );
     fireEvent.click(screen.getByRole('button', { name: 'Attach test photo' }));
+    await waitFor(() => expect(screen.getByText('photo.jpg')).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: 'Publish Now' }));
     await waitFor(() => expect(publishCalls.length).toBe(1), {
       timeout: 5000,
     });
     const body = publishCalls[0].body as {
       postType: string;
-      media: { source: string; mediaId: string };
+      media: { source: string; mediaId: string | null; postOwnedKey: string };
     };
     expect(body.postType).toBe('image');
-    expect(body.media.source).toBe('library');
-    expect(body.media.mediaId).toBe('22222222-2222-4222-a222-222222222222');
+    expect(body.media.source).toBe('post-owned');
+    expect(body.media.mediaId).toBeNull();
+    expect(body.media.postOwnedKey).toBe(copyKey);
+    vi.unstubAllGlobals();
   });
 
   it('shows restriction results, diagnostics, and a disabled retry', { timeout: 15000 }, async () => {
