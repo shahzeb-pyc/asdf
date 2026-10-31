@@ -184,7 +184,7 @@ async function graphRequest(
     ...(init.body ? { body: JSON.stringify(init.body) } : {}),
     signal: AbortSignal.timeout(GRAPH_TIMEOUT_MS),
   });
-  const data = (await response.json().catch(() => ({}))) as {
+  let data: {
     error?: {
       message?: string;
       code?: number;
@@ -192,6 +192,17 @@ async function graphRequest(
       fbtrace_id?: string;
     };
   } & Record<string, unknown>;
+  try {
+    data = (await response.json()) as typeof data;
+  } catch {
+    // An unreadable body is a real failure, surfaced loudly — never an
+    // empty object that would let the caller proceed on missing fields.
+    throw {
+      message: 'Instagram returned an unreadable response. Please try again.',
+      step,
+      httpStatus: response.status,
+    };
+  }
   if (!response.ok || data.error) {
     throw {
       message:
@@ -207,10 +218,16 @@ async function graphRequest(
   return data;
 }
 
+type ContainerStatusResult = {
+  status: string | null;
+  /** A failed status check is transient — carried, never swallowed. */
+  pollError: unknown;
+};
+
 async function getContainerStatus(
   containerId: string,
   accessToken: string
-): Promise<string | null> {
+): Promise<ContainerStatusResult> {
   try {
     const data = await graphRequest(
       `/${encodeURIComponent(containerId)}?fields=status_code`,
@@ -218,9 +235,15 @@ async function getContainerStatus(
       { method: 'GET' },
       'container-poll'
     );
-    return typeof data.status_code === 'string' ? data.status_code : null;
-  } catch {
-    return null;
+    return {
+      status: typeof data.status_code === 'string' ? data.status_code : null,
+      pollError: null,
+    };
+  } catch (error) {
+    // The caller keeps polling within budget, but the error rides along
+    // so a budget-expiry failure can surface the real last error instead
+    // of pretending the container was merely slow.
+    return { status: null, pollError: error };
   }
 }
 
@@ -273,8 +296,11 @@ async function publishToInstagramAccount(params: {
   }
 
   let statusCode: string | null = null;
+  let lastPollError: unknown = null;
   for (let attempt = 0; attempt < CONTAINER_MAX_POLLS; attempt += 1) {
-    statusCode = await getContainerStatus(containerId, accessToken);
+    const checked = await getContainerStatus(containerId, accessToken);
+    statusCode = checked.status;
+    lastPollError = checked.pollError;
     if (statusCode === 'FINISHED' || statusCode === 'PUBLISHED') break;
     if (statusCode === 'ERROR' || statusCode === 'EXPIRED') break;
     if (attempt < CONTAINER_MAX_POLLS - 1) {
@@ -291,6 +317,9 @@ async function publishToInstagramAccount(params: {
     );
   }
   if (statusCode !== 'FINISHED') {
+    // If the last status check itself failed, say so with the real error
+    // (auth, rate limit, transport) instead of blaming slow preparation.
+    if (lastPollError !== null) throw lastPollError;
     throw steppedError(
       'Instagram is still preparing this post. Try again — nothing has been published yet, so a retry will not duplicate it.',
       'container-poll'
@@ -314,7 +343,7 @@ async function publishToInstagramAccount(params: {
     return mediaId;
   } catch (error) {
     const recheck = await getContainerStatus(containerId, accessToken);
-    if (recheck === 'PUBLISHED') return containerId;
+    if (recheck.status === 'PUBLISHED') return containerId;
     throw error;
   }
 }
