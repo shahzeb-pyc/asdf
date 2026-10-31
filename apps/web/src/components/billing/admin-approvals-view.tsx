@@ -15,6 +15,7 @@ import { EmptyState } from '@/components/shared/ui/empty-state';
 import { Skeleton } from '@/components/shared/ui/skeleton';
 import { BillingStatusMark } from './billing-status-mark';
 import { AdminCouponsView } from './admin-coupons-view';
+import { AdminWebhookIssuesView } from './admin-webhook-issues-view';
 import { AdminRefundsView } from './admin-refunds-view';
 
 function countsSummary(counts: AdminPaymentsResponse['payments'][number]['counts']): string {
@@ -50,7 +51,10 @@ export function AdminApprovalsView({ subdomain }: Readonly<{ subdomain: string }
   const [data, setData] = React.useState<AdminPaymentsResponse | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [reloading, setReloading] = React.useState(false);
-  const [busy, setBusy] = React.useState<{ id: string; decision: 'approve' | 'reject' } | null>(null);
+  const [busy, setBusy] = React.useState<{
+    id: string;
+    decision: 'approve' | 'reject' | 'approve-crypto' | 'expire-crypto';
+  } | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
 
   const load = React.useCallback(async () => {
@@ -78,7 +82,10 @@ export function AdminApprovalsView({ subdomain }: Readonly<{ subdomain: string }
     }
   }
 
-  async function decide(paymentId: string, decision: 'approve' | 'reject') {
+  async function decide(
+    paymentId: string,
+    decision: 'approve' | 'reject' | 'approve-crypto' | 'expire-crypto'
+  ) {
     setBusy({ id: paymentId, decision });
     setNotice(null);
     try {
@@ -89,7 +96,11 @@ export function AdminApprovalsView({ subdomain }: Readonly<{ subdomain: string }
       setNotice(
         decision === 'approve'
           ? 'Approved. The plan starts now and runs for 30 days.'
-          : 'Rejected. No plan started.'
+          : decision === 'approve-crypto'
+            ? 'Crypto payment approved. The plan starts now and runs for 30 days.'
+            : decision === 'expire-crypto'
+              ? 'Crypto payment expired. No plan started; any held coupon was released.'
+              : 'Rejected. No plan started.'
       );
       await load();
     } catch (err) {
@@ -254,27 +265,110 @@ export function AdminApprovalsView({ subdomain }: Readonly<{ subdomain: string }
                 ) : (
                   <p className="text-body text-ink-sub">No screenshot attached.</p>
                 )}
+                {payment.method === 'nowpayments' ? (
+                  <p className="text-body text-ink-sub">
+                    Stuck crypto payment: the automatic confirmation never arrived. Approve
+                    it only when the payment actually arrived; expire it to cancel it.
+                  </p>
+                ) : null}
                 <div className="flex flex-wrap gap-2">
-                  <Button
-                    onClick={() => void decide(payment.id, 'approve')}
-                    loading={isBusy && busy?.decision === 'approve'}
-                    disabled={isBusy}
-                  >
-                    Approve payment
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => void decide(payment.id, 'reject')}
-                    loading={isBusy && busy?.decision === 'reject'}
-                    disabled={isBusy}
-                  >
-                    Reject payment
-                  </Button>
+                  {payment.method === 'nowpayments' ? (
+                    <>
+                      <Button
+                        onClick={() => void decide(payment.id, 'approve-crypto')}
+                        loading={isBusy && busy?.decision === 'approve-crypto'}
+                        disabled={isBusy}
+                      >
+                        Approve crypto
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => void decide(payment.id, 'expire-crypto')}
+                        loading={isBusy && busy?.decision === 'expire-crypto'}
+                        disabled={isBusy}
+                      >
+                        Expire crypto
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button
+                        onClick={() => void decide(payment.id, 'approve')}
+                        loading={isBusy && busy?.decision === 'approve'}
+                        disabled={isBusy}
+                      >
+                        Approve payment
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => void decide(payment.id, 'reject')}
+                        loading={isBusy && busy?.decision === 'reject'}
+                        disabled={isBusy}
+                      >
+                        Reject payment
+                      </Button>
+                    </>
+                  )}
                 </div>
               </CardContent>
             </Card>
           );
         })}
+      </section>
+
+      <section aria-label="Stuck crypto payments" className="flex flex-col gap-4">
+        <h2 className="text-lg leading-heading font-semibold text-ink">
+          Stuck crypto payments
+        </h2>
+        <p className="text-body text-ink-sub">
+          Crypto payments whose automatic confirmation never arrived or failed. Approve one
+          only when the payment actually arrived; expire it to cancel it and release any
+          held coupon.
+        </p>
+        {decided
+          .filter(
+            (payment) =>
+              payment.method === 'nowpayments' &&
+              (payment.status === 'failed' || payment.status === 'expired')
+          )
+          .map((payment) => {
+            const isBusy = busy?.id === payment.id;
+            return (
+              <Card key={payment.id}>
+                <CardContent className="flex flex-col gap-4 py-4">
+                  <div className="flex min-w-0 flex-col gap-1">
+                    <span className="truncate text-body font-medium text-ink">
+                      {payment.userEmail ?? 'Unknown user'}
+                    </span>
+                    <span className="text-metadata text-ink-sub">
+                      {countsSummary(payment.counts)} · {payment.amountPkr} PKR ·{' '}
+                      {methodLabel(payment)} · {payment.status} · {formatDate(payment.createdAt)}
+                      {payment.nowpaymentsPaymentId
+                        ? ` · Crypto payment ${payment.nowpaymentsPaymentId}`
+                        : ''}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      onClick={() => void decide(payment.id, 'approve-crypto')}
+                      loading={isBusy && busy?.decision === 'approve-crypto'}
+                      disabled={isBusy}
+                    >
+                      Approve crypto
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => void decide(payment.id, 'expire-crypto')}
+                      loading={isBusy && busy?.decision === 'expire-crypto'}
+                      disabled={isBusy}
+                    >
+                      Expire crypto
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
       </section>
 
       <section aria-label="Recently decided payments" className="flex flex-col gap-4">
@@ -303,12 +397,27 @@ export function AdminApprovalsView({ subdomain }: Readonly<{ subdomain: string }
               {payment.status === 'approved' || payment.status === 'paid' ? (
                 <BillingStatusMark kind="ok" label="Approved" />
               ) : (
-                <BillingStatusMark kind="failed" label="Rejected" />
+                // A failed/expired crypto payment was never rejected
+                // by an admin — it is stuck, and the section above
+                // offers the rescue. Labelling it "Rejected" would
+                // hide that.
+                <BillingStatusMark
+                  kind="failed"
+                  label={
+                    payment.status === 'failed'
+                      ? 'Failed'
+                      : payment.status === 'expired'
+                        ? 'Expired'
+                        : 'Rejected'
+                  }
+                />
               )}
             </CardContent>
           </Card>
         ))}
       </section>
+
+      <AdminWebhookIssuesView subdomain={subdomain} />
 
       <AdminRefundsView subdomain={subdomain} />
     </div>

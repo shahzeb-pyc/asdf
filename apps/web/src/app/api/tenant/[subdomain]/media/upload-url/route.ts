@@ -83,7 +83,8 @@ export async function handleCreateUploadUrl(
   // size before anything lands). No active period → quota 0 → refused.
   try {
     const quotaState = await (quotaStateProvider ?? defaultQuotaState)(session.userId);
-    if (quotaState) {
+    // Admins are never storage-gated (audit fix 2026-11-01).
+    if (quotaState && session.role !== 'admin') {
       const check = checkStorageQuota(quotaState, body.fileSize);
       if (!check.allowed) {
         return NextResponse.json(

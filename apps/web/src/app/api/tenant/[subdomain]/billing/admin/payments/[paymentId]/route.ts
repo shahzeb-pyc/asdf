@@ -4,10 +4,13 @@ import { authenticateTenantRoute } from '@/lib/route-auth';
 import { logServerError } from '@/lib/server-analytics';
 import { readJsonBody } from '@/lib/request-body';
 import {
+  activateCryptoPayment,
   approvePayment,
+  paymentFromRow,
   rejectPayment,
   SubscriptionGateError,
 } from '@/lib/billing/entitlement';
+import { releaseHeldRedemptionsForPayment } from '@/lib/billing/coupons';
 import {
   getBillingAdminClient,
   mapPaymentToItem,
@@ -20,7 +23,16 @@ import {
  * twice returns the same period and does not extend it again.
  * Only bank payments can be approved here: crypto payments
  * activate automatically when NOWPayments reports them finished,
- * so an admin approval must never start a period for unpaid crypto.
+ * so an admin approval must never start a period for unpaid crypto
+ * — except the rescue decisions below.
+ *
+ * Rescue (audit fix 2026-11-01): a crypto payment whose IPN never
+ * arrived leaves the user wedged under one-pending with no admin
+ * recourse. approve-crypto starts the period for a crypto payment
+ * in pending/failed/expired with no period (the admin has checked
+ * the payment outside the app); expire-crypto closes it and
+ * releases its coupon. Both refuse bank payments and crypto
+ * payments that already have a period.
  */
 export async function POST(
   request: NextRequest,
@@ -51,7 +63,7 @@ export async function POST(
   const parsed = AdminDecisionRequestSchema.safeParse(bodyResult.value);
   if (!parsed.success) {
     return NextResponse.json(
-      { error: 'INVALID_REQUEST', message: 'Choose approve or reject.' },
+      { error: 'INVALID_REQUEST', message: 'Choose approve, reject, or a crypto rescue action.' },
       { status: 400 }
     );
   }
@@ -62,13 +74,26 @@ export async function POST(
       return NextResponse.json({ payment: mapPaymentToItem(payment), period: null });
     }
 
+    if (parsed.data.decision === 'approve-crypto' || parsed.data.decision === 'expire-crypto') {
+      return handleCryptoRescue(client, paymentId, parsed.data.decision);
+    }
+
     // Bank-only approval gate: load the payment first so a crypto
-    // payment can never be approved into a paid period.
+    // payment can never be approved into a paid period. A missing
+    // row is a 404, not the crypto 400 below (audit fix 2026-11-01:
+    // approving a nonexistent payment used to report "crypto
+    // payments activate automatically", which is wrong twice over).
     const { data } = await client
       .from('subscription_payments')
       .select('method')
       .eq('id', paymentId)
       .maybeSingle();
+    if (!data) {
+      return NextResponse.json(
+        { error: 'PAYMENT_NOT_FOUND', message: 'That payment could not be found.' },
+        { status: 404 }
+      );
+    }
     const method =
       data !== null && typeof data === 'object'
         ? (data as Record<string, unknown>)['method']
@@ -108,4 +133,91 @@ export async function POST(
       { status: 500 }
     );
   }
+}
+
+async function handleCryptoRescue(
+  client: NonNullable<ReturnType<typeof getBillingAdminClient>>,
+  paymentId: string,
+  decision: 'approve-crypto' | 'expire-crypto'
+): Promise<NextResponse> {
+  const { data, error } = await client
+    .from('subscription_payments')
+    .select(
+      'id,user_id,method,bank_method,status,facebook_count,instagram_count,threads_count,x_count,tiktok_count,youtube_count,amount_pkr,is_upgrade,screenshot_storage_key,nowpayments_payment_id,nowpayments_pay_address,nowpayments_pay_amount,nowpayments_network,coupon_code,discount_pkr,period_id,approved_at,created_at'
+    )
+    .eq('id', paymentId)
+    .maybeSingle();
+  if (error || !data) {
+    return NextResponse.json(
+      { error: 'PAYMENT_NOT_FOUND', message: 'That payment could not be found.' },
+      { status: 404 }
+    );
+  }
+  const payment = paymentFromRow(data as Record<string, unknown>);
+  if (!payment) {
+    return NextResponse.json(
+      { error: 'PAYMENT_NOT_FOUND', message: 'That payment could not be found.' },
+      { status: 404 }
+    );
+  }
+  if (payment.method !== 'nowpayments') {
+    return NextResponse.json(
+      { error: 'INVALID_REQUEST', message: 'Rescue actions are for crypto payments only.' },
+      { status: 400 }
+    );
+  }
+  if (payment.periodId) {
+    return NextResponse.json(
+      { error: 'INVALID_REQUEST', message: 'This payment already has a period, so it needs no rescue.' },
+      { status: 400 }
+    );
+  }
+  if (payment.status !== 'pending' && payment.status !== 'failed' && payment.status !== 'expired') {
+    return NextResponse.json(
+      { error: 'INVALID_REQUEST', message: 'Only a pending, failed, or expired crypto payment can be rescued.' },
+      { status: 400 }
+    );
+  }
+
+  if (decision === 'approve-crypto') {
+    const result = await activateCryptoPayment(client, payment);
+    return NextResponse.json({
+      payment: mapPaymentToItem(result.payment),
+      period: {
+        id: result.period.id,
+        startsAt: result.period.startsAt.toISOString(),
+        endsAt: result.period.endsAt.toISOString(),
+      },
+    });
+  }
+
+  // Expire: close the payment and give the coupon back, by the same
+  // guarded release the reject path uses. The conditional update
+  // means a concurrent webhook finish wins cleanly instead: if the
+  // row is no longer pending/failed/expired, the rescue refuses.
+  const { data: expired, error: expireError } = await client
+    .from('subscription_payments')
+    .update({ status: 'expired', updated_at: new Date().toISOString() })
+    .eq('id', payment.id)
+    .in('status', ['pending', 'failed', 'expired'])
+    .is('period_id', null)
+    .select('id');
+  if (expireError) throw expireError;
+  if (!Array.isArray(expired) || expired.length === 0) {
+    return NextResponse.json(
+      { error: 'PAYMENT_ALREADY_DECIDED', message: 'That payment has already been decided.' },
+      { status: 409 }
+    );
+  }
+  try {
+    await releaseHeldRedemptionsForPayment(client, payment.id);
+  } catch (releaseError) {
+    logServerError('[billing] coupon release after crypto rescue expire failed', releaseError, {
+      source: 'billing',
+    });
+  }
+  return NextResponse.json({
+    payment: mapPaymentToItem({ ...payment, status: 'expired' }),
+    period: null,
+  });
 }

@@ -7,6 +7,7 @@ import {
   type RefundRequestItem,
   type UserRefundsResponse,
 } from '@/lib/api/schemas/billing';
+import { isUpgradeCancelledRefund } from '@fbuploadpro/contracts';
 import { Alert, AlertDescription, AlertTitle } from '@/components/shared/ui/alert';
 import { Button } from '@/components/shared/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/shared/ui/card';
@@ -30,10 +31,16 @@ function destinationLabel(item: RefundRequestItem): string {
   return `USDT wallet (${item.destinationNetwork === 'trc20' ? 'TRC20' : 'BEP20'})`;
 }
 
-function statusLabel(status: RefundRequestItem['status']): string {
-  if (status === 'requested') return 'Waiting for a decision';
-  if (status === 'approved') return 'Approved';
-  if (status === 'rejected') return 'Rejected';
+function statusLabel(item: RefundRequestItem): string {
+  // Upgrade-cancelled rows are stored as 'rejected' with the exact
+  // upgrade reason (the status CHECK has no 'cancelled' value):
+  // they render as cancelled, never as a plain rejection.
+  if (item.status === 'rejected' && isUpgradeCancelledRefund(item.reason)) {
+    return 'Cancelled because you upgraded';
+  }
+  if (item.status === 'requested') return 'Waiting for a decision';
+  if (item.status === 'approved') return 'Approved';
+  if (item.status === 'rejected') return 'Rejected';
   return 'Sent';
 }
 
@@ -276,7 +283,12 @@ export function RefundSection({ subdomain }: Readonly<{ subdomain: string }>) {
                       Your plan stays active while this request is waiting for a decision.
                     </span>
                   ) : null}
-                  {item.status === 'rejected' ? (
+                  {item.status === 'rejected' && isUpgradeCancelledRefund(item.reason) ? (
+                    <span className="text-metadata text-ink-sub">
+                      Cancelled because you upgraded — the upgrade credit already covered the
+                      unused value of your old plan, so no refund is due for it.
+                    </span>
+                  ) : item.status === 'rejected' ? (
                     <span className="text-metadata text-ink-sub">
                       Rejected — your plan keeps running. You can request again while still
                       inside the 7-day window.
@@ -292,9 +304,9 @@ export function RefundSection({ subdomain }: Readonly<{ subdomain: string }>) {
                 {item.status === 'requested' ? (
                   <BillingStatusMark kind="pending" label="Waiting for a decision" />
                 ) : item.status === 'approved' || item.status === 'sent' ? (
-                  <BillingStatusMark kind="ok" label={statusLabel(item.status)} />
+                  <BillingStatusMark kind="ok" label={statusLabel(item)} />
                 ) : (
-                  <BillingStatusMark kind="failed" label={statusLabel(item.status)} />
+                  <BillingStatusMark kind="failed" label={statusLabel(item)} />
                 )}
               </div>
             ))}

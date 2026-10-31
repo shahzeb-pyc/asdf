@@ -218,7 +218,13 @@ export const CreateCryptoCheckoutRequestSchema = z.object({
 export type CreateCryptoCheckoutRequest = z.infer<typeof CreateCryptoCheckoutRequestSchema>;
 
 export const AdminDecisionRequestSchema = z.object({
-  decision: z.enum(['approve', 'reject']),
+  // approve / reject: bank payments. approve-crypto / expire-crypto:
+  // rescue decisions for a stuck crypto payment whose IPN never
+  // arrived (audit fix 2026-11-01) — approve starts its period,
+  // expire closes it and releases its coupon. Never valid for bank
+  // payments, and never for a crypto payment that already has a
+  // period; the route enforces both.
+  decision: z.enum(['approve', 'reject', 'approve-crypto', 'expire-crypto']),
 });
 export type AdminDecisionRequest = z.infer<typeof AdminDecisionRequestSchema>;
 
@@ -305,6 +311,44 @@ export const AdminPaymentsResponseSchema = z.object({
   payments: z.array(AdminPaymentItemSchema),
 });
 export type AdminPaymentsResponse = z.infer<typeof AdminPaymentsResponseSchema>;
+
+/**
+ * A NOWPayments webhook event that needed a human, not an automatic
+ * outcome (audit fix 2026-11-01): an IPN for a payment we cannot
+ * find, an amount/currency/method mismatch against the payment, a
+ * payment that arrived underpaid, or a coupon released before a late
+ * finished event activated the payment. The webhook never fails on
+ * these — it records the issue and answers 200 — and the admin
+ * clears them from the payments view by acting on the payment
+ * (approve/expire) or dismissing the row. `reason` is one of the
+ * machine-readable codes below, never free text from the provider.
+ */
+export const WebhookIssueReasonSchema = z.enum([
+  'unknown_payment',
+  'amount_mismatch',
+  'currency_mismatch',
+  'underpaid',
+  'coupon_released_before_finish',
+  'refunded',
+]);
+export type WebhookIssueReason = z.infer<typeof WebhookIssueReasonSchema>;
+
+export const WebhookIssueSchema = z.object({
+  id: z.string().uuid(),
+  provider: z.string(),
+  providerPaymentId: z.string(),
+  paymentId: z.string().uuid().nullable(),
+  reason: WebhookIssueReasonSchema,
+  detail: z.string().nullable(),
+  dismissedAt: z.string().nullable(),
+  createdAt: z.string(),
+});
+export type WebhookIssue = z.infer<typeof WebhookIssueSchema>;
+
+export const WebhookIssuesResponseSchema = z.object({
+  issues: z.array(WebhookIssueSchema),
+});
+export type WebhookIssuesResponse = z.infer<typeof WebhookIssuesResponseSchema>;
 
 export const CryptoCheckoutResponseSchema = z.object({
   paymentId: z.string().uuid(),

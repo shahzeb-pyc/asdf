@@ -146,6 +146,7 @@ interface FakeState {
   updateErrors: Partial<Record<string, unknown>>;
   inserted: Array<{ table: string; row: Row }>;
   updated: Array<{ table: string; patch: Row }>;
+  deleted: Array<{ table: string; filters: Filter[] }>;
 }
 
 function baseState(overrides: Partial<FakeState> = {}): FakeState {
@@ -163,6 +164,7 @@ function baseState(overrides: Partial<FakeState> = {}): FakeState {
     updateErrors: {},
     inserted: [],
     updated: [],
+    deleted: [],
     ...overrides,
   };
 }
@@ -175,7 +177,8 @@ class FakeBuilder {
   private orderAsc = true;
   private limitN: number | null = null;
   private headCount = false;
-  private op: 'select' | 'insert' | 'update' = 'select';
+  private op: 'select' | 'insert' | 'update' | 'delete' = 'select';
+  private deletePatch: Row | null = null;
 
   constructor(
     private state: FakeState,
@@ -231,9 +234,18 @@ class FakeBuilder {
   insert(row: Row): this {
     this.op = 'insert';
     this.state.inserted.push({ table: this.table, row });
-    // Mirror the database: a successful usage insert is visible to
-    // the registry read that follows it in the same call.
-    if (this.table === 'subscription_usage') {
+    // Mirror the database: a SUCCESSFUL usage insert is visible to
+    // the registry read that follows it in the same call. A failed
+    // insert (usageInsertError / periodInsertError configured)
+    // inserts nothing — the race-winner row in the 23505 test is
+    // seeded explicitly instead.
+    const insertError =
+      this.table === 'subscription_usage'
+        ? this.state.usageInsertError
+        : this.table === 'subscription_periods'
+          ? this.state.periodInsertError
+          : null;
+    if (this.table === 'subscription_usage' && !insertError) {
       this.state.usageRows.push({
         user_id: row.user_id,
         platform: row.platform,
@@ -241,6 +253,11 @@ class FakeBuilder {
         feature: row.feature,
       });
     }
+    return this;
+  }
+
+  delete(): this {
+    this.op = 'delete';
     return this;
   }
 
@@ -283,14 +300,63 @@ class FakeBuilder {
 
   private compute(): Record<string, unknown> {
     if (this.op === 'insert') {
+      // Consume-once: a retry after a 23505 (legacy-row delete +
+      // reinsert) must succeed — the error models one failed
+      // attempt, not a permanently broken table.
       const err =
         this.table === 'subscription_usage'
           ? this.state.usageInsertError
           : this.state.periodInsertError;
+      if (this.table === 'subscription_usage') this.state.usageInsertError = null;
+      if (this.table === 'subscription_periods') this.state.periodInsertError = null;
       return { data: null, error: err };
     }
+    if (this.op === 'delete') {
+      this.state.deleted.push({ table: this.table, filters: [...this.filters] });
+      const rows =
+        this.table === 'subscription_usage'
+          ? this.state.usageRows
+          : this.table === 'subscription_periods'
+            ? this.state.periods
+            : [];
+      for (let i = rows.length - 1; i >= 0; i -= 1) {
+        const row = rows[i] as Row;
+        const matches = this.filters.every((f) => {
+          const v = row[f.col];
+          if (f.op === 'eq') return v === f.val;
+          if (f.op === 'is') return f.val === null ? v == null : v === f.val;
+          if (f.op === 'neq') return v !== f.val;
+          return false;
+        });
+        if (matches) rows.splice(i, 1);
+      }
+      return { data: [], error: null };
+    }
     if (this.op === 'update') {
-      return { error: this.state.updateErrors[this.table] ?? null };
+      const err = this.state.updateErrors[this.table] ?? null;
+      if (err) return { error: err };
+      // Emulate the claim/link conditional updates on payments:
+      // the update lands only when every filter still matches the
+      // stored row, and returns the row id (the select('id') the
+      // code awaits). A lost race returns no rows.
+      if (this.table === 'subscription_payments' && this.state.paymentRow) {
+        const row = this.state.paymentRow;
+        const matches = this.filters.every((f) => {
+          const v = row[f.col];
+          if (f.op === 'eq') return v === f.val;
+          if (f.op === 'is') return f.val === null ? v == null : v === f.val;
+          return true;
+        });
+        if (matches) {
+          const patch = this.state.updated
+            .filter((u) => u.table === 'subscription_payments')
+            .at(-1)?.patch;
+          if (patch) Object.assign(row, patch);
+          return { data: [{ id: row['id'] }], error: null };
+        }
+        return { data: [], error: null };
+      }
+      return { error: null };
     }
     const err = this.state.selectErrors[this.table];
     if (err) return { data: null, error: err, count: null };
@@ -553,7 +619,13 @@ describe('Publish Now uncapped (owner decision 2026-10-31)', () => {
     });
   });
 
-  it('registerUsage reclassifies a Publish Now row when a capped feature registers it', async () => {
+  it('registerUsage deletes a legacy Publish Now row and inserts the capped row', async () => {
+    // Audit fix 2026-11-01 (fix 24): the old reclassify UPDATE is
+    // gone — a capped registration colliding with a legacy
+    // Publish-Now row deletes that row and inserts the capped row
+    // instead, so the destination counts without keeping any
+    // Publish-Now row. The first insert fails 23505; the retry
+    // after the delete succeeds.
     const state = baseState({
       periods: [periodRow()],
       usageRows: [
@@ -563,26 +635,28 @@ describe('Publish Now uncapped (owner decision 2026-10-31)', () => {
     });
     await expect(
       registerUsage(fakeClient(state), 'user-1', 'facebook', 'page-a', 'destination-queue', null, NOW)
-    ).resolves.toMatchObject({ alreadyUsed: true });
-    expect(state.updated).toHaveLength(1);
-    expect(state.updated[0]).toMatchObject({
-      table: 'subscription_usage',
-      patch: expect.objectContaining({ feature: 'destination-queue' }),
-    });
+    ).resolves.toMatchObject({ alreadyUsed: false, usedCount: 1 });
+    expect(state.updated).toHaveLength(0);
+    expect(state.deleted).toHaveLength(1);
+    expect(state.deleted[0]).toMatchObject({ table: 'subscription_usage' });
+    expect(state.usageRows).toHaveLength(1);
+    expect(state.usageRows[0]).toMatchObject({ feature: 'destination-queue' });
   });
 
-  it('registerUsage leaves a Publish Now row alone when Publish Now re-registers it', async () => {
+  it('registerUsage rejects Publish Now features outright', async () => {
+    // Audit fix 2026-11-01 (fix 24): Publish Now never registers
+    // usage — not even a re-registration of its own legacy row.
     const state = baseState({
       periods: [periodRow()],
       usageRows: [
         { user_id: 'user-1', platform: 'facebook', destination_key: 'page-a', feature: 'publish-now' },
       ],
-      usageInsertError: { code: '23505' },
     });
     await expect(
       registerUsage(fakeClient(state), 'user-1', 'facebook', 'page-a', 'publish-now', null, NOW)
-    ).resolves.toMatchObject({ alreadyUsed: true });
+    ).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
     expect(state.updated).toHaveLength(0);
+    expect(state.inserted).toHaveLength(0);
   });
 });
 
@@ -943,8 +1017,14 @@ describe('registerUsage', () => {
   });
 
   it('treats a unique violation as an already-used race win', async () => {
+    // The race winner's capped row is seeded: a failed insert
+    // inserts nothing, so the already-used read must find a row
+    // that another request actually wrote.
     const state = baseState({
       periods: [periodRow()],
+      usageRows: [
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-a', feature: 'schedule' },
+      ],
       usageInsertError: { code: '23505' },
     });
     await expect(
@@ -1061,12 +1141,17 @@ describe('approvePayment', () => {
       approvedAt: '2026-06-01T00:00:00.000Z',
     });
     expect(result.period.id).toBe('period-new');
-    const paymentUpdate = state.updated.find((u) => u.table === 'subscription_payments');
-    expect(paymentUpdate?.patch).toMatchObject({
-      status: 'approved',
-      approved_by: 'admin-1',
-      period_id: 'period-new',
-    });
+    // Claim-first approval writes twice: the claim (status +
+    // approved_by) and then the period link. The link update is
+    // the one carrying period_id.
+    const claimUpdate = state.updated.find(
+      (u) => u.table === 'subscription_payments' && u.patch['status'] === 'approved'
+    );
+    expect(claimUpdate?.patch).toMatchObject({ status: 'approved', approved_by: 'admin-1' });
+    const linkUpdate = state.updated.find(
+      (u) => u.table === 'subscription_payments' && u.patch['period_id'] === 'period-new'
+    );
+    expect(linkUpdate?.patch).toMatchObject({ period_id: 'period-new' });
   });
 
   it('creates a period when the stored period id no longer resolves', async () => {
@@ -1113,7 +1198,7 @@ describe('approvePayment', () => {
       code: 'ENTITLEMENT_UNAVAILABLE',
     });
     expect(mockedLogServerError).toHaveBeenCalledWith(
-      '[billing] payment approve update failed',
+      '[billing] payment approve claim failed',
       expect.anything(),
       { source: 'billing' }
     );

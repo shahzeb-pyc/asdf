@@ -1260,7 +1260,10 @@ export function BillingView({
         </div>
         <Card>
           <CardHeader>
-            <CardTitle>Free</CardTitle>
+            {/* Expired, not Free (audit fix 2026-11-01): a lapsed
+                user had a paid plan before, matching the sidebar
+                word. The button below already buys again. */}
+            <CardTitle>{entitlement.hasPriorPeriod ? 'Expired' : 'Free'}</CardTitle>
           </CardHeader>
           <CardContent>
             <ul className="flex flex-col gap-3 text-body">

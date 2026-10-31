@@ -4,7 +4,9 @@ import {
   generateDailyRandomTimes,
   sanitizeSourceIdentity,
 } from '@fbuploadpro/contracts';
-import { aduContext, isInstagramAduConfig, loadAduConfigView } from '@/lib/server/adu';
+import { aduContext, isInstagramAduConfig, loadAduConfigView,
+  releaseAduConfigUsage,
+} from '@/lib/server/adu';
 
 export async function GET(
   request: NextRequest,
@@ -120,6 +122,13 @@ export async function DELETE(
   if (!(await isInstagramAduConfig(supabase, workspaceId, id))) {
     return NextResponse.json({ error: 'Account not found.' }, { status: 404 });
   }
+  const { data: configRow } = await supabase
+    .from('adu_configs')
+    .select('destination_id')
+    .eq('workspace_id', workspaceId)
+    .eq('id', id)
+    .maybeSingle();
+  const configDestinationId = (configRow as { destination_id?: unknown } | null)?.destination_id;
   // Old behaviour: reels are deleted first (in batches in the old app;
   // a single delete by config is equivalent here), then the page.
   await supabase.from('adu_reels').delete().eq('config_id', id);
@@ -129,5 +138,10 @@ export async function DELETE(
     .eq('workspace_id', workspaceId)
     .eq('id', id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  // Cap-at-add release (audit fix 2026-11-01): best-effort, see the
+  // Facebook delete route.
+  if (typeof configDestinationId === 'string' && configDestinationId.length > 0) {
+    await releaseAduConfigUsage(resolved.context, 'instagram', configDestinationId);
+  }
   return NextResponse.json({ deleted: true });
 }

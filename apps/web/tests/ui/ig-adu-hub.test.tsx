@@ -283,14 +283,14 @@ describe('IgAduHubPage', () => {
   it('disables Add Account at the cap and shows Limit reached', async () => {
     installFetchWithEntitlement(1, 1);
     renderWithQuery(<IgAduHubPage subdomain="acme" />);
-    expect(await screen.findByText('1 of 1 accounts connected · Limit reached')).toBeTruthy();
+    expect(await screen.findByText('1 of 1 accounts used · Limit reached')).toBeTruthy();
     expect(screen.getByRole('button', { name: '+ Add Account' })).toBeDisabled();
   });
 
   it('keeps Add Account enabled below the cap and shows remaining', async () => {
     installFetchWithEntitlement(1, 5);
     renderWithQuery(<IgAduHubPage subdomain="acme" />);
-    expect(await screen.findByText('1 of 5 accounts connected · 4 remaining')).toBeTruthy();
+    expect(await screen.findByText('1 of 5 accounts used · 4 remaining')).toBeTruthy();
     expect(screen.getByRole('button', { name: '+ Add Account' })).toBeEnabled();
   });
 });

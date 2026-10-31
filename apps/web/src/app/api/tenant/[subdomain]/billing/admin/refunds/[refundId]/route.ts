@@ -75,6 +75,12 @@ export async function POST(
       if (err.code === 'REFUND_ALREADY_DECIDED') {
         return NextResponse.json({ error: err.code, message: err.message }, { status: 409 });
       }
+      // Zero-amount block (audit fix 2026-11-01, fix 18): the
+      // message must reach the admin verbatim — a generic 500
+      // would hide why the approve button did nothing.
+      if (err.code === 'REFUND_ZERO_AMOUNT') {
+        return NextResponse.json({ error: err.code, message: err.message }, { status: 400 });
+      }
     }
     logServerError('[billing] admin refund decision failed', err, { source: 'billing' });
     return NextResponse.json(

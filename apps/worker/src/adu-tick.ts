@@ -11,6 +11,7 @@ import {
 } from '@fbuploadpro/contracts';
 import { decryptToken } from '@fbuploadpro/contracts';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { workspaceOwnerHasActivePeriod } from './entitlement.js';
 
 /**
  * ADU worker tick — schedule intake + reel publish, on the minute tick.
@@ -369,6 +370,32 @@ export async function runAduTick(options: {
         .eq('id', job.id);
       result.published += 1;
       continue;
+    }
+    // Entitlement pause (audit fix 2026-11-01): when the owning
+    // workspace has no active paid period, the job is NOT claimed
+    // and NOT published — it stays pending_publish for a later
+    // tick, so renewal resumes it without any missed-slot flood
+    // (ADU jobs are not slot-based; they publish as soon as the
+    // entitlement returns). The workspace comes from the config,
+    // which the claim below would load anyway; loading it first
+    // costs one query per job and keeps the gate ahead of the
+    // claim, where it belongs. A failed lookup fails closed.
+    {
+      const { data: gateConfigRow } = await supabase
+        .from('adu_configs')
+        .select('workspace_id')
+        .eq('id', job.config_id)
+        .maybeSingle();
+      const gateWorkspaceId = (gateConfigRow as { workspace_id?: string } | null)?.workspace_id;
+      const entitled = gateWorkspaceId
+        ? await workspaceOwnerHasActivePeriod(supabase, gateWorkspaceId, now)
+        : false;
+      if (!entitled) {
+        console.error(
+          `[adu-tick] job=${job.id} paused: owning workspace has no active paid period; leaving pending_publish`
+        );
+        continue;
+      }
     }
     // Claim-only-if-still-pending: the publish loop selects jobs and
     // then publishes them, so two ticks could otherwise select the

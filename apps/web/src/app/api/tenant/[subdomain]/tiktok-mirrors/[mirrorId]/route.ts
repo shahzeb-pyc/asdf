@@ -10,6 +10,8 @@ import {
   isLegacyClient,
 } from '@/lib/route-auth';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { getBillingAdminClient } from '@/lib/billing/route-helpers';
+import { releaseUsageForFeature } from '@/lib/billing/entitlement';
 import { logServerError } from '@/lib/server-analytics';
 import {
   asMirrorRow,
@@ -62,7 +64,7 @@ export async function authenticate(
   subdomain: string,
   dbClient?: Db
 ): Promise<
-  | { db: Db; workspaceId: string; errorResponse?: never }
+  | { db: Db; workspaceId: string; session: { userId: string; role: string }; errorResponse?: never }
   | { db?: never; workspaceId?: never; errorResponse: NextResponse }
 > {
   const auth = await authenticateTenantRoute(request, subdomain);
@@ -83,7 +85,7 @@ export async function authenticate(
       errorResponse: NextResponse.json({ error: 'Workspace not found' }, { status: 404 }),
     };
   }
-  return { db, workspaceId };
+  return { db, workspaceId, session };
 }
 
 export async function handleGetMirror(
@@ -294,6 +296,35 @@ export async function handleDeleteMirror(
         .eq('id', mirrorId)
         .eq('workspace_id', workspaceId);
       if (error) throw new Error(`Failed to delete mirror: ${error.message}`);
+    }
+    // Cap-at-add release (audit fix 2026-11-01): deleting the
+    // mirror frees its unit when the registry row still carries
+    // the mirror feature. Best-effort — the delete already
+    // succeeded. Admins never registered, so they never release.
+    if (auth.session.role !== 'admin') {
+      const billingClient = getBillingAdminClient();
+      if (!billingClient) {
+        logServerError('[billing] mirror usage release skipped: no billing client', null, {
+          source: 'billing',
+        });
+      } else if (
+        mirror.target_platform === 'facebook' ||
+        mirror.target_platform === 'instagram'
+      ) {
+        try {
+          await releaseUsageForFeature(
+            billingClient,
+            auth.session.userId,
+            mirror.target_platform,
+            mirror.target_external_id,
+            'tiktok-mirror'
+          );
+        } catch (releaseError) {
+          logServerError('[billing] mirror usage release failed', releaseError, {
+            source: 'billing',
+          });
+        }
+      }
     }
     const parsed = DeleteMirrorResponseSchema.safeParse({ deleted: true });
     return NextResponse.json(parsed.data);

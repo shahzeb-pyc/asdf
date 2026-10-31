@@ -749,6 +749,10 @@ export async function handleAddInstagramSchedule(
           if (gateResponse) return gateResponse;
           throw err;
         }
+      } else {
+        logServerError('[billing] instagram schedule cap gate skipped: no billing client', null, {
+          source: 'billing',
+        });
       }
     }
     let destinationId = '';

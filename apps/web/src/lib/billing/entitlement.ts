@@ -15,6 +15,7 @@ import {
   releaseHeldRedemptionsForPayment,
 } from './coupons';
 import { recordCommissionForPayment } from './sellers';
+import { cancelPendingRefundsForSupersededPeriods } from './refund-cancel';
 
 /**
  * Subscription entitlement, server-side only.
@@ -27,11 +28,12 @@ import { recordCommissionForPayment } from './sellers';
  * through the usage-register API route.
  *
  * EXCEPTION — Publish Now is unlimited (owner decision 2026-10-31):
- * its usage rows (see UNCAPPED_USAGE_FEATURES) never count toward
- * any cap, and its routes use the plan-only assertPaidPlan gate
- * instead of assertCanPost/registerUsage. The rows stay in the
- * registry for history; they are simply invisible to every cap
- * check below.
+ * it writes NO usage rows at all and its routes use the plan-only
+ * assertPaidPlan gate instead of assertCanPost/registerUsage. Rows
+ * with publish-now features that predate the 2026-11-01 audit fix
+ * are legacy history: every cap check below excludes them, and a
+ * capped registration colliding with one replaces it (see
+ * registerUsage). Never write a publish-now row again.
  *
  * SCOPE — per user account, across all workspaces (owner decision
  * 2026-10-31): every cap function below takes only a userId.
@@ -69,6 +71,14 @@ export interface SubscriptionPaymentRow {
   nowpaymentsPayAddress: string | null;
   nowpaymentsPayAmount: number | null;
   nowpaymentsNetwork: 'trc20' | 'bep20' | null;
+  /** IPN actuals (audit fix 2026-11-01): what the gateway really
+   *  received, persisted from the finished notification. Null until
+   *  a finished IPN with actuals arrives (or the columns predate
+   *  the migration that adds them). Refund math prefers this over
+   *  the checkout estimate. Stored alongside amount_pkr, never
+   *  converted into it. */
+  nowpaymentsActualPaid?: number | null;
+  nowpaymentsActualCurrency?: string | null;
   couponCode: string | null;
   discountPkr: number;
   periodId: string | null;
@@ -166,6 +176,8 @@ export function paymentFromRow(row: UnknownRow): SubscriptionPaymentRow | null {
   const bankMethod = stringField(row, 'bank_method');
   const network = stringField(row, 'nowpayments_network');
   const payAmount = row['nowpayments_pay_amount'];
+  const actualPaid = row['nowpayments_actual_paid'];
+  const actualCurrency = row['nowpayments_actual_currency'];
   return {
     id,
     userId,
@@ -186,6 +198,8 @@ export function paymentFromRow(row: UnknownRow): SubscriptionPaymentRow | null {
     nowpaymentsPayAddress: stringField(row, 'nowpayments_pay_address'),
     nowpaymentsPayAmount: typeof payAmount === 'number' ? payAmount : null,
     nowpaymentsNetwork: network === 'trc20' || network === 'bep20' ? network : null,
+    nowpaymentsActualPaid: typeof actualPaid === 'number' ? actualPaid : null,
+    nowpaymentsActualCurrency: typeof actualCurrency === 'string' ? actualCurrency : null,
     couponCode: stringField(row, 'coupon_code'),
     discountPkr: numberField(row, 'discount_pkr'),
     periodId: stringField(row, 'period_id'),
@@ -198,23 +212,27 @@ const COUNT_COLUMNS =
   'facebook_count,instagram_count,threads_count,x_count,tiktok_count,youtube_count';
 
 /**
- * Usage features that never consume the cap. Publish Now is
- * unlimited (owner decision 2026-10-31): a paid user may publish
- * now to any number of pages/accounts regardless of bought units.
- * Rows with these features stay in subscription_usage for history
- * but are excluded from every cap count and existence check below.
- * Do NOT delete them, and do NOT add a capped feature here.
+ * Publish Now features, LEGACY rows only (audit fix 2026-11-01).
+ * Publish Now is unlimited and writes NO usage rows at all: the
+ * usage route rejects publish-now features, and registerUsage
+ * refuses them, so no new row with these features can ever appear.
+ * The exclusions in the cap counts below exist ONLY for rows
+ * written before that fix (PR #77 kept them for history): a
+ * legacy publish-now-only destination must not suddenly consume
+ * cap. A capped registration colliding with a legacy row deletes
+ * that row and inserts the capped row (see registerUsage) — the
+ * legacy row is gone afterwards, never reclassified in place.
  */
-export const UNCAPPED_USAGE_FEATURES = [
+export const LEGACY_UNCAPPED_USAGE_FEATURES = [
   'publish-now',
   'instagram-publish-now',
   'threads-publish-now',
 ] as const;
 
-function isUncappedUsageFeature(feature: unknown): boolean {
+export function isLegacyUncappedUsageFeature(feature: unknown): boolean {
   return (
     typeof feature === 'string' &&
-    (UNCAPPED_USAGE_FEATURES as readonly string[]).includes(feature)
+    (LEGACY_UNCAPPED_USAGE_FEATURES as readonly string[]).includes(feature)
   );
 }
 
@@ -506,12 +524,17 @@ export async function assertPaidPlan(
  * a race that inserts the same destination twice is treated as
  * already-used (the unique constraint), never as a second unit.
  *
- * Cap-correctness note: a destination previously used ONLY via
- * Publish Now has an uncapped-feature row, which the cap checks
- * above deliberately ignore. When a capped feature registers that
- * destination, the race branch below reclassifies the row to the
- * capped feature — otherwise queueing to pages first reached via
- * Publish Now would never consume cap at all.
+ * Publish Now features are REFUSED here (audit fix 2026-11-01):
+ * Publish Now is uncapped and must leave no registry trace. A
+ * caller passing one is a bug, failed loud, never silently stored.
+ *
+ * Legacy note: a destination used ONLY via Publish Now before the
+ * fix still has a legacy publish-now row, which the cap checks
+ * deliberately ignore. When a capped feature registers that
+ * destination, the insert collides (23505) on the legacy row; the
+ * legacy row is then DELETED and the capped row inserted, so the
+ * destination starts counting toward the cap and no publish-now
+ * row survives. A collision on a capped row is plain already-used.
  */
 export async function registerUsage(
   client: SupabaseClient,
@@ -522,6 +545,12 @@ export async function registerUsage(
   destinationId: string | null = null,
   now: Date = new Date()
 ): Promise<{ alreadyUsed: boolean; usedCount: number }> {
+  if (isLegacyUncappedUsageFeature(feature)) {
+    throw new SubscriptionGateError(
+      'INVALID_REQUEST',
+      'Publish Now does not register usage.'
+    );
+  }
   await assertCanPost(client, userId, platform, destinationKey, now);
   if (await isDestinationUsed(client, userId, platform, destinationKey)) {
     return { alreadyUsed: true, usedCount: await getUsageCount(client, userId, platform) };
@@ -535,23 +564,37 @@ export async function registerUsage(
   });
   if (error) {
     // 23505 = unique violation: another request registered this
-    // destination in the meantime. That is a success, not a failure.
+    // destination in the meantime, or a legacy publish-now row is
+    // still there. A capped row means already-used. A legacy row
+    // is deleted and the capped row inserted instead (see above).
     if (error.code === '23505') {
-      // ...except when the existing row is an uncapped Publish Now
-      // row and this registration is for a capped feature: then the
-      // destination must start counting toward the cap, so the row
-      // is reclassified to the capped feature. A Publish Now
-      // re-registration leaves the row as it is.
-      if (!isUncappedUsageFeature(feature)) {
-        const { data: existing, error: existingError } = await client
+      const { data: existing, error: existingError } = await client
+        .from('subscription_usage')
+        .select('feature')
+        .eq('user_id', userId)
+        .eq('platform', platform)
+        .eq('destination_key', destinationKey)
+        .limit(1);
+      if (existingError) {
+        logServerError('[billing] usage row lookup failed', existingError, {
+          source: 'billing',
+        });
+        throw new SubscriptionGateError(
+          'ENTITLEMENT_UNAVAILABLE',
+          'Your plan could not be checked right now. Please try again.'
+        );
+      }
+      const existingRow = Array.isArray(existing) && existing.length > 0 ? asRow(existing[0]) : null;
+      if (existingRow && isLegacyUncappedUsageFeature(existingRow['feature'])) {
+        const { error: deleteError } = await client
           .from('subscription_usage')
-          .select('feature')
+          .delete()
           .eq('user_id', userId)
           .eq('platform', platform)
           .eq('destination_key', destinationKey)
-          .limit(1);
-        if (existingError) {
-          logServerError('[billing] usage row lookup failed', existingError, {
+          .eq('feature', existingRow['feature']);
+        if (deleteError) {
+          logServerError('[billing] legacy usage row delete failed', deleteError, {
             source: 'billing',
           });
           throw new SubscriptionGateError(
@@ -559,24 +602,28 @@ export async function registerUsage(
             'Your plan could not be checked right now. Please try again.'
           );
         }
-        const existingRow = Array.isArray(existing) && existing.length > 0 ? asRow(existing[0]) : null;
-        if (existingRow && isUncappedUsageFeature(existingRow['feature'])) {
-          const { error: reclassifyError } = await client
-            .from('subscription_usage')
-            .update({ feature })
-            .eq('user_id', userId)
-            .eq('platform', platform)
-            .eq('destination_key', destinationKey);
-          if (reclassifyError) {
-            logServerError('[billing] usage row reclassify failed', reclassifyError, {
-              source: 'billing',
-            });
-            throw new SubscriptionGateError(
-              'ENTITLEMENT_UNAVAILABLE',
-              'Your plan could not be checked right now. Please try again.'
-            );
+        const { error: retryError } = await client.from('subscription_usage').insert({
+          user_id: userId,
+          platform,
+          destination_key: destinationKey,
+          feature,
+          destination_id: destinationId,
+        });
+        if (retryError) {
+          // A concurrent capped registration won the retry: that is
+          // already-used, not a failure.
+          if (retryError.code === '23505') {
+            return { alreadyUsed: true, usedCount: await getUsageCount(client, userId, platform) };
           }
+          logServerError('[billing] usage insert retry failed', retryError, {
+            source: 'billing',
+          });
+          throw new SubscriptionGateError(
+            'ENTITLEMENT_UNAVAILABLE',
+            'Your plan could not be checked right now. Please try again.'
+          );
         }
+        return { alreadyUsed: false, usedCount: await getUsageCount(client, userId, platform) };
       }
       return { alreadyUsed: true, usedCount: await getUsageCount(client, userId, platform) };
     }
@@ -587,6 +634,40 @@ export async function registerUsage(
     );
   }
   return { alreadyUsed: false, usedCount: await getUsageCount(client, userId, platform) };
+}
+
+/**
+ * Release a worker-feature usage unit (audit fix 2026-11-01: cap at
+ * add). Deleting an ADU config, mirror, or auto-repost config frees
+ * its unit — but ONLY when the registry row still carries that
+ * feature. The registry holds one row per destination, shared
+ * across features: if queueing registered the destination first
+ * (or later replaced a legacy row), the row's feature differs and
+ * the destination is still in use, so the row must stay.
+ */
+export async function releaseUsageForFeature(
+  client: SupabaseClient,
+  userId: string,
+  platform: SubscriptionPlatform,
+  destinationKey: string,
+  feature: string
+): Promise<boolean> {
+  const { data, error } = await client
+    .from('subscription_usage')
+    .delete()
+    .eq('user_id', userId)
+    .eq('platform', platform)
+    .eq('destination_key', destinationKey)
+    .eq('feature', feature)
+    .select('id');
+  if (error) {
+    logServerError('[billing] usage release failed', error, { source: 'billing' });
+    throw new SubscriptionGateError(
+      'ENTITLEMENT_UNAVAILABLE',
+      'Your plan could not be checked right now. Please try again.'
+    );
+  }
+  return Array.isArray(data) && data.length > 0;
 }
 
 
@@ -626,6 +707,14 @@ export async function assertFeatureAddWithinCap(
       .select('destination_key')
       .eq('user_id', userId)
       .eq('platform', platform)
+      // A destination used ONLY via Publish Now (legacy rows) does
+      // NOT count as registered here — matching isDestinationUsed
+      // and the queue gate. Without this, an add would pass at cap
+      // for a publish-now-only destination and queueing would then
+      // refuse it: display, add-gate, and queue-gate must agree.
+      .neq('feature', 'publish-now')
+      .neq('feature', 'instagram-publish-now')
+      .neq('feature', 'threads-publish-now')
       .in('destination_key', uniqueKeys);
     if (error) {
       logServerError('[billing] feature-add cap check failed', error, { source: 'billing' });
@@ -652,19 +741,53 @@ export async function assertFeatureAddWithinCap(
 
 /** Supersede the user's current periods and start a fresh 30-day period.
  *  paymentId is null for zero-due coupon activations, which create no
- *  payment row; the coupon redemption carries the period link there. */
+ *  payment row; the coupon redemption carries the period link there.
+ *  isUpgrade marks an activation where upgrade credit was applied:
+ *  only then are pending refund requests on the replaced period
+ *  cancelled (upgrade-cancels-refund, owner decision 2026-11-01) —
+ *  a fresh purchase or renewal after expiry never cancels one. */
 export async function createPeriodForPurchase(
   client: SupabaseClient,
-  args: { userId: string; counts: PlatformCounts; paymentId: string | null },
+  args: { userId: string; counts: PlatformCounts; paymentId: string | null; isUpgrade?: boolean },
   startsAt: Date = new Date()
 ): Promise<SubscriptionPeriodRow> {
   const endsAt = new Date(startsAt.getTime() + SUBSCRIPTION_PERIOD_DAYS * 86_400_000);
+  // The periods this activation replaces: active right now, not
+  // merely unsuperseded. A lapsed period's pending refund (if one
+  // survived past expiry) is NOT the plan being upgraded from, so
+  // it is left alone for a late admin decision; only the active
+  // plan's pending refund is cancelled by the upgrade credit.
+  let replacedPeriodIds: string[] = [];
+  if (args.isUpgrade) {
+    const { data: activeData, error: activeError } = await client
+      .from('subscription_periods')
+      .select('id')
+      .eq('user_id', args.userId)
+      .is('superseded_at', null)
+      .lte('starts_at', startsAt.toISOString())
+      .gt('ends_at', startsAt.toISOString());
+    if (activeError) {
+      logServerError('[billing] replaced period lookup failed', activeError, { source: 'billing' });
+      throw new SubscriptionGateError(
+        'ENTITLEMENT_UNAVAILABLE',
+        'Your paid period could not be started right now. Please try again.'
+      );
+    }
+    replacedPeriodIds = (Array.isArray(activeData) ? activeData : [])
+      .map((row) => asRow(row)?.id)
+      .filter((id): id is string => typeof id === 'string');
+  }
+  // Supersede EVERY non-superseded period, including lapsed ones.
+  // The partial unique index on non-superseded periods (audit fix
+  // 2026-11-01) allows only one live period row per user, so an
+  // expired-but-unsuperseded row must not survive a renewal — and
+  // superseding it changes nothing observable: the time-window
+  // filters already exclude lapsed periods everywhere.
   const { error: supersedeError } = await client
     .from('subscription_periods')
     .update({ superseded_at: startsAt.toISOString() })
     .eq('user_id', args.userId)
-    .is('superseded_at', null)
-    .gt('ends_at', startsAt.toISOString());
+    .is('superseded_at', null);
   if (supersedeError) {
     logServerError('[billing] period supersede failed', supersedeError, { source: 'billing' });
     throw new SubscriptionGateError(
@@ -711,6 +834,22 @@ export async function createPeriodForPurchase(
       'Your paid period could not be started right now. Please try again.'
     );
   }
+  // Upgrade-cancels-refund: the new period is live, so a pending
+  // refund on the replaced plan must not pay out on top of the
+  // upgrade credit. A cancel failure never fails the activation —
+  // the upgrade proceeds normally — but it is logged loudly, so a
+  // surviving pending request is visible to the admin instead of
+  // silently double-compensating later.
+  if (args.isUpgrade && replacedPeriodIds.length > 0) {
+    try {
+      await cancelPendingRefundsForSupersededPeriods(client, replacedPeriodIds, startsAt);
+    } catch (cancelError) {
+      logServerError('[billing] upgrade refund cancel did not land; upgrade proceeds', cancelError, {
+        source: 'billing',
+        userId: args.userId,
+      });
+    }
+  }
   return period;
 }
 
@@ -722,7 +861,7 @@ export async function createPeriodForPayment(
 ): Promise<SubscriptionPeriodRow> {
   return createPeriodForPurchase(
     client,
-    { userId: payment.userId, counts: payment.counts, paymentId: payment.id },
+    { userId: payment.userId, counts: payment.counts, paymentId: payment.id, isUpgrade: payment.isUpgrade },
     startsAt
   );
 }
@@ -731,6 +870,16 @@ export async function createPeriodForPayment(
  * Approve a bank payment. Idempotent: approving an already-approved
  * payment returns its existing period and does NOT extend it again.
  * Only pending payments can be approved or rejected.
+ *
+ * Approval race (audit fix 2026-11-01, option C): the FIRST write
+ * is a conditional claim — pending -> approved — so of two
+ * concurrent approves exactly one wins the claim. The loser reloads
+ * and returns the winner's period instead of creating a second one.
+ * The period link is a second conditional update (period_id IS
+ * NULL): if it loses, the orphan period just created is superseded
+ * at once, so at most one non-superseded period is ever linked.
+ * The partial unique index on non-superseded periods is the
+ * database backstop for the same race.
  */
 export async function approvePayment(
   client: SupabaseClient,
@@ -738,36 +887,46 @@ export async function approvePayment(
   adminUserId: string,
   now: Date = new Date()
 ): Promise<{ payment: SubscriptionPaymentRow; period: SubscriptionPeriodRow }> {
-  const { data, error } = await client
-    .from('subscription_payments')
-    .select(
-      `id,user_id,method,bank_method,status,${COUNT_COLUMNS},amount_pkr,is_upgrade,screenshot_storage_key,nowpayments_payment_id,nowpayments_pay_address,nowpayments_pay_amount,nowpayments_network,coupon_code,discount_pkr,period_id,approved_at,created_at`
-    )
-    .eq('id', paymentId)
-    .maybeSingle();
-  if (error || !data) {
-    throw new SubscriptionGateError('PAYMENT_NOT_FOUND', 'That payment could not be found.');
-  }
-  const payment = paymentFromRow(asRow(data) ?? {});
+  const loadPayment = async (): Promise<SubscriptionPaymentRow | null> => {
+    const { data, error } = await client
+      .from('subscription_payments')
+      .select(
+        `id,user_id,method,bank_method,status,${COUNT_COLUMNS},amount_pkr,is_upgrade,screenshot_storage_key,nowpayments_payment_id,nowpayments_pay_address,nowpayments_pay_amount,nowpayments_network,coupon_code,discount_pkr,period_id,approved_at,created_at`
+      )
+      .eq('id', paymentId)
+      .maybeSingle();
+    if (error || !data) return null;
+    return paymentFromRow(asRow(data) ?? {});
+  };
+  const loadPeriod = async (periodId: string): Promise<SubscriptionPeriodRow | null> => {
+    const { data } = await client
+      .from('subscription_periods')
+      .select(`id,user_id,${COUNT_COLUMNS},starts_at,ends_at,superseded_at`)
+      .eq('id', periodId)
+      .maybeSingle();
+    return data ? periodFromRow(asRow(data) ?? {}) : null;
+  };
+
+  const payment = await loadPayment();
   if (!payment) {
     throw new SubscriptionGateError('PAYMENT_NOT_FOUND', 'That payment could not be found.');
   }
+  // Already linked: plain idempotent re-approve. A coupon redemption
+  // held on this payment may never have been applied (e.g. the first
+  // approve failed after linking); applying is held->applied only,
+  // so re-running it is safe, and now records the period link.
   if (payment.periodId) {
-    const { data: periodData } = await client
-      .from('subscription_periods')
-      .select(`id,user_id,${COUNT_COLUMNS},starts_at,ends_at,superseded_at`)
-      .eq('id', payment.periodId)
-      .maybeSingle();
-    const period = periodData ? periodFromRow(asRow(periodData) ?? {}) : null;
+    const period = await loadPeriod(payment.periodId);
     // Idempotent re-approve: the period already exists, but a coupon
     // redemption held on this payment may never have been applied
-    // (e.g. the first approve failed after creating the period).
-    // Applying is held→applied only, so re-running it is safe.
-    // The same recovery applies to the seller commission: recording
-    // is idempotent per payment, so a first approve that failed
-    // after the period but before the commission still lands it here.
+    // (e.g. the first approve failed after linking); applying is
+    // held→applied only, so re-running it is safe, and now records
+    // the period link. The same recovery applies to the seller
+    // commission: recording is idempotent per payment, so a first
+    // approve that failed after the period but before the
+    // commission still lands it here.
     if (period) {
-      await applyHeldRedemptionsForPayment(client, payment.id);
+      await applyHeldRedemptionsForPayment(client, payment.id, period.id);
       await recordCommissionForPayment(client, payment, period);
       return { payment, period };
     }
@@ -778,30 +937,21 @@ export async function approvePayment(
       'That payment has already been decided.'
     );
   }
-  const period = await createPeriodForPayment(client, payment, now);
-  // The period exists now; applying the held coupon redemption is
-  // part of the same approval. If it fails, the payment stays
-  // pending and the next approve retries through the path above.
-  await applyHeldRedemptionsForPayment(client, payment.id);
-  // Same rule for the seller commission: if recording fails, the
-  // payment stays pending and the re-approve path recovers it.
-  // Deployment note: the sellers migration must be applied before
-  // this code serves traffic, or approvals fail loudly here until
-  // it is (the payment stays pending and retries cleanly after).
-  await recordCommissionForPayment(client, payment, period);
-  const { error: updateError } = await client
+
+  // Claim FIRST: exactly one concurrent approve wins this update.
+  const { data: claimed, error: claimError } = await client
     .from('subscription_payments')
     .update({
       status: 'approved',
       approved_at: now.toISOString(),
       approved_by: adminUserId,
-      period_id: period.id,
       updated_at: now.toISOString(),
     })
     .eq('id', payment.id)
-    .eq('status', 'pending');
-  if (updateError) {
-    logServerError('[billing] payment approve update failed', updateError, {
+    .eq('status', 'pending')
+    .select('id');
+  if (claimError) {
+    logServerError('[billing] payment approve claim failed', claimError, {
       source: 'billing',
     });
     throw new SubscriptionGateError(
@@ -809,10 +959,368 @@ export async function approvePayment(
       'That payment could not be approved right now. Please try again.'
     );
   }
-  return {
-    payment: { ...payment, status: 'approved', approvedAt: now.toISOString(), periodId: period.id },
-    period,
+  if (!Array.isArray(claimed) || claimed.length === 0) {
+    // Lost the race: the winner owns the outcome now. Poll briefly
+    // for its linked period (the winner links right after creating
+    // it); if it appears, return it as a success, not a failure.
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const winner = await loadPayment();
+      if (winner?.periodId) {
+        const period = await loadPeriod(winner.periodId);
+        if (period) return { payment: winner, period };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    // The winner crashed between claim and link (or is stuck): the
+    // payment is approved but period-less. Fall through to the
+    // repair path below, which creates the period and links it
+    // conditionally — only one repair can win the link.
+    const repaired = await loadPayment();
+    if (!repaired) {
+      throw new SubscriptionGateError('PAYMENT_NOT_FOUND', 'That payment could not be found.');
+    }
+    if (repaired.periodId) {
+      const period = await loadPeriod(repaired.periodId);
+      if (period) return { payment: repaired, period };
+    }
+    if (repaired.status !== 'approved') {
+      throw new SubscriptionGateError(
+        'PAYMENT_ALREADY_DECIDED',
+        'That payment has already been decided.'
+      );
+    }
+    return linkPeriodForApprovedPayment(client, repaired, adminUserId, now, loadPeriod);
+  }
+
+  return linkPeriodForApprovedPayment(
+    client,
+    { ...payment, status: 'approved', approvedAt: now.toISOString() },
+    adminUserId,
+    now,
+    loadPeriod
+  );
+}
+
+/**
+ * Create the period for an already-claimed (approved) payment and
+ * link it conditionally. If the link loses, the orphan period is
+ * superseded immediately and the winner's period is returned.
+ */
+async function linkPeriodForApprovedPayment(
+  client: SupabaseClient,
+  payment: SubscriptionPaymentRow,
+  adminUserId: string,
+  now: Date,
+  loadPeriod: (periodId: string) => Promise<SubscriptionPeriodRow | null>
+): Promise<{ payment: SubscriptionPaymentRow; period: SubscriptionPeriodRow }> {
+  void adminUserId;
+  // Re-check before creating: a repair racing the winner's link
+  // must not mint a second period when the link already landed.
+  const fresh = await client
+    .from('subscription_payments')
+    .select('period_id')
+    .eq('id', payment.id)
+    .maybeSingle();
+  const freshRow = fresh.data ? asRow(fresh.data) : null;
+  const freshPeriodId = freshRow ? stringField(freshRow, 'period_id') : null;
+  if (freshPeriodId) {
+    const period = await loadPeriod(freshPeriodId);
+    if (period) {
+      await applyHeldRedemptionsForPayment(client, payment.id, period.id);
+      // Same recovery as the already-linked path: if the winner
+      // linked but crashed before recording the seller commission,
+      // this repair records it (idempotent per payment).
+      await recordCommissionForPayment(client, payment, period);
+      return { payment: { ...payment, periodId: period.id }, period };
+    }
+    // Stale link: the stored id resolves to no period row, so no
+    // winner period exists to protect. The link update below
+    // replaces exactly that stale value (guarded: a concurrent
+    // writer changing period_id in between makes it match 0 rows,
+    // and the loser path below handles it) instead of refusing to
+    // link at all — otherwise a payment whose period row is gone
+    // could never activate.
+  }
+  const period = await createPeriodForPayment(client, payment, now);
+  // The period exists now; applying the held coupon redemption is
+  // part of the same approval, and now records the period link.
+  await applyHeldRedemptionsForPayment(client, payment.id, period.id);
+  const linkQuery = client
+    .from('subscription_payments')
+    .update({ period_id: period.id, updated_at: now.toISOString() })
+    .eq('id', payment.id);
+  const { data: linked, error: linkError } = await (freshPeriodId
+    ? linkQuery.eq('period_id', freshPeriodId)
+    : linkQuery.is('period_id', null)
+  ).select('id');
+  if (linkError) {
+    logServerError('[billing] payment approve link failed', linkError, {
+      source: 'billing',
+    });
+    throw new SubscriptionGateError(
+      'ENTITLEMENT_UNAVAILABLE',
+      'That payment could not be approved right now. Please try again.'
+    );
+  }
+  if (Array.isArray(linked) && linked.length > 0) {
+    // The period is live now. Recording the seller commission
+    // throws on failure (fail loud): the payment stays approved
+    // and linked, and a later re-approve through the
+    // already-linked path recovers the commission — the same
+    // recovery the sellers flow relies on.
+    await recordCommissionForPayment(client, payment, period);
+    return {
+      payment: { ...payment, periodId: period.id },
+      period,
+    };
+  }
+  // Lost the link race: supersede the orphan at once so it can
+  // never become the live period, then return the winner's period.
+  await client
+    .from('subscription_periods')
+    .update({ superseded_at: now.toISOString() })
+    .eq('id', period.id)
+    .is('superseded_at', null);
+  const winner = await client
+    .from('subscription_payments')
+    .select('period_id')
+    .eq('id', payment.id)
+    .maybeSingle();
+  const winnerRow = winner.data ? asRow(winner.data) : null;
+  const winnerPeriodId = winnerRow ? stringField(winnerRow, 'period_id') : null;
+  if (winnerPeriodId) {
+    const winnerPeriod = await loadPeriod(winnerPeriodId);
+    if (winnerPeriod) {
+      return { payment: { ...payment, periodId: winnerPeriod.id }, period: winnerPeriod };
+    }
+  }
+  logServerError('[billing] payment approve link lost with no winner period', null, {
+    source: 'billing',
+    paymentId: payment.id,
+  });
+  throw new SubscriptionGateError(
+    'ENTITLEMENT_UNAVAILABLE',
+    'That payment could not be approved right now. Please try again.'
+  );
+}
+
+/**
+ * Activate a crypto payment from a finished webhook or an admin
+ * rescue approval (audit fix 2026-11-01). Same claim-first shape
+ * as approvePayment: the FIRST write claims the payment
+ * (pending/failed/expired -> paid), so a finished event racing a
+ * failed event cannot double-activate, and a failed event that
+ * already ran cannot overwrite a paid payment. failed/expired is
+ * NOT terminal: a later finished event still activates.
+ * A rejected payment never activates, and a payment that already
+ * has a period is returned as already-activated, never re-created.
+ * couponReleasedBeforeFinish is true when a failed/expired event
+ * already released this payment's coupon before the finish arrived:
+ * the period is still owed (the user paid), but the coupon went
+ * back to the pool — the caller records an admin-visible issue.
+ */
+export async function activateCryptoPayment(
+  client: SupabaseClient,
+  payment: SubscriptionPaymentRow,
+  now: Date = new Date()
+): Promise<{
+  payment: SubscriptionPaymentRow;
+  period: SubscriptionPeriodRow;
+  alreadyActivated: boolean;
+  couponReleasedBeforeFinish: boolean;
+}> {
+  const loadPeriodById = async (periodId: string): Promise<SubscriptionPeriodRow | null> => {
+    const { data } = await client
+      .from('subscription_periods')
+      .select(`id,user_id,${COUNT_COLUMNS},starts_at,ends_at,superseded_at`)
+      .eq('id', periodId)
+      .maybeSingle();
+    return data ? periodFromRow(asRow(data) ?? {}) : null;
   };
+  if (payment.periodId) {
+    const period = await loadPeriodById(payment.periodId);
+    if (period) return { payment, period, alreadyActivated: true, couponReleasedBeforeFinish: false };
+  }
+  if (payment.status === 'rejected') {
+    throw new SubscriptionGateError(
+      'PAYMENT_ALREADY_DECIDED',
+      'That payment was rejected and cannot be activated.'
+    );
+  }
+  if (payment.status !== 'pending' && payment.status !== 'failed' && payment.status !== 'expired') {
+    throw new SubscriptionGateError(
+      'PAYMENT_ALREADY_DECIDED',
+      'That payment has already been decided.'
+    );
+  }
+  const { data: claimed, error: claimError } = await client
+    .from('subscription_payments')
+    .update({ status: 'paid', updated_at: now.toISOString() })
+    .eq('id', payment.id)
+    .is('period_id', null)
+    .in('status', ['pending', 'failed', 'expired'])
+    .select('id');
+  if (claimError) {
+    logServerError('[billing] crypto activation claim failed', claimError, {
+      source: 'billing',
+    });
+    throw new SubscriptionGateError(
+      'ENTITLEMENT_UNAVAILABLE',
+      'That payment could not be activated right now. Please try again.'
+    );
+  }
+  if (!Array.isArray(claimed) || claimed.length === 0) {
+    // Another event won: a period means already-activated; a paid
+    // row without a period is a crashed winner — repair it below.
+    const { data: current } = await client
+      .from('subscription_payments')
+      .select('status,period_id')
+      .eq('id', payment.id)
+      .maybeSingle();
+    const currentRow = current ? asRow(current) : null;
+    const currentPeriodId = currentRow ? stringField(currentRow, 'period_id') : null;
+    if (currentPeriodId) {
+      const period = await loadPeriodById(currentPeriodId);
+      if (period) {
+        return { payment, period, alreadyActivated: true, couponReleasedBeforeFinish: false };
+      }
+    }
+    const currentStatus = currentRow ? stringField(currentRow, 'status') : null;
+    if (currentStatus !== 'paid') {
+      throw new SubscriptionGateError(
+        'PAYMENT_ALREADY_DECIDED',
+        'That payment has already been decided.'
+      );
+    }
+    // Repair: paid but period-less. The link inside is conditional,
+    // so only one repair can win it.
+    const repaired = await linkPeriodForApprovedPayment(
+      client,
+      { ...payment, status: 'paid' },
+      '',
+      now,
+      loadPeriodById
+    );
+    return { ...repaired, alreadyActivated: false, couponReleasedBeforeFinish: await hadReleasedRedemption(client, payment.id) };
+  }
+  const linked = await linkPeriodForApprovedPayment(
+    client,
+    { ...payment, status: 'paid' },
+    '',
+    now,
+    loadPeriodById
+  );
+  return { ...linked, alreadyActivated: false, couponReleasedBeforeFinish: await hadReleasedRedemption(client, payment.id) };
+}
+
+async function hadReleasedRedemption(
+  client: SupabaseClient,
+  paymentId: string
+): Promise<boolean> {
+  const { data } = await client
+    .from('coupon_redemptions')
+    .select('id')
+    .eq('payment_id', paymentId)
+    .eq('status', 'released')
+    .limit(1);
+  return Array.isArray(data) && data.length > 0;
+}
+
+/**
+ * Mark a crypto payment failed/expired from the webhook, but ONLY
+ * when it is still pending: a payment that already has a period, or
+ * is already paid, must never be overwritten by a late failure
+ * event. Returns false when another event already decided it.
+ * The caller releases the coupon only when this returns true.
+ */
+export async function markCryptoFailed(
+  client: SupabaseClient,
+  paymentId: string,
+  status: 'failed' | 'expired',
+  now: Date = new Date()
+): Promise<boolean> {
+  const { data, error } = await client
+    .from('subscription_payments')
+    .update({ status, updated_at: now.toISOString() })
+    .eq('id', paymentId)
+    .eq('status', 'pending')
+    .is('period_id', null)
+    .select('id');
+  if (error) {
+    logServerError('[billing] crypto mark failed update failed', error, {
+      source: 'billing',
+    });
+    throw new SubscriptionGateError(
+      'ENTITLEMENT_UNAVAILABLE',
+      'That payment could not be updated right now. Please try again.'
+    );
+  }
+  return Array.isArray(data) && data.length > 0;
+}
+
+/**
+ * IPN actuals for a payment, read tolerantly (audit fix 2026-11-01).
+ * The nowpayments_actual_* columns arrive with a migration that
+ * ships unapplied: until it is applied, this select errors and the
+ * caller falls back to the checkout estimate. A missing-column
+ * error is therefore NOT fatal here — it is logged loudly so the
+ * pending migration stays visible, and nulls are returned.
+ */
+export async function loadPaymentActuals(
+  client: SupabaseClient,
+  paymentId: string
+): Promise<{ actualPaid: number | null; actualCurrency: string | null }> {
+  const { data, error } = await client
+    .from('subscription_payments')
+    .select('nowpayments_actual_paid,nowpayments_actual_currency')
+    .eq('id', paymentId)
+    .maybeSingle();
+  if (error || !data) {
+    if (error) {
+      logServerError('[billing] payment actuals lookup unavailable', error, {
+        source: 'billing',
+      });
+    }
+    return { actualPaid: null, actualCurrency: null };
+  }
+  const row = asRow(data) ?? {};
+  const paid = row['nowpayments_actual_paid'];
+  const currency = row['nowpayments_actual_currency'];
+  return {
+    actualPaid: typeof paid === 'number' ? paid : null,
+    actualCurrency: typeof currency === 'string' ? currency : null,
+  };
+}
+
+/**
+ * Persist IPN actuals on a payment, best-effort (audit fix
+ * 2026-11-01). This update is deliberately SEPARATE from the
+ * activation update: until the migration adding the columns is
+ * applied, this fails with a missing-column error, and that must
+ * never break activation. Returns false when the columns are not
+ * there yet (or any other failure), true when persisted.
+ */
+export async function savePaymentActuals(
+  client: SupabaseClient,
+  paymentId: string,
+  actualPaid: number | null,
+  actualCurrency: string | null
+): Promise<boolean> {
+  const { error } = await client
+    .from('subscription_payments')
+    .update({
+      nowpayments_actual_paid: actualPaid,
+      nowpayments_actual_currency: actualCurrency,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', paymentId);
+  if (error) {
+    logServerError('[billing] payment actuals save unavailable', error, {
+      source: 'billing',
+    });
+    return false;
+  }
+  return true;
 }
 
 export async function rejectPayment(

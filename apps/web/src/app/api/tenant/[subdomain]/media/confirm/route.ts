@@ -297,7 +297,7 @@ export async function handleConfirmUpload(
     const quotaState = await (quotaStateProvider ?? ((userId: string) => defaultConfirmQuotaState(dbClient, userId)))(
       session.userId
     );
-    if (quotaState) {
+    if (quotaState && session.role !== 'admin') {
       const check = checkStorageQuota(quotaState, verifiedFileSize);
       if (!check.allowed) {
         return NextResponse.json(

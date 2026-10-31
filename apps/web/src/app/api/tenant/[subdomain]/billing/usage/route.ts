@@ -6,6 +6,7 @@ import { readJsonBody } from '@/lib/request-body';
 import {
   getActivePeriod,
   getUsageCounts,
+  isLegacyUncappedUsageFeature,
   registerUsage,
   SubscriptionGateError,
 } from '@/lib/billing/entitlement';
@@ -48,6 +49,15 @@ export async function POST(
   if (!parsed.success) {
     return NextResponse.json(
       { error: 'INVALID_REQUEST', message: 'That usage request is not valid.' },
+      { status: 400 }
+    );
+  }
+  // Publish Now is uncapped and writes NO usage rows (audit fix
+  // 2026-11-01): a publish-now registration here is a caller bug,
+  // refused loudly instead of stored and then ignored by the cap.
+  if (isLegacyUncappedUsageFeature(parsed.data.feature)) {
+    return NextResponse.json(
+      { error: 'INVALID_REQUEST', message: 'Publish Now does not register usage.' },
       { status: 400 }
     );
   }

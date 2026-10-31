@@ -35,7 +35,7 @@ import {
 } from '@/lib/publishing/post-owned-media';
 import { getStorageService } from '@/lib/storage';
 import { refreshDestinationUnmatchedFlag } from '@/lib/server/unmatched-flag';
-import { trackServerEvent } from '@/lib/server-analytics';
+import { logServerError, trackServerEvent } from '@/lib/server-analytics';
 import { getRouteSupabase } from '@/lib/route-auth';
 import {
   registerUsage,
@@ -305,6 +305,10 @@ export async function handleDestinationEnqueue(
         }
         throw err;
       }
+    } else {
+      logServerError('[billing] destination-queue gate skipped: no billing client', null, {
+        source: 'billing',
+      });
     }
   }
 

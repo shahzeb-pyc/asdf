@@ -6,13 +6,20 @@ import {
 import { authenticateTenantRoute } from '@/lib/route-auth';
 import { logServerError } from '@/lib/server-analytics';
 import { readJsonBody } from '@/lib/request-body';
+import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
 import {
   createPeriodForPurchase,
   getActivePeriod,
+  hasPendingPayment,
+  PENDING_PAYMENT_EXISTS_MESSAGE,
   pricePurchase,
   SubscriptionGateError,
 } from '@/lib/billing/entitlement';
-import { getBillingAdminClient } from '@/lib/billing/route-helpers';
+import {
+  getBillingAdminClient,
+  lookupBillingIdempotency,
+  storeBillingIdempotency,
+} from '@/lib/billing/route-helpers';
 import {
   applyRedemption,
   CouponError,
@@ -39,6 +46,14 @@ export async function POST(
   const auth = await authenticateTenantRoute(request, subdomain);
   if (auth.errorResponse) return auth.errorResponse;
   const { session } = auth;
+
+  // Admins never buy plans (audit fix 2026-11-01).
+  if (session.role === 'admin') {
+    return NextResponse.json(
+      { error: 'FORBIDDEN', message: 'Admin accounts do not buy plans.' },
+      { status: 403 }
+    );
+  }
 
   const client = getBillingAdminClient();
   if (!client) {
@@ -67,7 +82,64 @@ export async function POST(
   }
   const { counts, couponCode } = parsed.data;
 
+  // Billing idempotency (audit fix 2026-11-01): a retry with a known
+  // key replays the stored activation instead of creating a second
+  // period.
+  // The workspace is only the idempotency scope. If it cannot be
+  // resolved, idempotency is skipped with a loud log rather than
+  // failing the submission — the one-pending guard still protects
+  // against duplicates, and the payment row itself carries no
+  // workspace (its workspace_id column is dead).
+  let workspaceId: string | null = null;
   try {
+    workspaceId = await resolveTenantWorkspaceId(client, subdomain, session.userId, session.role);
+  } catch (error) {
+    logServerError('[billing] idempotency workspace unresolvable, skipping', error, {
+      source: 'billing',
+    });
+  }
+  let idempotencyKey: string | null = null;
+  if (workspaceId) {
+  try {
+    const idempotency = await lookupBillingIdempotency(
+      client,
+      workspaceId,
+      session.userId,
+      'billing-zero-due',
+      request.headers
+    );
+    if ('invalid' in idempotency) {
+      return NextResponse.json(
+        { error: 'INVALID_REQUEST', message: 'Idempotency-Key must be a UUID' },
+        { status: 400 }
+      );
+    }
+    idempotencyKey = idempotency.key;
+    if (idempotency.replay) {
+      return NextResponse.json(idempotency.replay.body, {
+        status: idempotency.replay.status,
+        headers: { 'Idempotency-Replayed': 'true' },
+      });
+    }
+  } catch {
+    return NextResponse.json(
+      { error: 'IDEMPOTENCY_STORE_UNAVAILABLE', message: 'Idempotency store unavailable' },
+      { status: 500 }
+    );
+  }
+  }
+
+  try {
+    // One pending payment per user — the zero-due route bypassed
+    // this entirely (audit fix 2026-11-01): a coupon activation
+    // while a bank/crypto payment waited would be silently
+    // overwritten by the later approval's fresh 30 days.
+    if (await hasPendingPayment(client, session.userId)) {
+      return NextResponse.json(
+        { error: 'PENDING_PAYMENT_EXISTS', message: PENDING_PAYMENT_EXISTS_MESSAGE },
+        { status: 409 }
+      );
+    }
     const activePeriod = await getActivePeriod(client, session.userId, new Date());
     let amountDuePkr: number;
     let isUpgrade: boolean;
@@ -113,28 +185,77 @@ export async function POST(
       paymentId: null,
       discountPkr,
     });
-    try {
-      const period = await createPeriodForPurchase(
-        client,
-        { userId: session.userId, counts, paymentId: null },
-        new Date()
-      );
-      await applyRedemption(client, redemption.id, period.id);
+    // Settled discount (audit fix 2026-11-01): a balance race can
+    // settle smaller than the pre-hold figure. A settled discount
+    // that no longer covers the amount REFUSES the activation —
+    // the hold is released and the user reviews the new amount and
+    // resubmits — instead of granting a full period the settled
+    // discount did not cover.
+    if (redemption.amountPkr < amountDuePkr) {
+      try {
+        await releaseRedemption(client, redemption);
+      } catch (releaseError) {
+        logServerError('[billing] zero-due coupon release after settle failed', releaseError, {
+          source: 'billing',
+        });
+      }
       return NextResponse.json(
         {
-          period: {
-            id: period.id,
-            startsAt: period.startsAt.toISOString(),
-            endsAt: period.endsAt.toISOString(),
-          },
-          couponCode: coupon.code,
-          discountPkr,
-          counts,
-          isUpgrade,
+          error: 'COUPON_SETTLED_LESS',
+          message: `This coupon now covers ${redemption.amountPkr} PKR, but ${amountDuePkr} PKR is due. Review the new amount and submit again.`,
+          amountDuePkr,
+          settledDiscountPkr: redemption.amountPkr,
         },
-        { status: 201 }
+        { status: 400 }
       );
+    }
+    let period: { id: string } | null = null;
+    try {
+      const created = await createPeriodForPurchase(
+        client,
+        { userId: session.userId, counts, paymentId: null, isUpgrade },
+        new Date()
+      );
+      period = created;
+      await applyRedemption(client, redemption.id, created.id);
+      const activationBody = {
+        period: {
+          id: created.id,
+          startsAt: created.startsAt.toISOString(),
+          endsAt: created.endsAt.toISOString(),
+        },
+        couponCode: coupon.code,
+        discountPkr: redemption.amountPkr,
+        counts,
+        isUpgrade,
+      };
+      await storeBillingIdempotency(client, workspaceId, session.userId, 'billing-zero-due', idempotencyKey, {
+        status: 201,
+        body: activationBody,
+      });
+      return NextResponse.json(activationBody, { status: 201 });
     } catch (err) {
+      // No live period before activation lands (audit fix 2026-11-01,
+      // fix 10): if the period was created but the redemption (or
+      // the idempotency store) failed, supersede the just-created
+      // period before giving the coupon back — otherwise the user
+      // keeps a live plan from a failed checkout AND the coupon.
+      // A supersede failure is logged loudly; the retry supersedes
+      // it anyway via createPeriodForPurchase's supersede-all.
+      if (period) {
+        try {
+          await client
+            .from('subscription_periods')
+            .update({ superseded_at: new Date().toISOString() })
+            .eq('id', period.id)
+            .is('superseded_at', null);
+        } catch (supersedeError) {
+          logServerError('[billing] zero-due orphan period supersede failed', supersedeError, {
+            source: 'billing',
+            periodId: period.id,
+          });
+        }
+      }
       // The hold landed but the period did not: give the coupon
       // back instead of stranding the user's balance/consumption.
       try {

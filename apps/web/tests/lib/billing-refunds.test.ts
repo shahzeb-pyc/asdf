@@ -524,7 +524,7 @@ describe('refund request lifecycle', () => {
     expect(eligibility.eligible).toBe(false);
   });
 
-  it('refunds in full on day-0 approval and zero at the 30-day cap', async () => {
+  it('refunds in full on day-0 approval and blocks a zero refund at the 30-day cap', async () => {
     const day0 = baseState();
     const client0 = fakeClient(day0);
     const created0 = await requestRefund(
@@ -550,14 +550,14 @@ describe('refund request lifecycle', () => {
       },
       NOW
     );
-    const approvedLate = await approveRefund(
-      clientLate,
-      createdLate.id,
-      'admin-1',
-      new Date(START.getTime() + 45 * DAY)
-    );
-    expect(approvedLate.daysUsed).toBe(30);
-    expect(approvedLate.refundAmount).toBe(0);
+    // Audit fix 2026-11-01 (fix 18): a refund that computes to 0
+    // is BLOCKED with a clear message — no approve-then-mark-sent
+    // for 0. The request stays undecided and the period untouched.
+    await expect(
+      approveRefund(clientLate, createdLate.id, 'admin-1', new Date(START.getTime() + 45 * DAY))
+    ).rejects.toMatchObject({ code: 'REFUND_ZERO_AMOUNT' });
+    expect(late.requests).toHaveLength(1);
+    expect(late.requests[0]).toMatchObject({ status: 'requested' });
   });
 
   it('rejects, then allows a re-request inside the window', async () => {

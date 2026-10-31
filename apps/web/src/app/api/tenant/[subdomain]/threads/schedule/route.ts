@@ -190,6 +190,10 @@ export async function POST(request: NextRequest, props: { params: Promise<{ subd
           if (gateResponse) return gateResponse;
           throw err;
         }
+      } else {
+        logServerError('[billing] threads schedule cap gate skipped: no billing client', null, {
+          source: 'billing',
+        });
       }
     }
 

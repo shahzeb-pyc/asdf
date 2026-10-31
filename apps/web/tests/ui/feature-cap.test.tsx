@@ -73,7 +73,7 @@ describe('useFeatureCap + FeatureCapText', () => {
     apiGet.mockResolvedValue(entitlement());
     renderProbe({ platform: 'facebook' });
     expect(await screen.findByTestId('feature-cap-text')).toHaveTextContent(
-      '3 of 5 pages connected · 2 remaining'
+      '3 of 5 pages used · 2 remaining'
     );
   });
 
@@ -81,7 +81,7 @@ describe('useFeatureCap + FeatureCapText', () => {
     apiGet.mockResolvedValue(entitlement());
     renderProbe({ platform: 'instagram' });
     expect(await screen.findByTestId('feature-cap-text')).toHaveTextContent(
-      '1 of 2 accounts connected · 1 remaining'
+      '1 of 2 accounts used · 1 remaining'
     );
   });
 
@@ -89,7 +89,7 @@ describe('useFeatureCap + FeatureCapText', () => {
     apiGet.mockResolvedValue(entitlement({ usage: { ...ZERO, facebook: 5 } }));
     renderProbe({ platform: 'facebook' });
     expect(await screen.findByTestId('feature-cap-text')).toHaveTextContent(
-      '5 of 5 pages connected · Limit reached'
+      '5 of 5 pages used · Limit reached'
     );
   });
 

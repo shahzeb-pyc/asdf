@@ -62,9 +62,12 @@ export function FeatureCapText({
   platform,
 }: Readonly<{ cap: FeatureCap; platform: CapPlatform }>) {
   const noun = platform === 'facebook' ? 'pages' : 'accounts';
+  // "used", not "connected" (audit fix 2026-11-01): the count is
+  // feature usage registered against the cap, not the number of
+  // connected accounts.
   const text = cap.atCap
-    ? `${cap.used} of ${cap.allowed} ${noun} connected · Limit reached`
-    : `${cap.used} of ${cap.allowed} ${noun} connected · ${cap.remaining} remaining`;
+    ? `${cap.used} of ${cap.allowed} ${noun} used · Limit reached`
+    : `${cap.used} of ${cap.allowed} ${noun} used · ${cap.remaining} remaining`;
   return (
     <p data-testid="feature-cap-text" className="m-0 text-body text-ink-dim">
       {text}

@@ -181,12 +181,26 @@ export async function getStorageQuotaState(
  * e.g. duplicate-name 23505). Uploads are NOT gated here — they
  * already carry their own fail-closed quota check (used + incoming
  * size vs quota) at initiate/single/confirm.
+ *
+ * Admins are never gated (audit fix 2026-11-01): an admin's quota
+ * is 0 by definition (admins hold no paid period), so without the
+ * exemption every admin upload and folder write would 403. A
+ * missing client is logged loudly (audit fix 2026-11-01): a gate
+ * that silently skips is a fail-open, even in a test harness.
  */
 export async function isMediaStorageReadOnly(
   client: SupabaseClient | DatabaseClient | null | undefined,
-  userId: string
+  userId: string,
+  isAdmin: boolean = false
 ): Promise<boolean> {
-  if (!client) return false;
+  if (isAdmin) return false;
+  if (!client) {
+    logServerError('[billing] media storage gate skipped: no billing client', null, {
+      source: 'billing',
+      userId,
+    });
+    return false;
+  }
   const state = await getStorageQuotaState(client, userId);
   return isMediaStorageOver(state);
 }

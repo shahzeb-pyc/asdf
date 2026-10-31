@@ -11,11 +11,13 @@ import {
 import {
   aduContext,
   aduDestinationKeysForCap,
+  registerAduConfigUsage,
   aduMissingTable,
   buildAduConfigView,
   type AduConfigView,
 } from '@/lib/server/adu';
 import { assertFeatureAddWithinCap } from '@/lib/billing/entitlement';
+import { logServerError } from '@/lib/server-analytics';
 import {
   getBillingAdminClient,
   subscriptionGateResponse,
@@ -322,7 +324,7 @@ export async function POST(
     if (fixedError) {
       return NextResponse.json({ error: fixedError }, { status: 400 });
     }
-    // Plan cap gate: adding ADU configs registers the target
+    // Plan cap gate: the cap gate CHECKS the target (creation registers the unit, see registerAduConfigUsage)
     // accounts against the Instagram cap, so an over-cap batch is
     // rejected here, before any config row is created. Admins are
     // never gated, and a missing billing client skips the gate (same
@@ -334,6 +336,14 @@ export async function POST(
     // item downstream.
     if (resolved.context.role !== 'admin') {
       const billingClient = getBillingAdminClient();
+      if (!billingClient) {
+        // A missing billing client skips the gate (same rule as the
+        // destination-queue gate) — but the skip is logged loudly
+        // (audit fix 2026-11-01): a silent skip is a fail-open.
+        logServerError('[billing] ADU cap gate skipped: no billing client', null, {
+          source: 'billing',
+        });
+      }
       if (billingClient) {
         try {
           const keys = await aduDestinationKeysForCap(
@@ -369,8 +379,15 @@ export async function POST(
         scheduleType: parsed.data.scheduleType,
         postingTimes: schedule.postingTimes,
       });
-      if (result.ok && result.id) created.push(result.id);
-      else failed.push({ destinationId: item.destinationId, error: result.error ?? 'Failed to create.' });
+      if (result.ok && result.id) {
+        // Cap at add (audit fix 2026-11-01): creation registers
+        // the destination's unit; a registration failure rolls
+        // the config back and fails this item, never a success
+        // without a unit.
+        const reg = await registerAduConfigUsage(resolved.context, 'instagram', item.destinationId, result.id);
+        if (reg.ok) created.push(result.id);
+        else failed.push({ destinationId: item.destinationId, error: reg.error instanceof Error ? reg.error.message : 'Failed to register the plan limit.' });
+      } else failed.push({ destinationId: item.destinationId, error: result.error ?? 'Failed to create.' });
     }
     return NextResponse.json({ created, failed }, { status: failed.length > 0 && created.length === 0 ? 400 : 201 });
   }
@@ -384,6 +401,14 @@ export async function POST(
   // Plan cap gate (single-add path; same rule as the bulk path above).
   if (resolved.context.role !== 'admin') {
     const billingClient = getBillingAdminClient();
+    if (!billingClient) {
+      // A missing billing client skips the gate (same rule as the
+      // destination-queue gate) — but the skip is logged loudly
+      // (audit fix 2026-11-01): a silent skip is a fail-open.
+      logServerError('[billing] ADU cap gate skipped: no billing client', null, {
+        source: 'billing',
+      });
+    }
     if (billingClient) {
       try {
         const keys = await aduDestinationKeysForCap(
@@ -411,6 +436,17 @@ export async function POST(
   const result = await createOne(resolved.context, parsed.data);
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 400 });
+  }
+  if (result.id) {
+    const reg = await registerAduConfigUsage(resolved.context, 'instagram', parsed.data.destinationId, result.id);
+    if (!reg.ok) {
+      const gateResponse = subscriptionGateResponse(reg.error);
+      if (gateResponse) return gateResponse;
+      return NextResponse.json(
+        { error: 'The plan limit could not be registered. Please try again.' },
+        { status: 500 }
+      );
+    }
   }
   return NextResponse.json({ id: result.id }, { status: 201 });
 }

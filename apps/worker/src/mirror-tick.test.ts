@@ -121,6 +121,36 @@ describe('processMirrorCheck', () => {
     expect(stamp?.patch.nextCheckAt).toBe('2026-10-29T13:00:00.000Z');
   });
 
+  it('entitlement-paused check claims and publishes nothing, stamping only nextCheckAt', async () => {
+    const state = newState();
+    const deps = fakeDeps(state, [reel('v1', 100), reel('v2', 200)]);
+    deps.checkEntitlement = async () => false;
+    const result = await processMirrorCheck(deps, mirror());
+    expect(result).toEqual({ posted: 0, skipped: 0, failed: 0 });
+    expect(state.claimed).toHaveLength(0);
+    expect(state.published).toHaveLength(0);
+    // Only the pause stamp: nextCheckAt advances so the schedule
+    // continues, but lastCheckedAt stays frozen — the gap
+    // catch-up rule must still fire on renewal, or paused reels
+    // would flood oldest-first instead of posting latest-only.
+    expect(state.mirrorUpdates).toHaveLength(1);
+    expect(state.mirrorUpdates[0]?.patch).toEqual({
+      nextCheckAt: '2026-10-29T13:00:00.000Z',
+    });
+  });
+
+  it('entitlement failure fails closed: nothing claimed or published', async () => {
+    const state = newState();
+    const deps = fakeDeps(state, [reel('v1', 100)]);
+    deps.checkEntitlement = async () => {
+      throw new Error('db down');
+    };
+    const result = await processMirrorCheck(deps, mirror());
+    expect(result.posted).toBe(0);
+    expect(state.claimed).toHaveLength(0);
+    expect(state.published).toHaveLength(0);
+  });
+
   it('posts only items newer than the last posted reel', async () => {
     const state = newState();
     const feed = [reel('v1', 100), reel('v2', 200), reel('v3', 300)];
