@@ -173,7 +173,7 @@ export function canUseDestination(
 export const SubscriptionPlanSchema = z.enum(['free', 'paid']);
 export type SubscriptionPlan = z.infer<typeof SubscriptionPlanSchema>;
 
-export const BankMethodSchema = z.enum(['easypaisa', 'nayapay', 'ubl']);
+export const BankMethodSchema = z.enum(['easypaisa', 'nayapay', 'ubl', 'binance']);
 export type BankMethod = z.infer<typeof BankMethodSchema>;
 
 export const PaymentMethodSchema = z.enum(['bank', 'nowpayments']);
@@ -272,6 +272,25 @@ export const BillingStatusResponseSchema = z.object({
   payments: z.array(BillingPaymentItemSchema),
 });
 export type BillingStatusResponse = z.infer<typeof BillingStatusResponseSchema>;
+
+/**
+ * Media Library storage state, computed server-side from the same
+ * quota/usage source as upload enforcement (5 GB per paid unit in the
+ * active period; live media_items.file_size sum). `state` is null when
+ * there is no active period — the Free-plan dialog already blocks the
+ * library then, so the meter renders nothing instead of inventing a
+ * limit. `hasActivePeriod` is quotaBytes > 0, stated explicitly so
+ * clients never re-derive it from the byte counts.
+ */
+export const MediaStorageResponseSchema = z.object({
+  quotaBytes: z.number().int().min(0),
+  usedBytes: z.number().int().min(0),
+  remainingBytes: z.number().int().min(0),
+  overBytes: z.number().int().min(0),
+  state: z.enum(['normal', 'near', 'full', 'over']).nullable(),
+  hasActivePeriod: z.boolean(),
+});
+export type MediaStorageResponse = z.infer<typeof MediaStorageResponseSchema>;
 
 export const AdminPaymentItemSchema = BillingPaymentItemSchema.extend({
   userId: z.string().uuid(),

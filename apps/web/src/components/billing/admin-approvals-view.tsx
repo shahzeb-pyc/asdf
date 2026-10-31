@@ -33,6 +33,7 @@ function methodLabel(payment: AdminPaymentsResponse['payments'][number]): string
   }
   if (payment.bankMethod === 'easypaisa') return 'Easypaisa';
   if (payment.bankMethod === 'nayapay') return 'Nayapay';
+  if (payment.bankMethod === 'binance') return 'Binance';
   return 'UBL bank';
 }
 
@@ -191,7 +192,7 @@ export function AdminApprovalsView({ subdomain }: Readonly<{ subdomain: string }
                       {payment.isUpgrade ? ' · Upgrade' : ''} · {formatDate(payment.createdAt)}
                     </CardDescription>
                   </div>
-                  <span className="text-lg font-semibold tabular-nums text-ink">
+                  <span className="shrink-0 text-lg font-semibold tabular-nums text-ink">
                     {payment.amountPkr} PKR
                   </span>
                 </div>
@@ -214,7 +215,7 @@ export function AdminApprovalsView({ subdomain }: Readonly<{ subdomain: string }
                     </span>
                   </a>
                 ) : payment.nowpaymentsPaymentId ? (
-                  <p className="text-body text-ink-sub">
+                  <p className="break-all text-body text-ink-sub">
                     Crypto payment {payment.nowpaymentsPaymentId}
                     {payment.nowpaymentsPayAddress ? ` · ${payment.nowpaymentsPayAddress}` : ''}
                   </p>

@@ -73,6 +73,8 @@ export type { MediaImportModalProps } from './media-import-progress';
 export type { ActiveDropdownKey } from './media-library-filters';
 import { MediaToolbar } from './media-library-toolbar';
 import { MediaLibraryHeader } from './media-library-header';
+import { MediaStorageMeter, useMediaStorage } from './media-storage-meter';
+import { MEDIA_STORAGE_READ_ONLY_MESSAGE } from '@/lib/billing/storage-display';
 import { DownloadDialog } from './download-dialog';
 import { MediaLibraryMain } from './media-library-main';
 import { MediaLibraryOverlays } from './media-library-overlays';
@@ -101,6 +103,13 @@ export function MediaLibraryExplorer({
   const queryClient = useQueryClient();
   const foldersQuery = useMediaFolders(subdomain, { initialFolders });
   const itemsQuery = useMediaItems(subdomain, { initialItems: initialMediaItems });
+  // Storage meter: same quota/usage source as upload enforcement, so
+  // display and enforcement cannot disagree. On fetch failure the
+  // meter hides and the server gates remain the backstop; the
+  // read-only flag is only ever true on a successful over-limit read.
+  const storageQuery = useMediaStorage(subdomain);
+  const storageDisplay = storageQuery.data ?? null;
+  const storageReadOnly = storageDisplay?.state === 'over';
   const folders = useMemo<MediaFolder[]>(() => foldersQuery.data ?? [], [foldersQuery.data]);
   // Load more (P1-15): the shared list query fetches only the first
   // MEDIA_LIST_LIMIT items, so libraries past 500 were silently
@@ -481,18 +490,31 @@ export function MediaLibraryExplorer({
       e.preventDefault();
       const payload = readInternalDropPayload(e);
       if (payload) {
+        // A drop-move is also a write: refused up front when read-only
+        // (the batch-move gate would refuse it anyway with a 409).
+        if (storageReadOnly) {
+          showToast(MEDIA_STORAGE_READ_ONLY_MESSAGE);
+          return;
+        }
         if (targetFolderId !== undefined) {
           void handleReparent(targetFolderId, payload);
         }
         return;
       }
       if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        // Read-only library: dropped files must not reach the import
+        // modal (the upload gates would refuse them anyway, but the
+        // user deserves the reason up front, not a dead import).
+        if (storageReadOnly) {
+          showToast(MEDIA_STORAGE_READ_ONLY_MESSAGE);
+          return;
+        }
         const files = Array.from(e.dataTransfer.files);
         setStagedFilesForImport(files);
         setIsImportModalOpen(true);
       }
     },
-    [handleReparent]
+    [handleReparent, storageReadOnly, showToast]
   );
 
   // Grid refresh (M11): show the confirmed item immediately instead of
@@ -622,7 +644,12 @@ export function MediaLibraryExplorer({
         onNewFolderClick={() => setIsNewFolderOpen(true)}
         onUploadClick={handleUploadClick}
         onDownloadClick={() => setIsDownloadDialogOpen(true)}
+        uploadDisabled={storageReadOnly}
+        newFolderDisabled={storageReadOnly}
       />
+
+      {/* Storage meter (billing limit states): compact, under the header. */}
+      {storageDisplay && <MediaStorageMeter display={storageDisplay} />}
 
       {/* Download dialog (spec 149): mounted fresh on every open so the
           destination defaults to the folder currently open. */}

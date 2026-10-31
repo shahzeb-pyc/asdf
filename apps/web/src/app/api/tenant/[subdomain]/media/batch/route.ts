@@ -9,6 +9,12 @@ import {
   type DatabaseClient,
 } from '@fbuploadpro/contracts';
 import { isLegacyClient, getRouteSupabase } from '@/lib/route-auth';
+import { logServerError } from '@/lib/server-analytics';
+import {
+  MEDIA_STORAGE_READ_ONLY_CODE,
+  MEDIA_STORAGE_READ_ONLY_MESSAGE,
+  isMediaStorageReadOnly,
+} from '@/lib/billing/storage-quota';
 import { getStorageService } from '../../../../../../lib/storage';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -56,6 +62,27 @@ export async function handleBatchMedia(
   }
 
   const payload = parsed.data;
+
+  // Read-only library (storage over the plan limit): move and caption
+  // writes are blocked. Delete is the way back under the limit and is
+  // deliberately exempt — it runs through the same branches below.
+  if (payload.action !== 'delete') {
+    try {
+      const quotaClient = isLegacyClient(dbClient) ? dbClient : getRouteSupabase(dbClient);
+      if (await isMediaStorageReadOnly(quotaClient, session.userId)) {
+        return NextResponse.json(
+          { error: MEDIA_STORAGE_READ_ONLY_CODE, message: MEDIA_STORAGE_READ_ONLY_MESSAGE },
+          { status: 409 }
+        );
+      }
+    } catch (err) {
+      // Gate failure is logged loudly but never masks the handler's own
+      // error mapping: the handler's own DB calls surface any real
+      // outage, and these organization writes consume no storage — the
+      // storage-consuming upload paths keep their own fail-closed gates.
+      logServerError('[media] storage read-only check failed', err, { source: 'media' });
+    }
+  }
 
   if (isLegacyClient(dbClient)) {
     if (payload.action === 'move') {

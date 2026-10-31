@@ -54,7 +54,7 @@ export interface SubscriptionPaymentRow {
   id: string;
   userId: string;
   method: 'bank' | 'nowpayments';
-  bankMethod: 'easypaisa' | 'nayapay' | 'ubl' | null;
+  bankMethod: 'easypaisa' | 'nayapay' | 'ubl' | 'binance' | null;
   status: string;
   counts: PlatformCounts;
   amountPkr: number;
@@ -164,7 +164,10 @@ export function paymentFromRow(row: UnknownRow): SubscriptionPaymentRow | null {
     userId,
     method: method === 'nowpayments' ? 'nowpayments' : 'bank',
     bankMethod:
-      bankMethod === 'easypaisa' || bankMethod === 'nayapay' || bankMethod === 'ubl'
+      bankMethod === 'easypaisa' ||
+      bankMethod === 'nayapay' ||
+      bankMethod === 'ubl' ||
+      bankMethod === 'binance'
         ? bankMethod
         : null,
     status: stringField(row, 'status') ?? 'pending',
@@ -232,6 +235,37 @@ export async function getActivePeriod(
   }
   const row = Array.isArray(data) && data.length > 0 ? asRow(data[0]) : null;
   return row ? periodFromRow(row) : null;
+}
+
+/**
+ * One pending payment per user at a time. While any payment with
+ * status 'pending' exists for the user, new submissions (bank and
+ * crypto alike) are blocked. Approved, rejected, paid, failed, and
+ * expired payments never block. A query failure fails closed: the
+ * caller must not proceed to create a payment it cannot prove is
+ * the user's only pending one.
+ */
+export const PENDING_PAYMENT_EXISTS_MESSAGE =
+  'You already have a payment waiting for approval. Wait for it to be decided before submitting another.';
+
+export async function hasPendingPayment(
+  client: SupabaseClient,
+  userId: string
+): Promise<boolean> {
+  const { data, error } = await client
+    .from('subscription_payments')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('status', 'pending')
+    .limit(1);
+  if (error) {
+    logServerError('[billing] pending payment query failed', error, { source: 'billing' });
+    throw new SubscriptionGateError(
+      'ENTITLEMENT_UNAVAILABLE',
+      'Your plan could not be checked right now. Please try again.'
+    );
+  }
+  return Array.isArray(data) && data.length > 0;
 }
 
 export async function getUsageCounts(

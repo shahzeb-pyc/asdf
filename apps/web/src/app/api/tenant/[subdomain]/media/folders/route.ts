@@ -10,6 +10,11 @@ import {
 } from '@fbuploadpro/contracts';
 import { isLegacyClient, getRouteSupabase } from '@/lib/route-auth';
 import { logServerError } from '@/lib/server-analytics';
+import {
+  MEDIA_STORAGE_READ_ONLY_CODE,
+  MEDIA_STORAGE_READ_ONLY_MESSAGE,
+  isMediaStorageReadOnly,
+} from '@/lib/billing/storage-quota';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 export async function handleListFolders(
@@ -226,6 +231,26 @@ export async function handleCreateFolder(
       { error: 'INVALID_REQUEST', details: parsed.error.flatten() },
       { status: 400 }
     );
+  }
+
+  // Read-only library (storage over the plan limit): no new folders.
+  // Delete stays allowed as the way back under the limit.
+  try {
+    const quotaClient = isLegacyClient(dbClient) ? dbClient : getRouteSupabase(dbClient);
+    if (await isMediaStorageReadOnly(quotaClient, session.userId)) {
+      return NextResponse.json(
+        { error: MEDIA_STORAGE_READ_ONLY_CODE, message: MEDIA_STORAGE_READ_ONLY_MESSAGE },
+        { status: 409 }
+      );
+    }
+  } catch (err) {
+    // Gate failure is logged loudly but never masks the handler's own
+    // error mapping (e.g. a duplicate-name 23505 must still surface
+    // as FOLDER_NAME_ALREADY_EXISTS, not a generic 500): the handler's
+    // own DB calls surface any real outage, and these organization
+    // writes consume no storage — the storage-consuming upload paths
+    // keep their own fail-closed gates.
+    logServerError('[media] storage read-only check failed', err, { source: 'media' });
   }
 
   const parentId = parsed.data.parentId ?? null;

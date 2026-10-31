@@ -21,6 +21,7 @@ import {
   totalPricePkr,
   totalUnits,
   ZERO_PLATFORM_COUNTS,
+  type BillingPaymentItem,
   type UpgradeQuote,
 } from '@fbuploadpro/contracts';
 import { BANK_PAYMENT_DETAILS } from '@/lib/billing/payment-details';
@@ -41,7 +42,23 @@ const PLATFORM_LABELS: Record<keyof PlatformCounts, string> = {
   youtube: 'YouTube',
 };
 
-type BankMethod = 'easypaisa' | 'nayapay' | 'ubl';
+/**
+ * Platforms that can be bought in Purchase. X, TikTok, and YouTube
+ * sections are still "Being tested — not available for public use",
+ * so their rows are hidden from Purchase entirely (not disabled).
+ * Purchase ONLY: My Plan, Payments history, and admin views keep
+ * showing all platforms, and upgrade math still runs on the full
+ * counts — a legacy period holding X/TikTok/YouTube counts carries
+ * those counts through unchanged, since no stepper can alter them.
+ */
+const PURCHASABLE_PLATFORMS: (keyof PlatformCounts)[] = ['facebook', 'instagram', 'threads'];
+
+/** Purchase display view of counts: unpurchasable platforms zeroed. */
+function purchasableCounts(counts: PlatformCounts): PlatformCounts {
+  return { ...counts, x: 0, tiktok: 0, youtube: 0 };
+}
+
+type BankMethod = 'easypaisa' | 'nayapay' | 'ubl' | 'binance';
 /** Billing's three sections. Purchase-internal steps are separate, below. */
 type Section = 'my-plan' | 'purchase' | 'payments';
 type PurchaseStep = 'builder' | 'checkout' | 'confirmation';
@@ -61,6 +78,16 @@ function formatDate(value: string | null): string {
   return Number.isNaN(date.getTime()) ? '—' : date.toLocaleDateString();
 }
 
+function formatDateTime(value: string | null): string {
+  if (!value) return '—';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString();
+}
+
+/** Same wording as the server's 409, for the client-side guard. */
+const PENDING_CHECKOUT_MESSAGE =
+  'You already have a payment waiting for approval. Wait for it to be decided before submitting another.';
+
 function plainQuoteError(message: string | null): string | null {
   if (!message) return null;
   if (
@@ -73,6 +100,13 @@ function plainQuoteError(message: string | null): string | null {
     return 'Your new plan must cost more than your current plan.';
   }
   return message;
+}
+
+function paymentMethodLabel(payment: BillingPaymentItem): string {
+  if (payment.method === 'bank') {
+    return payment.bankMethod ? BANK_PAYMENT_DETAILS[payment.bankMethod].label : 'Bank';
+  }
+  return `Crypto · USDT (${payment.nowpaymentsNetwork === 'trc20' ? 'TRC20' : 'BEP20'})`;
 }
 
 function paymentStatusLabel(status: string): string {
@@ -253,6 +287,17 @@ export function BillingView({
     void load();
   }, [load]);
 
+  /**
+   * Returning to Purchase must re-read payments: a pending payment
+   * decided (approved or rejected) while the user is elsewhere must
+   * not leave a stale disabled checkout behind.
+   */
+  React.useEffect(() => {
+    if (section === 'purchase') {
+      void load();
+    }
+  }, [section, load]);
+
   async function handleRetry() {
     setReloading(true);
     try {
@@ -263,6 +308,14 @@ export function BillingView({
   }
 
   const entitlement = status?.entitlement ?? null;
+  /**
+   * One pending payment per user: while one exists, Purchase shows it
+   * and the checkout is disabled instead of offering a fresh one.
+   * Page 1 of payments is newest-first, and nothing newer than a
+   * pending payment can be created once the server block is live, so
+   * the first pending row is the one in flight.
+   */
+  const pendingPayment = status?.payments.find((payment) => payment.status === 'pending') ?? null;
   const effectiveCounts = counts ?? entitlement?.counts ?? ZERO_PLATFORM_COUNTS;
   const total = totalPricePkr(effectiveCounts);
   const units = totalUnits(effectiveCounts);
@@ -344,6 +397,10 @@ export function BillingView({
   }
 
   async function submitBank() {
+    if (pendingPayment) {
+      setFormError(PENDING_CHECKOUT_MESSAGE);
+      return;
+    }
     if (units === 0) {
       setFormError('Choose at least one page or account.');
       return;
@@ -366,8 +423,16 @@ export function BillingView({
       await apiPost(buildTenantApiPath(subdomain, '/billing/payments'), form, {
         schema: BillingPaymentItemSchema,
       });
-      setScreenshot(null);
-      if (screenshotInputRef.current) screenshotInputRef.current.value = '';
+      // Order matters (checkout flicker fix): the checkout step renders
+      // the screenshot-upload CTA whenever `screenshot` is null, so
+      // clearing it BEFORE the refetch + navigation made the UI flash
+      // back to "add screenshot" for the whole slow load() before
+      // confirmation appeared. The reset now runs AFTER navigation, in
+      // the same synchronous block as the confirmation state, so React
+      // batches them into a single render: processing persists until
+      // confirmation renders, with no intermediate upload state. The
+      // same ordering also keeps the screenshot attached if the POST
+      // or the refetch fails, so a retry needs no re-upload.
       await load();
       setConfirmation({
         kind: 'bank',
@@ -377,6 +442,8 @@ export function BillingView({
         crypto: null,
       });
       goToPurchaseStep('confirmation');
+      setScreenshot(null);
+      if (screenshotInputRef.current) screenshotInputRef.current.value = '';
     } catch (err) {
       setFormError(getErrorMessage(err));
     } finally {
@@ -385,6 +452,10 @@ export function BillingView({
   }
 
   async function submitCrypto() {
+    if (pendingPayment) {
+      setFormError(PENDING_CHECKOUT_MESSAGE);
+      return;
+    }
     if (units === 0) {
       setFormError('Choose at least one page or account.');
       return;
@@ -440,7 +511,8 @@ export function BillingView({
   const details = BANK_PAYMENT_DETAILS[bankMethod];
   const includedUnits = totalUnits(entitlement.counts);
   const usedUnits = totalUnits(entitlement.usage);
-  const checkoutDisabled = busy !== null || units === 0 || Boolean(quoteError);
+  const checkoutDisabled =
+    busy !== null || units === 0 || Boolean(quoteError) || pendingPayment !== null;
   const bankDisabled = checkoutDisabled || !screenshot;
   const bankDisabledReason = units === 0
     ? 'Choose at least one page or account first.'
@@ -453,14 +525,14 @@ export function BillingView({
   // Purchase header — not repeated on every row.
   const configurator = (
     <div className="flex flex-col">
-      {SUBSCRIPTION_PLATFORMS.map((platform) => {
+      {PURCHASABLE_PLATFORMS.map((platform) => {
         const count = effectiveCounts[platform];
         return (
           <div
             key={platform}
-            className="flex items-center gap-4 border-t border-line py-4 first:border-t-0 first:pt-0"
+            className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line py-4 first:border-t-0 first:pt-0"
           >
-            <div className="w-40 shrink-0 sm:w-48">
+            <div className="w-full sm:w-48 sm:shrink-0">
               <p className="truncate text-body font-medium text-ink">{PLATFORM_LABELS[platform]}</p>
               <p className="truncate text-body text-ink-sub">
                 {platform === 'facebook' ? 'Pages' : 'Accounts'}
@@ -512,7 +584,7 @@ export function BillingView({
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         <dl className="flex flex-col gap-2 text-body">
-          {SUBSCRIPTION_PLATFORMS.filter((p) => effectiveCounts[p] > 0).map((platform) => (
+          {PURCHASABLE_PLATFORMS.filter((p) => effectiveCounts[p] > 0).map((platform) => (
             <div key={platform} className="flex items-baseline justify-between gap-3">
               <dt className="min-w-0 truncate text-ink-sub">
                 {PLATFORM_LABELS[platform]} · {effectiveCounts[platform]}{' '}
@@ -529,6 +601,10 @@ export function BillingView({
               <dd className="font-medium text-ink">Nothing selected yet</dd>
             </div>
           ) : null}
+          <div className="flex items-baseline justify-between gap-3">
+            <dt className="text-ink-sub">Media Library storage included</dt>
+            <dd className="shrink-0 font-medium tabular-nums text-ink">{5 * units} GB</dd>
+          </div>
           <div className="flex items-baseline justify-between gap-3">
             <dt className="text-ink-sub">Monthly total</dt>
             <dd className="font-semibold tabular-nums text-ink">{total} PKR</dd>
@@ -572,7 +648,7 @@ export function BillingView({
     <Card id="billing-payments" className="scroll-mt-20">
       <CardHeader>
         <CardTitle>Your payments</CardTitle>
-        <CardDescription>Bank payments start after we approve them. Crypto payments start as soon as we receive them.</CardDescription>
+        <CardDescription>Manual payments start after we approve them. Crypto payments start as soon as we receive them.</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         {status.payments.length === 0 ? (
@@ -595,13 +671,7 @@ export function BillingView({
             <div className="flex min-w-0 flex-col gap-1">
               <span className="text-body font-medium tabular-nums text-ink">
                 {payment.amountPkr} PKR ·{' '}
-                {payment.method === 'bank'
-                  ? (payment.bankMethod === 'easypaisa'
-                      ? 'Easypaisa'
-                      : payment.bankMethod === 'nayapay'
-                        ? 'Nayapay'
-                        : 'UBL bank')
-                  : `Crypto · USDT (${payment.nowpaymentsNetwork === 'trc20' ? 'TRC20' : 'BEP20'})`}
+                {paymentMethodLabel(payment)}
                 {payment.isUpgrade ? ' · Upgrade' : ''}
               </span>
               <span className="text-metadata text-ink-sub">{formatDate(payment.createdAt)}</span>
@@ -618,6 +688,41 @@ export function BillingView({
       </CardContent>
     </Card>
   );
+
+  /**
+   * Pending payment card for Purchase only: while one payment is in
+   * flight, Purchase shows it and disables checkout instead of
+   * offering a fresh one. The label follows the payment method —
+   * bank payments wait for approval, crypto payments wait for the
+   * user to send the funds. "Check again" re-reads payments so a
+   * decision made while this view is open unblocks the form.
+   */
+  const pendingPaymentCard = pendingPayment ? (
+    <Card>
+      <CardHeader>
+        <CardTitle>Payment in progress</CardTitle>
+        <CardDescription>
+          You already have a payment waiting. Wait for it to be decided before submitting another.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        <BillingStatusMark
+          kind="pending"
+          label={pendingPayment.method === 'bank' ? 'Waiting for approval' : 'Waiting for payment'}
+        />
+        <p className="text-body text-ink">
+          {pendingPayment.amountPkr} PKR · {paymentMethodLabel(pendingPayment)}
+          {pendingPayment.isUpgrade ? ' · Upgrade' : ''} · Submitted{' '}
+          {formatDateTime(pendingPayment.createdAt)}
+        </p>
+        <div>
+          <Button variant="outline" onClick={() => void load()}>
+            Check again
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  ) : null;
 
   /* ---------- Confirmation step (inside Purchase) ---------- */
   if (section === 'purchase' && purchaseStep === 'confirmation' && confirmation) {
@@ -648,7 +753,7 @@ export function BillingView({
               label={confirmation.kind === 'bank' ? 'Waiting for approval' : 'Waiting for payment'}
             />
             <p className="text-body text-ink">
-              {countsSummary(confirmation.counts)} · {confirmation.amountPkr} PKR
+              {countsSummary(purchasableCounts(confirmation.counts))} · {confirmation.amountPkr} PKR
               {confirmation.isUpgrade ? ' · Upgrade' : ''}
             </p>
             {confirmation.kind === 'crypto' && confirmation.crypto && cryptoAmount !== null ? (
@@ -663,7 +768,7 @@ export function BillingView({
               </Alert>
             ) : null}
             <p className="text-body text-ink-sub">
-              Bank payments start after we approve them. Crypto payments start as soon as we
+              Manual payments start after we approve them. Crypto payments start as soon as we
               receive them. You can see this payment under Payments.
             </p>
             <div className="flex flex-wrap gap-2">
@@ -689,11 +794,12 @@ export function BillingView({
           <h1 className="text-xl leading-heading font-semibold text-ink">Checkout</h1>
           <p className="text-body text-ink-sub">
             {isUpgrade ? 'Upgrade · ' : ''}
-            {countsSummary(effectiveCounts)} · {amountToPay} PKR
+            {countsSummary(purchasableCounts(effectiveCounts))} · {amountToPay} PKR
             {isUpgrade ? ' to pay now' : ' / month'}
           </p>
         </div>
         <PurchaseStepIndicator current="checkout" />
+        {pendingPaymentCard}
         {/* The posting-paused warning belongs to My Plan only, so it is
             deliberately not repeated here. */}
         {quoteError ? (
@@ -703,19 +809,19 @@ export function BillingView({
           </Alert>
         ) : null}
         <div className="flex flex-col items-start gap-6 lg:flex-row">
-          <div className="order-2 flex min-w-0 flex-1 flex-col gap-6 lg:order-1">
+          <div className="flex min-w-0 flex-1 flex-col gap-6">
             <Card>
               <CardHeader>
                 <CardTitle>Choose how to pay</CardTitle>
-                <CardDescription>Bank, mobile wallet, or crypto.</CardDescription>
+                <CardDescription>Manual payments or crypto.</CardDescription>
               </CardHeader>
               <CardContent className="flex flex-col gap-6">
                 <div role="radiogroup" aria-label="Payment type" className="grid gap-2 sm:grid-cols-2">
                   <MethodCard
                     selected={paymentType === 'bank'}
-                    title="Bank or mobile wallet"
-                    description="Easypaisa, Nayapay, UBL bank"
-                    label="Pay by bank or mobile wallet"
+                    title="Manual payments"
+                    description="Easypaisa, Nayapay, UBL bank, Binance"
+                    label="Pay with a manual payment"
                     onClick={() => setPaymentType('bank')}
                   />
                   <MethodCard
@@ -728,9 +834,9 @@ export function BillingView({
                 </div>
 
                 {paymentType === 'bank' ? (
-                  <section aria-label="Pay by bank or mobile wallet" className="flex flex-col gap-4">
-                    <div role="radiogroup" aria-label="Payment method" className="grid gap-2 sm:grid-cols-3">
-                      {(['easypaisa', 'nayapay', 'ubl'] as const).map((method) => (
+                  <section aria-label="Manual payments" className="flex flex-col gap-4">
+                    <div role="radiogroup" aria-label="Payment method" className="grid gap-2 sm:grid-cols-2">
+                      {(['easypaisa', 'nayapay', 'ubl', 'binance'] as const).map((method) => (
                         <MethodCard
                           key={method}
                           selected={bankMethod === method}
@@ -743,7 +849,9 @@ export function BillingView({
                     </div>
                     <dl className="grid gap-3 sm:grid-cols-2">
                       <div className="flex flex-col gap-1">
-                        <dt className="text-metadata text-ink-sub">Account number</dt>
+                        <dt className="text-metadata text-ink-sub">
+                          {details.accountNumberLabel ?? 'Account number'}
+                        </dt>
                         <dd className="flex flex-wrap items-center gap-2">
                           <span className="font-mono text-body text-ink">{details.accountNumber}</span>
                           <Button
@@ -751,7 +859,11 @@ export function BillingView({
                             size="sm"
                             onClick={() => void copyText(details.accountNumber, `account-${bankMethod}`)}
                           >
-                            {copied === `account-${bankMethod}` ? 'Copied' : 'Copy number'}
+                            {copied === `account-${bankMethod}`
+                              ? 'Copied'
+                              : details.accountNumberLabel
+                                ? `Copy ${details.accountNumberLabel}`
+                                : 'Copy number'}
                           </Button>
                         </dd>
                       </div>
@@ -879,7 +991,7 @@ export function BillingView({
               </CardContent>
             </Card>
           </div>
-          <div className="order-1 w-full shrink-0 lg:order-2 lg:sticky lg:top-20 lg:w-90 lg:self-start">{orderSummary}</div>
+          <div className="w-full shrink-0 lg:sticky lg:top-20 lg:w-90 lg:self-start">{orderSummary}</div>
         </div>
       </div>
     );
@@ -888,9 +1000,14 @@ export function BillingView({
   /* ---------- Purchase: builder step ---------- */
   if (section === 'purchase' && purchaseStep === 'builder') {
     const buildDisabled =
-      busy !== null || units === 0 || Boolean(quoteError) || (isPaid && countsUnchanged);
-    const buildDisabledReason =
-      units === 0
+      busy !== null ||
+      units === 0 ||
+      Boolean(quoteError) ||
+      (isPaid && countsUnchanged) ||
+      pendingPayment !== null;
+    const buildDisabledReason = pendingPayment
+      ? PENDING_CHECKOUT_MESSAGE
+      : units === 0
         ? 'Choose at least one page or account first.'
         : isPaid && countsUnchanged
           ? 'This is the same as your current plan. Increase a count to upgrade.'
@@ -911,12 +1028,32 @@ export function BillingView({
           </p>
         </div>
         <PurchaseStepIndicator current="builder" />
+        {pendingPaymentCard}
         {quoteError ? (
           <Alert variant="destructive">
             <AlertTitle>You can only increase your plan</AlertTitle>
             <AlertDescription>{plainQuoteError(quoteError)}</AlertDescription>
           </Alert>
         ) : null}
+        <Card>
+          <CardHeader>
+            <CardTitle>Included with your plan</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-2">
+            <p className="flex items-start gap-2 text-body text-ink">
+              <CheckIcon aria-hidden className="mt-0.5 size-5 shrink-0 text-signal-operational" />
+              <span>5 GB of Media Library storage per page or account</span>
+            </p>
+            <p className="flex items-start gap-2 text-body text-ink">
+              <CheckIcon aria-hidden className="mt-0.5 size-5 shrink-0 text-signal-operational" />
+              <span>Creator Finder included free</span>
+            </p>
+            <p className="flex items-start gap-2 text-body text-ink">
+              <CheckIcon aria-hidden className="mt-0.5 size-5 shrink-0 text-signal-operational" />
+              <span>Unlimited posts — no cap on the number of posts</span>
+            </p>
+          </CardContent>
+        </Card>
         <div className="flex flex-col items-start gap-6 lg:flex-row">
           <Card className="min-w-0 flex-1">
             <CardHeader>

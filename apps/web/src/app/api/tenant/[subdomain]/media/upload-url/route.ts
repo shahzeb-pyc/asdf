@@ -10,11 +10,34 @@ import {
 } from '@fbuploadpro/contracts';
 import { getStorageService } from '../../../../../../lib/storage';
 import { bodyTooLargeResponse, enforceIpRateLimit, readJsonBody } from '@/lib/request-body';
+import { getSupabaseAdminClient } from '@/lib/auth/clients';
+import {
+  checkStorageQuota,
+  getStorageQuotaState,
+  type StorageQuotaState,
+} from '@/lib/billing/storage-quota';
+
+/**
+ * Quota-state provider seam, mirroring the confirm route's storage
+ * verifier: production resolves the admin client and enforces the
+ * plan's storage quota; tests inject a fake. When no client resolves
+ * (test harnesses without a database), the check is skipped — in
+ * production the admin client is always configured, so the skip is
+ * unreachable there.
+ */
+export type UploadUrlQuotaStateProvider = (userId: string) => Promise<StorageQuotaState | null>;
+
+async function defaultQuotaState(userId: string): Promise<StorageQuotaState | null> {
+  const client = getSupabaseAdminClient();
+  if (!client) return null;
+  return getStorageQuotaState(client, userId);
+}
 
 export async function handleCreateUploadUrl(
   request: NextRequest,
   subdomain: string,
-  storageService?: IStorageService
+  storageService?: IStorageService,
+  quotaStateProvider?: UploadUrlQuotaStateProvider
 ): Promise<NextResponse> {
   const sessionSecret = getSessionSecret();
 
@@ -54,6 +77,27 @@ export async function handleCreateUploadUrl(
   }
 
   const body = parsed.data;
+
+  // 3b. Storage quota gate (declared size — advisory: a presigned PUT
+  // carries no size bound, so the confirm step re-checks the verified
+  // size before anything lands). No active period → quota 0 → refused.
+  try {
+    const quotaState = await (quotaStateProvider ?? defaultQuotaState)(session.userId);
+    if (quotaState) {
+      const check = checkStorageQuota(quotaState, body.fileSize);
+      if (!check.allowed) {
+        return NextResponse.json(
+          { error: 'STORAGE_QUOTA_EXCEEDED', message: check.message },
+          { status: check.noQuota ? 403 : 413 }
+        );
+      }
+    }
+  } catch {
+    return NextResponse.json(
+      { error: 'Your storage could not be checked. Please try again.' },
+      { status: 500 }
+    );
+  }
 
   // 4. Build isolated object keys
   const normalizedFileName = body.fileName.normalize('NFKC');

@@ -9,6 +9,8 @@ import { logServerError } from '@/lib/server-analytics';
 import { readJsonBody } from '@/lib/request-body';
 import {
   getActivePeriod,
+  hasPendingPayment,
+  PENDING_PAYMENT_EXISTS_MESSAGE,
   pricePurchase,
   SubscriptionGateError,
 } from '@/lib/billing/entitlement';
@@ -97,6 +99,14 @@ export async function POST(
   }
 
   try {
+    // One pending payment per user: checked before any estimate, any
+    // row, and any NOWPayments deposit is created.
+    if (await hasPendingPayment(client, session.userId)) {
+      return NextResponse.json(
+        { error: 'PENDING_PAYMENT_EXISTS', message: PENDING_PAYMENT_EXISTS_MESSAGE },
+        { status: 409 }
+      );
+    }
     const activePeriod = await getActivePeriod(client, session.userId, new Date());
     let amountPkr: number;
     let isUpgrade: boolean;
@@ -141,6 +151,16 @@ export async function POST(
       })
       .select('id')
       .single();
+    if (insertError?.code === '23505') {
+      // Race backstop, same as the bank route: two submissions that
+      // both passed the pending check collide on the
+      // one-pending-per-user index, and the loser gets the plain 409
+      // with no deposit created.
+      return NextResponse.json(
+        { error: 'PENDING_PAYMENT_EXISTS', message: PENDING_PAYMENT_EXISTS_MESSAGE },
+        { status: 409 }
+      );
+    }
     if (insertError || !inserted || typeof inserted.id !== 'string') {
       // Same rule as the bank route: never discard the database
       // error — log its code and message server-side, then throw
