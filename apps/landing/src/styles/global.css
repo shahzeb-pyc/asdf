@@ -612,3 +612,255 @@
     margin-bottom: 12px;
   }
 }
+
+/* Laptop-short fit, round two (checker-measured overflows at
+   900x768 and 1024x768 only): a SHORT-HEIGHT band, 768-1023px
+   wide AND <=800px tall. Desktop 1440x900 (wider), tablet
+   portrait 768x1024 (taller), and all phone widths (<768px)
+   are untouched. At 768-1023px the S2/S3/S4 grids are stacked
+   (below the lg breakpoint) and S7 is stacked too, which is
+   why these widths overflow while 1024px two-column S2/S3/S4
+   fit. Shrink order everywhere: spacing first, then
+   decorative/secondary sizing/text, headings last and
+   minimally. Nothing clipped, hidden, or removed; no copy,
+   href, order, or layout changes; the S5/S6 transition rules
+   and the footer are untouched. Unlayered rules here override
+   Tailwind utilities and the earlier tablet (768-1023px)
+   block, which this block follows. */
+@media (min-width: 768px) and (max-width: 1023px) and (max-height: 800px) {
+  /* S2 Muse (was 959px at 900x768, -191 needed): section
+     padding 64/64->32/32 (-64), grid gap 48->24 (-24), orbit
+     400->280 (-120), heading 48->44 (-14), description
+     margin 24->16 (-8). Total ≈ -230. Centre/badges scale
+     with the orbit; no text size changes. */
+  #section-2 {
+    padding-top: 32px;
+    padding-bottom: 32px;
+  }
+  .s2-grid {
+    gap: 24px;
+  }
+  .s2-heading {
+    font-size: 44px;
+  }
+  .s2-text {
+    margin-bottom: 16px;
+  }
+  .s2-orbit {
+    width: 280px;
+    height: 280px;
+  }
+  .s2-centre {
+    width: 160px;
+    height: 160px;
+  }
+  .s2-centre svg {
+    width: 88px;
+  }
+  .orbit-badge {
+    width: 56px;
+    height: 56px;
+  }
+  .orbit-badge svg {
+    width: 28px;
+    height: 28px;
+  }
+  /* S3 Prompt Library (was 986px at 900x768, -218 needed):
+     section padding 64/64->32/32 (-64), gap 24->20 (-4),
+     image cap 600->420px wide so its height drops 399->280
+     (-119, proportional, no crop), card padding 20->16 (-8),
+     heading 48->44 (-9), description margin 20->12 (-8),
+     link margin 28->16 (-12), label margin 16->8 (-8),
+     heart-row margin 16->8 (-8), title margin 12->8 and
+     size 18->16 (-8). Total ≈ -248. Link stays 48px tall. */
+  #section-3 {
+    padding-top: 32px;
+    padding-bottom: 32px;
+  }
+  #section-3 .s3-content {
+    gap: 20px;
+  }
+  #section-3 article {
+    max-width: 420px;
+  }
+  #section-3 .s3-anim p.mb-4 {
+    margin-bottom: 8px;
+  }
+  #section-3 .s3-anim h2 {
+    font-size: 44px;
+  }
+  #section-3 .s3-anim p.mt-5 {
+    margin-top: 12px;
+  }
+  #section-3 .s3-anim a {
+    margin-top: 16px;
+  }
+  #section-3 article .p-5 {
+    padding: 16px;
+  }
+  #section-3 article .mb-4 {
+    margin-bottom: 8px;
+  }
+  #section-3 article h3 {
+    margin-bottom: 8px;
+    font-size: 16px;
+  }
+  /* S4 Creator Finder (was 1005px at 900x768, -237 needed):
+     section padding 96/96->32/32 (-128), grid gap 40->24
+     (-16), heading 48->44 (-4), description margin 20->12
+     (-8), list margin 28->16 (-12), mode rows padding
+     10->6 each side (-32) and size 15->14 (-9), panel
+     padding 28->16 (-24), Example margin 16->8 (-8), tabs
+     margin 20->12 (-8) and padding 8->6 (-4), search margin
+     20->12 (-8) and row padding 12->8 (-8), creator rows
+     padding 14->10 (-8) and avatars 48->40 (-16).
+     Total ≈ -293. No text below 14px here. */
+  #section-4 {
+    padding-top: 32px;
+    padding-bottom: 32px;
+  }
+  #section-4 > div {
+    gap: 24px;
+  }
+  #section-4 h2 {
+    font-size: 44px;
+  }
+  #section-4 p.mt-5 {
+    margin-top: 12px;
+  }
+  #section-4 ul {
+    margin-top: 16px;
+  }
+  #section-4 li {
+    padding-top: 6px;
+    padding-bottom: 6px;
+    font-size: 14px;
+  }
+  #section-4 > div > div:last-child {
+    padding: 16px;
+  }
+  #section-4 .rounded-2xl > p {
+    margin-bottom: 8px;
+  }
+  #section-4 .rounded-2xl > div.flex-wrap {
+    margin-bottom: 12px;
+  }
+  #section-4 .rounded-2xl > div.flex-wrap > span {
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+  #section-4 .rounded-2xl > div.flex-col {
+    margin-bottom: 12px;
+  }
+  #section-4 .rounded-2xl > div.flex-col > span {
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+  #section-4 .rounded-2xl > div.flex.items-center {
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+  #section-4 .rounded-2xl > div.flex.items-center > span:first-child {
+    width: 40px;
+    height: 40px;
+  }
+  /* S7 Pricing, stacked form (was 989px at 900x768, -221
+     needed; on top of the tablet block): panel padding
+     64/48->24/16 (-72), heading 56->40 (-39 incl. rule
+     margins 8->6), grid margin 32->16 (-16), stacked gap
+     32->24 (-8; badge still clears the Free card by 10px),
+     card padding 24->12 (-24 each card), card headings
+     28->22 (-12 both cards), dividers 16->12 (-16 both
+     cards), feature gaps 10->8 (-12), feature size 16->14
+     (-21), list margins 20->12 (-16 both cards), buttons
+     48->44 (-8 both cards, the 44px floor), refund margin
+     12->8 (-4). Total ≈ -272. */
+  #section-7 .dark-panel {
+    padding-top: 24px;
+    padding-bottom: 16px;
+  }
+  #section-7 h2 {
+    font-size: 40px;
+  }
+  #section-7 h2 .my-3 {
+    margin-top: 6px;
+    margin-bottom: 6px;
+  }
+  #section-7 .dark-panel .grid {
+    margin-top: 16px;
+    gap: 24px;
+  }
+  #section-7 .dark-panel .grid > div {
+    padding: 12px;
+  }
+  #section-7 .dark-panel .grid h3 {
+    font-size: 22px;
+  }
+  #section-7 .h-px {
+    margin-top: 12px;
+    margin-bottom: 12px;
+  }
+  #section-7 ul {
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  #section-7 ul li {
+    font-size: 14px;
+  }
+  #section-7 .dark-panel .grid > div > a {
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+  #section-7 .dark-panel .grid > div > p {
+    margin-top: 8px;
+  }
+}
+
+/* Laptop-short fit, S7 only at exactly 1024px wide AND
+   <=800px tall (was 960px at 1024x768, -192 needed). At
+   1024px S2/S3/S4 already fit two-column, so they are NOT
+   touched here — only the two-column Pricing grid: panel
+   padding 96/64->48/32 (-80), heading 56->48 (-18), gold
+   rule margins 12->8 (-8), grid margin 40->24 (-16), card
+   padding 28->20 (-16), dividers 24->16 (-16), feature
+   gaps 14->10 (-24), list margin 32->20 (-12), feature
+   leading 1.6->1.5 (-13), buttons 56->48 (-8), refund
+   margin 16->12 (-4). Total ≈ -215. Buttons stay above
+   the 44px floor; no text below 16px here. */
+@media (min-width: 1024px) and (max-width: 1024px) and (max-height: 800px) {
+  #section-7 .dark-panel {
+    padding-top: 48px;
+    padding-bottom: 32px;
+  }
+  #section-7 h2 {
+    font-size: 48px;
+  }
+  #section-7 h2 .my-3 {
+    margin-top: 8px;
+    margin-bottom: 8px;
+  }
+  #section-7 .dark-panel .grid {
+    margin-top: 24px;
+  }
+  #section-7 .dark-panel .grid > div {
+    padding: 20px;
+  }
+  #section-7 .h-px {
+    margin-top: 16px;
+    margin-bottom: 16px;
+  }
+  #section-7 ul {
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+  #section-7 ul li {
+    line-height: 1.5;
+  }
+  #section-7 .dark-panel .grid > div > a {
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+  #section-7 .dark-panel .grid > div > p {
+    margin-top: 12px;
+  }
+}
