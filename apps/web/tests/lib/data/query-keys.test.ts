@@ -193,6 +193,39 @@ describe('queryKeys factory (spec 137 §3.2.3)', () => {
     expect(schedule.list).not.toEqual(tenant.threadsAccounts.list);
   });
 
+  it('scopes Threads Auto Repost keys separately from Facebook mirrors', () => {
+    const tenant = queryKeys.tenant('acme');
+    expect(tenant.threadsAutoRepost.all).toEqual(['tenant', 'acme', 'threads', 'auto-repost']);
+    expect(tenant.threadsAutoRepost.list).toEqual([
+      'tenant',
+      'acme',
+      'threads',
+      'auto-repost',
+      'list',
+    ]);
+    expect(tenant.threadsAutoRepost.listPage({ page: 2 })).toEqual([
+      'tenant',
+      'acme',
+      'threads',
+      'auto-repost',
+      'list',
+      { page: 2 },
+    ]);
+    expect(tenant.threadsAutoRepost.detail('mirror-1')).toEqual([
+      'tenant',
+      'acme',
+      'threads',
+      'auto-repost',
+      'mirror-1',
+    ]);
+    // Sharing a key with tiktokMirrors would serve Facebook mirrors to
+    // the Threads page (and vice versa), so the two families must differ.
+    expect(tenant.threadsAutoRepost.list).not.toEqual(tenant.tiktokMirrors.list);
+    expect(tenant.threadsAutoRepost.detail('mirror-1')).not.toEqual(
+      tenant.tiktokMirrors.detail('mirror-1')
+    );
+  });
+
   it('is deterministic — the same inputs produce equal keys for invalidation', () => {
     expect(queryKeys.tenant('acme').queue.items('p1')).toEqual(
       queryKeys.tenant('acme').queue.items('p1')

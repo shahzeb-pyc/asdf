@@ -545,6 +545,18 @@
         "firstLoadRawBytes": 614515,
         "routeSpecificGzipBytes": 41540,
         "routeSpecificRawBytes": 141096
+      },
+      "/tenant/[subdomain]/threads/auto-repost": {
+        "firstLoadGzipBytes": 170000,
+        "firstLoadRawBytes": 560000,
+        "routeSpecificGzipBytes": 35000,
+        "routeSpecificRawBytes": 115000
+      },
+      "/tenant/[subdomain]/threads/auto-repost/[mirrorId]": {
+        "firstLoadGzipBytes": 168000,
+        "firstLoadRawBytes": 555000,
+        "routeSpecificGzipBytes": 34000,
+        "routeSpecificRawBytes": 110000
       }
     },
     "totalClientJs": {
