@@ -83,27 +83,18 @@
   box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15), 0 2px 6px rgba(0, 0, 0, 0.10);
 }
 
-/* No-JS mobile menu: a <details> element in the topbar pill.
-   The summary is the Menu button (its marker is hidden); the
-   panel is a fixed bottom sheet, so the open menu never covers
-   the hero headline. The open/closed label swap is pure CSS.
-   No script, no transition, no animation anywhere here.
-   Known no-JS limitation: tapping a section link jumps the
-   page but does not close the sheet — tap Menu again to close. */
-.mobile-menu summary {
-  list-style: none;
-  cursor: pointer;
-}
-.mobile-menu summary::-webkit-details-marker {
-  display: none;
-}
+/* JS mobile menu: a button in the topbar pill, visible below lg.
+   The panel is a fixed bottom sheet, so the open menu never covers
+   the hero headline. The open/closed label swap follows the
+   .menu-open class the menu script toggles. Open/close is instant:
+   no transition, no animation anywhere here. */
 .mobile-menu .menu-open-label {
   display: none;
 }
-.mobile-menu[open] .menu-open-label {
+.mobile-menu.menu-open .menu-open-label {
   display: inline;
 }
-.mobile-menu[open] .menu-closed-label {
+.mobile-menu.menu-open .menu-closed-label {
   display: none;
 }
 

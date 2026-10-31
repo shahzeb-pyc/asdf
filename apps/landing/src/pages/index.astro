@@ -25,18 +25,18 @@ const signin = 'https://app.fbuploadpro.com/login';
         <a href={signin} class="hidden items-center py-3 text-sm font-medium no-underline lg:inline-flex sm:text-base">Sign in</a>
         <a href={signup} class="inline-flex items-center rounded-full bg-ink px-3 py-3 text-sm font-semibold text-white no-underline sm:px-4 sm:text-base">Get started</a>
       </div>
-      <!-- No-JS mobile menu: a <details> element, visible below lg.
-           The summary is the Menu button; the panel is a fixed bottom
-           sheet (see global.css), so the open menu never covers the
-           hero headline. No script, no transition, no animation.
-           Known no-JS limitation: tapping a section link jumps the
-           page but does not close the sheet — tap Menu again to close. -->
-      <details class="mobile-menu shrink-0 lg:hidden">
-        <summary class="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-line px-3 text-sm font-semibold" aria-label="Menu">
+      <!-- JS mobile menu: a button in the topbar pill, visible below lg.
+           The panel is a fixed bottom sheet, so the open menu never
+           covers the hero headline. Tapping the button toggles it;
+           tapping any menu link closes it and jumps to its anchor;
+           Esc or a tap outside the sheet closes it. Open/close is
+           instant — no transition, no animation. -->
+      <div class="mobile-menu shrink-0 lg:hidden">
+        <button id="mobile-menu-button" type="button" class="inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-full border border-line px-3 text-sm font-semibold" aria-expanded="false" aria-controls="mobile-menu-panel" aria-label="Menu">
           <span class="menu-closed-label">☰ <span class="hidden min-[375px]:inline">Menu</span></span>
           <span class="menu-open-label">✕ <span class="hidden min-[375px]:inline">Close</span></span>
-        </summary>
-        <div class="fixed inset-x-2 bottom-2 z-[60] rounded-3xl border border-line bg-white p-3 shadow-xl">
+        </button>
+        <div id="mobile-menu-panel" class="fixed inset-x-2 bottom-2 z-[60] rounded-3xl border border-line bg-white p-3 shadow-xl" hidden>
           <nav class="grid grid-cols-2 gap-2" aria-label="Sections">
             <a href="#section-2" class="flex min-h-11 items-center rounded-xl px-3 text-sm font-medium text-ink no-underline">Muse</a>
             <a href="#section-3" class="flex min-h-11 items-center rounded-xl px-3 text-sm font-medium text-ink no-underline">Prompt Library</a>
@@ -48,9 +48,42 @@ const signin = 'https://app.fbuploadpro.com/login';
             <a href={signup} class="flex min-h-11 items-center justify-center rounded-full bg-ink px-3 text-sm font-semibold text-white no-underline">Get started</a>
           </nav>
         </div>
-      </details>
+      </div>
     </div>
   </header>
+
+  <script>
+    const menuButton = document.getElementById('mobile-menu-button');
+    const menuPanel = document.getElementById('mobile-menu-panel');
+    if (menuButton && menuPanel) {
+      const menuRoot = menuButton.closest('.mobile-menu');
+      function setMenuOpen(open) {
+        menuButton.setAttribute('aria-expanded', open ? 'true' : 'false');
+        menuPanel.hidden = !open;
+        if (menuRoot) menuRoot.classList.toggle('menu-open', open);
+      }
+      menuButton.addEventListener('click', function (event) {
+        event.stopPropagation();
+        setMenuOpen(menuPanel.hidden);
+      });
+      menuPanel.querySelectorAll('a').forEach(function (link) {
+        link.addEventListener('click', function () {
+          setMenuOpen(false);
+        });
+      });
+      document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape' && !menuPanel.hidden) {
+          setMenuOpen(false);
+          menuButton.focus();
+        }
+      });
+      document.addEventListener('click', function (event) {
+        if (!menuPanel.hidden && !menuPanel.contains(event.target) && !menuButton.contains(event.target)) {
+          setMenuOpen(false);
+        }
+      });
+    }
+  </script>
 
   <main>
     <!-- Section 1: hero. -->
@@ -103,8 +136,8 @@ const signin = 'https://app.fbuploadpro.com/login';
       <div class="s2-grid mx-auto grid w-full max-w-[1240px] items-center gap-12 lg:grid-cols-[1fr_auto] lg:justify-between lg:gap-24">
         <div class="text-left">
           <h2 class="s2-heading mb-6 text-[36px] leading-[1.15] font-bold tracking-tight sm:text-5xl lg:text-[56px]">
-            <span class="reveal-mask xl:whitespace-nowrap"><span class="reveal-line">Give Muse API access,</span></span>
-            <span class="reveal-mask mt-2 ml-[1em] xl:whitespace-nowrap"><span class="reveal-line">it <span class="section-highlight">manages</span> FBUploadPro</span></span>
+            <span class="reveal-mask xl:whitespace-nowrap"><span class="reveal-line">Let Muse <span class="section-highlight">manage</span></span></span>
+            <span class="reveal-mask mt-2 ml-[1em] xl:whitespace-nowrap"><span class="reveal-line">FBUploadPro</span></span>
             <span class="reveal-mask mt-2"><span class="reveal-line">for you</span></span>
           </h2>
           <p class="s2-text mb-6 max-w-2xl text-base leading-relaxed text-ink-sub sm:text-lg">
