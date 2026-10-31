@@ -145,6 +145,25 @@ describe('assignQueueEstimates', () => {
     expect(result.get('p2')).toEqual(new Date('2026-01-16T09:00:00Z'));
   });
 
+  it('rolls estimates into the next month when every slot today has passed on the last day', () => {
+    // The calendar E2E month-end case (Oct 31 after 10:00 UTC): both
+    // daily slots have passed, so both estimates land on Nov 1. The
+    // October grid ends Sat Oct 31 and holds no November cells, so
+    // the calendar must show these on the November grid — the
+    // estimates themselves are correct, not lost.
+    const result = assignQueueEstimates({
+      slots: [
+        slot({ id: 's1', timeOfDay: '09:00' }),
+        slot({ id: 's2', timeOfDay: '10:00' }),
+      ],
+      timezone: 'UTC',
+      posts: [post('p1', 'text'), post('p2', 'text')],
+      now: new Date('2026-10-31T10:30:00Z'),
+    });
+    expect(result.get('p1')).toEqual(new Date('2026-11-01T09:00:00Z'));
+    expect(result.get('p2')).toEqual(new Date('2026-11-01T10:00:00Z'));
+  });
+
   it('sorts slots that differ only in seconds by their second value', () => {
     const result = assignQueueEstimates({
       slots: [
