@@ -61,10 +61,12 @@
   }
 }
 
-/* Fixed topbar: centred by flex, always visible, never hidden
-   on scroll. The pill is opaque white with a soft shadow,
-   legible over white and black sections alike. Width caps at the
-   viewport minus 16px so it never overflows a 320px phone. */
+/* Fixed topbar: centred by flex, opaque white pill with a soft
+   shadow, legible over white and black sections alike. Width caps
+   at the viewport minus 16px so it never overflows a 320px phone.
+   Hide-and-show lives in the motion block at the end of this file:
+   hidden on scroll down (past 120px), shown on scroll up, always
+   shown at the very top and while the mobile menu is open. */
 .topbar-fixed {
   position: fixed;
   top: 12px;
@@ -112,9 +114,8 @@
 
 /* Clip-mask headline lines. Each line sits inside an
    overflow-hidden mask with a small padding/margin cancel, so
-   descenders never clip. There is no hidden state anywhere:
-   every line is fully visible statically, and the page scrolls
-   natively with no motion module at all. */
+   descenders never clip. The mask lines themselves carry no hidden
+   state; page motion lives in the block at the end of this file. */
 .reveal-mask {
   display: block;
   overflow: hidden;
@@ -169,7 +170,9 @@
 
 /* Section 2 orbit badges. Positioned by percentage left/top with
    a centring translate, so the badges stay centred on their
-   orbit points at every size, statically. */
+   orbit points at every size. The ring rotates slowly (motion
+   block at the end of this file) and each badge counter-rotates
+   by the same amount, so logos stay upright while orbiting. */
 .orbit-badge {
   position: absolute;
   display: flex;
@@ -917,5 +920,168 @@
   }
   #section-7 .dark-panel .grid > div > p {
     margin-top: 12px;
+  }
+}
+
+/* Subtle professional motion (owner order 2026-11-01, "subtle and
+   professional" direction). Transform / opacity / border-radius
+   ONLY — no height, margin, padding, or layout change of any kind,
+   so the one-screen fit and all section heights are untouched.
+   No libraries: CSS transitions + one small IntersectionObserver
+   in the page script. No scroll snap/lock, no parallax, no
+   infinite loops, no marquees. The hero platform strips and the
+   topbar pill itself do not animate. */
+
+/* Scroll reveals + hero entrance: fade + rise 14px -> 0 over 600ms
+   ease-out, once, then stays visible. The hidden pre-reveal state
+   exists ONLY under .js (added by the page script itself), so with
+   JavaScript disabled everything is fully visible. Stagger steps
+   are 100ms, at most 300ms total. */
+.js .reveal {
+  opacity: 0;
+  transform: translateY(14px);
+  transition: opacity 600ms ease-out, transform 600ms ease-out;
+}
+.js .reveal.is-visible {
+  opacity: 1;
+  transform: none;
+}
+.js .reveal-d1 {
+  transition-delay: 100ms;
+}
+.js .reveal-d2 {
+  transition-delay: 200ms;
+}
+.js .reveal-d3 {
+  transition-delay: 300ms;
+}
+
+/* Hover / focus transitions: 200ms ease-out on colour, background,
+   border, shadow, and filter. Rounded-full buttons and social
+   circles dim very slightly on hover; cards lift at most 2px via
+   the independent `translate` property (separate from the reveal
+   `transform`, so lift and reveal compose instead of fighting).
+   No scale pops, no spins, no bounces. */
+a,
+button {
+  transition: color 200ms ease-out, background-color 200ms ease-out, border-color 200ms ease-out, box-shadow 200ms ease-out, filter 200ms ease-out;
+}
+a.rounded-full:hover,
+button.rounded-full:hover {
+  filter: brightness(0.94);
+}
+.lift-card {
+  transition: translate 200ms ease-out, box-shadow 200ms ease-out;
+}
+.lift-card:hover {
+  translate: 0 -2px;
+  box-shadow: 0 16px 36px rgba(17, 17, 17, 0.14);
+}
+
+/* Section 5 -> 6 boundary animation: the Section 5 bottom edge
+   starts FLAT (radius 0) and, on first scroll into view, rounds to
+   the resting shape over 600ms ease-out, once, then stays rounded.
+   Radius only — the Section 6 pull-up (-48px / -64px), the square
+   panel top, and all paddings are untouched, so there is no layout
+   shift and the final shape is identical to the static transition.
+   Without .js (no JavaScript) the base static radii below apply. */
+.js #section-5 {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  transition: border-bottom-left-radius 600ms ease-out, border-bottom-right-radius 600ms ease-out;
+}
+.js #section-5.s5-rounded {
+  border-bottom-left-radius: 48px;
+  border-bottom-right-radius: 48px;
+}
+@media (min-width: 1024px) {
+  .js #section-5.s5-rounded {
+    border-bottom-left-radius: 64px;
+    border-bottom-right-radius: 64px;
+  }
+}
+
+/* Rotating orbit (Section 2): the ring rotates slowly, one
+   revolution per 60s, linear, via CSS keyframes. Each badge
+   counter-rotates by the same amount and period, so the platform
+   logos stay upright and readable while orbiting — the badge
+   keyframes preserve the centring translate(-50%, -50%). The
+   centre Muse mark is a sibling of the ring, so it does NOT
+   rotate. Rotation exists only under .js: with JavaScript
+   disabled the orbit is static. */
+@keyframes orbit-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes orbit-spin-rev {
+  from {
+    transform: translate(-50%, -50%) rotate(0deg);
+  }
+  to {
+    transform: translate(-50%, -50%) rotate(-360deg);
+  }
+}
+.js .orbit-ring {
+  animation: orbit-spin 60s linear infinite;
+}
+.js .orbit-badge {
+  animation: orbit-spin-rev 60s linear infinite;
+}
+
+/* Topbar hide-and-show: hides on scroll down past 120px, shows on
+   scroll up, always shows at the very top and while the mobile
+   menu is open (the script enforces both). Transform-only, so
+   anchor landings (84px scroll-padding) and section heights never
+   change. The hide class is only ever added by the script, so
+   with JavaScript disabled the topbar is always visible. */
+.js .topbar-fixed {
+  transition: transform 300ms ease-out;
+}
+.js .topbar-fixed.topbar-hidden {
+  transform: translateY(-150%);
+}
+
+/* Reduced motion: ALL motion in this build stops and content is
+   fully visible and static — reveals instant, boundary rounded
+   statically, orbit static, topbar always visible, hover
+   transitions off (hover lift removed, hover shadow change is
+   instant, not animated). */
+@media (prefers-reduced-motion: reduce) {
+  .js .reveal,
+  .js .reveal.is-visible {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+  }
+  .js #section-5 {
+    border-bottom-left-radius: 48px !important;
+    border-bottom-right-radius: 48px !important;
+    transition: none !important;
+  }
+  .js .orbit-ring,
+  .js .orbit-badge {
+    animation: none !important;
+  }
+  .js .topbar-fixed {
+    transition: none !important;
+    transform: none !important;
+  }
+  a,
+  button,
+  .lift-card {
+    transition: none !important;
+  }
+  .lift-card:hover {
+    translate: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) and (min-width: 1024px) {
+  .js #section-5 {
+    border-bottom-left-radius: 64px !important;
+    border-bottom-right-radius: 64px !important;
   }
 }
