@@ -196,6 +196,14 @@ export const SignupRequestSchema = z.object({
   phone: E164PhoneSchema,
   email: GmailSchema,
   password: z.string().min(8, 'Password must be at least 8 characters long').max(128, 'Password cannot exceed 128 characters'),
+  /**
+   * Optional referral code, threaded from ?ref= on the signup page.
+   * Resolved server-side in signUpTenantUser: a valid code from an
+   * active seller is stored immutably on the new account; an
+   * unknown or paused seller's code is a 400 (the page
+   * pre-validates, so normal flows never submit one).
+   */
+  referralCode: z.string().trim().max(32).optional(),
 });
 
 export type SignupRequest = z.infer<typeof SignupRequestSchema>;

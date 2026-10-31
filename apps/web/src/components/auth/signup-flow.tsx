@@ -44,6 +44,8 @@ export interface SignupFlowProps {
    * paused card instead of the form.
    */
   initialIsPaused?: boolean;
+  /** Referral code arriving via the seller link (`?ref=`). */
+  initialReferralCode?: string | undefined;
 }
 
 export function SignupFlow({
@@ -52,6 +54,7 @@ export function SignupFlow({
   initialReturnUrl,
   initialSuccessNotice = null,
   initialIsPaused = false,
+  initialReferralCode,
 }: Readonly<SignupFlowProps>) {
   const [step, setStep] = useState<'details' | 'otp'>(initialStep);
   const [email, setEmail] = useState(initialEmail);
@@ -123,6 +126,7 @@ export function SignupFlow({
     >
       <SignupDetailsForm
         initialEmail={email || undefined}
+        initialReferralCode={initialReferralCode}
         successNotice={successNotice}
         onDismissSuccessNotice={() => setSuccessNotice(null)}
         onRequiresOtp={(submittedEmail, cooldownSecondsRemaining) => {

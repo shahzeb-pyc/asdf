@@ -80,10 +80,12 @@ export function parseInitialQueryParams(search: string) {
   const initialStep = params.get('step');
   const emailParam = params.get('email');
   const noticeParam = params.get('notice');
+  const referralParam = params.get('ref');
   return {
     returnUrl: ret ? sanitizeAuthRedirectUrl(ret) : undefined,
     step: initialStep === 'otp' ? ('otp' as const) : undefined,
     email: emailParam || undefined,
+    referralCode: referralParam || undefined,
     successNotice:
       noticeParam === 'pending_verification'
         ? 'We sent a 6-digit code to your email. Enter it below to finish signing up.'
@@ -147,6 +149,7 @@ export default async function SignupPage({
       initialReturnUrl={initial.returnUrl}
       initialSuccessNotice={initial.successNotice ?? null}
       initialIsPaused={!isSignupEnabled()}
+      initialReferralCode={initial.referralCode}
     />
   );
 }

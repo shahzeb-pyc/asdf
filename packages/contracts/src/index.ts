@@ -50,5 +50,6 @@ export * from './publishing/threads-publish-now.js';
 export * from './domain/subscription.js';
 export * from './domain/coupon.js';
 export * from './domain/refund.js';
+export * from './domain/sellers.js';
 export * from './domain/creator-finder.js';
 export * from './domain/adu.js';

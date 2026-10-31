@@ -14,6 +14,7 @@ import {
   applyHeldRedemptionsForPayment,
   releaseHeldRedemptionsForPayment,
 } from './coupons';
+import { recordCommissionForPayment } from './sellers';
 
 /**
  * Subscription entitlement, server-side only.
@@ -762,8 +763,12 @@ export async function approvePayment(
     // redemption held on this payment may never have been applied
     // (e.g. the first approve failed after creating the period).
     // Applying is held→applied only, so re-running it is safe.
+    // The same recovery applies to the seller commission: recording
+    // is idempotent per payment, so a first approve that failed
+    // after the period but before the commission still lands it here.
     if (period) {
       await applyHeldRedemptionsForPayment(client, payment.id);
+      await recordCommissionForPayment(client, payment, period);
       return { payment, period };
     }
   }
@@ -778,6 +783,12 @@ export async function approvePayment(
   // part of the same approval. If it fails, the payment stays
   // pending and the next approve retries through the path above.
   await applyHeldRedemptionsForPayment(client, payment.id);
+  // Same rule for the seller commission: if recording fails, the
+  // payment stays pending and the re-approve path recovers it.
+  // Deployment note: the sellers migration must be applied before
+  // this code serves traffic, or approvals fail loudly here until
+  // it is (the payment stays pending and retries cleanly after).
+  await recordCommissionForPayment(client, payment, period);
   const { error: updateError } = await client
     .from('subscription_payments')
     .update({
