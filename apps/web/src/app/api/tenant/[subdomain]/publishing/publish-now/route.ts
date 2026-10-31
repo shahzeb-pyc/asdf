@@ -31,8 +31,7 @@ import {
 import { getR2Config } from '@/lib/storage';
 import { logServerError, trackServerEvent } from '@/lib/server-analytics';
 import {
-  assertCanPost,
-  registerUsage,
+  assertPaidPlan,
   SubscriptionGateError,
 } from '@/lib/billing/entitlement';
 
@@ -40,14 +39,14 @@ import {
  * POST /api/tenant/[subdomain]/publishing/publish-now
  *
  * Direct, synchronous, multi-page Facebook publish that saves
- * NOTHING to the database except subscription usage rows (the
- * across-features cap registry — see the gate below). It deliberately does NOT use
- * destination-queue (which inserts queue_items), does NOT use the
- * publish-now re-time routes (which never call Facebook), and does
- * NOT write idempotency, publish-log, destination, media, or
- * posting-slot rows. The only database access here is READS:
- * the account's encrypted token, and (for library media) the
- * media row's URL for ownership + URL resolution.
+ * nothing to the database except the idempotency record. It
+ * deliberately does NOT use destination-queue (which inserts
+ * queue_items), does NOT use the publish-now re-time routes
+ * (which never call Facebook), and does NOT write publish-log,
+ * destination, media, or posting-slot rows. The only other
+ * database access here is READS: the account's encrypted token,
+ * and (for library media) the media row's URL for ownership +
+ * URL resolution.
  *
  * Per target, the page token is obtained transiently: the account
  * token is decrypted server-side, Graph /me/accounts is re-queried
@@ -652,30 +651,17 @@ export async function POST(
   const { caption, postType, firstComment, targets, media } = parsed.data;
 
   // Subscription gate, server-side, before any Facebook call:
-  // a paid period must be active and every target page must fit
-  // the across-features Facebook cap. Registering here counts a
-  // page once even if it is also queued via destination-queue.
-  // Admins are not gated. A gate failure fails the whole request
-  // so a partial publish can never slip past the cap.
-  // Pre-check every target first: registering one by one means a
-  // cap failure on page 3 would leave pages 1-2 permanently
-  // registered even though nothing was published. A gate failure
-  // in the pre-check registers nothing.
+  // Publish Now is unlimited (owner decision 2026-10-31): the
+  // ONLY gate is an active paid period. There is no per-page cap
+  // and no usage registration — a paid user may publish now to
+  // any number of pages regardless of bought units. Admins are
+  // not gated. A gate failure fails the whole request.
   if (session.role !== 'admin') {
-    const distinctPageIds = Array.from(new Set(targets.map((target) => target.fbPageId)));
     try {
-      for (const fbPageId of distinctPageIds) {
-        await assertCanPost(supabase, session.userId, 'facebook', fbPageId);
-      }
-      for (const fbPageId of distinctPageIds) {
-        await registerUsage(supabase, session.userId, 'facebook', fbPageId, 'publish-now', null);
-      }
+      await assertPaidPlan(supabase, session.userId);
     } catch (err) {
       if (err instanceof SubscriptionGateError) {
-        const status =
-          err.code === 'SUBSCRIPTION_CAP_REACHED' || err.code === 'SUBSCRIPTION_REQUIRED'
-            ? 403
-            : 500;
+        const status = err.code === 'SUBSCRIPTION_REQUIRED' ? 403 : 500;
         return NextResponse.json({ error: err.code, message: err.message }, { status });
       }
       throw err;

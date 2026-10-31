@@ -29,8 +29,7 @@ import {
 import { getR2Config } from '@/lib/storage';
 import { logServerError } from '@/lib/server-analytics';
 import {
-  assertCanPost,
-  registerUsage,
+  assertPaidPlan,
   SubscriptionGateError,
 } from '@/lib/billing/entitlement';
 
@@ -44,8 +43,9 @@ import {
  * NOT write destinations, publish logs, or media rows for device
  * media. The only database access is READS (the account's encrypted
  * token and, for library media, the media row), plus the
- * subscription-usage registry and the idempotency record — both
- * stated, neither hidden (see the spec).
+ * idempotency record — stated, not hidden (see the spec). Publish
+ * Now writes no subscription-usage rows: it is unlimited (owner
+ * decision 2026-10-31), gated only on an active paid period.
  *
  * Per account, sequentially, continuing on failure: create a
  * container at graph.instagram.com, poll its status_code, then
@@ -514,27 +514,16 @@ export async function POST(
   }
 
   // Subscription gate, server-side, before any Instagram call:
-  // pre-check every resolved account, then register usage. A gate
-  // failure fails the whole request so a partial publish can never
-  // slip past the cap. A gate failure in the pre-check registers
-  // nothing. Admins are not gated.
+  // Publish Now is unlimited (owner decision 2026-10-31): the
+  // ONLY gate is an active paid period. There is no per-account
+  // cap and no usage registration. A gate failure fails the whole
+  // request. Admins are not gated.
   if (session.role !== 'admin') {
-    const distinctIgUserIds = Array.from(
-      new Set([...accountCache.values()].map((account) => account.igUserId))
-    );
     try {
-      for (const igUserId of distinctIgUserIds) {
-        await assertCanPost(supabase, session.userId, 'instagram', igUserId);
-      }
-      for (const igUserId of distinctIgUserIds) {
-        await registerUsage(supabase, session.userId, 'instagram', igUserId, 'instagram-publish-now', null);
-      }
+      await assertPaidPlan(supabase, session.userId);
     } catch (err) {
       if (err instanceof SubscriptionGateError) {
-        const status =
-          err.code === 'SUBSCRIPTION_CAP_REACHED' || err.code === 'SUBSCRIPTION_REQUIRED'
-            ? 403
-            : 500;
+        const status = err.code === 'SUBSCRIPTION_REQUIRED' ? 403 : 500;
         return NextResponse.json({ error: err.code, message: err.message }, { status });
       }
       throw err;

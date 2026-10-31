@@ -73,14 +73,16 @@ function graphResponse(ok: boolean, status: number, data: unknown) {
 }
 
 /**
- * Subscription fixtures for the publish-now posting gate (added
- * with the subscription feature): the route registers each target
- * page in the usage registry before any Facebook call, so the fake
- * client must answer the entitlement queries the gate makes —
- * an active paid period with room for the test pages, and no
- * destinations used yet. Without these, the gate's query chain
- * (.is/.lte/.gt/.order/.limit) hits a builder that has none of
- * them and every publish-now test fails before Facebook is called.
+ * Subscription fixtures for the publish-now plan gate (added
+ * with the subscription feature): the route's plan-only gate
+ * (assertPaidPlan) still queries the entitlement — an active paid
+ * period — before any Facebook call. Publish Now is unlimited
+ * (owner decision 2026-10-31): it writes no usage rows and has no
+ * per-page cap, so the fake client must answer the entitlement
+ * queries the gate makes. Without these, the gate's query chain
+ * (.is/.lte/.gt/.order/.limit/.neq) hits a builder that has none
+ * of them and every publish-now test fails before Facebook is
+ * called.
  */
 type SupabaseChain = {
   select: () => SupabaseChain;
@@ -88,6 +90,7 @@ type SupabaseChain = {
   is: () => SupabaseChain;
   lte: () => SupabaseChain;
   gt: () => SupabaseChain;
+  neq: () => SupabaseChain;
   order: () => SupabaseChain;
   limit: () => SupabaseChain;
   insert: () => SupabaseChain;
@@ -97,6 +100,10 @@ type SupabaseChain = {
   error?: unknown;
 };
 
+let periodRow: Record<string, unknown> = {};
+let periodPresent = true;
+const insertedTables: string[] = [];
+
 function supabaseBuilder(table: string): SupabaseChain {
   const builder: SupabaseChain = {
     select: () => builder,
@@ -104,9 +111,13 @@ function supabaseBuilder(table: string): SupabaseChain {
     is: () => builder,
     lte: () => builder,
     gt: () => builder,
+    neq: () => builder,
     order: () => builder,
     limit: () => builder,
-    insert: () => builder,
+    insert: () => {
+      insertedTables.push(table);
+      return builder;
+    },
     maybeSingle: async () => {
       if (table === 'media_items') {
         return { data: mediaRow, error: null };
@@ -118,21 +129,7 @@ function supabaseBuilder(table: string): SupabaseChain {
     },
   };
   if (table === 'subscription_periods') {
-    builder.data = [
-      {
-        id: 'period-1',
-        user_id: 'user-1',
-        facebook_count: 10,
-        instagram_count: 10,
-        threads_count: 10,
-        x_count: 10,
-        tiktok_count: 10,
-        youtube_count: 10,
-        starts_at: '2020-01-01T00:00:00.000Z',
-        ends_at: '2099-01-01T00:00:00.000Z',
-        superseded_at: null,
-      },
-    ];
+    builder.data = periodPresent ? [periodRow] : [];
     builder.error = null;
   }
   if (table === 'subscription_usage') {
@@ -174,6 +171,21 @@ beforeEach(() => {
   };
   mediaFetchShouldFail = false;
   headShouldFail = false;
+  periodRow = {
+    id: 'period-1',
+    user_id: 'user-1',
+    facebook_count: 10,
+    instagram_count: 10,
+    threads_count: 10,
+    x_count: 10,
+    tiktok_count: 10,
+    youtube_count: 10,
+    starts_at: '2020-01-01T00:00:00.000Z',
+    ends_at: '2099-01-01T00:00:00.000Z',
+    superseded_at: null,
+  };
+  periodPresent = true;
+  insertedTables.length = 0;
 
   vi.stubGlobal(
     'fetch',
@@ -314,6 +326,33 @@ describe('POST publish-now', () => {
       postId: 'post-222',
       firstCommentFailed: null,
     });
+  });
+
+  it('publishes even with zero bought pages and writes no usage row (Publish Now is uncapped)', async () => {
+    periodRow = { ...periodRow, facebook_count: 0 };
+    const { status, body } = await callPost({
+      caption: 'Hello',
+      postType: 'text',
+      targets: [target('111', 'Page One'), target('222', 'Page Two')],
+      media: null,
+    });
+    expect(status).toBe(200);
+    expect(body.results).toHaveLength(2);
+    expect(body.results[0].status).toBe('published');
+    expect(body.results[1].status).toBe('published');
+    expect(insertedTables).not.toContain('subscription_usage');
+  });
+
+  it('still refuses a user with no paid period', async () => {
+    periodPresent = false;
+    const { status, body } = await callPost({
+      caption: 'Hello',
+      postType: 'text',
+      targets: [target('111', 'Page One')],
+      media: null,
+    });
+    expect(status).toBe(403);
+    expect(body.error).toBe('SUBSCRIPTION_REQUIRED');
   });
 
   it('continues to the next page when one fails, and maps the restriction', async () => {
