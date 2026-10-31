@@ -24,13 +24,12 @@ import type { SubscriptionPaymentRow, SubscriptionPeriodRow } from './entitlemen
  * Commission lifecycle: pending -> payable once BOTH 10 days
  * have passed from plan start AND no unresolved refund request
  * exists on that payment. Refund integration note: the refunds
- * system (PR #81) is not on main yet, so `refund_requests` may
- * not exist. `hasUnresolvedRefundRequest` treats a missing
- * table (42P01) as "no requests" — a documented compatibility
- * bridge, not a silent fallback: with no refund system there
- * can be no refund requests, and once the refunds migration
- * lands the check goes live with no code change. The refunds
- * PR must call `applyRefundOutcomeToCommission` on approval
+ * system (PR #81, merged) owns `refund_requests`.
+ * `hasUnresolvedRefundRequest` treats a missing table (42P01)
+ * as "no requests" — a dormant safety net, not a silent
+ * fallback: with no refund system there can be no refund
+ * requests. The refunds approval path must call
+ * `applyRefundOutcomeToCommission` on approval
  * (cancel/reduce) — flagged as a follow-up in the PR report.
  */
 
@@ -411,8 +410,9 @@ export async function recordCommissionForPayment(
  * True when an unresolved refund request exists on a payment.
  * Unresolved = status 'requested' (the refunds system's pending
  * state; approved/sent/rejected are terminal for this purpose).
- * Missing table (42P01 — refunds PR unmerged) means no requests
- * can exist, so it returns false. Any other error fails loud.
+ * Missing table (42P01 — dormant safety net for a database
+ * without the refunds migration) means no requests can exist,
+ * so it returns false. Any other error fails loud.
  */
 export async function hasUnresolvedRefundRequest(
   client: SupabaseClient,
