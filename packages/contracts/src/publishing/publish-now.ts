@@ -29,21 +29,34 @@ export type PublishNowTarget = z.infer<typeof PublishNowTargetSchema>;
  * (see the temp-media route); the server validates that its key
  * sits under the caller's own temp prefix and that its URL is the
  * R2 public URL for that key.
+ * `post-owned` media is a file under the caller's own post-owned
+ * prefixes (post-staging device uploads, or a library file copied
+ * to post-media at pick time) — the Facebook Publish Now route
+ * serves it; the Instagram/Threads routes reject it explicitly, so
+ * extending this shared schema changes no behaviour there (the
+ * value previously failed enum validation with 400, and still
+ * fails with 400, only with a clearer message).
  */
 export const PublishNowMediaSchema = z
   .object({
-    source: z.enum(['library', 'temp']),
+    source: z.enum(['library', 'temp', 'post-owned']),
     // Validation fix (2026-10-29, bare INVALID_REQUEST): these fields
     // are .nullish(), not just .nullable() — a client may legitimately
     // omit a field it has no value for (JSON.stringify drops
     // undefined), and an absent field must be treated as null, not
     // as a validation failure. The superRefine below still enforces
     // the source-specific requirement (library needs mediaId, temp
-    // needs tempKey), so nothing safety-critical is loosened.
+    // needs tempKey, post-owned needs postOwnedKey), so nothing
+    // safety-critical is loosened.
     mediaId: z.string().uuid().nullish(),
     // Audit N7: bounded — a temp key is temp/<user>/<uuid>/<name>,
     // far under 512; the route also checks prefix + URL equality.
     tempKey: z.string().min(1).max(512).nullish(),
+    // Post-owned key: users/<user>/post-media/<uuid>/<name> or
+    // users/<user>/post-staging/<uuid>/<name>; the route checks
+    // the caller's own prefix, key existence, and recomputes the
+    // URL server-side — the client URL is never trusted for it.
+    postOwnedKey: z.string().min(1).max(512).nullish(),
     url: z.string().url(),
     mediaType: z.enum(['image', 'video']),
     aspectRatio: z.string().nullish(),
@@ -64,6 +77,13 @@ export const PublishNowMediaSchema = z
         code: z.ZodIssueCode.custom,
         message: 'Temporary media requires a temp key',
         path: ['tempKey'],
+      });
+    }
+    if (media.source === 'post-owned' && !media.postOwnedKey) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Post-owned media requires a post-owned key',
+        path: ['postOwnedKey'],
       });
     }
   });
@@ -238,6 +258,32 @@ export type PublishNowTempMediaDeleteRequest = z.infer<
 export const PublishNowTempMediaDeleteResponseSchema = z.object({
   deleted: z.boolean(),
 });
+
+/**
+ * Copy a Media Library file to post-owned storage for a Publish
+ * Now post (media/posting separation). The copy runs server-side
+ * inside the object store; the library row and bytes are never
+ * touched, so deleting the library file afterwards cannot affect
+ * a post composed from the copy. The thumbnail is copied too when
+ * one exists, so the composer's attached preview survives a
+ * library delete as well.
+ */
+export const PublishNowCopyLibraryMediaRequestSchema = z.object({
+  mediaId: z.string().uuid(),
+});
+export type PublishNowCopyLibraryMediaRequest = z.infer<
+  typeof PublishNowCopyLibraryMediaRequestSchema
+>;
+
+export const PublishNowCopyLibraryMediaResponseSchema = z.object({
+  storageKey: z.string().min(1),
+  url: z.string().url(),
+  mediaType: z.enum(['image', 'video']),
+  thumbnailUrl: z.string().url().nullable(),
+});
+export type PublishNowCopyLibraryMediaResponse = z.infer<
+  typeof PublishNowCopyLibraryMediaResponseSchema
+>;
 
 // ==========================================
 // Human-readable validation messages

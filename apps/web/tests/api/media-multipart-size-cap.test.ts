@@ -122,6 +122,40 @@ describe('Multipart 500 MB server-side cap', () => {
     expect(fakeS3.sent).toContain('CreateMultipartUploadCommand');
   });
 
+  it('mints post-staging keys for purpose post-staging and library keys by default', async () => {
+    const staged = await initiatePost(
+      initiateRequest({
+        fileName: 'clip.mp4',
+        fileSize: 20 * 1024 * 1024,
+        mimeType: 'video/mp4',
+        purpose: 'post-staging',
+      }),
+      params
+    );
+    expect(staged.status).toBe(200);
+    const stagedBody = await staged.json();
+    expect(stagedBody.mediaKey).toMatch(
+      new RegExp(`^users/${userId}/post-staging/[^/]+/clip\\.mp4$`)
+    );
+    expect(stagedBody.thumbnailKey).toMatch(
+      new RegExp(`^users/${userId}/post-staging/[^/]+/thumbnail\\.webp$`)
+    );
+
+    const library = await initiatePost(
+      initiateRequest({
+        fileName: 'clip.mp4',
+        fileSize: 20 * 1024 * 1024,
+        mimeType: 'video/mp4',
+      }),
+      params
+    );
+    expect(library.status).toBe(200);
+    const libraryBody = await library.json();
+    expect(libraryBody.mediaKey).toMatch(
+      new RegExp(`^users/${userId}/media/[^/]+/clip\\.mp4$`)
+    );
+  });
+
   it('rejects actual uploaded bytes over 500 MB at complete and aborts instead of assembling', async () => {
     fakeS3.parts = [
       { PartNumber: 1, ETag: 'etag-1', Size: MAX_BYTES },

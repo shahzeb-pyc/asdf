@@ -68,9 +68,20 @@ export async function handleCreateUploadUrl(
   }
 
   const mediaId = randomUUID();
-  const mediaKey = `users/${session.userId}/media/${mediaId}/${sanitizedFileName}`;
+  // Purpose selects the key prefix; 'library' is the historical
+  // default and keeps this route's behaviour exactly. 'post-staging'
+  // mints composer staged keys — bytes that belong to a post, never
+  // to the library (the confirm route only accepts the library
+  // prefix, so a staging key can never be confirmed into it).
+  const mediaKey =
+    body.purpose === 'post-staging'
+      ? `users/${session.userId}/post-staging/${mediaId}/${sanitizedFileName}`
+      : `users/${session.userId}/media/${mediaId}/${sanitizedFileName}`;
   const thumbnailExt = body.thumbnailMimeType === 'image/jpeg' ? 'jpeg' : 'webp';
-  const thumbnailKey = `users/${session.userId}/thumbnails/${mediaId}.${thumbnailExt}`;
+  const thumbnailKey =
+    body.purpose === 'post-staging'
+      ? `users/${session.userId}/post-staging/${mediaId}/thumbnail.${thumbnailExt}`
+      : `users/${session.userId}/thumbnails/${mediaId}.${thumbnailExt}`;
 
   // 6. Generate presigned PUT URLs via storage service
   const storage = storageService ?? getStorageService();

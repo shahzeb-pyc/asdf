@@ -83,6 +83,25 @@ export type DestinationEnqueueKind = z.infer<
 const emptyToNull = (v: string | null | undefined): string | null =>
   typeof v === 'string' && v.trim().length === 0 ? null : (v ?? null);
 
+/**
+ * Composer staged media: one device upload made inside the Create
+ * Posts composer, sitting under the user's post-staging prefix. It is
+ * NOT a library item — there is no row, no id, and nothing to link.
+ * The route validates the key prefix (user-owned staging only) and
+ * recomputes the public URL; the client-supplied URL is never used.
+ * Facts the route needs for format eligibility (reel length, story
+ * size caps) ride along because there is no library row to read them
+ * from; unknown facts pass, exactly as null library facts do.
+ */
+export const StagedPostMediaSchema = z.object({
+  storageKey: z.string().min(1).max(1024),
+  mediaType: z.enum(['image', 'video']),
+  fileSize: z.number().int().positive().nullable().optional(),
+  durationSeconds: z.number().positive().nullable().optional(),
+  aspectRatio: z.string().max(50).nullable().optional(),
+});
+export type StagedPostMedia = z.infer<typeof StagedPostMediaSchema>;
+
 const destinationEnqueueBaseFields = {
   destinationId: z.string().uuid(),
   kind: DestinationEnqueueKindSchema,
@@ -102,8 +121,24 @@ const destinationEnqueueBaseFields = {
    * primary media (`media_item_id` + its denormalised url/key), which
    * is the first entry; carousel posts carry their full item list in
    * `platformOptions.carouselItems` per the platform schemas.
+   *
+   * Media/posting separation: a Facebook post queued from the Create
+   * Posts composer no longer stores a library link — the route copies
+   * library bytes to a post-owned key (or adopts a composer staged
+   * key) and stores media_item_id NULL. `mediaItemIds` stays for the
+   * non-Facebook variants, whose composers are out of that scope.
    */
   mediaItemIds: z.array(z.string().uuid()).max(10).default([]),
+  /**
+   * Composer staged media (Create Posts device uploads only): bytes
+   * already sitting under the user's post-staging prefix, never a
+   * library row. The route adopts the key as the post's own media
+   * (recomputing the public URL server-side, never trusting the
+   * client's) and stores media_item_id NULL. Mutually exclusive
+   * with `mediaItemIds`; Facebook only (the route rejects it for
+   * every other platform).
+   */
+  stagedMedia: StagedPostMediaSchema.optional(),
   linkUrl: z.string().url().nullable().optional(),
   intent: DestinationEnqueueIntentSchema,
   /** Required iff intent is 'scheduled'; rejected for the other intents. */
@@ -204,13 +239,26 @@ export const DestinationEnqueueRequestSchema = z
     }
 
     // --- Media / kind shape -------------------------------------------
-    const hasMedia = val.mediaItemIds.length > 0;
+    // A post carries exactly one media source: library ids OR one
+    // staged upload, never both. Staged media counts as media for
+    // every shape check below.
+    const hasLibraryMedia = val.mediaItemIds.length > 0;
+    const hasStagedMedia = val.stagedMedia !== undefined;
+    const hasMedia = hasLibraryMedia || hasStagedMedia;
+    if (hasLibraryMedia && hasStagedMedia) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'stagedMedia and mediaItemIds are mutually exclusive; a post carries one media source',
+        path: ['stagedMedia'],
+      });
+    }
     if (val.kind === 'text') {
       if (hasMedia) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: 'Text posts cannot include media; use the matching media kind',
-          path: ['mediaItemIds'],
+          path: [hasStagedMedia ? 'stagedMedia' : 'mediaItemIds'],
         });
       }
       if (!val.caption || val.caption.trim().length === 0) {
@@ -225,6 +273,20 @@ export const DestinationEnqueueRequestSchema = z
         code: z.ZodIssueCode.custom,
         message: 'mediaItemIds is required for media posts',
         path: ['mediaItemIds'],
+      });
+    }
+    // Staged media must match the post kind, exactly like library
+    // media does in the route's own kind check.
+    if (
+      hasStagedMedia &&
+      (val.kind === 'image' || val.kind === 'video') &&
+      val.stagedMedia !== undefined &&
+      val.stagedMedia.mediaType !== val.kind
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `The staged media is a ${val.stagedMedia.mediaType}, which does not match a ${val.kind} post.`,
+        path: ['stagedMedia'],
       });
     }
 

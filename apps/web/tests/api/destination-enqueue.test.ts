@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { signSessionToken, type DatabaseClient } from '@fbuploadpro/contracts';
 import { handleDestinationEnqueue } from '@/app/api/tenant/[subdomain]/publishing/destination-queue/route';
+import { MockStorageProvider } from '../helpers/mock-storage';
 
 const TEST_SECRET = ['destination', 'enqueue', 'test', 'secret', 'value'].join('-');
 
@@ -137,6 +138,7 @@ class FakeDb {
 let db: FakeDb;
 let dbClient: DatabaseClient;
 let sessionCookie: string;
+let storage: MockStorageProvider;
 
 function seed() {
   db.destinations.set(igDestinationId, {
@@ -202,7 +204,29 @@ function seed() {
   });
 }
 
-async function enqueue(body: unknown, cookie: string | null = sessionCookie) {
+async function enqueue(
+  body: unknown,
+  cookie: string | null = sessionCookie,
+  storageOverride?: MockStorageProvider
+) {
+  const store = storageOverride ?? storage;
+  if (!storageOverride) {
+    // Media/posting separation: the queue-time copy needs the
+    // library bytes present in storage. Seed every byte the FakeDb
+    // knows about (including rows seeded inside a test, like the
+    // K6 media) so existing tests keep passing with the copy in
+    // place. Tests that need a missing source pass their own empty
+    // storage instance instead.
+    for (const m of db.media.values()) {
+      if (m.storage_key && !store.uploadedObjects.has(m.storage_key)) {
+        await store.putObject({
+          key: m.storage_key,
+          body: new Uint8Array([1]),
+          contentType: 'application/octet-stream',
+        });
+      }
+    }
+  }
   const req = new NextRequest(
     'http://localhost:3000/api/tenant/acme/publishing/destination-queue',
     {
@@ -214,7 +238,7 @@ async function enqueue(body: unknown, cookie: string | null = sessionCookie) {
       body: JSON.stringify(body),
     }
   );
-  return handleDestinationEnqueue(req, subdomain, dbClient);
+  return handleDestinationEnqueue(req, subdomain, dbClient, store);
 }
 
 beforeEach(async () => {
@@ -223,6 +247,7 @@ beforeEach(async () => {
   db = new FakeDb();
   seed();
   dbClient = db as unknown as DatabaseClient;
+  storage = new MockStorageProvider();
   const token = await signSessionToken(
     {
       userId,
@@ -790,5 +815,224 @@ describe('destination enqueue — facebook format gates (K6, K7)', () => {
     });
     expect(res.status).toBe(201);
     expect(db.queueItems).toHaveLength(1);
+  });
+});
+
+describe('destination enqueue — media/posting separation', () => {
+  const fbDestinationId = 'cccccccc-cccc-4ccc-cccc-cccccccccccc';
+  const stagedKey = `users/${userId}/post-staging/aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa/clip.mp4`;
+
+  function seedFacebook() {
+    db.destinations.set(fbDestinationId, {
+      id: fbDestinationId,
+      workspace_id: workspaceId,
+      platform: 'facebook',
+      timezone: 'UTC',
+      status: 'active',
+      account_id: 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      account_status: 'active',
+      account_token_expires_at: '2999-01-01T00:00:00.000Z',
+    });
+  }
+
+  it('a library import queues a post-owned copy and drops the library link', async () => {
+    seedFacebook();
+    const res = await enqueue({
+      platform: 'facebook',
+      destinationId: fbDestinationId,
+      kind: 'image',
+      caption: 'From the library',
+      mediaItemIds: [imageMediaId],
+      intent: 'queue',
+    });
+    expect(res.status).toBe(201);
+    expect(db.queueItems).toHaveLength(1);
+    const row = db.queueItems[0];
+    // The invariant: no library link, post-owned key + URL only.
+    expect(row.media_item_id).toBeNull();
+    expect(row.media_storage_key).toMatch(
+      new RegExp(`^users/${userId}/post-media/[^/]+/photo\\.jpg$`)
+    );
+    expect(row.media_url).toBe(
+      storage.getPublicUrl(row.media_storage_key as string)
+    );
+    // The copy exists in storage next to the untouched library bytes.
+    expect(storage.uploadedObjects.has(row.media_storage_key as string)).toBe(true);
+    expect(storage.uploadedObjects.has('media/photo.jpg')).toBe(true);
+  });
+
+  it('deleting the library file after queueing leaves the queued post intact', async () => {
+    seedFacebook();
+    const res = await enqueue({
+      platform: 'facebook',
+      destinationId: fbDestinationId,
+      kind: 'image',
+      caption: 'From the library',
+      mediaItemIds: [imageMediaId],
+      intent: 'queue',
+    });
+    expect(res.status).toBe(201);
+    const row = db.queueItems[0];
+    // Simulate the library delete: bytes + row gone.
+    await storage.deleteObject('media/photo.jpg');
+    db.media.delete(imageMediaId);
+    // The queued post still resolves to live bytes — it is
+    // publishable, not collateral of the library delete.
+    expect(row.media_item_id).toBeNull();
+    expect(storage.uploadedObjects.has(row.media_storage_key as string)).toBe(true);
+    expect(row.media_url).toBe(
+      storage.getPublicUrl(row.media_storage_key as string)
+    );
+  });
+
+  it('a failed library copy fails loud with no row written', async () => {
+    seedFacebook();
+    // Empty storage: the library bytes are absent, so the copy
+    // cannot run. The enqueue must fail, not queue a dead link.
+    const emptyStorage = new MockStorageProvider();
+    const res = await enqueue(
+      {
+        platform: 'facebook',
+        destinationId: fbDestinationId,
+        kind: 'image',
+        caption: 'From the library',
+        mediaItemIds: [imageMediaId],
+        intent: 'queue',
+      },
+      sessionCookie,
+      emptyStorage
+    );
+    expect(res.status).toBe(500);
+    const payload = (await res.json()) as { error: string };
+    expect(payload.error).toBe('MEDIA_COPY_FAILED');
+    expect(db.queueItems).toHaveLength(0);
+  });
+
+  it('a composer staged upload is adopted as-is, never copied, never linked', async () => {
+    seedFacebook();
+    await storage.putObject({
+      key: stagedKey,
+      body: new Uint8Array([1]),
+      contentType: 'video/mp4',
+    });
+    const res = await enqueue({
+      platform: 'facebook',
+      destinationId: fbDestinationId,
+      kind: 'video',
+      platformFormat: 'reel',
+      caption: 'From my device',
+      mediaItemIds: [],
+      stagedMedia: {
+        storageKey: stagedKey,
+        mediaType: 'video',
+        durationSeconds: 45,
+        aspectRatio: '9:16',
+      },
+      intent: 'queue',
+    });
+    expect(res.status).toBe(201);
+    expect(db.queueItems).toHaveLength(1);
+    const row = db.queueItems[0];
+    expect(row.media_item_id).toBeNull();
+    expect(row.media_storage_key).toBe(stagedKey);
+    expect(row.media_url).toBe(storage.getPublicUrl(stagedKey));
+    // No post-media copy was made for an already post-owned key.
+    const postMediaKeys = [...storage.uploadedObjects.keys()].filter((k) =>
+      k.includes('/post-media/')
+    );
+    expect(postMediaKeys).toHaveLength(0);
+  });
+
+  it('staged media with a library key is rejected', async () => {
+    seedFacebook();
+    const res = await enqueue({
+      platform: 'facebook',
+      destinationId: fbDestinationId,
+      kind: 'image',
+      caption: 'Forged staged key',
+      mediaItemIds: [],
+      stagedMedia: { storageKey: 'media/photo.jpg', mediaType: 'image' },
+      intent: 'queue',
+    });
+    expect(res.status).toBe(400);
+    const payload = (await res.json()) as { error: string };
+    expect(payload.error).toBe('INVALID_STAGED_MEDIA');
+    expect(db.queueItems).toHaveLength(0);
+  });
+
+  it("staged media under another user's prefix is rejected", async () => {
+    seedFacebook();
+    const res = await enqueue({
+      platform: 'facebook',
+      destinationId: fbDestinationId,
+      kind: 'image',
+      caption: 'Not mine',
+      mediaItemIds: [],
+      stagedMedia: {
+        storageKey: `users/${otherUserId}/post-staging/aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa/photo.jpg`,
+        mediaType: 'image',
+      },
+      intent: 'queue',
+    });
+    expect(res.status).toBe(400);
+    const payload = (await res.json()) as { error: string };
+    expect(payload.error).toBe('INVALID_STAGED_MEDIA');
+    expect(db.queueItems).toHaveLength(0);
+  });
+
+  it('staged media for a non-Facebook destination is rejected', async () => {
+    const res = await enqueue({
+      platform: 'instagram',
+      destinationId: igDestinationId,
+      kind: 'image',
+      caption: 'Staged to IG',
+      mediaItemIds: [],
+      stagedMedia: { storageKey: stagedKey, mediaType: 'image' },
+      intent: 'queue',
+    });
+    expect(res.status).toBe(400);
+    const payload = (await res.json()) as { error: string };
+    expect(payload.error).toBe('STAGED_MEDIA_FACEBOOK_ONLY');
+    expect(db.queueItems).toHaveLength(0);
+  });
+
+  it('staged media whose bytes are gone is rejected, not queued dead', async () => {
+    seedFacebook();
+    const res = await enqueue({
+      platform: 'facebook',
+      destinationId: fbDestinationId,
+      kind: 'video',
+      platformFormat: 'reel',
+      caption: 'Swept draft',
+      mediaItemIds: [],
+      stagedMedia: {
+        storageKey: stagedKey,
+        mediaType: 'video',
+        durationSeconds: 45,
+        aspectRatio: '9:16',
+      },
+      intent: 'queue',
+    });
+    expect(res.status).toBe(400);
+    const payload = (await res.json()) as { error: string };
+    expect(payload.error).toBe('STAGED_MEDIA_NOT_FOUND');
+    expect(db.queueItems).toHaveLength(0);
+  });
+
+  it('a non-Facebook destination keeps the historical library-linked row', async () => {
+    const res = await enqueue({
+      platform: 'instagram',
+      destinationId: igDestinationId,
+      kind: 'image',
+      caption: 'IG still linked',
+      mediaItemIds: [imageMediaId],
+      intent: 'now',
+    });
+    expect(res.status).toBe(201);
+    expect(db.queueItems).toHaveLength(1);
+    const row = db.queueItems[0];
+    expect(row.media_item_id).toBe(imageMediaId);
+    expect(row.media_storage_key).toBe('media/photo.jpg');
+    expect(row.media_url).toBe('https://cdn.example.com/photo.jpg');
   });
 });

@@ -28,8 +28,12 @@ import {
   LARGE_JSON_BODY_LIMIT_BYTES,
   readJsonBody,
 } from '@/lib/request-body';
-import { getR2Config } from '@/lib/storage';
+import { getR2Config, getStorageService } from '@/lib/storage';
 import { logServerError, trackServerEvent } from '@/lib/server-analytics';
+import {
+  deletePostOwnedBytesBestEffort,
+  isPostOwnedStorageKey,
+} from '@/lib/publishing/post-owned-media';
 import {
   assertCanPost,
   registerUsage,
@@ -712,25 +716,61 @@ export async function POST(
     );
   }
 
-  // Resolve the media URL server-side. Library media: the stored row
-  // (ownership = session user) is the source of truth — the client's
-  // URL is never trusted. Temp media: the URL must be the R2 public
-  // URL for a key under the caller's own temp prefix.
+  // Resolve the media URL server-side — never from the client.
+  // Post-owned media (media/posting separation): the key must sit
+  // under the caller's own post-owned prefixes (post-staging
+  // device uploads, or a library file copied to post-media at pick
+  // time), the bytes must still exist, and the URL is recomputed
+  // server-side. This route never reads a library row: a library
+  // file deleted after picking cannot affect a post composed from
+  // its post-owned copy. Temp media (the direct device upload) is
+  // unchanged: the URL must be the R2 public URL for a key under
+  // the caller's own temp prefix.
   let mediaUrl: string | null = null;
-  if (media?.source === 'library' && media.mediaId) {
-    const { data, error } = await supabase
-      .from('media_items')
-      .select('id, media_type, url')
-      .eq('id', media.mediaId)
-      .eq('user_id', session.userId)
-      .maybeSingle();
-    if (error || !data || typeof data.url !== 'string' || !data.url) {
+  let postOwnedKey: string | null = null;
+  if (media?.source === 'library') {
+    // The composer copies library picks to post-owned storage at
+    // pick time; a bare library reference reaching here is stale
+    // (e.g. an old client) and must fail loud, never publish
+    // library bytes directly.
+    return NextResponse.json(
+      {
+        error: 'INVALID_REQUEST',
+        message: 'This media was picked from the Media Library before the separation change. Please pick it again.',
+      },
+      { status: 400 }
+    );
+  } else if (media?.source === 'post-owned' && media.postOwnedKey) {
+    if (
+      !isPostOwnedStorageKey(session.userId, media.postOwnedKey) ||
+      media.postOwnedKey.includes('..')
+    ) {
       return NextResponse.json(
-        { error: 'INVALID_REQUEST', message: 'The selected library media was not found.' },
+        { error: 'INVALID_REQUEST', message: 'The attached media could not be verified. Please re-attach it.' },
         { status: 400 }
       );
     }
-    mediaUrl = data.url;
+    // The bytes must still exist: a post-owned key abandoned past
+    // its retention window is swept, so a stale draft must fail
+    // loudly here ("upload it again") instead of publishing a
+    // dead key.
+    const storage = getStorageService();
+    const found = await storage.listObjects({
+      prefix: media.postOwnedKey,
+      maxKeys: 1,
+    });
+    if (!found.some((entry) => entry.key === media.postOwnedKey)) {
+      return NextResponse.json(
+        {
+          error: 'INVALID_REQUEST',
+          message:
+            'This upload is no longer available — it may have been cleaned up. Please upload it again.',
+        },
+        { status: 400 }
+      );
+    }
+    postOwnedKey = media.postOwnedKey;
+    mediaUrl = storage.getPublicUrl(media.postOwnedKey);
   } else if (media?.source === 'temp' && media.tempKey) {
     const config = getR2Config();
     // Strip trailing slashes without a regex: the R2 public URL is
@@ -1125,6 +1165,21 @@ export async function POST(
       page_count: results.length,
       published_count: publishedCount,
     });
+  }
+
+  // Post-owned retention: a fully successful run no longer needs
+  // its bytes — Facebook holds the posts — so they are removed
+  // best-effort (never failing the response). Any failed page
+  // keeps the bytes: "Retry failed only" reuses the same key, and
+  // the composer deletes it when the run ends (Done / close /
+  // Start over). A failed run therefore never loses its media
+  // to this cleanup.
+  if (postOwnedKey && results.length > 0 && publishedCount === results.length) {
+    await deletePostOwnedBytesBestEffort(
+      getStorageService(),
+      session.userId,
+      postOwnedKey
+    );
   }
 
   return NextResponse.json(responseBody);

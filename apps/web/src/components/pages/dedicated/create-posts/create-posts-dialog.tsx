@@ -762,6 +762,11 @@ export function CreatePostsDialog({
               platformFormat: item.platformFormat,
               caption: item.caption,
               mediaItemIds: item.mediaItemIds,
+              // Staged media (device uploads from the composer):
+              // post-owned bytes, adopted by the route — never a
+              // library link. Undefined for library blocks, so the
+              // request shape for them is unchanged.
+              stagedMedia: item.stagedMedia ?? undefined,
               intent: 'queue',
             },
             {
@@ -1110,6 +1115,7 @@ export function CreatePostsDialog({
         subdomain={subdomain}
         pageName={page.pageName}
         mode={pickerMode}
+        deviceUploads="staged"
         onSingleAttach={handleSingleAttach}
         onMultiAttach={handleMultiAttach}
         sessionKey={pickerSession}
