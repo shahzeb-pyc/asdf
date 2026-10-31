@@ -55,6 +55,7 @@ export const IdempotencyKeySchema = z.string().uuid();
 export const IdempotencyActionSchema = z.enum([
   'destination-queue',
   'publish-now',
+  'instagram-publish-now',
   'destination-publish-now',
   'destination-retry',
 ]);
