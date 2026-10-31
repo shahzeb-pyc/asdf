@@ -398,7 +398,7 @@
       },
       "/tenant/[subdomain]/prompts": {
         "firstLoadGzipBytes": 177217,
-        "firstLoadRawBytes": 596576,
+        "firstLoadRawBytes": 627491,
         "routeSpecificGzipBytes": 44184,
         "routeSpecificRawBytes": 149147
       },
