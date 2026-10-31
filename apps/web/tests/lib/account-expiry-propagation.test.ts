@@ -292,6 +292,9 @@ describe('propagateRevokedAccount (legacy SQL path)', () => {
     expect(items.find((r) => r.id === 'q-on-other')?.status).toBe('queued');
     expect(seen.join('\n')).toContain("status = 'error'");
     expect(seen.join('\n')).toContain("status = 'cancelled'");
+    // Pin the active-only predicate in the SQL text itself, not just
+    // in the mock's simulated behaviour.
+    expect(seen.join('\n')).toContain("status = 'active'");
     // Re-running is a no-op: nothing is active anymore.
     expect(await propagateRevokedAccount(legacy as never, ACCOUNT_ID)).toEqual({
       destinationsFlipped: 0,

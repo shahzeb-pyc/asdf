@@ -469,6 +469,7 @@ async function propagateRevocationSideEffects(
         await (client as DatabaseClient).query(
           `UPDATE social_accounts
            SET encrypted_access_token = NULL, encrypted_refresh_token = NULL, updated_at = now()
+           encrypted_refresh_token = NULL,
            WHERE id = $1`,
           [accountId]
         );
@@ -484,6 +485,7 @@ async function propagateRevocationSideEffects(
         if (error) throw new Error(error.message);
       }
     } catch (err) {
+      propagationFailed++;
       console.error(
         '[connect] Failed to null revoked account tokens:',
         accountId,

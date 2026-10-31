@@ -263,6 +263,28 @@ describe('Persistence edge cases (legacy client)', () => {
     expect(joined).toContain('UPDATE queue_items');
     expect(joined).toContain("status = 'cancelled'");
     expect(joined).toContain('encrypted_access_token');
+    // Verification send-back: the legacy path must null BOTH tokens,
+    // like the Supabase branch — a surviving refresh token is a hole.
+    expect(joined).toContain('encrypted_refresh_token');
+  });
+
+  it('counts a token-null failure instead of reporting full success (P0-2)', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const client = makeLegacyClient((sql) => {
+        if (sql.includes("SET status = 'revoked'")) return [{ id: 'acct-1' }];
+        if (sql.includes('UPDATE destinations')) return [{ id: 'd-1' }];
+        if (sql.includes('UPDATE queue_items')) return [{ id: 'q-1' }];
+        if (sql.includes('encrypted_access_token')) {
+          throw new Error('token table down');
+        }
+        return [];
+      });
+      const result = await markSocialAccountRevoked(client, 'facebook', 'ext-1');
+      expect(result).toEqual({ updated: 1, propagationFailed: 1 });
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   it('propagates a revocation on the Supabase path, including token nulling (P0-2)', async () => {
