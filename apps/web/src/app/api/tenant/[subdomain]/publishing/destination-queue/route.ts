@@ -606,6 +606,23 @@ export async function handleDestinationEnqueue(
     }
   }
 
+  // Best-effort removal of this attempt's copy: a copy with no row
+  // behind it is orphaned bytes (the sweep only covers post-staging,
+  // never post-media). Used on every failure path after the copy —
+  // concurrent-loser 409, claim-store 500, failed insert — never on
+  // success, where the row references the copy. A failed cleanup is
+  // logged, never fatal. The loser's key is its own fresh UUID, so
+  // deleting it can never touch the winner's row.
+  const cleanupCopiedKey = async () => {
+    if (copiedKey && resolvedStorage) {
+      try {
+        await resolvedStorage.deleteObject(copiedKey);
+      } catch (err) {
+        console.error(`Failed to clean up post-owned copy ${copiedKey}:`, err);
+      }
+    }
+  };
+
   // Atomic claim, AFTER every validation and BEFORE the insert:
   // a concurrent same-key request must see this claim and stop,
   // and a failed validation above must never hold a claim (a fixed
@@ -614,6 +631,7 @@ export async function handleDestinationEnqueue(
     try {
       const claim = await claimIdempotencyResult(client, idempotencyScope);
       if (claim === 'already-processing') {
+        await cleanupCopiedKey();
         return NextResponse.json(
           {
             error: 'IDEMPOTENCY_IN_PROGRESS',
@@ -624,6 +642,7 @@ export async function handleDestinationEnqueue(
         );
       }
     } catch {
+      await cleanupCopiedKey();
       return NextResponse.json(
         {
           error: 'IDEMPOTENCY_STORE_UNAVAILABLE',
@@ -659,13 +678,7 @@ export async function handleDestinationEnqueue(
     // wait out the 5-minute sentinel. A copy made for this attempt
     // is removed best-effort, so a failed queue never orphans
     // post-owned bytes; a failed cleanup is logged, never fatal.
-    if (copiedKey && resolvedStorage) {
-      try {
-        await resolvedStorage.deleteObject(copiedKey);
-      } catch (err) {
-        console.error(`Failed to clean up post-owned copy ${copiedKey}:`, err);
-      }
-    }
+    await cleanupCopiedKey();
     if (idempotencyScope) {
       await releaseIdempotencyClaim(client, idempotencyScope);
     }

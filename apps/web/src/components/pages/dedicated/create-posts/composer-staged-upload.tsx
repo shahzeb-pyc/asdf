@@ -201,8 +201,10 @@ async function captureVideoThumbnail(
         video.onseeked = () => resolve();
         setTimeout(resolve, 1000);
       });
-    } catch {
-      // First frame is fine when seeking fails.
+    } catch (error) {
+      // Seeking is best-effort — the first frame is used when it
+      // fails — but the failure is surfaced, never swallowed.
+      console.warn('Video seek failed; using the first frame instead.', error);
     }
     const frame = await captureVideoFrameAsWebp(video);
     URL.revokeObjectURL(objectUrl);
@@ -587,10 +589,21 @@ export function ComposerStagedUpload({
                 </span>
                 {f.status === 'uploading' && (
                   <span className="mt-1 block h-1 w-full overflow-hidden rounded-full bg-line">
-                    <span
-                      className="block h-full bg-link"
-                      style={{ width: `${f.progressPercent}%` }}
-                    />
+                    {/* Width is a runtime percentage, so it cannot
+                    be a static token class — but it also cannot be
+                    an inline style (spec 129 ratchet). An SVG rect
+                    carries the percentage as a width attribute,
+                    which is neither. */}
+                    <svg
+                      className="block h-full w-full text-link"
+                      aria-hidden="true"
+                    >
+                      <rect
+                        height="100%"
+                        width={`${f.progressPercent}%`}
+                        fill="currentColor"
+                      />
+                    </svg>
                   </span>
                 )}
                 {f.status === 'error' && f.error && (

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
-import { signSessionToken, type DatabaseClient } from '@fbuploadpro/contracts';
+import { signSessionToken, IDEMPOTENCY_KEY_HEADER, type DatabaseClient } from '@fbuploadpro/contracts';
 import { handleDestinationEnqueue } from '@/app/api/tenant/[subdomain]/publishing/destination-queue/route';
 import { MockStorageProvider } from '../helpers/mock-storage';
 
@@ -78,8 +78,116 @@ class FakeDb {
   slots: SlotRow[] = [];
   queueItems: QueueItemRow[] = [];
   private seq = 0;
+  idempotencyKeys: Array<{
+    workspace_id: string;
+    user_id: string;
+    action: string;
+    idempotency_key: string;
+    response_status: number;
+    response_body: unknown;
+    expires_at: string;
+  }> = [];
 
   query = vi.fn(async (sql: string, params: unknown[] = []) => {
+    // Minimal idempotency store, modelling the real table's
+    // semantics (claim = insert-if-absent returning a row;
+    // complete = sentinel-only update; lookup = unexpired row).
+    // DELETE must be checked before the SELECT branch: "DELETE
+    // FROM idempotency_keys" contains "FROM idempotency_keys".
+    if (sql.includes('DELETE FROM idempotency_keys')) {
+      const now = new Date().toISOString();
+      if (params.length >= 5) {
+        // Release: workspace, user, action, key, status.
+        this.idempotencyKeys = this.idempotencyKeys.filter(
+          (r) =>
+            !(
+              r.workspace_id === params[0] &&
+              r.user_id === params[1] &&
+              r.action === params[2] &&
+              r.idempotency_key === params[3] &&
+              r.response_status === params[4]
+            )
+        );
+      } else {
+        // Prune: workspace, user, expired rows only.
+        this.idempotencyKeys = this.idempotencyKeys.filter(
+          (r) =>
+            !(
+              r.workspace_id === params[0] &&
+              r.user_id === params[1] &&
+              r.expires_at < now
+            )
+        );
+      }
+      return [];
+    }
+    if (sql.includes('FROM idempotency_keys')) {
+      const now = new Date().toISOString();
+      const row = this.idempotencyKeys.find(
+        (r) =>
+          r.workspace_id === params[0] &&
+          r.user_id === params[1] &&
+          r.action === params[2] &&
+          r.idempotency_key === params[3] &&
+          r.expires_at > now
+      );
+      return row
+        ? [{ response_status: row.response_status, response_body: row.response_body }]
+        : [];
+    }
+    if (sql.includes('INSERT INTO idempotency_keys')) {
+      const tuple = [params[0], params[1], params[2], params[3]].map(String);
+      const exists = this.idempotencyKeys.some(
+        (r) =>
+          r.workspace_id === tuple[0] &&
+          r.user_id === tuple[1] &&
+          r.action === tuple[2] &&
+          r.idempotency_key === tuple[3]
+      );
+      if (sql.includes('RETURNING')) {
+        // Claim: only an absent key yields a row.
+        if (exists) return [];
+        this.idempotencyKeys.push({
+          workspace_id: tuple[0],
+          user_id: tuple[1],
+          action: tuple[2],
+          idempotency_key: tuple[3],
+          response_status: Number(params[4]),
+          response_body: JSON.parse(String(params[5])) as unknown,
+          expires_at: String(params[6]),
+        });
+        return [{ id: 'claim-row' }];
+      }
+      // Store (heal path): DO NOTHING on conflict.
+      if (!exists) {
+        this.idempotencyKeys.push({
+          workspace_id: tuple[0],
+          user_id: tuple[1],
+          action: tuple[2],
+          idempotency_key: tuple[3],
+          response_status: Number(params[4]),
+          response_body: JSON.parse(String(params[5])) as unknown,
+          expires_at: String(params[6]),
+        });
+      }
+      return [];
+    }
+    if (sql.includes('UPDATE idempotency_keys')) {
+      // Complete: only a sentinel row (status 102) may complete.
+      const row = this.idempotencyKeys.find(
+        (r) =>
+          r.workspace_id === params[3] &&
+          r.user_id === params[4] &&
+          r.action === params[5] &&
+          r.idempotency_key === params[6] &&
+          r.response_status === 102
+      );
+      if (!row) return [];
+      row.response_status = Number(params[0]);
+      row.response_body = JSON.parse(String(params[1])) as unknown;
+      row.expires_at = String(params[2]);
+      return [{ id: 'completed-row' }];
+    }
     if (sql.includes('FROM workspaces')) {
       return params[0] === subdomain ? [{ id: workspaceId }] : [];
     }
@@ -207,7 +315,8 @@ function seed() {
 async function enqueue(
   body: unknown,
   cookie: string | null = sessionCookie,
-  storageOverride?: MockStorageProvider
+  storageOverride?: MockStorageProvider,
+  idempotencyKey?: string
 ) {
   const store = storageOverride ?? storage;
   if (!storageOverride) {
@@ -234,6 +343,7 @@ async function enqueue(
       headers: {
         'content-type': 'application/json',
         ...(cookie ? { cookie } : {}),
+        ...(idempotencyKey ? { [IDEMPOTENCY_KEY_HEADER]: idempotencyKey } : {}),
       },
       body: JSON.stringify(body),
     }
@@ -1034,5 +1144,83 @@ describe('destination enqueue — media/posting separation', () => {
     expect(row.media_item_id).toBe(imageMediaId);
     expect(row.media_storage_key).toBe('media/photo.jpg');
     expect(row.media_url).toBe('https://cdn.example.com/photo.jpg');
+  });
+
+  it('a same-key queue retry replays without a second copy (nit 3)', async () => {
+    seedFacebook();
+    const key = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaa1';
+    const body = {
+      platform: 'facebook',
+      destinationId: fbDestinationId,
+      kind: 'image',
+      caption: 'From the library',
+      mediaItemIds: [imageMediaId],
+      intent: 'queue',
+    };
+    const first = await enqueue(body, undefined, undefined, key);
+    expect(first.status).toBe(201);
+    const firstJson = (await first.json()) as { id: string };
+    const postMediaKeys = () =>
+      [...storage.uploadedObjects.keys()].filter((k) =>
+        k.startsWith(`users/${userId}/post-media/`)
+      );
+    expect(postMediaKeys()).toHaveLength(1);
+    expect(db.queueItems).toHaveLength(1);
+
+    // The retry replays the ORIGINAL result: same id, replay
+    // header, no second row, and — the assertion this test adds —
+    // no second copy. The replay returns before the copy step, so
+    // a response-lost retry can never double the post's bytes.
+    const retry = await enqueue(body, undefined, undefined, key);
+    expect(retry.status).toBe(201);
+    expect(retry.headers.get('Idempotency-Replayed')).toBe('true');
+    const retryJson = (await retry.json()) as { id: string };
+    expect(retryJson.id).toBe(firstJson.id);
+    expect(db.queueItems).toHaveLength(1);
+    expect(postMediaKeys()).toHaveLength(1);
+  });
+
+  it('a concurrent-loser 409 removes its orphaned copy (nit 1)', async () => {
+    seedFacebook();
+    const key = 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbb2';
+    // Another request with this key is already processing: its
+    // sentinel row makes this attempt's claim lose AFTER its copy.
+    db.idempotencyKeys.push({
+      workspace_id: workspaceId,
+      user_id: userId,
+      action: 'destination-queue',
+      idempotency_key: key,
+      response_status: 102,
+      response_body: { processing: true },
+      expires_at: new Date(Date.now() + 300_000).toISOString(),
+    });
+    const res = await enqueue(
+      {
+        platform: 'facebook',
+        destinationId: fbDestinationId,
+        kind: 'image',
+        caption: 'From the library',
+        mediaItemIds: [imageMediaId],
+        intent: 'queue',
+      },
+      undefined,
+      undefined,
+      key
+    );
+    expect(res.status).toBe(409);
+    const payload = (await res.json()) as { error: string };
+    expect(payload.error).toBe('IDEMPOTENCY_IN_PROGRESS');
+    expect(db.queueItems).toHaveLength(0);
+    // The copy was made, then removed: no post-media bytes remain
+    // in storage, and the removed key is recorded as deleted.
+    const postMediaKeys = [...storage.uploadedObjects.keys()].filter((k) =>
+      k.startsWith(`users/${userId}/post-media/`)
+    );
+    expect(postMediaKeys).toHaveLength(0);
+    expect(
+      [...storage.deletedKeys].some((k) =>
+        k.startsWith(`users/${userId}/post-media/`)
+      )
+    ).toBe(true);
   });
 });
