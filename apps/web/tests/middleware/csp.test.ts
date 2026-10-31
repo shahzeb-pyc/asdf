@@ -30,7 +30,7 @@ describe('buildContentSecurityPolicy', () => {
     expect(policy).toContain("style-src 'self' 'unsafe-inline'");
     expect(policy).toContain("img-src 'self' data: https:");
     expect(policy).toContain(
-      "connect-src 'self' https://*.supabase.co https://us.i.posthog.com"
+      "connect-src 'self' https://*.supabase.co https://us.i.posthog.com https://eu.i.posthog.com"
     );
     expect(policy).toContain("font-src 'self' data:");
     expect(policy).toContain("frame-ancestors 'none'");

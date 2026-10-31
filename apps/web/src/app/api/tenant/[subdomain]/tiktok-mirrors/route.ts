@@ -22,7 +22,7 @@ import {
   parsePaginationParams,
   type PaginationMeta,
 } from '@/lib/server/pagination';
-import { logServerError } from '@/lib/server-analytics';
+import { logServerError, trackServerEvent } from '@/lib/server-analytics';
 import {
   buildTikwmPauseStore,
   fetchTikwmUserInfo,
@@ -1122,6 +1122,14 @@ export async function handleCreateMirror(
       });
       return NextResponse.json({ error: 'Failed to create TikTok mirror' }, { status: 500 });
     }
+    // Analytics: the mirror row landed (the immediate post may still
+    // have failed — that outcome lives on the mirror, not here).
+    // Fire-and-forget — never blocks the response.
+    void trackServerEvent('mirror_created', session.userId, {
+      source_platform: 'tiktok',
+      target_platform: 'facebook',
+    });
+
     return NextResponse.json(responseParsed.data, { status: 201 });
   } catch (err) {
     logServerError('[tiktok-mirrors] Create failed', err, {

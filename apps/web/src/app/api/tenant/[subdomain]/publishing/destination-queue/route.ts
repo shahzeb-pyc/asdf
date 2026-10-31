@@ -27,6 +27,7 @@ import {
   type OwnedMediaRow,
 } from '@/lib/publishing/destination-enqueue';
 import { refreshDestinationUnmatchedFlag } from '@/lib/server/unmatched-flag';
+import { trackServerEvent } from '@/lib/server-analytics';
 import { getRouteSupabase } from '@/lib/route-auth';
 import {
   registerUsage,
@@ -550,6 +551,14 @@ export async function handleDestinationEnqueue(
       body: response,
     });
   }
+  // Analytics: fresh inserts only. Idempotency replays return early
+  // above with the stored result and never re-emit, so retries do
+  // not inflate the count. Fire-and-forget — never blocks the response.
+  void trackServerEvent('post_queued', session.userId, {
+    platform: created.platform,
+    post_type: created.kind,
+  });
+
   return NextResponse.json(response, { status: 201 });
 }
 

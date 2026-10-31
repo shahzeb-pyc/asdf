@@ -14,6 +14,7 @@ import { WorkspaceBreadcrumb } from '@/components/workspace/workspace-breadcrumb
 import { CommandPaletteHost } from '@/components/shell/command-palette-host';
 import { DownloadTray } from '@/components/shell/download-tray';
 import { WorkspaceLifecycleGuard } from '@/components/workspace/workspace-lifecycle-guard';
+import { PostHogIdentify } from '@/components/posthog-identify';
 import { getServerSessionContext } from '@/lib/auth';
 import { DataProvider } from '@/lib/data/provider';
 import { getWorkspaceDisplayName } from './workspace-display-name';
@@ -105,6 +106,8 @@ export default async function TenantLayout({ params, children }: Readonly<Tenant
           Skip to content
         </a>
         <WorkspaceLifecycleGuard userId={session.userId} userEmail={session.email} />
+        {/* PostHog identify: tenant shell already holds the session. */}
+        <PostHogIdentify userId={session.userId} tenantId={subdomain} />
         <WorkspaceSidebar
           subdomain={subdomain}
           useCleanPaths={useCleanPaths}

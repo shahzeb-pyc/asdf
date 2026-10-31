@@ -10,7 +10,7 @@ import {
   type DatabaseClient,
   type OAuthStatePayload,
 } from '@fbuploadpro/contracts';
-import { logServerError } from '@/lib/server-analytics';
+import { logServerError, trackServerEvent } from '@/lib/server-analytics';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
 import {
@@ -521,6 +521,13 @@ export async function handleInstagramCallback(
       // reconnect rewrites the destination.
       console.error('[InstagramOAuth] Destination persist failed:', err);
     }
+
+    // Analytics: the account row landed. Fire-and-forget — never
+    // blocks the redirect.
+    void trackServerEvent('account_connected', userId, {
+      platform: 'instagram',
+      reconnected: alreadyExisted,
+    });
 
     return buildPostConnectRedirect(
       request.url,

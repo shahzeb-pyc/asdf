@@ -11,7 +11,7 @@ import {
   type DatabaseClient,
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
-import { logServerError } from '@/lib/server-analytics';
+import { logServerError, trackServerEvent } from '@/lib/server-analytics';
 import {
   createR2S3Client,
   getR2Config,
@@ -379,6 +379,12 @@ export async function handleConfirmUpload(
           : null,
       createdAt: new Date(insertedRow.created_at).toISOString(),
       updatedAt: new Date(insertedRow.updated_at).toISOString(),
+    });
+
+    // Analytics: the media row landed. Fire-and-forget — never blocks
+    // the response.
+    void trackServerEvent('media_uploaded', session.userId, {
+      media_type: body.mediaType,
     });
 
     return NextResponse.json(responsePayload, { status: 201 });

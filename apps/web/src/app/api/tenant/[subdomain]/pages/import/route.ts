@@ -17,7 +17,7 @@ import {
   isTokenDeadGraphStatus,
   markAccountConnectionError,
 } from '@/lib/connect/account-probe';
-import { logServerError } from '@/lib/server-analytics';
+import { logServerError, trackServerEvent } from '@/lib/server-analytics';
 import {
   bodyTooLargeResponse,
   enforceIpRateLimit,
@@ -1285,6 +1285,13 @@ export async function handleImportPages(
     success: true,
     importedCount: importedList.length,
     pages: importedList,
+  });
+
+  // Analytics: only the pages that actually imported count.
+  // Fire-and-forget — never blocks the response.
+  void trackServerEvent('page_added', session.userId, {
+    platform: 'facebook',
+    count: importedList.length,
   });
 
   return NextResponse.json(responsePayload);
