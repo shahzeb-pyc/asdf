@@ -90,6 +90,56 @@ describe('queryKeys factory (spec 137 §3.2.3)', () => {
     ).toEqual([...tenant.downloader.jobs]);
   });
 
+  it('builds Instagram Schedule keys under their own namespace', () => {
+    const tenant = queryKeys.tenant('acme');
+    const schedule = tenant.instagramSchedule;
+    expect(schedule.all).toEqual(['tenant', 'acme', 'instagram', 'schedule']);
+    expect(schedule.list).toEqual(['tenant', 'acme', 'instagram', 'schedule', 'list']);
+    expect(
+      schedule.listPage({
+        page: 2,
+        limit: 30,
+        search: '',
+        status: 'all',
+        account: 'all',
+      })
+    ).toEqual([
+      'tenant',
+      'acme',
+      'instagram',
+      'schedule',
+      'list',
+      { page: 2, limit: 30, search: '', status: 'all', account: 'all' },
+    ]);
+    expect(schedule.detail('dest-1')).toEqual([
+      'tenant',
+      'acme',
+      'instagram',
+      'schedule',
+      'dest-1',
+    ]);
+    expect(schedule.slots('dest-1')).toEqual([
+      'tenant',
+      'acme',
+      'instagram',
+      'schedule',
+      'dest-1',
+      'slots',
+    ]);
+    expect(schedule.queue('dest-1', { status: 'queued' })).toEqual([
+      'tenant',
+      'acme',
+      'instagram',
+      'schedule',
+      'dest-1',
+      'queue',
+      { status: 'queued' },
+    ]);
+    expect(schedule.detail('dest-1').slice(0, schedule.all.length)).toEqual([
+      ...schedule.all,
+    ]);
+  });
+
   it('is deterministic — the same inputs produce equal keys for invalidation', () => {
     expect(queryKeys.tenant('acme').queue.items('p1')).toEqual(
       queryKeys.tenant('acme').queue.items('p1')

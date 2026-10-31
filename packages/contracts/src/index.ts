@@ -37,6 +37,7 @@ export * from './publishing/token-refresh.js';
 export * from './publishing/youtube-options.js';
 export * from './publishing/x-options.js';
 export * from './publishing/instagram-options.js';
+export * from './publishing/instagram-schedule.js';
 export * from './publishing/threads-options.js';
 export * from './publishing/tiktok-options.js';
 export * from './publishing/destination-enqueue.js';
