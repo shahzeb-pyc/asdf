@@ -23,6 +23,7 @@ import { Toast, toast } from '@/components/shared/ui/toast';
 import { Banner } from '@/components/shared/ui/banner';
 import { Input } from '@/components/shared/ui/input';
 import { ThreadsScheduleCard } from './schedule-card';
+import { FeatureCapText, useFeatureCap } from '@/components/billing/feature-cap';
 import { AddThreadsScheduleDialog } from './add-schedule-dialog';
 
 const STATUS_OPTIONS = [
@@ -62,6 +63,9 @@ export function ThreadsScheduleShell({
   const [statusFilter, setStatusFilter] = React.useState<string>('all');
   const [accountFilter, setAccountFilter] = React.useState<string>('all');
   const [addOpen, setAddOpen] = React.useState(false);
+  // Plan cap: the Add account button disables at the cap, and the
+  // schedule add route enforces the same cap server-side.
+  const { cap: threadsCap } = useFeatureCap(subdomain, 'threads');
 
   const candidatesQuery = useQuery({
     queryKey: tenant.threadsSchedule.candidates,
@@ -141,8 +145,11 @@ export function ThreadsScheduleShell({
             Only accounts you add appear here — connect more accounts in
             Threads Accounts first.
           </p>
+          {threadsCap ? (
+            <FeatureCapText cap={threadsCap} platform="threads" />
+          ) : null}
         </div>
-        <Button type="button" onClick={() => setAddOpen(true)}>
+        <Button type="button" onClick={() => setAddOpen(true)} disabled={threadsCap?.atCap ?? false}>
           <PlusIcon aria-hidden className="size-4" />
           Add account
         </Button>
@@ -203,15 +210,20 @@ export function ThreadsScheduleShell({
           title="No accounts in In-app Schedule yet"
           description="Add a connected Threads account here to give it posting times and a queue. Accounts themselves are connected in Threads Accounts."
           action={
-            <div className="flex flex-wrap justify-center gap-3">
-              <Button type="button" onClick={() => setAddOpen(true)}>
-                Add account
-              </Button>
-              <Button type="button" variant="outline" asChild>
-                <Link href={`/tenant/${subdomain}/threads/accounts`}>
-                  Go to Threads Accounts
-                </Link>
-              </Button>
+            <div className="flex flex-col items-center gap-3">
+              {threadsCap ? (
+                <FeatureCapText cap={threadsCap} platform="threads" />
+              ) : null}
+              <div className="flex flex-wrap justify-center gap-3">
+                <Button type="button" onClick={() => setAddOpen(true)} disabled={threadsCap?.atCap ?? false}>
+                  Add account
+                </Button>
+                <Button type="button" variant="outline" asChild>
+                  <Link href={`/tenant/${subdomain}/threads/accounts`}>
+                    Go to Threads Accounts
+                  </Link>
+                </Button>
+              </div>
             </div>
           }
         />

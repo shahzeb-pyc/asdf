@@ -10,11 +10,17 @@ import {
 } from '@fbuploadpro/contracts';
 import {
   aduContext,
+  aduDestinationKeysForCap,
   aduMissingTable,
   aduRpcMissing,
   buildAduConfigView,
   type AduConfigView,
 } from '@/lib/server/adu';
+import { assertFeatureAddWithinCap } from '@/lib/billing/entitlement';
+import {
+  getBillingAdminClient,
+  subscriptionGateResponse,
+} from '@/lib/billing/route-helpers';
 
 function statusFilterToValue(filter: string): string | null {
   const map: Record<string, string> = {
@@ -209,6 +215,42 @@ export async function POST(
     if (fixedError) {
       return NextResponse.json({ error: fixedError }, { status: 400 });
     }
+    // Plan cap gate: adding ADU configs registers the target pages
+    // against the Facebook cap, so an over-cap batch is rejected
+    // here, before any config row is created. Admins are never
+    // gated, and a missing billing client skips the gate (same rule
+    // as the destination-queue gate). The gate always uses the admin
+    // client, never the route's working client — in production they
+    // are the same client, and in tests the working client is a fake
+    // that must not answer billing queries. Unknown destination ids
+    // are skipped by the key loader — createOne rejects them per
+    // item downstream.
+    if (resolved.context.role !== 'admin') {
+      const billingClient = getBillingAdminClient();
+      if (billingClient) {
+        try {
+          const keys = await aduDestinationKeysForCap(
+            billingClient,
+            resolved.context.workspaceId,
+            'facebook',
+            parsed.data.items.map((item) => item.destinationId)
+          );
+          await assertFeatureAddWithinCap(
+            billingClient,
+            resolved.context.userId,
+            'facebook',
+            keys
+          );
+        } catch (err) {
+          const gateResponse = subscriptionGateResponse(err);
+          if (gateResponse) return gateResponse;
+          return NextResponse.json(
+            { error: 'Failed to check the plan limit. Please try again.' },
+            { status: 500 }
+          );
+        }
+      }
+    }
     const created: string[] = [];
     const failed: Array<{ destinationId: string; error: string }> = [];
     for (const item of parsed.data.items) {
@@ -231,6 +273,33 @@ export async function POST(
       { error: parsed.error.issues[0]?.message ?? 'Invalid request.' },
       { status: 400 }
     );
+  }
+  // Plan cap gate (single-add path; same rule as the bulk path above).
+  if (resolved.context.role !== 'admin') {
+    const billingClient = getBillingAdminClient();
+    if (billingClient) {
+      try {
+        const keys = await aduDestinationKeysForCap(
+          billingClient,
+          resolved.context.workspaceId,
+          'facebook',
+          [parsed.data.destinationId]
+        );
+        await assertFeatureAddWithinCap(
+          billingClient,
+          resolved.context.userId,
+          'facebook',
+          keys
+        );
+      } catch (err) {
+        const gateResponse = subscriptionGateResponse(err);
+        if (gateResponse) return gateResponse;
+        return NextResponse.json(
+          { error: 'Failed to check the plan limit. Please try again.' },
+          { status: 500 }
+        );
+      }
+    }
   }
   const result = await createOne(resolved.context, parsed.data);
   if (!result.ok) {

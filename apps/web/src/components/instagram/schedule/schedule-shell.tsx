@@ -28,6 +28,7 @@ import {
 import { Skeleton } from '@/components/shared/ui/skeleton';
 import { Toast, toast } from '@/components/shared/ui/toast';
 import { ScheduleCard } from './schedule-card';
+import { FeatureCapText, useFeatureCap } from '@/components/billing/feature-cap';
 import { AddScheduleModal } from './add-schedule-modal';
 
 /**
@@ -69,6 +70,9 @@ export function ScheduleShell({ subdomain }: Readonly<{ subdomain: string }>) {
     React.useState<ScheduleStatusFilter>('all');
   const [accountFilter, setAccountFilter] = React.useState('all');
   const [isAddModalOpen, setIsAddModalOpen] = React.useState(false);
+  // Plan cap: the Add account button disables at the cap, and the
+  // schedule add route enforces the same cap server-side.
+  const { cap: instagramCap } = useFeatureCap(subdomain, 'instagram');
   const [highlightedIds, setHighlightedIds] = React.useState<string[]>([]);
 
   const listQuery = useQuery({
@@ -195,10 +199,19 @@ export function ScheduleShell({ subdomain }: Readonly<{ subdomain: string }>) {
         title="No Instagram accounts in Schedule yet"
         description="Add an Instagram account you have already connected, choose its timezone and posting times, and posts you create here will go out on that schedule."
         action={
-          <Button type="button" onClick={() => setIsAddModalOpen(true)}>
-            <PlusIcon aria-hidden />
-            <span>Add account</span>
-          </Button>
+          <div className="flex flex-col items-center gap-2">
+            {instagramCap ? (
+              <FeatureCapText cap={instagramCap} platform="instagram" />
+            ) : null}
+            <Button
+              type="button"
+              onClick={() => setIsAddModalOpen(true)}
+              disabled={instagramCap?.atCap ?? false}
+            >
+              <PlusIcon aria-hidden />
+              <span>Add account</span>
+            </Button>
+          </div>
         }
       />
     );
@@ -273,11 +286,15 @@ export function ScheduleShell({ subdomain }: Readonly<{ subdomain: string }>) {
               ? 'Accounts you add here post on the schedule you set.'
               : `${total} scheduled ${total === 1 ? 'account' : 'accounts'}`}
           </p>
+          {instagramCap ? (
+            <FeatureCapText cap={instagramCap} platform="instagram" />
+          ) : null}
         </div>
         <Button
           type="button"
           data-testid="header-add-schedule-btn"
           onClick={() => setIsAddModalOpen(true)}
+          disabled={instagramCap?.atCap ?? false}
         >
           <PlusIcon aria-hidden />
           <span>Add account</span>

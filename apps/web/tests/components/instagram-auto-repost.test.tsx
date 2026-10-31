@@ -88,7 +88,11 @@ describe('Instagram Auto Repost list', () => {
     expect(await screen.findByTestId('ig-auto-repost-mirrors-grid')).toBeTruthy();
     expect(screen.getByText('@alice')).toBeTruthy();
     expect(screen.getByText(/Alice on IG/)).toBeTruthy();
-    const listUrl = String(apiGetMock.mock.calls[0]?.[0] ?? '');
+    // The shell now fetches the entitlement first (cap display), so
+    // the mirrors list is no longer necessarily the first api call —
+    // find it by its filter instead of assuming call order.
+    const listUrl =
+      apiGetMock.mock.calls.map((c) => String(c[0])).find((u) => u.includes('targetPlatform=')) ?? '';
     expect(listUrl).toContain('targetPlatform=instagram');
   });
 

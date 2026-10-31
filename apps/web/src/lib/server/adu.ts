@@ -22,6 +22,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 export interface AduContext {
   workspaceId: string;
   supabase: SupabaseClient;
+  userId: string;
+  role: string;
 }
 
 export async function aduContext(
@@ -53,7 +55,47 @@ export async function aduContext(
       ),
     };
   }
-  return { context: { workspaceId, supabase } };
+  return {
+    context: {
+      workspaceId,
+      supabase,
+      userId: auth.session.userId,
+      role: auth.session.role,
+    },
+  };
+}
+
+/**
+ * Destination keys (external id, else the destination row id) for the
+ * plan-cap gate on ADU adds, loaded in ONE query for the single and
+ * bulk paths alike. Unknown ids are skipped here — createOne rejects
+ * them per item downstream — so a stale id can never block a valid add.
+ * Throws on a database error: the caller turns it into a 500, never a
+ * silent pass.
+ */
+export async function aduDestinationKeysForCap(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  platform: 'facebook' | 'instagram' | 'threads',
+  destinationIds: string[]
+): Promise<string[]> {
+  const ids = [...new Set(destinationIds)];
+  if (ids.length === 0) return [];
+  const { data, error } = await supabase
+    .from('destinations')
+    .select('id, external_destination_id')
+    .eq('workspace_id', workspaceId)
+    .eq('platform', platform)
+    .in('id', ids);
+  if (error) {
+    throw new Error(`ADU cap key lookup failed: ${error.message}`);
+  }
+  // Error is thrown above, so data is the row array here by the
+  // client's types; a null here would throw loudly in the caller.
+  return data.map((row) => {
+    const typed = row as { id: string; external_destination_id?: string | null };
+    return typed.external_destination_id ?? typed.id;
+  });
 }
 
 export function aduMissingTable(error: { code?: string } | null | undefined): boolean {

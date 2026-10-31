@@ -14,9 +14,17 @@ import { PlusIcon } from 'lucide-react';
 
 import { Button } from '@/components/shared/ui/button';
 import { EmptyState } from '@/components/shared/ui/empty-state';
+import {
+  FeatureCapText,
+  type FeatureCap,
+} from '@/components/billing/feature-cap';
 
 export interface PagesEmptyStateProps {
   onAddPage: () => void;
+  /** Disables the Add Page button when the plan cap is fully used. */
+  addDisabled?: boolean | undefined;
+  /** Plan cap for the header display; shown above the button when present. */
+  cap?: FeatureCap | null | undefined;
   /** Workspace subdomain, used for the Settings → Facebook link. */
   subdomain?: string | undefined;
   /**
@@ -32,6 +40,8 @@ export interface PagesEmptyStateProps {
 
 export function PagesEmptyState({
   onAddPage,
+  addDisabled = false,
+  cap = null,
   subdomain,
   facebookAppConfigured,
   byocPending = false,
@@ -95,11 +105,17 @@ export function PagesEmptyState({
             </Link>
           </div>
         )}
+        {cap ? (
+          <div className="mb-4">
+            <FeatureCapText cap={cap} platform="facebook" />
+          </div>
+        ) : null}
         <Button
           type="button"
           size="lg"
           data-testid="empty-state-add-page-btn"
           onClick={onAddPage}
+          disabled={addDisabled}
         >
           <PlusIcon aria-hidden />
           <span>Add Page</span>

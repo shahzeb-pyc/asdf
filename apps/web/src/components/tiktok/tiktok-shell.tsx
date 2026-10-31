@@ -13,6 +13,7 @@ import { Button } from '@/components/shared/ui/button';
 import { EmptyState } from '@/components/shared/ui/empty-state';
 import { ListPagination } from '@/components/shared/ui/list-pagination';
 import { Skeleton } from '@/components/shared/ui/skeleton';
+import { FeatureCapText, useFeatureCap } from '@/components/billing/feature-cap';
 import { AddMirrorDialog } from './add-mirror-dialog';
 import { TikTokCard } from './tiktok-card';
 
@@ -32,6 +33,9 @@ export function TikTokShell({ subdomain }: Readonly<TikTokShellProps>) {
   const tenant = queryKeys.tenant(subdomain);
   const [isAddOpen, setIsAddOpen] = React.useState(false);
   const [highlightedId, setHighlightedId] = React.useState<string | null>(null);
+  // Plan cap: the Add Auto Repost button disables at the cap, and
+  // the mirror create route enforces the same cap server-side.
+  const { cap: facebookCap } = useFeatureCap(subdomain, 'facebook');
 
   // Pagination state lives in the URL (?page=) so refresh and a shared
   // link land on the same page; an unparseable value falls back to 1.
@@ -116,10 +120,20 @@ export function TikTokShell({ subdomain }: Readonly<TikTokShellProps>) {
         title="No mirrors yet"
         description="Add a TikTok username and every new reel from that account will be reposted to your Facebook page automatically."
         action={
-          <Button type="button" data-testid="tiktok-empty-add-btn" onClick={() => setIsAddOpen(true)}>
-            <PlusIcon aria-hidden />
-            <span>Add Auto Repost</span>
-          </Button>
+          <div className="flex flex-col items-center gap-2">
+            {facebookCap ? (
+              <FeatureCapText cap={facebookCap} platform="facebook" />
+            ) : null}
+            <Button
+              type="button"
+              data-testid="tiktok-empty-add-btn"
+              onClick={() => setIsAddOpen(true)}
+              disabled={facebookCap?.atCap ?? false}
+            >
+              <PlusIcon aria-hidden />
+              <span>Add Auto Repost</span>
+            </Button>
+          </div>
         }
       />
     );
@@ -164,8 +178,16 @@ export function TikTokShell({ subdomain }: Readonly<TikTokShellProps>) {
               ? 'Auto-repost TikTok reels to your Facebook pages.'
               : `${total} ${total === 1 ? 'mirror' : 'mirrors'}`}
           </p>
+          {facebookCap ? (
+            <FeatureCapText cap={facebookCap} platform="facebook" />
+          ) : null}
         </div>
-        <Button type="button" data-testid="header-add-mirror-btn" onClick={() => setIsAddOpen(true)}>
+        <Button
+          type="button"
+          data-testid="header-add-mirror-btn"
+          onClick={() => setIsAddOpen(true)}
+          disabled={facebookCap?.atCap ?? false}
+        >
           <PlusIcon aria-hidden />
           <span>Add Auto Repost</span>
         </Button>

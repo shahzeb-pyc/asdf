@@ -3,6 +3,11 @@ import {
   type DatabaseClient,
 } from '@fbuploadpro/contracts';
 import { authenticateInstagramSchedule } from '@/lib/server/instagram-schedule-auth';
+import { assertFeatureAddWithinCap } from '@/lib/billing/entitlement';
+import {
+  getBillingAdminClient,
+  subscriptionGateResponse,
+} from '@/lib/billing/route-helpers';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import { logServerError } from '@/lib/server-analytics';
 import {
@@ -669,7 +674,7 @@ export async function handleAddInstagramSchedule(
     }
     const { data: existingDest } = await supabase
       .from('destinations')
-      .select('id, timezone, metadata')
+      .select('id, timezone, metadata, external_destination_id')
       .eq('account_id', accountId)
       .eq('workspace_id', auth.workspaceId)
       .eq('platform', 'instagram')
@@ -710,6 +715,41 @@ export async function handleAddInstagramSchedule(
     const cap = checkScheduleCap(numericCount(scheduledCount));
     if (!cap.allowed) {
       return NextResponse.json({ error: cap.message }, { status: 400 });
+    }
+    // Plan cap gate: adding an account to Schedule registers it
+    // against the Instagram cap, so an over-cap add is rejected here,
+    // before any destination mutation or slot write. (The SQL path
+    // above has no Supabase client and keeps its own
+    // checkScheduleCap; it is the legacy test harness path, not the
+    // production path.) Admins are never gated, and a missing
+    // billing client skips the gate (same rule as the
+    // destination-queue gate). The gate always uses the admin
+    // client, never the route's working client — in production they
+    // are the same client, and in tests the working client is a fake
+    // that must not answer billing queries. The key is the
+    // destination's external id when one exists, else the row id for
+    // an existing destination, else the account's external id — the
+    // same key the insert below writes for a new destination.
+    if (auth.session.role !== 'admin') {
+      const destinationKey = existingDest
+        ? ((existingDest as { external_destination_id?: string | null }).external_destination_id ??
+          existingDest.id)
+        : (account.external_account_id ?? accountId);
+      const billingClient = getBillingAdminClient();
+      if (billingClient) {
+        try {
+          await assertFeatureAddWithinCap(
+            billingClient,
+            auth.session.userId,
+            'instagram',
+            [destinationKey]
+          );
+        } catch (err) {
+          const gateResponse = subscriptionGateResponse(err);
+          if (gateResponse) return gateResponse;
+          throw err;
+        }
+      }
     }
     let destinationId = '';
     let destinationCreated = false;

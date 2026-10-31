@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   approvePayment,
   assertCanPost,
+  assertFeatureAddWithinCap,
   assertPaidPlan,
   countsFromRow,
   createPeriodForPayment,
@@ -136,6 +137,10 @@ interface FakeState {
   periodById: Row | null;
   createdPeriodRow: Row | null;
   selectErrors: Partial<Record<string, unknown>>;
+  // Error for the subscription_usage ROW-LIST select only (the
+  // already-used lookup). The head-count select is unaffected, so a
+  // test can fail the lookup without failing getEntitlement first.
+  usageListError: unknown;
   usageInsertError: { code?: string } | null;
   periodInsertError: unknown;
   updateErrors: Partial<Record<string, unknown>>;
@@ -152,6 +157,7 @@ function baseState(overrides: Partial<FakeState> = {}): FakeState {
     periodById: null,
     createdPeriodRow: null,
     selectErrors: {},
+    usageListError: null,
     usageInsertError: null,
     periodInsertError: null,
     updateErrors: {},
@@ -300,6 +306,11 @@ class FakeBuilder {
         if (f.op === 'neq') rows = rows.filter((row) => row[f.col] !== f.val);
       }
       return { count: rows.length, error: null };
+    }
+    // Row-list selects only: the already-used lookup. Head counts
+    // return above, so this error cannot leak into getEntitlement.
+    if (this.table === 'subscription_usage' && this.state.usageListError) {
+      return { data: null, error: this.state.usageListError, count: null };
     }
     let rows =
       this.table === 'subscription_periods'
@@ -769,6 +780,136 @@ describe('assertCanPost', () => {
     const state = baseState({ periods: [periodRow()] });
     const period = await assertCanPost(fakeClient(state), 'user-1', 'facebook', 'page-a', NOW);
     expect(period.id).toBe('period-1');
+  });
+});
+
+describe('assertFeatureAddWithinCap', () => {
+  it('refuses a Free user', async () => {
+    const state = baseState();
+    await expect(
+      assertFeatureAddWithinCap(fakeClient(state), 'user-1', 'facebook', ['page-a'], NOW)
+    ).rejects.toMatchObject({ code: 'SUBSCRIPTION_REQUIRED' });
+  });
+
+  it('allows new destinations under the cap and reports the new count', async () => {
+    const state = baseState({
+      periods: [periodRow({ facebook_count: 5 })],
+      usageRows: [
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-a' },
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-b' },
+      ],
+    });
+    const result = await assertFeatureAddWithinCap(
+      fakeClient(state),
+      'user-1',
+      'facebook',
+      ['page-c', 'page-d'],
+      NOW
+    );
+    expect(result).toEqual({ allowed: 5, used: 2, newCount: 2 });
+  });
+
+  it('does not count already-registered destinations against the cap', async () => {
+    const state = baseState({
+      periods: [periodRow({ facebook_count: 5 })],
+      usageRows: [
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-a' },
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-b' },
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-c' },
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-d' },
+      ],
+    });
+    const result = await assertFeatureAddWithinCap(
+      fakeClient(state),
+      'user-1',
+      'facebook',
+      ['page-a', 'page-e'],
+      NOW
+    );
+    expect(result).toEqual({ allowed: 5, used: 4, newCount: 1 });
+  });
+
+  it('dedupes repeated keys in one request', async () => {
+    const state = baseState({
+      periods: [periodRow({ facebook_count: 5 })],
+      usageRows: [
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-a' },
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-b' },
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-c' },
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-d' },
+      ],
+    });
+    const result = await assertFeatureAddWithinCap(
+      fakeClient(state),
+      'user-1',
+      'facebook',
+      ['page-e', 'page-e'],
+      NOW
+    );
+    expect(result.newCount).toBe(1);
+  });
+
+  it('refuses when new destinations would push usage past the cap', async () => {
+    const state = baseState({
+      periods: [periodRow({ facebook_count: 5 })],
+      usageRows: [
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-a' },
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-b' },
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-c' },
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-d' },
+      ],
+    });
+    await expect(
+      assertFeatureAddWithinCap(fakeClient(state), 'user-1', 'facebook', ['page-e', 'page-f'], NOW)
+    ).rejects.toMatchObject({ code: 'SUBSCRIPTION_CAP_REACHED' });
+  });
+
+  it('allows an add of only already-registered destinations even at the cap', async () => {
+    const state = baseState({
+      periods: [periodRow({ facebook_count: 1 })],
+      usageRows: [{ user_id: 'user-1', platform: 'facebook', destination_key: 'page-a' }],
+    });
+    const result = await assertFeatureAddWithinCap(
+      fakeClient(state),
+      'user-1',
+      'facebook',
+      ['page-a'],
+      NOW
+    );
+    expect(result).toEqual({ allowed: 1, used: 1, newCount: 0 });
+  });
+
+  it('allows an empty add even at the cap', async () => {
+    const state = baseState({
+      periods: [periodRow({ facebook_count: 1 })],
+      usageRows: [{ user_id: 'user-1', platform: 'facebook', destination_key: 'page-a' }],
+    });
+    const result = await assertFeatureAddWithinCap(fakeClient(state), 'user-1', 'facebook', [], NOW);
+    expect(result.newCount).toBe(0);
+  });
+
+  it('writes nothing to the registry', async () => {
+    const state = baseState({
+      periods: [periodRow({ facebook_count: 5 })],
+      usageRows: [{ user_id: 'user-1', platform: 'facebook', destination_key: 'page-a' }],
+    });
+    await assertFeatureAddWithinCap(fakeClient(state), 'user-1', 'facebook', ['page-b'], NOW);
+    expect(state.inserted.filter((entry) => entry.table === 'subscription_usage')).toEqual([]);
+  });
+
+  it('fails closed — and logs — when the already-used lookup errors', async () => {
+    const state = baseState({
+      periods: [periodRow({ facebook_count: 5 })],
+      usageListError: { message: 'db down' },
+    });
+    await expect(
+      assertFeatureAddWithinCap(fakeClient(state), 'user-1', 'facebook', ['page-a'], NOW)
+    ).rejects.toMatchObject({ code: 'ENTITLEMENT_UNAVAILABLE' });
+    expect(mockedLogServerError).toHaveBeenCalledWith(
+      '[billing] feature-add cap check failed',
+      expect.anything(),
+      { source: 'billing' }
+    );
   });
 });
 

@@ -13,6 +13,7 @@ import { Button } from '@/components/shared/ui/button';
 import { EmptyState } from '@/components/shared/ui/empty-state';
 import { ListPagination } from '@/components/shared/ui/list-pagination';
 import { Skeleton } from '@/components/shared/ui/skeleton';
+import { FeatureCapText, useFeatureCap } from '@/components/billing/feature-cap';
 import { AddThreadsAutoRepostDialog } from './add-threads-auto-repost-dialog';
 import { ThreadsAutoRepostCard } from './threads-auto-repost-card';
 
@@ -33,6 +34,9 @@ export function ThreadsAutoRepostShell({ subdomain }: Readonly<ThreadsAutoRepost
   const tenant = queryKeys.tenant(subdomain);
   const [isAddOpen, setIsAddOpen] = React.useState(false);
   const [highlightedId, setHighlightedId] = React.useState<string | null>(null);
+  // Plan cap: the Add Auto Repost button disables at the cap, and
+  // the mirror create route enforces the same cap server-side.
+  const { cap: threadsCap } = useFeatureCap(subdomain, 'threads');
 
   const initialPage = React.useMemo(() => {
     const raw = Number.parseInt(searchParams.get('page') ?? '', 10);
@@ -108,10 +112,20 @@ export function ThreadsAutoRepostShell({ subdomain }: Readonly<ThreadsAutoRepost
         title="No mirrors yet"
         description="Add a TikTok username and every new reel from that account will be reposted to your Threads account automatically."
         action={
-          <Button type="button" data-testid="threads-mirrors-empty-add-btn" onClick={() => setIsAddOpen(true)}>
-            <PlusIcon aria-hidden />
-            <span>Add Auto Repost</span>
-          </Button>
+          <div className="flex flex-col items-center gap-2">
+            {threadsCap ? (
+              <FeatureCapText cap={threadsCap} platform="threads" />
+            ) : null}
+            <Button
+              type="button"
+              data-testid="threads-mirrors-empty-add-btn"
+              onClick={() => setIsAddOpen(true)}
+              disabled={threadsCap?.atCap ?? false}
+            >
+              <PlusIcon aria-hidden />
+              <span>Add Auto Repost</span>
+            </Button>
+          </div>
         }
       />
     );
@@ -156,8 +170,16 @@ export function ThreadsAutoRepostShell({ subdomain }: Readonly<ThreadsAutoRepost
               ? 'Auto-repost TikTok reels to your Threads accounts.'
               : `${total} ${total === 1 ? 'mirror' : 'mirrors'}`}
           </p>
+          {threadsCap ? (
+            <FeatureCapText cap={threadsCap} platform="threads" />
+          ) : null}
         </div>
-        <Button type="button" data-testid="header-add-threads-mirror-btn" onClick={() => setIsAddOpen(true)}>
+        <Button
+          type="button"
+          data-testid="header-add-threads-mirror-btn"
+          onClick={() => setIsAddOpen(true)}
+          disabled={threadsCap?.atCap ?? false}
+        >
           <PlusIcon aria-hidden />
           <span>Add Auto Repost</span>
         </Button>

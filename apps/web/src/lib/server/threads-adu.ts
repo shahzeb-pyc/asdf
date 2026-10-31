@@ -9,6 +9,7 @@ import {
   aduMissingTable,
   buildAduConfigView,
   type AduConfigView,
+  type AduContext,
 } from '@/lib/server/adu';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -35,7 +36,7 @@ export async function threadsAduContext(
   request: NextRequest,
   subdomain: string
 ): Promise<
-  | { context: { workspaceId: string; supabase: SupabaseClient } }
+  | { context: AduContext }
   | { errorResponse: NextResponse }
 > {
   return aduContext(request, subdomain);

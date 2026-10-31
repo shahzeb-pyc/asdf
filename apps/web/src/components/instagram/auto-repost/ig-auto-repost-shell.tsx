@@ -14,6 +14,7 @@ import { EmptyState } from '@/components/shared/ui/empty-state';
 import { ListPagination } from '@/components/shared/ui/list-pagination';
 import { Skeleton } from '@/components/shared/ui/skeleton';
 import { TikTokCard } from '@/components/tiktok/tiktok-card';
+import { FeatureCapText, useFeatureCap } from '@/components/billing/feature-cap';
 import { IgAddMirrorDialog } from './ig-add-mirror-dialog';
 
 /**
@@ -35,6 +36,9 @@ export function IgAutoRepostShell({ subdomain }: Readonly<IgAutoRepostShellProps
   const tenant = queryKeys.tenant(subdomain);
   const [isAddOpen, setIsAddOpen] = React.useState(false);
   const [highlightedId, setHighlightedId] = React.useState<string | null>(null);
+  // Plan cap: the Add Auto Repost button disables at the cap, and
+  // the mirror create route enforces the same cap server-side.
+  const { cap: instagramCap } = useFeatureCap(subdomain, 'instagram');
 
   const initialPage = React.useMemo(() => {
     const raw = Number.parseInt(searchParams.get('page') ?? '', 10);
@@ -111,10 +115,20 @@ export function IgAutoRepostShell({ subdomain }: Readonly<IgAutoRepostShellProps
         title="No mirrors yet"
         description="Add a TikTok username and every new reel from that account will be reposted to your Instagram account automatically."
         action={
-          <Button type="button" data-testid="ig-auto-repost-empty-add-btn" onClick={() => setIsAddOpen(true)}>
-            <PlusIcon aria-hidden />
-            <span>Add Auto Repost</span>
-          </Button>
+          <div className="flex flex-col items-center gap-2">
+            {instagramCap ? (
+              <FeatureCapText cap={instagramCap} platform="instagram" />
+            ) : null}
+            <Button
+              type="button"
+              data-testid="ig-auto-repost-empty-add-btn"
+              onClick={() => setIsAddOpen(true)}
+              disabled={instagramCap?.atCap ?? false}
+            >
+              <PlusIcon aria-hidden />
+              <span>Add Auto Repost</span>
+            </Button>
+          </div>
         }
       />
     );
@@ -159,8 +173,16 @@ export function IgAutoRepostShell({ subdomain }: Readonly<IgAutoRepostShellProps
               ? 'Auto-repost TikTok reels to your Instagram accounts.'
               : `${total} ${total === 1 ? 'mirror' : 'mirrors'}`}
           </p>
+          {instagramCap ? (
+            <FeatureCapText cap={instagramCap} platform="instagram" />
+          ) : null}
         </div>
-        <Button type="button" data-testid="ig-header-add-mirror-btn" onClick={() => setIsAddOpen(true)}>
+        <Button
+          type="button"
+          data-testid="ig-header-add-mirror-btn"
+          onClick={() => setIsAddOpen(true)}
+          disabled={instagramCap?.atCap ?? false}
+        >
           <PlusIcon aria-hidden />
           <span>Add Auto Repost</span>
         </Button>
