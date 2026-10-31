@@ -7,8 +7,8 @@ const signin = 'https://app.fbuploadpro.com/login';
 ---
 
 <Layout
-  title="FBUploadPro — Your Accounts, posting themselves — 100% in the cloud"
-  description="Schedule posts across Facebook, Instagram, TikTok, YouTube, Threads, and X — they go live while you sleep, even when your laptop is closed."
+  title="FBUploadPro — Everything your workflow need, in one place."
+  description="Schedule and publish posts, store your media in one library, browse the Prompt Library, find creators, and automate reposts — 100% in the cloud."
 >
   <!-- Topbar: fixed pill, always legible over light and dark sections. -->
   <header id="site-topbar" class="topbar-fixed">
@@ -44,6 +44,7 @@ const signin = 'https://app.fbuploadpro.com/login';
             <a href="#section-5" class="flex min-h-11 items-center rounded-xl px-3 text-sm font-medium text-ink no-underline">Features</a>
             <a href="#section-6" class="flex min-h-11 items-center rounded-xl px-3 text-sm font-medium text-ink no-underline">Community</a>
             <a href="#section-7" class="flex min-h-11 items-center rounded-xl px-3 text-sm font-medium text-ink no-underline">Pricing</a>
+            <a href="#section-8" class="flex min-h-11 items-center rounded-xl px-3 text-sm font-medium text-ink no-underline">FAQ</a>
             <a href={signin} class="flex min-h-11 items-center rounded-xl px-3 text-sm font-medium text-ink no-underline">Sign in</a>
             <a href={signup} class="flex min-h-11 items-center justify-center rounded-full bg-ink px-3 text-sm font-semibold text-white no-underline">Get started</a>
           </nav>
@@ -453,7 +454,7 @@ const signin = 'https://app.fbuploadpro.com/login';
          the live footer — the mockup's text-only wordmark was
          NOT used, so the brand is not downgraded), brand line,
          WhatsApp + Facebook circular icons. Right: one
-         "Navigation" column with the six section links only.
+         "Navigation" column with the seven section links (FAQ added last).
          DROPPED from the old footer, as mocked: Sign in, Get
          started (both still in the topbar + mobile menu),
          Privacy Policy, Terms of Service, Contact link
@@ -473,13 +474,14 @@ const signin = 'https://app.fbuploadpro.com/login';
         </div>
         <nav aria-label="Sections">
           <h3 class="mb-[18px] text-[15px] font-semibold text-white">Navigation</h3>
-          <ul class="flex flex-col gap-[14px]">
-            <li><a href="#section-2" class="text-[15px] text-[#9aa0a8] no-underline hover:text-white">Muse</a></li>
-            <li><a href="#section-3" class="text-[15px] text-[#9aa0a8] no-underline hover:text-white">Prompt Library</a></li>
-            <li><a href="#section-4" class="text-[15px] text-[#9aa0a8] no-underline hover:text-white">Creator Finder</a></li>
-            <li><a href="#section-5" class="text-[15px] text-[#9aa0a8] no-underline hover:text-white">Features</a></li>
-            <li><a href="#section-6" class="text-[15px] text-[#9aa0a8] no-underline hover:text-white">Community</a></li>
-            <li><a href="#section-7" class="text-[15px] text-[#9aa0a8] no-underline hover:text-white">Pricing</a></li>
+          <ul class="flex flex-col gap-0">
+            <li><a href="#section-2" class="flex min-h-[44px] items-center text-[15px] text-[#9aa0a8] no-underline hover:text-white">Muse</a></li>
+            <li><a href="#section-3" class="flex min-h-[44px] items-center text-[15px] text-[#9aa0a8] no-underline hover:text-white">Prompt Library</a></li>
+            <li><a href="#section-4" class="flex min-h-[44px] items-center text-[15px] text-[#9aa0a8] no-underline hover:text-white">Creator Finder</a></li>
+            <li><a href="#section-5" class="flex min-h-[44px] items-center text-[15px] text-[#9aa0a8] no-underline hover:text-white">Features</a></li>
+            <li><a href="#section-6" class="flex min-h-[44px] items-center text-[15px] text-[#9aa0a8] no-underline hover:text-white">Community</a></li>
+            <li><a href="#section-7" class="flex min-h-[44px] items-center text-[15px] text-[#9aa0a8] no-underline hover:text-white">Pricing</a></li>
+            <li><a href="#section-8" class="flex min-h-[44px] items-center text-[15px] text-[#9aa0a8] no-underline hover:text-white">FAQ</a></li>
           </ul>
         </nav>
       </div>
