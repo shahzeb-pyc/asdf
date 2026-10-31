@@ -410,11 +410,16 @@ async function compensateClaim(
     throw new Error('Coupon balance compensation did not land');
   }
   if (coupon.kind === 'percent_once') {
+    // Guard on the timestamp this claim actually wrote (claimCoupon
+    // records it on coupon.consumedAt), not on this function's fresh
+    // `now`: the two timestamps are never equal, so guarding on the
+    // fresh one silently never undid the consumption and a failed
+    // hold permanently burned a one-time coupon.
     await client
       .from('coupons')
       .update({ consumed_at: null, updated_at: now })
       .eq('id', coupon.id)
-      .is('consumed_at', now);
+      .is('consumed_at', coupon.consumedAt);
   }
 }
 
