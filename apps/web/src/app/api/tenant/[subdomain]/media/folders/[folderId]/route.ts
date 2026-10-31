@@ -574,6 +574,14 @@ export async function handleDeleteFolder(
   // orphaned. Storage is purged per fetched page, then the chunk's
   // DB rows are deleted; folder rows are deleted in chunks last.
   // Chunking also keeps each .in() list short enough for PostgREST.
+  // A page fetch error is NEVER treated as end-of-data: the handler
+  // fails loud with a 500 before that chunk's DB delete, so no
+  // success is reported and no rows are deleted for a chunk whose
+  // storage purge is incomplete. Partial-chunk state on that path is
+  // settled, not implicit: earlier pages of the chunk may already be
+  // purged while their DB rows are retained, and a retry re-fetches
+  // those rows and re-purges (R2 deletes are idempotent) before
+  // deleting the rows, so the retry completes the delete.
   let deletedItemsCount = 0;
   const folderChunkSize = 50;
   const mediaPageSize = 1000;
@@ -581,13 +589,24 @@ export async function handleDeleteFolder(
     const chunk = folderIds.slice(i, i + folderChunkSize);
     let from = 0;
     for (;;) {
-      const { data: pageItems } = await supabase
+      const { data: pageItems, error: pageError } = await supabase
         .from('media_items')
         .select('id, storage_key, thumbnail_key')
         .eq('user_id', session.userId)
         .in('folder_id', chunk)
         .order('id', { ascending: true })
         .range(from, from + mediaPageSize - 1);
+      if (pageError) {
+        logServerError('[media/folders] Folder delete media page fetch failed', pageError, {
+          source: 'media-folder-delete',
+          subdomain,
+          folderId,
+        });
+        return NextResponse.json(
+          { error: 'INTERNAL_ERROR', message: 'Failed to delete folder' },
+          { status: 500 }
+        );
+      }
       const page = (pageItems || []) as Array<
         Pick<DatabaseMediaItemRow, 'storage_key' | 'thumbnail_key'>
       >;

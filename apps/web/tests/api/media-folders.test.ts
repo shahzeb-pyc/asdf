@@ -523,7 +523,12 @@ describe('Nested Media Folders CRUD, Reparenting & Cascading Deletion', () => {
  */
 type MockRow = Record<string, unknown>;
 
-function createCappedSupabaseMock(tables: Record<string, MockRow[]>) {
+function createCappedSupabaseMock(
+  tables: Record<string, MockRow[]>,
+  opts?: { failMediaItemsRangeAt?: number }
+) {
+  // Counts media_items .range() calls so a test can fail one page.
+  let mediaItemsRangeCalls = 0;
   function applyFilters(
     rows: MockRow[],
     eqs: [string, unknown][],
@@ -569,6 +574,13 @@ function createCappedSupabaseMock(tables: Record<string, MockRow[]>) {
       }) as (...args: never[]) => unknown,
       range: (from: number, to: number) => {
         range = [from, to];
+        if (
+          table === 'media_items' &&
+          opts?.failMediaItemsRangeAt !== undefined &&
+          ++mediaItemsRangeCalls === opts.failMediaItemsRangeAt
+        ) {
+          return Promise.resolve({ data: null, error: { message: 'boom' } });
+        }
         const rows = applyFilters(tables[table] ?? [], eqs, ins, orders);
         return Promise.resolve({
           data: rows.slice(from, to + 1),
@@ -707,5 +719,35 @@ describe('Supabase-path folder paging past the 1,000-row cap', () => {
         expect(mockStorage.deletedKeys.has(`users/${userId}/thumbs/${i}.webp`)).toBe(true);
       }
     }
+  });
+
+  it('fails loud on a media page fetch error: no success, no DB delete, no storage purge', async () => {
+    // A failed page must never be treated as end-of-data: the old
+    // code returned 200 and deleted the chunk's DB rows plus the
+    // folder rows, orphaning the items' R2 objects.
+    const tables: Record<string, MockRow[]> = {
+      media_folders: [folderRow(folderId, null, 'Root')],
+      media_items: [0, 1, 2].map((i) => ({
+        id: `dddddddd-0000-4000-8000-${String(i).padStart(12, '0')}`,
+        user_id: userId,
+        folder_id: folderId,
+        storage_key: `users/${userId}/media/${i}.jpg`,
+        thumbnail_key: null,
+      })),
+    };
+    const supabase = createCappedSupabaseMock(tables, { failMediaItemsRangeAt: 1 });
+    const req = new NextRequest(`http://localhost:3000/api/tenant/acme/media/folders/${folderId}`, {
+      method: 'DELETE',
+      headers: { cookie: validSessionCookie },
+    });
+    const res = await handleDeleteFolder(req, 'acme', folderId, supabase as never, mockStorage);
+    expect(res.status).toBe(500);
+    const data = await res.json();
+    expect(data.success).not.toBe(true);
+    // Nothing deleted: rows are retained so a retry can complete
+    // the delete (R2 deletes are idempotent).
+    expect(tables.media_items).toHaveLength(3);
+    expect(tables.media_folders).toHaveLength(1);
+    expect(mockStorage.deletedKeys.size).toBe(0);
   });
 });
