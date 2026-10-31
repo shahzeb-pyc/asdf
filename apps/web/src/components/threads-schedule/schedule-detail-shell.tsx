@@ -307,7 +307,7 @@ export function ThreadsScheduleDetailShell({
     return (
       <div className="flex flex-col gap-6">
         <Toast />
-        <Banner variant="error" title="Could not load this scheduled account">
+        <Banner variant="critical" title="Could not load this scheduled account">
           This account may have been removed from In-app Schedule, or its
           connection may have changed. Go back to the list and try again.
         </Banner>
@@ -462,7 +462,7 @@ export function ThreadsScheduleDetailShell({
         </div>
       </div>
       {disabledReason ? (
-        <Banner variant="error" title="Posting is paused for this account">
+        <Banner variant="critical" title="Posting is paused for this account">
           {disabledReason}
         </Banner>
       ) : null}
@@ -539,7 +539,7 @@ export function ThreadsScheduleDetailShell({
           {queueQuery.isPending ? (
             <Skeleton className="h-45 w-full rounded-md" />
           ) : queueQuery.isError ? (
-            <Banner variant="error" title="Could not load the queue">
+            <Banner variant="critical" title="Could not load the queue">
               Try again, and if it keeps happening, reconnect the account in Threads Accounts.
             </Banner>
           ) : queueItems.length === 0 ? (
@@ -575,7 +575,7 @@ export function ThreadsScheduleDetailShell({
             time that allows its post type.
           </p>
           {slotsQuery.isError ? (
-            <Banner variant="error" title="Could not load posting times">
+            <Banner variant="critical" title="Could not load posting times">
               Try again.
             </Banner>
           ) : slots.length === 0 ? (
@@ -697,7 +697,7 @@ export function ThreadsScheduleDetailShell({
           {insightsQuery.isPending ? (
             <Skeleton className="h-45 w-full rounded-md" />
           ) : insightsQuery.isError || !insightsQuery.data ? (
-            <Banner variant="error" title="Could not load insights">
+            <Banner variant="critical" title="Could not load insights">
               Try again.
             </Banner>
           ) : (

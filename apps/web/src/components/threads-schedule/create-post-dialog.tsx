@@ -20,11 +20,11 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, buildTenantApiPath } from '@/lib/api';
 import {
   DestinationEnqueueResponseSchema,
+  IDEMPOTENCY_KEY_HEADER,
   THREADS_SCHEDULE_FORMATS,
   threadsWeightedTextLength,
   type ThreadsScheduleFormat,
 } from '@fbuploadpro/contracts';
-import { IDEMPOTENCY_KEY_HEADER } from '@/lib/publishing/idempotency';
 import { queryKeys } from '@/lib/data';
 import { Button } from '@/components/shared/ui/button';
 import {

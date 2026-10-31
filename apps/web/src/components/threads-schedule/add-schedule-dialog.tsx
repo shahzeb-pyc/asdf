@@ -159,7 +159,7 @@ export function AddThreadsScheduleDialog({
         </DialogHeader>
 
         {error ? (
-          <Banner variant="error" title="Could not add this account">
+          <Banner variant="critical" title="Could not add this account">
             {error}
           </Banner>
         ) : null}

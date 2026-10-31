@@ -191,7 +191,7 @@ export function ThreadsScheduleShell({
       </div>
 
       {listQuery.isError ? (
-        <Banner variant="error" title="Could not load scheduled accounts">
+        <Banner variant="critical" title="Could not load scheduled accounts">
           Something went wrong loading this list. Try again, and if it keeps
           happening, reconnect the account in Threads Accounts.
         </Banner>

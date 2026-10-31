@@ -89,14 +89,23 @@ export async function GET(
           external_post_id: string | null;
           created_at: string;
           updated_at: string;
-          media: { name: string; thumbnail_url: string | null } | null;
+          media:
+            | { name: string; thumbnail_url: string | null }
+            | { name: string; thumbnail_url: string | null }[]
+            | null;
         };
+        // Supabase infers a to-many join as an array; a queue item has at
+        // most one media row, so take the first instead of reading .name
+        // off an array (which would always be null).
+        const media = Array.isArray(typed.media)
+          ? (typed.media[0] ?? null)
+          : typed.media;
         return {
           id: typed.id,
           kind: typed.kind,
           caption: typed.caption ?? '',
-          mediaName: typed.media?.name ?? null,
-          mediaThumbnailUrl: typed.media?.thumbnail_url ?? null,
+          mediaName: media?.name ?? null,
+          mediaThumbnailUrl: media?.thumbnail_url ?? null,
           scheduledTime: typed.scheduled_time ? new Date(typed.scheduled_time).toISOString() : null,
           status: typed.status,
           errorMessage: typed.error_message,

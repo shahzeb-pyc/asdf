@@ -1,3 +1,7 @@
+export {
+  isThreadsScheduleAdded,
+  isThreadsSchedulePaused,
+} from '@fbuploadpro/contracts';
 import {
   THREADS_SCHEDULE_FORMATS,
   isThreadsScheduleAdded,
