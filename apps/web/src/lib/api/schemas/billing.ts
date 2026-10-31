@@ -12,6 +12,7 @@ export {
   CreateCryptoCheckoutRequestSchema,
   CryptoCheckoutResponseSchema,
   EntitlementResponseSchema,
+  MediaStorageResponseSchema,
   PlatformCountsSchema,
   UsageRegisterRequestSchema,
 } from '@fbuploadpro/contracts';
@@ -20,5 +21,6 @@ export type {
   BillingStatusResponse,
   CryptoCheckoutResponse,
   EntitlementResponse,
+  MediaStorageResponse,
   PlatformCounts,
 } from '@fbuploadpro/contracts';

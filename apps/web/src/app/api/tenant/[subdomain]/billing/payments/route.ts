@@ -9,7 +9,9 @@ import { logServerError } from '@/lib/server-analytics';
 import { getStorageService } from '@/lib/storage';
 import {
   getActivePeriod,
+  hasPendingPayment,
   paymentFromRow,
+  PENDING_PAYMENT_EXISTS_MESSAGE,
   pricePurchase,
   SubscriptionGateError,
 } from '@/lib/billing/entitlement';
@@ -109,6 +111,14 @@ export async function POST(
 
   try {
     const counts = countsResult.data;
+    // One pending payment per user: checked before any screenshot is
+    // stored and before any row is created.
+    if (await hasPendingPayment(client, session.userId)) {
+      return NextResponse.json(
+        { error: 'PENDING_PAYMENT_EXISTS', message: PENDING_PAYMENT_EXISTS_MESSAGE },
+        { status: 409 }
+      );
+    }
     const activePeriod = await getActivePeriod(client, session.userId, new Date());
     let amountPkr: number;
     let isUpgrade: boolean;
@@ -160,6 +170,17 @@ export async function POST(
         'id,user_id,method,bank_method,status,facebook_count,instagram_count,threads_count,x_count,tiktok_count,youtube_count,amount_pkr,is_upgrade,screenshot_storage_key,nowpayments_payment_id,nowpayments_pay_address,nowpayments_pay_amount,nowpayments_network,period_id,approved_at,created_at'
       )
       .single();
+    if (error?.code === '23505') {
+      // Race backstop: two submissions that both passed the pending
+      // check can still collide on the one-pending-per-user index.
+      // The loser gets the same plain 409 as the check above, and no
+      // second row exists — the screenshot it uploaded is orphaned
+      // bytes under an unguessable key, never attached to a payment.
+      return NextResponse.json(
+        { error: 'PENDING_PAYMENT_EXISTS', message: PENDING_PAYMENT_EXISTS_MESSAGE },
+        { status: 409 }
+      );
+    }
     if (error || !data) {
       // Diagnostic only: the Supabase error was previously discarded here,
       // so the server log could not say WHY the insert was rejected

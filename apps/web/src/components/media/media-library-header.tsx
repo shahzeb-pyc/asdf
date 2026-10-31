@@ -24,6 +24,15 @@ export interface MediaLibraryHeaderProps {
   onNewFolderClick: () => void;
   onUploadClick: () => void;
   onDownloadClick: () => void;
+  /**
+   * Read-only library (storage over the plan limit): uploads and new
+   * folders are disabled here; browsing, preview, and delete stay
+   * enabled. The server gates are the enforcement — these flags are
+   * only the visible half, so a disabled button never implies the
+   * API would accept the write.
+   */
+  uploadDisabled?: boolean;
+  newFolderDisabled?: boolean;
 }
 
 export function MediaLibraryHeader({
@@ -32,6 +41,8 @@ export function MediaLibraryHeader({
   onNewFolderClick,
   onUploadClick,
   onDownloadClick,
+  uploadDisabled = false,
+  newFolderDisabled = false,
 }: Readonly<MediaLibraryHeaderProps>) {
   return (
     <>
@@ -80,6 +91,7 @@ export function MediaLibraryHeader({
             variant="link"
             data-testid="new-folder-link"
             onClick={onNewFolderClick}
+            disabled={newFolderDisabled}
             className="h-11 px-1 text-body md:h-10"
           >
             <FolderPlusIcon aria-hidden />
@@ -104,6 +116,7 @@ export function MediaLibraryHeader({
             type="button"
             data-testid="upload-files-btn"
             onClick={onUploadClick}
+            disabled={uploadDisabled}
             className="h-11"
           >
             <UploadIcon aria-hidden />

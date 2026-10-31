@@ -10,6 +10,8 @@ import {
   getMultipartPublicUrl,
   sanitizeMultipartFileName,
 } from '../multipart-lib';
+import { getSupabaseAdminClient } from '@/lib/auth/clients';
+import { checkStorageQuota, getStorageQuotaState } from '@/lib/billing/storage-quota';
 
 /**
  * Multipart step 1 (P3): create the server-side upload and mint the
@@ -43,6 +45,29 @@ export async function POST(
     );
   }
   const body = parsed.data;
+
+  // Storage quota gate (declared size — advisory; the confirm step
+  // re-checks the verified size before anything lands). No active
+  // period → quota 0 → refused. A missing admin client only happens
+  // in test harnesses without a database; production always has one.
+  try {
+    const quotaClient = getSupabaseAdminClient();
+    if (quotaClient) {
+      const quotaState = await getStorageQuotaState(quotaClient, session.userId);
+      const check = checkStorageQuota(quotaState, body.fileSize);
+      if (!check.allowed) {
+        return NextResponse.json(
+          { error: 'STORAGE_QUOTA_EXCEEDED', message: check.message },
+          { status: check.noQuota ? 403 : 413 }
+        );
+      }
+    }
+  } catch {
+    return NextResponse.json(
+      { error: 'Your storage could not be checked. Please try again.' },
+      { status: 500 }
+    );
+  }
 
   const clientOrError = getMultipartClient();
   if (clientOrError instanceof NextResponse) return clientOrError;

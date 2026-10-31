@@ -13,6 +13,11 @@ import {
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import { logServerError, trackServerEvent } from '@/lib/server-analytics';
 import {
+  checkStorageQuota,
+  getStorageQuotaState,
+  type StorageQuotaState,
+} from '@/lib/billing/storage-quota';
+import {
   createR2S3Client,
   getR2Config,
   getStorageService,
@@ -135,11 +140,37 @@ function uploadVerificationFailed(): NextResponse {
   );
 }
 
+/**
+ * Quota-state provider seam, mirroring the storage verifier: tests
+ * inject a fake; production resolves a client from the injected
+ * database client or the admin client. When no client resolves
+ * (test harnesses without a database), the check is skipped — in
+ * production a client always resolves, so the skip is unreachable
+ * there.
+ */
+export type ConfirmQuotaStateProvider = (userId: string) => Promise<StorageQuotaState | null>;
+
+async function defaultConfirmQuotaState(
+  dbClient: DatabaseClient | SupabaseClient | undefined,
+  userId: string
+): Promise<StorageQuotaState | null> {
+  if (dbClient && 'from' in dbClient && typeof dbClient.from === 'function') {
+    return getStorageQuotaState(dbClient as SupabaseClient, userId);
+  }
+  if (dbClient && 'query' in dbClient && typeof dbClient.query === 'function') {
+    return getStorageQuotaState(dbClient as DatabaseClient, userId);
+  }
+  const admin = getSupabaseAdminClient();
+  if (!admin) return null;
+  return getStorageQuotaState(admin, userId);
+}
+
 export async function handleConfirmUpload(
   request: NextRequest,
   subdomain: string,
   dbClient?: DatabaseClient | SupabaseClient,
-  storageVerifier?: MediaStorageVerifier
+  storageVerifier?: MediaStorageVerifier,
+  quotaStateProvider?: ConfirmQuotaStateProvider
 ): Promise<NextResponse> {
   const sessionSecret = getSessionSecret();
 
@@ -256,6 +287,35 @@ export async function handleConfirmUpload(
   const verifiedMimeType = objectMetadata.contentType?.trim()
     ? objectMetadata.contentType.trim()
     : body.mimeType;
+
+  // Storage quota gate on VERIFIED bytes — the real enforcement.
+  // Upload start only saw the client-declared size, which a caller
+  // can understate; nothing lands here over quota. No active period
+  // → quota 0 → refused. Usage sums live rows only, so deleting a
+  // file frees its quota immediately.
+  try {
+    const quotaState = await (quotaStateProvider ?? ((userId: string) => defaultConfirmQuotaState(dbClient, userId)))(
+      session.userId
+    );
+    if (quotaState) {
+      const check = checkStorageQuota(quotaState, verifiedFileSize);
+      if (!check.allowed) {
+        return NextResponse.json(
+          { error: 'STORAGE_QUOTA_EXCEEDED', message: check.message },
+          { status: check.noQuota ? 403 : 413 }
+        );
+      }
+    }
+  } catch (err) {
+    logServerError('[media/confirm] Failed to check storage quota', err, {
+      source: 'media-confirm',
+      subdomain,
+    });
+    return NextResponse.json(
+      { error: 'INTERNAL_ERROR', message: 'Failed to confirm media upload' },
+      { status: 500 }
+    );
+  }
 
   try {
     let insertedRow: MediaItemRow;
