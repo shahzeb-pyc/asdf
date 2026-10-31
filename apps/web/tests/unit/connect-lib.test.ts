@@ -244,6 +244,133 @@ describe('Persistence edge cases (legacy client)', () => {
     expect(result.updated).toBe(0);
   });
 
+  it('propagates a revocation to destinations, queued items, and tokens (P0-2)', async () => {
+    const seen: string[] = [];
+    const client = makeLegacyClient((sql) => {
+      seen.push(sql);
+      if (sql.includes("SET status = 'revoked'")) return [{ id: 'acct-1' }];
+      if (sql.includes('UPDATE destinations')) return [{ id: 'd-1' }];
+      if (sql.includes('UPDATE queue_items')) return [{ id: 'q-1' }];
+      if (sql.includes('encrypted_access_token')) return [];
+      return [];
+    });
+    const result = await markSocialAccountRevoked(client, 'facebook', 'ext-1');
+    expect(result).toEqual({ updated: 1, propagationFailed: 0 });
+    const joined = seen.join('\n');
+    expect(joined).toContain("SET status = 'revoked'");
+    expect(joined).toContain('UPDATE destinations');
+    expect(joined).toContain("status = 'error'");
+    expect(joined).toContain('UPDATE queue_items');
+    expect(joined).toContain("status = 'cancelled'");
+    expect(joined).toContain('encrypted_access_token');
+    // Verification send-back: the legacy path must null BOTH tokens,
+    // like the Supabase branch — a surviving refresh token is a hole.
+    expect(joined).toContain('encrypted_refresh_token');
+  });
+
+  it('counts a token-null failure instead of reporting full success (P0-2)', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const client = makeLegacyClient((sql) => {
+        if (sql.includes("SET status = 'revoked'")) return [{ id: 'acct-1' }];
+        if (sql.includes('UPDATE destinations')) return [{ id: 'd-1' }];
+        if (sql.includes('UPDATE queue_items')) return [{ id: 'q-1' }];
+        if (sql.includes('encrypted_access_token')) {
+          throw new Error('token table down');
+        }
+        return [];
+      });
+      const result = await markSocialAccountRevoked(client, 'facebook', 'ext-1');
+      expect(result).toEqual({ updated: 1, propagationFailed: 1 });
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('propagates a revocation on the Supabase path, including token nulling (P0-2)', async () => {
+    interface Call {
+      table: string;
+      update: Record<string, unknown>;
+      filters: Array<[string, unknown]>;
+      inFilters: Array<[string, unknown[]]>;
+    }
+    const calls: Call[] = [];
+    const supabase = {
+      from: (table: string) => {
+        const entry: Call = { table, update: {}, filters: [], inFilters: [] };
+        calls.push(entry);
+        const builder: Record<string, unknown> = {};
+        builder.update = (payload: Record<string, unknown>) => {
+          entry.update = payload;
+          return builder;
+        };
+        builder.eq = (column: string, value: unknown) => {
+          entry.filters.push([column, value]);
+          return builder;
+        };
+        builder.in = (column: string, values: unknown[]) => {
+          entry.inFilters.push([column, values]);
+          return builder;
+        };
+        builder.select = () => {
+          if (table === 'social_accounts' && entry.update.status === 'revoked') {
+            return Promise.resolve({ data: [{ id: 'acct-1' }], error: null });
+          }
+          if (table === 'destinations') {
+            return Promise.resolve({ data: [{ id: 'd-1' }], error: null });
+          }
+          if (table === 'queue_items') {
+            return Promise.resolve({ data: [{ id: 'q-1' }], error: null });
+          }
+          return Promise.resolve({ data: [], error: null });
+        };
+        // The token-null update is awaited directly (no .select()).
+        builder.then = (resolve: (value: unknown) => void) =>
+          resolve({ data: null, error: null });
+        return builder;
+      },
+    };
+    const result = await markSocialAccountRevoked(supabase as never, 'facebook', 'ext-1');
+    expect(result).toEqual({ updated: 1, propagationFailed: 0 });
+    expect(calls[0]?.table).toBe('social_accounts');
+    expect(calls[0]?.update.status).toBe('revoked');
+    expect(calls[0]?.filters).toContainEqual(['platform', 'facebook']);
+    expect(calls[0]?.filters).toContainEqual(['external_account_id', 'ext-1']);
+    const destCall = calls.find((c) => c.table === 'destinations');
+    expect(destCall?.update.status).toBe('error');
+    expect(destCall?.filters).toContainEqual(['account_id', 'acct-1']);
+    expect(destCall?.filters).toContainEqual(['status', 'active']);
+    const queueCall = calls.find((c) => c.table === 'queue_items');
+    expect(queueCall?.update.status).toBe('cancelled');
+    expect(queueCall?.filters).toContainEqual(['status', 'queued']);
+    expect(queueCall?.inFilters).toContainEqual(['destination_id', ['d-1']]);
+    const nullCall = calls.filter((c) => c.table === 'social_accounts').at(-1);
+    expect(nullCall?.update.encrypted_access_token).toBeNull();
+    expect(nullCall?.update.encrypted_refresh_token).toBeNull();
+    expect(nullCall?.filters).toContainEqual(['id', 'acct-1']);
+  });
+
+  it('still lands the revocation and nulls tokens when propagation fails (P0-2)', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const seen: string[] = [];
+      const client = makeLegacyClient((sql) => {
+        seen.push(sql);
+        if (sql.includes("SET status = 'revoked'")) return [{ id: 'acct-1' }];
+        if (sql.includes('UPDATE destinations')) {
+          throw new Error('destinations down');
+        }
+        if (sql.includes('encrypted_access_token')) return [];
+        return [];
+      });
+      const result = await markSocialAccountRevoked(client, 'facebook', 'ext-1');
+      expect(result).toEqual({ updated: 1, propagationFailed: 1 });
+      expect(seen.join('\n')).toContain('encrypted_access_token');
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
   it('returns null for a missing destination and missing credentials', async () => {
     const client = makeLegacyClient(() => []);
     expect(await fetchDestinationDetail(client, workspaceId, 'missing')).toBeNull();

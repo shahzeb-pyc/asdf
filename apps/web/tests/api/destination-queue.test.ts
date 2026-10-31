@@ -352,6 +352,36 @@ describe('destination queue publish-now', () => {
     expect(res.status).toBe(200);
     expect(db.queueItems[0]?.retry_count).toBe(0);
   });
+
+  it('blocks publish-now on a revoked-propagation Facebook destination (409 PAGE_NOT_PUBLISHABLE, item stays queued)', async () => {
+    // Propagated state: destinations.status 'error' with no fb_status
+    // marker — exactly what markSocialAccountRevoked leaves behind.
+    const fb = db.destinations.get(fbDestinationId);
+    if (fb) {
+      fb.status = 'error';
+      fb.metadata = null;
+    }
+    const item = makeItem({
+      destination_id: fbDestinationId,
+      platform: 'facebook',
+      status: 'queued',
+      scheduled_time: '2000-01-01T09:00:00.000Z',
+      slot_id: null,
+      claimed_at: null,
+    });
+    db.queueItems.push(item);
+    const res = await handleDestinationPublishNow(
+      request('POST'),
+      subdomain,
+      fbDestinationId,
+      item.id,
+      dbClient
+    );
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('PAGE_NOT_PUBLISHABLE');
+    expect(db.queueItems[0]?.status).toBe('queued');
+  });
 });
 
 describe('destination queue retry', () => {

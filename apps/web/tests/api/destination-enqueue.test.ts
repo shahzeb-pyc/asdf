@@ -599,6 +599,33 @@ describe('destination enqueue — expired-account gate (BG1)', () => {
     expect(db.queueItems).toHaveLength(0);
   });
 
+  it('rejects queueing to a revoked account with a distinct error and writes nothing', async () => {
+    const revokedDestinationId = 'ffffffff-ffff-4fff-ffff-ffffffffffff';
+    db.destinations.set(revokedDestinationId, {
+      id: revokedDestinationId,
+      workspace_id: workspaceId,
+      platform: 'instagram',
+      timezone: 'UTC',
+      status: 'active',
+      account_id: 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      account_status: 'revoked',
+      account_token_expires_at: '2999-01-01T00:00:00.000Z',
+    });
+    const res = await enqueue({
+      platform: 'instagram',
+      destinationId: revokedDestinationId,
+      kind: 'image',
+      mediaItemIds: [imageMediaId],
+      caption: 'x',
+      intent: 'now',
+    });
+    const payload = (await res.json()) as { error: string; message: string };
+    expect(res.status).toBe(409);
+    expect(payload.error).toBe('ACCOUNT_REVOKED');
+    expect(payload.message).toMatch(/Reconnect/);
+    expect(db.queueItems).toHaveLength(0);
+  });
+
   it('rejects queueing when the token has lapsed even though the stored status is still active', async () => {
     seedExpired();
     const res = await enqueue({

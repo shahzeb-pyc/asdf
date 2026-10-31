@@ -13,6 +13,8 @@ import {
   fetchDestinationQueueItem,
   updateDestinationQueueItem,
 } from '@/lib/publishing/destination-queue';
+import { evaluatePageHealth } from '@fbuploadpro/contracts';
+import { unifiedDestinationStatusToWire } from '@/lib/server/facebook-wire';
 import { refreshDestinationUnmatchedFlag } from '@/lib/server/unmatched-flag';
 
 /**
@@ -101,6 +103,53 @@ export async function handleDestinationPublishNow(
       { error: 'ALREADY_PUBLISHED', message: 'Item has already been published' },
       { status: 400 }
     );
+  }
+
+  // Status family 3A: the same PAGE_NOT_PUBLISHABLE gate the retry
+  // route applies. Only an active destination may publish now; every
+  // other wire status is a 409, never a fake success for a post that
+  // cannot go out. This closes the hole where a destination whose
+  // account was revoked on the platform's side (propagated to
+  // 'error') could still be re-queued for immediate dispatch here
+  // while the queue publish-now and retry routes refused it.
+  {
+    const wire = unifiedDestinationStatusToWire(
+      destination.status,
+      destination.metadata
+    );
+    const rateLimitedAt =
+      typeof destination.metadata?.rate_limited_at === 'string'
+        ? destination.metadata.rate_limited_at
+        : null;
+    const effective =
+      wire === 'fb_rate_limited' && rateLimitedAt
+        ? evaluatePageHealth({
+            status: wire,
+            updatedAt: null,
+            rateLimitedAt,
+          })
+        : wire;
+    if (effective !== 'active') {
+      const messages: Partial<Record<string, string>> = {
+        invalid_token:
+          'This Page’s connection has expired. Reconnect the Page, then try again.',
+        page_checkpoint:
+          'This Page is waiting on a Facebook identity check. Resolve it in Facebook, then try again.',
+        fb_rate_limited:
+          'This Page is rate-limited by Facebook right now. Wait for the limit to lift, then try again.',
+        disconnected: 'This Page is disconnected. Add it again, then try again.',
+        paused: 'This Page is paused. Resume posting, then try again.',
+      };
+      return NextResponse.json(
+        {
+          error: 'PAGE_NOT_PUBLISHABLE',
+          message:
+            messages[effective] ??
+            'This Page cannot publish right now. Fix the Page connection, then try again.',
+        },
+        { status: 409 }
+      );
+    }
   }
 
   const updated = await updateDestinationQueueItem(

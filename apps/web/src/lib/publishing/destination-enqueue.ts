@@ -137,6 +137,12 @@ function toDestination(row: DestinationRowRaw): DestinationForEnqueue {
  * already passed. A missing account row (accountId empty) is treated
  * as expired rather than trusted — the destination cannot be
  * published through an account the route cannot see.
+ *
+ * 'revoked' counts here too (launch prep, P0-2): the user removed
+ * the app on the platform's side, so the account can no longer
+ * publish — the route reports it distinctly (ACCOUNT_REVOKED)
+ * rather than as an expiry, but the gate itself is the same
+ * must-not-accept-new-queueing rule.
  */
 export function isAccountExpiredForEnqueue(
   destination: DestinationForEnqueue,
@@ -144,6 +150,7 @@ export function isAccountExpiredForEnqueue(
 ): boolean {
   if (!destination.accountId) return true;
   if (destination.accountStatus === 'expired') return true;
+  if (destination.accountStatus === 'revoked') return true;
   if (
     destination.accountStatus === 'active' &&
     destination.accountTokenExpiresAt
