@@ -1,6 +1,6 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import safariPreview from '../assets/prompts/african-safari-predator-encounter.webp';
+import dirtBikePreview from '../assets/prompts/high-speed-dirt-bike-hill-climb-master-prompt.webp';
 
 const signup = 'https://app.fbuploadpro.com/signup';
 const signin = 'https://app.fbuploadpro.com/login';
@@ -111,8 +111,8 @@ const signin = 'https://app.fbuploadpro.com/login';
 
     <!-- Section 2: how Muse manages FBUploadPro. Left headline plus
          description, right circular orbit: thick soft white rings,
-         the Muse mark at the centre, six platform badges revolving
-         with their logos kept upright. -->
+         the Muse mark at the centre, six platform badges placed
+         around it with their logos upright and static. -->
     <section id="section-2" class="section-full relative flex items-center overflow-hidden bg-white px-5 pt-24 pb-16 sm:px-8 sm:pt-16 lg:px-12" aria-label="How Muse manages FBUploadPro">
       <div class="s2-grid mx-auto grid w-full max-w-[1240px] items-center gap-12 lg:grid-cols-[1fr_auto] lg:justify-between lg:gap-24">
         <div class="text-left">
@@ -149,20 +149,24 @@ const signin = 'https://app.fbuploadpro.com/login';
          pull of any kind. Two columns on desktop: text left, one
          featured card right; stacked on phones. The card shows
          ONE real published prompt from the catalogue, hardcoded
-         here: "African Safari Predator Encounter" with meta
-         "Seedance 2.5", "Video Prompts", "30s" — nothing else
-         about the prompt is shown, and nothing is invented.
+         here: "High-Speed Dirt Bike Hill-Climb Master Prompt"
+         with meta "Video Prompts", "15-30s" — the tool pill is
+         omitted because the catalogue row has no tool assigned,
+         and the length is the row's bucket label because its
+         exact duration is blank; nothing else about the prompt
+         is shown, and nothing is invented.
          NO sample tag anywhere (this is a real prompt, not a
          sample). The preview area is the real preview image for
          this prompt, saved into the repo at
-         src/assets/prompts/african-safari-predator-encounter.webp
+         src/assets/prompts/high-speed-dirt-bike-hill-climb-master-prompt.webp
          and rendered through Astro's asset pipeline — no external
-         image URL, no runtime fetch. NO master prompt text (it
-         stays in the app), NO copy button, NO counts. Heading gold is TEXT
-         ONLY via the existing gold-deep token — the heavy gold
-         highlight box is removed from this section. -->
-    <section id="section-3" class="relative bg-white px-5 py-20 sm:px-8 sm:py-24 lg:px-12" aria-label="Prompt Library">
-      <div class="s3-content mx-auto grid w-full max-w-[1240px] items-start gap-10 lg:grid-cols-[1fr_1.2fr]">
+         image URL, no runtime fetch, full image, no cropping.
+         NO master prompt text (it stays in the app), NO copy
+         button, NO counts. Heading gold is TEXT ONLY via the
+         existing gold-deep token — the heavy gold highlight box
+         is removed from this section. -->
+    <section id="section-3" class="section-full relative flex items-center bg-white px-5 py-24 sm:px-8 lg:px-12" aria-label="Prompt Library">
+      <div class="s3-content mx-auto grid w-full max-w-[1240px] items-center gap-10 lg:grid-cols-[1fr_1.2fr]">
         <div class="s3-anim">
           <span class="mb-4 inline-flex items-center rounded-full border border-gold bg-gold/20 px-3 py-1.5 text-xs font-bold tracking-[0.12em] text-ink uppercase">Prompt Library</span>
           <h2 class="text-[36px] leading-[1.08] font-bold tracking-tight sm:text-5xl lg:text-[52px]">
@@ -175,16 +179,15 @@ const signin = 'https://app.fbuploadpro.com/login';
         </div>
         <div>
           <article class="s3-anim overflow-hidden rounded-2xl border border-line bg-white shadow-[0_12px_32px_rgba(17,17,17,0.10)]">
-            <img src={safariPreview.src} width={safariPreview.width} height={safariPreview.height} alt="African Safari Predator Encounter" class="block h-auto w-full" />
+            <img src={dirtBikePreview.src} width={dirtBikePreview.width} height={dirtBikePreview.height} alt="High-Speed Dirt Bike Hill-Climb Master Prompt" class="block h-auto w-full" />
             <div class="p-5">
               <div class="mb-4 flex items-center justify-end gap-3">
                 <span aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" /></svg></span>
               </div>
-              <h3 class="mb-3 text-lg font-semibold">African Safari Predator Encounter</h3>
+              <h3 class="mb-3 text-lg font-semibold">High-Speed Dirt Bike Hill-Climb Master Prompt</h3>
               <div class="flex flex-wrap gap-1.5">
-                <span class="inline-flex items-center rounded-full border border-line bg-[#f4f4f5] px-2.5 py-1 text-xs text-ink-sub">Seedance 2.5</span>
                 <span class="inline-flex items-center rounded-full border border-line bg-[#f4f4f5] px-2.5 py-1 text-xs text-ink-sub">Video Prompts</span>
-                <span class="inline-flex items-center rounded-full border border-line bg-[#f4f4f5] px-2.5 py-1 text-xs text-ink-sub">30s</span>
+                <span class="inline-flex items-center rounded-full border border-line bg-[#f4f4f5] px-2.5 py-1 text-xs text-ink-sub">15-30s</span>
               </div>
             </div>
           </article>
@@ -231,9 +234,10 @@ const signin = 'https://app.fbuploadpro.com/login';
          rounding at the join; the screenshot's rounded card +
          thin blue frame is the screenshot tool's frame, NOT
          footer design, so no blue border and no rounded card
-         here). Content height only — deliberately NOT
-         full-height, so the page ends shortly after the bottom
-         bar. Top row: logo + wordmark. Below: a short brand
+         here). Full screen: the footer fills its viewport and
+         its rows are distributed across it, so the page ends
+         with the bottom bar at the foot of the screen.
+         Top row: logo + wordmark. Below: a short brand
          line on the left (approved hero line, short form, no
          new copy), two heading-less link columns on the right.
          Divider, then bottom row: copyright left, circular
@@ -241,12 +245,12 @@ const signin = 'https://app.fbuploadpro.com/login';
          grid, its tagline, its Contact card, and its previous
          bottom line — the old footer's WhatsApp/Facebook URLs
          survive only as the two bottom-row circular icons. -->
-    <section id="section-6" class="relative bg-[#0b0e11] px-5 py-20 sm:px-8 lg:px-12" aria-label="Footer">
-      <div class="s5-content relative z-10 mx-auto w-full max-w-6xl">
+    <section id="section-6" class="section-full relative flex flex-col bg-[#0b0e11] px-5 py-16 sm:px-8 lg:px-12" aria-label="Footer">
+      <div class="s5-content relative z-10 mx-auto flex w-full max-w-6xl flex-1 flex-col justify-between">
         <a href="#section-1" class="inline-flex items-center gap-3 no-underline">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="32" height="32" fill="none" role="img" aria-label="FBUploadPro" class="h-8 w-8 shrink-0"><path d="M24 11L12 23L17 28L20 25V51L28 45V23H45L53 15H28L24 11Z" fill="#fcd535" /><path d="M24 11L12 23L13.2 24.2L24 13.4L28 17.4H50.6L53 15H28L24 11Z" fill="#ffffff" fill-opacity="0.35" /><path d="M32 30H48L40 38H32V30Z" fill="#f0b90b" /><path d="M32 43H41L35 49H32V43Z" fill="#766018" /></svg><span class="text-xl font-bold tracking-tight text-white">FBUploadPro</span>
         </a>
-        <div class="mt-12 grid gap-10 lg:grid-cols-[1.4fr_1fr_1fr]">
+        <div class="mt-8 grid gap-8 lg:grid-cols-[1.4fr_1fr_1fr]">
           <div>
             <p class="max-w-md text-base leading-relaxed text-white/70">Your accounts, posting themselves — 100% in the cloud</p>
           </div>
@@ -267,7 +271,7 @@ const signin = 'https://app.fbuploadpro.com/login';
             </ul>
           </div>
         </div>
-        <div class="mt-14 flex flex-col items-center justify-between gap-4 border-t border-white/15 pt-6 text-xs text-white/50 md:flex-row">
+        <div class="mt-10 flex flex-col items-center justify-between gap-4 border-t border-white/15 pt-4 text-xs text-white/50 md:flex-row">
           <span>© 2026 FBUploadPro, All Rights Reserved</span>
           <div class="flex items-center gap-3">
             <a href="https://wa.me/923278644204" target="_blank" rel="noopener noreferrer" aria-label="WhatsApp" class="flex h-10 w-10 items-center justify-center rounded-full bg-white text-[#111111] no-underline"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" role="img" aria-label="WhatsApp"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413Z" /></svg></a>
@@ -278,268 +282,4 @@ const signin = 'https://app.fbuploadpro.com/login';
     </section>
   </main>
 
-  <!-- Motion: one GSAP system, bundled from npm packages. Free
-       scrolling, smoothed by Lenis: wheel, touch, keyboard and
-       scrollbar all move freely through as many sections as the
-       visitor wants. Every scroll reveal plays forward on the way
-       down and genuinely reverses on the way back up. All motion
-       uses from-tweens, so if this module ever fails to load, every
-       element stays at its fully visible base state and the page
-       still scrolls natively. With reduced motion preferred, this
-       whole module stays off and the page is plain native scroll. -->
-  <script>
-    import gsap from 'gsap';
-    import { ScrollTrigger } from 'gsap/ScrollTrigger';
-    import Lenis from 'lenis';
-
-    gsap.registerPlugin(ScrollTrigger);
-
-    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      initMotion();
-    }
-
-    function initMotion() {
-      /* Lenis smooth scroll, wired into GSAP the standard way.
-         Lerp 0.1 is gentle smoothing; touch keeps its native
-         momentum, Lenis only smooths wheel input. */
-      var lenis = new Lenis({ lerp: 0.1, smoothWheel: true, syncTouch: false });
-      lenis.on('scroll', ScrollTrigger.update);
-      gsap.ticker.add(function (time) { lenis.raf(time * 1000); });
-      gsap.ticker.lagSmoothing(0);
-
-      /* Topbar: animated in with the hero, then hides while
-         scrolling down and returns while scrolling up, always
-         visible at the very top. Driven by Lenis scroll position,
-         with a native scroll fallback for phone touch scrolling. */
-      var topbar = document.getElementById('site-topbar');
-      var lastScroll = 0;
-      var topbarHidden = false;
-      function setTopbar(hidden) {
-        if (hidden === topbarHidden || !topbar) return;
-        topbarHidden = hidden;
-        gsap.to(topbar, {
-          yPercent: hidden ? -160 : 0,
-          opacity: hidden ? 0 : 1,
-          duration: 0.35,
-          ease: 'power2.out',
-          overwrite: 'auto',
-        });
-      }
-      lenis.on('scroll', function (e) {
-        var y = e.scroll;
-        if (y <= 0) setTopbar(false);
-        else if (y > lastScroll && y > 72) setTopbar(true);
-        else if (y < lastScroll) setTopbar(false);
-        lastScroll = y;
-      });
-      /* Native scroll fallback for the topbar: with syncTouch
-         false, Lenis does not reliably emit scroll during native
-         phone touch scrolling, so the topbar would stay visible
-         on scroll down. Same direction logic, its own last
-         position, same guarded setTopbar — the two listeners are
-         idempotent and never fight. A listener, not animation:
-         all topbar motion stays in the GSAP tween above. */
-      var lastNativeScroll = 0;
-      window.addEventListener('scroll', function () {
-        var y = window.scrollY || window.pageYOffset || 0;
-        if (y <= 0) setTopbar(false);
-        else if (y > lastNativeScroll && y > 72) setTopbar(true);
-        else if (y < lastNativeScroll) setTopbar(false);
-        lastNativeScroll = y;
-      }, { passive: true });
-
-      /* Word splitter: wraps each word in a mask > inner pair so
-         words rise from below their mask in a cascade. <br> stays
-         in place, and words inside a nowrap span stay inside it.
-         Runs only inside this module, so a failed load leaves the
-         original text untouched and visible. */
-      function splitWords(root) {
-        var words = [];
-        function walk(node) {
-          var children = Array.prototype.slice.call(node.childNodes);
-          children.forEach(function (child) {
-            if (child.nodeType === 3) {
-              var parts = child.textContent.split(/(\s+)/);
-              parts.forEach(function (part) {
-                if (!part) return;
-                if (/^\s+$/.test(part)) {
-                  node.insertBefore(document.createTextNode(part), child);
-                } else {
-                  var mask = document.createElement('span');
-                  mask.className = 'word-mask';
-                  var inner = document.createElement('span');
-                  inner.className = 'word-inner';
-                  inner.textContent = part;
-                  mask.appendChild(inner);
-                  node.insertBefore(mask, child);
-                  words.push(inner);
-                }
-              });
-              node.removeChild(child);
-            } else if (child.nodeType === 1 && child.tagName !== 'BR') {
-              walk(child);
-            }
-          });
-        }
-        if (root) walk(root);
-        return words;
-      }
-      var heroWords = splitWords(document.querySelector('.hero-sub'));
-      var s2Words = splitWords(document.querySelector('.s2-text'));
-
-      /* Hero load timeline: topbar pill drops in, the gold
-         highlight sweeps on, the subhead cascades word by word,
-         the button pops, tiles pop. Headline lines are NOT in
-         this timeline (see note below) — they are fully visible
-         on first paint. */
-      /* Hero headline: deliberately NOT animated on load. The old
-         mask-rise (.from yPercent 110 inside an overflow-hidden
-         mask) meant that at first paint / mid-load the headline
-         was literally half inside its own mask — top halves
-         visible, lower half covered, yellow line below. With no
-         load tween on these lines, the headline renders complete
-         on first paint and can never be half-clipped by its mask,
-         on load, reload, or at rest. The highlight sweep below
-         still animates, over an already-full gold base. */
-      var heroTl = gsap.timeline({ defaults: { ease: 'power3.out' } });
-      heroTl
-        .from('#site-topbar .topbar-pill', { y: -16, opacity: 0, duration: 0.8, clearProps: 'transform,opacity' }, 0)
-        .fromTo('.hero-highlight', { backgroundSize: '0% 100%' }, { backgroundSize: '100% 100%', duration: 0.8, ease: 'power2.out' }, 0.9)
-        .from(heroWords, { yPercent: 110, duration: 0.7, stagger: 0.03, clearProps: 'transform' }, 0.7)
-        .from('.hero-cta', { y: 16, scale: 0.96, opacity: 0, duration: 0.8, ease: 'back.out(1.2)', clearProps: 'transform,opacity' }, 1.0)
-        .from('.iso-wrap, .mob-tile', { opacity: 0, scale: 0.85, duration: 0.7, stagger: 0.08, ease: 'back.out(1.2)' }, 0.9);
-
-      /* Tile float: gentle, slow, staggered, transform only, on the
-         wrappers — the logo artwork itself is never animated. */
-      document.querySelectorAll('.iso-wrap, .mob-tile').forEach(function (el, i) {
-        gsap.to(el, { y: -8, duration: 2.2 + (i % 3) * 0.3, ease: 'sine.inOut', yoyo: true, repeat: -1, delay: 1.6 + (i % 6) * 0.15 });
-      });
-
-      /* Desktop mouse tilt on the perspective stage. */
-      var isoStage = document.querySelector('.iso-stage');
-      if (isoStage && window.matchMedia('(pointer: fine)').matches && window.innerWidth >= 1024) {
-        gsap.set(isoStage, { transformPerspective: 900 });
-        var tiltY = gsap.quickTo(isoStage, 'rotationY', { duration: 0.6, ease: 'power3.out' });
-        var tiltX = gsap.quickTo(isoStage, 'rotationX', { duration: 0.6, ease: 'power3.out' });
-        var heroSection = document.getElementById('section-1');
-        heroSection.addEventListener('mousemove', function (e) {
-          var r = heroSection.getBoundingClientRect();
-          tiltY(((e.clientX - r.left) / r.width - 0.5) * 6);
-          tiltX(-((e.clientY - r.top) / r.height - 0.5) * 6);
-        });
-        heroSection.addEventListener('mouseleave', function () { tiltY(0); tiltX(0); });
-      }
-
-      /* Section 2 reveal, SCRUBBED: progress is tied directly to
-         scroll position, so scrolling down plays it forward and
-         scrolling up reverses it along the exact same path — no
-         replay, no snap, no stepped replay. Reveal completes while
-         the section is entering (top 90% -> top 45%), before it is
-         centred. Defaults ease 'none' so scrub progress maps 1:1;
-         pops keep their own back.out ease. */
-      gsap.timeline({
-        scrollTrigger: { trigger: '#section-2', start: 'top 90%', end: 'top 45%', scrub: 1 },
-        defaults: { ease: 'none' },
-      })
-        .from('#section-2 .reveal-line', { yPercent: 110, duration: 0.9, stagger: 0.12 })
-        .from(s2Words, { yPercent: 110, duration: 0.7, stagger: 0.015 }, '-=0.5')
-        .from('.s2-centre', { opacity: 0, duration: 0.7 }, '-=0.5')
-        .from('.s2-centre svg', { opacity: 0, duration: 0.8 }, '<')
-        .from('.orbit-badge', { scale: 0.8, opacity: 0, xPercent: -50, yPercent: -50, duration: 0.7, stagger: 0.08, ease: 'back.out(1.2)' }, '-=0.4');
-
-      /* Orbit: the badge ring revolves slowly, each badge logo
-         counter-rotates so every logo stays upright. The centre
-         mark never rotates. These loops keep running; they are
-         never reversed by scrolling. */
-      gsap.to('.orbit-ring', { rotation: 360, duration: 24, repeat: -1, ease: 'none' });
-      gsap.to('.orbit-upright', { rotation: -360, duration: 24, repeat: -1, ease: 'none' });
-      /* Centre glow: a slow breathing scale on the mark only. */
-      gsap.to('.s2-centre svg', { scale: 1.03, duration: 2.4, ease: 'sine.inOut', yoyo: true, repeat: -1, delay: 2.5, transformOrigin: '50% 50%' });
-
-      /* Section 4 reveal, SCRUBBED (same forward/backward rule as
-         section 2: top 90% -> top 45%, no stepped replay). */
-      gsap.timeline({
-        scrollTrigger: { trigger: '#section-5', start: 'top 90%', end: 'top 45%', scrub: 1 },
-        defaults: { ease: 'none' },
-      })
-        .from('#section-4 .reveal-line', { yPercent: 110, duration: 0.9, stagger: 0.12 })
-        .fromTo('#section-4 .community-highlight', { backgroundSize: '0% 100%' }, { backgroundSize: '100% 100%', duration: 0.8, ease: 'power2.out' }, '-=0.3');
-
-      /* Section 3 reveal, SCRUBBED fade+rise only (same calm
-         vocabulary as sections 5–6: opacity + y, no scale, no
-         pop, no bounce, no mask, so nothing clips and scrolling
-         back returns it along the same path. Trigger top 90% ->
-         top 45%, scrub 1, ease none. */
-      gsap.timeline({
-        scrollTrigger: { trigger: '#section-3', start: 'top 90%', end: 'top 45%', scrub: 1 },
-        defaults: { ease: 'none' },
-      })
-        .from('#section-3 .s3-anim', { opacity: 0, y: 24, duration: 0.7, stagger: 0.12 });
-
-      /* Section 5 reveal, SCRUBBED (same forward/backward rule:
-         top 90% -> top 45%, no stepped replay). Calm fade+rise
-         only: no pop, no scale, no bounce, no masked-line rise,
-         so scrolling back up genuinely returns pill + heading
-         to opacity 0 / y 24 (hidden) along the same path. The
-         reveal-mask wrappers are animated, not the inner
-         reveal-line spans, so nothing clips through a mask. */
-      gsap.timeline({
-        scrollTrigger: { trigger: '#section-5', start: 'top 90%', end: 'top 45%', scrub: 1 },
-        defaults: { ease: 'none' },
-      })
-        .from('.s4-pill', { opacity: 0, y: 24, duration: 0.7 })
-        .from('#section-5 .reveal-mask', { opacity: 0, y: 24, duration: 0.9, stagger: 0.12 }, '-=0.3');
-
-      /* Section 6 footer reveal, SCRUBBED fade+rise only (same
-         calm vocabulary as section 4: opacity + y, no scale, no
-         pop, no bounce, no mask clipping — the footer children
-         are plain blocks, not masked lines). Trigger completes
-         early on purpose: start when the footer top reaches 95%
-         of the viewport, end when it reaches 75%. At maximum
-         scroll the footer top sits at viewport height minus
-         footer height; the footer is ~450px+ tall, so even on a
-         tall 1440px viewport its top rests near 69% — inside the
-         75% end — so the scrub always finishes and the footer is
-         fully visible at the very bottom of the page, and
-         scrolling back up returns it to hidden along the same
-         path. From-tweens only, so without JS it is fully
-         visible and native anchors still work. */
-      gsap.timeline({
-        scrollTrigger: { trigger: '#section-6', start: 'top 95%', end: 'top 75%', scrub: 1 },
-        defaults: { ease: 'none' },
-      })
-        .from('.s5-content > *', { opacity: 0, y: 24, duration: 0.9, stagger: 0.12 });
-
-      /* In-page anchors: smooth Lenis scroll to sections 2–5
-         from the footer pills. Only section anchors are
-         intercepted; without this module, native anchor jumps
-         still work (scroll-padding-top: 84px clears the topbar).
-         Topbar '#' placeholders are deliberately untouched. */
-      document.querySelectorAll('a[href^="#section-"]').forEach(function (a) {
-        a.addEventListener('click', function (ev) {
-          var target = document.querySelector(a.getAttribute('href'));
-          if (!target) return;
-          ev.preventDefault();
-          lenis.scrollTo(target, { duration: 1.2 });
-        });
-      });
-
-      /* Scroll parallax, scrubbed, so scrolling back moves
-         everything back along the same path. Applied to parent
-         wrappers only, never to elements the reveal timelines
-         animate, so the two never fight. Transform only. */
-      gsap.to('.hero-copy', { y: -20, ease: 'none', scrollTrigger: { trigger: '#section-1', start: 'top top', end: 'bottom top', scrub: 1 } });
-      gsap.to('.hero-copy', { opacity: 0.25, ease: 'none', scrollTrigger: { trigger: '#section-1', start: 'top top', end: 'bottom top', scrub: 1 } });
-      gsap.to('.iso-stage, .mob-grid', { y: 30, ease: 'none', scrollTrigger: { trigger: '#section-1', start: 'top top', end: 'bottom top', scrub: 1 } });
-      gsap.to('.s2-grid > div:first-child', { y: -25, ease: 'none', scrollTrigger: { trigger: '#section-2', start: 'top bottom', end: 'bottom top', scrub: 1 } });
-      gsap.to('.s2-orbit', { y: 15, ease: 'none', scrollTrigger: { trigger: '#section-2', start: 'top bottom', end: 'bottom top', scrub: 1 } });
-      /* No parallax on the section-4 panel: its section background
-         is now white, so moving the panel up would expose a white
-         strip between it and section 5. Section 5's panel keeps
-         its parallax — black on black, so the join stays seamless. */
-      gsap.to('#section-5 .dark-panel', { y: -20, ease: 'none', scrollTrigger: { trigger: '#section-4', start: 'top bottom', end: 'bottom top', scrub: 1 } });
-
-      window.addEventListener('load', function () { ScrollTrigger.refresh(); });
-    }
-  </script>
 </Layout>

@@ -19,9 +19,8 @@
 
   html {
     background-color: #ffffff;
-    /* Free scrolling: the page never forces a section into view,
-       and CSS smoothing stays off so it never double-smooths the
-       per-frame positions Lenis writes. */
+    /* Plain native scrolling: the page never forces a section
+       into view, and CSS smoothing stays off. */
     scroll-snap-type: none;
     scroll-behavior: auto;
     /* Fixed-topbar offset for anchor landings. */
@@ -62,11 +61,10 @@
   }
 }
 
-/* Fixed topbar: centred by flex, not by a translate, so GSAP can
-   animate its vertical position freely. The pill is opaque white
-   with a strong dark shadow, legible over white and black sections
-   alike. Width caps at the viewport minus 16px so it never
-   overflows a 320px phone. */
+/* Fixed topbar: centred by flex, always visible, never hidden
+   on scroll. The pill is opaque white with a strong dark shadow,
+   legible over white and black sections alike. Width caps at the
+   viewport minus 16px so it never overflows a 320px phone. */
 .topbar-fixed {
   position: fixed;
   top: 12px;
@@ -83,12 +81,11 @@
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
-/* Clip-mask headline reveals. Each reveal line sits inside an
+/* Clip-mask headline lines. Each line sits inside an
    overflow-hidden mask with a small padding/margin cancel, so
-   descenders never clip mid-rise. Word masks are inline-block so
-   words still wrap at spaces. There is deliberately no pre-hidden
-   state here: GSAP uses from-tweens only, so if the motion module
-   fails, every line is fully visible and the page scrolls natively. */
+   descenders never clip. There is no hidden state anywhere:
+   every line is fully visible statically, and the page scrolls
+   natively with no motion module at all. */
 .reveal-mask {
   display: block;
   overflow: hidden;
@@ -111,10 +108,9 @@
   will-change: transform;
 }
 
-/* Gold highlights. Base state is full gold, so if the sweep
-   animation never runs the highlight is simply there. The hero and
-   community highlights sweep on via GSAP background-size; the
-   section 2 word stays static gold. */
+/* Gold highlights. Full gold statically — no sweep, no motion.
+   The hero, community and section 2 highlights are all plain
+   static gold. */
 .hero-highlight {
   background-color: #f0b90b;
   background-image: linear-gradient(#f0b90b, #f0b90b);
@@ -163,9 +159,8 @@
 }
 
 /* Section 2 orbit badges. Positioned by percentage left/top with
-   a centring translate; GSAP reads that translate as a percentage
-   offset, so badge pops and the ring revolution keep the badges
-   centred on their orbit points at every size. */
+   a centring translate, so the badges stay centred on their
+   orbit points at every size, statically. */
 .orbit-badge {
   position: absolute;
   display: flex;
@@ -248,22 +243,30 @@
 }
 
 /* Phone layout: section 2 stacked layout. Phones stack text plus
-   orbit, and the section is NO LONGER forced full-height: it is
-   exactly as tall as its content, so it ends shortly after the
-   orbit instead of leaving a large white void below it. A short
-   phone scrolls naturally; nothing shrinks to fit one screen.
-   The orbit is the visual anchor again at 300px (it fits a 320px
-   screen: the orbit box sits 10px into the section padding each
-   side, badges reach 17px–303px, badge halo included, so nothing
-   is clipped by the screen edge — no downscaling is needed, and
-   none is applied). Above 768px the desktop two-column layout
-   is untouched. */
+   orbit, and the section now fills its viewport at minimum like
+   every other section (the old min-height:auto override is
+   deleted), growing instead of clipping if its content is
+   taller. The orbit is the visual anchor again at 300px (it fits
+   a 320px screen: the orbit box sits 10px into the section
+   padding each side, badges reach 17px–303px, badge halo
+   included, so nothing is clipped by the screen edge — no
+   downscaling is needed, and none is applied). Above 768px the
+   desktop two-column layout is untouched. */
 @media (max-width: 767px) {
   #section-2 {
-    min-height: auto;
     align-items: flex-start;
-    padding-top: 88px;
-    padding-bottom: 48px;
+    padding-top: 76px;
+    padding-bottom: 36px;
+  }
+  /* Phone fit tuning: section 3's vertical padding and grid gap
+     shrink on phones only, so its text + full-image card fit one
+     844px phone screen instead of running 64px over it. */
+  #section-3 {
+    padding-top: 64px;
+    padding-bottom: 64px;
+  }
+  #section-3 .s3-content {
+    gap: 32px;
   }
   .s2-grid {
     gap: 32px;
@@ -279,8 +282,8 @@
     margin-bottom: 32px;
   }
   .s2-orbit {
-    width: 300px;
-    height: 300px;
+    width: 290px;
+    height: 290px;
   }
   .s2-centre {
     width: 160px;
