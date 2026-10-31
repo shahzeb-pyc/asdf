@@ -360,6 +360,12 @@
         "routeSpecificGzipBytes": 40241,
         "routeSpecificRawBytes": 130825
       },
+      "/tenant/[subdomain]/instagram/publish-now": {
+        "firstLoadGzipBytes": 177308,
+        "firstLoadRawBytes": 591164,
+        "routeSpecificGzipBytes": 36813,
+        "routeSpecificRawBytes": 117744
+      },
       "/tenant/[subdomain]/media": {
         "firstLoadGzipBytes": 186243,
         "firstLoadRawBytes": 628000,
