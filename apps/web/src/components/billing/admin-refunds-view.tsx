@@ -140,9 +140,15 @@ export function AdminRefundsView({ subdomain }: Readonly<{ subdomain: string }>)
     );
   }
 
-  const waiting = data.requests.filter((item) => item.status === 'requested');
-  const approved = data.requests.filter((item) => item.status === 'approved');
-  const decided = data.requests.filter(
+  // A malformed refunds response must never crash the admin view:
+  // fail closed and render nothing, same as the fetch-error path.
+  const requests = Array.isArray(data.requests) ? data.requests : null;
+  if (!requests) {
+    return null;
+  }
+  const waiting = requests.filter((item) => item.status === 'requested');
+  const approved = requests.filter((item) => item.status === 'approved');
+  const decided = requests.filter(
     (item) => item.status === 'rejected' || item.status === 'sent'
   );
 
