@@ -34,10 +34,13 @@ export interface InstagramScheduleDestinationRow {
   handle?: string | null;
   avatar_url?: string | null;
   avatarUrl?: string | null;
-  created_at?: string | null;
-  createdAt?: string | null;
-  updated_at?: string | null;
-  updatedAt?: string | null;
+  // Timestamps arrive as strings from Supabase but as Date objects
+  // from the SQL path (node-postgres parses timestamptz to Date);
+  // isoField in the mapper handles both, so the row type says so.
+  created_at?: string | Date | null;
+  createdAt?: string | Date | null;
+  updated_at?: string | Date | null;
+  updatedAt?: string | Date | null;
 }
 
 /** Raw connected-account row as read from either data path. */
