@@ -413,6 +413,10 @@ export async function handleDestinationEnqueue(
   // there is no library row to read them from.
   let stagedMedia: typeof data.stagedMedia | null = null;
   if (data.stagedMedia) {
+    // Capture once: property narrowing on `data.stagedMedia` does not
+    // survive the awaits below, so all uses in this block go through
+    // this local (validation behaviour unchanged).
+    const staged = data.stagedMedia;
     if (destination.platform !== 'facebook') {
       return NextResponse.json(
         {
@@ -422,7 +426,7 @@ export async function handleDestinationEnqueue(
         { status: 400 }
       );
     }
-    if (!isPostStagingStorageKey(session.userId, data.stagedMedia.storageKey)) {
+    if (!isPostStagingStorageKey(session.userId, staged.storageKey)) {
       return NextResponse.json(
         {
           error: 'INVALID_STAGED_MEDIA',
@@ -437,10 +441,10 @@ export async function handleDestinationEnqueue(
     {
       const checkStorage = storageService ?? getStorageService();
       const found = await checkStorage.listObjects({
-        prefix: data.stagedMedia.storageKey,
+        prefix: staged.storageKey,
         maxKeys: 1,
       });
-      if (!found.some((entry) => entry.key === data.stagedMedia.storageKey)) {
+      if (!found.some((entry) => entry.key === staged.storageKey)) {
         return NextResponse.json(
           {
             error: 'STAGED_MEDIA_NOT_FOUND',
@@ -451,7 +455,7 @@ export async function handleDestinationEnqueue(
         );
       }
     }
-    stagedMedia = data.stagedMedia;
+    stagedMedia = staged;
     const eligibilityError = facebookEligibilityError({
       mediaType: stagedMedia.mediaType,
       fileSize:
