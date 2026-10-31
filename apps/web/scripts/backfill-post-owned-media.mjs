@@ -66,6 +66,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 import {
   CopyObjectCommand,
   DeleteObjectCommand,
@@ -127,12 +128,15 @@ function resolveUserId(row, mediaUserById) {
   return match ? match[1] : null;
 }
 
-async function main() {
+export async function main() {
   const supabaseUrl = requiredEnv('SUPABASE_URL');
   const supabaseKey = requiredEnv('SUPABASE_SERVICE_ROLE_KEY');
   const accountId = requiredEnv('R2_ACCOUNT_ID');
   const bucket = requiredEnv('R2_BUCKET_NAME');
-  const publicBase = requiredEnv('R2_PUBLIC_URL').replace(/\/+$/, '');
+  // Trailing slashes stripped without a regex: `/\/+$/` is flagged by
+  // Sonar (S8786, super-linear backtracking), and a loop is exact here.
+  let publicBase = requiredEnv('R2_PUBLIC_URL');
+  while (publicBase.endsWith('/')) publicBase = publicBase.slice(0, -1);
 
   const supabase = createClient(supabaseUrl, supabaseKey, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -334,7 +338,17 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error('Backfill failed:', err instanceof Error ? err.message : err);
-  process.exit(1);
-});
+// Run only when executed directly (`node scripts/...`), not when
+// imported — the vitest suite imports this module to run main()
+// against fakes and assert on its real behaviour (see
+// tests/backfill-post-owned-media.test.ts). CLI behaviour is
+// unchanged: argv[1] is the script path exactly when run directly.
+const isMainModule =
+  typeof process.argv[1] === 'string' &&
+  import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMainModule) {
+  main().catch((err) => {
+    console.error('Backfill failed:', err instanceof Error ? err.message : err);
+    process.exit(1);
+  });
+}
