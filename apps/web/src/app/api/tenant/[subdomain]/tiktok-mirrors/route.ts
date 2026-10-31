@@ -33,23 +33,29 @@ import {
   TikwmError,
 } from '@/lib/server/tikwm';
 import { FacebookReelError, publishFacebookReel } from '@/lib/server/facebook-reel';
+import { InstagramReelError, publishInstagramReel } from '@/lib/server/instagram-reel';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { DatabaseClient } from '@fbuploadpro/contracts';
 
 /**
- * TikTok mirrors — list + create (TikTok → Facebook auto-post).
+ * TikTok mirrors — list + create (TikTok → Facebook auto-post, and
+ * TikTok → Instagram auto-post for Instagram Auto Repost).
  *
- * A mirror links one TikTok username to one Facebook destination
- * (page). The same username may feed several pages, but the exact
- * pair (username + page) may exist only once. Creation verifies the
- * username's feed with the paid tikwmapi endpoint BEFORE creating
- * anything, then resolves and immediately posts the account's
- * current latest reel via the free tikwm POST endpoint; a failed
- * immediate post stays pending for the next hourly tick and puts
- * the mirror in error — never silently dropped.
+ * A mirror links one TikTok username to one target destination
+ * (a Facebook page, or an Instagram account). The same username
+ * may feed several targets, but the exact pair (username + target)
+ * may exist only once. Creation verifies the username's feed with
+ * the paid tikwmapi endpoint BEFORE creating anything, then
+ * resolves and immediately posts the account's current latest reel
+ * via the free tikwm POST endpoint; a failed immediate post stays
+ * pending for the next hourly tick and puts the mirror in error —
+ * never silently dropped.
  *
- * Mirror posts bypass queue/slots entirely. No migration is needed
- * at request time (the tables come from the branch migration).
+ * Mirror posts bypass queue/slots entirely. The mirrors table is
+ * platform-agnostic, so Instagram targets need no migration.
+ * Instagram targets differ in exactly two ways: the account IS the
+ * destination (no linked-pages discovery), and publishing uses the
+ * account token (Instagram destination rows carry no token).
  */
 
 type Db = SupabaseClient | DatabaseClient;
@@ -100,6 +106,7 @@ export interface CreateMirrorDeps {
   fetchTikwmInfo?: typeof fetchTikwmUserInfo;
   resolveTikwmVideo?: typeof resolveTikwmVideo;
   publishReel?: typeof publishFacebookReel;
+  publishInstagramReel?: typeof publishInstagramReel;
   fetchGraphPages?: typeof fetchAllFacebookPages;
 }
 
@@ -372,24 +379,45 @@ export async function handleListMirrors(
     const { page: requestedPage, limit } = parsePaginationParams(
       new URL(request.url).searchParams
     );
+    // Instagram Auto Repost lists only its own mirrors: an optional
+    // ?targetPlatform= filter (facebook | instagram). Absent, the
+    // list is unchanged (all platforms, as Facebook uses it).
+    const rawTargetPlatform = new URL(request.url).searchParams.get('targetPlatform');
+    if (rawTargetPlatform !== null && rawTargetPlatform !== 'facebook' && rawTargetPlatform !== 'instagram') {
+      return NextResponse.json(
+        { error: 'INVALID_REQUEST', message: 'targetPlatform must be facebook or instagram' },
+        { status: 400 }
+      );
+    }
+    const targetPlatformFilter = rawTargetPlatform as 'facebook' | 'instagram' | null;
     let meta: PaginationMeta;
     const mirrors: MirrorRow[] = [];
     if (isLegacyClient(db)) {
       const countRows = (await db.query(
-        `SELECT COUNT(*)::int AS total FROM mirrors WHERE workspace_id = $1`,
-        [workspaceId]
+        targetPlatformFilter
+          ? `SELECT COUNT(*)::int AS total FROM mirrors WHERE workspace_id = $1 AND target_platform = $2`
+          : `SELECT COUNT(*)::int AS total FROM mirrors WHERE workspace_id = $1`,
+        targetPlatformFilter ? [workspaceId, targetPlatformFilter] : [workspaceId]
       )) as Record<string, unknown>[];
       const total =
         typeof countRows[0]?.total === 'number' ? countRows[0].total : 0;
       meta = paginateMeta(total, requestedPage, limit);
       const offset = (meta.page - 1) * limit;
       const rows = (await db.query(
-        `SELECT id, workspace_id, source_platform, source_username, source_display_name,
+        targetPlatformFilter
+          ? `SELECT id, workspace_id, source_platform, source_username, source_display_name,
+                source_avatar_url, target_platform, target_external_id, target_display_name,
+                target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time,
+                last_checked_at, next_check_at, last_error, created_at, updated_at
+         FROM mirrors WHERE workspace_id = $1 AND target_platform = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4`
+          : `SELECT id, workspace_id, source_platform, source_username, source_display_name,
                 source_avatar_url, target_platform, target_external_id, target_display_name,
                 target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time,
                 last_checked_at, next_check_at, last_error, created_at, updated_at
          FROM mirrors WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
-        [workspaceId, limit, offset]
+        targetPlatformFilter
+          ? [workspaceId, targetPlatformFilter, limit, offset]
+          : [workspaceId, limit, offset]
       )) as unknown[];
       for (const row of rows) {
         const mirror = asMirrorRow(row);
@@ -397,22 +425,26 @@ export async function handleListMirrors(
       }
     } else {
       const supabase = db as SupabaseClient;
-      const { count, error: countError } = await supabase
+      const countQuery = supabase
         .from('mirrors')
         .select('*', { count: 'exact', head: true })
         .eq('workspace_id', workspaceId);
+      if (targetPlatformFilter) countQuery.eq('target_platform', targetPlatformFilter);
+      const { count, error: countError } = await countQuery;
       if (countError) {
         throw new Error(`Failed to count mirrors: ${countError.message}`);
       }
       const total = typeof count === 'number' ? count : 0;
       meta = paginateMeta(total, requestedPage, limit);
       const offset = (meta.page - 1) * limit;
-      const { data, error } = await supabase
+      const listQuery = supabase
         .from('mirrors')
         .select(
           'id, workspace_id, source_platform, source_username, source_display_name, source_avatar_url, target_platform, target_external_id, target_display_name, target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time, last_checked_at, next_check_at, last_error, created_at, updated_at'
         )
-        .eq('workspace_id', workspaceId)
+        .eq('workspace_id', workspaceId);
+      if (targetPlatformFilter) listQuery.eq('target_platform', targetPlatformFilter);
+      const { data, error } = await listQuery
         .order('created_at', { ascending: false })
         .range(offset, offset + limit - 1);
       if (error) throw new Error(`Failed to list mirrors: ${error.message}`);
@@ -690,6 +722,243 @@ async function resolveDestination(
 }
 
 /**
+ * Resolve the Instagram destination for a create request.
+ *
+ * Unlike Facebook, there is no linked-pages discovery: the Instagram
+ * account IS the destination, and its external id is the account's
+ * own external id. Either an existing Instagram destination id is
+ * named, or an account + its external id is named. The account row
+ * must be active — an expired account fails loudly here (reconnect
+ * first) instead of creating a mirror that can never post. A missing
+ * destination row is created identity-only from the account: the
+ * publishing token lives on the account row, so the destination row
+ * deliberately carries no token (the worker's Instagram fallback
+ * and this route's immediate post both read the account token).
+ * The returned accountToken is decrypted in memory only, exactly
+ * as the Facebook path decrypts the page token in memory.
+ */
+async function resolveInstagramDestination(
+  db: Db,
+  workspaceId: string,
+  input: {
+    targetDestinationId?: string | undefined;
+    accountId?: string | undefined;
+    targetExternalId?: string | undefined;
+  }
+): Promise<
+  | { destination: DestinationRow; accountToken: string | null }
+  | { error: NextResponse }
+> {
+  const encryptionKey = getTokenEncryptionKey();
+
+  if (input.targetDestinationId) {
+    let dest: DestinationRow | null = null;
+    if (isLegacyClient(db)) {
+      const rows = (await db.query(
+        `SELECT id, account_id, external_destination_id, name, avatar_url, encrypted_destination_token, status
+         FROM destinations WHERE id = $1 AND workspace_id = $2 AND platform = 'instagram' LIMIT 1`,
+        [input.targetDestinationId, workspaceId]
+      )) as unknown[];
+      dest = asDestinationRow(rows[0]);
+    } else {
+      const supabase = db as SupabaseClient;
+      const { data, error } = await supabase
+        .from('destinations')
+        .select('id, account_id, external_destination_id, name, avatar_url, encrypted_destination_token, status')
+        .eq('id', input.targetDestinationId)
+        .eq('workspace_id', workspaceId)
+        .eq('platform', 'instagram')
+        .maybeSingle();
+      if (error) throw new Error(`Failed to load destination: ${error.message}`);
+      dest = asDestinationRow(data);
+    }
+    if (!dest) {
+      return {
+        error: NextResponse.json({ error: 'Instagram account not found' }, { status: 404 }),
+      };
+    }
+    const accountToken = await loadInstagramAccountToken(db, workspaceId, dest.account_id);
+    return { destination: dest, accountToken };
+  }
+
+  const accountId = input.accountId as string;
+  const targetExternalId = input.targetExternalId as string;
+  interface InstagramAccountRow {
+    id: string;
+    external_account_id: string;
+    display_name: string;
+    avatar_url: string | null;
+    status: string;
+    encrypted_access_token: string | null;
+  }
+  let account: InstagramAccountRow | null = null;
+  if (isLegacyClient(db)) {
+    const rows = (await db.query(
+      `SELECT id, external_account_id, display_name, avatar_url, status, encrypted_access_token
+       FROM social_accounts WHERE id = $1 AND workspace_id = $2 AND platform = 'instagram' LIMIT 1`,
+      [accountId, workspaceId]
+    )) as Record<string, unknown>[];
+    const row = rows[0];
+    if (row && typeof row.id === 'string' && typeof row.external_account_id === 'string') {
+      account = {
+        id: row.id,
+        external_account_id: row.external_account_id,
+        display_name: typeof row.display_name === 'string' ? row.display_name : '',
+        avatar_url: typeof row.avatar_url === 'string' ? row.avatar_url : null,
+        status: typeof row.status === 'string' ? row.status : '',
+        encrypted_access_token:
+          typeof row.encrypted_access_token === 'string' ? row.encrypted_access_token : null,
+      };
+    }
+  } else {
+    const supabase = db as SupabaseClient;
+    const { data, error } = await supabase
+      .from('social_accounts')
+      .select('id, external_account_id, display_name, avatar_url, status, encrypted_access_token')
+      .eq('id', accountId)
+      .eq('workspace_id', workspaceId)
+      .eq('platform', 'instagram')
+      .maybeSingle();
+    if (error) throw new Error(`Failed to load account: ${error.message}`);
+    const row = data as Record<string, unknown> | null;
+    if (row && typeof row.id === 'string' && typeof row.external_account_id === 'string') {
+      account = {
+        id: row.id,
+        external_account_id: row.external_account_id,
+        display_name: typeof row.display_name === 'string' ? row.display_name : '',
+        avatar_url: typeof row.avatar_url === 'string' ? row.avatar_url : null,
+        status: typeof row.status === 'string' ? row.status : '',
+        encrypted_access_token:
+          typeof row.encrypted_access_token === 'string' ? row.encrypted_access_token : null,
+      };
+    }
+  }
+  if (!account || account.external_account_id !== targetExternalId) {
+    return {
+      error: NextResponse.json({ error: 'Instagram account not found' }, { status: 404 }),
+    };
+  }
+  if (account.status !== 'active') {
+    return {
+      error: NextResponse.json(
+        { error: 'ACCOUNT_EXPIRED', message: 'This Instagram account is expired. Reconnect it and try again.' },
+        { status: 400 }
+      ),
+    };
+  }
+
+  let existing: DestinationRow | null = null;
+  if (isLegacyClient(db)) {
+    const rows = (await db.query(
+      `SELECT id, account_id, external_destination_id, name, avatar_url, encrypted_destination_token, status
+       FROM destinations WHERE account_id = $1 AND external_destination_id = $2 AND platform = 'instagram' LIMIT 1`,
+      [accountId, targetExternalId]
+    )) as unknown[];
+    existing = asDestinationRow(rows[0]);
+  } else {
+    const supabase = db as SupabaseClient;
+    const { data, error } = await supabase
+      .from('destinations')
+      .select('id, account_id, external_destination_id, name, avatar_url, encrypted_destination_token, status')
+      .eq('account_id', accountId)
+      .eq('external_destination_id', targetExternalId)
+      .eq('platform', 'instagram')
+      .maybeSingle();
+    if (error) throw new Error(`Failed to load destination: ${error.message}`);
+    existing = asDestinationRow(data);
+  }
+  const accountToken = account.encrypted_access_token
+    ? await decryptToken(account.encrypted_access_token, encryptionKey)
+    : null;
+  if (existing) return { destination: existing, accountToken };
+
+  // Identity-only destination row (no token — see the header comment).
+  if (isLegacyClient(db)) {
+    const rows = (await db.query(
+      `INSERT INTO destinations (
+         workspace_id, account_id, platform, external_destination_id, name, avatar_url, status, metadata, updated_at
+       ) VALUES ($1, $2, 'instagram', $3, $4, $5, 'active', '{}'::jsonb, now())
+       ON CONFLICT (account_id, external_destination_id) DO NOTHING
+       RETURNING id, account_id, external_destination_id, name, avatar_url, encrypted_destination_token, status`,
+      [workspaceId, accountId, targetExternalId, account.display_name, account.avatar_url]
+    )) as unknown[];
+    const created = asDestinationRow(rows[0]);
+    if (created) return { destination: created, accountToken };
+    const raced = (await db.query(
+      `SELECT id, account_id, external_destination_id, name, avatar_url, encrypted_destination_token, status
+       FROM destinations WHERE account_id = $1 AND external_destination_id = $2 AND platform = 'instagram' LIMIT 1`,
+      [accountId, targetExternalId]
+    )) as unknown[];
+    const racedDest = asDestinationRow(raced[0]);
+    if (!racedDest) throw new Error('Failed to create destination for Instagram account');
+    return { destination: racedDest, accountToken };
+  }
+  const supabase = db as SupabaseClient;
+  const { data, error } = await supabase
+    .from('destinations')
+    .insert({
+      workspace_id: workspaceId,
+      account_id: accountId,
+      platform: 'instagram',
+      external_destination_id: targetExternalId,
+      name: account.display_name,
+      avatar_url: account.avatar_url,
+      status: 'active',
+      metadata: {},
+    })
+    .select('id, account_id, external_destination_id, name, avatar_url, encrypted_destination_token, status')
+    .single();
+  if (error && error.code === '23505') {
+    const { data: raced, error: racedError } = await supabase
+      .from('destinations')
+      .select('id, account_id, external_destination_id, name, avatar_url, encrypted_destination_token, status')
+      .eq('account_id', accountId)
+      .eq('external_destination_id', targetExternalId)
+      .eq('platform', 'instagram')
+      .maybeSingle();
+    if (racedError) throw new Error(`Failed to load destination: ${racedError.message}`);
+    const racedDest = asDestinationRow(raced);
+    if (!racedDest) throw new Error('Failed to create destination for Instagram account');
+    return { destination: racedDest, accountToken };
+  }
+  if (error) throw new Error(`Failed to create destination: ${error.message}`);
+  const created = asDestinationRow(data);
+  if (!created) throw new Error('Failed to create destination for Instagram account');
+  return { destination: created, accountToken };
+}
+
+/** Decrypted Instagram account token for one account id (in memory only). */
+async function loadInstagramAccountToken(
+  db: Db,
+  workspaceId: string,
+  accountId: string
+): Promise<string | null> {
+  const encryptionKey = getTokenEncryptionKey();
+  let encrypted: string | null = null;
+  if (isLegacyClient(db)) {
+    const rows = (await db.query(
+      `SELECT encrypted_access_token FROM social_accounts WHERE id = $1 AND workspace_id = $2 AND platform = 'instagram' LIMIT 1`,
+      [accountId, workspaceId]
+    )) as Record<string, unknown>[];
+    const token = rows[0]?.encrypted_access_token;
+    encrypted = typeof token === 'string' ? token : null;
+  } else {
+    const supabase = db as SupabaseClient;
+    const { data, error } = await supabase
+      .from('social_accounts')
+      .select('encrypted_access_token')
+      .eq('id', accountId)
+      .eq('workspace_id', workspaceId)
+      .eq('platform', 'instagram')
+      .maybeSingle();
+    if (error) throw new Error(`Failed to load account: ${error.message}`);
+    const token = (data as Record<string, unknown> | null)?.encrypted_access_token;
+    encrypted = typeof token === 'string' ? token : null;
+  }
+  return encrypted ? decryptToken(encrypted, encryptionKey) : null;
+}
+
+/**
  * Load one destination row by id, scoped to the caller's workspace
  * (used when the create request names an existing destination; the
  * mirror itself never stores this id — it stores the target platform
@@ -817,26 +1086,45 @@ export async function handleCreateMirror(
       throw err;
     }
 
-    // 2. Resolve (or create) the destination row.
-    const resolved = await resolveDestination(
-      db,
-      workspaceId,
-      {
+    // 2. Resolve (or create) the destination row. Instagram targets
+    //    take the Instagram branch (account IS the destination);
+    //    Facebook targets take the existing Graph-discovery branch.
+    //    The branches are written out (not a ternary over the two
+    //    resolvers) so the Instagram account token stays typed as
+    //    string | null instead of collapsing through a union.
+    const targetPlatform = parsed.data.targetPlatform ?? 'facebook';
+    let destination: DestinationRow;
+    let instagramAccountToken: string | null = null;
+    if (targetPlatform === 'instagram') {
+      const resolved = await resolveInstagramDestination(db, workspaceId, {
         targetDestinationId: parsed.data.targetDestinationId,
         accountId: parsed.data.accountId,
         targetExternalId: parsed.data.targetExternalId,
-      },
-      deps
-    );
-    if ('error' in resolved) return resolved.error;
-    const destination = resolved.destination;
+      });
+      if ('error' in resolved) return resolved.error;
+      destination = resolved.destination;
+      instagramAccountToken = resolved.accountToken;
+    } else {
+      const resolved = await resolveDestination(
+        db,
+        workspaceId,
+        {
+          targetDestinationId: parsed.data.targetDestinationId,
+          accountId: parsed.data.accountId,
+          targetExternalId: parsed.data.targetExternalId,
+        },
+        deps
+      );
+      if ('error' in resolved) return resolved.error;
+      destination = resolved.destination;
+    }
 
     // 3. Exact-duplicate block (same source username + same target).
     if (
       await findDuplicateMirror(
         db,
         workspaceId,
-        'facebook',
+        targetPlatform,
         destination.external_destination_id,
         username
       )
@@ -844,7 +1132,10 @@ export async function handleCreateMirror(
       return NextResponse.json(
         {
           error: 'DUPLICATE_MIRROR',
-          message: 'This TikTok account is already mirrored to this Facebook page.',
+          message:
+            targetPlatform === 'instagram'
+              ? 'This TikTok account is already reposted to this Instagram account.'
+              : 'This TikTok account is already mirrored to this Facebook page.',
         },
         { status: 409 }
       );
@@ -866,7 +1157,7 @@ export async function handleCreateMirror(
            workspace_id, source_platform, source_username, source_display_name,
            source_avatar_url, target_platform, target_external_id, target_display_name,
            target_avatar_url, status, last_checked_at, next_check_at, created_at, updated_at
-         ) VALUES ($1, 'tiktok', $2, $3, $4, 'facebook', $5, $6, $7, 'active', now(), $8, now(), now())
+         ) VALUES ($1, 'tiktok', $2, $3, $4, $9, $5, $6, $7, 'active', now(), $8, now(), now())
          RETURNING id, workspace_id, source_platform, source_username, source_display_name,
            source_avatar_url, target_platform, target_external_id, target_display_name,
            target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time,
@@ -880,6 +1171,7 @@ export async function handleCreateMirror(
           destination.name,
           destination.avatar_url,
           new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+          targetPlatform,
         ]
       )) as unknown[];
       const created = asMirrorRow(rows[0]);
@@ -895,7 +1187,7 @@ export async function handleCreateMirror(
           source_username: username,
           source_display_name: displayName,
           source_avatar_url: avatarUrl,
-          target_platform: 'facebook',
+          target_platform: targetPlatform,
           target_external_id: destination.external_destination_id,
           target_display_name: destination.name,
           target_avatar_url: destination.avatar_url,
@@ -916,7 +1208,10 @@ export async function handleCreateMirror(
           return NextResponse.json(
             {
               error: 'DUPLICATE_MIRROR',
-              message: 'This TikTok account is already mirrored to this Facebook page.',
+              message:
+                targetPlatform === 'instagram'
+                  ? 'This TikTok account is already reposted to this Instagram account.'
+                  : 'This TikTok account is already mirrored to this Facebook page.',
             },
             { status: 409 }
           );
@@ -1013,15 +1308,24 @@ export async function handleCreateMirror(
         if (!resolvedUrl) throw new Error('Resolved video URL is missing.');
         const videoUrl = resolvedUrl;
         const encryptionKey = getTokenEncryptionKey();
-        const pageToken = destination.encrypted_destination_token
-          ? await decryptToken(destination.encrypted_destination_token, encryptionKey)
-          : null;
-        if (!pageToken) {
+        // Instagram publishes with the account token (destination rows
+        // carry none); Facebook publishes with the page token.
+        const publishToken =
+          targetPlatform === 'instagram'
+            ? instagramAccountToken
+            : destination.encrypted_destination_token
+              ? await decryptToken(destination.encrypted_destination_token, encryptionKey)
+              : null;
+        if (!publishToken) {
           // Pending, not failed: the tick retries it, and reconnecting
-          // the page restores the token, so the reel can still post.
+          // the target restores the token, so the reel can still post.
+          const missingTokenMessage =
+            targetPlatform === 'instagram'
+              ? 'This Instagram account has no posting token. Reconnect the account and try again.'
+              : 'This page has no posting token. Reconnect the page and try again.';
           await updatePostAndMirror(db, mirror.id, postRowId, {
             status: 'pending',
-            error: 'This page has no posting token. Reconnect the page and try again.',
+            error: missingTokenMessage,
             mirrorStatus: 'error',
           });
           immediatePost = {
@@ -1029,14 +1333,60 @@ export async function handleCreateMirror(
             status: 'pending',
             sourcePostId: latest.video_id,
             publishedPostId: null,
-            error: 'This page has no posting token. Reconnect the page and try again.',
+            error: missingTokenMessage,
           };
+        } else if (targetPlatform === 'instagram') {
+          const publishIgReel = deps.publishInstagramReel ?? publishInstagramReel;
+          try {
+            const postId = await publishIgReel({
+              igUserId: destination.external_destination_id,
+              accessToken: publishToken,
+              videoUrl,
+              caption,
+            });
+            await updatePostAndMirror(db, mirror.id, postRowId, {
+              status: 'posted',
+              publishedPostId: postId,
+              lastPostedSourceId: latest.video_id,
+              lastPostedCreateTime:
+                typeof latest.create_time === 'number' ? latest.create_time : null,
+              mirrorStatus: 'active',
+            });
+            immediatePost = {
+              attempted: true,
+              status: 'posted',
+              sourcePostId: latest.video_id,
+              publishedPostId: postId,
+              error: null,
+            };
+          } catch (err) {
+            // Instagram helpers already throw plain-language messages
+            // (auth → expired); no Facebook restriction rewrite here.
+            const message =
+              err instanceof InstagramReelError
+                ? err.message
+                : err instanceof Error
+                  ? err.message
+                  : 'The latest reel could not be posted.';
+            await updatePostAndMirror(db, mirror.id, postRowId, {
+              status: 'pending',
+              error: message,
+              mirrorStatus: 'error',
+            });
+            immediatePost = {
+              attempted: true,
+              status: 'pending',
+              sourcePostId: latest.video_id,
+              publishedPostId: null,
+              error: message,
+            };
+          }
         } else {
           const publishReel = deps.publishReel ?? publishFacebookReel;
           try {
             const postId = await publishReel({
               pageId: destination.external_destination_id,
-              pageToken,
+              pageToken: publishToken,
               videoUrl,
               caption,
             });

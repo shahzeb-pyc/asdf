@@ -101,6 +101,15 @@ export async function handleGetMirror(
     if (!mirror) {
       return NextResponse.json({ error: 'TikTok mirror not found' }, { status: 404 });
     }
+    // An Instagram detail page must not render a Facebook mirror (and
+    // vice versa): when the caller names a platform, it must match.
+    const requestedPlatform = new URL(request.url).searchParams.get('targetPlatform');
+    if (
+      requestedPlatform !== null &&
+      requestedPlatform !== mirror.target_platform
+    ) {
+      return NextResponse.json({ error: 'TikTok mirror not found' }, { status: 404 });
+    }
     // Target resolved at request time; a missing target row no
     // longer 404s the mirror — the view carries the stored target
     // copies and a null targetDestinationId (Insights unavailable).

@@ -454,7 +454,7 @@ function WorkspaceSidebarContent({
                     {isOpen && (
                       <SidebarMenuSub>
                         <NavSubLeaf label="Accounts" href={platformAccountsHref} isActive={isAccountsSubActive} onLeafClick={handleLeafClick} />
-                        {platform.key === 'threads' && (
+{platform.key === 'threads' && (
                           <NavSubLeaf
                             label="Auto Download/Upload"
                             href={href('/threads/auto-download-upload')}
@@ -469,6 +469,23 @@ function WorkspaceSidebarContent({
                         )}
                         {platform.key === 'instagram' && (
                           <NavSubLeaf label="Publish Now" href={instagramPublishNowHref} isActive={isInstagramPublishNowActive} onLeafClick={handleLeafClick} />
+                        )}
+                        {/*
+                          Instagram Auto Repost only. The Publish Now
+                          leaf (parallel PR, merging before this one)
+                          sits between Accounts and Auto Repost after
+                          the merge-time rebase; this leaf is placed
+                          here so it never touches another platform.
+                        */}
+                        {platform.key === 'instagram' && (
+                          <NavSubLeaf
+                            label="Auto Repost"
+                            href={href('/instagram/auto-repost')}
+                            isActive={effectivePath.startsWith(
+                              normalizeTenantPath(href('/instagram/auto-repost'), subdomain)
+                            )}
+                            onLeafClick={handleLeafClick}
+                          />
                         )}
                         {platform.isTesting && (
                           <SidebarMenuSubItem>

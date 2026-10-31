@@ -308,6 +308,43 @@ describe('processMirrorCheck', () => {
     expect(stamp?.patch.catchUpPending).toBeUndefined();
     expect(stamp?.patch.lastCheckedAt).toBeUndefined();
   });
+
+  it('passes targetPlatform=instagram through to publishReel', async () => {
+    const state = newState();
+    const feed = [reel('v1', 100)];
+    const result = await processMirrorCheck(
+      fakeDeps(state, feed),
+      mirror({ targetPlatform: 'instagram', targetExternalId: 'ig_123', targetToken: 'ig-token' })
+    );
+    expect(result.posted).toBe(1);
+    expect(state.published[0]?.targetPlatform).toBe('instagram');
+    expect(state.published[0]?.targetId).toBe('ig_123');
+    expect(state.published[0]?.targetToken).toBe('ig-token');
+  });
+
+  it('does NOT rewrite a Facebook-restriction-shaped error on an Instagram mirror', async () => {
+    const state = newState();
+    const restrictedError = Object.assign(
+      new Error(
+        'For security reasons, your account has limited access to the site for a few days.'
+      ),
+      { code: 1, errorSubcode: 2424009 }
+    );
+    const deps: MirrorTickDeps = {
+      ...fakeDeps(state, [reel('v1', 100)]),
+      publishReel: async () => {
+        throw restrictedError;
+      },
+    };
+    const result = await processMirrorCheck(
+      deps,
+      mirror({ targetPlatform: 'instagram', targetExternalId: 'ig_123' })
+    );
+    expect(result.failed).toBe(1);
+    const stamp = state.mirrorUpdates[state.mirrorUpdates.length - 1];
+    expect(stamp?.patch.lastError).not.toBe(MIRROR_FACEBOOK_RESTRICTED_MESSAGE);
+    expect(stamp?.patch.lastError).toContain('limited access');
+  });
 });
 
 describe('buildMirrorTickDeps job RPCs (bound receiver)', () => {

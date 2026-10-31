@@ -360,6 +360,18 @@
         "routeSpecificGzipBytes": 40241,
         "routeSpecificRawBytes": 130825
       },
+      "/tenant/[subdomain]/instagram/auto-repost": {
+        "firstLoadGzipBytes": 175365,
+        "firstLoadRawBytes": 585574,
+        "routeSpecificGzipBytes": 34870,
+        "routeSpecificRawBytes": 112154
+      },
+      "/tenant/[subdomain]/instagram/auto-repost/[mirrorId]": {
+        "firstLoadGzipBytes": 173515,
+        "firstLoadRawBytes": 579831,
+        "routeSpecificGzipBytes": 33020,
+        "routeSpecificRawBytes": 106412
+      },
       "/tenant/[subdomain]/instagram/publish-now": {
         "firstLoadGzipBytes": 177308,
         "firstLoadRawBytes": 591164,
