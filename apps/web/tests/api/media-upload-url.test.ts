@@ -141,4 +141,32 @@ describe('Presigned Upload URL Endpoint (POST /api/tenant/[subdomain]/media/uplo
     expect(data.mediaKey).toContain('فيديو_تسويقي_2026');
     expect(data.mediaKey).not.toContain('____________');
   });
+
+  it('mints post-staging keys for purpose post-staging (composer uploads, never the library)', async () => {
+    const req = new NextRequest('http://localhost:3000/api/tenant/acme/media/upload-url', {
+      method: 'POST',
+      headers: { cookie: validSessionCookie },
+      body: JSON.stringify({
+        fileName: 'clip.mp4',
+        fileSize: 20971520,
+        mimeType: 'video/mp4',
+        thumbnailMimeType: 'image/webp',
+        purpose: 'post-staging',
+      }),
+    });
+    const res = await handleCreateUploadUrl(req, 'acme', mockStorage);
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.mediaKey).toBe(
+      `users/${userId}/post-staging/${data.mediaId}/clip.mp4`
+    );
+    expect(data.thumbnailKey).toBe(
+      `users/${userId}/post-staging/${data.mediaId}/thumbnail.webp`
+    );
+    expect(data.mediaKey).not.toContain('/media/');
+    expect(data.publicMediaUrl).toBe(
+      `https://media.fbuploadpro.com/users/${userId}/post-staging/${data.mediaId}/clip.mp4`
+    );
+  });
 });

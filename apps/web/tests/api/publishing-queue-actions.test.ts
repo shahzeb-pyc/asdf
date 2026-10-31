@@ -12,6 +12,7 @@ import {
   POST as POSTPublishNow,
 } from '../../src/app/api/tenant/[subdomain]/publishing/queue/[itemId]/publish-now/route';
 import type { DatabaseClient } from '@fbuploadpro/contracts';
+import { MockStorageProvider } from '../helpers/mock-storage';
 
 const TEST_SECRET = 'super-secret-session-signing-key-minimum-32-chars-long';
 
@@ -719,6 +720,107 @@ describe('Publishing Queue Actions Route Handlers (T128, T129)', () => {
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(data).toEqual({ success: true, itemId });
+    });
+
+    it('deletes the post-owned bytes with the queue item (media/posting separation)', async () => {
+      const postOwnedKey = `users/${userId}/post-media/aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa/photo.jpg`;
+      const libraryKey = `users/${userId}/media/bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb/photo.jpg`;
+      const store = new MockStorageProvider();
+      await store.putObject({
+        key: postOwnedKey,
+        body: new Uint8Array([1]),
+        contentType: 'image/jpeg',
+      });
+      await store.putObject({
+        key: libraryKey,
+        body: new Uint8Array([1]),
+        contentType: 'image/jpeg',
+      });
+      const mockDb: Partial<DatabaseClient> = {
+        query: vi.fn().mockImplementation((sql: string) => {
+          if (sql.includes('FROM workspaces')) {
+            return Promise.resolve([{ id: 'ws_123' }]);
+          }
+          if (sql.includes('SELECT') && sql.includes('FROM queue_items')) {
+            return Promise.resolve([
+              {
+                id: itemId,
+                user_id: userId,
+                status: 'queued',
+                media_storage_key: postOwnedKey,
+              },
+            ]);
+          }
+          if (sql.includes('DELETE FROM queue_items')) {
+            return Promise.resolve([{ id: itemId }]);
+          }
+          return Promise.resolve([]);
+        }),
+      };
+
+      const req = new NextRequest(`http://localhost:3000/api/tenant/acme/publishing/queue/${itemId}`, {
+        method: 'DELETE',
+        headers: { cookie: validSessionCookie },
+      });
+
+      const res = await handleDeleteQueueItem(
+        req,
+        'acme',
+        itemId,
+        mockDb as DatabaseClient,
+        store
+      );
+      expect(res.status).toBe(200);
+      expect(store.uploadedObjects.has(postOwnedKey)).toBe(false);
+      // The library bytes are untouched: a queue delete never
+      // deletes library files.
+      expect(store.uploadedObjects.has(libraryKey)).toBe(true);
+    });
+
+    it('never deletes library bytes when the row still points at a library key', async () => {
+      const libraryKey = `users/${userId}/media/bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb/photo.jpg`;
+      const store = new MockStorageProvider();
+      await store.putObject({
+        key: libraryKey,
+        body: new Uint8Array([1]),
+        contentType: 'image/jpeg',
+      });
+      const mockDb: Partial<DatabaseClient> = {
+        query: vi.fn().mockImplementation((sql: string) => {
+          if (sql.includes('FROM workspaces')) {
+            return Promise.resolve([{ id: 'ws_123' }]);
+          }
+          if (sql.includes('SELECT') && sql.includes('FROM queue_items')) {
+            return Promise.resolve([
+              {
+                id: itemId,
+                user_id: userId,
+                status: 'queued',
+                media_storage_key: libraryKey,
+              },
+            ]);
+          }
+          if (sql.includes('DELETE FROM queue_items')) {
+            return Promise.resolve([{ id: itemId }]);
+          }
+          return Promise.resolve([]);
+        }),
+      };
+
+      const req = new NextRequest(`http://localhost:3000/api/tenant/acme/publishing/queue/${itemId}`, {
+        method: 'DELETE',
+        headers: { cookie: validSessionCookie },
+      });
+
+      const res = await handleDeleteQueueItem(
+        req,
+        'acme',
+        itemId,
+        mockDb as DatabaseClient,
+        store
+      );
+      expect(res.status).toBe(200);
+      expect(store.uploadedObjects.has(libraryKey)).toBe(true);
     });
 
     it('refreshes the unmatched flag on delete (R25)', async () => {

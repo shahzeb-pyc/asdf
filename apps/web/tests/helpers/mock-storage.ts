@@ -1,5 +1,8 @@
 import type {
+  CopyObjectParams,
   IStorageService,
+  ListedObject,
+  ListObjectsParams,
   PresignedUploadParams,
   PresignedUploadResult,
   PutObjectParams,
@@ -17,7 +20,10 @@ function trimTrailingSlashes(str: string): string {
 export class MockStorageProvider implements IStorageService {
   public deletedKeys: Set<string> = new Set();
   public requestedUploadKeys: Set<string> = new Set();
-  public uploadedObjects: Map<string, { contentType: string; byteLength: number }> = new Map();
+  public uploadedObjects: Map<
+    string,
+    { contentType: string; byteLength: number; uploadedAt: Date }
+  > = new Map();
   public publicUrlBase: string = 'https://media.fbuploadpro.com';
 
   getPresignedUploadUrl(params: PresignedUploadParams): Promise<PresignedUploadResult> {
@@ -34,6 +40,7 @@ export class MockStorageProvider implements IStorageService {
     this.uploadedObjects.set(params.key, {
       contentType: params.contentType,
       byteLength: params.body.byteLength,
+      uploadedAt: new Date(),
     });
     this.deletedKeys.delete(params.key);
     return Promise.resolve({
@@ -48,6 +55,28 @@ export class MockStorageProvider implements IStorageService {
     this.requestedUploadKeys.delete(key);
     this.uploadedObjects.delete(key);
     return Promise.resolve();
+  }
+
+  copyObject(params: CopyObjectParams): Promise<void> {
+    const source = this.uploadedObjects.get(params.sourceKey);
+    if (!source) {
+      return Promise.reject(new Error(`Mock storage: source key not found: ${params.sourceKey}`));
+    }
+    this.uploadedObjects.set(params.destinationKey, { ...source, uploadedAt: new Date() });
+    this.deletedKeys.delete(params.destinationKey);
+    return Promise.resolve();
+  }
+
+  listObjects(params: ListObjectsParams): Promise<ListedObject[]> {
+    const limit = params.maxKeys ?? 1000;
+    const out: ListedObject[] = [];
+    for (const [key, value] of this.uploadedObjects.entries()) {
+      if (key.startsWith(params.prefix)) {
+        out.push({ key, lastModified: value.uploadedAt });
+        if (out.length >= limit) break;
+      }
+    }
+    return Promise.resolve(out);
   }
 
   getPublicUrl(key: string): string {

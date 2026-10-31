@@ -270,6 +270,31 @@ describe('Media Upload Confirmation (POST /api/tenant/[subdomain]/media/confirm)
     expect(mockDb.withTransaction).not.toHaveBeenCalled();
   });
 
+  it('rejects a composer post-staging key: staged uploads can never become library rows', async () => {
+    const captured = { params: [] as any[] };
+    const mockDb = makeEchoDb(captured);
+    // The object exists in storage — the prefix check alone must
+    // refuse it, so a staged composer upload can never be confirmed
+    // into the Media Library by construction.
+    const verifier = makeVerifier({ contentLength: 10485760, contentType: 'video/mp4' });
+
+    const res = await handleConfirmUpload(
+      makeRequest(
+        validBody({
+          storageKey: `users/${userId}/post-staging/${mediaId}/video.mp4`,
+          url: `https://media.fbuploadpro.com/users/${userId}/post-staging/${mediaId}/video.mp4`,
+        })
+      ),
+      'acme',
+      mockDb as DatabaseClient,
+      verifier
+    );
+
+    expect(res.status).toBe(400);
+    expect(verifier.headObject).not.toHaveBeenCalled();
+    expect(mockDb.withTransaction).not.toHaveBeenCalled();
+  });
+
   it('stores the size and content type from storage, not the spoofed request values', async () => {
     const captured = { params: [] as any[] };
     const mockDb = makeEchoDb(captured);

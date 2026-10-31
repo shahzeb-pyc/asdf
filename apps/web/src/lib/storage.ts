@@ -1,8 +1,17 @@
 import { z } from 'zod';
-import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
+  CopyObjectCommand,
+  ListObjectsV2Command,
+} from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import type {
+  CopyObjectParams,
   IStorageService,
+  ListedObject,
+  ListObjectsParams,
   PresignedUploadParams,
   PresignedUploadResult,
   PutObjectParams,
@@ -128,6 +137,40 @@ export class R2StorageProvider implements IStorageService {
       Key: key,
     });
     await this.client.send(command);
+  }
+
+  /**
+   * Server-side copy (media/posting separation): the bytes never
+   * travel through the app server. CopySource carries the bucket
+   * plus the key with each path segment URL-encoded (slashes stay
+   * literal — encoding them breaks the copy).
+   */
+  async copyObject(params: CopyObjectParams): Promise<void> {
+    const encodedKey = params.sourceKey
+      .split('/')
+      .map((segment) => encodeURIComponent(segment))
+      .join('/');
+    const command = new CopyObjectCommand({
+      Bucket: this.config.bucketName,
+      CopySource: `${this.config.bucketName}/${encodedKey}`,
+      Key: params.destinationKey,
+    });
+    await this.client.send(command);
+  }
+
+  async listObjects(params: ListObjectsParams): Promise<ListedObject[]> {
+    const command = new ListObjectsV2Command({
+      Bucket: this.config.bucketName,
+      Prefix: params.prefix,
+      MaxKeys: params.maxKeys ?? 1000,
+    });
+    const result = await this.client.send(command);
+    return (result.Contents ?? [])
+      .filter((entry) => typeof entry.Key === 'string')
+      .map((entry) => ({
+        key: entry.Key as string,
+        lastModified: entry.LastModified ?? null,
+      }));
   }
 
   getPublicUrl(key: string): string {
