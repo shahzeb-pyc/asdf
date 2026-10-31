@@ -1,8 +1,8 @@
 {
   "version": 1,
   "decision": "D137-3 superseded by Shahzeb on 2026-10-24: bundle budgets are enforced in CI.",
-  "measuredAt": "2026-10-30",
-  "measuredFromCommit": "f8e9296e4cbe8b7a10f8b1f6dd607972850ba453",
+  "measuredAt": "2026-10-31",
+  "measuredFromCommit": "14e40dad",
   "measurement": "Analyzer production build (ANALYZE=true next build --webpack) of a clean .next, measured by apps/web/scripts/measure-bundle.mjs from emitted files; sizes are bytes, gzip level 9.",
   "headroomPercent": 5,
   "baseline": {
@@ -76,6 +76,12 @@
         "firstLoadRawBytes": 577769,
         "routeSpecificGzipBytes": 38069,
         "routeSpecificRawBytes": 126893
+      },
+      "/tenant/[subdomain]/threads/publish-now": {
+        "firstLoadGzipBytes": 169335,
+        "firstLoadRawBytes": 564290,
+        "routeSpecificGzipBytes": 35528,
+        "routeSpecificRawBytes": 113414
       },
       "/tenant/[subdomain]/prompts": {
         "firstLoadGzipBytes": 159582,
@@ -235,8 +241,8 @@
       }
     },
     "totalClientJs": {
-      "gzipBytes": 1097121,
-      "rawBytes": 3479528
+      "gzipBytes": 1163314,
+      "rawBytes": 3700821
     },
     "routeCount": 25
   },
@@ -443,6 +449,12 @@
         "firstLoadRawBytes": 610000,
         "routeSpecificGzipBytes": 44000,
         "routeSpecificRawBytes": 147000
+      },
+      "/tenant/[subdomain]/threads/publish-now": {
+        "firstLoadGzipBytes": 177802,
+        "firstLoadRawBytes": 592505,
+        "routeSpecificGzipBytes": 37305,
+        "routeSpecificRawBytes": 119085
       },
       "/tenant/[subdomain]/tiktok/accounts": {
         "firstLoadGzipBytes": 167374,
