@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* global process, console */
 /**
  * Backfill post-owned media for existing Facebook queue items.
  *
