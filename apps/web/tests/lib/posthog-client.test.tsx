@@ -4,7 +4,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
  * Browser PostHog client suite (jsdom project — initPostHog requires
  * window). posthog-js is mocked at the module boundary; the real
  * lib/posthog.ts code runs, including host normalization, the
- * load-promise queueing, and the no-op-until-init guards.
+ * load-promise queueing, pre-init buffering, and the never-throw guards.
  *
  * The bug pinned here: init used to pass POSTHOG_HOST verbatim, so
  * "US" became request host `US`. The first test fails on the old
@@ -112,11 +112,12 @@ describe('identifyUser', () => {
     expect(props).not.toHaveProperty('name');
   });
 
-  it('is a no-op without a user id, and before init', async () => {
+  it('is a no-op without a user id, and when init never runs', async () => {
     const { lib, instance } = await loadClient();
     lib.identifyUser(undefined, TENANT_ID);
     lib.identifyUser(USER_ID, TENANT_ID);
     await flush();
+    // No init ever runs, so the buffered identify is never delivered.
     expect(instance.identify).not.toHaveBeenCalled();
   });
 });
@@ -132,10 +133,11 @@ describe('capturePageview', () => {
     });
   });
 
-  it('is a no-op before init and never throws', async () => {
+  it('never throws before init, and is dropped when init never runs', async () => {
     const { lib, instance } = await loadClient();
     expect(() => lib.capturePageview('/pages')).not.toThrow();
     await flush();
+    // No init ever runs, so the buffered pageview is never delivered.
     expect(instance.capture).not.toHaveBeenCalled();
   });
 });
@@ -160,14 +162,17 @@ describe('trackEvent', () => {
     });
   });
 
-  it('drops events issued before init (no-op, never throws)', async () => {
+  it('buffers events issued before init and delivers them once init succeeds', async () => {
     const { lib, instance } = await loadClient();
+    // Issued before init starts — the mount-order case: child
+    // effects (tracker, identify) run before the provider's init
+    // effect. These must LAND once init succeeds, not be dropped.
     lib.trackEvent(PAGE_ADDED_EVENT, { platform: PLATFORM, count: 1 });
     lib.initPostHog(TEST_KEY, HOST_REGION);
     await flush();
-    // trackEvent before init is a deliberate no-op (no load promise
-    // yet) — it must not throw and must not crash the page. Events
-    // are only captured once init has started.
-    expect(instance.capture).not.toHaveBeenCalled();
+    expect(instance.capture).toHaveBeenCalledWith(PAGE_ADDED_EVENT, {
+      platform: PLATFORM,
+      count: 1,
+    });
   });
 });

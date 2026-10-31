@@ -25,8 +25,13 @@
  *
  * FAILURE SEMANTICS (fail loud, never break a page): a failed chunk
  * load logs an error and leaves analytics off for the session. Every
- * capture helper is a no-op until init succeeds, and never throws —
- * analytics failure must never break app pages. A malformed host is
+ * capture helper never throws — analytics failure must never break
+ * app pages. Calls issued before init starts are buffered and
+ * delivered once the load succeeds (child effects run before the
+ * provider's init effect on mount, so the initial pageview and
+ * identify arrive before init starts); calls are only lost when init
+ * never runs (no key) or the load fails, both of which are visible
+ * states, not silent drops. A malformed host is
  * normalized (lib/posthog-host.ts) with a loud warning, never sent
  * verbatim — the old "US" host bug (requests to /US/… 404ing) cannot
  * recur through this module.
@@ -49,16 +54,40 @@ type PostHogInstance = {
 let loadPromise: Promise<PostHogInstance | null> | null = null;
 let loadStarted = false;
 
+/**
+ * Calls issued before init starts (loadPromise is still null) are
+ * BUFFERED, not dropped. This matters on mount: React runs child
+ * effects before parent effects, so the pageview tracker's and the
+ * identify component's mount-time calls execute BEFORE the
+ * provider's init effect starts the load. Dropping them (the old
+ * behaviour) silently lost the initial pageview and — worse, since
+ * identify does not re-fire on navigation — the initial identify,
+ * leaving the user anonymous. Buffered calls flush in order once
+ * the load resolves; if the load fails (already logged loudly by
+ * initPostHog) or init never runs (no key), they are discarded.
+ */
+let pending: Array<(posthog: PostHogInstance) => void> = [];
+
+function runSafely(
+  posthog: PostHogInstance,
+  run: (posthog: PostHogInstance) => void
+): void {
+  try {
+    run(posthog);
+  } catch (error: unknown) {
+    console.error('[posthog] analytics call failed', error);
+  }
+}
+
 function whenReady(run: (posthog: PostHogInstance) => void): void {
-  if (!loadPromise) return;
+  if (!loadPromise) {
+    pending.push(run);
+    return;
+  }
   void loadPromise
     .then((posthog) => {
       if (!posthog) return;
-      try {
-        run(posthog);
-      } catch (error: unknown) {
-        console.error('[posthog] analytics call failed', error);
-      }
+      runSafely(posthog, run);
     })
     .catch((error: unknown) => {
       console.error('[posthog] analytics call failed', error);
@@ -99,6 +128,16 @@ export function initPostHog(
       console.error('[posthog] failed to load posthog-js', error);
       return null;
     });
+
+  // Flush calls buffered before init started (see whenReady). On a
+  // failed load the buffer is discarded — the failure is already
+  // logged loudly above, and analytics stays off for the session.
+  void loadPromise.then((instance) => {
+    const queued = pending;
+    pending = [];
+    if (!instance) return;
+    for (const run of queued) runSafely(instance, run);
+  });
 }
 
 /**
