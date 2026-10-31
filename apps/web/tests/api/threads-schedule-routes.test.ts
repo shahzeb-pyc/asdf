@@ -67,10 +67,18 @@ const DISC_DEST = '66666666-6666-4666-a666-666666666666';
 const ACCT = 'acct-1';
 
 function params(subdomain = 'acme', extra: Record<string, string> = {}) {
-  return { params: Promise.resolve({ subdomain, ...extra }) };
+  return {
+    params: Promise.resolve({
+      subdomain,
+      scheduleId: DEST,
+      slotId: 'slot-1',
+      itemId: 'item-1',
+      ...extra,
+    }),
+  };
 }
 
-function req(url: string, init?: RequestInit) {
+function req(url: string, init?: ConstructorParameters<typeof NextRequest>[1]) {
   return new NextRequest(url, init);
 }
 
