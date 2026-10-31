@@ -14,6 +14,7 @@
  */
 import type { DatabaseClient, Platform } from '@fbuploadpro/contracts';
 import { getRouteSupabase, isLegacyClient } from '@/lib/route-auth';
+import { postStagingKeyPrefix } from '@/lib/publishing/post-owned-media';
 import type { ConnectDbClient } from '@/lib/connect/persist';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -265,6 +266,49 @@ export async function fetchOwnedMedia(
     .in('id', mediaIds);
   if (error || !data) return [];
   return data as OwnedMediaRow[];
+}
+
+/**
+ * The post-staging keys currently referenced by any queue item in
+ * the workspace (the lazy staged-upload sweep's keep set). Scoped
+ * by the staging prefix itself, so the scan stays small: only
+ * staged keys can ever match, never library or post-media keys.
+ */
+export async function fetchReferencedStagedKeys(
+  client: ConnectDbClient,
+  workspaceId: string,
+  userId: string
+): Promise<Set<string>> {
+  const prefix = postStagingKeyPrefix(userId);
+  if (isLegacyClient(client)) {
+    const rows = (await (client as DatabaseClient).query(
+      `SELECT media_storage_key
+       FROM queue_items
+       WHERE workspace_id = $1 AND media_storage_key LIKE $2
+       LIMIT 1000`,
+      [workspaceId, `${prefix}%`]
+    )) as Array<{ media_storage_key?: string | null }>;
+    return new Set(
+      rows
+        .map((r) => r.media_storage_key)
+        .filter((k): k is string => typeof k === 'string' && k.length > 0)
+    );
+  }
+
+  const supabase = getRouteSupabase(client as SupabaseClient);
+  if (!supabase) return new Set();
+  const { data, error } = await supabase
+    .from('queue_items')
+    .select('media_storage_key')
+    .eq('workspace_id', workspaceId)
+    .like('media_storage_key', `${prefix}%`)
+    .limit(1000);
+  if (error) return new Set();
+  return new Set(
+    (data as Array<{ media_storage_key?: string | null }>)
+      .map((r) => r.media_storage_key)
+      .filter((k): k is string => typeof k === 'string' && k.length > 0)
+  );
 }
 
 /** All of a destination's unified posting slots, earliest first. */

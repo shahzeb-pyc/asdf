@@ -19,13 +19,21 @@
  *     500-item list, same cache as the library page). It opens at
  *     the library root, and the user moves to ANY folder exactly
  *     as in the library; nothing confines browsing to one folder.
- *   - The Upload from device tab opens the library's own import
- *     modal (staging, duplicate flags, 3-concurrency engine,
- *     pause/resume/cancel/retry, completion summary) — the picker's
- *     first-build custom upload flow is deleted. The one picker
- *     rule on top of it: the import destination is LOCKED to the
- *     page's folder (named after the page, auto-created if
- *     missing), so device uploads always land there.
+ *   - The Upload from device tab has two modes (see the
+ *     `deviceUploads` prop). 'library' (default, every existing
+ *     caller) opens the library's own import modal (staging,
+ *     duplicate flags, 3-concurrency engine, pause/resume/
+ *     cancel/retry, completion summary) with the destination
+ *     LOCKED to the page's folder (named after the page,
+ *     auto-created if missing), so device uploads always land
+ *     there. 'staged' (Facebook Pages composer only) opens the
+ *     composer's own staged uploader instead: device uploads land
+ *     under the user's post-staging prefix, never create a library
+ *     row, and never appear in the library listing — at queue time
+ *     the route adopts the staged key as the post's own media.
+ *     The old page-folder destination for device uploads is gone
+ *     for the composer with the library link itself; other callers
+ *     keep it exactly as before.
  *
  * What is deliberately NOT the library: folder management. The
  * picker is browse + select only — no rename / move / delete
@@ -41,8 +49,9 @@
  * Captions: the media attached here carries its saved library
  * caption (`captionText`) through to the dialogue, which prefills
  * an empty block's text from it. Device uploads get their saved
- * caption from the library uploader itself (filename without
- * extension), so their blocks prefill the same way.
+ * caption from the uploader itself (filename without extension,
+ * in both the library modal and the staged uploader), so their
+ * blocks prefill the same way.
  */
 
 import * as React from 'react';
@@ -132,6 +141,7 @@ import type {
   SortOptionKey,
 } from '@/components/media/media-types';
 import { toComposerMedia } from './create-posts-types';
+import { ComposerStagedUpload } from './composer-staged-upload';
 
 /**
  * The library's preview + import dialogs are closed-by-default UI
@@ -160,6 +170,18 @@ export interface MediaLibraryPickerProps {
   subdomain: string;
   pageName: string;
   mode: 'single' | 'multi';
+  /**
+   * Media/posting separation: which device-upload path the
+   * device tab uses. 'library' (default) is the historical path —
+   * the library's import modal into the page-named folder — and is
+   * what every existing caller (Publish Now, Instagram/Threads
+   * schedule) keeps, untouched. 'staged' is the Facebook Pages
+   * composer path: the composer's own staged uploader, whose files
+   * never create a library row and are adopted as post-owned
+   * media at queue time. Only the Facebook composer passes
+   * 'staged'; no other caller is affected.
+   */
+  deviceUploads?: 'library' | 'staged';
   onSingleAttach: (media: ComposerMedia) => void;
   onMultiAttach: (media: ComposerMedia[]) => void;
   /**
@@ -193,6 +215,7 @@ export function MediaLibraryPicker({
   subdomain,
   pageName,
   mode,
+  deviceUploads = 'library',
   onSingleAttach,
   onMultiAttach,
   sessionKey = 0,
@@ -645,6 +668,62 @@ export function MediaLibraryPicker({
     setImportOpen(false);
     setStagedFiles([]);
   }, []);
+
+  // Staged device uploads (deviceUploads === 'staged', Facebook
+  // composer only): the file lives under the post-staging prefix
+  // and is NOT a library item — so, unlike the import-modal path,
+  // nothing is inserted into the library cache and no library
+  // invalidation is scheduled. Single mode attaches at once and
+  // closes through the uploads guard (P1); a second success after
+  // the close is ignored, so it can never overwrite the attached
+  // file. Multi mode: a freshly uploaded file is chosen by
+  // definition, so it joins the selection and Add selected
+  // includes it.
+  const handleStagedSuccess = React.useCallback(
+    (media: ComposerMedia) => {
+      if (mode === 'single') {
+        if (singleAttachedRef.current) return;
+        singleAttachedRef.current = true;
+        onSingleAttach(media);
+        handlePickerOpenChange(false);
+        return;
+      }
+      setUploadedItems((prev) =>
+        prev.some((u) => u.id === media.id) ? prev : [...prev, media]
+      );
+      setSelectedIds((prev) =>
+        prev.includes(media.id) ? prev : [...prev, media.id]
+      );
+    },
+    [mode, onSingleAttach, handlePickerOpenChange]
+  );
+
+  // Live upload state for the leave guard, shared by the staged
+  // uploader and the import modal: reported only when it changes
+  // (P2), so the dialogue never re-renders in a loop.
+  const handleActiveUploadsChange = React.useCallback(
+    (
+      count: number,
+      furthest: { name: string; progressPercent: number } | null
+    ) => {
+      setImportActiveCount(count);
+      setFurthestAlongUpload(furthest);
+      const prev = prevReportedUploadsRef.current;
+      if (
+        count !== prev.count ||
+        (furthest?.name ?? null) !== prev.name ||
+        (furthest?.progressPercent ?? null) !== prev.progressPercent
+      ) {
+        prevReportedUploadsRef.current = {
+          count,
+          name: furthest?.name ?? null,
+          progressPercent: furthest?.progressPercent ?? null,
+        };
+        onUploadsActiveChange?.(count, furthest);
+      }
+    },
+    [onUploadsActiveChange]
+  );
 
   // Selection resolved against the whole library (not just the
   // displayed view), so files picked across folders all queue.
@@ -1269,59 +1348,89 @@ export function MediaLibraryPicker({
             )}
           </TabsContent>
 
-          {/* P8: the device tab is a drop zone — dropped files take
-              the same validation + staging path as the file input. */}
+          {/* Device tab: 'staged' renders the composer's own staged
+              uploader (post-owned bytes, never the library); the
+              'library' path keeps the historical drop zone + file
+              input into the import modal. The outer drop handlers
+              are library-only — in staged mode the uploader owns
+              its own drag state, and an outer handler would
+              double-handle the same files. */}
           <TabsContent
             value="device"
             className={cn(
-              isDraggingOverDevice && 'rounded-md ring-2 ring-link/60 ring-inset'
+              deviceUploads === 'library' &&
+                isDraggingOverDevice &&
+                'rounded-md ring-2 ring-link/60 ring-inset'
             )}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setIsDraggingOverDevice(true);
-            }}
-            onDragLeave={() => setIsDraggingOverDevice(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              setIsDraggingOverDevice(false);
-              void handleDeviceFiles(e.dataTransfer.files);
-            }}
+            onDragOver={
+              deviceUploads === 'library'
+                ? (e) => {
+                    e.preventDefault();
+                    setIsDraggingOverDevice(true);
+                  }
+                : undefined
+            }
+            onDragLeave={
+              deviceUploads === 'library'
+                ? () => setIsDraggingOverDevice(false)
+                : undefined
+            }
+            onDrop={
+              deviceUploads === 'library'
+                ? (e) => {
+                    e.preventDefault();
+                    setIsDraggingOverDevice(false);
+                    void handleDeviceFiles(e.dataTransfer.files);
+                  }
+                : undefined
+            }
           >
-            <p className="mb-3 text-body text-ink-sub">
-              Uploads go to the “{folderName}” folder. The folder is created
-              automatically if it doesn’t exist yet. You can also drop files
-              anywhere on this tab.
-            </p>
-            <input
-              ref={deviceInputRef}
-              type="file"
-              data-testid="media-library-device-input"
-              className="hidden"
-              accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm"
-              multiple={mode === 'multi'}
-              onChange={(event) => {
-                void handleDeviceFiles(event.target.files);
-                event.target.value = '';
-              }}
-            />
-            <Button
-              type="button"
-              variant="secondary"
-              data-testid="media-library-device-choose-btn"
-              disabled={resolvingFolder}
-              onClick={() => deviceInputRef.current?.click()}
-            >
-              {resolvingFolder
-                ? 'Opening your page’s folder…'
-                : 'Choose files from your device'}
-            </Button>
-            {isDraggingOverDevice && (
-              <p className="mt-3 text-center text-body font-medium text-link">
-                Drop files to upload them
-              </p>
-            )}
-            {deviceError && (
-              <p className="mt-3 text-body text-signal-critical">{deviceError}</p>
+            {deviceUploads === 'staged' ? (
+              <ComposerStagedUpload
+                subdomain={subdomain}
+                mode={mode}
+                onSuccess={handleStagedSuccess}
+                onActiveChange={handleActiveUploadsChange}
+              />
+            ) : (
+              <>
+                <p className="mb-3 text-body text-ink-sub">
+                  Uploads go to the “{folderName}” folder. The folder is created
+                  automatically if it doesn’t exist yet. You can also drop files
+                  anywhere on this tab.
+                </p>
+                <input
+                  ref={deviceInputRef}
+                  type="file"
+                  data-testid="media-library-device-input"
+                  className="hidden"
+                  accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm"
+                  multiple={mode === 'multi'}
+                  onChange={(event) => {
+                    void handleDeviceFiles(event.target.files);
+                    event.target.value = '';
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  data-testid="media-library-device-choose-btn"
+                  disabled={resolvingFolder}
+                  onClick={() => deviceInputRef.current?.click()}
+                >
+                  {resolvingFolder
+                    ? 'Opening your page’s folder…'
+                    : 'Choose files from your device'}
+                </Button>
+                {isDraggingOverDevice && (
+                  <p className="mt-3 text-center text-body font-medium text-link">
+                    Drop files to upload them
+                  </p>
+                )}
+                {deviceError && (
+                  <p className="mt-3 text-body text-signal-critical">{deviceError}</p>
+                )}
+              </>
             )}
             {/* P5: the batch's live state on the device tab itself —
                 visible while the import modal is minimised to its
@@ -1407,42 +1516,27 @@ export function MediaLibraryPicker({
           </div>
         )}
 
-        {/* The library's own import modal, nested inside the picker:
-            staging, duplicate flags, the 3-concurrency engine and
-            progress — with the destination locked to the page
-            folder, so device uploads can never land elsewhere.
-            Single mode also disables "+ Add more" (P1). */}
-        <MediaImportModal
-          subdomain={subdomain}
-          isOpen={importOpen}
-          initialFiles={stagedFiles}
-          currentFolderId={pageFolderId}
-          folders={folders}
-          onClose={handleImportClose}
-          onUploadSuccess={handleImportSuccess}
-          onActiveUploadsChange={(count, furthest) => {
-            setImportActiveCount(count);
-            setFurthestAlongUpload(furthest);
-            // P2: report live upload state up to the composer
-            // dialogue's leave guard — only when it changes, so the
-            // dialogue never re-renders in a loop.
-            const prev = prevReportedUploadsRef.current;
-            if (
-              count !== prev.count ||
-              (furthest?.name ?? null) !== prev.name ||
-              (furthest?.progressPercent ?? null) !== prev.progressPercent
-            ) {
-              prevReportedUploadsRef.current = {
-                count,
-                name: furthest?.name ?? null,
-                progressPercent: furthest?.progressPercent ?? null,
-              };
-              onUploadsActiveChange?.(count, furthest);
-            }
-          }}
-          lockDestination
-          singleMode={mode === 'single'}
-        />
+        {/* The library's own import modal, nested inside the picker
+            (library device-upload mode only — never mounted in
+            staged mode): staging, duplicate flags, the
+            3-concurrency engine and progress — with the
+            destination locked to the page folder, so device
+            uploads can never land elsewhere. Single mode also
+            disables "+ Add more" (P1). */}
+        {deviceUploads === 'library' && (
+          <MediaImportModal
+            subdomain={subdomain}
+            isOpen={importOpen}
+            initialFiles={stagedFiles}
+            currentFolderId={pageFolderId}
+            folders={folders}
+            onClose={handleImportClose}
+            onUploadSuccess={handleImportSuccess}
+            onActiveUploadsChange={handleActiveUploadsChange}
+            lockDestination
+            singleMode={mode === 'single'}
+          />
+        )}
 
         {/* The library's own preview: in multi mode it is view-only
             (tile clicks preview instead of selecting, exactly as in

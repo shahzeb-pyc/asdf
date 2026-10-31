@@ -12,6 +12,9 @@ import {
 import { isLegacyClient, getRouteSupabase } from '@/lib/route-auth';
 import { refreshDestinationUnmatchedFlag } from '@/lib/server/unmatched-flag';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { deletePostOwnedBytesBestEffort } from '@/lib/publishing/post-owned-media';
+import { getStorageService } from '@/lib/storage';
+import type { IStorageService } from '@fbuploadpro/contracts';
 import {
   unifiedQueueRowToPostFormat,
   unifiedQueueStatusToWire,
@@ -30,6 +33,22 @@ import type { SupabaseClient } from '@supabase/supabase-js';
  * writes land as 'cancelled'; the unified vocabulary has no
  * 'skipped').
  */
+
+/**
+ * Resolve storage for best-effort cleanup only: a missing R2
+ * configuration must skip the cleanup, never fail the delete it
+ * rides along with.
+ */
+function resolveCleanupStorage(
+  storageService?: IStorageService
+): IStorageService | null {
+  try {
+    return storageService ?? getStorageService();
+  } catch (err) {
+    console.error('Post-owned cleanup skipped: storage unavailable:', err);
+    return null;
+  }
+}
 
 function resolveScheduledTime(
   requestedTime?: string | null,
@@ -510,7 +529,8 @@ export async function handleDeleteQueueItem(
   request: NextRequest,
   subdomain: string,
   itemId: string,
-  dbClient?: DatabaseClient | SupabaseClient
+  dbClient?: DatabaseClient | SupabaseClient,
+  storageService?: IStorageService
 ): Promise<NextResponse> {
   const auth = await authenticateQueueItemRequest(request, subdomain);
   if (auth.errorResponse) return auth.errorResponse;
@@ -524,7 +544,7 @@ export async function handleDeleteQueueItem(
   if (isLegacyClient(dbClient)) {
     // Check existing item
     const existingRows = (await dbClient.query(
-      `SELECT id, status, destination_id FROM queue_items WHERE id = $1 AND workspace_id = $2`,
+      `SELECT id, status, destination_id, media_storage_key FROM queue_items WHERE id = $1 AND workspace_id = $2`,
       [itemId, workspaceId]
     )) as Record<string, unknown>[];
 
@@ -561,6 +581,23 @@ export async function handleDeleteQueueItem(
       await refreshDestinationUnmatchedFlag(dbClient, existing.destination_id);
     }
 
+    // Media/posting separation: the post's own bytes go with it.
+    // Only post-owned keys are ever deleted here — a library key
+    // is left alone, so a queue delete can never delete library
+    // bytes. Best-effort, never fails the delete.
+    {
+      const cleanupStorage = resolveCleanupStorage(storageService);
+      if (cleanupStorage) {
+        await deletePostOwnedBytesBestEffort(
+          cleanupStorage,
+          session.userId,
+          typeof existing.media_storage_key === 'string'
+            ? existing.media_storage_key
+            : null
+        );
+      }
+    }
+
     return NextResponse.json({ success: true, itemId }, { status: 200 });
   }
 
@@ -571,7 +608,7 @@ export async function handleDeleteQueueItem(
 
   const { data: existing, error: existErr } = await supabase
     .from('queue_items')
-    .select('id, status, destination_id')
+    .select('id, status, destination_id, media_storage_key')
     .eq('id', itemId)
     .eq('workspace_id', workspaceId)
     .maybeSingle();
@@ -608,6 +645,21 @@ export async function handleDeleteQueueItem(
   // R25: see the legacy branch — best-effort, never fails the delete.
   if (existing.destination_id) {
     await refreshDestinationUnmatchedFlag(supabase, existing.destination_id);
+  }
+
+  // Media/posting separation: see the legacy branch — the post's own
+  // bytes go with it, library keys are never touched.
+  {
+    const cleanupStorage = resolveCleanupStorage(storageService);
+    if (cleanupStorage) {
+      await deletePostOwnedBytesBestEffort(
+        cleanupStorage,
+        session.userId,
+        typeof existing.media_storage_key === 'string'
+          ? existing.media_storage_key
+          : null
+      );
+    }
   }
 
   return NextResponse.json({ success: true, itemId }, { status: 200 });

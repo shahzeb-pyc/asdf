@@ -30,11 +30,24 @@ export function deriveDefaultCaptionFromFilename(fileName: string): string {
   return trimmed;
 }
 
+/**
+ * Upload purpose: which key prefix the minted object keys use.
+ * 'library' is the historical default — `users/<userId>/media/…`,
+ * confirmed into a `media_items` row. 'post-staging' mints
+ * `users/<userId>/post-staging/…` for composer device uploads: bytes
+ * that belong to a post, never to the library. The confirm route
+ * only accepts the library prefix, so a staging key can never be
+ * confirmed into the library, by construction.
+ */
+export const UploadPurposeSchema = z.enum(['library', 'post-staging']);
+export type UploadPurpose = z.infer<typeof UploadPurposeSchema>;
+
 export const UploadUrlRequestSchema = z.object({
   fileName: z.string().trim().min(1).max(255),
   fileSize: z.number().int().positive().max(524288000), // Max 500 MB
   mimeType: z.enum(AllowedMediaMimeTypes),
   thumbnailMimeType: z.enum(AllowedThumbnailMimeTypes).default('image/webp'),
+  purpose: UploadPurposeSchema.default('library'),
 });
 
 export type UploadUrlRequest = z.infer<typeof UploadUrlRequestSchema>;
@@ -92,6 +105,7 @@ export const MultipartInitiateRequestSchema = z.object({
   fileSize: z.number().int().positive().max(524288000), // Max 500 MB
   mimeType: z.enum(AllowedMediaMimeTypes),
   thumbnailMimeType: z.enum(AllowedThumbnailMimeTypes).default('image/webp'),
+  purpose: UploadPurposeSchema.default('library'),
 });
 
 export type MultipartInitiateRequest = z.infer<typeof MultipartInitiateRequestSchema>;

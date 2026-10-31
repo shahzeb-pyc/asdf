@@ -157,11 +157,18 @@ export function composerTextLimitForBlock(block: {
 }
 
 /**
- * One library item attached to a composer block. `captionText` is the
- * item's saved caption in the Media Library (null when it has none):
- * at attach time the composer prefills an empty block's text from it
+ * One item attached to a composer block. `captionText` is the item's
+ * saved caption in the Media Library (null when it has none): at
+ * attach time the composer prefills an empty block's text from it
  * (library → post only — editing in the composer never writes back
  * to the library caption).
+ *
+ * Media/posting separation: a block's media is EITHER a library item
+ * (`source` 'library', the default) OR a composer staged upload
+ * (`source` 'staged', with `storageKey` — bytes under the user's
+ * post-staging prefix, never a library row). The queue payload maps
+ * staged media to `stagedMedia` and library media to `mediaItemIds`;
+ * the two are never mixed for one block.
  */
 export const ComposerMediaSchema = z.object({
   id: z.string().uuid(),
@@ -173,6 +180,14 @@ export const ComposerMediaSchema = z.object({
   width: z.number().int().positive().nullable().optional(),
   height: z.number().int().positive().nullable().optional(),
   captionText: z.string().nullable(),
+  source: z.enum(['library', 'staged']).optional(),
+  /** Post-staging object key; present only when source is 'staged'. */
+  storageKey: z.string().min(1).optional(),
+  /** Facts a staged upload carries because no library row exists to
+   * read them from (file size, probed video duration). Library
+   * media leaves these absent — its facts come from its row. */
+  fileSize: z.number().int().positive().nullable().optional(),
+  durationSeconds: z.number().positive().nullable().optional(),
 });
 export type ComposerMedia = z.infer<typeof ComposerMediaSchema>;
 
@@ -209,6 +224,19 @@ export interface ComposerEnqueueItem {
   platformFormat: string | null;
   caption: string;
   mediaItemIds: string[];
+  /**
+   * Composer staged media for the route's `stagedMedia` field, when
+   * the block's media is a staged upload. Null for library media
+   * and text posts. Carries the facts the route needs for format
+   * eligibility because there is no library row to read them from.
+   */
+  stagedMedia?: {
+    storageKey: string;
+    mediaType: 'image' | 'video';
+    fileSize?: number | null;
+    durationSeconds?: number | null;
+    aspectRatio?: string | null;
+  } | null;
 }
 
 /**
@@ -237,12 +265,26 @@ export function toComposerEnqueueItem(
   if (derived === 'text') {
     return { kind: 'text', platformFormat: null, caption, mediaItemIds: [] };
   }
+  // Staged media rides `stagedMedia`, never `mediaItemIds`: the
+  // block holds no library link, and the route must not invent one.
+  const stagedMedia =
+    media?.source === 'staged' && media.storageKey
+      ? {
+          storageKey: media.storageKey,
+          mediaType: media.mediaType,
+          fileSize: media.fileSize ?? null,
+          durationSeconds: media.durationSeconds ?? null,
+          aspectRatio: media.aspectRatio,
+        }
+      : null;
+  const mediaItemIds = stagedMedia ? [] : [media?.id as string];
   if (derived === 'image') {
     return {
       kind: 'image',
       platformFormat: null,
       caption,
-      mediaItemIds: [media?.id as string],
+      mediaItemIds,
+      stagedMedia,
     };
   }
   if (derived === 'reel') {
@@ -250,13 +292,15 @@ export function toComposerEnqueueItem(
       kind: 'video',
       platformFormat: 'reel',
       caption,
-      mediaItemIds: [media?.id as string],
+      mediaItemIds,
+      stagedMedia,
     };
   }
   return {
     kind: 'video',
     platformFormat: null,
     caption,
-    mediaItemIds: [media?.id as string],
+    mediaItemIds,
+    stagedMedia,
   };
 }

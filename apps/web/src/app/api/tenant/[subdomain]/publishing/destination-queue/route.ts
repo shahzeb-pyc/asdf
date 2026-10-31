@@ -5,6 +5,7 @@ import {
   resolveDestinationPlatformOptions,
   validatePostFormatEligibility,
   type DestinationEnqueueKind,
+  type IStorageService,
 } from '@fbuploadpro/contracts';
 import { resolveSocialRouteContext } from '@/lib/connect/session';
 import type { ConnectDbClient } from '@/lib/connect/persist';
@@ -19,6 +20,7 @@ import {
   destinationWireStatus,
   fetchDestinationForEnqueue,
   fetchDestinationQueuedTimes,
+  fetchReferencedStagedKeys,
   isAccountExpiredForEnqueue,
   fetchDestinationSlots,
   fetchOwnedMedia,
@@ -26,6 +28,12 @@ import {
   insertDestinationQueueItem,
   type OwnedMediaRow,
 } from '@/lib/publishing/destination-enqueue';
+import {
+  copyLibraryMediaToPostOwned,
+  isPostStagingStorageKey,
+  sweepUnclaimedStagedUploads,
+} from '@/lib/publishing/post-owned-media';
+import { getStorageService } from '@/lib/storage';
 import { refreshDestinationUnmatchedFlag } from '@/lib/server/unmatched-flag';
 import { trackServerEvent } from '@/lib/server-analytics';
 import { getRouteSupabase } from '@/lib/route-auth';
@@ -67,7 +75,8 @@ import {
 export async function handleDestinationEnqueue(
   request: NextRequest,
   subdomain: string,
-  dbClient?: ConnectDbClient
+  dbClient?: ConnectDbClient,
+  storageService?: IStorageService
 ): Promise<NextResponse> {
   const context = await resolveSocialRouteContext(request, subdomain, dbClient);
   if (context.errorResponse) {
@@ -299,10 +308,61 @@ export async function handleDestinationEnqueue(
     }
   }
 
-  // Media ownership + kind compatibility. The row stores the primary
-  // (first) media denormalised — media_url/media_storage_key copied
-  // from the library row — so a claim stays valid even if the library
-  // item is later removed (media_item_id is ON DELETE SET NULL).
+  // Media ownership + kind compatibility.
+  //
+  // Media/posting separation (Facebook): a queued post never stores
+  // a library link. Library bytes are copied to a post-owned key at
+  // queue time (below) and composer staged bytes are adopted as-is,
+  // so a later library delete deletes only the library file — the
+  // post's media is already its own. The worker publishes from the
+  // url alone, so media_item_id NULL is safe on this path.
+  // Non-Facebook destinations keep the historical library-linked row
+  // (their composers are out of this change's scope).
+  //
+  // K6: repo-defined media limits, checked at enqueue for
+  // Facebook only — the only limits applied are the ones the
+  // repo already defines in validatePostFormatEligibility
+  // (reel > 90s, story photo > 10 MB, story video > 60s).
+  // No Facebook limit is invented here: unknown facts (null
+  // duration/size on the library row, or absent on staged media)
+  // pass, exactly as the validator's own semantics treat them.
+  // Other platforms keep their own rules; this gate never touches
+  // them. The PATCH path needs no equivalent: it cannot change a
+  // post's media, and its caption/format rules (reel 2,200, story
+  // comment) are already enforced there.
+  //
+  // Returns an eligibility error message, or null when the facts
+  // pass (or there is no media / the platform is not Facebook).
+  const facebookEligibilityError = (facts: {
+    mediaType: 'image' | 'video';
+    fileSize: number | null;
+    durationSeconds: number | null;
+    aspectRatio: string | null;
+  } | null): string | null => {
+    if (destination.platform !== 'facebook' || facts === null) return null;
+    const postFormat =
+      data.platformFormat === 'reel'
+        ? 'reel'
+        : data.kind === 'text' || data.kind === 'image' || data.kind === 'video' || data.kind === 'story'
+          ? data.kind
+          : null;
+    if (postFormat === null) return 'Unsupported post format: carousel';
+    const eligibility = validatePostFormatEligibility({
+      postFormat,
+      caption: data.caption,
+      firstComment: data.firstComment ?? null,
+      linkUrl: data.linkUrl ?? null,
+      media: {
+        mediaType: facts.mediaType,
+        fileSize: facts.fileSize,
+        durationSeconds: facts.durationSeconds,
+        aspectRatio: facts.aspectRatio,
+      },
+    });
+    return eligibility.valid
+      ? null
+      : (eligibility.error ?? 'This media does not fit the post format.');
+  };
   let primaryMedia: OwnedMediaRow | null = null;
   if (data.mediaItemIds.length > 0) {
     const mediaRows = await fetchOwnedMedia(client, session.userId, data.mediaItemIds);
@@ -324,53 +384,89 @@ export async function handleDestinationEnqueue(
       }
     }
 
-    // K6: repo-defined media limits, checked at enqueue for
-    // Facebook only — the only limits applied are the ones the
-    // repo already defines in validatePostFormatEligibility
-    // (reel > 90s, story photo > 10 MB, story video > 60s).
-    // No Facebook limit is invented here: unknown facts (null
-    // duration/size on the library row) pass, exactly as the
-    // validator's own semantics treat them. Other platforms keep
-    // their own rules; this gate never touches them. The PATCH
-    // path needs no equivalent: it cannot change a post's media,
-    // and its caption/format rules (reel 2,200, story comment)
-    // are already enforced there.
-    if (destination.platform === 'facebook' && primaryMedia) {
-      const postFormat =
-        data.platformFormat === 'reel'
-          ? 'reel'
-          : data.kind === 'text' || data.kind === 'image' || data.kind === 'video' || data.kind === 'story'
-            ? data.kind
-            : null;
-      if (postFormat === null) {
-        return NextResponse.json(
-          { error: 'INVALID_FORMAT', message: 'Unsupported post format: carousel' },
-          { status: 400 }
-        );
-      }
-      const eligibility = validatePostFormatEligibility({
-        postFormat,
-        caption: data.caption,
-        firstComment: data.firstComment ?? null,
-        linkUrl: data.linkUrl ?? null,
-        media: {
-          mediaType: primaryMedia.media_type === 'video' ? 'video' : 'image',
-          fileSize:
-            typeof primaryMedia.file_size === 'number' ? primaryMedia.file_size : null,
-          durationSeconds:
-            primaryMedia.duration_seconds === null ||
-            primaryMedia.duration_seconds === undefined
-              ? null
-              : Number(primaryMedia.duration_seconds),
-          aspectRatio: primaryMedia.aspect_ratio ?? null,
-        },
+    if (primaryMedia) {
+      const eligibilityError = facebookEligibilityError({
+        mediaType: primaryMedia.media_type === 'video' ? 'video' : 'image',
+        fileSize:
+          typeof primaryMedia.file_size === 'number' ? primaryMedia.file_size : null,
+        durationSeconds:
+          primaryMedia.duration_seconds === null ||
+          primaryMedia.duration_seconds === undefined
+            ? null
+            : Number(primaryMedia.duration_seconds),
+        aspectRatio: primaryMedia.aspect_ratio ?? null,
       });
-      if (!eligibility.valid) {
+      if (eligibilityError) {
         return NextResponse.json(
-          { error: 'INVALID_FORMAT', message: eligibility.error ?? 'This media does not fit the post format.' },
+          { error: 'INVALID_FORMAT', message: eligibilityError },
           { status: 400 }
         );
       }
+    }
+  }
+
+  // Staged media (Facebook composer device uploads only): no library
+  // row exists, so there is nothing to fetch — but the key must be
+  // one of this user's own post-staging keys. The public URL is
+  // recomputed server-side at insert time, never taken from the
+  // client. Eligibility runs on the staged facts themselves, since
+  // there is no library row to read them from.
+  let stagedMedia: typeof data.stagedMedia | null = null;
+  if (data.stagedMedia) {
+    if (destination.platform !== 'facebook') {
+      return NextResponse.json(
+        {
+          error: 'STAGED_MEDIA_FACEBOOK_ONLY',
+          message: 'Staged media is only supported for Facebook posts.',
+        },
+        { status: 400 }
+      );
+    }
+    if (!isPostStagingStorageKey(session.userId, data.stagedMedia.storageKey)) {
+      return NextResponse.json(
+        {
+          error: 'INVALID_STAGED_MEDIA',
+          message: 'The staged media key does not belong to this user.',
+        },
+        { status: 400 }
+      );
+    }
+    // The bytes must still exist: a staged upload abandoned for
+    // over a day is swept, so a stale draft must fail loudly here
+    // ("upload it again") instead of queueing a dead key.
+    {
+      const checkStorage = storageService ?? getStorageService();
+      const found = await checkStorage.listObjects({
+        prefix: data.stagedMedia.storageKey,
+        maxKeys: 1,
+      });
+      if (!found.some((entry) => entry.key === data.stagedMedia.storageKey)) {
+        return NextResponse.json(
+          {
+            error: 'STAGED_MEDIA_NOT_FOUND',
+            message:
+              'This upload is no longer available — it may have been cleaned up. Please upload it again.',
+          },
+          { status: 400 }
+        );
+      }
+    }
+    stagedMedia = data.stagedMedia;
+    const eligibilityError = facebookEligibilityError({
+      mediaType: stagedMedia.mediaType,
+      fileSize:
+        typeof stagedMedia.fileSize === 'number' ? stagedMedia.fileSize : null,
+      durationSeconds:
+        typeof stagedMedia.durationSeconds === 'number'
+          ? stagedMedia.durationSeconds
+          : null,
+      aspectRatio: stagedMedia.aspectRatio ?? null,
+    });
+    if (eligibilityError) {
+      return NextResponse.json(
+        { error: 'INVALID_FORMAT', message: eligibilityError },
+        { status: 400 }
+      );
     }
   }
 
@@ -463,6 +559,49 @@ export async function handleDestinationEnqueue(
     scheduledTime = computed.scheduledTime.toISOString();
   }
 
+  // Post-owned media (Facebook only), resolved AFTER every
+  // validation and BEFORE the claim/insert, so a failed copy never
+  // holds a claim and a failed insert never leaves a post behind:
+  //   - staged media is adopted as-is (already post-owned);
+  //   - library media is copied to a fresh post-owned key, and the
+  //     row stores media_item_id NULL — the post never references
+  //     the library afterwards, so deleting the library file
+  //     deletes only that file.
+  // A copy failure fails loud with no row written. Non-Facebook
+  // destinations keep the historical library-linked row.
+  let postOwnedMedia: { url: string; storageKey: string } | null = null;
+  let copiedKey: string | null = null;
+  let resolvedStorage: IStorageService | null = null;
+  if (destination.platform === 'facebook') {
+    if (stagedMedia !== null) {
+      resolvedStorage = storageService ?? getStorageService();
+      postOwnedMedia = {
+        url: resolvedStorage.getPublicUrl(stagedMedia.storageKey),
+        storageKey: stagedMedia.storageKey,
+      };
+    } else if (primaryMedia?.storage_key) {
+      try {
+        resolvedStorage = storageService ?? getStorageService();
+        const copied = await copyLibraryMediaToPostOwned(
+          resolvedStorage,
+          session.userId,
+          primaryMedia.storage_key
+        );
+        postOwnedMedia = copied;
+        copiedKey = copied.storageKey;
+      } catch (err) {
+        console.error('Failed to copy library media to post-owned storage:', err);
+        return NextResponse.json(
+          {
+            error: 'MEDIA_COPY_FAILED',
+            message: 'Could not prepare the post media. Please try again.',
+          },
+          { status: 500 }
+        );
+      }
+    }
+  }
+
   // Atomic claim, AFTER every validation and BEFORE the insert:
   // a concurrent same-key request must see this claim and stop,
   // and a failed validation above must never hold a claim (a fixed
@@ -500,9 +639,9 @@ export async function handleDestinationEnqueue(
     caption: data.caption,
     title: data.title ?? null,
     firstComment: data.firstComment ?? null,
-    mediaItemId: primaryMedia?.id ?? null,
-    mediaUrl: primaryMedia?.url ?? null,
-    mediaStorageKey: primaryMedia?.storage_key ?? null,
+    mediaItemId: postOwnedMedia !== null ? null : (primaryMedia?.id ?? null),
+    mediaUrl: postOwnedMedia?.url ?? primaryMedia?.url ?? null,
+    mediaStorageKey: postOwnedMedia?.storageKey ?? primaryMedia?.storage_key ?? null,
     linkUrl: data.linkUrl ?? null,
     platformOptions: optionsResult.options,
     scheduledTime,
@@ -513,7 +652,16 @@ export async function handleDestinationEnqueue(
   if (!created) {
     // The insert definitively did not happen, so the claim can be
     // released at once — an immediate retry is safe and must not
-    // wait out the 5-minute sentinel.
+    // wait out the 5-minute sentinel. A copy made for this attempt
+    // is removed best-effort, so a failed queue never orphans
+    // post-owned bytes; a failed cleanup is logged, never fatal.
+    if (copiedKey && resolvedStorage) {
+      try {
+        await resolvedStorage.deleteObject(copiedKey);
+      } catch (err) {
+        console.error(`Failed to clean up post-owned copy ${copiedKey}:`, err);
+      }
+    }
     if (idempotencyScope) {
       await releaseIdempotencyClaim(client, idempotencyScope);
     }
@@ -523,6 +671,30 @@ export async function handleDestinationEnqueue(
   if (destination.platform === 'facebook') {
     // A new queued post can introduce an unmatched format.
     await refreshDestinationUnmatchedFlag(client, destination.id);
+    // Lazy staged-upload sweep, fire-and-forget: unclaimed staged
+    // bytes older than the retention window are removed in the
+    // background. It never blocks or fails the enqueue — a sweep
+    // failure is logged loudly server-side.
+    void (async () => {
+      try {
+        const referenced = await fetchReferencedStagedKeys(
+          client,
+          workspaceId,
+          session.userId
+        );
+        const sweepStorage = resolvedStorage ?? storageService ?? getStorageService();
+        const report = await sweepUnclaimedStagedUploads(
+          sweepStorage,
+          session.userId,
+          referenced
+        );
+        if (report.error || report.failed.length > 0) {
+          console.error('Staged upload sweep had failures:', report);
+        }
+      } catch (err) {
+        console.error('Staged upload sweep failed:', err);
+      }
+    })();
   }
 
   const response = DestinationEnqueueResponseSchema.parse({
