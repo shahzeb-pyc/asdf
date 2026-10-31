@@ -354,3 +354,16 @@
 }
 
 
+
+/* FAQ accordions (Section 8): <details> markers hidden so the
+   custom "+" indicator is the only affordance. Opening/closing
+   is instant — no transition, no animation. */
+.faq-card summary {
+  list-style: none;
+}
+.faq-card summary::-webkit-details-marker {
+  display: none;
+}
+.faq-card summary::marker {
+  content: "";
+}
