@@ -228,7 +228,7 @@ const signin = 'https://app.fbuploadpro.com/login';
          because they already have their own sections above.
          No links, no buttons, no prices beyond the two
          owner-dictated quantities in the copied Pricing lines. -->
-    <section id="section-5" class="section-full relative flex items-center bg-white px-5 py-24 sm:px-8 lg:px-12" aria-label="Features">
+    <section id="section-5" class="section-full relative z-10 flex items-center bg-white px-5 py-24 sm:px-8 lg:px-12" aria-label="Features">
       <div class="mx-auto w-full max-w-[1240px]">
         <p class="mb-4 flex items-center gap-3">
           <span aria-hidden="true" class="inline-block h-[3px] w-8 bg-gold"></span>
@@ -266,10 +266,14 @@ const signin = 'https://app.fbuploadpro.com/login';
       </div>
     </section>
 
-    <!-- Section 6: community banner. Full viewport. The section
-         itself is white; the black panel inside it has rounded
-         top corners only, so the dark area enters as a soft
-         rounded shape instead of a straight full-width cut.
+    <!-- Section 6: community banner. Full viewport. The transition
+         is INVERTED (owner-corrected 2026-10-31): the WHITE section
+         above (Section 5) ends with rounded BOTTOM corners, and the
+         black panel is pulled up behind it, so black shows in the
+         bottom corners — a white rounded-bottom shape over black,
+         straight across the middle, curving at the corners. The
+         panel itself has a square top; do NOT re-add top rounding
+         to it (that was the mirror image the owner rejected).
          No subhead, no button, no link. -->
     <section id="section-6" class="section-full bg-white" aria-label="Community">
       <div class="dark-panel relative flex items-center justify-center overflow-hidden bg-[#0b0e11] px-5 py-16 text-center sm:py-20 lg:py-24">

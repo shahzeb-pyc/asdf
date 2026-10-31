@@ -155,10 +155,17 @@
 
 /* Dark panels: the panel is the section, full
    width and full viewport height, content centred inside it.
-   Section 6 (Community) only: rounded TOP corners, so the black panel enters
-   as a soft rounded shape out of the white section background
-   above it. Straight sides and bottom, and the panel still fills
-   its whole section, so there is no white gap below the rounding. */
+   Section 6 (Community) transition, INVERTED (owner-corrected
+   2026-10-31): the WHITE section above (Section 5) ends with
+   rounded BOTTOM corners, and Section 6 is pulled up behind it
+   by exactly the corner size, so black shows in the bottom
+   corners — a white rounded-bottom shape over black, straight
+   across the middle, curving at the corners. The panel itself
+   has a SQUARE top: black top rounding was the mirror image the
+   owner rejected, do NOT re-add it. The pull-up (48px / 64px)
+   only ever covers Section 5's 96px bottom padding, never its
+   content. Section 5 sits above the panel (z-10 in markup) so
+   its white covers the panel everywhere except the cut corners. */
 .dark-panel {
   min-height: 100vh;
   width: 100%;
@@ -168,16 +175,26 @@
     min-height: 100dvh;
   }
 }
+#section-5 {
+  border-bottom-left-radius: 48px;
+  border-bottom-right-radius: 48px;
+}
+#section-6 {
+  margin-top: -48px;
+}
 #section-6 .dark-panel {
-  border-top-left-radius: 48px;
-  border-top-right-radius: 48px;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
   border-bottom-left-radius: 0;
   border-bottom-right-radius: 0;
 }
 @media (min-width: 1024px) {
-  #section-6 .dark-panel {
-    border-top-left-radius: 64px;
-    border-top-right-radius: 64px;
+  #section-5 {
+    border-bottom-left-radius: 64px;
+    border-bottom-right-radius: 64px;
+  }
+  #section-6 {
+    margin-top: -64px;
   }
 }
 
