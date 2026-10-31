@@ -155,6 +155,26 @@ export async function PATCH(
           { status: 409 }
         );
       }
+      // Resume is only for a Schedule pause (disconnected + paused
+      // marker) or an already-publishable destination. A destination
+      // disconnected for another reason — or in error — must not be
+      // silently reactivated to active by a Schedule resume; it
+      // needs reconnecting in Threads Accounts first. The old code
+      // checked expiry only, so a plain-disconnected destination
+      // came back as active here.
+      const wasPaused = isThreadsSchedulePaused(destination.metadata);
+      if (
+        (destination.status === 'disconnected' && !wasPaused) ||
+        destination.status === 'error'
+      ) {
+        return NextResponse.json(
+          {
+            error: 'ACCOUNT_DISCONNECTED',
+            message: 'This account is disconnected. Reconnect it in Threads Accounts, then resume it here.',
+          },
+          { status: 409 }
+        );
+      }
       if (!isThreadsSchedulePaused(destination.metadata)) {
         // Resuming a destination that was never paused is a no-op
         // for status, but the request is still valid.
@@ -226,6 +246,17 @@ export async function DELETE(
     const nextMetadata: Record<string, unknown> = { ...(destination.metadata ?? {}) };
     delete nextMetadata['threads_schedule_added_at'];
     delete nextMetadata['threads_schedule_status'];
+    // Cancel FIRST, then clear the flag. If the cancel fails, the
+    // account stays in Schedule with its queued items still live —
+    // the old order cleared the flag first, so a cancel failure
+    // left a removed account whose queued items could still publish.
+    const { error: cancelError } = await supabase
+      .from('queue_items')
+      .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+      .eq('workspace_id', workspaceId)
+      .eq('destination_id', scheduleId)
+      .eq('status', 'queued');
+    if (cancelError) throw new Error(cancelError.message);
     const { error: flagError } = await supabase
       .from('destinations')
       .update({
@@ -239,13 +270,6 @@ export async function DELETE(
       .eq('id', scheduleId)
       .eq('workspace_id', workspaceId);
     if (flagError) throw new Error(flagError.message);
-    const { error: cancelError } = await supabase
-      .from('queue_items')
-      .update({ status: 'cancelled', updated_at: new Date().toISOString() })
-      .eq('workspace_id', workspaceId)
-      .eq('destination_id', scheduleId)
-      .eq('status', 'queued');
-    if (cancelError) throw new Error(cancelError.message);
     return NextResponse.json({ success: true });
   } catch (err) {
     logServerError('[threads/schedule] remove failed', err, { source: 'threads-schedule-remove' });

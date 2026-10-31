@@ -24,8 +24,9 @@ import { authenticateThreadsSchedule } from '@/lib/server/threads-schedule-auth'
  * threads_schedule_added_at — connected Threads accounts that were
  * never added here never appear, by design. Add: a connected Threads
  * destination, a validated timezone, and at least one posting time.
- * The flag, timezone and slots are written together; a slot failure
- * rolls the flag back so a half-added account is impossible.
+ * The flag, timezone, status and slots are written together; a slot
+ * failure rolls all of them back (including pre-existing slots) so
+ * a half-added account is impossible.
  */
 
 export async function GET(request: NextRequest, props: { params: Promise<{ subdomain: string }> }) {
@@ -163,11 +164,27 @@ export async function POST(request: NextRequest, props: { params: Promise<{ subd
 
     const previousMetadata = (destRow.metadata ?? {}) as Record<string, unknown>;
     const previousTimezone = destRow.timezone;
+    const previousStatus = destRow.status;
     const nextMetadata: Record<string, unknown> = {
       ...previousMetadata,
       threads_schedule_added_at: new Date().toISOString(),
     };
     delete nextMetadata['threads_schedule_status'];
+
+    // Snapshot pre-existing slots BEFORE any mutation, so a slot
+    // failure can restore them exactly — the old code deleted them
+    // first and never put them back, and its flag rollback also
+    // forgot the destination status it had forced to active.
+    const { data: previousSlots, error: previousSlotsError } = await supabase
+      .from('posting_slots')
+      .select('time_of_day, is_active, kind')
+      .eq('destination_id', destinationId);
+    if (previousSlotsError) throw new Error(previousSlotsError.message);
+    const previousSlotRows = (previousSlots ?? []) as Array<{
+      time_of_day: string;
+      is_active: boolean;
+      kind: unknown;
+    }>;
 
     const { error: flagError } = await supabase
       .from('destinations')
@@ -197,16 +214,30 @@ export async function POST(request: NextRequest, props: { params: Promise<{ subd
       );
       if (insertError) throw new Error(insertError.message);
     } catch (slotError) {
-      // Roll the flag back: a half-added account must never survive.
+      // Roll everything back: flag, timezone, status AND slots.
+      // A half-added account — or a silently emptied posting-times
+      // list — must never survive a slot failure.
       await supabase
         .from('destinations')
         .update({
           metadata: previousMetadata,
           timezone: previousTimezone,
+          status: previousStatus,
           updated_at: new Date().toISOString(),
         })
         .eq('id', destinationId)
         .eq('workspace_id', workspaceId);
+      await supabase.from('posting_slots').delete().eq('destination_id', destinationId);
+      if (previousSlotRows.length > 0) {
+        await supabase.from('posting_slots').insert(
+          previousSlotRows.map((slot) => ({
+            destination_id: destinationId,
+            time_of_day: slot.time_of_day,
+            is_active: slot.is_active,
+            kind: slot.kind,
+          }))
+        );
+      }
       throw slotError;
     }
 
