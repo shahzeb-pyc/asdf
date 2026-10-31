@@ -239,7 +239,7 @@ export function ComposerStagedUpload({
     const furthest =
       uploading.length > 0
         ? {
-            name: uploading[0].name,
+            name: uploading[0].file.name,
             progressPercent: uploading[0].progressPercent,
           }
         : null;
