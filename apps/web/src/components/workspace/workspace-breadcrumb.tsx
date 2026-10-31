@@ -98,7 +98,6 @@ export function computeBreadcrumbs(
       }
       return [{ label: platformLabel }, { label: 'In-app Schedule' }];
     }
-    }
     return [{ label: platformLabel }];
   }
 
