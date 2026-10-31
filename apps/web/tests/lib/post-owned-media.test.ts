@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   STAGED_SWEEP_MAX_DELETE,
   classifyBackfillRow,
+  deletePostOwnedBytesBestEffort,
   isPostOwnedStorageKey,
   isPostStagingStorageKey,
   postOwnedCopyKey,
@@ -153,5 +154,80 @@ describe('sweepUnclaimedStagedUploads', () => {
     const report = await sweepUnclaimedStagedUploads(broken, userId, new Set(), NOW);
     expect(report.error).toContain('R2 down');
     expect(report.deleted).toHaveLength(0);
+  });
+
+  it('records a per-key delete failure and keeps sweeping the rest', async () => {
+    const store = new MockStorageProvider();
+    const failing = `users/${userId}/post-staging/a/failing.mp4`;
+    const ok = `users/${userId}/post-staging/b/ok.mp4`;
+    for (const key of [failing, ok]) {
+      await store.putObject({
+        key,
+        body: new Uint8Array([1]),
+        contentType: 'video/mp4',
+      });
+      store.uploadedObjects.get(key)!.uploadedAt = OLD;
+    }
+    const realDelete = MockStorageProvider.prototype.deleteObject.bind(store);
+    store.deleteObject = async (key: string) => {
+      if (key === failing) throw new Error('R2 delete refused');
+      return realDelete(key);
+    };
+    const report = await sweepUnclaimedStagedUploads(store, userId, new Set(), NOW);
+    expect(report.failed).toEqual([failing]);
+    expect(report.deleted).toEqual([ok]);
+    expect(report.error).toBeNull();
+  });
+
+  it('skips staged keys of unknown age instead of deleting them', async () => {
+    const store = new MockStorageProvider();
+    const oldKey = `users/${userId}/post-staging/a/old.mp4`;
+    const unknownAgeKey = `users/${userId}/post-staging/b/unknown.mp4`;
+    store.listObjects = async () => [
+      { key: oldKey, lastModified: OLD },
+      { key: unknownAgeKey, lastModified: null },
+    ];
+    const report = await sweepUnclaimedStagedUploads(store, userId, new Set(), NOW);
+    expect(report.deleted).toEqual([oldKey]);
+    expect(report.skipped).toBe(1);
+  });
+});
+
+describe('deletePostOwnedBytesBestEffort', () => {
+  it('deletes only the owning user\u2019s post-owned keys', async () => {
+    const store = new MockStorageProvider();
+    const owned = `users/${userId}/post-media/uuid/photo.jpg`;
+    const staged = `users/${userId}/post-staging/uuid/clip.mp4`;
+    const deleteSpy = vi.spyOn(store, 'deleteObject');
+
+    await deletePostOwnedBytesBestEffort(store, userId, null);
+    await deletePostOwnedBytesBestEffort(store, userId, undefined);
+    await deletePostOwnedBytesBestEffort(store, userId, 'users/abc/media/1/photo.jpg');
+    await deletePostOwnedBytesBestEffort(
+      store,
+      userId,
+      `users/${otherUserId}/post-media/uuid/photo.jpg`
+    );
+    expect(deleteSpy).not.toHaveBeenCalled();
+
+    await deletePostOwnedBytesBestEffort(store, userId, owned);
+    await deletePostOwnedBytesBestEffort(store, userId, staged);
+    expect(deleteSpy).toHaveBeenCalledTimes(2);
+    expect(deleteSpy).toHaveBeenNthCalledWith(1, owned);
+    expect(deleteSpy).toHaveBeenNthCalledWith(2, staged);
+  });
+
+  it('never throws when the delete itself fails', async () => {
+    const store = new MockStorageProvider();
+    store.deleteObject = async () => {
+      throw new Error('R2 delete refused');
+    };
+    await expect(
+      deletePostOwnedBytesBestEffort(
+        store,
+        userId,
+        `users/${userId}/post-media/uuid/photo.jpg`
+      )
+    ).resolves.toBeUndefined();
   });
 });
