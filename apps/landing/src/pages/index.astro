@@ -312,7 +312,13 @@ const signin = 'https://app.fbuploadpro.com/login';
             <span class="reveal-mask mt-1"><span class="reveal-line">Upgrade to scale</span></span>
           </h2>
         </div>
-        <div class="relative z-10 mt-6 grid w-full max-w-[1240px] gap-4 sm:mt-14 sm:gap-6 lg:grid-cols-[0.9fr_1.5fr]">
+        <!-- Pricing grid: items-start so the Free card sizes to its own
+             content instead of stretching to the Paid card's height
+             (audit M2). Stacked gap is 32px (base + sm) so the Paid badge,
+             which overlaps its card's top edge by 14px, clears the Free
+             card below it by ~19px on phone widths (audit m1); lg:gap-6
+             keeps the desktop column gap at its previous 24px. -->
+        <div class="relative z-10 mt-6 grid w-full max-w-[1240px] items-start gap-8 sm:mt-14 sm:gap-8 lg:grid-cols-[0.9fr_1.5fr] lg:gap-6">
           <div class="flex flex-col rounded-[20px] border border-[#2a2f36] bg-[#171b1f] p-4 text-left text-white shadow-[0_8px_24px_rgba(0,0,0,0.25)] sm:p-9">
             <h3 class="text-[28px] leading-[1.15] font-extrabold tracking-tight">Free</h3>
             <div class="my-3 h-px bg-[#2a2f36] sm:my-6"></div>
@@ -322,7 +328,7 @@ const signin = 'https://app.fbuploadpro.com/login';
             <a href="https://app.fbuploadpro.com/signup" class="mt-auto block rounded-xl border border-white/35 bg-transparent px-5 py-3 sm:py-4 text-center text-base font-bold text-white no-underline">Get started</a>
           </div>
           <div class="relative flex flex-col rounded-[20px] border border-[#e5e5e5] bg-white p-4 text-left text-[#111111] shadow-[0_8px_24px_rgba(0,0,0,0.25)] sm:p-9">
-            <span class="absolute -top-[14px] left-1/2 -translate-x-1/2 rounded-full border-[1.5px] border-[#f0b90b] bg-white px-[14px] py-[6px] text-[13px] font-bold tracking-[0.02em] whitespace-nowrap text-[#f0b90b]">7-day refund</span>
+            <span class="absolute -top-[14px] left-1/2 -translate-x-1/2 rounded-full border-[1.5px] border-[#f0b90b] bg-white px-[14px] py-[6px] text-[13px] font-bold tracking-[0.02em] whitespace-nowrap text-[#111111]">7-day refund</span>
             <h3 class="text-[28px] leading-[1.15] font-extrabold tracking-tight">Paid</h3>
             <div class="my-3 h-px bg-[#e8e8ea] sm:my-6"></div>
             <ul class="mb-5 flex flex-1 flex-col gap-[14px] sm:mb-8">
