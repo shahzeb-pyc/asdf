@@ -747,6 +747,8 @@ describe('refund row mapping and destination derivation', () => {
       status: 'approved',
       counts: { facebook: 0, instagram: 0, threads: 0, x: 0, tiktok: 0, youtube: 0 },
       amountPkr: 4200,
+      couponCode: null,
+      discountPkr: 0,
       isUpgrade: false,
       screenshotStorageKey: null,
       nowpaymentsPaymentId: null,
