@@ -536,6 +536,15 @@ describe('runAduTick', () => {
       if (table === 'adu_reels' && ops.some((o) => o.kind === 'eq' && o.args[1] === 'download_failed')) {
         return { count: 0, data: [], error: null };
       }
+      // Claim-aware (current main claims the reel before inserting the
+      // job: update … set processing where status='downloaded' and
+      // require a returned row, else it skips the insert). Returning
+      // the claimed row here makes this test pass against both the
+      // branch's tick (post-insert update, return value ignored) and
+      // main's claim-before-insert tick.
+      if (table === 'adu_reels' && ops.some((o) => o.kind === 'update')) {
+        return { data: [{ id: 'reel-1' }], error: null };
+      }
       if (table === 'adu_reels' && ops.some((o) => o.kind === 'maybeSingle')) {
         return { data: reel, error: null };
       }
