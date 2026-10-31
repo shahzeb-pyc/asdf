@@ -11,6 +11,7 @@
  */
 
 import { test, expect, type Page } from '@playwright/test';
+import { createFixtureState, installApiFixtures } from './fixtures/api';
 import { expectNoDocumentOverflow, expectWithinViewport } from './fixtures/mobile';
 import { SESSION_COOKIE, TENANT, mintSessionToken } from './fixtures/tenant';
 
@@ -24,7 +25,7 @@ async function useAdminSession(context: import('@playwright/test').BrowserContex
 
 function sellerDashboardFixture() {
   return {
-    sellerId: 'seller-1',
+    sellerId: '11111111-1111-4111-8111-111111111111',
     name: 'Ali',
     email: 'ali@example.com',
     rate: 20,
@@ -44,7 +45,7 @@ function sellerReferralsFixture() {
   return {
     users: [
       {
-        id: 'buyer-1',
+        id: '22222222-2222-4222-8222-222222222222',
         name: 'Bilal',
         email: 'bilal@example.com',
         referralCode: 'ALI20',
@@ -71,7 +72,7 @@ async function installSellerFixtures(page: Page) {
       body: JSON.stringify(sellerReferralsFixture()),
     })
   );
-  await page.route('**/api/seller/payout-requests', (route) =>
+  await page.route('**/api/seller/payout-requests*', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -84,7 +85,7 @@ function adminSellersFixture() {
   return {
     sellers: [
       {
-        id: 'seller-1',
+        id: '11111111-1111-4111-8111-111111111111',
         name: 'Ali',
         email: 'ali@example.com',
         currentCode: 'ALI20',
@@ -106,8 +107,8 @@ function adminPayoutQueueFixture() {
   return {
     requests: [
       {
-        id: 'req-1',
-        sellerId: 'seller-1',
+        id: '33333333-3333-4333-8333-333333333333',
+        sellerId: '11111111-1111-4111-8111-111111111111',
         sellerName: 'Ali',
         sellerEmail: 'ali@example.com',
         totalPkr: 1500,
@@ -134,7 +135,7 @@ async function installAdminSellersFixtures(page: Page) {
       body: JSON.stringify(adminSellersFixture()),
     })
   );
-  await page.route(`**/api/tenant/${TENANT.subdomain}/sellers/payout-requests`, (route) =>
+  await page.route(`**/api/tenant/${TENANT.subdomain}/sellers/payout-requests*`, (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -150,6 +151,7 @@ test.describe('sellers at phone widths', () => {
   }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await useSellerSession(context);
+    await installApiFixtures(page, createFixtureState());
     await installSellerFixtures(page);
     await page.goto('/seller');
 
@@ -158,7 +160,7 @@ test.describe('sellers at phone widths', () => {
       'http://localhost:3100/signup?ref=ALI20'
     );
     await expect(page.getByText('20% · Every purchase')).toBeVisible();
-    await expect(page.getByText('Bilal')).toBeVisible();
+    await expect(page.getByText('Bilal', { exact: true })).toBeVisible();
 
     const payoutButton = page.getByRole('button', { name: 'Request payout' });
     await expect(payoutButton).toBeVisible();
@@ -175,6 +177,7 @@ test.describe('sellers at phone widths', () => {
   }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await useAdminSession(context);
+    await installApiFixtures(page, createFixtureState());
     await installAdminSellersFixtures(page);
     await page.goto(`/tenant/${TENANT.subdomain}/sellers`);
 
