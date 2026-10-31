@@ -154,4 +154,35 @@ describe('AdminSellersList', () => {
     await waitFor(() => expect(screen.getByText(/No sellers yet/)).toBeTruthy());
     expect(screen.getByText('No pending payout requests.')).toBeTruthy();
   });
+
+  it('creates a seller with an untouched optional code field', async () => {
+    const user = userEvent.setup();
+    apiPost.mockResolvedValue({ sellerId: 'new-seller-1' });
+    renderList();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create seller' })).toBeTruthy());
+    await user.click(screen.getByRole('button', { name: 'Create seller' }));
+    await waitFor(() => expect(screen.getByLabelText('Name')).toBeTruthy());
+    await user.type(screen.getByLabelText('Name'), 'Omar');
+    await user.type(screen.getByLabelText('Email'), 'omar@example.com');
+    await user.type(screen.getByLabelText('Password'), 'Password123!');
+    // The optional code field is deliberately left untouched: its
+    // default must submit as omitted, not as '' (the schema
+    // rejects '' at min 4). This is the regression test for that.
+    // Note: once the dialog opens, Radix aria-hides the trigger,
+    // so the only 'Create seller' button in the role query is the
+    // dialog's submit button.
+    await user.click(screen.getByRole('button', { name: 'Create seller' }));
+    await waitFor(() =>
+      expect(apiPost).toHaveBeenCalledWith(
+        '/api/tenant/acme/sellers',
+        expect.objectContaining({
+          name: 'Omar',
+          email: 'omar@example.com',
+          rate: 20,
+          scope: 'every',
+        }),
+        expect.anything()
+      )
+    );
+  });
 });

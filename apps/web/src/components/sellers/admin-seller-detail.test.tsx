@@ -7,6 +7,7 @@ import { AdminSellerDetail } from './admin-seller-detail';
 const apiGet = vi.fn();
 const apiPatch = vi.fn();
 const apiDelete = vi.fn();
+const apiPost = vi.fn();
 const push = vi.fn();
 
 vi.mock('@/lib/api', () => ({
@@ -14,6 +15,7 @@ vi.mock('@/lib/api', () => ({
     get: (...args: unknown[]) => apiGet(...args),
     patch: (...args: unknown[]) => apiPatch(...args),
     delete: (...args: unknown[]) => apiDelete(...args),
+    post: (...args: unknown[]) => apiPost(...args),
   },
   getErrorMessage: (err: unknown) =>
     err instanceof Error ? err.message : 'Something went wrong. Please try again.',
@@ -88,6 +90,7 @@ describe('AdminSellerDetail', () => {
     apiGet.mockReset();
     apiPatch.mockReset();
     apiDelete.mockReset();
+    apiPost.mockReset();
     push.mockReset();
     apiGet.mockResolvedValue(detail());
   });
@@ -126,6 +129,63 @@ describe('AdminSellerDetail', () => {
       expect(apiPatch).toHaveBeenCalledWith(
         '/api/tenant/acme/sellers/seller-1',
         expect.objectContaining({ rate: 15 }),
+        expect.anything()
+      )
+    );
+  });
+
+  it('deletes a fully paid-out seller after confirmation and navigates back', async () => {
+    const paidOut = detail({
+      seller: { ...detail().seller, payablePkr: 0 },
+      balances: { pending: 0, payable: 0, requested: 0, paid: 3500 },
+    });
+    apiGet.mockResolvedValue(paidOut);
+    apiDelete.mockResolvedValue({ ok: true });
+    renderDetail();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Delete seller' })).toBeTruthy());
+    const button = screen.getByRole('button', { name: 'Delete seller' });
+    expect((button as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(button);
+    await waitFor(() => expect(screen.getByText('Delete this seller?')).toBeTruthy());
+    // Once the dialog opens, Radix aria-hides the trigger, so the
+    // only 'Delete seller' button in the role query is the confirm.
+    fireEvent.click(screen.getByRole('button', { name: 'Delete seller' }));
+    await waitFor(() =>
+      expect(apiDelete).toHaveBeenCalledWith(
+        '/api/tenant/acme/sellers/seller-1',
+        expect.anything()
+      )
+    );
+    await waitFor(() => expect(push).toHaveBeenCalledWith('/tenant/acme/sellers'));
+  });
+
+  it('rejects a payout request from the payout history', async () => {
+    const withRequest = detail({
+      payoutRequests: [
+        {
+          id: 'req-1',
+          sellerId: 'seller-1',
+          sellerName: 'Ali',
+          sellerEmail: 'ali@example.com',
+          totalPkr: 1400,
+          commissionCount: 2,
+          status: 'pending',
+          payoutMethod: 'easypaisa',
+          payoutAccount: '03270000000',
+          requestedAt: '2026-01-05T00:00:00.000Z',
+          decidedAt: null,
+        },
+      ],
+    });
+    apiGet.mockResolvedValue(withRequest);
+    apiPost.mockResolvedValue({ ok: true });
+    renderDetail();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Reject' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    await waitFor(() =>
+      expect(apiPost).toHaveBeenCalledWith(
+        '/api/tenant/acme/sellers/payout-requests/req-1',
+        { action: 'reject' },
         expect.anything()
       )
     );

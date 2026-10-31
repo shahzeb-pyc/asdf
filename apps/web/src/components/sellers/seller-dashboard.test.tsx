@@ -181,4 +181,75 @@ describe('SellerDashboard', () => {
     );
     expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
   });
+
+  it('requests a payout through the payout endpoint', async () => {
+    const user = userEvent.setup();
+    apiGet.mockImplementation((path: string) => {
+      if (path.startsWith('/api/seller/dashboard')) {
+        return Promise.resolve(
+          dashboard({
+            balances: { pending: 0, payable: 1500, requested: 0, paid: 0 },
+            payoutDetails: { method: 'easypaisa', accountLabel: '03270000000' },
+          })
+        );
+      }
+      if (path.startsWith('/api/seller/referrals')) return Promise.resolve(referrals());
+      if (path.startsWith('/api/seller/payout-requests')) {
+        return Promise.resolve({ requests: [], total: 0 });
+      }
+      return Promise.reject(new Error('unexpected'));
+    });
+    apiPost.mockResolvedValue({
+      request: { id: 'req-1', totalPkr: 1500, status: 'pending' },
+      count: 2,
+    });
+    renderDashboard();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Request payout' })).toBeTruthy());
+    await user.click(screen.getByRole('button', { name: 'Request payout' }));
+    await waitFor(() =>
+      expect(apiPost).toHaveBeenCalledWith('/api/seller/payout-requests', {}, expect.anything())
+    );
+  });
+
+  it('saves payout details and shows confirmation', async () => {
+    const user = userEvent.setup();
+    apiGet.mockImplementation((path: string) => {
+      if (path.startsWith('/api/seller/dashboard')) {
+        return Promise.resolve(
+          dashboard({
+            payoutDetails: { method: 'easypaisa', accountLabel: '03270000000' },
+          })
+        );
+      }
+      if (path.startsWith('/api/seller/referrals')) return Promise.resolve(referrals());
+      if (path.startsWith('/api/seller/payout-requests')) {
+        return Promise.resolve({ requests: [], total: 0 });
+      }
+      return Promise.reject(new Error('unexpected'));
+    });
+    apiPut.mockResolvedValue({ ok: true });
+    renderDashboard();
+    await waitFor(() => expect(screen.getByLabelText('Account')).toBeTruthy());
+    await user.clear(screen.getByLabelText('Account'));
+    await user.type(screen.getByLabelText('Account'), '03270000009');
+    await user.click(screen.getByRole('button', { name: 'Save payout details' }));
+    await waitFor(() =>
+      expect(apiPut).toHaveBeenCalledWith(
+        '/api/seller/payout-details',
+        { method: 'easypaisa', accountLabel: '03270000009' },
+        expect.anything()
+      )
+    );
+    await waitFor(() => expect(screen.getByText('Payout details saved.')).toBeTruthy());
+  });
+
+  it('shows the referral code error when changing fails', async () => {
+    const user = userEvent.setup();
+    apiPost.mockRejectedValue(new Error('That code is taken.'));
+    renderDashboard();
+    await waitFor(() => expect(screen.getByLabelText('Change referral code')).toBeTruthy());
+    await user.type(screen.getByLabelText('Change referral code'), 'TAKEN1');
+    await user.click(screen.getByRole('button', { name: 'Change code' }));
+    await waitFor(() => expect(screen.getByText('That code is taken.')).toBeTruthy());
+  });
 });

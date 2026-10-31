@@ -81,7 +81,11 @@ function CreateSellerDialog({ subdomain }: { subdomain: string }) {
       password: '',
       rate: 20,
       scope: 'every',
-      referralCode: '',
+      // Undefined, not '': the code is optional, and the schema
+      // rejects '' (min 4). The input renders undefined as empty
+      // via `field.value ?? ''` below; typing then clearing also
+      // converts back to undefined on change.
+      referralCode: undefined,
     },
   });
 
