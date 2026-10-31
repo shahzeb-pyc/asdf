@@ -25,7 +25,9 @@ import {
   USER_ID,
   basePromptStore,
   makeClient,
+  mediaRow,
   newStore,
+  promptRow,
   sessionCookieFor,
   type Store,
 } from "./prompt-library-route-mock";
@@ -209,6 +211,24 @@ describe("GET /api/tenant/[subdomain]/prompts", () => {
     expect(res.status).toBe(200);
     expect(body.items).toEqual([]);
     expect(body.total).toBe(0);
+  });
+
+  it("favorites_only counts favourites past the 1,000-row PostgREST cap", async () => {
+    // 1,050 favourited prompts: the favourites fetch must page past
+    // the cap (facets pattern) instead of silently dropping the last
+    // 50. Against the old unpaged fetch — and the mock's
+    // PostgREST-realistic 1,000-row cap on unpaged selects — this
+    // total would come back as 1,000.
+    const store = newStore();
+    for (let i = 0; i < 1050; i++) {
+      const id = `10000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
+      store.prompts.push(promptRow(id, { slug: `prompt-${i}`, title: `Prompt ${i}` }));
+      store.media.push(mediaRow(id));
+      store.favourites.push({ user_id: USER_ID, prompt_id: id });
+    }
+    const { res, body } = await callList("?favorites_only=true", store, userCookie);
+    expect(res.status).toBe(200);
+    expect(body.total).toBe(1050);
   });
 
   it("rejects unauthenticated requests and wrong-tenant users", async () => {
@@ -410,6 +430,18 @@ describe("POST /api/tenant/[subdomain]/prompts", () => {
     const { res, body } = await callPost(null, basePromptStore(), adminCookie, "{not json");
     expect(res.status).toBe(400);
     expect(body.error).toBe("INVALID_JSON");
+  });
+
+  it("reports PROMPT_ROLLBACK_FAILED when the create rollback also fails", async () => {
+    // Persistent failures: the media insert fails AND the rollback
+    // delete of the just-created prompt fails too. The old code
+    // returned the generic 500, hiding the orphan prompt + media.
+    const store = basePromptStore();
+    store.failAlways["prompt_library_media:insert"] = new Error("media down");
+    store.failAlways["prompt_library_prompts:delete"] = new Error("delete down");
+    const { res, body } = await callPost(validCreateBody(), store, adminCookie);
+    expect(res.status).toBe(500);
+    expect(body.error).toBe("PROMPT_ROLLBACK_FAILED");
   });
 
   it("returns 503 when the admin client is unavailable", async () => {

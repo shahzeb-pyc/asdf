@@ -174,13 +174,38 @@ describe('Worker Heartbeat (Spec 116)', () => {
 
   function heartbeatCaptureDb() {
     const upserts: Record<string, unknown>[] = [];
+    // ADU tick talks Supabase chains, not rpc: model an empty store
+    // so every ADU stage is a no-op success. The heartbeat table
+    // keeps its recording upsert.
+    const aduChain: any = {
+      select: () => aduChain,
+      eq: () => aduChain,
+      lt: () => aduChain,
+      gt: () => aduChain,
+      order: () => aduChain,
+      limit: () => aduChain,
+      update: () => aduChain,
+      insert: () => aduChain,
+      delete: () => aduChain,
+      in: () => aduChain,
+      single: () => Promise.resolve({ data: null, error: null }),
+      maybeSingle: () => Promise.resolve({ data: null, error: null }),
+      then: (resolve: (v: unknown) => void) => {
+        resolve({ data: [], error: null });
+      },
+    };
     const db = {
-      from: vi.fn(() => ({
-        upsert: vi.fn(async (row: Record<string, unknown>) => {
-          upserts.push(row);
-          return { error: null };
-        }),
-      })),
+      from: vi.fn((table: string) => {
+        if (table === 'worker_heartbeats') {
+          return {
+            upsert: vi.fn(async (row: Record<string, unknown>) => {
+              upserts.push(row);
+              return { error: null };
+            }),
+          };
+        }
+        return aduChain;
+      }),
       query: vi.fn().mockResolvedValue([]),
       // Spec 122 superseded the empty-registry assumption in the test
       // below: the default registry now registers Facebook, so a claim

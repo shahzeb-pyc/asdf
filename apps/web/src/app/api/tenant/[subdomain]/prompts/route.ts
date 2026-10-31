@@ -84,14 +84,28 @@ export async function GET(
     // empty favourite list returns an empty page, never all prompts
     // pretending to be favorites.
     if (query.favorites_only) {
-      const { data: favRows, error: favListError } = await client
-        .from("prompt_library_favourites")
-        .select("prompt_id")
-        .eq("user_id", session.userId);
-      if (favListError) throw favListError;
-      const favouriteIds = (favRows ?? []).map(
-        (fav) => (fav as { prompt_id: string }).prompt_id,
-      );
+      // Paged, never truncated: PostgREST silently caps an unpaged
+      // select at 1,000 rows, so a user with more than 1,000
+      // favourites would otherwise lose favourites past the cap
+      // (facets pattern: 1,000-row pages until a short page).
+      const favouriteIds: string[] = [];
+      {
+        const pageSize = 1000;
+        let from = 0;
+        for (;;) {
+          const { data: favPage, error: favPageError } = await client
+            .from("prompt_library_favourites")
+            .select("prompt_id")
+            .eq("user_id", session.userId)
+            .order("prompt_id", { ascending: true })
+            .range(from, from + pageSize - 1);
+          if (favPageError) throw favPageError;
+          const page = (favPage ?? []) as Array<{ prompt_id: string }>;
+          for (const fav of page) favouriteIds.push(fav.prompt_id);
+          if (page.length < pageSize) break;
+          from += pageSize;
+        }
+      }
       if (favouriteIds.length === 0) {
         const empty = PromptListResponseSchema.parse({
           items: [],
@@ -233,10 +247,23 @@ export async function POST(
       .insert(toPromptMediaInsertRows(input.media, prompt.id));
     if (mediaError) {
       // Roll back the prompt rather than leaving a media-less prompt.
-      await client
+      // A failed rollback is reported distinctly: previously it
+      // fell through to the generic 500 below, hiding an orphan
+      // prompt + media from operators.
+      const { error: rollbackError } = await client
         .from('prompt_library_prompts')
         .delete()
         .eq('id', prompt.id);
+      if (rollbackError) {
+        logPromptError(
+          '[prompt-library] Prompt rollback failed after media insert failure — orphan prompt left behind',
+          rollbackError,
+        );
+        return NextResponse.json(
+          { error: 'PROMPT_ROLLBACK_FAILED' },
+          { status: 500 },
+        );
+      }
       throw mediaError;
     }
 
@@ -251,10 +278,21 @@ export async function POST(
       .insert(steps);
     if (stepsError) {
       // Roll back the prompt rather than leaving a step-less prompt.
-      await client
+      // A failed rollback is reported distinctly (see media above).
+      const { error: rollbackError } = await client
         .from('prompt_library_prompts')
         .delete()
         .eq('id', prompt.id);
+      if (rollbackError) {
+        logPromptError(
+          '[prompt-library] Prompt rollback failed after steps insert failure — orphan prompt left behind',
+          rollbackError,
+        );
+        return NextResponse.json(
+          { error: 'PROMPT_ROLLBACK_FAILED' },
+          { status: 500 },
+        );
+      }
       throw stepsError;
     }
 

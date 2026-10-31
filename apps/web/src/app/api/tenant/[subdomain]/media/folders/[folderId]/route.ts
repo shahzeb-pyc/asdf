@@ -253,10 +253,7 @@ export async function handleUpdateFolder(
       }
 
       if (parsed.data.parentId !== null) {
-        const { data: allFolders } = await supabase
-          .from('media_folders')
-          .select('id, parent_id')
-          .eq('user_id', session.userId);
+        const allFolders = await fetchAllUserFolders(supabase, session.userId);
 
         const folderMap = new Map((allFolders || []).map((f) => [f.id, f.parent_id]));
         if (!folderMap.has(parsed.data.parentId)) {
@@ -406,6 +403,38 @@ async function batchDeleteStorageKeys(
   await Promise.all(chunks.map((chunk) => deleteChunk(storage, chunk)));
 }
 
+/**
+ * All folders owned by the user, paged — never truncated.
+ * PostgREST silently caps an unpaged select at 1,000 rows, so a
+ * user with more than 1,000 folders would otherwise get a partial
+ * tree (PATCH cycle-check) or a partial delete (DELETE subtree).
+ * A fetch error throws: proceeding with a partial tree would
+ * delete the wrong set of folders, so failing loud beats deleting
+ * half a tree (PATCH already converts this to a 500).
+ */
+async function fetchAllUserFolders(
+  supabase: SupabaseClient,
+  userId: string
+): Promise<Array<{ id: string; parent_id: string | null }>> {
+  const rows: Array<{ id: string; parent_id: string | null }> = [];
+  const pageSize = 1000;
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from('media_folders')
+      .select('id, parent_id')
+      .eq('user_id', userId)
+      .order('id', { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (error) throw error;
+    const page = (data || []) as typeof rows;
+    rows.push(...page);
+    if (page.length < pageSize) break;
+    from += pageSize;
+  }
+  return rows;
+}
+
 export async function handleDeleteFolder(
   request: NextRequest,
   subdomain: string,
@@ -521,10 +550,10 @@ export async function handleDeleteFolder(
     );
   }
 
-  const { data: allFolders } = await supabase
-    .from('media_folders')
-    .select('id, parent_id')
-    .eq('user_id', session.userId);
+  // Descendant tree, paged (see fetchAllUserFolders): an unpaged
+  // fetch would silently truncate past 1,000 folders and delete
+  // only part of the subtree.
+  const allFolders = await fetchAllUserFolders(supabase, session.userId);
 
   // Compute all descendant folder IDs in memory
   const folderIds = [folderId];
@@ -539,38 +568,77 @@ export async function handleDeleteFolder(
     }
   }
 
-  const { data: mediaItems } = await supabase
-    .from('media_items')
-    .select('id, storage_key, thumbnail_key')
-    .eq('user_id', session.userId)
-    .in('folder_id', folderIds);
+  // Media in the subtree, in folder chunks with paged fetches:
+  // an unpaged .in('folder_id', folderIds) silently truncates past
+  // 1,000 rows, deleting the DB rows while leaving their R2 objects
+  // orphaned. Storage is purged per fetched page, then the chunk's
+  // DB rows are deleted; folder rows are deleted in chunks last.
+  // Chunking also keeps each .in() list short enough for PostgREST.
+  // A page fetch error is NEVER treated as end-of-data: the handler
+  // fails loud with a 500 before that chunk's DB delete, so no
+  // success is reported and no rows are deleted for a chunk whose
+  // storage purge is incomplete. Partial-chunk state on that path is
+  // settled, not implicit: earlier pages of the chunk may already be
+  // purged while their DB rows are retained, and a retry re-fetches
+  // those rows and re-purges (R2 deletes are idempotent) before
+  // deleting the rows, so the retry completes the delete.
+  let deletedItemsCount = 0;
+  const folderChunkSize = 50;
+  const mediaPageSize = 1000;
+  for (let i = 0; i < folderIds.length; i += folderChunkSize) {
+    const chunk = folderIds.slice(i, i + folderChunkSize);
+    let from = 0;
+    for (;;) {
+      const { data: pageItems, error: pageError } = await supabase
+        .from('media_items')
+        .select('id, storage_key, thumbnail_key')
+        .eq('user_id', session.userId)
+        .in('folder_id', chunk)
+        .order('id', { ascending: true })
+        .range(from, from + mediaPageSize - 1);
+      if (pageError) {
+        logServerError('[media/folders] Folder delete media page fetch failed', pageError, {
+          source: 'media-folder-delete',
+          subdomain,
+          folderId,
+        });
+        return NextResponse.json(
+          { error: 'INTERNAL_ERROR', message: 'Failed to delete folder' },
+          { status: 500 }
+        );
+      }
+      const page = (pageItems || []) as Array<
+        Pick<DatabaseMediaItemRow, 'storage_key' | 'thumbnail_key'>
+      >;
+      const keysToDelete = page
+        .flatMap((item) => [item.storage_key, item.thumbnail_key])
+        .filter((k): k is string => Boolean(k));
+      await batchDeleteStorageKeys(storage, keysToDelete, 50);
+      deletedItemsCount += page.length;
+      if (page.length < mediaPageSize) break;
+      from += mediaPageSize;
+    }
 
-  const mediaRows = (mediaItems || []) as Array<
-    Pick<DatabaseMediaItemRow, 'storage_key' | 'thumbnail_key'>
-  >;
-  const keysToDelete = mediaRows
-    .flatMap((item) => [item.storage_key, item.thumbnail_key])
-    .filter((k): k is string => Boolean(k));
+    await supabase
+      .from('media_items')
+      .delete()
+      .eq('user_id', session.userId)
+      .in('folder_id', chunk);
+  }
 
-  await batchDeleteStorageKeys(storage, keysToDelete, 50);
-
-  await supabase
-    .from('media_items')
-    .delete()
-    .eq('user_id', session.userId)
-    .in('folder_id', folderIds);
-
-  await supabase
-    .from('media_folders')
-    .delete()
-    .eq('user_id', session.userId)
-    .in('id', folderIds);
+  for (let i = 0; i < folderIds.length; i += folderChunkSize) {
+    await supabase
+      .from('media_folders')
+      .delete()
+      .eq('user_id', session.userId)
+      .in('id', folderIds.slice(i, i + folderChunkSize));
+  }
 
   const responsePayload = DeleteFolderResponseSchema.parse({
     success: true,
     deletedFolderId: folderId,
     deletedSubfoldersCount: Math.max(0, folderIds.length - 1),
-    deletedItemsCount: mediaRows.length,
+    deletedItemsCount,
   });
 
   return NextResponse.json(responsePayload);

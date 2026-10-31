@@ -229,11 +229,25 @@ export async function handleListMedia(
     }
 
     if (cursor) {
-      const [cursorCreatedAt] = cursor.split('|');
-      if (cursorCreatedAt) {
+      // Keyset cursor, parity with the legacy-SQL branch: the
+      // (created_at, id) pair is the cursor, so rows sharing a
+      // timestamp are neither skipped nor repeated. Cursor mode is
+      // created_at-DESC-only on both branches (the legacy branch
+      // also forces created_at DESC, id DESC here); sortBy/sortOrder
+      // apply to offset paging only. A cursor without an id part
+      // keeps the previous created_at-only behaviour.
+      const [cursorCreatedAt, cursorId] = cursor.split('|');
+      if (cursorCreatedAt && cursorId) {
+        queryBuilder = queryBuilder.or(
+          `created_at.lt.${cursorCreatedAt},and(created_at.eq.${cursorCreatedAt},id.lt.${cursorId})`
+        );
+      } else if (cursorCreatedAt) {
         queryBuilder = queryBuilder.lt('created_at', cursorCreatedAt);
       }
-      queryBuilder = queryBuilder.order('created_at', { ascending: false }).limit(limit);
+      queryBuilder = queryBuilder
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+        .limit(limit);
     } else {
       let sortCol = 'created_at';
       if (sortBy === 'name') {
