@@ -394,7 +394,7 @@
         "firstLoadGzipBytes": 177308,
         "firstLoadRawBytes": 591164,
         "routeSpecificGzipBytes": 36813,
-        "routeSpecificRawBytes": 117744
+        "routeSpecificRawBytes": 125175
       },
       "/tenant/[subdomain]/media": {
         "firstLoadGzipBytes": 186243,
@@ -454,7 +454,7 @@
         "firstLoadGzipBytes": 177802,
         "firstLoadRawBytes": 592505,
         "routeSpecificGzipBytes": 37305,
-        "routeSpecificRawBytes": 119085
+        "routeSpecificRawBytes": 126708
       },
       "/tenant/[subdomain]/tiktok/accounts": {
         "firstLoadGzipBytes": 167374,
