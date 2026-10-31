@@ -428,6 +428,12 @@ function WorkspaceSidebarContent({
                     normalizeTenantPath(instagramPublishNowHref, subdomain)
                   );
                 const isOpen = openPlatforms[platform.key] ?? isPlatformActive;
+                // Instagram ADU leaf only (other Instagram leaves are
+                // owned by their own parallel branches, not this one).
+                const igAduHref = href('/instagram/auto-download-upload');
+                const isIgAduActive = effectivePath.startsWith(
+                  normalizeTenantPath(igAduHref, subdomain)
+                );
 
                 return (
                   <SidebarMenuItem key={platform.key}>
@@ -487,6 +493,9 @@ function WorkspaceSidebarContent({
                             onLeafClick={handleLeafClick}
                           />
                         )}
+                        {platform.key === 'instagram' ? (
+                          <NavSubLeaf label="Auto Download/Upload" href={igAduHref} isActive={isIgAduActive} onLeafClick={handleLeafClick} />
+                        ) : null}
                         {platform.isTesting && (
                           <SidebarMenuSubItem>
                             <div

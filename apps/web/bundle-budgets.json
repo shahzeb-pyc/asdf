@@ -398,7 +398,7 @@
       },
       "/tenant/[subdomain]/prompts": {
         "firstLoadGzipBytes": 177217,
-        "firstLoadRawBytes": 596576,
+        "firstLoadRawBytes": 627491,
         "routeSpecificGzipBytes": 44184,
         "routeSpecificRawBytes": 149147
       },
@@ -497,11 +497,23 @@
         "firstLoadRawBytes": 604931,
         "routeSpecificGzipBytes": 38938,
         "routeSpecificRawBytes": 131512
+      },
+      "/tenant/[subdomain]/instagram/auto-download-upload": {
+        "firstLoadGzipBytes": 183811,
+        "firstLoadRawBytes": 617414,
+        "routeSpecificGzipBytes": 43317,
+        "routeSpecificRawBytes": 143995
+      },
+      "/tenant/[subdomain]/instagram/auto-download-upload/[id]": {
+        "firstLoadGzipBytes": 182034,
+        "firstLoadRawBytes": 614515,
+        "routeSpecificGzipBytes": 41540,
+        "routeSpecificRawBytes": 141096
       }
     },
     "totalClientJs": {
-      "gzipBytes": 1240000,
-      "rawBytes": 3970000
+      "gzipBytes": 1321000,
+      "rawBytes": 4242000
     }
   }
 }
