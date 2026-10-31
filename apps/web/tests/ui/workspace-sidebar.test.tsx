@@ -12,7 +12,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { SidebarProvider } from '@/components/shared/ui/sidebar';
 import { createQueryClient } from '@/lib/data/query-client';
@@ -388,6 +388,43 @@ describe('WorkspaceSidebar header plan word', () => {
   it('shows Admin for the admin shell without waiting on an entitlement', () => {
     render(<Shell adminOnly />);
     expect(within(branding()).getByText('Admin')).toBeInTheDocument();
+  });
+
+  it('keeps the Studio placeholder when the entitlement fetch fails (never a failed-as-Free word)', async () => {
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url =
+        typeof input === 'string' ? input : ((input as { url?: string }).url ?? '');
+      if (url.includes('billing/entitlement')) {
+        return new Response(JSON.stringify({ error: 'db down' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify(WORKSPACES_PAYLOAD), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<Shell />);
+    // The entitlement query retries once before settling into its
+    // error state; wait until that retry has fired so the assertion
+    // runs against the settled error state, not the loading state.
+    await waitFor(
+      () => {
+        const entitlementCalls = fetchMock.mock.calls.filter(([input]) => {
+          const url =
+            typeof input === 'string' ? input : ((input as { url?: string }).url ?? '');
+          return url.includes('billing/entitlement');
+        });
+        expect(entitlementCalls.length).toBeGreaterThanOrEqual(2);
+      },
+      { timeout: 5000 }
+    );
+    expect(within(branding()).getByText('Studio')).toBeInTheDocument();
+    expect(within(branding()).queryByText('Free')).toBeNull();
+    expect(within(branding()).queryByText('Paid')).toBeNull();
+    expect(within(branding()).queryByText('Expired')).toBeNull();
   });
 
   it('keeps the Studio placeholder while the entitlement is unresolved', () => {
