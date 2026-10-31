@@ -234,9 +234,6 @@ export interface MirrorTickDeps {
     targetPlatform: string;
     videoUrl: string;
     caption: string;
-    /** Mirror's target platform: 'threads' publishes via Threads,
-     *  anything else keeps the Facebook reel path. */
-    targetPlatform?: string | undefined;
   }) => Promise<string>;
   env?: PostHogEnv | undefined;
   now?: Date | undefined;
@@ -442,7 +439,6 @@ export async function processMirrorCheck(
             targetPlatform: mirror.targetPlatform,
             videoUrl: resolved.playUrl,
             caption,
-            targetPlatform: mirror.targetPlatform,
           });
           await deps.updatePost(claimedId, {
             status: 'posted',
@@ -1102,8 +1098,8 @@ export function buildMirrorTickDeps(
         // itself; there is no byte-upload path for Threads.
         const threadsClient = new ThreadsPublishClient();
         const { containerId } = await threadsClient.createContainer({
-          threadsUserId: params.pageId,
-          accessToken: params.pageToken,
+          threadsUserId: params.targetId,
+          accessToken: params.targetToken,
           mediaType: 'VIDEO',
           videoUrl: params.videoUrl,
           ...(params.caption ? { text: params.caption } : {}),
@@ -1112,7 +1108,7 @@ export function buildMirrorTickDeps(
         for (let poll = 0; poll < 5; poll += 1) {
           const statusData = await threadsClient.getContainerStatus({
             containerId,
-            accessToken: params.pageToken,
+            accessToken: params.targetToken,
           });
           status = statusData.status;
           if (status === 'FINISHED') break;
@@ -1135,8 +1131,8 @@ export function buildMirrorTickDeps(
           );
         }
         const { mediaId } = await threadsClient.publishContainer({
-          threadsUserId: params.pageId,
-          accessToken: params.pageToken,
+          threadsUserId: params.targetId,
+          accessToken: params.targetToken,
           containerId,
         });
         return mediaId;
