@@ -65,6 +65,18 @@
         "routeSpecificGzipBytes": 35465,
         "routeSpecificRawBytes": 113252
       },
+      "/tenant/[subdomain]/threads/schedule": {
+        "firstLoadGzipBytes": 168874,
+        "firstLoadRawBytes": 563256,
+        "routeSpecificGzipBytes": 35068,
+        "routeSpecificRawBytes": 112380
+      },
+      "/tenant/[subdomain]/threads/schedule/[scheduleId]": {
+        "firstLoadGzipBytes": 171875,
+        "firstLoadRawBytes": 577769,
+        "routeSpecificGzipBytes": 38069,
+        "routeSpecificRawBytes": 126893
+      },
       "/tenant/[subdomain]/prompts": {
         "firstLoadGzipBytes": 159582,
         "firstLoadRawBytes": 529526,
@@ -419,6 +431,18 @@
         "firstLoadRawBytes": 586665,
         "routeSpecificGzipBytes": 40864,
         "routeSpecificRawBytes": 132131
+      },
+      "/tenant/[subdomain]/threads/schedule": {
+        "firstLoadGzipBytes": 180000,
+        "firstLoadRawBytes": 595000,
+        "routeSpecificGzipBytes": 41000,
+        "routeSpecificRawBytes": 130000
+      },
+      "/tenant/[subdomain]/threads/schedule/[scheduleId]": {
+        "firstLoadGzipBytes": 182000,
+        "firstLoadRawBytes": 610000,
+        "routeSpecificGzipBytes": 44000,
+        "routeSpecificRawBytes": 147000
       },
       "/tenant/[subdomain]/tiktok/accounts": {
         "firstLoadGzipBytes": 167374,
