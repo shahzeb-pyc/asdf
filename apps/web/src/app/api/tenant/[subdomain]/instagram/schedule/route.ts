@@ -552,11 +552,16 @@ async function handleAddSql(
           ]
         );
       }
-    } catch {
-      // Rollback itself failed: the failure is already logged above
-      // and the client still receives the plain 500, never a partial
-      // success. The 409 + skip-existing-times rules on the next Add
-      // attempt finish the same schedule instead of duplicating it.
+    } catch (err) {
+      // Rollback itself failed: the original failure was logged
+      // above, and this rollback failure is logged here so a half
+      // rolled-back Add is visible server-side. The client still
+      // receives the plain 500, never a partial success, and the
+      // 409 + skip-existing-times rules on the next Add attempt
+      // finish the same schedule instead of duplicating it.
+      logServerError('[instagram-schedule] add rollback failed', err, {
+        source: 'instagram-schedule-add-rollback',
+      });
     }
     return NextResponse.json(
       { error: 'Could not add this account to Schedule. Nothing was saved. Please try again.' },

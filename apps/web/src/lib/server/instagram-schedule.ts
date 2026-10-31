@@ -8,6 +8,7 @@ import {
 } from '@fbuploadpro/contracts';
 
 import type { InstagramScheduleStatus } from '@/lib/api/schemas/instagram-schedule';
+import { logServerError } from '@/lib/server-analytics';
 
 /**
  * Shared server helpers for the Instagram Schedule routes. These are
@@ -212,7 +213,14 @@ export function parseDestinationMetadata(
       return typeof parsed === 'object' && parsed !== null
         ? (parsed as Record<string, unknown>)
         : null;
-    } catch {
+    } catch (err) {
+      // Malformed metadata still yields null (callers treat it as
+      // absent), but the failure is surfaced server-side instead of
+      // swallowed: a row carrying unparseable metadata is data
+      // corruption worth knowing about.
+      logServerError('[instagram-schedule] malformed destination metadata', err, {
+        source: 'instagram-schedule-metadata',
+      });
       return null;
     }
   }
