@@ -28,8 +28,7 @@ import {
 import { getR2Config } from '@/lib/storage';
 import { logServerError } from '@/lib/server-analytics';
 import {
-  assertCanPost,
-  registerUsage,
+  assertPaidPlan,
   SubscriptionGateError,
 } from '@/lib/billing/entitlement';
 import {
@@ -72,7 +71,9 @@ import {
  *   an otherwise published row, never a failed row.
  *
  * Database writes: ONLY the idempotency record (action
- * `threads-publish-now`) and the subscription-usage registry.
+ * `threads-publish-now`). Publish Now writes no subscription-usage
+ * rows: it is unlimited (owner decision 2026-10-31), gated only
+ * on an active paid period.
  * No queue, destination, publish-log, media, or history rows.
  * Publishing continues to the remaining accounts even when
  * one fails; the response carries one result per target.
@@ -229,24 +230,15 @@ export async function POST(
   }
 
   // Subscription gate, server-side, before any Threads call.
-  // Pre-check every target first: registering one by one means
-  // a cap failure on account 3 would leave accounts 1–2
-  // permanently registered even though nothing was published.
+  // Publish Now is unlimited (owner decision 2026-10-31): the
+  // ONLY gate is an active paid period. There is no per-account
+  // cap and no usage registration. Admins are not gated.
   if (session.role !== 'admin') {
-    const distinctUserIds = Array.from(new Set(targets.map((t) => t.threadsUserId)));
     try {
-      for (const threadsUserId of distinctUserIds) {
-        await assertCanPost(supabase, session.userId, 'threads', threadsUserId);
-      }
-      for (const threadsUserId of distinctUserIds) {
-        await registerUsage(supabase, session.userId, 'threads', threadsUserId, 'threads-publish-now', null);
-      }
+      await assertPaidPlan(supabase, session.userId);
     } catch (err) {
       if (err instanceof SubscriptionGateError) {
-        const status =
-          err.code === 'SUBSCRIPTION_CAP_REACHED' || err.code === 'SUBSCRIPTION_REQUIRED'
-            ? 403
-            : 500;
+        const status = err.code === 'SUBSCRIPTION_REQUIRED' ? 403 : 500;
         return NextResponse.json({ error: err.code, message: err.message }, { status });
       }
       throw err;

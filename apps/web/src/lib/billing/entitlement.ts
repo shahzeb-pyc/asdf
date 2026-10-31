@@ -20,6 +20,25 @@ import { logServerError } from '@/lib/server-analytics';
  * Posting gates call assertCanPost/registerUsage; future features
  * (auto download-upload, auto repost) call the same functions
  * through the usage-register API route.
+ *
+ * EXCEPTION — Publish Now is unlimited (owner decision 2026-10-31):
+ * its usage rows (see UNCAPPED_USAGE_FEATURES) never count toward
+ * any cap, and its routes use the plan-only assertPaidPlan gate
+ * instead of assertCanPost/registerUsage. The rows stay in the
+ * registry for history; they are simply invisible to every cap
+ * check below.
+ *
+ * SCOPE — per user account, across all workspaces (owner decision
+ * 2026-10-31): every cap function below takes only a userId.
+ * There is deliberately NO workspace parameter in the cap path:
+ * usage in workspace A plus usage in workspace B counts against
+ * the same purchased units, and at-cap in one workspace blocks
+ * adding a destination in any other workspace. Verified
+ * 2026-10-31: no cap query filters by workspace, and every
+ * enforcement call site passes the person-level session userId.
+ * The workspace_id columns on subscription_periods/payments are
+ * unused dead columns (never written or read); they are left in
+ * place, not removed, until a migration decision is made.
  */
 
 export interface SubscriptionPeriodRow {
@@ -159,6 +178,27 @@ export function paymentFromRow(row: UnknownRow): SubscriptionPaymentRow | null {
 const COUNT_COLUMNS =
   'facebook_count,instagram_count,threads_count,x_count,tiktok_count,youtube_count';
 
+/**
+ * Usage features that never consume the cap. Publish Now is
+ * unlimited (owner decision 2026-10-31): a paid user may publish
+ * now to any number of pages/accounts regardless of bought units.
+ * Rows with these features stay in subscription_usage for history
+ * but are excluded from every cap count and existence check below.
+ * Do NOT delete them, and do NOT add a capped feature here.
+ */
+export const UNCAPPED_USAGE_FEATURES = [
+  'publish-now',
+  'instagram-publish-now',
+  'threads-publish-now',
+] as const;
+
+function isUncappedUsageFeature(feature: unknown): boolean {
+  return (
+    typeof feature === 'string' &&
+    (UNCAPPED_USAGE_FEATURES as readonly string[]).includes(feature)
+  );
+}
+
 export async function getActivePeriod(
   client: SupabaseClient,
   userId: string,
@@ -204,7 +244,11 @@ export async function getUsageCounts(
       .from('subscription_usage')
       .select('id', { count: 'exact', head: true })
       .eq('user_id', userId)
-      .eq('platform', platform);
+      .eq('platform', platform)
+      // Publish Now rows never count toward any cap.
+      .neq('feature', 'publish-now')
+      .neq('feature', 'instagram-publish-now')
+      .neq('feature', 'threads-publish-now');
     if (error) {
       logServerError('[billing] usage counts query failed', error, { source: 'billing' });
       throw new SubscriptionGateError(
@@ -231,7 +275,11 @@ export async function getUsageCount(
     .from('subscription_usage')
     .select('id', { count: 'exact', head: true })
     .eq('user_id', userId)
-    .eq('platform', platform);
+    .eq('platform', platform)
+    // Publish Now rows never count toward any cap.
+    .neq('feature', 'publish-now')
+    .neq('feature', 'instagram-publish-now')
+    .neq('feature', 'threads-publish-now');
   if (error) {
     logServerError('[billing] usage count query failed', error, { source: 'billing' });
     throw new SubscriptionGateError(
@@ -255,6 +303,11 @@ export async function isDestinationUsed(
     .eq('user_id', userId)
     .eq('platform', platform)
     .eq('destination_key', destinationKey)
+    // A destination used ONLY via Publish Now does not count as
+    // used for any cap: Publish Now grants no queueing rights.
+    .neq('feature', 'publish-now')
+    .neq('feature', 'instagram-publish-now')
+    .neq('feature', 'threads-publish-now')
     .limit(1);
   if (error) {
     logServerError('[billing] destination existence query failed', error, {
@@ -347,9 +400,41 @@ export async function assertCanPost(
 }
 
 /**
+ * Plan-only gate for Publish Now (owner decision 2026-10-31):
+ * Publish Now is unlimited — no per-page/per-account cap and no
+ * usage registration. The ONLY gate is an active paid period.
+ * Free users and expired users stay blocked, with the same
+ * SUBSCRIPTION_REQUIRED error the capped gate used for its plan
+ * branch. Admins are not gated here — callers skip this check
+ * for role 'admin', exactly as they did for assertCanPost.
+ */
+export async function assertPaidPlan(
+  client: SupabaseClient,
+  userId: string,
+  now: Date = new Date()
+): Promise<SubscriptionPeriodRow> {
+  const entitlement = await getEntitlement(client, userId, now);
+  if (!entitlement.period || !entitlement.canPost) {
+    throw new SubscriptionGateError(
+      'SUBSCRIPTION_REQUIRED',
+      entitlement.reason ??
+        'Posting is paused. Your paid period has ended — renew it to post again.'
+    );
+  }
+  return entitlement.period;
+}
+
+/**
  * Register a destination as used in a feature. The gate runs first;
  * a race that inserts the same destination twice is treated as
  * already-used (the unique constraint), never as a second unit.
+ *
+ * Cap-correctness note: a destination previously used ONLY via
+ * Publish Now has an uncapped-feature row, which the cap checks
+ * above deliberately ignore. When a capped feature registers that
+ * destination, the race branch below reclassifies the row to the
+ * capped feature — otherwise queueing to pages first reached via
+ * Publish Now would never consume cap at all.
  */
 export async function registerUsage(
   client: SupabaseClient,
@@ -375,6 +460,47 @@ export async function registerUsage(
     // 23505 = unique violation: another request registered this
     // destination in the meantime. That is a success, not a failure.
     if (error.code === '23505') {
+      // ...except when the existing row is an uncapped Publish Now
+      // row and this registration is for a capped feature: then the
+      // destination must start counting toward the cap, so the row
+      // is reclassified to the capped feature. A Publish Now
+      // re-registration leaves the row as it is.
+      if (!isUncappedUsageFeature(feature)) {
+        const { data: existing, error: existingError } = await client
+          .from('subscription_usage')
+          .select('feature')
+          .eq('user_id', userId)
+          .eq('platform', platform)
+          .eq('destination_key', destinationKey)
+          .limit(1);
+        if (existingError) {
+          logServerError('[billing] usage row lookup failed', existingError, {
+            source: 'billing',
+          });
+          throw new SubscriptionGateError(
+            'ENTITLEMENT_UNAVAILABLE',
+            'Your plan could not be checked right now. Please try again.'
+          );
+        }
+        const existingRow = Array.isArray(existing) && existing.length > 0 ? asRow(existing[0]) : null;
+        if (existingRow && isUncappedUsageFeature(existingRow['feature'])) {
+          const { error: reclassifyError } = await client
+            .from('subscription_usage')
+            .update({ feature })
+            .eq('user_id', userId)
+            .eq('platform', platform)
+            .eq('destination_key', destinationKey);
+          if (reclassifyError) {
+            logServerError('[billing] usage row reclassify failed', reclassifyError, {
+              source: 'billing',
+            });
+            throw new SubscriptionGateError(
+              'ENTITLEMENT_UNAVAILABLE',
+              'Your plan could not be checked right now. Please try again.'
+            );
+          }
+        }
+      }
       return { alreadyUsed: true, usedCount: await getUsageCount(client, userId, platform) };
     }
     logServerError('[billing] usage insert failed', error, { source: 'billing' });

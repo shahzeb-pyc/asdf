@@ -44,7 +44,8 @@
  *     start.
  *
  * Nothing in this flow writes to the database except the
- * subscription-usage registry and the idempotency record itself:
+ * idempotency record itself (Publish Now is unlimited and writes
+ * no subscription-usage rows):
  * no queue_items, destinations, publish_logs, media_items, or
  * history rows. Device uploads go to a TEMPORARY R2 prefix and
  * are deleted on Start over / replace / remove.

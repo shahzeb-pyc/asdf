@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   approvePayment,
   assertCanPost,
+  assertPaidPlan,
   countsFromRow,
   createPeriodForPayment,
   getActivePeriod,
@@ -157,7 +158,7 @@ function baseState(overrides: Partial<FakeState> = {}): FakeState {
   };
 }
 
-type Filter = { op: 'eq' | 'is' | 'lte' | 'gt'; col: string; val: unknown };
+type Filter = { op: 'eq' | 'is' | 'lte' | 'gt' | 'neq'; col: string; val: unknown };
 
 class FakeBuilder {
   private filters: Filter[] = [];
@@ -197,6 +198,11 @@ class FakeBuilder {
     return this;
   }
 
+  neq(col: string, val: unknown): this {
+    this.filters.push({ op: 'neq', col, val });
+    return this;
+  }
+
   order(col: string, opts?: { ascending?: boolean }): this {
     this.orderCol = col;
     this.orderAsc = opts?.ascending !== false;
@@ -218,6 +224,7 @@ class FakeBuilder {
         user_id: row.user_id,
         platform: row.platform,
         destination_key: row.destination_key,
+        feature: row.feature,
       });
     }
     return this;
@@ -282,6 +289,7 @@ class FakeBuilder {
       let rows = [...this.state.usageRows];
       for (const f of this.filters) {
         if (f.op === 'eq') rows = rows.filter((row) => row[f.col] === f.val);
+        if (f.op === 'neq') rows = rows.filter((row) => row[f.col] !== f.val);
       }
       return { count: rows.length, error: null };
     }
@@ -297,6 +305,7 @@ class FakeBuilder {
         if (f.op === 'eq') return v === f.val;
         if (f.op === 'is') return f.val === null ? v == null : v === f.val;
         if (f.op === 'lte') return String(v) <= String(f.val);
+        if (f.op === 'neq') return v !== f.val;
         return String(v) > String(f.val);
       });
     }
@@ -480,6 +489,124 @@ describe('getUsageCounts / getUsageCount / isDestinationUsed', () => {
       expect.anything(),
       { source: 'billing' }
     );
+  });
+});
+
+describe('Publish Now uncapped (owner decision 2026-10-31)', () => {
+  it('excludes Publish Now rows from every usage count', async () => {
+    const state = baseState({
+      usageRows: [
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-a', feature: 'publish-now' },
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-b', feature: 'instagram-publish-now' },
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-c', feature: 'threads-publish-now' },
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-d', feature: 'destination-queue' },
+      ],
+    });
+    await expect(getUsageCount(fakeClient(state), 'user-1', 'facebook')).resolves.toBe(1);
+    await expect(getUsageCounts(fakeClient(state), 'user-1')).resolves.toEqual({
+      ...ZERO_COUNTS,
+      facebook: 1,
+    });
+  });
+
+  it('treats a Publish Now-only destination as unused for caps', async () => {
+    const state = baseState({
+      usageRows: [
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-a', feature: 'publish-now' },
+      ],
+    });
+    await expect(
+      isDestinationUsed(fakeClient(state), 'user-1', 'facebook', 'page-a')
+    ).resolves.toBe(false);
+  });
+
+  it('assertPaidPlan returns the period regardless of bought units', async () => {
+    const state = baseState({ periods: [periodRow({ facebook_count: 0 })] });
+    const period = await assertPaidPlan(fakeClient(state), 'user-1', NOW);
+    expect(period.id).toBe('period-1');
+  });
+
+  it('assertPaidPlan still refuses a Free user', async () => {
+    const state = baseState();
+    await expect(assertPaidPlan(fakeClient(state), 'user-1', NOW)).rejects.toMatchObject({
+      code: 'SUBSCRIPTION_REQUIRED',
+    });
+  });
+
+  it('registerUsage reclassifies a Publish Now row when a capped feature registers it', async () => {
+    const state = baseState({
+      periods: [periodRow()],
+      usageRows: [
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-a', feature: 'publish-now' },
+      ],
+      usageInsertError: { code: '23505' },
+    });
+    await expect(
+      registerUsage(fakeClient(state), 'user-1', 'facebook', 'page-a', 'destination-queue', null, NOW)
+    ).resolves.toMatchObject({ alreadyUsed: true });
+    expect(state.updated).toHaveLength(1);
+    expect(state.updated[0]).toMatchObject({
+      table: 'subscription_usage',
+      patch: expect.objectContaining({ feature: 'destination-queue' }),
+    });
+  });
+
+  it('registerUsage leaves a Publish Now row alone when Publish Now re-registers it', async () => {
+    const state = baseState({
+      periods: [periodRow()],
+      usageRows: [
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-a', feature: 'publish-now' },
+      ],
+      usageInsertError: { code: '23505' },
+    });
+    await expect(
+      registerUsage(fakeClient(state), 'user-1', 'facebook', 'page-a', 'publish-now', null, NOW)
+    ).resolves.toMatchObject({ alreadyUsed: true });
+    expect(state.updated).toHaveLength(0);
+  });
+});
+
+describe('Cap scope: per user across workspaces (owner decision 2026-10-31)', () => {
+  // destination_id is the workspace-scoped destination row. The cap
+  // functions never filter on it (verified 2026-10-31: no cap query
+  // takes a workspace parameter), so rows from two workspaces sum.
+  // The distinct destination_id values below simulate one user
+  // queueing in workspace A and workspace B. These tests lock that
+  // behaviour: a future workspace-scoped counting change must fail
+  // here first.
+  it('sums usage across destination rows from different workspaces', async () => {
+    const state = baseState({
+      usageRows: [
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-a', destination_id: 'dest-workspace-a', feature: 'destination-queue' },
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-b', destination_id: 'dest-workspace-b', feature: 'destination-queue' },
+      ],
+    });
+    await expect(getUsageCount(fakeClient(state), 'user-1', 'facebook')).resolves.toBe(2);
+  });
+
+  it('blocks a new destination when split usage across workspaces hits the cap', async () => {
+    const state = baseState({
+      periods: [periodRow({ facebook_count: 2 })],
+      usageRows: [
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-a', destination_id: 'dest-workspace-a', feature: 'destination-queue' },
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-b', destination_id: 'dest-workspace-b', feature: 'destination-queue' },
+      ],
+    });
+    await expect(
+      assertCanPost(fakeClient(state), 'user-1', 'facebook', 'page-c', NOW)
+    ).rejects.toMatchObject({ code: 'SUBSCRIPTION_CAP_REACHED' });
+  });
+
+  it('allows a new destination when split usage across workspaces is under the cap', async () => {
+    const state = baseState({
+      periods: [periodRow({ facebook_count: 3 })],
+      usageRows: [
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-a', destination_id: 'dest-workspace-a', feature: 'destination-queue' },
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-b', destination_id: 'dest-workspace-b', feature: 'destination-queue' },
+      ],
+    });
+    const period = await assertCanPost(fakeClient(state), 'user-1', 'facebook', 'page-c', NOW);
+    expect(period.id).toBe('period-1');
   });
 });
 

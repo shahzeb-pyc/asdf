@@ -94,6 +94,7 @@ type SupabaseChain = {
   is: () => SupabaseChain;
   lte: () => SupabaseChain;
   gt: () => SupabaseChain;
+  neq: () => SupabaseChain;
   order: () => SupabaseChain;
   limit: () => SupabaseChain;
   insert: () => SupabaseChain;
@@ -133,6 +134,10 @@ let containerStatus = 'FINISHED';
 let containerCounter = 0;
 let publishedContainers = new Set<string>();
 
+let periodRow: Record<string, unknown> = {};
+let periodPresent = true;
+const insertedTables: string[] = [];
+
 function supabaseBuilder(table: string): SupabaseChain {
   const eqValues = new Map<string, unknown>();
   const builder: SupabaseChain = {
@@ -144,9 +149,13 @@ function supabaseBuilder(table: string): SupabaseChain {
     is: () => builder,
     lte: () => builder,
     gt: () => builder,
+    neq: () => builder,
     order: () => builder,
     limit: () => builder,
-    insert: () => builder,
+    insert: () => {
+      insertedTables.push(table);
+      return builder;
+    },
     maybeSingle: async () => {
       if (table === 'media_items') {
         return { data: mediaRow, error: null };
@@ -167,21 +176,7 @@ function supabaseBuilder(table: string): SupabaseChain {
     },
   };
   if (table === 'subscription_periods') {
-    builder.data = [
-      {
-        id: 'period-1',
-        user_id: 'user-1',
-        facebook_count: 10,
-        instagram_count: 10,
-        threads_count: 10,
-        x_count: 10,
-        tiktok_count: 10,
-        youtube_count: 10,
-        starts_at: '2020-01-01T00:00:00.000Z',
-        ends_at: '2099-01-01T00:00:00.000Z',
-        superseded_at: null,
-      },
-    ];
+    builder.data = periodPresent ? [periodRow] : [];
     builder.error = null;
   }
   if (table === 'subscription_usage') {
@@ -215,6 +210,21 @@ beforeEach(() => {
   containerCounter = 0;
   publishedContainers = new Set<string>();
   idempotencyStore.clear();
+  periodRow = {
+    id: 'period-1',
+    user_id: 'user-1',
+    facebook_count: 10,
+    instagram_count: 10,
+    threads_count: 10,
+    x_count: 10,
+    tiktok_count: 10,
+    youtube_count: 10,
+    starts_at: '2020-01-01T00:00:00.000Z',
+    ends_at: '2099-01-01T00:00:00.000Z',
+    superseded_at: null,
+  };
+  periodPresent = true;
+  insertedTables.length = 0;
   idempotencyProcessing = new Set<string>();
   mediaRow = {
     id: '33333333-3333-4333-a333-333333333333',
@@ -347,6 +357,31 @@ describe('POST instagram/publish-now', () => {
       status: 'published',
       postId: 'media-1',
     });
+  });
+
+  it('publishes even with zero bought accounts and writes no usage row (Publish Now is uncapped)', async () => {
+    periodRow = { ...periodRow, instagram_count: 0 };
+    const { status, body } = await callPost({
+      ...photoBody([
+        { accountId: ACCOUNT_1, accountName: 'Creator One' },
+        { accountId: ACCOUNT_2, accountName: 'Creator Two' },
+      ]),
+      firstComment: 'Nice!',
+    });
+    expect(status).toBe(200);
+    expect(body.results).toHaveLength(2);
+    expect(body.results[0].status).toBe('published');
+    expect(body.results[1].status).toBe('published');
+    expect(insertedTables).not.toContain('subscription_usage');
+  });
+
+  it('still refuses a user with no paid period', async () => {
+    periodPresent = false;
+    const { status, body } = await callPost(
+      photoBody([{ accountId: ACCOUNT_1, accountName: 'Creator One' }])
+    );
+    expect(status).toBe(403);
+    expect(body.error).toBe('SUBSCRIPTION_REQUIRED');
   });
 
   it('continues to the next account when one fails, and maps the restriction', async () => {
