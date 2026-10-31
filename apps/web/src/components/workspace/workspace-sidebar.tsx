@@ -57,6 +57,7 @@ import { BrandMark } from '@/components/brand';
 import { buildTenantHref, normalizeTenantPath } from '@/lib/tenant-href';
 import { WorkspaceStudioFooter } from './workspace-switcher';
 import { UPCOMING_PLATFORMS, TESTING_PLACEHOLDER_TEXT } from './platform-nav-config';
+import { usePlanWord } from './plan-word';
 
 export interface WorkspaceSidebarProps {
   subdomain: string;
@@ -139,6 +140,12 @@ function WorkspaceSidebarContent({
   const router = useRouter();
   const { state, isMobile, setOpenMobile } = useSidebar();
   const isCollapsed = !isMobile && state === 'collapsed';
+  // Sidebar header plan word: replaces the "Studio" word under the
+  // FBUploadPro wordmark with the user's plan (Paid / Expired /
+  // Free / Admin). Null while the entitlement is unresolved or the
+  // check failed, so the "Studio" placeholder stays until the real
+  // word is known — never a flashed or failed-as-Free plan.
+  const planWord = usePlanWord(subdomain, adminOnly);
   const [isFacebookOpen, setIsFacebookOpen] = useState(true);
   const [isBillingOpen, setIsBillingOpen] = useState(true);
   const [openPlatforms, setOpenPlatforms] = useState<Record<string, boolean>>({});
@@ -323,7 +330,7 @@ function WorkspaceSidebarContent({
           {!isCollapsed && (
             <div className="flex min-w-0 flex-col">
               <span className="text-body font-bold tracking-caption text-ink">FBUploadPro</span>
-              <span className="text-metadata text-ink-dim">Studio</span>
+              <span className="text-metadata text-ink-dim">{planWord ?? 'Studio'}</span>
             </div>
           )}
         </Link>

@@ -78,6 +78,13 @@ export interface Entitlement {
   canPost: boolean;
   readOnly: boolean;
   reason: string | null;
+  /**
+   * True when the user has ever held a paid period, active or lapsed.
+   * The active-period lookup alone cannot tell "never paid" from
+   * "lapsed": both report period null. The sidebar plan word needs
+   * the distinction (Free vs Expired).
+   */
+  hasPriorPeriod: boolean;
 }
 
 export class SubscriptionGateError extends Error {
@@ -346,6 +353,7 @@ export async function getEntitlement(
       readOnly: true,
       reason:
         'Your plan is Free, which covers the Prompt Library only. Choose a paid plan to post or schedule.',
+      hasPriorPeriod: await hasAnyPeriod(client, userId),
     };
   }
   return {
@@ -357,7 +365,33 @@ export async function getEntitlement(
     canPost: isPeriodActive(period, now),
     readOnly: !isPeriodActive(period, now),
     reason: null,
+    // An active period is itself a prior period; no extra query.
+    hasPriorPeriod: true,
   };
+}
+
+/**
+ * Existence check for any paid period row for the user, active or
+ * lapsed (limit 1 — the row content is never read). Only used when
+ * no active period exists, so the active path costs no extra query.
+ */
+export async function hasAnyPeriod(
+  client: SupabaseClient,
+  userId: string
+): Promise<boolean> {
+  const { data, error } = await client
+    .from('subscription_periods')
+    .select('id')
+    .eq('user_id', userId)
+    .limit(1);
+  if (error) {
+    logServerError('[billing] prior period query failed', error, { source: 'billing' });
+    throw new SubscriptionGateError(
+      'ENTITLEMENT_UNAVAILABLE',
+      'Your plan could not be checked right now. Please try again.'
+    );
+  }
+  return Array.isArray(data) && data.length > 0;
 }
 
 /**

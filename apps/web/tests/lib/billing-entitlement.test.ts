@@ -638,6 +638,36 @@ describe('getEntitlement', () => {
     expect(entitlement.counts).toEqual(TEN_COUNTS);
     expect(entitlement.period?.id).toBe('period-1');
   });
+
+  it('reports hasPriorPeriod true for an active period without an extra lookup', async () => {
+    const state = baseState({ periods: [periodRow()] });
+    const entitlement = await getEntitlement(fakeClient(state), 'user-1', NOW);
+    expect(entitlement.hasPriorPeriod).toBe(true);
+  });
+
+  it('reports hasPriorPeriod true for a lapsed period (Expired, not Free)', async () => {
+    const state = baseState({
+      periods: [
+        periodRow({
+          starts_at: '2025-01-01T00:00:00.000Z',
+          ends_at: '2026-01-01T00:00:00.000Z',
+        }),
+      ],
+    });
+    const entitlement = await getEntitlement(fakeClient(state), 'user-1', NOW);
+    expect(entitlement).toMatchObject({
+      plan: 'free',
+      active: false,
+      period: null,
+      hasPriorPeriod: true,
+    });
+  });
+
+  it('reports hasPriorPeriod false when no period was ever held', async () => {
+    const state = baseState();
+    const entitlement = await getEntitlement(fakeClient(state), 'user-1', NOW);
+    expect(entitlement.hasPriorPeriod).toBe(false);
+  });
 });
 
 describe('assertCanPost', () => {

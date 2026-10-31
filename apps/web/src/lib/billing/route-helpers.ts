@@ -53,6 +53,7 @@ export function mapEntitlementToResponse(entitlement: Entitlement): EntitlementR
     canPost: entitlement.canPost,
     readOnly: entitlement.readOnly,
     reason: entitlement.reason,
+    hasPriorPeriod: entitlement.hasPriorPeriod,
   };
 }
 

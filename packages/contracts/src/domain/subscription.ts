@@ -239,6 +239,13 @@ export const EntitlementResponseSchema = z.object({
   canPost: z.boolean(),
   readOnly: z.boolean(),
   reason: z.string().nullable(),
+  /**
+   * True when the user has ever held a paid period (active or lapsed).
+   * Lets the sidebar tell "never paid" (Free) apart from "lapsed"
+   * (Expired): the active-period fields alone cannot, since both
+   * cases report null period bounds.
+   */
+  hasPriorPeriod: z.boolean(),
 });
 export type EntitlementResponse = z.infer<typeof EntitlementResponseSchema>;
 
