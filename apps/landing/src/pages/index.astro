@@ -267,12 +267,58 @@ const signin = 'https://app.fbuploadpro.com/login';
       </div>
     </section>
 
-    <!-- Section 5: community banner. Full viewport. The section
+    <!-- Section 5: all features. Direction B cards grid from the
+         owner-picked mockup, but with the features named on the
+         Pricing page (owner-confirmed 2026-10-31) — NOT the page
+         workspace parts from the mockup. Six cards only: Creator
+         Finder and Prompt Library are excluded because they
+         already have their own sections above. No links, no
+         buttons, no prices beyond the two owner-dictated
+         quantities in the copied Pricing lines. -->
+    <section id="section-5" class="section-full relative flex items-center bg-white px-5 py-24 sm:px-8 lg:px-12" aria-label="Features">
+      <div class="mx-auto w-full max-w-[1240px]">
+        <p class="mb-4 flex items-center gap-3">
+          <span aria-hidden="true" class="inline-block h-[3px] w-8 bg-gold"></span>
+          <span class="text-[13px] font-bold tracking-[0.12em] text-[#b7791f] uppercase">Features</span>
+        </p>
+        <h2 class="text-[36px] leading-[1.08] font-bold tracking-tight sm:text-5xl lg:text-[52px]">
+          More of what FBUploadPro does.
+        </h2>
+        <div class="mt-10 grid gap-4 sm:grid-cols-2 sm:gap-6 lg:grid-cols-3">
+          <div class="rounded-2xl border border-line bg-[#fafafa] p-6 shadow-[0_8px_24px_rgba(0,0,0,0.06)] sm:p-7">
+            <h3 class="text-xl leading-[1.2] font-bold tracking-tight">Media Library</h3>
+            <p class="mt-2 text-[15px] leading-[1.55] text-ink-sub">5 GB storage per page/account</p>
+          </div>
+          <div class="rounded-2xl border border-line bg-[#fafafa] p-6 shadow-[0_8px_24px_rgba(0,0,0,0.06)] sm:p-7">
+            <h3 class="text-xl leading-[1.2] font-bold tracking-tight">Downloader</h3>
+            <p class="mt-2 text-[15px] leading-[1.55] text-ink-sub">download from any platform, straight to your Media Library</p>
+          </div>
+          <div class="rounded-2xl border border-line bg-[#fafafa] p-6 shadow-[0_8px_24px_rgba(0,0,0,0.06)] sm:p-7">
+            <h3 class="text-xl leading-[1.2] font-bold tracking-tight">In-App Schedule</h3>
+            <p class="mt-2 text-[15px] leading-[1.55] text-ink-sub">schedule any post type across all platforms</p>
+          </div>
+          <div class="rounded-2xl border border-line bg-[#fafafa] p-6 shadow-[0_8px_24px_rgba(0,0,0,0.06)] sm:p-7">
+            <h3 class="text-xl leading-[1.2] font-bold tracking-tight">Auto Repost</h3>
+            <p class="mt-2 text-[15px] leading-[1.55] text-ink-sub">automatically repost a creator's latest TikTok reels to any platform</p>
+          </div>
+          <div class="rounded-2xl border border-line bg-[#fafafa] p-6 shadow-[0_8px_24px_rgba(0,0,0,0.06)] sm:p-7">
+            <h3 class="text-xl leading-[1.2] font-bold tracking-tight">Direct Publish</h3>
+            <p class="mt-2 text-[15px] leading-[1.55] text-ink-sub">publish any post to all platforms at once</p>
+          </div>
+          <div class="rounded-2xl border border-line bg-[#fafafa] p-6 shadow-[0_8px_24px_rgba(0,0,0,0.06)] sm:p-7">
+            <h3 class="text-xl leading-[1.2] font-bold tracking-tight">Auto Download/Upload</h3>
+            <p class="mt-2 text-[15px] leading-[1.55] text-ink-sub">move reels between platforms, 100% in the cloud, no PC needed</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Section 6: community banner. Full viewport. The section
          itself is white; the black panel inside it has rounded
          top corners only, so the dark area enters as a soft
          rounded shape instead of a straight full-width cut.
          No subhead, no button, no link. -->
-    <section id="section-5" class="section-full bg-white" aria-label="Community">
+    <section id="section-6" class="section-full bg-white" aria-label="Community">
       <div class="dark-panel relative flex items-center justify-center overflow-hidden bg-[#0b0e11] px-5 py-16 text-center sm:py-20 lg:py-24">
         <h2 class="relative z-10 mx-auto text-[clamp(28px,8vw,64px)] leading-[1.1] font-bold tracking-tight text-white">
           <span class="reveal-mask"><span class="reveal-line">Join our community</span></span>
@@ -281,14 +327,14 @@ const signin = 'https://app.fbuploadpro.com/login';
       </div>
     </section>
 
-    <!-- Section 6: pricing, direction C (Editorial) from the
+    <!-- Section 7: pricing, direction C (Editorial) from the
          owner-picked mockup. Two cards only: compact Free beside
          a wider Paid. HARD CONSTRAINTS (owner's orders): NO price
          anywhere (no amounts, currency, billing period), NO caps
          or quantities anywhere in the cards, NO stats,
          NO testimonials, NO popularity labels, NO email. Free is
          Prompt Library only. Both buttons go to sign up. -->
-    <section id="section-6" class="section-full bg-[#0b0e11]" aria-label="Pricing">
+    <section id="section-7" class="section-full bg-[#0b0e11]" aria-label="Pricing">
       <div class="dark-panel relative flex flex-col items-center justify-start overflow-hidden bg-[#0b0e11] px-5 pt-20 pb-10 text-center sm:pt-28 sm:pb-16 lg:pt-32 lg:pb-20">
         <div class="relative z-10 flex flex-col items-center">
           <h2 class="mx-auto text-[clamp(28px,8vw,64px)] leading-[1.1] font-bold tracking-tight text-white">
@@ -345,7 +391,7 @@ const signin = 'https://app.fbuploadpro.com/login';
          grid, its tagline, its Contact card, and its previous
          bottom line — the old footer's WhatsApp/Facebook URLs
          survive only as the two bottom-row circular icons. -->
-    <section id="section-7" class="section-full relative flex flex-col bg-[#0b0e11] px-5 py-16 sm:px-8 lg:px-12" aria-label="Footer">
+    <section id="section-8" class="section-full relative flex flex-col bg-[#0b0e11] px-5 py-16 sm:px-8 lg:px-12" aria-label="Footer">
       <div class="s5-content relative z-10 mx-auto flex w-full max-w-6xl flex-1 flex-col justify-between">
         <a href="#section-1" class="inline-flex items-center gap-3 no-underline">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="32" height="32" fill="none" role="img" aria-label="FBUploadPro" class="h-8 w-8 shrink-0"><path d="M24 11L12 23L17 28L20 25V51L28 45V23H45L53 15H28L24 11Z" fill="#fcd535" /><path d="M24 11L12 23L13.2 24.2L24 13.4L28 17.4H50.6L53 15H28L24 11Z" fill="#ffffff" fill-opacity="0.35" /><path d="M32 30H48L40 38H32V30Z" fill="#f0b90b" /><path d="M32 43H41L35 49H32V43Z" fill="#766018" /></svg><span class="text-xl font-bold tracking-tight text-white">FBUploadPro</span>
@@ -357,8 +403,8 @@ const signin = 'https://app.fbuploadpro.com/login';
           <div>
             <ul class="space-y-3 text-sm text-white/60">
               <li><a href="#section-2" class="inline-flex min-h-10 items-center no-underline hover:text-white">Muse</a></li>
-              <li><a href="#section-5" class="inline-flex min-h-10 items-center no-underline hover:text-white">Community</a></li>
-              <li><a href="#section-6" class="inline-flex min-h-10 items-center no-underline hover:text-white">Pricing</a></li>
+              <li><a href="#section-6" class="inline-flex min-h-10 items-center no-underline hover:text-white">Community</a></li>
+              <li><a href="#section-7" class="inline-flex min-h-10 items-center no-underline hover:text-white">Pricing</a></li>
               <li><a href="https://app.fbuploadpro.com/login" class="inline-flex min-h-10 items-center no-underline hover:text-white">Sign in</a></li>
             </ul>
           </div>
