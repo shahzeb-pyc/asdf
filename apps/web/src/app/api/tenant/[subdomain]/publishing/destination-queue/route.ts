@@ -5,8 +5,8 @@ import {
   resolveDestinationPlatformOptions,
   validatePostFormatEligibility,
   type DestinationEnqueueKind,
-  type IStorageService,
 } from '@fbuploadpro/contracts';
+import type { IStorageServiceWithCopy } from '@/lib/storage';
 import { resolveSocialRouteContext } from '@/lib/connect/session';
 import type { ConnectDbClient } from '@/lib/connect/persist';
 import {
@@ -76,7 +76,7 @@ export async function handleDestinationEnqueue(
   request: NextRequest,
   subdomain: string,
   dbClient?: ConnectDbClient,
-  storageService?: IStorageService
+  storageService?: IStorageServiceWithCopy
 ): Promise<NextResponse> {
   const context = await resolveSocialRouteContext(request, subdomain, dbClient);
   if (context.errorResponse) {
@@ -575,7 +575,7 @@ export async function handleDestinationEnqueue(
   // destinations keep the historical library-linked row.
   let postOwnedMedia: { url: string; storageKey: string } | null = null;
   let copiedKey: string | null = null;
-  let resolvedStorage: IStorageService | null = null;
+  let resolvedStorage: IStorageServiceWithCopy | null = null;
   if (destination.platform === 'facebook') {
     if (stagedMedia !== null) {
       resolvedStorage = storageService ?? getStorageService();

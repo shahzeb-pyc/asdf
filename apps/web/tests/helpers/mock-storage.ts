@@ -1,6 +1,5 @@
 import type {
   CopyObjectParams,
-  IStorageService,
   ListedObject,
   ListObjectsParams,
   PresignedUploadParams,
@@ -8,6 +7,7 @@ import type {
   PutObjectParams,
   PutObjectResult,
 } from '@fbuploadpro/contracts';
+import type { IStorageServiceWithCopy } from '@/lib/storage';
 
 function trimTrailingSlashes(str: string): string {
   let end = str.length;
@@ -17,7 +17,7 @@ function trimTrailingSlashes(str: string): string {
   return str.slice(0, end);
 }
 
-export class MockStorageProvider implements IStorageService {
+export class MockStorageProvider implements IStorageServiceWithCopy {
   public deletedKeys: Set<string> = new Set();
   public requestedUploadKeys: Set<string> = new Set();
   public uploadedObjects: Map<

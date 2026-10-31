@@ -90,7 +90,24 @@ function trimTrailingSlashes(str: string): string {
   return str.slice(0, end);
 }
 
-export class R2StorageProvider implements IStorageService {
+/**
+ * The web app's storage service: the shared base interface plus
+ * the server-side copy/list operations the media/posting
+ * separation needs (post-owned copies, staged-upload sweep).
+ *
+ * Deliberately a WEB-ONLY extension, not a widening of the shared
+ * `IStorageService`: the download-worker's own implementers
+ * (R2 binding sink, test fakes) must not grow copy/list methods
+ * they never use, and widening the shared interface broke their
+ * typecheck. Only the separation code depends on this interface;
+ * everything else keeps depending on the base.
+ */
+export interface IStorageServiceWithCopy extends IStorageService {
+  copyObject(params: CopyObjectParams): Promise<void>;
+  listObjects(params: ListObjectsParams): Promise<ListedObject[]>;
+}
+
+export class R2StorageProvider implements IStorageServiceWithCopy {
   private readonly client: S3Client;
   private readonly config: R2Config;
 
@@ -180,7 +197,7 @@ export class R2StorageProvider implements IStorageService {
   }
 }
 
-export function getStorageService(): IStorageService {
+export function getStorageService(): IStorageServiceWithCopy {
   const config = getR2Config();
   if (config) {
     return new R2StorageProvider(config);

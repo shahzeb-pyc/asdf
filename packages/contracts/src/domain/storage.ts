@@ -48,8 +48,6 @@ export interface ListObjectsParams {
 export interface IStorageService {
   getPresignedUploadUrl(params: PresignedUploadParams): Promise<PresignedUploadResult>;
   putObject(params: PutObjectParams): Promise<PutObjectResult>;
-  copyObject(params: CopyObjectParams): Promise<void>;
-  listObjects(params: ListObjectsParams): Promise<ListedObject[]>;
   deleteObject(key: string): Promise<void>;
   getPublicUrl(key: string): string;
 }

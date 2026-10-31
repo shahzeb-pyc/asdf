@@ -20,6 +20,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { IStorageService } from '@fbuploadpro/contracts';
+import type { IStorageServiceWithCopy } from '@/lib/storage';
 
 /** Age after which an unclaimed staged upload is swept (24 hours). */
 export const STAGED_UPLOAD_RETENTION_MS = 24 * 60 * 60 * 1000;
@@ -77,7 +78,7 @@ export function postOwnedCopyKey(userId: string, sourceKey: string): string {
  * Throws on failure — the caller must fail loud with no row written.
  */
 export async function copyLibraryMediaToPostOwned(
-  storage: IStorageService,
+  storage: IStorageServiceWithCopy,
   userId: string,
   sourceKey: string
 ): Promise<{ storageKey: string; url: string }> {
@@ -104,7 +105,7 @@ export interface StagedSweepReport {
  * deleted — age is the only thing that proves abandonment.
  */
 export async function sweepUnclaimedStagedUploads(
-  storage: IStorageService,
+  storage: IStorageServiceWithCopy,
   userId: string,
   referencedKeys: ReadonlySet<string>,
   now: Date = new Date()
