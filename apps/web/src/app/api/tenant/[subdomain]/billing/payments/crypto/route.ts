@@ -22,6 +22,14 @@ import {
   NowPaymentsError,
 } from '@/lib/billing/nowpayments';
 import { getBillingAdminClient } from '@/lib/billing/route-helpers';
+import {
+  CouponError,
+  computeDiscount,
+  holdCoupon,
+  loadCouponByCode,
+  releaseRedemption,
+  type CouponRedemptionRow,
+} from '@/lib/billing/coupons';
 
 /**
  * POST /api/tenant/[subdomain]/billing/payments/crypto
@@ -73,6 +81,9 @@ export async function POST(
     );
   }
   const { counts, network } = parsed.data;
+  const couponCode = parsed.data.couponCode?.trim()
+    ? parsed.data.couponCode.trim()
+    : undefined;
 
   const config = getNowPaymentsConfig();
   if (!config.apiKey) {
@@ -98,6 +109,11 @@ export async function POST(
     );
   }
 
+  // A hold that never got linked (insert failed, link failed,
+  // deposit failed) must not strand the coupon; the catch below
+  // releases it. These live outside the try block for that reason.
+  let heldRedemption: CouponRedemptionRow | null = null;
+  let redemptionLinked = false;
   try {
     // One pending payment per user: checked before any estimate, any
     // row, and any NOWPayments deposit is created.
@@ -119,6 +135,38 @@ export async function POST(
         return NextResponse.json({ error: 'INVALID_REQUEST', message: err.message }, { status: 400 });
       }
       throw err;
+    }
+
+    // Coupon hold (if any): the claim lands before the deposit is
+    // created, and the deposit is created for the REDUCED amount.
+    // A coupon covering the full amount belongs to the zero-due
+    // path, not here — there is no deposit to create for 0.
+    let discountPkr = 0;
+    if (couponCode) {
+      const coupon = await loadCouponByCode(client, couponCode);
+      if (!coupon) {
+        return NextResponse.json(
+          { error: 'COUPON_NOT_FOUND', message: 'That coupon code was not found.' },
+          { status: 404 }
+        );
+      }
+      discountPkr = computeDiscount(coupon, amountPkr);
+      if (discountPkr >= amountPkr) {
+        return NextResponse.json(
+          {
+            error: 'INVALID_REQUEST',
+            message: 'This coupon covers the full amount. Activate your plan with the coupon instead of paying crypto.',
+          },
+          { status: 400 }
+        );
+      }
+      heldRedemption = await holdCoupon(client, {
+        coupon,
+        userId: session.userId,
+        paymentId: null,
+        discountPkr,
+      });
+      amountPkr -= discountPkr;
     }
 
     const estimatedUsdt = await estimateUsdt(amountPkr, network, config.apiKey);
@@ -148,6 +196,8 @@ export async function POST(
         amount_pkr: amountPkr,
         is_upgrade: isUpgrade,
         nowpayments_network: network,
+        coupon_code: couponCode ? couponCode.trim().toUpperCase() : null,
+        discount_pkr: discountPkr,
       })
       .select('id')
       .single();
@@ -181,6 +231,22 @@ export async function POST(
     }
     const paymentId = inserted.id as string;
 
+    if (heldRedemption) {
+      // Link the held redemption to this payment. If the link
+      // fails, the payment is removed again (created milliseconds
+      // ago by this request, never seen) and the coupon released.
+      const { error: linkError } = await client
+        .from('coupon_redemptions')
+        .update({ payment_id: paymentId })
+        .eq('id', heldRedemption.id)
+        .eq('status', 'held');
+      if (linkError) {
+        await client.from('subscription_payments').delete().eq('id', paymentId);
+        throw new Error('Coupon redemption link failed');
+      }
+      redemptionLinked = true;
+    }
+
     let created;
     try {
       created = await createNowPaymentsPayment(
@@ -195,7 +261,20 @@ export async function POST(
     } catch (err) {
       // Best-effort compensation: the checkout already failed, so
       // the user sees the 502 either way — but a failed mark-failed
-      // update must still be logged, never silently dropped.
+      // update must still be logged, never silently dropped. The
+      // coupon is released FIRST so a failed deposit never strands
+      // a held discount on a payment that will never be paid.
+      // (The link always succeeded by this point, so the release
+      // also restores the balance through the same guarded path.)
+      if (heldRedemption) {
+        try {
+          await releaseRedemption(client, heldRedemption);
+        } catch (releaseError) {
+          logServerError('[billing] coupon release after crypto failure failed', releaseError, {
+            source: 'billing',
+          });
+        }
+      }
       const { error: markFailedError } = await client
         .from('subscription_payments')
         .update({ status: 'failed', updated_at: new Date().toISOString() })
@@ -230,6 +309,18 @@ export async function POST(
         source: 'billing',
         code: addressUpdateError.code,
       });
+      // The deposit exists at the gateway but cannot be matched to
+      // this payment, so the payment fails — and the held coupon
+      // goes back, for the same reason as above.
+      if (heldRedemption) {
+        try {
+          await releaseRedemption(client, heldRedemption);
+        } catch (releaseError) {
+          logServerError('[billing] coupon release after crypto failure failed', releaseError, {
+            source: 'billing',
+          });
+        }
+      }
       const { error: markFailedError } = await client
         .from('subscription_payments')
         .update({ status: 'failed', updated_at: new Date().toISOString() })
@@ -265,6 +356,22 @@ export async function POST(
       { status: 201 }
     );
   } catch (err) {
+    if (err instanceof CouponError) {
+      const status = err.code === 'COUPON_NOT_FOUND' ? 404 : 400;
+      return NextResponse.json({ error: err.code, message: err.message }, { status });
+    }
+    // A hold that never got linked (insert failed, link failed)
+    // must not strand the coupon. Linked holds are NOT released
+    // here: the payment exists and its outcome (webhook) decides.
+    if (heldRedemption && !redemptionLinked) {
+      try {
+        await releaseRedemption(client, heldRedemption);
+      } catch (releaseError) {
+        logServerError('[billing] coupon release after crypto failure failed', releaseError, {
+          source: 'billing',
+        });
+      }
+    }
     logServerError('[billing] crypto checkout failed', err, { source: 'billing' });
     if (err instanceof NowPaymentsError) {
       return NextResponse.json({ error: 'CRYPTO_CHECKOUT_FAILED', message: err.message }, { status: 502 });

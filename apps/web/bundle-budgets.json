@@ -490,7 +490,7 @@
         "firstLoadGzipBytes": 176478,
         "firstLoadRawBytes": 599680,
         "routeSpecificGzipBytes": 39723,
-        "routeSpecificRawBytes": 140031
+        "routeSpecificRawBytes": 147204
       },
       "/tenant/[subdomain]/creator-finder": {
         "firstLoadGzipBytes": 175174,
@@ -561,7 +561,7 @@
     },
     "totalClientJs": {
       "gzipBytes": 1340000,
-      "rawBytes": 4242000
+      "rawBytes": 4457708
     }
   }
 }

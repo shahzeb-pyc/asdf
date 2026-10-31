@@ -9,6 +9,10 @@ import {
   paymentFromRow,
   SubscriptionGateError,
 } from '@/lib/billing/entitlement';
+import {
+  applyHeldRedemptionsForPayment,
+  releaseHeldRedemptionsForPayment,
+} from '@/lib/billing/coupons';
 import { getBillingAdminClient } from '@/lib/billing/route-helpers';
 import { getNowPaymentsConfig } from '@/lib/billing/nowpayments';
 
@@ -80,7 +84,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       const { data, error: lookupError } = await client
         .from('subscription_payments')
         .select(
-          'id,user_id,method,bank_method,status,facebook_count,instagram_count,threads_count,x_count,tiktok_count,youtube_count,amount_pkr,is_upgrade,screenshot_storage_key,nowpayments_payment_id,nowpayments_pay_address,nowpayments_pay_amount,nowpayments_network,period_id,approved_at,created_at'
+          'id,user_id,method,bank_method,status,facebook_count,instagram_count,threads_count,x_count,tiktok_count,youtube_count,amount_pkr,is_upgrade,screenshot_storage_key,nowpayments_payment_id,nowpayments_pay_address,nowpayments_pay_amount,nowpayments_network,coupon_code,discount_pkr,period_id,approved_at,created_at'
         )
         .eq('id', payload.order_id)
         .maybeSingle();
@@ -94,7 +98,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       const { data, error: lookupError } = await client
         .from('subscription_payments')
         .select(
-          'id,user_id,method,bank_method,status,facebook_count,instagram_count,threads_count,x_count,tiktok_count,youtube_count,amount_pkr,is_upgrade,screenshot_storage_key,nowpayments_payment_id,nowpayments_pay_address,nowpayments_pay_amount,nowpayments_network,period_id,approved_at,created_at'
+          'id,user_id,method,bank_method,status,facebook_count,instagram_count,threads_count,x_count,tiktok_count,youtube_count,amount_pkr,is_upgrade,screenshot_storage_key,nowpayments_payment_id,nowpayments_pay_address,nowpayments_pay_amount,nowpayments_network,coupon_code,discount_pkr,period_id,approved_at,created_at'
         )
         .eq('nowpayments_payment_id', providerPaymentId)
         .maybeSingle();
@@ -139,6 +143,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         })
         .eq('id', payment.id);
       if (markPaidError) throw markPaidError;
+      // Coupon held at checkout becomes applied now that the
+      // deposit finished. This is logged loudly, not thrown: a
+      // retry of this notification would hit the alreadyActivated
+      // check above and return without re-running this step, so
+      // failing the webhook here could not recover it — and the
+      // money outcome is already correct (the balance was
+      // deducted at hold time).
+      try {
+        await applyHeldRedemptionsForPayment(client, payment.id);
+      } catch (err) {
+        logServerError('[billing] coupon apply after webhook finished failed', err, {
+          source: 'billing',
+          paymentId: payment.id,
+        });
+      }
       return NextResponse.json({ received: true, activated: true });
     }
 
@@ -149,6 +168,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           .update({ status, updated_at: new Date().toISOString() })
           .eq('id', payment.id);
         if (markStatusError) throw markStatusError;
+      }
+      // A deposit that will never finish gives the coupon back,
+      // by the same guarded release the bank reject path uses.
+      // Logged loudly, not thrown, for the same retry reason as
+      // the finished path above.
+      try {
+        await releaseHeldRedemptionsForPayment(client, payment.id);
+      } catch (err) {
+        logServerError('[billing] coupon release after webhook failure failed', err, {
+          source: 'billing',
+          paymentId: payment.id,
+        });
       }
       return NextResponse.json({ received: true, updated: true });
     }

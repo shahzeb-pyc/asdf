@@ -119,6 +119,8 @@ function paymentObject(overrides: Partial<SubscriptionPaymentRow> = {}): Subscri
     nowpaymentsPayAddress: null,
     nowpaymentsPayAmount: null,
     nowpaymentsNetwork: null,
+    couponCode: null,
+    discountPkr: 0,
     periodId: null,
     approvedAt: null,
     createdAt: '2026-10-30T00:00:00.000Z',
@@ -159,7 +161,7 @@ function baseState(overrides: Partial<FakeState> = {}): FakeState {
   };
 }
 
-type Filter = { op: 'eq' | 'is' | 'lte' | 'gt' | 'neq'; col: string; val: unknown };
+type Filter = { op: 'eq' | 'is' | 'lte' | 'gt' | 'neq' | 'in'; col: string; val: unknown };
 
 class FakeBuilder {
   private filters: Filter[] = [];
@@ -186,6 +188,11 @@ class FakeBuilder {
 
   is(col: string, val: unknown): this {
     this.filters.push({ op: 'is', col, val });
+    return this;
+  }
+
+  in(col: string, val: unknown[]): this {
+    this.filters.push({ op: 'in', col, val });
     return this;
   }
 
@@ -305,6 +312,7 @@ class FakeBuilder {
         const v = row[f.col];
         if (f.op === 'eq') return v === f.val;
         if (f.op === 'is') return f.val === null ? v == null : v === f.val;
+        if (f.op === 'in') return Array.isArray(f.val) && f.val.includes(v);
         if (f.op === 'lte') return String(v) <= String(f.val);
         if (f.op === 'neq') return v !== f.val;
         return String(v) > String(f.val);

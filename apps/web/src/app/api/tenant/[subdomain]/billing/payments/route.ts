@@ -16,6 +16,14 @@ import {
   SubscriptionGateError,
 } from '@/lib/billing/entitlement';
 import {
+  CouponError,
+  computeDiscount,
+  holdCoupon,
+  loadCouponByCode,
+  releaseRedemption,
+  type CouponRedemptionRow,
+} from '@/lib/billing/coupons';
+import {
   getBillingAdminClient,
   mapPaymentToItem,
 } from '@/lib/billing/route-helpers';
@@ -89,6 +97,21 @@ export async function POST(
       { status: 400 }
     );
   }
+  // One coupon per purchase, enforced here: a second couponCode
+  // field is a 400, never a silent second discount.
+  const couponCodes = form
+    .getAll('couponCode')
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+  if (couponCodes.length > 1) {
+    return NextResponse.json(
+      {
+        error: 'INVALID_REQUEST',
+        message: 'Only one coupon can be used per purchase.',
+      },
+      { status: 400 }
+    );
+  }
+  const couponCode = couponCodes.length === 1 ? couponCodes[0] : null;
   if (file === null || typeof file === 'string' || file.size === 0) {
     return NextResponse.json(
       {
@@ -109,6 +132,13 @@ export async function POST(
     );
   }
 
+  // Coupon hold (if any): the claim lands before any money moves,
+  // so a failed submission never strands a discount. The payment
+  // row is inserted with the REDUCED amount; the redemption is
+  // linked to it right after the insert. These live outside the
+  // try block so the catch can release an unlinked hold.
+  let heldRedemption: CouponRedemptionRow | null = null;
+  let redemptionLinked = false;
   try {
     const counts = countsResult.data;
     // One pending payment per user: checked before any screenshot is
@@ -133,6 +163,37 @@ export async function POST(
       throw err;
     }
 
+    let discountPkr = 0;
+    if (couponCode) {
+      const coupon = await loadCouponByCode(client, couponCode);
+      if (!coupon) {
+        return NextResponse.json(
+          { error: 'COUPON_NOT_FOUND', message: 'That coupon code was not found.' },
+          { status: 404 }
+        );
+      }
+      discountPkr = computeDiscount(coupon, amountPkr);
+      // A coupon covering the full amount belongs to the zero-due
+      // path, not here: a 0-PKR bank payment needing a screenshot
+      // and an approval would be nonsense. Refused before any hold.
+      if (discountPkr >= amountPkr) {
+        return NextResponse.json(
+          {
+            error: 'INVALID_REQUEST',
+            message: 'This coupon covers the full amount. Activate your plan with the coupon instead of paying by bank.',
+          },
+          { status: 400 }
+        );
+      }
+      heldRedemption = await holdCoupon(client, {
+        coupon,
+        userId: session.userId,
+        paymentId: null,
+        discountPkr,
+      });
+      amountPkr -= discountPkr;
+    }
+
     const storageKey = `billing-screenshots/${session.userId}/${crypto.randomUUID()}.${extension}`;
     const bytes = new Uint8Array(await file.arrayBuffer());
     try {
@@ -142,6 +203,15 @@ export async function POST(
         contentType: file.type,
       });
     } catch (err) {
+      if (heldRedemption) {
+        try {
+          await releaseRedemption(client, heldRedemption);
+        } catch (releaseError) {
+          logServerError('[billing] coupon release after screenshot failure failed', releaseError, {
+            source: 'billing',
+          });
+        }
+      }
       logServerError('[billing] screenshot upload failed', err, { source: 'billing' });
       return NextResponse.json(
         { error: 'The screenshot could not be saved. Please try again.' },
@@ -165,9 +235,11 @@ export async function POST(
         amount_pkr: amountPkr,
         is_upgrade: isUpgrade,
         screenshot_storage_key: storageKey,
+        coupon_code: couponCode ? couponCode.trim().toUpperCase() : null,
+        discount_pkr: discountPkr,
       })
       .select(
-        'id,user_id,method,bank_method,status,facebook_count,instagram_count,threads_count,x_count,tiktok_count,youtube_count,amount_pkr,is_upgrade,screenshot_storage_key,nowpayments_payment_id,nowpayments_pay_address,nowpayments_pay_amount,nowpayments_network,period_id,approved_at,created_at'
+        'id,user_id,method,bank_method,status,facebook_count,instagram_count,threads_count,x_count,tiktok_count,youtube_count,amount_pkr,is_upgrade,screenshot_storage_key,nowpayments_payment_id,nowpayments_pay_address,nowpayments_pay_amount,nowpayments_network,coupon_code,discount_pkr,period_id,approved_at,created_at'
       )
       .single();
     if (error?.code === '23505') {
@@ -208,8 +280,49 @@ export async function POST(
     }
     const payment = paymentFromRow(data as Record<string, unknown>);
     if (!payment) throw new Error('Payment insert returned an unreadable row');
+    if (heldRedemption) {
+      // Link the held redemption to this payment. If the link
+      // itself fails, the payment is removed again (it was created
+      // milliseconds ago by this request and never seen) and the
+      // coupon is released, so no discounted-but-couponless payment
+      // can strand the user or the coupon.
+      const { error: linkError } = await client
+        .from('coupon_redemptions')
+        .update({ payment_id: payment.id })
+        .eq('id', heldRedemption.id)
+        .eq('status', 'held');
+      if (linkError) {
+        await client.from('subscription_payments').delete().eq('id', payment.id);
+        try {
+          await releaseRedemption(client, heldRedemption);
+        } catch (releaseError) {
+          logServerError('[billing] coupon release after link failure failed', releaseError, {
+            source: 'billing',
+          });
+        }
+        throw new Error('Coupon redemption link failed');
+      }
+      redemptionLinked = true;
+    }
     return NextResponse.json(mapPaymentToItem(payment), { status: 201 });
   } catch (err) {
+    if (err instanceof CouponError) {
+      const status = err.code === 'COUPON_NOT_FOUND' ? 404 : 400;
+      return NextResponse.json({ error: err.code, message: err.message }, { status });
+    }
+    // A hold that never got linked (insert failed, link failed,
+    // unreadable row) must not strand the coupon: release it.
+    // Releasing is idempotent — a hold already released by an
+    // inner path simply no-ops here.
+    if (heldRedemption && !redemptionLinked) {
+      try {
+        await releaseRedemption(client, heldRedemption);
+      } catch (releaseError) {
+        logServerError('[billing] coupon release after bank failure failed', releaseError, {
+          source: 'billing',
+        });
+      }
+    }
     logServerError('[billing] bank payment failed', err, { source: 'billing' });
     return NextResponse.json(
       { error: 'Your payment could not be submitted. Please try again.' },

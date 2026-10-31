@@ -48,5 +48,6 @@ export * from './publishing/publish-now.js';
 export * from './publishing/instagram-publish-now.js';
 export * from './publishing/threads-publish-now.js';
 export * from './domain/subscription.js';
+export * from './domain/coupon.js';
 export * from './domain/creator-finder.js';
 export * from './domain/adu.js';
