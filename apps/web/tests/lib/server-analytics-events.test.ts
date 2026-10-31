@@ -81,7 +81,7 @@ describe('trackServerEvent', () => {
       platform: PLATFORM,
       count: 2,
     });
-    expect(instances.length).toBe(before);
+    expect(instances).toHaveLength(before);
   });
 
   it('normalizes a bare region host instead of sending it verbatim', async () => {

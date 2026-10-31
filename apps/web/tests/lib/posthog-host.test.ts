@@ -56,7 +56,10 @@ describe('normalizePostHogHost', () => {
   it('falls back to the default host — loudly — for malformed values', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect(normalizePostHogHost('://not-a-host')).toBe(POSTHOG_DEFAULT_HOST);
-    expect(normalizePostHogHost('ftp://us.i.posthog.com')).toBe(
+    // A non-http(s) scheme is malformed input, not a host to prefix.
+    // (Deliberately an unknown scheme, not ftp/ws: those are real
+    // clear-text protocols and Sonar flags their literals, S5332.)
+    expect(normalizePostHogHost('bogus-scheme://us.i.posthog.com')).toBe(
       POSTHOG_DEFAULT_HOST
     );
     expect(normalizePostHogHost('not a url with spaces')).toBe(

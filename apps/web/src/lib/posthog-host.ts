@@ -62,7 +62,12 @@ export function normalizePostHogHost(input: string | undefined | null): string {
       (url.protocol === 'https:' || url.protocol === 'http:') &&
       url.hostname.length > 0
     ) {
-      return url.toString().replace(/\/+$/, '');
+      // Strip trailing slashes without a regex: a quantified pattern
+      // before an end anchor (e.g. /\/+$/) trips Sonar's super-linear
+      // backtracking rule (S8786), and a loop is linear and obvious.
+      let host = url.toString();
+      while (host.endsWith('/')) host = host.slice(0, -1);
+      return host;
     }
   } catch {
     // Unparseable: warned below, same as the parsed-but-unusable case.
