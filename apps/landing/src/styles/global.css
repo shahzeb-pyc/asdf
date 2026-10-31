@@ -367,3 +367,97 @@
 .faq-card summary::marker {
   content: "";
 }
+
+/* Phone fit compression (owner order: every section must fit one
+   phone screen). Phone-only (max-width 767px), so desktop rules
+   are untouched. Shrink order everywhere: spacing first, then
+   secondary sizing/text, headings and buttons last and minimally.
+   Nothing is clipped, hidden, or removed; no wording changes;
+   no transitions or animations. Unlayered rules here override
+   Tailwind utilities. */
+@media (max-width: 767px) {
+  /* Section 4 Creator Finder (was ~1201px): section padding,
+     text block, grid gap, then panel padding/tabs/search/rows. */
+  #section-4 { padding-top: 52px; padding-bottom: 36px; }
+  #section-4 > div { gap: 20px; }
+  #section-4 > div > div:first-child > p:first-child { margin-bottom: 8px; }
+  #section-4 h2 { font-size: 28px; }
+  #section-4 p.mt-5 { margin-top: 12px; font-size: 14px; line-height: 1.5; }
+  #section-4 ul { margin-top: 16px; }
+  #section-4 li { padding-top: 6px; padding-bottom: 6px; font-size: 13.5px; line-height: 1.45; }
+  #section-4 > div > div:last-child { padding: 16px; }
+  #section-4 .rounded-2xl > p { margin-bottom: 8px; font-size: 12px; }
+  #section-4 .rounded-2xl > div.flex-wrap { margin-bottom: 12px; }
+  #section-4 .rounded-2xl > div.flex-wrap > span { padding-top: 6px; padding-bottom: 6px; font-size: 12px; }
+  #section-4 .rounded-2xl > div.flex-col { margin-bottom: 12px; }
+  #section-4 .rounded-2xl > div.flex-col > span:first-child { padding-top: 8px; padding-bottom: 8px; }
+  #section-4 .rounded-2xl > div.flex-col > span:last-child { padding-top: 10px; padding-bottom: 10px; }
+  #section-4 .rounded-2xl > div.flex.items-center { padding-top: 8px; padding-bottom: 8px; }
+  #section-4 .rounded-2xl > div.flex.items-center > span:first-child { width: 40px; height: 40px; }
+  /* Section 5 All Features (was ~1087px): padding, label/heading,
+     grid gap, row padding/title/detail. Bottom padding stays 64px:
+     48px transition pull-up + 16px clearance — never below that. */
+  #section-5 { padding-top: 48px; padding-bottom: 64px; }
+  #section-5 > div > p:first-child { margin-bottom: 8px; }
+  #section-5 h2 { font-size: 28px; }
+  #section-5 .mt-10 { margin-top: 24px; }
+  #section-5 .mt-10 > div { padding-top: 12px; padding-bottom: 12px; }
+  #section-5 .mt-10 h3 { font-size: 17px; }
+  #section-5 .mt-10 p { margin-top: 4px; font-size: 14px; line-height: 1.5; }
+  /* Section 7 Pricing (was ~1179px): panel padding, heading/rule,
+     card padding, dividers, feature gaps/leading, buttons last.
+     Stacked gap stays 32px so the badge keeps ~18px clearance
+     over the Free card below it. Buttons land at 36px (floor). */
+  #section-7 .dark-panel { padding-top: 36px; padding-bottom: 20px; }
+  #section-7 h2 { font-size: 26px; }
+  #section-7 h2 .block { margin-top: 6px; margin-bottom: 6px; }
+  #section-7 .grid { margin-top: 12px; }
+  #section-7 .grid > div { padding: 8px; }
+  #section-7 .grid h3 { font-size: 22px; }
+  #section-7 .grid .my-3 { margin-top: 6px; margin-bottom: 6px; }
+  #section-7 .grid ul { gap: 6px; margin-bottom: 16px; }
+  #section-7 .grid li { font-size: 13.5px; line-height: 1.4; }
+  #section-7 .grid a { padding-top: 6px; padding-bottom: 6px; }
+  #section-7 .grid p.mt-4 { margin-top: 12px; font-size: 13.5px; }
+  /* Section 8 FAQ (closed state, was already near fit): trim
+     section padding and grid gap for margin on both heights. */
+  #section-8 { padding-top: 48px; padding-bottom: 48px; }
+  #section-8 > div { gap: 28px; }
+}
+
+/* Short-phone extra squeeze (max-height 700px, phones only):
+   tighter spacing/text, and the Creator Finder search row goes
+   horizontal (input + button side by side) instead of stacked.
+   Section 5 bottom padding stays 60px: 48px pull-up + 12px
+   clearance. Floors respected: body text >= 12px, buttons 36px. */
+@media (max-width: 767px) and (max-height: 700px) {
+  #section-4 { padding-top: 40px; padding-bottom: 24px; }
+  #section-4 > div { gap: 12px; }
+  #section-4 h2 { font-size: 26px; }
+  #section-4 p.mt-5 { margin-top: 8px; font-size: 12.5px; line-height: 1.45; }
+  #section-4 ul { margin-top: 12px; }
+  #section-4 li { padding-top: 4px; padding-bottom: 4px; font-size: 13px; line-height: 1.4; }
+  #section-4 > div > div:last-child { padding: 10px; }
+  #section-4 .rounded-2xl > p { margin-bottom: 6px; }
+  #section-4 .rounded-2xl > div.flex-wrap { gap: 6px; }
+  #section-4 .rounded-2xl > div.flex-wrap > span { padding-top: 4px; padding-bottom: 4px; }
+  #section-4 .rounded-2xl > div.flex-col { flex-direction: row; align-items: center; }
+  #section-4 .rounded-2xl > div.flex.items-center { padding-top: 6px; padding-bottom: 6px; }
+  #section-4 .rounded-2xl > div.flex.items-center > span:first-child { width: 36px; height: 36px; }
+  #section-5 { padding-top: 32px; padding-bottom: 60px; }
+  #section-5 .mt-10 { margin-top: 20px; }
+  #section-5 h2 { font-size: 26px; }
+  #section-5 .mt-10 > div { padding-top: 8px; padding-bottom: 8px; }
+  #section-5 .mt-10 h3 { font-size: 16px; }
+  #section-5 .mt-10 p { font-size: 13px; line-height: 1.4; }
+  #section-7 .dark-panel { padding-top: 28px; padding-bottom: 16px; }
+  #section-7 h2 { font-size: 24px; }
+  #section-7 .grid { margin-top: 8px; }
+  #section-7 .grid > div { padding: 6px; }
+  #section-7 .grid h3 { font-size: 20px; }
+  #section-7 .grid .my-3 { margin-top: 4px; margin-bottom: 4px; }
+  #section-7 .grid ul { gap: 4px; margin-bottom: 12px; }
+  #section-7 .grid li { font-size: 12.5px; line-height: 1.35; }
+  #section-7 .grid p.mt-4 { margin-top: 8px; }
+  #section-8 { padding-top: 40px; padding-bottom: 40px; }
+}
