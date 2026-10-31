@@ -269,10 +269,31 @@ export async function fetchOwnedMedia(
 }
 
 /**
- * The post-staging keys currently referenced by any queue item in
- * the workspace (the lazy staged-upload sweep's keep set). Scoped
- * by the staging prefix itself, so the scan stays small: only
- * staged keys can ever match, never library or post-media keys.
+ * Queue statuses whose rows can still publish, and whose staged
+ * keys the lazy sweep must therefore keep. Published and cancelled
+ * rows are terminal — their staged bytes will never be published
+ * from, so their keys are not kept.
+ */
+export const LIVE_QUEUE_STATUSES_FOR_SWEEP = ['queued', 'failed', 'publishing'] as const;
+
+/** One keep-set page: PostgREST's default cap, and the SQL page size. */
+const REFERENCED_STAGED_KEYS_PAGE = 1000;
+
+/** The nil UUID: every real queue id sorts after it, so keyset paging starts here. */
+const NIL_UUID = '00000000-0000-0000-0000-000000000000';
+
+/**
+ * The post-staging keys currently referenced by any still-live
+ * queue item in the workspace (the lazy staged-upload sweep's keep
+ * set). Scoped by the staging prefix itself, so the scan stays
+ * small: only staged keys can ever match, never library or
+ * post-media keys.
+ *
+ * Complete, not capped: the keep set pages through every live row
+ * (keyset on id) instead of taking an arbitrary first 1,000. A
+ * capped slice used to drop a still-queued staged post scheduled
+ * far out once the workspace passed 1,000 staged-key rows, and the
+ * sweep then deleted bytes its later publish needed.
  */
 export async function fetchReferencedStagedKeys(
   client: ConnectDbClient,
@@ -281,34 +302,54 @@ export async function fetchReferencedStagedKeys(
 ): Promise<Set<string>> {
   const prefix = postStagingKeyPrefix(userId);
   if (isLegacyClient(client)) {
-    const rows = (await (client as DatabaseClient).query(
-      `SELECT media_storage_key
-       FROM queue_items
-       WHERE workspace_id = $1 AND media_storage_key LIKE $2
-       LIMIT 1000`,
-      [workspaceId, `${prefix}%`]
-    )) as Array<{ media_storage_key?: string | null }>;
-    return new Set(
-      rows
-        .map((r) => r.media_storage_key)
-        .filter((k): k is string => typeof k === 'string' && k.length > 0)
-    );
+    const keys = new Set<string>();
+    let lastId = NIL_UUID;
+    for (;;) {
+      const rows = (await (client as DatabaseClient).query(
+        `SELECT id, media_storage_key
+         FROM queue_items
+         WHERE workspace_id = $1 AND media_storage_key LIKE $2
+           AND status = ANY($3::text[]) AND id > $4
+         ORDER BY id ASC
+         LIMIT ${REFERENCED_STAGED_KEYS_PAGE}`,
+        [workspaceId, `${prefix}%`, [...LIVE_QUEUE_STATUSES_FOR_SWEEP], lastId]
+      )) as Array<{ id: string; media_storage_key?: string | null }>;
+      for (const r of rows) {
+        if (typeof r.media_storage_key === 'string' && r.media_storage_key.length > 0) {
+          keys.add(r.media_storage_key);
+        }
+      }
+      if (rows.length < REFERENCED_STAGED_KEYS_PAGE) break;
+      lastId = rows[rows.length - 1].id;
+    }
+    return keys;
   }
 
   const supabase = getRouteSupabase(client as SupabaseClient);
   if (!supabase) return new Set();
-  const { data, error } = await supabase
-    .from('queue_items')
-    .select('media_storage_key')
-    .eq('workspace_id', workspaceId)
-    .like('media_storage_key', `${prefix}%`)
-    .limit(1000);
-  if (error) return new Set();
-  return new Set(
-    (data as Array<{ media_storage_key?: string | null }>)
-      .map((r) => r.media_storage_key)
-      .filter((k): k is string => typeof k === 'string' && k.length > 0)
-  );
+  const keys = new Set<string>();
+  let lastId = NIL_UUID;
+  for (;;) {
+    const { data, error } = await supabase
+      .from('queue_items')
+      .select('id, media_storage_key')
+      .eq('workspace_id', workspaceId)
+      .like('media_storage_key', `${prefix}%`)
+      .in('status', [...LIVE_QUEUE_STATUSES_FOR_SWEEP])
+      .gt('id', lastId)
+      .order('id', { ascending: true })
+      .limit(REFERENCED_STAGED_KEYS_PAGE);
+    if (error) return new Set();
+    const page = data as Array<{ id: string; media_storage_key?: string | null }>;
+    for (const r of page) {
+      if (typeof r.media_storage_key === 'string' && r.media_storage_key.length > 0) {
+        keys.add(r.media_storage_key);
+      }
+    }
+    if (page.length < REFERENCED_STAGED_KEYS_PAGE) break;
+    lastId = page[page.length - 1].id;
+  }
+  return keys;
 }
 
 /** All of a destination's unified posting slots, earliest first. */
