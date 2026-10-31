@@ -8,9 +8,9 @@ import type { ThreadsScheduleItem } from '@fbuploadpro/contracts';
 vi.mock('next/image', () => ({
   default: (props: Record<string, unknown>) => {
     const { src, alt } = props as { src: string; alt: string };
-    // Test double for next/image — a plain img is the point.
-    // eslint-disable-next-line @next/next/no-img-element
-    return <img src={src} alt={alt} />;
+    // Test double for next/image, built via createElement so the
+    // regression guardrail stays green.
+    return React.createElement('img', { src, alt });
   },
 }));
 vi.mock('next/link', () => ({

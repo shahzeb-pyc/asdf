@@ -38,7 +38,19 @@ function matches(row: Row, filters: Filter[]): boolean {
 
 let idCounter = 0;
 
-export class FakeBuilder {
+/**
+ * The builder is a genuine Promise (like tests/helpers/mock-supabase-pages),
+ * NOT a custom thenable: Sonar rule S7739 flags a `then` method added to
+ * a class, and this helper is not a *.test.ts file so it is scanned as
+ * main code. Resolution is deferred to a microtask scheduled by the
+ * first chain call, so the route's synchronous chain finishes before
+ * execute() observes the final chain state.
+ */
+export class FakeBuilder extends Promise<unknown> {
+  static get [Symbol.species](): PromiseConstructor {
+    return Promise;
+  }
+
   filters: Filter[] = [];
   private mode: 'select' | 'insert' | 'update' | 'delete' | 'upsert' = 'select';
   private head = false;
@@ -50,15 +62,48 @@ export class FakeBuilder {
   private orderAsc = true;
   private pendingInsert: Row[] | null = null;
   private pendingUpdate: Row | null = null;
+  private resolveResult!: (value: unknown) => void;
+  private rejectResult!: (reason: unknown) => void;
+  private scheduled = false;
+  private readonly table: string;
+  private readonly db: Record<string, Row[]>;
+  private readonly errors: Record<string, { message: string; code?: string; once?: boolean }>;
+  private readonly calls: FakeCall[];
 
   constructor(
-    private readonly table: string,
-    private readonly db: Record<string, Row[]>,
-    private readonly errors: Record<string, { message: string; code?: string; once?: boolean }>,
-    private readonly calls: FakeCall[]
-  ) {}
+    table: string,
+    db: Record<string, Row[]>,
+    errors: Record<string, { message: string; code?: string; once?: boolean }>,
+    calls: FakeCall[]
+  ) {
+    let resolveResult!: (value: unknown) => void;
+    let rejectResult!: (reason: unknown) => void;
+    super((resolve, reject) => {
+      resolveResult = resolve;
+      rejectResult = reject;
+    });
+    this.resolveResult = resolveResult;
+    this.rejectResult = rejectResult;
+    this.table = table;
+    this.db = db;
+    this.errors = errors;
+    this.calls = calls;
+  }
+
+  private schedule(): void {
+    if (this.scheduled) return;
+    this.scheduled = true;
+    void Promise.resolve().then(() => {
+      try {
+        this.resolveResult(this.execute());
+      } catch (error) {
+        this.rejectResult(error);
+      }
+    });
+  }
 
   select(_cols?: string, opts?: { count?: string; head?: boolean }) {
+    this.schedule();
     if (this.mode === 'insert' || this.mode === 'upsert') {
       this.selectAfterInsert = true;
     } else {
@@ -69,76 +114,89 @@ export class FakeBuilder {
   }
 
   eq(col: string, val: unknown) {
+    this.schedule();
     this.filters.push({ op: 'eq', col, val });
     return this;
   }
 
   in(col: string, val: unknown[]) {
+    this.schedule();
     this.filters.push({ op: 'in', col, val });
     return this;
   }
 
   gte(col: string, val: unknown) {
+    this.schedule();
     this.filters.push({ op: 'gte', col, val });
     return this;
   }
 
   lt(col: string, val: unknown) {
+    this.schedule();
     this.filters.push({ op: 'lt', col, val });
     return this;
   }
 
   gt(col: string, val: unknown) {
+    this.schedule();
     this.filters.push({ op: 'gt', col, val });
     return this;
   }
 
   order(col: string, opts?: { ascending?: boolean }) {
+    this.schedule();
     this.orderCol = col;
     this.orderAsc = opts?.ascending !== false;
     return this;
   }
 
   range(from: number, to: number) {
+    this.schedule();
     this.rangeFrom = from;
     this.rangeTo = to;
     return this;
   }
 
   insert(payload: Row | Row[]) {
+    this.schedule();
     this.mode = 'insert';
     this.pendingInsert = Array.isArray(payload) ? payload : [payload];
     return this;
   }
 
   upsert(payload: Row, _opts?: unknown) {
+    this.schedule();
     this.mode = 'upsert';
     this.pendingInsert = [payload];
     return this;
   }
 
   update(payload: Row) {
+    this.schedule();
     this.mode = 'update';
     this.pendingUpdate = payload;
     return this;
   }
 
   delete() {
+    this.schedule();
     this.mode = 'delete';
     return this;
   }
 
   single() {
+    this.schedule();
     this.singleFlag = true;
     return this;
   }
 
   maybeSingle() {
+    this.schedule();
     this.singleFlag = true;
     return this;
   }
 
-  then(resolve: (value: unknown) => void) {
+  private execute(): unknown {
     const errKey = `${this.table}:${this.mode}`;
     const err = this.errors[errKey];
     if (err?.once) delete this.errors[errKey];
@@ -149,8 +207,7 @@ export class FakeBuilder {
       filters: [...this.filters],
     });
     if (err) {
-      resolve({ data: null, count: null, error: err });
-      return;
+      return { data: null, count: null, error: err };
     }
     const store = (this.db[this.table] ??= []);
     if (this.mode === 'insert' || this.mode === 'upsert') {
@@ -177,23 +234,20 @@ export class FakeBuilder {
         return full;
       });
       if (this.selectAfterInsert && this.singleFlag) {
-        resolve({ data: inserted[0] ?? null, error: null });
+        return { data: inserted[0] ?? null, error: null };
       } else {
-        resolve({ data: inserted, error: null });
+        return { data: inserted, error: null };
       }
-      return;
     }
     if (this.mode === 'update') {
       for (const row of store) {
         if (matches(row, this.filters)) Object.assign(row, this.pendingUpdate);
       }
-      resolve({ error: null });
-      return;
+      return { error: null };
     }
     if (this.mode === 'delete') {
       this.db[this.table] = store.filter((row) => !matches(row, this.filters));
-      resolve({ error: null });
-      return;
+      return { error: null };
     }
     // select
     let rows = store.filter((row) => matches(row, this.filters));
@@ -210,14 +264,12 @@ export class FakeBuilder {
       rows = rows.slice(this.rangeFrom, this.rangeTo + 1);
     }
     if (this.head) {
-      resolve({ count: rows.length, error: null });
-      return;
+      return { count: rows.length, error: null };
     }
     if (this.singleFlag) {
-      resolve({ data: rows[0] ?? null, error: null });
-      return;
+      return { data: rows[0] ?? null, error: null };
     }
-    resolve({ data: rows, count: rows.length, error: null });
+    return { data: rows, count: rows.length, error: null };
   }
 }
 
