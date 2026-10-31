@@ -1,3 +1,4 @@
+import { InternalError } from '@fbuploadpro/contracts';
 import {
   InstagramGraphError,
   InstagramPublishClient,
@@ -72,13 +73,13 @@ export async function publishInstagramMirrorReel(params: {
     }
     if (statusCode === 'FINISHED' || statusCode === 'PUBLISHED') break;
     if (statusCode === 'ERROR' || statusCode === 'EXPIRED') {
-      throw new Error('Instagram could not prepare this reel. Check the video and try again.');
+      throw new InternalError('Instagram could not prepare this reel. Check the video and try again.');
     }
     if (attempt < maxPolls - 1) await sleep(pollIntervalMs);
   }
   if (statusCode === 'PUBLISHED') return containerId;
   if (statusCode !== 'FINISHED') {
-    throw new Error('Instagram is still preparing this reel. It will be tried again at the next check.');
+    throw new InternalError('Instagram is still preparing this reel. It will be tried again at the next check.');
   }
 
   try {
