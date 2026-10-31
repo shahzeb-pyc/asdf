@@ -138,26 +138,6 @@
   padding: 0.02em 0.12em;
 }
 
-/* Isometric platform tiles (desktop). Tile: a diamond via
-   rotateX(58deg) rotateZ(-45deg). Logo: a separate layer, a
-   sibling of the tile, absolutely centred over it with
-   translate(-50%, -50%) only — no tilt — so it renders upright
-   and undistorted on top of the diamond. Logos: Simple Icons
-   paths, copied faithfully from the previous page. */
-.iso-tile {
-  transform: rotateX(58deg) rotateZ(-45deg);
-  box-shadow: 0 18px 32px rgba(17, 17, 17, 0.14);
-}
-.iso-logo {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  display: block;
-  flex-shrink: 0;
-  filter: drop-shadow(0 2px 4px rgba(17, 17, 17, 0.15));
-}
-
 /* Section 2 orbit badges. Positioned by percentage left/top with
    a centring translate, so the badges stay centred on their
    orbit points at every size, statically. */
@@ -232,13 +212,6 @@
   .hero .grid-cols-3 > span > svg {
     width: 22px;
     height: 22px;
-  }
-}
-
-/* Short desktop viewport: smaller perspective stage. */
-@media (min-width: 1024px) and (max-height: 760px) {
-  .iso-stage {
-    height: 220px;
   }
 }
 
@@ -326,22 +299,6 @@
   .hero-sub {
     margin-bottom: 24px;
   }
-  .hero .iso-stage {
-    height: 220px;
-    margin-top: 16px;
-  }
-  .iso-stage > span:nth-child(1) { width: 100px; height: 100px; bottom: 66px; }
-  .iso-stage > span:nth-child(2) { width: 117px; height: 117px; bottom: 14px; }
-  .iso-stage > span:nth-child(3) { width: 90px; height: 90px; bottom: 93px; }
-  .iso-stage > span:nth-child(4) { width: 114px; height: 114px; bottom: 22px; }
-  .iso-stage > span:nth-child(5) { width: 95px; height: 95px; bottom: 85px; }
-  .iso-stage > span:nth-child(6) { width: 111px; height: 111px; bottom: 30px; }
-  .iso-stage > span:nth-child(1) .iso-logo { width: 44px; height: 44px; }
-  .iso-stage > span:nth-child(2) .iso-logo { width: 51px; height: 51px; }
-  .iso-stage > span:nth-child(3) .iso-logo { width: 39px; height: 39px; }
-  .iso-stage > span:nth-child(4) .iso-logo { width: 49px; height: 49px; }
-  .iso-stage > span:nth-child(5) .iso-logo { width: 44px; height: 44px; }
-  .iso-stage > span:nth-child(6) .iso-logo { width: 48px; height: 48px; }
 }
 @media (min-width: 1024px) and (max-height: 620px) {
   .hero {
@@ -351,21 +308,6 @@
   .hero h1 {
     font-size: 48px;
   }
-  .hero .iso-stage {
-    height: 180px;
-  }
-  .iso-stage > span:nth-child(1) { width: 83px; height: 83px; bottom: 54px; }
-  .iso-stage > span:nth-child(2) { width: 97px; height: 97px; bottom: 12px; }
-  .iso-stage > span:nth-child(3) { width: 74px; height: 74px; bottom: 76px; }
-  .iso-stage > span:nth-child(4) { width: 94px; height: 94px; bottom: 18px; }
-  .iso-stage > span:nth-child(5) { width: 78px; height: 78px; bottom: 69px; }
-  .iso-stage > span:nth-child(6) { width: 91px; height: 91px; bottom: 24px; }
-  .iso-stage > span:nth-child(1) .iso-logo { width: 36px; height: 36px; }
-  .iso-stage > span:nth-child(2) .iso-logo { width: 42px; height: 42px; }
-  .iso-stage > span:nth-child(3) .iso-logo { width: 32px; height: 32px; }
-  .iso-stage > span:nth-child(4) .iso-logo { width: 41px; height: 41px; }
-  .iso-stage > span:nth-child(5) .iso-logo { width: 36px; height: 36px; }
-  .iso-stage > span:nth-child(6) .iso-logo { width: 39px; height: 39px; }
 }
 
 
