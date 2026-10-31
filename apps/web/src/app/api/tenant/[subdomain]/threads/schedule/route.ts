@@ -4,7 +4,6 @@ import {
   isThreadsScheduleAdded,
   type ThreadsScheduleItem,
 } from '@fbuploadpro/contracts';
-import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import { logServerError } from '@/lib/server-analytics';
 import { paginateMeta, parsePaginationParams } from '@/lib/server/pagination';
 import {
@@ -17,7 +16,6 @@ import {
 } from '@/lib/server/threads-schedule';
 import { refreshDestinationUnmatchedFlag } from '@/lib/server/unmatched-flag';
 import { authenticateThreadsSchedule } from '@/lib/server/threads-schedule-auth';
-import type { SupabaseClient } from '@supabase/supabase-js';
 
 /**
  * Threads In-app Schedule list + add.

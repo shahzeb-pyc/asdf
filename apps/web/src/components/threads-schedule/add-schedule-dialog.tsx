@@ -80,7 +80,6 @@ export function AddThreadsScheduleDialog({
     enabled: open,
   });
   const candidates: ThreadsScheduleCandidate[] = candidatesQuery.data?.candidates ?? [];
-  const selected = candidates.find((c) => c.destinationId === selectedDestinationId) ?? null;
 
   const reset = React.useCallback(() => {
     setStep(1);
