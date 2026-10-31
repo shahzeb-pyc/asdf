@@ -133,6 +133,16 @@ describe('IgAduHubPage', () => {
     expect(document.body.textContent).not.toContain('Facebook');
   });
 
+  it('shows the migration banner, not the empty state, when the ADU tables are missing', async () => {
+    fetchMock.mockImplementation((url: string) => {
+      if (url.includes('/options')) return jsonResponse(OPTIONS_BODY);
+      return jsonResponse({ configs: [], total: 0, page: 1, migrationMissing: true });
+    });
+    render(<IgAduHubPage subdomain="acme" />);
+    expect(await screen.findByText('ADU tables are not created yet')).toBeTruthy();
+    expect(screen.queryByText('No accounts found')).toBeNull();
+  });
+
   it('shows the first-use empty state when no accounts are configured', async () => {
     fetchMock.mockImplementation((url: string) => {
       if (url.includes('/options')) return jsonResponse(OPTIONS_BODY);

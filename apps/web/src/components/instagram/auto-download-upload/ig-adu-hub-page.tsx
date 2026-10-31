@@ -77,6 +77,7 @@ export function IgAduHubPage({ subdomain }: { subdomain: string }) {
   const [stats, setStats] = React.useState({ totalPages: 0, followersGained: 0, totalFollowers: 0 });
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  const [migrationMissing, setMigrationMissing] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState('');
   const [statusFilter, setStatusFilter] = React.useState<string>('All Statuses');
   const [sort, setSort] = React.useState<string>('Newest First');
@@ -92,6 +93,7 @@ export function IgAduHubPage({ subdomain }: { subdomain: string }) {
       const response = await fetch(`${buildTenantApiPath(subdomain, '/instagram/auto-download-upload')}?${params}`);
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error ?? 'Failed to load accounts.');
+      setMigrationMissing(Boolean(body.migrationMissing));
       setConfigs(body.configs ?? []);
       setStats(body.stats ?? { totalPages: 0, followersGained: 0, totalFollowers: 0 });
       setTotalPages(body.totalPages ?? 0);
@@ -119,6 +121,9 @@ export function IgAduHubPage({ subdomain }: { subdomain: string }) {
       </div>
 
       {error ? <Banner variant="critical" title="Could not load accounts" description={error} /> : null}
+      {migrationMissing ? (
+        <Banner variant="warning" title="ADU tables are not created yet" description="Apply migration 20261030120000_adu.sql to the database, then refresh this page. Until then, no ADU accounts can be added." />
+      ) : null}
 
       <div className="grid gap-4 sm:grid-cols-3">
         {[
@@ -147,7 +152,7 @@ export function IgAduHubPage({ subdomain }: { subdomain: string }) {
 
       {loading ? (
         <p className="text-body text-ink-sub">Loading accounts…</p>
-      ) : configs.length === 0 ? (
+      ) : migrationMissing ? null : configs.length === 0 ? (
         hasActiveFilter ? (
           <EmptyState type="no-results" title="No accounts match your search or filters." action={<Button type="button" variant="outline" onClick={() => { setSearchQuery(''); setStatusFilter('All Statuses'); setPage(1); }}>Clear filters</Button>} />
         ) : (
@@ -250,12 +255,16 @@ function AddAccountDialog({ subdomain, open, onOpenChange, onCreated }: {
     if (!open) return;
     setStep(1); setError(null); setResult(null);
     void fetch(buildTenantApiPath(subdomain, '/instagram/auto-download-upload/options'))
-      .then((r) => r.json())
-      .then((body) => {
+      .then(async (r) => {
+        const body = await r.json().catch(() => ({}));
+        // Fail loud, like the Facebook dialog after #56: a 500 used to
+        // render as an empty picker with no error, inviting duplicates.
+        if (!r.ok) throw new Error(body.error ?? 'Could not load Instagram accounts.');
+        if (body.migrationMissing) throw new Error('The Auto Download/Upload tables have not been created yet. Apply migration 20261030120000_adu.sql, then try again.');
         setPages(body.pages ?? []);
         setConfigured(body.configured ?? []);
       })
-      .catch(() => setError('Could not load Instagram accounts.'));
+      .catch((err) => setError(err instanceof Error ? err.message : 'Could not load Instagram accounts.'));
   }, [open, subdomain]);
 
   const totalSteps = mode === 'single' ? 2 : 3;
