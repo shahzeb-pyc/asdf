@@ -153,13 +153,12 @@
   box-shadow: 0 0 0 6px rgba(255, 255, 255, 1), 0 14px 28px rgba(17, 17, 17, 0.16);
 }
 
-/* Dark panels (sections 3 and 4): the panel is the section, full
+/* Dark panels: the panel is the section, full
    width and full viewport height, content centred inside it.
-   Section 3 only: rounded TOP corners, so the black panel enters
+   Section 6 (Community) only: rounded TOP corners, so the black panel enters
    as a soft rounded shape out of the white section background
    above it. Straight sides and bottom, and the panel still fills
-   its whole section, so there is no white gap below the rounding
-   and no white strip between section 3 and section 4. */
+   its whole section, so there is no white gap below the rounding. */
 .dark-panel {
   min-height: 100vh;
   width: 100%;
@@ -169,16 +168,16 @@
     min-height: 100dvh;
   }
 }
-#section-3 .dark-panel {
-  border-top-left-radius: 24px;
-  border-top-right-radius: 24px;
+#section-6 .dark-panel {
+  border-top-left-radius: 48px;
+  border-top-right-radius: 48px;
   border-bottom-left-radius: 0;
   border-bottom-right-radius: 0;
 }
 @media (min-width: 1024px) {
-  #section-3 .dark-panel {
-    border-top-left-radius: 32px;
-    border-top-right-radius: 32px;
+  #section-6 .dark-panel {
+    border-top-left-radius: 64px;
+    border-top-right-radius: 64px;
   }
 }
 
@@ -196,10 +195,6 @@
   }
   .hero-sub {
     font-size: 14px;
-  }
-  .mob-grid {
-    margin-top: 24px;
-    gap: 8px;
   }
   .hero .grid-cols-3 > span {
     width: 60px;
