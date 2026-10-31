@@ -109,10 +109,14 @@ export async function POST(
       } catch (codeErr) {
         try {
           await deleteSeller(client, sellerId);
-        } catch {
-          // Rollback is best-effort; the original error is what
-          // the admin sees, and the seller row is visible in the
-          // list for manual cleanup if this ever fails.
+        } catch (rollbackErr) {
+          // Rollback is best-effort, but its failure is logged
+          // loudly: the original error is what the admin sees,
+          // and the seller row stays visible in the list for
+          // manual cleanup if this ever fails.
+          logServerError('[sellers] seller-create rollback failed', rollbackErr, {
+            source: 'sellers',
+          });
         }
         throw codeErr;
       }

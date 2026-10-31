@@ -25,6 +25,7 @@ import {
 } from '@/components/shared/ui/sidebar';
 import { Button } from '@/components/shared/ui/button';
 import { api } from '@/lib/api';
+import { reportError } from '@/lib/report-error';
 
 const LogoutResponseSchema = z.object({
   redirectUrl: z.string().optional(),
@@ -47,8 +48,11 @@ export function SellerSidebar({ user }: Readonly<SellerSidebarProps>) {
         schema: LogoutResponseSchema,
       });
       if (data.redirectUrl) target = data.redirectUrl;
-    } catch {
-      // Fall through to the logged-out login page.
+    } catch (error) {
+      // Sign-out still leaves for the logged-out login page, but
+      // the failure is reported loudly rather than swallowed:
+      // a logout that silently fails leaves a live session behind.
+      reportError(error, { source: 'seller-sign-out' });
     }
     window.location.href = target;
   }, []);

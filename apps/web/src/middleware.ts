@@ -314,8 +314,8 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     if (subdomain === 'app' || isApex) {
       const session = await resolveSession(request, sessionSecret);
       const isLogoutSuccess = request.nextUrl.searchParams.get('logout') === 'success';
-      // Sellers have no workspace: any seller session on the app
-      // host that is not already on /seller belongs on /seller
+      // Sellers have no workspace: seller sessions on the app
+      // host that are not already on /seller belong on /seller
       // (entry routes, /tenant/ paths, stray root paths alike),
       // and a suspended seller belongs on the suspended page.
       // Logout-success is exempt — the cookie is being cleared.
