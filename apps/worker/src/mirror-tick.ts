@@ -10,10 +10,12 @@ import {
   selectNewReels,
   type TikwmApiKeyPauseStore,
   type TikwmVideoItem,
+  validateThreadsText,
 } from '@fbuploadpro/contracts';
 import { FacebookPublishClient } from './fb-client.js';
 import { InstagramPublishClient } from './instagram-client.js';
 import { publishInstagramMirrorReel } from './instagram-mirror-reel.js';
+import { ThreadsPublishClient } from './threads-client.js';
 import { captureWorkerError, type PostHogEnv } from './analytics.js';
 
 // ==========================================
@@ -232,6 +234,9 @@ export interface MirrorTickDeps {
     targetPlatform: string;
     videoUrl: string;
     caption: string;
+    /** Mirror's target platform: 'threads' publishes via Threads,
+     *  anything else keeps the Facebook reel path. */
+    targetPlatform?: string | undefined;
   }) => Promise<string>;
   env?: PostHogEnv | undefined;
   now?: Date | undefined;
@@ -386,6 +391,29 @@ export async function processMirrorCheck(
           break;
         }
         const caption = resolved.title || reel.title || '';
+        // Threads-only rule: a caption over Threads' 500 weighted
+        // characters / 5 links is SKIPPED with the plain reason —
+        // never truncated (that would fabricate the post) and never
+        // silently dropped. Later reels are still tried.
+        if (mirror.targetPlatform === 'threads') {
+          const captionError = validateThreadsText(caption);
+          if (captionError) {
+            const skippedId = await deps.claimPost(mirror.id, {
+              sourcePostId: reel.video_id,
+              caption,
+              videoUrl: resolved.playUrl,
+              coverUrl: reel.cover ?? null,
+              sourceCreatedAt: toIso(reel.create_time),
+              status: 'skipped',
+              error: captionError,
+            });
+            if (skippedId) {
+              result.skipped += 1;
+              mirrorError = captionError;
+            }
+            continue;
+          }
+        }
         const claimedId = await deps.claimPost(mirror.id, {
           sourcePostId: reel.video_id,
           caption,
@@ -414,6 +442,7 @@ export async function processMirrorCheck(
             targetPlatform: mirror.targetPlatform,
             videoUrl: resolved.playUrl,
             caption,
+            targetPlatform: mirror.targetPlatform,
           });
           await deps.updatePost(claimedId, {
             status: 'posted',
@@ -1064,6 +1093,53 @@ export function buildMirrorTickDeps(
             ? { pollIntervalMs: options.instagramPollIntervalMs }
             : {}),
         });
+      }
+      if (params.targetPlatform === 'threads') {
+        // Threads async flow (same as the Threads publisher): create
+        // a VIDEO container with the public video URL, poll until
+        // FINISHED (at most once a minute, up to 5 minutes — the
+        // publisher's cadence), then publish. Meta fetches the URL
+        // itself; there is no byte-upload path for Threads.
+        const threadsClient = new ThreadsPublishClient();
+        const { containerId } = await threadsClient.createContainer({
+          threadsUserId: params.pageId,
+          accessToken: params.pageToken,
+          mediaType: 'VIDEO',
+          videoUrl: params.videoUrl,
+          ...(params.caption ? { text: params.caption } : {}),
+        });
+        let status = '';
+        for (let poll = 0; poll < 5; poll += 1) {
+          const statusData = await threadsClient.getContainerStatus({
+            containerId,
+            accessToken: params.pageToken,
+          });
+          status = statusData.status;
+          if (status === 'FINISHED') break;
+          if (status === 'PUBLISHED') return containerId;
+          if (status === 'ERROR') {
+            throw new InternalError(
+              statusData.errorMessage ?? 'Threads could not prepare this video.'
+            );
+          }
+          if (status === 'EXPIRED') {
+            throw new InternalError('Threads could not prepare this video.');
+          }
+          if (poll < 4) {
+            await new Promise((resolve) => setTimeout(resolve, 60_000));
+          }
+        }
+        if (status !== 'FINISHED') {
+          throw new InternalError(
+            'Threads is still preparing this video. It stays pending and will be retried on the next check.'
+          );
+        }
+        const { mediaId } = await threadsClient.publishContainer({
+          threadsUserId: params.pageId,
+          accessToken: params.pageToken,
+          containerId,
+        });
+        return mediaId;
       }
       const result = await fbClient.publishReel({
         pageId: params.targetId,

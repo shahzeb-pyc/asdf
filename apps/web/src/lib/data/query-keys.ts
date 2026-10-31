@@ -142,6 +142,18 @@ export const queryKeys = {
         detail: (mirrorId: string) =>
           [...tenantRoot, 'instagram-auto-repost', mirrorId] as const,
       },
+      /** Threads Auto Repost (TikTok → Threads) mirrors. Separate
+       *  from `tiktokMirrors` on purpose: the two lists filter by
+       *  target platform, so sharing a key would serve Facebook
+       *  mirrors to the Threads page (and vice versa). */
+      threadsAutoRepost: {
+        all: [...tenantRoot, 'threads', 'auto-repost'] as const,
+        list: [...tenantRoot, 'threads', 'auto-repost', 'list'] as const,
+        listPage: (params: { page: number }) =>
+          [...tenantRoot, 'threads', 'auto-repost', 'list', params] as const,
+        detail: (mirrorId: string) =>
+          [...tenantRoot, 'threads', 'auto-repost', mirrorId] as const,
+      },
 
       destinations: {
         all: [...tenantRoot, 'destinations'] as const,

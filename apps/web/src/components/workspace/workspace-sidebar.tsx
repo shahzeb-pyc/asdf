@@ -156,6 +156,7 @@ function WorkspaceSidebarContent({
   const pagesHref = href('/pages');
   const publishNowHref = href('/publish-now');
   const tiktokMirrorsHref = href('/tiktok-mirrors');
+  const threadsAutoRepostHref = href('/threads/auto-repost');
   const billingHref = href('/billing');
   const billingMyPlanHref = href('/billing?view=my-plan');
   const billingPurchaseHref = href('/billing?view=purchase');
@@ -180,6 +181,9 @@ function WorkspaceSidebarContent({
   );
   const isTiktokMirrorsActive = effectivePath.startsWith(
     normalizeTenantPath(tiktokMirrorsHref, subdomain)
+  );
+  const isThreadsAutoRepostActive = effectivePath.startsWith(
+    normalizeTenantPath(threadsAutoRepostHref, subdomain)
   );
   const isBillingActive = effectivePath.startsWith(
     normalizeTenantPath(billingHref, subdomain)
@@ -482,6 +486,9 @@ function WorkspaceSidebarContent({
                         ) : null}
                         {platform.key === 'threads' && (
                           <NavSubLeaf label="Publish Now" href={platformPublishNowHref} isActive={isPublishNowSubActive} onLeafClick={handleLeafClick} />
+                        )}
+                        {platform.key === 'threads' && (
+                          <NavSubLeaf label="Auto Repost" href={threadsAutoRepostHref} isActive={isThreadsAutoRepostActive} onLeafClick={handleLeafClick} />
                         )}
                         {platform.key === 'threads' && (
                           <NavSubLeaf
