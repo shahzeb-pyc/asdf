@@ -44,6 +44,8 @@ function freeEntitlement() {
     canPost: false,
     readOnly: true,
     reason: 'Your plan is Free, which covers the Prompt Library only.',
+    // Required by EntitlementResponseSchema since PR #75: never paid.
+    hasPriorPeriod: false,
   };
 }
 
@@ -58,6 +60,8 @@ function paidEntitlement() {
     canPost: true,
     readOnly: false,
     reason: null,
+    // Required by EntitlementResponseSchema since PR #75: holds a period.
+    hasPriorPeriod: true,
   };
 }
 
