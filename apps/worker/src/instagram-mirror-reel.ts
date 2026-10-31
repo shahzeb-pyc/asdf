@@ -79,7 +79,7 @@ export async function publishInstagramMirrorReel(params: {
   }
   if (statusCode === 'PUBLISHED') return containerId;
   if (statusCode !== 'FINISHED') {
-    throw new InternalError('Instagram is still preparing this reel. It will be tried again at the next check.');
+    throw new InternalError('Instagram is still preparing this reel. This post remains pending.');
   }
 
   try {

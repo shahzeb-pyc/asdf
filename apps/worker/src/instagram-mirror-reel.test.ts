@@ -54,6 +54,14 @@ describe('publishInstagramMirrorReel', () => {
     );
   });
 
+  it('reports still-preparing without promising a retry when the poll budget runs out', async () => {
+    const client = new MockInstagramPublishClient();
+    client.statusSequence = ['IN_PROGRESS'];
+    await expect(
+      publishInstagramMirrorReel({ ...base, client, maxPolls: 3, pollIntervalMs: 0 })
+    ).rejects.toThrow('Instagram is still preparing this reel. This post remains pending.');
+  });
+
   it('fails loudly when the container errors instead of polling forever', async () => {
     const client = new MockInstagramPublishClient();
     client.statusSequence = ['ERROR'];

@@ -97,6 +97,6 @@ describe('publishInstagramReel', () => {
       .mockResolvedValue(okJson({ status_code: 'IN_PROGRESS' }));
     await expect(
       publishInstagramReel({ ...base, maxPolls: 3, fetchFn: fetchFn as never })
-    ).rejects.toThrow('still preparing this reel');
+    ).rejects.toThrow('Instagram is still preparing this reel. This post remains pending.');
   });
 });

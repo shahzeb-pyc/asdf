@@ -157,7 +157,7 @@ export async function publishInstagramReel(params: {
   if (statusCode !== 'FINISHED') {
     throw new InstagramReelError(
       'reel-container-status',
-      'Instagram is still preparing this reel. It will be tried again at the next check.'
+      'Instagram is still preparing this reel. This post remains pending.'
     );
   }
 
