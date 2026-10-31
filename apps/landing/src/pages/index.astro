@@ -162,15 +162,21 @@ const signin = 'https://app.fbuploadpro.com/login';
          and rendered through Astro's asset pipeline — no external
          image URL, no runtime fetch, full image, no cropping.
          NO master prompt text (it stays in the app), NO copy
-         button, NO counts. Heading gold is TEXT ONLY via the
-         existing gold-deep token — the heavy gold highlight box
-         is removed from this section. -->
+         button, NO counts. Heading is direction A (Editorial
+         clean, owner pick 2026-10-31): NO eyebrow pill — a small
+         gold uppercase label with a short gold rule beside it,
+         heading all near-black with "ready to use." underlined
+         in gold instead of coloured gold. No gold highlight box
+         anywhere in this section. -->
     <section id="section-3" class="section-full relative flex items-center bg-white px-5 py-24 sm:px-8 lg:px-12" aria-label="Prompt Library">
       <div class="s3-content mx-auto grid w-full max-w-[1240px] items-center gap-10 lg:grid-cols-[1fr_1.2fr]">
         <div class="s3-anim">
-          <span class="mb-4 inline-flex items-center rounded-full border border-gold bg-gold/20 px-3 py-1.5 text-xs font-bold tracking-[0.12em] text-ink uppercase">Prompt Library</span>
+          <p class="mb-4 flex items-center gap-3">
+            <span aria-hidden="true" class="inline-block h-[3px] w-8 bg-gold"></span>
+            <span class="text-[13px] font-bold tracking-[0.12em] text-[#b7791f] uppercase">Prompt Library</span>
+          </p>
           <h2 class="text-[36px] leading-[1.08] font-bold tracking-tight sm:text-5xl lg:text-[52px]">
-            A library of prompts,<br /><span class="text-gold-deep">ready to use.</span>
+            A library of prompts,<br /><span class="text-ink underline decoration-gold decoration-4 underline-offset-[6px]">ready to use.</span>
           </h2>
           <p class="mt-5 max-w-xl text-base leading-relaxed text-ink-sub sm:text-lg">
             Browse prompts for Dola AI, Veo 3, and Google Flow — search by category, tool, or language, copy the master prompt, and create.
