@@ -140,6 +140,59 @@ describe('queryKeys factory (spec 137 §3.2.3)', () => {
     ]);
   });
 
+  it('builds Threads In-app Schedule keys in their own namespace', () => {
+    const tenant = queryKeys.tenant('acme');
+    const schedule = tenant.threadsSchedule;
+    expect(schedule.all).toEqual(['tenant', 'acme', 'threads', 'schedule']);
+    expect(schedule.list).toEqual(['tenant', 'acme', 'threads', 'schedule', 'list']);
+    expect(
+      schedule.listPage({ page: 2, limit: 20, search: 'x', status: 'active', account: 'all' })
+    ).toEqual([
+      'tenant',
+      'acme',
+      'threads',
+      'schedule',
+      'list',
+      { page: 2, limit: 20, search: 'x', status: 'active', account: 'all' },
+    ]);
+    expect(schedule.candidates).toEqual([
+      'tenant',
+      'acme',
+      'threads',
+      'schedule',
+      'candidates',
+    ]);
+    expect(schedule.detail('sched-1')).toEqual(['tenant', 'acme', 'threads', 'schedule', 'sched-1']);
+    expect(schedule.slots('sched-1')).toEqual([
+      'tenant',
+      'acme',
+      'threads',
+      'schedule',
+      'sched-1',
+      'slots',
+    ]);
+    expect(schedule.queue('sched-1')).toEqual([
+      'tenant',
+      'acme',
+      'threads',
+      'schedule',
+      'sched-1',
+      'queue',
+    ]);
+    expect(schedule.insights('sched-1')).toEqual([
+      'tenant',
+      'acme',
+      'threads',
+      'schedule',
+      'sched-1',
+      'insights',
+    ]);
+    // Separate namespace from Threads accounts: invalidating Schedule
+    // must never invalidate the Accounts list, and vice versa.
+    expect(schedule.all).not.toEqual(tenant.threadsAccounts.all);
+    expect(schedule.list).not.toEqual(tenant.threadsAccounts.list);
+  });
+
   it('is deterministic — the same inputs produce equal keys for invalidation', () => {
     expect(queryKeys.tenant('acme').queue.items('p1')).toEqual(
       queryKeys.tenant('acme').queue.items('p1')

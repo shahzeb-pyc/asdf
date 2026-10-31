@@ -5,6 +5,7 @@ export * from './domain/facebook-health.js';
 export * from './domain/instagram-accounts.js';
 export * from './domain/facebook-restriction.js';
 export * from './domain/threads-accounts.js';
+export * from './domain/threads-schedule.js';
 export * from './domain/oauth.js';
 export * from './domain/session.js';
 export * from './domain/routing.js';

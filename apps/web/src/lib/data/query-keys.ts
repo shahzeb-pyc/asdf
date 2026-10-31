@@ -60,6 +60,28 @@ export const queryKeys = {
         }) => [...tenantRoot, 'threads', 'accounts', 'list', params] as const,
       },
 
+      /** Threads In-app Schedule: separate namespace from Threads accounts. */
+      threadsSchedule: {
+        all: [...tenantRoot, 'threads', 'schedule'] as const,
+        list: [...tenantRoot, 'threads', 'schedule', 'list'] as const,
+        listPage: (params: {
+          page: number;
+          limit: number;
+          search: string;
+          status: string;
+          account: string;
+        }) => [...tenantRoot, 'threads', 'schedule', 'list', params] as const,
+        candidates: [...tenantRoot, 'threads', 'schedule', 'candidates'] as const,
+        detail: (scheduleId: string) =>
+          [...tenantRoot, 'threads', 'schedule', scheduleId] as const,
+        slots: (scheduleId: string) =>
+          [...tenantRoot, 'threads', 'schedule', scheduleId, 'slots'] as const,
+        queue: (scheduleId: string) =>
+          [...tenantRoot, 'threads', 'schedule', scheduleId, 'queue'] as const,
+        insights: (scheduleId: string) =>
+          [...tenantRoot, 'threads', 'schedule', scheduleId, 'insights'] as const,
+      },
+
       pages: {
         all: [...tenantRoot, 'pages'] as const,
         list: [...tenantRoot, 'pages', 'list'] as const,
