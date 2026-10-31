@@ -245,8 +245,14 @@ const fakeSupabase = {
   from: (table: string) => new FakeBuilder(table, db as unknown as Record<string, Row[]>),
 };
 
-function hubRequest(path: string, init?: RequestInit) {
-  return new NextRequest(`http://localhost:3000/api/tenant/acme/instagram/auto-download-upload${path}`, init) as never;
+function hubRequest(
+  path: string,
+  init?: { method?: string; headers?: Record<string, string>; body?: string },
+) {
+  return new NextRequest(
+    `http://localhost:3000/api/tenant/acme/instagram/auto-download-upload${path}`,
+    init,
+  ) as never;
 }
 
 describe('Instagram ADU hub route', () => {
