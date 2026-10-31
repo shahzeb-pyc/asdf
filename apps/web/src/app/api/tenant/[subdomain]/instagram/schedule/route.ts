@@ -193,24 +193,43 @@ async function handleListSupabase(
   page: number,
   limit: number
 ): Promise<NextResponse> {
-  const { data: destinations, error: destError } = await supabase
-    .from('destinations')
-    .select(
-      'id, account_id, timezone, status, metadata, name, handle, avatar_url, created_at, updated_at'
-    )
-    .eq('workspace_id', workspaceId)
-    .eq('platform', 'instagram')
-    .order('created_at', { ascending: false });
-  if (destError) {
-    logServerError('[instagram-schedule] list destinations failed', destError, {
-      source: 'instagram-schedule-list',
-    });
-    return NextResponse.json(
-      { error: 'Failed to load your scheduled accounts.' },
-      { status: 500 }
-    );
+  // Bounded fetch, matching the SQL path's scheduled-only
+  // membership: the DB filter keeps unscheduled destinations out
+  // entirely, and .range() chunks keep every single PostgREST
+  // response to at most 200 rows instead of one unbounded fetch.
+  // Search/status/account filtering and the page window still
+  // happen in memory afterwards (status is computed from the
+  // joined account, which PostgREST cannot rank the way the SQL
+  // path does), so total, sort order, and window are identical
+  // to before — only the fetch itself is now bounded.
+  const destinations: Array<InstagramScheduleDestinationRow> = [];
+  const LIST_CHUNK = 200;
+  let listOffset = 0;
+  for (;;) {
+    const { data: chunk, error: destError } = await supabase
+      .from('destinations')
+      .select(
+        'id, account_id, timezone, status, metadata, name, handle, avatar_url, created_at, updated_at'
+      )
+      .eq('workspace_id', workspaceId)
+      .eq('platform', 'instagram')
+      .eq('metadata->>scheduled', 'true')
+      .order('created_at', { ascending: false })
+      .range(listOffset, listOffset + LIST_CHUNK - 1);
+    if (destError) {
+      logServerError('[instagram-schedule] list destinations failed', destError, {
+        source: 'instagram-schedule-list',
+      });
+      return NextResponse.json(
+        { error: 'Failed to load your scheduled accounts.' },
+        { status: 500 }
+      );
+    }
+    destinations.push(...(chunk as Array<InstagramScheduleDestinationRow>));
+    if (chunk.length < LIST_CHUNK) break;
+    listOffset += LIST_CHUNK;
   }
-  const scheduled = (destinations ?? []).filter((d) =>
+  const scheduled = destinations.filter((d) =>
     isScheduledDestination(parseDestinationMetadata(d.metadata))
   );
   const accountIds = [...new Set(scheduled.map((d) => d.account_id))];
@@ -666,12 +685,32 @@ export async function handleAddInstagramSchedule(
         { status: 409 }
       );
     }
-    const { count: scheduledCount } = await supabase
+    // Scheduled-only count, matching the SQL path exactly: a
+    // destination counts only when metadata.scheduled is true, so
+    // merely-connected (unscheduled) Instagram destinations never
+    // consume the cap. The cap hook is the same checkScheduleCap()
+    // the SQL path calls — with IG_SCHEDULE_COUNT_CAP null today
+    // this allows everything, and the moment a cap is set both
+    // paths enforce it identically.
+    const { count: scheduledCount, error: countError } = await supabase
       .from('destinations')
       .select('id', { count: 'exact', head: true })
       .eq('workspace_id', auth.workspaceId)
-      .eq('platform', 'instagram');
-    void scheduledCount;
+      .eq('platform', 'instagram')
+      .eq('metadata->>scheduled', 'true');
+    if (countError) {
+      logServerError('[instagram-schedule] add scheduled count failed', countError, {
+        source: 'instagram-schedule-add',
+      });
+      return NextResponse.json(
+        { error: 'Could not add this account to Schedule. Please try again.' },
+        { status: 500 }
+      );
+    }
+    const cap = checkScheduleCap(numericCount(scheduledCount));
+    if (!cap.allowed) {
+      return NextResponse.json({ error: cap.message }, { status: 400 });
+    }
     let destinationId = '';
     let destinationCreated = false;
     let previousTimezone: string | null = null;
@@ -766,22 +805,39 @@ export async function handleAddInstagramSchedule(
       logServerError('[instagram-schedule] add failed, rolling back', err, {
         source: 'instagram-schedule-add',
       });
-      if (insertedSlotIds.length > 0) {
-        await supabase
-          .from('posting_slots')
-          .delete()
-          .in('id', insertedSlotIds);
-      }
-      if (destinationId && destinationCreated) {
-        await supabase.from('destinations').delete().eq('id', destinationId);
-      } else if (destinationId && existingDest) {
-        await supabase
-          .from('destinations')
-          .update({
-            timezone: previousTimezone ?? 'UTC',
-            metadata: parseDestinationMetadata(existingDest.metadata) ?? {},
-          })
-          .eq('id', destinationId);
+      try {
+        // Mirrors the SQL path: a rollback failure is logged under
+        // its own distinct source, never allowed to fall through to
+        // the generic outer catch and hide a half-rolled-back Add.
+        // Supabase returns errors instead of throwing, so an error
+        // result is turned into a throw here to reach that log.
+        if (insertedSlotIds.length > 0) {
+          const { error: slotDeleteError } = await supabase
+            .from('posting_slots')
+            .delete()
+            .in('id', insertedSlotIds);
+          if (slotDeleteError) throw new Error(slotDeleteError.message);
+        }
+        if (destinationId && destinationCreated) {
+          const { error: destDeleteError } = await supabase
+            .from('destinations')
+            .delete()
+            .eq('id', destinationId);
+          if (destDeleteError) throw new Error(destDeleteError.message);
+        } else if (destinationId && existingDest) {
+          const { error: destRestoreError } = await supabase
+            .from('destinations')
+            .update({
+              timezone: previousTimezone ?? 'UTC',
+              metadata: parseDestinationMetadata(existingDest.metadata) ?? {},
+            })
+            .eq('id', destinationId);
+          if (destRestoreError) throw new Error(destRestoreError.message);
+        }
+      } catch (rollbackErr) {
+        logServerError('[instagram-schedule] add rollback failed', rollbackErr, {
+          source: 'instagram-schedule-add-rollback',
+        });
       }
       return NextResponse.json(
         { error: 'Could not add this account to Schedule. Nothing was saved. Please try again.' },
