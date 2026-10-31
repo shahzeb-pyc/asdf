@@ -6,7 +6,12 @@ import { isThreadsScheduleAdded } from '@/lib/server/threads-schedule';
 /**
  * GET derived insights for one Threads Schedule destination.
  *
- * Derived from queue_items only: posted/failed by kind and totals.
+ * Totals and byKind come from queue_items; byDay comes from
+ * publish_logs as attempt-level success/failure counts per UTC day
+ * over the last 14 days, via bounded head-count queries only (no row
+ * downloads, so PostgREST's 1,000-row cap cannot silently truncate).
+ * The destination row is workspace-owned, so destination_id scoping
+ * on publish_logs (which has no workspace column) is tenant-safe.
  * No live Threads insights are reported — the connect scopes are
  * threads_basic + threads_content_publish, so no follower or reach
  * numbers exist, and none are invented here.
@@ -58,7 +63,46 @@ export async function GET(
       ]);
       byKind.push({ kind, posted: kindPosted, failed: kindFailed });
     }
-    return NextResponse.json({ totals: { posted, failed, queued }, byKind });
+    const countLogForDay = async (
+      result: 'success' | 'failure',
+      dayStart: string,
+      dayEnd: string
+    ): Promise<number> => {
+      const { count, error } = await supabase
+        .from('publish_logs')
+        .select('id', { count: 'exact', head: true })
+        .eq('destination_id', scheduleId)
+        .eq('platform', 'threads')
+        .eq('result', result)
+        .gte('created_at', dayStart)
+        .lt('created_at', dayEnd);
+      if (error) throw new Error(error.message);
+      return count ?? 0;
+    };
+    const todayUtc = new Date();
+    todayUtc.setUTCHours(0, 0, 0, 0);
+    const dayStarts: Date[] = [];
+    for (let i = 13; i >= 0; i -= 1) {
+      const day = new Date(todayUtc);
+      day.setUTCDate(day.getUTCDate() - i);
+      dayStarts.push(day);
+    }
+    const byDay = await Promise.all(
+      dayStarts.map(async (day) => {
+        const next = new Date(day);
+        next.setUTCDate(next.getUTCDate() + 1);
+        const [dayPosted, dayFailed] = await Promise.all([
+          countLogForDay('success', day.toISOString(), next.toISOString()),
+          countLogForDay('failure', day.toISOString(), next.toISOString()),
+        ]);
+        return {
+          date: day.toISOString().slice(0, 10),
+          posted: dayPosted,
+          failed: dayFailed,
+        };
+      })
+    );
+    return NextResponse.json({ totals: { posted, failed, queued }, byKind, byDay });
   } catch (err) {
     logServerError('[threads/schedule] insights failed', err, {
       source: 'threads-schedule-insights',

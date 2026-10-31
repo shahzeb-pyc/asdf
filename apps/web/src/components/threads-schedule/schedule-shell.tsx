@@ -8,6 +8,7 @@ import { PlusIcon } from 'lucide-react';
 
 import { api, buildTenantApiPath, buildUrl } from '@/lib/api';
 import {
+  ListThreadsScheduleCandidatesResponseSchema,
   ListThreadsScheduleResponseSchema,
   type ThreadsScheduleItem,
 } from '@fbuploadpro/contracts';
@@ -59,7 +60,27 @@ export function ThreadsScheduleShell({
   const [searchQuery, setSearchQuery] = React.useState('');
   const debouncedSearch = useDebouncedValue(searchQuery);
   const [statusFilter, setStatusFilter] = React.useState<string>('all');
+  const [accountFilter, setAccountFilter] = React.useState<string>('all');
   const [addOpen, setAddOpen] = React.useState(false);
+
+  const candidatesQuery = useQuery({
+    queryKey: tenant.threadsSchedule.candidates,
+    queryFn: ({ signal }) =>
+      api.get(buildTenantApiPath(subdomain, '/threads/schedule/candidates'), {
+        schema: ListThreadsScheduleCandidatesResponseSchema,
+        signal,
+      }),
+    staleTime: 60_000,
+  });
+  const accountOptions = React.useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const candidate of candidatesQuery.data?.candidates ?? []) {
+      if (candidate.scheduleAdded && !seen.has(candidate.accountId)) {
+        seen.set(candidate.accountId, candidate.displayName);
+      }
+    }
+    return [...seen.entries()].map(([value, label]) => ({ value, label }));
+  }, [candidatesQuery.data]);
 
   const listPath = buildTenantApiPath(subdomain, '/threads/schedule');
   const listQuery = useQuery({
@@ -68,7 +89,7 @@ export function ThreadsScheduleShell({
       limit: DEFAULT_PAGE_SIZE,
       search: debouncedSearch.trim(),
       status: statusFilter,
-      account: 'all',
+      account: accountFilter,
     }),
     queryFn: ({ signal }) =>
       api.get(
@@ -77,6 +98,7 @@ export function ThreadsScheduleShell({
           limit: DEFAULT_PAGE_SIZE,
           ...(debouncedSearch.trim() ? { search: debouncedSearch.trim() } : {}),
           ...(statusFilter !== 'all' ? { status: statusFilter } : {}),
+          ...(accountFilter !== 'all' ? { account: accountFilter } : {}),
         }),
         { schema: ListThreadsScheduleResponseSchema, signal }
       ),
@@ -98,7 +120,7 @@ export function ThreadsScheduleShell({
 
   React.useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, statusFilter]);
+  }, [debouncedSearch, statusFilter, accountFilter]);
 
   const onAdded = React.useCallback(
     (name: string) => {
@@ -144,6 +166,22 @@ export function ThreadsScheduleShell({
             className="rounded-sm border border-line bg-panel px-2 py-2 text-body text-ink"
           >
             {STATUS_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex items-center gap-2 text-body text-ink-dim">
+          Account
+          <select
+            aria-label="Filter by account"
+            value={accountFilter}
+            onChange={(event) => setAccountFilter(event.target.value)}
+            className="rounded-sm border border-line bg-panel px-2 py-2 text-body text-ink"
+          >
+            <option value="all">All accounts</option>
+            {accountOptions.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
               </option>

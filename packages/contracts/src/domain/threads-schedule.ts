@@ -269,6 +269,10 @@ export type ListThreadsScheduleQueueResponse = z.infer<
  * Insights derived from queue_items and publish_logs only. Threads
  * connect scopes are threads_basic + threads_content_publish, so no
  * live follower/reach numbers exist to report — and none are invented.
+ * Totals and byKind are post-level queue counts. byDay is attempt-level:
+ * publish_logs success/failure attempts per UTC calendar day over the
+ * last 14 days (a retried post can therefore appear in more than one
+ * attempt, which is why the UI labels byDay as attempts, not posts).
  */
 export const ThreadsScheduleInsightsResponseSchema = z.object({
   totals: z.object({
@@ -279,6 +283,13 @@ export const ThreadsScheduleInsightsResponseSchema = z.object({
   byKind: z.array(
     z.object({
       kind: z.enum(['text', 'image', 'video', 'carousel']),
+      posted: z.number().int().nonnegative(),
+      failed: z.number().int().nonnegative(),
+    })
+  ),
+  byDay: z.array(
+    z.object({
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
       posted: z.number().int().nonnegative(),
       failed: z.number().int().nonnegative(),
     })

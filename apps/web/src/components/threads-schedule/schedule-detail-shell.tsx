@@ -733,6 +733,22 @@ export function ThreadsScheduleDetailShell({
                   </li>
                 ))}
               </ul>
+              <p className="text-body font-bold text-ink">
+                Publish attempts over the last 14 days
+              </p>
+              <ul className="flex flex-col gap-2">
+                {insightsQuery.data.byDay.map((row) => (
+                  <li
+                    key={row.date}
+                    className="flex justify-between gap-2 rounded-md border border-line bg-panel p-4 text-body text-ink"
+                  >
+                    <span>{row.date}</span>
+                    <span>
+                      {row.posted} posted · {row.failed} failed
+                    </span>
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
         </TabsContent>

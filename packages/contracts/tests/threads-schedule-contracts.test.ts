@@ -7,6 +7,7 @@ import {
   ListThreadsScheduleQueueResponseSchema,
   threadsScheduleStatusFromRows,
   ThreadsScheduleFormatSchema,
+  ThreadsScheduleInsightsResponseSchema,
   UpdateThreadsScheduleRequestSchema,
 } from '../src/domain/threads-schedule.js';
 
@@ -170,6 +171,27 @@ describe('ListThreadsScheduleQueueResponseSchema', () => {
         ],
         total: 1,
         counts: { queued: 1, publishing: 0, published: 0, failed: 0, cancelled: 0 },
+      }).success
+    ).toBe(false);
+  });
+});
+
+describe('ThreadsScheduleInsightsResponseSchema', () => {
+  it('accepts totals, byKind, and a 14-day attempt series', () => {
+    expect(
+      ThreadsScheduleInsightsResponseSchema.safeParse({
+        totals: { posted: 2, failed: 1, queued: 3 },
+        byKind: [{ kind: 'text', posted: 2, failed: 1 }],
+        byDay: [{ date: '2026-10-31', posted: 1, failed: 0 }],
+      }).success
+    ).toBe(true);
+  });
+
+  it('rejects insights without the over-time series', () => {
+    expect(
+      ThreadsScheduleInsightsResponseSchema.safeParse({
+        totals: { posted: 0, failed: 0, queued: 0 },
+        byKind: [],
       }).success
     ).toBe(false);
   });
