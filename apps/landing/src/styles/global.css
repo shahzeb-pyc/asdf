@@ -864,3 +864,58 @@
     margin-top: 12px;
   }
 }
+
+/* Wide-short fit, S7 ONLY, at widths ABOVE 1024px AND <=800px
+   tall (was 909px at 1200x768, -141 needed; 883px at
+   1280x768, -115 needed). The 1024px-wide band above and the
+   768-1023px band are untouched (disjoint widths), and
+   1440x900, tablet, and phones are untouched (height >800px
+   or width <1025px). Only the two-column desktop Pricing
+   grid is compressed, in the owner's shrink order: panel
+   padding 96/64->48/32 (-80), grid margin 40->24 (-16),
+   card padding 28->20 (-16), dividers 24->16 (-8), feature
+   gaps 14->10 (-24), list margin 32->20 (-12), feature
+   leading 1.6->1.5 (-11; -13 at 1200 where a line wraps),
+   buttons 56->48 (-8, above the 44px floor), refund margin
+   16->12 (-4), heading 56->48 (-18 incl. leading) and gold
+   rule margins 12->8 (-8). Total ≈ -205 at 1280, -207 at
+   1200, so both widths fit with margin. No text below
+   16px here; no grid-ratio, copy, href, badge, or other
+   section change. */
+@media (min-width: 1025px) and (max-height: 800px) {
+  #section-7 .dark-panel {
+    padding-top: 48px;
+    padding-bottom: 32px;
+  }
+  #section-7 h2 {
+    font-size: 48px;
+  }
+  #section-7 h2 .my-3 {
+    margin-top: 8px;
+    margin-bottom: 8px;
+  }
+  #section-7 .dark-panel .grid {
+    margin-top: 24px;
+  }
+  #section-7 .dark-panel .grid > div {
+    padding: 20px;
+  }
+  #section-7 .h-px {
+    margin-top: 8px;
+    margin-bottom: 8px;
+  }
+  #section-7 ul {
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+  #section-7 ul li {
+    line-height: 1.5;
+  }
+  #section-7 .dark-panel .grid > div > a {
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+  #section-7 .dark-panel .grid > div > p {
+    margin-top: 12px;
+  }
+}
