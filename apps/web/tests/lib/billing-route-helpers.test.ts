@@ -101,6 +101,7 @@ describe('mapEntitlementToResponse', () => {
       canPost: false,
       readOnly: true,
       reason: 'Your plan is Free, which covers the Prompt Library only.',
+      hasPriorPeriod: false,
     });
     expect(response).toMatchObject({
       plan: 'free',
@@ -109,6 +110,7 @@ describe('mapEntitlementToResponse', () => {
       periodStartsAt: null,
       canPost: false,
       readOnly: true,
+      hasPriorPeriod: false,
     });
   });
 
@@ -129,6 +131,7 @@ describe('mapEntitlementToResponse', () => {
       canPost: true,
       readOnly: false,
       reason: null,
+      hasPriorPeriod: true,
     });
     expect(response.periodStartsAt).toBe('2026-06-01T00:00:00.000Z');
     expect(response.periodEndsAt).toBe('2026-07-01T00:00:00.000Z');

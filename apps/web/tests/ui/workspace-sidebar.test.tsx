@@ -12,7 +12,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { SidebarProvider } from '@/components/shared/ui/sidebar';
 import { createQueryClient } from '@/lib/data/query-client';
@@ -53,12 +53,18 @@ vi.mock('next/link', async () => {
 function Shell({
   defaultOpen = true,
   subdomain = 'acme',
-}: Readonly<{ defaultOpen?: boolean; subdomain?: string }>) {
+  adminOnly = false,
+}: Readonly<{
+  defaultOpen?: boolean;
+  subdomain?: string;
+  adminOnly?: boolean;
+}>) {
   return (
     <QueryClientProvider client={createQueryClient(subdomain)}>
       <SidebarProvider defaultOpen={defaultOpen}>
         <WorkspaceSidebar
           subdomain={subdomain}
+          adminOnly={adminOnly}
           user={{ name: 'Jane Doe', email: 'jane@example.com' }}
         />
       </SidebarProvider>
@@ -287,5 +293,156 @@ describe('WorkspaceSidebar (spec 130 rebuild on shared/ui Sidebar)', () => {
     expect(trigger).toHaveAttribute('aria-label', 'Workspace and profile menu');
     expect(screen.getByTestId('workspace-user-avatar')).toHaveTextContent('AC');
     expect(screen.getByText('jane@example.com')).toBeInTheDocument();
+  });
+});
+
+describe('WorkspaceSidebar header plan word', () => {
+  const ZERO_COUNTS = {
+    facebook: 0,
+    instagram: 0,
+    threads: 0,
+    x: 0,
+    tiktok: 0,
+    youtube: 0,
+  };
+
+  const WORKSPACES_PAYLOAD = {
+    workspaces: [
+      {
+        id: '11111111-1111-4111-8111-111111111111',
+        ownerId: '22222222-2222-4222-222222222222',
+        name: 'Acme',
+        subdomain: 'acme',
+      },
+    ],
+  };
+
+  function entitlementPayload(overrides: Record<string, unknown> = {}) {
+    return {
+      plan: 'free',
+      active: false,
+      counts: ZERO_COUNTS,
+      usage: ZERO_COUNTS,
+      periodEndsAt: null,
+      periodStartsAt: null,
+      canPost: false,
+      readOnly: true,
+      reason: null,
+      hasPriorPeriod: false,
+      ...overrides,
+    };
+  }
+
+  function stubFetchWithEntitlement(entitlement: unknown) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown) => {
+        const url =
+          typeof input === 'string' ? input : ((input as { url?: string }).url ?? '');
+        const body = url.includes('billing/entitlement')
+          ? entitlement
+          : WORKSPACES_PAYLOAD;
+        return new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      })
+    );
+  }
+
+  function branding() {
+    return screen.getByTestId('sidebar-branding-link');
+  }
+
+  it('shows Paid for an active paid period and leaves the Fdola Studio leaf untouched', async () => {
+    stubFetchWithEntitlement(
+      entitlementPayload({
+        plan: 'paid',
+        active: true,
+        canPost: true,
+        readOnly: false,
+        periodEndsAt: '2026-07-01T00:00:00.000Z',
+        periodStartsAt: '2026-06-01T00:00:00.000Z',
+      })
+    );
+    render(<Shell />);
+    expect(await screen.findByText('Paid')).toBeInTheDocument();
+    expect(within(branding()).queryByText('Studio')).toBeNull();
+    expect(screen.getByRole('link', { name: /^Fdola Studio/ })).toHaveTextContent(
+      'Fdola Studio'
+    );
+  });
+
+  it('shows Free when no period was ever held', async () => {
+    stubFetchWithEntitlement(entitlementPayload());
+    render(<Shell />);
+    expect(await screen.findByText('Free')).toBeInTheDocument();
+  });
+
+  it('shows Expired when the period lapsed (not Free)', async () => {
+    stubFetchWithEntitlement(entitlementPayload({ hasPriorPeriod: true }));
+    render(<Shell />);
+    expect(await screen.findByText('Expired')).toBeInTheDocument();
+  });
+
+  it('shows Admin for the admin shell without waiting on an entitlement', () => {
+    render(<Shell adminOnly />);
+    expect(within(branding()).getByText('Admin')).toBeInTheDocument();
+  });
+
+  it('keeps the Studio placeholder when the entitlement fetch fails (never a failed-as-Free word)', async () => {
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url =
+        typeof input === 'string' ? input : ((input as { url?: string }).url ?? '');
+      if (url.includes('billing/entitlement')) {
+        return new Response(JSON.stringify({ error: 'db down' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify(WORKSPACES_PAYLOAD), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<Shell />);
+    // The entitlement query retries once before settling into its
+    // error state; wait until that retry has fired so the assertion
+    // runs against the settled error state, not the loading state.
+    await waitFor(
+      () => {
+        const entitlementCalls = fetchMock.mock.calls.filter(([input]) => {
+          const url =
+            typeof input === 'string' ? input : ((input as { url?: string }).url ?? '');
+          return url.includes('billing/entitlement');
+        });
+        expect(entitlementCalls.length).toBeGreaterThanOrEqual(2);
+      },
+      { timeout: 5000 }
+    );
+    expect(within(branding()).getByText('Studio')).toBeInTheDocument();
+    expect(within(branding()).queryByText('Free')).toBeNull();
+    expect(within(branding()).queryByText('Paid')).toBeNull();
+    expect(within(branding()).queryByText('Expired')).toBeNull();
+  });
+
+  it('keeps the Studio placeholder while the entitlement is unresolved', () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown) => {
+        const url =
+          typeof input === 'string' ? input : ((input as { url?: string }).url ?? '');
+        if (url.includes('billing/entitlement')) {
+          return new Promise<Response>(() => {});
+        }
+        return new Response(JSON.stringify(WORKSPACES_PAYLOAD), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      })
+    );
+    render(<Shell />);
+    expect(within(branding()).getByText('Studio')).toBeInTheDocument();
   });
 });

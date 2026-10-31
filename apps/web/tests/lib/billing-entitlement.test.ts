@@ -11,6 +11,7 @@ import {
   getEntitlement,
   getUsageCount,
   getUsageCounts,
+  hasAnyPeriod,
   isDestinationUsed,
   paymentFromRow,
   periodFromRow,
@@ -637,6 +638,74 @@ describe('getEntitlement', () => {
     });
     expect(entitlement.counts).toEqual(TEN_COUNTS);
     expect(entitlement.period?.id).toBe('period-1');
+  });
+
+  it('reports hasPriorPeriod true for an active period without an extra lookup', async () => {
+    const state = baseState({ periods: [periodRow()] });
+    const entitlement = await getEntitlement(fakeClient(state), 'user-1', NOW);
+    expect(entitlement.hasPriorPeriod).toBe(true);
+  });
+
+  it('reports hasPriorPeriod true for a lapsed period (Expired, not Free)', async () => {
+    const state = baseState({
+      periods: [
+        periodRow({
+          starts_at: '2025-01-01T00:00:00.000Z',
+          ends_at: '2026-01-01T00:00:00.000Z',
+        }),
+      ],
+    });
+    const entitlement = await getEntitlement(fakeClient(state), 'user-1', NOW);
+    expect(entitlement).toMatchObject({
+      plan: 'free',
+      active: false,
+      period: null,
+      hasPriorPeriod: true,
+    });
+  });
+
+  it('reports hasPriorPeriod false when no period was ever held', async () => {
+    const state = baseState();
+    const entitlement = await getEntitlement(fakeClient(state), 'user-1', NOW);
+    expect(entitlement.hasPriorPeriod).toBe(false);
+  });
+});
+
+describe('hasAnyPeriod', () => {
+  it('returns true when any period row exists, active or lapsed', async () => {
+    const lapsed = baseState({
+      periods: [
+        periodRow({
+          starts_at: '2025-01-01T00:00:00.000Z',
+          ends_at: '2026-01-01T00:00:00.000Z',
+        }),
+      ],
+    });
+    await expect(hasAnyPeriod(fakeClient(lapsed), 'user-1')).resolves.toBe(true);
+  });
+
+  it('returns false when no period row exists', async () => {
+    await expect(hasAnyPeriod(fakeClient(baseState()), 'user-1')).resolves.toBe(false);
+  });
+
+  it('fails closed — and logs — when the prior-period query errors', async () => {
+    const state = baseState({
+      selectErrors: { subscription_periods: { message: 'db down' } },
+    });
+    await expect(hasAnyPeriod(fakeClient(state), 'user-1')).rejects.toMatchObject({
+      code: 'ENTITLEMENT_UNAVAILABLE',
+    });
+    try {
+      await hasAnyPeriod(fakeClient(state), 'user-1');
+      expect.unreachable();
+    } catch (err) {
+      expect((err as Error).message).toContain('could not be checked right now');
+    }
+    expect(mockedLogServerError).toHaveBeenCalledWith(
+      '[billing] prior period query failed',
+      expect.anything(),
+      { source: 'billing' }
+    );
   });
 });
 
