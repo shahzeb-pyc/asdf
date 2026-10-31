@@ -14,6 +14,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { EmptyState } from '@/components/shared/ui/empty-state';
 import { Skeleton } from '@/components/shared/ui/skeleton';
 import { BillingStatusMark } from './billing-status-mark';
+import { AdminCouponsView } from './admin-coupons-view';
 
 function countsSummary(counts: AdminPaymentsResponse['payments'][number]['counts']): string {
   const parts: string[] = [];
@@ -44,6 +45,7 @@ function formatDate(value: string | null | undefined): string {
 }
 
 export function AdminApprovalsView({ subdomain }: Readonly<{ subdomain: string }>) {
+  const [adminSection, setAdminSection] = React.useState<'approvals' | 'coupons'>('approvals');
   const [data, setData] = React.useState<AdminPaymentsResponse | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [reloading, setReloading] = React.useState(false);
@@ -96,6 +98,26 @@ export function AdminApprovalsView({ subdomain }: Readonly<{ subdomain: string }
     }
   }
 
+  if (adminSection === 'coupons') {
+    return (
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-xl leading-heading font-semibold text-ink">Subscriptions approval</h1>
+          <p className="text-body text-ink-sub">
+            Approving a payment starts a 30-day plan from approval. Rejecting starts nothing.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2" role="tablist" aria-label="Admin billing sections">
+          <Button variant="outline" onClick={() => setAdminSection('approvals')}>
+            Approvals
+          </Button>
+          <Button onClick={() => setAdminSection('coupons')}>Coupons</Button>
+        </div>
+        <AdminCouponsView subdomain={subdomain} />
+      </div>
+    );
+  }
+
   if (error && !data) {
     return (
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6">
@@ -140,6 +162,12 @@ export function AdminApprovalsView({ subdomain }: Readonly<{ subdomain: string }
         <p className="text-body text-ink-sub">
           Approving a payment starts a 30-day plan from approval. Rejecting starts nothing.
         </p>
+      </div>
+      <div className="flex flex-wrap gap-2" role="tablist" aria-label="Admin billing sections">
+        <Button onClick={() => setAdminSection('approvals')}>Approvals</Button>
+        <Button variant="outline" onClick={() => setAdminSection('coupons')}>
+          Coupons
+        </Button>
       </div>
 
       <Card>
@@ -190,6 +218,9 @@ export function AdminApprovalsView({ subdomain }: Readonly<{ subdomain: string }
                     <CardDescription>
                       {countsSummary(payment.counts)} · {methodLabel(payment)}
                       {payment.isUpgrade ? ' · Upgrade' : ''} · {formatDate(payment.createdAt)}
+                      {payment.couponCode
+                        ? ` · Coupon ${payment.couponCode} (−${payment.discountPkr} PKR)`
+                        : ''}
                     </CardDescription>
                   </div>
                   <span className="shrink-0 text-lg font-semibold tabular-nums text-ink">
@@ -263,6 +294,9 @@ export function AdminApprovalsView({ subdomain }: Readonly<{ subdomain: string }
                 </span>
                 <span className="text-metadata text-ink-sub">
                   {countsSummary(payment.counts)} · {payment.amountPkr} PKR · {methodLabel(payment)}
+                  {payment.couponCode
+                    ? ` · Coupon ${payment.couponCode} (−${payment.discountPkr} PKR)`
+                    : ''}
                 </span>
               </div>
               {payment.status === 'approved' || payment.status === 'paid' ? (

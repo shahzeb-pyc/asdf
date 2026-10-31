@@ -36,6 +36,8 @@ export function mapPaymentToItem(payment: SubscriptionPaymentRow): BillingPaymen
     nowpaymentsPayAddress: payment.nowpaymentsPayAddress,
     nowpaymentsPayAmount: payment.nowpaymentsPayAmount,
     nowpaymentsNetwork: payment.nowpaymentsNetwork,
+    couponCode: payment.couponCode,
+    discountPkr: payment.discountPkr,
     createdAt: payment.createdAt,
     approvedAt: payment.approvedAt,
   };

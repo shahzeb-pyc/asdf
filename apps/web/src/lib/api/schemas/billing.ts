@@ -16,11 +16,25 @@ export {
   PlatformCountsSchema,
   UsageRegisterRequestSchema,
 } from '@fbuploadpro/contracts';
+export {
+  CouponRedemptionsResponseSchema,
+  CouponsListResponseSchema,
+  CouponValidateResponseSchema,
+  CreateCouponRequestSchema,
+  AdminCouponActionSchema,
+  ZeroDueCheckoutResponseSchema,
+} from '@fbuploadpro/contracts';
 export type {
   AdminPaymentsResponse,
   BillingStatusResponse,
+  Coupon,
+  CouponRedemption,
+  CouponValidateResponse,
+  CouponsListResponse,
+  CouponRedemptionsResponse,
   CryptoCheckoutResponse,
   EntitlementResponse,
   MediaStorageResponse,
   PlatformCounts,
+  ZeroDueCheckoutResponse,
 } from '@fbuploadpro/contracts';

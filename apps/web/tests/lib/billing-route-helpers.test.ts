@@ -40,6 +40,8 @@ function payment(overrides: Partial<SubscriptionPaymentRow> = {}): SubscriptionP
     nowpaymentsPayAddress: null,
     nowpaymentsPayAmount: null,
     nowpaymentsNetwork: null,
+    couponCode: null,
+    discountPkr: 0,
     periodId: null,
     approvedAt: null,
     createdAt: '2026-10-30T00:00:00.000Z',
@@ -84,6 +86,8 @@ describe('mapPaymentToItem', () => {
       nowpaymentsPayAddress: null,
       nowpaymentsPayAmount: null,
       nowpaymentsNetwork: null,
+      couponCode: null,
+      discountPkr: 0,
       createdAt: '2026-10-30T00:00:00.000Z',
       approvedAt: null,
     });

@@ -8,7 +8,9 @@ import {
   BillingPaymentItemSchema,
   BillingStatusResponseSchema,
   CryptoCheckoutResponseSchema,
+  ZeroDueCheckoutResponseSchema,
   type BillingStatusResponse,
+  type CouponValidateResponse,
   type CryptoCheckoutResponse,
   type PlatformCounts,
 } from '@/lib/api/schemas/billing';
@@ -32,6 +34,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { EmptyState } from '@/components/shared/ui/empty-state';
 import { Skeleton } from '@/components/shared/ui/skeleton';
 import { BillingStatusMark } from './billing-status-mark';
+import { CouponSection } from './coupon-section';
 
 const PLATFORM_LABELS: Record<keyof PlatformCounts, string> = {
   facebook: 'Facebook',
@@ -65,11 +68,12 @@ type PurchaseStep = 'builder' | 'checkout' | 'confirmation';
 type PaymentType = 'bank' | 'crypto';
 
 interface ConfirmationData {
-  kind: 'bank' | 'crypto';
+  kind: 'bank' | 'crypto' | 'coupon';
   amountPkr: number;
   counts: PlatformCounts;
   isUpgrade: boolean;
   crypto: CryptoCheckoutResponse | null;
+  couponCode: string | null;
 }
 
 function formatDate(value: string | null): string {
@@ -266,6 +270,8 @@ export function BillingView({
   const [screenshot, setScreenshot] = React.useState<File | null>(null);
   const [cryptoNetwork, setCryptoNetwork] = React.useState<'trc20' | 'bep20'>('trc20');
   const [confirmation, setConfirmation] = React.useState<ConfirmationData | null>(null);
+  const [appliedCoupon, setAppliedCoupon] = React.useState<CouponValidateResponse | null>(null);
+  const [activatingZeroDue, setActivatingZeroDue] = React.useState(false);
   const [copied, setCopied] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState<'bank' | 'crypto' | null>(null);
   const [formError, setFormError] = React.useState<string | null>(null);
@@ -384,6 +390,10 @@ export function BillingView({
   function goToCheckout() {
     setFormError(null);
     setConfirmation(null);
+    // A coupon preview is priced for the counts at apply time;
+    // re-entering checkout always starts without one, so a stale
+    // discount can never ride along with changed counts.
+    setAppliedCoupon(null);
     goToPurchaseStep('checkout');
   }
 
@@ -420,6 +430,9 @@ export function BillingView({
       form.append('counts', JSON.stringify(effectiveCounts));
       form.append('bankMethod', bankMethod);
       form.append('screenshot', screenshot);
+      if (appliedCoupon) {
+        form.append('couponCode', appliedCoupon.code);
+      }
       await apiPost(buildTenantApiPath(subdomain, '/billing/payments'), form, {
         schema: BillingPaymentItemSchema,
       });
@@ -436,10 +449,11 @@ export function BillingView({
       await load();
       setConfirmation({
         kind: 'bank',
-        amountPkr: amountToPay,
+        amountPkr: appliedCoupon ? appliedCoupon.amountAfterDiscountPkr : amountToPay,
         counts: effectiveCounts,
         isUpgrade,
         crypto: null,
+        couponCode: appliedCoupon ? appliedCoupon.code : null,
       });
       goToPurchaseStep('confirmation');
       setScreenshot(null);
@@ -469,22 +483,67 @@ export function BillingView({
     try {
       const result = await apiPost(
         buildTenantApiPath(subdomain, '/billing/payments/crypto'),
-        { counts: effectiveCounts, network: cryptoNetwork, isUpgrade },
+        {
+          counts: effectiveCounts,
+          network: cryptoNetwork,
+          isUpgrade,
+          ...(appliedCoupon ? { couponCode: appliedCoupon.code } : {}),
+        },
         { schema: CryptoCheckoutResponseSchema }
       );
       await load();
       setConfirmation({
         kind: 'crypto',
-        amountPkr: amountToPay,
+        amountPkr: appliedCoupon ? appliedCoupon.amountAfterDiscountPkr : amountToPay,
         counts: effectiveCounts,
         isUpgrade,
         crypto: result,
+        couponCode: appliedCoupon ? appliedCoupon.code : null,
       });
       goToPurchaseStep('confirmation');
     } catch (err) {
       setFormError(getErrorMessage(err));
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function submitZeroDue() {
+    if (units === 0) {
+      setFormError('Choose at least one page or account.');
+      return;
+    }
+    if (quoteError) {
+      setFormError(plainQuoteError(quoteError));
+      return;
+    }
+    if (!appliedCoupon || !appliedCoupon.fullyCovered) {
+      setFormError('This coupon does not cover the full amount.');
+      return;
+    }
+    setActivatingZeroDue(true);
+    setFormError(null);
+    try {
+      const result = await apiPost(
+        buildTenantApiPath(subdomain, '/billing/payments/zero-due'),
+        { counts: effectiveCounts, couponCode: appliedCoupon.code },
+        { schema: ZeroDueCheckoutResponseSchema }
+      );
+      await load();
+      setConfirmation({
+        kind: 'coupon',
+        amountPkr: 0,
+        counts: result.counts,
+        isUpgrade: result.isUpgrade,
+        crypto: null,
+        couponCode: result.couponCode,
+      });
+      setAppliedCoupon(null);
+      goToPurchaseStep('confirmation');
+    } catch (err) {
+      setFormError(getErrorMessage(err));
+    } finally {
+      setActivatingZeroDue(false);
     }
   }
 
@@ -511,12 +570,22 @@ export function BillingView({
   const details = BANK_PAYMENT_DETAILS[bankMethod];
   const includedUnits = totalUnits(entitlement.counts);
   const usedUnits = totalUnits(entitlement.usage);
+  // A fully-covering coupon disables both payment submits: there is
+  // nothing to pay, and activation happens from the coupon section.
+  // A pending payment also disables checkout (#79 one-pending block).
+  const fullyCovered = Boolean(appliedCoupon?.fullyCovered);
   const checkoutDisabled =
-    busy !== null || units === 0 || Boolean(quoteError) || pendingPayment !== null;
+    busy !== null ||
+    units === 0 ||
+    Boolean(quoteError) ||
+    pendingPayment !== null ||
+    fullyCovered;
   const bankDisabled = checkoutDisabled || !screenshot;
-  const bankDisabledReason = units === 0
-    ? 'Choose at least one page or account first.'
-    : plainQuoteError(quoteError) ?? (!screenshot ? 'Add a screenshot of your payment so we can approve it.' : null);
+  const bankDisabledReason = fullyCovered
+    ? 'Your coupon covers the full amount — activate your plan above, no payment needed.'
+    : units === 0
+      ? 'Choose at least one page or account first.'
+      : plainQuoteError(quoteError) ?? (!screenshot ? 'Add a screenshot of your payment so we can approve it.' : null);
 
   // Purchase rows name the unit only. Included/in-use counts belong
   // to My Plan and are deliberately NOT shown here — the stepper
@@ -623,16 +692,44 @@ export function BillingView({
                 <dt className="text-ink-sub">Credit for unused days</dt>
                 <dd className="font-medium tabular-nums text-ink">−{quote.creditPkr} PKR</dd>
               </div>
+              {appliedCoupon ? (
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-ink-sub">Coupon {appliedCoupon.code}</dt>
+                  <dd className="font-medium tabular-nums text-ink">
+                    −{appliedCoupon.discountPkr} PKR
+                  </dd>
+                </div>
+              ) : null}
               <div className="flex items-baseline justify-between gap-3 border-t border-line pt-2">
                 <dt className="font-medium text-ink">You pay now</dt>
-                <dd className="font-semibold tabular-nums text-ink">{amountToPay} PKR</dd>
+                <dd className="font-semibold tabular-nums text-ink">
+                  {appliedCoupon ? appliedCoupon.amountAfterDiscountPkr : amountToPay} PKR
+                </dd>
               </div>
             </>
           ) : (
-            <div className="flex items-baseline justify-between gap-3 border-t border-line pt-2">
-              <dt className="text-lg font-medium text-ink">You pay</dt>
-              <dd className="text-lg font-semibold tabular-nums text-ink">{total} PKR / month</dd>
-            </div>
+            <>
+              {appliedCoupon ? (
+                <>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <dt className="text-ink-sub">Coupon {appliedCoupon.code}</dt>
+                    <dd className="font-medium tabular-nums text-ink">
+                      −{appliedCoupon.discountPkr} PKR
+                    </dd>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-3 border-t border-line pt-2">
+                    <dt className="font-medium text-ink">You pay now</dt>
+                    <dd className="font-semibold tabular-nums text-ink">
+                      {appliedCoupon.amountAfterDiscountPkr} PKR
+                    </dd>
+                  </div>
+                </>
+              ) : null}
+              <div className="flex items-baseline justify-between gap-3 border-t border-line pt-2">
+                <dt className="text-lg font-medium text-ink">You pay</dt>
+                <dd className="text-lg font-semibold tabular-nums text-ink">{total} PKR / month</dd>
+              </div>
+            </>
           )}
         </dl>
         <p className="text-body text-ink-sub">
@@ -673,6 +770,9 @@ export function BillingView({
                 {payment.amountPkr} PKR ·{' '}
                 {paymentMethodLabel(payment)}
                 {payment.isUpgrade ? ' · Upgrade' : ''}
+                {payment.couponCode
+                  ? ` · Coupon ${payment.couponCode} (−${payment.discountPkr} PKR)`
+                  : ''}
               </span>
               <span className="text-metadata text-ink-sub">{formatDate(payment.createdAt)}</span>
             </div>
@@ -733,28 +833,47 @@ export function BillingView({
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
         <div className="flex flex-col gap-1">
           <h1 className="text-xl leading-heading font-semibold text-ink">Purchase</h1>
-          <p className="text-body text-ink-sub">{confirmation.kind === 'bank' ? 'We have received your payment.' : 'One step left: send your payment.'}</p>
+          <p className="text-body text-ink-sub">
+            {confirmation.kind === 'bank'
+              ? 'We have received your payment.'
+              : confirmation.kind === 'coupon'
+                ? 'Your plan is active now.'
+                : 'One step left: send your payment.'}
+          </p>
         </div>
         <PurchaseStepIndicator current="confirmation" />
         <Card>
           <CardHeader>
             <CardTitle>
-              {confirmation.kind === 'bank' ? 'Payment submitted' : 'Send your crypto payment'}
+              {confirmation.kind === 'bank'
+                ? 'Payment submitted'
+                : confirmation.kind === 'coupon'
+                  ? 'Plan activated'
+                  : 'Send your crypto payment'}
             </CardTitle>
             <CardDescription>
               {confirmation.kind === 'bank'
                 ? 'Your plan starts when we approve it, and runs for 30 days.'
-                : 'Your plan starts automatically once we receive your payment.'}
+                : confirmation.kind === 'coupon'
+                  ? 'Your coupon covered the full amount — no payment was needed.'
+                  : 'Your plan starts automatically once we receive your payment.'}
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             <BillingStatusMark
-              kind="pending"
-              label={confirmation.kind === 'bank' ? 'Waiting for approval' : 'Waiting for payment'}
+              kind={confirmation.kind === 'coupon' ? 'ok' : 'pending'}
+              label={
+                confirmation.kind === 'bank'
+                  ? 'Waiting for approval'
+                  : confirmation.kind === 'coupon'
+                    ? 'Active'
+                    : 'Waiting for payment'
+              }
             />
             <p className="text-body text-ink">
               {countsSummary(purchasableCounts(confirmation.counts))} · {confirmation.amountPkr} PKR
               {confirmation.isUpgrade ? ' · Upgrade' : ''}
+              {confirmation.couponCode ? ` · Coupon ${confirmation.couponCode}` : ''}
             </p>
             {confirmation.kind === 'crypto' && confirmation.crypto && cryptoAmount !== null ? (
               <Alert variant="success">
@@ -768,8 +887,9 @@ export function BillingView({
               </Alert>
             ) : null}
             <p className="text-body text-ink-sub">
-              Manual payments start after we approve them. Crypto payments start as soon as we
-              receive them. You can see this payment under Payments.
+              {confirmation.kind === 'coupon'
+                ? 'Your plan runs for 30 days from today.'
+                : 'Manual payments start after we approve them. Crypto payments start as soon as we receive them. You can see this payment under Payments.'}
             </p>
             <div className="flex flex-wrap gap-2">
               <Button onClick={goToMyPlan}>Back to My Plan</Button>
@@ -794,8 +914,12 @@ export function BillingView({
           <h1 className="text-xl leading-heading font-semibold text-ink">Checkout</h1>
           <p className="text-body text-ink-sub">
             {isUpgrade ? 'Upgrade · ' : ''}
-            {countsSummary(purchasableCounts(effectiveCounts))} · {amountToPay} PKR
+            {countsSummary(purchasableCounts(effectiveCounts))} ·{' '}
+            {appliedCoupon ? appliedCoupon.amountAfterDiscountPkr : amountToPay} PKR
             {isUpgrade ? ' to pay now' : ' / month'}
+            {appliedCoupon
+              ? ` · Coupon ${appliedCoupon.code} (−${appliedCoupon.discountPkr} PKR)`
+              : ''}
           </p>
         </div>
         <PurchaseStepIndicator current="checkout" />
@@ -809,7 +933,16 @@ export function BillingView({
           </Alert>
         ) : null}
         <div className="flex flex-col items-start gap-6 lg:flex-row">
-          <div className="flex min-w-0 flex-1 flex-col gap-6">
+          <div className="order-2 flex min-w-0 flex-1 flex-col gap-6 lg:order-1">
+            <CouponSection
+              subdomain={subdomain}
+              counts={effectiveCounts}
+              applied={appliedCoupon}
+              onAppliedChange={setAppliedCoupon}
+              onActivateZeroDue={() => void submitZeroDue()}
+              activating={activatingZeroDue}
+              disabled={busy !== null || activatingZeroDue}
+            />
             <Card>
               <CardHeader>
                 <CardTitle>Choose how to pay</CardTitle>
@@ -950,7 +1083,8 @@ export function BillingView({
                 ) : (
                   <section aria-label="Pay with crypto" className="flex flex-col gap-4">
                     <p className="text-body text-ink-sub">
-                      Pay in USDT. You will pay the USDT equal to {amountToPay} PKR.
+                      Pay in USDT. You will pay the USDT equal to{' '}
+                      {appliedCoupon ? appliedCoupon.amountAfterDiscountPkr : amountToPay} PKR.
                     </p>
                     <div role="radiogroup" aria-label="Crypto network" className="grid gap-2 sm:grid-cols-2">
                       {(['trc20', 'bep20'] as const).map((network) => (
@@ -976,6 +1110,12 @@ export function BillingView({
                       {units === 0 ? (
                         <p className="mt-2 text-body text-ink-sub">
                           Choose at least one page or account first.
+                        </p>
+                      ) : null}
+                      {fullyCovered ? (
+                        <p className="mt-2 text-body text-ink-sub">
+                          Your coupon covers the full amount — activate your plan above, no
+                          payment needed.
                         </p>
                       ) : null}
                     </div>

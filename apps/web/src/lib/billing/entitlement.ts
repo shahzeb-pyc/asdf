@@ -10,6 +10,10 @@ import {
   type SubscriptionPlatform,
 } from '@fbuploadpro/contracts';
 import { logServerError } from '@/lib/server-analytics';
+import {
+  applyHeldRedemptionsForPayment,
+  releaseHeldRedemptionsForPayment,
+} from './coupons';
 
 /**
  * Subscription entitlement, server-side only.
@@ -64,6 +68,8 @@ export interface SubscriptionPaymentRow {
   nowpaymentsPayAddress: string | null;
   nowpaymentsPayAmount: number | null;
   nowpaymentsNetwork: 'trc20' | 'bep20' | null;
+  couponCode: string | null;
+  discountPkr: number;
   periodId: string | null;
   approvedAt: string | null;
   createdAt: string;
@@ -179,6 +185,8 @@ export function paymentFromRow(row: UnknownRow): SubscriptionPaymentRow | null {
     nowpaymentsPayAddress: stringField(row, 'nowpayments_pay_address'),
     nowpaymentsPayAmount: typeof payAmount === 'number' ? payAmount : null,
     nowpaymentsNetwork: network === 'trc20' || network === 'bep20' ? network : null,
+    couponCode: stringField(row, 'coupon_code'),
+    discountPkr: numberField(row, 'discount_pkr'),
     periodId: stringField(row, 'period_id'),
     approvedAt: stringField(row, 'approved_at'),
     createdAt: stringField(row, 'created_at') ?? '',
@@ -580,17 +588,19 @@ export async function registerUsage(
   return { alreadyUsed: false, usedCount: await getUsageCount(client, userId, platform) };
 }
 
-/** Supersede the user's current periods and start a fresh 30-day period for a payment. */
-export async function createPeriodForPayment(
+/** Supersede the user's current periods and start a fresh 30-day period.
+ *  paymentId is null for zero-due coupon activations, which create no
+ *  payment row; the coupon redemption carries the period link there. */
+export async function createPeriodForPurchase(
   client: SupabaseClient,
-  payment: SubscriptionPaymentRow,
+  args: { userId: string; counts: PlatformCounts; paymentId: string | null },
   startsAt: Date = new Date()
 ): Promise<SubscriptionPeriodRow> {
   const endsAt = new Date(startsAt.getTime() + SUBSCRIPTION_PERIOD_DAYS * 86_400_000);
   const { error: supersedeError } = await client
     .from('subscription_periods')
     .update({ superseded_at: startsAt.toISOString() })
-    .eq('user_id', payment.userId)
+    .eq('user_id', args.userId)
     .is('superseded_at', null)
     .gt('ends_at', startsAt.toISOString());
   if (supersedeError) {
@@ -603,14 +613,14 @@ export async function createPeriodForPayment(
   const { data, error } = await client
     .from('subscription_periods')
     .insert({
-      user_id: payment.userId,
-      payment_id: payment.id,
-      facebook_count: payment.counts.facebook,
-      instagram_count: payment.counts.instagram,
-      threads_count: payment.counts.threads,
-      x_count: payment.counts.x,
-      tiktok_count: payment.counts.tiktok,
-      youtube_count: payment.counts.youtube,
+      user_id: args.userId,
+      payment_id: args.paymentId,
+      facebook_count: args.counts.facebook,
+      instagram_count: args.counts.instagram,
+      threads_count: args.counts.threads,
+      x_count: args.counts.x,
+      tiktok_count: args.counts.tiktok,
+      youtube_count: args.counts.youtube,
       starts_at: startsAt.toISOString(),
       ends_at: endsAt.toISOString(),
     })
@@ -642,6 +652,19 @@ export async function createPeriodForPayment(
   return period;
 }
 
+/** Supersede the user's current periods and start a fresh 30-day period for a payment. */
+export async function createPeriodForPayment(
+  client: SupabaseClient,
+  payment: SubscriptionPaymentRow,
+  startsAt: Date = new Date()
+): Promise<SubscriptionPeriodRow> {
+  return createPeriodForPurchase(
+    client,
+    { userId: payment.userId, counts: payment.counts, paymentId: payment.id },
+    startsAt
+  );
+}
+
 /**
  * Approve a bank payment. Idempotent: approving an already-approved
  * payment returns its existing period and does NOT extend it again.
@@ -656,7 +679,7 @@ export async function approvePayment(
   const { data, error } = await client
     .from('subscription_payments')
     .select(
-      `id,user_id,method,bank_method,status,${COUNT_COLUMNS},amount_pkr,is_upgrade,screenshot_storage_key,nowpayments_payment_id,nowpayments_pay_address,nowpayments_pay_amount,nowpayments_network,period_id,approved_at,created_at`
+      `id,user_id,method,bank_method,status,${COUNT_COLUMNS},amount_pkr,is_upgrade,screenshot_storage_key,nowpayments_payment_id,nowpayments_pay_address,nowpayments_pay_amount,nowpayments_network,coupon_code,discount_pkr,period_id,approved_at,created_at`
     )
     .eq('id', paymentId)
     .maybeSingle();
@@ -674,7 +697,14 @@ export async function approvePayment(
       .eq('id', payment.periodId)
       .maybeSingle();
     const period = periodData ? periodFromRow(asRow(periodData) ?? {}) : null;
-    if (period) return { payment, period };
+    // Idempotent re-approve: the period already exists, but a coupon
+    // redemption held on this payment may never have been applied
+    // (e.g. the first approve failed after creating the period).
+    // Applying is held→applied only, so re-running it is safe.
+    if (period) {
+      await applyHeldRedemptionsForPayment(client, payment.id);
+      return { payment, period };
+    }
   }
   if (payment.status !== 'pending') {
     throw new SubscriptionGateError(
@@ -683,6 +713,10 @@ export async function approvePayment(
     );
   }
   const period = await createPeriodForPayment(client, payment, now);
+  // The period exists now; applying the held coupon redemption is
+  // part of the same approval. If it fails, the payment stays
+  // pending and the next approve retries through the path above.
+  await applyHeldRedemptionsForPayment(client, payment.id);
   const { error: updateError } = await client
     .from('subscription_payments')
     .update({
@@ -717,7 +751,7 @@ export async function rejectPayment(
   const { data, error } = await client
     .from('subscription_payments')
     .select(
-      `id,user_id,method,bank_method,status,${COUNT_COLUMNS},amount_pkr,is_upgrade,screenshot_storage_key,nowpayments_payment_id,nowpayments_pay_address,nowpayments_pay_amount,nowpayments_network,period_id,approved_at,created_at`
+      `id,user_id,method,bank_method,status,${COUNT_COLUMNS},amount_pkr,is_upgrade,screenshot_storage_key,nowpayments_payment_id,nowpayments_pay_address,nowpayments_pay_amount,nowpayments_network,coupon_code,discount_pkr,period_id,approved_at,created_at`
     )
     .eq('id', paymentId)
     .maybeSingle();
@@ -734,6 +768,10 @@ export async function rejectPayment(
       'That payment has already been decided.'
     );
   }
+  // Release BEFORE the status update: if the release fails, the
+  // payment stays pending and the admin's retry recovers, instead
+  // of a rejected payment keeping a coupon held forever.
+  await releaseHeldRedemptionsForPayment(client, payment.id);
   const { error: updateError } = await client
     .from('subscription_payments')
     .update({ status: 'rejected', updated_at: now.toISOString() })

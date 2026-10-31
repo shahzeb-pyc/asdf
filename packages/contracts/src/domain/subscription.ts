@@ -213,6 +213,7 @@ export const CreateCryptoCheckoutRequestSchema = z.object({
   counts: PlatformCountsSchema,
   network: CryptoNetworkSchema,
   isUpgrade: z.boolean(),
+  couponCode: z.string().min(1).max(32).optional(),
 });
 export type CreateCryptoCheckoutRequest = z.infer<typeof CreateCryptoCheckoutRequestSchema>;
 
@@ -262,6 +263,8 @@ export const BillingPaymentItemSchema = z.object({
   nowpaymentsPayAddress: z.string().nullable(),
   nowpaymentsPayAmount: z.number().nullable(),
   nowpaymentsNetwork: CryptoNetworkSchema.nullable(),
+  couponCode: z.string().nullable().default(null),
+  discountPkr: z.number().int().min(0).default(0),
   createdAt: z.string(),
   approvedAt: z.string().nullable(),
 });
