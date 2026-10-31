@@ -96,15 +96,17 @@ interface UnifiedItemRow {
   external_comment_id: string | null;
   created_at: string;
   updated_at: string;
+  /** The row's own media_url (post-owned bytes; null for text posts). */
+  media_url: string | null;
 }
 
 const UNIFIED_ITEM_COLUMNS =
-  'id, destination_id, slot_id, media_item_id, kind, platform_format, link_url, scheduled_time, caption, first_comment, status, retry_count, max_retries, external_post_id, external_comment_id, created_at, updated_at';
+  'id, destination_id, slot_id, media_item_id, kind, platform_format, link_url, scheduled_time, caption, first_comment, status, retry_count, max_retries, external_post_id, external_comment_id, created_at, updated_at, media_url';
 
 const UNIFIED_ITEM_SQL_COLUMNS = `
   id, destination_id, slot_id, media_item_id, kind, platform_format,
   link_url, scheduled_time, caption, first_comment, status, retry_count,
-  max_retries, external_post_id, external_comment_id, created_at, updated_at`;
+  max_retries, external_post_id, external_comment_id, created_at, updated_at, media_url`;
 
 async function authenticateQueueItemRequest(
   request: NextRequest,
@@ -158,12 +160,44 @@ async function fetchWorkspaceOwnerId(
   return data?.owner_id ?? null;
 }
 
+/**
+ * Display name for a post-owned queue row's media: the row has no
+ * library row to name it, so the public URL's basename is the name
+ * ('' when the URL carries none).
+ */
+function basenameFromMediaUrl(url: string): string {
+  const path = url.split('?')[0].split('#')[0];
+  const last = path.split('/').pop() ?? '';
+  if (!last) return '';
+  try {
+    return decodeURIComponent(last);
+  } catch {
+    return last;
+  }
+}
+
 function buildQueueItemResponse(
   row: UnifiedItemRow,
   userId: string,
   mediaRecord: QueueMediaRecord | null,
   formatOverride?: PostFormat
 ) {
+  // Post-owned rows (media_item_id NULL) have no joined media
+  // record, so the PATCH response used to omit `media` entirely
+  // for them — same half-wiring as the list path. Fall back to
+  // the row's own media_url, mirroring the list fallback.
+  const fallbackMedia =
+    !mediaRecord && row.media_url
+      ? {
+          name: basenameFromMediaUrl(row.media_url),
+          mediaType: row.kind === 'video' ? 'video' : 'image',
+          url: row.media_url,
+          thumbnailUrl: null,
+          aspectRatio: 'unknown',
+          durationSeconds: null,
+        }
+      : null;
+
   const queueItem = {
     id: row.id,
     userId,
@@ -202,7 +236,9 @@ function buildQueueItemResponse(
                 : null,
           },
         }
-      : {}),
+      : fallbackMedia
+        ? { media: fallbackMedia }
+        : {}),
   };
 
   return QueueItemSchema.parse(queueItem);

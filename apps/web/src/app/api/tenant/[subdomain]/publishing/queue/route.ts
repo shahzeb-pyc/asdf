@@ -58,9 +58,20 @@ interface QueueListRow {
   media_url?: string | null;
   media_aspect_ratio?: string | null;
   media_duration_seconds?: number | string | null;
+  /**
+   * The queue row's OWN media_url (post-owned bytes), distinct
+   * from the joined library url above: for a post-owned row
+   * (media_item_id NULL) the join yields nothing, and this is the
+   * only media the row has. Legacy branch selects it as
+   * `queue_media_url`; the Supabase branch maps its `media_url`
+   * column onto it at the call site.
+   */
+  queue_media_url?: string | null;
 }
 
 interface QueueListSupabaseRow extends Omit<QueueListRow, 'media_name' | 'media_type' | 'media_thumbnail_url' | 'media_url' | 'media_aspect_ratio' | 'media_duration_seconds'> {
+  /** The queue row's own media_url column (post-owned rows). */
+  media_url: string | null;
   media: {
     name: string;
     media_type: string;
@@ -69,6 +80,22 @@ interface QueueListSupabaseRow extends Omit<QueueListRow, 'media_name' | 'media_
     aspect_ratio: string | null;
     duration_seconds: number | null;
   } | null;
+}
+
+/**
+ * Display name for a post-owned queue row's media: the row has no
+ * library row to name it, so the public URL's basename is the name
+ * ('' when the URL carries none).
+ */
+function basenameFromMediaUrl(url: string): string {
+  const path = url.split('?')[0].split('#')[0];
+  const last = path.split('/').pop() ?? '';
+  if (!last) return '';
+  try {
+    return decodeURIComponent(last);
+  } catch {
+    return last;
+  }
 }
 
 function mapQueueRow(
@@ -84,6 +111,26 @@ function mapQueueRow(
   const mediaUrl = mediaRecord ? mediaRecord.url : flat.media_url;
   const mediaAspect = mediaRecord ? mediaRecord.aspect_ratio : flat.media_aspect_ratio;
   const mediaDuration = mediaRecord ? mediaRecord.duration_seconds : flat.media_duration_seconds;
+
+  // Post-owned rows (media_item_id NULL) have no joined media, so
+  // the joined name is empty — but the row itself carries its
+  // bytes' URL. Fall back to it (mirroring the media_url fallback
+  // in toUnifiedQueueItemView, destination-queue lib) so the queue
+  // UI shows a thumbnail/name instead of nothing; without this
+  // the list returned media: undefined for every new Facebook
+  // media post. A text post has no media_url either, so it still
+  // returns no media, as before.
+  const fallbackMedia =
+    !mediaName && flat.queue_media_url
+      ? {
+          name: basenameFromMediaUrl(flat.queue_media_url),
+          mediaType: row.kind === 'video' ? 'video' : 'image',
+          thumbnailUrl: null,
+          url: flat.queue_media_url,
+          aspectRatio: 'unknown',
+          durationSeconds: null,
+        }
+      : undefined;
 
   return {
     id: row.id,
@@ -113,7 +160,7 @@ function mapQueueRow(
           aspectRatio: mediaAspect ?? 'unknown',
           durationSeconds: mediaDuration != null ? Number(mediaDuration) : null,
         }
-      : undefined,
+      : fallbackMedia,
   };
 }
 
@@ -247,7 +294,8 @@ export async function handleListQueueItems(
         m.thumbnail_url AS media_thumbnail_url,
         m.url AS media_url,
         m.aspect_ratio AS media_aspect_ratio,
-        m.duration_seconds AS media_duration_seconds
+        m.duration_seconds AS media_duration_seconds,
+        qi.media_url AS queue_media_url
       FROM queue_items qi
       LEFT JOIN media_items m ON qi.media_item_id = m.id AND m.user_id = $${params.length + 3}
       WHERE ${whereClause}
@@ -368,7 +416,7 @@ export async function handleListQueueItems(
   let queryBuilder = supabase
     .from('queue_items')
     .select(
-      'id, destination_id, slot_id, media_item_id, kind, platform_format, link_url, scheduled_time, caption, first_comment, status, retry_count, max_retries, external_post_id, external_comment_id, created_at, updated_at, media:media_items(name, media_type, thumbnail_url, url, aspect_ratio, duration_seconds)',
+      'id, destination_id, slot_id, media_item_id, kind, platform_format, link_url, scheduled_time, caption, first_comment, status, retry_count, max_retries, external_post_id, external_comment_id, created_at, updated_at, media_url, media:media_items(name, media_type, thumbnail_url, url, aspect_ratio, duration_seconds)',
       { count: 'exact' }
     )
     .eq('workspace_id', workspaceId)
@@ -405,6 +453,7 @@ export async function handleListQueueItems(
     mapQueueRow(
       {
         ...row,
+        queue_media_url: row.media_url ?? null,
         published_at: row.status === 'published' ? row.updated_at : null,
       },
       ownerId,
