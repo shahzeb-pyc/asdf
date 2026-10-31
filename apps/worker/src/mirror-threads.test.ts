@@ -84,7 +84,7 @@ describe('processMirrorCheck for Threads targets', () => {
     expect(result.posted).toBe(1);
     expect(state.published).toHaveLength(1);
     expect(state.published[0]?.targetPlatform).toBe('threads');
-    expect(state.published[0]?.pageId).toBe('threads_123');
+    expect(state.published[0]?.targetId).toBe('threads_123');
     expect(state.published[0]?.caption).toBe('Hello');
   });
 
