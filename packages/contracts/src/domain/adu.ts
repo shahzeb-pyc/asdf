@@ -178,6 +178,48 @@ export function aduStatusAlert(
   }
 }
 
+/**
+ * Threads Auto Download/Upload alert, same status enum, Threads wording.
+ * The Facebook alerts above are NOT reused: they name Facebook, Business
+ * Manager 2FA and Facebook Accounts, none of which apply to a Threads
+ * destination. Facebook-only statuses map to the closest Threads action
+ * instead of leaking Facebook copy into the Threads section.
+ */
+export function threadsAduStatusAlert(
+  status: AduConfigStatus,
+  syncStatus: AduSyncStatus
+): string | null {
+  if (syncStatus === 'error')
+    return 'The source could not be found. Check the source username in Settings, then try again.';
+  if (status === 'active') return null;
+  switch (status) {
+    case 'inactive':
+      return 'Posting is inactive. Activate automation from the header to resume.';
+    case 'fb_verification_required':
+      return 'Threads verification is required. Complete verification in the Threads app — do not reconnect the account.';
+    case 'fb_rate_limited':
+      return 'Automation is paused because of a Threads rate limit. It resumes automatically.';
+    case 'invalid_token':
+      return 'The Threads connection is invalid. Reconnect the account in Threads Accounts.';
+    case 'page_not_accessible':
+      return 'This Threads account is not accessible. Check the account permissions and reconnect if needed.';
+    case 'invalid_username':
+      return 'The source is disabled. Change the source in Settings to continue.';
+    case 'creator_suspended':
+      return 'This source is unavailable after too many download failures. Change the source in Settings, then reactivate.';
+    case 'completed':
+      return 'All videos have been posted. Update the source in Settings to continue.';
+    case '2fa_required_on_BM':
+      return 'Two-factor authentication is required on the account. Complete it, then reactivate.';
+    case 'check_developer_app':
+      return 'Check the developer app settings for this account, then reactivate.';
+    case 'account_suspended':
+      return 'The Threads account is suspended. Resolve it in Threads, then reactivate.';
+    default:
+      return null;
+  }
+}
+
 export function aduSourceLink(
   platform: AduSourcePlatform,
   username: string

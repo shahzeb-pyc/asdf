@@ -170,9 +170,12 @@ function emptyDb(): FakeDb {
   });
 }
 
-function fakePublisher(publishImpl: Publisher['publish']) {
+function fakePublisher(
+  publishImpl: Publisher['publish'],
+  platform: Publisher['platform'] = 'facebook',
+) {
   return {
-    platform: 'facebook',
+    platform,
     publish: vi.fn(publishImpl),
     refreshTokens: vi.fn(async () => ({ accessToken: 'x' })),
     mapError: () => ({ kind: 'permanent' as const, code: 'unknown', message: 'unknown' }),
@@ -368,6 +371,7 @@ describe('runAduTick', () => {
             id: 'dest-1',
             account_id: 'acc-1',
             workspace_id: 'ws-1',
+            platform: 'facebook',
             status: 'active',
             encrypted_destination_token: null,
           },
@@ -400,6 +404,208 @@ describe('runAduTick', () => {
         c.ops.some((o) => o.kind === 'update' && (o.args[0] as Row).status === 'expired'),
     );
     expect(expired).toBeDefined();
+  });
+
+  it('publishes a Threads job through the Threads publisher, not Facebook', async () => {
+    const job = {
+      id: 'job-1',
+      config_id: 'c1',
+      reel_id: 'reel-1',
+      publish_retries: 0,
+      graph_post_id: null,
+      adu_reels: { caption: 'hi', media_url: 'https://example.invalid/r.mp4', media_object_key: 'r.mp4' },
+    };
+    const facebookPublisher = fakePublisher(async () => ({ status: 'published', externalPostId: 'fb-post' }));
+    const threadsPublisher = fakePublisher(
+      async () => ({ status: 'published', externalPostId: 'threads-media-1' }),
+      'threads',
+    );
+    const registry = createPublisherRegistry();
+    registry.register(facebookPublisher);
+    registry.register(threadsPublisher);
+    const encryptedAccess = await encryptToken('access', MASTER_KEY);
+    const db = makeDb((table, ops) => {
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
+        return { error: null };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'eq' && o.args[1] === 'pending_publish')) {
+        return { data: [job], error: null };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'eq' && o.args[1] === 'publishing')) {
+        return { data: [], error: null };
+      }
+      if (table === 'adu_configs' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return { data: { destination_id: 'dest-1' }, error: null };
+      }
+      if (table === 'adu_configs') return { data: [], error: null };
+      if (table === 'destinations') {
+        return {
+          data: {
+            id: 'dest-1',
+            account_id: 'acc-1',
+            workspace_id: 'ws-1',
+            platform: 'threads',
+            status: 'active',
+            encrypted_destination_token: null,
+          },
+          error: null,
+        };
+      }
+      if (table === 'social_accounts') {
+        return {
+          data: {
+            id: 'acc-1',
+            status: 'active',
+            encrypted_access_token: encryptedAccess,
+            encrypted_refresh_token: null,
+          },
+          error: null,
+        };
+      }
+      return { data: [], error: null };
+    });
+    const result = await runAduTick({
+      db: db as never,
+      registry,
+      masterKey: MASTER_KEY,
+      now: NOW,
+    });
+    expect(result.published).toBe(1);
+    expect(facebookPublisher.publish).not.toHaveBeenCalled();
+    expect(threadsPublisher.publish).toHaveBeenCalledTimes(1);
+    const item = (threadsPublisher.publish as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]?.[0] as Row;
+    expect(item.platform).toBe('threads');
+    expect(item.platform_format).toBe('video');
+    expect(item.media_url).toBe('https://example.invalid/r.mp4');
+    const settled = db.calls.find(
+      (c) =>
+        c.table === 'adu_posting_jobs' &&
+        c.ops.some((o) => o.kind === 'update' && (o.args[0] as Row).status === 'published'),
+    );
+    expect(settled).toBeDefined();
+  });
+
+  it('takes a Threads job from downloaded reel to published in one tick', async () => {
+    // Download-to-upload path at the tick level: a downloaded reel
+    // (the state the downloader leaves) is intaken at a due posting
+    // time, then the same tick publishes it through the Threads
+    // publisher and settles it — no Facebook publisher involvement.
+    const reel = {
+      id: 'reel-1',
+      caption: 'hi',
+      media_url: 'https://example.invalid/r.mp4',
+      media_object_key: 'r.mp4',
+      status: 'downloaded',
+    };
+    const jobs: Row[] = [];
+    const facebookPublisher = fakePublisher(async () => ({ status: 'published', externalPostId: 'fb-post' }));
+    const threadsPublisher = fakePublisher(
+      async () => ({ status: 'published', externalPostId: 'threads-media-1' }),
+      'threads',
+    );
+    const registry = createPublisherRegistry();
+    registry.register(facebookPublisher);
+    registry.register(threadsPublisher);
+    const encryptedAccess = await encryptToken('access', MASTER_KEY);
+    const encryptedRefresh = await encryptToken('refresh', MASTER_KEY);
+    const db = makeDb((table, ops) => {
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
+        return { error: null };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'insert')) {
+        const payload = ops.find((o) => o.kind === 'insert')?.args[0] as Row;
+        jobs.push({
+          id: 'job-1',
+          config_id: payload.config_id,
+          reel_id: payload.reel_id,
+          publish_retries: 0,
+          graph_post_id: null,
+          adu_reels: reel,
+        });
+        return { error: null };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'eq' && o.args[1] === 'pending_publish')) {
+        return { data: jobs, error: null };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'eq' && o.args[1] === 'publishing')) {
+        return { data: [], error: null };
+      }
+      if (table === 'adu_configs' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return { data: { destination_id: 'dest-1' }, error: null };
+      }
+      if (table === 'adu_configs') return { data: [configRow('c1', ['09:00'])], error: null };
+      if (table === 'adu_reels' && ops.some((o) => o.kind === 'eq' && o.args[1] === 'download_failed')) {
+        return { count: 0, data: [], error: null };
+      }
+      // Claim-aware (current main claims the reel before inserting the
+      // job: update … set processing where status='downloaded' and
+      // require a returned row, else it skips the insert). Returning
+      // the claimed row here makes this test pass against both the
+      // branch's tick (post-insert update, return value ignored) and
+      // main's claim-before-insert tick.
+      if (table === 'adu_reels' && ops.some((o) => o.kind === 'update')) {
+        return { data: [{ id: 'reel-1' }], error: null };
+      }
+      if (table === 'adu_reels' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return { data: reel, error: null };
+      }
+      if (table === 'destinations') {
+        return {
+          data: {
+            id: 'dest-1',
+            account_id: 'acc-1',
+            workspace_id: 'ws-1',
+            platform: 'threads',
+            status: 'active',
+            encrypted_destination_token: null,
+          },
+          error: null,
+        };
+      }
+      if (table === 'social_accounts') {
+        return {
+          data: {
+            id: 'acc-1',
+            status: 'active',
+            encrypted_access_token: encryptedAccess,
+            encrypted_refresh_token: encryptedRefresh,
+          },
+          error: null,
+        };
+      }
+      return { data: [], error: null };
+    });
+    const result = await runAduTick({
+      db: db as never,
+      registry,
+      masterKey: MASTER_KEY,
+      now: NOW,
+    });
+    expect(result.intakeJobsCreated).toBe(1);
+    expect(result.published).toBe(1);
+    expect(facebookPublisher.publish).not.toHaveBeenCalled();
+    expect(threadsPublisher.publish).toHaveBeenCalledTimes(1);
+    const item = (threadsPublisher.publish as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]?.[0] as Row;
+    expect(item.platform).toBe('threads');
+    expect(item.media_url).toBe('https://example.invalid/r.mp4');
+    const processing = db.calls.find(
+      (c) =>
+        c.table === 'adu_reels' &&
+        c.ops.some((o) => o.kind === 'update' && (o.args[0] as Row).status === 'processing'),
+    );
+    expect(processing).toBeDefined();
+    const posted = db.calls.find(
+      (c) =>
+        c.table === 'adu_reels' &&
+        c.ops.some((o) => o.kind === 'update' && (o.args[0] as Row).status === 'posted'),
+    );
+    expect(posted).toBeDefined();
+    const settled = db.calls.find(
+      (c) =>
+        c.table === 'adu_posting_jobs' &&
+        c.ops.some((o) => o.kind === 'update' && (o.args[0] as Row).status === 'published'),
+    );
+    expect(settled).toBeDefined();
   });
 
   it('retention deletes only settled jobs older than 90 days', async () => {
