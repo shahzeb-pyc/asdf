@@ -8,7 +8,7 @@ import {
   SellerPayoutDetailsSchema,
   SELLER_COMMISSION_PAYABLE_AFTER_DAYS,
   SELLER_PAYOUT_MINIMUM_PKR,
-} from './sellers';
+} from './sellers.js';
 
 describe('sellers contracts', () => {
   it('keeps the payout minimum and payable delay from the approved plan', () => {
