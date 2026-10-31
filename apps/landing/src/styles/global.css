@@ -47,11 +47,13 @@
   }
 }
 
-/* Every section fills a viewport at minimum (100dvh where
-   supported), and grows instead of clipping if its content is ever
-   taller. Sections are direct siblings, full width, with zero gap:
-   white section 2 meets section 3's rounded-top black panel, and
-   section 3 meets section 4 dark-to-dark the same way. */
+/* Hero only: #section-1 fills a viewport at minimum (100dvh
+   where supported), and grows instead of clipping if its
+   content is ever taller. All other sections size to their
+   content (audit M9/M1, 2026-11-01): forcing every section to
+   full height produced oversized, airy sections at middle
+   widths and short phones. Sections are direct siblings, full
+   width, with zero gap. */
 .section-full {
   min-height: 100vh;
 }
@@ -62,7 +64,7 @@
 }
 
 /* Fixed topbar: centred by flex, always visible, never hidden
-   on scroll. The pill is opaque white with a strong dark shadow,
+   on scroll. The pill is opaque white with a soft shadow,
    legible over white and black sections alike. Width caps at the
    viewport minus 16px so it never overflows a 320px phone. */
 .topbar-fixed {
@@ -78,7 +80,7 @@
 }
 .topbar-pill {
   pointer-events: auto;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), 0 2px 8px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15), 0 2px 6px rgba(0, 0, 0, 0.10);
 }
 
 /* Clip-mask headline lines. Each line sits inside an
@@ -154,7 +156,9 @@
 }
 
 /* Dark panels: the panel is the section, full
-   width and full viewport height, content centred inside it.
+   width, sizing to its content (audit M9, 2026-11-01: the
+   old 100vh min-height is deleted, like section-full above),
+   content centred inside it.
    Section 6 (Community) transition, INVERTED (owner-corrected
    2026-10-31): the WHITE section above (Section 5) ends with
    rounded BOTTOM corners, and Section 6 is pulled up behind it
@@ -167,13 +171,7 @@
    content. Section 5 sits above the panel (z-10 in markup) so
    its white covers the panel everywhere except the cut corners. */
 .dark-panel {
-  min-height: 100vh;
   width: 100%;
-}
-@supports (height: 100dvh) {
-  .dark-panel {
-    min-height: 100dvh;
-  }
 }
 #section-5 {
   border-bottom-left-radius: 48px;
@@ -228,9 +226,8 @@
 }
 
 /* Phone layout: section 2 stacked layout. Phones stack text plus
-   orbit, and the section now fills its viewport at minimum like
-   every other section (the old min-height:auto override is
-   deleted), growing instead of clipping if its content is
+   orbit, and the section sizes to its content (audit M9,
+   2026-11-01), growing instead of clipping if its content is
    taller. The orbit is the visual anchor again at 300px (it fits
    a 320px screen: the orbit box sits 10px into the section
    padding each side, badges reach 17px–303px, badge halo
@@ -257,12 +254,12 @@
     gap: 32px;
   }
   .s2-heading {
-    font-size: 32px;
+    font-size: 40px;
     line-height: 1.1;
     margin-bottom: 16px;
   }
   .s2-text {
-    font-size: 15px;
+    font-size: 16px;
     line-height: 1.6;
     margin-bottom: 32px;
   }
