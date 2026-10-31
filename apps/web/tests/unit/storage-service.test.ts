@@ -50,6 +50,10 @@ describe('Storage Service Providers', () => {
       expect(mock.uploadedObjects.get(key)).toEqual({
         contentType: 'video/mp4',
         byteLength: 5,
+        // Added with the media/posting separation: the mock tracks
+        // upload time so listObjects can report lastModified for
+        // the staged-upload sweep's age check.
+        uploadedAt: expect.any(Date),
       });
 
       await mock.deleteObject(key);
