@@ -381,7 +381,7 @@
       "/tenant/[subdomain]/instagram/auto-repost": {
         "firstLoadGzipBytes": 175365,
         "firstLoadRawBytes": 585574,
-        "routeSpecificGzipBytes": 34870,
+        "routeSpecificGzipBytes": 36624,
         "routeSpecificRawBytes": 122992
       },
       "/tenant/[subdomain]/instagram/auto-repost/[mirrorId]": {
@@ -490,7 +490,7 @@
         "firstLoadGzipBytes": 176478,
         "firstLoadRawBytes": 599680,
         "routeSpecificGzipBytes": 39723,
-        "routeSpecificRawBytes": 147204
+        "routeSpecificRawBytes": 154774
       },
       "/tenant/[subdomain]/creator-finder": {
         "firstLoadGzipBytes": 175174,
