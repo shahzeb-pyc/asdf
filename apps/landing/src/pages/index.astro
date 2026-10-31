@@ -1,5 +1,6 @@
 ---
 import Layout from '../layouts/Layout.astro';
+import safariPreview from '../assets/prompts/african-safari-predator-encounter.webp';
 
 const signup = 'https://app.fbuploadpro.com/signup';
 const signin = 'https://app.fbuploadpro.com/login';
@@ -152,11 +153,12 @@ const signin = 'https://app.fbuploadpro.com/login';
          "Seedance 2.5", "Video Prompts", "30s" — nothing else
          about the prompt is shown, and nothing is invented.
          NO sample tag anywhere (this is a real prompt, not a
-         sample). The preview area is an abstract gradient
-         placeholder with a play glyph — NOT this prompt's real
-         preview, whose URL is deliberately not invented or
-         hotlinked here. NO master prompt text (it stays in the
-         app), NO Copy button, NO counts. Heading gold is TEXT
+         sample). The preview area is the real preview image for
+         this prompt, saved into the repo at
+         src/assets/prompts/african-safari-predator-encounter.webp
+         and rendered through Astro's asset pipeline — no external
+         image URL, no runtime fetch. NO master prompt text (it
+         stays in the app), NO copy button, NO counts. Heading gold is TEXT
          ONLY via the existing gold-deep token — the heavy gold
          highlight box is removed from this section. -->
     <section id="section-3" class="relative bg-white px-5 py-20 sm:px-8 sm:py-24 lg:px-12" aria-label="Prompt Library">
@@ -173,7 +175,7 @@ const signin = 'https://app.fbuploadpro.com/login';
         </div>
         <div>
           <article class="s3-anim overflow-hidden rounded-2xl border border-line bg-white shadow-[0_12px_32px_rgba(17,17,17,0.10)]">
-            <div class="flex h-[240px] items-center justify-center bg-[linear-gradient(135deg,#fde68a,#f0b90b_55%,#92400e)]" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="32" height="32" fill="#111111" aria-hidden="true"><path d="M8 5v14l11-7z" /></svg></div>
+            <img src={safariPreview.src} alt="African Safari Predator Encounter" class="h-[240px] w-full object-cover" />
             <div class="p-5">
               <div class="mb-4 flex items-center justify-end gap-3">
                 <span aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" /></svg></span>
