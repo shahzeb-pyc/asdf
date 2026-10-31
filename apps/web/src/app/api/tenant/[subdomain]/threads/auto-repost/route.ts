@@ -15,6 +15,11 @@ import {
   isLegacyClient,
 } from '@/lib/route-auth';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { assertFeatureAddWithinCap } from '@/lib/billing/entitlement';
+import {
+  getBillingAdminClient,
+  subscriptionGateResponse,
+} from '@/lib/billing/route-helpers';
 import {
   paginateMeta,
   parsePaginationParams,
@@ -207,8 +212,8 @@ async function authenticate(
   subdomain: string,
   dbClient?: Db
 ): Promise<
-  | { db: Db; workspaceId: string; errorResponse?: never }
-  | { db?: never; workspaceId?: never; errorResponse: NextResponse }
+  | { db: Db; workspaceId: string; session: { userId: string; role: string }; errorResponse?: never }
+  | { db?: never; workspaceId?: never; session?: never; errorResponse: NextResponse }
 > {
   const auth = await authenticateTenantRoute(request, subdomain);
   if (auth.errorResponse) return { errorResponse: auth.errorResponse };
@@ -231,7 +236,7 @@ async function authenticate(
   if (!workspaceId) {
     return { errorResponse: NextResponse.json({ error: 'Workspace not found' }, { status: 404 }) };
   }
-  return { db: db as Db, workspaceId };
+  return { db: db as Db, workspaceId, session };
 }
 
 const MIRROR_COLUMNS =
@@ -419,7 +424,7 @@ export async function handleCreateThreadsMirror(
 ): Promise<NextResponse> {
   const auth = await authenticate(request, subdomain, dbClient);
   if (auth.errorResponse) return auth.errorResponse;
-  const { db, workspaceId } = auth;
+  const { db, workspaceId, session } = auth;
 
   let rawBody: unknown;
   try {
@@ -467,6 +472,29 @@ export async function handleCreateThreadsMirror(
     });
     if ('error' in resolved) return resolved.error;
     const destination = resolved.destination;
+
+    // 2b. Plan cap gate: adding a mirror registers the target Threads
+    // account against the Threads cap, so an over-cap mirror is
+    // rejected here, before any mirror row is created. Admins are
+    // never gated, and a missing billing client skips the gate (same
+    // rule as the destination-queue gate) rather than failing the add.
+    if (session.role !== 'admin') {
+      const billingClient = getBillingAdminClient();
+      if (billingClient) {
+        try {
+          await assertFeatureAddWithinCap(
+            billingClient,
+            session.userId,
+            'threads',
+            [destination.external_destination_id ?? destination.id]
+          );
+        } catch (err) {
+          const gateResponse = subscriptionGateResponse(err);
+          if (gateResponse) return gateResponse;
+          throw err;
+        }
+      }
+    }
 
     // 3. Exact-duplicate block (same username + same Threads account).
     const { data: dupData, error: dupError } = await db

@@ -7,6 +7,7 @@
 import React from 'react';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('next/link', () => ({
   default: ({ href, children }: { href: string; children: React.ReactNode }) => (
@@ -106,6 +107,18 @@ function installFetch(postBody: unknown = { id: 'cfg-new' }) {
   });
 }
 
+// The hub now reads the cap display hook (react-query), so renders
+// need a provider — a fresh client per render, no retries, matching
+// the other hub tests. The entitlement fetch hits the same mocked
+// fetch and fails schema validation, so the cap renders nothing and
+// the hub copy/add flows are unaffected.
+function renderWithQuery(node: React.ReactElement) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(<QueryClientProvider client={client}>{node}</QueryClientProvider>);
+}
+
 describe('IgAduHubPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -118,7 +131,7 @@ describe('IgAduHubPage', () => {
   });
 
   it('renders Instagram hub copy, stats, and the account card with an account link', async () => {
-    render(<IgAduHubPage subdomain="acme" />);
+    renderWithQuery(<IgAduHubPage subdomain="acme" />);
     expect(await screen.findByText('Auto Download/Upload')).toBeTruthy();
     expect(screen.getByText('Connected Instagram accounts for automated reel download and posting.')).toBeTruthy();
     expect(screen.getByText('Total Accounts')).toBeTruthy();
@@ -138,7 +151,7 @@ describe('IgAduHubPage', () => {
       if (url.includes('/options')) return jsonResponse(OPTIONS_BODY);
       return jsonResponse({ configs: [], total: 0, page: 1, migrationMissing: true });
     });
-    render(<IgAduHubPage subdomain="acme" />);
+    renderWithQuery(<IgAduHubPage subdomain="acme" />);
     expect(await screen.findByText('ADU tables are not created yet')).toBeTruthy();
     expect(screen.queryByText('No accounts found')).toBeNull();
   });
@@ -148,12 +161,12 @@ describe('IgAduHubPage', () => {
       if (url.includes('/options')) return jsonResponse(OPTIONS_BODY);
       return jsonResponse({ configs: [], stats: { totalPages: 0, followersGained: 0, totalFollowers: 0 }, totalPages: 0, page: 1, limit: 9 });
     });
-    render(<IgAduHubPage subdomain="acme" />);
+    renderWithQuery(<IgAduHubPage subdomain="acme" />);
     expect(await screen.findByText('No accounts found')).toBeTruthy();
   });
 
   it('single add: picks one Instagram account, enters a source, and POSTs a single config', async () => {
-    render(<IgAduHubPage subdomain="acme" />);
+    renderWithQuery(<IgAduHubPage subdomain="acme" />);
     await screen.findByText('My IG Account');
     fireEvent.click(screen.getByText('+ Add Account'));
     expect(await screen.findByText('Add New Account')).toBeTruthy();
@@ -196,7 +209,7 @@ describe('IgAduHubPage', () => {
       if (init?.method === 'POST') return jsonResponse({ created: [{ id: 'cfg-a' }, { id: 'cfg-b' }], failed: [] });
       return jsonResponse(HUB_BODY);
     });
-    render(<IgAduHubPage subdomain="acme" />);
+    renderWithQuery(<IgAduHubPage subdomain="acme" />);
     await screen.findByText('My IG Account');
     fireEvent.click(screen.getByText('+ Add Account'));
     await screen.findByText('Add New Account');
@@ -220,5 +233,64 @@ describe('IgAduHubPage', () => {
       expect(body.items.map((i: { destinationId: string }) => i.destinationId)).toEqual(['dest-1', 'dest-2']);
       expect(body.items.map((i: { sourceUsername: string }) => i.sourceUsername)).toEqual(['creator_one', 'creator_two']);
     });
+  });
+
+  // Cap-disable wiring (feature-cap display, PR #80): the Add button
+  // must actually disable at the cap — removing the disabled prop
+  // from the shell has to fail these tests, not just the hook tests.
+  function installFetchWithEntitlement(usageInstagram: number, allowedInstagram: number) {
+    const entitlement = {
+      plan: 'paid',
+      active: true,
+      counts: {
+        facebook: 0,
+        instagram: allowedInstagram,
+        threads: 0,
+        x: 0,
+        tiktok: 0,
+        youtube: 0,
+      },
+      usage: {
+        facebook: 0,
+        instagram: usageInstagram,
+        threads: 0,
+        x: 0,
+        tiktok: 0,
+        youtube: 0,
+      },
+      periodEndsAt: '2027-01-01T00:00:00.000Z',
+      periodStartsAt: '2026-10-01T00:00:00.000Z',
+      canPost: true,
+      readOnly: false,
+      reason: null,
+      hasPriorPeriod: true,
+    };
+    fetchMock.mockImplementation((url: string, init?: { method?: string }) => {
+      // The cap hook fetches via api.get, which reads response.text()
+      // (not .json()), so the entitlement mock must provide text().
+      if (url.includes('/billing/entitlement'))
+        return Promise.resolve({
+          ok: true,
+          text: () => Promise.resolve(JSON.stringify(entitlement)),
+          json: () => Promise.resolve(entitlement),
+        });
+      if (url.includes('/instagram/auto-download-upload/options')) return jsonResponse(OPTIONS_BODY);
+      if (init?.method === 'POST') return jsonResponse({ id: 'cfg-new' });
+      return jsonResponse(HUB_BODY);
+    });
+  }
+
+  it('disables Add Account at the cap and shows Limit reached', async () => {
+    installFetchWithEntitlement(1, 1);
+    renderWithQuery(<IgAduHubPage subdomain="acme" />);
+    expect(await screen.findByText('1 of 1 accounts connected · Limit reached')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '+ Add Account' })).toBeDisabled();
+  });
+
+  it('keeps Add Account enabled below the cap and shows remaining', async () => {
+    installFetchWithEntitlement(1, 5);
+    renderWithQuery(<IgAduHubPage subdomain="acme" />);
+    expect(await screen.findByText('1 of 5 accounts connected · 4 remaining')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '+ Add Account' })).toBeEnabled();
   });
 });

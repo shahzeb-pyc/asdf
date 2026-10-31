@@ -16,6 +16,11 @@ import {
 } from '@/lib/server/threads-schedule';
 import { refreshDestinationUnmatchedFlag } from '@/lib/server/unmatched-flag';
 import { authenticateThreadsSchedule } from '@/lib/server/threads-schedule-auth';
+import { assertFeatureAddWithinCap } from '@/lib/billing/entitlement';
+import {
+  getBillingAdminClient,
+  subscriptionGateResponse,
+} from '@/lib/billing/route-helpers';
 
 /**
  * Threads In-app Schedule list + add.
@@ -87,7 +92,7 @@ export async function POST(request: NextRequest, props: { params: Promise<{ subd
   const { subdomain } = await props.params;
   const auth = await authenticateThreadsSchedule(request, subdomain);
   if ('errorResponse' in auth) return auth.errorResponse;
-  const { supabase, workspaceId } = auth;
+  const { supabase, workspaceId, session } = auth;
 
   let rawBody: unknown;
   try {
@@ -160,6 +165,32 @@ export async function POST(request: NextRequest, props: { params: Promise<{ subd
         },
         { status: 409 }
       );
+    }
+
+    // Plan cap gate: adding an account to Schedule registers it
+    // against the Threads cap, so an over-cap add is rejected here,
+    // before any destination mutation or slot write. Admins are never
+    // gated, and a missing billing client skips the gate (same rule
+    // as the destination-queue gate). The gate always uses the admin
+    // client, never the route's working client — in production they
+    // are the same client, and in tests the working client is a fake
+    // that must not answer billing queries.
+    if (session.role !== 'admin') {
+      const billingClient = getBillingAdminClient();
+      if (billingClient) {
+        try {
+          await assertFeatureAddWithinCap(
+            billingClient,
+            session.userId,
+            'threads',
+            [destRow.external_destination_id ?? destRow.id]
+          );
+        } catch (err) {
+          const gateResponse = subscriptionGateResponse(err);
+          if (gateResponse) return gateResponse;
+          throw err;
+        }
+      }
     }
 
     const previousMetadata = (destRow.metadata ?? {}) as Record<string, unknown>;

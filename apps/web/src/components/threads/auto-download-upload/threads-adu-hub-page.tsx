@@ -26,6 +26,7 @@ import {
 } from '@/components/shared/ui/select';
 import { Textarea } from '@/components/shared/ui/textarea';
 import { buildTenantApiPath } from '@/lib/api/client';
+import { FeatureCapText, useFeatureCap } from '@/components/billing/feature-cap';
 
 const STATUS_OPTIONS = [
   'All Statuses', 'Active', 'Inactive', 'Verification Req.', 'Rate Limited',
@@ -84,6 +85,9 @@ export function ThreadsAduHubPage({ subdomain }: { subdomain: string }) {
   const [page, setPage] = React.useState(1);
   const [totalPages, setTotalPages] = React.useState(0);
   const [dialogOpen, setDialogOpen] = React.useState(false);
+  // Plan cap: the Add Account button disables at the cap, and the
+  // ADU create route enforces the same cap server-side.
+  const { cap: threadsCap } = useFeatureCap(subdomain, 'threads');
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -114,8 +118,11 @@ export function ThreadsAduHubPage({ subdomain }: { subdomain: string }) {
         <div className="flex min-w-0 flex-col gap-1">
           <h1 className="text-lg leading-heading font-semibold text-ink">Auto Download/Upload</h1>
           <p className="text-body text-ink-sub">Connected Threads accounts for automated video download and posting.</p>
+          {threadsCap ? (
+            <FeatureCapText cap={threadsCap} platform="threads" />
+          ) : null}
         </div>
-        <Button type="button" onClick={() => setDialogOpen(true)}>
+        <Button type="button" onClick={() => setDialogOpen(true)} disabled={threadsCap?.atCap ?? false}>
           <PlusIcon aria-hidden /><span>+ Add Account</span>
         </Button>
       </div>

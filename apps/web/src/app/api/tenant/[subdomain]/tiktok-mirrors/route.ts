@@ -17,6 +17,11 @@ import {
   isLegacyClient,
 } from '@/lib/route-auth';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { assertFeatureAddWithinCap } from '@/lib/billing/entitlement';
+import {
+  getBillingAdminClient,
+  subscriptionGateResponse,
+} from '@/lib/billing/route-helpers';
 import {
   paginateMeta,
   parsePaginationParams,
@@ -1117,6 +1122,29 @@ export async function handleCreateMirror(
       );
       if ('error' in resolved) return resolved.error;
       destination = resolved.destination;
+    }
+
+    // 2b. Plan cap gate: adding a mirror registers the target page /
+    // account against that platform's cap, so an over-cap mirror is
+    // rejected here, before any mirror row is created. Admins are
+    // never gated, and a missing billing client skips the gate (same
+    // rule as the destination-queue gate) rather than failing the add.
+    if (session.role !== 'admin') {
+      const billingClient = getBillingAdminClient();
+      if (billingClient) {
+        try {
+          await assertFeatureAddWithinCap(
+            billingClient,
+            session.userId,
+            targetPlatform,
+            [destination.external_destination_id ?? destination.id]
+          );
+        } catch (err) {
+          const gateResponse = subscriptionGateResponse(err);
+          if (gateResponse) return gateResponse;
+          throw err;
+        }
+      }
     }
 
     // 3. Exact-duplicate block (same source username + same target).

@@ -17,7 +17,7 @@ export async function authenticateThreadsSchedule(
   request: NextRequest,
   subdomain: string
 ): Promise<
-  | { session: { userId: string }; workspaceId: string; supabase: SupabaseClient }
+  | { session: { userId: string; role: string }; workspaceId: string; supabase: SupabaseClient }
   | { errorResponse: NextResponse }
 > {
   const sessionCookie = request.cookies.get('fbup_session')?.value;
