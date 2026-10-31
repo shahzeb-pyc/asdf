@@ -81,6 +81,44 @@
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
+/* No-JS mobile menu: a <details> element in the topbar pill.
+   The summary is the Menu button (its marker is hidden); the
+   panel is a fixed bottom sheet, so the open menu never covers
+   the hero headline. The open/closed label swap is pure CSS.
+   No script, no transition, no animation anywhere here.
+   Known no-JS limitation: tapping a section link jumps the
+   page but does not close the sheet — tap Menu again to close. */
+.mobile-menu summary {
+  list-style: none;
+  cursor: pointer;
+}
+.mobile-menu summary::-webkit-details-marker {
+  display: none;
+}
+.mobile-menu .menu-open-label {
+  display: none;
+}
+.mobile-menu[open] .menu-open-label {
+  display: inline;
+}
+.mobile-menu[open] .menu-closed-label {
+  display: none;
+}
+
+/* Visually-hidden headings for the footer link columns:
+   announced to assistive technology, invisible on screen. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* Clip-mask headline lines. Each line sits inside an
    overflow-hidden mask with a small padding/margin cancel, so
    descenders never clip. There is no hidden state anywhere:
