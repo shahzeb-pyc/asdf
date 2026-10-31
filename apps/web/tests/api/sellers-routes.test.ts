@@ -356,7 +356,7 @@ function req(
   return new NextRequest(`http://localhost${url}`, {
     method: init.method ?? 'GET',
     headers,
-    body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+    ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
   });
 }
 
