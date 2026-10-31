@@ -188,7 +188,7 @@ describe('WorkspaceSidebar (spec 130 rebuild on shared/ui Sidebar)', () => {
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
 
-  it('opening Threads shows its Accounts leaf with no testing note, while a still-testing platform shows the note', () => {
+  it('opening Threads shows its Accounts leaf with no testing note, while a still-testing platform shows ONLY the note (no Accounts leaf)', () => {
     mockPathname = '/tenant/acme/threads/accounts';
     render(<Shell />);
     // The active platform group opens by default. Threads is no longer
@@ -205,7 +205,8 @@ describe('WorkspaceSidebar (spec 130 rebuild on shared/ui Sidebar)', () => {
     fireEvent.click(screen.getByRole('button', { name: /Instagram/ }));
     expect(screen.queryByTestId('sidebar-testing-note-instagram')).not.toBeInTheDocument();
 
-    // A platform that is still testing (X) keeps showing the note.
+    // A platform that is still testing (X) shows ONLY the note — its
+    // Accounts leaf is removed, so no X accounts link may exist.
     fireEvent.click(screen.getByRole('button', { name: /X \(Twitter\)/ }));
     expect(screen.getByTestId('sidebar-testing-note-x')).toHaveTextContent(
       'Being tested — not available for public use'
@@ -214,9 +215,35 @@ describe('WorkspaceSidebar (spec 130 rebuild on shared/ui Sidebar)', () => {
       .getAllByRole('link', { name: /^Accounts/ })
       .map((l) => l.getAttribute('href'));
     expect(accountsLeaves).toContain('/tenant/acme/instagram/accounts');
+    expect(accountsLeaves).not.toContain('/tenant/acme/x/accounts');
   });
 
-  it('every platform Accounts leaf href is a tenant Link href (spec 110)', () => {
+  it('testing platforms (X, TikTok, YouTube) show only the testing note and no Accounts leaf', () => {
+    render(<Shell />);
+    for (const [label, key] of [
+      ['X (Twitter)', 'x'],
+      ['TikTok', 'tiktok'],
+      ['YouTube', 'youtube'],
+    ] as const) {
+      fireEvent.click(screen.getByRole('button', { name: new RegExp(label.replace(/[()]/g, '\\$&')) }));
+      expect(screen.getByTestId(`sidebar-testing-note-${key}`)).toBeInTheDocument();
+    }
+    // Open the non-testing platforms too, so their leaves are rendered.
+    fireEvent.click(screen.getByRole('button', { name: /Instagram/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Threads/ }));
+    const hrefs = screen
+      .getAllByRole('link', { name: /^Accounts/ })
+      .map((l) => l.getAttribute('href'));
+    expect(hrefs).not.toContain('/tenant/acme/x/accounts');
+    expect(hrefs).not.toContain('/tenant/acme/tiktok/accounts');
+    expect(hrefs).not.toContain('/tenant/acme/youtube/accounts');
+    // Facebook, Instagram and Threads keep their Accounts leaves.
+    expect(hrefs).toContain('/tenant/acme/accounts');
+    expect(hrefs).toContain('/tenant/acme/instagram/accounts');
+    expect(hrefs).toContain('/tenant/acme/threads/accounts');
+  });
+
+  it('every non-testing platform Accounts leaf href is a tenant Link href (spec 110)', () => {
     render(<Shell />);
     for (const label of ['Instagram', 'Threads', 'X (Twitter)', 'TikTok', 'YouTube']) {
       fireEvent.click(screen.getByRole('button', { name: new RegExp(label.replace(/[()]/g, '\\$&')) }));
@@ -229,11 +256,11 @@ describe('WorkspaceSidebar (spec 130 rebuild on shared/ui Sidebar)', () => {
         '/tenant/acme/accounts',
         '/tenant/acme/instagram/accounts',
         '/tenant/acme/threads/accounts',
-        '/tenant/acme/x/accounts',
-        '/tenant/acme/tiktok/accounts',
-        '/tenant/acme/youtube/accounts',
       ])
     );
+    expect(hrefs).not.toContain('/tenant/acme/x/accounts');
+    expect(hrefs).not.toContain('/tenant/acme/tiktok/accounts');
+    expect(hrefs).not.toContain('/tenant/acme/youtube/accounts');
   });
 
   it('in icon-collapsed mode the Facebook toggle navigates via router.push (spec 110 parent model)', () => {
@@ -241,6 +268,17 @@ describe('WorkspaceSidebar (spec 130 rebuild on shared/ui Sidebar)', () => {
     const toggle = screen.getByRole('button', { name: /Facebook/ });
     fireEvent.click(toggle);
     expect(mockPush).toHaveBeenCalledWith('/tenant/acme/accounts');
+  });
+
+  it('in icon-collapsed mode a testing platform header never navigates to its accounts route', () => {
+    render(<Shell defaultOpen={false} />);
+    fireEvent.click(screen.getByRole('button', { name: /X \(Twitter\)/ }));
+    expect(mockPush).not.toHaveBeenCalled();
+    // The click only expands the group, revealing the testing note.
+    expect(screen.getByTestId('sidebar-testing-note-x')).toBeInTheDocument();
+    // Non-testing platforms keep the collapsed navigate behaviour.
+    fireEvent.click(screen.getByRole('button', { name: /Instagram/ }));
+    expect(mockPush).toHaveBeenCalledWith('/tenant/acme/instagram/accounts');
   });
 
   it('renders the studio footer trigger with workspace identity and user email', () => {
