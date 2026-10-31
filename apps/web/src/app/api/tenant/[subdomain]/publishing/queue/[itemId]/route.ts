@@ -12,6 +12,9 @@ import {
 import { isLegacyClient, getRouteSupabase } from '@/lib/route-auth';
 import { refreshDestinationUnmatchedFlag } from '@/lib/server/unmatched-flag';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { deletePostOwnedBytesBestEffort } from '@/lib/publishing/post-owned-media';
+import { getStorageService } from '@/lib/storage';
+import type { IStorageService } from '@fbuploadpro/contracts';
 import {
   unifiedQueueRowToPostFormat,
   unifiedQueueStatusToWire,
@@ -30,6 +33,22 @@ import type { SupabaseClient } from '@supabase/supabase-js';
  * writes land as 'cancelled'; the unified vocabulary has no
  * 'skipped').
  */
+
+/**
+ * Resolve storage for best-effort cleanup only: a missing R2
+ * configuration must skip the cleanup, never fail the delete it
+ * rides along with.
+ */
+function resolveCleanupStorage(
+  storageService?: IStorageService
+): IStorageService | null {
+  try {
+    return storageService ?? getStorageService();
+  } catch (err) {
+    console.error('Post-owned cleanup skipped: storage unavailable:', err);
+    return null;
+  }
+}
 
 function resolveScheduledTime(
   requestedTime?: string | null,
@@ -77,15 +96,17 @@ interface UnifiedItemRow {
   external_comment_id: string | null;
   created_at: string;
   updated_at: string;
+  /** The row's own media_url (post-owned bytes; null for text posts). */
+  media_url: string | null;
 }
 
 const UNIFIED_ITEM_COLUMNS =
-  'id, destination_id, slot_id, media_item_id, kind, platform_format, link_url, scheduled_time, caption, first_comment, status, retry_count, max_retries, external_post_id, external_comment_id, created_at, updated_at';
+  'id, destination_id, slot_id, media_item_id, kind, platform_format, link_url, scheduled_time, caption, first_comment, status, retry_count, max_retries, external_post_id, external_comment_id, created_at, updated_at, media_url';
 
 const UNIFIED_ITEM_SQL_COLUMNS = `
   id, destination_id, slot_id, media_item_id, kind, platform_format,
   link_url, scheduled_time, caption, first_comment, status, retry_count,
-  max_retries, external_post_id, external_comment_id, created_at, updated_at`;
+  max_retries, external_post_id, external_comment_id, created_at, updated_at, media_url`;
 
 async function authenticateQueueItemRequest(
   request: NextRequest,
@@ -139,12 +160,44 @@ async function fetchWorkspaceOwnerId(
   return data?.owner_id ?? null;
 }
 
+/**
+ * Display name for a post-owned queue row's media: the row has no
+ * library row to name it, so the public URL's basename is the name
+ * ('' when the URL carries none).
+ */
+function basenameFromMediaUrl(url: string): string {
+  const path = url.split('?')[0].split('#')[0];
+  const last = path.split('/').pop() ?? '';
+  if (!last) return '';
+  try {
+    return decodeURIComponent(last);
+  } catch {
+    return last;
+  }
+}
+
 function buildQueueItemResponse(
   row: UnifiedItemRow,
   userId: string,
   mediaRecord: QueueMediaRecord | null,
   formatOverride?: PostFormat
 ) {
+  // Post-owned rows (media_item_id NULL) have no joined media
+  // record, so the PATCH response used to omit `media` entirely
+  // for them — same half-wiring as the list path. Fall back to
+  // the row's own media_url, mirroring the list fallback.
+  const fallbackMedia =
+    !mediaRecord && row.media_url
+      ? {
+          name: basenameFromMediaUrl(row.media_url),
+          mediaType: row.kind === 'video' ? 'video' : 'image',
+          url: row.media_url,
+          thumbnailUrl: null,
+          aspectRatio: 'unknown',
+          durationSeconds: null,
+        }
+      : null;
+
   const queueItem = {
     id: row.id,
     userId,
@@ -183,7 +236,9 @@ function buildQueueItemResponse(
                 : null,
           },
         }
-      : {}),
+      : fallbackMedia
+        ? { media: fallbackMedia }
+        : {}),
   };
 
   return QueueItemSchema.parse(queueItem);
@@ -510,7 +565,8 @@ export async function handleDeleteQueueItem(
   request: NextRequest,
   subdomain: string,
   itemId: string,
-  dbClient?: DatabaseClient | SupabaseClient
+  dbClient?: DatabaseClient | SupabaseClient,
+  storageService?: IStorageService
 ): Promise<NextResponse> {
   const auth = await authenticateQueueItemRequest(request, subdomain);
   if (auth.errorResponse) return auth.errorResponse;
@@ -524,7 +580,7 @@ export async function handleDeleteQueueItem(
   if (isLegacyClient(dbClient)) {
     // Check existing item
     const existingRows = (await dbClient.query(
-      `SELECT id, status, destination_id FROM queue_items WHERE id = $1 AND workspace_id = $2`,
+      `SELECT id, status, destination_id, media_storage_key FROM queue_items WHERE id = $1 AND workspace_id = $2`,
       [itemId, workspaceId]
     )) as Record<string, unknown>[];
 
@@ -561,6 +617,23 @@ export async function handleDeleteQueueItem(
       await refreshDestinationUnmatchedFlag(dbClient, existing.destination_id);
     }
 
+    // Media/posting separation: the post's own bytes go with it.
+    // Only post-owned keys are ever deleted here — a library key
+    // is left alone, so a queue delete can never delete library
+    // bytes. Best-effort, never fails the delete.
+    {
+      const cleanupStorage = resolveCleanupStorage(storageService);
+      if (cleanupStorage) {
+        await deletePostOwnedBytesBestEffort(
+          cleanupStorage,
+          session.userId,
+          typeof existing.media_storage_key === 'string'
+            ? existing.media_storage_key
+            : null
+        );
+      }
+    }
+
     return NextResponse.json({ success: true, itemId }, { status: 200 });
   }
 
@@ -571,7 +644,7 @@ export async function handleDeleteQueueItem(
 
   const { data: existing, error: existErr } = await supabase
     .from('queue_items')
-    .select('id, status, destination_id')
+    .select('id, status, destination_id, media_storage_key')
     .eq('id', itemId)
     .eq('workspace_id', workspaceId)
     .maybeSingle();
@@ -608,6 +681,21 @@ export async function handleDeleteQueueItem(
   // R25: see the legacy branch — best-effort, never fails the delete.
   if (existing.destination_id) {
     await refreshDestinationUnmatchedFlag(supabase, existing.destination_id);
+  }
+
+  // Media/posting separation: see the legacy branch — the post's own
+  // bytes go with it, library keys are never touched.
+  {
+    const cleanupStorage = resolveCleanupStorage(storageService);
+    if (cleanupStorage) {
+      await deletePostOwnedBytesBestEffort(
+        cleanupStorage,
+        session.userId,
+        typeof existing.media_storage_key === 'string'
+          ? existing.media_storage_key
+          : null
+      );
+    }
   }
 
   return NextResponse.json({ success: true, itemId }, { status: 200 });

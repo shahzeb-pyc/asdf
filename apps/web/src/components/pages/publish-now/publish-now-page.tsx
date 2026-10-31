@@ -74,6 +74,7 @@ import {
   IDEMPOTENCY_KEY_HEADER,
   isFacebookAccountRestricted,
   PublishNowResponseSchema,
+  PublishNowCopyLibraryMediaResponseSchema,
   PublishNowTempMediaResponseSchema,
   type ComposerMedia,
 } from '@fbuploadpro/contracts';
@@ -310,6 +311,8 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
     new Set()
   );
   const tempKeysRef = React.useRef<Set<string>>(new Set());
+  /** Post-owned keys held for this run (staged uploads, library copies). */
+  const postOwnedKeysRef = React.useRef<Set<string>>(new Set());
   const tempInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const accountsQuery = useQuery({
@@ -377,9 +380,14 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
     [allPages, selectedPageKeys]
   );
 
-  /** Deletes every temp key still tracked for this run, best-effort. */
-  const deleteAllTempMedia = React.useCallback(async (): Promise<boolean> => {
-    const keys = [...tempKeysRef.current];
+  /**
+   * Deletes every run-scoped key still tracked for this run
+   * (temp device uploads + post-owned staged/copied keys),
+   * best-effort. The temp-media DELETE endpoint accepts all
+   * run-scoped prefixes under the caller's own user prefix.
+   */
+  const deleteAllRunMedia = React.useCallback(async (): Promise<boolean> => {
+    const keys = [...tempKeysRef.current, ...postOwnedKeysRef.current];
     if (keys.length === 0) return true;
     let allDeleted = true;
     await Promise.all(
@@ -395,6 +403,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
           );
           if (response.ok) {
             tempKeysRef.current.delete(key);
+            postOwnedKeysRef.current.delete(key);
           } else {
             allDeleted = false;
           }
@@ -593,6 +602,19 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
         if (response.ok) tempKeysRef.current.delete(key);
       });
     }
+    if (attached?.postOwnedKey) {
+      const key = attached.postOwnedKey;
+      void fetch(
+        buildTenantApiPath(subdomain, '/publishing/publish-now/temp-media'),
+        {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key }),
+        }
+      ).then((response) => {
+        if (response.ok) postOwnedKeysRef.current.delete(key);
+      });
+    }
     setAttached(null);
   }, [attached, subdomain]);
 
@@ -608,8 +630,21 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
     [attached, postType, removeAttachedMedia]
   );
 
+  /**
+   * Attach picker media, always as post-owned bytes (media/posting
+   * separation) — the publish path never reads a library row:
+   * - Staged device uploads (picker device tab) arrive with a
+   *   post-staging key and are adopted as-is.
+   * - Library picks are copied to post-media storage at pick time
+   *   via the copy endpoint, so a library file deleted after
+   *   picking can never affect the post. The picker stays open
+   *   while the server-side copy runs and closes on success; a
+   *   copy failure shows an error and attaches nothing.
+   * Replacing an attach drops the previous run-scoped bytes
+   * (temp key and/or post-owned key) best-effort.
+   */
   const attachLibraryMedia = React.useCallback(
-    (media: ComposerMedia) => {
+    async (media: ComposerMedia) => {
       const expectedMediaType = postType === 'image' ? 'image' : 'video';
       if (postType !== 'text' && media.mediaType !== expectedMediaType) {
         setErrorMessage(
@@ -618,20 +653,38 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
         setPickerOpen(false);
         return;
       }
-      setAttached((prev) => {
-        if (prev?.tempKey) {
+      const dropPreviousRunMedia = () => {
+        if (attached?.tempKey) {
+          const key = attached.tempKey;
           void fetch(
             buildTenantApiPath(subdomain, '/publishing/publish-now/temp-media'),
             {
               method: 'DELETE',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ key: prev.tempKey }),
+              body: JSON.stringify({ key }),
             }
           ).then((response) => {
-            if (response.ok) tempKeysRef.current.delete(prev.tempKey!);
+            if (response.ok) tempKeysRef.current.delete(key);
           });
         }
-        return {
+        if (attached?.postOwnedKey) {
+          const key = attached.postOwnedKey;
+          void fetch(
+            buildTenantApiPath(subdomain, '/publishing/publish-now/temp-media'),
+            {
+              method: 'DELETE',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ key }),
+            }
+          ).then((response) => {
+            if (response.ok) postOwnedKeysRef.current.delete(key);
+          });
+        }
+      };
+      if (media.source === 'staged' && media.storageKey) {
+        dropPreviousRunMedia();
+        postOwnedKeysRef.current.add(media.storageKey);
+        setAttached({
           name: media.name,
           mediaType: media.mediaType,
           aspectRatio: media.aspectRatio,
@@ -640,10 +693,52 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
           width: media.width ?? null,
           height: media.height ?? null,
           captionText: media.captionText,
-          libraryId: media.id,
+          origin: 'device',
+          postOwnedKey: media.storageKey,
           tempKey: null,
-        };
-      });
+        });
+      } else {
+        // Library pick: copy to post-owned storage first.
+        let copied: {
+          storageKey: string;
+          url: string;
+          thumbnailUrl: string | null;
+        } | null = null;
+        try {
+          copied = await api.post(
+            buildTenantApiPath(
+              subdomain,
+              '/publishing/publish-now/copy-library-media'
+            ),
+            { mediaId: media.id },
+            { schema: PublishNowCopyLibraryMediaResponseSchema }
+          );
+        } catch {
+          copied = null;
+        }
+        if (!copied) {
+          setErrorMessage(
+            'We could not prepare this file for publishing. Please pick it again.'
+          );
+          setPickerOpen(false);
+          return;
+        }
+        dropPreviousRunMedia();
+        postOwnedKeysRef.current.add(copied.storageKey);
+        setAttached({
+          name: media.name,
+          mediaType: media.mediaType,
+          aspectRatio: media.aspectRatio,
+          thumbnailUrl: copied.thumbnailUrl ?? media.thumbnailUrl,
+          url: copied.url,
+          width: media.width ?? null,
+          height: media.height ?? null,
+          captionText: media.captionText,
+          origin: 'library',
+          postOwnedKey: copied.storageKey,
+          tempKey: null,
+        });
+      }
       // Caption prefill: library caption fills an empty composer
       // text only — typed text is never overwritten, and editing
       // here never writes back to the library caption.
@@ -659,7 +754,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
       });
       setPickerOpen(false);
     },
-    [postType, subdomain]
+    [attached, postType, subdomain]
   );
 
   const handleTempFileSelect = React.useCallback(
@@ -714,6 +809,19 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
             if (response.ok) tempKeysRef.current.delete(oldKey);
           });
         }
+        if (attached?.postOwnedKey) {
+          const oldKey = attached.postOwnedKey;
+          void fetch(
+            buildTenantApiPath(subdomain, '/publishing/publish-now/temp-media'),
+            {
+              method: 'DELETE',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ key: oldKey }),
+            }
+          ).then((response) => {
+            if (response.ok) postOwnedKeysRef.current.delete(oldKey);
+          });
+        }
         const defaultCaption = deriveDefaultCaptionFromFilename(file.name);
         setAttached({
           name: file.name,
@@ -724,7 +832,8 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
           width: dimensions.width,
           height: dimensions.height,
           captionText: defaultCaption || null,
-          libraryId: null,
+          origin: 'device',
+          postOwnedKey: null,
           tempKey: upload.key,
         });
         setText((prev) =>
@@ -745,9 +854,12 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
     async (targets: PublishNowSelectedPage[], idempotencyKey: string) => {
       const mediaPayload = attached
         ? {
-            source: attached.libraryId ? ('library' as const) : ('temp' as const),
-            mediaId: attached.libraryId,
+            source: attached.postOwnedKey
+              ? ('post-owned' as const)
+              : ('temp' as const),
+            mediaId: null,
             tempKey: attached.tempKey,
+            postOwnedKey: attached.postOwnedKey,
             url: attached.url,
             mediaType: attached.mediaType,
             aspectRatio: attached.aspectRatio,
@@ -979,7 +1091,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
   );
 
   const handleStartOver = React.useCallback(() => {
-    void deleteAllTempMedia().then((deleted) => {
+    void deleteAllRunMedia().then((deleted) => {
       if (!deleted) {
         toast.error(
           "We couldn't remove the uploaded file. Please try again."
@@ -1002,7 +1114,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
       setHasRun(false);
       publishRunKeysRef.current.clear();
     });
-  }, [deleteAllTempMedia]);
+  }, [deleteAllRunMedia]);
 
   const publishedCount = results.filter(
     (result) => result.status === 'published'
@@ -1599,7 +1711,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
                           </p>
                           <p className="text-xs text-ink-sub">
                             {attached.mediaType === 'image' ? 'Image' : 'Video'}
-                            {attached.libraryId
+                            {attached.origin === 'library'
                               ? ' · from Media Library'
                               : ' · from your device'}
                           </p>
@@ -1899,6 +2011,7 @@ export function PublishNowPage({ subdomain }: Readonly<{ subdomain: string }>) {
         subdomain={subdomain}
         pageName="Publish Now"
         mode="single"
+        deviceUploads="staged"
         onSingleAttach={attachLibraryMedia}
         onMultiAttach={() => undefined}
         sessionKey={pickerSession}

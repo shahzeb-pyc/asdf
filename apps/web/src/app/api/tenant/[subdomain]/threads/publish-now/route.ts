@@ -134,6 +134,18 @@ export async function POST(
   const { caption, postType, reply, targets, media } = parsed.data;
   const trimmedReply = reply?.trim() || undefined;
 
+  // Post-owned media belongs to the Facebook Publish Now path
+  // only. The shared schema accepts the value, so this route
+  // rejects it explicitly — net behaviour is unchanged (it
+  // previously failed enum validation with 400, and still fails
+  // with 400, only with a clearer message).
+  if (media?.source === 'post-owned') {
+    return NextResponse.json(
+      { error: 'INVALID_REQUEST', message: 'Post-owned media is not supported for Threads Publish Now.' },
+      { status: 400 }
+    );
+  }
+
   if (postType === 'text' && caption.trim().length === 0) {
     return NextResponse.json(
       { error: 'INVALID_REQUEST', message: 'A text post needs text.' },

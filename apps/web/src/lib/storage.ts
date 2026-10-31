@@ -1,8 +1,17 @@
 import { z } from 'zod';
-import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
+  CopyObjectCommand,
+  ListObjectsV2Command,
+} from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import type {
+  CopyObjectParams,
   IStorageService,
+  ListedObject,
+  ListObjectsParams,
   PresignedUploadParams,
   PresignedUploadResult,
   PutObjectParams,
@@ -81,7 +90,24 @@ function trimTrailingSlashes(str: string): string {
   return str.slice(0, end);
 }
 
-export class R2StorageProvider implements IStorageService {
+/**
+ * The web app's storage service: the shared base interface plus
+ * the server-side copy/list operations the media/posting
+ * separation needs (post-owned copies, staged-upload sweep).
+ *
+ * Deliberately a WEB-ONLY extension, not a widening of the shared
+ * `IStorageService`: the download-worker's own implementers
+ * (R2 binding sink, test fakes) must not grow copy/list methods
+ * they never use, and widening the shared interface broke their
+ * typecheck. Only the separation code depends on this interface;
+ * everything else keeps depending on the base.
+ */
+export interface IStorageServiceWithCopy extends IStorageService {
+  copyObject(params: CopyObjectParams): Promise<void>;
+  listObjects(params: ListObjectsParams): Promise<ListedObject[]>;
+}
+
+export class R2StorageProvider implements IStorageServiceWithCopy {
   private readonly client: S3Client;
   private readonly config: R2Config;
 
@@ -130,6 +156,40 @@ export class R2StorageProvider implements IStorageService {
     await this.client.send(command);
   }
 
+  /**
+   * Server-side copy (media/posting separation): the bytes never
+   * travel through the app server. CopySource carries the bucket
+   * plus the key with each path segment URL-encoded (slashes stay
+   * literal — encoding them breaks the copy).
+   */
+  async copyObject(params: CopyObjectParams): Promise<void> {
+    const encodedKey = params.sourceKey
+      .split('/')
+      .map((segment) => encodeURIComponent(segment))
+      .join('/');
+    const command = new CopyObjectCommand({
+      Bucket: this.config.bucketName,
+      CopySource: `${this.config.bucketName}/${encodedKey}`,
+      Key: params.destinationKey,
+    });
+    await this.client.send(command);
+  }
+
+  async listObjects(params: ListObjectsParams): Promise<ListedObject[]> {
+    const command = new ListObjectsV2Command({
+      Bucket: this.config.bucketName,
+      Prefix: params.prefix,
+      MaxKeys: params.maxKeys ?? 1000,
+    });
+    const result = await this.client.send(command);
+    return (result.Contents ?? [])
+      .filter((entry) => typeof entry.Key === 'string')
+      .map((entry) => ({
+        key: entry.Key as string,
+        lastModified: entry.LastModified ?? null,
+      }));
+  }
+
   getPublicUrl(key: string): string {
     const trimmedBase = trimTrailingSlashes(this.config.publicUrl);
     const trimmedKey = key.replace(/^\/+/, '');
@@ -137,7 +197,7 @@ export class R2StorageProvider implements IStorageService {
   }
 }
 
-export function getStorageService(): IStorageService {
+export function getStorageService(): IStorageServiceWithCopy {
   const config = getR2Config();
   if (config) {
     return new R2StorageProvider(config);

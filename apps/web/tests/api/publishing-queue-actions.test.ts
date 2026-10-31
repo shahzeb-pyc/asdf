@@ -12,6 +12,7 @@ import {
   POST as POSTPublishNow,
 } from '../../src/app/api/tenant/[subdomain]/publishing/queue/[itemId]/publish-now/route';
 import type { DatabaseClient } from '@fbuploadpro/contracts';
+import { MockStorageProvider } from '../helpers/mock-storage';
 
 const TEST_SECRET = 'super-secret-session-signing-key-minimum-32-chars-long';
 
@@ -511,6 +512,90 @@ describe('Publishing Queue Actions Route Handlers (T128, T129)', () => {
       expect(data.media.name).toBe('video.mp4');
     });
 
+    it('returns the row media_url for a post-owned row with no library link (PATCH fallback)', async () => {
+      const postOwnedUrl =
+        'https://media.fbuploadpro.com/users/11111111-1111-4111-a111-111111111111/post-media/aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa/photo.jpg';
+      const existingTime = '2026-10-08T18:00:00.000Z';
+      const mockDb: Partial<DatabaseClient> = {
+        query: vi.fn().mockImplementation((sql: string) => {
+          if (sql.includes('FROM workspaces')) {
+            return Promise.resolve([{ id: 'ws_123' }]);
+          }
+          if (sql.includes('SELECT') && sql.includes('FROM queue_items')) {
+            return Promise.resolve([
+              {
+                id: itemId,
+                user_id: userId,
+                destination_id: pageId,
+                slot_id: slotId,
+                media_item_id: null,
+                kind: 'image',
+                platform_format: null,
+                scheduled_time: new Date(existingTime),
+                caption: 'Original caption',
+                first_comment: null,
+                status: 'queued',
+                retry_count: 0,
+                max_retries: 3,
+                external_post_id: null,
+                external_comment_id: null,
+                published_at: null,
+                created_at: new Date('2026-10-07T12:00:00.000Z'),
+                updated_at: new Date('2026-10-07T12:00:00.000Z'),
+                media_url: postOwnedUrl,
+              },
+            ]);
+          }
+          if (sql.includes('UPDATE queue_items')) {
+            return Promise.resolve([
+              {
+                id: itemId,
+                user_id: userId,
+                destination_id: pageId,
+                slot_id: slotId,
+                media_item_id: null,
+                kind: 'image',
+                platform_format: null,
+                scheduled_time: new Date(existingTime),
+                caption: 'Edited caption',
+                first_comment: null,
+                status: 'queued',
+                retry_count: 0,
+                max_retries: 3,
+                external_post_id: null,
+                external_comment_id: null,
+                published_at: null,
+                created_at: new Date('2026-10-07T12:00:00.000Z'),
+                updated_at: new Date('2026-10-07T13:00:00.000Z'),
+                media_url: postOwnedUrl,
+              },
+            ]);
+          }
+          return Promise.resolve([]);
+        }),
+      };
+
+      const req = new NextRequest(`http://localhost:3000/api/tenant/acme/publishing/queue/${itemId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ caption: 'Edited caption' }),
+        headers: {
+          cookie: validSessionCookie,
+          'content-type': 'application/json',
+        },
+      });
+
+      const res = await handleUpdateQueueItem(req, 'acme', itemId, mockDb as DatabaseClient);
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.caption).toBe('Edited caption');
+      // Same send-back-1 regression on the PATCH path: the
+      // response used to omit `media` entirely for unlinked rows.
+      expect(data.media).toBeDefined();
+      expect(data.media.url).toBe(postOwnedUrl);
+      expect(data.media.name).toBe('photo.jpg');
+      expect(data.media.thumbnailUrl).toBeNull();
+    });
+
     it('works with the Next.js PATCH route handler wrapper', async () => {
       const mockDb: Partial<DatabaseClient> = {
         query: vi.fn().mockImplementation((sql: string) => {
@@ -719,6 +804,107 @@ describe('Publishing Queue Actions Route Handlers (T128, T129)', () => {
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(data).toEqual({ success: true, itemId });
+    });
+
+    it('deletes the post-owned bytes with the queue item (media/posting separation)', async () => {
+      const postOwnedKey = `users/${userId}/post-media/aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa/photo.jpg`;
+      const libraryKey = `users/${userId}/media/bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb/photo.jpg`;
+      const store = new MockStorageProvider();
+      await store.putObject({
+        key: postOwnedKey,
+        body: new Uint8Array([1]),
+        contentType: 'image/jpeg',
+      });
+      await store.putObject({
+        key: libraryKey,
+        body: new Uint8Array([1]),
+        contentType: 'image/jpeg',
+      });
+      const mockDb: Partial<DatabaseClient> = {
+        query: vi.fn().mockImplementation((sql: string) => {
+          if (sql.includes('FROM workspaces')) {
+            return Promise.resolve([{ id: 'ws_123' }]);
+          }
+          if (sql.includes('SELECT') && sql.includes('FROM queue_items')) {
+            return Promise.resolve([
+              {
+                id: itemId,
+                user_id: userId,
+                status: 'queued',
+                media_storage_key: postOwnedKey,
+              },
+            ]);
+          }
+          if (sql.includes('DELETE FROM queue_items')) {
+            return Promise.resolve([{ id: itemId }]);
+          }
+          return Promise.resolve([]);
+        }),
+      };
+
+      const req = new NextRequest(`http://localhost:3000/api/tenant/acme/publishing/queue/${itemId}`, {
+        method: 'DELETE',
+        headers: { cookie: validSessionCookie },
+      });
+
+      const res = await handleDeleteQueueItem(
+        req,
+        'acme',
+        itemId,
+        mockDb as DatabaseClient,
+        store
+      );
+      expect(res.status).toBe(200);
+      expect(store.uploadedObjects.has(postOwnedKey)).toBe(false);
+      // The library bytes are untouched: a queue delete never
+      // deletes library files.
+      expect(store.uploadedObjects.has(libraryKey)).toBe(true);
+    });
+
+    it('never deletes library bytes when the row still points at a library key', async () => {
+      const libraryKey = `users/${userId}/media/bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb/photo.jpg`;
+      const store = new MockStorageProvider();
+      await store.putObject({
+        key: libraryKey,
+        body: new Uint8Array([1]),
+        contentType: 'image/jpeg',
+      });
+      const mockDb: Partial<DatabaseClient> = {
+        query: vi.fn().mockImplementation((sql: string) => {
+          if (sql.includes('FROM workspaces')) {
+            return Promise.resolve([{ id: 'ws_123' }]);
+          }
+          if (sql.includes('SELECT') && sql.includes('FROM queue_items')) {
+            return Promise.resolve([
+              {
+                id: itemId,
+                user_id: userId,
+                status: 'queued',
+                media_storage_key: libraryKey,
+              },
+            ]);
+          }
+          if (sql.includes('DELETE FROM queue_items')) {
+            return Promise.resolve([{ id: itemId }]);
+          }
+          return Promise.resolve([]);
+        }),
+      };
+
+      const req = new NextRequest(`http://localhost:3000/api/tenant/acme/publishing/queue/${itemId}`, {
+        method: 'DELETE',
+        headers: { cookie: validSessionCookie },
+      });
+
+      const res = await handleDeleteQueueItem(
+        req,
+        'acme',
+        itemId,
+        mockDb as DatabaseClient,
+        store
+      );
+      expect(res.status).toBe(200);
+      expect(store.uploadedObjects.has(libraryKey)).toBe(true);
     });
 
     it('refreshes the unmatched flag on delete (R25)', async () => {

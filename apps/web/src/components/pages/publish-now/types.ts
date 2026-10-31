@@ -67,8 +67,20 @@ export interface PublishNowAttachedMedia {
   width: number | null;
   height: number | null;
   captionText: string | null;
-  /** Set only for library media (a real media_items id). */
-  libraryId: string | null;
+  /**
+   * Where the attached file came from, for the attached label
+   * only: 'library' = a Media Library file copied to post-owned
+   * storage at pick time; 'device' = a device upload (staged or
+   * temp). The publish path never reads the library, whichever
+   * origin is shown.
+   */
+  origin: 'library' | 'device';
+  /**
+   * Post-owned storage key (post-staging device uploads, or a
+   * library file copied to post-media at pick time). Set for
+   * every picker attach; the publish path serves this key alone.
+   */
+  postOwnedKey: string | null;
   /** Set only for temporary device media (an R2 temp key). */
   tempKey: string | null;
 }

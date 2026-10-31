@@ -116,5 +116,66 @@ describe('Publishing Queue Route Handlers (T125, T126, T127)', () => {
       expect(data.items[0].media.name).toBe('video1.mp4');
       expect(data.items[0].media.durationSeconds).toBe(29.5);
     });
+
+    it('returns the row media_url for a post-owned row with no library link', async () => {
+      const postOwnedUrl =
+        'https://media.fbuploadpro.com/users/11111111-1111-4111-a111-111111111111/post-media/aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa/photo.jpg';
+      const mockDb: Partial<DatabaseClient> = {
+        query: vi.fn().mockImplementation((sql: string) => {
+          if (sql.includes('FROM workspaces')) {
+            return Promise.resolve([{ id: 'ws_123' }]);
+          }
+          if (sql.includes('SELECT COUNT(*)')) {
+            return Promise.resolve([{ total: 1 }]);
+          }
+          return Promise.resolve([
+            {
+              id: queueItemId,
+              destination_id: pageId,
+              slot_id: slotId,
+              media_item_id: null,
+              kind: 'image',
+              platform_format: null,
+              link_url: null,
+              scheduled_time: new Date('2026-10-07T18:00:00Z'),
+              caption: 'Post-owned image',
+              first_comment: null,
+              status: 'queued',
+              retry_count: 0,
+              max_retries: 3,
+              external_post_id: null,
+              external_comment_id: null,
+              published_at: null,
+              created_at: new Date('2026-10-07T12:00:00Z'),
+              updated_at: new Date('2026-10-07T12:00:00Z'),
+              media_name: null,
+              media_type: null,
+              media_thumbnail_url: null,
+              media_url: null,
+              media_aspect_ratio: null,
+              media_duration_seconds: null,
+              queue_media_url: postOwnedUrl,
+            },
+          ]);
+        }),
+      };
+
+      const req = new NextRequest('http://localhost:3000/api/tenant/acme/publishing/queue?pageId=' + pageId + '&status=queued', {
+        headers: { cookie: validSessionCookie },
+      });
+
+      const res = await handleListQueueItems(req, 'acme', mockDb as DatabaseClient);
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.items).toHaveLength(1);
+      // Regression (PR #74 send-back 1): the list used to return
+      // media: undefined for post-owned rows, so the queue UI
+      // showed no thumbnail/name for them.
+      expect(data.items[0].media).toBeDefined();
+      expect(data.items[0].media.url).toBe(postOwnedUrl);
+      expect(data.items[0].media.name).toBe('photo.jpg');
+      expect(data.items[0].media.mediaType).toBe('image');
+      expect(data.items[0].media.thumbnailUrl).toBeNull();
+    });
   });
 });

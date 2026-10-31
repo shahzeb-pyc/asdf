@@ -1,7 +1,9 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
-import { signSessionToken, type DatabaseClient } from '@fbuploadpro/contracts';
+import { signSessionToken, IDEMPOTENCY_KEY_HEADER, type DatabaseClient } from '@fbuploadpro/contracts';
 import { handleDestinationEnqueue } from '@/app/api/tenant/[subdomain]/publishing/destination-queue/route';
+import { postStagingKeyPrefix } from '@/lib/publishing/post-owned-media';
+import { MockStorageProvider } from '../helpers/mock-storage';
 
 const TEST_SECRET = ['destination', 'enqueue', 'test', 'secret', 'value'].join('-');
 
@@ -77,8 +79,116 @@ class FakeDb {
   slots: SlotRow[] = [];
   queueItems: QueueItemRow[] = [];
   private seq = 0;
+  idempotencyKeys: Array<{
+    workspace_id: string;
+    user_id: string;
+    action: string;
+    idempotency_key: string;
+    response_status: number;
+    response_body: unknown;
+    expires_at: string;
+  }> = [];
 
   query = vi.fn(async (sql: string, params: unknown[] = []) => {
+    // Minimal idempotency store, modelling the real table's
+    // semantics (claim = insert-if-absent returning a row;
+    // complete = sentinel-only update; lookup = unexpired row).
+    // DELETE must be checked before the SELECT branch: "DELETE
+    // FROM idempotency_keys" contains "FROM idempotency_keys".
+    if (sql.includes('DELETE FROM idempotency_keys')) {
+      const now = new Date().toISOString();
+      if (params.length >= 5) {
+        // Release: workspace, user, action, key, status.
+        this.idempotencyKeys = this.idempotencyKeys.filter(
+          (r) =>
+            !(
+              r.workspace_id === params[0] &&
+              r.user_id === params[1] &&
+              r.action === params[2] &&
+              r.idempotency_key === params[3] &&
+              r.response_status === params[4]
+            )
+        );
+      } else {
+        // Prune: workspace, user, expired rows only.
+        this.idempotencyKeys = this.idempotencyKeys.filter(
+          (r) =>
+            !(
+              r.workspace_id === params[0] &&
+              r.user_id === params[1] &&
+              r.expires_at < now
+            )
+        );
+      }
+      return [];
+    }
+    if (sql.includes('FROM idempotency_keys')) {
+      const now = new Date().toISOString();
+      const row = this.idempotencyKeys.find(
+        (r) =>
+          r.workspace_id === params[0] &&
+          r.user_id === params[1] &&
+          r.action === params[2] &&
+          r.idempotency_key === params[3] &&
+          r.expires_at > now
+      );
+      return row
+        ? [{ response_status: row.response_status, response_body: row.response_body }]
+        : [];
+    }
+    if (sql.includes('INSERT INTO idempotency_keys')) {
+      const tuple = [params[0], params[1], params[2], params[3]].map(String);
+      const exists = this.idempotencyKeys.some(
+        (r) =>
+          r.workspace_id === tuple[0] &&
+          r.user_id === tuple[1] &&
+          r.action === tuple[2] &&
+          r.idempotency_key === tuple[3]
+      );
+      if (sql.includes('RETURNING')) {
+        // Claim: only an absent key yields a row.
+        if (exists) return [];
+        this.idempotencyKeys.push({
+          workspace_id: tuple[0],
+          user_id: tuple[1],
+          action: tuple[2],
+          idempotency_key: tuple[3],
+          response_status: Number(params[4]),
+          response_body: JSON.parse(String(params[5])) as unknown,
+          expires_at: String(params[6]),
+        });
+        return [{ id: 'claim-row' }];
+      }
+      // Store (heal path): DO NOTHING on conflict.
+      if (!exists) {
+        this.idempotencyKeys.push({
+          workspace_id: tuple[0],
+          user_id: tuple[1],
+          action: tuple[2],
+          idempotency_key: tuple[3],
+          response_status: Number(params[4]),
+          response_body: JSON.parse(String(params[5])) as unknown,
+          expires_at: String(params[6]),
+        });
+      }
+      return [];
+    }
+    if (sql.includes('UPDATE idempotency_keys')) {
+      // Complete: only a sentinel row (status 102) may complete.
+      const row = this.idempotencyKeys.find(
+        (r) =>
+          r.workspace_id === params[3] &&
+          r.user_id === params[4] &&
+          r.action === params[5] &&
+          r.idempotency_key === params[6] &&
+          r.response_status === 102
+      );
+      if (!row) return [];
+      row.response_status = Number(params[0]);
+      row.response_body = JSON.parse(String(params[1])) as unknown;
+      row.expires_at = String(params[2]);
+      return [{ id: 'completed-row' }];
+    }
     if (sql.includes('FROM workspaces')) {
       return params[0] === subdomain ? [{ id: workspaceId }] : [];
     }
@@ -137,6 +247,7 @@ class FakeDb {
 let db: FakeDb;
 let dbClient: DatabaseClient;
 let sessionCookie: string;
+let storage: MockStorageProvider;
 
 function seed() {
   db.destinations.set(igDestinationId, {
@@ -202,7 +313,30 @@ function seed() {
   });
 }
 
-async function enqueue(body: unknown, cookie: string | null = sessionCookie) {
+async function enqueue(
+  body: unknown,
+  cookie: string | null = sessionCookie,
+  storageOverride?: MockStorageProvider,
+  idempotencyKey?: string
+) {
+  const store = storageOverride ?? storage;
+  if (!storageOverride) {
+    // Media/posting separation: the queue-time copy needs the
+    // library bytes present in storage. Seed every byte the FakeDb
+    // knows about (including rows seeded inside a test, like the
+    // K6 media) so existing tests keep passing with the copy in
+    // place. Tests that need a missing source pass their own empty
+    // storage instance instead.
+    for (const m of db.media.values()) {
+      if (m.storage_key && !store.uploadedObjects.has(m.storage_key)) {
+        await store.putObject({
+          key: m.storage_key,
+          body: new Uint8Array([1]),
+          contentType: 'application/octet-stream',
+        });
+      }
+    }
+  }
   const req = new NextRequest(
     'http://localhost:3000/api/tenant/acme/publishing/destination-queue',
     {
@@ -210,11 +344,12 @@ async function enqueue(body: unknown, cookie: string | null = sessionCookie) {
       headers: {
         'content-type': 'application/json',
         ...(cookie ? { cookie } : {}),
+        ...(idempotencyKey ? { [IDEMPOTENCY_KEY_HEADER]: idempotencyKey } : {}),
       },
       body: JSON.stringify(body),
     }
   );
-  return handleDestinationEnqueue(req, subdomain, dbClient);
+  return handleDestinationEnqueue(req, subdomain, dbClient, store);
 }
 
 beforeEach(async () => {
@@ -223,6 +358,7 @@ beforeEach(async () => {
   db = new FakeDb();
   seed();
   dbClient = db as unknown as DatabaseClient;
+  storage = new MockStorageProvider();
   const token = await signSessionToken(
     {
       userId,
@@ -553,6 +689,47 @@ describe('destination enqueue — facebook publisher-driven intents', () => {
     const payload = (await res.json()) as { scheduledTime: string };
     expect(new Date(payload.scheduledTime).getTime()).toBeGreaterThanOrEqual(before - 1000);
   });
+
+  it('a keep-set fetch failure deletes nothing: the sweep is skipped, the enqueue still succeeds', async () => {
+    seedFacebook();
+    // An old staged upload past the 24h retention window. Under the
+    // old fail-open behaviour (empty keep set on error) the sweep
+    // would delete exactly this key; with a throwing fetch the
+    // caller's catch skips the sweep entirely.
+    const stagedKey = `${postStagingKeyPrefix(userId)}aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa/staged.mp4`;
+    storage.uploadedObjects.set(stagedKey, {
+      contentType: 'video/mp4',
+      byteLength: 10,
+      uploadedAt: new Date(Date.now() - 25 * 60 * 60 * 1000),
+    });
+    // Only the keep-set query fails; every other query works.
+    const realQuery = db.query;
+    db.query = vi.fn(async (sql: string, params: unknown[] = []) => {
+      if (sql.includes('media_storage_key LIKE')) {
+        throw new Error('keep-set DB down');
+      }
+      return realQuery(sql, params);
+    });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await enqueue({
+      platform: 'facebook',
+      destinationId: fbDestinationId,
+      kind: 'text',
+      caption: 'Hello',
+      intent: 'queue',
+      slotId,
+    });
+    expect(res.status).toBe(201);
+    // The sweep runs fire-and-forget: wait until its failure is
+    // logged, proving the catch path ran instead of a sweep.
+    await vi.waitFor(() =>
+      expect(errorSpy).toHaveBeenCalledWith(
+        'Staged upload sweep failed:',
+        expect.anything()
+      )
+    );
+    expect(storage.uploadedObjects.has(stagedKey)).toBe(true);
+  });
 });
 
 describe('destination enqueue — expired-account gate (BG1)', () => {
@@ -790,5 +967,302 @@ describe('destination enqueue — facebook format gates (K6, K7)', () => {
     });
     expect(res.status).toBe(201);
     expect(db.queueItems).toHaveLength(1);
+  });
+});
+
+describe('destination enqueue — media/posting separation', () => {
+  const fbDestinationId = 'cccccccc-cccc-4ccc-cccc-cccccccccccc';
+  const stagedKey = `users/${userId}/post-staging/aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa/clip.mp4`;
+
+  function seedFacebook() {
+    db.destinations.set(fbDestinationId, {
+      id: fbDestinationId,
+      workspace_id: workspaceId,
+      platform: 'facebook',
+      timezone: 'UTC',
+      status: 'active',
+      account_id: 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      account_status: 'active',
+      account_token_expires_at: '2999-01-01T00:00:00.000Z',
+    });
+  }
+
+  it('a library import queues a post-owned copy and drops the library link', async () => {
+    seedFacebook();
+    const res = await enqueue({
+      platform: 'facebook',
+      destinationId: fbDestinationId,
+      kind: 'image',
+      caption: 'From the library',
+      mediaItemIds: [imageMediaId],
+      intent: 'queue',
+    });
+    expect(res.status).toBe(201);
+    expect(db.queueItems).toHaveLength(1);
+    const row = db.queueItems[0];
+    // The invariant: no library link, post-owned key + URL only.
+    expect(row.media_item_id).toBeNull();
+    expect(row.media_storage_key).toMatch(
+      new RegExp(`^users/${userId}/post-media/[^/]+/photo\\.jpg$`)
+    );
+    expect(row.media_url).toBe(
+      storage.getPublicUrl(row.media_storage_key as string)
+    );
+    // The copy exists in storage next to the untouched library bytes.
+    expect(storage.uploadedObjects.has(row.media_storage_key as string)).toBe(true);
+    expect(storage.uploadedObjects.has('media/photo.jpg')).toBe(true);
+  });
+
+  it('deleting the library file after queueing leaves the queued post intact', async () => {
+    seedFacebook();
+    const res = await enqueue({
+      platform: 'facebook',
+      destinationId: fbDestinationId,
+      kind: 'image',
+      caption: 'From the library',
+      mediaItemIds: [imageMediaId],
+      intent: 'queue',
+    });
+    expect(res.status).toBe(201);
+    const row = db.queueItems[0];
+    // Simulate the library delete: bytes + row gone.
+    await storage.deleteObject('media/photo.jpg');
+    db.media.delete(imageMediaId);
+    // The queued post still resolves to live bytes — it is
+    // publishable, not collateral of the library delete.
+    expect(row.media_item_id).toBeNull();
+    expect(storage.uploadedObjects.has(row.media_storage_key as string)).toBe(true);
+    expect(row.media_url).toBe(
+      storage.getPublicUrl(row.media_storage_key as string)
+    );
+  });
+
+  it('a failed library copy fails loud with no row written', async () => {
+    seedFacebook();
+    // Empty storage: the library bytes are absent, so the copy
+    // cannot run. The enqueue must fail, not queue a dead link.
+    const emptyStorage = new MockStorageProvider();
+    const res = await enqueue(
+      {
+        platform: 'facebook',
+        destinationId: fbDestinationId,
+        kind: 'image',
+        caption: 'From the library',
+        mediaItemIds: [imageMediaId],
+        intent: 'queue',
+      },
+      sessionCookie,
+      emptyStorage
+    );
+    expect(res.status).toBe(500);
+    const payload = (await res.json()) as { error: string };
+    expect(payload.error).toBe('MEDIA_COPY_FAILED');
+    expect(db.queueItems).toHaveLength(0);
+  });
+
+  it('a composer staged upload is adopted as-is, never copied, never linked', async () => {
+    seedFacebook();
+    await storage.putObject({
+      key: stagedKey,
+      body: new Uint8Array([1]),
+      contentType: 'video/mp4',
+    });
+    const res = await enqueue({
+      platform: 'facebook',
+      destinationId: fbDestinationId,
+      kind: 'video',
+      platformFormat: 'reel',
+      caption: 'From my device',
+      mediaItemIds: [],
+      stagedMedia: {
+        storageKey: stagedKey,
+        mediaType: 'video',
+        durationSeconds: 45,
+        aspectRatio: '9:16',
+      },
+      intent: 'queue',
+    });
+    expect(res.status).toBe(201);
+    expect(db.queueItems).toHaveLength(1);
+    const row = db.queueItems[0];
+    expect(row.media_item_id).toBeNull();
+    expect(row.media_storage_key).toBe(stagedKey);
+    expect(row.media_url).toBe(storage.getPublicUrl(stagedKey));
+    // No post-media copy was made for an already post-owned key.
+    const postMediaKeys = [...storage.uploadedObjects.keys()].filter((k) =>
+      k.includes('/post-media/')
+    );
+    expect(postMediaKeys).toHaveLength(0);
+  });
+
+  it('staged media with a library key is rejected', async () => {
+    seedFacebook();
+    const res = await enqueue({
+      platform: 'facebook',
+      destinationId: fbDestinationId,
+      kind: 'image',
+      caption: 'Forged staged key',
+      mediaItemIds: [],
+      stagedMedia: { storageKey: 'media/photo.jpg', mediaType: 'image' },
+      intent: 'queue',
+    });
+    expect(res.status).toBe(400);
+    const payload = (await res.json()) as { error: string };
+    expect(payload.error).toBe('INVALID_STAGED_MEDIA');
+    expect(db.queueItems).toHaveLength(0);
+  });
+
+  it("staged media under another user's prefix is rejected", async () => {
+    seedFacebook();
+    const res = await enqueue({
+      platform: 'facebook',
+      destinationId: fbDestinationId,
+      kind: 'image',
+      caption: 'Not mine',
+      mediaItemIds: [],
+      stagedMedia: {
+        storageKey: `users/${otherUserId}/post-staging/aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa/photo.jpg`,
+        mediaType: 'image',
+      },
+      intent: 'queue',
+    });
+    expect(res.status).toBe(400);
+    const payload = (await res.json()) as { error: string };
+    expect(payload.error).toBe('INVALID_STAGED_MEDIA');
+    expect(db.queueItems).toHaveLength(0);
+  });
+
+  it('staged media for a non-Facebook destination is rejected', async () => {
+    const res = await enqueue({
+      platform: 'instagram',
+      destinationId: igDestinationId,
+      kind: 'image',
+      caption: 'Staged to IG',
+      mediaItemIds: [],
+      stagedMedia: { storageKey: stagedKey, mediaType: 'image' },
+      intent: 'queue',
+    });
+    expect(res.status).toBe(400);
+    const payload = (await res.json()) as { error: string };
+    expect(payload.error).toBe('STAGED_MEDIA_FACEBOOK_ONLY');
+    expect(db.queueItems).toHaveLength(0);
+  });
+
+  it('staged media whose bytes are gone is rejected, not queued dead', async () => {
+    seedFacebook();
+    const res = await enqueue({
+      platform: 'facebook',
+      destinationId: fbDestinationId,
+      kind: 'video',
+      platformFormat: 'reel',
+      caption: 'Swept draft',
+      mediaItemIds: [],
+      stagedMedia: {
+        storageKey: stagedKey,
+        mediaType: 'video',
+        durationSeconds: 45,
+        aspectRatio: '9:16',
+      },
+      intent: 'queue',
+    });
+    expect(res.status).toBe(400);
+    const payload = (await res.json()) as { error: string };
+    expect(payload.error).toBe('STAGED_MEDIA_NOT_FOUND');
+    expect(db.queueItems).toHaveLength(0);
+  });
+
+  it('a non-Facebook destination keeps the historical library-linked row', async () => {
+    const res = await enqueue({
+      platform: 'instagram',
+      destinationId: igDestinationId,
+      kind: 'image',
+      caption: 'IG still linked',
+      mediaItemIds: [imageMediaId],
+      intent: 'now',
+    });
+    expect(res.status).toBe(201);
+    expect(db.queueItems).toHaveLength(1);
+    const row = db.queueItems[0];
+    expect(row.media_item_id).toBe(imageMediaId);
+    expect(row.media_storage_key).toBe('media/photo.jpg');
+    expect(row.media_url).toBe('https://cdn.example.com/photo.jpg');
+  });
+
+  it('a same-key queue retry replays without a second copy (nit 3)', async () => {
+    seedFacebook();
+    const key = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaa1';
+    const body = {
+      platform: 'facebook',
+      destinationId: fbDestinationId,
+      kind: 'image',
+      caption: 'From the library',
+      mediaItemIds: [imageMediaId],
+      intent: 'queue',
+    };
+    const first = await enqueue(body, undefined, undefined, key);
+    expect(first.status).toBe(201);
+    const firstJson = (await first.json()) as { id: string };
+    const postMediaKeys = () =>
+      [...storage.uploadedObjects.keys()].filter((k) =>
+        k.startsWith(`users/${userId}/post-media/`)
+      );
+    expect(postMediaKeys()).toHaveLength(1);
+    expect(db.queueItems).toHaveLength(1);
+
+    // The retry replays the ORIGINAL result: same id, replay
+    // header, no second row, and — the assertion this test adds —
+    // no second copy. The replay returns before the copy step, so
+    // a response-lost retry can never double the post's bytes.
+    const retry = await enqueue(body, undefined, undefined, key);
+    expect(retry.status).toBe(201);
+    expect(retry.headers.get('Idempotency-Replayed')).toBe('true');
+    const retryJson = (await retry.json()) as { id: string };
+    expect(retryJson.id).toBe(firstJson.id);
+    expect(db.queueItems).toHaveLength(1);
+    expect(postMediaKeys()).toHaveLength(1);
+  });
+
+  it('a concurrent-loser 409 removes its orphaned copy (nit 1)', async () => {
+    seedFacebook();
+    const key = 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbb2';
+    // Another request with this key is already processing: its
+    // sentinel row makes this attempt's claim lose AFTER its copy.
+    db.idempotencyKeys.push({
+      workspace_id: workspaceId,
+      user_id: userId,
+      action: 'destination-queue',
+      idempotency_key: key,
+      response_status: 102,
+      response_body: { processing: true },
+      expires_at: new Date(Date.now() + 300_000).toISOString(),
+    });
+    const res = await enqueue(
+      {
+        platform: 'facebook',
+        destinationId: fbDestinationId,
+        kind: 'image',
+        caption: 'From the library',
+        mediaItemIds: [imageMediaId],
+        intent: 'queue',
+      },
+      undefined,
+      undefined,
+      key
+    );
+    expect(res.status).toBe(409);
+    const payload = (await res.json()) as { error: string };
+    expect(payload.error).toBe('IDEMPOTENCY_IN_PROGRESS');
+    expect(db.queueItems).toHaveLength(0);
+    // The copy was made, then removed: no post-media bytes remain
+    // in storage, and the removed key is recorded as deleted.
+    const postMediaKeys = [...storage.uploadedObjects.keys()].filter((k) =>
+      k.startsWith(`users/${userId}/post-media/`)
+    );
+    expect(postMediaKeys).toHaveLength(0);
+    expect(
+      [...storage.deletedKeys].some((k) =>
+        k.startsWith(`users/${userId}/post-media/`)
+      )
+    ).toBe(true);
   });
 });

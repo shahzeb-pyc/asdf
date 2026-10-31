@@ -34,6 +34,9 @@ function queueRow(destinationId: string) {
     created_at: '2026-10-07T12:00:00.000Z',
     updated_at: '2026-10-07T12:00:00.000Z',
     media: null,
+    // The queue row's own media_url column (post-owned rows);
+    // null here, overridden by the post-owned test below.
+    media_url: null as string | null,
   };
 }
 
@@ -214,5 +217,37 @@ describe('Publishing queue Supabase destinations fetch (R7)', () => {
     const json = await res.json();
     expect(json.queuedCount).toBe(1);
     expect(json.publishingCount).toBe(1);
+  });
+
+  it('returns the row media_url for a post-owned row with no library link (Supabase path)', async () => {
+    const postOwnedUrl =
+      'https://media.fbuploadpro.com/users/11111111-1111-4111-a111-111111111111/post-media/bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb/clip.mp4';
+    const { supabase } = makeSupabase({
+      destinations: [{ id: PAGE_ID, status: 'active', metadata: null }],
+      destinationsError: false,
+      queueRows: [
+        {
+          ...queueRow(PAGE_ID),
+          kind: 'video',
+          media: null,
+          media_url: postOwnedUrl,
+        },
+      ],
+    });
+    const req = new NextRequest(
+      `http://localhost:3000/api/tenant/acme/publishing/queue?pageId=${PAGE_ID}`,
+      { headers: { cookie: validSessionCookie } },
+    );
+    const res = await handleListQueueItems(req, 'acme', supabase as never);
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.items).toHaveLength(1);
+    // Same send-back-1 regression on the production (Supabase)
+    // path: the select used to embed only the joined media row.
+    expect(json.items[0].media).toBeDefined();
+    expect(json.items[0].media.url).toBe(postOwnedUrl);
+    expect(json.items[0].media.name).toBe('clip.mp4');
+    expect(json.items[0].media.mediaType).toBe('video');
+    expect(json.items[0].media.thumbnailUrl).toBeNull();
   });
 });

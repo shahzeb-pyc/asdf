@@ -50,6 +50,10 @@ describe('Storage Service Providers', () => {
       expect(mock.uploadedObjects.get(key)).toEqual({
         contentType: 'video/mp4',
         byteLength: 5,
+        // Added with the media/posting separation: the mock tracks
+        // upload time so listObjects can report lastModified for
+        // the staged-upload sweep's age check.
+        uploadedAt: expect.any(Date),
       });
 
       await mock.deleteObject(key);
@@ -115,6 +119,66 @@ describe('Storage Service Providers', () => {
       await provider.deleteObject('users/tenant-1/media/file.mp4');
 
       expect(mockSend).toHaveBeenCalledTimes(1);
+    });
+
+    it('copies server-side with segments encoded and slashes literal', async () => {
+      const mockSend = vi.fn().mockResolvedValue({});
+      const fakeS3Client = { send: mockSend } as any;
+
+      const provider = new R2StorageProvider(fakeConfig, fakeS3Client);
+      await provider.copyObject({
+        sourceKey: 'users/tenant-1/media/1/My Photo (1).jpg',
+        destinationKey: 'users/tenant-1/post-media/uuid/My_Photo__1_.jpg',
+      });
+
+      expect(mockSend).toHaveBeenCalledTimes(1);
+      const command = mockSend.mock.calls[0][0] as {
+        input: Record<string, unknown>;
+      };
+      expect(command.input).toEqual({
+        Bucket: 'fake_bucket',
+        CopySource: 'fake_bucket/users/tenant-1/media/1/My%20Photo%20(1).jpg',
+        Key: 'users/tenant-1/post-media/uuid/My_Photo__1_.jpg',
+      });
+    });
+
+    it('lists objects mapped, filtered, and defaulted', async () => {
+      const modified = new Date('2026-01-01T00:00:00.000Z');
+      const mockSend = vi
+        .fn()
+        .mockResolvedValueOnce({
+          Contents: [
+            { Key: 'users/tenant-1/post-staging/a/old.mp4', LastModified: modified },
+            { Key: undefined },
+            { Key: 'users/tenant-1/post-staging/b/no-date.mp4' },
+          ],
+        })
+        .mockResolvedValueOnce({ Contents: [] });
+      const fakeS3Client = { send: mockSend } as any;
+
+      const provider = new R2StorageProvider(fakeConfig, fakeS3Client);
+      const listed = await provider.listObjects({
+        prefix: 'users/tenant-1/post-staging/',
+      });
+
+      expect(listed).toEqual([
+        { key: 'users/tenant-1/post-staging/a/old.mp4', lastModified: modified },
+        { key: 'users/tenant-1/post-staging/b/no-date.mp4', lastModified: null },
+      ]);
+      const first = mockSend.mock.calls[0][0] as { input: Record<string, unknown> };
+      expect(first.input).toEqual({
+        Bucket: 'fake_bucket',
+        Prefix: 'users/tenant-1/post-staging/',
+        MaxKeys: 1000,
+      });
+
+      const empty = await provider.listObjects({
+        prefix: 'users/tenant-1/post-staging/',
+        maxKeys: 5,
+      });
+      expect(empty).toEqual([]);
+      const second = mockSend.mock.calls[1][0] as { input: Record<string, unknown> };
+      expect(second.input.MaxKeys).toBe(5);
     });
   });
 

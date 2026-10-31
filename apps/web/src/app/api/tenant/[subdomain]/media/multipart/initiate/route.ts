@@ -75,9 +75,18 @@ export async function POST(
 
   const sanitizedFileName = sanitizeMultipartFileName(body.fileName, body.mimeType);
   const mediaId = randomUUID();
-  const mediaKey = `users/${session.userId}/media/${mediaId}/${sanitizedFileName}`;
+  // Purpose selects the key prefix; 'library' is the historical
+  // default and keeps this route's behaviour exactly. 'post-staging'
+  // mints composer staged keys (see the upload-url route's note).
+  const mediaKey =
+    body.purpose === 'post-staging'
+      ? `users/${session.userId}/post-staging/${mediaId}/${sanitizedFileName}`
+      : `users/${session.userId}/media/${mediaId}/${sanitizedFileName}`;
   const thumbnailExt = body.thumbnailMimeType === 'image/jpeg' ? 'jpeg' : 'webp';
-  const thumbnailKey = `users/${session.userId}/thumbnails/${mediaId}.${thumbnailExt}`;
+  const thumbnailKey =
+    body.purpose === 'post-staging'
+      ? `users/${session.userId}/post-staging/${mediaId}/thumbnail.${thumbnailExt}`
+      : `users/${session.userId}/thumbnails/${mediaId}.${thumbnailExt}`;
   const expiresInSeconds = 900;
 
   const created = await client.send(
