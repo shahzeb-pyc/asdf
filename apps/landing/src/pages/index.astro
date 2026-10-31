@@ -104,6 +104,32 @@ const signin = 'https://app.fbuploadpro.com/login';
         showAll();
         return;
       }
+      /* Hero-only entrance fix (the independent checker proved the
+         hero headline, subhead, and CTA never visibly animated):
+         this module script runs before first paint, so the old path
+         added .js and then is-visible within pre-paint frames with
+         no style calculation in between — the browser's first
+         computed style already contained is-visible, so the 600ms
+         transition never triggered. For hero elements only: force a
+         synchronous layout read, which computes the hidden
+         .js .reveal state, and then wait two animation frames, so
+         the hidden state is both computed and painted before
+         is-visible is added and the transition provably runs.
+         Below-fold reveals keep the existing observer path below,
+         which is verified working; the observer still observes hero
+         elements too, but its later add of is-visible is a harmless
+         no-op once the hero path has revealed them. */
+      var heroEls = document.querySelectorAll('#section-1 .reveal');
+      if ('requestAnimationFrame' in window) {
+        heroEls.forEach(function (el) { void el.offsetHeight; });
+        requestAnimationFrame(function () {
+          requestAnimationFrame(function () {
+            heroEls.forEach(function (el) { el.classList.add('is-visible'); });
+          });
+        });
+      } else {
+        heroEls.forEach(function (el) { el.classList.add('is-visible'); });
+      }
       function revealSoon(el, cls) {
         if (!('requestAnimationFrame' in window)) {
           el.classList.add(cls);
