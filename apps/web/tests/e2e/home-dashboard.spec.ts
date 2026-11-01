@@ -6,11 +6,13 @@
  * page's server-side Supabase load cannot succeed here. What this spec
  * genuinely covers is the fallback render a signed-in user gets under
  * those conditions — hero with the subdomain fallback, the visible
- * error card for a regular user, the admin-panel card for an admin —
- * plus the no-overflow contract at 360px. The paid/free/expired
- * dashboard sections are covered by the vitest render contract in
- * tests/api/dashboard.test.ts (mocked data) instead; they need a real
- * database and cannot run in this fixture environment.
+ * error card for a regular user — plus the no-overflow contract at
+ * 360px. Admins never land on Home (they redirect to the admin
+ * panel), so the admin case asserts that redirect, not a card. The
+ * paid/free/expired dashboard sections are covered by the vitest
+ * render contract in tests/api/dashboard.test.ts (mocked data)
+ * instead; they need a real database and cannot run in this fixture
+ * environment.
  *
  * Follows the billing-mobile pattern: the desktop project with the
  * viewport set explicitly per test, so CSS media queries genuinely
@@ -44,17 +46,20 @@ test.describe('Tenant Home at 360px', () => {
     await expectNoDocumentOverflow(page);
   });
 
-  test('admin sees the admin-panel card, no overflow', async ({ page, context }) => {
+  test('admin home redirects to the approvals panel, no overflow', async ({
+    page,
+    context,
+  }) => {
     await context.addCookies([
       { ...SESSION_COOKIE, value: mintSessionToken('admin') },
     ]);
     await page.goto(`/tenant/${TENANT.subdomain}`);
 
-    await expect(
-      page.getByTestId('home-hero').getByRole('heading', { name: 'Welcome, e2e' })
-    ).toBeVisible();
-    await expect(page.getByTestId('admin-panel-card')).toBeVisible();
-    await expect(page.getByTestId('admin-panel-card').getByRole('link')).toBeVisible();
+    // Admins never land on Home: the Home hit redirects to the
+    // admin panel (Billing → approvals view), with no overflow.
+    await expect(page).toHaveURL(
+      new RegExp(`/tenant/${TENANT.subdomain}/billing$`)
+    );
     await expectNoDocumentOverflow(page);
   });
 });

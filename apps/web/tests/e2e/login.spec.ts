@@ -1,9 +1,16 @@
 /**
  * Flow 1 — Login (spec 137-A3, T34; updated by PR-A6, T54).
  *
- * - Success: valid credentials → the app navigates to the workspace home,
- *   which renders for real (middleware + tenant layout verify the session
- *   cookie the login response sets).
+ * - Success (admin): valid credentials → the admin lands on the admin
+ *   panel (Billing → approvals view), never on Home — even when the
+ *   login response carries a Home-bound redirectUrl, the middleware
+ *   Home redirect sends the admin session to the panel. The fixture
+ *   deliberately keeps a Home-bound redirectUrl so the test proves
+ *   that leg; the server's own admin redirect is covered by the
+ *   auth-redirect unit tests.
+ * - Success (non-admin): valid credentials → the app navigates to the
+ *   workspace home, which renders for real (middleware + tenant layout
+ *   verify the session cookie the login response sets).
  * - Wrong password: the server error now renders once as a plain rose
  *   line (`role="alert"`) — PR #5 removed the FormErrorSummary box from
  *   auth pages, so there is no summary to focus — and the typed input
@@ -17,11 +24,14 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { SESSION_COOKIE, TENANT } from './fixtures/tenant';
+import { SESSION_COOKIE, TENANT, mintSessionToken } from './fixtures/tenant';
 import { expectNoDocumentOverflow } from './fixtures/mobile';
 
 test.describe('login', () => {
-  test('success signs in and lands on the workspace home', async ({ page, context }) => {
+  test('success signs an admin in and lands on the admin panel, not home', async ({
+    page,
+    context,
+  }) => {
     await page.route('**/api/auth/login', async (route) => {
       // The real login response sets the session cookie scoped to the root
       // domain (production: .fbuploadpro.com), so it is valid on the tenant
@@ -44,6 +54,66 @@ test.describe('login', () => {
             name: TENANT.name,
             subdomain: TENANT.subdomain,
             role: 'admin',
+            status: 'active',
+          },
+        }),
+      });
+    });
+
+    // The approvals view loads its payments on mount; fixture it so
+    // the panel assertion never depends on the dummy-env API.
+    await page.route(`**/api/tenant/${TENANT.subdomain}/billing/admin/payments`, (route) => {
+      if (route.request().method() !== 'GET') return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ payments: [] }),
+      });
+    });
+
+    await page.goto('/login');
+    await page.getByLabel('Email Address').fill(TENANT.email);
+    await page.getByLabel('Password', { exact: true }).fill(TENANT.password);
+    await page.getByRole('button', { name: 'Sign In' }).click();
+
+    // Post-login the app navigates to the tenant subdomain home URL
+    // (http://e2e.localhost:3100/tenant/e2e), but an admin session is
+    // redirected by middleware to the admin panel instead.
+    await expect(page).toHaveURL(
+      new RegExp(`${TENANT.subdomain}\\.localhost:3100/billing$`)
+    );
+    await expect(
+      page.getByRole('heading', { name: 'Subscriptions approval' })
+    ).toBeVisible();
+  });
+
+  test('success signs a non-admin in and lands on the workspace home', async ({
+    page,
+    context,
+  }) => {
+    await page.route('**/api/auth/login', async (route) => {
+      // Same cookie-planting as the admin test, but with a user-role
+      // session: non-admin landing is unchanged (workspace home).
+      await context.addCookies([
+        { ...SESSION_COOKIE, value: mintSessionToken('user') },
+        {
+          ...SESSION_COOKIE,
+          value: mintSessionToken('user'),
+          domain: `${TENANT.subdomain}.localhost`,
+        },
+      ]);
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          redirectUrl: `/tenant/${TENANT.subdomain}`,
+          user: {
+            id: TENANT.userId,
+            email: TENANT.email,
+            name: TENANT.name,
+            subdomain: TENANT.subdomain,
+            role: 'user',
             status: 'active',
           },
         }),

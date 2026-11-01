@@ -12,7 +12,7 @@ import {
   getSessionSecret,
   signSessionToken,
 } from '@fbuploadpro/contracts';
-import { sanitizeAuthRedirectUrl } from '@/lib/auth-redirect';
+import { redirectAdminHomeToPanel, sanitizeAuthRedirectUrl } from '@/lib/auth-redirect';
 import { logServerError } from '../server-analytics';
 import { getSupabaseAdminClient } from './clients';
 import { verifyPassword } from './passwords';
@@ -158,7 +158,7 @@ export async function loginTenantUser(params: {
   // Sellers have no workspace: they always land on /seller, never
   // on a workspace URL (their session subdomain is only an
   // email-derived fallback). Any returnUrl is ignored for them.
-  const redirectUrl =
+  const resolvedRedirect =
     user.role === 'seller'
       ? '/seller'
       : sanitizeAuthRedirectUrl(
@@ -168,6 +168,13 @@ export async function loginTenantUser(params: {
           params.requestHost,
           allowedSubdomains
         );
+  // Admins never land on Home after login: a Home-bound redirect
+  // becomes the admin panel (Billing → approvals view). Deeper
+  // targets pass through unchanged.
+  const redirectUrl =
+    user.role === 'admin'
+      ? redirectAdminHomeToPanel(resolvedRedirect, user.subdomain)
+      : resolvedRedirect;
 
   return {
     user,

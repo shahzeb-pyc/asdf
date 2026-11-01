@@ -1,12 +1,16 @@
 /**
- * Admin navigation must not bounce to Home.
+ * Admin navigation must not bounce to Home — and admins never land
+ * on Home at all.
  *
- * Regression net for the reported bug: an admin who logs in lands on
- * Home (expected), but selecting "Subscriptions approval" or "Sellers"
- * in the admin sidebar must land on that section and STAY there — never
- * bounce back to Home. Non-admin sessions must still be kept out of
- * both sections exactly as today (sellers redirects home; billing
- * renders the user Billing view, never the approvals view).
+ * Regression net for the reported bug, extended by the admin-landing
+ * change: an admin opening Home (directly, via the logo, or from a
+ * Home-bound post-login navigation) is redirected to the admin
+ * panel (Billing → approvals view) instead, and selecting
+ * "Subscriptions approval" or "Sellers" in the admin sidebar must
+ * land on that section and STAY there — never bounce back to Home.
+ * Non-admin sessions must still be kept out of both sections
+ * exactly as today (sellers redirects home; billing renders the user
+ * Billing view, never the approvals view).
  *
  * Runs at 360px: the admin sidebar is a drawer at phone widths, so the
  * test opens the drawer and taps the leaves, the same path a phone
@@ -84,7 +88,7 @@ async function installAdminFixtures(page: Page) {
 test.describe('admin navigation stays on admin sections (360px)', () => {
   test.use({ viewport: { width: 360, height: 740 }, hasTouch: true, isMobile: true });
 
-  test('admin sidebar clicks land on approvals and sellers, not home', async ({
+  test('admin home redirects to the panel; sidebar clicks land on sellers, not home', async ({
     page,
     context,
   }) => {
@@ -93,12 +97,8 @@ test.describe('admin navigation stays on admin sections (360px)', () => {
     await installAdminFixtures(page);
     await page.goto(`/tenant/${SUB}`);
 
-    // Admin home: the admin-panel card proves the admin session.
-    await expect(page.getByTestId('admin-panel-card')).toBeVisible();
-
-    // Subscriptions approval: sidebar tap lands on billing + approvals.
-    await openDrawer(page);
-    await page.getByRole('link', { name: 'Subscriptions approval' }).tap();
+    // Admin Home redirects to the panel: billing URL + approvals
+    // heading, and the Home admin-panel card never renders.
     await expect(page).toHaveURL(new RegExp(`/tenant/${SUB}/billing$`));
     await expect(
       page.getByRole('heading', { name: 'Subscriptions approval' })
@@ -155,7 +155,7 @@ test.describe('admin navigation stays on admin sections (360px)', () => {
 });
 
 test.describe('admin navigation at desktop width', () => {
-  test('admin sidebar clicks land on approvals and sellers, not home', async ({
+  test('admin home redirects to the panel; sidebar clicks land on sellers, not home', async ({
     page,
     context,
   }) => {
@@ -164,15 +164,15 @@ test.describe('admin navigation at desktop width', () => {
     await installAdminFixtures(page);
     await page.goto(`/tenant/${SUB}`);
 
-    await expect(page.getByTestId('admin-panel-card')).toBeVisible();
-
-    // Desktop: the sidebar is visible, no drawer to open.
-    await page.getByRole('link', { name: 'Subscriptions approval' }).click();
+    // Admin Home redirects to the panel: billing URL + approvals
+    // heading, and the Home admin-panel card never renders.
     await expect(page).toHaveURL(new RegExp(`/tenant/${SUB}/billing$`));
     await expect(
       page.getByRole('heading', { name: 'Subscriptions approval' })
     ).toBeVisible();
+    await expect(page.getByTestId('admin-panel-card')).toHaveCount(0);
 
+    // Desktop: the sidebar is visible, no drawer to open.
     await page.getByRole('link', { name: 'Sellers' }).click();
     await expect(page).toHaveURL(new RegExp(`/tenant/${SUB}/sellers$`));
     await expect(page.getByText('Resellers who earn commission')).toBeVisible();
