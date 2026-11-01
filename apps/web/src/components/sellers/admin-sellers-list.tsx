@@ -79,8 +79,12 @@ function CreateSellerDialog({ subdomain }: { subdomain: string }) {
       name: '',
       email: '',
       password: '',
-      rate: 20,
-      scope: 'every',
+      // No defaults for rate and scope: the keys are deliberately
+      // ABSENT (not explicitly undefined — exactOptionalPropertyTypes
+      // rejects that in RHF's DefaultValues type). RHF leaves both
+      // fields undefined, the rate input renders that as empty, the
+      // scope select shows its "Choose scope" placeholder, and the
+      // required schema blocks submit until the admin picks both.
       // Undefined, not '': the code is optional, and the schema
       // rejects '' (min 4). The input renders undefined as empty
       // via `field.value ?? ''` below; typing then clearing also

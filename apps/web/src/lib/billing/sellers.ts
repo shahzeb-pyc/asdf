@@ -539,9 +539,19 @@ export async function applyRefundOutcomeToCommission(
       );
     }
     if (commission.status === 'requested' && commission.payoutRequestId) {
+      // Correct the batch total by this commission's share only —
+      // never zero the whole batch, which may hold other
+      // commissions of the same seller.
+      const { data: reqRow } = await client
+        .from('seller_payout_requests')
+        .select('total_pkr')
+        .eq('id', commission.payoutRequestId)
+        .maybeSingle();
+      const reqData = asRow(reqRow);
+      const total = reqData ? numberField(reqData, 'total_pkr') : 0;
       await client
         .from('seller_payout_requests')
-        .update({ total_pkr: 0, updated_at: now })
+        .update({ total_pkr: Math.max(0, total - commission.amountPkr), updated_at: now })
         .eq('id', commission.payoutRequestId);
     }
     return { ...commission, status: 'cancelled', amountPkr: commission.amountPkr };

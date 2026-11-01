@@ -45,6 +45,17 @@ describe('sellers contracts', () => {
     ).toBe(true);
   });
 
+  it('holds the admin initial code to the same format rule as self-change', () => {
+    const base = {
+      name: 'Ali', email: 'ali@example.com', password: 'password123',
+      rate: 20, scope: 'every' as const,
+    };
+    expect(SellerCreateSchema.safeParse({ ...base, referralCode: 'ALI20' }).success).toBe(true);
+    expect(SellerCreateSchema.safeParse({ ...base, referralCode: 'ALI 20' }).success).toBe(false);
+    expect(SellerCreateSchema.safeParse({ ...base, referralCode: 'ALI&20' }).success).toBe(false);
+    expect(SellerCreateSchema.safeParse({ ...base }).success).toBe(true);
+  });
+
   it('rejects non-whole or out-of-range rates', () => {
     const base = {
       name: 'Ali',

@@ -45,7 +45,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const current = await getCurrentReferralCode(client, sellerId);
     const host = request.headers.get('host') ?? '';
     const protocol = host.includes('localhost') || host.includes('127.0.0.1') ? 'http' : 'https';
-    const referralLink = current ? `${protocol}://${host}/signup?ref=${current}` : null;
+    const referralLink = current ? `${protocol}://${host}/signup?ref=${encodeURIComponent(current)}` : null;
     const [signups, purchasers, balances, payoutDetails] = await Promise.all([
       getSellerSignupCount(client, sellerId),
       getSellerPurchaserCount(client, sellerId),

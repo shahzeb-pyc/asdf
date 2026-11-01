@@ -876,6 +876,22 @@ describe('sellers lib', () => {
     await expectCode(applyRefundOutcomeToCommission(cRed, 'pay-1', 3500), 'SELLERS_UNAVAILABLE');
   });
 
+  it('corrects a multi-commission batch total by only the cancelled share', async () => {
+    const seed = sellerSeed();
+    seed['seller_commissions']!.push(
+      commissionRow({ status: 'requested', payout_request_id: 'req-1', amount_pkr: 1400 }),
+      commissionRow({ id: 'c-2', payment_id: 'pay-2', status: 'requested', payout_request_id: 'req-1', amount_pkr: 1400 })
+    );
+    seed['seller_payout_requests'] = [{
+      id: 'req-1', seller_id: SELLER_ID, total_pkr: 2800, status: 'pending',
+    }];
+    const { client, db } = makeClient(seed);
+    const cancelled = await applyRefundOutcomeToCommission(client, 'pay-1', 0);
+    expect(cancelled?.status).toBe('cancelled');
+    // The batch still holds the second commission: 2800 - 1400.
+    expect(db['seller_payout_requests']![0]!['total_pkr']).toBe(1400);
+  });
+
   it('decides payout requests, and fails loud on every step that can fail', async () => {
     const err = { code: 'XX000', message: 'boom' };
     const requestRow = (overrides: Partial<Row> = {}) => ({

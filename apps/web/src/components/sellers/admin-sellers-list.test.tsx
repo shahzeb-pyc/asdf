@@ -155,7 +155,7 @@ describe('AdminSellersList', () => {
     expect(screen.getByText('No pending payout requests.')).toBeTruthy();
   });
 
-  it('creates a seller with an untouched optional code field', async () => {
+  it('creates a seller with an untouched optional code field, after picking rate and scope', async () => {
     const user = userEvent.setup();
     apiPost.mockResolvedValue({ sellerId: 'new-seller-1' });
     renderList();
@@ -165,6 +165,11 @@ describe('AdminSellersList', () => {
     await user.type(screen.getByLabelText('Name'), 'Omar');
     await user.type(screen.getByLabelText('Email'), 'omar@example.com');
     await user.type(screen.getByLabelText('Password'), 'Password123!');
+    // Rate and scope have NO defaults: the admin picks both every
+    // time, and the required schema blocks submit until they do.
+    await user.type(screen.getByLabelText('Commission %'), '20');
+    await user.click(screen.getByRole('combobox'));
+    await user.click(screen.getByRole('option', { name: 'Every purchase' }));
     // The optional code field is deliberately left untouched: its
     // default must submit as omitted, not as '' (the schema
     // rejects '' at min 4). This is the regression test for that.

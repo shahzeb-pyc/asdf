@@ -99,8 +99,14 @@ export const SellerCreateSchema = z.object({
   rate: SellerRateSchema,
   scope: SellerScopeSchema,
   /** Optional initial code: when omitted the seller starts with
-   * no code and sets one from their own dashboard. */
-  referralCode: z.string().trim().min(4).max(32).optional(),
+   * no code and sets one from their own dashboard. The format
+   * rule matches the seller self-change path (referralCodeField:
+   * 4–32 letters, numbers, dashes, underscores); normalization
+   * to uppercase happens in changeReferralCode, so this field
+   * deliberately carries no transform — a transform would make
+   * the schema's input type unknown and break the create form's
+   * resolver typing under exactOptionalPropertyTypes. */
+  referralCode: referralCodeField.optional(),
 });
 export type SellerCreate = z.infer<typeof SellerCreateSchema>;
 export type SellerCreateInput = z.infer<typeof SellerCreateSchema>;
