@@ -15,12 +15,12 @@ import {
 } from '@fbuploadpro/contracts';
 import { sanitizeAuthRedirectUrl } from '@/lib/auth-redirect';
 import { logServerError } from '../server-analytics';
-import { escapePostgrestFilterValue, resolveCanonicalEmail } from './email';
+import { resolveCanonicalEmail } from './email';
 import { getSupabaseAdminClient } from './clients';
 import { hashPassword } from './passwords';
 import { localPasswordStore, localUserStore } from './stores';
 import { findUserByEmail, type AuthUser } from './users';
-import { ensureWorkspaceForUser, resolveUniqueSubdomain } from './workspaces';
+import { resolveUniqueSubdomain } from './workspaces';
 
 export async function signUpTenantUser(params: {
   name: string;
@@ -76,16 +76,21 @@ export async function signUpTenantUser(params: {
       logServerError('[Supabase Auth Admin] getUserById exception:', adminErr);
     }
 
-    // User is unconfirmed in Supabase: update details and resend code
+    // User is unconfirmed in Supabase: update details and resend code.
+    // The update goes through the validated server-side function, not a
+    // PostgREST write: the signup write happens before any session
+    // exists, and public.users has no policy covering that moment, so a
+    // direct write fails RLS whenever the server client is not holding
+    // the service-role key (fix 2026-11-01). The function only updates
+    // name/phone for an unconfirmed account and can never touch
+    // role, status, or referral.
     try {
-      const { error: updateError } = await supabase
-        .from('users')
-        .update({
-          name: params.name,
-          phone: formattedPhone,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', existingUser.id);
+      const { error: updateError } = await supabase.rpc('update_unconfirmed_signup_profile', {
+        p_user_id: existingUser.id,
+        p_email: canonicalEmail,
+        p_name: params.name,
+        p_phone: formattedPhone,
+      });
 
       if (updateError) {
         throw new Error(updateError.message || 'User detail update failed');
@@ -194,46 +199,57 @@ export async function signUpTenantUser(params: {
       status: 'active',
     };
 
+    // Profile + workspace creation goes through the validated
+    // server-side function (migration 20261101150000), NOT a PostgREST
+    // upsert: the write happens before any session exists and
+    // public.users has no policy covering that moment, so a direct
+    // write fails RLS ("new row violates row-level security policy for
+    // table users") whenever the server client is not holding the
+    // service-role key (fix 2026-11-01). The function forces
+    // role 'user' / status 'active', freezes referral at creation,
+    // and is idempotent — a failure here is loud, never silent.
     try {
-      const { data: inserted, error: insertError } = await supabase
-        .from('users')
-        .upsert(
-          {
-            id: userId,
-            email: canonicalEmail,
-            normalized_email: canonicalEmail,
-            name: params.name,
-            phone: formattedPhone,
-            role: 'user',
-            status: 'active',
-            ...(params.referral
-              ? {
-                  referred_by_seller_id: params.referral.sellerId,
-                  referred_by_code: params.referral.code,
-                }
-              : {}),
-          },
-          { onConflict: 'id' }
-        )
-        .select('id, email, name, phone, role, status')
-        .single();
+      const { data: created, error: createError } = await supabase.rpc('create_signup_profile', {
+        p_user_id: userId,
+        p_email: canonicalEmail,
+        p_name: params.name,
+        p_phone: formattedPhone,
+        p_subdomain: subdomain,
+        ...(params.referral
+          ? {
+              p_referred_by_seller_id: params.referral.sellerId,
+              p_referred_by_code: params.referral.code,
+            }
+          : {}),
+      });
 
-      if (insertError) {
-        throw new Error(insertError.message || 'User profile creation failed');
+      if (createError) {
+        throw new Error(createError.message || 'User profile creation failed');
       }
 
-      const wsSubdomain = await ensureWorkspaceForUser(
-        supabase,
-        userId,
-        params.name || canonicalEmail.split('@')[0],
-        subdomain
-      );
-
-      if (inserted) {
-        userRecord = { ...(inserted as object), subdomain: wsSubdomain } as AuthUser;
-      } else {
-        userRecord.subdomain = wsSubdomain;
+      const createdRow = (Array.isArray(created) ? created[0] : created) as
+        | {
+            id?: string;
+            email?: string;
+            name?: string | null;
+            phone?: string | null;
+            subdomain?: string | null;
+          }
+        | null
+        | undefined;
+      if (!createdRow?.id) {
+        throw new Error('User profile creation failed');
       }
+
+      userRecord = {
+        id: createdRow.id,
+        email: createdRow.email || canonicalEmail,
+        name: createdRow.name ?? params.name,
+        phone: createdRow.phone ?? formattedPhone,
+        subdomain: createdRow.subdomain || subdomain,
+        role: 'user',
+        status: 'active',
+      };
     } catch (insertErr) {
       logServerError('[Supabase PostgREST] User insert exception', insertErr);
       throw insertErr;
@@ -291,13 +307,14 @@ export async function verifySignupOtpViaSupabase(params: {
   let userRecord: AuthUser | null = await findUserByEmail(canonicalEmail);
 
   if (supabase) {
-    const { error } = await supabase.auth.verifyOtp({
+    const firstAttempt = await supabase.auth.verifyOtp({
       email: canonicalEmail,
       token: params.otp,
       type: 'signup',
     });
+    let verifiedAuthUser = firstAttempt.data?.user ?? null;
 
-    if (error) {
+    if (firstAttempt.error) {
       const retry = await supabase.auth.verifyOtp({
         email: canonicalEmail,
         token: params.otp,
@@ -306,26 +323,37 @@ export async function verifySignupOtpViaSupabase(params: {
       if (retry.error) {
         throw new Error('Invalid or expired verification code.');
       }
+      verifiedAuthUser = retry.data?.user ?? null;
     }
 
-    try {
-      const quoted = escapePostgrestFilterValue(canonicalEmail);
-      const { error: updateError } = await supabase
-        .from('users')
-        .update({ status: 'active', updated_at: new Date().toISOString() })
-        .or(`normalized_email.eq.${quoted},email.ilike.${quoted}`);
-
-      if (updateError) {
-        throw new Error(updateError.message || 'User status activation failed');
-      }
-    } catch (updateErr) {
-      console.error('[Supabase PostgREST] Status activation error:', updateErr);
-      throw updateErr;
-    }
-
+    // No status UPDATE here (fix 2026-11-01): creation already sets
+    // 'active', so the update was a no-op for every legitimate signup
+    // row, it hard-fails under a weak server key (same RLS root cause
+    // as the signup insert), and unconditionally writing 'active'
+    // could reactivate a suspended account. A suspended row now fails
+    // loudly below instead of being reactivated.
     userRecord = await findUserByEmail(canonicalEmail);
-    if (userRecord) {
-      userRecord.status = 'active';
+    if (!userRecord && verifiedAuthUser) {
+      // Weak-key read fallback, same precedent as login: construct the
+      // session user from the verified auth user's metadata. The
+      // profile row itself was created at signup via the validated
+      // server-side function; this only covers the read, never a
+      // write, and never invents a user (verifiedAuthUser is null
+      // unless the OTP just verified).
+      const metadata = (verifiedAuthUser.user_metadata || {}) as Record<string, unknown>;
+      const metaSubdomain = typeof metadata.subdomain === 'string' ? metadata.subdomain : '';
+      userRecord = {
+        id: verifiedAuthUser.id,
+        email: verifiedAuthUser.email || canonicalEmail,
+        name: typeof metadata.name === 'string' ? metadata.name : null,
+        phone: typeof metadata.phone === 'string' ? metadata.phone : null,
+        subdomain: metaSubdomain || deriveSubdomainFromEmail(canonicalEmail),
+        role: 'user',
+        status: 'active',
+      };
+    }
+    if (userRecord?.status === 'suspended') {
+      throw new Error('Account is suspended');
     }
   } else {
     // Local / test fallback
