@@ -13,9 +13,9 @@
  * fact it reads is slot existence for the setup checklist (a posting
  * time configured, not a post).
  *
- * Failure contract: any failure (no session, no admin client, unknown
- * workspace, any query error) is logged loudly and resolves to the
- * `error` variant — the page renders a visible error card, never
+ * Failure contract: every failure (no session, no admin client,
+ * unknown workspace, a failed query) is logged loudly and resolves to
+ * the `error` variant — the page renders a visible error card, never
  * invented numbers and never a silent partial dashboard.
  */
 import { totalUnits } from '@fbuploadpro/contracts';
@@ -26,6 +26,7 @@ import { getEntitlement } from '@/lib/billing/entitlement';
 import { getStorageQuotaState as getStorageState } from '@/lib/billing/storage-quota';
 import { logServerError } from '@/lib/server-analytics';
 import { unifiedDestinationStatusToWire } from '@/lib/server/facebook-wire';
+import { getWorkspaceIdentity } from '../../app/tenant/[subdomain]/workspace-display-name';
 
 import type { HomeAttentionStatus } from './home-helpers';
 
@@ -131,16 +132,14 @@ export async function loadHomeData(subdomain: string): Promise<HomeData> {
       );
     }
 
-    const { data: workspace, error: workspaceError } = await supabase
-      .from('workspaces')
-      .select('id')
-      .eq('subdomain', subdomain)
-      .eq('owner_id', session.userId)
-      .maybeSingle();
-    if (workspaceError) {
-      return errorResult('Home data could not be loaded. Please try again.', workspaceError);
-    }
-    const workspaceId = (workspace as { id?: unknown } | null)?.id;
+    // Workspace identity resolves through the tenant layout's cached
+    // resolver (workspace-display-name.ts) — the layout, the hero name
+    // and this loader share ONE workspaces lookup per request instead
+    // of each performing it. A null identity means the workspace does
+    // not exist for this owner (a lookup failure is already reported
+    // loudly by the resolver itself).
+    const identity = await getWorkspaceIdentity(subdomain);
+    const workspaceId = identity?.id;
     if (typeof workspaceId !== 'string') {
       return {
         kind: 'error',

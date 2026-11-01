@@ -76,7 +76,7 @@ async function signInToTenantHome(page: Page): Promise<void> {
   await page.context().addCookies([SESSION_COOKIE]);
   await installPaletteFixtures(page);
   await page.goto(`/tenant/${TENANT.subdomain}`);
-  await expect(page.getByRole('heading', { name: /Workspace:/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Welcome,/ })).toBeVisible();
 }
 
 test.describe('⌘K command palette (spec 130 §5.9)', () => {

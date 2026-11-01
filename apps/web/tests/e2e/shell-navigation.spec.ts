@@ -86,7 +86,7 @@ async function signInToTenantHome(page: Page): Promise<void> {
   await installShellFixtures(page);
   await page.goto(`/tenant/${TENANT.subdomain}`);
   await expect(
-    page.getByRole('heading', { name: /Workspace:/ })
+    page.getByRole('heading', { name: /Welcome,/ })
   ).toBeVisible();
 }
 
@@ -117,7 +117,7 @@ test.describe('shell navigation + workspace switch (spec 130 §5.9)', () => {
 
     await page.getByRole('link', { name: /^Home/ }).click();
     await expect(page).toHaveURL(new RegExp(`/tenant/${TENANT.subdomain}/?$`));
-    await expect(page.getByRole('heading', { name: /Workspace:/ })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /Welcome,/ })).toBeVisible();
 
     // Collapse to the icon rail, then expand again — the header
     // trigger and the sidebar are one state (single provider).
@@ -132,7 +132,7 @@ test.describe('shell navigation + workspace switch (spec 130 §5.9)', () => {
     await expect(page.getByTestId('workspace-switcher-dropdown')).toBeVisible();
     await page.getByTestId('workspace-option-beta').click();
     await expect(page).toHaveURL(/\/tenant\/beta\/?$/);
-    await expect(page.getByRole('heading', { name: /Workspace:/ })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /Welcome,/ })).toBeVisible();
   });
 });
 
@@ -164,7 +164,7 @@ async function exerciseMobileWorkspaceSwitch(page: Page): Promise<void> {
   // pointer-down first, the click never reaches the row.
   await page.getByTestId('workspace-option-beta').tap();
   await expect(page).toHaveURL(/\/tenant\/beta\/?$/);
-  await expect(page.getByRole('heading', { name: /Workspace:/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Welcome,/ })).toBeVisible();
 }
 
 test.describe('shell navigation at phone width (spec 142 mobile gate)', () => {
