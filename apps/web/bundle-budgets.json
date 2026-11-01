@@ -1,8 +1,8 @@
 {
   "version": 1,
   "decision": "D137-3 superseded by Shahzeb on 2026-10-24: bundle budgets are enforced in CI.",
-  "measuredAt": "2026-11-01",
-  "measuredFromCommit": "53d67343",
+  "measuredAt": "2026-11-02",
+  "measuredFromCommit": "52172c733ae047fa4a72bbe5b7e35627b91c545e",
   "measurement": "Analyzer production build (ANALYZE=true next build --webpack) of a clean .next, measured by apps/web/scripts/measure-bundle.mjs from emitted files; sizes are bytes, gzip level 9.",
   "headroomPercent": 5,
   "baseline": {
@@ -276,6 +276,30 @@
         "routeSpecificGzipBytes": 9769,
         "routeSpecificRawBytes": 24392
       },
+      "/admin": {
+        "firstLoadGzipBytes": 150934,
+        "firstLoadRawBytes": 498899,
+        "routeSpecificGzipBytes": 10401,
+        "routeSpecificRawBytes": 25426
+      },
+      "/admin/subscriptions": {
+        "firstLoadGzipBytes": 158276,
+        "firstLoadRawBytes": 532984,
+        "routeSpecificGzipBytes": 17743,
+        "routeSpecificRawBytes": 59511
+      },
+      "/admin/sellers": {
+        "firstLoadGzipBytes": 158897,
+        "firstLoadRawBytes": 528839,
+        "routeSpecificGzipBytes": 18364,
+        "routeSpecificRawBytes": 55367
+      },
+      "/admin/sellers/[sellerId]": {
+        "firstLoadGzipBytes": 158093,
+        "firstLoadRawBytes": 525662,
+        "routeSpecificGzipBytes": 17560,
+        "routeSpecificRawBytes": 52190
+      },
       "/connect/facebook/error": {
         "firstLoadGzipBytes": 152237,
         "firstLoadRawBytes": 502437,
@@ -297,20 +321,20 @@
       "/connect/instagram/success": {
         "firstLoadGzipBytes": 150309,
         "firstLoadRawBytes": 497892,
-        "routeSpecificGzipBytes": 11088,
-        "routeSpecificRawBytes": 28099
+        "routeSpecificGzipBytes": 11697,
+        "routeSpecificRawBytes": 29740
       },
       "/connect/threads/success": {
         "firstLoadGzipBytes": 151548,
         "firstLoadRawBytes": 501026,
-        "routeSpecificGzipBytes": 11063,
-        "routeSpecificRawBytes": 27635
+        "routeSpecificGzipBytes": 11715,
+        "routeSpecificRawBytes": 29733
       },
       "/connect/threads/error": {
         "firstLoadGzipBytes": 151388,
         "firstLoadRawBytes": 500428,
-        "routeSpecificGzipBytes": 10903,
-        "routeSpecificRawBytes": 27036
+        "routeSpecificGzipBytes": 11549,
+        "routeSpecificRawBytes": 29135
       },
       "/forgot-password": {
         "firstLoadGzipBytes": 152720,
@@ -321,14 +345,14 @@
       "/login": {
         "firstLoadGzipBytes": 153250,
         "firstLoadRawBytes": 505010,
-        "routeSpecificGzipBytes": 12710,
-        "routeSpecificRawBytes": 31510
+        "routeSpecificGzipBytes": 13944,
+        "routeSpecificRawBytes": 34982
       },
       "/privacy": {
         "firstLoadGzipBytes": 148779,
         "firstLoadRawBytes": 494187,
-        "routeSpecificGzipBytes": 8258,
-        "routeSpecificRawBytes": 20789
+        "routeSpecificGzipBytes": 9060,
+        "routeSpecificRawBytes": 22737
       },
       "/reset-password": {
         "firstLoadGzipBytes": 151286,
@@ -339,8 +363,8 @@
       "/signup": {
         "firstLoadGzipBytes": 156377,
         "firstLoadRawBytes": 516588,
-        "routeSpecificGzipBytes": 15837,
-        "routeSpecificRawBytes": 43088
+        "routeSpecificGzipBytes": 16331,
+        "routeSpecificRawBytes": 45467
       },
       "/tenant/[subdomain]": {
         "firstLoadGzipBytes": 166245,
@@ -563,18 +587,6 @@
         "firstLoadRawBytes": 535070,
         "routeSpecificGzipBytes": 19364,
         "routeSpecificRawBytes": 61598
-      },
-      "/tenant/[subdomain]/sellers": {
-        "firstLoadGzipBytes": 171879,
-        "firstLoadRawBytes": 577976,
-        "routeSpecificGzipBytes": 31343,
-        "routeSpecificRawBytes": 104504
-      },
-      "/tenant/[subdomain]/sellers/[sellerId]": {
-        "firstLoadGzipBytes": 171052,
-        "firstLoadRawBytes": 574746,
-        "routeSpecificGzipBytes": 30516,
-        "routeSpecificRawBytes": 101274
       }
     },
     "totalClientJs": {
