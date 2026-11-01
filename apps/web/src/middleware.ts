@@ -93,6 +93,20 @@ function buildAdminSectionRedirect(request: NextRequest): NextResponse {
  * any other tenant path lands on the panel home (subscriptions).
  * Old admin API paths have NO compat layer (they 404).
  */
+/**
+ * Strip trailing slashes with a plain scan, not a regex: Sonar's
+ * super-linear-backtracking rule flags the `/\/+$/` pattern.
+ * Exactly equivalent to `value.length > 1 ? value.replace(/\/+$/, '') : value`.
+ */
+function stripTrailingSlashes(value: string): string {
+  if (value.length <= 1) return value;
+  let end = value.length;
+  while (end > 0 && value.charAt(end - 1) === '/') {
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
+
 function mapOldAdminTenantPathToAdmin(pathname: string): string {
   let tenantPath = pathname;
   const tenantPrefixMatch = pathname.match(/^\/tenant\/[^/]+(\/.*)?$/);
@@ -100,8 +114,7 @@ function mapOldAdminTenantPathToAdmin(pathname: string): string {
     tenantPath = tenantPrefixMatch[1] ?? '/';
     if (tenantPath === '') tenantPath = '/';
   }
-  const normalized =
-    tenantPath.length > 1 ? tenantPath.replace(/\/+$/, '') : tenantPath;
+  const normalized = stripTrailingSlashes(tenantPath);
   if (normalized === '/billing') return '/admin/subscriptions';
   if (normalized === '/sellers') return '/admin/sellers';
   const sellerDetail = normalized.match(/^\/sellers\/(.+)$/);

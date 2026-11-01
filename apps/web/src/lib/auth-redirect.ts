@@ -238,6 +238,20 @@ function resolveRelativeRedirect(
  *   → /admin/subscriptions. Search and hash are dropped, and the
  *   origin is dropped — the admin path is host-independent.
  */
+/**
+ * Strip trailing slashes with a plain scan, not a regex: Sonar's
+ * super-linear-backtracking rule flags the `/\/+$/` pattern.
+ * Exactly equivalent to `value.length > 1 ? value.replace(/\/+$/, '') : value`.
+ */
+function stripTrailingSlashes(value: string): string {
+  if (value.length <= 1) return value;
+  let end = value.length;
+  while (end > 0 && value.charAt(end - 1) === '/') {
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
+
 export function resolveAdminLoginRedirect(
   rawReturnUrl: string | null | undefined
 ): string {
@@ -258,7 +272,7 @@ export function resolveAdminLoginRedirect(
   } catch {
     path = trimmed.split(/[?#]/, 1)[0] ?? '';
   }
-  const normalized = path.length > 1 ? path.replace(/\/+$/, '') : path;
+  const normalized = stripTrailingSlashes(path);
   const lower = normalized.toLowerCase();
   if (lower === '/admin' || lower.startsWith('/admin/')) {
     return normalized;
@@ -267,8 +281,7 @@ export function resolveAdminLoginRedirect(
   // and prefixed forms map alike.
   const tenantMatch = normalized.match(/^\/tenant\/[^/]+(\/.*)?$/i);
   const tenantPath = tenantMatch ? (tenantMatch[1] ?? '/') : normalized;
-  const tenantNormalized =
-    tenantPath.length > 1 ? tenantPath.replace(/\/+$/, '') : tenantPath;
+  const tenantNormalized = stripTrailingSlashes(tenantPath);
   const lowerTenant = tenantNormalized.toLowerCase();
   if (lowerTenant === '/billing') return HOME;
   if (lowerTenant === '/sellers') return '/admin/sellers';
