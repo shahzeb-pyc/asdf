@@ -189,7 +189,7 @@ class FakeQuery {
         (r) => ({
           id: nextId(),
           created_at: new Date().toISOString(),
-          ...(this.table === 'referral_codes' ? { superseded_at: null } : {}),
+          ...(this.table === 'referral_codes' ? { superseded_at: null, tombstoned_at: null } : {}),
           ...r,
         })
       );
@@ -300,7 +300,7 @@ function baseSeed(): Record<string, Row[]> {
       { user_id: SELLER2_ID, rate: 15, scope: 'one-time', status: 'active' },
     ],
     referral_codes: [
-      { id: 'code-1', seller_id: SELLER_ID, code: 'ALI20', superseded_at: null, created_at: OLD },
+      { id: 'code-1', seller_id: SELLER_ID, code: 'ALI20', superseded_at: null, tombstoned_at: null, created_at: OLD },
       { id: 'code-2', seller_id: SELLER2_ID, code: 'TAKEN1', superseded_at: null, created_at: OLD },
     ],
     seller_commissions: [

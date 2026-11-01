@@ -60,7 +60,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       scope: settings.scope,
       status: settings.status,
       currentCode: current ?? null,
-      codes: codes.map((c) => ({ code: c.code, current: c.current, createdAt: c.createdAt })),
+      codes: codes.map((c) => ({ code: c.code, current: c.current, tombstoned: c.tombstoned, createdAt: c.createdAt })),
       referralLink,
       signups,
       purchasers,
