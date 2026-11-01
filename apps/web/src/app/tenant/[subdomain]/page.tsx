@@ -26,6 +26,7 @@ import {
 import { buildTenantHref, shouldUseCleanTenantPaths } from '@/lib/tenant-href';
 
 import { getWorkspaceDisplayName } from './workspace-display-name';
+import { OldUsersNoticeBanner } from '@/components/shared/old-users-notice-banner';
 
 /** Title resolves through the tenant layout's `<Section> · <Workspace>` template (§3.3.4). */
 export const metadata: Metadata = { title: 'Home' };
@@ -109,6 +110,7 @@ export default async function TenantIndexPage({ params }: Readonly<TenantIndexPa
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6 px-6 py-6">
+      <OldUsersNoticeBanner />
       <HomeHero workspaceName={workspaceName} />
 
       {data.kind === 'error' ? <HomeErrorCard message={data.message} /> : null}
