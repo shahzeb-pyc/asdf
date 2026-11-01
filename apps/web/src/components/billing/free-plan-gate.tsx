@@ -1,41 +1,45 @@
 'use client';
 
 /**
- * FreePlanGate — the route-level Free-plan upgrade gate for the tenant shell.
+ * FreePlanGate — the route-level plan gate for the tenant shell.
  *
- * Mounted in the tenant layout around `{children}`. On every section and
- * sub-section route EXCEPT Home, Prompt Library, and Billing, a user whose
- * entitlement says they cannot post (Free plan, or an expired paid period)
- * sees a hard-block upgrade dialog instead of the section content. Admins
- * never see it and never trigger an entitlement fetch; exempt routes render
- * their content immediately with no fetch at all.
+ * Mounted in the tenant layout around `{children}`. On every section
+ * and sub-section route EXCEPT Home, Prompt Library, and Billing, a
+ * user whose proven entitlement says they cannot post sees a
+ * hard-block upgrade dialog instead of the section content. Admins
+ * never see it; exempt routes render their content immediately.
  *
- * Source of truth is the existing entitlement endpoint, validated with
- * EntitlementResponseSchema. No backend change: the server-side subscription
- * gates stay as the silent backstop for actions.
+ * Source of truth is the tenant layout's shared entitlement query
+ * (`EntitlementProvider`): the gate reads the same query data as the
+ * sidebar plan word and the billing view, so the dialog and the word
+ * can never disagree within one page state. This component performs
+ * NO fetch of its own — the independent apiGet effect it used to
+ * own is deleted.
  *
- * Loading: gated non-admin routes hold a neutral loading state until the
- * entitlement resolves, so section content is never flashed to a Free user.
- * Fetch error: reported via reportError and the children render (fail-open
- * with a loud log — wrongly locking a paying user out of whole sections is
+ * Free-only-when-proven: the dialog renders ONLY from a successful,
+ * privilege-proven entitlement response. While the check has never
+ * resolved, gated routes hold a neutral loading state; when the
+ * check fails — first fetch or a refetch newer than the last
+ * success — the children render with no dialog (fail-open, exactly
+ * as before: wrongly locking a paying user out of whole sections is
  * worse than showing content the server gates still protect).
+ * While a refetch is in flight the previous proven decision is kept
+ * (no skeleton flash).
  *
- * Freshness: entitlement is re-checked on every navigation and when the
- * tab regains window focus, so a plan that becomes paid while the tab is
- * open unblocks sections without a full reload. A re-check keeps showing
- * the previous status until the fresh result arrives (no skeleton flash);
- * a failed re-check still fails open, exactly like the first fetch.
+ * Blocked means proven `canPost: false`. That covers Free users and
+ * expired users exactly as before — same dialog, same copy, same
+ * buttons — because expiry keeps the renewal funnel behind Upgrade.
+ * What changed is what can never block: loading, error, unverified,
+ * or stale data. A proven Paid response never blocks.
  *
- * Hard block: shared Dialog, controlled open, no close button, Esc and
- * outside-pointer dismissal explicitly prevented, onOpenChange ignored.
- * The only exits are Upgrade (Billing Purchase view) and Back to Home.
+ * Hard block: shared Dialog, controlled open, no close button, Esc
+ * and outside-pointer dismissal explicitly prevented, onOpenChange
+ * ignored. The only exits are Upgrade (Billing Purchase view) and
+ * Back to Home.
  */
 
 import * as React from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { EntitlementResponseSchema } from '@fbuploadpro/contracts';
-import { apiGet, buildTenantApiPath } from '@/lib/api';
-import { reportError } from '@/lib/report-error';
 import { buildTenantHref, normalizeTenantPath } from '@/lib/tenant-href';
 import { Button } from '@/components/shared/ui/button';
 import {
@@ -45,6 +49,7 @@ import {
   DialogTitle,
 } from '@/components/shared/ui/dialog';
 import { Skeleton } from '@/components/shared/ui/skeleton';
+import { useSharedEntitlement } from './entitlement-provider';
 
 export interface FreePlanGateProps {
   subdomain: string;
@@ -62,8 +67,6 @@ export function isFreePlanExemptRoute(pathname: string | null, subdomain: string
   return EXEMPT_FIRST_SEGMENTS.has(first);
 }
 
-type GateStatus = 'loading' | 'allowed' | 'blocked' | 'error-open';
-
 export function FreePlanGate({
   subdomain,
   useCleanPaths,
@@ -73,66 +76,23 @@ export function FreePlanGate({
   const pathname = usePathname();
   const router = useRouter();
   const exempt = isFreePlanExemptRoute(pathname, subdomain);
-  const [status, setStatus] = React.useState<GateStatus>('loading');
-  // Bumped on window focus to re-run the entitlement effect below.
-  const [refreshTick, setRefreshTick] = React.useState(0);
-  const liveRef = React.useRef(true);
-
-  // Re-check when the tab regains focus, so a plan that becomes paid
-  // while the tab sits in the background unblocks sections without a
-  // full reload. Exempt routes and admins never fetch (guarded here
-  // and in the entitlement effect); the tick itself carries no data.
-  React.useEffect(() => {
-    if (exempt || isAdmin) return;
-    const onFocus = () => {
-      setRefreshTick((tick) => tick + 1);
-    };
-    window.addEventListener('focus', onFocus);
-    return () => {
-      window.removeEventListener('focus', onFocus);
-    };
-  }, [exempt, isAdmin]);
-
-  React.useEffect(() => {
-    if (exempt || isAdmin) return;
-    liveRef.current = true;
-    const controller = new AbortController();
-    void (async () => {
-      try {
-        const entitlement = await apiGet(
-          buildTenantApiPath(subdomain, '/billing/entitlement'),
-          { schema: EntitlementResponseSchema, signal: controller.signal },
-        );
-        if (liveRef.current) setStatus(entitlement.canPost ? 'allowed' : 'blocked');
-      } catch (err) {
-        if (!liveRef.current || controller.signal.aborted) return;
-        reportError(err, { source: 'free-plan-gate' });
-        setStatus('error-open');
-      }
-    })();
-    return () => {
-      liveRef.current = false;
-      controller.abort();
-    };
-    // Re-check on every navigation (layouts persist across SPA
-    // navigations, so pathname — not just exempt — must be a dep, or a
-    // tab loaded while Free keeps showing the dialog after the plan
-    // becomes paid) and on window focus (refreshTick above). The
-    // previous status is deliberately kept during a re-check: no
-    // skeleton flash, and a failed re-check still fails open.
-  }, [exempt, isAdmin, subdomain, pathname, refreshTick]);
+  const { entitlement, isProven, isLoading } = useSharedEntitlement();
 
   if (exempt || isAdmin) return <>{children}</>;
-  if (status === 'allowed' || status === 'error-open') return <>{children}</>;
-  if (status === 'loading') {
-    return (
-      <div data-testid="free-plan-gate-loading" aria-busy="true" className="space-y-3 p-4">
-        <Skeleton className="h-5 w-1/3" />
-        <Skeleton className="h-4 w-full" />
-        <Skeleton className="h-4 w-2/3" />
-      </div>
-    );
+  if (!isProven || !entitlement) {
+    if (isLoading) {
+      return (
+        <div data-testid="free-plan-gate-loading" aria-busy="true" className="space-y-3 p-4">
+          <Skeleton className="h-5 w-1/3" />
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-2/3" />
+        </div>
+      );
+    }
+    // Unproven (fetch error or failed refetch): fail open.
+    return <>{children}</>;
   }
+  if (entitlement.canPost) return <>{children}</>;
 
   const homeHref = buildTenantHref(subdomain, '/', useCleanPaths);
   const upgradeHref = buildTenantHref(subdomain, '/billing?view=purchase', useCleanPaths);

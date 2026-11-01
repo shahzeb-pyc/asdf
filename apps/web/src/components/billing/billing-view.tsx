@@ -43,6 +43,7 @@ import { Skeleton } from '@/components/shared/ui/skeleton';
 import { BillingStatusMark } from './billing-status-mark';
 import { CouponSection } from './coupon-section';
 import { RefundSection } from './refund-section';
+import { useSharedEntitlement } from './entitlement-provider';
 
 const PLATFORM_LABELS: Record<keyof PlatformCounts, string> = {
   facebook: 'Facebook',
@@ -252,6 +253,18 @@ export function BillingView({
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [reloading, setReloading] = React.useState(false);
   const [counts, setCounts] = React.useState<PlatformCounts | null>(null);
+  /**
+   * Plan decisions (Paid / Expired / Free, My Plan card, pending
+   * verification) come from the tenant layout's shared entitlement
+   * query — the same data the gate and the sidebar word read — not
+   * from this view's own /billing fetch. The /billing fetch below
+   * still supplies payments (and the pending-payment row); its
+   * nested entitlement is ignored for plan decisions so the three
+   * surfaces can never disagree, and so the plan display refreshes
+   * on window focus through the shared query instead of going stale
+   * after the mount-only load.
+   */
+  const sharedEntitlement = useSharedEntitlement();
   // Raw text of each chooser input while it is being edited. The
   // committed count (above) is the single source of truth for prices,
   // totals, quotes, and submission; drafts only hold what the field
@@ -350,13 +363,14 @@ export function BillingView({
   async function handleRetry() {
     setReloading(true);
     try {
+      await sharedEntitlement.refetch();
       await load();
     } finally {
       setReloading(false);
     }
   }
 
-  const entitlement = status?.entitlement ?? null;
+  const entitlement = sharedEntitlement.entitlement;
   /**
    * One pending payment per user: while one exists, Purchase shows it
    * and hides the builder instead of offering a fresh one.
@@ -804,6 +818,28 @@ export function BillingView({
         <Alert variant="destructive">
           <AlertTitle>Couldn&apos;t load billing</AlertTitle>
           <AlertDescription>{loadError}</AlertDescription>
+        </Alert>
+        <div>
+          <Button onClick={() => void handleRetry()} loading={reloading}>
+            Try again
+          </Button>
+        </div>
+      </div>
+    );
+  }
+  // Unproven plan check (first fetch failed, or a refetch newer than
+  // the last success): never render a Free card from missing data —
+  // show the same retryable error instead of the skeleton, so a
+  // failed check cannot sit behind an endless loader either.
+  if (sharedEntitlement.isUnproven) {
+    return (
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
+        <h1 className="text-xl leading-heading font-semibold text-ink">Billing</h1>
+        <Alert variant="destructive">
+          <AlertTitle>Couldn&apos;t load billing</AlertTitle>
+          <AlertDescription>
+            Your plan could not be checked right now. Please try again.
+          </AlertDescription>
         </Alert>
         <div>
           <Button onClick={() => void handleRetry()} loading={reloading}>

@@ -80,10 +80,45 @@ export function _resetMockSupabaseClients(): void {
 }
 
 /**
- * Returns a Supabase client configured with the service-role key (SUPABASE_SERVICE_ROLE_KEY).
- * Exclusively for server-side administrative workflows and system jobs.
- * The name makes the elevated privilege explicit at every call site.
+ * Decodes the `role` (and `ref`, when present) claims from a Supabase
+ * JWT without verifying the signature. Supabase anon/service keys are
+ * JWTs, and this is a misconfiguration detector, not an authentication
+ * check: the threat is an anon key pasted into the service-role slot,
+ * and the payload of an anon key says `role: "anon"` in the clear.
+ * Returns nulls when the value is not a decodable JWT with a string
+ * role claim. Signature verification is deliberately out of scope:
+ * the signing secret is not available server-side, and a forged key
+ * is not the failure mode — a misconfigured one is.
  */
+export function decodeSupabaseKeyClaims(key: string): {
+  role: string | null;
+  ref: string | null;
+} {
+  const parts = key.split('.');
+  if (parts.length !== 3) return { role: null, ref: null };
+  try {
+    const normalized = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
+    const binary = atob(padded);
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    const payload = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
+    if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
+      return { role: null, ref: null };
+    }
+    const record = payload as { role?: unknown; ref?: unknown };
+    return {
+      role: typeof record.role === 'string' ? record.role : null,
+      ref: typeof record.ref === 'string' ? record.ref : null,
+    };
+  } catch {
+    return { role: null, ref: null };
+  }
+}
+
+/** Convenience wrapper: the `role` claim of a Supabase JWT, or null. */
+export function getSupabaseKeyRole(key: string): string | null {
+  return decodeSupabaseKeyClaims(key).role;
+}
 export function getSupabaseAdminClient(): SupabaseClient | null {
   if (isTestDoubleAllowed() && mockSupabaseServiceClientForTesting) {
     return mockSupabaseServiceClientForTesting;
@@ -107,6 +142,20 @@ export function getSupabaseAdminClient(): SupabaseClient | null {
     if (!url || url.includes('placeholder') || !key || key.includes('placeholder')) {
       throw new Error(
         'NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are strictly required in production.'
+      );
+    }
+    // Privilege proof (entitlement rebuild): subscription tables run
+    // under RLS with no policies, so a non-service client silently
+    // reads zero rows — and zero rows is exactly what "Free" looks
+    // like. Presence alone cannot tell an anon key from a service
+    // key, so decode the key's JWT role claim and refuse anything
+    // that is not service_role, loudly, before any query can trust
+    // it. This runs on every production call (before the cache
+    // lookup below), so a config change to a wrong key fails on the
+    // next call instead of serving wrong plan data.
+    if (getSupabaseKeyRole(key) !== 'service_role') {
+      throw new Error(
+        'SUPABASE_SERVICE_ROLE_KEY is not a service-role key: refusing to build an admin client that would silently run under RLS and report every user as Free.'
       );
     }
   } else {

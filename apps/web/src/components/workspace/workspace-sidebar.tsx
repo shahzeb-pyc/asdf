@@ -145,7 +145,7 @@ function WorkspaceSidebarContent({
   // Free / Admin). Null while the entitlement is unresolved or the
   // check failed, so the "Studio" placeholder stays until the real
   // word is known — never a flashed or failed-as-Free plan.
-  const planWord = usePlanWord(subdomain, adminOnly);
+  const planWord = usePlanWord(adminOnly);
   const [isFacebookOpen, setIsFacebookOpen] = useState(true);
   const [isBillingOpen, setIsBillingOpen] = useState(true);
   const [openPlatforms, setOpenPlatforms] = useState<Record<string, boolean>>({});
