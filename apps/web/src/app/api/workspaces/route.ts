@@ -10,7 +10,6 @@ import {
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import { setSessionCookie } from '@/lib/auth/session';
-import { ensureWorkspaceForUser } from '@/lib/auth/workspaces';
 import { bodyTooLargeResponse, enforceIpRateLimit, readJsonBody } from '@/lib/request-body';
 
 async function extractSession(request: NextRequest): Promise<SessionPayload | null> {
@@ -46,7 +45,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: error.message || 'Failed to fetch workspaces' }, { status: 500 });
     }
 
-    let rows = (workspaces || []).map((w) => ({
+    const rows = (workspaces || []).map((w) => ({
       id: w.id as string,
       ownerId: w.owner_id as string,
       name: w.name as string,
@@ -54,41 +53,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       createdAt: w.created_at as string | undefined,
       updatedAt: w.updated_at as string | undefined,
     }));
-
-    // Backfill if empty
-    if (rows.length === 0) {
-      const initialName = session.name || session.subdomain;
-      const targetSubdomain = await ensureWorkspaceForUser(
-        supabase,
-        session.userId,
-        initialName,
-        session.subdomain
-      );
-
-      const { data: inserted, error: insertError } = await supabase
-        .from('workspaces')
-        .select('id, owner_id, name, subdomain, created_at, updated_at')
-        .eq('subdomain', targetSubdomain)
-        .maybeSingle();
-
-      if (insertError) {
-        console.error('[Workspaces API] Failed to provision default workspace:', insertError);
-        return NextResponse.json({ error: insertError.message || 'Failed to provision default workspace' }, { status: 500 });
-      }
-
-      if (inserted) {
-        rows = [
-          {
-            id: inserted.id as string,
-            ownerId: inserted.owner_id as string,
-            name: inserted.name as string,
-            subdomain: inserted.subdomain as string,
-            createdAt: inserted.created_at as string | undefined,
-            updatedAt: inserted.updated_at as string | undefined,
-          },
-        ];
-      }
-    }
 
     return NextResponse.json({ workspaces: rows });
   } catch (err) {
