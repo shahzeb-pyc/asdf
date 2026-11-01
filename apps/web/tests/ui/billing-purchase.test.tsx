@@ -93,14 +93,28 @@ describe('Billing Purchase', () => {
     mockApiPost.mockResolvedValue(paymentItem({ status: 'pending' }));
   });
 
-  it('pending payment shows the banner and disables checkout', async () => {
+  it('pending payment hides the builder and shows only the pending card', async () => {
     mockApiGet.mockResolvedValue(statusFixture([paymentItem()]));
     render(<BillingView subdomain="acme" initialSection="purchase" />);
     expect(await screen.findByText('Payment in progress')).toBeInTheDocument();
     expect(screen.getByText('Waiting for approval')).toBeInTheDocument();
     expect(screen.getAllByText(/70 PKR/).length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: 'Check again' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Continue to checkout' })).toBeDisabled();
+    expect(
+      screen.getByText(
+        'You already have a payment waiting for approval. Wait for it to be decided before submitting another.'
+      )
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('You can build a new plan once this payment is decided.')
+    ).toBeInTheDocument();
+    // The builder is hidden, not disabled: no draft priced on current
+    // usage next to a different pending order.
+    expect(screen.queryByText('Included with your plan')).toBeNull();
+    expect(screen.queryByText('Choose your pages and accounts')).toBeNull();
+    expect(screen.queryByText('Order summary')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Continue to checkout' })).toBeNull();
+    expect(screen.queryByLabelText('Increase Facebook')).toBeNull();
   });
 
   it('Purchase shows only Facebook, Instagram, Threads steppers', async () => {

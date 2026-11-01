@@ -317,7 +317,7 @@ export function BillingView({
   const entitlement = status?.entitlement ?? null;
   /**
    * One pending payment per user: while one exists, Purchase shows it
-   * and the checkout is disabled instead of offering a fresh one.
+   * and hides the builder instead of offering a fresh one.
    * Page 1 of payments is newest-first, and nothing newer than a
    * pending payment can be created once the server block is live, so
    * the first pending row is the one in flight.
@@ -792,7 +792,7 @@ export function BillingView({
 
   /**
    * Pending payment card for Purchase only: while one payment is in
-   * flight, Purchase shows it and disables checkout instead of
+   * flight, Purchase shows it and hides the builder instead of
    * offering a fresh one. The label follows the payment method —
    * bank payments wait for approval, crypto payments wait for the
    * user to send the funds. "Check again" re-reads payments so a
@@ -1140,15 +1140,45 @@ export function BillingView({
 
   /* ---------- Purchase: builder step ---------- */
   if (section === 'purchase' && purchaseStep === 'builder') {
+    /**
+     * While a payment is pending, the builder is hidden entirely:
+     * the draft builder (priced on current usage) sitting next to a
+     * different pending order read as if the purchase had not
+     * registered. Only the pending card, the pending message, and
+     * the note that a new plan can be built once it is decided.
+     */
+    if (pendingPayment !== null) {
+      return (
+        <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
+          <div className="flex flex-col gap-2">
+            <Button variant="outline" size="sm" className="self-start" onClick={goToMyPlan}>
+              <ArrowLeftIcon aria-hidden className="size-4" /> Back to My Plan
+            </Button>
+            <h1 className="text-xl leading-heading font-semibold text-ink">Purchase</h1>
+            <p className="text-body text-ink-sub">
+              70 PKR per page or account, paid monthly. Facebook counts pages; other platforms
+              count accounts.
+            </p>
+            <p className="text-body text-ink-sub">
+              Example: 5 Facebook pages + 3 Instagram accounts = 560 PKR / month.
+            </p>
+          </div>
+          <PurchaseStepIndicator current="builder" />
+          {pendingPaymentCard}
+          <p className="text-body text-ink-sub">{PENDING_CHECKOUT_MESSAGE}</p>
+          <p className="text-body text-ink-sub">
+            You can build a new plan once this payment is decided.
+          </p>
+        </div>
+      );
+    }
     const buildDisabled =
       busy !== null ||
       units === 0 ||
       Boolean(quoteError) ||
-      (isPaid && countsUnchanged) ||
-      pendingPayment !== null;
-    const buildDisabledReason = pendingPayment
-      ? PENDING_CHECKOUT_MESSAGE
-      : units === 0
+      (isPaid && countsUnchanged);
+    const buildDisabledReason =
+      units === 0
         ? 'Choose at least one page or account first.'
         : isPaid && countsUnchanged
           ? 'This is the same as your current plan. Increase a count to upgrade.'
