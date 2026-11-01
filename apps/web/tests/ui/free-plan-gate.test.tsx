@@ -79,6 +79,10 @@ function renderGate(props: { isAdmin?: boolean; useCleanPaths?: boolean } = {}) 
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Drain any queued once-implementations left by a previous test (e.g. a
+  // refetch a test expected but the old code never made), then restore the
+  // default Free entitlement. clearAllMocks alone does not drain the queue.
+  mockApiGet.mockReset();
   mocks.pathname = '/tenant/acme/accounts';
   mockApiGet.mockResolvedValue(entitlement(false));
 });
@@ -184,5 +188,59 @@ describe('FreePlanGate', () => {
     const panel = await screen.findByTestId('free-plan-upgrade-dialog');
     expect(panel.className).toContain('inset-x-4');
     expect(panel.className).toContain('sm:max-w-lg');
+  });
+
+  it('re-checks on navigation: the dialog disappears without a reload once the plan becomes paid', async () => {
+    const { rerender } = renderGate();
+    await screen.findByTestId('free-plan-upgrade-dialog');
+    expect(mockApiGet).toHaveBeenCalledTimes(1);
+    mockApiGet.mockResolvedValue(entitlement(true));
+    mocks.pathname = '/tenant/acme/pages';
+    rerender(
+      <FreePlanGate subdomain="acme" useCleanPaths={false} isAdmin={false}>
+        <div>Section content</div>
+      </FreePlanGate>,
+    );
+    expect(await screen.findByText('Section content')).toBeInTheDocument();
+    expect(screen.queryByTestId('free-plan-upgrade-dialog')).not.toBeInTheDocument();
+    expect(mockApiGet).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-checks on window focus: the dialog disappears once the plan becomes paid', async () => {
+    renderGate();
+    await screen.findByTestId('free-plan-upgrade-dialog');
+    expect(mockApiGet).toHaveBeenCalledTimes(1);
+    mockApiGet.mockResolvedValue(entitlement(true));
+    fireEvent.focus(window);
+    expect(await screen.findByText('Section content')).toBeInTheDocument();
+    expect(screen.queryByTestId('free-plan-upgrade-dialog')).not.toBeInTheDocument();
+    expect(mockApiGet).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps showing the previous status during a navigation re-check (no skeleton flash)', async () => {
+    let resolveSecond!: (value: unknown) => void;
+    mockApiGet.mockResolvedValueOnce(entitlement(false));
+    mockApiGet.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveSecond = resolve; }),
+    );
+    const { rerender } = renderGate();
+    await screen.findByTestId('free-plan-upgrade-dialog');
+    mocks.pathname = '/tenant/acme/pages';
+    rerender(
+      <FreePlanGate subdomain="acme" useCleanPaths={false} isAdmin={false}>
+        <div>Section content</div>
+      </FreePlanGate>,
+    );
+    expect(screen.getByTestId('free-plan-upgrade-dialog')).toBeInTheDocument();
+    expect(screen.queryByTestId('free-plan-gate-loading')).not.toBeInTheDocument();
+    resolveSecond(entitlement(true));
+    expect(await screen.findByText('Section content')).toBeInTheDocument();
+  });
+
+  it('does not fetch on window focus for admins', async () => {
+    renderGate({ isAdmin: true });
+    expect(screen.getByText('Section content')).toBeInTheDocument();
+    fireEvent.focus(window);
+    expect(mockApiGet).not.toHaveBeenCalled();
   });
 });
