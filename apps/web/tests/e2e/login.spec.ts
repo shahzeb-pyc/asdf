@@ -61,9 +61,9 @@ test.describe('login', () => {
       new RegExp(`${TENANT.subdomain}\\.localhost:3100/tenant/${TENANT.subdomain}$`)
     );
     await expect(
-      page.getByRole('heading', { name: new RegExp(`Workspace:`) })
+      page.getByRole('heading', { name: /Welcome,/ })
     ).toBeVisible();
-    await expect(page.getByText('Welcome to your FBUploadPro workspace.')).toBeVisible();
+    await expect(page.getByText('Your workspace at a glance.')).toBeVisible();
   });
 
   test('wrong password shows the error as a plain rose line and keeps the input', async ({

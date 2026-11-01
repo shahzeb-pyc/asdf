@@ -108,13 +108,13 @@ test.describe('mobile layout', () => {
     await installApiFixtures(page, state);
 
     await page.goto(`http://${TENANT.subdomain}.localhost:3100/tenant/${TENANT.subdomain}`);
-    const heading = page.getByRole('heading', { name: /Workspace:/ });
+    const heading = page.getByRole('heading', { name: /Welcome,/ });
     await expect(heading).toBeVisible();
-    await expect(page.getByText('Welcome to your FBUploadPro workspace.')).toBeVisible();
+    await expect(page.getByText('Your workspace at a glance.')).toBeVisible();
     await expectNoDocumentOverflow(page);
     await expectWithinViewport(heading, page);
     await expectWithinViewport(
-      page.getByText('Welcome to your FBUploadPro workspace.'),
+      page.getByText('Your workspace at a glance.'),
       page
     );
     const topbar = page.getByTestId('workspace-topbar');

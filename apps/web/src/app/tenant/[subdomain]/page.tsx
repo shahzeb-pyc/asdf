@@ -1,6 +1,30 @@
 import type { Metadata } from 'next';
 import React from 'react';
-import { Card } from '@/components/shared/ui/card';
+import { headers } from 'next/headers';
+
+import { loadHomeData } from '@/components/home/home-data';
+import {
+  buildChecklist,
+  buildFreeQuickLinks,
+  buildPaidQuickLinks,
+  isChecklistComplete,
+} from '@/components/home/home-helpers';
+import {
+  AdminPanelCard,
+  ExpiredBanner,
+  FreePlanCard,
+  HomeErrorCard,
+  HomeHero,
+  NeedsAttention,
+  PagesEmptyState,
+  PaidPlanBanner,
+  QuickLinks,
+  SetupChecklist,
+  SummaryCards,
+  UpgradeCard,
+} from '@/components/home/home-sections';
+import { buildTenantHref, shouldUseCleanTenantPaths } from '@/lib/tenant-href';
+
 import { getWorkspaceDisplayName } from './workspace-display-name';
 
 /** Title resolves through the tenant layout's `<Section> · <Workspace>` template (§3.3.4). */
@@ -11,43 +35,131 @@ interface TenantIndexPageProps {
 }
 
 /**
- * Workspace home (spec 130 §5.5, PR-130-3) — preservation rebuild
- * (OD130-1 = A): the welcome card ONLY. No vital-few elements, no
- * checklist, no new data sections. Copy and behaviour are §4.2-verbatim;
- * only the construction changes — the former hand-rolled card (inline
- * styles + `lib/theme` preset imports) is rebuilt on the shared/ui
- * `Card` primitive and semantic token utilities.
+ * Workspace home — the overview dashboard, rebuilt from the old agency
+ * dashboard's shape (welcome hero, setup checklist, at-a-glance
+ * numbers, pages needing attention, quick links) adapted to today's
+ * subscription model (plan instead of token balance, storage quota
+ * instead of token tiers).
  *
- * Server-first (§6 duty 1): the display name resolves in the server
- * component through the `cache()`-deduped resolver (§5.8) — no client
- * fetch and no raw fetch call. A failed name lookup falls back to the
- * subdomain slug (§4.1 — the workspace's real identifier, preserved
- * deliberately; distinct from the deleted identity fabrication).
+ * HARD CONSTRAINT (owner): no queues or posts data anywhere on Home.
+ * Nothing here reads queue items, counts scheduled/published/failed
+ * posts, or links to Queue or Calendar. Posting times appear only as
+ * a setup-checklist step (a time configured, not a post) and as a
+ * quick link to the page tab that manages them.
  *
- * Geometry: outer measure `max-w-3xl` (48rem — the container-token step
- * nearest the former 800px) with 24px page padding; the card carries
- * 24px padding via the primitive's `py-6` + `px-6` here. The heading
- * sits on the token type scale (`text-xl` — the scale has no 24px step;
- * UI Rule 14 mandates the scale) with the original `tracking-h1`,
- * bold weight and primary text colour; the body is `text-body` (the
- * former 0.875rem exactly) in secondary text. `loading.tsx` mirrors
- * this geometry skeleton-for-skeleton.
+ * Sections by plan (Home stays exempt from the free-plan dialog):
+ * - Paid: hero, plan banner, setup checklist (hidden once complete),
+ *   summary cards (or the add-first-page empty state at zero pages),
+ *   needs-attention pages, quick links.
+ * - Free: hero, free plan card, upgrade card, Prompt Library + Billing
+ *   links only (nothing that would throw the upgrade dialog).
+ * - Expired: hero plus the expired banner and renew button only.
+ * - Admin: hero plus the admin-panel link only.
+ *
+ * Server-first: all data loads in `loadHomeData` (one server module,
+ * session + service-role client, every row scoped to the resolved
+ * workspace or the session user). Any load failure renders a visible
+ * error card, never invented numbers.
  */
 export default async function TenantIndexPage({ params }: Readonly<TenantIndexPageProps>) {
   const { subdomain } = await params;
   // H5: the heading must show the workspace display name, never the internal slug.
   const workspaceName = (await getWorkspaceDisplayName(subdomain)) ?? subdomain;
 
+  let hostHeader: string | null = null;
+  try {
+    hostHeader = (await headers()).get('host');
+  } catch {
+    // Outside a request scope (tests, static generation): fall back to prefixed URLs.
+    hostHeader = null;
+  }
+  const rootDomain = process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'fbuploadpro.com';
+  const useCleanPaths = shouldUseCleanTenantPaths(hostHeader, subdomain, rootDomain);
+  const href = (path: string) => buildTenantHref(subdomain, path, useCleanPaths);
+
+  const pagesHref = href('/pages');
+  const accountsHref = href('/accounts');
+  const mediaHref = href('/media');
+  const promptsHref = href('/prompts');
+  const billingHref = href('/billing');
+  const billingPurchaseHref = href('/billing?view=purchase');
+  const aduHref = href('/auto-download-upload');
+
+  const data = await loadHomeData(subdomain);
+
+  // Posting times live on a page's Posting Times tab: link the user's
+  // first Facebook page's tab when one exists, else the Pages section
+  // where a page is added first.
+  const postingTimesHref =
+    data.kind === 'paid' && data.firstFacebookPageId
+      ? href(`/pages/${data.firstFacebookPageId}?tab=calendar`)
+      : pagesHref;
+
+  const checklist =
+    data.kind === 'paid'
+      ? buildChecklist({
+          accountsCount: data.accountsCount,
+          totalDestinations: data.totalDestinations,
+          hasActiveSlot: data.hasActiveSlot,
+          accountsHref,
+          pagesHref,
+          postingTimesHref,
+        })
+      : [];
+
   return (
-    <div className="mx-auto w-full max-w-3xl px-6 py-6">
-      <Card className="gap-1 px-6">
-        <h1 className="text-xl leading-heading font-bold tracking-h1 text-ink">
-          Workspace: {workspaceName}
-        </h1>
-        <p className="text-body leading-body text-ink-sub">
-          Welcome to your FBUploadPro workspace.
-        </p>
-      </Card>
+    <div className="mx-auto w-full max-w-3xl space-y-6 px-6 py-6">
+      <HomeHero workspaceName={workspaceName} />
+
+      {data.kind === 'error' ? <HomeErrorCard message={data.message} /> : null}
+
+      {data.kind === 'admin' ? <AdminPanelCard billingHref={billingHref} /> : null}
+
+      {data.kind === 'free' ? (
+        <>
+          <FreePlanCard />
+          <UpgradeCard billingPurchaseHref={billingPurchaseHref} />
+          <QuickLinks links={buildFreeQuickLinks({ promptsHref, billingHref })} />
+        </>
+      ) : null}
+
+      {data.kind === 'expired' ? (
+        <ExpiredBanner billingPurchaseHref={billingPurchaseHref} />
+      ) : null}
+
+      {data.kind === 'paid' ? (
+        <>
+          <PaidPlanBanner data={data} billingPurchaseHref={billingPurchaseHref} />
+          {!isChecklistComplete(checklist) ? <SetupChecklist steps={checklist} /> : null}
+          {data.totalDestinations === 0 ? (
+            <PagesEmptyState pagesHref={pagesHref} />
+          ) : (
+            <SummaryCards
+              data={data}
+              pagesHref={pagesHref}
+              aduHref={aduHref}
+              mediaHref={mediaHref}
+            />
+          )}
+          {data.attention.length > 0 ? (
+            <NeedsAttention
+              items={data.attention}
+              totalCount={data.attentionTotal}
+              pagesHref={pagesHref}
+            />
+          ) : null}
+          <QuickLinks
+            links={buildPaidQuickLinks({
+              pagesHref,
+              accountsHref,
+              postingTimesHref,
+              mediaHref,
+              promptsHref,
+              billingHref,
+            })}
+          />
+        </>
+      ) : null}
     </div>
   );
 }

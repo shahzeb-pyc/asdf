@@ -10,12 +10,14 @@
  *   the Toaster mount.
  *
  * PR-130-3 extends the home-page coverage to rendered content
- * (spec 130 §5.5 / T34): the §4.2 welcome copy verbatim, the
- * display-name → subdomain-slug fallback, the Card-primitive/token
- * construction with zero inline styles, and the shared loading fallback
- * staying neutral (it must never mirror the home card, so no route
- * shows another page's skeleton). No assertion below replaces or weakens
- * the PR-130-1 suite above it.
+ * (spec 130 §5.5 / T34): the display-name → subdomain-slug fallback,
+ * the Card-primitive/token construction with zero inline styles, and
+ * the shared loading fallback staying neutral (it must never mirror
+ * the home card, so no route shows another page's skeleton). The
+ * 2026-11-01 home dashboard rebuild replaces the §4.2 welcome-card-only
+ * contract with the paid/free/expired/admin sections (and the
+ * no-queues-or-posts-data rule) asserted below. No assertion below
+ * replaces or weakens the PR-130-1 suite above it.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React from 'react';
@@ -31,9 +33,40 @@ vi.mock('../../src/app/tenant/[subdomain]/workspace-display-name', () => ({
   getWorkspaceDisplayName: (...args: unknown[]) => mockGetDisplayName(...args),
 }));
 
+const mockLoadHomeData = vi.fn();
+vi.mock('@/components/home/home-data', () => ({
+  loadHomeData: (...args: unknown[]) => mockLoadHomeData(...args),
+}));
+
+const PAID_HOME = {
+  kind: 'paid',
+  periodEndsAt: new Date('2099-01-01T00:00:00.000Z'),
+  units: 5,
+  totalDestinations: 3,
+  activeDestinations: 2,
+  facebookAccounts: 1,
+  accountsCount: 1,
+  hasActiveSlot: true,
+  firstFacebookPageId: 'page-1',
+  attention: [
+    {
+      id: 'page-2',
+      name: 'Paused Page',
+      platform: 'facebook',
+      status: 'paused',
+      reason: 'Paused',
+    },
+  ],
+  attentionTotal: 1,
+  followersGained: 120,
+  storageUsedBytes: 1073741824,
+  storageQuotaBytes: 26843545600,
+};
+
 import TenantLayout, { generateMetadata } from '../../src/app/tenant/[subdomain]/layout';
 import TenantIndexPage, { metadata as homeMetadata } from '../../src/app/tenant/[subdomain]/page';
 import TenantLoading from '../../src/app/tenant/[subdomain]/loading';
+import { HomeHero } from '@/components/home/home-sections';
 import { WorkspaceSidebar } from '@/components/workspace/workspace-sidebar';
 import { Toaster } from '@/components/shared/ui/toast';
 import { Card } from '@/components/shared/ui/card';
@@ -73,6 +106,8 @@ describe('Tenant Workspace Shell', () => {
     mockGetSession.mockReset();
     mockGetDisplayName.mockReset();
     mockGetDisplayName.mockResolvedValue('Acme Corp');
+    mockLoadHomeData.mockReset();
+    mockLoadHomeData.mockResolvedValue(PAID_HOME);
   });
 
   it('redirects to login on a null session — never renders a fabricated user', async () => {
@@ -144,23 +179,24 @@ describe('Tenant Workspace Shell', () => {
     });
   });
 
-  it('renders tenant index page with workspace title and welcome message', async () => {
+  it('renders tenant index page with workspace hero', async () => {
     const pageJsx = await TenantIndexPage({
       params: Promise.resolve({ subdomain: 'acme' }),
     });
 
     expect(pageJsx).toBeDefined();
     expect(React.isValidElement(pageJsx)).toBe(true);
-    const elements = collectElements(pageJsx);
-    const heading = elements.find((el) => el.type === 'h1');
-    expect(heading?.props.children).toEqual(['Workspace: ', 'Acme Corp']);
+    const html = renderToStaticMarkup(pageJsx).replaceAll('<!-- -->', '');
+    expect(html).toContain('Welcome, Acme Corp');
   });
 });
 
-describe('Tenant workspace home — preservation rebuild (spec 130 §5.5, PR-130-3)', () => {
+describe('Tenant workspace home — overview dashboard rebuild (2026-11-01)', () => {
   beforeEach(() => {
     mockGetDisplayName.mockReset();
     mockGetDisplayName.mockResolvedValue('Acme Corp');
+    mockLoadHomeData.mockReset();
+    mockLoadHomeData.mockResolvedValue(PAID_HOME);
   });
 
   async function renderHome() {
@@ -169,53 +205,63 @@ describe('Tenant workspace home — preservation rebuild (spec 130 §5.5, PR-130
     });
   }
 
-  it('renders the §4.2 welcome copy verbatim — heading and body, nothing added', async () => {
+  it('renders the paid dashboard — hero, plan banner, summary, attention, quick links, no queue or calendar links', async () => {
     const pageJsx = await renderHome();
-    const elements = collectElements(pageJsx);
-
-    // Exactly one heading on the home (logical heading order, §8.5).
-    const headings = elements.filter((el) => el.type === 'h1');
-    expect(headings).toHaveLength(1);
-
-    // Body copy verbatim (§4.2): the welcome sentence, as its own paragraph.
-    const body = elements.find((el) => el.type === 'p');
-    expect(body?.props.children).toBe('Welcome to your FBUploadPro workspace.');
-
-    // OD130-1 = A (preservation): no actions or extra sections ship —
-    // the card contains no links or buttons at all.
-    expect(elements.some((el) => el.type === 'a' || el.type === 'button')).toBe(false);
-
-    // Rendered markup carries both verbatim strings.
     const html = renderToStaticMarkup(pageJsx).replaceAll('<!-- -->', '');
-    expect(html).toContain('Workspace: Acme Corp');
-    expect(html).toContain('Welcome to your FBUploadPro workspace.');
+
+    // Exactly one h1 on the home (logical heading order, §8.5).
+    expect(html.match(/<h1/g)?.length).toBe(1);
+    expect(html).toContain('Welcome, Acme Corp');
+
+    // Paid sections render.
+    expect(html).toContain('data-testid="plan-banner"');
+    expect(html).toContain('data-testid="summary-cards"');
+    expect(html).toContain('data-testid="needs-attention"');
+    expect(html).toContain('data-testid="quick-links"');
+
+    // Checklist hidden once complete (account + page + slot all done).
+    expect(html).not.toContain('data-testid="setup-checklist"');
+
+    // HARD CONSTRAINT: no queues or posts data anywhere on Home —
+    // no Queue/Calendar links and no queue wording at all.
+    expect(html).not.toContain('>Queue<');
+    expect(html).not.toContain('>Calendar View<');
+    expect(html).not.toContain('/queue');
+  });
+
+  it('shows the setup checklist while steps are incomplete, and the empty state at zero pages', async () => {
+    mockLoadHomeData.mockResolvedValue({
+      ...PAID_HOME,
+      totalDestinations: 0,
+      activeDestinations: 0,
+      accountsCount: 0,
+      hasActiveSlot: false,
+      firstFacebookPageId: null,
+      attention: [],
+      attentionTotal: 0,
+    });
+
+    const html = renderToStaticMarkup(await renderHome()).replaceAll('<!-- -->', '');
+    expect(html).toContain('data-testid="setup-checklist"');
+    expect(html).toContain('data-testid="pages-empty-state"');
+    expect(html).not.toContain('data-testid="summary-cards"');
+    expect(html).not.toContain('data-testid="needs-attention"');
   });
 
   it('falls back to the subdomain slug when the display-name lookup returns null', async () => {
     mockGetDisplayName.mockResolvedValue(null);
 
-    const pageJsx = await renderHome();
-    const elements = collectElements(pageJsx);
-    const heading = elements.find((el) => el.type === 'h1');
+    const html = renderToStaticMarkup(await renderHome()).replaceAll('<!-- -->', '');
     // §4.1: the slug is the workspace's real identifier — the deliberate
     // name-lookup fallback, not fabricated identity data.
-    expect(heading?.props.children).toEqual(['Workspace: ', 'acme']);
+    expect(html).toContain('Welcome, acme');
   });
 
-  it('builds the welcome card on the shared/ui Card primitive with tokens and zero inline styles', async () => {
+  it('builds the home on the shared/ui Card primitive with tokens and zero inline styles', async () => {
     const pageJsx = await renderHome();
-    const elements = collectElements(pageJsx);
 
-    const card = elements.find((el) => el.type === Card);
-    expect(card).toBeDefined();
-    expect(card?.props.className).toContain('gap-1');
-    expect(card?.props.className).toContain('px-6');
-
-    // Zero inline styles anywhere in the home tree (§8.1 ratchet duty).
-    expect(elements.every((el) => el.props.style === undefined)).toBe(true);
-
-    // The rendered card carries the primitive's token classes, and the
-    // markup contains no style attribute at all.
+    // The rendered cards carry the primitive's token classes, and the
+    // markup contains no style attribute at all (§8.1 ratchet duty).
     const html = renderToStaticMarkup(pageJsx);
     expect(html).toContain('data-slot="card"');
     expect(html).toContain('bg-panel');
@@ -234,8 +280,8 @@ describe('Tenant workspace home — preservation rebuild (spec 130 §5.5, PR-130
     const loadingElements = collectElements(loadingJsx);
     const loadingOuter = loadingJsx as AnyElement;
 
-    // The home page itself still ships its welcome Card unchanged.
-    expect(pageElements.some((el) => el.type === Card)).toBe(true);
+    // The home page itself still ships its welcome hero.
+    expect(pageElements.some((el) => el.type === HomeHero)).toBe(true);
 
     // The shared fallback must NOT render that Card (or any page's cards):
     // it previously mirrored the home card, so every route without its own
