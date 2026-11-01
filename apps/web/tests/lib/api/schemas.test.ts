@@ -330,9 +330,23 @@ describe('settings, workspaces and connect schemas', () => {
         hasSecret: false,
         status: 'unverified',
         lastTestedAt: null,
+        fbAppName: 'Acme App',
         connectedAt: null,
-      }).fbAppId
-    ).toBe('12345');
+      }).fbAppName
+    ).toBe('Acme App');
+    expect(
+      ByocSettingsResponseSchema.parse({
+        workspaceId: UUID,
+        subdomain: 'alpha',
+        fbAppId: '12345',
+        fbAppSecretHint: null,
+        hasSecret: false,
+        status: 'unverified',
+        lastTestedAt: null,
+        fbAppName: null,
+        connectedAt: null,
+      }).fbAppName
+    ).toBeNull();
     expect(
       SaveCredentialsResponseSchema.parse({
         success: true,

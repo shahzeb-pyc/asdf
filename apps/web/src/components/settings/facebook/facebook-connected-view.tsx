@@ -44,6 +44,8 @@ export function formatConnectedDate(dateStr?: string | null): string {
 
 export interface FacebookConnectedViewProps {
   fbAppId: string;
+  /** Meta app display name from the connect-time Graph verification. Null for rows connected before names were saved — the block is then omitted, and the view renders exactly as before. */
+  fbAppName?: string | null | undefined;
   connectedAt?: string | null | undefined;
   /** Fetches the saved App Secret from the reveal action (spec 139 N3). */
   onRevealSecret: () => Promise<string>;
@@ -53,6 +55,7 @@ export interface FacebookConnectedViewProps {
 
 export function FacebookConnectedView({
   fbAppId,
+  fbAppName,
   connectedAt,
   onRevealSecret,
   onEditDetails,
@@ -114,6 +117,21 @@ export function FacebookConnectedView({
 
   return (
     <div className="flex flex-col gap-4">
+      {/* App Name — only when a verified name was saved at connect time.
+          Legacy rows have none and render exactly as before. */}
+      {fbAppName ? (
+        <div className="flex flex-col gap-1.5">
+          <span className="text-metadata font-medium tracking-caption text-ink-dim uppercase">
+            App Name
+          </span>
+          <div className="flex items-center justify-between gap-4 border-t border-line py-2">
+            <span data-testid="fb-saved-app-name" className="text-body break-all text-ink">
+              {fbAppName}
+            </span>
+          </div>
+        </div>
+      ) : null}
+
       {/* App ID */}
       <div className="flex flex-col gap-1.5">
         <span className="text-metadata font-medium tracking-caption text-ink-dim uppercase">

@@ -78,6 +78,8 @@ export interface PlatformCredentialsRecord {
   encryptedClientSecret: string;
   status: PlatformCredentialStatus;
   lastTestedAt: string | null;
+  /** Provider app display name from a verification fetch (null until first verification). */
+  appName: string | null;
   createdAt: string | null;
   updatedAt: string | null;
 }
@@ -85,6 +87,28 @@ export interface PlatformCredentialsRecord {
 export interface SavePlatformCredentialsInput {
   clientId: string;
   clientSecret?: string | undefined;
+  /**
+   * App display name fetched from the provider's API by a verification
+   * step the caller performed BEFORE saving (Facebook BYOC connect).
+   * When present, the row is written as verified with this name and
+   * the test timestamp in the same write; when absent, today's
+   * behavior is preserved (status resets to 'unverified', and the
+   * stored name and test timestamp are left untouched).
+   */
+  verifiedAppName?: string | undefined;
+}
+
+/**
+ * The verification outcome a caller attaches to a save: the row is
+ * written as 'valid' with the fetched name and the test time, in the
+ * same write that stores the credentials — never as a second write
+ * that could leave a verified name on an unverified row (or vice
+ * versa) if it failed.
+ */
+interface VerifiedWrite {
+  status: 'valid';
+  lastTestedAt: string;
+  appName: string;
 }
 
 export type PlatformCredentialsMutationResult =
@@ -97,7 +121,7 @@ type CredentialsClient = DatabaseClient | SupabaseClient | null | undefined;
 type WriteOutcome = 'ok' | 'error' | 'unavailable';
 
 const CREDENTIAL_COLUMNS =
-  'id, workspace_id, platform, client_id, encrypted_client_secret, status, last_tested_at, created_at, updated_at';
+  'id, workspace_id, platform, client_id, encrypted_client_secret, status, last_tested_at, app_name, created_at, updated_at';
 
 interface CredentialsRowShape {
   id?: string | null;
@@ -107,6 +131,7 @@ interface CredentialsRowShape {
   encrypted_client_secret?: string;
   status?: string;
   last_tested_at?: string | null;
+  app_name?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -120,6 +145,7 @@ function toRecord(row: CredentialsRowShape, workspaceId: string, platform: ByocP
     encryptedClientSecret: row.encrypted_client_secret ?? '',
     status: (row.status as PlatformCredentialStatus) || 'unverified',
     lastTestedAt: row.last_tested_at ?? null,
+    appName: row.app_name ?? null,
     createdAt: row.created_at ?? null,
     updatedAt: row.updated_at ?? null,
   };
@@ -196,21 +222,45 @@ async function upsertRow(
   clientId: string,
   encryptedClientSecret: string,
   now: string,
-  client: CredentialsClient
+  client: CredentialsClient,
+  verification: VerifiedWrite | null
 ): Promise<WriteOutcome> {
   const legacy = legacyDb(client);
   if (legacy) {
     try {
-      await legacy.query(
-        `INSERT INTO platform_credentials (workspace_id, platform, client_id, encrypted_client_secret, status, updated_at)
-         VALUES ($1, $2, $3, $4, 'unverified', $5)
-         ON CONFLICT (workspace_id, platform) DO UPDATE SET
-           client_id = EXCLUDED.client_id,
-           encrypted_client_secret = EXCLUDED.encrypted_client_secret,
-           status = 'unverified',
-           updated_at = EXCLUDED.updated_at`,
-        [workspaceId, platform, clientId, encryptedClientSecret, now]
-      );
+      if (verification) {
+        await legacy.query(
+          `INSERT INTO platform_credentials (workspace_id, platform, client_id, encrypted_client_secret, status, last_tested_at, app_name, updated_at)
+           VALUES ($1, $2, $3, $4, 'valid', $5, $6, $7)
+           ON CONFLICT (workspace_id, platform) DO UPDATE SET
+             client_id = EXCLUDED.client_id,
+             encrypted_client_secret = EXCLUDED.encrypted_client_secret,
+             status = 'valid',
+             last_tested_at = EXCLUDED.last_tested_at,
+             app_name = EXCLUDED.app_name,
+             updated_at = EXCLUDED.updated_at`,
+          [
+            workspaceId,
+            platform,
+            clientId,
+            encryptedClientSecret,
+            verification.lastTestedAt,
+            verification.appName,
+            now,
+          ]
+        );
+      } else {
+        await legacy.query(
+          `INSERT INTO platform_credentials (workspace_id, platform, client_id, encrypted_client_secret, status, updated_at)
+           VALUES ($1, $2, $3, $4, 'unverified', $5)
+           ON CONFLICT (workspace_id, platform) DO UPDATE SET
+             client_id = EXCLUDED.client_id,
+             encrypted_client_secret = EXCLUDED.encrypted_client_secret,
+             status = 'unverified',
+             updated_at = EXCLUDED.updated_at`,
+          [workspaceId, platform, clientId, encryptedClientSecret, now]
+        );
+      }
       return 'ok';
     } catch (err) {
       console.error('[Platform Credentials] Failed to save credentials (legacy client):', err);
@@ -227,7 +277,10 @@ async function upsertRow(
       platform,
       client_id: clientId,
       encrypted_client_secret: encryptedClientSecret,
-      status: 'unverified',
+      status: verification ? 'valid' : 'unverified',
+      ...(verification
+        ? { last_tested_at: verification.lastTestedAt, app_name: verification.appName }
+        : {}),
       updated_at: now,
     },
     { onConflict: 'workspace_id,platform' }
@@ -242,42 +295,46 @@ async function upsertRow(
 async function updateRow(
   workspaceId: string,
   platform: ByocPlatform,
-  patch: { client_id: string; status: PlatformCredentialStatus },
-  client: CredentialsClient,
-  now: string
-): Promise<WriteOutcome>;
-async function updateRow(
-  workspaceId: string,
-  platform: ByocPlatform,
-  patch: { status: PlatformCredentialStatus; last_tested_at: string },
-  client: CredentialsClient,
-  now: string
-): Promise<WriteOutcome>;
-async function updateRow(
-  workspaceId: string,
-  platform: ByocPlatform,
-  patch: { client_id?: string; status: PlatformCredentialStatus; last_tested_at?: string },
+  patch: {
+    client_id?: string;
+    status: PlatformCredentialStatus;
+    last_tested_at?: string;
+    app_name?: string;
+  },
   client: CredentialsClient,
   now: string
 ): Promise<WriteOutcome> {
   const legacy = legacyDb(client);
   if (legacy) {
     try {
-      if (patch.last_tested_at !== undefined) {
-        await legacy.query(
-          `UPDATE platform_credentials
-           SET status = $3, last_tested_at = $4, updated_at = $5
-           WHERE workspace_id = $1 AND platform = $2`,
-          [workspaceId, platform, patch.status, patch.last_tested_at, now]
-        );
-      } else {
-        await legacy.query(
-          `UPDATE platform_credentials
-           SET client_id = $3, status = $4, updated_at = $5
-           WHERE workspace_id = $1 AND platform = $2`,
-          [workspaceId, platform, patch.client_id, patch.status, now]
-        );
+      // Only the columns the caller actually supplies are set, so an
+      // unverified re-save never wipes a stored name or test time.
+      // Column order is fixed (client_id, status, last_tested_at,
+      // app_name, updated_at) so the two pre-existing shapes keep the
+      // exact SQL and parameter positions they always had.
+      const sets: string[] = [];
+      const params: unknown[] = [workspaceId, platform];
+      let nextParam = 3;
+      if (patch.client_id !== undefined) {
+        sets.push(`client_id = $${nextParam++}`);
+        params.push(patch.client_id);
       }
+      sets.push(`status = $${nextParam++}`);
+      params.push(patch.status);
+      if (patch.last_tested_at !== undefined) {
+        sets.push(`last_tested_at = $${nextParam++}`);
+        params.push(patch.last_tested_at);
+      }
+      if (patch.app_name !== undefined) {
+        sets.push(`app_name = $${nextParam++}`);
+        params.push(patch.app_name);
+      }
+      sets.push(`updated_at = $${nextParam++}`);
+      params.push(now);
+      await legacy.query(
+        `UPDATE platform_credentials SET ${sets.join(', ')} WHERE workspace_id = $1 AND platform = $2`,
+        params
+      );
       return 'ok';
     } catch (err) {
       console.error('[Platform Credentials] Failed to update credentials (legacy client):', err);
@@ -360,10 +417,14 @@ export async function getCredentials(
 /**
  * Saves a workspace's app details for a BYOC platform. A supplied secret is
  * encrypted before storage; when no new secret is supplied, the previously
- * saved secret is kept (and saving fails if there is none yet). Saving
- * always resets the status to 'unverified' until the details are tested.
- * Only the platform_credentials row is written — connected accounts and
- * their tokens are never touched.
+ * saved secret is kept (and saving fails if there is none yet). Without a
+ * caller-supplied verification, saving resets the status to 'unverified'
+ * until the details are tested, leaving any stored name and test time
+ * untouched. With `verifiedAppName` (a name the caller just fetched from
+ * the provider's API for exactly this pair), the same write stores the
+ * name and marks the row 'valid' with the test time — the verification
+ * is never a second write. Only the platform_credentials row is
+ * written — connected accounts and their tokens are never touched.
  */
 export async function saveCredentials(
   workspaceId: string,
@@ -374,6 +435,10 @@ export async function saveCredentials(
   assertByocPlatform(platform);
   const now = new Date().toISOString();
   const hasNewSecret = Boolean(input.clientSecret && input.clientSecret.length > 0);
+  const verification: VerifiedWrite | null =
+    input.verifiedAppName !== undefined
+      ? { status: 'valid', lastTestedAt: now, appName: input.verifiedAppName }
+      : null;
 
   if (!hasNewSecret) {
     const existing = await fetchRow(workspaceId, platform, client);
@@ -387,7 +452,13 @@ export async function saveCredentials(
     const outcome = await updateRow(
       workspaceId,
       platform,
-      { client_id: input.clientId, status: 'unverified' },
+      {
+        client_id: input.clientId,
+        status: verification ? 'valid' : 'unverified',
+        ...(verification
+          ? { last_tested_at: verification.lastTestedAt, app_name: verification.appName }
+          : {}),
+      },
       client,
       now
     );
@@ -402,7 +473,15 @@ export async function saveCredentials(
     return { ok: false, error: 'Failed to save credentials', status: 500 };
   }
 
-  const outcome = await upsertRow(workspaceId, platform, input.clientId, encryptedSecret, now, client);
+  const outcome = await upsertRow(
+    workspaceId,
+    platform,
+    input.clientId,
+    encryptedSecret,
+    now,
+    client,
+    verification
+  );
   return outcomeToResult(outcome, 'Failed to save credentials');
 }
 

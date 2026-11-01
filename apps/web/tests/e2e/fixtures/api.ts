@@ -159,6 +159,7 @@ export async function installApiFixtures(
       subdomain: SUB,
       fbAppId: '123456789012345',
       fbAppSecretHint: '••••cret',
+      fbAppName: 'E2E Facebook App',
       hasSecret: true,
       status: 'valid',
       lastTestedAt: null,

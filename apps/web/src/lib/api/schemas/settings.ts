@@ -30,6 +30,8 @@ export const ByocSettingsResponseSchema = z.object({
   hasSecret: z.boolean(),
   status: CredentialsStatusSchema,
   lastTestedAt: z.string().nullable(),
+  /** Meta app display name from the Graph verification; null until first verification. */
+  fbAppName: z.string().nullable(),
   connectedAt: z.string().nullable(),
 });
 export type ByocSettingsResponse = z.infer<typeof ByocSettingsResponseSchema>;
@@ -44,6 +46,12 @@ export const SaveCredentialsResponseSchema = z.object({
   hasSecret: z.boolean(),
   status: CredentialsStatusSchema,
   connectedAt: z.string(),
+  /**
+   * Meta app display name from the Graph verification. Optional because
+   * this schema is shared with the Instagram/Threads app-details save,
+   * which does not verify and never returns a name.
+   */
+  fbAppName: z.string().nullable().optional(),
 });
 export type SaveCredentialsResponse = z.infer<typeof SaveCredentialsResponseSchema>;
 

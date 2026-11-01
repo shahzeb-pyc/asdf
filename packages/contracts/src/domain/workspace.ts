@@ -58,6 +58,8 @@ export const BYOCCredentialsViewSchema = z.object({
   hasSecret: z.boolean().default(false),
   status: BYOCStatusSchema.default('unverified'),
   lastTestedAt: z.string().nullable().optional(),
+  /** Meta app display name from the Graph API verification (null until first verification). */
+  appName: z.string().nullable().optional(),
 });
 export type BYOCCredentialsView = z.infer<typeof BYOCCredentialsViewSchema>;
 
