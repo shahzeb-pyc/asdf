@@ -18,6 +18,7 @@
 
 import { test, expect } from '@playwright/test';
 import { SESSION_COOKIE, TENANT } from './fixtures/tenant';
+import { expectNoDocumentOverflow } from './fixtures/mobile';
 
 test.describe('login', () => {
   test('success signs in and lands on the workspace home', async ({ page, context }) => {
@@ -135,5 +136,19 @@ test.describe('login', () => {
     ).toBeVisible();
     await expect(page.getByLabel('Email Address')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Sign In' })).toBeVisible();
+  });
+});
+
+test.describe('old-users migration notice at 360px', () => {
+  test.use({ viewport: { width: 360, height: 720 } });
+
+  test('login shows the migration notice above the form, no overflow', async ({ page }) => {
+    await page.goto('/login');
+    await expect(page.getByTestId('old-users-notice-banner')).toBeVisible();
+    await expect(page.getByTestId('old-users-notice-banner')).toContainText(
+      'Old fbuploadpro users'
+    );
+    await expect(page.getByRole('button', { name: 'Sign In' })).toBeVisible();
+    await expectNoDocumentOverflow(page);
   });
 });

@@ -40,6 +40,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { AuthSplitLayout } from '@/components/auth/auth-split-layout';
 import { LoginShowcasePanel } from '@/components/auth/login-showcase-panel';
 import { PasswordInput } from '@/components/auth/password-input';
+import { OldUsersNoticeBanner } from '@/components/shared/old-users-notice-banner';
 import {
   Form,
   FormControl,
@@ -253,6 +254,7 @@ export default function LoginPage({ initialResetSuccess = false }: LoginPageProp
         </span>
       }
     >
+      <OldUsersNoticeBanner />
       <Form {...form}>
         <form
           noValidate

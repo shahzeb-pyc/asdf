@@ -36,6 +36,10 @@ test.describe('Tenant Home at 360px', () => {
     await expect(
       page.getByTestId('home-hero').getByRole('heading', { name: 'Welcome, e2e' })
     ).toBeVisible();
+    await expect(page.getByTestId('old-users-notice-banner')).toBeVisible();
+    await expect(page.getByTestId('old-users-notice-banner')).toContainText(
+      'Old fbuploadpro users'
+    );
     await expect(page.getByTestId('home-error')).toBeVisible();
     await expectNoDocumentOverflow(page);
   });

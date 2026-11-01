@@ -80,6 +80,18 @@ describe("login form (form standard reference conversion)", () => {
     expect(screen.queryByText(SESSION_EXPIRED_NOTICE)).toBeNull();
   });
 
+  it('shows the old-users migration notice above the sign-in form, text only', () => {
+    render(<LoginPage />);
+    const banner = screen.getByTestId('old-users-notice-banner');
+    expect(banner.textContent).toContain(
+      'Old fbuploadpro users, new account create karein aur mujhe WhatsApp par message karein jo neechay show ho raha hai, main aapke tokens idhar transfer karta hoon.'
+    );
+    expect(banner.querySelector('a')).toBeNull();
+    expect(banner.querySelector('button')).toBeNull();
+    // The form itself is untouched and still present below the banner.
+    expect(screen.getByRole('button', { name: 'Sign In' })).toBeTruthy();
+  });
+
   it("validates on blur: a non-Gmail address errors inline without a submit or a request", async () => {
     const user = userEvent.setup();
     render(<LoginPage />);
