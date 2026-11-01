@@ -131,7 +131,7 @@ export function CouponSection({
             <Input
               id="billing-coupon-code"
               value={code}
-              onChange={(event) => setCode(event.target.value)}
+              onChange={(event) => setCode(event.target.value.toUpperCase())}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') {
                   event.preventDefault();
