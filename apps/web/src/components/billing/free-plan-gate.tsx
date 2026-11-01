@@ -24,7 +24,16 @@
  * as before: wrongly locking a paying user out of whole sections is
  * worse than showing content the server gates still protect).
  * While a refetch is in flight the previous proven decision is kept
- * (no skeleton flash).
+ * (no skeleton flash). The fail-open decision is sticky the same
+ * way: once a fetch has settled unproven, later refetches keep the
+ * children instead of pulling the skeletons back. Without stickiness
+ * a gated page whose content itself reads this query (the pages
+ * shell's feature-cap query refetches on mount) oscillates forever:
+ * fail-open mounts the shell, the mount refetches, the pending
+ * refetch shows skeletons, the skeletons unmount the shell and abort
+ * its queries, the failed refetch fail-opens again — and the page
+ * never renders. A sticky fail-open breaks the cycle: the shell
+ * mounts once and stays, so its queries complete.
  *
  * Blocked means proven `canPost: false`. That covers Free users and
  * expired users exactly as before — same dialog, same copy, same
@@ -76,11 +85,22 @@ export function FreePlanGate({
   const pathname = usePathname();
   const router = useRouter();
   const exempt = isFreePlanExemptRoute(pathname, subdomain);
-  const { entitlement, isProven, isLoading } = useSharedEntitlement();
+  const { entitlement, isProven, isLoading, isUnproven } = useSharedEntitlement();
+
+  // Sticky fail-open (see the header note): once a fetch has settled
+  // unproven, later refetches keep the children instead of flashing
+  // the skeletons and unmounting the section. The flag is set in an
+  // effect so it is already true by the time any refetch renders as
+  // pending; it never resets within one shell mount, and a proven
+  // decision always takes precedence over it below.
+  const hasFailOpenedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (isUnproven) hasFailOpenedRef.current = true;
+  }, [isUnproven]);
 
   if (exempt || isAdmin) return <>{children}</>;
   if (!isProven || !entitlement) {
-    if (isLoading) {
+    if (isLoading && !hasFailOpenedRef.current) {
       return (
         <div data-testid="free-plan-gate-loading" aria-busy="true" className="space-y-3 p-4">
           <Skeleton className="h-5 w-1/3" />

@@ -127,9 +127,14 @@ function base64Url(input: Buffer | string): string {
 /**
  * Mints a session token in the app's own format (HS256 JWT — see
  * @fbuploadpro/contracts signSessionToken) for the disposable tenant.
+ *
+ * The default is a regular user: most specs exercise user pages, and
+ * under shell isolation an admin session cannot view user pages at
+ * all (middleware redirects admins to the admin section). Specs
+ * that need another role mint it explicitly.
  */
 export function mintSessionToken(
-  role: 'admin' | 'user' | 'seller' = 'admin',
+  role: 'admin' | 'user' | 'seller' = 'user',
   allowedSubdomains: string[] = []
 ): string {
   const now = Math.floor(Date.now() / 1000);

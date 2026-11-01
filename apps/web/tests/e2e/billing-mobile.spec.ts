@@ -382,12 +382,12 @@ test.describe('billing at phone widths', () => {
     context,
   }) => {
     await page.setViewportSize({ width: 360, height: 844 });
-    // Default fixture cookie is admin: the old billing URL
+    // Admin session, minted explicitly: the old billing URL
     // redirects to the admin section, which renders the approvals
     // view there.
     await context.addCookies([
-      SESSION_COOKIE,
-      { ...SESSION_COOKIE, domain: `${TENANT.subdomain}.localhost` },
+      { ...SESSION_COOKIE, value: mintSessionToken('admin') },
+      { ...SESSION_COOKIE, value: mintSessionToken('admin'), domain: `${TENANT.subdomain}.localhost` },
     ]);
     const state = createFixtureState();
     await installApiFixtures(page, state);

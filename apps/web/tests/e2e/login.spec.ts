@@ -39,8 +39,8 @@ test.describe('login', () => {
       // host-only, so the fixture plants the same session cookie for both
       // hosts involved — the localhost equivalent of that one cookie.
       await context.addCookies([
-        SESSION_COOKIE,
-        { ...SESSION_COOKIE, domain: `${TENANT.subdomain}.localhost` },
+        { ...SESSION_COOKIE, value: mintSessionToken('admin') },
+        { ...SESSION_COOKIE, value: mintSessionToken('admin'), domain: `${TENANT.subdomain}.localhost` },
       ]);
       return route.fulfill({
         status: 200,
