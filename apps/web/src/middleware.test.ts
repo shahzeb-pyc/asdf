@@ -71,6 +71,46 @@ describe('middleware bounced-session fix (login-cookie-loop)', () => {
     expect(setCookies.some((c) => c.includes('Domain='))).toBe(false);
   });
 
+  it('does NOT purge on a preview host with a production root env: the preview host-only cookie IS the session', async () => {
+    // SECOND SEND BACK fix: previews are built with the production
+    // config (NEXT_PUBLIC_ROOT_DOMAIN=fbuploadpro.com) while serving
+    // on a *.vercel.app host. Gating the purge on the configured root
+    // alone let it fire here and delete the preview user's ONLY
+    // session cookie. The bounced preview user must still get the 307
+    // to their same-host tenant path, with zero purges.
+    const token = await validSessionToken();
+    const response = await middleware(
+      requestWithCookie(
+        'https://fbuploadpro-git-fix-login-cookie-loop-velocta.vercel.app/login?returnUrl=https%3A%2F%2Ffbuploadpro-git-fix-login-cookie-loop-velocta.vercel.app%2Ftenant%2Facme',
+        token
+      )
+    );
+    expect(response.status).toBe(307);
+    expect(response.headers.get('location')).toBe(
+      'https://fbuploadpro-git-fix-login-cookie-loop-velocta.vercel.app/tenant/acme'
+    );
+    const setCookies =
+      typeof response.headers.getSetCookie === 'function'
+        ? response.headers.getSetCookie()
+        : [response.headers.get('set-cookie') ?? ''];
+    expect(setCookies.filter((c) => c.startsWith('fbup_session=;'))).toEqual([]);
+    expect(setCookies.some((c) => c.includes('Domain='))).toBe(false);
+  });
+
+  it('does NOT purge on a localhost host even with a production root env', async () => {
+    const token = await validSessionToken();
+    const response = await middleware(
+      requestWithCookie('https://localhost:3000/login?returnUrl=%2Ftenant%2Facme', token)
+    );
+    expect(response.status).toBe(307);
+    const setCookies =
+      typeof response.headers.getSetCookie === 'function'
+        ? response.headers.getSetCookie()
+        : [response.headers.get('set-cookie') ?? ''];
+    expect(setCookies.filter((c) => c.startsWith('fbup_session=;'))).toEqual([]);
+    expect(setCookies.some((c) => c.includes('Domain='))).toBe(false);
+  });
+
   it('redirects a valid session on /login without a returnUrl to the tenant home (existing behaviour)', async () => {
     const token = await validSessionToken();
     const response = await middleware(

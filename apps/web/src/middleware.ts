@@ -366,18 +366,37 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
           // shared-domain cookie. The purge sets no Domain attribute,
           // so a good shared-domain (.fbuploadpro.com) cookie is a
           // separate entry and SURVIVES — a user with a good shared
-          // cookie is unaffected. Scoped to production custom
-          // domains only: on localhost / vercel preview the host-only
-          // cookie IS the session, so purging it there would log
-          // those users out.
+          // cookie is unaffected. Scoped to requests actually from
+          // production custom hosts only: on localhost / vercel
+          // preview the host-only cookie IS the session, so purging
+          // it there would log those users out.
+          //
+          // SECOND SEND BACK fix: gate the purge on the REQUEST HOST
+          // as well as the configured root domain. The previous gate
+          // only looked at the root domain, but previews are built
+          // with the production config, so a preview deployment serves
+          // on a *.vercel.app host while NEXT_PUBLIC_ROOT_DOMAIN is
+          // still fbuploadpro.com — the old gate passed and the purge
+          // deleted the preview user's ONLY session cookie. Purge
+          // only when the request actually came from a production
+          // custom host: the host is the root or a subdomain of it,
+          // and it is not localhost, 127.0.0.1, or a *.vercel.app
+          // preview host. This mirrors the host test in
+          // lib/auth/clients.ts getCookieDomain, which cannot be
+          // imported into Edge middleware (it imports
+          // @supabase/supabase-js), so the test is mirrored inline.
           const response = buildAuthenticatedWorkspaceRedirect(request, session, host, rootDomain);
-          const cleanRoot = rootDomain.toLowerCase().split(':')[0];
-          const isProductionCustomDomain =
+          const cleanHost = host.toLowerCase().split(':')[0] || '';
+          const cleanRoot = rootDomain.toLowerCase().split(':')[0] || '';
+          const isLocalOrPreviewHost =
+            cleanHost.includes('localhost') ||
+            cleanHost.includes('127.0.0.1') ||
+            cleanHost.endsWith('.vercel.app');
+          const isProductionCustomHost =
             !!cleanRoot &&
-            !cleanRoot.includes('localhost') &&
-            !cleanRoot.includes('127.0.0.1') &&
-            !cleanRoot.endsWith('.vercel.app');
-          if (isProductionCustomDomain) {
+            !isLocalOrPreviewHost &&
+            (cleanHost === cleanRoot || cleanHost.endsWith(`.${cleanRoot}`));
+          if (isProductionCustomHost) {
             purgeHostOnlySessionCookie(response);
           }
           return applyCspHeaders(response, nonce);
