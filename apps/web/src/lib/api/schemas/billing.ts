@@ -19,6 +19,7 @@ export {
   RefundRequestCreateSchema,
   RefundRequestItemSchema,
   UsageRegisterRequestSchema,
+  WebhookIssuesResponseSchema,
   UserRefundsResponseSchema,
 } from '@fbuploadpro/contracts';
 export {
@@ -46,5 +47,6 @@ export type {
   RefundEligibility,
   RefundRequestItem,
   UserRefundsResponse,
+  WebhookIssuesResponse,
   ZeroDueCheckoutResponse,
 } from '@fbuploadpro/contracts';

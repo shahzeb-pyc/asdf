@@ -7,6 +7,7 @@ import {
 import { authenticateTenantRoute } from '@/lib/route-auth';
 import { logServerError } from '@/lib/server-analytics';
 import { getStorageService } from '@/lib/storage';
+import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
 import {
   getActivePeriod,
   hasPendingPayment,
@@ -25,7 +26,9 @@ import {
 } from '@/lib/billing/coupons';
 import {
   getBillingAdminClient,
+  lookupBillingIdempotency,
   mapPaymentToItem,
+  storeBillingIdempotency,
 } from '@/lib/billing/route-helpers';
 
 /**
@@ -57,11 +60,66 @@ export async function POST(
   if (auth.errorResponse) return auth.errorResponse;
   const { session } = auth;
 
+  // Admins never buy plans (audit fix 2026-11-01): an admin account
+  // is for approvals, not for subscribing.
+  if (session.role === 'admin') {
+    return NextResponse.json(
+      { error: 'FORBIDDEN', message: 'Admin accounts do not buy plans.' },
+      { status: 403 }
+    );
+  }
+
   const client = getBillingAdminClient();
   if (!client) {
     return NextResponse.json(
       { error: 'Something went wrong. Please try again.' },
       { status: 503 }
+    );
+  }
+
+  // Billing idempotency (audit fix 2026-11-01): a retry with a known
+  // key replays the stored response instead of creating a second
+  // pending payment.
+  // The workspace is only the idempotency scope. If it cannot be
+  // resolved, the lookup still runs (an invalid key is rejected
+  // either way) but replay and storage are skipped with a loud log
+  // rather than failing the submission — the one-pending guard
+  // still protects against duplicates, and the payment row itself
+  // carries no workspace (its workspace_id column is dead).
+  let workspaceId: string | null = null;
+  try {
+    workspaceId = await resolveTenantWorkspaceId(client, subdomain, session.userId, session.role);
+  } catch (error) {
+    logServerError('[billing] idempotency workspace unresolvable, skipping', error, {
+      source: 'billing',
+    });
+  }
+  let idempotencyKey: string | null = null;
+  try {
+    const idempotency = await lookupBillingIdempotency(
+      client,
+      workspaceId,
+      session.userId,
+      'billing-bank',
+      request.headers
+    );
+    if ('invalid' in idempotency) {
+      return NextResponse.json(
+        { error: 'INVALID_REQUEST', message: 'Idempotency-Key must be a UUID' },
+        { status: 400 }
+      );
+    }
+    idempotencyKey = idempotency.key;
+    if (idempotency.replay) {
+      return NextResponse.json(idempotency.replay.body, {
+        status: idempotency.replay.status,
+        headers: { 'Idempotency-Replayed': 'true' },
+      });
+    }
+  } catch {
+    return NextResponse.json(
+      { error: 'IDEMPOTENCY_STORE_UNAVAILABLE', message: 'Idempotency store unavailable' },
+      { status: 500 }
     );
   }
 
@@ -191,6 +249,13 @@ export async function POST(
         paymentId: null,
         discountPkr,
       });
+      // Charge and record the SETTLED discount (audit fix
+      // 2026-11-01): a balance race can settle smaller than the
+      // pre-hold figure, and the payment must carry what the
+      // coupon actually gave, not what was computed before the
+      // claim. (Percent discounts settle exactly; the full-cover
+      // check above already guarantees settled < amount here.)
+      discountPkr = heldRedemption.amountPkr;
       amountPkr -= discountPkr;
     }
 
@@ -248,6 +313,20 @@ export async function POST(
       // The loser gets the same plain 409 as the check above, and no
       // second row exists — the screenshot it uploaded is orphaned
       // bytes under an unguessable key, never attached to a payment.
+      // The held coupon is released FIRST (audit fix 2026-11-01):
+      // this is a plain return, not a throw, so the catch below
+      // would never release it — returning without releasing used
+      // to strand the hold (burning a one-time coupon or debiting
+      // a balance with no payment to show for it).
+      if (heldRedemption) {
+        try {
+          await releaseRedemption(client, heldRedemption);
+        } catch (releaseError) {
+          logServerError('[billing] coupon release after pending race failed', releaseError, {
+            source: 'billing',
+          });
+        }
+      }
       return NextResponse.json(
         { error: 'PENDING_PAYMENT_EXISTS', message: PENDING_PAYMENT_EXISTS_MESSAGE },
         { status: 409 }
@@ -304,7 +383,12 @@ export async function POST(
       }
       redemptionLinked = true;
     }
-    return NextResponse.json(mapPaymentToItem(payment), { status: 201 });
+    const item = mapPaymentToItem(payment);
+    await storeBillingIdempotency(client, workspaceId, session.userId, 'billing-bank', idempotencyKey, {
+      status: 201,
+      body: item,
+    });
+    return NextResponse.json(item, { status: 201 });
   } catch (err) {
     if (err instanceof CouponError) {
       const status = err.code === 'COUPON_NOT_FOUND' ? 404 : 400;

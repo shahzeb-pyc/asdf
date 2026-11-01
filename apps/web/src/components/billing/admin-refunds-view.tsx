@@ -7,7 +7,11 @@ import {
   type AdminRefundItem,
   type AdminRefundsResponse,
 } from '@/lib/api/schemas/billing';
-import { computeRefundAmount, daysUsedBetween } from '@fbuploadpro/contracts';
+import {
+  computeRefundAmount,
+  daysUsedBetween,
+  isUpgradeCancelledRefund,
+} from '@fbuploadpro/contracts';
 import { Alert, AlertDescription, AlertTitle } from '@/components/shared/ui/alert';
 import { Button } from '@/components/shared/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/shared/ui/card';
@@ -290,12 +294,16 @@ export function AdminRefundsView({ subdomain }: Readonly<{ subdomain: string }>)
                 <span className="text-metadata text-ink-sub">
                   {item.status === 'sent' && item.refundAmount !== null
                     ? `Sent ${formatAmount(item.refundAmount, item.currency)}`
-                    : 'Rejected'}
+                    : isUpgradeCancelledRefund(item.reason)
+                      ? 'Cancelled because the user upgraded'
+                      : 'Rejected'}
                   {` · ${destinationLabel(item)}: ${item.destinationValue}`}
                 </span>
               </div>
               {item.status === 'sent' ? (
                 <BillingStatusMark kind="ok" label="Sent" />
+              ) : isUpgradeCancelledRefund(item.reason) ? (
+                <BillingStatusMark kind="failed" label="Cancelled because the user upgraded" />
               ) : (
                 <BillingStatusMark kind="failed" label="Rejected" />
               )}

@@ -111,6 +111,10 @@ export async function handleImportPages(
         if (gateResponse) return gateResponse;
         throw err;
       }
+    } else {
+      logServerError('[billing] pages import cap gate skipped: no billing client', null, {
+        source: 'billing',
+      });
     }
   }
 

@@ -603,6 +603,29 @@ describe('admin refund decision route', () => {
     expect((await again.json()).error).toBe('REFUND_ALREADY_DECIDED');
   });
 
+  it('approving a fully-used period is a 400, not an approve-then-mark-sent for 0', async () => {
+    db.requests = [refundRow()];
+    // A period that started 40 days ago is fully used: the computed
+    // refund is 0, and the approve path must refuse it outright.
+    db.periods = [
+      periodRow({
+        starts_at: new Date(Date.now() - 40 * DAY).toISOString(),
+        ends_at: new Date(Date.now() + 30 * DAY).toISOString(),
+      }),
+    ];
+    const res = await postAdminDecision(
+      jsonRequest('http://localhost:3000/api/tenant/acme/billing/admin/refunds/refund-1', {
+        decision: 'approve',
+      }),
+      adminCtx('refund-1')
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; message?: string };
+    expect(body.error).toBe('REFUND_ZERO_AMOUNT');
+    expect(db.requests[0]?.['status']).toBe('requested');
+    expect(db.periods[0]?.['superseded_at']).toBeNull();
+  });
+
   it('mark-as-sent on a merely requested refund is a 409, not a send', async () => {
     db.requests = [refundRow()];
     const res = await postAdminDecision(

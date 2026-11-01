@@ -237,7 +237,7 @@ export async function handleCreateFolder(
   // Delete stays allowed as the way back under the limit.
   try {
     const quotaClient = isLegacyClient(dbClient) ? dbClient : getRouteSupabase(dbClient);
-    if (await isMediaStorageReadOnly(quotaClient, session.userId)) {
+    if (await isMediaStorageReadOnly(quotaClient, session.userId, session.role === 'admin')) {
       return NextResponse.json(
         { error: MEDIA_STORAGE_READ_ONLY_CODE, message: MEDIA_STORAGE_READ_ONLY_MESSAGE },
         { status: 409 }

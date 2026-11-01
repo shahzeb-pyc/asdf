@@ -87,6 +87,61 @@ function wireDetailRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/**
+ * Audit fix 2026-11-01 (fix 12): the queue-item Publish Now route
+ * carries the plan-only gate, so these tests give it a billing
+ * client with an active paid period. The fake ignores the user_id
+ * filter — every gated user reads as paid here, which preserves
+ * every downstream expectation (ownership/item checks still run
+ * after the gate).
+ */
+const paidPeriodRow = {
+  id: 'period-paid',
+  user_id: 'paid-user',
+  facebook_count: 5,
+  instagram_count: 5,
+  threads_count: 5,
+  x_count: 0,
+  tiktok_count: 0,
+  youtube_count: 0,
+  starts_at: '2020-01-01T00:00:00.000Z',
+  ends_at: '2030-01-01T00:00:00.000Z',
+  superseded_at: null,
+};
+
+class PaidBillingBuilder {
+  constructor(private table: string) {}
+  select(): this { return this; }
+  eq(): this { return this; }
+  is(): this { return this; }
+  lte(): this { return this; }
+  gt(): this { return this; }
+  neq(): this { return this; }
+  order(): this { return this; }
+  limit(): this { return this; }
+  then(resolve: (value: unknown) => void): void {
+    if (this.table === 'subscription_periods') {
+      resolve({ data: [paidPeriodRow], error: null });
+    } else {
+      resolve({ data: [], count: 0, error: null });
+    }
+  }
+}
+
+const paidBillingClient = {
+  from(table: string): PaidBillingBuilder {
+    return new PaidBillingBuilder(table);
+  },
+};
+
+vi.mock('@/lib/billing/route-helpers', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/billing/route-helpers')>();
+  return {
+    ...actual,
+    getBillingAdminClient: () => paidBillingClient,
+  };
+});
+
 describe('Pages status family', () => {
   beforeEach(async () => {
     process.env.SESSION_SECRET = TEST_SECRET;

@@ -12,9 +12,70 @@ import {
   type Entitlement,
   type SubscriptionPaymentRow,
 } from './entitlement';
+import {
+  lookupIdempotencyResult,
+  parseIdempotencyKeyHeader,
+  storeIdempotencyResult,
+  type IdempotencyScope,
+} from '@/lib/publishing/idempotency';
+import type { IdempotencyAction } from '@fbuploadpro/contracts';
+import { logServerError } from '@/lib/server-analytics';
 
 export function getBillingAdminClient(): SupabaseClient | null {
   return getSupabaseAdminClient() as SupabaseClient | null;
+}
+
+/**
+ * Billing-submission idempotency (audit fix 2026-11-01): the same
+ * Idempotency-Key contract as publishing, scoped to the tenant
+ * workspace + user + submission route. Absent key = old behaviour
+ * (no replay possible); invalid key = 400; a stored success replays
+ * verbatim with Idempotency-Replayed. Only successes are stored.
+ * When the workspace cannot be resolved, idempotency is skipped
+ * with a loud log — the one-pending rule still guards duplicates,
+ * so a missed scope must not fail the submission itself.
+ */
+export async function lookupBillingIdempotency(
+  client: SupabaseClient,
+  workspaceId: string | null,
+  userId: string,
+  action: IdempotencyAction,
+  headers: { get(name: string): string | null }
+): Promise<
+  | { key: null; replay: null }
+  | { key: string; replay: { status: number; body: unknown } | null }
+  | { invalid: true }
+> {
+  const parsed = parseIdempotencyKeyHeader(headers);
+  if (parsed.invalid) return { invalid: true };
+  if (!parsed.key) return { key: null, replay: null };
+  if (!workspaceId) {
+    logServerError('[billing] idempotency skipped: workspace unresolved', null, {
+      source: 'billing',
+      userId,
+      action,
+    });
+    return { key: parsed.key, replay: null };
+  }
+  const scope: IdempotencyScope = { workspaceId, userId, action, key: parsed.key };
+  const replay = await lookupIdempotencyResult(client, scope);
+  return { key: parsed.key, replay };
+}
+
+export async function storeBillingIdempotency(
+  client: SupabaseClient,
+  workspaceId: string | null,
+  userId: string,
+  action: IdempotencyAction,
+  key: string | null,
+  result: { status: number; body: unknown }
+): Promise<void> {
+  if (!key || !workspaceId) return;
+  const scope: IdempotencyScope = { workspaceId, userId, action, key };
+  // Store failures are swallowed + logged inside, like publishing:
+  // the request already succeeded, so failing the response would
+  // cause the exact duplicate retry this exists to prevent.
+  await storeIdempotencyResult(client, scope, result);
 }
 
 /**

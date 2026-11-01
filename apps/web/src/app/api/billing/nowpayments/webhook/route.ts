@@ -5,17 +5,20 @@ import {
 } from '@fbuploadpro/contracts';
 import { logServerError } from '@/lib/server-analytics';
 import {
-  createPeriodForPayment,
+  activateCryptoPayment,
+  markCryptoFailed,
   paymentFromRow,
+  savePaymentActuals,
   SubscriptionGateError,
 } from '@/lib/billing/entitlement';
+import { verifyIpnAgainstPayment, verifyIpnMethodOnly } from '@/lib/billing/webhook-verify';
 import {
-  applyHeldRedemptionsForPayment,
   releaseHeldRedemptionsForPayment,
 } from '@/lib/billing/coupons';
 import { recordCommissionForPayment } from '@/lib/billing/sellers';
 import { getBillingAdminClient } from '@/lib/billing/route-helpers';
 import { getNowPaymentsConfig } from '@/lib/billing/nowpayments';
+import { recordWebhookIssue } from '@/lib/billing/webhook-issues';
 
 /**
  * POST /api/billing/nowpayments/webhook
@@ -28,8 +31,24 @@ import { getNowPaymentsConfig } from '@/lib/billing/nowpayments';
  * Deduplication is by provider + payment + status: the same
  * finished notification twice activates once. Only 'finished'
  * starts a paid period; waiting/confirming/confirmed leave the
- * payment pending, and failed/expired mark it so. A payment
- * that already has a period is never activated again.
+ * payment pending, and failed/expired mark it so — but ONLY when
+ * the payment is still pending (a late failure never overwrites a
+ * paid payment, and never releases a coupon an activation already
+ * applied). failed/expired is NOT terminal: a later finished
+ * event still activates. A payment that already has a period is
+ * never activated again, and a rejected payment never activates.
+ *
+ * Verification (audit fix 2026-11-01): before ANY state change, a
+ * finished/failed/expired notification must match the payment —
+ * method (nowpayments, never a bank row found by order_id),
+ * currency (the network's USDT ticker), and amount (what actually
+ * arrived, >= the checkout pay amount). A mismatch changes nothing:
+ * the issue is recorded for the admin, the webhook answers 200,
+ * and the dedupe row is released so a corrected re-send can still
+ * process. Underpayment (including partially_paid) is held for an
+ * admin decision via the rescue buttons, never auto-activated.
+ * A refunded notification revokes the period when one was
+ * activated, and always alerts the admin.
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
   let body: unknown;
@@ -63,6 +82,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (!client) {
     return NextResponse.json({ error: 'Service unavailable' }, { status: 503 });
   }
+
+  const releaseDedupe = async (): Promise<void> => {
+    await client
+      .from('subscription_webhook_events')
+      .delete()
+      .eq('provider', 'nowpayments')
+      .eq('event_key', eventKey);
+  };
 
   try {
     const { error: eventError } = await client.from('subscription_webhook_events').insert({
@@ -111,12 +138,51 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         source: 'billing',
         providerPaymentId,
       });
+      // Do NOT keep the dedupe row for an unknown payment: the
+      // payment row may simply not exist yet, and a kept row would
+      // swallow the later real notification for the same key.
+      await releaseDedupe();
+      await recordWebhookIssue(client, {
+        providerPaymentId,
+        paymentId: null,
+        reason: 'unknown_payment',
+        detail: `No subscription payment matched order ${payload.order_id ?? '—'} or gateway id ${providerPaymentId}.`,
+      });
       return NextResponse.json({ received: true, unknownPayment: true });
     }
 
     const payment = paymentFromRow(paymentRow);
     if (!payment) {
+      await releaseDedupe();
       return NextResponse.json({ received: true, unknownPayment: true });
+    }
+    // Refunded runs BEFORE the already-activated early return below:
+    // revoking the period needs the period id, and a refunded event
+    // for an activated payment must not be answered as a no-op
+    // already-activated. (A refunded event for a payment without a
+    // period still records the admin issue.)
+    if (status === 'refunded') {
+      if (payment.periodId) {
+        await client
+          .from('subscription_periods')
+          .update({ superseded_at: new Date().toISOString() })
+          .eq('id', payment.periodId)
+          .is('superseded_at', null);
+      }
+      logServerError('[billing] webhook refunded payment', null, {
+        source: 'billing',
+        providerPaymentId,
+        paymentId: payment.id,
+      });
+      await recordWebhookIssue(client, {
+        providerPaymentId,
+        paymentId: payment.id,
+        reason: 'refunded',
+        detail: payment.periodId
+          ? 'The gateway refunded this deposit, so the paid period was revoked. Check the payment before acting further.'
+          : 'The gateway refunded this deposit. No period had been activated.',
+      });
+      return NextResponse.json({ received: true, refunded: true });
     }
     if (payment.periodId) {
       // Already activated: a redelivery still owes the seller
@@ -153,34 +219,76 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ received: true, rejected: true });
     }
 
+    // Verification for money-moving statuses. Method is verified
+    // for every money status (an order_id matching a bank row must
+    // never be moved by a crypto notification). Currency and amount
+    // gate ACTIVATION (finished / partially_paid): a failed event
+    // legitimately arrives with nothing paid, so amount checks
+    // would wrongly hold every genuine failure. A mismatch records
+    // an admin issue and changes nothing; the dedupe row is
+    // released so a corrected re-send reprocesses.
+    if (status === 'finished' || status === 'failed' || status === 'expired' || status === 'partially_paid') {
+      const verification =
+        status === 'finished' || status === 'partially_paid'
+          ? verifyIpnAgainstPayment(payment, payload)
+          : verifyIpnMethodOnly(payment);
+      if (!verification.ok) {
+        logServerError('[billing] webhook verification failed', null, {
+          source: 'billing',
+          providerPaymentId,
+          paymentId: payment.id,
+          reason: verification.reason,
+        });
+        await releaseDedupe();
+        await recordWebhookIssue(client, {
+          providerPaymentId,
+          paymentId: payment.id,
+          reason: verification.reason,
+          detail: verification.detail,
+        });
+        return NextResponse.json({ received: true, verificationFailed: true, reason: verification.reason });
+      }
+    }
+
+    if (status === 'partially_paid') {
+      // Held for an admin decision (audit fix 2026-11-01): a partial
+      // deposit is neither activated nor failed. The admin approves
+      // (rescue) or expires it from the payments view.
+      await recordWebhookIssue(client, {
+        providerPaymentId,
+        paymentId: payment.id,
+        reason: 'underpaid',
+        detail: 'Partial payment received. Waiting for an admin decision: approve it or expire it.',
+      });
+      return NextResponse.json({ received: true, heldForAdmin: true });
+    }
+
     if (status === 'finished') {
-      const period = await createPeriodForPayment(client, payment);
-      // Never report activated when the persist failed: throwing
-      // releases the dedupe row so the provider retry reprocesses
-      // (createPeriodForPayment supersedes the first period, so
-      // the retry cannot double-activate).
-      const { error: markPaidError } = await client
-        .from('subscription_payments')
-        .update({
-          status: 'paid',
-          period_id: period.id,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', payment.id);
-      if (markPaidError) throw markPaidError;
-      // Coupon held at checkout becomes applied now that the
-      // deposit finished. This is logged loudly, not thrown: a
-      // retry of this notification would hit the alreadyActivated
-      // check above and return without re-running this step, so
-      // failing the webhook here could not recover it — and the
-      // money outcome is already correct (the balance was
-      // deducted at hold time).
-      try {
-        await applyHeldRedemptionsForPayment(client, payment.id);
-      } catch (err) {
-        logServerError('[billing] coupon apply after webhook finished failed', err, {
+      const actualPaid = typeof payload.actually_paid === 'number' ? payload.actually_paid : null;
+      const payAmount = typeof payload.pay_amount === 'number' ? payload.pay_amount : null;
+      const arrived = actualPaid ?? payAmount;
+      const result = await activateCryptoPayment(client, payment);
+      // Persist what actually arrived, in a SEPARATE update: until
+      // the migration adding the columns is applied this fails,
+      // and that must never break activation.
+      if (arrived !== null) {
+        await savePaymentActuals(
+          client,
+          payment.id,
+          arrived,
+          typeof payload.pay_currency === 'string' ? payload.pay_currency : null
+        );
+      }
+      if (result.couponReleasedBeforeFinish) {
+        logServerError('[billing] coupon released before webhook finish', null, {
           source: 'billing',
           paymentId: payment.id,
+        });
+        await recordWebhookIssue(client, {
+          providerPaymentId,
+          paymentId: payment.id,
+          reason: 'coupon_released_before_finish',
+          detail: 'A failed/expired notification released this payment’s coupon before the finished notification arrived. The period was still activated because the user paid — check whether the coupon should be re-applied manually.',
         });
       }
       // Seller commission, by contrast, THROWS on failure: the
@@ -188,17 +296,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // retry reprocesses through the alreadyActivated branch
       // above, which records the commission. A swallowed failure
       // here would lose the seller money with no recovery.
-      await recordCommissionForPayment(client, payment, period);
-      return NextResponse.json({ received: true, activated: true });
+      await recordCommissionForPayment(client, payment, result.period);
+      return NextResponse.json({
+        received: true,
+        activated: !result.alreadyActivated,
+        alreadyActivated: result.alreadyActivated,
+      });
     }
 
     if (status === 'failed' || status === 'expired') {
-      if (payment.status === 'pending') {
-        const { error: markStatusError } = await client
-          .from('subscription_payments')
-          .update({ status, updated_at: new Date().toISOString() })
-          .eq('id', payment.id);
-        if (markStatusError) throw markStatusError;
+      // Conditional: only a still-pending payment moves to
+      // failed/expired, and only then is the coupon released. A
+      // late failure arriving after a finish changes nothing and
+      // releases nothing — releasing an applied coupon would be
+      // wrong, and overwriting a paid payment would be worse.
+      const moved = await markCryptoFailed(client, payment.id, status);
+      if (!moved) {
+        return NextResponse.json({ received: true, alreadyDecided: true });
       }
       // A deposit that will never finish gives the coupon back,
       // by the same guarded release the bank reject path uses.
@@ -223,11 +337,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // never activate. Successful activations keep their row.
     // (Double activation is still guarded by the periodId check
     // above, so releasing on failure cannot double-activate.)
-    await client
-      .from('subscription_webhook_events')
-      .delete()
-      .eq('provider', 'nowpayments')
-      .eq('event_key', eventKey);
+    await releaseDedupe();
     if (err instanceof SubscriptionGateError) {
       logServerError('[billing] webhook activation failed', err, { source: 'billing' });
       return NextResponse.json({ error: 'Activation failed' }, { status: 500 });
@@ -236,3 +346,5 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Webhook failed' }, { status: 500 });
   }
 }
+
+export { verifyIpnAgainstPayment, verifyIpnMethodOnly } from '@/lib/billing/webhook-verify';

@@ -4,7 +4,9 @@ import {
   generateDailyRandomTimes,
   sanitizeSourceIdentity,
 } from '@fbuploadpro/contracts';
-import { aduContext, loadAduConfigView } from '@/lib/server/adu';
+import { aduContext, loadAduConfigView,
+  releaseAduConfigUsage,
+} from '@/lib/server/adu';
 
 export async function GET(
   request: NextRequest,
@@ -117,11 +119,12 @@ export async function DELETE(
   // (deleted with the workspace filter) survives.
   const { data: owned } = await supabase
     .from('adu_configs')
-    .select('id')
+    .select('id, destination_id')
     .eq('workspace_id', workspaceId)
     .eq('id', id)
     .maybeSingle();
   if (!owned) return NextResponse.json({ error: 'Page not found.' }, { status: 404 });
+  const ownedDestinationId = (owned as { destination_id?: unknown }).destination_id;
   // Old behaviour: reels are deleted first (in batches in the old app;
   // a single delete by config is equivalent here), then the page.
   await supabase.from('adu_reels').delete().eq('config_id', id);
@@ -131,5 +134,11 @@ export async function DELETE(
     .eq('workspace_id', workspaceId)
     .eq('id', id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  // Cap-at-add release (audit fix 2026-11-01): deleting the config
+  // frees its unit when the registry row still carries the ADU
+  // feature. Best-effort — the delete already succeeded.
+  if (typeof ownedDestinationId === 'string' && ownedDestinationId.length > 0) {
+    await releaseAduConfigUsage(resolved.context, 'facebook', ownedDestinationId);
+  }
   return NextResponse.json({ deleted: true });
 }

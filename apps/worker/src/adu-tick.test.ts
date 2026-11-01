@@ -352,6 +352,22 @@ describe('runAduTick', () => {
     }));
     const encryptedAccess = await encryptToken('access', MASTER_KEY);
     const db = makeDb((table, ops) => {
+      // Entitlement gate (audit fix 2026-11-01): the publish
+      // loop checks the owning workspace's paid period first.
+      if (table === 'workspaces') return { data: { owner_id: 'user-1' }, error: null };
+      if (table === 'users') return { data: { role: 'user' }, error: null };
+      if (table === 'subscription_periods') {
+        return {
+          data: [
+            {
+              starts_at: new Date(NOW.getTime() - 86400000).toISOString(),
+              ends_at: new Date(NOW.getTime() + 86400000 * 20).toISOString(),
+              superseded_at: null,
+            },
+          ],
+          error: null,
+        };
+      }
       if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
         return { error: null };
       }
@@ -362,7 +378,7 @@ describe('runAduTick', () => {
         return { data: [], error: null };
       }
       if (table === 'adu_configs' && ops.some((o) => o.kind === 'maybeSingle')) {
-        return { data: { destination_id: 'dest-1' }, error: null };
+        return { data: { destination_id: 'dest-1', workspace_id: 'ws-1' }, error: null };
       }
       if (table === 'adu_configs') return { data: [], error: null };
       if (table === 'destinations') {
@@ -425,6 +441,22 @@ describe('runAduTick', () => {
     registry.register(threadsPublisher);
     const encryptedAccess = await encryptToken('access', MASTER_KEY);
     const db = makeDb((table, ops) => {
+      // Entitlement gate (audit fix 2026-11-01): the publish
+      // loop checks the owning workspace's paid period first.
+      if (table === 'workspaces') return { data: { owner_id: 'user-1' }, error: null };
+      if (table === 'users') return { data: { role: 'user' }, error: null };
+      if (table === 'subscription_periods') {
+        return {
+          data: [
+            {
+              starts_at: new Date(NOW.getTime() - 86400000).toISOString(),
+              ends_at: new Date(NOW.getTime() + 86400000 * 20).toISOString(),
+              superseded_at: null,
+            },
+          ],
+          error: null,
+        };
+      }
       if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
         return { error: null };
       }
@@ -435,7 +467,7 @@ describe('runAduTick', () => {
         return { data: [], error: null };
       }
       if (table === 'adu_configs' && ops.some((o) => o.kind === 'maybeSingle')) {
-        return { data: { destination_id: 'dest-1' }, error: null };
+        return { data: { destination_id: 'dest-1', workspace_id: 'ws-1' }, error: null };
       }
       if (table === 'adu_configs') return { data: [], error: null };
       if (table === 'destinations') {
@@ -509,6 +541,22 @@ describe('runAduTick', () => {
     const encryptedAccess = await encryptToken('access', MASTER_KEY);
     const encryptedRefresh = await encryptToken('refresh', MASTER_KEY);
     const db = makeDb((table, ops) => {
+      // Entitlement gate (audit fix 2026-11-01): the publish
+      // loop checks the owning workspace's paid period first.
+      if (table === 'workspaces') return { data: { owner_id: 'user-1' }, error: null };
+      if (table === 'users') return { data: { role: 'user' }, error: null };
+      if (table === 'subscription_periods') {
+        return {
+          data: [
+            {
+              starts_at: new Date(NOW.getTime() - 86400000).toISOString(),
+              ends_at: new Date(NOW.getTime() + 86400000 * 20).toISOString(),
+              superseded_at: null,
+            },
+          ],
+          error: null,
+        };
+      }
       if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
         return { error: null };
       }
@@ -531,7 +579,7 @@ describe('runAduTick', () => {
         return { data: [], error: null };
       }
       if (table === 'adu_configs' && ops.some((o) => o.kind === 'maybeSingle')) {
-        return { data: { destination_id: 'dest-1' }, error: null };
+        return { data: { destination_id: 'dest-1', workspace_id: 'ws-1' }, error: null };
       }
       if (table === 'adu_configs') return { data: [configRow('c1', ['09:00'])], error: null };
       if (table === 'adu_reels' && ops.some((o) => o.kind === 'eq' && o.args[1] === 'download_failed')) {
@@ -631,6 +679,22 @@ describe('runAduTick', () => {
     registry.register(igPublisher);
     registry.register(fbPublisher);
     const db = makeDb((table, ops) => {
+      // Entitlement gate (audit fix 2026-11-01): the publish
+      // loop checks the owning workspace's paid period first.
+      if (table === 'workspaces') return { data: { owner_id: 'user-1' }, error: null };
+      if (table === 'users') return { data: { role: 'user' }, error: null };
+      if (table === 'subscription_periods') {
+        return {
+          data: [
+            {
+              starts_at: new Date(NOW.getTime() - 86400000).toISOString(),
+              ends_at: new Date(NOW.getTime() + 86400000 * 20).toISOString(),
+              superseded_at: null,
+            },
+          ],
+          error: null,
+        };
+      }
       if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
         return { error: null };
       }
@@ -641,7 +705,7 @@ describe('runAduTick', () => {
         return { data: [], error: null };
       }
       if (table === 'adu_configs' && ops.some((o) => o.kind === 'maybeSingle')) {
-        return { data: { destination_id: 'dest-ig-1' }, error: null };
+        return { data: { destination_id: 'dest-ig-1', workspace_id: 'ws-1' }, error: null };
       }
       if (table === 'adu_configs') return { data: [], error: null };
       if (table === 'destinations') {
@@ -704,6 +768,22 @@ describe('runAduTick', () => {
     registry.register(fbPublisher);
     registry.register(igPublisher);
     const db = makeDb((table, ops) => {
+      // Entitlement gate (audit fix 2026-11-01): the publish
+      // loop checks the owning workspace's paid period first.
+      if (table === 'workspaces') return { data: { owner_id: 'user-1' }, error: null };
+      if (table === 'users') return { data: { role: 'user' }, error: null };
+      if (table === 'subscription_periods') {
+        return {
+          data: [
+            {
+              starts_at: new Date(NOW.getTime() - 86400000).toISOString(),
+              ends_at: new Date(NOW.getTime() + 86400000 * 20).toISOString(),
+              superseded_at: null,
+            },
+          ],
+          error: null,
+        };
+      }
       if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
         return { error: null };
       }
@@ -714,7 +794,7 @@ describe('runAduTick', () => {
         return { data: [], error: null };
       }
       if (table === 'adu_configs' && ops.some((o) => o.kind === 'maybeSingle')) {
-        return { data: { destination_id: 'dest-x-1' }, error: null };
+        return { data: { destination_id: 'dest-x-1', workspace_id: 'ws-1' }, error: null };
       }
       if (table === 'adu_configs') return { data: [], error: null };
       if (table === 'destinations') {
@@ -829,6 +909,22 @@ describe('runAduTick', () => {
     };
     const publisher = fakePublisher(async () => ({ status: 'published', externalPostId: 'g1' }));
     const db = makeDb((table, ops) => {
+      // Entitlement gate (audit fix 2026-11-01): the publish
+      // loop checks the owning workspace's paid period first.
+      if (table === 'workspaces') return { data: { owner_id: 'user-1' }, error: null };
+      if (table === 'users') return { data: { role: 'user' }, error: null };
+      if (table === 'subscription_periods') {
+        return {
+          data: [
+            {
+              starts_at: new Date(NOW.getTime() - 86400000).toISOString(),
+              ends_at: new Date(NOW.getTime() + 86400000 * 20).toISOString(),
+              superseded_at: null,
+            },
+          ],
+          error: null,
+        };
+      }
       if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
         return { error: null };
       }
@@ -842,6 +938,9 @@ describe('runAduTick', () => {
       }
       if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'eq' && o.args[1] === 'publishing')) {
         return { data: [], error: null };
+      }
+      if (table === 'adu_configs' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return { data: { destination_id: 'dest-1', workspace_id: 'ws-1' }, error: null };
       }
       if (table === 'adu_configs') return { data: [], error: null };
       return { data: [], error: null };
@@ -1019,5 +1118,51 @@ describe('runAduTick', () => {
         c.ops.some((o) => o.kind === 'update' && (o.args[0] as Row).status === 'downloaded'),
     );
     expect(release).toBeDefined();
+  });
+  it('entitlement-paused job stays pending_publish and never reaches the publisher', async () => {
+    const job = {
+      id: 'job-1',
+      config_id: 'c1',
+      reel_id: 'reel-1',
+      publish_retries: 0,
+      graph_post_id: null,
+      adu_reels: { caption: 'hi', media_url: 'https://example.invalid/r.mp4', media_object_key: 'r.mp4' },
+    };
+    const publisher = fakePublisher(async () => ({ status: 'published', externalPostId: 'g1' }));
+    const db = makeDb((table, ops) => {
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
+        return { error: null };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'eq' && o.args[1] === 'pending_publish')) {
+        return { data: [job], error: null };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'eq' && o.args[1] === 'publishing')) {
+        return { data: [], error: null };
+      }
+      if (table === 'adu_configs' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return { data: { destination_id: 'dest-1', workspace_id: 'ws-1' }, error: null };
+      }
+      if (table === 'adu_configs') return { data: [], error: null };
+      // No active period: expired workspace, so the job pauses.
+      if (table === 'workspaces') return { data: { owner_id: 'user-1' }, error: null };
+      if (table === 'users') return { data: { role: 'user' }, error: null };
+      if (table === 'subscription_periods') return { data: [], error: null };
+      return { data: [], error: null };
+    });
+    const result = await runAduTick({
+      db: db as never,
+      registry: registryWith(publisher),
+      masterKey: MASTER_KEY,
+      now: NOW,
+    });
+    expect(publisher.publish).not.toHaveBeenCalled();
+    expect(result.published).toBe(0);
+    // Never claimed: no update to 'publishing' for this job.
+    const claim = db.calls.find(
+      (c) =>
+        c.table === 'adu_posting_jobs' &&
+        c.ops.some((o) => o.kind === 'update' && (o.args[0] as Row).status === 'publishing'),
+    );
+    expect(claim).toBeUndefined();
   });
 });

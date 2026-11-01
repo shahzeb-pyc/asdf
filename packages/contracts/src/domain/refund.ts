@@ -24,6 +24,26 @@ import { z } from 'zod';
 export const REFUND_WINDOW_DAYS = 7;
 export const REFUND_PERIOD_DAYS = 30;
 
+/**
+ * Upgrade-cancels-refund (owner-decided, 2026-11-01): when an
+ * upgrade activation lands, any PENDING refund request on the
+ * superseded period is cancelled, because the upgrade credit
+ * already compensates the user for the old plan's unused value —
+ * paying the refund too would double-compensate. The refund_requests
+ * status CHECK allows only requested/approved/rejected/sent, so a
+ * cancellation is recorded as status 'rejected' WITH this exact
+ * reason (never a bare rejection): both the user view and the admin
+ * view recognise this reason and render the row as "Cancelled
+ * because you upgraded" instead of "Rejected".
+ */
+export const UPGRADE_CANCEL_REFUND_REASON =
+  'Cancelled because you upgraded to a new plan. The upgrade credit already covered the unused value of your old plan, so this refund is no longer due.';
+
+/** True when a refund row's reason marks it as upgrade-cancelled. */
+export function isUpgradeCancelledRefund(reason: string | null | undefined): boolean {
+  return reason === UPGRADE_CANCEL_REFUND_REASON;
+}
+
 const DAY_MS = 86_400_000;
 
 /** Whole days elapsed from period start to a moment, clamped to [0, 30]. */

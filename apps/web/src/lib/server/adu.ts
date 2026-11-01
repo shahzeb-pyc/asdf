@@ -10,6 +10,13 @@ import {
 import { authenticateTenantRoute, getRouteSupabase } from '@/lib/route-auth';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { logServerError } from '@/lib/server-analytics';
+import {
+  registerUsage,
+  releaseUsageForFeature,
+  SubscriptionGateError,
+} from '@/lib/billing/entitlement';
+import { getBillingAdminClient } from '@/lib/billing/route-helpers';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 /**
@@ -96,6 +103,126 @@ export async function aduDestinationKeysForCap(
     const typed = row as { id: string; external_destination_id?: string | null };
     return typed.external_destination_id ?? typed.id;
   });
+}
+
+/**
+ * Cap at add, second half (audit fix 2026-11-01): after an ADU
+ * config row is created, register its destination in the usage
+ * registry, so the cap counts worker-driven features from the
+ * moment they are added — not only when they first queue. The
+ * add-gate (assertFeatureAddWithinCap) only CHECKS; this WRITES.
+ * Admins never register. A missing billing client skips with a
+ * loud log (the same skip rule as the gate). On ANY registration
+ * failure the just-created config is deleted again, so a config
+ * can never exist without its cap unit: the caller reports the
+ * returned error for that item instead of a success.
+ */
+export async function registerAduConfigUsage(
+  ctx: AduContext,
+  platform: 'facebook' | 'instagram',
+  destinationId: string,
+  configId: string
+): Promise<{ ok: true } | { ok: false; error: unknown }> {
+  if (ctx.role === 'admin') return { ok: true };
+  const billingClient = getBillingAdminClient();
+  if (!billingClient) {
+    logServerError('[billing] ADU usage registration skipped: no billing client', null, {
+      source: 'billing',
+      platform,
+    });
+    return { ok: true };
+  }
+  const rollback = async (): Promise<void> => {
+    await ctx.supabase.from('adu_configs').delete().eq('id', configId);
+  };
+  try {
+    const keys = await aduDestinationKeysForCap(
+      billingClient,
+      ctx.workspaceId,
+      platform,
+      [destinationId]
+    );
+    const key = keys[0];
+    if (!key) {
+      throw new Error('ADU cap key lookup returned no key for the destination.');
+    }
+    await registerUsage(
+      billingClient,
+      ctx.userId,
+      platform,
+      key,
+      'auto-download-upload',
+      destinationId
+    );
+    return { ok: true };
+  } catch (err) {
+    // Roll back the config: without its unit, the config must not
+    // exist. A rollback failure is logged loudly — the config row
+    // surviving unregistered is a cap leak the admin must see.
+    try {
+      await rollback();
+    } catch (rollbackError) {
+      logServerError('[billing] ADU config rollback after usage failure failed', rollbackError, {
+        source: 'billing',
+        configId,
+      });
+    }
+    if (err instanceof SubscriptionGateError) {
+      return { ok: false, error: err };
+    }
+    logServerError('[billing] ADU usage registration failed', err, {
+      source: 'billing',
+      platform,
+    });
+    return { ok: false, error: err };
+  }
+}
+
+/**
+ * Cap-at-add release (audit fix 2026-11-01): deleting an ADU config
+ * frees its unit — but only when the registry row still carries the
+ * ADU feature (see releaseUsageForFeature: a destination first
+ * registered by queueing keeps its row). Admins never registered,
+ * so they never release. A missing billing client or a release
+ * failure is logged loudly and swallowed: the config is already
+ * deleted by then, and failing the delete response over it would
+ * be worse than a visible unit leak the admin can see in logs.
+ */
+export async function releaseAduConfigUsage(
+  ctx: AduContext,
+  platform: 'facebook' | 'instagram',
+  destinationId: string
+): Promise<void> {
+  if (ctx.role === 'admin') return;
+  const billingClient = getBillingAdminClient();
+  if (!billingClient) {
+    logServerError('[billing] ADU usage release skipped: no billing client', null, {
+      source: 'billing',
+      platform,
+    });
+    return;
+  }
+  try {
+    const keys = await aduDestinationKeysForCap(
+      billingClient,
+      ctx.workspaceId,
+      platform,
+      [destinationId]
+    );
+    const key = keys[0] ?? destinationId;
+    await releaseUsageForFeature(
+      billingClient,
+      ctx.userId,
+      platform,
+      key,
+      'auto-download-upload'
+    );
+  } catch (err) {
+    logServerError('[billing] ADU usage release failed', err, {
+      source: 'billing',
+      platform,
+    });
+  }
 }
 
 export function aduMissingTable(error: { code?: string } | null | undefined): boolean {

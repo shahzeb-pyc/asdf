@@ -11,6 +11,8 @@ import {
   isLegacyClient,
 } from '@/lib/route-auth';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { getBillingAdminClient } from '@/lib/billing/route-helpers';
+import { releaseUsageForFeature } from '@/lib/billing/entitlement';
 import { logServerError } from '@/lib/server-analytics';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -95,7 +97,7 @@ async function authenticate(
   subdomain: string,
   dbClient?: Db
 ): Promise<
-  | { db: Db; workspaceId: string; errorResponse?: never }
+  | { db: Db; workspaceId: string; session: { userId: string; role: string }; errorResponse?: never }
   | { db?: never; workspaceId?: never; errorResponse: NextResponse }
 > {
   const auth = await authenticateTenantRoute(request, subdomain);
@@ -119,7 +121,7 @@ async function authenticate(
   if (!workspaceId) {
     return { errorResponse: NextResponse.json({ error: 'Workspace not found' }, { status: 404 }) };
   }
-  return { db: db as Db, workspaceId };
+  return { db: db as Db, workspaceId, session };
 }
 
 async function loadMirror(
@@ -313,6 +315,32 @@ export async function handleDeleteThreadsMirror(
       .eq('id', mirrorId)
       .eq('workspace_id', workspaceId);
     if (error) throw new Error(`Failed to delete mirror: ${error.message}`);
+    // Cap-at-add release (audit fix 2026-11-01): deleting the
+    // mirror frees its unit when the registry row still carries
+    // the auto-repost feature. Best-effort — the delete already
+    // succeeded. Admins never registered, so they never release.
+    if (auth.session.role !== 'admin') {
+      const billingClient = getBillingAdminClient();
+      if (!billingClient) {
+        logServerError('[billing] auto-repost usage release skipped: no billing client', null, {
+          source: 'billing',
+        });
+      } else {
+        try {
+          await releaseUsageForFeature(
+            billingClient,
+            auth.session.userId,
+            'threads',
+            mirror.target_external_id,
+            'auto-repost'
+          );
+        } catch (releaseError) {
+          logServerError('[billing] auto-repost usage release failed', releaseError, {
+            source: 'billing',
+          });
+        }
+      }
+    }
     const parsed = DeleteMirrorResponseSchema.safeParse({ deleted: true });
     return NextResponse.json(parsed.data);
   } catch (err) {

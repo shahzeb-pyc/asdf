@@ -15,7 +15,11 @@ import {
   isLegacyClient,
 } from '@/lib/route-auth';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
-import { assertFeatureAddWithinCap } from '@/lib/billing/entitlement';
+import {
+  assertFeatureAddWithinCap,
+  registerUsage,
+  SubscriptionGateError,
+} from '@/lib/billing/entitlement';
 import {
   getBillingAdminClient,
   subscriptionGateResponse,
@@ -473,13 +477,20 @@ export async function handleCreateThreadsMirror(
     if ('error' in resolved) return resolved.error;
     const destination = resolved.destination;
 
-    // 2b. Plan cap gate: adding a mirror registers the target Threads
+    // 2b. Plan cap gate: the gate CHECKS the target Threads
     // account against the Threads cap, so an over-cap mirror is
-    // rejected here, before any mirror row is created. Admins are
-    // never gated, and a missing billing client skips the gate (same
-    // rule as the destination-queue gate) rather than failing the add.
+    // rejected here, before any mirror row is created. Creation
+    // registers the unit (step 5b). Admins are never gated, and a
+    // missing billing client skips the gate (same rule as the
+    // destination-queue gate) — but the skip is logged loudly
+    // (audit fix 2026-11-01): a silent skip is a fail-open.
     if (session.role !== 'admin') {
       const billingClient = getBillingAdminClient();
+      if (!billingClient) {
+        logServerError('[billing] auto-repost cap gate skipped: no billing client', null, {
+          source: 'billing',
+        });
+      }
       if (billingClient) {
         try {
           await assertFeatureAddWithinCap(
@@ -547,6 +558,45 @@ export async function handleCreateThreadsMirror(
     if (mirrorError) throw new Error(`Failed to create mirror: ${mirrorError.message}`);
     const mirror = asMirrorRow(mirrorData);
     if (!mirror) throw new Error('Failed to create mirror');
+
+    // 5b. Cap at add (audit fix 2026-11-01): creation registers
+    // the target's unit. A registration failure rolls the mirror
+    // back and fails the add — a mirror must never exist without
+    // its unit. Admins never register; a missing billing client
+    // skips with a loud log (same rule as the gate).
+    if (session.role !== 'admin') {
+      const billingClient = getBillingAdminClient();
+      if (!billingClient) {
+        logServerError('[billing] auto-repost usage registration skipped: no billing client', null, {
+          source: 'billing',
+        });
+      } else {
+        try {
+          await registerUsage(
+            billingClient,
+            session.userId,
+            'threads',
+            destination.external_destination_id ?? destination.id,
+            'auto-repost',
+            destination.id
+          );
+        } catch (regError) {
+          await db.from('mirrors').delete().eq('id', mirror.id).eq('workspace_id', workspaceId);
+          const gateResponse =
+            regError instanceof SubscriptionGateError
+              ? subscriptionGateResponse(regError)
+              : null;
+          if (gateResponse) return gateResponse;
+          logServerError('[billing] auto-repost usage registration failed', regError, {
+            source: 'billing',
+          });
+          return NextResponse.json(
+            { error: 'The plan limit could not be registered. Please try again.' },
+            { status: 500 }
+          );
+        }
+      }
+    }
 
     // 6. Immediate post of the current latest reel: resolve it via
     //    the FREE tikwm endpoint, then publish to Threads. Any

@@ -447,10 +447,14 @@ export async function applyRedemption(
   return Array.isArray(data) && data.length > 0;
 }
 
-/** Apply every HELD redemption for a payment (approve / webhook idempotent paths). */
+/** Apply every HELD redemption for a payment (approve / webhook idempotent paths).
+ *  periodId, when given, is recorded on the redemption — the bank
+ *  approval path links the coupon to the period it paid for (audit
+ *  fix 2026-11-01: bank approvals previously left period_id null). */
 export async function applyHeldRedemptionsForPayment(
   client: SupabaseClient,
-  paymentId: string
+  paymentId: string,
+  periodId: string | null = null
 ): Promise<void> {
   const { data, error } = await client
     .from('coupon_redemptions')
@@ -468,7 +472,7 @@ export async function applyHeldRedemptionsForPayment(
   }
   for (const row of Array.isArray(data) ? data : []) {
     const redemption = redemptionFromRow(asRow(row) ?? {});
-    if (redemption) await applyRedemption(client, redemption.id);
+    if (redemption) await applyRedemption(client, redemption.id, periodId);
   }
 }
 

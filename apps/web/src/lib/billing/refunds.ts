@@ -13,6 +13,7 @@ import {
 import { logServerError } from '@/lib/server-analytics';
 import {
   getActivePeriod,
+  loadPaymentActuals,
   paymentFromRow,
   periodFromRow,
   SubscriptionGateError,
@@ -141,9 +142,8 @@ export function refundFromRow(row: UnknownRow, periodStartsAt: string | null): R
 /**
  * The destination type is DERIVED from the original payment method —
  * the refund goes to the same account the user paid from. The raw
- * bank_method string is read (not the mapped payment row) so a future
- * Binance bank method maps correctly even though today's payment row
- * mapper only knows Easypaisa, Nayapay, and UBL.
+ * bank_method string is read (not the mapped payment row) so the
+ * derivation never depends on the row mapper's method list.
  */
 export function destinationTypeForPayment(
   method: string,
@@ -159,15 +159,26 @@ export function destinationTypeForPayment(
 
 /**
  * What the user actually paid, in the currency they paid it in. Bank
- * pays PKR (amount_pkr); crypto pays USDT (nowpayments_pay_amount).
- * A crypto row without a USDT amount cannot be refunded by math —
- * failing loud beats inventing a converted figure.
+ * pays PKR (amount_pkr); crypto pays USDT. For crypto, the amount
+ * the gateway actually received (persisted from the IPN, audit fix
+ * 2026-11-01) wins over the checkout-time estimate whenever it is
+ * present — the estimate can differ from what arrived. A crypto row
+ * with neither amount cannot be refunded by math — failing loud
+ * beats inventing a converted figure.
  */
 export function paidAmountForPayment(payment: SubscriptionPaymentRow): {
   amount: number;
   currency: RefundCurrency;
 } {
   if (payment.method === 'nowpayments') {
+    const actual = payment.nowpaymentsActualPaid;
+    // typeof, not !== null: the actuals columns are migration-gated
+    // and older callers may leave the field undefined — undefined
+    // must fall through to the checkout estimate, never be
+    // returned as an amount.
+    if (typeof actual === 'number') {
+      return { amount: actual, currency: 'USDT' };
+    }
     if (payment.nowpaymentsPayAmount === null) {
       throw new SubscriptionGateError(
         'REFUND_UNAVAILABLE',
@@ -231,6 +242,14 @@ export async function getRefundEligibility(
   const payment = paymentRow ? paymentFromRow(paymentRow) : null;
   if (!payment) {
     return ineligible('No payment was found for your current plan.');
+  }
+  // IPN actuals (audit fix 2026-11-01): when the migration columns
+  // exist, the refund base is what the gateway actually received,
+  // not the checkout estimate. Absent columns -> nulls -> estimate.
+  {
+    const actuals = await loadPaymentActuals(client, payment.id);
+    if (actuals.actualPaid !== null) payment.nowpaymentsActualPaid = actuals.actualPaid;
+    if (actuals.actualCurrency !== null) payment.nowpaymentsActualCurrency = actuals.actualCurrency;
   }
   if (payment.status !== 'approved' && payment.status !== 'paid') {
     return ineligible('Only a completed purchase can be refunded.');
@@ -420,6 +439,13 @@ async function loadPeriod(
  * is a no-op and the refund still pays out — eligibility was locked at
  * request time, and cancelling the newer upgrade period (separate,
  * non-refundable money) would be wrong.
+ *
+ * Defence in depth (audit fix 2026-11-01): the request is reloaded
+ * immediately before the cancel, and the approval update is
+ * conditional on status = 'requested', so a concurrent second
+ * approve can neither double-pay nor revive an approved/sent row.
+ * A refund that works out to 0 is BLOCKED, never approved: there is
+ * nothing to send, so no approve-then-mark-sent path exists for 0.
  */
 export async function approveRefund(
   client: SupabaseClient,
@@ -437,6 +463,22 @@ export async function approveRefund(
   const period = await loadPeriod(client, request.periodId);
   const daysUsed = daysUsedBetween(period.startsAt, now);
   const refundAmount = computeRefundAmount(request.amountPaid, daysUsed, request.currency);
+  if (refundAmount <= 0) {
+    throw new SubscriptionGateError(
+      'REFUND_ZERO_AMOUNT',
+      'This refund works out to 0 because the plan period has been fully used, so there is nothing to refund.'
+    );
+  }
+
+  // Re-check immediately before any write: the load above may be
+  // stale if a concurrent approve landed in between.
+  const { request: fresh } = await loadRequest(client, refundId);
+  if (fresh.status !== 'requested') {
+    throw new SubscriptionGateError(
+      'REFUND_ALREADY_DECIDED',
+      'That refund request has already been decided.'
+    );
+  }
 
   const { error: cancelError } = await client
     .from('subscription_periods')

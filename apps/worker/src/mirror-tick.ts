@@ -235,6 +235,15 @@ export interface MirrorTickDeps {
     videoUrl: string;
     caption: string;
   }) => Promise<string>;
+  /**
+   * Entitlement gate (audit fix 2026-11-01), wired by the consumer
+   * from the worker's Supabase client. When it returns false, the
+   * check claims and publishes NOTHING — the tick only advances
+   * nextCheckAt (never lastCheckedAt), so the gap catch-up rule
+   * still fires on renewal and paused reels do not flood. When the
+   * dep is absent (unit tests), the check runs ungated, as before.
+   */
+  checkEntitlement?: ((workspaceId: string) => Promise<boolean>) | undefined;
   env?: PostHogEnv | undefined;
   now?: Date | undefined;
   waitUntil?: ((promise: Promise<unknown>) => void) | undefined;
@@ -275,6 +284,39 @@ export async function processMirrorCheck(
   const now = deps.now ?? new Date();
   const nextCheckAt = new Date(now.getTime() + 60 * 60 * 1000).toISOString();
   const result: MirrorCheckResult = { posted: 0, skipped: 0, failed: 0 };
+
+  // Entitlement pause (audit fix 2026-11-01): when the owning
+  // workspace has no active paid period, this check claims and
+  // publishes nothing. Only nextCheckAt advances — lastCheckedAt
+  // stays frozen, so on renewal the >2h gap catch-up rule fires
+  // and paused reels post latest-only instead of flooding. A
+  // failed entitlement lookup fails closed (paused this tick).
+  if (deps.checkEntitlement) {
+    let entitled = false;
+    try {
+      entitled = await deps.checkEntitlement(mirror.workspaceId);
+    } catch (err) {
+      console.error(
+        `[mirror-tick] mirror=${mirror.id} entitlement check failed; pausing this tick:`,
+        err
+      );
+      entitled = false;
+    }
+    if (!entitled) {
+      console.error(
+        `[mirror-tick] mirror=${mirror.id} paused: owning workspace has no active paid period; nothing claimed or published this tick`
+      );
+      try {
+        await deps.updateMirror(mirror.id, { nextCheckAt });
+      } catch (err) {
+        console.error(`[mirror-tick] mirror=${mirror.id} pause stamp failed:`, err);
+      }
+      console.info(
+        `[mirror-tick] mirror=${mirror.id} posted=0 skipped=0 failed=0 (entitlement-paused)`
+      );
+      return result;
+    }
+  }
 
   {
     let mirrorError: string | null = null;
@@ -724,6 +766,44 @@ export function buildMirrorTickDeps(
     env: options?.env,
     now: options?.now,
     waitUntil: options?.waitUntil,
+    // Entitlement gate (audit fix 2026-11-01): the owning
+    // workspace's owner must have an active, non-superseded
+    // period, or the check claims and publishes nothing (see
+    // processMirrorCheck). Admin owners are exempt. Any lookup
+    // failure fails closed (false). SupabaseLike has no is/lte/
+    // gt, so the window filter runs in code over the owner's
+    // unsuperseded-period rows, bounded by a limit.
+    checkEntitlement: async (workspaceId: string) => {
+      const now = options?.now ?? new Date();
+      const { data: workspaceData, error: workspaceError } = await db
+        .from('workspaces')
+        .select('owner_id')
+        .eq('id', workspaceId)
+        .maybeSingle();
+      const ownerId = (workspaceData as { owner_id?: unknown } | null)?.owner_id;
+      if (workspaceError || typeof ownerId !== 'string') return false;
+      const { data: userData, error: userError } = await db
+        .from('users')
+        .select('role')
+        .eq('id', ownerId)
+        .maybeSingle();
+      if (userError) return false;
+      if ((userData as { role?: unknown } | null)?.role === 'admin') return true;
+      const { data: periodData, error: periodError } = await db
+        .from('subscription_periods')
+        .select('starts_at, ends_at, superseded_at')
+        .eq('user_id', ownerId)
+        .limit(100);
+      if (periodError || !Array.isArray(periodData)) return false;
+      const nowMs = now.getTime();
+      return periodData.some((row) => {
+        const period = row as Record<string, unknown>;
+        if (period['superseded_at'] !== null) return false;
+        const starts = typeof period['starts_at'] === 'string' ? Date.parse(period['starts_at']) : Number.NaN;
+        const ends = typeof period['ends_at'] === 'string' ? Date.parse(period['ends_at']) : Number.NaN;
+        return !Number.isNaN(starts) && !Number.isNaN(ends) && starts <= nowMs && ends > nowMs;
+      });
+    },
     listDueMirrorIds: async (now: Date, cap: number) => {
       const nowMs = now.getTime();
       const ids: string[] = [];

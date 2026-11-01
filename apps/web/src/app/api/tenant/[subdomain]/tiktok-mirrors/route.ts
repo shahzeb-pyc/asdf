@@ -17,7 +17,11 @@ import {
   isLegacyClient,
 } from '@/lib/route-auth';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
-import { assertFeatureAddWithinCap } from '@/lib/billing/entitlement';
+import {
+  assertFeatureAddWithinCap,
+  registerUsage,
+  SubscriptionGateError,
+} from '@/lib/billing/entitlement';
 import {
   getBillingAdminClient,
   subscriptionGateResponse,
@@ -1124,13 +1128,20 @@ export async function handleCreateMirror(
       destination = resolved.destination;
     }
 
-    // 2b. Plan cap gate: adding a mirror registers the target page /
+    // 2b. Plan cap gate: the gate CHECKS the target page /
     // account against that platform's cap, so an over-cap mirror is
-    // rejected here, before any mirror row is created. Admins are
-    // never gated, and a missing billing client skips the gate (same
-    // rule as the destination-queue gate) rather than failing the add.
+    // rejected here, before any mirror row is created. Creation
+    // registers the unit (step 5b). Admins are never gated, and a
+    // missing billing client skips the gate (same rule as the
+    // destination-queue gate) — but the skip is logged loudly
+    // (audit fix 2026-11-01): a silent skip is a fail-open.
     if (session.role !== 'admin') {
       const billingClient = getBillingAdminClient();
+      if (!billingClient) {
+        logServerError('[billing] mirror cap gate skipped: no billing client', null, {
+          source: 'billing',
+        });
+      }
       if (billingClient) {
         try {
           await assertFeatureAddWithinCap(
@@ -1249,6 +1260,56 @@ export async function handleCreateMirror(
       const created = asMirrorRow(data);
       if (!created) throw new Error('Failed to create mirror');
       mirror = created;
+    }
+
+    // 5b. Cap at add (audit fix 2026-11-01): creation registers
+    // the target's unit. A registration failure rolls the mirror
+    // back and fails the add — a mirror must never exist without
+    // its unit. Admins never register; a missing billing client
+    // skips with a loud log (same rule as the gate).
+    if (session.role !== 'admin') {
+      const billingClient = getBillingAdminClient();
+      if (!billingClient) {
+        logServerError('[billing] mirror usage registration skipped: no billing client', null, {
+          source: 'billing',
+        });
+      } else {
+        try {
+          await registerUsage(
+            billingClient,
+            session.userId,
+            targetPlatform,
+            destination.external_destination_id ?? destination.id,
+            'tiktok-mirror',
+            destination.id
+          );
+        } catch (regError) {
+          if (isLegacyClient(db)) {
+            await db.query(`DELETE FROM mirrors WHERE id = $1 AND workspace_id = $2`, [
+              mirror.id,
+              workspaceId,
+            ]);
+          } else {
+            await (db as SupabaseClient)
+              .from('mirrors')
+              .delete()
+              .eq('id', mirror.id)
+              .eq('workspace_id', workspaceId);
+          }
+          const gateResponse =
+            regError instanceof SubscriptionGateError
+              ? subscriptionGateResponse(regError)
+              : null;
+          if (gateResponse) return gateResponse;
+          logServerError('[billing] mirror usage registration failed', regError, {
+            source: 'billing',
+          });
+          return NextResponse.json(
+            { error: 'The plan limit could not be registered. Please try again.' },
+            { status: 500 }
+          );
+        }
+      }
     }
 
     // 6. Immediate post of the current latest reel: resolve it

@@ -193,3 +193,188 @@ describe('BANK_PAYMENT_DETAILS', () => {
     });
   });
 });
+
+describe('billing idempotency helpers', () => {
+  type Row = Record<string, unknown>;
+  type Filter = { col: string; op: string; val: unknown };
+
+  class IdemBuilder {
+    private op: 'select' | 'insert' | 'upsert' | 'delete' = 'select';
+    private filters: Filter[] = [];
+    private row: Row | null = null;
+    private maybeSingleMode = false;
+
+    constructor(private rows: Row[]) {}
+
+    select(): this {
+      return this;
+    }
+
+    insert(row: Row): this {
+      this.op = 'insert';
+      this.row = row;
+      return this;
+    }
+
+    upsert(row: Row): this {
+      this.op = 'upsert';
+      this.row = row;
+      return this;
+    }
+
+    delete(): this {
+      this.op = 'delete';
+      return this;
+    }
+
+    eq(col: string, val: unknown): this {
+      this.filters.push({ col, op: 'eq', val });
+      return this;
+    }
+
+    lte(col: string, val: unknown): this {
+      this.filters.push({ col, op: 'lte', val });
+      return this;
+    }
+
+    gt(col: string, val: unknown): this {
+      this.filters.push({ col, op: 'gt', val });
+      return this;
+    }
+
+    maybeSingle(): this {
+      this.maybeSingleMode = true;
+      return this;
+    }
+
+    private matches(r: Row): boolean {
+      return this.filters.every((f) => {
+        const v = r[f.col];
+        if (f.op === 'eq') return v === f.val;
+        if (f.op === 'lte') return typeof v === 'string' && typeof f.val === 'string' && v <= f.val;
+        if (f.op === 'gt') return typeof v === 'string' && typeof f.val === 'string' && v > f.val;
+        return true;
+      });
+    }
+
+    private compute(): { data: unknown; error: unknown } {
+      if (this.op === 'insert' || this.op === 'upsert') {
+        const row = { ...this.row } as Row;
+        const idx = this.rows.findIndex(
+          (r) =>
+            r['workspace_id'] === row['workspace_id'] &&
+            r['user_id'] === row['user_id'] &&
+            r['action'] === row['action'] &&
+            r['idempotency_key'] === row['idempotency_key']
+        );
+        if (idx >= 0) {
+          if (this.op === 'upsert') return { data: null, error: null };
+          return { data: null, error: { code: '23505' } };
+        }
+        this.rows.push(row);
+        return { data: null, error: null };
+      }
+      if (this.op === 'delete') {
+        for (let i = this.rows.length - 1; i >= 0; i -= 1) {
+          if (this.matches(this.rows[i] as Row)) this.rows.splice(i, 1);
+        }
+        return { data: null, error: null };
+      }
+      const matched = this.rows.filter((r) => this.matches(r));
+      if (this.maybeSingleMode) {
+        return { data: matched[0] ?? null, error: null };
+      }
+      return { data: matched, error: null };
+    }
+
+    then(resolve: (value: { data: unknown; error: unknown }) => void): void {
+      resolve(this.compute());
+    }
+  }
+
+  const KEY = '123e4567-e89b-12d3-a456-426614174000';
+
+  function headersWith(key: string | null): { get(name: string): string | null } {
+    return { get: (name: string) => (name.toLowerCase() === 'idempotency-key' ? key : null) };
+  }
+
+  function idemClient(rows: Row[]): { from(table: string): IdemBuilder } {
+    return {
+      from(table: string): IdemBuilder {
+        if (table !== 'idempotency_keys') throw new Error(`unexpected table ${table}`);
+        return new IdemBuilder(rows);
+      },
+    };
+  }
+
+  it('returns no key and touches nothing without a header', async () => {
+    const { lookupBillingIdempotency } = await import('@/lib/billing/route-helpers');
+    const rows: Row[] = [];
+    const result = await lookupBillingIdempotency(
+      idemClient(rows) as never,
+      'ws-1',
+      'user-1',
+      'billing-bank',
+      headersWith(null)
+    );
+    expect(result).toEqual({ key: null, replay: null });
+    expect(rows).toHaveLength(0);
+  });
+
+  it('flags an invalid key without touching the store', async () => {
+    const { lookupBillingIdempotency } = await import('@/lib/billing/route-helpers');
+    const rows: Row[] = [];
+    const result = await lookupBillingIdempotency(
+      idemClient(rows) as never,
+      'ws-1',
+      'user-1',
+      'billing-bank',
+      headersWith('not-a-uuid')
+    );
+    expect(result).toEqual({ invalid: true });
+    expect(rows).toHaveLength(0);
+  });
+
+  it('stores a success and replays it on a same-key retry', async () => {
+    const { lookupBillingIdempotency, storeBillingIdempotency } = await import(
+      '@/lib/billing/route-helpers'
+    );
+    const rows: Row[] = [];
+    const client = idemClient(rows) as never;
+    const first = await lookupBillingIdempotency(client, 'ws-1', 'user-1', 'billing-crypto', headersWith(KEY));
+    expect(first).toEqual({ key: KEY, replay: null });
+    await storeBillingIdempotency(client, 'ws-1', 'user-1', 'billing-crypto', KEY, {
+      status: 201,
+      body: { id: 'payment-9' },
+    });
+    const replay = await lookupBillingIdempotency(client, 'ws-1', 'user-1', 'billing-crypto', headersWith(KEY));
+    expect(replay).toEqual({ key: KEY, replay: { status: 201, body: { id: 'payment-9' } } });
+  });
+
+  it('logs and skips replay when the workspace cannot be resolved', async () => {
+    const { lookupBillingIdempotency } = await import('@/lib/billing/route-helpers');
+    const rows: Row[] = [];
+    // A valid key with a null workspace: the key is still accepted
+    // (an invalid key would be rejected above), but no replay lookup
+    // runs and no row is touched — the submission proceeds ungated
+    // by idempotency, with a loud log.
+    const result = await lookupBillingIdempotency(
+      idemClient(rows) as never,
+      null,
+      'user-1',
+      'billing-bank',
+      headersWith(KEY)
+    );
+    expect(result).toEqual({ key: KEY, replay: null });
+    expect(rows).toHaveLength(0);
+  });
+
+  it('skips the store when the key or workspace is missing', async () => {
+    const { storeBillingIdempotency } = await import('@/lib/billing/route-helpers');
+    const rows: Row[] = [];
+    const client = idemClient(rows) as never;
+    await storeBillingIdempotency(client, null, 'user-1', 'billing-bank', KEY, { status: 201, body: {} });
+    await storeBillingIdempotency(client, 'ws-1', 'user-1', 'billing-bank', null, { status: 201, body: {} });
+    expect(rows).toHaveLength(0);
+  });
+});

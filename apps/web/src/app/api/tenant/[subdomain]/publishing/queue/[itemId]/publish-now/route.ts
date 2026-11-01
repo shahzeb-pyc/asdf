@@ -17,6 +17,12 @@ import {
   storeIdempotencyResult,
   type IdempotencyScope,
 } from '@/lib/publishing/idempotency';
+import {
+  assertPaidPlan,
+  SubscriptionGateError,
+} from '@/lib/billing/entitlement';
+import { getBillingAdminClient } from '@/lib/billing/route-helpers';
+import { logServerError } from '@/lib/server-analytics';
 
 /**
  * Status family 2A: the same PAGE_NOT_PUBLISHABLE gate the enqueue
@@ -231,6 +237,38 @@ export async function handlePublishNow(
         },
         { status: 500 }
       );
+    }
+  }
+
+  // Plan gate (audit fix 2026-11-01): queue-item Publish Now IS
+  // Publish Now, so it carries the plan-only gate the direct
+  // Publish Now routes already have. Free and expired users are
+  // refused here; admins are exempt, exactly like the other gates.
+  // A missing billing client fails closed — this gate must never
+  // be skipped silently. (Retry is a different route and stays
+  // ungated: re-queueing is not publishing, and the slot claim
+  // enforces entitlement when the item is actually claimed.)
+  if (session.role !== 'admin') {
+    const billingClient = getBillingAdminClient();
+    if (!billingClient) {
+      logServerError('[billing] queue publish-now gate skipped: no billing client', null, {
+        source: 'billing',
+      });
+      return NextResponse.json(
+        { error: 'Your plan could not be checked right now. Please try again.' },
+        { status: 503 }
+      );
+    }
+    try {
+      await assertPaidPlan(billingClient, session.userId);
+    } catch (err) {
+      if (err instanceof SubscriptionGateError) {
+        return NextResponse.json(
+          { error: err.code, message: err.message },
+          { status: 403 }
+        );
+      }
+      throw err;
     }
   }
 
