@@ -11,6 +11,7 @@ import {
   UpdateMirrorResponseSchema,
 } from '@/lib/api/schemas/tiktok-mirrors';
 import { queryKeys } from '@/lib/data/query-keys';
+import { buildTenantHref, isTenantSubdomainHost } from '@/lib/tenant-href';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -100,7 +101,13 @@ export function TikTokDetailShell({ subdomain, mirrorId }: Readonly<TikTokDetail
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: tenant.tiktokMirrors.list });
       toast.success('Mirror deleted');
-      router.push(`/tenant/${subdomain}/tiktok-mirrors`);
+      router.push(
+        buildTenantHref(
+          subdomain,
+          '/tiktok-mirrors',
+          isTenantSubdomainHost(window.location.hostname, subdomain)
+        )
+      );
     },
     onError: () => {
       toast.error('Could not delete the mirror. Please try again.');
@@ -115,9 +122,11 @@ export function TikTokDetailShell({ subdomain, mirrorId }: Readonly<TikTokDetail
     else params.set('tab', tab);
     const query = params.toString();
     router.replace(
-      query
-        ? `/tenant/${subdomain}/tiktok-mirrors/${mirrorId}?${query}`
-        : `/tenant/${subdomain}/tiktok-mirrors/${mirrorId}`,
+      buildTenantHref(
+        subdomain,
+        query ? `/tiktok-mirrors/${mirrorId}?${query}` : `/tiktok-mirrors/${mirrorId}`,
+        isTenantSubdomainHost(window.location.hostname, subdomain)
+      ),
       { scroll: false }
     );
   };

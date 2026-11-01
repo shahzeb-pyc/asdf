@@ -36,6 +36,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shared/ui
 import { Textarea } from '@/components/shared/ui/textarea';
 import { PageTabInsights } from '@/components/pages/dedicated';
 import { buildTenantApiPath } from '@/lib/api/client';
+import { buildTenantHref, isTenantSubdomainHost } from '@/lib/tenant-href';
 
 interface ConfigView {
   id: string;
@@ -425,7 +426,7 @@ export function AduDetailPage({ subdomain, configId }: { subdomain: string; conf
             <Button type="button" variant="outline" onClick={() => setDeleteOpen(false)}>Cancel</Button>
             <Button type="button" onClick={async () => {
               const response = await fetch(base, { method: 'DELETE' });
-              if (response.ok) window.location.href = `/tenant/${subdomain}/auto-download-upload`;
+              if (response.ok) window.location.href = buildTenantHref(subdomain, `/auto-download-upload`, isTenantSubdomainHost(window.location.hostname, subdomain));
               else setError('Could not delete this page.');
             }}>Permanently Delete</Button>
           </div>

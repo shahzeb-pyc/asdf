@@ -86,6 +86,7 @@ import {
 import { api, buildTenantApiPath, isApiError } from '@/lib/api';
 import { ListQueueSlotsResponseSchema } from '@/lib/api/schemas/queue';
 import { queryKeys } from '@/lib/data/query-keys';
+import { buildTenantHref, isTenantSubdomainHost } from '@/lib/tenant-href';
 import Link from 'next/link';
 import { Button } from '@/components/shared/ui/button';
 import {
@@ -622,7 +623,7 @@ export function CreatePostsDialog({
         const nextParams = new URLSearchParams(searchParams.toString());
         nextParams.set('tab', 'calendar');
         router.push(
-          `/tenant/${subdomain}/pages/${page.id}?${nextParams.toString()}`,
+          buildTenantHref(subdomain, `/pages/${page.id}?${nextParams.toString()}`, isTenantSubdomainHost(window.location.hostname, subdomain)),
           { scroll: false }
         );
       },

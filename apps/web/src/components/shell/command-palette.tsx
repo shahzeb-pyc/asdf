@@ -52,7 +52,7 @@ import {
   SwitchWorkspaceResponseSchema,
 } from '@/lib/api/schemas/workspaces';
 import { queryKeys } from '@/lib/data/query-keys';
-import { buildTenantHref } from '@/lib/tenant-href';
+import { buildTenantHref, hasSwappableSubdomain } from '@/lib/tenant-href';
 import { definePreference, getPreference, preferences, setPreference } from '@/lib/storage/preferences';
 import {
   Command,
@@ -170,6 +170,13 @@ export function CommandPalette({
         window.location.href = data.redirectUrl;
       } else if (useCleanPaths) {
         const parts = window.location.hostname.split('.');
+        parts[0] = targetSubdomain;
+        window.location.href = `${window.location.protocol}//${parts.join('.')}/`;
+      } else if (hasSwappableSubdomain(window.location.hostname)) {
+        // Same as the workspace switcher: swap the current host's
+        // subdomain label for the target's and land on its clean
+        // home (port preserved).
+        const parts = window.location.host.split('.');
         parts[0] = targetSubdomain;
         window.location.href = `${window.location.protocol}//${parts.join('.')}/`;
       } else {
@@ -478,7 +485,17 @@ export function CommandPalette({
         onSuccess={(newWorkspace) => {
           setIsCreateOpen(false);
           // §4.1: creation ends by arriving in the new workspace's home.
-          window.location.href = `/tenant/${newWorkspace.subdomain}`;
+          // On a host with a swappable subdomain label, go straight
+          // to the new workspace's own clean home; elsewhere the
+          // prefixed form stays (middleware normalizes it if the
+          // host turns out to be the new workspace's own host).
+          if (hasSwappableSubdomain(window.location.hostname)) {
+            const parts = window.location.host.split('.');
+            parts[0] = newWorkspace.subdomain;
+            window.location.href = `${window.location.protocol}//${parts.join('.')}/`;
+          } else {
+            window.location.href = `/tenant/${newWorkspace.subdomain}`;
+          }
         }}
       />
     </>

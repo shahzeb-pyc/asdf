@@ -15,6 +15,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { SellerPatchSchema, type SellerPatch } from '@fbuploadpro/contracts';
 import { api, getErrorMessage, isApiError } from '@/lib/api';
+import { buildTenantHref, isTenantSubdomainHost } from '@/lib/tenant-href';
 import {
   AdminSellerDetailResponseSchema,
   SellerOkResponseSchema,
@@ -146,7 +147,7 @@ export function AdminSellerDetail({
       setConfirmDelete(false);
       invalidate();
       toast('Seller deleted');
-      router.push(`/tenant/${subdomain}/sellers`);
+      router.push(buildTenantHref(subdomain, `/sellers`, isTenantSubdomainHost(window.location.hostname, subdomain)));
     },
     onError: (error: unknown) => {
       setConfirmDelete(false);

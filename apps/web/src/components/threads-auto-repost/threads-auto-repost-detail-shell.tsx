@@ -10,6 +10,7 @@ import {
   UpdateMirrorResponseSchema,
 } from '@/lib/api/schemas/threads-auto-repost';
 import { queryKeys } from '@/lib/data/query-keys';
+import { buildTenantHref, isTenantSubdomainHost } from '@/lib/tenant-href';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -79,7 +80,7 @@ export function ThreadsAutoRepostDetailShell({ subdomain, mirrorId }: Readonly<T
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: tenant.threadsAutoRepost.list });
       toast.success('Mirror deleted');
-      router.push(`/tenant/${subdomain}/threads/auto-repost`);
+      router.push(buildTenantHref(subdomain, `/threads/auto-repost`, isTenantSubdomainHost(window.location.hostname, subdomain)));
     },
     onError: () => {
       toast.error('Could not delete the mirror. Please try again.');

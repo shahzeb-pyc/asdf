@@ -12,6 +12,7 @@ import {
   InstagramScheduleDetailResponseSchema,
 } from '@/lib/api/schemas/instagram-schedule';
 import { queryKeys } from '@/lib/data/query-keys';
+import { buildTenantHref, isTenantSubdomainHost } from '@/lib/tenant-href';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -139,7 +140,7 @@ export function ScheduleDetailShell({
         queryKey: tenant.instagramSchedule.list,
       });
       toast.success('Account removed from Schedule.');
-      router.push(`/tenant/${subdomain}/instagram/schedule`);
+      router.push(buildTenantHref(subdomain, `/instagram/schedule`, isTenantSubdomainHost(window.location.hostname, subdomain)));
     },
     onError: (error) => {
       toast.error(getErrorMessage(error, "Couldn't remove this account from Schedule. Please try again."));
@@ -166,7 +167,7 @@ export function ScheduleDetailShell({
             <Button
               type="button"
               onClick={() =>
-                router.push(`/tenant/${subdomain}/instagram/schedule`)
+                router.push(buildTenantHref(subdomain, `/instagram/schedule`, isTenantSubdomainHost(window.location.hostname, subdomain)))
               }
             >
               Back to Schedule

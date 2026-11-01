@@ -9,6 +9,7 @@ import { api, buildTenantApiPath, buildUrl } from '@/lib/api';
 import { ListMirrorsResponseSchema } from '@/lib/api/schemas/tiktok-mirrors';
 import { queryKeys } from '@/lib/data/query-keys';
 import { DEFAULT_PAGE_SIZE } from '@/lib/server/pagination';
+import { buildTenantHref, isTenantSubdomainHost } from '@/lib/tenant-href';
 import { Button } from '@/components/shared/ui/button';
 import { EmptyState } from '@/components/shared/ui/empty-state';
 import { ListPagination } from '@/components/shared/ui/list-pagination';
@@ -147,7 +148,7 @@ export function TikTokShell({ subdomain }: Readonly<TikTokShellProps>) {
               mirror={mirror}
               highlighted={highlightedId === mirror.id}
               onSelect={(selected) => {
-                router.push(`/tenant/${subdomain}/tiktok-mirrors/${selected.id}`);
+                router.push(buildTenantHref(subdomain, `/tiktok-mirrors/${selected.id}`, isTenantSubdomainHost(window.location.hostname, subdomain)));
               }}
             />
           ))}

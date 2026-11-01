@@ -34,6 +34,40 @@ export function normalizeTenantPath(pathname: string, subdomain: string): string
 }
 
 /**
+ * True when `hostname` is the tenant's OWN subdomain host: exactly
+ * `<subdomain>` (bare) or `<subdomain>.<anything>`. The trailing dot
+ * on the prefix form prevents partial-label matches
+ * (`creatorstack10x...` is not creatorstack10's host).
+ * Case-insensitive; ports are stripped. Pure and client-safe: used
+ * by middleware and by click-time navigations, never during server
+ * rendering (a window-derived hostname would hydrate differently).
+ */
+export function isTenantSubdomainHost(hostname: string, subdomain: string): boolean {
+  const host = hostname.toLowerCase().split(':')[0];
+  const sub = subdomain.toLowerCase();
+  return host === sub || host.startsWith(`${sub}.`);
+}
+
+/**
+ * True when `hostname` carries a swappable subdomain label: a
+ * `*.localhost` host with a label before it, or any host with at
+ * least three labels that is not a `*.vercel.app` preview. Bare
+ * localhost / 127.0.0.1, bare apex hosts (two labels), and previews
+ * return false — on those hosts a workspace switch must keep the
+ * prefixed `/tenant/<subdomain>` form, because there is no own-host
+ * label to swap to. Case-insensitive; ports are stripped.
+ */
+export function hasSwappableSubdomain(hostname: string): boolean {
+  const host = hostname.toLowerCase().split(':')[0];
+  const labels = host.split('.');
+  if (labels.length < 2) return false;
+  if (host === 'localhost' || host === '127.0.0.1') return false;
+  if (host.endsWith('.vercel.app')) return false;
+  if (labels[labels.length - 1] === 'localhost') return labels.length >= 2;
+  return labels.length >= 3;
+}
+
+/**
  * Server-side: determine whether clean tenant paths can be used for the
  * current request. True only when the request host is exactly the tenant's
  * own subdomain (e.g. shahzebpyc.fbuploadpro.com).

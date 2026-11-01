@@ -45,6 +45,7 @@ import {
   type QueueItem,
 } from '@/lib/api/schemas/queue';
 import { queryKeys } from '@/lib/data/query-keys';
+import { buildTenantHref, isTenantSubdomainHost } from '@/lib/tenant-href';
 import { Banner } from '@/components/shared/ui/banner';
 import { Button } from '@/components/shared/ui/button';
 import { Skeleton } from '@/components/shared/ui/skeleton';
@@ -189,7 +190,7 @@ export function QueuePanel({
     (nextPage: number) => {
       const nextParams = new URLSearchParams(searchParams.toString());
       nextParams.set('page', String(nextPage));
-      router.push(`/tenant/${subdomain}/pages/${pageId}?${nextParams.toString()}`, {
+      router.push(buildTenantHref(subdomain, `/pages/${pageId}?${nextParams.toString()}`, isTenantSubdomainHost(window.location.hostname, subdomain)), {
         scroll: false,
       });
     },

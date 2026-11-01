@@ -26,6 +26,7 @@ import {
   type DiscoveredDestination,
   type Platform,
 } from '@/lib/connect/registry';
+import { buildTenantHref, isTenantSubdomainHost } from '@/lib/tenant-href';
 
 export type DestinationPickResult =
   | { ok: true; accountsUrl: string }
@@ -54,7 +55,11 @@ export async function submitDestinationPick(
       // not today): per-platform Accounts page, not Facebook's.
       accountsUrl:
         data.accountsUrl ??
-        `/tenant/${subdomain}${getPlatformAccountsPath(platform)}`,
+        buildTenantHref(
+          subdomain,
+          getPlatformAccountsPath(platform),
+          isTenantSubdomainHost(window.location.hostname, subdomain)
+        ),
     };
   } catch {
     return { ok: false, error: "Couldn't save your choices. Please try again." };

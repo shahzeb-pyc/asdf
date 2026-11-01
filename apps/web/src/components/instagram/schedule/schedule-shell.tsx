@@ -14,6 +14,7 @@ import {
 import { queryKeys } from '@/lib/data/query-keys';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
 import { DEFAULT_PAGE_SIZE } from '@/lib/server/pagination';
+import { buildTenantHref, isTenantSubdomainHost } from '@/lib/tenant-href';
 import { Button } from '@/components/shared/ui/button';
 import { EmptyState } from '@/components/shared/ui/empty-state';
 import { Input } from '@/components/shared/ui/input';
@@ -141,7 +142,7 @@ export function ScheduleShell({ subdomain }: Readonly<{ subdomain: string }>) {
 
   const handleSelect = React.useCallback(
     (item: InstagramScheduleItem) => {
-      router.push(`/tenant/${subdomain}/instagram/schedule/${item.id}`);
+      router.push(buildTenantHref(subdomain, `/instagram/schedule/${item.id}`, isTenantSubdomainHost(window.location.hostname, subdomain)));
     },
     [router, subdomain]
   );

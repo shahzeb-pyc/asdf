@@ -21,6 +21,7 @@ import { Button } from '@/components/shared/ui/button';
 import { StatusMark, type StatusMarkKind } from '@/components/shared/ui/status-mark';
 import { getUserInitials } from '@/lib/user-initials';
 import { cn } from '@/lib/utils';
+import { buildTenantHref, isTenantSubdomainHost } from '@/lib/tenant-href';
 import {
   getAccountHealth,
   getAccountHealthLabel,
@@ -291,7 +292,7 @@ export function AccountCard({
       // sharing a name used to land on an ambiguous filter. The
       // Pages route still resolves a legacy display-name param, so
       // old links keep working.
-      router.push(`/tenant/${currentSubdomain}/pages?account=${encodeURIComponent(account.id)}`);
+      router.push(buildTenantHref(currentSubdomain, `/pages?account=${encodeURIComponent(account.id)}`, isTenantSubdomainHost(window.location.hostname, currentSubdomain)));
     } else {
       setIsPagesExpanded((prev) => !prev);
     }

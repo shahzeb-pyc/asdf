@@ -36,6 +36,7 @@ import { DEFAULT_PAGE_SIZE } from '@/lib/server/pagination';
 import { queryKeys } from '@/lib/data';
 import { getUserInitials } from '@/lib/user-initials';
 import { searchAndGroupTimezones } from '@/lib/timezones';
+import { buildTenantHref, isTenantSubdomainHost } from '@/lib/tenant-href';
 import { Button } from '@/components/shared/ui/button';
 import { Banner } from '@/components/shared/ui/banner';
 import { EmptyState } from '@/components/shared/ui/empty-state';
@@ -132,7 +133,7 @@ export function ThreadsScheduleDetailShell({
     : 'dashboard';
   const setTab = React.useCallback(
     (tab: TabId) => {
-      router.replace(`/tenant/${subdomain}/threads/schedule/${scheduleId}?tab=${tab}`, {
+      router.replace(buildTenantHref(subdomain, `/threads/schedule/${scheduleId}?tab=${tab}`, isTenantSubdomainHost(window.location.hostname, subdomain)), {
         scroll: false,
       });
     },
@@ -287,7 +288,7 @@ export function ThreadsScheduleDetailShell({
     onSuccess: async () => {
       setConfirmRemove(false);
       toast.success('Account removed from In-app Schedule.');
-      router.push(`/tenant/${subdomain}/threads/schedule`);
+      router.push(buildTenantHref(subdomain, `/threads/schedule`, isTenantSubdomainHost(window.location.hostname, subdomain)));
     },
     onError: (err: unknown) => {
       toast.error(errorMessage(err, 'Could not remove this account. Try again.'));

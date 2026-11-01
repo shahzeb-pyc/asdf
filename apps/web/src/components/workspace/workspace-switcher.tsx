@@ -64,7 +64,7 @@ import {
 } from '@/lib/api/schemas/workspaces';
 import { queryKeys } from '@/lib/data/query-keys';
 import { getPreference, preferences, setPreference } from '@/lib/storage/preferences';
-import { buildTenantHref, normalizeTenantPath } from '@/lib/tenant-href';
+import { buildTenantHref, hasSwappableSubdomain, normalizeTenantPath } from '@/lib/tenant-href';
 import { getUserInitials } from '@/lib/user-initials';
 import {
   Popover,
@@ -207,6 +207,14 @@ export function WorkspaceStudioFooter({
       } else if (useCleanPaths) {
         // On the tenant's own subdomain: switch to the target workspace's host.
         const parts = window.location.hostname.split('.');
+        parts[0] = targetSubdomain;
+        window.location.href = `${window.location.protocol}//${parts.join('.')}/`;
+      } else if (hasSwappableSubdomain(window.location.hostname)) {
+        // No clean-path flag and no server redirect: the current host
+        // carries a subdomain label, so swap it for the target's and
+        // land on the target workspace's own clean home (port
+        // preserved, unlike the hostname-based branch above).
+        const parts = window.location.host.split('.');
         parts[0] = targetSubdomain;
         window.location.href = `${window.location.protocol}//${parts.join('.')}/`;
       } else {
