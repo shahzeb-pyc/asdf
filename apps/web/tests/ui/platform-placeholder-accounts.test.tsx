@@ -128,7 +128,10 @@ describe('PlatformAccountsShell (Spec 047 / spec 131 PR-131-5)', () => {
     await user.click(
       screen.getByRole('button', { name: 'Return to Overview' })
     );
-    expect(pushMock).toHaveBeenCalledWith('/tenant/acme');
+    // The shell navigates via buildTenantHref, which normalizes the
+    // empty home path to '/', so the prefixed home carries a trailing
+    // slash — the same tenant-overview route as before.
+    expect(pushMock).toHaveBeenCalledWith('/tenant/acme/');
   });
 
   it.each(PLATFORMS)(
