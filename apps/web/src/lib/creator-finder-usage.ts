@@ -11,7 +11,7 @@
  * RPC, so concurrent requests can never lose an increment and
  * a request that crosses the cap mid-flight still completes.
  *
- * Fail loud: any counter read/write failure throws
+ * Fail loud: every counter read/write failure throws
  * CreatorFinderUsageError and the route fails with a clear 503
  * instead of proceeding ungated or blocking silently. Admins
  * bypass entirely — never gated, never counted, no database
