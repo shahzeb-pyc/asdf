@@ -156,7 +156,7 @@ export function AduHubPage({ subdomain }: { subdomain: string }) {
       </div>
 
       {migrationMissing ? (
-        <Banner variant="warning" title="ADU tables are not created yet" description="Apply migration 20261030120000_adu.sql to the database, then refresh this page. Until then, no ADU pages can be added." />
+        <Banner variant="warning" title="ADU tables are not created yet" description="Apply migration 20261030120001_adu.sql to the database, then refresh this page. Until then, no ADU pages can be added." />
       ) : null}
       {error ? <Banner variant="critical" title="Could not load pages" description={error} /> : null}
 
@@ -451,7 +451,7 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
         </div>
         <p className="text-body text-ink-sub">{selectedPages.length} pages selected</p>
         {optionsMigrationMissing ? (
-          <Banner variant="warning" title="ADU tables are not created yet" description="Apply migration 20261030120000_adu.sql to the database, then refresh this page. Until then, no ADU pages can be added." />
+          <Banner variant="warning" title="ADU tables are not created yet" description="Apply migration 20261030120001_adu.sql to the database, then refresh this page. Until then, no ADU pages can be added." />
         ) : null}
         {error ? <Banner variant="critical" title="Could not add pages" description={error} /> : null}
         {result ? <Banner variant="success" title="Done" description={result} /> : null}
