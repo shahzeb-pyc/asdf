@@ -1,0 +1,1087 @@
+@import "tailwindcss";
+
+@theme {
+  --color-page: #d9dde2;
+  --color-white: #ffffff;
+  --color-line: #e5e7eb;
+  --color-ink: #111111;
+  --color-ink-sub: #4b5563;
+  --color-gold: #f0b90b;
+  --color-gold-deep: #92400e;
+}
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html {
+    background-color: #ffffff;
+    /* Plain native scrolling: the page never forces a section
+       into view, and CSS smoothing stays off. */
+    scroll-snap-type: none;
+    scroll-behavior: auto;
+    /* Fixed-topbar offset for anchor landings. */
+    scroll-padding-top: 84px;
+  }
+
+  body {
+    margin: 0;
+    background-color: #ffffff;
+    color: #111111;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.5;
+    overflow-x: hidden;
+  }
+
+  a {
+    color: inherit;
+  }
+
+  a:focus-visible {
+    outline: 2px solid #92400e;
+    outline-offset: 3px;
+  }
+}
+
+/* Every section fills a viewport at minimum (100dvh
+   where supported), and grows instead of clipping if its
+   content is ever taller (owner order 2026-11-01: full-screen
+   sections, content vertically centered top-to-bottom).
+   Sections are direct siblings, full width, with zero gap. */
+.section-full {
+  min-height: 100vh;
+}
+@supports (height: 100dvh) {
+  .section-full {
+    min-height: 100dvh;
+  }
+}
+
+/* Fixed topbar: centred by flex, opaque white pill with a soft
+   shadow, legible over white and black sections alike. Width caps
+   at the viewport minus 16px so it never overflows a 320px phone.
+   Hide-and-show lives in the motion block at the end of this file:
+   hidden on scroll down (past 120px), shown on scroll up, always
+   shown at the very top and while the mobile menu is open. */
+.topbar-fixed {
+  position: fixed;
+  top: 12px;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  display: flex;
+  justify-content: center;
+  padding: 0 8px;
+  pointer-events: none;
+}
+.topbar-pill {
+  pointer-events: auto;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15), 0 2px 6px rgba(0, 0, 0, 0.10);
+}
+
+/* JS mobile menu: a button in the topbar pill, visible below lg.
+   The panel is a fixed bottom sheet, so the open menu never covers
+   the hero headline. The open/closed label swap follows the
+   .menu-open class the menu script toggles. Open/close is instant:
+   no transition, no animation anywhere here. */
+.mobile-menu .menu-open-label {
+  display: none;
+}
+.mobile-menu.menu-open .menu-open-label {
+  display: inline;
+}
+.mobile-menu.menu-open .menu-closed-label {
+  display: none;
+}
+
+/* Visually-hidden headings for the footer link columns:
+   announced to assistive technology, invisible on screen. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Clip-mask headline lines. Each line sits inside an
+   overflow-hidden mask with a small padding/margin cancel, so
+   descenders never clip. The mask lines themselves carry no hidden
+   state; page motion lives in the block at the end of this file. */
+.reveal-mask {
+  display: block;
+  overflow: hidden;
+  padding-bottom: 0.14em;
+  margin-bottom: -0.14em;
+}
+.reveal-line {
+  display: block;
+  will-change: transform;
+}
+.word-mask {
+  display: inline-block;
+  overflow: hidden;
+  padding-bottom: 0.12em;
+  margin-bottom: -0.12em;
+  vertical-align: bottom;
+}
+.word-inner {
+  display: inline-block;
+  will-change: transform;
+}
+
+/* Gold highlights. Full gold statically — no sweep, no motion.
+   The hero, community and section 2 highlights are all plain
+   static gold. */
+.hero-highlight {
+  background-color: #f0b90b;
+  background-image: linear-gradient(#f0b90b, #f0b90b);
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  color: #111111;
+  border-radius: 12px;
+  padding: 0.08em 0.15em;
+}
+.section-highlight {
+  display: inline-block;
+  background-color: #f0b90b;
+  color: #111111;
+  border-radius: 12px;
+  padding: 0.08em 0.15em;
+}
+.community-highlight {
+  display: inline-block;
+  background-color: #f0b90b;
+  background-image: linear-gradient(#f0b90b, #f0b90b);
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  color: #111111;
+  border-radius: 6px;
+  padding: 0.02em 0.12em;
+}
+
+/* Section 2 orbit badges. Positioned by percentage left/top with
+   a centring translate, so the badges stay centred on their
+   orbit points at every size. The ring rotates slowly (motion
+   block at the end of this file) and each badge counter-rotates
+   by the same amount, so logos stay upright while orbiting. */
+.orbit-badge {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: translate(-50%, -50%);
+  border-radius: 9999px;
+  border: 1px solid #e9ebef;
+  background-color: #ffffff;
+  box-shadow: 0 0 0 6px rgba(255, 255, 255, 1), 0 14px 28px rgba(17, 17, 17, 0.16);
+}
+
+/* Dark panels: the panel is the section, full
+   width, filling a viewport at minimum (100vh/100dvh,
+   restored on owner order 2026-11-01), growing instead of
+   clipping if its content is taller, content centred
+   inside it.
+   Section 6 (Community) transition, INVERTED (owner-corrected
+   2026-10-31): the WHITE section above (Section 5) ends with
+   rounded BOTTOM corners, and Section 6 is pulled up behind it
+   by exactly the corner size, so black shows in the bottom
+   corners — a white rounded-bottom shape over black, straight
+   across the middle, curving at the corners. The panel itself
+   has a SQUARE top: black top rounding was the mirror image the
+   owner rejected, do NOT re-add it. The pull-up (48px / 64px)
+   only ever covers Section 5's 96px bottom padding, never its
+   content. Section 5 sits above the panel (z-10 in markup) so
+   its white covers the panel everywhere except the cut corners. */
+.dark-panel {
+  width: 100%;
+  min-height: 100vh;
+}
+@supports (height: 100dvh) {
+  .dark-panel {
+    min-height: 100dvh;
+  }
+}
+#section-5 {
+  border-bottom-left-radius: 48px;
+  border-bottom-right-radius: 48px;
+}
+#section-6 {
+  margin-top: -48px;
+}
+#section-6 .dark-panel {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+@media (min-width: 1024px) {
+  #section-5 {
+    border-bottom-left-radius: 64px;
+    border-bottom-right-radius: 64px;
+  }
+  #section-6 {
+    margin-top: -64px;
+  }
+}
+
+/* Short-viewport fit: hero. At 620px viewport height or less the
+   hero shrinks (smaller headline and subhead, smaller mobile
+   tiles, tighter gaps) so it still fits one screen at 320x568
+   without hiding anything. */
+@media (max-height: 620px) {
+  .hero {
+    padding-top: 76px;
+    padding-bottom: 16px;
+  }
+  .hero h1 {
+    font-size: 34px;
+  }
+  .hero-sub {
+    font-size: 14px;
+  }
+  .hero .grid-cols-3 > span {
+    width: 60px;
+    height: 60px;
+  }
+  .hero .grid-cols-3 > span > span:first-child {
+    width: 44px;
+    height: 44px;
+  }
+  .hero .grid-cols-3 > span > svg {
+    width: 22px;
+    height: 22px;
+  }
+}
+
+/* Phone layout: section 2 stacked layout. Phones stack text plus
+   orbit; the section fills the viewport at minimum (owner
+   order 2026-11-01) and grows instead of clipping if its
+   content is taller, and its content is vertically centered
+   by the flex items-center on the section itself. The orbit is the visual anchor again at 300px (it fits
+   a 320px screen: the orbit box sits 10px into the section
+   padding each side, badges reach 17px–303px, badge halo
+   included, so nothing is clipped by the screen edge — no
+   downscaling is needed, and none is applied). Above 768px the
+   desktop two-column layout is untouched. */
+@media (max-width: 767px) {
+  #section-2 {
+    padding-top: 76px;
+    padding-bottom: 36px;
+  }
+  /* Phone fit tuning: section 3's vertical padding and grid gap
+     shrink on phones only, so its text + full-image card fit one
+     844px phone screen instead of running 64px over it. */
+  #section-3 {
+    padding-top: 64px;
+    padding-bottom: 56px;
+  }
+  #section-3 .s3-content {
+    gap: 28px;
+  }
+  .s2-grid {
+    gap: 32px;
+  }
+  .s2-heading {
+    font-size: 40px;
+    line-height: 1.1;
+    margin-bottom: 16px;
+  }
+  .s2-text {
+    font-size: 16px;
+    line-height: 1.6;
+    margin-bottom: 32px;
+  }
+  .s2-orbit {
+    width: 290px;
+    height: 290px;
+  }
+  .s2-centre {
+    width: 160px;
+    height: 160px;
+  }
+  .s2-centre svg {
+    width: 88px;
+  }
+  .orbit-badge {
+    width: 56px;
+    height: 56px;
+  }
+  .orbit-badge svg {
+    width: 28px;
+    height: 28px;
+  }
+}
+
+/* Hero fit fix (2026-10-29): the desktop stage is a flex item
+   with mx-auto, so without w-full (now on the element) it
+   collapsed to the width of its absolute-positioned content and
+   the tiles piled up at the centre. These short-viewport rules
+   (appended last, so they win over the earlier fit rules) shrink
+   the hero and the stage proportionally at short heights, so the
+   headline + subhead + CTA + stage fit one viewport instead of
+   the stage being pushed below the fold and cut off. Tile sizes
+   and bottom offsets are scaled per tile (nth-child order:
+   Facebook, Instagram, Threads, TikTok, YouTube, X) so no tile
+   rises above the top of its stage. Plain sizing only — no
+   animation, no transition. */
+@media (min-width: 1024px) and (max-height: 760px) {
+  .hero {
+    padding-top: 80px;
+    padding-bottom: 24px;
+  }
+  .hero h1 {
+    font-size: 56px;
+    margin-bottom: 16px;
+  }
+  .hero-sub {
+    margin-bottom: 24px;
+  }
+}
+@media (min-width: 1024px) and (max-height: 620px) {
+  .hero {
+    padding-top: 72px;
+    padding-bottom: 16px;
+  }
+  .hero h1 {
+    font-size: 48px;
+  }
+}
+
+
+
+/* FAQ accordions (Section 8): <details> markers hidden so the
+   custom "+" indicator is the only affordance. Opening/closing
+   is instant — no transition, no animation. */
+.faq-card summary {
+  list-style: none;
+}
+.faq-card summary::-webkit-details-marker {
+  display: none;
+}
+.faq-card summary::marker {
+  content: "";
+}
+
+
+/* Phone fit compression (owner order: every section must fit one
+   phone screen). Phone-only (max-width 767px), so desktop rules
+   are untouched. Shrink order everywhere: spacing first, then
+   secondary sizing/text, headings and buttons last and minimally.
+   Nothing is clipped, hidden, or removed; no wording changes;
+   no transitions or animations. Unlayered rules here override
+   Tailwind utilities. */
+@media (max-width: 767px) {
+  /* Section 4 Creator Finder (was ~1201px): section padding,
+     text block, grid gap, then panel padding/tabs/search/rows. */
+  #section-4 { padding-top: 52px; padding-bottom: 36px; }
+  #section-4 > div { gap: 20px; }
+  #section-4 > div > div:first-child > p:first-child { margin-bottom: 8px; }
+  #section-4 h2 { font-size: 28px; }
+  #section-4 p.mt-5 { margin-top: 12px; font-size: 14px; line-height: 1.5; }
+  #section-4 ul { margin-top: 16px; }
+  #section-4 li { padding-top: 6px; padding-bottom: 6px; font-size: 13.5px; line-height: 1.45; }
+  #section-4 > div > div:last-child { padding: 16px; }
+  #section-4 .rounded-2xl > p { margin-bottom: 8px; font-size: 12px; }
+  #section-4 .rounded-2xl > div.flex-wrap { margin-bottom: 12px; }
+  #section-4 .rounded-2xl > div.flex-wrap > span { padding-top: 6px; padding-bottom: 6px; font-size: 12px; }
+  #section-4 .rounded-2xl > div.flex-col { margin-bottom: 12px; }
+  #section-4 .rounded-2xl > div.flex-col > span:first-child { padding-top: 8px; padding-bottom: 8px; }
+  #section-4 .rounded-2xl > div.flex-col > span:last-child { padding-top: 10px; padding-bottom: 10px; }
+  #section-4 .rounded-2xl > div.flex.items-center { padding-top: 8px; padding-bottom: 8px; }
+  #section-4 .rounded-2xl > div.flex.items-center > span:first-child { width: 40px; height: 40px; }
+  /* Section 5 All Features (was ~1087px): padding, label/heading,
+     grid gap, row padding/title/detail. Bottom padding stays 64px:
+     48px transition pull-up + 16px clearance — never below that. */
+  #section-5 { padding-top: 48px; padding-bottom: 64px; }
+  #section-5 > div > p:first-child { margin-bottom: 8px; }
+  #section-5 h2 { font-size: 28px; }
+  #section-5 .mt-10 { margin-top: 24px; }
+  #section-5 .mt-10 > div { padding-top: 12px; padding-bottom: 12px; }
+  #section-5 .mt-10 h3 { font-size: 17px; }
+  #section-5 .mt-10 p { margin-top: 4px; font-size: 14px; line-height: 1.5; }
+  /* Section 7 Pricing (was ~1179px): panel padding, heading/rule,
+     card padding, dividers, feature gaps/leading, buttons last.
+     Stacked gap stays 32px so the badge keeps ~18px clearance
+     over the Free card below it. Buttons land at 36px (floor). */
+  #section-7 .dark-panel { padding-top: 36px; padding-bottom: 20px; }
+  #section-7 h2 { font-size: 26px; }
+  #section-7 h2 .block { margin-top: 6px; margin-bottom: 6px; }
+  #section-7 .grid { margin-top: 12px; }
+  #section-7 .grid > div { padding: 8px; }
+  #section-7 .grid h3 { font-size: 22px; }
+  #section-7 .grid .my-3 { margin-top: 6px; margin-bottom: 6px; }
+  #section-7 .grid ul { gap: 6px; margin-bottom: 16px; }
+  #section-7 .grid li { font-size: 13.5px; line-height: 1.4; }
+  #section-7 .grid a { padding-top: 6px; padding-bottom: 6px; }
+  #section-7 .grid p.mt-4 { margin-top: 12px; font-size: 13.5px; }
+  /* Section 8 FAQ (closed state, was already near fit): trim
+     section padding and grid gap for margin on both heights. */
+  #section-8 { padding-top: 48px; padding-bottom: 48px; }
+  #section-8 > div { gap: 28px; }
+}
+
+/* Short-phone extra squeeze (max-height 700px, phones only):
+   tighter spacing/text, and the Creator Finder search row goes
+   horizontal (input + button side by side) instead of stacked.
+   Section 5 bottom padding stays 60px: 48px pull-up + 12px
+   clearance. Floors respected: body text >= 12px, buttons 36px. */
+@media (max-width: 767px) and (max-height: 700px) {
+  #section-4 { padding-top: 40px; padding-bottom: 24px; }
+  #section-4 > div { gap: 12px; }
+  #section-4 h2 { font-size: 26px; }
+  #section-4 p.mt-5 { margin-top: 8px; font-size: 12.5px; line-height: 1.45; }
+  #section-4 ul { margin-top: 12px; }
+  #section-4 li { padding-top: 4px; padding-bottom: 4px; font-size: 13px; line-height: 1.4; }
+  #section-4 > div > div:last-child { padding: 10px; }
+  #section-4 .rounded-2xl > p { margin-bottom: 6px; }
+  #section-4 .rounded-2xl > div.flex-wrap { gap: 6px; }
+  #section-4 .rounded-2xl > div.flex-wrap > span { padding-top: 4px; padding-bottom: 4px; }
+  #section-4 .rounded-2xl > div.flex-col { flex-direction: row; align-items: center; }
+  #section-4 .rounded-2xl > div.flex.items-center { padding-top: 6px; padding-bottom: 6px; }
+  #section-4 .rounded-2xl > div.flex.items-center > span:first-child { width: 36px; height: 36px; }
+  #section-5 { padding-top: 32px; padding-bottom: 60px; }
+  #section-5 .mt-10 { margin-top: 20px; }
+  #section-5 h2 { font-size: 26px; }
+  #section-5 .mt-10 > div { padding-top: 8px; padding-bottom: 8px; }
+  #section-5 .mt-10 h3 { font-size: 16px; }
+  #section-5 .mt-10 p { font-size: 13px; line-height: 1.4; }
+  #section-7 .dark-panel { padding-top: 28px; padding-bottom: 16px; }
+  #section-7 h2 { font-size: 24px; }
+  #section-7 .grid { margin-top: 8px; }
+  #section-7 .grid > div { padding: 6px; }
+  #section-7 .grid h3 { font-size: 20px; }
+  #section-7 .grid .my-3 { margin-top: 4px; margin-bottom: 4px; }
+  #section-7 .grid ul { gap: 4px; margin-bottom: 12px; }
+  #section-7 .grid li { font-size: 12.5px; line-height: 1.35; }
+  #section-7 .grid p.mt-4 { margin-top: 8px; }
+  #section-8 { padding-top: 40px; padding-bottom: 40px; }
+}
+
+/* Fit tuning, tablet only (768–1023px): S3 + S7 desktop/tablet
+   compression. Scoped so desktop (≥1024) and phone (<768)
+   rules are untouched. Spacing first, image size second,
+   secondary text last. */
+@media (min-width: 768px) and (max-width: 1023px) {
+  /* S3: padding 96→64 each side (-64), gap 40→24 (-16), card
+     capped at 600px wide so the 1.5-ratio image drops
+     469→400px tall (-69). Total ≈ -149. */
+  #section-3 {
+    padding-top: 64px;
+    padding-bottom: 64px;
+  }
+  #section-3 .s3-content {
+    gap: 24px;
+  }
+  #section-3 article {
+    max-width: 600px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  /* S7: panel padding 112/64→64/48 (-64), grid margin 56→32
+     (-24), card padding 36→24 each side, stacked (-48),
+     feature gaps 14→10 (-24), list bottom margin 32→20,
+     stacked (-24), dividers 24→16 each side, stacked (-32),
+     buttons 56→48 tall, stacked (-16), refund margin 16→12
+     (-4), gold rule margin 24→16 (-8), feature leading
+     1.6→1.5 (≈-18). Total ≈ -262. */
+  #section-7 .dark-panel {
+    padding-top: 64px;
+    padding-bottom: 48px;
+  }
+  #section-7 .dark-panel .grid {
+    margin-top: 32px;
+  }
+  #section-7 .dark-panel .grid > div {
+    padding: 24px;
+  }
+  #section-7 ul {
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+  #section-7 .h-px {
+    margin-top: 16px;
+    margin-bottom: 16px;
+  }
+  #section-7 .dark-panel .grid > div > a {
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+  #section-7 .dark-panel .grid > div > p {
+    margin-top: 12px;
+  }
+  #section-7 h2 .my-3 {
+    margin-top: 8px;
+    margin-bottom: 8px;
+  }
+  #section-7 ul li {
+    line-height: 1.5;
+  }
+}
+
+/* Short-phone fit, S2 only: phone widths AND ≤700px viewport
+   height, so normal phones (844px tall) and desktop are
+   untouched. Orbit 290→190 (-100), section padding 76/36→
+   56/24 (-32), grid gap 32→20 (-12), heading margin 16→8 +
+   leading 1.1→1.05 (-14), description leading 1.6→1.5 +
+   margin 32→16 (-30). Total ≈ -188. */
+@media (max-width: 767px) and (max-height: 700px) {
+  #section-2 {
+    padding-top: 56px;
+    padding-bottom: 24px;
+  }
+  .s2-grid {
+    gap: 20px;
+  }
+  .s2-heading {
+    margin-bottom: 8px;
+    line-height: 1.05;
+  }
+  .s2-text {
+    line-height: 1.5;
+    margin-bottom: 16px;
+  }
+  .s2-orbit {
+    width: 190px;
+    height: 190px;
+  }
+  .s2-centre {
+    width: 112px;
+    height: 112px;
+  }
+  .s2-centre svg {
+    width: 64px;
+  }
+  .orbit-badge {
+    width: 46px;
+    height: 46px;
+  }
+  .orbit-badge svg {
+    width: 24px;
+    height: 24px;
+  }
+}
+
+/* Short-phone fit, S3 only: same scoping as S2 above.
+   Padding 64/56→32/32 (-56), gap 28→20 (-12), image capped
+   at 260px wide so its height drops 233→173 (-60), link
+   margin 28→16 (-12), description margin 20→12 (-8) and
+   size 16→14px (-10), card padding 20→16 (-8), heart row
+   margin 16→8 (-8), title margin 12→8 (-4), heading
+   36→32px (-9), label margin 16→12 (-4). Total ≈ -191
+   on top of the -8 phone padding-bottom cut above. */
+@media (max-width: 767px) and (max-height: 700px) {
+  #section-3 {
+    padding-top: 32px;
+    padding-bottom: 32px;
+  }
+  #section-3 .s3-content {
+    gap: 20px;
+  }
+  #section-3 article {
+    max-width: 260px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  #section-3 .s3-anim a {
+    margin-top: 16px;
+  }
+  #section-3 .s3-anim p.mt-5 {
+    margin-top: 12px;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  #section-3 article .p-5 {
+    padding: 16px;
+  }
+  #section-3 article .mb-4 {
+    margin-bottom: 8px;
+  }
+  #section-3 article h3 {
+    margin-bottom: 8px;
+  }
+  #section-3 .s3-anim h2 {
+    font-size: 32px;
+  }
+  #section-3 .s3-anim p.mb-4 {
+    margin-bottom: 12px;
+  }
+}
+
+/* Laptop-short fit, round two (checker-measured overflows at
+   900x768 and 1024x768 only): a SHORT-HEIGHT band, 768-1023px
+   wide AND <=800px tall. Desktop 1440x900 (wider), tablet
+   portrait 768x1024 (taller), and all phone widths (<768px)
+   are untouched. At 768-1023px the S2/S3/S4 grids are stacked
+   (below the lg breakpoint) and S7 is stacked too, which is
+   why these widths overflow while 1024px two-column S2/S3/S4
+   fit. Shrink order everywhere: spacing first, then
+   decorative/secondary sizing/text, headings last and
+   minimally. Nothing clipped, hidden, or removed; no copy,
+   href, order, or layout changes; the S5/S6 transition rules
+   and the footer are untouched. Unlayered rules here override
+   Tailwind utilities and the earlier tablet (768-1023px)
+   block, which this block follows. */
+@media (min-width: 768px) and (max-width: 1023px) and (max-height: 800px) {
+  /* S2 Muse (was 959px at 900x768, -191 needed): section
+     padding 64/64->32/32 (-64), grid gap 48->24 (-24), orbit
+     400->280 (-120), heading 48->44 (-14), description
+     margin 24->16 (-8). Total ≈ -230. Centre/badges scale
+     with the orbit; no text size changes. */
+  #section-2 {
+    padding-top: 32px;
+    padding-bottom: 32px;
+  }
+  .s2-grid {
+    gap: 24px;
+  }
+  .s2-heading {
+    font-size: 44px;
+  }
+  .s2-text {
+    margin-bottom: 16px;
+  }
+  .s2-orbit {
+    width: 280px;
+    height: 280px;
+  }
+  .s2-centre {
+    width: 160px;
+    height: 160px;
+  }
+  .s2-centre svg {
+    width: 88px;
+  }
+  .orbit-badge {
+    width: 56px;
+    height: 56px;
+  }
+  .orbit-badge svg {
+    width: 28px;
+    height: 28px;
+  }
+  /* S3 Prompt Library (was 986px at 900x768, -218 needed):
+     section padding 64/64->32/32 (-64), gap 24->20 (-4),
+     image cap 600->420px wide so its height drops 399->280
+     (-119, proportional, no crop), card padding 20->16 (-8),
+     heading 48->44 (-9), description margin 20->12 (-8),
+     link margin 28->16 (-12), label margin 16->8 (-8),
+     heart-row margin 16->8 (-8), title margin 12->8 and
+     size 18->16 (-8). Total ≈ -248. Link stays 48px tall. */
+  #section-3 {
+    padding-top: 32px;
+    padding-bottom: 32px;
+  }
+  #section-3 .s3-content {
+    gap: 20px;
+  }
+  #section-3 article {
+    max-width: 420px;
+  }
+  #section-3 .s3-anim p.mb-4 {
+    margin-bottom: 8px;
+  }
+  #section-3 .s3-anim h2 {
+    font-size: 44px;
+  }
+  #section-3 .s3-anim p.mt-5 {
+    margin-top: 12px;
+  }
+  #section-3 .s3-anim a {
+    margin-top: 16px;
+  }
+  #section-3 article .p-5 {
+    padding: 16px;
+  }
+  #section-3 article .mb-4 {
+    margin-bottom: 8px;
+  }
+  #section-3 article h3 {
+    margin-bottom: 8px;
+    font-size: 16px;
+  }
+  /* S4 Creator Finder (was 1005px at 900x768, -237 needed):
+     section padding 96/96->32/32 (-128), grid gap 40->24
+     (-16), heading 48->44 (-4), description margin 20->12
+     (-8), list margin 28->16 (-12), mode rows padding
+     10->6 each side (-32) and size 15->14 (-9), panel
+     padding 28->16 (-24), Example margin 16->8 (-8), tabs
+     margin 20->12 (-8) and padding 8->6 (-4), search margin
+     20->12 (-8) and row padding 12->8 (-8), creator rows
+     padding 14->10 (-8) and avatars 48->40 (-16).
+     Total ≈ -293. No text below 14px here. */
+  #section-4 {
+    padding-top: 32px;
+    padding-bottom: 32px;
+  }
+  #section-4 > div {
+    gap: 24px;
+  }
+  #section-4 h2 {
+    font-size: 44px;
+  }
+  #section-4 p.mt-5 {
+    margin-top: 12px;
+  }
+  #section-4 ul {
+    margin-top: 16px;
+  }
+  #section-4 li {
+    padding-top: 6px;
+    padding-bottom: 6px;
+    font-size: 14px;
+  }
+  #section-4 > div > div:last-child {
+    padding: 16px;
+  }
+  #section-4 .rounded-2xl > p {
+    margin-bottom: 8px;
+  }
+  #section-4 .rounded-2xl > div.flex-wrap {
+    margin-bottom: 12px;
+  }
+  #section-4 .rounded-2xl > div.flex-wrap > span {
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+  #section-4 .rounded-2xl > div.flex-col {
+    margin-bottom: 12px;
+  }
+  #section-4 .rounded-2xl > div.flex-col > span {
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+  #section-4 .rounded-2xl > div.flex.items-center {
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+  #section-4 .rounded-2xl > div.flex.items-center > span:first-child {
+    width: 40px;
+    height: 40px;
+  }
+  /* S7 Pricing, stacked form (was 989px at 900x768, -221
+     needed; on top of the tablet block): panel padding
+     64/48->24/16 (-72), heading 56->40 (-39 incl. rule
+     margins 8->6), grid margin 32->16 (-16), stacked gap
+     32->24 (-8; badge still clears the Free card by 10px),
+     card padding 24->12 (-24 each card), card headings
+     28->22 (-12 both cards), dividers 16->12 (-16 both
+     cards), feature gaps 10->8 (-12), feature size 16->14
+     (-21), list margins 20->12 (-16 both cards), buttons
+     48->44 (-8 both cards, the 44px floor), refund margin
+     12->8 (-4). Total ≈ -272. */
+  #section-7 .dark-panel {
+    padding-top: 24px;
+    padding-bottom: 16px;
+  }
+  #section-7 h2 {
+    font-size: 40px;
+  }
+  #section-7 h2 .my-3 {
+    margin-top: 6px;
+    margin-bottom: 6px;
+  }
+  #section-7 .dark-panel .grid {
+    margin-top: 16px;
+    gap: 24px;
+  }
+  #section-7 .dark-panel .grid > div {
+    padding: 12px;
+  }
+  #section-7 .dark-panel .grid h3 {
+    font-size: 22px;
+  }
+  #section-7 .h-px {
+    margin-top: 12px;
+    margin-bottom: 12px;
+  }
+  #section-7 ul {
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  #section-7 ul li {
+    font-size: 14px;
+  }
+  #section-7 .dark-panel .grid > div > a {
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+  #section-7 .dark-panel .grid > div > p {
+    margin-top: 8px;
+  }
+}
+
+/* Laptop-short fit, S7 only at exactly 1024px wide AND
+   <=800px tall (was 960px at 1024x768, -192 needed). At
+   1024px S2/S3/S4 already fit two-column, so they are NOT
+   touched here — only the two-column Pricing grid: panel
+   padding 96/64->48/32 (-80), heading 56->48 (-18), gold
+   rule margins 12->8 (-8), grid margin 40->24 (-16), card
+   padding 28->20 (-16), dividers 24->16 (-16), feature
+   gaps 14->10 (-24), list margin 32->20 (-12), feature
+   leading 1.6->1.5 (-13), buttons 56->48 (-8), refund
+   margin 16->12 (-4). Total ≈ -215. Buttons stay above
+   the 44px floor; no text below 16px here. */
+@media (min-width: 1024px) and (max-width: 1024px) and (max-height: 800px) {
+  #section-7 .dark-panel {
+    padding-top: 48px;
+    padding-bottom: 32px;
+  }
+  #section-7 h2 {
+    font-size: 48px;
+  }
+  #section-7 h2 .my-3 {
+    margin-top: 8px;
+    margin-bottom: 8px;
+  }
+  #section-7 .dark-panel .grid {
+    margin-top: 24px;
+  }
+  #section-7 .dark-panel .grid > div {
+    padding: 20px;
+  }
+  #section-7 .h-px {
+    margin-top: 16px;
+    margin-bottom: 16px;
+  }
+  #section-7 ul {
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+  #section-7 ul li {
+    line-height: 1.5;
+  }
+  #section-7 .dark-panel .grid > div > a {
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+  #section-7 .dark-panel .grid > div > p {
+    margin-top: 12px;
+  }
+}
+
+/* Wide-short fit, S7 ONLY, at widths ABOVE 1024px AND <=800px
+   tall (was 909px at 1200x768, -141 needed; 883px at
+   1280x768, -115 needed). The 1024px-wide band above and the
+   768-1023px band are untouched (disjoint widths), and
+   1440x900, tablet, and phones are untouched (height >800px
+   or width <1025px). Only the two-column desktop Pricing
+   grid is compressed, in the owner's shrink order: panel
+   padding 96/64->48/32 (-80), grid margin 40->24 (-16),
+   card padding 28->20 (-16), dividers 24->16 (-8), feature
+   gaps 14->10 (-24), list margin 32->20 (-12), feature
+   leading 1.6->1.5 (-11; -13 at 1200 where a line wraps),
+   buttons 56->48 (-8, above the 44px floor), refund margin
+   16->12 (-4), heading 56->48 (-18 incl. leading) and gold
+   rule margins 12->8 (-8). Total ≈ -205 at 1280, -207 at
+   1200, so both widths fit with margin. No text below
+   16px here; no grid-ratio, copy, href, badge, or other
+   section change. */
+@media (min-width: 1025px) and (max-height: 800px) {
+  #section-7 .dark-panel {
+    padding-top: 48px;
+    padding-bottom: 32px;
+  }
+  #section-7 h2 {
+    font-size: 48px;
+  }
+  #section-7 h2 .my-3 {
+    margin-top: 8px;
+    margin-bottom: 8px;
+  }
+  #section-7 .dark-panel .grid {
+    margin-top: 24px;
+  }
+  #section-7 .dark-panel .grid > div {
+    padding: 20px;
+  }
+  #section-7 .h-px {
+    margin-top: 8px;
+    margin-bottom: 8px;
+  }
+  #section-7 ul {
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+  #section-7 ul li {
+    line-height: 1.5;
+  }
+  #section-7 .dark-panel .grid > div > a {
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+  #section-7 .dark-panel .grid > div > p {
+    margin-top: 12px;
+  }
+}
+
+/* Subtle professional motion (owner order 2026-11-01, "subtle and
+   professional" direction). Transform / opacity / border-radius
+   ONLY — no height, margin, padding, or layout change of any kind,
+   so the one-screen fit and all section heights are untouched.
+   No libraries: CSS transitions + one small IntersectionObserver
+   in the page script. No scroll snap/lock, no parallax, no
+   infinite loops, no marquees. The hero platform strips and the
+   topbar pill itself do not animate. */
+
+/* Scroll reveals + hero entrance: fade + rise 14px -> 0 over 600ms
+   ease-out, once, then stays visible. The hidden pre-reveal state
+   exists ONLY under .js (added by the page script itself), so with
+   JavaScript disabled everything is fully visible. Stagger steps
+   are 100ms, at most 300ms total. */
+.js .reveal {
+  opacity: 0;
+  transform: translateY(14px);
+  transition: opacity 600ms ease-out, transform 600ms ease-out;
+}
+.js .reveal.is-visible {
+  opacity: 1;
+  transform: none;
+}
+.js .reveal-d1 {
+  transition-delay: 100ms;
+}
+.js .reveal-d2 {
+  transition-delay: 200ms;
+}
+.js .reveal-d3 {
+  transition-delay: 300ms;
+}
+
+/* Hover / focus transitions: 200ms ease-out on colour, background,
+   border, shadow, and filter. Rounded-full buttons and social
+   circles dim very slightly on hover; cards lift at most 2px via
+   the independent `translate` property (separate from the reveal
+   `transform`, so lift and reveal compose instead of fighting).
+   No scale pops, no spins, no bounces. */
+a,
+button {
+  transition: color 200ms ease-out, background-color 200ms ease-out, border-color 200ms ease-out, box-shadow 200ms ease-out, filter 200ms ease-out;
+}
+a.rounded-full:hover,
+button.rounded-full:hover {
+  filter: brightness(0.94);
+}
+.lift-card {
+  transition: translate 200ms ease-out, box-shadow 200ms ease-out;
+}
+.lift-card:hover {
+  translate: 0 -2px;
+  box-shadow: 0 16px 36px rgba(17, 17, 17, 0.14);
+}
+
+/* Section 5 -> 6 boundary animation: the Section 5 bottom edge
+   starts FLAT (radius 0) and, on first scroll into view, rounds to
+   the resting shape over 600ms ease-out, once, then stays rounded.
+   Radius only — the Section 6 pull-up (-48px / -64px), the square
+   panel top, and all paddings are untouched, so there is no layout
+   shift and the final shape is identical to the static transition.
+   Without .js (no JavaScript) the base static radii below apply. */
+.js #section-5 {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  transition: border-bottom-left-radius 600ms ease-out, border-bottom-right-radius 600ms ease-out;
+}
+.js #section-5.s5-rounded {
+  border-bottom-left-radius: 48px;
+  border-bottom-right-radius: 48px;
+}
+@media (min-width: 1024px) {
+  .js #section-5.s5-rounded {
+    border-bottom-left-radius: 64px;
+    border-bottom-right-radius: 64px;
+  }
+}
+
+/* Rotating orbit (Section 2): the ring rotates slowly, one
+   revolution per 60s, linear, via CSS keyframes. Each badge
+   counter-rotates by the same amount and period, so the platform
+   logos stay upright and readable while orbiting — the badge
+   keyframes preserve the centring translate(-50%, -50%). The
+   centre Muse mark is a sibling of the ring, so it does NOT
+   rotate. Rotation exists only under .js: with JavaScript
+   disabled the orbit is static. */
+@keyframes orbit-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes orbit-spin-rev {
+  from {
+    transform: translate(-50%, -50%) rotate(0deg);
+  }
+  to {
+    transform: translate(-50%, -50%) rotate(-360deg);
+  }
+}
+.js .orbit-ring {
+  animation: orbit-spin 60s linear infinite;
+}
+.js .orbit-badge {
+  animation: orbit-spin-rev 60s linear infinite;
+}
+
+/* Topbar hide-and-show: hides on scroll down past 120px, shows on
+   scroll up, always shows at the very top and while the mobile
+   menu is open (the script enforces both). Transform-only, so
+   anchor landings (84px scroll-padding) and section heights never
+   change. The hide class is only ever added by the script, so
+   with JavaScript disabled the topbar is always visible. */
+.js .topbar-fixed {
+  transition: transform 300ms ease-out;
+}
+.js .topbar-fixed.topbar-hidden {
+  transform: translateY(-150%);
+}
+
+/* Reduced motion: ALL motion in this build stops and content is
+   fully visible and static — reveals instant, boundary rounded
+   statically, orbit static, topbar always visible, hover
+   transitions off (hover lift removed, hover shadow change is
+   instant, not animated). */
+@media (prefers-reduced-motion: reduce) {
+  .js .reveal,
+  .js .reveal.is-visible {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+  }
+  .js #section-5 {
+    border-bottom-left-radius: 48px !important;
+    border-bottom-right-radius: 48px !important;
+    transition: none !important;
+  }
+  .js .orbit-ring,
+  .js .orbit-badge {
+    animation: none !important;
+  }
+  .js .topbar-fixed {
+    transition: none !important;
+    transform: none !important;
+  }
+  a,
+  button,
+  .lift-card {
+    transition: none !important;
+  }
+  .lift-card:hover {
+    translate: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) and (min-width: 1024px) {
+  .js #section-5 {
+    border-bottom-left-radius: 64px !important;
+    border-bottom-right-radius: 64px !important;
+  }
+}
