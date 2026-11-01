@@ -71,6 +71,8 @@ export interface DatabasePlatformCredentialsRow {
   encrypted_client_secret: string;
   status: 'unverified' | 'valid' | 'invalid';
   last_tested_at: string | null;
+  /** Meta app display name, fetched from the Graph API at connect time (migration 20261102032000). NULL until first verification. */
+  app_name: string | null;
   created_at: string;
   updated_at: string;
 }

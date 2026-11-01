@@ -17,6 +17,7 @@ import {
   saveCredentials,
   toSecretHint,
 } from '@/lib/server/platform-credentials';
+import { verifyFacebookApp } from '@/lib/server/facebook-app-verify';
 
 async function extractSession(request: NextRequest): Promise<SessionPayload | null> {
   const token = request.cookies.get('fbup_session')?.value;
@@ -85,6 +86,7 @@ export async function GET(
       hasSecret: Boolean(byoc?.encryptedClientSecret),
       status: byoc?.status || 'unverified',
       lastTestedAt: byoc?.lastTestedAt || null,
+      fbAppName: byoc?.appName ?? null,
       connectedAt: byoc?.createdAt || byoc?.updatedAt || null,
     });
   } catch (err) {
@@ -143,10 +145,77 @@ export async function PUT(
       return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
     }
 
+    const submittedId = parseResult.data.fbAppId;
+    const submittedSecret = parseResult.data.fbAppSecret;
+    const hasNewSecret = Boolean(submittedSecret && submittedSecret.length > 0);
+    const existing = await getCredentials(workspaceId, 'facebook', supabase);
+
+    // Nothing changed: same App ID and no new secret — keep the stored
+    // name and status exactly as they are, with no Graph call and no
+    // write. (A legacy unverified row stays unverified here; it gains
+    // a name only when it is actually re-verified below.)
+    if (existing && existing.clientId === submittedId && !hasNewSecret) {
+      return NextResponse.json({
+        success: true,
+        hasSecret: true,
+        status: existing.status,
+        connectedAt: existing.createdAt ?? existing.updatedAt ?? new Date().toISOString(),
+        fbAppName: existing.appName ?? null,
+      });
+    }
+
+    // The secret the verification runs with: the submitted one, or the
+    // stored one when the field was left blank (edit keeps the secret).
+    let effectiveSecret: string | null = null;
+    if (hasNewSecret) {
+      effectiveSecret = submittedSecret as string;
+    } else if (existing?.encryptedClientSecret) {
+      try {
+        effectiveSecret = await decryptToken(
+          existing.encryptedClientSecret,
+          getTokenEncryptionKey()
+        );
+      } catch (err) {
+        console.error('[BYOC Settings API] Failed to decrypt stored app secret for verification:', err);
+        return NextResponse.json({ error: 'Failed to save BYOC credentials' }, { status: 500 });
+      }
+    }
+    if (!effectiveSecret) {
+      return NextResponse.json(
+        { error: 'Enter your Facebook App Secret to complete setup.' },
+        { status: 400 }
+      );
+    }
+
+    // Verify BEFORE saving: a rejected pair is never stored, so a typo
+    // fails here with a plain message instead of surfacing later at
+    // account-connect time. An unreachable Meta is a different failure
+    // and stays distinguishable in both the response and the log.
+    const verification = await verifyFacebookApp(submittedId, effectiveSecret);
+    if (!verification.ok) {
+      if (verification.kind === 'rejected') {
+        return NextResponse.json(
+          {
+            error:
+              'Facebook rejected this App ID and App Secret. Please check them and try again.',
+          },
+          { status: 400 }
+        );
+      }
+      return NextResponse.json(
+        { error: "Couldn't reach Facebook to verify your app. Please try again." },
+        { status: 503 }
+      );
+    }
+
     const saveResult = await saveCredentials(
       workspaceId,
       'facebook',
-      { clientId: parseResult.data.fbAppId, clientSecret: parseResult.data.fbAppSecret },
+      {
+        clientId: submittedId,
+        clientSecret: hasNewSecret ? (submittedSecret as string) : undefined,
+        verifiedAppName: verification.appName,
+      },
       supabase
     );
 
@@ -157,8 +226,9 @@ export async function PUT(
     return NextResponse.json({
       success: true,
       hasSecret: true,
-      status: 'unverified',
+      status: 'valid',
       connectedAt: new Date().toISOString(),
+      fbAppName: verification.appName,
     });
   } catch (err) {
     console.error('[BYOC Settings API] Unhandled PUT exception:', err);

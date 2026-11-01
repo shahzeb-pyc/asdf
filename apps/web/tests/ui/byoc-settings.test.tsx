@@ -57,6 +57,7 @@ interface ByocPayload {
   hasSecret: boolean;
   status: 'unverified' | 'valid' | 'invalid';
   lastTestedAt: string | null;
+  fbAppName: string | null;
   connectedAt: string | null;
 }
 
@@ -68,6 +69,7 @@ const NOT_CONNECTED: ByocPayload = {
   hasSecret: false,
   status: 'unverified',
   lastTestedAt: null,
+  fbAppName: null,
   connectedAt: null,
 };
 
@@ -79,6 +81,7 @@ const CONNECTED: ByocPayload = {
   hasSecret: true,
   status: 'valid',
   lastTestedAt: '2026-10-16T10:00:00.000Z',
+  fbAppName: 'Acme App',
   connectedAt: '2026-10-16T12:00:00.000Z',
 };
 
@@ -542,6 +545,22 @@ describe('FacebookSettingsView — connected state', () => {
     expect(screen.queryByTestId('fb-one-more-step-card')).toBeNull();
     expect(document.body.textContent).not.toContain('Permissions your app needs');
     expect(document.body.textContent).not.toContain('last tested');
+  });
+
+  it('shows the saved app name in the connected card', () => {
+    renderView(CONNECTED);
+
+    expect(screen.getByTestId('fb-saved-app-name').textContent).toBe('Acme App');
+  });
+
+  it('legacy rows without a name render as before, with no name block and no error', () => {
+    renderView({ ...CONNECTED, fbAppName: null });
+
+    expect(screen.queryByTestId('fb-saved-app-name')).toBeNull();
+    expect(screen.getByTestId('fb-saved-app-id').textContent).toBe(SAVED_APP_ID);
+    expect(
+      screen.getByText('Your Facebook app is connected and ready to publish.')
+    ).toBeTruthy();
   });
 
   it('Copy App ID writes to the clipboard and shows the "App ID copied" feedback', async () => {

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { encryptToken, signSessionToken } from '@fbuploadpro/contracts';
 import { GET as getBYOC, PUT as saveBYOC, DELETE as deleteBYOC } from '@/app/api/tenant/[subdomain]/settings/byoc/route';
@@ -153,6 +153,7 @@ describe('Facebook BYOC Settings API Routes', () => {
                     encrypted_client_secret: encryptedSecret,
                     status: 'valid',
                     last_tested_at: '2026-10-14T10:00:00Z',
+                    app_name: 'Acme App',
                     created_at: '2026-10-14T09:00:00Z',
                   },
                   error: null,
@@ -175,6 +176,7 @@ describe('Facebook BYOC Settings API Routes', () => {
       expect(json.hasSecret).toBe(true);
       expect(json.status).toBe('valid');
       expect(json.lastTestedAt).toBe('2026-10-14T10:00:00Z');
+      expect(json.fbAppName).toBe('Acme App');
       expect(json.connectedAt).toBe('2026-10-14T09:00:00Z');
       // The masked hint (bullets + last four) is all the GET carries.
       expect(json.fbAppSecretHint).toBe('••••1234');
@@ -185,6 +187,54 @@ describe('Facebook BYOC Settings API Routes', () => {
   });
 
   describe('PUT /api/tenant/[subdomain]/settings/byoc', () => {
+    // The route verifies the pair against Graph before saving, so every
+    // PUT test below stubs the Graph fetch; unstub after each so no
+    // stub leaks into the next test.
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    function stubGraphSuccess(name = 'Acme App') {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () =>
+          new Response(JSON.stringify({ name }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        )
+      );
+    }
+
+    function stubGraphError(status: number, body: unknown) {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () =>
+          new Response(JSON.stringify(body), {
+            status,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        )
+      );
+    }
+
+    function stubGraphThrow() {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => {
+          throw new Error('fetch failed');
+        })
+      );
+    }
+
+    function putRequest(body: Record<string, unknown>) {
+      return new NextRequest(`http://localhost:3000/api/tenant/${subdomain}/settings/byoc`, {
+        method: 'PUT',
+        headers: { cookie: validSessionCookie, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    }
+
     it('returns 400 when request body fails validation', async () => {
       const req = new NextRequest(`http://localhost:3000/api/tenant/${subdomain}/settings/byoc`, {
         method: 'PUT',
@@ -219,47 +269,56 @@ describe('Facebook BYOC Settings API Routes', () => {
     });
 
     it('returns 200 and encrypts secret when saving new credentials', async () => {
+      stubGraphSuccess('Acme App');
       const upsertMock = vi.fn().mockResolvedValue({ error: null });
       const mockSupabase = {
         from: vi.fn((table: string) => {
           if (table === 'workspaces') return workspaceFound(workspaceId);
           if (table === 'platform_credentials') {
-            return { upsert: upsertMock };
+            return {
+              select: () => selectChain({ data: null, error: null }),
+              upsert: upsertMock,
+            };
           }
           return {};
         }),
       };
       vi.spyOn(authModule, 'getSupabaseAdminClient').mockReturnValue(mockSupabase as any);
 
-      const req = new NextRequest(`http://localhost:3000/api/tenant/${subdomain}/settings/byoc`, {
-        method: 'PUT',
-        headers: { cookie: validSessionCookie, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fbAppId: '123456789012345',
-          fbAppSecret: 'super_secret_fb_key_999',
-        }),
+      const req = putRequest({
+        fbAppId: '123456789012345',
+        fbAppSecret: 'super_secret_fb_key_999',
       });
       const res = await saveBYOC(req, { params: Promise.resolve({ subdomain }) });
       expect(res.status).toBe(200);
       const json = await res.json();
       expect(json.success).toBe(true);
       expect(json.hasSecret).toBe(true);
+      // Verified save: the Graph name is stored and the row is valid.
+      expect(json.status).toBe('valid');
+      expect(json.fbAppName).toBe('Acme App');
       expect(upsertMock).toHaveBeenCalledWith(
         expect.objectContaining({
           workspace_id: workspaceId,
           platform: 'facebook',
           client_id: '123456789012345',
-          status: 'unverified',
+          status: 'valid',
+          app_name: 'Acme App',
         }),
         { onConflict: 'workspace_id,platform' }
       );
       const upsertArg = upsertMock.mock.calls[0][0];
       expect(upsertArg.encrypted_client_secret).toBeTruthy();
       expect(upsertArg.encrypted_client_secret).not.toBe('super_secret_fb_key_999');
+      expect(upsertArg.last_tested_at).toBeTruthy();
       expect(upsertArg).not.toHaveProperty('user_id');
     });
 
     it('returns 200 when updating fbAppId without changing existing secret', async () => {
+      stubGraphSuccess('Acme App');
+      // A REAL ciphertext for the stored secret, so the route's
+      // decrypt-for-verification path genuinely runs.
+      const storedEncrypted = await encryptToken('stored-secret-123456', TEST_ENCRYPTION_KEY);
       const finalEqMock = vi.fn().mockResolvedValue({ error: null });
       const updateMock = vi.fn().mockReturnValue({
         eq: vi.fn().mockReturnValue({ eq: finalEqMock }),
@@ -271,7 +330,12 @@ describe('Facebook BYOC Settings API Routes', () => {
             return {
               select: () =>
                 selectChain({
-                  data: { encrypted_client_secret: 'already_encrypted' },
+                  data: {
+                    client_id: '111111111111111',
+                    encrypted_client_secret: storedEncrypted,
+                    status: 'valid',
+                    app_name: 'Old App Name',
+                  },
                   error: null,
                 }),
               update: updateMock,
@@ -282,21 +346,125 @@ describe('Facebook BYOC Settings API Routes', () => {
       };
       vi.spyOn(authModule, 'getSupabaseAdminClient').mockReturnValue(mockSupabase as any);
 
-      const req = new NextRequest(`http://localhost:3000/api/tenant/${subdomain}/settings/byoc`, {
-        method: 'PUT',
-        headers: { cookie: validSessionCookie, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fbAppId: '987654321098765' }),
-      });
+      const req = putRequest({ fbAppId: '987654321098765' });
       const res = await saveBYOC(req, { params: Promise.resolve({ subdomain }) });
       expect(res.status).toBe(200);
       const json = await res.json();
       expect(json.success).toBe(true);
+      expect(json.fbAppName).toBe('Acme App');
+      // Changed App ID with the stored secret: verified with the new
+      // pair, so the update carries the fresh name and valid status.
       expect(updateMock).toHaveBeenCalledWith(
         expect.objectContaining({
           client_id: '987654321098765',
-          status: 'unverified',
+          status: 'valid',
+          app_name: 'Acme App',
         })
       );
+    });
+
+    it('returns 400 and saves NOTHING when Graph rejects the pair', async () => {
+      stubGraphError(400, {
+        error: { message: 'Invalid OAuth access token.', type: 'OAuthException', code: 190 },
+      });
+      const upsertMock = vi.fn().mockResolvedValue({ error: null });
+      const mockSupabase = {
+        from: vi.fn((table: string) => {
+          if (table === 'workspaces') return workspaceFound(workspaceId);
+          if (table === 'platform_credentials') {
+            return {
+              select: () => selectChain({ data: null, error: null }),
+              upsert: upsertMock,
+            };
+          }
+          return {};
+        }),
+      };
+      vi.spyOn(authModule, 'getSupabaseAdminClient').mockReturnValue(mockSupabase as any);
+
+      const req = putRequest({
+        fbAppId: '123456789012345',
+        fbAppSecret: 'wrong_secret_value_123',
+      });
+      const res = await saveBYOC(req, { params: Promise.resolve({ subdomain }) });
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toBe(
+        'Facebook rejected this App ID and App Secret. Please check them and try again.'
+      );
+      expect(upsertMock).not.toHaveBeenCalled();
+    });
+
+    it('returns 503 with a DISTINCT message and saves NOTHING when Graph is unreachable', async () => {
+      stubGraphThrow();
+      const upsertMock = vi.fn().mockResolvedValue({ error: null });
+      const mockSupabase = {
+        from: vi.fn((table: string) => {
+          if (table === 'workspaces') return workspaceFound(workspaceId);
+          if (table === 'platform_credentials') {
+            return {
+              select: () => selectChain({ data: null, error: null }),
+              upsert: upsertMock,
+            };
+          }
+          return {};
+        }),
+      };
+      vi.spyOn(authModule, 'getSupabaseAdminClient').mockReturnValue(mockSupabase as any);
+
+      const req = putRequest({
+        fbAppId: '123456789012345',
+        fbAppSecret: 'super_secret_fb_key_999',
+      });
+      const res = await saveBYOC(req, { params: Promise.resolve({ subdomain }) });
+      expect(res.status).toBe(503);
+      const json = await res.json();
+      expect(json.error).toBe("Couldn't reach Facebook to verify your app. Please try again.");
+      expect(json.error).not.toContain('rejected');
+      expect(upsertMock).not.toHaveBeenCalled();
+    });
+
+    it('skips the Graph fetch and the write when neither the App ID nor the secret changed', async () => {
+      const fetchMock = vi.fn(async () => {
+        throw new Error('Graph must not be called for an unchanged pair');
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      const storedEncrypted = await encryptToken('stored-secret-123456', TEST_ENCRYPTION_KEY);
+      const updateMock = vi.fn();
+      const mockSupabase = {
+        from: vi.fn((table: string) => {
+          if (table === 'workspaces') return workspaceFound(workspaceId);
+          if (table === 'platform_credentials') {
+            return {
+              select: () =>
+                selectChain({
+                  data: {
+                    client_id: '123456789012345',
+                    encrypted_client_secret: storedEncrypted,
+                    status: 'valid',
+                    app_name: 'Acme App',
+                    created_at: '2026-10-14T09:00:00Z',
+                    updated_at: '2026-10-14T11:00:00Z',
+                  },
+                  error: null,
+                }),
+              update: updateMock,
+            };
+          }
+          return {};
+        }),
+      };
+      vi.spyOn(authModule, 'getSupabaseAdminClient').mockReturnValue(mockSupabase as any);
+
+      const req = putRequest({ fbAppId: '123456789012345' });
+      const res = await saveBYOC(req, { params: Promise.resolve({ subdomain }) });
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.success).toBe(true);
+      expect(json.status).toBe('valid');
+      expect(json.fbAppName).toBe('Acme App');
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(updateMock).not.toHaveBeenCalled();
     });
   });
 

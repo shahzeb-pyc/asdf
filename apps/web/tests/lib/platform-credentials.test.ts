@@ -398,4 +398,129 @@ describe('platform-credentials service', () => {
       ]);
     });
   });
+
+  describe('verified saves (caller-supplied app name)', () => {
+    it('writes status valid, the app name, and the test time in the same upsert', async () => {
+      const { supabase, calls } = createRecordingSupabase(null);
+
+      const result = await saveCredentials(
+        WORKSPACE_ID,
+        'facebook',
+        {
+          clientId: 'verified-app-id',
+          clientSecret: 'verified-secret-value-123',
+          verifiedAppName: 'Acme App',
+        },
+        supabase
+      );
+
+      expect(result.ok).toBe(true);
+      const upsert = calls.find((c) => c.op === 'upsert');
+      expect(upsert).toBeDefined();
+      const row = upsert!.args[0] as Record<string, unknown>;
+      expect(row.status).toBe('valid');
+      expect(row.app_name).toBe('Acme App');
+      expect(row.last_tested_at).toBeTruthy();
+    });
+
+    it('verified save without a new secret updates id, status, name, and test time — never the secret', async () => {
+      const existingEncrypted = await encryptToken('existing-secret-xyz', TEST_ENCRYPTION_KEY);
+      const { supabase, calls } = createRecordingSupabase({
+        workspace_id: WORKSPACE_ID,
+        platform: 'facebook',
+        client_id: 'old-app-id',
+        encrypted_client_secret: existingEncrypted,
+        status: 'unverified',
+        last_tested_at: null,
+        app_name: null,
+        created_at: '2026-10-14T09:00:00Z',
+        updated_at: '2026-10-14T09:00:00Z',
+      });
+
+      const result = await saveCredentials(
+        WORKSPACE_ID,
+        'facebook',
+        { clientId: 'new-app-id', verifiedAppName: 'Acme App' },
+        supabase
+      );
+
+      expect(result.ok).toBe(true);
+      expect(calls.find((c) => c.op === 'upsert')).toBeUndefined();
+      const update = calls.find((c) => c.op === 'update');
+      expect(update).toBeDefined();
+      const patch = update!.args[0] as Record<string, unknown>;
+      expect(patch.client_id).toBe('new-app-id');
+      expect(patch.status).toBe('valid');
+      expect(patch.app_name).toBe('Acme App');
+      expect(patch.last_tested_at).toBeTruthy();
+      expect(patch).not.toHaveProperty('encrypted_client_secret');
+    });
+
+    it('unverified save leaves a stored name and test time untouched', async () => {
+      const { supabase, calls } = createRecordingSupabase(null);
+
+      const result = await saveCredentials(
+        WORKSPACE_ID,
+        'facebook',
+        { clientId: 'plain-app-id', clientSecret: 'plain-secret-value-123' },
+        supabase
+      );
+
+      expect(result.ok).toBe(true);
+      const upsert = calls.find((c) => c.op === 'upsert');
+      expect(upsert).toBeDefined();
+      const row = upsert!.args[0] as Record<string, unknown>;
+      expect(row.status).toBe('unverified');
+      expect(row).not.toHaveProperty('app_name');
+      expect(row).not.toHaveProperty('last_tested_at');
+    });
+
+    it('reads back the stored app name', async () => {
+      const existingEncrypted = await encryptToken('read-back-secret', TEST_ENCRYPTION_KEY);
+      const { supabase } = createRecordingSupabase({
+        id: 'cred-row-1',
+        workspace_id: WORKSPACE_ID,
+        platform: 'facebook',
+        client_id: 'app-id-777',
+        encrypted_client_secret: existingEncrypted,
+        status: 'valid',
+        last_tested_at: '2026-10-14T10:00:00Z',
+        app_name: 'Acme App',
+        created_at: '2026-10-14T09:00:00Z',
+        updated_at: '2026-10-14T11:00:00Z',
+      });
+
+      const record = await getCredentials(WORKSPACE_ID, 'facebook', supabase);
+
+      expect(record).not.toBeNull();
+      expect(record!.appName).toBe('Acme App');
+    });
+
+    it('verified legacy insert carries the name, valid status, and test time', async () => {
+      const queries: Array<{ sql: string; params: unknown[] }> = [];
+      const query = vi.fn().mockImplementation((sql: string, params: unknown[]) => {
+        queries.push({ sql, params });
+        return Promise.resolve([]);
+      });
+      const legacyClient = { query } as unknown as DatabaseClient;
+
+      const result = await saveCredentials(
+        WORKSPACE_ID,
+        'facebook',
+        {
+          clientId: 'legacy-verified-app',
+          clientSecret: 'legacy-secret-value-123',
+          verifiedAppName: 'Acme App',
+        },
+        legacyClient
+      );
+
+      expect(result.ok).toBe(true);
+      const insert = queries.find((q) => q.sql.includes('INSERT INTO platform_credentials'));
+      expect(insert).toBeDefined();
+      expect(insert!.sql).toContain('app_name');
+      expect(insert!.sql).toContain("'valid'");
+      expect(insert!.params).toContain('Acme App');
+    });
+  });
 });

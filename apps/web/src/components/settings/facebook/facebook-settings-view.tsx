@@ -260,6 +260,7 @@ export function FacebookSettingsView({ subdomain }: Readonly<FacebookSettingsVie
         {isConnectedState ? (
           <FacebookConnectedView
             fbAppId={credentials.fbAppId}
+            fbAppName={credentials.fbAppName}
             connectedAt={credentials.connectedAt}
             onRevealSecret={handleRevealSecret}
             onEditDetails={() => {
