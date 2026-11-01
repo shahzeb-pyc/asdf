@@ -81,10 +81,11 @@ export async function POST(
   // key replays the stored response instead of creating a second
   // pending payment.
   // The workspace is only the idempotency scope. If it cannot be
-  // resolved, idempotency is skipped with a loud log rather than
-  // failing the submission — the one-pending guard still protects
-  // against duplicates, and the payment row itself carries no
-  // workspace (its workspace_id column is dead).
+  // resolved, the lookup still runs (an invalid key is rejected
+  // either way) but replay and storage are skipped with a loud log
+  // rather than failing the submission — the one-pending guard
+  // still protects against duplicates, and the payment row itself
+  // carries no workspace (its workspace_id column is dead).
   let workspaceId: string | null = null;
   try {
     workspaceId = await resolveTenantWorkspaceId(client, subdomain, session.userId, session.role);
@@ -94,7 +95,6 @@ export async function POST(
     });
   }
   let idempotencyKey: string | null = null;
-  if (workspaceId) {
   try {
     const idempotency = await lookupBillingIdempotency(
       client,
@@ -121,7 +121,6 @@ export async function POST(
       { error: 'IDEMPOTENCY_STORE_UNAVAILABLE', message: 'Idempotency store unavailable' },
       { status: 500 }
     );
-  }
   }
 
   let form: FormData;

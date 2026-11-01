@@ -18,6 +18,7 @@ import {
   periodFromRow,
   pricePurchase,
   registerUsage,
+  releaseUsageForFeature,
   rejectPayment,
   SubscriptionGateError,
   type SubscriptionPaymentRow,
@@ -147,6 +148,11 @@ interface FakeState {
   inserted: Array<{ table: string; row: Row }>;
   updated: Array<{ table: string; patch: Row }>;
   deleted: Array<{ table: string; filters: Filter[] }>;
+  // Race simulations for the claim-first approval paths: the next
+  // claim (status patch) or link (period_id patch) update loses to
+  // a concurrent winner, which is recorded as already linked.
+  loseClaimOnce: boolean;
+  loseLinkOnce: boolean;
 }
 
 function baseState(overrides: Partial<FakeState> = {}): FakeState {
@@ -165,6 +171,8 @@ function baseState(overrides: Partial<FakeState> = {}): FakeState {
     inserted: [],
     updated: [],
     deleted: [],
+    loseClaimOnce: false,
+    loseLinkOnce: false,
     ...overrides,
   };
 }
@@ -313,6 +321,7 @@ class FakeBuilder {
     }
     if (this.op === 'delete') {
       this.state.deleted.push({ table: this.table, filters: [...this.filters] });
+      const deletedIds: unknown[] = [];
       const rows =
         this.table === 'subscription_usage'
           ? this.state.usageRows
@@ -328,9 +337,12 @@ class FakeBuilder {
           if (f.op === 'neq') return v !== f.val;
           return false;
         });
-        if (matches) rows.splice(i, 1);
+        if (matches) {
+          deletedIds.push((rows[i] as Row)['id'] ?? null);
+          rows.splice(i, 1);
+        }
       }
-      return { data: [], error: null };
+      return { data: deletedIds, error: null };
     }
     if (this.op === 'update') {
       const err = this.state.updateErrors[this.table] ?? null;
@@ -341,6 +353,25 @@ class FakeBuilder {
       // code awaits). A lost race returns no rows.
       if (this.table === 'subscription_payments' && this.state.paymentRow) {
         const row = this.state.paymentRow;
+        const patch = this.state.updated
+          .filter((u) => u.table === 'subscription_payments')
+          .at(-1)?.patch;
+        // A concurrent winner claimed (and linked) between our load
+        // and our claim: our claim matches nothing, and the poll
+        // finds the winner already linked.
+        if (this.state.loseClaimOnce && patch && 'status' in patch && !('period_id' in patch)) {
+          this.state.loseClaimOnce = false;
+          Object.assign(row, { status: 'approved', period_id: 'period-winner' });
+          return { data: [], error: null };
+        }
+        // A concurrent winner linked between our create and our
+        // link: our link matches nothing, and the orphan path finds
+        // the winner already linked.
+        if (this.state.loseLinkOnce && patch && 'period_id' in patch) {
+          this.state.loseLinkOnce = false;
+          Object.assign(row, { period_id: 'period-winner' });
+          return { data: [], error: null };
+        }
         const matches = this.filters.every((f) => {
           const v = row[f.col];
           if (f.op === 'eq') return v === f.val;
@@ -348,9 +379,6 @@ class FakeBuilder {
           return true;
         });
         if (matches) {
-          const patch = this.state.updated
-            .filter((u) => u.table === 'subscription_payments')
-            .at(-1)?.patch;
           if (patch) Object.assign(row, patch);
           return { data: [{ id: row['id'] }], error: null };
         }
@@ -1298,5 +1326,101 @@ describe('pricePurchase', () => {
       oldMonthlyTotalPkr: 700,
       newMonthlyTotalPkr: 1400,
     });
+  });
+});
+
+describe('approvePayment races (audit fix 2026-11-01, fix 14)', () => {
+  const now = new Date('2026-06-01T00:00:00.000Z');
+
+  it('returns the winner period when the claim loses, creating no period', async () => {
+    const state = baseState({
+      paymentRow: paymentRow(),
+      periodById: periodRow({ id: 'period-winner' }),
+      loseClaimOnce: true,
+    });
+    const result = await approvePayment(fakeClient(state), 'payment-1', 'admin-1', now);
+    expect(result.period.id).toBe('period-winner');
+    expect(result.payment.status).toBe('approved');
+    expect(state.inserted.filter((i) => i.table === 'subscription_periods')).toHaveLength(0);
+  });
+
+  it('supersedes the orphan and returns the winner when the link loses', async () => {
+    const state = baseState({
+      paymentRow: paymentRow(),
+      createdPeriodRow: periodRow({ id: 'period-new' }),
+      periodById: periodRow({ id: 'period-winner' }),
+      loseLinkOnce: true,
+    });
+    const result = await approvePayment(fakeClient(state), 'payment-1', 'admin-1', now);
+    expect(result.period.id).toBe('period-winner');
+    // The orphan period created by the loser is superseded at once,
+    // so it can never become the live period.
+    const supersede = state.updated.find(
+      (u) => u.table === 'subscription_periods' && u.patch['superseded_at'] != null
+    );
+    expect(supersede).toBeDefined();
+  });
+});
+
+describe('releaseUsageForFeature (audit fix 2026-11-01, fix 2)', () => {
+  it('deletes only the row matching the removed feature', async () => {
+    const state = baseState({
+      usageRows: [
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-a', feature: 'destination-queue' },
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-a', feature: 'auto-download-upload' },
+      ],
+    });
+    const removed = await releaseUsageForFeature(
+      fakeClient(state),
+      'user-1',
+      'facebook',
+      'page-a',
+      'auto-download-upload'
+    );
+    expect(removed).toBe(true);
+    expect(state.usageRows).toHaveLength(1);
+    expect(state.usageRows[0]).toMatchObject({ feature: 'destination-queue' });
+  });
+
+  it('leaves rows alone when the feature does not match', async () => {
+    const state = baseState({
+      usageRows: [
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-a', feature: 'destination-queue' },
+      ],
+    });
+    const removed = await releaseUsageForFeature(
+      fakeClient(state),
+      'user-1',
+      'facebook',
+      'page-a',
+      'auto-download-upload'
+    );
+    expect(removed).toBe(false);
+    expect(state.usageRows).toHaveLength(1);
+  });
+});
+
+describe('assertFeatureAddWithinCap Publish-Now exclusion (audit fix 2026-11-01, fix 23)', () => {
+  it('does not count a Publish-Now-only destination as registered', async () => {
+    const state = baseState({
+      periods: [periodRow({ facebook_count: 1 })],
+      usageRows: [
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-a', feature: 'publish-now' },
+      ],
+    });
+    const result = await assertFeatureAddWithinCap(fakeClient(state), 'user-1', 'facebook', ['page-a'], NOW);
+    expect(result).toEqual({ allowed: 1, used: 0, newCount: 1 });
+  });
+
+  it('still enforces the cap for capped-feature usage', async () => {
+    const state = baseState({
+      periods: [periodRow({ facebook_count: 1 })],
+      usageRows: [
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-b', feature: 'destination-queue' },
+      ],
+    });
+    await expect(
+      assertFeatureAddWithinCap(fakeClient(state), 'user-1', 'facebook', ['page-c'], NOW)
+    ).rejects.toMatchObject({ code: 'SUBSCRIPTION_CAP_REACHED' });
   });
 });

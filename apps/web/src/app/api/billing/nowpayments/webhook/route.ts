@@ -156,6 +156,34 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       await releaseDedupe();
       return NextResponse.json({ received: true, unknownPayment: true });
     }
+    // Refunded runs BEFORE the already-activated early return below:
+    // revoking the period needs the period id, and a refunded event
+    // for an activated payment must not be answered as a no-op
+    // already-activated. (A refunded event for a payment without a
+    // period still records the admin issue.)
+    if (status === 'refunded') {
+      if (payment.periodId) {
+        await client
+          .from('subscription_periods')
+          .update({ superseded_at: new Date().toISOString() })
+          .eq('id', payment.periodId)
+          .is('superseded_at', null);
+      }
+      logServerError('[billing] webhook refunded payment', null, {
+        source: 'billing',
+        providerPaymentId,
+        paymentId: payment.id,
+      });
+      await recordWebhookIssue(client, {
+        providerPaymentId,
+        paymentId: payment.id,
+        reason: 'refunded',
+        detail: payment.periodId
+          ? 'The gateway refunded this deposit, so the paid period was revoked. Check the payment before acting further.'
+          : 'The gateway refunded this deposit. No period had been activated.',
+      });
+      return NextResponse.json({ received: true, refunded: true });
+    }
     if (payment.periodId) {
       // Already activated: a redelivery still owes the seller
       // commission if the first attempt recorded the period but
@@ -233,33 +261,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         detail: 'Partial payment received. Waiting for an admin decision: approve it or expire it.',
       });
       return NextResponse.json({ received: true, heldForAdmin: true });
-    }
-
-    if (status === 'refunded') {
-      // The gateway refunded the deposit: revoke the period when
-      // one was activated, and always alert the admin. The payment
-      // row keeps its status — the refund itself is outside the app.
-      if (payment.periodId) {
-        await client
-          .from('subscription_periods')
-          .update({ superseded_at: new Date().toISOString() })
-          .eq('id', payment.periodId)
-          .is('superseded_at', null);
-      }
-      logServerError('[billing] webhook refunded payment', null, {
-        source: 'billing',
-        providerPaymentId,
-        paymentId: payment.id,
-      });
-      await recordWebhookIssue(client, {
-        providerPaymentId,
-        paymentId: payment.id,
-        reason: 'refunded',
-        detail: payment.periodId
-          ? 'The gateway refunded this deposit, so the paid period was revoked. Check the payment before acting further.'
-          : 'The gateway refunded this deposit. No period had been activated.',
-      });
-      return NextResponse.json({ received: true, refunded: true });
     }
 
     if (status === 'finished') {

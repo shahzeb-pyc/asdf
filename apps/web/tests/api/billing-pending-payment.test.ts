@@ -151,11 +151,19 @@ class FakeBuilder {
   }
 }
 
+const idempotencyOverride = vi.hoisted(() => ({
+  lookup: null as null | ((...args: unknown[]) => unknown),
+}));
+
 vi.mock('@/lib/billing/route-helpers', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/billing/route-helpers')>();
   return {
     ...actual,
     getBillingAdminClient: () => fakeClient,
+    lookupBillingIdempotency: (...args: unknown[]) =>
+      idempotencyOverride.lookup
+        ? idempotencyOverride.lookup(...args)
+        : (actual.lookupBillingIdempotency as (...args: unknown[]) => unknown)(...args),
   };
 });
 
@@ -306,5 +314,40 @@ describe('one pending payment per user', () => {
     const res = await postBank(req, ctx);
     expect(res.status).toBe(409);
     expect(db.payments).toHaveLength(1);
+  });
+});
+
+describe('billing submission idempotency (audit fix 2026-11-01, fix 9)', () => {
+  beforeEach(() => {
+    process.env.NEXT_PUBLIC_APP_URL = 'https://app.example.com';
+    db = { payments: [], insertViolation: false, putObjectCalls: 0, nowPaymentsCalls: 0 };
+    idempotencyOverride.lookup = null;
+  });
+
+  it('an invalid Idempotency-Key is rejected with 400 before any payment is created', async () => {
+    idempotencyOverride.lookup = () => ({ invalid: true });
+    const req = bankRequest();
+    req.headers.set('Idempotency-Key', 'not-a-uuid');
+    const res = await postBank(req, ctx);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe('INVALID_REQUEST');
+    expect(db.payments).toHaveLength(0);
+    expect(db.putObjectCalls).toBe(0);
+  });
+
+  it('a replayed key returns the stored response and creates no second payment', async () => {
+    idempotencyOverride.lookup = () => ({
+      key: '11111111-1111-4111-a111-111111111111',
+      replay: { status: 201, body: { id: 'payment-replayed' } },
+    });
+    const req = bankRequest();
+    req.headers.set('Idempotency-Key', '11111111-1111-4111-a111-111111111111');
+    const res = await postBank(req, ctx);
+    expect(res.status).toBe(201);
+    expect(res.headers.get('Idempotency-Replayed')).toBe('true');
+    const body = await res.json();
+    expect(body.id).toBe('payment-replayed');
+    expect(db.payments).toHaveLength(0);
   });
 });

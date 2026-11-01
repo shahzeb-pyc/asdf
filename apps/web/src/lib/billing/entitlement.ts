@@ -197,7 +197,12 @@ export function paymentFromRow(row: UnknownRow): SubscriptionPaymentRow | null {
     nowpaymentsPaymentId: stringField(row, 'nowpayments_payment_id'),
     nowpaymentsPayAddress: stringField(row, 'nowpayments_pay_address'),
     nowpaymentsPayAmount: typeof payAmount === 'number' ? payAmount : null,
-    nowpaymentsNetwork: network === 'trc20' || network === 'bep20' ? network : null,
+    nowpaymentsNetwork:
+      typeof network === 'string' && network.toLowerCase() === 'trc20'
+        ? 'trc20'
+        : typeof network === 'string' && network.toLowerCase() === 'bep20'
+          ? 'bep20'
+          : null,
     nowpaymentsActualPaid: typeof actualPaid === 'number' ? actualPaid : null,
     nowpaymentsActualCurrency: typeof actualCurrency === 'string' ? actualCurrency : null,
     couponCode: stringField(row, 'coupon_code'),
