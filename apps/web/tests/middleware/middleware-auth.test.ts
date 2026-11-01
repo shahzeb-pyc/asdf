@@ -202,14 +202,18 @@ describe('Next.js Edge Middleware Session Authentication & Tenant Isolation (Use
     process.env.NEXT_PUBLIC_ROOT_DOMAIN = 'localhost:3000';
   });
 
-  it('breaks redirect ping-pong loop and clears stale cookies when user is bounced to login from their own workspace', async () => {
+  it('redirects a verified session bounced to login from its own workspace back home instead of clearing the session (login-cookie-loop fix)', async () => {
+    // The old behaviour served the login page and set fbup_session
+    // clearing cookies here, destroying a VALID session — which turned
+    // any bounce into an infinite login ↔ home loop. A verified
+    // session must never be cleared by this branch: it goes home.
     process.env.NEXT_PUBLIC_ROOT_DOMAIN = 'vinsmokemedia.online';
     const req = buildAppLoginReq('https://acme.vinsmokemedia.online/');
     const res = await middleware(req);
-    expect(res.status).toBe(200);
-    const setCookie = res.headers.get('set-cookie');
-    expect(setCookie).toContain('fbup_session=');
-    expect(setCookie).toContain('Max-Age=0');
+    expect(res.status).toBe(307);
+    expect(res.headers.get('location')).toBe('https://acme.vinsmokemedia.online/');
+    expect(res.headers.get('set-cookie') ?? '').not.toContain('Max-Age=0');
+    expect(res.cookies.get('fbup_session')).toBeUndefined();
     process.env.NEXT_PUBLIC_ROOT_DOMAIN = 'localhost:3000';
   });
 

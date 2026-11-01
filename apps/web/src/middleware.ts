@@ -342,26 +342,21 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
         );
 
         if (isBouncedFromWorkspace) {
-          const bouncedHeaders = stripUserHeaders(request);
-          setCspRequestHeaders(bouncedHeaders, nonce);
-          const response = NextResponse.next({
-            request: {
-              headers: bouncedHeaders,
-            },
-          });
-          response.cookies.set('fbup_session', '', {
-            path: '/',
-            maxAge: 0,
-          });
-          const cleanRoot = rootDomain.toLowerCase().split(':')[0];
-          if (cleanRoot && !cleanRoot.includes('localhost') && !cleanRoot.includes('127.0.0.1')) {
-            response.cookies.set('fbup_session', '', {
-              path: '/',
-              domain: `.${cleanRoot}`,
-              maxAge: 0,
-            });
-          }
-          return applyCspHeaders(response, nonce);
+          // A VERIFIED session must never be destroyed here. The old
+          // code served the login page and set clearing cookies for
+          // fbup_session (host-only and .<root>), which turned any
+          // bounce back to /login into an infinite login ↔ home loop:
+          // the tenant sent the user to login with a returnUrl, login
+          // destroyed the session, and the next request had no session
+          // at all. A bounced user with a valid session belongs on
+          // their tenant home, exactly like any other authenticated
+          // entry-route visit. Genuinely invalid sessions never reach
+          // this branch (resolveSession returns null), so they still
+          // land on login untouched.
+          return applyCspHeaders(
+            buildAuthenticatedWorkspaceRedirect(request, session, host, rootDomain),
+            nonce
+          );
         }
 
         return applyCspHeaders(
