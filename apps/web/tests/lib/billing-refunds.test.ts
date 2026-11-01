@@ -112,6 +112,7 @@ interface FakeState {
   payments: Row[];
   requests: Row[];
   users: Row[];
+  commissions: Row[];
   insertError: { code?: string } | null;
   selectErrors: Partial<Record<string, unknown>>;
   /** One entry consumed per subscription_periods select, in call order
@@ -133,6 +134,7 @@ function baseState(overrides: Partial<FakeState> = {}): FakeState {
     payments: [paymentRow()],
     requests: [],
     users: [{ id: 'user-1', email: 'user@example.com' }],
+    commissions: [],
     insertError: null,
     selectErrors: {},
     periodSelectErrors: [],
@@ -233,6 +235,7 @@ class FakeBuilder {
     if (this.table === 'subscription_payments') return this.state.payments;
     if (this.table === 'refund_requests') return this.state.requests;
     if (this.table === 'users') return this.state.users;
+    if (this.table === 'seller_commissions') return this.state.commissions;
     return [];
   }
 
@@ -654,6 +657,151 @@ describe('refund request lifecycle', () => {
     await rejectRefund(client, created.id, 'admin-1', NOW);
     const period = await entitlementActivePeriod(client, 'user-1', NOW);
     expect(period).not.toBeNull();
+  });
+});
+
+function commissionRow(overrides: Row = {}): Row {
+  return {
+    id: 'commission-1',
+    seller_id: 'seller-1',
+    user_id: 'user-1',
+    payment_id: 'payment-1',
+    period_id: 'period-1',
+    period_starts_at: START.toISOString(),
+    rate_snapshot: 20,
+    scope_snapshot: 'every',
+    amount_pkr: 840,
+    status: 'pending',
+    payout_request_id: null,
+    created_at: START.toISOString(),
+    ...overrides,
+  };
+}
+
+describe('refund approval adjusts seller commissions', () => {
+  it('cancels the pending commission on a full-refund approval', async () => {
+    const state = baseState({ commissions: [commissionRow()] });
+    const client = fakeClient(state);
+    const created = await requestRefund(
+      client,
+      'user-1',
+      {
+        paymentId: 'payment-1',
+        destination: { type: 'mobile', value: '03001234567', network: null },
+      },
+      START
+    );
+    const approved = await approveRefund(client, created.id, 'admin-1', START);
+    expect(approved.refundAmount).toBe(4200);
+    expect(state.commissions).toHaveLength(1);
+    expect(state.commissions[0]).toMatchObject({ status: 'cancelled', amount_pkr: 840 });
+  });
+
+  it('reduces the pending commission to rate × kept on a partial-refund approval', async () => {
+    const state = baseState({ commissions: [commissionRow()] });
+    const client = fakeClient(state);
+    const created = await requestRefund(
+      client,
+      'user-1',
+      {
+        paymentId: 'payment-1',
+        destination: { type: 'mobile', value: '03001234567', network: null },
+      },
+      NOW
+    );
+    const approved = await approveRefund(client, created.id, 'admin-1', NOW);
+    expect(approved.refundAmount).toBe(3780);
+    // Kept 4200 − 3780 = 420; 20% of 420 = 84. Status stays pending.
+    expect(state.commissions[0]).toMatchObject({ status: 'pending', amount_pkr: 84 });
+  });
+
+  it('reduces a crypto commission by the kept fraction of the PKR total', async () => {
+    const state = baseState({
+      payments: [
+        paymentRow({
+          method: 'nowpayments',
+          bank_method: null,
+          amount_pkr: 28000,
+          nowpayments_pay_amount: 100,
+          nowpayments_network: 'trc20',
+        }),
+      ],
+      commissions: [commissionRow({ rate_snapshot: 10, amount_pkr: 2800 })],
+    });
+    const client = fakeClient(state);
+    const created = await requestRefund(
+      client,
+      'user-1',
+      {
+        paymentId: 'payment-1',
+        destination: { type: 'usdt', value: 'TXyzAddress', network: 'trc20' },
+      },
+      NOW
+    );
+    const approved = await approveRefund(client, created.id, 'admin-1', NOW);
+    expect(approved.currency).toBe('USDT');
+    expect(approved.refundAmount).toBe(90);
+    // Kept fraction (100 − 90) / 100 = 10% of the 28000 PKR total =
+    // 2800 kept; 10% of 2800 = 280.
+    expect(state.commissions[0]).toMatchObject({ status: 'pending', amount_pkr: 280 });
+  });
+
+  it('leaves the commission untouched on rejection, payable on schedule', async () => {
+    const state = baseState({ commissions: [commissionRow()] });
+    const client = fakeClient(state);
+    const created = await requestRefund(
+      client,
+      'user-1',
+      {
+        paymentId: 'payment-1',
+        destination: { type: 'mobile', value: '03001234567', network: null },
+      },
+      NOW
+    );
+    await rejectRefund(client, created.id, 'admin-1', NOW);
+    expect(state.commissions[0]).toMatchObject({ status: 'pending', amount_pkr: 840 });
+  });
+
+  it('approves cleanly when the payment has no commission', async () => {
+    const state = baseState();
+    const client = fakeClient(state);
+    const created = await requestRefund(
+      client,
+      'user-1',
+      {
+        paymentId: 'payment-1',
+        destination: { type: 'mobile', value: '03001234567', network: null },
+      },
+      NOW
+    );
+    const approved = await approveRefund(client, created.id, 'admin-1', NOW);
+    expect(approved.status).toBe('approved');
+    expect(approved.refundAmount).toBe(3780);
+  });
+
+  it('blocks the approval — writing nothing — when the commission cannot be adjusted', async () => {
+    const state = baseState({
+      commissions: [commissionRow()],
+      selectErrors: { seller_commissions: { code: 'XX' } },
+    });
+    const client = fakeClient(state);
+    const created = await requestRefund(
+      client,
+      'user-1',
+      {
+        paymentId: 'payment-1',
+        destination: { type: 'mobile', value: '03001234567', network: null },
+      },
+      NOW
+    );
+    await expect(approveRefund(client, created.id, 'admin-1', NOW)).rejects.toMatchObject({
+      code: 'REFUND_UNAVAILABLE',
+    });
+    // The hook runs before any refund write, so the request is still
+    // undecided and the period untouched — the admin can retry.
+    expect(state.requests[0]).toMatchObject({ status: 'requested' });
+    expect(state.periods[0]).toMatchObject({ superseded_at: null });
+    expect(state.commissions[0]).toMatchObject({ status: 'pending', amount_pkr: 840 });
   });
 });
 

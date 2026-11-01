@@ -20,6 +20,7 @@ import {
   type SubscriptionPaymentRow,
   type SubscriptionPeriodRow,
 } from './entitlement';
+import { applyRefundOutcomeToCommission, SellerError } from './sellers';
 
 /**
  * Refund requests, server-side only.
@@ -433,6 +434,33 @@ async function loadPeriod(
 }
 
 /**
+ * What the seller keeps commission on, in PKR (commissions are PKR
+ * always). Bank refunds are PKR already, so kept is exact. Crypto
+ * refunds are USDT, so kept is the kept fraction of the payment
+ * applied to the payment's PKR total — the same PKR base the
+ * purchase-time commission was computed from, so a full crypto
+ * refund keeps exactly 0 and a partial refund keeps the same
+ * fraction in PKR as in USDT.
+ */
+async function keptPkrForRefund(
+  client: SupabaseClient,
+  request: RefundRequest,
+  refundAmount: number
+): Promise<number> {
+  if (request.currency === 'PKR') return request.amountPaid - refundAmount;
+  const { data, error } = await client
+    .from('subscription_payments')
+    .select('amount_pkr')
+    .eq('id', request.paymentId)
+    .maybeSingle();
+  if (error) failClosed(error, 'refund commission payment lookup failed');
+  const row = asRow(data);
+  const amountPkr = row ? numberField(row, 'amount_pkr') : 0;
+  if (request.amountPaid <= 0) return 0;
+  return Math.round((amountPkr * (request.amountPaid - refundAmount)) / request.amountPaid);
+}
+
+/**
  * Approve: lock the final amount from the days used NOW, then drop the
  * plan to Free immediately by cancelling the period. If the period was
  * already superseded (the user upgraded after requesting), the cancel
@@ -478,6 +506,32 @@ export async function approveRefund(
       'REFUND_ALREADY_DECIDED',
       'That refund request has already been decided.'
     );
+  }
+
+  // Seller commission follow-through (sellers follow-up, 2026-11-01):
+  // approving lifts the payable hold (unresolved = status
+  // 'requested' only), so the commission must be adjusted here, or
+  // it would become payable at 10 days on refunded money. The
+  // adjustment runs BEFORE any refund write: if it fails, nothing
+  // has changed and the admin can retry cleanly, and a concurrent
+  // approve that wins the race re-runs the same adjustment
+  // idempotently (cancel is sticky; reduce recomputes the same
+  // value). Rejection needs no call: the hold lifts on its own and
+  // the commission becomes payable on schedule, exactly per rule.
+  const keptPkr = await keptPkrForRefund(client, request, refundAmount);
+  try {
+    await applyRefundOutcomeToCommission(client, request.paymentId, keptPkr);
+  } catch (err) {
+    if (err instanceof SellerError) {
+      // Already logged loudly by the sellers module; translate to
+      // the billing error type so the admin route reports a
+      // retryable failure instead of an untyped 500.
+      throw new SubscriptionGateError(
+        'REFUND_UNAVAILABLE',
+        'The refund could not be approved right now because the seller commission could not be adjusted. Please try again.'
+      );
+    }
+    throw err;
   }
 
   const { error: cancelError } = await client
