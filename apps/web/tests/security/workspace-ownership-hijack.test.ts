@@ -31,6 +31,23 @@ describe('ISSUE-01: Workspace Ownership Hijack Prevention', () => {
   it('never calls workspaces.upsert with onConflict: subdomain during signUpTenantUser', async () => {
     const upsertSpy = vi.fn().mockResolvedValue({ data: null, error: null });
     const insertSpy = vi.fn().mockResolvedValue({ data: { id: '00000000-0000-4000-a000-000000000099' }, error: null });
+    const rpcSpy = vi.fn((name: string) => {
+      if (name === 'create_signup_profile') {
+        return Promise.resolve({
+          data: [
+            {
+              id: VALID_UUID,
+              email: 'attacker@gmail.com',
+              name: 'Attacker',
+              phone: '+15555550199',
+              subdomain: 'attacker',
+            },
+          ],
+          error: null,
+        });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
 
     const mockSupabase = {
       auth: {
@@ -42,28 +59,13 @@ describe('ISSUE-01: Workspace Ownership Hijack Prevention', () => {
           getUserById: vi.fn().mockResolvedValue({ data: null, error: { message: 'Not found' } }),
         },
       },
+      rpc: rpcSpy,
       from: vi.fn((table: string) => {
         if (table === 'users') {
           return {
             select: vi.fn(() => ({
               or: vi.fn(() => ({
                 maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-              })),
-            })),
-            upsert: vi.fn(() => ({
-              select: vi.fn(() => ({
-                single: vi.fn().mockResolvedValue({
-                  data: { id: VALID_UUID, email: 'attacker@gmail.com', name: 'Attacker' },
-                  error: null,
-                }),
-              })),
-            })),
-            insert: vi.fn(() => ({
-              select: vi.fn(() => ({
-                single: vi.fn().mockResolvedValue({
-                  data: { id: VALID_UUID, email: 'attacker@gmail.com', name: 'Attacker' },
-                  error: null,
-                }),
               })),
             })),
           };
@@ -99,27 +101,67 @@ describe('ISSUE-01: Workspace Ownership Hijack Prevention', () => {
 
     authModule._setMockSupabaseClient(mockSupabase as any);
 
-    await authModule.signUpTenantUser({
+    const res = await authModule.signUpTenantUser({
       name: 'Attacker',
       email: 'attacker@gmail.com',
       phone: '+15555550199',
       password: 'SecurePassword123!',
     });
 
-    // CRITICAL: workspaces.upsert MUST NOT be called with onConflict: 'subdomain'
+    // CRITICAL: workspaces.upsert MUST NOT be called with onConflict: 'subdomain'.
+    // Since fix 2026-11-01, signup creates the profile + workspace inside the
+    // validated server-side RPC (which inserts with an explicit owner_id and
+    // only retries the subdomain on unique violation), so no PostgREST
+    // workspace write happens at all — the RPC, not a client-side insert,
+    // is what must be called, with the signing-up user's own id.
     for (const call of upsertSpy.mock.calls) {
       if (call[1]?.onConflict === 'subdomain') {
         expect.fail('Detected illegal workspaces.upsert with onConflict: subdomain!');
       }
     }
-
-    // Explicit insert must be called instead
-    expect(insertSpy).toHaveBeenCalled();
+    expect(insertSpy).not.toHaveBeenCalled();
+    expect(rpcSpy).toHaveBeenCalledWith(
+      'create_signup_profile',
+      expect.objectContaining({ p_user_id: VALID_UUID, p_subdomain: 'attacker' })
+    );
+    expect(res.user.subdomain).toBe('attacker');
   });
 
-  it('handles PostgreSQL 23505 duplicate key on subdomain during registration by generating unique candidate without hijacking', async () => {
-    let insertAttempts = 0;
-    const insertedSubdomains: string[] = [];
+  it('uses a collision-safe subdomain returned by the signup RPC during registration without hijacking', async () => {
+    // Since fix 2026-11-01, the PostgreSQL 23505 subdomain-collision
+    // retry lives inside create_signup_profile (SQL), not in JS: the
+    // function inserts the workspace with the requested subdomain and
+    // retries with a random suffix on unique violation, never touching
+    // another owner's row. This test locks the JS boundary of that
+    // contract: signup passes the derived subdomain to the RPC and
+    // uses the RPC-returned (collision-safe) subdomain verbatim.
+    // The SQL-level retry itself is covered by the migration's
+    // Postgres verification (collision → suffixed subdomain, victim
+    // workspace untouched).
+    const upsertSpy = vi.fn((payload: any, options: any) => {
+      if (options?.onConflict === 'subdomain') {
+        expect.fail('workspaces.upsert with onConflict: subdomain should never be called!');
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+    const rpcSpy = vi.fn((name: string) => {
+      if (name === 'create_signup_profile') {
+        return Promise.resolve({
+          data: [
+            {
+              id: VALID_UUID,
+              email: 'attacker@gmail.com',
+              name: 'Attacker',
+              phone: '+15555550199',
+              // As the SQL retry would produce after a collision on 'attacker'.
+              subdomain: 'attacker-9f3a1c',
+            },
+          ],
+          error: null,
+        });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
 
     const mockSupabase = {
       auth: {
@@ -128,28 +170,13 @@ describe('ISSUE-01: Workspace Ownership Hijack Prevention', () => {
           error: null,
         }),
       },
+      rpc: rpcSpy,
       from: vi.fn((table: string) => {
         if (table === 'users') {
           return {
             select: vi.fn(() => ({
               or: vi.fn(() => ({
                 maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-              })),
-            })),
-            insert: vi.fn(() => ({
-              select: vi.fn(() => ({
-                single: vi.fn().mockResolvedValue({
-                  data: { id: VALID_UUID, email: 'attacker@gmail.com', name: 'Attacker' },
-                  error: null,
-                }),
-              })),
-            })),
-            upsert: vi.fn(() => ({
-              select: vi.fn(() => ({
-                single: vi.fn().mockResolvedValue({
-                  data: { id: VALID_UUID, email: 'attacker@gmail.com', name: 'Attacker' },
-                  error: null,
-                }),
               })),
             })),
           };
@@ -170,24 +197,7 @@ describe('ISSUE-01: Workspace Ownership Hijack Prevention', () => {
                 return { maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) };
               }),
             })),
-            upsert: vi.fn((payload: any, options: any) => {
-              if (options?.onConflict === 'subdomain') {
-                expect.fail('workspaces.upsert with onConflict: subdomain should never be called!');
-              }
-              return Promise.resolve({ data: null, error: null });
-            }),
-            insert: vi.fn(async (payload: any) => {
-              insertAttempts++;
-              insertedSubdomains.push(payload.subdomain);
-              if (insertAttempts === 1) {
-                // First attempt collides with existing victim subdomain
-                return {
-                  data: null,
-                  error: { code: '23505', message: 'duplicate key value violates unique constraint "workspaces_subdomain_key"' },
-                };
-              }
-              return { data: { id: '00000000-0000-4000-a000-000000000099' }, error: null };
-            }),
+            upsert: upsertSpy,
           };
         }
         return {};
@@ -203,10 +213,20 @@ describe('ISSUE-01: Workspace Ownership Hijack Prevention', () => {
       password: 'SecurePassword123!',
     });
 
-    // Should have retried with a safe non-colliding subdomain
-    expect(insertAttempts).toBeGreaterThanOrEqual(2);
-    expect(res.user.subdomain).not.toBe(insertedSubdomains[0]);
+    // The RPC was asked for the derived subdomain and returned a safe
+    // non-colliding candidate; signup must use it verbatim.
+    expect(rpcSpy).toHaveBeenCalledWith(
+      'create_signup_profile',
+      expect.objectContaining({ p_user_id: VALID_UUID, p_subdomain: 'attacker' })
+    );
+    expect(res.user.subdomain).toBe('attacker-9f3a1c');
+    expect(res.user.subdomain).not.toBe('attacker');
     expect(res.user.subdomain).toContain('attacker');
+    for (const call of upsertSpy.mock.calls) {
+      if (call[1]?.onConflict === 'subdomain') {
+        expect.fail('workspaces.upsert with onConflict: subdomain should never be called!');
+      }
+    }
   });
 
   it('never calls workspaces.upsert with onConflict: subdomain during resetUserPasswordWithOtp', async () => {

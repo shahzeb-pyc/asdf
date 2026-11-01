@@ -1,7 +1,13 @@
 /**
  * @file silent-postgrest-failures.test.ts
  * @description Security regression tests for ISSUE-07: Silent PostgREST Insert/Upsert Failures During Signup & Verification
- * Verifies that PostgREST errors during user upsert/insert and status activation throw errors instead of returning fake success.
+ * Verifies that failures during profile creation/update and signup verification throw errors instead of returning fake success.
+ * Since fix 2026-11-01, profile creation/update go through the validated server-side RPCs
+ * (create_signup_profile / update_unconfirmed_signup_profile), not PostgREST writes, so the
+ * failure injection below targets the RPC calls; the fail-loud invariant is unchanged.
+ * Verification no longer issues a status UPDATE (creation already sets 'active'), so its
+ * tests lock the new fail-loud points instead: a suspended account is rejected, and a
+ * verification with no user record anywhere is rejected.
  */
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
@@ -28,6 +34,16 @@ describe('ISSUE-07: Silent PostgREST Insert/Upsert Failures During Signup & Veri
             getUserById: vi.fn().mockResolvedValue({ data: null, error: { message: 'Not found' } }),
           },
         },
+        // Profile creation now goes through the server-side RPC, not a PostgREST upsert.
+        rpc: vi.fn((name: string) => {
+          if (name === 'create_signup_profile') {
+            return Promise.resolve({
+              data: null,
+              error: { message: 'relation "users" does not exist', code: '42P01' },
+            });
+          }
+          return Promise.resolve({ data: null, error: null });
+        }),
         from: vi.fn((table: string) => {
           if (table === 'users') {
             return {
@@ -36,24 +52,6 @@ describe('ISSUE-07: Silent PostgREST Insert/Upsert Failures During Signup & Veri
                   maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
                 })),
               })),
-              upsert: vi.fn(() => ({
-                select: vi.fn(() => ({
-                  single: vi.fn().mockResolvedValue({
-                    data: null,
-                    error: { message: 'relation "users" does not exist', code: '42P01' },
-                  }),
-                })),
-              })),
-            };
-          }
-          if (table === 'workspaces') {
-            return {
-              select: vi.fn(() => ({
-                eq: vi.fn(() => ({
-                  maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-                })),
-              })),
-              insert: vi.fn().mockResolvedValue({ data: { id: 'ws-1' }, error: null }),
             };
           }
           return {};
@@ -83,6 +81,16 @@ describe('ISSUE-07: Silent PostgREST Insert/Upsert Failures During Signup & Veri
           },
           resend: vi.fn().mockResolvedValue({ data: null, error: null }),
         },
+        // Detail update now goes through the server-side RPC, not a PostgREST update.
+        rpc: vi.fn((name: string) => {
+          if (name === 'update_unconfirmed_signup_profile') {
+            return Promise.resolve({
+              data: null,
+              error: { message: 'violates foreign key constraint', code: '23503' },
+            });
+          }
+          return Promise.resolve({ data: null, error: null });
+        }),
         from: vi.fn((table: string) => {
           if (table === 'users') {
             return {
@@ -93,12 +101,6 @@ describe('ISSUE-07: Silent PostgREST Insert/Upsert Failures During Signup & Veri
                     error: null,
                   }),
                 })),
-              })),
-              update: vi.fn(() => ({
-                eq: vi.fn().mockResolvedValue({
-                  data: null,
-                  error: { message: 'violates foreign key constraint', code: '23503' },
-                }),
               })),
             };
           }
@@ -128,6 +130,15 @@ describe('ISSUE-07: Silent PostgREST Insert/Upsert Failures During Signup & Veri
           },
           resend: vi.fn().mockResolvedValue({ data: null, error: null }),
         },
+        rpc: vi.fn((name: string) => {
+          if (name === 'update_unconfirmed_signup_profile') {
+            return Promise.resolve({
+              data: null,
+              error: { message: '', code: '23503' },
+            });
+          }
+          return Promise.resolve({ data: null, error: null });
+        }),
         from: vi.fn((table: string) => {
           if (table === 'users') {
             return {
@@ -138,12 +149,6 @@ describe('ISSUE-07: Silent PostgREST Insert/Upsert Failures During Signup & Veri
                     error: null,
                   }),
                 })),
-              })),
-              update: vi.fn(() => ({
-                eq: vi.fn().mockResolvedValue({
-                  data: null,
-                  error: { message: '', code: '23503' },
-                }),
               })),
             };
           }
@@ -173,20 +178,21 @@ describe('ISSUE-07: Silent PostgREST Insert/Upsert Failures During Signup & Veri
             getUserById: vi.fn().mockResolvedValue({ data: null, error: { message: 'Not found' } }),
           },
         },
+        rpc: vi.fn((name: string) => {
+          if (name === 'create_signup_profile') {
+            return Promise.resolve({
+              data: null,
+              error: { message: '', code: '42P01' },
+            });
+          }
+          return Promise.resolve({ data: null, error: null });
+        }),
         from: vi.fn((table: string) => {
           if (table === 'users') {
             return {
               select: vi.fn(() => ({
                 or: vi.fn(() => ({
                   maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-                })),
-              })),
-              upsert: vi.fn(() => ({
-                select: vi.fn(() => ({
-                  single: vi.fn().mockResolvedValue({
-                    data: null,
-                    error: { message: '', code: '42P01' },
-                  }),
                 })),
               })),
             };
@@ -254,6 +260,12 @@ describe('ISSUE-07: Silent PostgREST Insert/Upsert Failures During Signup & Veri
           },
           resend: vi.fn().mockResolvedValue({ data: null, error: null }),
         },
+        rpc: vi.fn((name: string) => {
+          if (name === 'update_unconfirmed_signup_profile') {
+            return Promise.resolve({ data: null, error: null });
+          }
+          return Promise.resolve({ data: null, error: null });
+        }),
         from: vi.fn((table: string) => {
           if (table === 'users') {
             return {
@@ -264,12 +276,6 @@ describe('ISSUE-07: Silent PostgREST Insert/Upsert Failures During Signup & Veri
                     error: null,
                   }),
                 })),
-              })),
-              update: vi.fn(() => ({
-                eq: vi.fn().mockResolvedValue({
-                  data: { id: VALID_UUID },
-                  error: null,
-                }),
               })),
             };
           }
@@ -302,6 +308,15 @@ describe('ISSUE-07: Silent PostgREST Insert/Upsert Failures During Signup & Veri
             error: null,
           }),
         },
+        rpc: vi.fn((name: string) => {
+          if (name === 'create_signup_profile') {
+            return Promise.resolve({
+              data: null,
+              error: { message: 'null value in column "id" violates not-null constraint', code: '23502' },
+            });
+          }
+          return Promise.resolve({ data: null, error: null });
+        }),
         from: vi.fn((table: string) => {
           if (table === 'users') {
             return {
@@ -310,37 +325,6 @@ describe('ISSUE-07: Silent PostgREST Insert/Upsert Failures During Signup & Veri
                   maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
                 })),
               })),
-              insert: vi.fn(() => ({
-                select: vi.fn(() => ({
-                  single: vi.fn().mockResolvedValue({
-                    data: null,
-                    error: { message: 'null value in column "id" violates not-null constraint', code: '23502' },
-                  }),
-                })),
-              })),
-              upsert: vi.fn(() => ({
-                select: vi.fn(() => ({
-                  single: vi.fn().mockResolvedValue({
-                    data: null,
-                    error: { message: 'null value in column "id" violates not-null constraint', code: '23502' },
-                  }),
-                })),
-              })),
-            };
-          }
-          if (table === 'workspaces') {
-            return {
-              select: vi.fn(() => ({
-                eq: vi.fn(() => ({
-                  order: vi.fn(() => ({
-                    limit: vi.fn(() => ({
-                      maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-                    })),
-                  })),
-                  maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-                })),
-              })),
-              insert: vi.fn().mockResolvedValue({ data: { id: 'ws-1' }, error: null }),
             };
           }
           return {};
@@ -367,28 +351,21 @@ describe('ISSUE-07: Silent PostgREST Insert/Upsert Failures During Signup & Veri
             error: null,
           }),
         },
+        rpc: vi.fn((name: string) => {
+          if (name === 'create_signup_profile') {
+            return Promise.resolve({
+              data: null,
+              error: { message: '', code: '23502' },
+            });
+          }
+          return Promise.resolve({ data: null, error: null });
+        }),
         from: vi.fn((table: string) => {
           if (table === 'users') {
             return {
               select: vi.fn(() => ({
                 or: vi.fn(() => ({
                   maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-                })),
-              })),
-              insert: vi.fn(() => ({
-                select: vi.fn(() => ({
-                  single: vi.fn().mockResolvedValue({
-                    data: null,
-                    error: { message: '', code: '23502' },
-                  }),
-                })),
-              })),
-              upsert: vi.fn(() => ({
-                select: vi.fn(() => ({
-                  single: vi.fn().mockResolvedValue({
-                    data: null,
-                    error: { message: '', code: '23502' },
-                  }),
                 })),
               })),
             };
@@ -411,10 +388,25 @@ describe('ISSUE-07: Silent PostgREST Insert/Upsert Failures During Signup & Veri
   });
 
   describe('verifySignupOtpViaSupabase', () => {
-    it('throws error when activating user status fails in PostgREST', async () => {
+    // Fix 2026-11-01: verification no longer issues a status UPDATE —
+    // creation already sets 'active', so there is no activation write
+    // whose failure could be swallowed. These tests lock the new
+    // fail-loud points instead: a suspended account is rejected (it
+    // must never be reactivated by OTP verification), and a
+    // verification with no user record anywhere is rejected.
+    it('rejects when the verified account is suspended', async () => {
       const mockSupabase = {
         auth: {
-          verifyOtp: vi.fn().mockResolvedValue({ data: { user: { id: VALID_UUID } }, error: null }),
+          verifyOtp: vi.fn().mockResolvedValue({
+            data: {
+              user: {
+                id: VALID_UUID,
+                email: 'testuser@gmail.com',
+                user_metadata: { name: 'Test User', subdomain: 'testuser' },
+              },
+            },
+            error: null,
+          }),
         },
         from: vi.fn((table: string) => {
           if (table === 'users') {
@@ -422,16 +414,10 @@ describe('ISSUE-07: Silent PostgREST Insert/Upsert Failures During Signup & Veri
               select: vi.fn(() => ({
                 or: vi.fn(() => ({
                   maybeSingle: vi.fn().mockResolvedValue({
-                    data: { id: VALID_UUID, email: 'testuser@gmail.com', role: 'user', status: 'pending' },
+                    data: { id: VALID_UUID, email: 'testuser@gmail.com', role: 'user', status: 'suspended' },
                     error: null,
                   }),
                 })),
-              })),
-              update: vi.fn(() => ({
-                or: vi.fn().mockResolvedValue({
-                  data: null,
-                  error: { message: 'connection timeout', code: '57P01' },
-                }),
               })),
             };
           }
@@ -446,30 +432,21 @@ describe('ISSUE-07: Silent PostgREST Insert/Upsert Failures During Signup & Veri
           email: 'testuser@gmail.com',
           otp: '123456',
         })
-      ).rejects.toThrow(/connection timeout|User status activation failed/i);
+      ).rejects.toThrow('Account is suspended');
     });
 
-    it('throws fallback error when activating user status returns PostgREST error with empty message', async () => {
+    it('rejects when no user record exists and the verified auth user is absent', async () => {
       const mockSupabase = {
         auth: {
-          verifyOtp: vi.fn().mockResolvedValue({ data: { user: { id: VALID_UUID } }, error: null }),
+          verifyOtp: vi.fn().mockResolvedValue({ data: { user: null }, error: null }),
         },
         from: vi.fn((table: string) => {
           if (table === 'users') {
             return {
               select: vi.fn(() => ({
                 or: vi.fn(() => ({
-                  maybeSingle: vi.fn().mockResolvedValue({
-                    data: { id: VALID_UUID, email: 'testuser@gmail.com', role: 'user', status: 'pending' },
-                    error: null,
-                  }),
+                  maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
                 })),
-              })),
-              update: vi.fn(() => ({
-                or: vi.fn().mockResolvedValue({
-                  data: null,
-                  error: { message: '', code: '57P01' },
-                }),
               })),
             };
           }
@@ -484,7 +461,47 @@ describe('ISSUE-07: Silent PostgREST Insert/Upsert Failures During Signup & Veri
           email: 'testuser@gmail.com',
           otp: '123456',
         })
-      ).rejects.toThrow('User status activation failed');
+      ).rejects.toThrow('Unable to find user account after verification.');
+    });
+
+    it('succeeds via the verified auth user metadata when the DB read misses', async () => {
+      const mockSupabase = {
+        auth: {
+          verifyOtp: vi.fn().mockResolvedValue({
+            data: {
+              user: {
+                id: VALID_UUID,
+                email: 'testuser@gmail.com',
+                user_metadata: { name: 'Test User', phone: '+15555550199', subdomain: 'testuser' },
+              },
+            },
+            error: null,
+          }),
+        },
+        from: vi.fn((table: string) => {
+          if (table === 'users') {
+            return {
+              select: vi.fn(() => ({
+                or: vi.fn(() => ({
+                  maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+                })),
+              })),
+            };
+          }
+          return {};
+        }),
+      };
+
+      authModule._setMockSupabaseClient(mockSupabase as any);
+
+      const result = await authModule.verifySignupOtpViaSupabase({
+        email: 'testuser@gmail.com',
+        otp: '123456',
+      });
+
+      expect(result.user.id).toBe(VALID_UUID);
+      expect(result.user.subdomain).toBe('testuser');
+      expect(result.user.status).toBe('active');
     });
   });
 });
