@@ -75,9 +75,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
+      # Installed from Doppler's apt repository (not a curl|sh pipe) so the
+      # install step stays clean under static analysis.
       - name: Install Doppler CLI
         run: |
-          curl -Ls --tlsv1.2 --proto "=https" --retry 3 https://cli.doppler.com/install.sh | sudo sh
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq apt-transport-https ca-certificates curl gnupg
+          curl -sLf --retry 3 --tlsv1.2 --proto "=https" https://packages.doppler.com/public/cli/gpg.DE2A7741A397C129.key | sudo gpg --dearmor -o /usr/share/keyrings/doppler-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/doppler-archive-keyring.gpg] https://packages.doppler.com/public/cli/deb/debian any-version main" | sudo tee /etc/apt/sources.list.d/doppler-cli.list
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq doppler
 
       - name: Install PostgreSQL client
         run: |
@@ -208,10 +215,13 @@ jobs:
                   sys.exit(1)
               # Record immediately after success (manual-row pattern: version
               # text plus name from the filename; statements left NULL).
+              # Values travel as psql variables, never interpolated into SQL.
               insert = psql([
+                  "-v", f"ver={version}",
+                  "-v", f"nm={name}",
                   "-c",
                   "INSERT INTO supabase_migrations.schema_migrations (version, name) "
-                  f"VALUES ('{version}', '{name}') ON CONFLICT (version) DO NOTHING",
+                  "VALUES (:'ver', :'nm') ON CONFLICT (version) DO NOTHING",
               ])
               if insert.returncode != 0:
                   fail(f"applied {version} {name} but could not record it in the ledger; "
