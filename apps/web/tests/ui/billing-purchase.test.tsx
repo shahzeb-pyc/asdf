@@ -4,7 +4,11 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 import { BillingView } from '@/components/billing/billing-view';
 import { AdminApprovalsView } from '@/components/billing/admin-approvals-view';
-import { abortedError, httpError } from '@/lib/api';
+import { abortedError, httpError, networkError, parseError, sessionExpiredError } from '@/lib/api';
+import {
+  resetReportErrorTransport,
+  setReportErrorTransport,
+} from '@/lib/report-error';
 
 /**
  * Billing Purchase behaviour: the pending-payment block, the
@@ -132,6 +136,7 @@ describe('Billing Purchase', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    resetReportErrorTransport();
   });
 
   it('pending payment hides the builder and shows only the pending card', async () => {
@@ -535,9 +540,11 @@ describe('Billing Purchase', () => {
     await goToCheckout();
     await pickScreenshot();
     fireEvent.click(screen.getByRole('button', { name: 'Submit payment for approval' }));
-    await screen.findByText(
-      'You already have a payment waiting for approval. Wait for it to be decided before submitting another.'
-    );
+    expect(
+      await screen.findByText(
+        'You already have a payment waiting for approval. Wait for it to be decided before submitting another.'
+      )
+    ).toBeInTheDocument();
   });
 
   it('repeated timeouts show the timeout message with a manual retry', async () => {
@@ -554,6 +561,258 @@ describe('Billing Purchase', () => {
       'The request timed out. Your screenshot is still attached — try again.'
     );
     expect(await screen.findByRole('button', { name: 'Try again' })).toBeInTheDocument();
+  });
+
+  it('a transient mint failure retries and the upload still lands', async () => {
+    let mintCalls = 0;
+    mockApiPost.mockImplementation(async (url: string) => {
+      if (url.includes('screenshot-upload')) {
+        mintCalls += 1;
+        if (mintCalls === 1) throw networkError(new Error('offline'));
+        return MINT_RESPONSE;
+      }
+      return paymentItem({ status: 'pending' });
+    });
+    stubPutOk();
+
+    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    await goToCheckout();
+    await pickScreenshot();
+    expect(mintCalls).toBe(2);
+  });
+
+  it('a rejected mint shows its own error and keeps submit disabled', async () => {
+    mockApiPost.mockImplementation(async (url: string) => {
+      if (url.includes('screenshot-upload')) throw httpError(400, 'Bad screenshot details.');
+      return paymentItem({ status: 'pending' });
+    });
+    stubPutOk();
+
+    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    await goToCheckout();
+    const submit = await screen.findByRole('button', { name: 'Submit payment for approval' });
+    const input = document.querySelector('#billing-screenshot') as HTMLInputElement;
+    fireEvent.change(input, {
+      target: { files: [new File(['bytes'], 'proof.png', { type: 'image/png' })] },
+    });
+    await screen.findByText('Bad screenshot details.');
+    expect(submit).toBeDisabled();
+  });
+
+  it('an expired session during the mint shows the session message, not a generic error', async () => {
+    mockApiPost.mockImplementation(async (url: string) => {
+      if (url.includes('screenshot-upload')) throw sessionExpiredError();
+      return paymentItem({ status: 'pending' });
+    });
+    stubPutOk();
+
+    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    await goToCheckout();
+    const input = document.querySelector('#billing-screenshot') as HTMLInputElement;
+    fireEvent.change(input, {
+      target: { files: [new File(['bytes'], 'proof.png', { type: 'image/png' })] },
+    });
+    await screen.findByText('Your session expired. Sign in again to pick up where you left off.');
+  });
+
+  it('an aborted PUT shows the timeout message with a retry', async () => {
+    const abort = new Error('aborted');
+    abort.name = 'AbortError';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw abort;
+      })
+    );
+    mockApiPost.mockImplementation(async (url: string) => {
+      if (url.includes('screenshot-upload')) return MINT_RESPONSE;
+      return paymentItem({ status: 'pending' });
+    });
+
+    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    await goToCheckout();
+    const input = document.querySelector('#billing-screenshot') as HTMLInputElement;
+    fireEvent.change(input, {
+      target: { files: [new File(['bytes'], 'proof.png', { type: 'image/png' })] },
+    });
+    await screen.findByText(
+      'The screenshot upload timed out. Your screenshot was not saved — try uploading again.'
+    );
+    expect(screen.getByRole('button', { name: 'Retry upload' })).toBeInTheDocument();
+  });
+
+  it('a rejected PUT shows the rejected message, without retry', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 400 }) as Response));
+    mockApiPost.mockImplementation(async (url: string) => {
+      if (url.includes('screenshot-upload')) return MINT_RESPONSE;
+      return paymentItem({ status: 'pending' });
+    });
+
+    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    await goToCheckout();
+    const input = document.querySelector('#billing-screenshot') as HTMLInputElement;
+    fireEvent.change(input, {
+      target: { files: [new File(['bytes'], 'proof.png', { type: 'image/png' })] },
+    });
+    await screen.findByText(
+      'The screenshot was rejected. Try a PNG, JPG, WebP, or GIF image under 10 MB.'
+    );
+  });
+
+  it('an expired session during submit shows the session message', async () => {
+    stubPutOk();
+    routeMintAndPayments(async () => {
+      throw sessionExpiredError();
+    });
+
+    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    await goToCheckout();
+    await pickScreenshot();
+    fireEvent.click(screen.getByRole('button', { name: 'Submit payment for approval' }));
+    await screen.findByText('Your session expired. Sign in again to pick up where you left off.');
+  });
+
+  it('a malformed submit response shows the parse message, not a generic error', async () => {
+    stubPutOk();
+    routeMintAndPayments(async () => {
+      throw parseError('The server returned a response that was not valid JSON.');
+    });
+
+    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    await goToCheckout();
+    await pickScreenshot();
+    fireEvent.click(screen.getByRole('button', { name: 'Submit payment for approval' }));
+    await screen.findByText(
+      'The server returned an unexpected response. Your screenshot is still attached — try again.'
+    );
+  });
+
+  it('a truly unknown submit error shows the fallback, logs it, and offers a retry', async () => {
+    const reported: unknown[] = [];
+    setReportErrorTransport((error) => {
+      reported.push(error);
+    });
+    stubPutOk();
+    routeMintAndPayments(async () => {
+      throw new Error('boom');
+    });
+
+    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    await goToCheckout();
+    await pickScreenshot();
+    fireEvent.click(screen.getByRole('button', { name: 'Submit payment for approval' }));
+    await screen.findByText(
+      'Something went wrong while saving your payment. Your screenshot is still attached — try again.'
+    );
+    expect(await screen.findByRole('button', { name: 'Try again' })).toBeInTheDocument();
+    expect(reported).toHaveLength(1);
+  });
+
+  it('a click during the upload posts nothing; submit works once the upload lands', async () => {
+    const putGate: { release: (() => void) | null } = { release: null };
+    const putPromise = new Promise<Response>((resolve) => {
+      putGate.release = () => resolve({ ok: true } as Response);
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => putPromise)
+    );
+    let paymentsCalls = 0;
+    routeMintAndPayments(async () => {
+      paymentsCalls += 1;
+      return paymentItem({ status: 'pending' });
+    });
+
+    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    await goToCheckout();
+    const submit = await screen.findByRole('button', { name: 'Submit payment for approval' });
+    const input = document.querySelector('#billing-screenshot') as HTMLInputElement;
+    fireEvent.change(input, {
+      target: { files: [new File(['bytes'], 'proof.png', { type: 'image/png' })] },
+    });
+    await screen.findByText('Uploading screenshot…');
+    expect(submit).toBeDisabled();
+    // Even a synthetic click on the disabled button posts nothing:
+    // the disabled state is the primary guard, and the handler's
+    // upload-await is the backstop behind it.
+    fireEvent.click(submit);
+    expect(paymentsCalls).toBe(0);
+    putGate.release?.();
+    await screen.findByText('Uploaded');
+    fireEvent.click(screen.getByRole('button', { name: 'Submit payment for approval' }));
+    await screen.findByText('Payment submitted');
+    expect(paymentsCalls).toBe(1);
+  });
+
+  it('a click during an upload that then fails posts nothing; retry recovers', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500 }) as Response));
+    let paymentsCalls = 0;
+    routeMintAndPayments(async () => {
+      paymentsCalls += 1;
+      return paymentItem({ status: 'pending' });
+    });
+
+    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    await goToCheckout();
+    const submit = await screen.findByRole('button', { name: 'Submit payment for approval' });
+    const input = document.querySelector('#billing-screenshot') as HTMLInputElement;
+    fireEvent.change(input, {
+      target: { files: [new File(['bytes'], 'proof.png', { type: 'image/png' })] },
+    });
+    await screen.findByText('Uploading screenshot…');
+    fireEvent.click(submit);
+    await screen.findByText('Your screenshot couldn\'t be uploaded. Retry the upload to submit.');
+    expect(paymentsCalls).toBe(0);
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true }) as Response));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry upload' }));
+    await screen.findByText('Uploaded');
+    fireEvent.click(screen.getByRole('button', { name: 'Submit payment for approval' }));
+    await screen.findByText('Payment submitted');
+    expect(paymentsCalls).toBe(1);
+  });
+
+  it('a newer pick supersedes an in-flight upload: the second key wins', async () => {
+    const mintA = { ...MINT_RESPONSE, storageKey: 'billing-screenshots/user-1/shot-a.png' };
+    const mintB = { ...MINT_RESPONSE, storageKey: 'billing-screenshots/user-1/shot-b.png' };
+    let mintCalls = 0;
+    const putGate: { release: (() => void) | null } = { release: null };
+    const putPromiseA = new Promise<Response>((resolve) => {
+      putGate.release = () => resolve({ ok: true } as Response);
+    });
+    let putCalls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => {
+        putCalls += 1;
+        return putCalls === 1 ? putPromiseA : Promise.resolve({ ok: true } as Response);
+      })
+    );
+    let capturedBody: Record<string, unknown> | null = null;
+    mockApiPost.mockImplementation(async (url: string, body: unknown) => {
+      if (url.includes('screenshot-upload')) {
+        mintCalls += 1;
+        return mintCalls === 1 ? mintA : mintB;
+      }
+      capturedBody = body as Record<string, unknown>;
+      return paymentItem({ status: 'pending' });
+    });
+
+    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    await goToCheckout();
+    const input = document.querySelector('#billing-screenshot') as HTMLInputElement;
+    fireEvent.change(input, {
+      target: { files: [new File(['bytes'], 'proof-a.png', { type: 'image/png' })] },
+    });
+    await screen.findByText('Uploading screenshot…');
+    fireEvent.change(input, {
+      target: { files: [new File(['bytes'], 'proof-b.png', { type: 'image/png' })] },
+    });
+    await screen.findByText('Uploaded');
+    // The stale first upload landing late must not clobber the second.
+    putGate.release?.();
+    fireEvent.click(screen.getByRole('button', { name: 'Submit payment for approval' }));
+    await screen.findByText('Payment submitted');
+    expect(capturedBody?.['screenshotStorageKey']).toBe(mintB.storageKey);
   });
 });
 

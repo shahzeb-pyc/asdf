@@ -48,6 +48,7 @@ interface FakeDb {
   redemptions: Row[];
   insertViolation: boolean;
   insertError: boolean;
+  linkError: boolean;
   putObjectCalls: number;
   nowPaymentsCalls: number;
   failReleaseOnce: boolean;
@@ -90,6 +91,7 @@ class FakeBuilder {
   private limitN: number | null = null;
   private insertRow: Row | null = null;
   private updatePatch: Row | null = null;
+  private deleteMode = false;
 
   constructor(
     private getRows: () => Row[],
@@ -138,6 +140,11 @@ class FakeBuilder {
     return this;
   }
 
+  delete(): this {
+    this.deleteMode = true;
+    return this;
+  }
+
   private matched(): Row[] {
     let rows = this.getRows().filter((r) => this.filters.every((f) => f(r)));
     if (this.limitN !== null) rows = rows.slice(0, this.limitN);
@@ -149,7 +156,10 @@ class FakeBuilder {
       if (db.insertViolation && this.violationApplies) {
         return { data: null, error: { code: '23505' } };
       }
-      if (db.insertError) {
+      // Gated on the payments builder (violationApplies): a coupon
+      // hold inserts a redemption first, and an insert failure there
+      // is a different failure than a payment-insert failure.
+      if (db.insertError && this.violationApplies) {
         return { data: null, error: { code: '42501' } };
       }
       this.pushRow?.(this.insertRow);
@@ -166,7 +176,23 @@ class FakeBuilder {
   }
 
   then(resolve: (value: { data: Row[]; error: { code: string } | null }) => void): void {
+    if (this.deleteMode) {
+      const rows = this.getRows();
+      for (let i = rows.length - 1; i >= 0; i -= 1) {
+        if (this.filters.every((f) => f(rows[i] as Row))) rows.splice(i, 1);
+      }
+      resolve({ data: [], error: null });
+      return;
+    }
     if (this.updatePatch) {
+      // A failing coupon link: the payment-link update errors, so
+      // the route deletes the payment and releases the coupon.
+      const isLinkUpdate =
+        this.getRows() === db.redemptions && this.updatePatch['payment_id'] !== undefined;
+      if (isLinkUpdate && db.linkError) {
+        resolve({ data: [], error: { code: '500' } });
+        return;
+      }
       // A failing coupon release: the flip update errors, so
       // releaseRedemption throws and the route logs it (then still
       // returns its 409/422 — the release failure never blocks the
@@ -334,7 +360,7 @@ const ctx = { params: Promise.resolve({ subdomain: 'acme' }) };
 describe('one pending payment per user', () => {
   beforeEach(() => {
     process.env.NEXT_PUBLIC_APP_URL = 'https://app.example.com';
-    db = { payments: [], coupons: [couponRow()], redemptions: [], insertViolation: false, insertError: false, putObjectCalls: 0, nowPaymentsCalls: 0, failReleaseOnce: false };
+    db = { payments: [], coupons: [couponRow()], redemptions: [], insertViolation: false, insertError: false, linkError: false, putObjectCalls: 0, nowPaymentsCalls: 0, failReleaseOnce: false };
   });
 
   it('bank submission while a bank payment is pending → 409, no row, no R2 write', async () => {
@@ -431,6 +457,44 @@ describe('one pending payment per user', () => {
     expect(db.payments).toHaveLength(0);
   });
 
+  it('an insert failure after a coupon hold releases the coupon', async () => {
+    db.insertError = true;
+    const res = await postBank(bankRequestWithCoupon(), ctx);
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toBe('PAYMENT_SAVE_FAILED');
+    expect(db.payments).toHaveLength(0);
+    expect(db.redemptions).toHaveLength(1);
+    expect(db.redemptions[0]?.['status']).toBe('released');
+  });
+
+  it('a coupon-link failure deletes the payment, releases the coupon, and stays retryable', async () => {
+    db.linkError = true;
+    const res = await postBank(bankRequestWithCoupon(), ctx);
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toBe('PAYMENT_SAVE_FAILED');
+    expect(body.message).toContain('still attached');
+    expect(db.payments).toHaveLength(0);
+    expect(db.redemptions).toHaveLength(1);
+    expect(db.redemptions[0]?.['status']).toBe('released');
+  });
+
+  it('an empty purchase (no units at all) is refused with 400', async () => {
+    const req = new NextRequest('https://app.example.com/api/tenant/acme/billing/payments', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        counts: { facebook: 0, instagram: 0, threads: 0, tiktok: 0, youtube: 0, snapchat: 0 },
+        bankMethod: 'easypaisa',
+        screenshotStorageKey: SCREENSHOT_KEY,
+      }),
+    });
+    const res = await postBank(req, ctx);
+    expect(res.status).toBe(400);
+    expect(db.payments).toHaveLength(0);
+  });
+
   it('a failing idempotency store after the insert still returns 201 — the payment exists', async () => {
     idempotencyOverride.store = () => {
       throw new Error('store down');
@@ -461,7 +525,7 @@ describe('one pending payment per user', () => {
 describe('billing submission idempotency (audit fix 2026-11-01, fix 9)', () => {
   beforeEach(() => {
     process.env.NEXT_PUBLIC_APP_URL = 'https://app.example.com';
-    db = { payments: [], coupons: [couponRow()], redemptions: [], insertViolation: false, insertError: false, putObjectCalls: 0, nowPaymentsCalls: 0, failReleaseOnce: false };
+    db = { payments: [], coupons: [couponRow()], redemptions: [], insertViolation: false, insertError: false, linkError: false, putObjectCalls: 0, nowPaymentsCalls: 0, failReleaseOnce: false };
     idempotencyOverride.lookup = null;
   });
 
@@ -502,6 +566,7 @@ describe('billing submissions with coupons, admin rejection, and crypto idempote
       redemptions: [],
       insertViolation: false,
       insertError: false,
+      linkError: false,
       putObjectCalls: 0,
       nowPaymentsCalls: 0,
       failReleaseOnce: false,
@@ -611,6 +676,7 @@ describe('billing submission release-failure logging', () => {
       redemptions: [],
       insertViolation: false,
       insertError: false,
+      linkError: false,
       putObjectCalls: 0,
       nowPaymentsCalls: 0,
       failReleaseOnce: false,
