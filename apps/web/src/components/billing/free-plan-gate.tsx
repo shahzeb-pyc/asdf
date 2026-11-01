@@ -20,6 +20,12 @@
  * with a loud log — wrongly locking a paying user out of whole sections is
  * worse than showing content the server gates still protect).
  *
+ * Freshness: entitlement is re-checked on every navigation and when the
+ * tab regains window focus, so a plan that becomes paid while the tab is
+ * open unblocks sections without a full reload. A re-check keeps showing
+ * the previous status until the fresh result arrives (no skeleton flash);
+ * a failed re-check still fails open, exactly like the first fetch.
+ *
  * Hard block: shared Dialog, controlled open, no close button, Esc and
  * outside-pointer dismissal explicitly prevented, onOpenChange ignored.
  * The only exits are Upgrade (Billing Purchase view) and Back to Home.
@@ -68,7 +74,24 @@ export function FreePlanGate({
   const router = useRouter();
   const exempt = isFreePlanExemptRoute(pathname, subdomain);
   const [status, setStatus] = React.useState<GateStatus>('loading');
+  // Bumped on window focus to re-run the entitlement effect below.
+  const [refreshTick, setRefreshTick] = React.useState(0);
   const liveRef = React.useRef(true);
+
+  // Re-check when the tab regains focus, so a plan that becomes paid
+  // while the tab sits in the background unblocks sections without a
+  // full reload. Exempt routes and admins never fetch (guarded here
+  // and in the entitlement effect); the tick itself carries no data.
+  React.useEffect(() => {
+    if (exempt || isAdmin) return;
+    const onFocus = () => {
+      setRefreshTick((tick) => tick + 1);
+    };
+    window.addEventListener('focus', onFocus);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [exempt, isAdmin]);
 
   React.useEffect(() => {
     if (exempt || isAdmin) return;
@@ -91,7 +114,13 @@ export function FreePlanGate({
       liveRef.current = false;
       controller.abort();
     };
-  }, [exempt, isAdmin, subdomain]);
+    // Re-check on every navigation (layouts persist across SPA
+    // navigations, so pathname — not just exempt — must be a dep, or a
+    // tab loaded while Free keeps showing the dialog after the plan
+    // becomes paid) and on window focus (refreshTick above). The
+    // previous status is deliberately kept during a re-check: no
+    // skeleton flash, and a failed re-check still fails open.
+  }, [exempt, isAdmin, subdomain, pathname, refreshTick]);
 
   if (exempt || isAdmin) return <>{children}</>;
   if (status === 'allowed' || status === 'error-open') return <>{children}</>;
