@@ -3,6 +3,7 @@
 import * as React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
+  CreatorFinderUsageResponseSchema,
   NicheResponseSchema,
   RegionListResponseSchema,
   SavedCreatorDeleteResponseSchema,
@@ -46,6 +47,8 @@ interface SearchState {
   message: string | null;
   heading: string | null;
   saveFailed?: boolean | undefined;
+  /** True when the search was blocked by the daily cap (429 flag). */
+  dailyLimit?: boolean | undefined;
 }
 
 const IDLE_STATE: SearchState = {
@@ -54,7 +57,33 @@ const IDLE_STATE: SearchState = {
   message: null,
   heading: null,
   saveFailed: false,
+  dailyLimit: false,
 };
+
+/**
+ * The owner's words for the cap, shown with the usage display
+ * and with every blocked message. Single source so the wording
+ * can never drift between the two places.
+ */
+const TEMPORARY_LIMIT_NOTE =
+  "This limit is temporary — I'll increase it later if you guys like this feature.";
+
+/**
+ * A 429 is a daily-cap block only when the error body carries
+ * the dailyLimitExceeded flag — never from the message string
+ * alone, so a provider rate-limit 429 never renders as a cap
+ * block. The typed client preserves the raw body on err.cause.
+ */
+function isDailyLimitError(err: unknown): boolean {
+  if (!isApiError(err)) return false;
+  if (err.status !== 429) return false;
+  const cause = err.cause as { dailyLimitExceeded?: unknown } | null | undefined;
+  return (
+    cause !== null &&
+    typeof cause === 'object' &&
+    cause.dailyLimitExceeded === true
+  );
+}
 
 function errorMessage(err: unknown): string {
   if (isApiError(err)) return err.message;
@@ -218,6 +247,20 @@ export function CreatorFinderPage({
       }),
   });
 
+  /**
+   * Daily-cap usage for today. Never counted, never gated — it
+   * makes no upstream call. Refetched after every search so a
+   * block (or a completed search) updates the number at once.
+   */
+  const usageQuery = useQuery({
+    queryKey: ['creator-finder', 'usage', subdomain],
+    queryFn: () =>
+      api.get(buildTenantApiPath(subdomain, '/creator-finder/usage'), {
+        schema: CreatorFinderUsageResponseSchema,
+      }),
+  });
+  const usage = usageQuery.data;
+
   const regions: Region[] = regionsQuery.data?.regions ?? [];
   const defaultRegion = regionsQuery.data?.defaultRegion ?? null;
   const defaultRegionName =
@@ -295,8 +338,10 @@ export function CreatorFinderPage({
         creators: [],
         message: errorMessage(err),
         heading: null,
+        dailyLimit: isDailyLimitError(err),
       });
     }
+    void usageQuery.refetch();
   }
 
   async function searchNiche(event: React.FormEvent) {
@@ -327,8 +372,9 @@ export function CreatorFinderPage({
       });
       void savedQuery.refetch();
     } catch (err) {
-      setNiche({ status: 'error', creators: [], message: errorMessage(err), heading: null });
+      setNiche({ status: 'error', creators: [], message: errorMessage(err), heading: null, dailyLimit: isDailyLimitError(err) });
     }
+    void usageQuery.refetch();
   }
 
   async function searchSimilar(event: React.FormEvent) {
@@ -354,8 +400,9 @@ export function CreatorFinderPage({
       });
       void savedQuery.refetch();
     } catch (err) {
-      setSimilar({ status: 'error', creators: [], message: errorMessage(err), heading: null });
+      setSimilar({ status: 'error', creators: [], message: errorMessage(err), heading: null, dailyLimit: isDailyLimitError(err) });
     }
+    void usageQuery.refetch();
   }
 
   function renderResults(state: SearchState) {
@@ -363,6 +410,18 @@ export function CreatorFinderPage({
       return <p className="text-body text-ink-sub">Finding creators…</p>;
     }
     if (state.status === 'error') {
+      // A cap block renders distinctly from any other search
+      // error: "Daily limit exceeded" plus the temporary note —
+      // no raw technical string, no countdown, no retry timer.
+      if (state.dailyLimit) {
+        return (
+          <Banner
+            variant="critical"
+            title="Daily limit exceeded"
+            description={TEMPORARY_LIMIT_NOTE}
+          />
+        );
+      }
       return (
         <Banner
           variant="critical"
@@ -410,6 +469,16 @@ export function CreatorFinderPage({
           already know. Creators you find are saved automatically — nothing is
           contacted or published.
         </p>
+        {usage ? (
+          <div className="mt-3">
+            <p className="text-body text-ink-sub">
+              {usage.used} of {usage.limit} used today
+            </p>
+            <p className="mt-1 text-metadata text-ink-dim">
+              {TEMPORARY_LIMIT_NOTE}
+            </p>
+          </div>
+        ) : null}
       </div>
 
       <Tabs
@@ -426,11 +495,19 @@ export function CreatorFinderPage({
         <TabsContent value="trending">
           <div className="flex flex-col gap-3">
             {regionsQuery.isError ? (
-              <Banner
-                variant="critical"
-                title="Couldn't load countries"
-                description="The country list could not be loaded. Please try again."
-              />
+              isDailyLimitError(regionsQuery.error) ? (
+                <Banner
+                  variant="critical"
+                  title="Daily limit exceeded"
+                  description={TEMPORARY_LIMIT_NOTE}
+                />
+              ) : (
+                <Banner
+                  variant="critical"
+                  title="Couldn't load countries"
+                  description="The country list could not be loaded. Please try again."
+                />
+              )
             ) : null}
             <div className="flex flex-col gap-2 text-body font-medium text-ink">
               <label htmlFor="creator-finder-country">Country</label>

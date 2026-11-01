@@ -4,6 +4,11 @@ import {
   SimilarResponseSchema,
 } from '@fbuploadpro/contracts';
 import {
+  creatorFinderDailyLimitResponse,
+  creatorFinderUsageErrorResponse,
+  startCreatorFinderDiscovery,
+} from '@/lib/creator-finder-usage';
+import {
   creatorFinderErrorResponse,
   getCreatorFinderKeys,
   getCreatorFinderSession,
@@ -31,8 +36,18 @@ export async function GET(
   }
   const searchTerm = username.trim().replace(/^@/, '');
   try {
+    // Daily cap, checked at request start: at the limit this
+    // returns 429 with no upstream call made. A request that
+    // starts under the cap is never stopped mid-flight.
+    const gate = await startCreatorFinderDiscovery({
+      supabase: getCreatorFinderSupabase(),
+      userId: session.userId,
+      role: session.role,
+    });
+    if (gate.blocked) return creatorFinderDailyLimitResponse();
     const result = await fetchSimilarCreators(username, {
       apiKeys: getCreatorFinderKeys(),
+      onUpstreamCall: gate.onUpstreamCall,
     });
     // Auto-save: results still render if the save fails; the
     // response carries saveFailed so the page warns visibly.
@@ -63,6 +78,8 @@ export async function GET(
       SimilarResponseSchema.parse({ ...result, saveFailed }),
     );
   } catch (err) {
-    return creatorFinderErrorResponse(err);
+    return (
+      creatorFinderUsageErrorResponse(err) ?? creatorFinderErrorResponse(err)
+    );
   }
 }

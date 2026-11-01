@@ -5,6 +5,11 @@ import {
   NicheSearchFiltersQuerySchema,
 } from '@fbuploadpro/contracts';
 import {
+  creatorFinderDailyLimitResponse,
+  creatorFinderUsageErrorResponse,
+  startCreatorFinderDiscovery,
+} from '@/lib/creator-finder-usage';
+import {
   creatorFinderErrorResponse,
   getCreatorFinderKeys,
   getCreatorFinderSession,
@@ -45,8 +50,18 @@ export async function GET(
   }
   const filters = filtersParsed.data;
   try {
+    // Daily cap, checked at request start: at the limit this
+    // returns 429 with no upstream call made. A request that
+    // starts under the cap is never stopped mid-flight.
+    const gate = await startCreatorFinderDiscovery({
+      supabase: getCreatorFinderSupabase(),
+      userId: session.userId,
+      role: session.role,
+    });
+    if (gate.blocked) return creatorFinderDailyLimitResponse();
     const result = await fetchCreatorsByKeyword(keyword, {
       apiKeys: getCreatorFinderKeys(),
+      onUpstreamCall: gate.onUpstreamCall,
       filters: {
         region: filters.region,
         publishTime: filters.publish_time
@@ -86,6 +101,8 @@ export async function GET(
       NicheResponseSchema.parse({ ...result, saveFailed }),
     );
   } catch (err) {
-    return creatorFinderErrorResponse(err);
+    return (
+      creatorFinderUsageErrorResponse(err) ?? creatorFinderErrorResponse(err)
+    );
   }
 }
