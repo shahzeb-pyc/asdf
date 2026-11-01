@@ -169,7 +169,7 @@ export async function loadCouponByCode(
  */
 export function computeDiscount(coupon: CouponRow, amountDuePkr: number): number {
   if (coupon.status === 'deleted') {
-    throw new CouponError('COUPON_NOT_FOUND', 'That coupon code was not found.');
+    throw new CouponError('COUPON_NOT_FOUND', 'Invalid coupon code, try another.');
   }
   if (coupon.status === 'paused') {
     throw new CouponError('COUPON_PAUSED', 'This coupon is paused right now and cannot be used.');
@@ -212,7 +212,7 @@ export async function previewCoupon(
 ): Promise<{ coupon: CouponRow; discountPkr: number }> {
   const coupon = await loadCouponByCode(client, rawCode);
   if (!coupon) {
-    throw new CouponError('COUPON_NOT_FOUND', 'That coupon code was not found.');
+    throw new CouponError('COUPON_NOT_FOUND', 'Invalid coupon code, try another.');
   }
   return { coupon, discountPkr: computeDiscount(coupon, amountDuePkr) };
 }
@@ -256,7 +256,7 @@ async function claimCoupon(
       // plain terminal error, never a silent partial claim.
       const fresh = await loadCouponByCode(client, coupon.code);
       if (!fresh || fresh.status === 'deleted') {
-        throw new CouponError('COUPON_NOT_FOUND', 'That coupon code was not found.');
+        throw new CouponError('COUPON_NOT_FOUND', 'Invalid coupon code, try another.');
       }
       if (fresh.status === 'paused') {
         throw new CouponError('COUPON_PAUSED', 'This coupon is paused right now and cannot be used.');
@@ -291,7 +291,7 @@ async function claimCoupon(
     if (!Array.isArray(data) || data.length === 0) {
       const fresh = await loadCouponByCode(client, coupon.code);
       if (!fresh || fresh.status === 'deleted') {
-        throw new CouponError('COUPON_NOT_FOUND', 'That coupon code was not found.');
+        throw new CouponError('COUPON_NOT_FOUND', 'Invalid coupon code, try another.');
       }
       if (fresh.status === 'paused') {
         throw new CouponError('COUPON_PAUSED', 'This coupon is paused right now and cannot be used.');
@@ -320,7 +320,7 @@ async function claimCoupon(
   if (!Array.isArray(data) || data.length === 0) {
     const fresh = await loadCouponByCode(client, coupon.code);
     if (!fresh || fresh.status === 'deleted') {
-      throw new CouponError('COUPON_NOT_FOUND', 'That coupon code was not found.');
+      throw new CouponError('COUPON_NOT_FOUND', 'Invalid coupon code, try another.');
     }
     throw new CouponError('COUPON_PAUSED', 'This coupon is paused right now and cannot be used.');
   }

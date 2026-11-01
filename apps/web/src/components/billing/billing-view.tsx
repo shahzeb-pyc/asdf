@@ -32,6 +32,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/shared/ui/aler
 import { Button } from '@/components/shared/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/shared/ui/card';
 import { EmptyState } from '@/components/shared/ui/empty-state';
+import { Input } from '@/components/shared/ui/input';
 import { Skeleton } from '@/components/shared/ui/skeleton';
 import { BillingStatusMark } from './billing-status-mark';
 import { CouponSection } from './coupon-section';
@@ -245,6 +246,12 @@ export function BillingView({
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [reloading, setReloading] = React.useState(false);
   const [counts, setCounts] = React.useState<PlatformCounts | null>(null);
+  // Raw text of each chooser input while it is being edited. The
+  // committed count (above) is the single source of truth for prices,
+  // totals, quotes, and submission; drafts only hold what the field
+  // shows mid-edit so an invalid keystroke can be reverted on blur
+  // without ever touching the totals.
+  const [countDrafts, setCountDrafts] = React.useState<Partial<Record<keyof PlatformCounts, string>>>({});
   const [section, setSection] = React.useState<Section>(initialSection);
   const [purchaseStep, setPurchaseStep] = React.useState<PurchaseStep>('builder');
   const router = useRouter();
@@ -349,6 +356,32 @@ export function BillingView({
   function setCount(platform: keyof PlatformCounts, value: number) {
     const next = { ...effectiveCounts, [platform]: Math.max(0, Math.floor(value) || 0) };
     setCounts(next);
+  }
+
+  /**
+   * Chooser input editing: valid whole numbers commit immediately so
+   * row prices and totals update live as the user types; a blank
+   * field commits 0 so the total never breaks mid-edit. Anything
+   * else (letters, decimals, negatives) leaves the committed count
+   * alone — the field holds the raw text until blur, which drops the
+   * draft and shows the last valid count again. No toasts, no
+   * dialogs: the revert is silent at the input level.
+   */
+  function handleCountInput(platform: keyof PlatformCounts, raw: string) {
+    setCountDrafts((prev) => ({ ...prev, [platform]: raw }));
+    if (raw === '') {
+      setCount(platform, 0);
+    } else if (/^\d+$/.test(raw)) {
+      setCount(platform, Number(raw));
+    }
+  }
+
+  function handleCountBlur(platform: keyof PlatformCounts) {
+    setCountDrafts((prev) => {
+      const next = { ...prev };
+      delete next[platform];
+      return next;
+    });
   }
 
   /**
@@ -589,7 +622,7 @@ export function BillingView({
       : plainQuoteError(quoteError) ?? (!screenshot ? 'Add a screenshot of your payment so we can approve it.' : null);
 
   // Purchase rows name the unit only. Included/in-use counts belong
-  // to My Plan and are deliberately NOT shown here — the stepper
+  // to My Plan and are deliberately NOT shown here — the input
   // value itself is the count being bought (starting from the current
   // plan's counts for a Paid user). Rate is stated once, in the
   // Purchase header — not repeated on every row.
@@ -609,33 +642,19 @@ export function BillingView({
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-3">
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="icon-lg"
-                  aria-label={`Decrease ${PLATFORM_LABELS[platform]}`}
-                  onClick={() => setCount(platform, count - 1)}
-                  disabled={count <= 0}
-                  className="text-lg disabled:opacity-100 disabled:text-ink-sub"
-                >
-                  −
-                </Button>
-                <span
-                  aria-label={`${PLATFORM_LABELS[platform]} ${subscriptionUnitLabel(platform)}`}
-                  className="flex h-10 w-12 items-center justify-center text-body font-medium tabular-nums text-ink"
-                >
-                  {count}
-                </span>
-                <Button
-                  variant="outline"
-                  size="icon-lg"
-                  aria-label={`Increase ${PLATFORM_LABELS[platform]}`}
-                  onClick={() => setCount(platform, count + 1)}
-                  className="text-lg"
-                >
-                  +
-                </Button>
-              </div>
+              {/* Direct input, not a stepper: type="text" with a numeric
+              keyboard carries no native spinners, so there is no
+              increase/decrease control anywhere in this chooser. */}
+              <Input
+                type="text"
+                inputMode="numeric"
+                autoComplete="off"
+                aria-label={`${PLATFORM_LABELS[platform]} ${subscriptionUnitLabel(platform)}`}
+                value={countDrafts[platform] ?? String(count)}
+                onChange={(event) => handleCountInput(platform, event.target.value)}
+                onBlur={() => handleCountBlur(platform)}
+                className="w-20 text-center tabular-nums"
+              />
               <span className="w-20 shrink-0 text-right text-body font-medium tabular-nums text-ink">
                 {count * SUBSCRIPTION_PRICE_PKR_PER_UNIT} PKR
               </span>
@@ -1078,7 +1097,7 @@ export function BillingView({
                       {bankDisabledReason ? (
                         <p className="text-body text-ink-sub">{bankDisabledReason}</p>
                       ) : null}
-                      <p className="text-body text-ink-sub">Your plan runs for 30 days from approval.</p>
+                      <p className="text-body text-ink-sub">Your plan runs for 30 days after approval.</p>
                     </div>
                   </section>
                 ) : (

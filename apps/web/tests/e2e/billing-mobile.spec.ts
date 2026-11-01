@@ -136,7 +136,7 @@ test.describe('billing at phone widths', () => {
       ).toBeVisible();
       await expect(page.getByRole('button', { name: 'Check again' })).toBeVisible();
       // The builder is hidden, not disabled: no inclusions, no
-      // steppers, no summary, no checkout button next to the
+      // chooser inputs, no summary, no checkout button next to the
       // pending order.
       await expect(page.getByText('Included with your plan')).toHaveCount(0);
       await expect(page.getByText('Choose your pages and accounts')).toHaveCount(0);
@@ -144,10 +144,9 @@ test.describe('billing at phone widths', () => {
       await expect(
         page.getByRole('button', { name: 'Continue to checkout' })
       ).toHaveCount(0);
-      await expect(page.getByLabel('Increase Facebook')).toHaveCount(0);
-      await expect(page.getByLabel('Increase X')).toHaveCount(0);
-      await expect(page.getByLabel('Increase TikTok')).toHaveCount(0);
-      await expect(page.getByLabel('Increase YouTube')).toHaveCount(0);
+      await expect(page.getByLabel('Facebook pages')).toHaveCount(0);
+      await expect(page.getByLabel('Instagram accounts')).toHaveCount(0);
+      await expect(page.getByLabel('Threads accounts')).toHaveCount(0);
 
       await expectNoDocumentOverflow(page);
     });
@@ -185,6 +184,35 @@ test.describe('billing at phone widths', () => {
     await expectNoDocumentOverflow(page);
   });
 
+  test('Purchase chooser uses a typed input at 360px, no steppers', async ({
+    page,
+    context,
+  }) => {
+    await page.setViewportSize({ width: 360, height: 844 });
+    await useUserSession(context);
+    const state = createFixtureState();
+    await installApiFixtures(page, state);
+    await installBillingFixture(page, {
+      entitlement: freeEntitlement(),
+      payments: [],
+    });
+    await gotoBilling(page, 'purchase');
+
+    await page.getByLabel('Facebook pages').fill('100');
+    await expect(page.getByText('7000 PKR').first()).toBeVisible();
+    // No increase/decrease control anywhere in the chooser, and no
+    // native number spinner (the inputs are text inputs).
+    await expect(
+      page.getByRole('button', { name: 'Increase Facebook' })
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole('button', { name: 'Decrease Facebook' })
+    ).toHaveCount(0);
+    await expect(page.locator('input[type="number"]')).toHaveCount(0);
+
+    await expectNoDocumentOverflow(page);
+  });
+
   test('Purchase checkout reaches confirmation at 360px', async ({ page, context }) => {
     await page.setViewportSize({ width: 360, height: 844 });
     await useUserSession(context);
@@ -203,7 +231,7 @@ test.describe('billing at phone widths', () => {
     );
     await gotoBilling(page, 'purchase');
 
-    await page.getByLabel('Increase Facebook').click();
+    await page.getByLabel('Facebook pages').fill('1');
     await page.getByRole('button', { name: 'Continue to checkout' }).click();
     // Radio, not bare text: the checkout description ("Manual payments
     // or crypto.") shares the same words.

@@ -80,9 +80,9 @@ function statusFixture(payments: unknown[] = []) {
 async function goToCheckout() {
   // The builder renders after the billing load resolves (the view
   // shows a "Loading billing" skeleton first): wait for it before
-  // clicking, or the stepper lookup throws on the skeleton.
+  // typing, or the input lookup throws on the skeleton.
   await screen.findByText('Choose your pages and accounts');
-  fireEvent.click(screen.getByLabelText('Increase Facebook'));
+  fireEvent.change(screen.getByLabelText('Facebook pages'), { target: { value: '1' } });
   fireEvent.click(screen.getByRole('button', { name: 'Continue to checkout' }));
 }
 
@@ -114,18 +114,72 @@ describe('Billing Purchase', () => {
     expect(screen.queryByText('Choose your pages and accounts')).toBeNull();
     expect(screen.queryByText('Order summary')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Continue to checkout' })).toBeNull();
-    expect(screen.queryByLabelText('Increase Facebook')).toBeNull();
+    expect(screen.queryByLabelText('Facebook pages')).toBeNull();
   });
 
-  it('Purchase shows only Facebook, Instagram, Threads steppers', async () => {
+  it('Purchase shows only Facebook, Instagram, Threads inputs — no steppers', async () => {
     render(<BillingView subdomain="acme" initialSection="purchase" />);
     await screen.findByText('Choose your pages and accounts');
-    expect(screen.getByLabelText('Increase Facebook')).toBeInTheDocument();
-    expect(screen.getByLabelText('Increase Instagram')).toBeInTheDocument();
-    expect(screen.getByLabelText('Increase Threads')).toBeInTheDocument();
-    expect(screen.queryByLabelText('Increase X')).toBeNull();
-    expect(screen.queryByLabelText('Increase TikTok')).toBeNull();
-    expect(screen.queryByLabelText('Increase YouTube')).toBeNull();
+    expect(screen.getByLabelText('Facebook pages')).toBeInTheDocument();
+    expect(screen.getByLabelText('Instagram accounts')).toBeInTheDocument();
+    expect(screen.getByLabelText('Threads accounts')).toBeInTheDocument();
+    expect(screen.queryByLabelText('X accounts')).toBeNull();
+    expect(screen.queryByLabelText('TikTok accounts')).toBeNull();
+    expect(screen.queryByLabelText('YouTube accounts')).toBeNull();
+    // No increase/decrease control anywhere in the chooser, and no
+    // native number spinner either (the inputs are text inputs).
+    expect(screen.queryByRole('button', { name: 'Increase Facebook' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Decrease Facebook' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Increase Instagram' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Decrease Instagram' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Increase Threads' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Decrease Threads' })).toBeNull();
+    expect(document.querySelector('input[type="number"]')).toBeNull();
+  });
+
+  it('typing a count updates the row price and total live', async () => {
+    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    await screen.findByText('Choose your pages and accounts');
+    const facebook = screen.getByLabelText('Facebook pages') as HTMLInputElement;
+    fireEvent.change(facebook, { target: { value: '100' } });
+    expect(facebook.value).toBe('100');
+    // Row price and order summary both price the typed count live.
+    expect(screen.getAllByText('7000 PKR').length).toBeGreaterThan(0);
+    const instagram = screen.getByLabelText('Instagram accounts') as HTMLInputElement;
+    fireEvent.change(instagram, { target: { value: '4' } });
+    expect(screen.getAllByText('280 PKR').length).toBeGreaterThan(0);
+  });
+
+  it('invalid input never touches the totals and reverts on blur', async () => {
+    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    await screen.findByText('Choose your pages and accounts');
+    const facebook = screen.getByLabelText('Facebook pages') as HTMLInputElement;
+    fireEvent.change(facebook, { target: { value: '4' } });
+    expect(facebook.value).toBe('4');
+    expect(screen.getAllByText('280 PKR').length).toBeGreaterThan(0);
+    // Letters, decimals, and negatives: the field holds the raw text
+    // while editing, the committed count (and its price) stays put,
+    // and blur drops the draft back to the last valid count.
+    for (const bad of ['xyz', '2.5', '-5']) {
+      fireEvent.change(facebook, { target: { value: bad } });
+      expect(facebook.value).toBe(bad);
+      expect(screen.getAllByText('280 PKR').length).toBeGreaterThan(0);
+      fireEvent.blur(facebook);
+      expect(facebook.value).toBe('4');
+    }
+  });
+
+  it('blank while typing counts as 0 and stays 0 on blur', async () => {
+    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    await screen.findByText('Choose your pages and accounts');
+    const facebook = screen.getByLabelText('Facebook pages') as HTMLInputElement;
+    fireEvent.change(facebook, { target: { value: '2' } });
+    expect(screen.getAllByText('140 PKR').length).toBeGreaterThan(0);
+    fireEvent.change(facebook, { target: { value: '' } });
+    expect(facebook.value).toBe('');
+    expect(screen.queryByText('140 PKR')).toBeNull();
+    fireEvent.blur(facebook);
+    expect(facebook.value).toBe('0');
   });
 
   it('Purchase shows all three inclusions and a dynamic storage total', async () => {
@@ -140,9 +194,8 @@ describe('Billing Purchase', () => {
     ).toBeInTheDocument();
     expect(screen.getByText('Media Library storage included')).toBeInTheDocument();
     expect(screen.getByText('0 GB')).toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText('Increase Facebook'));
-    fireEvent.click(screen.getByLabelText('Increase Facebook'));
-    fireEvent.click(screen.getByLabelText('Increase Instagram'));
+    fireEvent.change(screen.getByLabelText('Facebook pages'), { target: { value: '2' } });
+    fireEvent.change(screen.getByLabelText('Instagram accounts'), { target: { value: '1' } });
     await waitFor(() => expect(screen.getByText('15 GB')).toBeInTheDocument());
   });
 
@@ -245,6 +298,7 @@ describe('Billing Purchase', () => {
     render(<BillingView subdomain="acme" initialSection="purchase" />);
     await goToCheckout();
     expect(await screen.findByText('Manual payments')).toBeInTheDocument();
+    expect(screen.getByText('Your plan runs for 30 days after approval.')).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText('Pay with Binance'));
     expect(screen.getByText('Binance ID')).toBeInTheDocument();
     expect(screen.getAllByText('983001576').length).toBeGreaterThan(0);

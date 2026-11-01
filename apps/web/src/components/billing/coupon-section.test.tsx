@@ -94,6 +94,29 @@ describe('CouponSection', () => {
     expect(onAppliedChange).not.toHaveBeenCalled();
   });
 
+  it('shows the not-found wording for a nonexistent code and keeps the old coupon', async () => {
+    const user = userEvent.setup();
+    const onAppliedChange = vi.fn();
+    apiPost.mockRejectedValue(new Error('Invalid coupon code, try another.'));
+    render(
+      <CouponSection
+        subdomain="test"
+        counts={counts({ facebook: 10 })}
+        applied={preview}
+        onAppliedChange={onAppliedChange}
+        onActivateZeroDue={() => {}}
+        activating={false}
+        disabled={false}
+      />
+    );
+    expect(screen.getByText(/SAVE20/)).toBeInTheDocument();
+    await user.type(screen.getByLabelText('Use a different code'), 'NOPE');
+    await user.click(screen.getByRole('button', { name: 'Apply' }));
+    await waitFor(() => expect(screen.getByText('Coupon not applied')).toBeInTheDocument());
+    expect(screen.getByText('Invalid coupon code, try another.')).toBeInTheDocument();
+    expect(onAppliedChange).not.toHaveBeenCalled();
+  });
+
   it('removes the applied coupon', async () => {
     const user = userEvent.setup();
     const onAppliedChange = vi.fn();
