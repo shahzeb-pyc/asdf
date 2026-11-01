@@ -195,6 +195,29 @@ describe("signup details form (form standard)", () => {
     );
   });
 
+  it("email-budget rate limit surfaces the plain message with no countdown and the submit stays enabled", async () => {
+    const user = userEvent.setup();
+    fetchMock.mockResolvedValue(
+      jsonResponse(429, {
+        error:
+          "We couldn't send your verification code right now because email sending is temporarily at its limit. Please try again in a little while.",
+        emailRateLimited: true,
+      })
+    );
+    render(<SignupFlow />);
+    await fillDetails(user);
+    await submitDetails(user);
+
+    expect(
+      await screen.findByText(
+        "We couldn't send your verification code right now because email sending is temporarily at its limit. Please try again in a little while."
+      )
+    ).toBeTruthy();
+    // No invented countdown: the submit keeps its normal label and stays enabled.
+    const button = screen.getByRole("button", { name: "Create Account" });
+    expect(button.hasAttribute("disabled")).toBe(false);
+  });
+
   it("rate-limited signup surfaces the wait message and disables the submit with its countdown", async () => {
     const user = userEvent.setup();
     fetchMock.mockResolvedValue(
@@ -336,6 +359,30 @@ describe("signup OTP step (§5.4 pattern)", () => {
     expect(screen.getByText("Code Sent")).toBeTruthy();
     const cooled = screen.getByRole("button", { name: "Resend code in 60s" });
     expect(cooled.hasAttribute("disabled")).toBe(true);
+  });
+
+  it("email-budget resend failure shows the plain message with no cooldown and keeps resend usable", async () => {
+    const user = userEvent.setup();
+    fetchMock.mockResolvedValue(
+      jsonResponse(429, {
+        error:
+          "We couldn't send your verification code right now because email sending is temporarily at its limit. Please try again in a little while.",
+        emailRateLimited: true,
+      })
+    );
+    render(<SignupFlow initialStep="otp" initialEmail={VALID.email} />);
+
+    const resend = await screen.findByRole("button", { name: "Did not receive code? Resend" });
+    await user.click(resend);
+
+    expect(
+      await screen.findByText(
+        "We couldn't send your verification code right now because email sending is temporarily at its limit. Please try again in a little while."
+      )
+    ).toBeTruthy();
+    // No invented countdown: resend keeps its normal label and stays enabled.
+    const resendAfter = screen.getByRole("button", { name: "Did not receive code? Resend" });
+    expect(resendAfter.hasAttribute("disabled")).toBe(false);
   });
 
   it("pending-verification entry shows the fresh-code notice on the details step", async () => {

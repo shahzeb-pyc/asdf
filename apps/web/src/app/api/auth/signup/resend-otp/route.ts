@@ -85,6 +85,19 @@ export async function POST(request: NextRequest) {
     const resendResult = await resendSignupOtpViaSupabase(canonicalEmail);
 
     if (!resendResult.success) {
+      // Supabase Auth's hourly email budget: a 429 with no countdown —
+      // no retry timing exists for this error, so the UI must not show
+      // one. (Previously this fell through to a 400 with the raw
+      // GoTrue message.)
+      if (resendResult.emailRateLimited) {
+        return NextResponse.json(
+          {
+            error: resendResult.error || 'Unable to resend verification code.',
+            emailRateLimited: true,
+          },
+          { status: 429 }
+        );
+      }
       const status = resendResult.cooldownSecondsRemaining ? 429 : 400;
       return NextResponse.json(
         {

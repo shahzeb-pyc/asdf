@@ -71,6 +71,8 @@ export interface SignupErrorBody {
   details?: Record<string, string[]>;
   retryAfterSeconds?: number;
   cooldownSecondsRemaining?: number;
+  /** Supabase Auth hourly email budget: 429 with no retry timing. */
+  emailRateLimited?: boolean;
 }
 
 export const VerifyOtpSuccessResponseSchema = z.object({
@@ -98,6 +100,8 @@ export interface ResendOtpErrorBody {
   error?: string;
   retryAfterSeconds?: number;
   cooldownSecondsRemaining?: number;
+  /** Supabase Auth hourly email budget: 429 with no retry timing. */
+  emailRateLimited?: boolean;
 }
 
 /* ------------------------------------------------------------------ */

@@ -75,6 +75,35 @@ export interface AuthErrorResponseOptions {
 }
 
 /**
+ * Plain user-facing message for Supabase Auth's project-wide hourly
+ * email budget (GoTrue `over_email_send_rate_limit`, message "email
+ * rate limit exceeded"). Unlike the per-address "after N seconds"
+ * cooldown, this error carries NO retry timing — the budget resets on
+ * a rolling hour — so no response for it may invent a countdown.
+ */
+export const EMAIL_RATE_LIMIT_MESSAGE =
+  "We couldn't send your verification code right now because email sending is temporarily at its limit. Please try again in a little while.";
+
+/**
+ * True when the error is Supabase Auth's hourly email-budget limit,
+ * whether it arrives as a thrown error with the GoTrue code, a thrown
+ * error carrying the raw message, or the raw message itself.
+ */
+export function isEmailRateLimitError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  if (
+    typeof code === 'string' &&
+    (code === 'EMAIL_RATE_LIMITED' || code === 'over_email_send_rate_limit')
+  ) {
+    return true;
+  }
+  const message = extractRawErrorMessage(error);
+  if (!message) return false;
+  const lower = message.toLowerCase();
+  return lower.includes('email rate limit exceeded') || lower.includes('over_email_send_rate_limit');
+}
+
+/**
  * Server-side error handler for authentication endpoints.
  * Logs full diagnostic traces internally for server logs while ensuring that
  * client response bodies NEVER contain infrastructure or database details.
@@ -82,7 +111,7 @@ export interface AuthErrorResponseOptions {
 export function formatAuthErrorResponse(
   error: unknown,
   options: AuthErrorResponseOptions = {}
-): NextResponse<{ error: string; redirectUrl?: string | undefined; requiresOtp?: boolean | undefined; email?: string | undefined }> {
+): NextResponse<{ error: string; redirectUrl?: string | undefined; requiresOtp?: boolean | undefined; email?: string | undefined; emailRateLimited?: boolean | undefined }> {
   const fallbackMessage =
     options.fallbackMessage || 'Unable to complete your request at this moment. Please try again shortly.';
   const defaultStatus = options.defaultStatus || 500;
@@ -132,6 +161,20 @@ export function formatAuthErrorResponse(
     return NextResponse.json(
       { error: 'Email is already registered' },
       { status: 409 }
+    );
+  }
+
+  // 3.5. Supabase Auth hourly email budget (429, evaluated before the
+  // generic rate-limit branch). No retry timing exists for this error,
+  // so the response carries no retryAfterSeconds and no Retry-After
+  // header — the UI must not show a countdown for it.
+  if (isEmailRateLimitError(error)) {
+    return NextResponse.json(
+      {
+        error: EMAIL_RATE_LIMIT_MESSAGE,
+        emailRateLimited: true,
+      },
+      { status: 429 }
     );
   }
 
