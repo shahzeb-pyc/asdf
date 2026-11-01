@@ -85,7 +85,7 @@ finished files will not be visible in the library).
 Supabase migrations, in order, applied to the target database with a
 separate go-ahead (never by the PR itself): the existing
 `20261025120000` claim migration, then the new
-`20261030120000` checkpoint migration.
+`20261030120002` checkpoint migration.
 
 ## Layout
 

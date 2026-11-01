@@ -129,7 +129,7 @@ export function IgAduHubPage({ subdomain }: { subdomain: string }) {
 
       {error ? <Banner variant="critical" title="Could not load accounts" description={error} /> : null}
       {migrationMissing ? (
-        <Banner variant="warning" title="ADU tables are not created yet" description="Apply migration 20261030120000_adu.sql to the database, then refresh this page. Until then, no ADU accounts can be added." />
+        <Banner variant="warning" title="ADU tables are not created yet" description="Apply migration 20261030120001_adu.sql to the database, then refresh this page. Until then, no ADU accounts can be added." />
       ) : null}
 
       <div className="grid gap-4 sm:grid-cols-3">
@@ -267,7 +267,7 @@ function AddAccountDialog({ subdomain, open, onOpenChange, onCreated }: {
         // Fail loud, like the Facebook dialog after #56: a 500 used to
         // render as an empty picker with no error, inviting duplicates.
         if (!r.ok) throw new Error(body.error ?? 'Could not load Instagram accounts.');
-        if (body.migrationMissing) throw new Error('The Auto Download/Upload tables have not been created yet. Apply migration 20261030120000_adu.sql, then try again.');
+        if (body.migrationMissing) throw new Error('The Auto Download/Upload tables have not been created yet. Apply migration 20261030120001_adu.sql, then try again.');
         setPages(body.pages ?? []);
         setConfigured(body.configured ?? []);
       })

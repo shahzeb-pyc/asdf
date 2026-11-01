@@ -175,7 +175,7 @@ async function createOne(
     if (threadsAduMissingTable(error)) {
       return {
         ok: false,
-        error: 'The ADU tables have not been created yet. Apply migration 20261030120000_adu.sql, then try again.',
+        error: 'The ADU tables have not been created yet. Apply migration 20261030120001_adu.sql, then try again.',
       };
     }
     return { ok: false, error: error.message };
