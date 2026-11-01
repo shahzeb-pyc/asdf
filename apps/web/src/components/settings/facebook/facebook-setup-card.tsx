@@ -14,8 +14,8 @@
  * address the connect flow actually sends to Meta. It must NOT use
  * the generic callback-URL helper (`lib/platforms/callback-urls`):
  * that helper gives /api/connect/facebook/callback, a path the
- * Facebook flow never uses (Instagram/Threads do use it, and still
- * get their addresses from that helper).
+ * Facebook flow never uses (Threads still uses it, and still gets its
+ * address from that helper).
  *
  * Copy is spec §5.2 verbatim, including Meta's own field name
  * ("Valid OAuth Redirect URIs"), carried like "App ID" / "App Secret".

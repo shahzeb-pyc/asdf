@@ -1,54 +1,57 @@
 /**
- * Spec 124: Instagram connect registration on spec 123's framework.
+ * Spec 124: Instagram connect config (direct flow).
  *
  * Instagram-Login route only (D2): Instagram's own authorize window,
  * code → 1-hour token → 60-day long-lived token, Professional-account
  * detection with a plain-language refusal, and the destination = the
  * IG account itself.
+ *
+ * 2026-11-02: the framework Instagram registration was removed with
+ * the old framework flow — the direct callback builds its exchange
+ * from `createInstagramConnectConfig`, not from the registry. These
+ * tests pin the factory's shape, not a registration.
  */
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { INSTAGRAM_OAUTH_SCOPES } from '@fbuploadpro/contracts';
-import {
-  clearPlatformConnectConfigsForTests,
-  getPlatformConnectConfig,
-  hasPlatformConnectConfig,
-} from '@/lib/connect/registry';
 import {
   createInstagramConnectConfig,
   isProfessionalInstagramAccountType,
-  registerInstagramConnectConfig,
   type InstagramDiscoveredDestination,
 } from '@/lib/connect/platforms/instagram';
 
-describe('Instagram connect registration (spec 124)', () => {
-  beforeEach(() => {
-    clearPlatformConnectConfigsForTests();
-  });
-
-  it('registers Instagram as a BYOC platform on the Instagram-Login route', () => {
-    registerInstagramConnectConfig();
-    expect(hasPlatformConnectConfig('instagram')).toBe(true);
-    const config = getPlatformConnectConfig('instagram');
+describe('Instagram connect config (spec 124)', () => {
+  it('builds an Instagram-Login config for a BYOC platform', () => {
+    const config = createInstagramConnectConfig();
+    expect(config.platform).toBe('instagram');
     // Instagram-Login ONLY: Instagram's own authorize window, never Facebook's dialog.
-    expect(config?.authorizeUrl).toBe('https://api.instagram.com/oauth/authorize');
-    expect(config?.authorizeUrl).not.toContain('facebook.com');
-    expect(config?.clientIdSource).toBe('byoc');
-    expect(config?.usePkce).toBe(false);
-    // Spec 123's framework fixture mode for Instagram.
-    expect(config?.destinationMode).toBe('picker');
+    expect(config.authorizeUrl).toBe('https://api.instagram.com/oauth/authorize');
+    expect(config.authorizeUrl).not.toContain('facebook.com');
+    expect(config.clientIdSource).toBe('byoc');
+    expect(config.usePkce).toBe(false);
+    expect(config.destinationMode).toBe('picker');
   });
 
   it('requests the manage-comments permission (the first comment needs it)', () => {
-    registerInstagramConnectConfig();
-    const config = getPlatformConnectConfig('instagram');
-    expect(config?.scopes).toEqual([...INSTAGRAM_OAUTH_SCOPES]);
-    expect(config?.scopes).toContain('instagram_business_manage_comments');
-    expect(config?.scopes).toContain('instagram_business_content_publish');
+    const config = createInstagramConnectConfig();
+    expect(config.scopes).toEqual([...INSTAGRAM_OAUTH_SCOPES]);
+    expect(config.scopes).toContain('instagram_business_manage_comments');
+    expect(config.scopes).toContain('instagram_business_content_publish');
   });
 
-  it('registration is idempotent', () => {
-    registerInstagramConnectConfig();
-    expect(() => registerInstagramConnectConfig()).not.toThrow();
+  it('the factory is pure: two calls return equal, independent configs', () => {
+    const first = createInstagramConnectConfig();
+    const second = createInstagramConnectConfig();
+    expect(first).not.toBe(second);
+    // Data fields match (functions are compared by identity, so the
+    // function fields are asserted separately by type, not by value).
+    expect(first.platform).toBe(second.platform);
+    expect(first.authorizeUrl).toBe(second.authorizeUrl);
+    expect(first.scopes).toEqual(second.scopes);
+    expect(first.clientIdSource).toBe(second.clientIdSource);
+    expect(first.usePkce).toBe(second.usePkce);
+    expect(first.destinationMode).toBe(second.destinationMode);
+    expect(typeof first.exchangeCode).toBe('function');
+    expect(typeof first.fetchDestinations).toBe('function');
   });
 
   it('Professional detection accepts Business/Creator and refuses personal accounts', () => {

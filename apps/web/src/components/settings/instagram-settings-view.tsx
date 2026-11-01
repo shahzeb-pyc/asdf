@@ -19,9 +19,9 @@
  */
 
 import React from 'react';
+import { buildSubdomainOAuthRedirectUriForCallback } from '@fbuploadpro/contracts';
 import { PlatformCredentialsView } from '@/components/settings/platform/platform-credentials-view';
 import { PlatformSetupCard } from '@/components/settings/platform/platform-setup-card';
-import { getPlatformCallbackUrls } from '@/lib/platforms/callback-urls';
 import { buildPrivacyPolicyUrl } from '@/lib/privacy-url';
 
 export const INSTAGRAM_CREDENTIALS_CONFIG = {
@@ -38,7 +38,25 @@ export interface InstagramSettingsViewProps {
 }
 
 export function InstagramSettingsView({ subdomain }: Readonly<InstagramSettingsViewProps>) {
-  const urls = getPlatformCallbackUrls('instagram');
+  // The sign-in address shown here is built with the SAME builder the
+  // real Instagram OAuth initiate uses
+  // (apps/web/src/app/api/auth/instagram/route.ts) — so the address
+  // shown can never drift from the address the connect flow actually
+  // sends to Meta. It must NOT use the generic callback-URL helper
+  // (`lib/platforms/callback-urls`): that helper gives
+  // /api/connect/instagram/callback, a path the Instagram flow never
+  // uses since the direct flow replaced the framework flow (Threads
+  // still uses the helper, and still gets its address from it).
+  const signInCallback = buildSubdomainOAuthRedirectUriForCallback(
+    subdomain,
+    '/api/auth/instagram/callback',
+    typeof window !== 'undefined' ? window.location.origin : null,
+    // Same default as the Facebook setup card: without it, an unset
+    // root domain would fall back to a localhost address, which is
+    // never the address Meta must have on file.
+    process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'fbuploadpro.com',
+    process.env.NEXT_PUBLIC_APP_URL
+  );
 
   return (
     <PlatformCredentialsView
@@ -54,7 +72,7 @@ export function InstagramSettingsView({ subdomain }: Readonly<InstagramSettingsV
             {
               key: 'signin',
               label: 'Sign-in address',
-              url: urls.signInCallback,
+              url: signInCallback,
               helper:
                 'Paste this into the address field in the Instagram sign-in settings in your Meta app.',
             },

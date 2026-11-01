@@ -286,9 +286,9 @@ async function instagramAccountExistedBefore(
 
 /**
  * The provider-reported account type, validated against the contracts
- * metadata schema before it is written — the twin of `accountTypeOf`
- * in `/api/connect/instagram/complete` (which writes the same key for
- * framework connects). A malformed value is never persisted.
+ * metadata schema before it is written into the destination row's
+ * metadata (where the story gate reads it). A malformed value is never
+ * persisted.
  */
 function accountTypeOf(destination: { accountType?: unknown }): string | null {
   const raw = destination.accountType;
