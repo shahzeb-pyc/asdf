@@ -226,7 +226,7 @@ export async function POST(
       const coupon = await loadCouponByCode(client, couponCode);
       if (!coupon) {
         return NextResponse.json(
-          { error: 'COUPON_NOT_FOUND', message: 'That coupon code was not found.' },
+          { error: 'COUPON_NOT_FOUND', message: 'Invalid coupon code, try another.' },
           { status: 404 }
         );
       }

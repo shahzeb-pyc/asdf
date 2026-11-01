@@ -459,12 +459,14 @@ describe('preview and guards', () => {
     seedCoupon(tables, { code: 'LIVE20', kind: 'percent_multi', percent: 20 });
     await expect(previewCoupon(client, 'NOPE', 700)).rejects.toMatchObject({
       code: 'COUPON_NOT_FOUND',
+      message: 'Invalid coupon code, try another.',
     });
     await expect(previewCoupon(client, 'PAUSED20', 700)).rejects.toMatchObject({
       code: 'COUPON_PAUSED',
     });
     await expect(previewCoupon(client, 'GONE20', 700)).rejects.toMatchObject({
       code: 'COUPON_NOT_FOUND',
+      message: 'Invalid coupon code, try another.',
     });
     const live = await loadCoupon(client, 'LIVE20');
     try {
