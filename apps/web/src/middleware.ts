@@ -14,6 +14,7 @@ import {
   CSP_HEADER_NAME,
   generateNonce,
 } from './lib/csp';
+import { purgeHostOnlySessionCookie } from './lib/auth/session';
 
 export const config = {
   matcher: [
@@ -378,24 +379,61 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
         );
 
         if (isBouncedFromWorkspace) {
-          const bouncedHeaders = stripUserHeaders(request);
-          setCspRequestHeaders(bouncedHeaders, nonce);
-          const response = NextResponse.next({
-            request: {
-              headers: bouncedHeaders,
-            },
-          });
-          response.cookies.set('fbup_session', '', {
-            path: '/',
-            maxAge: 0,
-          });
-          const cleanRoot = rootDomain.toLowerCase().split(':')[0];
-          if (cleanRoot && !cleanRoot.includes('localhost') && !cleanRoot.includes('127.0.0.1')) {
-            response.cookies.set('fbup_session', '', {
-              path: '/',
-              domain: `.${cleanRoot}`,
-              maxAge: 0,
-            });
+          // A VERIFIED session must never be destroyed here. The old
+          // code served the login page and set clearing cookies for
+          // fbup_session (host-only and .<root>), which turned any
+          // bounce back to /login into an infinite login ↔ home loop:
+          // the tenant sent the user to login with a returnUrl, login
+          // destroyed the session, and the next request had no session
+          // at all. A bounced user with a valid session belongs on
+          // their tenant home, exactly like any other authenticated
+          // entry-route visit. Genuinely invalid sessions never reach
+          // this branch (resolveSession returns null), so they still
+          // land on login untouched.
+          //
+          // SEND BACK fix: still clear ONLY the host-only (app-address)
+          // copy of fbup_session. A user whose only cookie is a stale
+          // app-only one would otherwise bounce forever after this
+          // fix, with no way to reach the login form: the redirect
+          // below sends them to the tenant, the tenant cannot read
+          // the app-only cookie, and they bounce back here again.
+          // Clearing the host-only copy lets that user land on the
+          // login form next time and log in fresh for a working
+          // shared-domain cookie. The purge sets no Domain attribute,
+          // so a good shared-domain (.fbuploadpro.com) cookie is a
+          // separate entry and SURVIVES — a user with a good shared
+          // cookie is unaffected. Scoped to requests actually from
+          // production custom hosts only: on localhost / vercel
+          // preview the host-only cookie IS the session, so purging
+          // it there would log those users out.
+          //
+          // SECOND SEND BACK fix: gate the purge on the REQUEST HOST
+          // as well as the configured root domain. The previous gate
+          // only looked at the root domain, but previews are built
+          // with the production config, so a preview deployment serves
+          // on a *.vercel.app host while NEXT_PUBLIC_ROOT_DOMAIN is
+          // still fbuploadpro.com — the old gate passed and the purge
+          // deleted the preview user's ONLY session cookie. Purge
+          // only when the request actually came from a production
+          // custom host: the host is the root or a subdomain of it,
+          // and it is not localhost, 127.0.0.1, or a *.vercel.app
+          // preview host. This mirrors the host test in
+          // lib/auth/clients.ts getCookieDomain, which cannot be
+          // imported into Edge middleware (it imports
+          // @supabase/supabase-js), so the test is mirrored inline.
+          const response = buildAuthenticatedWorkspaceRedirect(request, session, host, rootDomain);
+          const cleanHost = host.toLowerCase().split(':')[0] || '';
+          const cleanRoot = rootDomain.toLowerCase().split(':')[0] || '';
+          const isLocalOrPreviewHost =
+            cleanHost.includes('localhost') ||
+            cleanHost.includes('127.0.0.1') ||
+            cleanHost.endsWith('.vercel.app');
+          const isProductionCustomHost =
+            !!cleanRoot &&
+            !isLocalOrPreviewHost &&
+            (cleanHost === cleanRoot || cleanHost.endsWith(`.${cleanRoot}`));
+          if (isProductionCustomHost) {
+            purgeHostOnlySessionCookie(response);
           }
           return applyCspHeaders(response, nonce);
         }

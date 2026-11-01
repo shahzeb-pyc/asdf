@@ -157,24 +157,64 @@ export function getCookieDomain(requestHost?: string | null): string | undefined
     .split('/')[0]
     ?.split(':')[0] || 'localhost';
 
+  if (requestHost) {
+    const cleanHost = requestHost.trim().toLowerCase().split(':')[0] || '';
+    const isLocalHost =
+      cleanHost.includes('localhost') || cleanHost.includes('127.0.0.1');
+    const isVercelHost = cleanHost.endsWith('.vercel.app');
+
+    // Fail loud, never silently host-only, on a production custom
+    // domain. A host-only cookie set on app.<root> can never be read
+    // by <workspace>.<root>, so issuing one looks like a successful
+    // login on the app host and then fails on every tenant host —
+    // which feeds bounces into the login ↔ home loop. A loud error
+    // at login time (logged server-side, surfaced by the route's
+    // error path) is strictly better than that silent loop.
+    // Scoped so local dev and previews are untouched: localhost and
+    // *.vercel.app deployments serve tenant paths on the same host,
+    // so a host-only cookie works there, and non-production callers
+    // keep the old silent fallback.
+    if (process.env.NODE_ENV === 'production' && !isLocalHost && !isVercelHost) {
+      const cookieDomain = process.env.COOKIE_DOMAIN?.trim();
+      const effectiveBase = (cookieDomain ? cookieDomain.replace(/^\./, '') : cleanRoot)
+        .toLowerCase();
+      const effectiveIsUsable =
+        !effectiveBase.includes('localhost') &&
+        !effectiveBase.includes('127.0.0.1') &&
+        !effectiveBase.endsWith('.vercel.app');
+      const coversHost =
+        cleanHost === effectiveBase || cleanHost.endsWith(`.${effectiveBase}`);
+      if (!effectiveIsUsable || !coversHost) {
+        console.error(
+          '[auth] getCookieDomain: refusing to issue a host-only session cookie in production — ' +
+            'the cookie domain cannot cover tenant subdomains for this host. ' +
+            'Check NEXT_PUBLIC_ROOT_DOMAIN and COOKIE_DOMAIN.',
+          { host: cleanHost, rootDomain: cleanRoot, cookieDomain: cookieDomain || null }
+        );
+        throw new Error(
+          'Session cookie domain cannot cover tenant subdomains for this host; ' +
+            'refusing to issue a host-only fbup_session cookie in production. ' +
+            'Check NEXT_PUBLIC_ROOT_DOMAIN and COOKIE_DOMAIN.'
+        );
+      }
+      return cookieDomain || `.${cleanRoot}`;
+    }
+
+    if (
+      isLocalHost ||
+      isVercelHost ||
+      (cleanHost !== cleanRoot && !cleanHost.endsWith(`.${cleanRoot}`))
+    ) {
+      return undefined;
+    }
+  }
+
   if (
     cleanRoot.includes('localhost') ||
     cleanRoot.includes('127.0.0.1') ||
     cleanRoot.endsWith('.vercel.app')
   ) {
     return undefined;
-  }
-
-  if (requestHost) {
-    const cleanHost = requestHost.trim().toLowerCase().split(':')[0] || '';
-    if (
-      cleanHost.includes('localhost') ||
-      cleanHost.includes('127.0.0.1') ||
-      cleanHost.endsWith('.vercel.app') ||
-      (cleanHost !== cleanRoot && !cleanHost.endsWith(`.${cleanRoot}`))
-    ) {
-      return undefined;
-    }
   }
 
   return process.env.COOKIE_DOMAIN?.trim() || `.${cleanRoot}`;
