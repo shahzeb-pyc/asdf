@@ -163,8 +163,10 @@ export async function getSellerSettings(
 /**
  * Resolve a referral code to an ACTIVE seller. Any code row for
  * the seller resolves, current or superseded — past codes stay
- * valid forever. Unknown codes, and codes belonging to paused
- * or deleted sellers, resolve to null (no new attribution).
+ * valid forever. Unknown codes, codes belonging to paused
+ * sellers, and TOMBSTONED codes (a deleted seller's codes,
+ * kept so they can never be re-claimed) resolve to null
+ * (no new attribution).
  */
 export async function resolveReferralCode(
   client: SupabaseClient,
@@ -176,6 +178,7 @@ export async function resolveReferralCode(
     .from('referral_codes')
     .select('seller_id')
     .eq('code', code)
+    .is('tombstoned_at', null)
     .maybeSingle();
   if (codeError) {
     logServerError('[sellers] referral code lookup failed', codeError, { source: 'sellers' });
@@ -199,7 +202,7 @@ export async function resolveReferralCode(
   return { sellerId, sellerName: userData ? stringField(userData, 'name') : null };
 }
 
-/** Current (non-superseded) code for a seller, if one is picked. */
+/** Current (non-superseded, non-tombstoned) code for a seller, if one is picked. */
 export async function getCurrentReferralCode(
   client: SupabaseClient,
   sellerId: string
@@ -209,6 +212,7 @@ export async function getCurrentReferralCode(
     .select('code')
     .eq('seller_id', sellerId)
     .is('superseded_at', null)
+    .is('tombstoned_at', null)
     .order('created_at', { ascending: false })
     .limit(1);
   if (error) {
@@ -219,14 +223,14 @@ export async function getCurrentReferralCode(
   return first ? stringField(first, 'code') : null;
 }
 
-/** All codes a seller has ever used, newest first. */
+/** All codes a seller has ever used, newest first. Tombstoned codes are included with tombstoned: true. */
 export async function listReferralCodes(
   client: SupabaseClient,
   sellerId: string
-): Promise<Array<{ code: string; current: boolean; createdAt: string }>> {
+): Promise<Array<{ code: string; current: boolean; tombstoned: boolean; createdAt: string }>> {
   const { data, error } = await client
     .from('referral_codes')
-    .select('code,superseded_at,created_at')
+    .select('code,superseded_at,tombstoned_at,created_at')
     .eq('seller_id', sellerId)
     .order('created_at', { ascending: false })
     .limit(100);
@@ -240,7 +244,8 @@ export async function listReferralCodes(
   return rows
     .map((r) => ({
       code: stringField(r, 'code') ?? '',
-      current: stringField(r, 'superseded_at') === null,
+      current: stringField(r, 'superseded_at') === null && stringField(r, 'tombstoned_at') === null,
+      tombstoned: stringField(r, 'tombstoned_at') !== null,
       createdAt: stringField(r, 'created_at') ?? '',
     }))
     .filter((r) => r.code.length > 0);
@@ -249,8 +254,10 @@ export async function listReferralCodes(
 /**
  * Change (or first pick) a seller's referral code. The new code
  * must be globally unique across every code ever used, by any
- * seller, current or superseded — the unique index enforces it
- * (23505 → a loud duplicate error, never a silent reuse).
+ * seller, current or superseded — and across TOMBSTONED codes
+ * (a deleted seller's codes, which the clash check below still
+ * sees as taken). The unique index enforces it (23505 → a loud
+ * duplicate error, never a silent reuse).
  * The previous current code is superseded, never deleted, so
  * links carrying it keep attributing forever.
  */
@@ -1109,9 +1116,12 @@ export async function updateSeller(
  * because pending rows must first mature and be paid; the
  * caller gets the outstanding breakdown. Auth is deleted first
  * (not-found tolerated) so a failed profile delete stays
- * retryable. Referral codes are deleted with the seller; payout
- * requests and commission rows survive via their snapshots and
- * non-FK seller ids for audit.
+ * retryable. Referral codes are TOMBSTONED, never deleted:
+ * every code the seller ever used (current and superseded) is
+ * stamped tombstoned_at, so the globally-unique code index
+ * keeps it reserved forever and no other seller can ever
+ * re-claim it. Payout requests and commission rows survive
+ * via their snapshots and non-FK seller ids for audit.
  */
 export async function deleteSeller(
   client: SupabaseClient,
@@ -1153,12 +1163,17 @@ export async function deleteSeller(
       throw new SellerError('SELLERS_UNAVAILABLE', 'The seller could not be deleted right now.');
     }
   }
+  // Tombstone every code the seller ever used (current and
+  // superseded alike) instead of deleting them: the unique index
+  // on code then keeps each one reserved forever. Re-stamping
+  // already-tombstoned rows is a harmless no-op, so a second
+  // delete stays safe.
   const { error: codesError } = await client
     .from('referral_codes')
-    .delete()
+    .update({ tombstoned_at: new Date().toISOString() })
     .eq('seller_id', sellerId);
   if (codesError) {
-    logServerError('[sellers] seller codes delete failed', codesError, { source: 'sellers' });
+    logServerError('[sellers] seller codes tombstone failed', codesError, { source: 'sellers' });
     throw new SellerError('SELLERS_UNAVAILABLE', 'The seller could not be deleted right now.');
   }
   const { error: userError } = await client.from('users').delete().eq('id', sellerId);

@@ -309,7 +309,7 @@ function sellerSeed(overrides: Partial<Row> = {}): Record<string, Row[]> {
       { user_id: SELLER_ID, rate: 20, scope: 'every', status: 'active' },
     ],
     referral_codes: [
-      { id: 'code-1', seller_id: SELLER_ID, code: 'ALI20', superseded_at: null, created_at: '2026-01-01T00:00:00.000Z' },
+      { id: 'code-1', seller_id: SELLER_ID, code: 'ALI20', superseded_at: null, tombstoned_at: null, created_at: '2026-01-01T00:00:00.000Z' },
     ],
     seller_commissions: [],
     seller_payout_requests: [],
@@ -350,6 +350,7 @@ describe('sellers lib', () => {
       seller_id: SELLER_ID,
       code: 'OLD20',
       superseded_at: '2026-02-01T00:00:00.000Z',
+      tombstoned_at: null,
       created_at: '2025-12-01T00:00:00.000Z',
     });
     expect(await resolveReferralCode(client, 'OLD20')).not.toBeNull();
@@ -540,7 +541,10 @@ describe('sellers lib', () => {
     expect(result.deleted).toBe(true);
     expect(auth.deleteUser).toHaveBeenCalledWith(SELLER_ID);
     expect(db['users']!.find((u) => u['id'] === SELLER_ID)).toBeUndefined();
-    expect(db['referral_codes']!.length).toBe(0);
+    // Codes are tombstoned, never deleted: the row survives, stamped.
+    expect(db['referral_codes']!.length).toBe(1);
+    expect(db['referral_codes']![0]!['code']).toBe('ALI20');
+    expect(typeof db['referral_codes']![0]!['tombstoned_at']).toBe('string');
   });
 
   it('sums balances by status and excludes cancelled rows', async () => {
@@ -651,7 +655,7 @@ describe('sellers lib', () => {
     const { client: c2 } = makeClient(seed2);
     expect(await getCurrentReferralCode(c2, SELLER_ID)).toBeNull();
     const codes = await listReferralCodes(c2, SELLER_ID);
-    expect(codes).toEqual([{ code: 'ALI20', current: true, createdAt: '' }]);
+    expect(codes).toEqual([{ code: 'ALI20', current: true, tombstoned: false, createdAt: '' }]);
 
     // Settings row with an unknown scope is not a seller.
     const seed3 = sellerSeed();
@@ -1008,7 +1012,7 @@ describe('sellers lib', () => {
     expect(await deleteSeller(c3, SELLER_ID)).toEqual({ deleted: true });
     expect(db3['users']!.find((u) => u['id'] === SELLER_ID)).toBeUndefined();
 
-    const { client: c4 } = makeClient(sellerSeed(), { 'referral_codes:delete': err });
+    const { client: c4 } = makeClient(sellerSeed(), { 'referral_codes:update': err });
     await expectCode(deleteSeller(c4, SELLER_ID), 'SELLERS_UNAVAILABLE');
 
     const { client: c5 } = makeClient(sellerSeed(), { 'users:delete': err });
@@ -1069,5 +1073,57 @@ describe('sellers lib', () => {
     const { client: c2 } = makeClient(seed, { seller_commissions: { code: 'XX000', message: 'boom' } });
     await expectCode(listSellerPayoutRequests(c2, SELLER_ID, 20, 0), 'SELLERS_UNAVAILABLE');
     expect(db['seller_payout_requests']!.length).toBe(3);
+  });
+
+  it('tombstones codes on delete, and never re-issues them', async () => {
+    const seed = sellerSeed();
+    seed['referral_codes']!.push({
+      id: 'code-2',
+      seller_id: SELLER_ID,
+      code: 'ALIOLD',
+      superseded_at: '2026-01-05T00:00:00.000Z',
+      tombstoned_at: null,
+      created_at: '2025-12-01T00:00:00.000Z',
+    });
+    const { client, db } = makeClient(seed);
+    expect(await deleteSeller(client, SELLER_ID)).toEqual({ deleted: true });
+
+    // Both the current code and the old superseded code survive, stamped.
+    expect(db['referral_codes']!.length).toBe(2);
+    for (const row of db['referral_codes']!) {
+      expect(typeof row['tombstoned_at']).toBe('string');
+    }
+
+    // A signup arriving with a tombstoned link proceeds unattributed:
+    // the code no longer resolves, so no referred_by_* is recorded.
+    expect(await resolveReferralCode(client, 'ALI20')).toBeNull();
+    expect(await resolveReferralCode(client, 'ALIOLD')).toBeNull();
+    expect(await getCurrentReferralCode(client, SELLER_ID)).toBeNull();
+
+    // ...but the codes are still taken: no seller can claim one.
+    await expectCode(changeReferralCode(client, 'seller-2', 'ali20'), 'REFERRAL_CODE_TAKEN');
+    await expectCode(changeReferralCode(client, 'seller-2', 'ALIOLD'), 'REFERRAL_CODE_TAKEN');
+
+    // The code list marks them tombstoned, never current.
+    const codes = await listReferralCodes(client, SELLER_ID);
+    expect(codes).toEqual([
+      expect.objectContaining({ code: 'ALI20', current: false, tombstoned: true }),
+      expect.objectContaining({ code: 'ALIOLD', current: false, tombstoned: true }),
+    ]);
+  });
+
+  it('tolerates deleting a seller twice, and deleting one with no codes', async () => {
+    const { client, db } = makeClient(sellerSeed());
+    expect(await deleteSeller(client, SELLER_ID)).toEqual({ deleted: true });
+    // Settings survive the first delete, so the second delete still
+    // resolves the seller; re-stamping the tombstones is a no-op.
+    expect(await deleteSeller(client, SELLER_ID)).toEqual({ deleted: true });
+    expect(db['referral_codes']!.length).toBe(1);
+    expect(typeof db['referral_codes']![0]!['tombstoned_at']).toBe('string');
+
+    const seed0 = sellerSeed();
+    seed0['referral_codes'] = [];
+    const { client: c0 } = makeClient(seed0);
+    expect(await deleteSeller(c0, SELLER_ID)).toEqual({ deleted: true });
   });
 });

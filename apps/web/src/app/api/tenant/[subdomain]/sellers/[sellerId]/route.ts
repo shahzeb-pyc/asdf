@@ -102,6 +102,7 @@ export async function GET(
       codes: codes.map((c) => ({
         code: c.code,
         current: c.current,
+        tombstoned: c.tombstoned,
         createdAt: c.createdAt,
       })),
       balances,
