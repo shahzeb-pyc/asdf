@@ -68,6 +68,7 @@ import {
 } from '@/components/shared/ui/menu';
 import { cn } from '@/lib/utils';
 import { getUserInitials } from '@/lib/user-initials';
+import { buildTenantHref, isTenantSubdomainHost } from '@/lib/tenant-href';
 import type { FacebookPageItem } from '../page-card';
 import { resolveFormatLabel } from './posting-times/posting-time-utils';
 import {
@@ -297,7 +298,7 @@ export function DedicatedPageHeader({
         <button
           type="button"
           data-testid="back-to-pages-link"
-          onClick={() => router.push(`/tenant/${subdomain}/pages`)}
+          onClick={() => router.push(buildTenantHref(subdomain, `/pages`, isTenantSubdomainHost(window.location.hostname, subdomain)))}
           className="inline-flex min-h-11 items-center gap-1 px-1 text-body font-medium text-ink-sub transition-colors hover:text-ink"
         >
           <ChevronLeftIcon className="size-4" aria-hidden />
@@ -375,7 +376,7 @@ export function DedicatedPageHeader({
               <Button
                 type="button"
                 data-testid="reconnect-account-btn"
-                onClick={() => router.push(`/tenant/${subdomain}/accounts`)}
+                onClick={() => router.push(buildTenantHref(subdomain, `/accounts`, isTenantSubdomainHost(window.location.hostname, subdomain)))}
               >
                 Open Facebook Accounts
               </Button>

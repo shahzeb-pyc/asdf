@@ -26,6 +26,7 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/shared/ui/button';
 import { EmptyState } from '@/components/shared/ui/empty-state';
 import { TESTING_PLACEHOLDER_TEXT } from '@/components/workspace/platform-nav-config';
+import { buildTenantHref, isTenantSubdomainHost } from '@/lib/tenant-href';
 
 export interface PlatformAccountsShellProps {
   platformName: string;
@@ -47,7 +48,7 @@ export function PlatformAccountsShell({
   const router = useRouter();
 
   const handleReturnHome = () => {
-    router.push(`/tenant/${subdomain}`);
+    router.push(buildTenantHref(subdomain, ``, isTenantSubdomainHost(window.location.hostname, subdomain)));
   };
 
   return (

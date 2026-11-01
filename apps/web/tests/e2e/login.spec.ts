@@ -125,11 +125,13 @@ test.describe('login', () => {
     await page.getByLabel('Password', { exact: true }).fill(TENANT.password);
     await page.getByRole('button', { name: 'Sign In' }).click();
 
-    // Post-login the app navigates to the tenant subdomain home
-    // (http://e2e.localhost:3100/tenant/e2e), which middleware rewrites to
-    // the workspace home.
+    // Post-login the app navigates to the tenant subdomain home. The
+    // login stub returns the prefixed home (/tenant/e2e), but URL
+    // normalization redirects it to the clean home on the tenant's
+    // own host (http://e2e.localhost:3100/) — the prefix must never
+    // appear in the address bar there.
     await expect(page).toHaveURL(
-      new RegExp(`${TENANT.subdomain}\\.localhost:3100/tenant/${TENANT.subdomain}$`)
+      new RegExp(`${TENANT.subdomain}\\.localhost:3100/$`)
     );
     await expect(
       page.getByRole('heading', { name: /Welcome,/ })

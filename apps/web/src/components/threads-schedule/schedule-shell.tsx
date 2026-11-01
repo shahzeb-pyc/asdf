@@ -15,6 +15,7 @@ import {
 import { DEFAULT_PAGE_SIZE } from '@/lib/server/pagination';
 import { queryKeys } from '@/lib/data';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
+import { buildTenantHref, isTenantSubdomainHost } from '@/lib/tenant-href';
 import { Button } from '@/components/shared/ui/button';
 import { EmptyState } from '@/components/shared/ui/empty-state';
 import { ListPagination } from '@/components/shared/ui/list-pagination';
@@ -246,10 +247,10 @@ export function ThreadsScheduleShell({
               onPageChange={(next) => {
                 setPage(next);
                 router.replace(
-                  `/tenant/${subdomain}/threads/schedule?${new URLSearchParams({
+                  buildTenantHref(subdomain, `/threads/schedule?${new URLSearchParams({
                     ...Object.fromEntries(searchParams.entries()),
                     page: String(next),
-                  }).toString()}`,
+                  }).toString()}`, isTenantSubdomainHost(window.location.hostname, subdomain)),
                   { scroll: false }
                 );
               }}

@@ -15,6 +15,7 @@ import {
   generateNonce,
 } from './lib/csp';
 import { purgeHostOnlySessionCookie } from './lib/auth/session';
+import { isTenantSubdomainHost } from '@/lib/tenant-href';
 
 export const config = {
   matcher: [
@@ -259,6 +260,20 @@ function handleDirectTenantPathOnApex(
   const access = canAccessTenant(session, pathSubdomain);
   if (!access.allowed) {
     if (access.reason === 'mismatch') {
+      // Guard (a): when the request host is already the session's own
+      // subdomain host, the bounce lands on the CLEAN home, not the
+      // prefixed home — one redirect instead of guard → prefixed →
+      // clean. (Under correct root-domain config this branch never
+      // sees a tenant-own host; it only fires when the host fell
+      // through to the apex branch, e.g. a misconfigured root
+      // domain. The query string, including notice, is preserved
+      // exactly as the prefixed form did.)
+      const requestHost = request.headers.get('host') || '';
+      if (isTenantSubdomainHost(requestHost, session.subdomain)) {
+        const cleanHomeUrl = new URL('/', request.url);
+        cleanHomeUrl.searchParams.set('notice', 'tenant_redirect');
+        return NextResponse.redirect(cleanHomeUrl, 307);
+      }
       const redirectUrl = new URL(`/tenant/${session.subdomain}`, request.url);
       redirectUrl.searchParams.set('notice', 'tenant_redirect');
       return NextResponse.redirect(redirectUrl, 307);
@@ -547,6 +562,19 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     if (access.reason === 'mismatch') {
       const authorizedUrl = new URL(request.url);
       authorizedUrl.host = `${session.subdomain}.${rootDomain}`;
+      // Guard (b): the target host is by construction the session's
+      // own host, so if the preserved path still carries the
+      // session's own /tenant/<subdomain> prefix, strip it here —
+      // the bounce is a single redirect to the clean path, not
+      // guard → prefixed → clean. Any other tenant's prefix is
+      // left untouched (it is not the session's own path).
+      const ownPrefix = `/tenant/${session.subdomain}`;
+      const lowerPath = authorizedUrl.pathname.toLowerCase();
+      if (lowerPath === ownPrefix.toLowerCase()) {
+        authorizedUrl.pathname = '/';
+      } else if (lowerPath.startsWith(`${ownPrefix.toLowerCase()}/`)) {
+        authorizedUrl.pathname = authorizedUrl.pathname.slice(ownPrefix.length);
+      }
       authorizedUrl.searchParams.set('notice', 'tenant_redirect');
       return applyCspHeaders(NextResponse.redirect(authorizedUrl, 307), nonce);
     }
@@ -566,6 +594,28 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
       pathname === `/tenant/${subdomain}/`)
   ) {
     return applyCspHeaders(NextResponse.redirect(new URL('/billing', request.url), 307), nonce);
+  }
+
+  // URL normalization: on a tenant's OWN subdomain host, the
+  // /tenant/<subdomain>/ prefix must never appear in the address
+  // bar. When the request path carries the tenant's own prefix —
+  // and the path subdomain, the host subdomain, and the session
+  // subdomain all match — redirect (307) to the clean path, with
+  // the query string (including notice) preserved. This runs AFTER
+  // the mismatch guard above, so mismatched requests keep the
+  // guard's behavior unchanged, and it never fires on apex,
+  // preview, or localhost-root hosts (those never reach this
+  // tenant-host branch), where the prefixed form stays required.
+  // No redirect loop: the clean target rewrites and serves.
+  if (
+    (pathname === `/tenant/${subdomain}` || pathname.startsWith(`/tenant/${subdomain}/`)) &&
+    session.subdomain === subdomain &&
+    isTenantSubdomainHost(host, subdomain)
+  ) {
+    const cleanUrl = new URL(request.url);
+    const remainder = pathname.slice(`/tenant/${subdomain}`.length);
+    cleanUrl.pathname = remainder === '' || remainder === '/' ? '/' : remainder;
+    return applyCspHeaders(NextResponse.redirect(cleanUrl, 307), nonce);
   }
 
   // Rewrite to tenant workspace path (/tenant/[subdomain]/*)

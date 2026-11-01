@@ -35,6 +35,7 @@ import { Switch } from '@/components/shared/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shared/ui/tabs';
 import { Textarea } from '@/components/shared/ui/textarea';
 import { buildTenantApiPath } from '@/lib/api/client';
+import { buildTenantHref, isTenantSubdomainHost } from '@/lib/tenant-href';
 
 interface ConfigView {
   id: string;
@@ -428,7 +429,7 @@ export function ThreadsAduDetailPage({ subdomain, configId }: { subdomain: strin
             <Button type="button" variant="outline" onClick={() => setDeleteOpen(false)}>Cancel</Button>
             <Button type="button" onClick={async () => {
               const response = await fetch(base, { method: 'DELETE' });
-              if (response.ok) window.location.href = `/tenant/${subdomain}/threads/auto-download-upload`;
+              if (response.ok) window.location.href = buildTenantHref(subdomain, `/threads/auto-download-upload`, isTenantSubdomainHost(window.location.hostname, subdomain));
               else setError('Could not delete this account.');
             }}>Permanently Delete</Button>
           </div>

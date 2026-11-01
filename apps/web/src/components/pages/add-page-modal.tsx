@@ -38,6 +38,7 @@ import {
 } from '@/lib/api/schemas/pages';
 import { ListFacebookAccountsResponseSchema } from '@/lib/api/schemas/accounts';
 import { reportError } from '@/lib/report-error';
+import { buildTenantHref, isTenantSubdomainHost } from '@/lib/tenant-href';
 import { buildDirectConnectUrl } from '@/components/accounts/connect-account-modal';
 import { getAccountHealth } from '@/components/accounts/account-health';
 import type { FacebookAccountItem } from '@/components/accounts/account-card';
@@ -587,7 +588,7 @@ export function AddPageModal({
       if (onNavigateToSettingsFacebook) {
         onNavigateToSettingsFacebook();
       } else if (typeof window !== 'undefined') {
-        window.location.href = `/tenant/${subdomain}/settings?tab=byoc`;
+        window.location.href = buildTenantHref(subdomain, `/settings?tab=byoc`, isTenantSubdomainHost(window.location.hostname, subdomain));
       }
       return;
     }

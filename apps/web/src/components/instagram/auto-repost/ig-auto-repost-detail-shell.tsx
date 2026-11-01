@@ -11,6 +11,7 @@ import {
   UpdateMirrorResponseSchema,
 } from '@/lib/api/schemas/tiktok-mirrors';
 import { queryKeys } from '@/lib/data/query-keys';
+import { buildTenantHref, isTenantSubdomainHost } from '@/lib/tenant-href';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -87,7 +88,7 @@ export function IgAutoRepostDetailShell({ subdomain, mirrorId }: Readonly<IgAuto
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: tenant.instagramAutoRepost.list });
       toast.success('Mirror deleted');
-      router.push(`/tenant/${subdomain}/instagram/auto-repost`);
+      router.push(buildTenantHref(subdomain, `/instagram/auto-repost`, isTenantSubdomainHost(window.location.hostname, subdomain)));
     },
     onError: () => {
       toast.error('Could not delete the mirror. Please try again.');

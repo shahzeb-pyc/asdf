@@ -35,6 +35,7 @@ import { Switch } from '@/components/shared/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shared/ui/tabs';
 import { Textarea } from '@/components/shared/ui/textarea';
 import { buildTenantApiPath } from '@/lib/api/client';
+import { buildTenantHref, isTenantSubdomainHost } from '@/lib/tenant-href';
 
 interface ConfigView {
   id: string;
@@ -441,7 +442,7 @@ export function IgAduDetailPage({ subdomain, configId }: { subdomain: string; co
             <Button type="button" variant="outline" onClick={() => setDeleteOpen(false)}>Cancel</Button>
             <Button type="button" onClick={async () => {
               const response = await fetch(base, { method: 'DELETE' });
-              if (response.ok) window.location.href = `/tenant/${subdomain}/instagram/auto-download-upload`;
+              if (response.ok) window.location.href = buildTenantHref(subdomain, `/instagram/auto-download-upload`, isTenantSubdomainHost(window.location.hostname, subdomain));
               else setError('Could not delete this account.');
             }}>Permanently Delete</Button>
           </div>
