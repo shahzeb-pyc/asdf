@@ -14,6 +14,7 @@ import {
   CSP_HEADER_NAME,
   generateNonce,
 } from './lib/csp';
+import { purgeHostOnlySessionCookie } from './lib/auth/session';
 
 export const config = {
   matcher: [
@@ -353,10 +354,33 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
           // entry-route visit. Genuinely invalid sessions never reach
           // this branch (resolveSession returns null), so they still
           // land on login untouched.
-          return applyCspHeaders(
-            buildAuthenticatedWorkspaceRedirect(request, session, host, rootDomain),
-            nonce
-          );
+          //
+          // SEND BACK fix: still clear ONLY the host-only (app-address)
+          // copy of fbup_session. A user whose only cookie is a stale
+          // app-only one would otherwise bounce forever after this
+          // fix, with no way to reach the login form: the redirect
+          // below sends them to the tenant, the tenant cannot read
+          // the app-only cookie, and they bounce back here again.
+          // Clearing the host-only copy lets that user land on the
+          // login form next time and log in fresh for a working
+          // shared-domain cookie. The purge sets no Domain attribute,
+          // so a good shared-domain (.fbuploadpro.com) cookie is a
+          // separate entry and SURVIVES — a user with a good shared
+          // cookie is unaffected. Scoped to production custom
+          // domains only: on localhost / vercel preview the host-only
+          // cookie IS the session, so purging it there would log
+          // those users out.
+          const response = buildAuthenticatedWorkspaceRedirect(request, session, host, rootDomain);
+          const cleanRoot = rootDomain.toLowerCase().split(':')[0];
+          const isProductionCustomDomain =
+            !!cleanRoot &&
+            !cleanRoot.includes('localhost') &&
+            !cleanRoot.includes('127.0.0.1') &&
+            !cleanRoot.endsWith('.vercel.app');
+          if (isProductionCustomDomain) {
+            purgeHostOnlySessionCookie(response);
+          }
+          return applyCspHeaders(response, nonce);
         }
 
         return applyCspHeaders(

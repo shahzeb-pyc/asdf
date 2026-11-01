@@ -45,7 +45,7 @@ describe('middleware bounced-session fix (login-cookie-loop)', () => {
     vi.unstubAllEnvs();
   });
 
-  it('redirects a valid session with a tenant returnUrl to the tenant home without clearing the cookie', async () => {
+  it('redirects a valid session with a tenant returnUrl to the tenant home, purging only the host-only cookie', async () => {
     const token = await validSessionToken();
     const response = await middleware(
       requestWithCookie(
@@ -55,9 +55,20 @@ describe('middleware bounced-session fix (login-cookie-loop)', () => {
     );
     expect(response.status).toBe(307);
     expect(response.headers.get('location')).toBe('https://acme.fbuploadpro.com/');
-    // No clearing cookie: the old bug set fbup_session= with Max-Age=0.
-    expect(response.headers.get('set-cookie') ?? '').not.toContain('fbup_session=;');
-    expect(response.cookies.get('fbup_session')).toBeUndefined();
+    // SEND BACK fix: the redirect must ALSO clear just the host-only
+    // (app-address) copy of fbup_session, so a user whose only cookie
+    // is a stale app-only one can reach the login form and log in
+    // fresh instead of bouncing forever. The purge sets no Domain
+    // attribute, so it must NOT clear the shared-domain cookie.
+    const setCookies =
+      typeof response.headers.getSetCookie === 'function'
+        ? response.headers.getSetCookie()
+        : [response.headers.get('set-cookie') ?? ''];
+    const purges = setCookies.filter((c) => c.startsWith('fbup_session=;'));
+    expect(purges.length).toBe(1);
+    expect(purges[0]).toContain('Max-Age=0');
+    expect(purges[0]).not.toContain('Domain=');
+    expect(setCookies.some((c) => c.includes('Domain='))).toBe(false);
   });
 
   it('redirects a valid session on /login without a returnUrl to the tenant home (existing behaviour)', async () => {

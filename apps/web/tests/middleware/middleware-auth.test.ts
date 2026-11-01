@@ -202,18 +202,30 @@ describe('Next.js Edge Middleware Session Authentication & Tenant Isolation (Use
     process.env.NEXT_PUBLIC_ROOT_DOMAIN = 'localhost:3000';
   });
 
-  it('redirects a verified session bounced to login from its own workspace back home instead of clearing the session (login-cookie-loop fix)', async () => {
+  it('redirects a verified session bounced to login from its own workspace back home, purging only the host-only cookie (login-cookie-loop fix)', async () => {
     // The old behaviour served the login page and set fbup_session
     // clearing cookies here, destroying a VALID session — which turned
     // any bounce into an infinite login ↔ home loop. A verified
     // session must never be cleared by this branch: it goes home.
+    // SEND BACK fix: the redirect ALSO clears just the host-only
+    // (app-address) copy, so a user with only a stale app-only cookie
+    // can reach the login form and log in fresh instead of bouncing
+    // forever. The shared-domain cookie is a separate entry and must
+    // survive: no Domain clearing cookie may be set here.
     process.env.NEXT_PUBLIC_ROOT_DOMAIN = 'vinsmokemedia.online';
     const req = buildAppLoginReq('https://acme.vinsmokemedia.online/');
     const res = await middleware(req);
     expect(res.status).toBe(307);
     expect(res.headers.get('location')).toBe('https://acme.vinsmokemedia.online/');
-    expect(res.headers.get('set-cookie') ?? '').not.toContain('Max-Age=0');
-    expect(res.cookies.get('fbup_session')).toBeUndefined();
+    const setCookies =
+      typeof res.headers.getSetCookie === 'function'
+        ? res.headers.getSetCookie()
+        : [res.headers.get('set-cookie') ?? ''];
+    const purges = setCookies.filter((c) => c.startsWith('fbup_session=;'));
+    expect(purges.length).toBe(1);
+    expect(purges[0]).toContain('Max-Age=0');
+    expect(purges[0]).not.toContain('Domain=');
+    expect(setCookies.some((c) => c.includes('Domain='))).toBe(false);
     process.env.NEXT_PUBLIC_ROOT_DOMAIN = 'localhost:3000';
   });
 
