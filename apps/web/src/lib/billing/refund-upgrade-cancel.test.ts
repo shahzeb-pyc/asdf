@@ -15,6 +15,10 @@ import { cancelPendingRefundsForSupersededPeriods } from './refund-cancel';
  */
 type Row = Record<string, unknown>;
 
+// Set by a test to make the next update fail, so the cancel
+// helper's error branch (log + rethrow) is exercised.
+let failNextUpdate = false;
+
 class FakeQuery {
   private filters: Array<(row: Row) => boolean> = [];
   private mode: 'single' | 'maybeSingle' | 'many' = 'many';
@@ -77,7 +81,11 @@ class FakeQuery {
     return this.filters.every((filter) => filter(row));
   }
 
-  private run(): { data: unknown; error: null } {
+  private run(): { data: unknown; error: { code: string } | null } {
+    if (this.op === 'update' && failNextUpdate) {
+      failNextUpdate = false;
+      return { data: null, error: { code: '500' } };
+    }
     if (this.op === 'insert') {
       const rows = (Array.isArray(this.payload) ? this.payload : [this.payload as Row]).map(
         (row) => {
@@ -114,7 +122,7 @@ class FakeQuery {
   }
 
   then(
-    resolve: (value: { data: unknown; error: null }) => unknown,
+    resolve: (value: { data: unknown; error: { code: string } | null }) => unknown,
     reject?: (reason: unknown) => unknown
   ): Promise<unknown> {
     return Promise.resolve()
@@ -295,5 +303,21 @@ describe('upgrade cancels a pending refund', () => {
     seedRefund(tables, { id: 'refund-1', period_id: 'period-old', status: 'approved' });
     expect(await cancelPendingRefundsForSupersededPeriods(client, ['period-old'], NOW)).toBe(0);
     expect(tables['refund_requests'][0]['status']).toBe('approved');
+  });
+});
+
+describe('cancelPendingRefundsForSupersededPeriods failure branch', () => {
+  it('a failing update is logged and rethrown for the caller to handle', async () => {
+    const { client, tables } = makeClient();
+    tables.refund_requests.push({
+      id: 'refund-1',
+      period_id: 'period-old',
+      status: 'requested',
+    });
+    failNextUpdate = true;
+    await expect(
+      cancelPendingRefundsForSupersededPeriods(client, ['period-old'], NOW)
+    ).rejects.toMatchObject({ code: '500' });
+    expect(tables.refund_requests[0]['status']).toBe('requested');
   });
 });

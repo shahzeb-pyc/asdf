@@ -36,6 +36,10 @@ interface FakeState {
   payments: Row[];
   periods: Row[];
   redemptions: Row[];
+  failQuery: 'count' | 'pending' | 'decided' | null;
+  updateErrorOnce: boolean;
+  expireLosesOnce: boolean;
+  selectErrorOnce: boolean;
 }
 
 let state: FakeState;
@@ -147,8 +151,25 @@ class FakeBuilder {
     });
   }
 
-  private compute(): { data: unknown; error: unknown; count?: number } {
+  private compute(): { data: unknown; error: unknown; count?: number | null } {
     const rows = this.rows();
+    if (this.op === 'update' && this.st.updateErrorOnce) {
+      this.st.updateErrorOnce = false;
+      return { data: null, error: { code: '500', message: 'boom' } };
+    }
+    if (
+      this.op === 'update' &&
+      this.st.expireLosesOnce &&
+      this.table === 'subscription_payments' &&
+      this.patch?.['status'] === 'expired'
+    ) {
+      this.st.expireLosesOnce = false;
+      return { data: [], error: null };
+    }
+    if (this.op === 'select' && this.st.selectErrorOnce && this.table === 'coupon_redemptions') {
+      this.st.selectErrorOnce = false;
+      return { data: null, error: { code: '500', message: 'boom' } };
+    }
     if (this.op === 'insert') {
       const row = { ...this.insertRow } as Row;
       if (this.table === 'subscription_periods' && row['id'] == null) {
@@ -164,7 +185,24 @@ class FakeBuilder {
       return { data: matched.map((r) => ({ id: r['id'] })), error: null };
     }
     let matched = rows.filter((r) => this.matches(r));
-    if (this.headCount) return { data: [], error: null, count: matched.length };
+    if (this.headCount) {
+      if (this.st.failQuery === 'count') {
+        return { data: [], error: { code: '500', message: 'boom' }, count: null };
+      }
+      return { data: [], error: null, count: matched.length };
+    }
+    if (
+      this.st.failQuery === 'pending' &&
+      this.filters.some((f) => f.col === 'status' && f.op === 'eq' && f.val === 'pending')
+    ) {
+      return { data: [], error: { code: '500', message: 'boom' } };
+    }
+    if (
+      this.st.failQuery === 'decided' &&
+      this.filters.some((f) => f.col === 'status' && f.op === 'neq')
+    ) {
+      return { data: [], error: { code: '500', message: 'boom' } };
+    }
     if (this.orderDesc) {
       matched = [...matched].sort((a, b) =>
         String(b[this.orderDesc as string]).localeCompare(String(a[this.orderDesc as string]))
@@ -182,7 +220,7 @@ class FakeBuilder {
     return { data: matched, error: null };
   }
 
-  then(resolve: (value: { data: unknown; error: unknown; count?: number }) => void): void {
+  then(resolve: (value: { data: unknown; error: unknown; count?: number | null }) => void): void {
     resolve(this.compute());
   }
 }
@@ -260,6 +298,10 @@ describe('admin payments list', () => {
       ],
       periods: [],
       redemptions: [],
+      failQuery: null,
+      updateErrorOnce: false,
+      expireLosesOnce: false,
+      selectErrorOnce: false,
     };
   });
 
@@ -307,7 +349,15 @@ describe('admin payments list', () => {
 describe('admin payments rescue decisions', () => {
   beforeEach(() => {
     authState.role = 'admin';
-    state = { payments: [cryptoRow()], periods: [], redemptions: [] };
+    state = {
+      payments: [cryptoRow()],
+      periods: [],
+      redemptions: [],
+      failQuery: null,
+      updateErrorOnce: false,
+      expireLosesOnce: false,
+      selectErrorOnce: false,
+    };
   });
 
   async function decide(paymentId: string, decision: string): Promise<{ status: number; json: Record<string, unknown> }> {
@@ -349,5 +399,89 @@ describe('admin payments rescue decisions', () => {
     state.payments = [cryptoRow({ period_id: 'period-1' })];
     const { status } = await decide('payment-1', 'approve-crypto');
     expect(status).toBe(400);
+  });
+});
+
+describe('admin payments list and rescue failure branches', () => {
+  beforeEach(() => {
+    authState.role = 'admin';
+    state = {
+      payments: [cryptoRow()],
+      periods: [],
+      redemptions: [],
+      failQuery: null,
+      updateErrorOnce: false,
+      expireLosesOnce: false,
+      selectErrorOnce: false,
+    };
+  });
+
+  it('a failing pending count fails the list with 500', async () => {
+    state.failQuery = 'count';
+    const req = new NextRequest('http://localhost:3000/api/tenant/acme/billing/admin/payments');
+    const res = await listPayments(req, ctx());
+    expect(res.status).toBe(500);
+  });
+
+  it('a failing pending slice fails the list with 500', async () => {
+    state.failQuery = 'pending';
+    const req = new NextRequest('http://localhost:3000/api/tenant/acme/billing/admin/payments');
+    const res = await listPayments(req, ctx());
+    expect(res.status).toBe(500);
+  });
+
+  it('a failing decided slice fails the list with 500', async () => {
+    state.failQuery = 'decided';
+    const req = new NextRequest('http://localhost:3000/api/tenant/acme/billing/admin/payments');
+    const res = await listPayments(req, ctx());
+    expect(res.status).toBe(500);
+  });
+
+  async function decide(paymentId: string, decision: string): Promise<{ status: number; json: Record<string, unknown> }> {
+    const req = new NextRequest(
+      `http://localhost:3000/api/tenant/acme/billing/admin/payments/${paymentId}`,
+      { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ decision }) }
+    );
+    const res = await decidePayment(req, ctx(paymentId));
+    return { status: res.status, json: (await res.json()) as Record<string, unknown> };
+  }
+
+  it('rescue on a missing payment returns 404', async () => {
+    state.payments = [];
+    const { status, json } = await decide('payment-1', 'approve-crypto');
+    expect(status).toBe(404);
+    expect(json['error']).toBe('PAYMENT_NOT_FOUND');
+  });
+
+  it('rescue on an unmappable row returns 404', async () => {
+    state.payments = [cryptoRow({ user_id: null })];
+    const { status } = await decide('payment-1', 'approve-crypto');
+    expect(status).toBe(404);
+  });
+
+  it('rescue on a decided crypto payment returns 400', async () => {
+    state.payments = [cryptoRow({ status: 'approved' })];
+    const { status } = await decide('payment-1', 'approve-crypto');
+    expect(status).toBe(400);
+  });
+
+  it('expire losing the conditional update to a concurrent finish returns 409', async () => {
+    state.expireLosesOnce = true;
+    const { status, json } = await decide('payment-1', 'expire-crypto');
+    expect(status).toBe(409);
+    expect(json['error']).toBe('PAYMENT_ALREADY_DECIDED');
+  });
+
+  it('an expire update error fails with 500', async () => {
+    state.updateErrorOnce = true;
+    const { status } = await decide('payment-1', 'expire-crypto');
+    expect(status).toBe(500);
+  });
+
+  it('a coupon-release failure after expire is logged and the expire still succeeds', async () => {
+    state.selectErrorOnce = true;
+    const { status } = await decide('payment-1', 'expire-crypto');
+    expect(status).toBe(200);
+    expect(state.payments[0]).toMatchObject({ status: 'expired' });
   });
 });

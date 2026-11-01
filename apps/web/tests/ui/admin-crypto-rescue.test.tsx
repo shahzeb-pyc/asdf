@@ -98,6 +98,28 @@ describe('AdminApprovalsView crypto rescue', () => {
     expect(await screen.findByText('Crypto payment expired. No plan started; any held coupon was released.')).toBeInTheDocument();
   });
 
+  it('bank pending payments show Approve and Reject buttons that post the decision', async () => {
+    mockPayments([
+      payment({ id: 'payment-bank', method: 'bank', bankMethod: 'easypaisa', status: 'pending' }),
+    ]);
+    mockedApiPost.mockResolvedValue({});
+    render(<AdminApprovalsView subdomain="acme" />);
+    fireEvent.click(await screen.findByText('Approve payment'));
+    await waitFor(() =>
+      expect(mockedApiPost).toHaveBeenCalledWith(
+        '/api/tenant/acme/billing/admin/payments/payment-bank',
+        { decision: 'approve' }
+      )
+    );
+    fireEvent.click(screen.getByText('Reject payment'));
+    await waitFor(() =>
+      expect(mockedApiPost).toHaveBeenCalledWith(
+        '/api/tenant/acme/billing/admin/payments/payment-bank',
+        { decision: 'reject' }
+      )
+    );
+  });
+
   it('lists failed crypto payments in the stuck section with rescue buttons', async () => {
     mockPayments([payment({ id: 'payment-2', status: 'failed' })]);
     mockedApiPost.mockResolvedValue({});
@@ -105,5 +127,26 @@ describe('AdminApprovalsView crypto rescue', () => {
     expect(await screen.findByText('Stuck crypto payments')).toBeInTheDocument();
     expect(screen.getAllByText('Approve crypto').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Expire crypto').length).toBeGreaterThan(0);
+  });
+
+  it('stuck-section rescue buttons post the rescue decision for the failed payment', async () => {
+    mockPayments([payment({ id: 'payment-2', status: 'failed' })]);
+    mockedApiPost.mockResolvedValue({});
+    render(<AdminApprovalsView subdomain="acme" />);
+    await screen.findByText('Stuck crypto payments');
+    fireEvent.click(screen.getAllByText('Approve crypto')[0]);
+    await waitFor(() =>
+      expect(mockedApiPost).toHaveBeenCalledWith(
+        '/api/tenant/acme/billing/admin/payments/payment-2',
+        { decision: 'approve-crypto' }
+      )
+    );
+    fireEvent.click(screen.getAllByText('Expire crypto')[0]);
+    await waitFor(() =>
+      expect(mockedApiPost).toHaveBeenCalledWith(
+        '/api/tenant/acme/billing/admin/payments/payment-2',
+        { decision: 'expire-crypto' }
+      )
+    );
   });
 });

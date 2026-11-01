@@ -135,6 +135,15 @@ describe('queue publish-now plan gate', () => {
     expect(res.status).toBe(404);
   });
 
+  it('rethrows a non-gate billing failure instead of mapping it to 403', async () => {
+    billingState.client = {
+      from: () => {
+        throw new Error('billing client exploded');
+      },
+    };
+    await expect(callGate('user')).rejects.toThrow('billing client exploded');
+  });
+
   it('lets a paid user through the gate to the item lookup', async () => {
     billingState.client = billingClient([paidPeriodRow]);
     const res = await callGate('user');

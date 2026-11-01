@@ -75,7 +75,11 @@ export async function POST(
     }
 
     if (parsed.data.decision === 'approve-crypto' || parsed.data.decision === 'expire-crypto') {
-      return handleCryptoRescue(client, paymentId, parsed.data.decision);
+      // Awaited, not merely returned: a bare return would let a
+      // rescue throw bypass this try/catch's error mapping below
+      // and surface as an unhandled Next.js error instead of the
+      // JSON 500 (audit fix 2026-11-01: fail loud, mapped).
+      return await handleCryptoRescue(client, paymentId, parsed.data.decision);
     }
 
     // Bank-only approval gate: load the payment first so a crypto

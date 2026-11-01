@@ -2,7 +2,10 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  activateCryptoPayment,
   approvePayment,
+  loadPaymentActuals,
+  savePaymentActuals,
   assertCanPost,
   assertFeatureAddWithinCap,
   assertPaidPlan,
@@ -145,6 +148,7 @@ interface FakeState {
   usageInsertError: { code?: string } | null;
   periodInsertError: unknown;
   updateErrors: Partial<Record<string, unknown>>;
+  deleteErrors: Partial<Record<string, unknown>>;
   inserted: Array<{ table: string; row: Row }>;
   updated: Array<{ table: string; patch: Row }>;
   deleted: Array<{ table: string; filters: Filter[] }>;
@@ -153,6 +157,10 @@ interface FakeState {
   // a concurrent winner, which is recorded as already linked.
   loseClaimOnce: boolean;
   loseLinkOnce: boolean;
+  // Crypto-activation race: the next paid-claim update loses to a
+  // concurrent winner that claimed but crashed before linking, so
+  // the payment reads back paid with no period.
+  loseCryptoClaimOnce: boolean;
 }
 
 function baseState(overrides: Partial<FakeState> = {}): FakeState {
@@ -168,11 +176,13 @@ function baseState(overrides: Partial<FakeState> = {}): FakeState {
     usageInsertError: null,
     periodInsertError: null,
     updateErrors: {},
+    deleteErrors: {},
     inserted: [],
     updated: [],
     deleted: [],
     loseClaimOnce: false,
     loseLinkOnce: false,
+    loseCryptoClaimOnce: false,
     ...overrides,
   };
 }
@@ -320,6 +330,8 @@ class FakeBuilder {
       return { data: null, error: err };
     }
     if (this.op === 'delete') {
+      const deleteError = this.state.deleteErrors[this.table] ?? null;
+      if (deleteError) return { data: null, error: deleteError, count: null };
       this.state.deleted.push({ table: this.table, filters: [...this.filters] });
       const deletedIds: unknown[] = [];
       const rows =
@@ -356,6 +368,14 @@ class FakeBuilder {
         const patch = this.state.updated
           .filter((u) => u.table === 'subscription_payments')
           .at(-1)?.patch;
+        // A concurrent crypto winner claimed but crashed before
+        // linking: our claim matches nothing, and the reload finds
+        // the payment paid with no period (the repair path).
+        if (this.state.loseCryptoClaimOnce && patch && patch['status'] === 'paid') {
+          this.state.loseCryptoClaimOnce = false;
+          Object.assign(row, { status: 'paid', period_id: null });
+          return { data: [], error: null };
+        }
         // A concurrent winner claimed (and linked) between our load
         // and our claim: our claim matches nothing, and the poll
         // finds the winner already linked.
@@ -1422,5 +1442,202 @@ describe('assertFeatureAddWithinCap Publish-Now exclusion (audit fix 2026-11-01,
     await expect(
       assertFeatureAddWithinCap(fakeClient(state), 'user-1', 'facebook', ['page-c'], NOW)
     ).rejects.toMatchObject({ code: 'SUBSCRIPTION_CAP_REACHED' });
+  });
+});
+
+describe('approvePayment stale link (audit fix 2026-11-01, fix 14)', () => {
+  const now = new Date('2026-06-01T00:00:00.000Z');
+
+  it('overwrites a stored period link that resolves to no period row', async () => {
+    const state = baseState({
+      paymentRow: paymentRow({ period_id: 'period-stale' }),
+      periodById: null,
+      createdPeriodRow: periodRow({ id: 'period-new' }),
+    });
+    const result = await approvePayment(fakeClient(state), 'payment-1', 'admin-1', now);
+    expect(result.period.id).toBe('period-new');
+    const linkUpdate = state.updated.find(
+      (u) => u.table === 'subscription_payments' && u.patch['period_id'] === 'period-new'
+    );
+    expect(linkUpdate).toBeDefined();
+  });
+
+  it('repairs a claim lost to a winner whose period never resolved, via the stale link', async () => {
+    const state = baseState({
+      paymentRow: paymentRow(),
+      periodById: null,
+      createdPeriodRow: periodRow({ id: 'period-new' }),
+      loseClaimOnce: true,
+    });
+    const result = await approvePayment(fakeClient(state), 'payment-1', 'admin-1', now);
+    // The winner linked 'period-winner', but that row does not
+    // resolve here, so the repair path treats it as a stale link
+    // and overwrites it with the period it just created.
+    expect(result.period.id).toBe('period-new');
+    const linkUpdate = state.updated.find(
+      (u) => u.table === 'subscription_payments' && u.patch['period_id'] === 'period-new'
+    );
+    expect(linkUpdate).toBeDefined();
+  });
+});
+
+describe('activateCryptoPayment branches (audit fix 2026-11-01, fix 7)', () => {
+  const now = new Date('2026-06-01T00:00:00.000Z');
+  const payment = (overrides: Row = {}): SubscriptionPaymentRow => {
+    const row = paymentFromRow(paymentRow(overrides));
+    if (!row) throw new Error('test payment did not map');
+    return row;
+  };
+
+  it('returns the existing period without claiming when already activated', async () => {
+    const state = baseState({ periodById: periodRow() });
+    const result = await activateCryptoPayment(
+      fakeClient(state),
+      payment({ period_id: 'period-1', status: 'paid' }),
+      now
+    );
+    expect(result.alreadyActivated).toBe(true);
+    expect(result.period.id).toBe('period-1');
+    expect(result.couponReleasedBeforeFinish).toBe(false);
+  });
+
+  it('refuses a rejected payment', async () => {
+    const state = baseState();
+    await expect(
+      activateCryptoPayment(fakeClient(state), payment({ status: 'rejected' }), now)
+    ).rejects.toMatchObject({ code: 'PAYMENT_ALREADY_DECIDED' });
+  });
+
+  it('refuses a paid payment with no period', async () => {
+    const state = baseState();
+    await expect(
+      activateCryptoPayment(fakeClient(state), payment({ status: 'paid' }), now)
+    ).rejects.toMatchObject({ code: 'PAYMENT_ALREADY_DECIDED' });
+  });
+
+  it('fails closed when the claim update errors', async () => {
+    const state = baseState({
+      paymentRow: paymentRow({ status: 'failed' }),
+      updateErrors: { subscription_payments: { code: '500' } },
+    });
+    await expect(
+      activateCryptoPayment(fakeClient(state), payment({ status: 'failed' }), now)
+    ).rejects.toMatchObject({ code: 'ENTITLEMENT_UNAVAILABLE' });
+  });
+
+  it('returns the winner period when the claim loses to a linked winner', async () => {
+    const state = baseState({
+      paymentRow: paymentRow({ status: 'failed' }),
+      periodById: periodRow({ id: 'period-winner' }),
+      loseClaimOnce: true,
+    });
+    const result = await activateCryptoPayment(
+      fakeClient(state),
+      payment({ status: 'failed' }),
+      now
+    );
+    expect(result.alreadyActivated).toBe(true);
+    expect(result.period.id).toBe('period-winner');
+  });
+
+  it('refuses when the claim loser finds a decided-but-unlinked winner', async () => {
+    const state = baseState({
+      paymentRow: paymentRow({ status: 'failed' }),
+      periodById: null,
+      loseClaimOnce: true,
+    });
+    await expect(
+      activateCryptoPayment(fakeClient(state), payment({ status: 'failed' }), now)
+    ).rejects.toMatchObject({ code: 'PAYMENT_ALREADY_DECIDED' });
+  });
+
+  it('repairs a crashed winner (paid, no period) by creating and linking a period', async () => {
+    const state = baseState({
+      paymentRow: paymentRow({ status: 'failed' }),
+      periodById: null,
+      createdPeriodRow: periodRow({ id: 'period-new' }),
+      loseCryptoClaimOnce: true,
+    });
+    const result = await activateCryptoPayment(
+      fakeClient(state),
+      payment({ status: 'failed' }),
+      now
+    );
+    expect(result.alreadyActivated).toBe(false);
+    expect(result.period.id).toBe('period-new');
+  });
+});
+
+describe('entitlement failure branches (audit fix 2026-11-01)', () => {
+  const now = new Date('2026-06-01T00:00:00.000Z');
+
+  it('releaseUsageForFeature fails closed when the delete errors', async () => {
+    const state = baseState({
+      usageRows: [
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-a', feature: 'destination-queue' },
+      ],
+      deleteErrors: { subscription_usage: { code: '500' } },
+    });
+    await expect(
+      releaseUsageForFeature(fakeClient(state), 'user-1', 'facebook', 'page-a', 'destination-queue')
+    ).rejects.toMatchObject({ code: 'ENTITLEMENT_UNAVAILABLE' });
+  });
+
+  it('createPeriodForPayment fails closed when the replaced-period lookup errors', async () => {
+    const state = baseState({
+      selectErrors: { subscription_periods: { code: '500' } },
+    });
+    const payment = paymentFromRow(paymentRow({ is_upgrade: true }));
+    if (!payment) throw new Error('test payment did not map');
+    await expect(createPeriodForPayment(fakeClient(state), payment, now)).rejects.toMatchObject({
+      code: 'ENTITLEMENT_UNAVAILABLE',
+    });
+  });
+
+  it('an upgrade whose refund cancel fails still activates, loudly', async () => {
+    const state = baseState({
+      periods: [periodRow()],
+      createdPeriodRow: periodRow({ id: 'period-new' }),
+      updateErrors: { refund_requests: { code: '500' } },
+    });
+    const payment = paymentFromRow(paymentRow({ is_upgrade: true }));
+    if (!payment) throw new Error('test payment did not map');
+    const period = await createPeriodForPayment(fakeClient(state), payment, now);
+    expect(period.id).toBe('period-new');
+    expect(mockedLogServerError).toHaveBeenCalledWith(
+      '[billing] upgrade refund cancel did not land; upgrade proceeds',
+      expect.anything(),
+      expect.objectContaining({ userId: 'user-1' })
+    );
+  });
+
+  it('a link lost with no winner period fails closed instead of linking nothing', async () => {
+    const state = baseState({
+      paymentRow: paymentRow(),
+      periodById: null,
+      createdPeriodRow: periodRow({ id: 'period-new' }),
+      loseLinkOnce: true,
+    });
+    await expect(approvePayment(fakeClient(state), 'payment-1', 'admin-1', now)).rejects.toMatchObject({
+      code: 'ENTITLEMENT_UNAVAILABLE',
+    });
+  });
+
+  it('loadPaymentActuals falls back to nulls when the columns are missing', async () => {
+    const state = baseState({
+      paymentRow: paymentRow(),
+      selectErrors: { subscription_payments: { code: '42703' } },
+    });
+    const actuals = await loadPaymentActuals(fakeClient(state), 'payment-1');
+    expect(actuals).toEqual({ actualPaid: null, actualCurrency: null });
+  });
+
+  it('savePaymentActuals returns false when the columns are missing', async () => {
+    const state = baseState({
+      paymentRow: paymentRow(),
+      updateErrors: { subscription_payments: { code: '42703' } },
+    });
+    const saved = await savePaymentActuals(fakeClient(state), 'payment-1', 10, 'usdttrc20');
+    expect(saved).toBe(false);
   });
 });

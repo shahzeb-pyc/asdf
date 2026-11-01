@@ -160,6 +160,20 @@ describe('Billing Purchase', () => {
     expect(screen.getByText('YouTube')).toBeInTheDocument();
   });
 
+  it('My Plan shows Free for a never-paid user and Expired for a lapsed user', async () => {
+    mockApiGet.mockResolvedValue(statusFixture());
+    const { unmount } = render(<BillingView subdomain="acme" initialSection="my-plan" />);
+    expect(await screen.findByText('Free')).toBeInTheDocument();
+    unmount();
+
+    mockApiGet.mockResolvedValue({
+      entitlement: { ...freeEntitlement(), hasPriorPeriod: true },
+      payments: [],
+    });
+    render(<BillingView subdomain="acme" initialSection="my-plan" />);
+    expect(await screen.findByText('Expired')).toBeInTheDocument();
+  });
+
   it('Binance is selectable, shows its ID verbatim, and submits as a manual payment', async () => {
     let capturedForm: FormData | null = null;
     mockApiPost.mockImplementation(async (_url: string, body: unknown) => {

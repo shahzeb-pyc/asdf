@@ -190,6 +190,26 @@ describe('RefundSection extended paths', () => {
     expect(container.textContent).toBe('');
   });
 
+  it('renders an upgrade-cancelled request as cancelled, never as rejected', async () => {
+    mockedApiGet.mockResolvedValue({
+      requests: [
+        requestItem({
+          id: 'r-cancelled',
+          status: 'rejected',
+          reason:
+            'Cancelled because you upgraded to a new plan. The upgrade credit already covered the unused value of your old plan, so this refund is no longer due.',
+        }),
+      ],
+      eligibility: { ...ineligibleData.eligibility },
+    });
+    render(<RefundSection subdomain="acme" />);
+    expect(await screen.findByText('Cancelled because you upgraded')).toBeTruthy();
+    expect(
+      screen.getByText(/Cancelled because you upgraded — the upgrade credit already covered/)
+    ).toBeTruthy();
+    expect(screen.queryByText('Rejected')).toBeNull();
+  });
+
   it('renders approved, sent, and rejected requests with their statuses and amounts', async () => {
     mockedApiGet.mockResolvedValue({
       requests: [

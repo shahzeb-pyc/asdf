@@ -133,6 +133,19 @@ function fakeSql(period: Row | null, usageTotal: number) {
   };
 }
 
+describe('isMediaStorageReadOnly gate exemptions', () => {
+  it('admins are never read-only, without touching the client', async () => {
+    const { isMediaStorageReadOnly } = await import('@/lib/billing/storage-quota');
+    const client = fakeSupabase([], []) as never;
+    await expect(isMediaStorageReadOnly(client, 'user-1', true)).resolves.toBe(false);
+  });
+
+  it('a missing client logs loudly and fails toward writable', async () => {
+    const { isMediaStorageReadOnly } = await import('@/lib/billing/storage-quota');
+    await expect(isMediaStorageReadOnly(null, 'user-1')).resolves.toBe(false);
+  });
+});
+
 describe('storage quota math', () => {
   it('quota is 5 GB per paid unit across platforms in the active period', async () => {
     const client = fakeSupabase(

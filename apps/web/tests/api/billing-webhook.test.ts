@@ -445,6 +445,28 @@ describe('NOWPayments webhook route', () => {
     expect(periodId).toBeDefined();
   });
 
+  it('answers unknownPayment when the matched row does not map to a payment, and releases the dedupe', async () => {
+    // A row without a user id cannot map to a payment (defensive:
+    // paymentFromRow returns null), so the event is unknown, not
+    // a crash — and the dedupe row is released with it.
+    state = baseState({ payments: [paymentRow({ user_id: null })] });
+    const first = await callWebhook(finishedPayload());
+    expect(first.json).toMatchObject({ received: true, unknownPayment: true });
+    // The dedupe row was released, so a re-send is still an unknown
+    // payment — never swallowed as a duplicate.
+    const second = await callWebhook(finishedPayload());
+    expect(second.json).toMatchObject({ received: true, unknownPayment: true });
+    expect(state.periods).toHaveLength(0);
+  });
+
+  it('returns 500 Activation failed when activation itself throws a gate error', async () => {
+    state = baseState({ payments: [paymentRow({ status: 'paid', period_id: null })] });
+    const { status, json } = await callWebhook(finishedPayload());
+    expect(status).toBe(500);
+    expect(json).toMatchObject({ error: 'Activation failed' });
+    expect(state.periods).toHaveLength(0);
+  });
+
   it('ignores waiting notifications without changing anything', async () => {
     const { json } = await callWebhook(finishedPayload({ payment_status: 'waiting' }));
     expect(json).toMatchObject({ received: true, ignored: true });

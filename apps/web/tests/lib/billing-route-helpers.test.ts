@@ -351,6 +351,24 @@ describe('billing idempotency helpers', () => {
     expect(replay).toEqual({ key: KEY, replay: { status: 201, body: { id: 'payment-9' } } });
   });
 
+  it('logs and skips replay when the workspace cannot be resolved', async () => {
+    const { lookupBillingIdempotency } = await import('@/lib/billing/route-helpers');
+    const rows: Row[] = [];
+    // A valid key with a null workspace: the key is still accepted
+    // (an invalid key would be rejected above), but no replay lookup
+    // runs and no row is touched — the submission proceeds ungated
+    // by idempotency, with a loud log.
+    const result = await lookupBillingIdempotency(
+      idemClient(rows) as never,
+      null,
+      'user-1',
+      'billing-bank',
+      headersWith(KEY)
+    );
+    expect(result).toEqual({ key: KEY, replay: null });
+    expect(rows).toHaveLength(0);
+  });
+
   it('skips the store when the key or workspace is missing', async () => {
     const { storeBillingIdempotency } = await import('@/lib/billing/route-helpers');
     const rows: Row[] = [];

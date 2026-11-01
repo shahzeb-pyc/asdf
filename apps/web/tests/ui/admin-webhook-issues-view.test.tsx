@@ -73,6 +73,33 @@ describe('AdminWebhookIssuesView', () => {
     await waitFor(() => expect(mockedApiGet).toHaveBeenCalledTimes(2));
   });
 
+  it('labels every issue reason, including the refunded fallback', async () => {
+    mockedApiGet.mockResolvedValue({
+      issues: [
+        issue({ id: 'i-1', reason: 'amount_mismatch', providerPaymentId: 'np-a' }),
+        issue({ id: 'i-2', reason: 'currency_mismatch', providerPaymentId: 'np-b' }),
+        issue({ id: 'i-3', reason: 'coupon_released_before_finish', providerPaymentId: 'np-c' }),
+        issue({ id: 'i-4', reason: 'refunded', providerPaymentId: 'np-d' }),
+      ],
+    });
+    render(<AdminWebhookIssuesView subdomain="acme" />);
+    expect(await screen.findByText('Webhook issues (4)')).toBeInTheDocument();
+    expect(screen.getByText('Amount does not match the payment')).toBeInTheDocument();
+    expect(screen.getByText('Currency does not match the payment')).toBeInTheDocument();
+    expect(screen.getByText('Coupon released before payment finished')).toBeInTheDocument();
+    expect(screen.getByText('Refunded after activation — period revoked')).toBeInTheDocument();
+  });
+
+  it('shows an error when dismiss fails', async () => {
+    mockedApiGet.mockResolvedValue({ issues: [issue()] });
+    mockedApiPost.mockRejectedValue(new Error('dismiss down'));
+    render(<AdminWebhookIssuesView subdomain="acme" />);
+    await screen.findByText('Webhook issues (1)');
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    await waitFor(() => expect(mockedApiPost).toHaveBeenCalled());
+    expect(await screen.findByText('dismiss down')).toBeInTheDocument();
+  });
+
   it('renders nothing when the load fails before any data', async () => {
     mockedApiGet.mockRejectedValue(new Error('boom'));
     const { container } = render(<AdminWebhookIssuesView subdomain="acme" />);

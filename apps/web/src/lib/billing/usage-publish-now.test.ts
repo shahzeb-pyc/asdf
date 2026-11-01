@@ -27,7 +27,14 @@ class FakeQuery {
     private readonly table: Row[],
     private readonly op: 'select' | 'insert' | 'update' | 'delete',
     private readonly payload: Row | Row[] | null,
-    private readonly idSeq: () => string
+    private readonly idSeq: () => string,
+    private readonly failures: {
+      selectUsage: number;
+      deleteUsage: number;
+      retryInsert: number;
+      inserts: number;
+    } | null = null,
+    private readonly isUsage = false
   ) {}
 
   select(_cols?: string, opts?: { count?: string; head?: boolean }): this {
@@ -101,7 +108,22 @@ class FakeQuery {
   }
 
   private run(): { data: unknown; error: { code: string } | null; count?: number } {
+    if (this.op === 'select' && this.isUsage && this.failures && this.failures.selectUsage > 0) {
+      this.failures.selectUsage -= 1;
+      return { data: null, error: { code: '500' } };
+    }
+    if (this.op === 'delete' && this.isUsage && this.failures && this.failures.deleteUsage > 0) {
+      this.failures.deleteUsage -= 1;
+      return { data: null, error: { code: '500' } };
+    }
     if (this.op === 'insert') {
+      if (this.isUsage && this.failures) {
+        this.failures.inserts += 1;
+        if (this.failures.retryInsert > 0 && this.failures.inserts >= 2) {
+          this.failures.retryInsert -= 1;
+          return { data: null, error: { code: '500' } };
+        }
+      }
       const rows = Array.isArray(this.payload) ? this.payload : [this.payload as Row];
       for (const row of rows) {
         const clash = this.table.some(
@@ -157,21 +179,24 @@ class FakeQuery {
 
 function makeClient() {
   const tables: Record<string, Row[]> = { subscription_periods: [], subscription_usage: [] };
+  const failures = { selectUsage: 0, deleteUsage: 0, retryInsert: 0, inserts: 0 };
   let seq = 0;
   const idSeq = () => `fake-${++seq}`;
   const client = {
     from(table: string) {
       const rows = tables[table] ?? [];
+      const isUsage = table === 'subscription_usage';
       return {
         select: (cols?: string, opts?: { count?: string; head?: boolean }) =>
-          new FakeQuery(rows, 'select', null, idSeq).select(cols, opts),
-        insert: (payload: Row | Row[]) => new FakeQuery(rows, 'insert', payload, idSeq),
-        update: (payload: Row) => new FakeQuery(rows, 'update', payload, idSeq),
-        delete: () => new FakeQuery(rows, 'delete', null, idSeq),
+          new FakeQuery(rows, 'select', null, idSeq, failures, isUsage).select(cols, opts),
+        insert: (payload: Row | Row[]) =>
+          new FakeQuery(rows, 'insert', payload, idSeq, failures, isUsage),
+        update: (payload: Row) => new FakeQuery(rows, 'update', payload, idSeq, failures, isUsage),
+        delete: () => new FakeQuery(rows, 'delete', null, idSeq, failures, isUsage),
       };
     },
   };
-  return { client: client as unknown as SupabaseClient, tables };
+  return { client: client as unknown as SupabaseClient, tables, failures };
 }
 
 const NOW = new Date('2026-11-01T12:00:00.000Z');
@@ -275,5 +300,39 @@ describe('registerUsage and Publish Now', () => {
     expect(second.alreadyUsed).toBe(true);
     expect(second.usedCount).toBe(1);
     expect(tables['subscription_usage']).toHaveLength(1);
+  });
+});
+
+describe('registerUsage failure branches (audit fix 2026-11-01)', () => {
+  it('fails closed when the legacy-row lookup errors', async () => {
+    const { client, tables, failures } = makeClient();
+    seedActivePeriod(tables);
+    seedUsage(tables, 'publish-now');
+    failures.selectUsage = 1;
+    await expect(
+      registerUsage(client, 'user-1', 'facebook', 'page-1', 'destination-queue', 'dest-1', NOW)
+    ).rejects.toMatchObject({ code: 'ENTITLEMENT_UNAVAILABLE' });
+  });
+
+  it('fails closed when the legacy-row delete errors, keeping the legacy row', async () => {
+    const { client, tables, failures } = makeClient();
+    seedActivePeriod(tables);
+    seedUsage(tables, 'publish-now');
+    failures.deleteUsage = 1;
+    await expect(
+      registerUsage(client, 'user-1', 'facebook', 'page-1', 'destination-queue', 'dest-1', NOW)
+    ).rejects.toMatchObject({ code: 'ENTITLEMENT_UNAVAILABLE' });
+    expect(tables['subscription_usage']).toHaveLength(1);
+  });
+
+  it('fails closed when the retry insert errors, after deleting the legacy row', async () => {
+    const { client, tables, failures } = makeClient();
+    seedActivePeriod(tables);
+    seedUsage(tables, 'publish-now');
+    failures.retryInsert = 1;
+    await expect(
+      registerUsage(client, 'user-1', 'facebook', 'page-1', 'destination-queue', 'dest-1', NOW)
+    ).rejects.toMatchObject({ code: 'ENTITLEMENT_UNAVAILABLE' });
+    expect(tables['subscription_usage']).toHaveLength(0);
   });
 });

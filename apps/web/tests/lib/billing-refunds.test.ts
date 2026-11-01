@@ -330,6 +330,31 @@ describe('refund eligibility', () => {
     expect(eligibility.currency).toBe('PKR');
   });
 
+  it('uses the persisted IPN actuals, not the checkout estimate, for a crypto payment', async () => {
+    const state = baseState({
+      payments: [
+        paymentRow({
+          method: 'nowpayments',
+          bank_method: null,
+          nowpayments_payment_id: 'np-1',
+          nowpayments_pay_address: 'TTest',
+          nowpayments_pay_amount: 10,
+          nowpayments_network: 'trc20',
+          // The IPN actually delivered 9 USDT, not the 10 estimated
+          // at checkout: refund math must use 9.
+          nowpayments_actual_paid: 9,
+          nowpayments_actual_currency: 'usdttrc20',
+        }),
+      ],
+    });
+    const eligibility = await getRefundEligibility(fakeClient(state), 'user-1', NOW);
+    expect(eligibility.eligible).toBe(true);
+    expect(eligibility.currency).toBe('USDT');
+    expect(eligibility.amountPaid).toBe(9);
+    // 9 - 3 * (9 / 30) = 8.1, at 2-decimal USDT precision.
+    expect(eligibility.estimatedRefund).toBe(8.1);
+  });
+
   it('keeps the window open at exactly day 7 and closes it after', async () => {
     const client = fakeClient(baseState());
     const atDay7 = await getRefundEligibility(
