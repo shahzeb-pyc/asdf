@@ -77,6 +77,14 @@ export default async function TenantLayout({ params, children }: Readonly<Tenant
     redirect(`/login?returnUrl=${encodeURIComponent(`/tenant/${subdomain}`)}`);
   }
 
+  // Sellers have no workspace and must never render the tenant
+  // frame (sidebar, plan gate, lifecycle guard all assume a
+  // workspace). Middleware redirects them first; this is the
+  // backstop for any path that reaches the layout directly.
+  if (session.role === 'seller') {
+    redirect('/seller');
+  }
+
   let hostHeader: string | null = null;
   try {
     hostHeader = (await headers()).get('host');

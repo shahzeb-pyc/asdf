@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { SignupRequestSchema, isSignupEnabled } from '@fbuploadpro/contracts';
+import { SignupRequestSchema, isSignupEnabled, normalizeReferralCode } from '@fbuploadpro/contracts';
 import { signUpTenantUser } from '@/lib/auth/signup';
 import { formatAuthErrorResponse } from '@/lib/auth-errors';
 import { checkRateLimit, extractClientIp, RATE_LIMIT_WINDOW_MS } from '@/lib/rate-limiter';
 import { bodyTooLargeResponse, readJsonBody } from '@/lib/request-body';
+import { getBillingAdminClient } from '@/lib/billing/route-helpers';
+import { resolveReferralCode } from '@/lib/billing/sellers';
 
 export async function POST(request: NextRequest) {
   try {
@@ -67,8 +69,34 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 3. Initiate or resume registration and dispatch OTP via Supabase Auth
-    const signupResult = await signUpTenantUser(parseResult.data);
+    // 3. Resolve the referral code server-side (the page pre-check
+    // is UX only). An invalid or paused seller's code is a 400 —
+    // never a silent unattributed signup for a code the user
+    // actually submitted. Without a server client (local dev)
+    // the code cannot be resolved and is dropped, matching the
+    // page's behaviour on a 503 from the validate endpoint.
+    let referral: { sellerId: string; code: string } | undefined;
+    if (parseResult.data.referralCode) {
+      const client = getBillingAdminClient();
+      if (client) {
+        const resolved = await resolveReferralCode(client, parseResult.data.referralCode);
+        if (!resolved) {
+          return NextResponse.json(
+            { error: 'This referral code is no longer valid. You can still create your account without it.' },
+            { status: 400 }
+          );
+        }
+        referral = {
+          sellerId: resolved.sellerId,
+          code: normalizeReferralCode(parseResult.data.referralCode),
+        };
+      }
+    }
+
+    // 4. Initiate or resume registration and dispatch OTP via Supabase Auth
+    const { referralCode: _submittedCode, ...signupParams } = parseResult.data;
+    void _submittedCode;
+    const signupResult = await signUpTenantUser({ ...signupParams, referral });
 
     return NextResponse.json(
       {

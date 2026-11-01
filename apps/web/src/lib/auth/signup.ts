@@ -28,6 +28,15 @@ export async function signUpTenantUser(params: {
   email: string;
   password?: string | undefined;
   hashedPassword?: string | undefined;
+  /**
+   * Pre-resolved referral (route-resolved via resolveReferralCode).
+   * Written ONLY at users-row creation and never afterwards:
+   * attribution is frozen at signup, and later link clicks or a
+   * second signup attempt for an existing (unconfirmed) account
+   * cannot change it. Local fallback (no Supabase client) signs
+   * up without a referrer — there is no database to record it in.
+   */
+  referral?: { sellerId: string; code: string } | undefined;
 }): Promise<{
   user: AuthUser;
   requiresOtp: boolean;
@@ -197,6 +206,12 @@ export async function signUpTenantUser(params: {
             phone: formattedPhone,
             role: 'user',
             status: 'active',
+            ...(params.referral
+              ? {
+                  referred_by_seller_id: params.referral.sellerId,
+                  referred_by_code: params.referral.code,
+                }
+              : {}),
           },
           { onConflict: 'id' }
         )

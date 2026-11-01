@@ -13,6 +13,7 @@ import {
   applyHeldRedemptionsForPayment,
   releaseHeldRedemptionsForPayment,
 } from '@/lib/billing/coupons';
+import { recordCommissionForPayment } from '@/lib/billing/sellers';
 import { getBillingAdminClient } from '@/lib/billing/route-helpers';
 import { getNowPaymentsConfig } from '@/lib/billing/nowpayments';
 
@@ -118,6 +119,30 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ received: true, unknownPayment: true });
     }
     if (payment.periodId) {
+      // Already activated: a redelivery still owes the seller
+      // commission if the first attempt recorded the period but
+      // failed before the commission (the dedupe release on
+      // failure routes the retry here). Recording is idempotent
+      // per payment, so this is a no-op when already recorded.
+      const { data: periodRow } = await client
+        .from('subscription_periods')
+        .select('starts_at')
+        .eq('id', payment.periodId)
+        .maybeSingle();
+      const periodData =
+        periodRow !== null && typeof periodRow === 'object'
+          ? (periodRow as Record<string, unknown>)
+          : null;
+      const startsAt =
+        periodData && typeof periodData['starts_at'] === 'string'
+          ? new Date(periodData['starts_at'])
+          : null;
+      if (startsAt) {
+        await recordCommissionForPayment(client, payment, {
+          id: payment.periodId,
+          startsAt,
+        });
+      }
       return NextResponse.json({ received: true, alreadyActivated: true });
     }
     // A payment an admin rejected must never activate, even if the
@@ -158,6 +183,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           paymentId: payment.id,
         });
       }
+      // Seller commission, by contrast, THROWS on failure: the
+      // outer catch releases the dedupe row, so the provider
+      // retry reprocesses through the alreadyActivated branch
+      // above, which records the commission. A swallowed failure
+      // here would lose the seller money with no recovery.
+      await recordCommissionForPayment(client, payment, period);
       return NextResponse.json({ received: true, activated: true });
     }
 

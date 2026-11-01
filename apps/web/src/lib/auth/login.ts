@@ -155,13 +155,19 @@ export async function loginTenantUser(params: {
   );
 
   const rootDomain = process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'localhost:3000';
-  const redirectUrl = sanitizeAuthRedirectUrl(
-    params.returnUrl,
-    user.subdomain,
-    rootDomain,
-    params.requestHost,
-    allowedSubdomains
-  );
+  // Sellers have no workspace: they always land on /seller, never
+  // on a workspace URL (their session subdomain is only an
+  // email-derived fallback). Any returnUrl is ignored for them.
+  const redirectUrl =
+    user.role === 'seller'
+      ? '/seller'
+      : sanitizeAuthRedirectUrl(
+          params.returnUrl,
+          user.subdomain,
+          rootDomain,
+          params.requestHost,
+          allowedSubdomains
+        );
 
   return {
     user,

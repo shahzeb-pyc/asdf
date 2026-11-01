@@ -41,12 +41,15 @@ import {
   SignupSuccessResponseSchema,
   type SignupErrorBody,
 } from '@/lib/api/schemas/auth';
+import { ReferralValidateResponseSchema } from '@/lib/api/schemas/sellers';
 import { reportError } from '@/lib/report-error';
 import { signupFormSchema, type SignupFormValues } from '@/app/signup/signup-form-schema';
 
 export interface SignupDetailsFormProps {
   /** Email arriving via the page's entry parameters (`?email=`). */
   initialEmail?: string | undefined;
+  /** Referral code arriving via a seller link (`?ref=`). */
+  initialReferralCode?: string | undefined;
   /** Pending-verification notice arriving via `?notice=pending_verification`. */
   successNotice?: string | null | undefined;
   onDismissSuccessNotice?: (() => void) | undefined;
@@ -68,6 +71,7 @@ const FIELD_ORDER: SignupFieldName[] = ['name', 'phone', 'email', 'password', 'c
 
 export function SignupDetailsForm({
   initialEmail,
+  initialReferralCode,
   successNotice,
   onDismissSuccessNotice,
   onRequiresOtp,
@@ -75,6 +79,44 @@ export function SignupDetailsForm({
   const [serverError, setServerError] = useState<string | null>(null);
   const [isEmailConflict, setIsEmailConflict] = useState(false);
   const [cooldown, setCooldown] = useState(0);
+  /**
+   * Referral pre-check state. The server re-resolves the code at
+   * submit time — this is display only: 'valid' shows the
+   * referred-by banner and submits the code; 'invalid' shows a
+   * notice and submits without it; 'unavailable' (endpoint error
+   * or 503) also submits without it, quietly, so a check outage
+   * never blocks registration.
+   */
+  const [referralState, setReferralState] = useState<
+    | { status: 'none' }
+    | { status: 'checking' }
+    | { status: 'valid'; sellerName: string | null }
+    | { status: 'invalid' }
+    | { status: 'unavailable' }
+  >({ status: initialReferralCode ? 'checking' : 'none' });
+
+  useEffect(() => {
+    if (!initialReferralCode) return;
+    let cancelled = false;
+    api
+      .get(
+        `/api/referral/validate?code=${encodeURIComponent(initialReferralCode)}`,
+        { schema: ReferralValidateResponseSchema }
+      )
+      .then((data) => {
+        if (cancelled) return;
+        setReferralState(
+          data.valid ? { status: 'valid', sellerName: data.sellerName } : { status: 'invalid' }
+        );
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setReferralState({ status: 'unavailable' });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [initialReferralCode]);
 
   const form = useForm<SignupFormValues>({
     resolver: zodResolver(signupFormSchema),
@@ -136,6 +178,9 @@ export function SignupDetailsForm({
           phone: values.phone.trim(),
           email: values.email.trim(),
           password: values.password,
+          ...(referralState.status === 'valid' && initialReferralCode
+            ? { referralCode: initialReferralCode }
+            : {}),
         },
         { schema: SignupSuccessResponseSchema }
       );
@@ -216,6 +261,29 @@ export function SignupDetailsForm({
                 ×
               </button>
             )}
+          </Alert>
+        )}
+
+        {referralState.status === 'valid' && (
+          <Alert variant="success">
+            <div className="flex flex-col gap-1">
+              <AlertTitle>Referred by {referralState.sellerName ?? 'a seller'}</AlertTitle>
+              <AlertDescription>
+                You signed up through a seller&apos;s referral link. This account will be linked
+                to them.
+              </AlertDescription>
+            </div>
+          </Alert>
+        )}
+        {referralState.status === 'invalid' && (
+          <Alert variant="warning">
+            <div className="flex flex-col gap-1">
+              <AlertTitle>Referral link no longer valid</AlertTitle>
+              <AlertDescription>
+                This referral link is no longer active. You can still create your account — it
+                just won&apos;t be linked to a seller.
+              </AlertDescription>
+            </div>
           </Alert>
         )}
 

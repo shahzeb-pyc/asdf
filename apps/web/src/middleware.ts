@@ -222,6 +222,13 @@ function handleDirectTenantPathOnApex(
     return NextResponse.redirect(new URL('/account-suspended', request.url), 307);
   }
 
+  // Sellers have no workspace: a seller session on any /tenant/
+  // path belongs on /seller, never on a workspace redirect (their
+  // session subdomain is only an email-derived fallback).
+  if (session.role === 'seller') {
+    return NextResponse.redirect(new URL('/seller', request.url), 307);
+  }
+
   const access = canAccessTenant(session, pathSubdomain);
   if (!access.allowed) {
     if (access.reason === 'mismatch') {
@@ -307,6 +314,22 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     if (subdomain === 'app' || isApex) {
       const session = await resolveSession(request, sessionSecret);
       const isLogoutSuccess = request.nextUrl.searchParams.get('logout') === 'success';
+      // Sellers have no workspace: seller sessions on the app
+      // host that are not already on /seller belong on /seller
+      // (entry routes, /tenant/ paths, stray root paths alike),
+      // and a suspended seller belongs on the suspended page.
+      // Logout-success is exempt — the cookie is being cleared.
+      if (session && session.role === 'seller' && !isLogoutSuccess) {
+        if (session.status === 'suspended') {
+          return applyCspHeaders(
+            NextResponse.redirect(new URL('/account-suspended', request.url), 307),
+            nonce
+          );
+        }
+        if (!pathname.startsWith('/seller')) {
+          return applyCspHeaders(NextResponse.redirect(new URL('/seller', request.url), 307), nonce);
+        }
+      }
       const isEntryOrAuthRoute =
         pathname === '/' || pathname === '/login' || pathname === '/signup';
 
@@ -419,6 +442,20 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
       NextResponse.redirect(new URL('/account-suspended', request.url), 307),
       nonce
     );
+  }
+
+  // Sellers have no workspace: a seller session on a tenant host
+  // belongs on the app host's /seller, never on a workspace
+  // (their session subdomain is only an email-derived fallback,
+  // so the mismatch redirect below would send them to a
+  // workspace that does not exist).
+  if (session.role === 'seller') {
+    const sellerUrl = new URL(request.url);
+    sellerUrl.host = `app.${rootDomain}`;
+    sellerUrl.pathname = '/seller';
+    sellerUrl.search = '';
+    sellerUrl.hash = '';
+    return applyCspHeaders(NextResponse.redirect(sellerUrl, 307), nonce);
   }
 
   const access = canAccessTenant(session, subdomain);
