@@ -612,7 +612,9 @@ describe('Billing Purchase', () => {
     fireEvent.change(input, {
       target: { files: [new File(['bytes'], 'proof.png', { type: 'image/png' })] },
     });
-    await screen.findByText('Your session expired. Sign in again to pick up where you left off.');
+    expect(
+      await screen.findByText('Your session expired. Sign in again to pick up where you left off.')
+    ).toBeInTheDocument();
   });
 
   it('an aborted PUT shows the timeout message with a retry', async () => {
@@ -654,9 +656,11 @@ describe('Billing Purchase', () => {
     fireEvent.change(input, {
       target: { files: [new File(['bytes'], 'proof.png', { type: 'image/png' })] },
     });
-    await screen.findByText(
-      'The screenshot was rejected. Try a PNG, JPG, WebP, or GIF image under 10 MB.'
-    );
+    expect(
+      await screen.findByText(
+        'The screenshot was rejected. Try a PNG, JPG, WebP, or GIF image under 10 MB.'
+      )
+    ).toBeInTheDocument();
   });
 
   it('an expired session during submit shows the session message', async () => {
@@ -669,7 +673,9 @@ describe('Billing Purchase', () => {
     await goToCheckout();
     await pickScreenshot();
     fireEvent.click(screen.getByRole('button', { name: 'Submit payment for approval' }));
-    await screen.findByText('Your session expired. Sign in again to pick up where you left off.');
+    expect(
+      await screen.findByText('Your session expired. Sign in again to pick up where you left off.')
+    ).toBeInTheDocument();
   });
 
   it('a malformed submit response shows the parse message, not a generic error', async () => {
@@ -682,9 +688,11 @@ describe('Billing Purchase', () => {
     await goToCheckout();
     await pickScreenshot();
     fireEvent.click(screen.getByRole('button', { name: 'Submit payment for approval' }));
-    await screen.findByText(
-      'The server returned an unexpected response. Your screenshot is still attached — try again.'
-    );
+    expect(
+      await screen.findByText(
+        'The server returned an unexpected response. Your screenshot is still attached — try again.'
+      )
+    ).toBeInTheDocument();
   });
 
   it('a truly unknown submit error shows the fallback, logs it, and offers a retry', async () => {
