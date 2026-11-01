@@ -283,6 +283,56 @@ export const BillingStatusResponseSchema = z.object({
 export type BillingStatusResponse = z.infer<typeof BillingStatusResponseSchema>;
 
 /**
+ * Manual payment screenshot upload, split out of the payment POST
+ * (submit rewrite 2026-11-01): the browser uploads the screenshot
+ * straight to R2 through a presigned URL, so a multi-MB image never
+ * rides a serverless function body and checkout can show the upload's
+ * own loading state and block submit until it finishes. The payment
+ * POST then references the stored key instead of a file. Screenshots
+ * never counted against the media library quota, so minting applies
+ * no quota gate.
+ */
+export const SCREENSHOT_UPLOAD_MIME_TYPES = [
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif',
+] as const;
+export const MAX_SCREENSHOT_BYTES = 10 * 1024 * 1024;
+
+export const BillingScreenshotUploadUrlRequestSchema = z.object({
+  mimeType: z.enum(SCREENSHOT_UPLOAD_MIME_TYPES),
+  fileSize: z.number().int().min(1).max(MAX_SCREENSHOT_BYTES),
+});
+export type BillingScreenshotUploadUrlRequest = z.infer<
+  typeof BillingScreenshotUploadUrlRequestSchema
+>;
+
+export const BillingScreenshotUploadUrlResponseSchema = z.object({
+  storageKey: z.string().min(1),
+  uploadUrl: z.string().url(),
+  expiresInSeconds: z.number().int().positive(),
+});
+export type BillingScreenshotUploadUrlResponse = z.infer<
+  typeof BillingScreenshotUploadUrlResponseSchema
+>;
+
+/**
+ * Manual bank payment submission (JSON now, not multipart): the
+ * screenshot is already in R2 under the given key, minted by the
+ * upload route for this user. The route verifies the key belongs to
+ * the caller — a key minted for another user, or a made-up path, is
+ * refused before any row is created.
+ */
+export const BillingBankPaymentSubmitSchema = z.object({
+  counts: PlatformCountsSchema,
+  bankMethod: BankMethodSchema,
+  screenshotStorageKey: z.string().min(1).max(512),
+  couponCode: z.string().trim().min(1).max(64).optional(),
+});
+export type BillingBankPaymentSubmit = z.infer<typeof BillingBankPaymentSubmitSchema>;
+
+/**
  * Media Library storage state, computed server-side from the same
  * quota/usage source as upload enforcement (5 GB per paid unit in the
  * active period; live media_items.file_size sum). `state` is null when

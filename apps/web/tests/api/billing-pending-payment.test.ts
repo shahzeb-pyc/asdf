@@ -7,11 +7,12 @@ import { POST as postCrypto } from '@/app/api/tenant/[subdomain]/billing/payment
 /**
  * One pending payment per user: while any payment with status
  * 'pending' exists for the user, bank AND crypto submissions are
- * refused with 409 and create nothing — no row, no screenshot
- * upload, no crypto deposit. After the pending payment is approved
- * or rejected, submissions work again. A race that slips past the
- * check collides on the one-pending-per-user index (23505) and gets
- * the same 409.
+ * refused with 409 and create nothing — no row, no R2 write (the
+ * screenshot uploads before the payment POST now, so the payment
+ * route itself never touches storage). After the pending payment is
+ * approved or rejected, submissions work again. A race that slips
+ * past the check collides on the one-pending-per-user index (23505)
+ * and gets the same 409.
  *
  * Tested against a small thenable fake Supabase client — no real
  * database, storage, or NOWPayments call.
@@ -46,6 +47,7 @@ interface FakeDb {
   coupons: Row[];
   redemptions: Row[];
   insertViolation: boolean;
+  insertError: boolean;
   putObjectCalls: number;
   nowPaymentsCalls: number;
   failReleaseOnce: boolean;
@@ -147,6 +149,9 @@ class FakeBuilder {
       if (db.insertViolation && this.violationApplies) {
         return { data: null, error: { code: '23505' } };
       }
+      if (db.insertError) {
+        return { data: null, error: { code: '42501' } };
+      }
       this.pushRow?.(this.insertRow);
       const row = this.insertRow;
       this.insertRow = null;
@@ -186,6 +191,7 @@ class FakeBuilder {
 
 const idempotencyOverride = vi.hoisted(() => ({
   lookup: null as null | ((...args: unknown[]) => unknown),
+  store: null as null | ((...args: unknown[]) => unknown),
 }));
 
 vi.mock('@/lib/billing/route-helpers', async (importOriginal) => {
@@ -197,6 +203,10 @@ vi.mock('@/lib/billing/route-helpers', async (importOriginal) => {
       idempotencyOverride.lookup
         ? idempotencyOverride.lookup(...args)
         : (actual.lookupBillingIdempotency as (...args: unknown[]) => unknown)(...args),
+    storeBillingIdempotency: (...args: unknown[]) =>
+      idempotencyOverride.store
+        ? idempotencyOverride.store(...args)
+        : (actual.storeBillingIdempotency as (...args: unknown[]) => unknown)(...args),
   };
 });
 
@@ -252,14 +262,17 @@ function seedPayment(overrides: Row = {}): Row {
   return row;
 }
 
+const SCREENSHOT_KEY = `billing-screenshots/${userId}/22222222-2222-4222-a222-222222222222.png`;
+
 function bankRequest(): NextRequest {
-  const form = new FormData();
-  form.append('counts', JSON.stringify({ ...ZERO_COUNTS, facebook: 1 }));
-  form.append('bankMethod', 'easypaisa');
-  form.append('screenshot', new Blob(['fake-png-bytes'], { type: 'image/png' }), 'proof.png');
   return new NextRequest('http://localhost:3000/api/tenant/acme/billing/payments', {
     method: 'POST',
-    body: form,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      counts: { ...ZERO_COUNTS, facebook: 1 },
+      bankMethod: 'easypaisa',
+      screenshotStorageKey: SCREENSHOT_KEY,
+    }),
   });
 }
 
@@ -291,14 +304,15 @@ function couponRow(overrides: Row = {}): Row {
 }
 
 function bankRequestWithCoupon(): NextRequest {
-  const form = new FormData();
-  form.append('counts', JSON.stringify({ ...ZERO_COUNTS, facebook: 1 }));
-  form.append('bankMethod', 'easypaisa');
-  form.append('couponCode', 'HALF50');
-  form.append('screenshot', new Blob(['fake-png-bytes'], { type: 'image/png' }), 'proof.png');
   return new NextRequest('http://localhost:3000/api/tenant/acme/billing/payments', {
     method: 'POST',
-    body: form,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      counts: { ...ZERO_COUNTS, facebook: 1 },
+      bankMethod: 'easypaisa',
+      couponCode: 'HALF50',
+      screenshotStorageKey: SCREENSHOT_KEY,
+    }),
   });
 }
 
@@ -320,10 +334,10 @@ const ctx = { params: Promise.resolve({ subdomain: 'acme' }) };
 describe('one pending payment per user', () => {
   beforeEach(() => {
     process.env.NEXT_PUBLIC_APP_URL = 'https://app.example.com';
-    db = { payments: [], coupons: [couponRow()], redemptions: [], insertViolation: false, putObjectCalls: 0, nowPaymentsCalls: 0, failReleaseOnce: false };
+    db = { payments: [], coupons: [couponRow()], redemptions: [], insertViolation: false, insertError: false, putObjectCalls: 0, nowPaymentsCalls: 0, failReleaseOnce: false };
   });
 
-  it('bank submission while a bank payment is pending → 409, no row, no screenshot stored', async () => {
+  it('bank submission while a bank payment is pending → 409, no row, no R2 write', async () => {
     seedPayment({ status: 'pending' });
     const res = await postBank(bankRequest(), ctx);
     expect(res.status).toBe(409);
@@ -374,15 +388,69 @@ describe('one pending payment per user', () => {
     expect(db.payments).toHaveLength(0);
   });
 
-  it('Binance submissions use the same manual path and are blocked while pending', async () => {
-    seedPayment({ status: 'pending', method: 'bank', bank_method: 'binance' });
-    const form = new FormData();
-    form.append('counts', JSON.stringify({ ...ZERO_COUNTS, facebook: 1 }));
-    form.append('bankMethod', 'binance');
-    form.append('screenshot', new Blob(['fake-png-bytes'], { type: 'image/png' }), 'proof.png');
+  it('a screenshot key minted for another user → 400, no row', async () => {
     const req = new NextRequest('http://localhost:3000/api/tenant/acme/billing/payments', {
       method: 'POST',
-      body: form,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        counts: { ...ZERO_COUNTS, facebook: 1 },
+        bankMethod: 'easypaisa',
+        screenshotStorageKey:
+          'billing-screenshots/33333333-3333-4333-a333-333333333333/22222222-2222-4222-a222-222222222222.png',
+      }),
+    });
+    const res = await postBank(req, ctx);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.message).toContain('does not belong to this payment');
+    expect(db.payments).toHaveLength(0);
+  });
+
+  it('a made-up screenshot key → 400, no row', async () => {
+    const req = new NextRequest('http://localhost:3000/api/tenant/acme/billing/payments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        counts: { ...ZERO_COUNTS, facebook: 1 },
+        bankMethod: 'easypaisa',
+        screenshotStorageKey: 'users/someone-else/media/shot.png',
+      }),
+    });
+    const res = await postBank(req, ctx);
+    expect(res.status).toBe(400);
+    expect(db.payments).toHaveLength(0);
+  });
+
+  it('a failed insert → specific 500 (never the old generic), no row', async () => {
+    db.insertError = true;
+    const res = await postBank(bankRequest(), ctx);
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toBe('PAYMENT_SAVE_FAILED');
+    expect(body.message).toContain('still attached');
+    expect(db.payments).toHaveLength(0);
+  });
+
+  it('a failing idempotency store after the insert still returns 201 — the payment exists', async () => {
+    idempotencyOverride.store = () => {
+      throw new Error('store down');
+    };
+    const res = await postBank(bankRequest(), ctx);
+    expect(res.status).toBe(201);
+    expect(db.payments).toHaveLength(1);
+    idempotencyOverride.store = null;
+  });
+
+  it('Binance submissions use the same manual path and are blocked while pending', async () => {
+    seedPayment({ status: 'pending', method: 'bank', bank_method: 'binance' });
+    const req = new NextRequest('http://localhost:3000/api/tenant/acme/billing/payments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        counts: { ...ZERO_COUNTS, facebook: 1 },
+        bankMethod: 'binance',
+        screenshotStorageKey: SCREENSHOT_KEY,
+      }),
     });
     const res = await postBank(req, ctx);
     expect(res.status).toBe(409);
@@ -393,7 +461,7 @@ describe('one pending payment per user', () => {
 describe('billing submission idempotency (audit fix 2026-11-01, fix 9)', () => {
   beforeEach(() => {
     process.env.NEXT_PUBLIC_APP_URL = 'https://app.example.com';
-    db = { payments: [], coupons: [couponRow()], redemptions: [], insertViolation: false, putObjectCalls: 0, nowPaymentsCalls: 0, failReleaseOnce: false };
+    db = { payments: [], coupons: [couponRow()], redemptions: [], insertViolation: false, insertError: false, putObjectCalls: 0, nowPaymentsCalls: 0, failReleaseOnce: false };
     idempotencyOverride.lookup = null;
   });
 
@@ -433,6 +501,7 @@ describe('billing submissions with coupons, admin rejection, and crypto idempote
       coupons: [couponRow()],
       redemptions: [],
       insertViolation: false,
+      insertError: false,
       putObjectCalls: 0,
       nowPaymentsCalls: 0,
       failReleaseOnce: false,
@@ -541,6 +610,7 @@ describe('billing submission release-failure logging', () => {
       coupons: [couponRow()],
       redemptions: [],
       insertViolation: false,
+      insertError: false,
       putObjectCalls: 0,
       nowPaymentsCalls: 0,
       failReleaseOnce: false,
