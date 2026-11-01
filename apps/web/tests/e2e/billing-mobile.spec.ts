@@ -1,7 +1,7 @@
 /**
  * Billing at phone widths (360–390px): no horizontal overflow, controls
  * inside the viewport, and the new billing work behaving on a real
- * phone-width page — pending banner + disabled checkout, reduced
+ * phone-width page — pending banner with the builder hidden, reduced
  * platform list, inclusions, summary stacking, and admin approvals.
  *
  * The mobile-* Playwright projects only match mobile-layout.spec.ts,
@@ -108,7 +108,7 @@ async function gotoBilling(page: Page, view: string) {
 
 test.describe('billing at phone widths', () => {
   for (const width of [360, 390]) {
-    test(`Purchase fits ${width}px: pending banner, disabled checkout, inclusions, summary below chooser`, async ({
+    test(`Purchase fits ${width}px: pending banner only, builder hidden`, async ({
       page,
       context,
     }) => {
@@ -126,31 +126,30 @@ test.describe('billing at phone widths', () => {
       // Exact match: the pending message itself contains the same
       // words as a substring ("payment waiting for approval").
       await expect(page.getByText('Waiting for approval', { exact: true })).toBeVisible();
-      const continueBtn = page.getByRole('button', { name: 'Continue to checkout' });
-      await expect(continueBtn).toBeDisabled();
-      await expect(page.getByText('Included with your plan')).toBeVisible();
       await expect(
-        page.getByText('5 GB of Media Library storage per page or account')
+        page.getByText(
+          'You already have a payment waiting for approval. Wait for it to be decided before submitting another.'
+        )
       ).toBeVisible();
-      await expect(page.getByText('Creator Finder included free')).toBeVisible();
       await expect(
-        page.getByText('Unlimited posts — no cap on the number of posts')
+        page.getByText('You can build a new plan once this payment is decided.')
       ).toBeVisible();
-      // Reduced platform list: no X/TikTok/YouTube steppers in Purchase.
+      await expect(page.getByRole('button', { name: 'Check again' })).toBeVisible();
+      // The builder is hidden, not disabled: no inclusions, no
+      // steppers, no summary, no checkout button next to the
+      // pending order.
+      await expect(page.getByText('Included with your plan')).toHaveCount(0);
+      await expect(page.getByText('Choose your pages and accounts')).toHaveCount(0);
+      await expect(page.getByText('Order summary')).toHaveCount(0);
+      await expect(
+        page.getByRole('button', { name: 'Continue to checkout' })
+      ).toHaveCount(0);
+      await expect(page.getByLabel('Increase Facebook')).toHaveCount(0);
       await expect(page.getByLabel('Increase X')).toHaveCount(0);
       await expect(page.getByLabel('Increase TikTok')).toHaveCount(0);
       await expect(page.getByLabel('Increase YouTube')).toHaveCount(0);
 
-      // Summary stacks BELOW the chooser on phones: the summary
-      // heading must start below the bottom of the stepper button.
-      const stepperBox = await page.getByLabel('Increase Facebook').boundingBox();
-      const summaryBox = await page.getByText('Order summary').boundingBox();
-      expect(stepperBox).not.toBeNull();
-      expect(summaryBox).not.toBeNull();
-      expect(summaryBox!.y).toBeGreaterThan(stepperBox!.y + stepperBox!.height);
-
       await expectNoDocumentOverflow(page);
-      await expectWithinViewport(continueBtn, page);
     });
   }
 
