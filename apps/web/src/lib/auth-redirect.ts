@@ -224,43 +224,71 @@ function resolveRelativeRedirect(
 }
 
 /**
- * Admin landing: an admin's post-login redirect must never land on the
- * tenant Home page — it lands on the admin panel (the Billing route,
- * which renders the Subscriptions approval view for admin sessions).
+ * Admin post-login redirect (shell isolation). Replaces the old
+ * admin-home redirect helper: the admin section has one address on
+ * every host, so there is no tenant-billing vs preview-path split.
  *
- * Only Home-bound targets are rewritten. Any deeper target (a section,
- * a returnUrl to a specific page) passes through unchanged, so an
- * admin deep-linked to Sellers still lands on Sellers. The URL's form
- * is preserved: a /tenant/-prefixed target stays prefixed, a bare
- * root on a tenant host becomes /billing, and a bare relative root
- * defaults to the prefixed panel path (the app-host form, which
- * always renders). Search and hash are dropped on rewrite — the
- * panel needs neither.
+ * - A returnUrl already under /admin/* is honored as-is.
+ * - An old tenant admin location maps through the compat table:
+ *   billing → subscriptions, sellers → sellers[/id], anything else
+ *   tenant → subscriptions. Bare tenant-host forms (/billing,
+ *   /sellers) map the same way.
+ * - A returnUrl pointing at a user section is NOT honored.
+ * - Anything else (missing, dangerous scheme, non-admin target)
+ *   → /admin/subscriptions. Search and hash are dropped, and the
+ *   origin is dropped — the admin path is host-independent.
  */
-export function redirectAdminHomeToPanel(redirectUrl: string, subdomain: string): string {
-  const sub = subdomain.toLowerCase();
-  let origin = '';
-  let path = '';
+/**
+ * Strip trailing slashes with a plain scan, not a regex: Sonar's
+ * super-linear-backtracking rule flags the `/\/+$/` pattern.
+ * Exactly equivalent to `value.length > 1 ? value.replace(/\/+$/, '') : value`.
+ */
+function stripTrailingSlashes(value: string): string {
+  if (value.length <= 1) return value;
+  let end = value.length;
+  while (end > 0 && value.charAt(end - 1) === '/') {
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
+
+export function resolveAdminLoginRedirect(
+  rawReturnUrl: string | null | undefined
+): string {
+  const HOME = '/admin/subscriptions';
+  if (!rawReturnUrl || typeof rawReturnUrl !== 'string') return HOME;
+  const trimmed = rawReturnUrl.trim();
+  if (
+    !trimmed ||
+    trimmed.startsWith('//') ||
+    trimmed.includes('\\') ||
+    /^(?:javascript|data|vbscript):/i.test(trimmed)
+  ) {
+    return HOME;
+  }
+  let path: string;
   try {
-    const parsed = new URL(redirectUrl);
-    origin = parsed.origin;
-    path = parsed.pathname;
+    path = new URL(trimmed).pathname;
   } catch {
-    path = redirectUrl.split(/[?#]/, 1)[0] ?? '';
+    path = trimmed.split(/[?#]/, 1)[0] ?? '';
   }
-  const normalizedPath = path.toLowerCase();
-  const isHome =
-    normalizedPath === '/' ||
-    normalizedPath === '' ||
-    normalizedPath === `/tenant/${sub}` ||
-    normalizedPath === `/tenant/${sub}/`;
-  if (!isHome) return redirectUrl;
-  if (normalizedPath.startsWith('/tenant/')) {
-    const panelPath = `/tenant/${subdomain}/billing`;
-    return origin ? `${origin}${panelPath}` : panelPath;
+  const normalized = stripTrailingSlashes(path);
+  const lower = normalized.toLowerCase();
+  if (lower === '/admin' || lower.startsWith('/admin/')) {
+    return normalized;
   }
-  if (origin) return `${origin}/billing`;
-  return `/tenant/${subdomain}/billing`;
+  // Strip a leading /tenant/<segment> (apex prefixed form) so bare
+  // and prefixed forms map alike.
+  const tenantMatch = normalized.match(/^\/tenant\/[^/]+(\/.*)?$/i);
+  const tenantPath = tenantMatch ? (tenantMatch[1] ?? '/') : normalized;
+  const tenantNormalized = stripTrailingSlashes(tenantPath);
+  const lowerTenant = tenantNormalized.toLowerCase();
+  if (lowerTenant === '/billing') return HOME;
+  if (lowerTenant === '/sellers') return '/admin/sellers';
+  if (lowerTenant.startsWith('/sellers/')) {
+    return `/admin/sellers/${tenantNormalized.slice('/sellers/'.length)}`;
+  }
+  return HOME;
 }
 
 export function sanitizeAuthRedirectUrl(

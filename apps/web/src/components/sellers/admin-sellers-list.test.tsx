@@ -67,7 +67,7 @@ function renderList() {
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <AdminSellersList subdomain="acme" />
+      <AdminSellersList />
     </QueryClientProvider>
   );
 }
@@ -91,7 +91,7 @@ describe('AdminSellersList', () => {
     expect(screen.getByText(/Payable PKR 1,500/)).toBeTruthy();
     expect(screen.getByText('Active')).toBeTruthy();
     const link = screen.getByRole('link', { name: /Ali/ });
-    expect(link.getAttribute('href')).toBe('/tenant/acme/sellers/seller-1');
+    expect(link.getAttribute('href')).toBe('/admin/sellers/seller-1');
   });
 
   it('shows the pending payout queue with decide buttons', async () => {
@@ -114,7 +114,7 @@ describe('AdminSellersList', () => {
     await user.click(screen.getByRole('button', { name: 'Reject' }));
     await waitFor(() =>
       expect(apiPost).toHaveBeenCalledWith(
-        '/api/tenant/acme/sellers/payout-requests/req-1',
+        '/api/admin/sellers/payout-requests/req-1',
         { action: 'reject' },
         expect.anything()
       )
@@ -136,7 +136,7 @@ describe('AdminSellersList', () => {
     await user.click(screen.getByRole('button', { name: 'Yes, I paid it' }));
     await waitFor(() =>
       expect(apiPost).toHaveBeenCalledWith(
-        '/api/tenant/acme/sellers/payout-requests/req-1',
+        '/api/admin/sellers/payout-requests/req-1',
         { action: 'mark-sent' },
         expect.anything()
       )
@@ -179,7 +179,7 @@ describe('AdminSellersList', () => {
     await user.click(screen.getByRole('button', { name: 'Create seller' }));
     await waitFor(() =>
       expect(apiPost).toHaveBeenCalledWith(
-        '/api/tenant/acme/sellers',
+        '/api/admin/sellers',
         expect.objectContaining({
           name: 'Omar',
           email: 'omar@example.com',

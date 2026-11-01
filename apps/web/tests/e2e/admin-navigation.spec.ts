@@ -2,15 +2,18 @@
  * Admin navigation must not bounce to Home — and admins never land
  * on Home at all.
  *
- * Regression net for the reported bug, extended by the admin-landing
- * change: an admin opening Home (directly, via the logo, or from a
- * Home-bound post-login navigation) is redirected to the admin
- * panel (Billing → approvals view) instead, and selecting
- * "Subscriptions approval" or "Sellers" in the admin sidebar must
- * land on that section and STAY there — never bounce back to Home.
- * Non-admin sessions must still be kept out of both sections
- * exactly as today (sellers redirects home; billing renders the user
- * Billing view, never the approvals view).
+ * Regression net for the reported bug, extended by the shell
+ * isolation change: the admin section is now global (/admin/*),
+ * separate from the tenant section. An admin opening Home
+ * (directly, via the logo, or from a Home-bound post-login
+ * navigation) is redirected to /admin/subscriptions instead, and
+ * selecting "Subscriptions approval" or "Sellers" in the admin
+ * sidebar must land on that section and STAY there — never bounce
+ * back to Home. Old tenant admin URLs (bookmarks, deep links)
+ * redirect to the equivalent new admin page. Non-admin sessions
+ * must still be kept out of admin sections exactly as today
+ * (users redirect home; billing renders the user Billing view,
+ * never the approvals view).
  *
  * Runs at 360px: the admin sidebar is a drawer at phone widths, so the
  * test opens the drawer and taps the leaves, the same path a phone
@@ -43,7 +46,7 @@ async function openDrawer(page: Page) {
 }
 
 async function installAdminFixtures(page: Page) {
-  await page.route(`**/api/tenant/${SUB}/billing/admin/payments`, (route) => {
+  await page.route(`**/api/admin/payments`, (route) => {
     if (route.request().method() !== 'GET') return route.fallback();
     return route.fulfill({
       status: 200,
@@ -51,14 +54,14 @@ async function installAdminFixtures(page: Page) {
       body: JSON.stringify({ payments: [] }),
     });
   });
-  await page.route(`**/api/tenant/${SUB}/sellers/payout-requests*`, (route) =>
+  await page.route(`**/api/admin/sellers/payout-requests*`, (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({ requests: [], total: 0 }),
     })
   );
-  await page.route(`**/api/tenant/${SUB}/sellers*`, (route) =>
+  await page.route(`**/api/admin/sellers*`, (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -88,7 +91,7 @@ async function installAdminFixtures(page: Page) {
 test.describe('admin navigation stays on admin sections (360px)', () => {
   test.use({ viewport: { width: 360, height: 740 }, hasTouch: true, isMobile: true });
 
-  test('admin home redirects to the panel; sidebar clicks land on sellers, not home', async ({
+  test('admin home redirects to the admin section; sidebar clicks land on sellers, not home', async ({
     page,
     context,
   }) => {
@@ -97,9 +100,9 @@ test.describe('admin navigation stays on admin sections (360px)', () => {
     await installAdminFixtures(page);
     await page.goto(`/tenant/${SUB}`);
 
-    // Admin Home redirects to the panel: billing URL + approvals
-    // heading, and the Home admin-panel card never renders.
-    await expect(page).toHaveURL(new RegExp(`/tenant/${SUB}/billing$`));
+    // Admin Home redirects to the admin section: subscriptions URL
+    // + approvals heading, and the Home admin-panel card never renders.
+    await expect(page).toHaveURL(/\/admin\/subscriptions$/);
     await expect(
       page.getByRole('heading', { name: 'Subscriptions approval' })
     ).toBeVisible();
@@ -108,7 +111,7 @@ test.describe('admin navigation stays on admin sections (360px)', () => {
     // Sellers: sidebar tap lands on the admin sellers list.
     await openDrawer(page);
     await page.getByRole('link', { name: 'Sellers' }).tap();
-    await expect(page).toHaveURL(new RegExp(`/tenant/${SUB}/sellers$`));
+    await expect(page).toHaveURL(/\/admin\/sellers$/);
     await expect(page.getByText('Resellers who earn commission')).toBeVisible();
 
     await expectNoDocumentOverflow(page);
@@ -119,18 +122,37 @@ test.describe('admin navigation stays on admin sections (360px)', () => {
     await installApiFixtures(page, createFixtureState());
     await installAdminFixtures(page);
 
-    await page.goto(`/tenant/${SUB}/sellers`);
-    await expect(page).toHaveURL(new RegExp(`/tenant/${SUB}/sellers$`));
+    await page.goto(`/admin/sellers`);
+    await expect(page).toHaveURL(/\/admin\/sellers$/);
     await expect(page.getByText('Resellers who earn commission')).toBeVisible();
     await page.reload();
-    await expect(page).toHaveURL(new RegExp(`/tenant/${SUB}/sellers$`));
+    await expect(page).toHaveURL(/\/admin\/sellers$/);
     await expect(page.getByText('Resellers who earn commission')).toBeVisible();
 
-    await page.goto(`/tenant/${SUB}/billing`);
-    await expect(page).toHaveURL(new RegExp(`/tenant/${SUB}/billing$`));
+    await page.goto(`/admin/subscriptions`);
+    await expect(page).toHaveURL(/\/admin\/subscriptions$/);
     await expect(
       page.getByRole('heading', { name: 'Subscriptions approval' })
     ).toBeVisible();
+  });
+
+  test('old tenant admin URLs redirect to the equivalent admin page', async ({
+    page,
+    context,
+  }) => {
+    await useSession(context, 'admin');
+    await installApiFixtures(page, createFixtureState());
+    await installAdminFixtures(page);
+
+    await page.goto(`/tenant/${SUB}/billing`);
+    await expect(page).toHaveURL(/\/admin\/subscriptions$/);
+    await expect(
+      page.getByRole('heading', { name: 'Subscriptions approval' })
+    ).toBeVisible();
+
+    await page.goto(`/tenant/${SUB}/sellers`);
+    await expect(page).toHaveURL(/\/admin\/sellers$/);
+    await expect(page.getByText('Resellers who earn commission')).toBeVisible();
   });
 
   test('non-admin sessions are still kept out of admin sections', async ({
@@ -139,6 +161,13 @@ test.describe('admin navigation stays on admin sections (360px)', () => {
   }) => {
     await useSession(context, 'user');
     await installApiFixtures(page, createFixtureState());
+
+    // A user on the admin section redirects to their workspace home.
+    await page.goto(`/admin/subscriptions`);
+    await expect(page.getByText('Resellers who earn commission')).toHaveCount(0);
+    await expect(
+      page.getByRole('heading', { name: 'Subscriptions approval' })
+    ).toHaveCount(0);
 
     // Sellers redirects a non-admin home, exactly as today.
     await page.goto(`/tenant/${SUB}/sellers`);
@@ -155,7 +184,7 @@ test.describe('admin navigation stays on admin sections (360px)', () => {
 });
 
 test.describe('admin navigation at desktop width', () => {
-  test('admin home redirects to the panel; sidebar clicks land on sellers, not home', async ({
+  test('admin home redirects to the admin section; sidebar clicks land on sellers, not home', async ({
     page,
     context,
   }) => {
@@ -164,9 +193,9 @@ test.describe('admin navigation at desktop width', () => {
     await installAdminFixtures(page);
     await page.goto(`/tenant/${SUB}`);
 
-    // Admin Home redirects to the panel: billing URL + approvals
-    // heading, and the Home admin-panel card never renders.
-    await expect(page).toHaveURL(new RegExp(`/tenant/${SUB}/billing$`));
+    // Admin Home redirects to the admin section: subscriptions URL
+    // + approvals heading, and the Home admin-panel card never renders.
+    await expect(page).toHaveURL(/\/admin\/subscriptions$/);
     await expect(
       page.getByRole('heading', { name: 'Subscriptions approval' })
     ).toBeVisible();
@@ -174,7 +203,7 @@ test.describe('admin navigation at desktop width', () => {
 
     // Desktop: the sidebar is visible, no drawer to open.
     await page.getByRole('link', { name: 'Sellers' }).click();
-    await expect(page).toHaveURL(new RegExp(`/tenant/${SUB}/sellers$`));
+    await expect(page).toHaveURL(/\/admin\/sellers$/);
     await expect(page.getByText('Resellers who earn commission')).toBeVisible();
   });
 
@@ -184,6 +213,12 @@ test.describe('admin navigation at desktop width', () => {
   }) => {
     await useSession(context, 'user');
     await installApiFixtures(page, createFixtureState());
+
+    // A user on the admin section redirects to their workspace home.
+    await page.goto(`/admin/subscriptions`);
+    await expect(
+      page.getByRole('heading', { name: 'Subscriptions approval' })
+    ).toHaveCount(0);
 
     // Sellers redirects a non-admin home, exactly as today.
     await page.goto(`/tenant/${SUB}/sellers`);

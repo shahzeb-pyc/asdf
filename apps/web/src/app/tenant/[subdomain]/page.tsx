@@ -57,7 +57,7 @@ interface TenantIndexPageProps {
  * - Free: hero, free plan card, upgrade card, Prompt Library + Billing
  *   links only (nothing that would throw the upgrade dialog).
  * - Expired: hero plus the expired banner and renew button only.
- * - Admin: redirected to the admin panel (Billing → approvals view)
+ * - Admin: redirected to the admin section (/admin/subscriptions)
  *   before render, so the admin branch below is only a fallback and
  *   never the landing an admin sees.
  *
@@ -84,14 +84,13 @@ export default async function TenantIndexPage({ params }: Readonly<TenantIndexPa
 
   // Admins never land on Home: a direct load that reaches this page
   // (notably the app-host /tenant/<subdomain> form, which middleware
-  // passes through) goes to the admin panel instead. Middleware
+  // passes through) goes to the admin section instead. Middleware
   // already redirects the tenant-host and apex Home forms, so this
   // only ever fires for the app-host form — and never loops, since
-  // the Billing route renders the approvals view for admins rather
-  // than redirecting back here.
+  // /admin/subscriptions is outside the tenant routes.
   const session = await getServerSessionContext();
   if (session?.role === 'admin') {
-    redirect(href('/billing'));
+    redirect('/admin/subscriptions');
   }
 
   const pagesHref = href('/pages');

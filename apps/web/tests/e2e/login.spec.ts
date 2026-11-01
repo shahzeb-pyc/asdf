@@ -39,8 +39,8 @@ test.describe('login', () => {
       // host-only, so the fixture plants the same session cookie for both
       // hosts involved — the localhost equivalent of that one cookie.
       await context.addCookies([
-        SESSION_COOKIE,
-        { ...SESSION_COOKIE, domain: `${TENANT.subdomain}.localhost` },
+        { ...SESSION_COOKIE, value: mintSessionToken('admin') },
+        { ...SESSION_COOKIE, value: mintSessionToken('admin'), domain: `${TENANT.subdomain}.localhost` },
       ]);
       return route.fulfill({
         status: 200,
@@ -62,7 +62,7 @@ test.describe('login', () => {
 
     // The approvals view loads its payments on mount; fixture it so
     // the panel assertion never depends on the dummy-env API.
-    await page.route(`**/api/tenant/${TENANT.subdomain}/billing/admin/payments`, (route) => {
+    await page.route(`**/api/admin/payments`, (route) => {
       if (route.request().method() !== 'GET') return route.fallback();
       return route.fulfill({
         status: 200,
@@ -76,12 +76,10 @@ test.describe('login', () => {
     await page.getByLabel('Password', { exact: true }).fill(TENANT.password);
     await page.getByRole('button', { name: 'Sign In' }).click();
 
-    // Post-login the app navigates to the tenant subdomain home URL
-    // (http://e2e.localhost:3100/tenant/e2e), but an admin session is
-    // redirected by middleware to the admin panel instead.
-    await expect(page).toHaveURL(
-      new RegExp(`${TENANT.subdomain}\\.localhost:3100/billing$`)
-    );
+    // Post-login the app navigates to the mocked tenant home URL,
+    // but an admin session is redirected by middleware to the admin
+    // section instead.
+    await expect(page).toHaveURL(/\/admin\/subscriptions$/);
     await expect(
       page.getByRole('heading', { name: 'Subscriptions approval' })
     ).toBeVisible();

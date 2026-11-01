@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
-import { GET as listIssues, POST as dismissIssue } from '@/app/api/tenant/[subdomain]/billing/admin/webhook-issues/route';
+import { GET as listIssues, POST as dismissIssue } from '@/app/api/admin/webhook-issues/route';
 
 /**
  * Admin webhook-issues route (audit fix 2026-11-01, fix 22):
@@ -12,7 +12,7 @@ import { GET as listIssues, POST as dismissIssue } from '@/app/api/tenant/[subdo
 const authState = vi.hoisted(() => ({ role: 'admin' }));
 
 vi.mock('@/lib/route-auth', () => ({
-  authenticateTenantRoute: vi.fn(async () => ({
+  authenticateAdminRoute: vi.fn(async () => ({
     session: {
       userId: 'admin-1',
       email: 'admin@example.com',
@@ -131,7 +131,6 @@ function issueRow(overrides: Row = {}): Row {
   };
 }
 
-const ctx = { params: Promise.resolve({ subdomain: 'acme' }) } as never;
 
 describe('admin webhook-issues route', () => {
   beforeEach(() => {
@@ -145,14 +144,14 @@ describe('admin webhook-issues route', () => {
 
   it('refuses non-admins with 403', async () => {
     authState.role = 'user';
-    const req = new NextRequest('http://localhost:3000/api/tenant/acme/billing/admin/webhook-issues');
-    const res = await listIssues(req, ctx);
+    const req = new NextRequest('http://localhost:3000/api/admin/webhook-issues');
+    const res = await listIssues(req);
     expect(res.status).toBe(403);
   });
 
   it('lists open issues newest first, excluding dismissed ones', async () => {
-    const req = new NextRequest('http://localhost:3000/api/tenant/acme/billing/admin/webhook-issues');
-    const res = await listIssues(req, ctx);
+    const req = new NextRequest('http://localhost:3000/api/admin/webhook-issues');
+    const res = await listIssues(req);
     expect(res.status).toBe(200);
     const json = (await res.json()) as { issues: Array<{ id: string; reason: string }> };
     expect(json.issues.map((i) => i.id)).toEqual(['issue-new', 'issue-old']);
@@ -161,14 +160,14 @@ describe('admin webhook-issues route', () => {
 
   it('dismisses an open issue', async () => {
     const req = new NextRequest(
-      'http://localhost:3000/api/tenant/acme/billing/admin/webhook-issues',
+      'http://localhost:3000/api/admin/webhook-issues',
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ issueId: 'issue-old' }),
       }
     );
-    const res = await dismissIssue(req, ctx);
+    const res = await dismissIssue(req);
     expect(res.status).toBe(200);
     expect((await res.json()) as { dismissed: boolean }).toEqual({ dismissed: true });
     expect(issues.find((i) => i.id === 'issue-old')).toMatchObject({ dismissed_at: expect.any(String) });
@@ -176,27 +175,27 @@ describe('admin webhook-issues route', () => {
 
   it('dismissing a missing issue returns 404', async () => {
     const req = new NextRequest(
-      'http://localhost:3000/api/tenant/acme/billing/admin/webhook-issues',
+      'http://localhost:3000/api/admin/webhook-issues',
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ issueId: 'no-such-issue' }),
       }
     );
-    const res = await dismissIssue(req, ctx);
+    const res = await dismissIssue(req);
     expect(res.status).toBe(404);
   });
 
   it('dismissing without an issueId returns 400', async () => {
     const req = new NextRequest(
-      'http://localhost:3000/api/tenant/acme/billing/admin/webhook-issues',
+      'http://localhost:3000/api/admin/webhook-issues',
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
       }
     );
-    const res = await dismissIssue(req, ctx);
+    const res = await dismissIssue(req);
     expect(res.status).toBe(400);
   });
 });

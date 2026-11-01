@@ -67,7 +67,7 @@ import TenantLayout, { generateMetadata } from '../../src/app/tenant/[subdomain]
 import TenantIndexPage, { metadata as homeMetadata } from '../../src/app/tenant/[subdomain]/page';
 import TenantLoading from '../../src/app/tenant/[subdomain]/loading';
 import { HomeHero } from '@/components/home/home-sections';
-import { WorkspaceSidebar } from '@/components/workspace/workspace-sidebar';
+import { UserShell } from '@/components/shell/user-shell';
 import { Toaster } from '@/components/shared/ui/toast';
 import { Card } from '@/components/shared/ui/card';
 import { Skeleton } from '@/components/shared/ui/skeleton';
@@ -134,37 +134,22 @@ describe('Tenant Workspace Shell', () => {
     const layoutJsx = await renderLayout();
     const elements = collectElements(layoutJsx);
 
-    // The sidebar receives the REAL session identity — no invented address.
-    const sidebar = elements.find((el) => el.type === WorkspaceSidebar);
-    expect(sidebar).toBeDefined();
-    const user = sidebar?.props.user as { name: string; email: string };
+    // The shell receives the REAL session identity — no invented address.
+    // (The sidebar itself is rendered by UserShell, so the frame
+    // assertion checks the UserShell element's props.)
+    const shell = elements.find((el) => el.type === UserShell);
+    expect(shell).toBeDefined();
+    const user = shell?.props.user as { name: string; email: string };
     expect(user.email).toBe('owner@example.com');
     expect(user.email).not.toContain('@fbuploadpro.com');
-    expect(sidebar?.props.workspaceName).toBe('Acme Corp');
+    expect(shell?.props.workspaceName).toBe('Acme Corp');
 
-    // Skip link targets the content region and is the first link in the tree.
-    const firstAnchor = elements.find((el) => el.type === 'a');
-    expect(firstAnchor?.props.href).toBe('#tenant-content');
-    expect(firstAnchor?.props.children).toBe('Skip to content');
-
-    // Content region carries the skip-link target id and is focusable.
-    const inset = elements.find((el) => el.props.id === 'tenant-content');
-    expect(inset).toBeDefined();
-    expect(inset?.props.tabIndex).toBe(-1);
-
-    // Header with the workspace topbar contract is present.
-    const header = elements.find((el) => el.props['data-testid'] === 'workspace-topbar');
-    expect(header).toBeDefined();
-
-    // Banner slot region sits in the frame.
-    const bannerSlot = elements.find((el) => el.props.id === 'tenant-banner-slot');
-    expect(bannerSlot).toBeDefined();
-
-    // The one Toaster system is mounted in the frame.
-    const toaster = elements.find((el) => el.type === Toaster);
-    expect(toaster).toBeDefined();
-
-    // Children render inside the frame.
+    // The layout tree now ends at <UserShell>: the skip link,
+    // content region, topbar, banner slot, and Toaster live inside
+    // UserShell's render, which an element walk cannot descend into.
+    // Their presence is proven by the UserShell render test
+    // (tests/ui/user-shell.test.tsx), not by this walk.
+    // Children render inside the frame (passed through as props).
     const child = elements.find((el) => el.props.id === 'test-child');
     expect(child).toBeDefined();
   });

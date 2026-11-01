@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { ImageIcon } from 'lucide-react';
-import { apiGet, apiPost, buildTenantApiPath, getErrorMessage } from '@/lib/api';
+import { apiGet, apiPost, getErrorMessage } from '@/lib/api';
 import {
   AdminPaymentsResponseSchema,
   type AdminPaymentsResponse,
@@ -46,7 +46,7 @@ function formatDate(value: string | null | undefined): string {
   return Number.isNaN(date.getTime()) ? '—' : date.toLocaleDateString();
 }
 
-export function AdminApprovalsView({ subdomain }: Readonly<{ subdomain: string }>) {
+export function AdminApprovalsView() {
   const [adminSection, setAdminSection] = React.useState<'approvals' | 'coupons'>('approvals');
   const [data, setData] = React.useState<AdminPaymentsResponse | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -59,7 +59,7 @@ export function AdminApprovalsView({ subdomain }: Readonly<{ subdomain: string }
 
   const load = React.useCallback(async () => {
     try {
-      const result = await apiGet(buildTenantApiPath(subdomain, '/billing/admin/payments'), {
+      const result = await apiGet('/api/admin/payments', {
         schema: AdminPaymentsResponseSchema,
       });
       setData(result);
@@ -67,7 +67,7 @@ export function AdminApprovalsView({ subdomain }: Readonly<{ subdomain: string }
     } catch (err) {
       setError(getErrorMessage(err));
     }
-  }, [subdomain]);
+  }, []);
 
   React.useEffect(() => {
     void load();
@@ -90,7 +90,7 @@ export function AdminApprovalsView({ subdomain }: Readonly<{ subdomain: string }
     setNotice(null);
     try {
       await apiPost(
-        buildTenantApiPath(subdomain, `/billing/admin/payments/${paymentId}`),
+        `/api/admin/payments/${paymentId}`,
         { decision }
       );
       setNotice(
@@ -125,7 +125,7 @@ export function AdminApprovalsView({ subdomain }: Readonly<{ subdomain: string }
           </Button>
           <Button onClick={() => setAdminSection('coupons')}>Coupons</Button>
         </div>
-        <AdminCouponsView subdomain={subdomain} />
+        <AdminCouponsView />
       </div>
     );
   }
@@ -243,10 +243,7 @@ export function AdminApprovalsView({ subdomain }: Readonly<{ subdomain: string }
               <CardContent className="flex flex-col gap-4">
                 {payment.screenshotStorageKey ? (
                   <a
-                    href={buildTenantApiPath(
-                      subdomain,
-                      `/billing/admin/payments/${payment.id}/screenshot`
-                    )}
+                    href={`/api/admin/payments/${payment.id}/screenshot`}
                     target="_blank"
                     rel="noreferrer"
                     className="flex items-center gap-3 rounded-md border border-line bg-panel px-4 py-3 transition-colors hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link"
@@ -417,9 +414,9 @@ export function AdminApprovalsView({ subdomain }: Readonly<{ subdomain: string }
         ))}
       </section>
 
-      <AdminWebhookIssuesView subdomain={subdomain} />
+      <AdminWebhookIssuesView />
 
-      <AdminRefundsView subdomain={subdomain} />
+      <AdminRefundsView />
     </div>
   );
 }

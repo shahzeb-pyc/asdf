@@ -3,7 +3,7 @@
 /**
  * Admin sellers list — sellers table, create-seller dialog, and
  * the payout-requests queue. All data comes from the typed
- * /api/tenant/[subdomain]/sellers/* routes; the page guards the
+ * /api/admin/sellers/* routes; the page guards the
  * admin role server-side.
  */
 
@@ -67,7 +67,7 @@ function formatPkr(amount: number): string {
   return `PKR ${amount.toLocaleString('en-PK')}`;
 }
 
-function CreateSellerDialog({ subdomain }: { subdomain: string }) {
+function CreateSellerDialog() {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -95,14 +95,14 @@ function CreateSellerDialog({ subdomain }: { subdomain: string }) {
 
   const create = useMutation({
     mutationFn: (values: SellerCreateInput) =>
-      api.post(`/api/tenant/${subdomain}/sellers`, values, {
+      api.post('/api/admin/sellers', values, {
         schema: SellerCreateResponseSchema,
       }),
     onSuccess: () => {
       setServerError(null);
       setOpen(false);
       form.reset();
-      void queryClient.invalidateQueries({ queryKey: ['admin', 'sellers', subdomain] });
+      void queryClient.invalidateQueries({ queryKey: ['admin', 'sellers'] });
       toast('Seller created');
     },
     onError: (error: unknown) => {
@@ -255,26 +255,26 @@ function CreateSellerDialog({ subdomain }: { subdomain: string }) {
   );
 }
 
-function PayoutQueue({ subdomain }: { subdomain: string }) {
+function PayoutQueue() {
   const queryClient = useQueryClient();
   const [confirmSentId, setConfirmSentId] = useState<string | null>(null);
 
   const queueQuery = useQuery({
-    queryKey: ['admin', 'sellers', subdomain, 'payout-requests'],
+    queryKey: ['admin', 'sellers', 'payout-requests'],
     queryFn: () =>
-      api.get(`/api/tenant/${subdomain}/sellers/payout-requests`, {
+      api.get('/api/admin/sellers/payout-requests', {
         schema: SellerPayoutRequestsResponseSchema,
       }),
   });
 
   const decide = useMutation({
     mutationFn: ({ id, action }: { id: string; action: 'mark-sent' | 'reject' }) =>
-      api.post(`/api/tenant/${subdomain}/sellers/payout-requests/${id}`, { action }, {
+      api.post(`/api/admin/sellers/payout-requests/${id}`, { action }, {
         schema: SellerOkResponseSchema,
       }),
     onSuccess: () => {
       setConfirmSentId(null);
-      void queryClient.invalidateQueries({ queryKey: ['admin', 'sellers', subdomain] });
+      void queryClient.invalidateQueries({ queryKey: ['admin', 'sellers'] });
       toast('Payout request updated');
     },
     onError: (error: unknown) => {
@@ -401,12 +401,12 @@ function PayoutQueue({ subdomain }: { subdomain: string }) {
   );
 }
 
-export function AdminSellersList({ subdomain }: { subdomain: string }) {
+export function AdminSellersList() {
   const [page, setPage] = useState(1);
   const listQuery = useQuery({
-    queryKey: ['admin', 'sellers', subdomain, page],
+    queryKey: ['admin', 'sellers', page],
     queryFn: () =>
-      api.get(`/api/tenant/${subdomain}/sellers?page=${page}`, {
+      api.get(`/api/admin/sellers?page=${page}`, {
         schema: AdminSellersResponseSchema,
       }),
   });
@@ -422,7 +422,7 @@ export function AdminSellersList({ subdomain }: { subdomain: string }) {
               until every commission is paid out.
             </CardDescription>
           </div>
-          <CreateSellerDialog subdomain={subdomain} />
+          <CreateSellerDialog />
         </CardHeader>
         <CardContent>
           {listQuery.isPending && (
@@ -451,7 +451,7 @@ export function AdminSellersList({ subdomain }: { subdomain: string }) {
               {listQuery.data.sellers.map((s) => (
                 <li key={s.id}>
                   <Link
-                    href={`/tenant/${subdomain}/sellers/${s.id}`}
+                    href={`/admin/sellers/${s.id}`}
                     className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-line px-3 py-2 hover:border-link"
                   >
                     <span className="min-w-0">
@@ -515,7 +515,7 @@ export function AdminSellersList({ subdomain }: { subdomain: string }) {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <PayoutQueue subdomain={subdomain} />
+          <PayoutQueue />
         </CardContent>
       </Card>
     </div>

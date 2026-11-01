@@ -13,7 +13,7 @@ describe('admin login redirect', () => {
     _resetAuthStores();
   });
 
-  it('lands an admin on the approvals panel, not Home, for a Home-bound returnUrl', async () => {
+  it('lands an admin on the admin section, not Home, for a Home-bound returnUrl', async () => {
     await _seedTestUser(
       {
         id: '33333333-3333-4333-a333-333333333333',
@@ -31,10 +31,9 @@ describe('admin login redirect', () => {
       password: 'Password123!',
       returnUrl: '/tenant/e2e',
     });
-    // The sanitizer absolutizes to the tenant host first; the admin
-    // helper then rewrites the Home path to the panel, keeping the
-    // prefixed form.
-    expect(redirectUrl).toBe('http://e2e.localhost:3000/tenant/e2e/billing');
+    // The admin section has one host-independent address: any
+    // tenant home returnUrl becomes /admin/subscriptions.
+    expect(redirectUrl).toBe('/admin/subscriptions');
   });
 
   it('keeps Home landing for a non-admin with the same returnUrl', async () => {
@@ -58,7 +57,7 @@ describe('admin login redirect', () => {
     expect(redirectUrl).toBe('http://e2e.localhost:3000/tenant/e2e');
   });
 
-  it('keeps a deeper admin returnUrl unchanged', async () => {
+  it('maps an old tenant sellers returnUrl to the new admin sellers page', async () => {
     await _seedTestUser(
       {
         id: '33333333-3333-4333-a333-333333333333',
@@ -76,6 +75,27 @@ describe('admin login redirect', () => {
       password: 'Password123!',
       returnUrl: '/tenant/e2e/sellers',
     });
-    expect(redirectUrl).toBe('http://e2e.localhost:3000/tenant/e2e/sellers');
+    expect(redirectUrl).toBe('/admin/sellers');
+  });
+
+  it('honors a returnUrl already under /admin/*', async () => {
+    await _seedTestUser(
+      {
+        id: '33333333-3333-4333-a333-333333333333',
+        email: 'adminlogin@gmail.com',
+        name: 'Admin',
+        phone: null,
+        subdomain: 'e2e',
+        role: 'admin',
+        status: 'active',
+      },
+      'Password123!'
+    );
+    const { redirectUrl } = await loginTenantUser({
+      email: 'adminlogin@gmail.com',
+      password: 'Password123!',
+      returnUrl: '/admin/sellers',
+    });
+    expect(redirectUrl).toBe('/admin/sellers');
   });
 });

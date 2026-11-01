@@ -9,7 +9,9 @@ import {
   SidebarTrigger,
 } from '@/components/shared/ui/sidebar';
 import { Toaster } from '@/components/shared/ui/toast';
-import { SellerSidebar } from '@/components/sellers/seller-sidebar';
+import { AppSidebar } from '@/components/shell/app-sidebar';
+import { SELLER_SECTIONS } from '@/components/shell/sidebar-sections';
+import { AccountFooter } from '@/components/shell/account-footer';
 import { DataProvider } from '@/lib/data/provider';
 
 export const metadata: Metadata = {
@@ -69,7 +71,14 @@ export default async function SellerLayout({ children }: Readonly<{ children: Re
         >
           Skip to content
         </a>
-        <SellerSidebar user={user} />
+        <AppSidebar
+          sections={SELLER_SECTIONS}
+          headerWord="Seller"
+          brandingHref="/seller"
+          showBrandMark={false}
+          brandingClassName="flex min-w-0 items-center gap-2 px-2 py-2"
+          footer={<AccountFooter user={user} signOutErrorSource="seller-sign-out" />}
+        />
         <SidebarInset id="seller-content" tabIndex={-1} className="scroll-mt-11">
           <header
             data-slot="seller-topbar"

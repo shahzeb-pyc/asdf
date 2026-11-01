@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
-import { GET as streamScreenshot } from '@/app/api/tenant/[subdomain]/billing/admin/payments/[paymentId]/screenshot/route';
+import { GET as streamScreenshot } from '@/app/api/admin/payments/[paymentId]/screenshot/route';
 import { logServerError } from '@/lib/server-analytics';
 
 /**
@@ -14,7 +14,7 @@ import { logServerError } from '@/lib/server-analytics';
 const authRole = vi.hoisted(() => ({ role: 'admin' }));
 
 vi.mock('@/lib/route-auth', () => ({
-  authenticateTenantRoute: vi.fn(async () => ({
+  authenticateAdminRoute: vi.fn(async () => ({
     session: {
       userId: 'admin-1',
       email: 'admin@example.com',
@@ -81,13 +81,13 @@ const paymentId = '3820c197-9549-483a-bb4b-77fcf3485db1';
 
 function streamRequest(): NextRequest {
   return new NextRequest(
-    `http://localhost:3000/api/tenant/acme/billing/admin/payments/${paymentId}/screenshot`,
+    `http://localhost:3000/api/admin/payments/${paymentId}/screenshot`,
     { method: 'GET' }
   );
 }
 
 const ctx = {
-  params: Promise.resolve({ subdomain: 'acme', paymentId }),
+  params: Promise.resolve({ paymentId }),
 };
 
 describe('admin payment screenshot stream', () => {

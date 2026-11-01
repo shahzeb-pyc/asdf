@@ -224,6 +224,36 @@ describe('FreePlanGate', () => {
     expect(mockReportError).toHaveBeenCalled();
   });
 
+  it('keeps section content during a refetch after a failed check (sticky fail-open, no skeleton flash)', async () => {
+    mockApiGet.mockRejectedValue(new Error('entitlement down'));
+    const { rerenderGate } = renderGate();
+    expect(await screen.findByText('Section content')).toBeInTheDocument();
+    expect(screen.queryByTestId('free-plan-gate-loading')).not.toBeInTheDocument();
+    const callsAfterError = mockApiGet.mock.calls.length;
+    let rejectRefetch!: (error: unknown) => void;
+    mockApiGet.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectRefetch = reject;
+        }),
+    );
+    // A navigation re-check starts while the section is fail-open.
+    // Without stickiness the pending refetch would flash skeletons,
+    // unmounting the section — and any child that reads this query
+    // and refetches on mount would loop mount/refetch/unmount
+    // forever instead of rendering.
+    mocks.pathname = '/tenant/acme/pages';
+    rerenderGate();
+    await vi.waitFor(() => {
+      expect(mockApiGet.mock.calls.length).toBeGreaterThan(callsAfterError);
+    });
+    expect(screen.getByText('Section content')).toBeInTheDocument();
+    expect(screen.queryByTestId('free-plan-gate-loading')).not.toBeInTheDocument();
+    rejectRefetch(new Error('entitlement down'));
+    expect(await screen.findByText('Section content')).toBeInTheDocument();
+    expect(screen.queryByTestId('free-plan-gate-loading')).not.toBeInTheDocument();
+  });
+
   it('fails open when a refetch fails after a proven Free decision', async () => {
     const { rerenderGate } = renderGate();
     await screen.findByTestId('free-plan-upgrade-dialog');

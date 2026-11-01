@@ -56,10 +56,10 @@ test.describe('Tenant Home at 360px', () => {
     await page.goto(`/tenant/${TENANT.subdomain}`);
 
     // Admins never land on Home: the Home hit redirects to the
-    // admin panel (Billing → approvals view), with no overflow.
-    await expect(page).toHaveURL(
-      new RegExp(`/tenant/${TENANT.subdomain}/billing$`)
-    );
+    // global admin section (shell isolation — admins have no tenant
+    // pages; the approvals view lives at /admin/subscriptions),
+    // with no overflow.
+    await expect(page).toHaveURL(/\/admin\/subscriptions$/);
     await expectNoDocumentOverflow(page);
   });
 });

@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { apiGet, apiPost, buildTenantApiPath, getErrorMessage } from '@/lib/api';
+import { apiGet, apiPost, getErrorMessage } from '@/lib/api';
 import {
   WebhookIssuesResponseSchema,
   type WebhookIssuesResponse,
@@ -36,7 +36,7 @@ function formatDate(value: string | null): string {
  * the issues table migration is unapplied, the route returns an
  * empty list and this section renders nothing.
  */
-export function AdminWebhookIssuesView({ subdomain }: Readonly<{ subdomain: string }>) {
+export function AdminWebhookIssuesView() {
   const [data, setData] = React.useState<WebhookIssuesResponse | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [busyId, setBusyId] = React.useState<string | null>(null);
@@ -44,7 +44,7 @@ export function AdminWebhookIssuesView({ subdomain }: Readonly<{ subdomain: stri
 
   const load = React.useCallback(async () => {
     try {
-      const result = await apiGet(buildTenantApiPath(subdomain, '/billing/admin/webhook-issues'), {
+      const result = await apiGet('/api/admin/webhook-issues', {
         schema: WebhookIssuesResponseSchema,
       });
       setData(result);
@@ -52,7 +52,7 @@ export function AdminWebhookIssuesView({ subdomain }: Readonly<{ subdomain: stri
     } catch (err) {
       setError(getErrorMessage(err));
     }
-  }, [subdomain]);
+  }, []);
 
   React.useEffect(() => {
     void load();
@@ -62,7 +62,7 @@ export function AdminWebhookIssuesView({ subdomain }: Readonly<{ subdomain: stri
     setBusyId(issueId);
     setNotice(null);
     try {
-      await apiPost(buildTenantApiPath(subdomain, '/billing/admin/webhook-issues'), { issueId });
+      await apiPost('/api/admin/webhook-issues', { issueId });
       setNotice('Dismissed.');
       await load();
     } catch (err) {

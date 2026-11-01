@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { apiGet, apiPost, buildTenantApiPath, getErrorMessage } from '@/lib/api';
+import { apiGet, apiPost, getErrorMessage } from '@/lib/api';
 import {
   AdminRefundsResponseSchema,
   type AdminRefundItem,
@@ -52,7 +52,7 @@ function estimateToday(item: AdminRefundItem): number | null {
  * does NOT send money — only "Mark as sent", pressed after the admin
  * sends the money outside the app, records a send.
  */
-export function AdminRefundsView({ subdomain }: Readonly<{ subdomain: string }>) {
+export function AdminRefundsView() {
   const [data, setData] = React.useState<AdminRefundsResponse | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [reloading, setReloading] = React.useState(false);
@@ -64,7 +64,7 @@ export function AdminRefundsView({ subdomain }: Readonly<{ subdomain: string }>)
 
   const load = React.useCallback(async () => {
     try {
-      const result = await apiGet(buildTenantApiPath(subdomain, '/billing/admin/refunds'), {
+      const result = await apiGet('/api/admin/refunds', {
         schema: AdminRefundsResponseSchema,
       });
       setData(result);
@@ -72,7 +72,7 @@ export function AdminRefundsView({ subdomain }: Readonly<{ subdomain: string }>)
     } catch (err) {
       setError(getErrorMessage(err));
     }
-  }, [subdomain]);
+  }, []);
 
   React.useEffect(() => {
     void load();
@@ -92,7 +92,7 @@ export function AdminRefundsView({ subdomain }: Readonly<{ subdomain: string }>)
     setNotice(null);
     try {
       const result = (await apiPost(
-        buildTenantApiPath(subdomain, `/billing/admin/refunds/${item.id}`),
+        `/api/admin/refunds/${item.id}`,
         { decision }
       )) as { request?: { refundAmount?: number | null; currency?: string } };
       if (decision === 'approve') {

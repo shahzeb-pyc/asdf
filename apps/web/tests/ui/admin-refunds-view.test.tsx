@@ -19,7 +19,6 @@ const mockedApiPost = vi.fn();
 vi.mock('@/lib/api', () => ({
   apiGet: (...args: unknown[]) => mockedApiGet(...args),
   apiPost: (...args: unknown[]) => mockedApiPost(...args),
-  buildTenantApiPath: (subdomain: string, path: string) => `/api/tenant/${subdomain}${path}`,
   getErrorMessage: (err: unknown) =>
     err instanceof Error ? err.message : 'Something went wrong. Please try again.',
 }));
@@ -87,13 +86,13 @@ beforeEach(() => {
 describe('AdminRefundsView', () => {
   it('shows a loading skeleton while the queue loads', () => {
     mockedApiGet.mockImplementation(() => new Promise(() => {}));
-    const { container } = render(<AdminRefundsView subdomain="acme" />);
+    const { container } = render(<AdminRefundsView />);
     expect(container.querySelector('[aria-label="Loading refund requests"]')).toBeTruthy();
   });
 
   it('lists waiting, approved, and decided requests with their counts', async () => {
     mockedApiGet.mockResolvedValue(fullQueue);
-    render(<AdminRefundsView subdomain="acme" />);
+    render(<AdminRefundsView />);
     expect(await screen.findByText('Waiting for a decision (1)')).toBeTruthy();
     expect(screen.getByText('Approved, waiting to be sent (1)')).toBeTruthy();
     expect(screen.getByText('Decided')).toBeTruthy();
@@ -109,7 +108,7 @@ describe('AdminRefundsView', () => {
 
   it('shows empty states when nothing is waiting or decided', async () => {
     mockedApiGet.mockResolvedValue({ requests: [], page: 1 });
-    render(<AdminRefundsView subdomain="acme" />);
+    render(<AdminRefundsView />);
     expect(await screen.findByText('No refund requests waiting')).toBeTruthy();
     expect(screen.getByText('No decided refund requests yet')).toBeTruthy();
     expect(screen.queryByText(/Approved, waiting to be sent/)).toBeNull();
@@ -126,7 +125,7 @@ describe('AdminRefundsView', () => {
       ],
       page: 1,
     });
-    render(<AdminRefundsView subdomain="acme" />);
+    render(<AdminRefundsView />);
     expect(await screen.findByText(/Mobile number: 03001112222/)).toBeTruthy();
     expect(screen.getByText(/Bank account \/ IBAN: PK00BANK0002/)).toBeTruthy();
     expect(screen.getByText(/Binance ID: BIN999/)).toBeTruthy();
@@ -143,7 +142,7 @@ describe('AdminRefundsView', () => {
       ],
       page: 1,
     });
-    const { container } = render(<AdminRefundsView subdomain="acme" />);
+    const { container } = render(<AdminRefundsView />);
     await screen.findByText('Waiting for a decision (3)');
     // 4200 - 3 * 140 = 3780, exactly one estimate across three cards.
     expect(container.textContent.match(/Estimated refund today: 3780 PKR/g)).toHaveLength(1);
@@ -154,7 +153,7 @@ describe('AdminRefundsView', () => {
       requests: [item({ requestedAt: null }), item({ id: 'r-bad-date', requestedAt: 'not-a-date' })],
       page: 1,
     });
-    const { container } = render(<AdminRefundsView subdomain="acme" />);
+    const { container } = render(<AdminRefundsView />);
     await screen.findByText('Waiting for a decision (2)');
     expect(container.textContent.match(/Requested —/g)).toHaveLength(2);
   });
@@ -162,7 +161,7 @@ describe('AdminRefundsView', () => {
   it('shows the load error with Try again, and reloads on retry', async () => {
     mockedApiGet.mockRejectedValueOnce(new Error('Queue unavailable'));
     mockedApiGet.mockResolvedValue(waitingOnly);
-    render(<AdminRefundsView subdomain="acme" />);
+    render(<AdminRefundsView />);
     expect(await screen.findByText("Couldn't load refund requests")).toBeTruthy();
     expect(screen.getByText('Queue unavailable')).toBeTruthy();
     fireEvent.click(screen.getByText('Try again'));
@@ -171,7 +170,7 @@ describe('AdminRefundsView', () => {
 
   it('renders nothing instead of crashing on a malformed response', async () => {
     mockedApiGet.mockResolvedValue({ requests: null, page: 1 });
-    const { container } = render(<AdminRefundsView subdomain="acme" />);
+    const { container } = render(<AdminRefundsView />);
     await waitFor(() => expect(mockedApiGet).toHaveBeenCalled());
     await waitFor(() => expect(container.querySelector('[aria-busy]')).toBeNull());
     expect(container.textContent).toBe('');
@@ -181,11 +180,11 @@ describe('AdminRefundsView', () => {
     mockedApiGet.mockResolvedValueOnce(waitingOnly);
     mockedApiGet.mockResolvedValue({ requests: [], page: 1 });
     mockedApiPost.mockResolvedValue({ request: { refundAmount: 3500, currency: 'PKR' } });
-    render(<AdminRefundsView subdomain="acme" />);
+    render(<AdminRefundsView />);
     fireEvent.click(await screen.findByText('Approve refund'));
     await waitFor(() =>
       expect(mockedApiPost).toHaveBeenCalledWith(
-        '/api/tenant/acme/billing/admin/refunds/refund-1',
+        '/api/admin/refunds/refund-1',
         { decision: 'approve' }
       )
     );
@@ -199,7 +198,7 @@ describe('AdminRefundsView', () => {
   it('approve without a locked amount still reports the plan as Free', async () => {
     mockedApiGet.mockResolvedValue(waitingOnly);
     mockedApiPost.mockResolvedValue({});
-    render(<AdminRefundsView subdomain="acme" />);
+    render(<AdminRefundsView />);
     fireEvent.click(await screen.findByText('Approve refund'));
     expect(
       await screen.findByText(
@@ -211,11 +210,11 @@ describe('AdminRefundsView', () => {
   it('reject posts the decision and reports the plan keeps running', async () => {
     mockedApiGet.mockResolvedValue(waitingOnly);
     mockedApiPost.mockResolvedValue({ request: { id: 'refund-1' } });
-    render(<AdminRefundsView subdomain="acme" />);
+    render(<AdminRefundsView />);
     fireEvent.click(await screen.findByText('Reject refund'));
     await waitFor(() =>
       expect(mockedApiPost).toHaveBeenCalledWith(
-        '/api/tenant/acme/billing/admin/refunds/refund-1',
+        '/api/admin/refunds/refund-1',
         { decision: 'reject' }
       )
     );
@@ -228,11 +227,11 @@ describe('AdminRefundsView', () => {
       page: 1,
     });
     mockedApiPost.mockResolvedValue({ request: { id: 'refund-1' } });
-    render(<AdminRefundsView subdomain="acme" />);
+    render(<AdminRefundsView />);
     fireEvent.click(await screen.findByText('Mark as sent'));
     await waitFor(() =>
       expect(mockedApiPost).toHaveBeenCalledWith(
-        '/api/tenant/acme/billing/admin/refunds/refund-1',
+        '/api/admin/refunds/refund-1',
         { decision: 'mark-sent' }
       )
     );
@@ -242,7 +241,7 @@ describe('AdminRefundsView', () => {
   it('a failed decision shows the save error without losing the queue', async () => {
     mockedApiGet.mockResolvedValue(waitingOnly);
     mockedApiPost.mockRejectedValue(new Error('Decision failed'));
-    render(<AdminRefundsView subdomain="acme" />);
+    render(<AdminRefundsView />);
     fireEvent.click(await screen.findByText('Approve refund'));
     expect(await screen.findByText("Couldn't save that decision")).toBeTruthy();
     expect(screen.getByText('Decision failed')).toBeTruthy();
@@ -254,7 +253,7 @@ describe('AdminRefundsView', () => {
       requests: [item({ status: 'approved', refundAmount: null, daysUsed: null, userEmail: null })],
       page: 1,
     });
-    render(<AdminRefundsView subdomain="acme" />);
+    render(<AdminRefundsView />);
     expect(await screen.findByText(/Refund locked: —/)).toBeTruthy();
     expect(screen.queryByText(/days used/)).toBeNull();
   });
@@ -264,7 +263,7 @@ describe('AdminRefundsView', () => {
       requests: [item({ status: 'sent', refundAmount: null, userEmail: null })],
       page: 1,
     });
-    render(<AdminRefundsView subdomain="acme" />);
+    render(<AdminRefundsView />);
     expect(await screen.findByText(/Rejected · Mobile number: 03001234567/)).toBeTruthy();
     expect(screen.getByText('Sent')).toBeTruthy();
   });
@@ -274,7 +273,7 @@ describe('AdminRefundsView', () => {
       requests: [item({ reason: 'Changed my mind' })],
       page: 1,
     });
-    render(<AdminRefundsView subdomain="acme" />);
+    render(<AdminRefundsView />);
     expect(await screen.findByText(/Reason: Changed my mind/)).toBeTruthy();
   });
 });
