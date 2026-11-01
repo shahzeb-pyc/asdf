@@ -1132,7 +1132,10 @@ export async function deleteSeller(
     );
   }
   try {
-    await client.auth.admin.deleteUser(sellerId);
+    // Supabase returns auth errors instead of throwing: a failed
+    // auth delete must stop the deletion, not be silently ignored.
+    const { error: authError } = await client.auth.admin.deleteUser(sellerId);
+    if (authError) throw authError;
   } catch (err) {
     const message = err instanceof Error ? err.message : '';
     if (!message.toLowerCase().includes('not found')) {
