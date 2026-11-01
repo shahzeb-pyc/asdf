@@ -35,6 +35,7 @@ const CONNECTED_AT = '2026-10-16T12:00:00.000Z';
 interface ByocFixture {
   fbAppId: string;
   fbAppSecretHint: string | null;
+  fbAppName: string | null;
   hasSecret: boolean;
   status: 'unverified' | 'valid' | 'invalid';
   connectedAt: string | null;
@@ -43,6 +44,7 @@ interface ByocFixture {
 const NOT_CONNECTED: ByocFixture = {
   fbAppId: '',
   fbAppSecretHint: null,
+  fbAppName: null,
   hasSecret: false,
   status: 'unverified',
   connectedAt: null,
@@ -54,6 +56,7 @@ function byocPayload(state: ByocFixture) {
     subdomain: TENANT.subdomain,
     fbAppId: state.fbAppId,
     fbAppSecretHint: state.fbAppSecretHint,
+    fbAppName: state.fbAppName,
     hasSecret: state.hasSecret,
     status: state.status,
     lastTestedAt: state.connectedAt,
@@ -115,6 +118,7 @@ async function installSettingsFixtures(
           typeof body.fbAppSecret === 'string'
             ? `••••${body.fbAppSecret.slice(-4)}`
             : byoc.fbAppSecretHint,
+        fbAppName: 'E2E Facebook App',
         hasSecret: true,
         status: 'valid',
         connectedAt: CONNECTED_AT,
@@ -171,6 +175,7 @@ test.describe('settings — BYOC save/test flow (spec 135 §9)', () => {
     // Connected state: App ID shown, secret masked, "Connected on"
     // line, success toast, and the card hidden.
     await expect(page.getByText('Your Facebook app is connected.')).toBeVisible();
+    await expect(page.getByTestId('fb-saved-app-name')).toHaveText('E2E Facebook App');
     await expect(page.getByTestId('fb-saved-app-id')).toHaveText('123456789012345');
     await expect(page.getByTestId('fb-saved-app-secret')).toHaveText('•'.repeat(24));
     await expect(page.getByTestId('fb-connected-date')).toHaveText(
