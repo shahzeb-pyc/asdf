@@ -47,6 +47,76 @@ describe('Workspaces API Routes (Spec 037 Supabase PostgREST)', () => {
     expect(postRes.status).toBe(401);
   });
 
+  it('returns owned workspaces unchanged from GET', async () => {
+    const rows = [
+      {
+        id: 'ws-1',
+        owner_id: userId,
+        name: 'Acme',
+        subdomain: 'acme',
+        created_at: '2026-10-10T12:00:00Z',
+        updated_at: '2026-10-16T12:00:00Z',
+      },
+    ];
+    const insertSpy = vi.fn();
+    const mockSupabase = {
+      from: vi.fn(() => ({
+        select: vi.fn(() => ({
+          eq: vi.fn(() => ({
+            order: vi.fn(() => Promise.resolve({ data: rows, error: null })),
+          })),
+        })),
+        insert: insertSpy,
+      })),
+    };
+
+    vi.spyOn(authModule, 'getSupabaseAdminClient').mockReturnValue(mockSupabase as any);
+
+    const req = new NextRequest('http://localhost:3000/api/workspaces', {
+      headers: { cookie: validSessionCookie },
+    });
+    const res = await listWorkspaces(req);
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.workspaces).toEqual([
+      {
+        id: 'ws-1',
+        ownerId: userId,
+        name: 'Acme',
+        subdomain: 'acme',
+        createdAt: '2026-10-10T12:00:00Z',
+        updatedAt: '2026-10-16T12:00:00Z',
+      },
+    ]);
+    expect(insertSpy).not.toHaveBeenCalled();
+  });
+
+  it('returns an empty list from GET without provisioning when the user has no workspaces', async () => {
+    const insertSpy = vi.fn();
+    const mockSupabase = {
+      from: vi.fn(() => ({
+        select: vi.fn(() => ({
+          eq: vi.fn(() => ({
+            order: vi.fn(() => Promise.resolve({ data: [], error: null })),
+          })),
+        })),
+        insert: insertSpy,
+      })),
+    };
+
+    vi.spyOn(authModule, 'getSupabaseAdminClient').mockReturnValue(mockSupabase as any);
+
+    const req = new NextRequest('http://localhost:3000/api/workspaces', {
+      headers: { cookie: validSessionCookie },
+    });
+    const res = await listWorkspaces(req);
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json).toEqual({ workspaces: [] });
+    // The removed GET backfill must never attempt an insert/provision.
+    expect(insertSpy).not.toHaveBeenCalled();
+  });
+
   it('auto-generates unique subdomain using main subdomain and 4 random alphabets when creating workspace', async () => {
     const mockSupabase = {
       from: vi.fn((table: string) => {
