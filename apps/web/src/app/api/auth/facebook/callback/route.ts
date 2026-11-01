@@ -26,6 +26,10 @@ import {
   fetchWithTimeout,
 } from '@/lib/http/fetch-with-timeout';
 import { buildMagicConnectUrl as buildAppHostConnectUrl } from '@/lib/connect/magic-url';
+import {
+  findMissingScopes,
+  parseFacebookPermissions,
+} from '@/lib/facebook-permissions';
 
 /**
  * Facebook-only wrapper over the shared app-host magic-URL helper
@@ -135,6 +139,39 @@ function buildOAuthStepErrorRedirect(
     return NextResponse.redirect(magicErrorUrl);
   }
   destinationUrl.searchParams.set('error', errorCode);
+  return NextResponse.redirect(destinationUrl);
+}
+
+/**
+ * Scope-rejection redirect: an account that declined any requested
+ * permission is saved nowhere. Direct flows land on Accounts with the
+ * missing scopes carried in the `missing` param (the Accounts banner
+ * names them in plain language); magic flows land on the app-host
+ * error page with the same reason and param. The caller must return
+ * this redirect without touching the database.
+ */
+function buildScopeRejectionRedirect(
+  requestUrl: string,
+  destinationUrl: URL,
+  isMagic: boolean | undefined,
+  missing: readonly string[],
+  rootDomain?: string,
+  appUrl?: string
+): NextResponse {
+  const missingParam = missing.join(',');
+  if (isMagic) {
+    const magicErrorUrl = buildMagicConnectUrl(
+      '/connect/facebook/error',
+      request.url,
+      rootDomain ?? '',
+      appUrl ?? ''
+    );
+    magicErrorUrl.searchParams.set('reason', 'scope_rejected');
+    magicErrorUrl.searchParams.set('missing', missingParam);
+    return NextResponse.redirect(magicErrorUrl);
+  }
+  destinationUrl.searchParams.set('error', 'scope_rejected');
+  destinationUrl.searchParams.set('missing', missingParam);
   return NextResponse.redirect(destinationUrl);
 }
 
@@ -785,6 +822,59 @@ export async function handleFacebookCallback(
     }
     const meJson = await meRes.json();
     const meProfile = FacebookUserProfileResponseSchema.parse(meJson);
+
+    // 4b. Hard scope rejection: before saving anything, confirm the
+    // account granted all five requested scopes. A missing or
+    // declined scope saves nothing and redirects to the rejection
+    // banner. If the permissions check itself fails, the outcome is
+    // unknown — connect as before, but log loudly, never silently.
+    // Already-connected accounts are untouched by this check: it
+    // runs only on a fresh connect, and never disconnects anyone.
+    let scopeCheckUnknown = false;
+    try {
+      const permissionsUrl = new URL(
+        'https://graph.facebook.com/v26.0/me/permissions'
+      );
+      const permissionsRes = await fetchWithTimeout(
+        permissionsUrl.toString(),
+        {
+          headers: {
+            Authorization: `Bearer ${longTokenData.access_token}`,
+          },
+        },
+        GRAPH_API_TIMEOUT_MS
+      );
+      if (!permissionsRes.ok) {
+        scopeCheckUnknown = true;
+      } else {
+        const permissionsJson = await permissionsRes.json();
+        const missing = findMissingScopes(
+          parseFacebookPermissions(permissionsJson)
+        );
+        if (missing.length > 0) {
+          return buildScopeRejectionRedirect(
+            request.url,
+            destinationUrl,
+            statePayload.isMagic,
+            missing,
+            rootDomain,
+            appUrl
+          );
+        }
+      }
+    } catch (err) {
+      scopeCheckUnknown = true;
+      logServerError(
+        '[FacebookOAuth] Permissions check failed — treating scope outcome as unknown and connecting as before',
+        err,
+        { source: 'facebook-oauth-callback', workspaceId, tenantSubdomain }
+      );
+    }
+    if (scopeCheckUnknown) {
+      console.warn(
+        '[FacebookOAuth] Permissions check failed (Graph error or unreadable response) — scope outcome unknown, connecting as before; no scope was proven missing.'
+      );
+    }
 
     // 5. Encrypt long-lived token using Web Crypto AES-256-GCM
     const encryptedToken = await encryptToken(

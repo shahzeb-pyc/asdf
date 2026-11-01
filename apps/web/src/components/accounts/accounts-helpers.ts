@@ -14,6 +14,10 @@ import {
   type AccountHealth,
 } from '@/components/accounts/account-health';
 import type { FacebookAccountItem } from '@/components/accounts/account-card';
+import {
+  buildScopeRejectionMessage,
+  parseMissingScopesParam,
+} from '@/lib/facebook-permissions';
 
 export type AccountStatusFilter = 'all' | 'active' | 'expiring_soon' | 'expired' | 'error';
 
@@ -252,6 +256,21 @@ export function resolveOAuthRedirectNotice(searchParams: {
 
   const error = searchParams.get('error');
   if (error) {
+    if (error === 'scope_rejected') {
+      // Hard scope rejection: nothing was saved, so the banner
+      // offers a fresh connect (connectAgain) and names the
+      // actually missing scopes in plain language.
+      return {
+        notice: {
+          type: 'error',
+          message: buildScopeRejectionMessage(
+            parseMissingScopesParam(searchParams.get('missing'))
+          ),
+          connectAgain: true,
+        },
+        keysToRemove: ['error', 'missing'],
+      };
+    }
     if (error === 'account_save_failed') {
       // BL1 fix: a failed save is not a permissions problem, so it must
       // not fall through to the generic permissions copy below. The

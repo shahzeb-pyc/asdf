@@ -42,6 +42,8 @@ import {
   type FormErrorSummaryEntry,
 } from '@/components/shared/ui/form';
 import { Input } from '@/components/shared/ui/input';
+import { FacebookSetupCard } from './facebook-setup-card';
+import { FacebookPrivacyUrlRow } from './facebook-privacy-url-row';
 
 const APP_ID_FIELD_ID = 'fb-app-id-input';
 const APP_SECRET_FIELD_ID = 'fb-app-secret-input';
@@ -81,6 +83,8 @@ export type FacebookConnectFormValues = z.infer<
 >;
 
 export interface FacebookConnectFormProps {
+  subdomain: string;
+  privacyUrl: string;
   /** App ID to pre-fill (edit mode); empty for a first connect. */
   initialAppId: string;
   /** True when the workspace already has a secret saved (edit mode). */
@@ -108,6 +112,8 @@ const LABEL_CLASS_NAME =
   'text-metadata font-medium tracking-caption text-ink-dim uppercase';
 
 export function FacebookConnectForm({
+  subdomain,
+  privacyUrl,
   initialAppId,
   hasExistingSecret,
   isEditMode,
@@ -161,33 +167,89 @@ export function FacebookConnectForm({
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Step 1 */}
+      {/* Coming-soon video guide: a placeholder only — no link, no
+          button, nothing to click that leads nowhere. First connect
+          only; edit and connected states do not show it. */}
+      {!isEditMode && (
+        <div
+          data-testid="fb-video-guide-coming-soon"
+          className="flex flex-col items-center gap-1 rounded-md border border-dashed border-line bg-canvas px-6 py-7 text-center"
+        >
+          <span aria-hidden="true" className="text-xxl text-link">
+            ▶
+          </span>
+          <span className="font-semibold text-ink">Video guide coming soon</span>
+        </div>
+      )}
+
+      {isEditMode && (
+        <p data-testid="fb-unsaved-changes-note" className="text-body text-ink-sub">
+          Unsaved changes. Your previously saved app remains connected until you save.
+        </p>
+      )}
+
+      {/* Step 1 — first connect only: an editor already has an app. */}
+      {!isEditMode && (
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <StepBadge>1</StepBadge>
+            <h3 className="text-body font-semibold text-ink">Find your app details</h3>
+          </div>
+          <p className="pl-8 text-body text-ink-sub">
+            If you do not have an app yet, create one in the{' '}
+            <a
+              href="https://developers.facebook.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="fb-meta-dashboard-link"
+              className="font-semibold text-link hover:underline"
+            >
+              Meta developer dashboard →
+            </a>
+            , then copy your App ID and App Secret from Settings → Basic.
+          </p>
+        </div>
+      )}
+
+      <div aria-hidden="true" className="h-px w-full bg-line" />
+
+      {/* Step 2 — the sign-in address, before any details are typed. */}
       <div className="flex flex-col gap-2">
         <div className="flex items-center gap-2">
-          <StepBadge>1</StepBadge>
-          <h3 className="text-body font-semibold text-ink">Find your app details</h3>
+          <StepBadge>2</StepBadge>
+          <h3 className="text-body font-semibold text-ink">Before you connect</h3>
         </div>
         <p className="pl-8 text-body text-ink-sub">
-          Open your{' '}
-          <a
-            href="https://developers.facebook.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            data-testid="fb-meta-dashboard-link"
-            className="font-semibold text-link hover:underline"
-          >
-            Meta developer dashboard →
-          </a>{' '}
-          and copy your App ID and App Secret from Settings → Basic.
+          Add this address to your Meta app so Facebook can return you here after you
+          sign in.
         </p>
+        <div className="pl-8 max-sm:pl-0">
+          <FacebookSetupCard subdomain={subdomain} bare />
+        </div>
       </div>
 
       <div aria-hidden="true" className="h-px w-full bg-line" />
 
-      {/* Step 2 */}
+      {/* Step 3 — Privacy Policy URL. */}
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-2">
+          <StepBadge>3</StepBadge>
+          <h3 className="text-body font-semibold text-ink">Privacy Policy URL</h3>
+        </div>
+        <p className="pl-8 text-body text-ink-sub">
+          Add this address to your Meta app as the Privacy Policy URL.
+        </p>
+        <div className="pl-8 max-sm:pl-0">
+          <FacebookPrivacyUrlRow privacyUrl={privacyUrl} />
+        </div>
+      </div>
+
+      <div aria-hidden="true" className="h-px w-full bg-line" />
+
+      {/* Step 4 */}
       <div className="flex flex-col gap-4">
         <div className="flex items-center gap-2">
-          <StepBadge>2</StepBadge>
+          <StepBadge>4</StepBadge>
           <h3 className="text-body font-semibold text-ink">Add your app details here</h3>
         </div>
 
@@ -220,7 +282,7 @@ export function FacebookConnectForm({
                     />
                   </FormControl>
                   <FormDescription>
-                    You&apos;ll find this in your Meta app under Settings → Basic.
+                    You will find this in your Meta app under Settings → Basic.
                   </FormDescription>
                   <FormMessage data-testid="fb-app-id-error" />
                 </FormItem>
@@ -254,7 +316,20 @@ export function FacebookConnectForm({
                     </button>
                   </div>
                   <FormDescription>
-                    Only you can see this — it stays hidden until you choose to show it.
+                    {isEditMode ? (
+                      <>
+                        <strong>Leave this blank to keep your current secret.</strong>{' '}
+                        To change it, you will find the new secret in your Meta app under
+                        Settings → Basic. Only you can see this — it stays hidden until
+                        you choose to show it.
+                      </>
+                    ) : (
+                      <>
+                        You will find this in your Meta app under Settings → Basic, next
+                        to App ID. Only you can see this — it stays hidden until you
+                        choose to show it.
+                      </>
+                    )}
                   </FormDescription>
                   <FormMessage data-testid="fb-app-secret-error" />
                 </FormItem>
@@ -269,7 +344,13 @@ export function FacebookConnectForm({
                   loading={isConnecting}
                   disabled={isConnecting}
                 >
-                  {isConnecting ? 'Connecting...' : 'Connect Facebook'}
+                  {isEditMode
+                    ? isConnecting
+                      ? 'Saving...'
+                      : 'Save changes'
+                    : isConnecting
+                      ? 'Connecting...'
+                      : 'Connect Facebook'}
                 </Button>
                 {isEditMode && (
                   <Button

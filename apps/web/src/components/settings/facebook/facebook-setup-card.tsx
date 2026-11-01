@@ -28,7 +28,10 @@ import { buildSubdomainOAuthRedirectUri } from '@fbuploadpro/contracts';
 /** How long the "Copied" feedback stays visible (as shipped). */
 const COPY_FEEDBACK_DURATION_MS = 2000;
 
-export function FacebookSetupCard({ subdomain }: Readonly<{ subdomain: string }>) {
+export function FacebookSetupCard({
+  subdomain,
+  bare = false,
+}: Readonly<{ subdomain: string; /** Omit the "One more step" heading when embedded as a numbered step. */ bare?: boolean }>) {
   // Same builder as the OAuth initiators
   // (apps/web/src/app/api/auth/facebook/route.ts and
   // apps/web/src/app/connect/facebook/route.ts): production shows the
@@ -76,19 +79,21 @@ export function FacebookSetupCard({ subdomain }: Readonly<{ subdomain: string }>
       aria-labelledby="fb-one-more-step-heading"
       className="flex flex-col gap-4"
     >
-      <div>
-        <h3 id="fb-one-more-step-heading" className="text-lg font-semibold text-ink">
-          One more step
-        </h3>
-        <p className="mt-1 text-body text-ink-sub">
-          Add this address to your Meta app so Facebook can bring you back here after you
-          sign in.
-        </p>
-      </div>
+      {!bare && (
+        <div>
+          <h3 id="fb-one-more-step-heading" className="text-lg font-semibold text-ink">
+            One more step
+          </h3>
+          <p className="mt-1 text-body text-ink-sub">
+            Add this address to your Meta app so Facebook can bring you back here after you
+            sign in.
+          </p>
+        </div>
+      )}
 
       <div className="flex flex-col gap-1.5">
         <span className="text-metadata font-medium tracking-caption text-ink-dim uppercase">
-          Sign-in address
+          Sign-in address (Valid OAuth Redirect URIs)
         </span>
         <div className="flex items-center justify-between gap-4 border-t border-line py-2">
           <span
@@ -108,7 +113,7 @@ export function FacebookSetupCard({ subdomain }: Readonly<{ subdomain: string }>
           </button>
         </div>
         <span className="text-metadata text-ink-dim">
-          {'Paste this into the "Valid OAuth Redirect URIs" field in your Meta app.'}
+          {'Paste this into the "Valid OAuth Redirect URIs" field in your Meta app, under Facebook Login → Settings.'}
         </span>
       </div>
     </section>

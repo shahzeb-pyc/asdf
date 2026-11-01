@@ -80,7 +80,7 @@ describe("Tabs (ARIA tabs pattern)", () => {
     expect(screen.getByRole("tabpanel")).toHaveTextContent("History panel");
   });
 
-  it("line trigger variant: active tab is bold with a 3px ink underline, no panel background", () => {
+  it("line trigger variant: active tab is bold with a 4px ink underline at content width, no panel background", () => {
     render(
       <Tabs defaultValue="queue">
         <TabsList variant="line" aria-label="Sections">
@@ -96,8 +96,12 @@ describe("Tabs (ARIA tabs pattern)", () => {
       </Tabs>
     );
     const active = screen.getByRole("tab", { name: "Queue" });
-    expect(active.className).toContain("border-b-3");
-    expect(active.className).toContain("data-[state=active]:border-ink");
+    // Thicker fixed-width bar, inset by the trigger padding so it
+    // spans the label's content width, not the full trigger width.
+    expect(active.className).toContain("after:h-1");
+    expect(active.className).toContain("after:left-3");
+    expect(active.className).toContain("after:right-3");
+    expect(active.className).toContain("data-[state=active]:after:bg-ink");
     expect(active.className).toContain("data-[state=active]:font-bold");
     expect(active.className).not.toContain("data-[state=active]:bg-panel");
     expect(active.className).not.toContain("data-[state=active]:shadow-card");
