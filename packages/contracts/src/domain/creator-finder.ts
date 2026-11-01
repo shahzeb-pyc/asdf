@@ -38,6 +38,18 @@ import { TIKWMAPI_BASE_URL } from './tikwmapi.js';
  */
 
 export const TRENDING_COUNT_MAX = 20;
+/**
+ * Daily cap on upstream provider calls in Creator Finder, per user,
+ * across all discovery methods (trending, niche, similar, regions).
+ * A "call" is one actual HTTP request to the provider, including
+ * key-rotation retries: each attempt consumes budget. The gate is
+ * checked at the start of a discovery request only — a request
+ * that starts under the cap is never aborted mid-flight, even if
+ * its calls push the count past the cap; only the next request
+ * is blocked. Admins bypass the cap entirely (never gated, never
+ * counted). The usage day is a calendar day in Asia/Karachi.
+ */
+export const CREATOR_FINDER_DAILY_LIMIT = 100;
 export const CHALLENGE_COUNT_MAX = 30;
 export const SEARCH_COUNT_MAX = 30;
 export const FOLLOWING_COUNT_MAX = 200;
@@ -115,6 +127,34 @@ export const RegionListResponseSchema = z.object({
   defaultRegion: z.string().nullable(),
 });
 export type RegionListResponse = z.infer<typeof RegionListResponseSchema>;
+
+/** Today's Creator Finder usage for one user: calls made out of
+ *  the daily cap, on the Asia/Karachi calendar date. Served by the
+ *  usage endpoint, which is itself never counted and never gated. */
+export const CreatorFinderUsageResponseSchema = z.object({
+  used: z.number().int().nonnegative(),
+  limit: z.number().int().nonnegative(),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+export type CreatorFinderUsageResponse = z.infer<
+  typeof CreatorFinderUsageResponseSchema
+>;
+
+/**
+ * Error body for a discovery request blocked by the daily cap
+ * (HTTP 429, no upstream call made). The `dailyLimitExceeded`
+ * flag is the machine-readable signal — the page keys its
+ * "Daily limit exceeded" message off the flag, not the string —
+ * following the emailRateLimited pattern in the auth errors.
+ */
+export const CreatorFinderDailyLimitExceededBodySchema = z.object({
+  error: z.literal('DAILY_LIMIT_EXCEEDED'),
+  message: z.literal('Daily limit exceeded'),
+  dailyLimitExceeded: z.literal(true),
+});
+export type CreatorFinderDailyLimitExceededBody = z.infer<
+  typeof CreatorFinderDailyLimitExceededBodySchema
+>;
 
 export const CreatorListResponseSchema = z.object({
   creators: z.array(CreatorSchema),
@@ -384,7 +424,11 @@ async function fetchTikwmJson(
   path: string,
   key: string,
   fetchFn: FetchFn,
+  onUpstreamCall?: (() => Promise<void> | void) | undefined,
 ): Promise<unknown> {
+  // Counted before the attempt, outside the try below: a
+  // counting failure must surface as itself, never as UNREACHABLE.
+  await onUpstreamCall?.();
   let res: Response;
   try {
     res = await fetchFn(`${TIKWMAPI_BASE_URL}${path}`, {
@@ -519,14 +563,27 @@ async function callWithKeys<T>(
 export interface CreatorFinderCallOptions {
   fetchFn?: FetchFn | undefined;
   apiKeys?: string[] | undefined;
+  /**
+   * Called once per actual upstream HTTP attempt, BEFORE the
+   * attempt is made — including key-rotation retries, each of
+   * which is its own attempt. The daily-cap counter hooks in
+   * here: the callback increments the caller's per-user daily
+   * count, and if the increment fails it throws, which aborts
+   * the discovery request loudly instead of proceeding
+   * uncounted. It is awaited outside fetchTikwmJson's own
+   * try/catch so a counting failure is never masked as an
+   * upstream reachability error.
+   */
+  onUpstreamCall?: (() => Promise<void> | void) | undefined;
 }
 
 export async function fetchRegionList(
   options: CreatorFinderCallOptions = {},
 ): Promise<RegionListResponse> {
   const fetchFn = options.fetchFn ?? fetch;
+  const onUpstreamCall = options.onUpstreamCall;
   const data = await callWithKeys(options.apiKeys ?? [], async (key) => {
-    const body = await fetchTikwmJson('/region', key, fetchFn);
+    const body = await fetchTikwmJson('/region', key, fetchFn, onUpstreamCall);
     return unwrapData(body);
   });
   const regions: Region[] = [];
@@ -562,6 +619,7 @@ export async function fetchTrendingCreators(
   options: CreatorFinderCallOptions = {},
 ): Promise<TrendingResponse> {
   const fetchFn = options.fetchFn ?? fetch;
+  const onUpstreamCall = options.onUpstreamCall;
   const cleanRegion = region.trim().toUpperCase();
   if (!/^[A-Z]{2}$/.test(cleanRegion)) {
     throw new CreatorFinderError('BAD_RESPONSE', 'Pick a country from the list.');
@@ -571,6 +629,7 @@ export async function fetchTrendingCreators(
       `/feed/list?region=${encodeURIComponent(cleanRegion)}&count=${TRENDING_COUNT_MAX}`,
       key,
       fetchFn,
+      onUpstreamCall,
     );
     return unwrapData(body);
   });
@@ -674,6 +733,7 @@ export async function fetchCreatorsByKeyword(
   options: CreatorFinderCallOptions & { filters?: NicheSearchFilters } = {},
 ): Promise<NicheResponse> {
   const fetchFn = options.fetchFn ?? fetch;
+  const onUpstreamCall = options.onUpstreamCall;
   const cleanKeyword = keyword.trim();
   if (cleanKeyword.length === 0) {
     throw new CreatorFinderError(
@@ -700,6 +760,7 @@ export async function fetchCreatorsByKeyword(
         `/challenge/search?keywords=${encoded}&count=${SEARCH_COUNT_MAX}`,
         key,
         fetchFn,
+        onUpstreamCall,
       );
       return unwrapData(body);
     }),
@@ -708,6 +769,7 @@ export async function fetchCreatorsByKeyword(
         `/feed/search${feedParams}`,
         key,
         fetchFn,
+        onUpstreamCall,
       );
       return unwrapData(body);
     }),
@@ -734,6 +796,7 @@ export async function fetchCreatorsByKeyword(
             `/challenge/info?challenge_name=${encodeURIComponent(name)}`,
             key,
             fetchFn,
+            onUpstreamCall,
           );
           const data = unwrapData(body);
           const id = challengeIdFromData(data);
@@ -751,6 +814,7 @@ export async function fetchCreatorsByKeyword(
           `/challenge/posts?challenge_id=${encodeURIComponent(challengeId)}&count=${CHALLENGE_COUNT_MAX}${regionParam}`,
           key,
           fetchFn,
+          onUpstreamCall,
         );
         return unwrapData(body);
       });
@@ -963,6 +1027,7 @@ export async function fetchSimilarCreators(
   options: CreatorFinderCallOptions = {},
 ): Promise<SimilarResponse> {
   const fetchFn = options.fetchFn ?? fetch;
+  const onUpstreamCall = options.onUpstreamCall;
   const cleanName = username.trim().replace(/^@+/, '').toLowerCase();
   if (cleanName.length === 0) {
     throw new CreatorFinderError('BAD_RESPONSE', 'Enter a TikTok username.');
@@ -973,6 +1038,7 @@ export async function fetchSimilarCreators(
       `/user/info?unique_id=${encodeURIComponent(cleanName)}`,
       key,
       fetchFn,
+      onUpstreamCall,
     );
     const data = unwrapData(body);
     const user = asRecord(data.user) ?? data;
@@ -1000,6 +1066,7 @@ export async function fetchSimilarCreators(
             `/user/following?user_id=${encodedId}&count=${FOLLOWING_COUNT_MAX}`,
             key,
             fetchFn,
+            onUpstreamCall,
           );
           const data = unwrapData(body);
           return peopleFromData(data, [
@@ -1020,6 +1087,7 @@ export async function fetchSimilarCreators(
             `/user/followers?user_id=${encodedId}&count=${FOLLOWERS_COUNT_MAX}`,
             key,
             fetchFn,
+            onUpstreamCall,
           );
           const data = unwrapData(body);
           return peopleFromData(data, [
@@ -1040,6 +1108,7 @@ export async function fetchSimilarCreators(
             `/user/search?keywords=${encodeURIComponent(searchKeyword)}&count=${USER_SEARCH_COUNT_MAX}`,
             key,
             fetchFn,
+            onUpstreamCall,
           );
           const data = unwrapData(body);
           return peopleFromData(data, ['user_list', 'users', 'items', 'list'])
@@ -1063,6 +1132,7 @@ export async function fetchSimilarCreators(
           `/user/posts?unique_id=${encodeURIComponent(cleanName)}&count=${USER_POSTS_COUNT_MAX}`,
           key,
           fetchFn,
+          onUpstreamCall,
         );
         return videosFromData(unwrapData(body));
       }),
@@ -1077,6 +1147,7 @@ export async function fetchSimilarCreators(
             `/challenge/info?challenge_name=${encodeURIComponent(tag)}`,
             key,
             fetchFn,
+            onUpstreamCall,
           );
           const id = challengeIdFromData(unwrapData(body));
           if (!id) {
@@ -1092,6 +1163,7 @@ export async function fetchSimilarCreators(
             `/challenge/posts?challenge_id=${encodeURIComponent(challengeId)}&count=${CHALLENGE_COUNT_MAX}`,
             key,
             fetchFn,
+            onUpstreamCall,
           );
           return unwrapData(body);
         });
