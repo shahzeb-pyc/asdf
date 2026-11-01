@@ -1,0 +1,223 @@
+# Apply Prod Migrations
+#
+# Applies Supabase migrations to production automatically whenever a migration
+# merges to main. This REPLACES the old manual-apply rule: from now on, a
+# migration is live as soon as its PR merges.
+#
+# HOW IT WORKS
+# - Trigger: push to main that touches supabase/migrations/** only. Merging
+#   this workflow file itself never triggers a run (it lives outside that
+#   path), and pull requests never trigger it.
+# - It reads the prod database target from Doppler config `prd` (project
+#   `fbuploadpro`) — URL plus DB password — and touches NO other database.
+# - It applies, in version order, every migration file whose version is NOT
+#   already recorded in supabase_migrations.schema_migrations, each file in
+#   its own transaction, and records the version in the ledger immediately
+#   after that file succeeds (version text plus name from the filename,
+#   matching the existing manual-row pattern).
+# - On the FIRST failure it stops immediately, fails the workflow loudly,
+#   and applies nothing further. A failed file is retried on the next run
+#   (its version was never recorded); files already applied are skipped.
+# - Runs serialize (concurrency group) so two merges cannot apply at once.
+# - Secrets are NEVER printed: the Doppler JSON and the DB password live
+#   only inside the apply step's process memory and are never echoed.
+#
+# REQUIRED SETUP (owner action, before this workflow is ever merged)
+# - In Doppler, create a service token scoped to project `fbuploadpro`,
+#   config `prd`, with read access.
+# - In GitHub, add it as an Actions secret named DOPPLER_TOKEN
+#   (repo Settings -> Secrets and variables -> Actions).
+# - Without DOPPLER_TOKEN the Doppler step fails and the run fails loudly;
+#   nothing is applied.
+#
+# *** SEQUENCING WARNING — DO NOT MERGE THIS WORKFLOW EARLY ***
+# This workflow targets whatever Doppler `prd` points to at run time. It
+# must NOT be merged until ALL of these are true: (1) the new prod
+# database exists, (2) Doppler `prd` has been repointed to it, and (3) the
+# full migration chain has been applied and verified there. Merging it
+# earlier would make the next migration-merge auto-apply against the OLD
+# prod database. Main sequences the merge; this PR on its own applies
+# nothing.
+#
+# ASSUMPTIONS (fail loud if violated, never guessed around)
+# - Migration files are named <version>_<name>.sql with a numeric version,
+#   and versions are unique. Duplicate versions fail the run loudly: the
+#   ledger tracks by version, so duplicates cannot be tracked correctly.
+# - The ledger table supabase_migrations.schema_migrations already exists
+#   (it does once the initial full-chain apply has run). A missing ledger
+#   fails the run loudly instead of blindly applying everything.
+# - The Supabase URL in Doppler is a *.supabase.co host, so the direct
+#   database host is db.<project-ref>.supabase.co on port 5432. Any other
+#   shape fails loudly.
+
+name: Apply Prod Migrations
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'supabase/migrations/**'
+
+concurrency:
+  group: prod-migrations
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  apply:
+    name: Apply pending prod migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install Doppler CLI
+        run: |
+          curl -Ls --tlsv1.2 --proto "=https" --retry 3 https://cli.doppler.com/install.sh | sudo sh
+
+      - name: Install PostgreSQL client
+        run: |
+          command -v psql >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client)
+
+      - name: Apply pending migrations to prod
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        run: |
+          python3 - <<'PYEOF'
+          import json
+          import os
+          import re
+          import subprocess
+          import sys
+          from urllib.parse import urlparse
+
+
+          def fail(message):
+              print(f"ERROR: {message}", file=sys.stderr)
+              sys.exit(1)
+
+
+          # Safety: this workflow runs only on pushes to main.
+          if os.environ.get("GITHUB_REF") != "refs/heads/main":
+              fail(f"refusing to run on non-main ref: {os.environ.get('GITHUB_REF')}")
+
+          # Fetch prod config from Doppler. Output is captured, never printed:
+          # it contains the DB password and other secrets.
+          doppler = subprocess.run(
+              [
+                  "doppler", "secrets", "download",
+                  "--no-file", "--format", "json",
+                  "--project", "fbuploadpro", "--config", "prd",
+              ],
+              capture_output=True,
+              text=True,
+              timeout=120,
+          )
+          if doppler.returncode != 0:
+              fail("doppler secrets download failed; check the DOPPLER_TOKEN secret "
+                   "(Doppler service token with prd read access)")
+          try:
+              secrets = json.loads(doppler.stdout)
+          except json.JSONDecodeError:
+              fail("doppler secrets download returned unparsable output")
+
+          supabase_url = secrets.get("NEXT_PUBLIC_SUPABASE_URL")
+          db_password = secrets.get("SUPABASE_DB_PASSWORD")
+          if not supabase_url or not db_password:
+              fail("Doppler prd is missing NEXT_PUBLIC_SUPABASE_URL or "
+                   "SUPABASE_DB_PASSWORD; refusing to guess a target")
+
+          # Derive the direct database host from the public Supabase URL.
+          host = urlparse(supabase_url).hostname
+          if not host:
+              fail("NEXT_PUBLIC_SUPABASE_URL has no host; refusing to guess a target")
+          if host.startswith("db."):
+              db_host = host
+          elif host.endswith(".supabase.co"):
+              db_host = "db." + host
+          else:
+              fail(f"unexpected Supabase URL host shape: {host}; refusing to guess a target")
+
+          print(f"target database host: {db_host}")
+
+          psql_env = {
+              "PATH": os.environ.get("PATH", ""),
+              "HOME": os.environ.get("HOME", ""),
+              "PGHOST": db_host,
+              "PGPORT": "5432",
+              "PGDATABASE": "postgres",
+              "PGUSER": "postgres",
+              "PGPASSWORD": db_password,
+              "PGSSLMODE": "require",
+          }
+
+          def psql(args, input_text=None):
+              return subprocess.run(
+                  ["psql", "-t", "-A"] + args,
+                  input=input_text,
+                  capture_output=True,
+                  text=True,
+                  env=psql_env,
+                  timeout=300,
+              )
+
+          # Read the ledger. A missing/unreadable ledger fails loudly rather
+          # than applying everything blindly.
+          ledger = psql(["-c", "SELECT version FROM supabase_migrations.schema_migrations"])
+          if ledger.returncode != 0:
+              fail("could not read supabase_migrations.schema_migrations; the initial "
+                   "full-chain apply must run first (see workflow header)")
+          recorded = {line.strip() for line in ledger.stdout.splitlines() if line.strip()}
+
+          # Collect and validate migration files.
+          mig_dir = "supabase/migrations"
+          files = []
+          seen_versions = {}
+          for filename in sorted(os.listdir(mig_dir)):
+              if not filename.endswith(".sql"):
+                  continue
+              match = re.fullmatch(r"([0-9]+)_([A-Za-z0-9_]+)\.sql", filename)
+              if not match:
+                  fail(f"unexpected migration filename {filename!r}: files must be "
+                       "<version>_<name>.sql")
+              version, name = match.groups()
+              if version in seen_versions:
+                  fail(f"duplicate migration version {version}: {seen_versions[version]} "
+                       f"and {filename}; rename to unique versions")
+              seen_versions[version] = filename
+              files.append((int(version), version, name, filename))
+          files.sort()
+
+          pending = [f for f in files if f[1] not in recorded]
+          print(f"recorded versions: {len(recorded)}; pending migrations: {len(pending)}")
+
+          applied = 0
+          for _, version, name, filename in pending:
+              path = os.path.join(mig_dir, filename)
+              print(f"applying {version} {name} ...")
+              result = psql(["--single-transaction", "-v", "ON_ERROR_STOP=1", "-f", path])
+              if result.returncode != 0:
+                  print(f"FAILED {version} {name}; stopping, nothing further applied",
+                        file=sys.stderr)
+                  if result.stderr.strip():
+                      print(result.stderr.strip(), file=sys.stderr)
+                  sys.exit(1)
+              # Record immediately after success (manual-row pattern: version
+              # text plus name from the filename; statements left NULL).
+              insert = psql([
+                  "-c",
+                  "INSERT INTO supabase_migrations.schema_migrations (version, name) "
+                  f"VALUES ('{version}', '{name}') ON CONFLICT (version) DO NOTHING",
+              ])
+              if insert.returncode != 0:
+                  fail(f"applied {version} {name} but could not record it in the ledger; "
+                       "stopping so the gap is visible and the file retries next run")
+              applied += 1
+              print(f"applied {version} {name}")
+
+          print(f"done: applied {applied}, skipped {len(files) - len(pending)}")
+          PYEOF
