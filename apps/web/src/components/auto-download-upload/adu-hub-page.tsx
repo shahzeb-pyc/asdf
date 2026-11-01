@@ -320,7 +320,7 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
   };
 
   const applyPaste = () => {
-    const parsed = parseAduBulkPaste(pasteText, 'instagram');
+    const parsed = parseAduBulkPaste(pasteText, 'tiktok');
     if (parsed.errors.length > 0) { setPasteFeedback(parsed.errors.join(' ')); return; }
     const empty = selectedPages.filter((p) => !(sources[p.id]?.username ?? '').trim());
     const already = new Set(configured.map((c) => `${c.source_platform}|${c.source_username.toLowerCase()}`));
@@ -395,7 +395,7 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
         const items = selectedPages.map((p) => {
           const base = {
             destinationId: p.id,
-            sourcePlatform: sources[p.id]?.platform ?? 'instagram',
+            sourcePlatform: sources[p.id]?.platform ?? 'tiktok',
             sourceUsername: sources[p.id]?.username ?? '',
           };
           if (timingScope !== 'separate') return base;
@@ -531,19 +531,19 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
           <div className="flex flex-col gap-4">
             <div>
               <label className="font-medium" htmlFor="adu-source-platform">Source platform</label>
-              <Select value={sources[selectedPages[0]?.id ?? '']?.platform ?? 'instagram'} onValueChange={(v) => {
+              <Select value={sources[selectedPages[0]?.id ?? '']?.platform ?? 'tiktok'} onValueChange={(v) => {
                 const page = selectedPages[0]; if (!page) return;
                 setSources({ ...sources, [page.id]: { platform: v as Platform, username: sources[page.id]?.username ?? '' } });
               }}>
                 <SelectTrigger id="adu-source-platform"><SelectValue /></SelectTrigger>
-                <SelectContent>{PLATFORMS.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}</SelectContent>
+                <SelectContent>{PLATFORMS.map((p) => <SelectItem key={p} value={p} disabled={p !== 'tiktok'}>{p}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div>
               <label className="font-medium" htmlFor="adu-source-username">Source Identity</label>
               <Input id="adu-source-username" placeholder={sources[selectedPages[0]?.id ?? '']?.platform === 'youtube' ? 'channel_id' : sources[selectedPages[0]?.id ?? '']?.platform === 'facebook' ? 'page_or_user_id' : '@username'} value={sources[selectedPages[0]?.id ?? '']?.username ?? ''} onChange={(e) => {
                 const page = selectedPages[0]; if (!page) return;
-                setSources({ ...sources, [page.id]: { platform: sources[page.id]?.platform ?? 'instagram', username: e.target.value } });
+                setSources({ ...sources, [page.id]: { platform: sources[page.id]?.platform ?? 'tiktok', username: e.target.value } });
               }} />
             </div>
             <div>
@@ -602,11 +602,11 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
               {selectedPages.map((page) => (
                 <div key={page.id} className="flex flex-wrap items-center gap-2 rounded-md border p-2">
                   <span className="min-w-0 flex-1 truncate">{page.name}</span>
-                  <Select value={sources[page.id]?.platform ?? 'instagram'} onValueChange={(v) => setSources({ ...sources, [page.id]: { platform: v as Platform, username: sources[page.id]?.username ?? '' } })}>
+                  <Select value={sources[page.id]?.platform ?? 'tiktok'} onValueChange={(v) => setSources({ ...sources, [page.id]: { platform: v as Platform, username: sources[page.id]?.username ?? '' } })}>
                     <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
-                    <SelectContent>{PLATFORMS.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}</SelectContent>
+                    <SelectContent>{PLATFORMS.map((p) => <SelectItem key={p} value={p} disabled={p !== 'tiktok'}>{p}</SelectItem>)}</SelectContent>
                   </Select>
-                  <Input placeholder="@username" value={sources[page.id]?.username ?? ''} onChange={(e) => setSources({ ...sources, [page.id]: { platform: sources[page.id]?.platform ?? 'instagram', username: e.target.value } })} className="w-48" />
+                  <Input placeholder="@username" value={sources[page.id]?.username ?? ''} onChange={(e) => setSources({ ...sources, [page.id]: { platform: sources[page.id]?.platform ?? 'tiktok', username: e.target.value } })} className="w-48" />
                 </div>
               ))}
             </div>
