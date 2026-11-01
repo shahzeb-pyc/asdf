@@ -1,17 +1,15 @@
 import { type NextRequest, NextResponse } from 'next/server';
-import { authenticateTenantRoute } from '@/lib/route-auth';
+import { authenticateAdminRoute } from '@/lib/route-auth';
 import { getBillingAdminClient } from '@/lib/billing/route-helpers';
 import { listAdminPayoutRequests, SellerError } from '@/lib/billing/sellers';
 import { sellerErrorResponse } from '@/lib/route-seller';
 import { logServerError } from '@/lib/server-analytics';
 
-/** GET /api/tenant/[subdomain]/sellers/payout-requests — admin queue. */
+/** GET /api/admin/sellers/payout-requests — admin queue. */
 export async function GET(
-  request: NextRequest,
-  context: { params: Promise<{ subdomain: string }> }
+  request: NextRequest
 ): Promise<NextResponse> {
-  const { subdomain } = await context.params;
-  const auth = await authenticateTenantRoute(request, subdomain);
+  const auth = await authenticateAdminRoute(request);
   if (auth.errorResponse) return auth.errorResponse;
   if (auth.session.role !== 'admin') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });

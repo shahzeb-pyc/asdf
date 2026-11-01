@@ -1,20 +1,18 @@
 import { type NextRequest, NextResponse } from 'next/server';
-import { authenticateTenantRoute } from '@/lib/route-auth';
+import { authenticateAdminRoute } from '@/lib/route-auth';
 import { logServerError } from '@/lib/server-analytics';
 import { getBillingAdminClient } from '@/lib/billing/route-helpers';
 import { listAdminRefunds } from '@/lib/billing/refunds';
 
 /**
- * GET /api/tenant/[subdomain]/billing/admin/refunds
+ * GET /api/admin/refunds
  * Admin only, fail closed: non-admins get 403 and no data.
  * Newest requests first, bounded: 100 rows per page, `?page=`.
  */
 export async function GET(
-  request: NextRequest,
-  context: { params: Promise<{ subdomain: string }> }
+  request: NextRequest
 ): Promise<NextResponse> {
-  const { subdomain } = await context.params;
-  const auth = await authenticateTenantRoute(request, subdomain);
+  const auth = await authenticateAdminRoute(request);
   if (auth.errorResponse) return auth.errorResponse;
   if (auth.session.role !== 'admin') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });

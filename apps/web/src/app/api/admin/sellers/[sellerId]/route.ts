@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { SellerPatchSchema } from '@fbuploadpro/contracts';
-import { authenticateTenantRoute } from '@/lib/route-auth';
+import { authenticateAdminRoute } from '@/lib/route-auth';
 import { getBillingAdminClient } from '@/lib/billing/route-helpers';
 import {
   deleteSeller,
@@ -19,7 +19,7 @@ import { sellerErrorResponse } from '@/lib/route-seller';
 import { logServerError } from '@/lib/server-analytics';
 
 /**
- * GET /api/tenant/[subdomain]/sellers/[sellerId] — admin detail:
+ * GET /api/admin/sellers/[sellerId] — admin detail:
  * profile, codes, balances, commissions, payout history, referrals.
  * PATCH — edit rate/scope/status (future purchases only).
  * DELETE — blocked while any commission is unpaid.
@@ -27,13 +27,13 @@ import { logServerError } from '@/lib/server-analytics';
  */
 async function adminAuth(
   request: NextRequest,
-  context: { params: Promise<{ subdomain: string; sellerId: string }> }
+  context: { params: Promise<{ sellerId: string }> }
 ): Promise<
   | { sellerId: string; errorResponse?: never }
   | { sellerId?: never; errorResponse: NextResponse }
 > {
-  const { subdomain, sellerId } = await context.params;
-  const auth = await authenticateTenantRoute(request, subdomain);
+  const { sellerId } = await context.params;
+  const auth = await authenticateAdminRoute(request);
   if (auth.errorResponse) return { errorResponse: auth.errorResponse };
   if (auth.session.role !== 'admin') {
     return { errorResponse: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) };
@@ -43,7 +43,7 @@ async function adminAuth(
 
 export async function GET(
   request: NextRequest,
-  context: { params: Promise<{ subdomain: string; sellerId: string }> }
+  context: { params: Promise<{ sellerId: string }> }
 ): Promise<NextResponse> {
   const gate = await adminAuth(request, context);
   if (gate.errorResponse) return gate.errorResponse;
@@ -150,7 +150,7 @@ export async function GET(
 
 export async function PATCH(
   request: NextRequest,
-  context: { params: Promise<{ subdomain: string; sellerId: string }> }
+  context: { params: Promise<{ sellerId: string }> }
 ): Promise<NextResponse> {
   const gate = await adminAuth(request, context);
   if (gate.errorResponse) return gate.errorResponse;
@@ -189,7 +189,7 @@ export async function PATCH(
 
 export async function DELETE(
   request: NextRequest,
-  context: { params: Promise<{ subdomain: string; sellerId: string }> }
+  context: { params: Promise<{ sellerId: string }> }
 ): Promise<NextResponse> {
   const gate = await adminAuth(request, context);
   if (gate.errorResponse) return gate.errorResponse;

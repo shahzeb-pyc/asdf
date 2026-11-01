@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { AdminDecisionRequestSchema } from '@fbuploadpro/contracts';
-import { authenticateTenantRoute } from '@/lib/route-auth';
+import { authenticateAdminRoute } from '@/lib/route-auth';
 import { logServerError } from '@/lib/server-analytics';
 import { readJsonBody } from '@/lib/request-body';
 import {
@@ -18,7 +18,7 @@ import {
 } from '@/lib/billing/route-helpers';
 
 /**
- * POST /api/tenant/[subdomain]/billing/admin/payments/[paymentId]
+ * POST /api/admin/payments/[paymentId]
  * Admin only, fail closed. Approving starts a paid period of
  * exactly 30 days from approval and is idempotent — approving
  * twice returns the same period and does not extend it again.
@@ -37,10 +37,10 @@ import {
  */
 export async function POST(
   request: NextRequest,
-  context: { params: Promise<{ subdomain: string; paymentId: string }> }
+  context: { params: Promise<{ paymentId: string }> }
 ): Promise<NextResponse> {
-  const { subdomain, paymentId } = await context.params;
-  const auth = await authenticateTenantRoute(request, subdomain);
+  const { paymentId } = await context.params;
+  const auth = await authenticateAdminRoute(request);
   if (auth.errorResponse) return auth.errorResponse;
   if (auth.session.role !== 'admin') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });

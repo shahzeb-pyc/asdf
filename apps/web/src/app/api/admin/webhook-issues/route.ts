@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from 'next/server';
-import { authenticateTenantRoute } from '@/lib/route-auth';
+import { authenticateAdminRoute } from '@/lib/route-auth';
 import { readJsonBody } from '@/lib/request-body';
 import {
   dismissWebhookIssue,
@@ -8,7 +8,7 @@ import {
 import { getBillingAdminClient } from '@/lib/billing/route-helpers';
 
 /**
- * GET /api/tenant/[subdomain]/billing/admin/webhook-issues
+ * GET /api/admin/webhook-issues
  * Admin only: open NOWPayments webhook issues (unknown payments,
  * amount/currency mismatches, underpayments, late-finish coupon
  * releases, gateway refunds) newest first. An empty list when the
@@ -19,11 +19,9 @@ import { getBillingAdminClient } from '@/lib/billing/route-helpers';
  * with dismissed_at set; dismissed rows never list again).
  */
 export async function GET(
-  request: NextRequest,
-  context: { params: Promise<{ subdomain: string }> }
+  request: NextRequest
 ): Promise<NextResponse> {
-  const { subdomain } = await context.params;
-  const auth = await authenticateTenantRoute(request, subdomain);
+  const auth = await authenticateAdminRoute(request);
   if (auth.errorResponse) return auth.errorResponse;
   if (auth.session.role !== 'admin') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
@@ -51,11 +49,9 @@ export async function GET(
 }
 
 export async function POST(
-  request: NextRequest,
-  context: { params: Promise<{ subdomain: string }> }
+  request: NextRequest
 ): Promise<NextResponse> {
-  const { subdomain } = await context.params;
-  const auth = await authenticateTenantRoute(request, subdomain);
+  const auth = await authenticateAdminRoute(request);
   if (auth.errorResponse) return auth.errorResponse;
   if (auth.session.role !== 'admin') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });

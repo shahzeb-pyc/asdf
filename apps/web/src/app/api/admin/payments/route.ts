@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from 'next/server';
-import { authenticateTenantRoute } from '@/lib/route-auth';
+import { authenticateAdminRoute } from '@/lib/route-auth';
 import { logServerError } from '@/lib/server-analytics';
 import { paymentFromRow } from '@/lib/billing/entitlement';
 import {
@@ -8,7 +8,7 @@ import {
 } from '@/lib/billing/route-helpers';
 
 /**
- * GET /api/tenant/[subdomain]/billing/admin/payments
+ * GET /api/admin/payments
  * Admin only, fail closed: non-admins get 403 and no data.
  * Pending payments first, then the most recent decided ones —
  * across the FULL list, not per page (audit fix 2026-11-01): the
@@ -22,11 +22,9 @@ import {
  * them — the full table is never returned in one response.
  */
 export async function GET(
-  request: NextRequest,
-  context: { params: Promise<{ subdomain: string }> }
+  request: NextRequest
 ): Promise<NextResponse> {
-  const { subdomain } = await context.params;
-  const auth = await authenticateTenantRoute(request, subdomain);
+  const auth = await authenticateAdminRoute(request);
   if (auth.errorResponse) return auth.errorResponse;
   if (auth.session.role !== 'admin') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });

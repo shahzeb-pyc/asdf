@@ -3,32 +3,30 @@ import {
   CreateCouponRequestSchema,
   normalizeCouponCode,
 } from '@fbuploadpro/contracts';
-import { authenticateTenantRoute } from '@/lib/route-auth';
+import { authenticateAdminRoute } from '@/lib/route-auth';
 import { logServerError } from '@/lib/server-analytics';
 import { readJsonBody } from '@/lib/request-body';
 import { getBillingAdminClient } from '@/lib/billing/route-helpers';
 import { couponFromRow, couponToItem } from '@/lib/billing/coupons';
 
 /**
- * GET /api/tenant/[subdomain]/billing/admin/coupons
+ * GET /api/admin/coupons
  * Admin only, fail closed: non-admins get 403 and no data.
  * Newest first, 20 per page. Redemption counts are exact COUNT
  * queries (head-only, one per listed coupon, in parallel) — the
  * rows themselves are never fetched for a count, so a busy
  * percent-multi coupon cannot blow up the list response.
  *
- * POST /api/tenant/[subdomain]/billing/admin/coupons
+ * POST /api/admin/coupons
  * Admin only. Creates a coupon with an admin-chosen code,
  * normalised (trimmed, upper-cased) and unique across ALL
  * statuses — a deleted code stays taken, so history can never
  * be confused with a reissued code.
  */
 export async function GET(
-  request: NextRequest,
-  context: { params: Promise<{ subdomain: string }> }
+  request: NextRequest
 ): Promise<NextResponse> {
-  const { subdomain } = await context.params;
-  const auth = await authenticateTenantRoute(request, subdomain);
+  const auth = await authenticateAdminRoute(request);
   if (auth.errorResponse) return auth.errorResponse;
   if (auth.session.role !== 'admin') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
@@ -82,11 +80,9 @@ export async function GET(
 }
 
 export async function POST(
-  request: NextRequest,
-  context: { params: Promise<{ subdomain: string }> }
+  request: NextRequest
 ): Promise<NextResponse> {
-  const { subdomain } = await context.params;
-  const auth = await authenticateTenantRoute(request, subdomain);
+  const auth = await authenticateAdminRoute(request);
   if (auth.errorResponse) return auth.errorResponse;
   if (auth.session.role !== 'admin') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });

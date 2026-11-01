@@ -1,13 +1,13 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { AdminCouponActionSchema } from '@fbuploadpro/contracts';
-import { authenticateTenantRoute } from '@/lib/route-auth';
+import { authenticateAdminRoute } from '@/lib/route-auth';
 import { logServerError } from '@/lib/server-analytics';
 import { readJsonBody } from '@/lib/request-body';
 import { getBillingAdminClient } from '@/lib/billing/route-helpers';
 import { couponFromRow, couponToItem } from '@/lib/billing/coupons';
 
 /**
- * PATCH /api/tenant/[subdomain]/billing/admin/coupons/[couponId]
+ * PATCH /api/admin/coupons/[couponId]
  * Admin only. One action per call: pause, resume, or delete.
  * Transitions are conditional on the current status, so a stale
  * admin tab cannot silently re-pause a coupon that was already
@@ -22,10 +22,10 @@ import { couponFromRow, couponToItem } from '@/lib/billing/coupons';
  */
 export async function PATCH(
   request: NextRequest,
-  context: { params: Promise<{ subdomain: string; couponId: string }> }
+  context: { params: Promise<{ couponId: string }> }
 ): Promise<NextResponse> {
-  const { subdomain, couponId } = await context.params;
-  const auth = await authenticateTenantRoute(request, subdomain);
+  const { couponId } = await context.params;
+  const auth = await authenticateAdminRoute(request);
   if (auth.errorResponse) return auth.errorResponse;
   if (auth.session.role !== 'admin') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });

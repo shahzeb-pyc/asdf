@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { AdminRefundDecisionSchema } from '@fbuploadpro/contracts';
-import { authenticateTenantRoute } from '@/lib/route-auth';
+import { authenticateAdminRoute } from '@/lib/route-auth';
 import { logServerError } from '@/lib/server-analytics';
 import { readJsonBody } from '@/lib/request-body';
 import { getBillingAdminClient } from '@/lib/billing/route-helpers';
@@ -12,7 +12,7 @@ import {
 import { SubscriptionGateError } from '@/lib/billing/entitlement';
 
 /**
- * POST /api/tenant/[subdomain]/billing/admin/refunds/[refundId]
+ * POST /api/admin/refunds/[refundId]
  * Admin only, fail closed. Three decisions:
  * - approve: locks the final refund amount from the days used now and
  *   drops the user's plan to Free immediately (the period is
@@ -24,10 +24,10 @@ import { SubscriptionGateError } from '@/lib/billing/entitlement';
  */
 export async function POST(
   request: NextRequest,
-  context: { params: Promise<{ subdomain: string; refundId: string }> }
+  context: { params: Promise<{ refundId: string }> }
 ): Promise<NextResponse> {
-  const { subdomain, refundId } = await context.params;
-  const auth = await authenticateTenantRoute(request, subdomain);
+  const { refundId } = await context.params;
+  const auth = await authenticateAdminRoute(request);
   if (auth.errorResponse) return auth.errorResponse;
   if (auth.session.role !== 'admin') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });

@@ -1,23 +1,23 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { PayoutDecisionSchema } from '@fbuploadpro/contracts';
-import { authenticateTenantRoute } from '@/lib/route-auth';
+import { authenticateAdminRoute } from '@/lib/route-auth';
 import { getBillingAdminClient } from '@/lib/billing/route-helpers';
 import { decidePayoutRequest, SellerError } from '@/lib/billing/sellers';
 import { sellerErrorResponse } from '@/lib/route-seller';
 import { logServerError } from '@/lib/server-analytics';
 
 /**
- * POST /api/tenant/[subdomain]/sellers/payout-requests/[requestId]
+ * POST /api/admin/sellers/payout-requests/[requestId]
  * { action: 'mark-sent' | 'reject' } — admin only. Mark-sent pays
  * the whole batch outside the app; reject returns the commissions
  * to payable. Terminal decisions conflict (409).
  */
 export async function POST(
   request: NextRequest,
-  context: { params: Promise<{ subdomain: string; requestId: string }> }
+  context: { params: Promise<{ requestId: string }> }
 ): Promise<NextResponse> {
-  const { subdomain, requestId } = await context.params;
-  const auth = await authenticateTenantRoute(request, subdomain);
+  const { requestId } = await context.params;
+  const auth = await authenticateAdminRoute(request);
   if (auth.errorResponse) return auth.errorResponse;
   if (auth.session.role !== 'admin') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });

@@ -1,11 +1,11 @@
 import { type NextRequest, NextResponse } from 'next/server';
-import { authenticateTenantRoute } from '@/lib/route-auth';
+import { authenticateAdminRoute } from '@/lib/route-auth';
 import { logServerError } from '@/lib/server-analytics';
 import { getBillingAdminClient } from '@/lib/billing/route-helpers';
 import { redemptionFromRow } from '@/lib/billing/coupons';
 
 /**
- * GET /api/tenant/[subdomain]/billing/admin/coupons/[couponId]/redemptions
+ * GET /api/admin/coupons/[couponId]/redemptions
  * Admin only, fail closed. The redemption history for one coupon:
  * who used it, when, how much, and whether the redemption is held,
  * applied, or released. Newest first, 100 per page — the table is
@@ -15,10 +15,10 @@ import { redemptionFromRow } from '@/lib/billing/coupons';
  */
 export async function GET(
   request: NextRequest,
-  context: { params: Promise<{ subdomain: string; couponId: string }> }
+  context: { params: Promise<{ couponId: string }> }
 ): Promise<NextResponse> {
-  const { subdomain, couponId } = await context.params;
-  const auth = await authenticateTenantRoute(request, subdomain);
+  const { couponId } = await context.params;
+  const auth = await authenticateAdminRoute(request);
   if (auth.errorResponse) return auth.errorResponse;
   if (auth.session.role !== 'admin') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });

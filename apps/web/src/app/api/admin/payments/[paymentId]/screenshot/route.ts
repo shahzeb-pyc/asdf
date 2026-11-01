@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { GetObjectCommand } from '@aws-sdk/client-s3';
-import { authenticateTenantRoute } from '@/lib/route-auth';
+import { authenticateAdminRoute } from '@/lib/route-auth';
 import { logServerError } from '@/lib/server-analytics';
 import { createR2S3Client, getR2Config } from '@/lib/storage';
 import { getBillingAdminClient } from '@/lib/billing/route-helpers';
@@ -22,10 +22,10 @@ const CONTENT_TYPES: Record<string, string> = {
 
 export async function GET(
   request: NextRequest,
-  context: { params: Promise<{ subdomain: string; paymentId: string }> }
+  context: { params: Promise<{ paymentId: string }> }
 ): Promise<NextResponse> {
-  const { subdomain, paymentId } = await context.params;
-  const auth = await authenticateTenantRoute(request, subdomain);
+  const { paymentId } = await context.params;
+  const auth = await authenticateAdminRoute(request);
   if (auth.errorResponse) return auth.errorResponse;
   if (auth.session.role !== 'admin') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });

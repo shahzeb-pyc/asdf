@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { SellerCreateSchema } from '@fbuploadpro/contracts';
-import { authenticateTenantRoute } from '@/lib/route-auth';
+import { authenticateAdminRoute } from '@/lib/route-auth';
 import { getBillingAdminClient } from '@/lib/billing/route-helpers';
 import {
   changeReferralCode,
@@ -13,17 +13,15 @@ import { sellerErrorResponse } from '@/lib/route-seller';
 import { logServerError } from '@/lib/server-analytics';
 
 /**
- * GET /api/tenant/[subdomain]/sellers — admin seller list, newest first.
+ * GET /api/admin/sellers — admin seller list, newest first.
  * POST — admin creates a seller (name, email, admin-set password,
  * rate + scope, optional initial referral code).
  * Admin only, fail closed: non-admins get 403 and no data.
  */
 export async function GET(
-  request: NextRequest,
-  context: { params: Promise<{ subdomain: string }> }
+  request: NextRequest
 ): Promise<NextResponse> {
-  const { subdomain } = await context.params;
-  const auth = await authenticateTenantRoute(request, subdomain);
+  const auth = await authenticateAdminRoute(request);
   if (auth.errorResponse) return auth.errorResponse;
   if (auth.session.role !== 'admin') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
@@ -65,11 +63,9 @@ export async function GET(
 }
 
 export async function POST(
-  request: NextRequest,
-  context: { params: Promise<{ subdomain: string }> }
+  request: NextRequest
 ): Promise<NextResponse> {
-  const { subdomain } = await context.params;
-  const auth = await authenticateTenantRoute(request, subdomain);
+  const auth = await authenticateAdminRoute(request);
   if (auth.errorResponse) return auth.errorResponse;
   if (auth.session.role !== 'admin') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
