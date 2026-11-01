@@ -153,6 +153,38 @@ test.describe('billing at phone widths', () => {
     });
   }
 
+  test('My Plan fits 360px: pending verification instead of Free', async ({
+    page,
+    context,
+  }) => {
+    await page.setViewportSize({ width: 360, height: 844 });
+    await useUserSession(context);
+    const state = createFixtureState();
+    await installApiFixtures(page, state);
+    await installBillingFixture(page, {
+      entitlement: freeEntitlement(),
+      payments: [paymentItem()],
+    });
+    await gotoBilling(page, 'my-plan');
+
+    await expect(page.getByText('Payment in progress')).toBeVisible();
+    await expect(page.getByText('Waiting for approval', { exact: true })).toBeVisible();
+    await expect(
+      page.getByText('Your plan activates once the payment is approved.')
+    ).toBeVisible();
+    await expect(page.getByRole('button', { name: 'View payments' })).toBeVisible();
+    // The Free card is replaced, not stacked: no Free title, no Free
+    // feature list, no upgrade button — and no Purchase-only copy.
+    await expect(page.getByText('Free', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('Posting and scheduling')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Buy or upgrade' })).toHaveCount(0);
+    await expect(
+      page.getByText('You can build a new plan once this payment is decided.')
+    ).toHaveCount(0);
+
+    await expectNoDocumentOverflow(page);
+  });
+
   test('Purchase checkout reaches confirmation at 360px', async ({ page, context }) => {
     await page.setViewportSize({ width: 360, height: 844 });
     await useUserSession(context);

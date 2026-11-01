@@ -1278,6 +1278,30 @@ export function BillingView({
      pricing cards, no builder, no checkout, no payment methods, no
      payments history here — just one link to Purchase. */
   if (!isPaid) {
+    /* Pending verification, not Free: a user with no live period
+       whose payment is still waiting for approval must see that
+       payment in flight, not the plain Free card as if nothing had
+       happened. Expired users keep the Expired card unchanged — a
+       lapsed plan with a renewal pending still reads Expired here,
+       and the pending stays visible in Payments. Paid users never
+       reach this branch. */
+    if (!entitlement.hasPriorPeriod && pendingPayment !== null) {
+      return (
+        <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
+          <div className="flex flex-col gap-1">
+            <h1 className="text-xl leading-heading font-semibold text-ink">My plan</h1>
+            <p className="text-body text-ink-sub">What your current plan includes.</p>
+          </div>
+          {pendingPaymentCard}
+          <p className="text-body text-ink-sub">
+            Your plan activates once the payment is approved.
+          </p>
+          <div>
+            <Button onClick={goToPayments}>View payments</Button>
+          </div>
+        </div>
+      );
+    }
     /* Free only: no summary-card stats and no per-platform list
        (all zeros, useless for Free) — just what Free includes, what
        it does not, and the upgrade button. Paid falls through to the

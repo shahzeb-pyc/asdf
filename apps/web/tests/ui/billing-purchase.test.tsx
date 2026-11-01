@@ -188,6 +188,54 @@ describe('Billing Purchase', () => {
     expect(await screen.findByText('Expired')).toBeInTheDocument();
   });
 
+  it('My Plan shows pending verification instead of Free when a payment is pending', async () => {
+    mockApiGet.mockResolvedValue(statusFixture([paymentItem()]));
+    render(<BillingView subdomain="acme" initialSection="my-plan" />);
+    expect(await screen.findByText('Payment in progress')).toBeInTheDocument();
+    expect(screen.getByText('Waiting for approval')).toBeInTheDocument();
+    expect(screen.getAllByText(/70 PKR/).length).toBeGreaterThan(0);
+    expect(
+      screen.getByText('Your plan activates once the payment is approved.')
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'View payments' })).toBeInTheDocument();
+    // The Free card is replaced, not stacked: no Free title, no Free
+    // feature list, and no upgrade button in this state.
+    expect(screen.queryByText('Free')).toBeNull();
+    expect(screen.queryByText('Posting and scheduling')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Buy or upgrade' })).toBeNull();
+  });
+
+  it('My Plan keeps Expired for a lapsed user even with a payment pending', async () => {
+    mockApiGet.mockResolvedValue({
+      entitlement: { ...freeEntitlement(), hasPriorPeriod: true },
+      payments: [paymentItem()],
+    });
+    render(<BillingView subdomain="acme" initialSection="my-plan" />);
+    expect(await screen.findByText('Expired')).toBeInTheDocument();
+    expect(screen.queryByText('Payment in progress')).toBeNull();
+  });
+
+  it('My Plan keeps Paid for a paid user with an upgrade pending', async () => {
+    mockApiGet.mockResolvedValue({
+      entitlement: {
+        plan: 'paid',
+        active: true,
+        counts: { facebook: 2, instagram: 1, threads: 1, x: 1, tiktok: 1, youtube: 1 },
+        usage: { ...ZERO_COUNTS },
+        periodEndsAt: '2026-11-30T00:00:00.000Z',
+        periodStartsAt: '2026-10-31T00:00:00.000Z',
+        canPost: true,
+        readOnly: false,
+        reason: null,
+      },
+      payments: [paymentItem({ isUpgrade: true })],
+    });
+    render(<BillingView subdomain="acme" initialSection="my-plan" />);
+    expect(await screen.findByText('Your plan')).toBeInTheDocument();
+    expect(screen.getByText('Paid')).toBeInTheDocument();
+    expect(screen.queryByText('Payment in progress')).toBeNull();
+  });
+
   it('Binance is selectable, shows its ID verbatim, and submits as a manual payment', async () => {
     let capturedForm: FormData | null = null;
     mockApiPost.mockImplementation(async (_url: string, body: unknown) => {
