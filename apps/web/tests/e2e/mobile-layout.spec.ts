@@ -37,7 +37,7 @@ import {
   expectNoDocumentOverflow,
   expectWithinViewport,
 } from './fixtures/mobile';
-import { SESSION_COOKIE, TENANT } from './fixtures/tenant';
+import { SESSION_COOKIE, TENANT, mintSessionToken } from './fixtures/tenant';
 
 /**
  * The project name carries its width (`mobile-320` … `mobile-1024`);
@@ -100,9 +100,16 @@ test.describe('mobile layout', () => {
 
   test('workspace home fits the viewport', async ({ page, context }, testInfo) => {
     expectProjectViewport(page, testInfo);
+    // Home is a non-admin surface since the admin-landing change
+    // (admins redirect to the panel), so the viewport evidence uses
+    // a regular user session — the Home layout this test owns.
     await context.addCookies([
-      SESSION_COOKIE,
-      { ...SESSION_COOKIE, domain: `${TENANT.subdomain}.localhost` },
+      { ...SESSION_COOKIE, value: mintSessionToken('user') },
+      {
+        ...SESSION_COOKIE,
+        value: mintSessionToken('user'),
+        domain: `${TENANT.subdomain}.localhost`,
+      },
     ]);
     const state = createFixtureState();
     await installApiFixtures(page, state);

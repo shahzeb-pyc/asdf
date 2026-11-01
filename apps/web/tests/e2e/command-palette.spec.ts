@@ -20,7 +20,7 @@
 
 import { test, expect, type Page } from '@playwright/test';
 import { createFixtureState, installApiFixtures } from './fixtures/api';
-import { CONNECTED_ACCOUNT, FACEBOOK_PAGE, SESSION_COOKIE, TENANT } from './fixtures/tenant';
+import { CONNECTED_ACCOUNT, FACEBOOK_PAGE, SESSION_COOKIE, TENANT, mintSessionToken } from './fixtures/tenant';
 
 const WORKSPACES = [
   {
@@ -73,7 +73,12 @@ async function installPaletteFixtures(page: Page): Promise<void> {
 }
 
 async function signInToTenantHome(page: Page): Promise<void> {
-  await page.context().addCookies([SESSION_COOKIE]);
+  // Home is a non-admin surface since the admin-landing change
+  // (admins redirect to the panel), so the palette tests sign in as
+  // a regular user — the palette itself is role-independent.
+  await page.context().addCookies([
+    { ...SESSION_COOKIE, value: mintSessionToken('user') },
+  ]);
   await installPaletteFixtures(page);
   await page.goto(`/tenant/${TENANT.subdomain}`);
   await expect(page.getByRole('heading', { name: /Welcome,/ })).toBeVisible();

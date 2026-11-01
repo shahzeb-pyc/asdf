@@ -127,9 +127,27 @@ describe('Next.js Edge Middleware Session Authentication & Tenant Isolation (Use
     expect(new URL(rewriteUrl!).pathname).toBe('/tenant/acme');
   });
 
-  it('allows cross-tenant inspection access for admin role', async () => {
+  it('redirects cross-tenant admin Home visits to that tenant\'s panel, never blocks them', async () => {
     // Admin with subdomain 'platform-admin' accessing 'acme' tenant
+    // Home: admins never land on Home, so the visit goes to that
+    // tenant's admin panel (Billing -> approvals) instead of being
+    // blocked or rewritten to Home.
     const req = new NextRequest('http://acme.localhost:3000/', {
+      headers: {
+        host: 'acme.localhost:3000',
+        cookie: `fbup_session=${adminToken}`,
+      },
+    });
+    const res = await middleware(req);
+    expect(res.status).toBe(307);
+    expect(res.headers.get('location')).toBe('http://acme.localhost:3000/billing');
+  });
+
+  it('still allows cross-tenant inspection access for admin role on deeper routes', async () => {
+    // The Home redirect must not become a tenant-isolation block:
+    // an admin inspecting another tenant's section still rewrites
+    // through to it.
+    const req = new NextRequest('http://acme.localhost:3000/pages', {
       headers: {
         host: 'acme.localhost:3000',
         cookie: `fbup_session=${adminToken}`,
@@ -139,7 +157,7 @@ describe('Next.js Edge Middleware Session Authentication & Tenant Isolation (Use
     expect(res.status).toBe(200);
     const rewriteUrl = res.headers.get('x-middleware-rewrite');
     expect(rewriteUrl).not.toBeNull();
-    expect(new URL(rewriteUrl!).pathname).toBe('/tenant/acme');
+    expect(new URL(rewriteUrl!).pathname).toBe('/tenant/acme/pages');
   });
 
   it('redirects authenticated user on .vercel.app root/login to /tenant/[subdomain]', async () => {
