@@ -57,7 +57,17 @@ export async function GET(
       data !== null && typeof data === 'object'
         ? (data as Record<string, unknown>)['screenshot_storage_key']
         : null;
-    if (error || typeof key !== 'string' || key.length === 0 || key.includes('..')) {
+    if (error) {
+      logServerError('[billing] screenshot lookup failed', error, {
+        source: 'billing',
+        paymentId,
+      });
+      return NextResponse.json(
+        { error: 'Screenshot could not be loaded. Please try again.' },
+        { status: 500 }
+      );
+    }
+    if (typeof key !== 'string' || key.length === 0 || key.includes('..')) {
       return NextResponse.json({ error: 'Screenshot not found' }, { status: 404 });
     }
     const extension = key.split('.').pop() ?? '';
