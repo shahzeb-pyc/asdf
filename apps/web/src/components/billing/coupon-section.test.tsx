@@ -59,14 +59,44 @@ describe('CouponSection', () => {
       />
     );
     await user.type(screen.getByLabelText('Coupon code'), 'save20');
+    // Typed lowercase becomes uppercase in the input value itself.
+    expect(screen.getByLabelText('Coupon code')).toHaveValue('SAVE20');
     await user.click(screen.getByRole('button', { name: 'Apply' }));
     await waitFor(() => expect(apiPost).toHaveBeenCalledTimes(1));
     expect(apiPost).toHaveBeenCalledWith(
       '/tenant/test/billing/coupons/validate',
-      { code: 'save20', counts: counts({ facebook: 10 }) },
+      { code: 'SAVE20', counts: counts({ facebook: 10 }) },
       expect.anything()
     );
     await waitFor(() => expect(onAppliedChange).toHaveBeenCalledWith(preview));
+  });
+
+  it('uppercases pasted lowercase codes before applying', async () => {
+    const user = userEvent.setup();
+    const onAppliedChange = vi.fn();
+    apiPost.mockResolvedValue(preview);
+    render(
+      <CouponSection
+        subdomain="test"
+        counts={counts({ facebook: 10 })}
+        applied={null}
+        onAppliedChange={onAppliedChange}
+        onActivateZeroDue={() => {}}
+        activating={false}
+        disabled={false}
+      />
+    );
+    const input = screen.getByLabelText('Coupon code');
+    await user.click(input);
+    await user.paste('save20');
+    expect(input).toHaveValue('SAVE20');
+    await user.click(screen.getByRole('button', { name: 'Apply' }));
+    await waitFor(() => expect(apiPost).toHaveBeenCalledTimes(1));
+    expect(apiPost).toHaveBeenCalledWith(
+      '/tenant/test/billing/coupons/validate',
+      { code: 'SAVE20', counts: counts({ facebook: 10 }) },
+      expect.anything()
+    );
   });
 
   it('shows the server message on a failed apply and keeps the old coupon', async () => {

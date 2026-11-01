@@ -264,7 +264,7 @@ export function AdminCouponsView({ subdomain }: Readonly<{ subdomain: string }>)
             <Input
               id="admin-coupon-code"
               value={code}
-              onChange={(event) => setCode(event.target.value)}
+              onChange={(event) => setCode(event.target.value.toUpperCase())}
               placeholder="e.g. SAVE20"
               autoCapitalize="characters"
               autoComplete="off"
