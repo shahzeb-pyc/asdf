@@ -408,7 +408,14 @@ for (const c of PLATFORM_CASES) {
       expect(screen.getByTestId(`${p}-one-more-step-card`)).toBeTruthy();
       expect(screen.getByText('One more step')).toBeTruthy();
       const address = screen.getByTestId(`${p}-setup-address-signin`).textContent ?? '';
-      expect(address.endsWith(`/api/connect/${p}/callback`)).toBe(true);
+      // Instagram shows the direct callback (the address its connect
+      // flow actually sends to Meta); Threads still shows the
+      // framework callback it actually uses.
+      const expectedSuffix =
+        p === 'instagram'
+          ? '/api/auth/instagram/callback'
+          : `/api/connect/${p}/callback`;
+      expect(address.endsWith(expectedSuffix)).toBe(true);
 
       const user = userEvent.setup();
       // userEvent.setup() installs its own clipboard stub over the
@@ -800,13 +807,15 @@ describe('Instagram redesign (2026-10-25)', () => {
       )
     ).toBeTruthy();
     expect(screen.getByTestId('instagram-copy-signin-btn')).toBeTruthy();
-    // Callback address uses the connect path (never the old /api/auth
-    // path); its origin is window.location.origin in production, i.e.
-    // the workspace subdomain when the user is in their workspace —
-    // jsdom's origin is localhost here, so only the path is asserted.
+    // Callback address uses the direct /api/auth path — the address
+    // the connect flow actually sends to Meta — never the framework
+    // /api/connect path; its origin is window.location.origin in
+    // production, i.e. the workspace subdomain when the user is in
+    // their workspace — jsdom's origin is localhost here, so only the
+    // path is asserted.
     const address = screen.getByTestId('instagram-setup-address-signin').textContent ?? '';
-    expect(address.endsWith('/api/connect/instagram/callback')).toBe(true);
-    expect(address).not.toContain('/api/auth/');
+    expect(address.endsWith('/api/auth/instagram/callback')).toBe(true);
+    expect(address).not.toContain('/api/connect/');
   });
 
   it('renders single-column: header stacked above the panel, never split side by side', () => {

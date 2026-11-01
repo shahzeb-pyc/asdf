@@ -6,6 +6,13 @@
  * platform use the same paths, so the shown address can never drift from
  * the real one.
  *
+ * Exception: Facebook and Instagram settings views do NOT use this
+ * helper for their sign-in address — their flows use direct callbacks
+ * (`/api/auth/facebook/callback`, `/api/auth/instagram/callback`), so
+ * those views build the shown address with the direct-flow builder
+ * instead. Threads is the remaining settings consumer of
+ * `signInCallback` here.
+ *
  * The origin is resolved exactly the way the Facebook settings view
  * resolves the origin for the sign-in address it displays: the current
  * window origin when running in the browser, with the production site as

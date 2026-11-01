@@ -22,9 +22,10 @@ import { INSTAGRAM_AUTHORIZE_URL } from '@/lib/connect/platforms/instagram';
  * is sent to the Instagram-Login authorize dialog.
  *
  * This is the direct view of the Instagram connect modal (Facebook's
- * modal direct view goes to `/api/auth/facebook` the same way). The
- * framework initiate (`/api/connect/instagram`) stays available for
- * other entry points; it is not used by the modal any more.
+ * modal direct view goes to `/api/auth/facebook` the same way). It is
+ * the ONLY Instagram connect entry: the old framework Instagram flow
+ * was removed (2026-11-02) — the framework initiate/callback resolve
+ * no Instagram config, and the Instagram complete route was deleted.
  */
 export async function handleInitiateInstagramOAuth(
   request: NextRequest,

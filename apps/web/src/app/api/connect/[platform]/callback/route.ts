@@ -6,8 +6,7 @@ import {
 } from '@fbuploadpro/contracts';
 // Side effect: registers the X connect config (spec 127).
 import '@/lib/connect/platforms/x';
-// Side effect: registers the Instagram + Threads connect configs (spec 124).
-import '@/lib/connect/platforms/instagram';
+// Side effect: registers the Threads connect config (spec 124).
 import '@/lib/connect/platforms/threads';
 import {
   getPlatformConnectConfig,

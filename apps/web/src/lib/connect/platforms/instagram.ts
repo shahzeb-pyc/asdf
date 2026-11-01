@@ -1,25 +1,30 @@
 /**
- * Instagram connect registration (Spec 124, on spec 123's framework).
+ * Instagram connect (Spec 124).
  *
  * BYOC: the workspace supplies its own Meta app details (Settings →
- * Instagram tab, stored in `platform_credentials`); this flow reads
- * them through the framework — the Threads-pair trap does not apply
- * here, but the pair used is always THIS workspace's Instagram app.
+ * Instagram tab, stored in `platform_credentials`); the pair used is
+ * always THIS workspace's Instagram app.
  *
  * Route (D2, DECIDED): Instagram-Login ONLY — the authorize window is
  * Instagram's own (`api.instagram.com/oauth/authorize`), never the
  * Facebook-Login dialog. The account must be Professional (Business or
  * Creator): a personal account cannot publish, so the exchange reads
  * the profile and refuses a non-Professional account in plain
- * language. (Spec 123's callback maps any exchange failure to the
- * framework's plain-language "couldn't finish connecting" notice; the
- * specific reason is logged here server-side.)
+ * language.
+ *
+ * Connect entry is the DIRECT flow only
+ * (`app/api/auth/instagram/route.ts` → `app/api/auth/instagram/callback/route.ts`,
+ * which exchanges the code, persists the account, and persists the
+ * destination row for the account itself with its provider-reported
+ * account type). The old framework Instagram flow was removed
+ * (2026-11-02): this module no longer registers a framework connect
+ * config, so the framework initiate/callback resolve no Instagram
+ * config. `createInstagramConnectConfig` is kept because the direct
+ * callback builds its exchange from it.
  *
  * Token path: code → 1-hour short-lived token → 60-day long-lived
- * token, both exchanged server-side here; the framework persists the
- * long-lived token encrypted. The destination is the IG account
- * itself: its external id is the destination id, presented through
- * the framework's picker (spec 123's fixture mode for Instagram).
+ * token, both exchanged server-side here; the direct callback persists
+ * the long-lived token encrypted.
  *
  * Guide facts the Settings copy carries (spec 124 §1): where the app
  * is in Development mode, the account owner accepts the tester invite
@@ -29,8 +34,6 @@
  */
 import { INSTAGRAM_OAUTH_SCOPES } from '@fbuploadpro/contracts';
 import {
-  hasPlatformConnectConfig,
-  registerPlatformConnectConfig,
   type ConnectExchangeContext,
   type DiscoveredDestination,
   type ExchangedAccount,
@@ -215,14 +218,3 @@ export function createInstagramConnectConfig(
     },
   };
 }
-
-/** Registers the Instagram connect config once (idempotent). */
-export function registerInstagramConnectConfig(): void {
-  if (!hasPlatformConnectConfig('instagram')) {
-    registerPlatformConnectConfig(createInstagramConnectConfig());
-  }
-}
-
-// Registration is a module side effect: importing this file (the
-// connect routes and picker page do) makes Instagram connectable.
-registerInstagramConnectConfig();
