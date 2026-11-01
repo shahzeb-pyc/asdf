@@ -779,6 +779,59 @@ describe('refund approval adjusts seller commissions', () => {
     expect(approved.refundAmount).toBe(3780);
   });
 
+  it('blocks a crypto approval — writing nothing — when the payment lookup fails', async () => {
+    const state = baseState({
+      requests: [
+        refundRow({
+          currency: 'USDT',
+          amount_paid: 100,
+          destination_type: 'usdt',
+          destination_value: 'TXyzAddress',
+          destination_network: 'trc20',
+        }),
+      ],
+      payments: [
+        paymentRow({
+          method: 'nowpayments',
+          bank_method: null,
+          amount_pkr: 28000,
+          nowpayments_pay_amount: 100,
+          nowpayments_network: 'trc20',
+        }),
+      ],
+      commissions: [commissionRow({ rate_snapshot: 10, amount_pkr: 2800 })],
+      selectErrors: { subscription_payments: { code: 'XX' } },
+    });
+    await expect(approveRefund(fakeClient(state), 'refund-1', 'admin-1', NOW)).rejects.toMatchObject({
+      code: 'ENTITLEMENT_UNAVAILABLE',
+    });
+    expect(state.requests[0]).toMatchObject({ status: 'requested' });
+    expect(state.periods[0]).toMatchObject({ superseded_at: null });
+    expect(state.commissions[0]).toMatchObject({ status: 'pending', amount_pkr: 2800 });
+  });
+
+  it('blocks a crypto approval — writing nothing — when the payment row is missing', async () => {
+    const state = baseState({
+      requests: [
+        refundRow({
+          currency: 'USDT',
+          amount_paid: 100,
+          destination_type: 'usdt',
+          destination_value: 'TXyzAddress',
+          destination_network: 'trc20',
+        }),
+      ],
+      payments: [],
+      commissions: [commissionRow({ rate_snapshot: 10, amount_pkr: 2800 })],
+    });
+    await expect(approveRefund(fakeClient(state), 'refund-1', 'admin-1', NOW)).rejects.toMatchObject({
+      code: 'ENTITLEMENT_UNAVAILABLE',
+    });
+    expect(state.requests[0]).toMatchObject({ status: 'requested' });
+    expect(state.periods[0]).toMatchObject({ superseded_at: null });
+    expect(state.commissions[0]).toMatchObject({ status: 'pending', amount_pkr: 2800 });
+  });
+
   it('blocks the approval — writing nothing — when the commission cannot be adjusted', async () => {
     const state = baseState({
       commissions: [commissionRow()],

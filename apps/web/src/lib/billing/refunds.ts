@@ -455,7 +455,15 @@ async function keptPkrForRefund(
     .maybeSingle();
   if (error) failClosed(error, 'refund commission payment lookup failed');
   const row = asRow(data);
-  const amountPkr = row ? numberField(row, 'amount_pkr') : 0;
+  // A refund request naming a payment that no longer exists is
+  // corrupt data: fail loud instead of inventing a kept figure.
+  if (!row) {
+    failClosed(
+      new Error('Refund payment row missing for commission base'),
+      'refund commission payment missing'
+    );
+  }
+  const amountPkr = numberField(row, 'amount_pkr');
   if (request.amountPaid <= 0) return 0;
   return Math.round((amountPkr * (request.amountPaid - refundAmount)) / request.amountPaid);
 }
