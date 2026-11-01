@@ -223,6 +223,46 @@ function resolveRelativeRedirect(
     : cleanTrimmed;
 }
 
+/**
+ * Admin landing: an admin's post-login redirect must never land on the
+ * tenant Home page — it lands on the admin panel (the Billing route,
+ * which renders the Subscriptions approval view for admin sessions).
+ *
+ * Only Home-bound targets are rewritten. Any deeper target (a section,
+ * a returnUrl to a specific page) passes through unchanged, so an
+ * admin deep-linked to Sellers still lands on Sellers. The URL's form
+ * is preserved: a /tenant/-prefixed target stays prefixed, a bare
+ * root on a tenant host becomes /billing, and a bare relative root
+ * defaults to the prefixed panel path (the app-host form, which
+ * always renders). Search and hash are dropped on rewrite — the
+ * panel needs neither.
+ */
+export function redirectAdminHomeToPanel(redirectUrl: string, subdomain: string): string {
+  const sub = subdomain.toLowerCase();
+  let origin = '';
+  let path = '';
+  try {
+    const parsed = new URL(redirectUrl);
+    origin = parsed.origin;
+    path = parsed.pathname;
+  } catch {
+    path = redirectUrl.split(/[?#]/, 1)[0] ?? '';
+  }
+  const normalizedPath = path.toLowerCase();
+  const isHome =
+    normalizedPath === '/' ||
+    normalizedPath === '' ||
+    normalizedPath === `/tenant/${sub}` ||
+    normalizedPath === `/tenant/${sub}/`;
+  if (!isHome) return redirectUrl;
+  if (normalizedPath.startsWith('/tenant/')) {
+    const panelPath = `/tenant/${subdomain}/billing`;
+    return origin ? `${origin}${panelPath}` : panelPath;
+  }
+  if (origin) return `${origin}/billing`;
+  return `/tenant/${subdomain}/billing`;
+}
+
 export function sanitizeAuthRedirectUrl(
   rawReturnUrl: string | null | undefined,
   userSubdomain?: string | undefined,

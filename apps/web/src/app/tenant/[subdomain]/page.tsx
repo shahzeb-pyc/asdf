@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
 import React from 'react';
 import { headers } from 'next/headers';
+import { redirect } from 'next/navigation';
+import { getServerSessionContext } from '@/lib/auth';
 
 import { loadHomeData } from '@/components/home/home-data';
 import {
@@ -55,7 +57,9 @@ interface TenantIndexPageProps {
  * - Free: hero, free plan card, upgrade card, Prompt Library + Billing
  *   links only (nothing that would throw the upgrade dialog).
  * - Expired: hero plus the expired banner and renew button only.
- * - Admin: hero plus the admin-panel link only.
+ * - Admin: redirected to the admin panel (Billing → approvals view)
+ *   before render, so the admin branch below is only a fallback and
+ *   never the landing an admin sees.
  *
  * Server-first: all data loads in `loadHomeData` (one server module,
  * session + service-role client, every row scoped to the resolved
@@ -77,6 +81,18 @@ export default async function TenantIndexPage({ params }: Readonly<TenantIndexPa
   const rootDomain = process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'fbuploadpro.com';
   const useCleanPaths = shouldUseCleanTenantPaths(hostHeader, subdomain, rootDomain);
   const href = (path: string) => buildTenantHref(subdomain, path, useCleanPaths);
+
+  // Admins never land on Home: a direct load that reaches this page
+  // (notably the app-host /tenant/<subdomain> form, which middleware
+  // passes through) goes to the admin panel instead. Middleware
+  // already redirects the tenant-host and apex Home forms, so this
+  // only ever fires for the app-host form — and never loops, since
+  // the Billing route renders the approvals view for admins rather
+  // than redirecting back here.
+  const session = await getServerSessionContext();
+  if (session?.role === 'admin') {
+    redirect(href('/billing'));
+  }
 
   const pagesHref = href('/pages');
   const accountsHref = href('/accounts');

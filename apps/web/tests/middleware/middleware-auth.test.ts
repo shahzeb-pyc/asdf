@@ -127,9 +127,76 @@ describe('Next.js Edge Middleware Session Authentication & Tenant Isolation (Use
     expect(new URL(rewriteUrl!).pathname).toBe('/tenant/acme');
   });
 
-  it('allows cross-tenant inspection access for admin role', async () => {
+  it('redirects cross-tenant admin Home visits to that tenant\'s panel, never blocks them', async () => {
     // Admin with subdomain 'platform-admin' accessing 'acme' tenant
+    // Home: admins never land on Home, so the visit goes to that
+    // tenant's admin panel (Billing -> approvals) instead of being
+    // blocked or rewritten to Home.
     const req = new NextRequest('http://acme.localhost:3000/', {
+      headers: {
+        host: 'acme.localhost:3000',
+        cookie: `fbup_session=${adminToken}`,
+      },
+    });
+    const res = await middleware(req);
+    expect(res.status).toBe(307);
+    expect(res.headers.get('location')).toBe('http://acme.localhost:3000/billing');
+  });
+
+  it('redirects an already-authenticated admin on an entry route to the panel', async () => {
+    // Admin with subdomain 'platform-admin' hitting the central app
+    // login route while signed in: the entry-route redirect goes to
+    // the admin panel, never to the workspace root.
+    const req = new NextRequest('http://app.localhost:3000/login', {
+      headers: {
+        host: 'app.localhost:3000',
+        cookie: `fbup_session=${adminToken}`,
+      },
+    });
+    const res = await middleware(req);
+    expect(res.status).toBe(307);
+    expect(res.headers.get('location')).toBe(
+      'http://platform-admin.localhost:3000/billing'
+    );
+  });
+
+  it('redirects an already-authenticated admin on a vercel.app entry route to the prefixed panel', async () => {
+    // Vercel-preview form: the panel redirect keeps the /tenant/
+    // prefix instead of switching to the tenant host.
+    const req = new NextRequest('https://fbuploadpro.vercel.app/login', {
+      headers: {
+        host: 'fbuploadpro.vercel.app',
+        cookie: `fbup_session=${adminToken}`,
+      },
+    });
+    const res = await middleware(req);
+    expect(res.status).toBe(307);
+    expect(res.headers.get('location')).toBe(
+      'https://fbuploadpro.vercel.app/tenant/platform-admin/billing'
+    );
+  });
+
+  it('redirects an admin opening a tenant Home path on apex to that tenant\'s panel', async () => {
+    // Direct /tenant/<subdomain> hit on the apex host: the admin
+    // lands on that tenant's panel, not its Home.
+    const req = new NextRequest('https://fbuploadpro.vercel.app/tenant/acme', {
+      headers: {
+        host: 'fbuploadpro.vercel.app',
+        cookie: `fbup_session=${adminToken}`,
+      },
+    });
+    const res = await middleware(req);
+    expect(res.status).toBe(307);
+    expect(res.headers.get('location')).toBe(
+      'https://fbuploadpro.vercel.app/tenant/acme/billing'
+    );
+  });
+
+  it('still allows cross-tenant inspection access for admin role on deeper routes', async () => {
+    // The Home redirect must not become a tenant-isolation block:
+    // an admin inspecting another tenant's section still rewrites
+    // through to it.
+    const req = new NextRequest('http://acme.localhost:3000/pages', {
       headers: {
         host: 'acme.localhost:3000',
         cookie: `fbup_session=${adminToken}`,
@@ -139,7 +206,7 @@ describe('Next.js Edge Middleware Session Authentication & Tenant Isolation (Use
     expect(res.status).toBe(200);
     const rewriteUrl = res.headers.get('x-middleware-rewrite');
     expect(rewriteUrl).not.toBeNull();
-    expect(new URL(rewriteUrl!).pathname).toBe('/tenant/acme');
+    expect(new URL(rewriteUrl!).pathname).toBe('/tenant/acme/pages');
   });
 
   it('redirects authenticated user on .vercel.app root/login to /tenant/[subdomain]', async () => {

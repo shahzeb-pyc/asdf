@@ -73,6 +73,32 @@ function buildAuthenticatedWorkspaceRedirect(
   return NextResponse.redirect(workspaceUrl);
 }
 
+// Admin landing mirror of buildAuthenticatedWorkspaceRedirect: an
+// admin's entry-route redirect goes to the admin panel (Billing,
+// which renders the Subscriptions approval view for admins),
+// never to the workspace root.
+function buildAdminPanelRedirect(
+  request: NextRequest,
+  session: SessionPayload,
+  host: string,
+  rootDomain: string
+): NextResponse {
+  const cleanHost = host.toLowerCase().split(':')[0] || '';
+  const isLocalRoot = rootDomain.includes('localhost') || rootDomain.includes('127.0.0.1');
+  const isLocalHost = cleanHost.includes('localhost') || cleanHost.includes('127.0.0.1');
+
+  if (cleanHost.endsWith('.vercel.app') || (isLocalRoot && !isLocalHost)) {
+    return NextResponse.redirect(new URL(`/tenant/${session.subdomain}/billing`, request.url));
+  }
+
+  const panelUrl = new URL(request.url);
+  panelUrl.host = `${session.subdomain}.${rootDomain}`;
+  panelUrl.pathname = '/billing';
+  panelUrl.search = '';
+  panelUrl.hash = '';
+  return NextResponse.redirect(panelUrl);
+}
+
 function isReturnUrlTargetingTenant(
   returnUrlParam: string | null | undefined,
   tenantSubdomain: string,
@@ -239,6 +265,16 @@ function handleDirectTenantPathOnApex(
     return NextResponse.redirect(new URL('/login', request.url), 307);
   }
 
+  // Admins never land on the tenant Home route: a direct Home hit
+  // (bookmark, logo, typed URL) goes to the admin panel instead.
+  // Deeper tenant paths pass through unchanged.
+  if (
+    session.role === 'admin' &&
+    (pathname === `/tenant/${pathSubdomain}` || pathname === `/tenant/${pathSubdomain}/`)
+  ) {
+    return NextResponse.redirect(new URL(`/tenant/${pathSubdomain}/billing`, request.url), 307);
+  }
+
   const requestHeaders = buildTenantHeaders(request, pathSubdomain, pathname, session);
   setCspRequestHeaders(requestHeaders, nonce);
   const response = NextResponse.next({
@@ -364,6 +400,16 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
           return applyCspHeaders(response, nonce);
         }
 
+        // Admins never land on Home from an entry route: an
+        // already-authenticated admin session goes straight to the
+        // admin panel instead of the workspace root.
+        if (session.role === 'admin') {
+          return applyCspHeaders(
+            buildAdminPanelRedirect(request, session, host, rootDomain),
+            nonce
+          );
+        }
+
         return applyCspHeaders(
           buildAuthenticatedWorkspaceRedirect(request, session, host, rootDomain),
           nonce
@@ -467,6 +513,21 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
       return applyCspHeaders(NextResponse.redirect(authorizedUrl, 307), nonce);
     }
     return applyCspHeaders(NextResponse.redirect(new URL('/login', request.url), 307), nonce);
+  }
+
+  // Admins never land on the tenant Home route: a direct Home hit
+  // (bookmark, logo, typed URL, or a Home-bound post-login
+  // navigation) goes to the admin panel instead. On a tenant host
+  // the Home route is `/` or the prefixed `/tenant/<subdomain>`
+  // form; the panel target uses the clean path, matching the
+  // sidebar's clean-path links on tenant hosts.
+  if (
+    session.role === 'admin' &&
+    (pathname === '/' ||
+      pathname === `/tenant/${subdomain}` ||
+      pathname === `/tenant/${subdomain}/`)
+  ) {
+    return applyCspHeaders(NextResponse.redirect(new URL('/billing', request.url), 307), nonce);
   }
 
   // Rewrite to tenant workspace path (/tenant/[subdomain]/*)
