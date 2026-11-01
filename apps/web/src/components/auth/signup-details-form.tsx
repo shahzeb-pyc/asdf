@@ -34,7 +34,7 @@ import { Input } from '@/components/shared/ui/input';
 import { Button } from '@/components/shared/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/shared/ui/alert';
 import { PasswordInput } from '@/components/auth/password-input';
-import { sanitizeAuthErrorMessage } from '@/lib/auth-errors';
+import { EMAIL_RATE_LIMIT_MESSAGE, sanitizeAuthErrorMessage } from '@/lib/auth-errors';
 import { completeAuthRedirect } from '@/lib/auth-broadcast';
 import { api, isApiError } from '@/lib/api';
 import {
@@ -201,6 +201,15 @@ export function SignupDetailsForm({
       const body = (error.cause ?? null) as SignupErrorBody | null;
 
       if (error.status === 400 && body && handleServerFieldErrors(body)) {
+        return;
+      }
+      if (error.status === 429 && body?.emailRateLimited) {
+        // Supabase Auth's hourly email budget: no retry timing exists,
+        // so show the plain message with no countdown and leave the
+        // submit enabled — the user retries when ready.
+        setServerError(
+          sanitizeAuthErrorMessage(body?.error, EMAIL_RATE_LIMIT_MESSAGE)
+        );
         return;
       }
       if (error.status === 429) {

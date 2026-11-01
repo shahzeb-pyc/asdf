@@ -14,6 +14,7 @@ import {
   validateAndFormatE164Phone,
 } from '@fbuploadpro/contracts';
 import { sanitizeAuthRedirectUrl } from '@/lib/auth-redirect';
+import { EMAIL_RATE_LIMIT_MESSAGE, isEmailRateLimitError } from '../auth-errors';
 import { logServerError } from '../server-analytics';
 import { resolveCanonicalEmail } from './email';
 import { getSupabaseAdminClient } from './clients';
@@ -148,6 +149,17 @@ export async function signUpTenantUser(params: {
     if (authError) {
       if (authError.message?.toLowerCase().includes('already registered')) {
         throw new Error('Email is already registered');
+      }
+
+      // Supabase Auth's project-wide hourly email budget (GoTrue
+      // over_email_send_rate_limit). It carries no retry timing, so it
+      // must never fall into the after-N-seconds branch below and must
+      // never surface raw: the caller maps this code to a 429 with a
+      // plain message and no countdown.
+      if (isEmailRateLimitError(authError)) {
+        const emailRateLimitError = new Error(EMAIL_RATE_LIMIT_MESSAGE);
+        (emailRateLimitError as unknown as { code: string }).code = 'EMAIL_RATE_LIMITED';
+        throw emailRateLimitError;
       }
 
       const isRateLimited =
@@ -418,6 +430,7 @@ export async function resendSignupOtpViaSupabase(email: string): Promise<{
   otp?: string | undefined;
   cooldownSecondsRemaining?: number | undefined;
   error?: string | undefined;
+  emailRateLimited?: boolean | undefined;
 }> {
   let canonicalEmail: string;
   try {
@@ -433,6 +446,13 @@ export async function resendSignupOtpViaSupabase(email: string): Promise<{
       email: canonicalEmail,
     });
     if (error) {
+      if (isEmailRateLimitError(error)) {
+        return {
+          success: false,
+          error: EMAIL_RATE_LIMIT_MESSAGE,
+          emailRateLimited: true,
+        };
+      }
       const match = error.message.match(/after\s+(\d+)\s+seconds/i);
       const cooldown = match ? Number.parseInt(match[1], 10) : undefined;
       return {

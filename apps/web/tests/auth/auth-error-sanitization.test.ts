@@ -1,5 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
-import { sanitizeAuthErrorMessage, formatAuthErrorResponse } from '../../src/lib/auth-errors';
+import {
+  sanitizeAuthErrorMessage,
+  formatAuthErrorResponse,
+  EMAIL_RATE_LIMIT_MESSAGE,
+  isEmailRateLimitError,
+} from '../../src/lib/auth-errors';
 
 describe('Auth Error Sanitization & Zero Leakage (T001, T002)', () => {
   describe('sanitizeAuthErrorMessage', () => {
@@ -157,6 +162,50 @@ describe('Auth Error Sanitization & Zero Leakage (T001, T002)', () => {
       const msg5 = 'The full technology stack is operational.';
       expect(sanitizeAuthErrorMessage(msg5)).toBe(msg5);
     });
+  });
+});
+
+describe('Supabase Auth hourly email budget (over_email_send_rate_limit)', () => {
+  it('detects the raw GoTrue message and the GoTrue code', () => {
+    expect(isEmailRateLimitError(new Error('email rate limit exceeded'))).toBe(true);
+    const coded = new Error('something failed') as Error & { code: string };
+    coded.code = 'over_email_send_rate_limit';
+    expect(isEmailRateLimitError(coded)).toBe(true);
+    const flagged = new Error(EMAIL_RATE_LIMIT_MESSAGE) as Error & { code: string };
+    flagged.code = 'EMAIL_RATE_LIMITED';
+    expect(isEmailRateLimitError(flagged)).toBe(true);
+    expect(isEmailRateLimitError(new Error('For security purposes, please wait 45 seconds'))).toBe(
+      false
+    );
+  });
+
+  it('maps the raw GoTrue message to a 429 with the plain message, flag, and no countdown', async () => {
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const response = formatAuthErrorResponse(new Error('email rate limit exceeded'), {
+      fallbackMessage: 'Unable to initiate account registration. Please try again shortly.',
+    });
+    expect(response.status).toBe(429);
+    const data = await response.json();
+    expect(data.error).toBe(EMAIL_RATE_LIMIT_MESSAGE);
+    expect(data.error).not.toContain('email rate limit exceeded');
+    expect(data.emailRateLimited).toBe(true);
+    expect(data.retryAfterSeconds).toBeUndefined();
+    expect(data.cooldownSecondsRemaining).toBeUndefined();
+    expect(response.headers.get('Retry-After')).toBeNull();
+    consoleSpy.mockRestore();
+  });
+
+  it('maps the EMAIL_RATE_LIMITED code the same way, never the raw dump', async () => {
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const err = new Error(EMAIL_RATE_LIMIT_MESSAGE) as Error & { code: string };
+    err.code = 'EMAIL_RATE_LIMITED';
+    const response = formatAuthErrorResponse(err);
+    expect(response.status).toBe(429);
+    const data = await response.json();
+    expect(data.error).toBe(EMAIL_RATE_LIMIT_MESSAGE);
+    expect(data.emailRateLimited).toBe(true);
+    expect(data.retryAfterSeconds).toBeUndefined();
+    consoleSpy.mockRestore();
   });
 });
 
