@@ -2,8 +2,8 @@
 
 import * as React from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { ArrowLeftIcon, CheckIcon, UploadIcon, XIcon } from 'lucide-react';
-import { apiGet, apiPost, buildTenantApiPath, getErrorMessage } from '@/lib/api';
+import { ArrowLeftIcon, CheckIcon, Loader2Icon, UploadIcon, XIcon } from 'lucide-react';
+import { apiGet, apiPost, buildTenantApiPath, getErrorMessage, isApiError } from '@/lib/api';
 import {
   BillingPaymentItemSchema,
   BillingStatusResponseSchema,
@@ -27,6 +27,12 @@ import {
   type UpgradeQuote,
 } from '@fbuploadpro/contracts';
 import { BANK_PAYMENT_DETAILS } from '@/lib/billing/payment-details';
+import {
+  ScreenshotUploadError,
+  timeoutSignal,
+  uploadScreenshotFile,
+} from '@/lib/billing/screenshot-upload';
+import { reportError } from '@/lib/report-error';
 import { cn } from '@/lib/utils';
 import { Alert, AlertDescription, AlertTitle } from '@/components/shared/ui/alert';
 import { Button } from '@/components/shared/ui/button';
@@ -276,6 +282,35 @@ export function BillingView({
   const [paymentType, setPaymentType] = React.useState<PaymentType>('bank');
   const [bankMethod, setBankMethod] = React.useState<BankMethod>('easypaisa');
   const [screenshot, setScreenshot] = React.useState<File | null>(null);
+  /**
+   * Screenshot upload state (submit rewrite 2026-11-01): the file
+   * uploads straight to R2 as soon as it is picked, and submit is
+   * blocked until the upload finishes. `uploading` shows its own
+   * loading state in the screenshot area; `failed` shows the
+   * specific upload error with a retry action — the submit button
+   * never fires without an uploaded key, and a failed upload never
+   * falls through to the generic submit error.
+   */
+  type ScreenshotUploadState =
+    | { status: 'idle' }
+    | { status: 'uploading' }
+    | { status: 'uploaded'; storageKey: string }
+    | { status: 'failed'; error: string };
+  const [screenshotUpload, setScreenshotUpload] = React.useState<ScreenshotUploadState>({
+    status: 'idle',
+  });
+  const screenshotUploadRunRef = React.useRef(0);
+  const screenshotUploadPromiseRef = React.useRef<Promise<string | null> | null>(null);
+  /** Handler-level double-submit guard (see submitBank). */
+  const submitBusyRef = React.useRef(false);
+  /**
+   * Stable idempotency key for the current checkout visit, minted
+   * on entering checkout. Automatic and manual retries of the same
+   * submission reuse it, so a retry can replay — never duplicate.
+   * Cleared on success; a fresh visit mints a fresh key.
+   */
+  const submissionKeyRef = React.useRef<string | null>(null);
+  const [bankSubmitFailed, setBankSubmitFailed] = React.useState(false);
   const [cryptoNetwork, setCryptoNetwork] = React.useState<'trc20' | 'bep20'>('trc20');
   const [confirmation, setConfirmation] = React.useState<ConfirmationData | null>(null);
   const [appliedCoupon, setAppliedCoupon] = React.useState<CouponValidateResponse | null>(null);
@@ -428,6 +463,10 @@ export function BillingView({
     // re-entering checkout always starts without one, so a stale
     // discount can never ride along with changed counts.
     setAppliedCoupon(null);
+    setBankSubmitFailed(false);
+    // Fresh checkout visit, fresh submission key: retries within
+    // the visit reuse it, a later visit never replays this one.
+    submissionKeyRef.current = crypto.randomUUID();
     goToPurchaseStep('checkout');
   }
 
@@ -440,7 +479,156 @@ export function BillingView({
     }
   }
 
+  function mapUploadError(error: unknown): string {
+    if (error instanceof ScreenshotUploadError) return error.message;
+    if (isApiError(error)) {
+      if (error.kind === 'session-expired') return error.message;
+      if (error.kind === 'network') {
+        return 'The screenshot could not be uploaded. Check your connection and try uploading again.';
+      }
+      if (error.kind === 'http' && error.status !== undefined && error.status >= 500) {
+        return 'The screenshot upload failed. Try uploading again.';
+      }
+      return error.message;
+    }
+    return 'The screenshot could not be uploaded. Try uploading again.';
+  }
+
+  /**
+   * Upload one picked file straight to R2 and report its state.
+   * Returns the storage key, or null when the upload failed or was
+   * superseded by a newer pick — never throws, so a stale pick
+   * cannot surface as an unhandled rejection. The returned promise
+   * is what submit awaits when it lands mid-upload.
+   */
+  function beginScreenshotUpload(file: File): Promise<string | null> {
+    const run = ++screenshotUploadRunRef.current;
+    setScreenshotUpload({ status: 'uploading' });
+    const done = (async (): Promise<string | null> => {
+      try {
+        const result = await uploadScreenshotFile(subdomain, file);
+        if (screenshotUploadRunRef.current !== run) return null;
+        setScreenshotUpload({ status: 'uploaded', storageKey: result.storageKey });
+        return result.storageKey;
+      } catch (error) {
+        if (screenshotUploadRunRef.current !== run) return null;
+        setScreenshotUpload({ status: 'failed', error: mapUploadError(error) });
+        return null;
+      }
+    })();
+    screenshotUploadPromiseRef.current = done;
+    void done.then(() => {
+      if (screenshotUploadPromiseRef.current === done) screenshotUploadPromiseRef.current = null;
+    });
+    return done;
+  }
+
+  function handleScreenshotSelect(file: File | null): void {
+    // A newer pick abandons the previous upload's state updates;
+    // bytes already in flight land under an unguessable key that
+    // nothing references, never attached to a payment.
+    screenshotUploadRunRef.current += 1;
+    screenshotUploadPromiseRef.current = null;
+    setScreenshot(file);
+    if (!file) {
+      setScreenshotUpload({ status: 'idle' });
+      return;
+    }
+    if (
+      !['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type) ||
+      file.size > 10 * 1024 * 1024
+    ) {
+      setScreenshotUpload({
+        status: 'failed',
+        error: 'The screenshot must be a PNG, JPG, WebP, or GIF image under 10 MB.',
+      });
+      return;
+    }
+    void beginScreenshotUpload(file);
+  }
+
+  function retryScreenshotUpload(): void {
+    if (screenshot) void beginScreenshotUpload(screenshot);
+  }
+
+  function clearScreenshot(): void {
+    screenshotUploadRunRef.current += 1;
+    screenshotUploadPromiseRef.current = null;
+    setScreenshot(null);
+    setScreenshotUpload({ status: 'idle' });
+    if (screenshotInputRef.current) screenshotInputRef.current.value = '';
+  }
+
+  /** Fallback for a truly unknown submit error — logged, never silent. */
+  const UNKNOWN_SUBMIT_MESSAGE =
+    'Something went wrong while saving your payment. Your screenshot is still attached — try again.';
+
+  function mapSubmitError(error: unknown): string {
+    if (isApiError(error)) {
+      if (error.kind === 'session-expired') return error.message;
+      if (error.kind === 'network') {
+        return 'Connection problem. Your screenshot is still attached — try again.';
+      }
+      if (error.kind === 'aborted') {
+        return 'The request timed out. Your screenshot is still attached — try again.';
+      }
+      if (error.kind === 'http') {
+        if (error.status === 409) return PENDING_CHECKOUT_MESSAGE;
+        // Server specifics flow through: validation, coupon, and
+        // the payment route's own save-failed message.
+        return error.message;
+      }
+      // Only 'parse' remains after the kinds above are excluded.
+      return 'The server returned an unexpected response. Your screenshot is still attached — try again.';
+    }
+    return UNKNOWN_SUBMIT_MESSAGE;
+  }
+
+  function isTransientSubmitError(error: unknown): boolean {
+    if (!isApiError(error)) return false;
+    if (error.kind === 'network' || error.kind === 'aborted') return true;
+    return error.kind === 'http' && error.status !== undefined && error.status >= 500;
+  }
+
+  /**
+   * One payment POST attempt set: a single automatic retry on a
+   * transient failure, with the SAME submission key and the SAME
+   * uploaded screenshot key — so a retry replays or 409s, never
+   * double-creates, and never re-uploads.
+   */
+  async function postBankPayment(submissionKey: string, storageKey: string) {
+    const body = {
+      counts: effectiveCounts,
+      bankMethod,
+      screenshotStorageKey: storageKey,
+      ...(appliedCoupon ? { couponCode: appliedCoupon.code } : {}),
+    };
+    const signal = timeoutSignal(60_000);
+    const options = {
+      schema: BillingPaymentItemSchema,
+      headers: { 'Idempotency-Key': submissionKey },
+      ...(signal ? { signal } : {}),
+    };
+    try {
+      return await apiPost(buildTenantApiPath(subdomain, '/billing/payments'), body, options);
+    } catch (error) {
+      if (!isTransientSubmitError(error)) throw error;
+      const retrySignal = timeoutSignal(60_000);
+      return await apiPost(buildTenantApiPath(subdomain, '/billing/payments'), body, {
+        ...options,
+        ...(retrySignal ? { signal: retrySignal } : {}),
+      });
+    }
+  }
+
   async function submitBank() {
+    // Handler-level double-submit guard: the button's disabled prop
+    // alone cannot stop two taps landing before React re-renders
+    // (the old handler had no guard at all, so a fast double-tap
+    // fired two submissions and the loser 409'd or orphaned an
+    // upload). The ref closes that gap; the button stays disabled
+    // too, as the visible state.
+    if (submitBusyRef.current) return;
     if (pendingPayment) {
       setFormError(PENDING_CHECKOUT_MESSAGE);
       return;
@@ -457,19 +645,35 @@ export function BillingView({
       setFormError('Add a screenshot of your payment so we can approve it.');
       return;
     }
+    // WAIT FOR THE UPLOAD: submit never fires while the screenshot
+    // is still in flight. The button is disabled during upload, but
+    // this await is the backstop — any path that reaches here
+    // mid-upload waits for the upload promise instead of submitting
+    // without a key. A failed upload stops here with the upload's
+    // own error, never the generic submit error. Busy is set before
+    // the wait so the form locks while submit is pending.
+    submitBusyRef.current = true;
     setBusy('bank');
     setFormError(null);
+    setBankSubmitFailed(false);
     try {
-      const form = new FormData();
-      form.append('counts', JSON.stringify(effectiveCounts));
-      form.append('bankMethod', bankMethod);
-      form.append('screenshot', screenshot);
-      if (appliedCoupon) {
-        form.append('couponCode', appliedCoupon.code);
+      let storageKey: string | null = null;
+      if (screenshotUpload.status === 'uploaded') {
+        storageKey = screenshotUpload.storageKey;
+      } else if (screenshotUpload.status === 'uploading' && screenshotUploadPromiseRef.current) {
+        storageKey = await screenshotUploadPromiseRef.current;
       }
-      await apiPost(buildTenantApiPath(subdomain, '/billing/payments'), form, {
-        schema: BillingPaymentItemSchema,
-      });
+      if (!storageKey) {
+        setFormError(
+          screenshotUpload.status === 'failed'
+            ? 'Your screenshot couldn\'t be uploaded. Retry the upload to submit.'
+            : 'Wait for your screenshot to finish uploading, then submit.'
+        );
+        return;
+      }
+      const submissionKey = submissionKeyRef.current ?? crypto.randomUUID();
+      submissionKeyRef.current = submissionKey;
+      await postBankPayment(submissionKey, storageKey);
       // Order matters (checkout flicker fix): the checkout step renders
       // the screenshot-upload CTA whenever `screenshot` is null, so
       // clearing it BEFORE the refetch + navigation made the UI flash
@@ -490,11 +694,23 @@ export function BillingView({
         couponCode: appliedCoupon ? appliedCoupon.code : null,
       });
       goToPurchaseStep('confirmation');
-      setScreenshot(null);
-      if (screenshotInputRef.current) screenshotInputRef.current.value = '';
+      clearScreenshot();
+      submissionKeyRef.current = null;
     } catch (err) {
-      setFormError(getErrorMessage(err));
+      const message = mapSubmitError(err);
+      setFormError(message);
+      setBankSubmitFailed(true);
+      if (message === UNKNOWN_SUBMIT_MESSAGE) {
+        reportError(err, { source: 'billing-submit' });
+      }
+      // A 409 means a payment IS pending (created by the attempt
+      // itself, or another tab): refresh so the pending card, not a
+      // dead retry button, is what the user sees next.
+      if (isApiError(err) && err.kind === 'http' && err.status === 409) {
+        void load();
+      }
     } finally {
+      submitBusyRef.current = false;
       setBusy(null);
     }
   }
@@ -614,12 +830,19 @@ export function BillingView({
     Boolean(quoteError) ||
     pendingPayment !== null ||
     fullyCovered;
-  const bankDisabled = checkoutDisabled || !screenshot;
+  const bankDisabled = checkoutDisabled || !screenshot || screenshotUpload.status !== 'uploaded';
   const bankDisabledReason = fullyCovered
     ? 'Your coupon covers the full amount — activate your plan above, no payment needed.'
     : units === 0
       ? 'Choose at least one page or account first.'
-      : plainQuoteError(quoteError) ?? (!screenshot ? 'Add a screenshot of your payment so we can approve it.' : null);
+      : plainQuoteError(quoteError) ??
+        (!screenshot
+          ? 'Add a screenshot of your payment so we can approve it.'
+          : screenshotUpload.status === 'uploading'
+            ? 'Uploading your screenshot — submit unlocks when it finishes.'
+            : screenshotUpload.status === 'failed'
+              ? 'Your screenshot couldn\'t be uploaded. Retry the upload to submit.'
+              : null);
 
   // Purchase rows name the unit only. Included/in-use counts belong
   // to My Plan and are deliberately NOT shown here — the input
@@ -1050,30 +1273,53 @@ export function BillingView({
                         type="file"
                         accept="image/png,image/jpeg,image/webp,image/gif"
                         className="sr-only"
-                        onChange={(event) => setScreenshot(event.target.files?.[0] ?? null)}
+                        onChange={(event) => handleScreenshotSelect(event.target.files?.[0] ?? null)}
                       />
                       {screenshot ? (
-                        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-line bg-panel px-4 py-3">
-                          <span className="flex min-w-0 items-center gap-2 text-body text-ink">
-                            <UploadIcon aria-hidden className="size-4 shrink-0 text-ink-sub" />
-                            <span className="truncate">{screenshot.name}</span>
-                          </span>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                              setScreenshot(null);
-                              if (screenshotInputRef.current) screenshotInputRef.current.value = '';
-                            }}
-                          >
-                            <XIcon aria-hidden className="size-4" /> Remove
-                          </Button>
+                        <div className="flex flex-col gap-2">
+                          <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-line bg-panel px-4 py-3">
+                            <span className="flex min-w-0 items-center gap-2 text-body text-ink">
+                              {screenshotUpload.status === 'uploading' ? (
+                                <Loader2Icon
+                                  aria-hidden
+                                  className="size-4 shrink-0 animate-spin text-ink-sub"
+                                />
+                              ) : screenshotUpload.status === 'uploaded' ? (
+                                <BillingStatusMark kind="ok" label="Uploaded" />
+                              ) : (
+                                <UploadIcon aria-hidden className="size-4 shrink-0 text-ink-sub" />
+                              )}
+                              <span className="truncate">{screenshot.name}</span>
+                              {screenshotUpload.status === 'uploading' ? (
+                                <span className="shrink-0 text-body text-ink-sub">
+                                  Uploading screenshot…
+                                </span>
+                              ) : null}
+                            </span>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={busy !== null}
+                              onClick={clearScreenshot}
+                            >
+                              <XIcon aria-hidden className="size-4" /> Remove
+                            </Button>
+                          </div>
+                          {screenshotUpload.status === 'failed' ? (
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <p className="text-body text-ink-sub">{screenshotUpload.error}</p>
+                              <Button variant="outline" size="sm" onClick={retryScreenshotUpload}>
+                                Retry upload
+                              </Button>
+                            </div>
+                          ) : null}
                         </div>
                       ) : (
                         <button
                           type="button"
+                          disabled={busy !== null}
                           onClick={() => screenshotInputRef.current?.click()}
-                          className="flex flex-col items-center gap-2 rounded-md border border-dashed border-line bg-panel px-4 py-6 text-center transition-colors hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link"
+                          className="flex flex-col items-center gap-2 rounded-md border border-dashed border-line bg-panel px-4 py-6 text-center transition-colors hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link disabled:cursor-not-allowed disabled:opacity-60"
                         >
                           <UploadIcon aria-hidden className="size-5 text-ink-sub" />
                           <span className="text-body font-medium text-ink">
@@ -1146,6 +1392,19 @@ export function BillingView({
                   <Alert variant="destructive">
                     <AlertTitle>Couldn&apos;t complete that</AlertTitle>
                     <AlertDescription>{formError}</AlertDescription>
+                    {bankSubmitFailed && screenshotUpload.status === 'uploaded' ? (
+                      <div className="mt-3">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void submitBank()}
+                          loading={busy === 'bank'}
+                          disabled={bankDisabled}
+                        >
+                          Try again
+                        </Button>
+                      </div>
+                    ) : null}
                   </Alert>
                 ) : null}
               </CardContent>

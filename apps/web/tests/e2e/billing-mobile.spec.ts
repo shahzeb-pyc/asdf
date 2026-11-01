@@ -106,6 +106,35 @@ async function gotoBilling(page: Page, view: string) {
   await page.goto(`/tenant/${TENANT.subdomain}/billing?view=${view}`);
 }
 
+/**
+ * Screenshot upload fixtures (submit rewrite 2026-11-01): picking a
+ * file mints a presigned URL, then PUTs the bytes straight to R2.
+ * The mint returns a fake R2 URL the test can route; `delayMs`
+ * holds the PUT open so the uploading state is observable.
+ * Register AFTER the payments fixture: Playwright matches routes
+ * in reverse registration order, and the payments pattern would
+ * otherwise swallow the mint URL.
+ */
+async function installScreenshotUploadFixtures(page: Page, delayMs = 0): Promise<void> {
+  await page.route(
+    `**/api/tenant/${TENANT.subdomain}/billing/payments/screenshot-upload`,
+    (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          storageKey: 'billing-screenshots/user-1/shot.png',
+          uploadUrl: 'https://r2.example.com/billing-screenshots/user-1/shot.png?sig=test',
+          expiresInSeconds: 900,
+        }),
+      })
+  );
+  await page.route('**/r2.example.com/**', async (route) => {
+    if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    await route.fulfill({ status: 200, body: '' });
+  });
+}
+
 test.describe('billing at phone widths', () => {
   for (const width of [360, 390]) {
     test(`Purchase fits ${width}px: pending banner only, builder hidden`, async ({
@@ -229,6 +258,7 @@ test.describe('billing at phone widths', () => {
         body: JSON.stringify(paymentItem()),
       })
     );
+    await installScreenshotUploadFixtures(page);
     await gotoBilling(page, 'purchase');
 
     await page.getByLabel('Facebook pages').fill('1');
@@ -248,6 +278,56 @@ test.describe('billing at phone widths', () => {
       mimeType: 'image/png',
       buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47]),
     });
+    // Submit unlocks only once the upload lands.
+    await expect(page.getByText('Uploaded')).toBeVisible();
+    await page.getByRole('button', { name: 'Submit payment for approval' }).click();
+    await expect(page.getByText('Payment submitted')).toBeVisible();
+    await expectNoDocumentOverflow(page);
+  });
+
+  test('Purchase checkout shows the upload state and blocks submit until it lands at 360px', async ({
+    page,
+    context,
+  }) => {
+    await page.setViewportSize({ width: 360, height: 844 });
+    await useUserSession(context);
+    const state = createFixtureState();
+    await installApiFixtures(page, state);
+    await installBillingFixture(page, {
+      entitlement: freeEntitlement(),
+      payments: [],
+    });
+    await page.route(`**/api/tenant/${TENANT.subdomain}/billing/payments`, (route) =>
+      route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify(paymentItem()),
+      })
+    );
+    await installScreenshotUploadFixtures(page, 900);
+    await gotoBilling(page, 'purchase');
+
+    await page.getByLabel('Facebook pages').fill('1');
+    await page.getByRole('button', { name: 'Continue to checkout' }).click();
+    await page.setInputFiles('#billing-screenshot', {
+      name: 'proof.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+    });
+    // While the PUT is held open: the screenshot area shows its own
+    // loading state, and submit is disabled — it cannot fire early.
+    await expect(page.getByText('Uploading screenshot…')).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: 'Submit payment for approval' })
+    ).toBeDisabled();
+    await expect(
+      page.getByText('Uploading your screenshot — submit unlocks when it finishes.')
+    ).toBeVisible();
+    // Once the upload lands, submit unlocks and the flow completes.
+    await expect(page.getByText('Uploaded')).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: 'Submit payment for approval' })
+    ).toBeEnabled();
     await page.getByRole('button', { name: 'Submit payment for approval' }).click();
     await expect(page.getByText('Payment submitted')).toBeVisible();
     await expectNoDocumentOverflow(page);

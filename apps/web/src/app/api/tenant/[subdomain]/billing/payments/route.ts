@@ -1,13 +1,12 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import {
-  BankMethodSchema,
-  PlatformCountsSchema,
+  BillingBankPaymentSubmitSchema,
   totalPricePkr,
 } from '@fbuploadpro/contracts';
 import { authenticateTenantRoute } from '@/lib/route-auth';
 import { logServerError } from '@/lib/server-analytics';
-import { getStorageService } from '@/lib/storage';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { readJsonBody } from '@/lib/request-body';
 import {
   getActivePeriod,
   hasPendingPayment,
@@ -33,23 +32,37 @@ import {
 
 /**
  * POST /api/tenant/[subdomain]/billing/payments
- * Manual bank payment, multipart form: counts (JSON), bankMethod,
- * and a payment screenshot image (max 10 MB).
+ * Manual bank payment, JSON body: counts, bankMethod, the storage
+ * key of an already-uploaded screenshot, and an optional coupon
+ * code (submit rewrite 2026-11-01).
+ *
+ * The screenshot no longer rides this request. The browser uploads
+ * it straight to R2 first (see the screenshot-upload route), so a
+ * multi-MB image is never bundled with the coupon hold, the DB
+ * insert, and the idempotency store into one long request — that
+ * bundling is what made submissions fail "randomly" with the
+ * generic error whenever any downstream step blipped. The payment
+ * row records the key; only the key is stored, never a public URL.
+ * The payment stays pending until an admin approves it.
  *
  * The amount is always computed server-side from the current
  * period: a fresh purchase pays the full total; an active period
- * can only be upgraded, with credit for the days left. The
- * screenshot goes to the app's R2 storage under an unguessable
- * key; only the key is stored on the payment row, never a public
- * URL. The payment stays pending until an admin approves it.
+ * can only be upgraded, with credit for the days left.
+ *
+ * Errors are specific, never the old generic catch-all: a failed
+ * save says the screenshot is still attached and to try again (a
+ * retry reuses the uploaded key with the same idempotency key, so
+ * it can never double-create), and a failure after the row was
+ * created is never reported as a failure at all — the idempotency
+ * store is best-effort once the payment exists, and a retry then
+ * hits the truthful one-pending 409 instead of a lie.
  */
-const MAX_SCREENSHOT_BYTES = 10 * 1024 * 1024;
-const SCREENSHOT_EXTENSIONS: Record<string, string> = {
-  'image/png': 'png',
-  'image/jpeg': 'jpg',
-  'image/webp': 'webp',
-  'image/gif': 'gif',
-};
+const SCREENSHOT_KEY_PATTERN =
+  /^billing-screenshots\/([0-9a-fA-F-]{36})\/[0-9a-fA-F-]{36}\.(png|jpg|webp|gif)$/;
+
+/** The retry is safe: the screenshot is already stored, nothing is charged twice. */
+const SAVE_FAILED_MESSAGE =
+  "We couldn't save your payment. Your screenshot is still attached — try again.";
 
 export async function POST(
   request: NextRequest,
@@ -79,13 +92,14 @@ export async function POST(
 
   // Billing idempotency (audit fix 2026-11-01): a retry with a known
   // key replays the stored response instead of creating a second
-  // pending payment.
-  // The workspace is only the idempotency scope. If it cannot be
-  // resolved, the lookup still runs (an invalid key is rejected
-  // either way) but replay and storage are skipped with a loud log
-  // rather than failing the submission — the one-pending guard
-  // still protects against duplicates, and the payment row itself
-  // carries no workspace (its workspace_id column is dead).
+  // pending payment. Checkout now always sends a stable key per
+  // submission, so automatic and manual retries replay instead of
+  // re-inserting. The workspace is only the idempotency scope. If
+  // it cannot be resolved, the lookup still runs (an invalid key is
+  // rejected either way) but replay and storage are skipped with a
+  // loud log rather than failing the submission — the one-pending
+  // guard still protects against duplicates, and the payment row
+  // itself carries no workspace (its workspace_id column is dead).
   let workspaceId: string | null = null;
   try {
     workspaceId = await resolveTenantWorkspaceId(client, subdomain, session.userId, session.role);
@@ -123,30 +137,15 @@ export async function POST(
     );
   }
 
-  let form: FormData;
-  try {
-    form = await request.formData();
-  } catch {
+  const bodyResult = await readJsonBody(request);
+  if (!bodyResult.ok) {
     return NextResponse.json(
       { error: 'INVALID_REQUEST', message: 'The payment could not be read. Please try again.' },
       { status: 400 }
     );
   }
-
-  const countsRaw = form.get('counts');
-  const bankMethodRaw = form.get('bankMethod');
-  const file = form.get('screenshot');
-  let countsParsed: unknown = null;
-  if (typeof countsRaw === 'string') {
-    try {
-      countsParsed = JSON.parse(countsRaw) as unknown;
-    } catch {
-      countsParsed = null;
-    }
-  }
-  const countsResult = PlatformCountsSchema.safeParse(countsParsed);
-  const bankResult = BankMethodSchema.safeParse(bankMethodRaw);
-  if (!countsResult.success || !bankResult.success || totalPricePkr(countsResult.data) <= 0) {
+  const body = BillingBankPaymentSubmitSchema.safeParse(bodyResult.value);
+  if (!body.success || totalPricePkr(body.data.counts) <= 0) {
     return NextResponse.json(
       {
         error: 'INVALID_REQUEST',
@@ -155,22 +154,16 @@ export async function POST(
       { status: 400 }
     );
   }
-  // One coupon per purchase, enforced here: a second couponCode
-  // field is a 400, never a silent second discount.
-  const couponCodes = form
-    .getAll('couponCode')
-    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
-  if (couponCodes.length > 1) {
-    return NextResponse.json(
-      {
-        error: 'INVALID_REQUEST',
-        message: 'Only one coupon can be used per purchase.',
-      },
-      { status: 400 }
-    );
-  }
-  const couponCode = couponCodes.length === 1 ? couponCodes[0] : null;
-  if (file === null || typeof file === 'string' || file.size === 0) {
+  const { counts, bankMethod } = body.data;
+  const couponCode = body.data.couponCode ?? null;
+
+  // The screenshot must already exist under this caller's own
+  // namespace. A missing key means no upload happened; a key
+  // outside the namespace is a forgery attempt, not a client bug —
+  // both are refused before any row is created.
+  const screenshotStorageKey = body.data.screenshotStorageKey;
+  const keyMatch = SCREENSHOT_KEY_PATTERN.exec(screenshotStorageKey);
+  if (!keyMatch) {
     return NextResponse.json(
       {
         error: 'INVALID_REQUEST',
@@ -179,12 +172,11 @@ export async function POST(
       { status: 400 }
     );
   }
-  const extension = SCREENSHOT_EXTENSIONS[file.type];
-  if (!extension || file.size > MAX_SCREENSHOT_BYTES) {
+  if (keyMatch[1].toLowerCase() !== session.userId.toLowerCase()) {
     return NextResponse.json(
       {
         error: 'INVALID_REQUEST',
-        message: 'The screenshot must be a PNG, JPG, WebP, or GIF image under 10 MB.',
+        message: 'That screenshot does not belong to this payment. Re-upload your screenshot and try again.',
       },
       { status: 400 }
     );
@@ -198,9 +190,9 @@ export async function POST(
   let heldRedemption: CouponRedemptionRow | null = null;
   let redemptionLinked = false;
   try {
-    const counts = countsResult.data;
-    // One pending payment per user: checked before any screenshot is
-    // stored and before any row is created.
+    // One pending payment per user: checked before any row is
+    // created. The screenshot is already stored by now; a refusal
+    // orphans only unguessable bytes, never a payment.
     if (await hasPendingPayment(client, session.userId)) {
       return NextResponse.json(
         { error: 'PENDING_PAYMENT_EXISTS', message: PENDING_PAYMENT_EXISTS_MESSAGE },
@@ -259,37 +251,12 @@ export async function POST(
       amountPkr -= discountPkr;
     }
 
-    const storageKey = `billing-screenshots/${session.userId}/${crypto.randomUUID()}.${extension}`;
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    try {
-      await getStorageService().putObject({
-        key: storageKey,
-        body: bytes,
-        contentType: file.type,
-      });
-    } catch (err) {
-      if (heldRedemption) {
-        try {
-          await releaseRedemption(client, heldRedemption);
-        } catch (releaseError) {
-          logServerError('[billing] coupon release after screenshot failure failed', releaseError, {
-            source: 'billing',
-          });
-        }
-      }
-      logServerError('[billing] screenshot upload failed', err, { source: 'billing' });
-      return NextResponse.json(
-        { error: 'The screenshot could not be saved. Please try again.' },
-        { status: 502 }
-      );
-    }
-
     const { data, error } = await client
       .from('subscription_payments')
       .insert({
         user_id: session.userId,
         method: 'bank',
-        bank_method: bankResult.data,
+        bank_method: bankMethod,
         status: 'pending',
         facebook_count: counts.facebook,
         instagram_count: counts.instagram,
@@ -299,7 +266,7 @@ export async function POST(
         youtube_count: counts.youtube,
         amount_pkr: amountPkr,
         is_upgrade: isUpgrade,
-        screenshot_storage_key: storageKey,
+        screenshot_storage_key: screenshotStorageKey,
         coupon_code: couponCode ? couponCode.trim().toUpperCase() : null,
         discount_pkr: discountPkr,
       })
@@ -311,13 +278,11 @@ export async function POST(
       // Race backstop: two submissions that both passed the pending
       // check can still collide on the one-pending-per-user index.
       // The loser gets the same plain 409 as the check above, and no
-      // second row exists — the screenshot it uploaded is orphaned
-      // bytes under an unguessable key, never attached to a payment.
-      // The held coupon is released FIRST (audit fix 2026-11-01):
-      // this is a plain return, not a throw, so the catch below
-      // would never release it — returning without releasing used
-      // to strand the hold (burning a one-time coupon or debiting
-      // a balance with no payment to show for it).
+      // second row exists. The held coupon is released FIRST (audit
+      // fix 2026-11-01): this is a plain return, not a throw, so
+      // the catch below would never release it — returning without
+      // releasing used to strand the hold (burning a one-time
+      // coupon or debiting a balance with no payment to show for it).
       if (heldRedemption) {
         try {
           await releaseRedemption(client, heldRedemption);
@@ -333,13 +298,12 @@ export async function POST(
       );
     }
     if (error || !data) {
-      // Diagnostic only: the Supabase error was previously discarded here,
-      // so the server log could not say WHY the insert was rejected
-      // (e.g. 42501 RLS denial vs 42P01 missing table vs 42703 missing
-      // column). Log the PostgREST fields server-side, then still throw
-      // the generic error so the user-facing message is unchanged.
-      // PostgREST code/message/details/hint for an insert describe the
-      // schema/constraint failure, not row contents or secrets.
+      // Diagnostic only: the Supabase error was previously discarded
+      // here, so the server log could not say WHY the insert was
+      // rejected (e.g. 42501 RLS denial vs 42P01 missing table vs
+      // 42703 missing column). Log the PostgREST fields server-side,
+      // then return a specific, retryable message — the screenshot
+      // is already stored, so a retry with the same key is safe.
       if (error) {
         const detailParts = [
           `PostgREST code: ${error.code}`,
@@ -355,10 +319,28 @@ export async function POST(
           ...(error.hint ? { postgrest_hint: error.hint } : {}),
         });
       }
-      throw new Error('Payment insert failed');
+      if (heldRedemption) {
+        try {
+          await releaseRedemption(client, heldRedemption);
+        } catch (releaseError) {
+          logServerError('[billing] coupon release after insert failure failed', releaseError, {
+            source: 'billing',
+          });
+        }
+      }
+      return NextResponse.json(
+        { error: 'PAYMENT_SAVE_FAILED', message: SAVE_FAILED_MESSAGE },
+        { status: 500 }
+      );
     }
     const payment = paymentFromRow(data as Record<string, unknown>);
-    if (!payment) throw new Error('Payment insert returned an unreadable row');
+    if (!payment) {
+      // The row exists but is unreadable: a retry hits the
+      // one-pending 409, which is truthful — so say the save failed
+      // and to try again, rather than claiming success we cannot
+      // show. The hold is released by the catch below.
+      throw new Error('Payment insert returned an unreadable row');
+    }
     if (heldRedemption) {
       // Link the held redemption to this payment. If the link
       // itself fails, the payment is removed again (it was created
@@ -379,15 +361,29 @@ export async function POST(
             source: 'billing',
           });
         }
-        throw new Error('Coupon redemption link failed');
+        return NextResponse.json(
+          { error: 'PAYMENT_SAVE_FAILED', message: SAVE_FAILED_MESSAGE },
+          { status: 500 }
+        );
       }
       redemptionLinked = true;
     }
     const item = mapPaymentToItem(payment);
-    await storeBillingIdempotency(client, workspaceId, session.userId, 'billing-bank', idempotencyKey, {
-      status: 201,
-      body: item,
-    });
+    try {
+      await storeBillingIdempotency(client, workspaceId, session.userId, 'billing-bank', idempotencyKey, {
+        status: 201,
+        body: item,
+      });
+    } catch (storeError) {
+      // The payment genuinely exists now: failing the request here
+      // would be the old lie (user told it failed, retry told a
+      // payment is already pending). Log loudly, return the 201 —
+      // replay for this key is unavailable, but the one-pending
+      // guard still makes any retry truthful and duplicate-free.
+      logServerError('[billing] idempotency store after insert failed, returning 201', storeError, {
+        source: 'billing',
+      });
+    }
     return NextResponse.json(item, { status: 201 });
   } catch (err) {
     if (err instanceof CouponError) {
@@ -408,8 +404,14 @@ export async function POST(
       }
     }
     logServerError('[billing] bank payment failed', err, { source: 'billing' });
+    // Generic fallback, allowed only for a truly unknown error —
+    // and it still says the screenshot is attached and to try
+    // again, because the upload already happened before this call.
     return NextResponse.json(
-      { error: 'Your payment could not be submitted. Please try again.' },
+      {
+        error: 'UNKNOWN',
+        message: 'Something went wrong while saving your payment. Your screenshot is still attached — try again.',
+      },
       { status: 500 }
     );
   }
