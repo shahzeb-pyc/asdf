@@ -11,6 +11,7 @@ import {
   SubscriptionGateError,
 } from '@/lib/billing/entitlement';
 import { releaseHeldRedemptionsForPayment } from '@/lib/billing/coupons';
+import { recordCommissionForPayment } from '@/lib/billing/sellers';
 import {
   getBillingAdminClient,
   mapPaymentToItem,
@@ -185,6 +186,14 @@ async function handleCryptoRescue(
 
   if (decision === 'approve-crypto') {
     const result = await activateCryptoPayment(client, payment);
+    // A rescued payment is an approved/finished payment, so the
+    // referral commission is due exactly as on a webhook finish.
+    // This THROWS on failure (fail loud, mapped to a JSON 500 by
+    // the POST catch): the period is already live, and a rescue
+    // retry is refused for period-having payments, so the only
+    // automatic recovery is a later webhook notification for this
+    // payment, which records through its alreadyActivated path.
+    await recordCommissionForPayment(client, result.payment, result.period);
     return NextResponse.json({
       payment: mapPaymentToItem(result.payment),
       period: {

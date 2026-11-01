@@ -36,6 +36,10 @@ interface FakeState {
   payments: Row[];
   periods: Row[];
   redemptions: Row[];
+  // Seller tables (rescue approve records the referral commission):
+  // no test buyer is referred, so both stay empty.
+  commissions: Row[];
+  users: Row[];
   failQuery: 'count' | 'pending' | 'decided' | null;
   updateErrorOnce: boolean;
   expireLosesOnce: boolean;
@@ -63,6 +67,8 @@ class FakeBuilder {
   private rows(): Row[] {
     if (this.table === 'subscription_payments') return this.st.payments;
     if (this.table === 'subscription_periods') return this.st.periods;
+    if (this.table === 'seller_commissions') return this.st.commissions;
+    if (this.table === 'users') return this.st.users;
     return this.st.redemptions;
   }
 
@@ -298,6 +304,8 @@ describe('admin payments list', () => {
       ],
       periods: [],
       redemptions: [],
+      commissions: [],
+      users: [],
       failQuery: null,
       updateErrorOnce: false,
       expireLosesOnce: false,
@@ -353,6 +361,8 @@ describe('admin payments rescue decisions', () => {
       payments: [cryptoRow()],
       periods: [],
       redemptions: [],
+      commissions: [],
+      users: [],
       failQuery: null,
       updateErrorOnce: false,
       expireLosesOnce: false,
@@ -409,6 +419,8 @@ describe('admin payments list and rescue failure branches', () => {
       payments: [cryptoRow()],
       periods: [],
       redemptions: [],
+      commissions: [],
+      users: [],
       failQuery: null,
       updateErrorOnce: false,
       expireLosesOnce: false,

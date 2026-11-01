@@ -31,6 +31,11 @@ interface FakeState {
   issues: Row[];
   redemptions: Row[];
   coupons: Row[];
+  // Seller tables (rebase onto sellers #84): the webhook records
+  // the referral commission after activation. No test buyer is
+  // referred, so both stay empty and recording is a no-op.
+  commissions: Row[];
+  users: Row[];
 }
 
 let state: FakeState;
@@ -43,6 +48,8 @@ function baseState(overrides: Partial<FakeState> = {}): FakeState {
     issues: [],
     redemptions: [],
     coupons: [],
+    commissions: [],
+    users: [],
     ...overrides,
   };
 }
@@ -76,6 +83,10 @@ class FakeBuilder {
         return this.st.redemptions;
       case 'coupons':
         return this.st.coupons;
+      case 'seller_commissions':
+        return this.st.commissions;
+      case 'users':
+        return this.st.users;
       default:
         throw new Error(`unexpected table ${this.table}`);
     }
