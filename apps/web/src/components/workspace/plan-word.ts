@@ -1,11 +1,11 @@
-import { useQuery } from '@tanstack/react-query';
-import { apiGet, buildTenantApiPath } from '@/lib/api';
-import { EntitlementResponseSchema } from '@/lib/api/schemas/billing';
+import { useSharedEntitlement } from '@/components/billing/entitlement-provider';
 
 /**
  * The word shown under "FBUploadPro" in the sidebar header brand
  * block, in place of "Studio". It is the user's plan, derived from
- * the billing entitlement endpoint — never a separate plan API:
+ * the tenant layout's shared entitlement query — never a separate
+ * plan API and never a second fetch (the gate reads the same data,
+ * so the word and the dialog can never disagree):
  *
  * - Admin — the session role is admin (admins bypass plans entirely).
  * - Paid — an active paid period exists.
@@ -15,9 +15,11 @@ import { EntitlementResponseSchema } from '@/lib/api/schemas/billing';
  * - Free — no active period and no prior period.
  *
  * The hook returns null while the entitlement is unresolved OR the
- * fetch failed. The caller renders the "Studio" placeholder in that
- * case — a wrong plan word must never flash, and a failed check
- * must never masquerade as Free.
+ * check failed — including a failed refetch newer than the last
+ * success, which clears the previously proven value instead of
+ * letting a stale Free stick around. The caller renders the
+ * "Studio" placeholder in that case — a wrong plan word must never
+ * flash, and a failed check must never masquerade as Free.
  */
 export type PlanWord = 'Admin' | 'Paid' | 'Expired' | 'Free';
 
@@ -35,22 +37,17 @@ export function planWordFromEntitlement(
 /**
  * Sidebar plan word. Admins resolve immediately with no fetch (the
  * admin-only shell never needs an entitlement). Everyone else reads
- * the entitlement endpoint via React Query: staleTime 0 so the word
- * refreshes on mount and on window focus (the app default) whenever
- * the plan changes — no polling, no second client, no custom cache.
+ * the shared entitlement query owned by the tenant layout: the
+ * provider fetches on mount and on window focus (the app default)
+ * and re-checks on navigation, so the word refreshes whenever the
+ * plan changes — no polling, no second client, no custom cache.
  */
-export function usePlanWord(subdomain: string, adminOnly: boolean): PlanWord | null {
-  const entitlementQuery = useQuery({
-    queryKey: ['tenant', subdomain, 'billing', 'entitlement'],
-    queryFn: () =>
-      apiGet(buildTenantApiPath(subdomain, '/billing/entitlement'), {
-        schema: EntitlementResponseSchema,
-      }),
-    enabled: !adminOnly,
-    staleTime: 0,
-  });
+export function usePlanWord(adminOnly: boolean): PlanWord | null {
+  const { entitlement } = useSharedEntitlement();
   return planWordFromEntitlement(
-    entitlementQuery.data ?? null,
+    entitlement
+      ? { active: entitlement.active, hasPriorPeriod: entitlement.hasPriorPeriod }
+      : null,
     adminOnly
   );
 }

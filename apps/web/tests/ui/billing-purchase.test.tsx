@@ -1,8 +1,11 @@
 import * as React from 'react';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { createQueryClient } from '@/lib/data/query-client';
 
 import { BillingView } from '@/components/billing/billing-view';
+import { EntitlementProvider } from '@/components/billing/entitlement-provider';
 import { AdminApprovalsView } from '@/components/billing/admin-approvals-view';
 import { abortedError, httpError, networkError, parseError, sessionExpiredError } from '@/lib/api';
 import {
@@ -82,6 +85,37 @@ function statusFixture(payments: unknown[] = []) {
   return { entitlement: freeEntitlement(), payments };
 }
 
+/**
+ * Entitlement rebuild: BillingView's plan decisions now come from the
+ * tenant layout's shared entitlement query, while its /billing load
+ * still supplies payments — so the apiGet mock routes by URL. The
+ * entitlement path returns the status's nested entitlement (with
+ * hasPriorPeriod defaulted, as the real API always sends it);
+ * everything else returns the full status object.
+ */
+function mockBillingApi<T extends { entitlement: object; payments: unknown[] }>(
+  status: T
+): void {
+  mockApiGet.mockImplementation(async (url: string) => {
+    if (url.includes('/billing/entitlement')) {
+      const entitlement = status.entitlement as Record<string, unknown>;
+      return { ...entitlement, hasPriorPeriod: entitlement.hasPriorPeriod ?? false };
+    }
+    return status;
+  });
+}
+
+/** Render BillingView the way the tenant layout does: inside the shared entitlement provider. */
+function renderBilling(section: 'purchase' | 'my-plan') {
+  return render(
+    <QueryClientProvider client={createQueryClient('acme')}>
+      <EntitlementProvider subdomain="acme" adminOnly={false}>
+        <BillingView subdomain="acme" initialSection={section} />
+      </EntitlementProvider>
+    </QueryClientProvider>
+  );
+}
+
 async function goToCheckout() {
   // The builder renders after the billing load resolves (the view
   // shows a "Loading billing" skeleton first): wait for it before
@@ -130,7 +164,7 @@ async function pickScreenshot(): Promise<void> {
 describe('Billing Purchase', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockApiGet.mockResolvedValue(statusFixture());
+    mockBillingApi(statusFixture());
     mockApiPost.mockResolvedValue(paymentItem({ status: 'pending' }));
   });
 
@@ -140,8 +174,8 @@ describe('Billing Purchase', () => {
   });
 
   it('pending payment hides the builder and shows only the pending card', async () => {
-    mockApiGet.mockResolvedValue(statusFixture([paymentItem()]));
-    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    mockBillingApi(statusFixture([paymentItem()]));
+    renderBilling('purchase');
     expect(await screen.findByText('Payment in progress')).toBeInTheDocument();
     expect(screen.getByText('Waiting for approval')).toBeInTheDocument();
     expect(screen.getAllByText(/70 PKR/).length).toBeGreaterThan(0);
@@ -164,7 +198,7 @@ describe('Billing Purchase', () => {
   });
 
   it('Purchase shows only Facebook, Instagram, Threads inputs — no steppers', async () => {
-    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    renderBilling('purchase');
     await screen.findByText('Choose your pages and accounts');
     expect(screen.getByLabelText('Facebook pages')).toBeInTheDocument();
     expect(screen.getByLabelText('Instagram accounts')).toBeInTheDocument();
@@ -184,7 +218,7 @@ describe('Billing Purchase', () => {
   });
 
   it('typing a count updates the row price and total live', async () => {
-    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    renderBilling('purchase');
     await screen.findByText('Choose your pages and accounts');
     const facebook = screen.getByLabelText('Facebook pages') as HTMLInputElement;
     fireEvent.change(facebook, { target: { value: '100' } });
@@ -197,7 +231,7 @@ describe('Billing Purchase', () => {
   });
 
   it('invalid input never touches the totals and reverts on blur', async () => {
-    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    renderBilling('purchase');
     await screen.findByText('Choose your pages and accounts');
     const facebook = screen.getByLabelText('Facebook pages') as HTMLInputElement;
     fireEvent.change(facebook, { target: { value: '4' } });
@@ -216,7 +250,7 @@ describe('Billing Purchase', () => {
   });
 
   it('blank while typing counts as 0 and stays 0 on blur', async () => {
-    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    renderBilling('purchase');
     await screen.findByText('Choose your pages and accounts');
     const facebook = screen.getByLabelText('Facebook pages') as HTMLInputElement;
     fireEvent.change(facebook, { target: { value: '2' } });
@@ -229,7 +263,7 @@ describe('Billing Purchase', () => {
   });
 
   it('Purchase shows all three inclusions and a dynamic storage total', async () => {
-    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    renderBilling('purchase');
     await screen.findByText('Included with your plan');
     expect(
       screen.getByText('5 GB of Media Library storage per page or account')
@@ -249,7 +283,7 @@ describe('Billing Purchase', () => {
     // Free users get a deliberately shorter My Plan (no per-platform
     // list — all zeros, useless for Free), so this needs a paid
     // entitlement: the Purchase platform filter must not leak here.
-    mockApiGet.mockResolvedValue({
+    mockBillingApi({
       entitlement: {
         plan: 'paid',
         active: true,
@@ -263,7 +297,7 @@ describe('Billing Purchase', () => {
       },
       payments: [],
     });
-    render(<BillingView subdomain="acme" initialSection="my-plan" />);
+    renderBilling('my-plan');
     await screen.findByText('Pages and accounts by platform');
     expect(screen.getByText('Facebook')).toBeInTheDocument();
     expect(screen.getByText('Instagram')).toBeInTheDocument();
@@ -274,22 +308,22 @@ describe('Billing Purchase', () => {
   });
 
   it('My Plan shows Free for a never-paid user and Expired for a lapsed user', async () => {
-    mockApiGet.mockResolvedValue(statusFixture());
-    const { unmount } = render(<BillingView subdomain="acme" initialSection="my-plan" />);
+    mockBillingApi(statusFixture());
+    const { unmount } = renderBilling('my-plan');
     expect(await screen.findByText('Free')).toBeInTheDocument();
     unmount();
 
-    mockApiGet.mockResolvedValue({
+    mockBillingApi({
       entitlement: { ...freeEntitlement(), hasPriorPeriod: true },
       payments: [],
     });
-    render(<BillingView subdomain="acme" initialSection="my-plan" />);
+    renderBilling('my-plan');
     expect(await screen.findByText('Expired')).toBeInTheDocument();
   });
 
   it('My Plan shows pending verification instead of Free when a payment is pending', async () => {
-    mockApiGet.mockResolvedValue(statusFixture([paymentItem()]));
-    render(<BillingView subdomain="acme" initialSection="my-plan" />);
+    mockBillingApi(statusFixture([paymentItem()]));
+    renderBilling('my-plan');
     expect(await screen.findByText('Payment in progress')).toBeInTheDocument();
     expect(screen.getByText('Waiting for approval')).toBeInTheDocument();
     expect(screen.getAllByText(/70 PKR/).length).toBeGreaterThan(0);
@@ -305,17 +339,17 @@ describe('Billing Purchase', () => {
   });
 
   it('My Plan keeps Expired for a lapsed user even with a payment pending', async () => {
-    mockApiGet.mockResolvedValue({
+    mockBillingApi({
       entitlement: { ...freeEntitlement(), hasPriorPeriod: true },
       payments: [paymentItem()],
     });
-    render(<BillingView subdomain="acme" initialSection="my-plan" />);
+    renderBilling('my-plan');
     expect(await screen.findByText('Expired')).toBeInTheDocument();
     expect(screen.queryByText('Payment in progress')).toBeNull();
   });
 
   it('My Plan keeps Paid for a paid user with an upgrade pending', async () => {
-    mockApiGet.mockResolvedValue({
+    mockBillingApi({
       entitlement: {
         plan: 'paid',
         active: true,
@@ -329,7 +363,7 @@ describe('Billing Purchase', () => {
       },
       payments: [paymentItem({ isUpgrade: true })],
     });
-    render(<BillingView subdomain="acme" initialSection="my-plan" />);
+    renderBilling('my-plan');
     expect(await screen.findByText('Your plan')).toBeInTheDocument();
     expect(screen.getByText('Paid')).toBeInTheDocument();
     expect(screen.queryByText('Payment in progress')).toBeNull();
@@ -344,7 +378,7 @@ describe('Billing Purchase', () => {
       return paymentItem({ bankMethod: 'binance' });
     });
     const put = stubPutOk();
-    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    renderBilling('purchase');
     await goToCheckout();
     expect(await screen.findByText('Manual payments')).toBeInTheDocument();
     expect(screen.getByText('Your plan runs for 30 days after approval.')).toBeInTheDocument();
@@ -373,7 +407,12 @@ describe('Billing Purchase', () => {
     // Holder object, not a bare `let`: TS narrows a bare variable
     // assigned only inside a closure to `never` at the release site.
     const loadGate: { release: (() => void) | null } = { release: null };
-    mockApiGet.mockImplementation(async () => {
+    mockApiGet.mockImplementation(async (url: string) => {
+      // Route the shared entitlement query straight through; only
+      // the /billing load is held open after submit.
+      if (url.includes('/billing/entitlement')) {
+        return { ...freeEntitlement(), hasPriorPeriod: false };
+      }
       if (submitHappened && !loadGateOpen) {
         await new Promise<void>((resolve) => {
           loadGate.release = resolve;
@@ -387,7 +426,7 @@ describe('Billing Purchase', () => {
     });
     stubPutOk();
 
-    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    renderBilling('purchase');
     await goToCheckout();
     const submit = await screen.findByRole('button', { name: 'Submit payment for approval' });
     await pickScreenshot();
@@ -422,7 +461,7 @@ describe('Billing Purchase', () => {
       return paymentItem({ status: 'pending' });
     });
 
-    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    renderBilling('purchase');
     await goToCheckout();
     const submit = await screen.findByRole('button', { name: 'Submit payment for approval' });
     const input = document.querySelector('#billing-screenshot') as HTMLInputElement;
@@ -448,7 +487,7 @@ describe('Billing Purchase', () => {
       return paymentItem({ status: 'pending' });
     });
 
-    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    renderBilling('purchase');
     await goToCheckout();
     const submit = await screen.findByRole('button', { name: 'Submit payment for approval' });
     const input = document.querySelector('#billing-screenshot') as HTMLInputElement;
@@ -477,7 +516,7 @@ describe('Billing Purchase', () => {
       return paymentItem({ status: 'pending' });
     });
 
-    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    renderBilling('purchase');
     await goToCheckout();
     await pickScreenshot();
     const submit = screen.getByRole('button', { name: 'Submit payment for approval' });
@@ -499,7 +538,7 @@ describe('Billing Purchase', () => {
       return paymentItem({ status: 'pending' });
     });
 
-    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    renderBilling('purchase');
     await goToCheckout();
     await pickScreenshot();
     fireEvent.click(screen.getByRole('button', { name: 'Submit payment for approval' }));
@@ -519,7 +558,7 @@ describe('Billing Purchase', () => {
       return paymentItem({ status: 'pending' });
     });
 
-    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    renderBilling('purchase');
     await goToCheckout();
     await pickScreenshot();
     fireEvent.click(screen.getByRole('button', { name: 'Submit payment for approval' }));
@@ -536,7 +575,7 @@ describe('Billing Purchase', () => {
       throw httpError(409, 'PENDING_PAYMENT_EXISTS');
     });
 
-    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    renderBilling('purchase');
     await goToCheckout();
     await pickScreenshot();
     fireEvent.click(screen.getByRole('button', { name: 'Submit payment for approval' }));
@@ -553,7 +592,7 @@ describe('Billing Purchase', () => {
       throw abortedError();
     });
 
-    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    renderBilling('purchase');
     await goToCheckout();
     await pickScreenshot();
     fireEvent.click(screen.getByRole('button', { name: 'Submit payment for approval' }));
@@ -575,7 +614,7 @@ describe('Billing Purchase', () => {
     });
     stubPutOk();
 
-    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    renderBilling('purchase');
     await goToCheckout();
     await pickScreenshot();
     expect(mintCalls).toBe(2);
@@ -588,7 +627,7 @@ describe('Billing Purchase', () => {
     });
     stubPutOk();
 
-    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    renderBilling('purchase');
     await goToCheckout();
     const submit = await screen.findByRole('button', { name: 'Submit payment for approval' });
     const input = document.querySelector('#billing-screenshot') as HTMLInputElement;
@@ -606,7 +645,7 @@ describe('Billing Purchase', () => {
     });
     stubPutOk();
 
-    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    renderBilling('purchase');
     await goToCheckout();
     const input = document.querySelector('#billing-screenshot') as HTMLInputElement;
     fireEvent.change(input, {
@@ -631,7 +670,7 @@ describe('Billing Purchase', () => {
       return paymentItem({ status: 'pending' });
     });
 
-    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    renderBilling('purchase');
     await goToCheckout();
     const input = document.querySelector('#billing-screenshot') as HTMLInputElement;
     fireEvent.change(input, {
@@ -650,7 +689,7 @@ describe('Billing Purchase', () => {
       return paymentItem({ status: 'pending' });
     });
 
-    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    renderBilling('purchase');
     await goToCheckout();
     const input = document.querySelector('#billing-screenshot') as HTMLInputElement;
     fireEvent.change(input, {
@@ -669,7 +708,7 @@ describe('Billing Purchase', () => {
       throw sessionExpiredError();
     });
 
-    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    renderBilling('purchase');
     await goToCheckout();
     await pickScreenshot();
     fireEvent.click(screen.getByRole('button', { name: 'Submit payment for approval' }));
@@ -684,7 +723,7 @@ describe('Billing Purchase', () => {
       throw parseError('The server returned a response that was not valid JSON.');
     });
 
-    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    renderBilling('purchase');
     await goToCheckout();
     await pickScreenshot();
     fireEvent.click(screen.getByRole('button', { name: 'Submit payment for approval' }));
@@ -705,7 +744,7 @@ describe('Billing Purchase', () => {
       throw new Error('boom');
     });
 
-    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    renderBilling('purchase');
     await goToCheckout();
     await pickScreenshot();
     fireEvent.click(screen.getByRole('button', { name: 'Submit payment for approval' }));
@@ -731,7 +770,7 @@ describe('Billing Purchase', () => {
       return paymentItem({ status: 'pending' });
     });
 
-    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    renderBilling('purchase');
     await goToCheckout();
     const submit = await screen.findByRole('button', { name: 'Submit payment for approval' });
     const input = document.querySelector('#billing-screenshot') as HTMLInputElement;
@@ -760,7 +799,7 @@ describe('Billing Purchase', () => {
       return paymentItem({ status: 'pending' });
     });
 
-    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    renderBilling('purchase');
     await goToCheckout();
     const submit = await screen.findByRole('button', { name: 'Submit payment for approval' });
     const input = document.querySelector('#billing-screenshot') as HTMLInputElement;
@@ -805,7 +844,7 @@ describe('Billing Purchase', () => {
       return paymentItem({ status: 'pending' });
     });
 
-    render(<BillingView subdomain="acme" initialSection="purchase" />);
+    renderBilling('purchase');
     await goToCheckout();
     const input = document.querySelector('#billing-screenshot') as HTMLInputElement;
     fireEvent.change(input, {

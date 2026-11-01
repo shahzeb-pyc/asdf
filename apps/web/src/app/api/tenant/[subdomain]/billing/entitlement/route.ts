@@ -17,7 +17,22 @@ export async function GET(
   if (auth.errorResponse) return auth.errorResponse;
   const { session } = auth;
 
-  const client = getBillingAdminClient();
+  // A throwing admin-client factory is a misconfigured deployment
+  // (missing key, placeholder key, or a non-service key that would
+  // silently read zero rows under RLS and report every user as Free).
+  // That must surface as a loud 503 the client fail-opens on — never
+  // as a 200 Free body and never as an unhandled 500 without a
+  // stable shape.
+  let client;
+  try {
+    client = getBillingAdminClient();
+  } catch (err) {
+    logServerError('[billing] admin client unavailable', err, { source: 'billing' });
+    return NextResponse.json(
+      { error: 'Something went wrong. Please try again.' },
+      { status: 503 }
+    );
+  }
   if (!client) {
     return NextResponse.json(
       { error: 'Something went wrong. Please try again.' },

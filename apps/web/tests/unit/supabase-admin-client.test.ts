@@ -35,6 +35,13 @@ describe('getSupabaseAdminClient (spec 139)', () => {
     }
   }
 
+  /** A Supabase JWT carrying the given role claim (signature unverified, as in the factory check). */
+  function jwtWithRole(role: string): string {
+    const encode = (value: unknown): string =>
+      Buffer.from(JSON.stringify(value)).toString('base64url');
+    return `${encode({ alg: 'HS256', typ: 'JWT' })}.${encode({ sub: 'test', role })}.sig`;
+  }
+
   describe('production fail-fast', () => {
     it('throws in production when only the anon key is set (no anon fallback)', () => {
       setEnv({
@@ -80,10 +87,32 @@ describe('getSupabaseAdminClient (spec 139)', () => {
         NODE_ENV: 'production',
         NEXT_PUBLIC_SUPABASE_URL: 'https://example.supabase.co',
         NEXT_PUBLIC_SUPABASE_ANON_KEY: 'anon-key-value',
-        SUPABASE_SERVICE_ROLE_KEY: 'service-role-key-value',
+        SUPABASE_SERVICE_ROLE_KEY: jwtWithRole('service_role'),
       });
 
       expect(getSupabaseAdminClient()).not.toBeNull();
+    });
+
+    it('throws in production when the service-role slot holds an anon JWT (entitlement rebuild: the role claim must prove privilege)', () => {
+      setEnv({
+        NODE_ENV: 'production',
+        NEXT_PUBLIC_SUPABASE_URL: 'https://example.supabase.co',
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: 'anon-key-value',
+        SUPABASE_SERVICE_ROLE_KEY: jwtWithRole('anon'),
+      });
+
+      expect(() => getSupabaseAdminClient()).toThrow(/not a service-role key/);
+    });
+
+    it('throws in production when the service-role slot holds a non-JWT value', () => {
+      setEnv({
+        NODE_ENV: 'production',
+        NEXT_PUBLIC_SUPABASE_URL: 'https://example.supabase.co',
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: 'anon-key-value',
+        SUPABASE_SERVICE_ROLE_KEY: 'service-role-key-value',
+      });
+
+      expect(() => getSupabaseAdminClient()).toThrow(/not a service-role key/);
     });
   });
 

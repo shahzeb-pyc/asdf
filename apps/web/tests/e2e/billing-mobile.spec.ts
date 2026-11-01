@@ -100,6 +100,19 @@ async function installBillingFixture(
   await page.route(`**/api/tenant/${TENANT.subdomain}/billing`, (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(status) })
   );
+  // Entitlement rebuild: the tenant layout's shared entitlement query
+  // fetches /billing/entitlement separately from the /billing load,
+  // so it needs its own fixture with the same entitlement — otherwise
+  // it falls through to the real (keyless, in CI) server, returns
+  // 503, and the view renders its unproven-plan error instead of the
+  // fixture content.
+  await page.route(`**/api/tenant/${TENANT.subdomain}/billing/entitlement`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(status.entitlement),
+    })
+  );
 }
 
 async function gotoBilling(page: Page, view: string) {

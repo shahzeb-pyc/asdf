@@ -17,6 +17,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { SidebarProvider } from '@/components/shared/ui/sidebar';
 import { createQueryClient } from '@/lib/data/query-client';
 import { WorkspaceSidebar } from '@/components/workspace/workspace-sidebar';
+import { EntitlementProvider } from '@/components/billing/entitlement-provider';
 
 let mockPathname = '/tenant/acme';
 const mockPush = vi.fn();
@@ -61,13 +62,18 @@ function Shell({
 }>) {
   return (
     <QueryClientProvider client={createQueryClient(subdomain)}>
-      <SidebarProvider defaultOpen={defaultOpen}>
-        <WorkspaceSidebar
-          subdomain={subdomain}
-          adminOnly={adminOnly}
-          user={{ name: 'Jane Doe', email: 'jane@example.com' }}
-        />
-      </SidebarProvider>
+      {/* Entitlement rebuild: the sidebar word reads the tenant
+          layout's shared entitlement query, so the test shell mounts
+          the provider around it (same position as the layout). */}
+      <EntitlementProvider subdomain={subdomain} adminOnly={adminOnly}>
+        <SidebarProvider defaultOpen={defaultOpen}>
+          <WorkspaceSidebar
+            subdomain={subdomain}
+            adminOnly={adminOnly}
+            user={{ name: 'Jane Doe', email: 'jane@example.com' }}
+          />
+        </SidebarProvider>
+      </EntitlementProvider>
     </QueryClientProvider>
   );
 }

@@ -15,6 +15,7 @@ import { CommandPaletteHost } from '@/components/shell/command-palette-host';
 import { DownloadTray } from '@/components/shell/download-tray';
 import { WorkspaceLifecycleGuard } from '@/components/workspace/workspace-lifecycle-guard';
 import { FreePlanGate } from '@/components/billing/free-plan-gate';
+import { EntitlementProvider } from '@/components/billing/entitlement-provider';
 import { PostHogIdentify } from '@/components/posthog-identify';
 import { getServerSessionContext } from '@/lib/auth';
 import { DataProvider } from '@/lib/data/provider';
@@ -106,6 +107,10 @@ export default async function TenantLayout({ params, children }: Readonly<Tenant
 
   return (
     <DataProvider subdomain={subdomain}>
+      {/* The one entitlement query for the whole shell: the gate,
+          the sidebar plan word, and the billing view all read this
+          provider's data, so they can never disagree. */}
+      <EntitlementProvider subdomain={subdomain} adminOnly={session.role === 'admin'}>
       <SidebarProvider>
         {/* Skip link: the frame's first focusable element (spec 130 §5.1). */}
         <a
@@ -180,6 +185,7 @@ export default async function TenantLayout({ params, children }: Readonly<Tenant
           mobileOffset={{ top: 'max(16px, env(safe-area-inset-top))' }}
         />
       </SidebarProvider>
+      </EntitlementProvider>
     </DataProvider>
   );
 }
