@@ -1,51 +1,45 @@
 import { describe, it, expect } from 'vitest';
-import { redirectAdminHomeToPanel } from './auth-redirect';
+import { resolveAdminLoginRedirect } from './auth-redirect';
 
 /**
- * Admin landing: a Home-bound post-login redirect becomes the admin
- * panel (Billing → approvals view); anything deeper passes through
- * unchanged. Pure-function contract for redirectAdminHomeToPanel.
+ * Admin post-login redirect (shell isolation): a /admin/* returnUrl
+ * is honored, an old tenant admin location maps through the compat
+ * table, and anything else becomes /admin/subscriptions. Pure
+ * function contract for resolveAdminLoginRedirect.
  */
-describe('redirectAdminHomeToPanel', () => {
+describe('resolveAdminLoginRedirect', () => {
   it.each([
-    // [input, subdomain, expected]
-    ['https://e2e.localhost:3100/', 'e2e', 'https://e2e.localhost:3100/billing'],
-    [
-      'https://e2e.localhost:3100/?notice=tenant_redirect#top',
-      'e2e',
-      'https://e2e.localhost:3100/billing',
-    ],
-    [
-      'https://preview.vercel.app/tenant/e2e',
-      'e2e',
-      'https://preview.vercel.app/tenant/e2e/billing',
-    ],
-    [
-      'https://preview.vercel.app/tenant/e2e/',
-      'e2e',
-      'https://preview.vercel.app/tenant/e2e/billing',
-    ],
-    ['/tenant/e2e', 'e2e', '/tenant/e2e/billing'],
-    ['/tenant/e2e/', 'e2e', '/tenant/e2e/billing'],
-    ['/', 'e2e', '/tenant/e2e/billing'],
-    ['https://x.localhost/tenant/E2E', 'e2e', 'https://x.localhost/tenant/e2e/billing'],
-  ])('rewrites Home %s to %s', (input, subdomain, expected) => {
-    expect(redirectAdminHomeToPanel(input, subdomain)).toBe(expected);
-  });
-
-  it.each([
-    '/tenant/e2e/sellers',
-    '/tenant/e2e/billing',
-    '/pages',
-    'https://e2e.localhost:3100/tenant/e2e/billing',
-    'https://e2e.localhost:3100/tenant/e2e/sellers',
-    'https://e2e.localhost:3100/pages',
-    // Another workspace's Home is not this admin's landing Home:
-    // it passes through (middleware routes it to that workspace's
-    // panel if the admin opens it directly).
-    '/tenant/other',
-    'https://x.localhost/tenant/other',
-  ])('leaves deeper targets unchanged: %s', (input) => {
-    expect(redirectAdminHomeToPanel(input, 'e2e')).toBe(input);
+    // [input, expected]
+    ['/admin/subscriptions', '/admin/subscriptions'],
+    ['/admin/sellers', '/admin/sellers'],
+    ['/admin/sellers/abc-123', '/admin/sellers/abc-123'],
+    ['/admin', '/admin'],
+    // Old tenant admin locations map through the compat table.
+    ['/tenant/e2e/billing', '/admin/subscriptions'],
+    ['/tenant/e2e/billing?view=payments', '/admin/subscriptions'],
+    ['/tenant/e2e/sellers', '/admin/sellers'],
+    ['/tenant/e2e/sellers/abc-123', '/admin/sellers/abc-123'],
+    // Tenant home and bare tenant-host forms map to the panel home.
+    ['/tenant/e2e', '/admin/subscriptions'],
+    ['/tenant/e2e/', '/admin/subscriptions'],
+    ['/', '/admin/subscriptions'],
+    ['/billing', '/admin/subscriptions'],
+    ['/sellers', '/admin/sellers'],
+    ['/sellers/abc-123', '/admin/sellers/abc-123'],
+    // Full URLs: the origin is dropped, the path maps the same way.
+    ['https://e2e.localhost:3100/billing', '/admin/subscriptions'],
+    ['https://preview.vercel.app/tenant/e2e/sellers', '/admin/sellers'],
+    ['https://preview.vercel.app/tenant/e2e/sellers/abc-123', '/admin/sellers/abc-123'],
+    // User sections are NOT honored.
+    ['/pages', '/admin/subscriptions'],
+    ['/tenant/e2e/pages', '/admin/subscriptions'],
+    ['https://e2e.localhost:3100/pages', '/admin/subscriptions'],
+    // Missing / dangerous targets fall back to the panel home.
+    [null, '/admin/subscriptions'],
+    ['', '/admin/subscriptions'],
+    ['javascript:alert(1)', '/admin/subscriptions'],
+    ['//evil.example.com/admin/sellers', '/admin/subscriptions'],
+  ])('maps %s to %s', (input, expected) => {
+    expect(resolveAdminLoginRedirect(input)).toBe(expected);
   });
 });

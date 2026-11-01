@@ -6,6 +6,10 @@
  * route, so links should use clean paths to keep the address bar clean.
  * On Vercel previews (*.vercel.app) and apex-domain access there is no
  * subdomain to rewrite from, so the /tenant/[subdomain] prefix is required.
+ *
+ * This helper is for USER (tenant) links only. Admin and seller links
+ * are absolute (/admin/*, /seller) and never use it — those sections
+ * are workspace-free and have no subdomain to rewrite from.
  */
 
 /** Build a navigation href for a tenant workspace path. */

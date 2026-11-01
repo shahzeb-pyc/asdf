@@ -15,7 +15,6 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { SellerPatchSchema, type SellerPatch } from '@fbuploadpro/contracts';
 import { api, getErrorMessage, isApiError } from '@/lib/api';
-import { buildTenantHref, isTenantSubdomainHost } from '@/lib/tenant-href';
 import {
   AdminSellerDetailResponseSchema,
   SellerOkResponseSchema,
@@ -73,10 +72,8 @@ function commissionStatusMark(status: string): { kind: 'operational' | 'queued' 
 }
 
 export function AdminSellerDetail({
-  subdomain,
   sellerId,
 }: {
-  subdomain: string;
   sellerId: string;
 }) {
   const router = useRouter();
@@ -87,9 +84,9 @@ export function AdminSellerDetail({
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const detailQuery = useQuery({
-    queryKey: ['admin', 'sellers', subdomain, sellerId],
+    queryKey: ['admin', 'sellers', sellerId],
     queryFn: () =>
-      api.get(`/api/tenant/${subdomain}/sellers/${sellerId}`, {
+      api.get(`/api/admin/sellers/${sellerId}`, {
         schema: AdminSellerDetailResponseSchema,
       }),
   });
@@ -116,12 +113,12 @@ export function AdminSellerDetail({
   });
 
   const invalidate = () => {
-    void queryClient.invalidateQueries({ queryKey: ['admin', 'sellers', subdomain] });
+    void queryClient.invalidateQueries({ queryKey: ['admin', 'sellers'] });
   };
 
   const update = useMutation({
     mutationFn: (values: SellerPatch) =>
-      api.patch(`/api/tenant/${subdomain}/sellers/${sellerId}`, values, {
+      api.patch(`/api/admin/sellers/${sellerId}`, values, {
         schema: SellerOkResponseSchema,
       }),
     onSuccess: () => {
@@ -140,14 +137,14 @@ export function AdminSellerDetail({
 
   const remove = useMutation({
     mutationFn: () =>
-      api.delete(`/api/tenant/${subdomain}/sellers/${sellerId}`, {
+      api.delete(`/api/admin/sellers/${sellerId}`, {
         schema: SellerOkResponseSchema,
       }),
     onSuccess: () => {
       setConfirmDelete(false);
       invalidate();
       toast('Seller deleted');
-      router.push(buildTenantHref(subdomain, `/sellers`, isTenantSubdomainHost(window.location.hostname, subdomain)));
+      router.push('/admin/sellers');
     },
     onError: (error: unknown) => {
       setConfirmDelete(false);
@@ -161,7 +158,7 @@ export function AdminSellerDetail({
 
   const decide = useMutation({
     mutationFn: ({ id, action }: { id: string; action: 'mark-sent' | 'reject' }) =>
-      api.post(`/api/tenant/${subdomain}/sellers/payout-requests/${id}`, { action }, {
+      api.post(`/api/admin/sellers/payout-requests/${id}`, { action }, {
         schema: SellerOkResponseSchema,
       }),
     onSuccess: () => {

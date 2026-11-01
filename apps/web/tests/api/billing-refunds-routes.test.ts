@@ -2,8 +2,8 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { NextRequest, NextResponse } from 'next/server';
 
 import { GET as getUserRefunds, POST as postUserRefund } from '@/app/api/tenant/[subdomain]/billing/refunds/route';
-import { GET as getAdminRefunds } from '@/app/api/tenant/[subdomain]/billing/admin/refunds/route';
-import { POST as postAdminDecision } from '@/app/api/tenant/[subdomain]/billing/admin/refunds/[refundId]/route';
+import { GET as getAdminRefunds } from '@/app/api/admin/refunds/route';
+import { POST as postAdminDecision } from '@/app/api/admin/refunds/[refundId]/route';
 
 /**
  * Refund routes, tested against a small thenable fake Supabase client
@@ -18,8 +18,11 @@ import { POST as postAdminDecision } from '@/app/api/tenant/[subdomain]/billing/
 const authState = vi.hoisted(() => ({ role: 'user' as 'user' | 'admin' | 'error' }));
 const clientState = vi.hoisted(() => ({ nullClient: false }));
 
-vi.mock('@/lib/route-auth', () => ({
-  authenticateTenantRoute: vi.fn(async () => {
+vi.mock('@/lib/route-auth', () => {
+  // The user refunds route still authenticates via the tenant route,
+  // while the admin routes use the admin route; both share this
+  // fixture session, keyed off authState.role.
+  const authenticate = vi.fn(async () => {
     if (authState.role === 'error') {
       return { errorResponse: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) };
     }
@@ -33,8 +36,9 @@ vi.mock('@/lib/route-auth', () => ({
         status: 'active',
       },
     };
-  }),
-}));
+  });
+  return { authenticateTenantRoute: authenticate, authenticateAdminRoute: authenticate };
+});
 
 vi.mock('@/lib/server-analytics', () => ({
   logServerError: vi.fn(),
@@ -299,7 +303,7 @@ vi.mock('@/lib/billing/route-helpers', async (importOriginal) => {
 
 const userCtx = { params: Promise.resolve({ subdomain: 'acme' }) };
 const adminCtx = (refundId: string) => ({
-  params: Promise.resolve({ subdomain: 'acme', refundId }),
+  params: Promise.resolve({ refundId }),
 });
 
 function jsonRequest(url: string, body: unknown): NextRequest {
@@ -465,8 +469,7 @@ describe('admin refunds list route', () => {
       { id: 'user-2', email: 'second@example.com' },
     ];
     const res = await getAdminRefunds(
-      new NextRequest('http://localhost:3000/api/tenant/acme/billing/admin/refunds?page=1'),
-      userCtx
+      new NextRequest('http://localhost:3000/api/admin/refunds?page=1')
     );
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -482,8 +485,7 @@ describe('admin refunds list route', () => {
     db.requests = [refundRow()];
     db.users = [];
     const res = await getAdminRefunds(
-      new NextRequest('http://localhost:3000/api/tenant/acme/billing/admin/refunds?page=abc'),
-      userCtx
+      new NextRequest('http://localhost:3000/api/admin/refunds?page=abc')
     );
     const body = await res.json();
     expect(body.page).toBe(1);
@@ -492,8 +494,7 @@ describe('admin refunds list route', () => {
 
   it('GET refuses non-admins with 403 and no data', async () => {
     const res = await getAdminRefunds(
-      new NextRequest('http://localhost:3000/api/tenant/acme/billing/admin/refunds'),
-      userCtx
+      new NextRequest('http://localhost:3000/api/admin/refunds')
     );
     expect(res.status).toBe(403);
     expect((await res.json()).error).toBe('Forbidden');
@@ -502,22 +503,19 @@ describe('admin refunds list route', () => {
   it('GET passes auth errors through, is a 503 without a client, and a 500 on failure', async () => {
     authState.role = 'error';
     const authRes = await getAdminRefunds(
-      new NextRequest('http://localhost:3000/api/tenant/acme/billing/admin/refunds'),
-      userCtx
+      new NextRequest('http://localhost:3000/api/admin/refunds')
     );
     expect(authRes.status).toBe(401);
     authState.role = 'admin';
     clientState.nullClient = true;
     const noClient = await getAdminRefunds(
-      new NextRequest('http://localhost:3000/api/tenant/acme/billing/admin/refunds'),
-      userCtx
+      new NextRequest('http://localhost:3000/api/admin/refunds')
     );
     expect(noClient.status).toBe(503);
     clientState.nullClient = false;
     db.selectErrors = { refund_requests: { code: 'DBFAIL' } };
     const failed = await getAdminRefunds(
-      new NextRequest('http://localhost:3000/api/tenant/acme/billing/admin/refunds'),
-      userCtx
+      new NextRequest('http://localhost:3000/api/admin/refunds')
     );
     expect(failed.status).toBe(500);
   });
@@ -531,7 +529,7 @@ describe('admin refund decision route', () => {
   it('approve locks the day-3 amount and cancels the period', async () => {
     db.requests = [refundRow()];
     const res = await postAdminDecision(
-      jsonRequest('http://localhost:3000/api/tenant/acme/billing/admin/refunds/refund-1', {
+      jsonRequest('http://localhost:3000/api/admin/refunds/refund-1', {
         decision: 'approve',
       }),
       adminCtx('refund-1')
@@ -547,7 +545,7 @@ describe('admin refund decision route', () => {
   it('reject keeps the plan running, and mark-as-sent records the send', async () => {
     db.requests = [refundRow()];
     const rejected = await postAdminDecision(
-      jsonRequest('http://localhost:3000/api/tenant/acme/billing/admin/refunds/refund-1', {
+      jsonRequest('http://localhost:3000/api/admin/refunds/refund-1', {
         decision: 'reject',
       }),
       adminCtx('refund-1')
@@ -557,7 +555,7 @@ describe('admin refund decision route', () => {
 
     db.requests = [refundRow({ status: 'approved', refund_amount: 3780, days_used: 3 })];
     const sent = await postAdminDecision(
-      jsonRequest('http://localhost:3000/api/tenant/acme/billing/admin/refunds/refund-1', {
+      jsonRequest('http://localhost:3000/api/admin/refunds/refund-1', {
         decision: 'mark-sent',
       }),
       adminCtx('refund-1')
@@ -568,14 +566,14 @@ describe('admin refund decision route', () => {
   it('an unknown decision or unreadable body is a 400 and decides nothing', async () => {
     db.requests = [refundRow()];
     const badDecision = await postAdminDecision(
-      jsonRequest('http://localhost:3000/api/tenant/acme/billing/admin/refunds/refund-1', {
+      jsonRequest('http://localhost:3000/api/admin/refunds/refund-1', {
         decision: 'refund-everything',
       }),
       adminCtx('refund-1')
     );
     expect(badDecision.status).toBe(400);
     const badBody = await postAdminDecision(
-      jsonRequest('http://localhost:3000/api/tenant/acme/billing/admin/refunds/refund-1', 'nope{'),
+      jsonRequest('http://localhost:3000/api/admin/refunds/refund-1', 'nope{'),
       adminCtx('refund-1')
     );
     expect(badBody.status).toBe(400);
@@ -584,7 +582,7 @@ describe('admin refund decision route', () => {
 
   it('deciding an unknown request is a 404, and re-deciding is a 409', async () => {
     const missing = await postAdminDecision(
-      jsonRequest('http://localhost:3000/api/tenant/acme/billing/admin/refunds/refund-nope', {
+      jsonRequest('http://localhost:3000/api/admin/refunds/refund-nope', {
         decision: 'approve',
       }),
       adminCtx('refund-nope')
@@ -594,7 +592,7 @@ describe('admin refund decision route', () => {
 
     db.requests = [refundRow({ status: 'approved' })];
     const again = await postAdminDecision(
-      jsonRequest('http://localhost:3000/api/tenant/acme/billing/admin/refunds/refund-1', {
+      jsonRequest('http://localhost:3000/api/admin/refunds/refund-1', {
         decision: 'approve',
       }),
       adminCtx('refund-1')
@@ -614,7 +612,7 @@ describe('admin refund decision route', () => {
       }),
     ];
     const res = await postAdminDecision(
-      jsonRequest('http://localhost:3000/api/tenant/acme/billing/admin/refunds/refund-1', {
+      jsonRequest('http://localhost:3000/api/admin/refunds/refund-1', {
         decision: 'approve',
       }),
       adminCtx('refund-1')
@@ -629,7 +627,7 @@ describe('admin refund decision route', () => {
   it('mark-as-sent on a merely requested refund is a 409, not a send', async () => {
     db.requests = [refundRow()];
     const res = await postAdminDecision(
-      jsonRequest('http://localhost:3000/api/tenant/acme/billing/admin/refunds/refund-1', {
+      jsonRequest('http://localhost:3000/api/admin/refunds/refund-1', {
         decision: 'mark-sent',
       }),
       adminCtx('refund-1')
@@ -640,7 +638,7 @@ describe('admin refund decision route', () => {
   it('refuses non-admins, passes auth errors through, and is a 503 without a client', async () => {
     authState.role = 'user';
     const forbidden = await postAdminDecision(
-      jsonRequest('http://localhost:3000/api/tenant/acme/billing/admin/refunds/refund-1', {
+      jsonRequest('http://localhost:3000/api/admin/refunds/refund-1', {
         decision: 'approve',
       }),
       adminCtx('refund-1')
@@ -648,7 +646,7 @@ describe('admin refund decision route', () => {
     expect(forbidden.status).toBe(403);
     authState.role = 'error';
     const authRes = await postAdminDecision(
-      jsonRequest('http://localhost:3000/api/tenant/acme/billing/admin/refunds/refund-1', {
+      jsonRequest('http://localhost:3000/api/admin/refunds/refund-1', {
         decision: 'approve',
       }),
       adminCtx('refund-1')
@@ -657,7 +655,7 @@ describe('admin refund decision route', () => {
     authState.role = 'admin';
     clientState.nullClient = true;
     const noClient = await postAdminDecision(
-      jsonRequest('http://localhost:3000/api/tenant/acme/billing/admin/refunds/refund-1', {
+      jsonRequest('http://localhost:3000/api/admin/refunds/refund-1', {
         decision: 'approve',
       }),
       adminCtx('refund-1')
@@ -670,7 +668,7 @@ describe('admin refund decision route', () => {
     // inventing an amount — and the route reports a plain 500.
     db.requests = [refundRow({ period_id: 'period-missing' })];
     const res = await postAdminDecision(
-      jsonRequest('http://localhost:3000/api/tenant/acme/billing/admin/refunds/refund-1', {
+      jsonRequest('http://localhost:3000/api/admin/refunds/refund-1', {
         decision: 'approve',
       }),
       adminCtx('refund-1')

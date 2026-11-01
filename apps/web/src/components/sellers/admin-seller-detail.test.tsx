@@ -80,7 +80,7 @@ function renderDetail() {
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <AdminSellerDetail subdomain="acme" sellerId="seller-1" />
+      <AdminSellerDetail sellerId="seller-1" />
     </QueryClientProvider>
   );
 }
@@ -127,7 +127,7 @@ describe('AdminSellerDetail', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() =>
       expect(apiPatch).toHaveBeenCalledWith(
-        '/api/tenant/acme/sellers/seller-1',
+        '/api/admin/sellers/seller-1',
         expect.objectContaining({ rate: 15 }),
         expect.anything()
       )
@@ -152,11 +152,11 @@ describe('AdminSellerDetail', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Delete seller' }));
     await waitFor(() =>
       expect(apiDelete).toHaveBeenCalledWith(
-        '/api/tenant/acme/sellers/seller-1',
+        '/api/admin/sellers/seller-1',
         expect.anything()
       )
     );
-    await waitFor(() => expect(push).toHaveBeenCalledWith('/tenant/acme/sellers'));
+    await waitFor(() => expect(push).toHaveBeenCalledWith('/admin/sellers'));
   });
 
   it('rejects a payout request from the payout history', async () => {
@@ -184,7 +184,7 @@ describe('AdminSellerDetail', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
     await waitFor(() =>
       expect(apiPost).toHaveBeenCalledWith(
-        '/api/tenant/acme/sellers/payout-requests/req-1',
+        '/api/admin/sellers/payout-requests/req-1',
         { action: 'reject' },
         expect.anything()
       )

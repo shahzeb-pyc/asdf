@@ -878,7 +878,7 @@ describe('Admin approvals view', () => {
         },
       ],
     });
-    render(<AdminApprovalsView subdomain="acme" />);
+    render(<AdminApprovalsView />);
     expect(await screen.findByText(/Binance/)).toBeInTheDocument();
     expect(screen.getByText('View payment screenshot')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Approve payment' })).toBeInTheDocument();

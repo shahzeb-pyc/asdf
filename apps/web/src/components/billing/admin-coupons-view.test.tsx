@@ -12,7 +12,6 @@ vi.mock('@/lib/api', () => ({
   apiGet: (...args: unknown[]) => apiGet(...args),
   apiPost: (...args: unknown[]) => apiPost(...args),
   apiPatch: (...args: unknown[]) => apiPatch(...args),
-  buildTenantApiPath: (subdomain: string, path: string) => `/tenant/${subdomain}${path}`,
   getErrorMessage: (err: unknown) =>
     err instanceof Error ? err.message : 'Something went wrong. Please try again.',
 }));
@@ -28,7 +27,7 @@ describe('AdminCouponsView coupon code input', () => {
 
   it('uppercases a lowercase code as it is typed and submits it uppercase', async () => {
     const user = userEvent.setup();
-    render(<AdminCouponsView subdomain="test" />);
+    render(<AdminCouponsView />);
     await waitFor(() =>
       expect(screen.getByText('Create a coupon')).toBeInTheDocument()
     );
@@ -39,7 +38,7 @@ describe('AdminCouponsView coupon code input', () => {
     await user.click(screen.getByRole('button', { name: 'Create coupon' }));
     await waitFor(() => expect(apiPost).toHaveBeenCalledTimes(1));
     expect(apiPost).toHaveBeenCalledWith(
-      '/tenant/test/billing/admin/coupons',
+      '/api/admin/coupons',
       expect.objectContaining({ code: 'SAVE20' })
     );
     await waitFor(() =>
@@ -49,7 +48,7 @@ describe('AdminCouponsView coupon code input', () => {
 
   it('uppercases a pasted lowercase code', async () => {
     const user = userEvent.setup();
-    render(<AdminCouponsView subdomain="test" />);
+    render(<AdminCouponsView />);
     await waitFor(() =>
       expect(screen.getByText('Create a coupon')).toBeInTheDocument()
     );

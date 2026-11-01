@@ -18,7 +18,6 @@ const mockedApiPost = vi.fn();
 vi.mock('@/lib/api', () => ({
   apiGet: (...args: unknown[]) => mockedApiGet(...args),
   apiPost: (...args: unknown[]) => mockedApiPost(...args),
-  buildTenantApiPath: (subdomain: string, path: string) => `/api/tenant/${subdomain}${path}`,
   getErrorMessage: (err: unknown) =>
     err instanceof Error ? err.message : 'Something went wrong. Please try again.',
 }));
@@ -63,7 +62,7 @@ describe('AdminApprovalsView crypto rescue', () => {
   it('shows rescue buttons, not bank buttons, on a pending crypto payment', async () => {
     mockPayments([payment()]);
     mockedApiPost.mockResolvedValue({});
-    render(<AdminApprovalsView subdomain="acme" />);
+    render(<AdminApprovalsView />);
     expect(await screen.findByText('Approve crypto')).toBeInTheDocument();
     expect(screen.getByText('Expire crypto')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Approve payment' })).toBeNull();
@@ -73,11 +72,11 @@ describe('AdminApprovalsView crypto rescue', () => {
   it('approving crypto posts approve-crypto and shows the approval notice', async () => {
     mockPayments([payment()]);
     mockedApiPost.mockResolvedValue({});
-    render(<AdminApprovalsView subdomain="acme" />);
+    render(<AdminApprovalsView />);
     fireEvent.click(await screen.findByText('Approve crypto'));
     await waitFor(() =>
       expect(mockedApiPost).toHaveBeenCalledWith(
-        '/api/tenant/acme/billing/admin/payments/payment-1',
+        '/api/admin/payments/payment-1',
         { decision: 'approve-crypto' }
       )
     );
@@ -87,11 +86,11 @@ describe('AdminApprovalsView crypto rescue', () => {
   it('expiring crypto posts expire-crypto and shows the expiry notice', async () => {
     mockPayments([payment()]);
     mockedApiPost.mockResolvedValue({});
-    render(<AdminApprovalsView subdomain="acme" />);
+    render(<AdminApprovalsView />);
     fireEvent.click(await screen.findByText('Expire crypto'));
     await waitFor(() =>
       expect(mockedApiPost).toHaveBeenCalledWith(
-        '/api/tenant/acme/billing/admin/payments/payment-1',
+        '/api/admin/payments/payment-1',
         { decision: 'expire-crypto' }
       )
     );
@@ -103,18 +102,18 @@ describe('AdminApprovalsView crypto rescue', () => {
       payment({ id: 'payment-bank', method: 'bank', bankMethod: 'easypaisa', status: 'pending' }),
     ]);
     mockedApiPost.mockResolvedValue({});
-    render(<AdminApprovalsView subdomain="acme" />);
+    render(<AdminApprovalsView />);
     fireEvent.click(await screen.findByText('Approve payment'));
     await waitFor(() =>
       expect(mockedApiPost).toHaveBeenCalledWith(
-        '/api/tenant/acme/billing/admin/payments/payment-bank',
+        '/api/admin/payments/payment-bank',
         { decision: 'approve' }
       )
     );
     fireEvent.click(screen.getByText('Reject payment'));
     await waitFor(() =>
       expect(mockedApiPost).toHaveBeenCalledWith(
-        '/api/tenant/acme/billing/admin/payments/payment-bank',
+        '/api/admin/payments/payment-bank',
         { decision: 'reject' }
       )
     );
@@ -123,7 +122,7 @@ describe('AdminApprovalsView crypto rescue', () => {
   it('lists failed crypto payments in the stuck section with rescue buttons', async () => {
     mockPayments([payment({ id: 'payment-2', status: 'failed' })]);
     mockedApiPost.mockResolvedValue({});
-    render(<AdminApprovalsView subdomain="acme" />);
+    render(<AdminApprovalsView />);
     expect(await screen.findByText('Stuck crypto payments')).toBeInTheDocument();
     expect(screen.getAllByText('Approve crypto').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Expire crypto').length).toBeGreaterThan(0);
@@ -132,19 +131,19 @@ describe('AdminApprovalsView crypto rescue', () => {
   it('stuck-section rescue buttons post the rescue decision for the failed payment', async () => {
     mockPayments([payment({ id: 'payment-2', status: 'failed' })]);
     mockedApiPost.mockResolvedValue({});
-    render(<AdminApprovalsView subdomain="acme" />);
+    render(<AdminApprovalsView />);
     await screen.findByText('Stuck crypto payments');
     fireEvent.click(screen.getAllByText('Approve crypto')[0]);
     await waitFor(() =>
       expect(mockedApiPost).toHaveBeenCalledWith(
-        '/api/tenant/acme/billing/admin/payments/payment-2',
+        '/api/admin/payments/payment-2',
         { decision: 'approve-crypto' }
       )
     );
     fireEvent.click(screen.getAllByText('Expire crypto')[0]);
     await waitFor(() =>
       expect(mockedApiPost).toHaveBeenCalledWith(
-        '/api/tenant/acme/billing/admin/payments/payment-2',
+        '/api/admin/payments/payment-2',
         { decision: 'expire-crypto' }
       )
     );

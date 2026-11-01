@@ -128,14 +128,14 @@ async function installAdminSellersFixtures(page: Page) {
   // Registered first so the queue fixture below (registered
   // later) wins for its path — Playwright matches routes in
   // reverse registration order.
-  await page.route(`**/api/tenant/${TENANT.subdomain}/sellers*`, (route) =>
+  await page.route(`**/api/admin/sellers*`, (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify(adminSellersFixture()),
     })
   );
-  await page.route(`**/api/tenant/${TENANT.subdomain}/sellers/payout-requests*`, (route) =>
+  await page.route(`**/api/admin/sellers/payout-requests*`, (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -179,7 +179,7 @@ test.describe('sellers at phone widths', () => {
     await useAdminSession(context);
     await installApiFixtures(page, createFixtureState());
     await installAdminSellersFixtures(page);
-    await page.goto(`/tenant/${TENANT.subdomain}/sellers`);
+    await page.goto(`/admin/sellers`);
 
     await expect(page.getByText('Resellers who earn commission')).toBeVisible();
     await expect(page.getByText('ali@example.com')).toBeVisible();

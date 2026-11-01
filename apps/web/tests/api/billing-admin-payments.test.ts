@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
-import { GET as listPayments } from '@/app/api/tenant/[subdomain]/billing/admin/payments/route';
-import { POST as decidePayment } from '@/app/api/tenant/[subdomain]/billing/admin/payments/[paymentId]/route';
+import { GET as listPayments } from '@/app/api/admin/payments/route';
+import { POST as decidePayment } from '@/app/api/admin/payments/[paymentId]/route';
 
 /**
  * Admin payments list + rescue decisions (audit fix 2026-11-01):
@@ -13,7 +13,7 @@ import { POST as decidePayment } from '@/app/api/tenant/[subdomain]/billing/admi
 const authState = vi.hoisted(() => ({ role: 'admin' }));
 
 vi.mock('@/lib/route-auth', () => ({
-  authenticateTenantRoute: vi.fn(async () => ({
+  authenticateAdminRoute: vi.fn(async () => ({
     session: {
       userId: 'admin-1',
       email: 'admin@example.com',
@@ -289,7 +289,7 @@ function cryptoRow(overrides: Row = {}): Row {
 const ctx = (paymentId?: string) =>
   ({
     params: Promise.resolve(
-      paymentId ? { subdomain: 'acme', paymentId } : { subdomain: 'acme' }
+      paymentId ? { paymentId } : {}
     ),
   }) as never;
 
@@ -315,14 +315,14 @@ describe('admin payments list', () => {
 
   it('refuses non-admins with 403', async () => {
     authState.role = 'user';
-    const req = new NextRequest('http://localhost:3000/api/tenant/acme/billing/admin/payments');
-    const res = await listPayments(req, ctx());
+    const req = new NextRequest('http://localhost:3000/api/admin/payments');
+    const res = await listPayments(req);
     expect(res.status).toBe(403);
   });
 
   it('sorts pending-first across the full list, newest first within each run', async () => {
-    const req = new NextRequest('http://localhost:3000/api/tenant/acme/billing/admin/payments');
-    const res = await listPayments(req, ctx());
+    const req = new NextRequest('http://localhost:3000/api/admin/payments');
+    const res = await listPayments(req);
     expect(res.status).toBe(200);
     const json = (await res.json()) as { payments: Array<{ id: string }>; pendingTotal: number };
     expect(json.pendingTotal).toBe(2);
@@ -342,8 +342,8 @@ describe('admin payments list', () => {
     }
     payments.push(paymentRow({ id: 'decided-1', status: 'approved' }));
     state.payments = payments;
-    const req = new NextRequest('http://localhost:3000/api/tenant/acme/billing/admin/payments?page=2');
-    const res = await listPayments(req, ctx());
+    const req = new NextRequest('http://localhost:3000/api/admin/payments?page=2');
+    const res = await listPayments(req);
     const json = (await res.json()) as { payments: Array<{ id: string }>; pendingTotal: number };
     expect(json.pendingTotal).toBe(101);
     // Page 2 holds the last pending row plus the decided row — a
@@ -372,7 +372,7 @@ describe('admin payments rescue decisions', () => {
 
   async function decide(paymentId: string, decision: string): Promise<{ status: number; json: Record<string, unknown> }> {
     const req = new NextRequest(
-      `http://localhost:3000/api/tenant/acme/billing/admin/payments/${paymentId}`,
+      `http://localhost:3000/api/admin/payments/${paymentId}`,
       { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ decision }) }
     );
     const res = await decidePayment(req, ctx(paymentId));
@@ -430,28 +430,28 @@ describe('admin payments list and rescue failure branches', () => {
 
   it('a failing pending count fails the list with 500', async () => {
     state.failQuery = 'count';
-    const req = new NextRequest('http://localhost:3000/api/tenant/acme/billing/admin/payments');
-    const res = await listPayments(req, ctx());
+    const req = new NextRequest('http://localhost:3000/api/admin/payments');
+    const res = await listPayments(req);
     expect(res.status).toBe(500);
   });
 
   it('a failing pending slice fails the list with 500', async () => {
     state.failQuery = 'pending';
-    const req = new NextRequest('http://localhost:3000/api/tenant/acme/billing/admin/payments');
-    const res = await listPayments(req, ctx());
+    const req = new NextRequest('http://localhost:3000/api/admin/payments');
+    const res = await listPayments(req);
     expect(res.status).toBe(500);
   });
 
   it('a failing decided slice fails the list with 500', async () => {
     state.failQuery = 'decided';
-    const req = new NextRequest('http://localhost:3000/api/tenant/acme/billing/admin/payments');
-    const res = await listPayments(req, ctx());
+    const req = new NextRequest('http://localhost:3000/api/admin/payments');
+    const res = await listPayments(req);
     expect(res.status).toBe(500);
   });
 
   async function decide(paymentId: string, decision: string): Promise<{ status: number; json: Record<string, unknown> }> {
     const req = new NextRequest(
-      `http://localhost:3000/api/tenant/acme/billing/admin/payments/${paymentId}`,
+      `http://localhost:3000/api/admin/payments/${paymentId}`,
       { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ decision }) }
     );
     const res = await decidePayment(req, ctx(paymentId));

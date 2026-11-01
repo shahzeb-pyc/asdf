@@ -17,7 +17,6 @@ const mockedApiPost = vi.fn();
 vi.mock('@/lib/api', () => ({
   apiGet: (...args: unknown[]) => mockedApiGet(...args),
   apiPost: (...args: unknown[]) => mockedApiPost(...args),
-  buildTenantApiPath: (subdomain: string, path: string) => `/api/tenant/${subdomain}${path}`,
   getErrorMessage: (err: unknown) =>
     err instanceof Error ? err.message : 'Something went wrong. Please try again.',
 }));
@@ -43,7 +42,7 @@ describe('AdminWebhookIssuesView', () => {
 
   it('renders nothing when the list is empty', async () => {
     mockedApiGet.mockResolvedValue({ issues: [] });
-    const { container } = render(<AdminWebhookIssuesView subdomain="acme" />);
+    const { container } = render(<AdminWebhookIssuesView />);
     await waitFor(() => expect(mockedApiGet).toHaveBeenCalled());
     expect(container.querySelector('section[aria-label="Webhook issues"]')).toBeNull();
   });
@@ -58,7 +57,7 @@ describe('AdminWebhookIssuesView', () => {
       })
       .mockResolvedValueOnce({ issues: [] });
     mockedApiPost.mockResolvedValue({});
-    render(<AdminWebhookIssuesView subdomain="acme" />);
+    render(<AdminWebhookIssuesView />);
     expect(await screen.findByText('Webhook issues (2)')).toBeInTheDocument();
     expect(screen.getByText('Unknown payment')).toBeInTheDocument();
     expect(screen.getByText('Underpaid — held for admin decision')).toBeInTheDocument();
@@ -66,7 +65,7 @@ describe('AdminWebhookIssuesView', () => {
     fireEvent.click(screen.getAllByRole('button', { name: 'Dismiss' })[0]);
     await waitFor(() =>
       expect(mockedApiPost).toHaveBeenCalledWith(
-        '/api/tenant/acme/billing/admin/webhook-issues',
+        '/api/admin/webhook-issues',
         { issueId: 'issue-1' }
       )
     );
@@ -82,7 +81,7 @@ describe('AdminWebhookIssuesView', () => {
         issue({ id: 'i-4', reason: 'refunded', providerPaymentId: 'np-d' }),
       ],
     });
-    render(<AdminWebhookIssuesView subdomain="acme" />);
+    render(<AdminWebhookIssuesView />);
     expect(await screen.findByText('Webhook issues (4)')).toBeInTheDocument();
     expect(screen.getByText('Amount does not match the payment')).toBeInTheDocument();
     expect(screen.getByText('Currency does not match the payment')).toBeInTheDocument();
@@ -93,7 +92,7 @@ describe('AdminWebhookIssuesView', () => {
   it('shows an error when dismiss fails', async () => {
     mockedApiGet.mockResolvedValue({ issues: [issue()] });
     mockedApiPost.mockRejectedValue(new Error('dismiss down'));
-    render(<AdminWebhookIssuesView subdomain="acme" />);
+    render(<AdminWebhookIssuesView />);
     await screen.findByText('Webhook issues (1)');
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
     await waitFor(() => expect(mockedApiPost).toHaveBeenCalled());
@@ -102,7 +101,7 @@ describe('AdminWebhookIssuesView', () => {
 
   it('renders nothing when the load fails before any data', async () => {
     mockedApiGet.mockRejectedValue(new Error('boom'));
-    const { container } = render(<AdminWebhookIssuesView subdomain="acme" />);
+    const { container } = render(<AdminWebhookIssuesView />);
     await waitFor(() => expect(mockedApiGet).toHaveBeenCalled());
     // The error alert only shows once data exists; with no data the
     // section hides entirely rather than crashing the admin page.

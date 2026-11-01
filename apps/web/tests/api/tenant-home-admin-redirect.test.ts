@@ -1,5 +1,6 @@
 /**
- * Tenant Home page-level admin guard (admin-landing change).
+ * Tenant Home page-level admin guard (admin-landing change, shell
+ * isolation: the admin section is now /admin/*).
  *
  * Middleware already redirects the tenant-host and apex Home forms
  * for admins; this page guard covers the app-host /tenant/<subdomain>
@@ -7,8 +8,8 @@
  * database: the session and the data load are mocked, the real
  * Next redirect() throws, and the test asserts on its digest.
  *
- * - Admin session: the page throws a NEXT_REDIRECT to the panel
- *   (/tenant/<subdomain>/billing) BEFORE loadHomeData runs.
+ * - Admin session: the page throws a NEXT_REDIRECT to the admin
+ *   section (/admin/subscriptions) BEFORE loadHomeData runs.
  * - Non-admin session: no redirect; the page loads data and returns
  *   JSX (here the error kind, the cheapest renderable shape).
  */
@@ -40,7 +41,7 @@ describe('tenant Home page admin guard', () => {
     mockLoadHomeData.mockResolvedValue({ kind: 'error', message: 'boom' });
   });
 
-  it('redirects an admin session to the panel before any data load', async () => {
+  it('redirects an admin session to the admin section before any data load', async () => {
     mockGetSession.mockResolvedValue({ role: 'admin' });
 
     let thrown: unknown;
@@ -54,7 +55,7 @@ describe('tenant Home page admin guard', () => {
     expect(thrown).toBeDefined();
     const digest = (thrown as { digest?: string }).digest ?? String(thrown);
     expect(digest).toContain('NEXT_REDIRECT');
-    expect(digest).toContain('/tenant/e2e/billing');
+    expect(digest).toContain('/admin/subscriptions');
     expect(mockLoadHomeData).not.toHaveBeenCalled();
   });
 

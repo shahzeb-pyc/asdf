@@ -3,22 +3,8 @@ import React from 'react';
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { shouldUseCleanTenantPaths } from '@/lib/tenant-href';
-import {
-  SidebarProvider,
-  SidebarInset,
-  SidebarTrigger,
-} from '@/components/shared/ui/sidebar';
-import { Toaster } from '@/components/shared/ui/toast';
-import { WorkspaceSidebar } from '@/components/workspace/workspace-sidebar';
-import { WorkspaceBreadcrumb } from '@/components/workspace/workspace-breadcrumb';
-import { CommandPaletteHost } from '@/components/shell/command-palette-host';
-import { DownloadTray } from '@/components/shell/download-tray';
-import { WorkspaceLifecycleGuard } from '@/components/workspace/workspace-lifecycle-guard';
-import { FreePlanGate } from '@/components/billing/free-plan-gate';
-import { EntitlementProvider } from '@/components/billing/entitlement-provider';
-import { PostHogIdentify } from '@/components/posthog-identify';
 import { getServerSessionContext } from '@/lib/auth';
-import { DataProvider } from '@/lib/data/provider';
+import { UserShell } from '@/components/shell/user-shell';
 import { getWorkspaceDisplayName } from './workspace-display-name';
 
 interface TenantLayoutProps {
@@ -49,26 +35,17 @@ export async function generateMetadata({
 }
 
 /**
- * Tenant frame (spec 130 §5.1, PR-130-1): rebuilt on the shared/ui
- * Sidebar primitive — provider, inset and header trigger come from
- * `components/shared/ui/sidebar`, styling is token-backed utilities
- * only, and the shell mounts the one Toaster system plus the Banner
- * slot every tenant surface raises into.
+ * Tenant layout — a thin role router (shell isolation). It resolves
+ * the session and hands rendering to UserShell for regular users
+ * only. Sellers and admins never render the tenant frame:
  *
- * Provider state (spec 130 §11, closed by PR-130-2b): PR-130-1 left a
- * legacy provider nested inside this frame as the designed transition
- * state while the sidebar and footer migrated. PR-130-2a/2b migrated
- * both, the legacy `components/ui/sidebar.tsx` is deleted, and this
- * frame is now single-provider: the shared/ui `SidebarProvider` is
- * the one sidebar state — the header trigger and Cmd/Ctrl+B drive
- * exactly it.
- *
- * Identity (spec 137 §4.4): a null server session NEVER renders a
- * shell with invented identity data. Middleware already redirects
- * unauthenticated tenant requests, so a null session here is a race
- * or test path — it resolves via redirect to login, carrying the
- * tenant return path in the `returnUrl` parameter the login flow
- * already honours for tenant redirects (the middleware convention).
+ * - No session → login (unchanged; a null session here is a race or
+ *   test path — middleware already redirects unauthenticated tenant
+ *   requests, and the tenant return path rides in `returnUrl`).
+ * - Seller → /seller backstop (unchanged; sellers have no workspace).
+ * - Admin → /admin/subscriptions backstop (NEW — replaces the old
+ *   `adminOnly` rendering; admins live in the global admin section).
+ * - User → <UserShell> (the tenant frame, user sections only).
  */
 export default async function TenantLayout({ params, children }: Readonly<TenantLayoutProps>) {
   const { subdomain } = await params;
@@ -84,6 +61,12 @@ export default async function TenantLayout({ params, children }: Readonly<Tenant
   // backstop for any path that reaches the layout directly.
   if (session.role === 'seller') {
     redirect('/seller');
+  }
+
+  // Admins live in the global admin section, not the tenant frame.
+  // Middleware redirects them first; this is the backstop.
+  if (session.role === 'admin') {
+    redirect('/admin/subscriptions');
   }
 
   let hostHeader: string | null = null;
@@ -106,86 +89,15 @@ export default async function TenantLayout({ params, children }: Readonly<Tenant
   };
 
   return (
-    <DataProvider subdomain={subdomain}>
-      {/* The one entitlement query for the whole shell: the gate,
-          the sidebar plan word, and the billing view all read this
-          provider's data, so they can never disagree. */}
-      <EntitlementProvider subdomain={subdomain} adminOnly={session.role === 'admin'}>
-      <SidebarProvider>
-        {/* Skip link: the frame's first focusable element (spec 130 §5.1). */}
-        <a
-          href="#tenant-content"
-          className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-toast focus:rounded-sm focus:bg-panel focus:px-4 focus:py-2 focus:text-body focus:font-medium focus:text-ink focus:outline-2 focus:outline-offset-2 focus:outline-link"
-        >
-          Skip to content
-        </a>
-        <WorkspaceLifecycleGuard userId={session.userId} userEmail={session.email} />
-        {/* PostHog identify: tenant shell already holds the session. */}
-        <PostHogIdentify userId={session.userId} tenantId={subdomain} />
-        <WorkspaceSidebar
-          subdomain={subdomain}
-          useCleanPaths={useCleanPaths}
-          user={user}
-          workspaceName={workspaceName ?? undefined}
-          adminOnly={session.role === 'admin'}
-        />
-        <SidebarInset id="tenant-content" tabIndex={-1} className="scroll-mt-11">
-            <header
-              data-slot="workspace-topbar"
-              data-testid="workspace-topbar"
-              className="flex h-11 shrink-0 items-center gap-2 border-b border-line bg-canvas px-3"
-            >
-              <SidebarTrigger className="size-11" />
-              <div aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-line" />
-              <WorkspaceBreadcrumb subdomain={subdomain} useCleanPaths={useCleanPaths} />
-              {/*
-                ⌘K palette trigger (spec 130 §5.6, OD130-6: YES — the
-                visible search-style header button ships alongside the
-                keyboard shortcut). The host is the palette's only
-                frame-bundle part; the palette itself loads via
-                next/dynamic on first open (PR-130-4's one mount edit
-                to this layout).
-              */}
-              <CommandPaletteHost subdomain={subdomain} useCleanPaths={useCleanPaths} />
-            </header>
-            {/*
-              Banner slot (spec 130 §5.1): the shell-level region directly
-              under the header where a persistent page/account-level Banner
-              (shared/ui) renders when a surface or the shell raises one.
-              Surfaces render their Banner into `#tenant-banner-slot`; no
-              banner is raised at baseline.
-            */}
-            <div id="tenant-banner-slot" data-slot="tenant-banner-slot" />
-            <FreePlanGate
-              subdomain={subdomain}
-              useCleanPaths={useCleanPaths}
-              isAdmin={session.role === 'admin'}
-            >
-              {children}
-            </FreePlanGate>
-        </SidebarInset>
-        {/*
-          Tenant toasts sit top-right (not the shared default
-          bottom-right): the flow-scoped Accounts/Pages toasters already
-          use top-right, and dedicated-page feedback (automation
-          paused/resumed, publishing, slots, timezone) must be visible
-          at once, not below the fold. Top offset mirrors the shared
-          bottom offset (24px desktop / 16px mobile) against the top
-          safe-area inset, so toasts never hug the very edge.
-        */}
-        {/*
-          Download tray (spec 149): shell-level, mounted on every
-          tenant page so progress survives section navigation. It
-          reads only the jobs endpoint — no page props needed.
-        */}
-        <DownloadTray subdomain={subdomain} useCleanPaths={useCleanPaths} />
-        <Toaster
-          position="top-right"
-          offset={{ top: 'max(24px, env(safe-area-inset-top))' }}
-          mobileOffset={{ top: 'max(16px, env(safe-area-inset-top))' }}
-        />
-      </SidebarProvider>
-      </EntitlementProvider>
-    </DataProvider>
+    <UserShell
+      subdomain={subdomain}
+      useCleanPaths={useCleanPaths}
+      user={user}
+      workspaceName={workspaceName ?? undefined}
+      sessionUserId={session.userId}
+      sessionEmail={session.email}
+    >
+      {children}
+    </UserShell>
   );
 }

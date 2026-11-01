@@ -76,29 +76,37 @@ function buildAuthenticatedWorkspaceRedirect(
 }
 
 // Admin landing mirror of buildAuthenticatedWorkspaceRedirect: an
-// admin's entry-route redirect goes to the admin panel (Billing,
-// which renders the Subscriptions approval view for admins),
-// never to the workspace root.
-function buildAdminPanelRedirect(
-  request: NextRequest,
-  session: SessionPayload,
-  host: string,
-  rootDomain: string
-): NextResponse {
-  const cleanHost = host.toLowerCase().split(':')[0] || '';
-  const isLocalRoot = rootDomain.includes('localhost') || rootDomain.includes('127.0.0.1');
-  const isLocalHost = cleanHost.includes('localhost') || cleanHost.includes('127.0.0.1');
+// admin's entry-route redirect goes to the admin section
+// (/admin/subscriptions), never to a workspace URL. The admin
+// section has one address on every host, so there is no
+// tenant-billing vs preview-path split anymore.
+function buildAdminSectionRedirect(request: NextRequest): NextResponse {
+  return NextResponse.redirect(new URL('/admin/subscriptions', request.url));
+}
 
-  if (cleanHost.endsWith('.vercel.app') || (isLocalRoot && !isLocalHost)) {
-    return NextResponse.redirect(new URL(`/tenant/${session.subdomain}/billing`, request.url));
+/**
+ * Old-admin-URL compat map (shell isolation §4.3): an admin
+ * requesting an old tenant location lands on the equivalent new
+ * admin page, never on tenant content. Bare tenant-host paths
+ * (/billing, /sellers) and /tenant/<sub> prefixed paths map alike
+ * — the leading /tenant/<segment> is stripped before matching, and
+ * any other tenant path lands on the panel home (subscriptions).
+ * Old admin API paths have NO compat layer (they 404).
+ */
+function mapOldAdminTenantPathToAdmin(pathname: string): string {
+  let tenantPath = pathname;
+  const tenantPrefixMatch = pathname.match(/^\/tenant\/[^/]+(\/.*)?$/);
+  if (tenantPrefixMatch) {
+    tenantPath = tenantPrefixMatch[1] ?? '/';
+    if (tenantPath === '') tenantPath = '/';
   }
-
-  const panelUrl = new URL(request.url);
-  panelUrl.host = `${session.subdomain}.${rootDomain}`;
-  panelUrl.pathname = '/billing';
-  panelUrl.search = '';
-  panelUrl.hash = '';
-  return NextResponse.redirect(panelUrl);
+  const normalized =
+    tenantPath.length > 1 ? tenantPath.replace(/\/+$/, '') : tenantPath;
+  if (normalized === '/billing') return '/admin/subscriptions';
+  if (normalized === '/sellers') return '/admin/sellers';
+  const sellerDetail = normalized.match(/^\/sellers\/(.+)$/);
+  if (sellerDetail) return `/admin/sellers/${sellerDetail[1]}`;
+  return '/admin/subscriptions';
 }
 
 function isReturnUrlTargetingTenant(
@@ -281,14 +289,27 @@ function handleDirectTenantPathOnApex(
     return NextResponse.redirect(new URL('/login', request.url), 307);
   }
 
-  // Admins never land on the tenant Home route: a direct Home hit
-  // (bookmark, logo, typed URL) goes to the admin panel instead.
-  // Deeper tenant paths pass through unchanged.
+  // Admins never render tenant content: an admin on any /tenant/
+  // path (old bookmark, deep link, or tenant home) goes to the
+  // equivalent admin-section page via the compat map. This runs
+  // BEFORE the tenant rewrite below, and replaces the old
+  // admin-home special case (which only covered the Home route).
+  if (session.role === 'admin') {
+    return NextResponse.redirect(
+      new URL(mapOldAdminTenantPathToAdmin(pathname), request.url),
+      307
+    );
+  }
+
+  // Deleted admin-only sellers routes keep their old non-admin
+  // behavior (the deleted pages redirected non-admins home): a
+  // user on a sellers path goes home instead of hitting a 404.
+  // Admins and sellers cannot reach here (returned above).
   if (
-    session.role === 'admin' &&
-    (pathname === `/tenant/${pathSubdomain}` || pathname === `/tenant/${pathSubdomain}/`)
+    pathname === `/tenant/${pathSubdomain}/sellers` ||
+    pathname.startsWith(`/tenant/${pathSubdomain}/sellers/`)
   ) {
-    return NextResponse.redirect(new URL(`/tenant/${pathSubdomain}/billing`, request.url), 307);
+    return NextResponse.redirect(new URL(`/tenant/${pathSubdomain}`, request.url), 307);
   }
 
   const requestHeaders = buildTenantHeaders(request, pathSubdomain, pathname, session);
@@ -382,6 +403,34 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
           return applyCspHeaders(NextResponse.redirect(new URL('/seller', request.url), 307), nonce);
         }
       }
+      // Admin section guard (shell isolation): /admin/* is the
+      // admin section, not a tenant route. Admins pass through to
+      // the admin layout (which guards the role); a suspended
+      // session goes to the suspended page; unauthenticated
+      // visitors go to login with the admin path as returnUrl; a
+      // user goes to their own workspace home. Sellers cannot reach
+      // here (redirected to /seller above). Logout-success is
+      // exempt — the cookie is being cleared.
+      if (!isLogoutSuccess && (pathname === '/admin' || pathname.startsWith('/admin/'))) {
+        if (session && session.status === 'suspended') {
+          return applyCspHeaders(
+            NextResponse.redirect(new URL('/account-suspended', request.url), 307),
+            nonce
+          );
+        }
+        if (!session) {
+          const loginUrl = new URL('/login', request.url);
+          loginUrl.searchParams.set('returnUrl', pathname);
+          return applyCspHeaders(NextResponse.redirect(loginUrl, 307), nonce);
+        }
+        if (session.role !== 'admin') {
+          return applyCspHeaders(
+            buildAuthenticatedWorkspaceRedirect(request, session, host, rootDomain),
+            nonce
+          );
+        }
+        // Admin falls through to the admin layout.
+      }
       const isEntryOrAuthRoute =
         pathname === '/' || pathname === '/login' || pathname === '/signup';
 
@@ -455,12 +504,9 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
 
         // Admins never land on Home from an entry route: an
         // already-authenticated admin session goes straight to the
-        // admin panel instead of the workspace root.
+        // admin section instead of the workspace root.
         if (session.role === 'admin') {
-          return applyCspHeaders(
-            buildAdminPanelRedirect(request, session, host, rootDomain),
-            nonce
-          );
+          return applyCspHeaders(buildAdminSectionRedirect(request), nonce);
         }
 
         return applyCspHeaders(
@@ -581,19 +627,56 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     return applyCspHeaders(NextResponse.redirect(new URL('/login', request.url), 307), nonce);
   }
 
-  // Admins never land on the tenant Home route: a direct Home hit
-  // (bookmark, logo, typed URL, or a Home-bound post-login
-  // navigation) goes to the admin panel instead. On a tenant host
-  // the Home route is `/` or the prefixed `/tenant/<subdomain>`
-  // form; the panel target uses the clean path, matching the
-  // sidebar's clean-path links on tenant hosts.
+  // Admin section on a tenant host: /admin/* is a root route, not
+  // a tenant route — it must NOT be rewritten to /tenant/<sub>/*
+  // below. Admins pass through (the admin layout guards the role);
+  // a user on /admin/* goes to their own tenant home (the mismatch
+  // guard above already ensured this is an allowed host); sellers
+  // were redirected above.
+  if (pathname === '/admin' || pathname.startsWith('/admin/')) {
+    if (session.role === 'admin') {
+      const adminHeaders = stripUserHeaders(request);
+      setCspRequestHeaders(adminHeaders, nonce);
+      return applyCspHeaders(
+        NextResponse.next({
+          request: { headers: adminHeaders },
+        }),
+        nonce
+      );
+    }
+    return applyCspHeaders(NextResponse.redirect(new URL('/', request.url), 307), nonce);
+  }
+
+  // Admins never render tenant content: an admin on any tenant-host
+  // path (bare /billing, /sellers, any user section, or the old
+  // prefixed form) goes to the equivalent admin-section page via
+  // the compat map. This sits alongside the old admin-home check
+  // and BEFORE URL normalization below: an admin requesting an old
+  // tenant URL on their own host must reach /admin/*, never
+  // normalize to the old tenant path first.
+  if (session.role === 'admin') {
+    return applyCspHeaders(
+      NextResponse.redirect(
+        new URL(mapOldAdminTenantPathToAdmin(pathname), request.url),
+        307
+      ),
+      nonce
+    );
+  }
+
+  // Deleted admin-only sellers routes keep their old non-admin
+  // behavior: a user on a sellers path (bare or prefixed) goes to
+  // their tenant home instead of hitting a 404. Runs before
+  // normalization below so a prefixed sellers path does not
+  // normalize first. Admins and sellers cannot reach here
+  // (returned above).
   if (
-    session.role === 'admin' &&
-    (pathname === '/' ||
-      pathname === `/tenant/${subdomain}` ||
-      pathname === `/tenant/${subdomain}/`)
+    pathname === '/sellers' ||
+    pathname.startsWith('/sellers/') ||
+    pathname === `/tenant/${subdomain}/sellers` ||
+    pathname.startsWith(`/tenant/${subdomain}/sellers/`)
   ) {
-    return applyCspHeaders(NextResponse.redirect(new URL('/billing', request.url), 307), nonce);
+    return applyCspHeaders(NextResponse.redirect(new URL('/', request.url), 307), nonce);
   }
 
   // URL normalization: on a tenant's OWN subdomain host, the

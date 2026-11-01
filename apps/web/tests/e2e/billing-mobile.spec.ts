@@ -382,15 +382,16 @@ test.describe('billing at phone widths', () => {
     context,
   }) => {
     await page.setViewportSize({ width: 360, height: 844 });
-    // Default fixture cookie is admin: the billing route renders the
-    // approvals view for it.
+    // Default fixture cookie is admin: the old billing URL
+    // redirects to the admin section, which renders the approvals
+    // view there.
     await context.addCookies([
       SESSION_COOKIE,
       { ...SESSION_COOKIE, domain: `${TENANT.subdomain}.localhost` },
     ]);
     const state = createFixtureState();
     await installApiFixtures(page, state);
-    await page.route(`**/api/tenant/${TENANT.subdomain}/billing/admin/payments`, (route) => {
+    await page.route(`**/api/admin/payments*`, (route) => {
       if (route.request().method() === 'GET') {
         return route.fulfill({
           status: 200,

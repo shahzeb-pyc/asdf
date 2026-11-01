@@ -206,12 +206,12 @@ describe('Tenant-host URL normalization', () => {
     expect(preview.headers.get('x-middleware-rewrite')).toBeNull();
   });
 
-  it('keeps the admin-home redirect ahead of normalization', async () => {
+  it('keeps the admin-section redirect ahead of normalization', async () => {
     const res = await middleware(
       request('http://acme.localhost:3000/tenant/acme', 'acme.localhost:3000', adminToken)
     );
     expect(res.status).toBe(307);
-    expect(res.headers.get('location')).toBe('http://acme.localhost:3000/billing');
+    expect(res.headers.get('location')).toBe('http://acme.localhost:3000/admin/subscriptions');
   });
 
   it('does not redirect clean paths on the tenant host', async () => {

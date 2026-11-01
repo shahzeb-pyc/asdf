@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { apiGet, apiPatch, apiPost, buildTenantApiPath, getErrorMessage } from '@/lib/api';
+import { apiGet, apiPatch, apiPost, getErrorMessage } from '@/lib/api';
 import {
   CouponRedemptionsResponseSchema,
   CouponsListResponseSchema,
@@ -57,7 +57,7 @@ function formatDate(value: string | null | undefined): string {
  * redemptions alone — they still apply or release on their own
  * payment's outcome.
  */
-export function AdminCouponsView({ subdomain }: Readonly<{ subdomain: string }>) {
+export function AdminCouponsView() {
   const [data, setData] = React.useState<CouponsListResponse | null>(null);
   const [page, setPage] = React.useState(1);
   const [error, setError] = React.useState<string | null>(null);
@@ -81,7 +81,7 @@ export function AdminCouponsView({ subdomain }: Readonly<{ subdomain: string }>)
     async (targetPage: number) => {
       try {
         const result = await apiGet(
-          buildTenantApiPath(subdomain, `/billing/admin/coupons?page=${targetPage}`),
+          `/api/admin/coupons?page=${targetPage}`,
           { schema: CouponsListResponseSchema }
         );
         setData(result);
@@ -91,7 +91,7 @@ export function AdminCouponsView({ subdomain }: Readonly<{ subdomain: string }>)
         setError(getErrorMessage(err));
       }
     },
-    [subdomain]
+    []
   );
 
   React.useEffect(() => {
@@ -128,7 +128,7 @@ export function AdminCouponsView({ subdomain }: Readonly<{ subdomain: string }>)
         }
         body['percent'] = parsed;
       }
-      await apiPost(buildTenantApiPath(subdomain, '/billing/admin/coupons'), body);
+      await apiPost('/api/admin/coupons', body);
       setNotice(`Coupon ${code.trim().toUpperCase()} created.`);
       setCode('');
       await load(1);
@@ -144,7 +144,7 @@ export function AdminCouponsView({ subdomain }: Readonly<{ subdomain: string }>)
     setNotice(null);
     setError(null);
     try {
-      await apiPatch(buildTenantApiPath(subdomain, `/billing/admin/coupons/${coupon.id}`), {
+      await apiPatch(`/api/admin/coupons/${coupon.id}`, {
         action,
       });
       setNotice(
@@ -174,7 +174,7 @@ export function AdminCouponsView({ subdomain }: Readonly<{ subdomain: string }>)
     setRedemptionsLoading(true);
     try {
       const result = await apiGet(
-        buildTenantApiPath(subdomain, `/billing/admin/coupons/${coupon.id}/redemptions`),
+        `/api/admin/coupons/${coupon.id}/redemptions`,
         { schema: CouponRedemptionsResponseSchema }
       );
       setRedemptions(result);

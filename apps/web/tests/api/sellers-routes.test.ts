@@ -27,20 +27,20 @@ import { GET as getReferralValidate } from '@/app/api/referral/validate/route';
 import {
   GET as getAdminSellers,
   POST as postAdminSeller,
-} from '@/app/api/tenant/[subdomain]/sellers/route';
+} from '@/app/api/admin/sellers/route';
 import {
   GET as getAdminSellerDetail,
   PATCH as patchAdminSeller,
   DELETE as deleteAdminSeller,
-} from '@/app/api/tenant/[subdomain]/sellers/[sellerId]/route';
-import { GET as getAdminPayoutRequests } from '@/app/api/tenant/[subdomain]/sellers/payout-requests/route';
-import { POST as postAdminPayoutDecision } from '@/app/api/tenant/[subdomain]/sellers/payout-requests/[requestId]/route';
+} from '@/app/api/admin/sellers/[sellerId]/route';
+import { GET as getAdminPayoutRequests } from '@/app/api/admin/sellers/payout-requests/route';
+import { POST as postAdminPayoutDecision } from '@/app/api/admin/sellers/payout-requests/[requestId]/route';
 
 const TEST_SECRET = 'sellers-route-test-secret-0123456789abcdef';
 
 const adminAuthState = vi.hoisted(() => ({ role: 'admin' as 'admin' | 'user' }));
 vi.mock('@/lib/route-auth', () => ({
-  authenticateTenantRoute: vi.fn(async () => ({
+  authenticateAdminRoute: vi.fn(async () => ({
     session: {
       userId: 'admin-1',
       email: 'admin@example.com',
@@ -361,7 +361,7 @@ function req(
 }
 
 function adminParams<T extends Record<string, string>>(params: T) {
-  return { params: Promise.resolve({ subdomain: 'e2e', ...params }) };
+  return { params: Promise.resolve({ ...params }) };
 }
 
 describe('sellers routes', () => {
@@ -546,7 +546,7 @@ describe('sellers routes', () => {
   describe('admin sellers list', () => {
     it('lists sellers with stats, newest first', async () => {
       install();
-      const res = await getAdminSellers(req('/api/tenant/e2e/sellers'), adminParams({}));
+      const res = await getAdminSellers(req('/api/admin/sellers'));
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.total).toBe(2);
@@ -559,11 +559,11 @@ describe('sellers routes', () => {
     it('403s for non-admins and 503s without a client', async () => {
       install();
       adminAuthState.role = 'user';
-      const forbidden = await getAdminSellers(req('/api/tenant/e2e/sellers'), adminParams({}));
+      const forbidden = await getAdminSellers(req('/api/admin/sellers'));
       expect(forbidden.status).toBe(403);
       adminAuthState.role = 'admin';
       clientState.client = null;
-      const unavailable = await getAdminSellers(req('/api/tenant/e2e/sellers'), adminParams({}));
+      const unavailable = await getAdminSellers(req('/api/admin/sellers'));
       expect(unavailable.status).toBe(503);
     });
   });
@@ -572,11 +572,10 @@ describe('sellers routes', () => {
     it('creates the seller and returns its id', async () => {
       const { db } = install();
       const res = await postAdminSeller(
-        req('/api/tenant/e2e/sellers', {
+        req('/api/admin/sellers', {
           method: 'POST',
           body: { name: 'Omar', email: 'omar@example.com', password: 'Password123!', rate: 25, scope: 'one-time' },
-        }),
-        adminParams({})
+        })
       );
       expect(res.status).toBe(201);
       const body = await res.json();
@@ -591,20 +590,18 @@ describe('sellers routes', () => {
     it('409s on an existing email and 400s on an invalid rate', async () => {
       install();
       const existing = await postAdminSeller(
-        req('/api/tenant/e2e/sellers', {
+        req('/api/admin/sellers', {
           method: 'POST',
           body: { name: 'Ali', email: 'ali@example.com', password: 'Password123!', rate: 20, scope: 'every' },
-        }),
-        adminParams({})
+        })
       );
       expect(existing.status).toBe(409);
       expect((await existing.json()).error).toBe('SELLER_EMAIL_EXISTS');
       const invalid = await postAdminSeller(
-        req('/api/tenant/e2e/sellers', {
+        req('/api/admin/sellers', {
           method: 'POST',
           body: { name: 'Omar', email: 'omar@example.com', password: 'Password123!', rate: 0, scope: 'every' },
-        }),
-        adminParams({})
+        })
       );
       expect(invalid.status).toBe(400);
     });
@@ -612,11 +609,10 @@ describe('sellers routes', () => {
     it('rolls back the created seller when the initial code is taken', async () => {
       const { db } = install();
       const res = await postAdminSeller(
-        req('/api/tenant/e2e/sellers', {
+        req('/api/admin/sellers', {
           method: 'POST',
           body: { name: 'Omar', email: 'omar@example.com', password: 'Password123!', rate: 20, scope: 'every', referralCode: 'TAKEN1' },
-        }),
-        adminParams({})
+        })
       );
       expect(res.status).toBe(409);
       expect((db['users'] as Row[]).find((u) => u['email'] === 'omar@example.com')).toBeUndefined();
@@ -627,7 +623,7 @@ describe('sellers routes', () => {
     it('returns profile, codes, balances, commissions, and referrals', async () => {
       install();
       const res = await getAdminSellerDetail(
-        req(`/api/tenant/e2e/sellers/${SELLER_ID}`),
+        req(`/api/admin/sellers/${SELLER_ID}`),
         adminParams({ sellerId: SELLER_ID })
       );
       expect(res.status).toBe(200);
@@ -643,7 +639,7 @@ describe('sellers routes', () => {
     it('404s for a non-seller id', async () => {
       install();
       const res = await getAdminSellerDetail(
-        req(`/api/tenant/e2e/sellers/${BUYER_ID}`),
+        req(`/api/admin/sellers/${BUYER_ID}`),
         adminParams({ sellerId: BUYER_ID })
       );
       expect(res.status).toBe(404);
@@ -652,7 +648,7 @@ describe('sellers routes', () => {
     it('patches rate/scope and 400s on invalid updates', async () => {
       const { db } = install();
       const res = await patchAdminSeller(
-        req(`/api/tenant/e2e/sellers/${SELLER_ID}`, { method: 'PATCH', body: { rate: 15, scope: 'one-time' } }),
+        req(`/api/admin/sellers/${SELLER_ID}`, { method: 'PATCH', body: { rate: 15, scope: 'one-time' } }),
         adminParams({ sellerId: SELLER_ID })
       );
       expect(res.status).toBe(200);
@@ -661,7 +657,7 @@ describe('sellers routes', () => {
       expect(settings?.['rate']).toBe(15);
       expect(settings?.['scope']).toBe('one-time');
       const invalid = await patchAdminSeller(
-        req(`/api/tenant/e2e/sellers/${SELLER_ID}`, { method: 'PATCH', body: { rate: 101 } }),
+        req(`/api/admin/sellers/${SELLER_ID}`, { method: 'PATCH', body: { rate: 101 } }),
         adminParams({ sellerId: SELLER_ID })
       );
       expect(invalid.status).toBe(400);
@@ -670,7 +666,7 @@ describe('sellers routes', () => {
     it('blocks delete while commissions are unpaid, then deletes when paid out', async () => {
       const { db } = install();
       const blocked = await deleteAdminSeller(
-        req(`/api/tenant/e2e/sellers/${SELLER_ID}`, { method: 'DELETE' }),
+        req(`/api/admin/sellers/${SELLER_ID}`, { method: 'DELETE' }),
         adminParams({ sellerId: SELLER_ID })
       );
       expect(blocked.status).toBe(409);
@@ -679,7 +675,7 @@ describe('sellers routes', () => {
         if (row['seller_id'] === SELLER_ID) row['status'] = 'paid';
       }
       const deleted = await deleteAdminSeller(
-        req(`/api/tenant/e2e/sellers/${SELLER_ID}`, { method: 'DELETE' }),
+        req(`/api/admin/sellers/${SELLER_ID}`, { method: 'DELETE' }),
         adminParams({ sellerId: SELLER_ID })
       );
       expect(deleted.status).toBe(200);
@@ -690,13 +686,13 @@ describe('sellers routes', () => {
   describe('admin payout queue', () => {
     it('lists requests and marks a batch sent', async () => {
       const { db } = install(requestedSeed());
-      const list = await getAdminPayoutRequests(req('/api/tenant/e2e/sellers/payout-requests'), adminParams({}));
+      const list = await getAdminPayoutRequests(req('/api/admin/sellers/payout-requests'));
       expect(list.status).toBe(200);
       const body = await list.json();
       expect(body.total).toBe(1);
       expect(body.requests[0].status).toBe('pending');
       const decided = await postAdminPayoutDecision(
-        req(`/api/tenant/e2e/sellers/payout-requests/${REQUEST_ID}`, { method: 'POST', body: { action: 'mark-sent' } }),
+        req(`/api/admin/sellers/payout-requests/${REQUEST_ID}`, { method: 'POST', body: { action: 'mark-sent' } }),
         adminParams({ requestId: REQUEST_ID })
       );
       expect(decided.status).toBe(200);
@@ -709,7 +705,7 @@ describe('sellers routes', () => {
     it('rejects back to payable and 409s on a decided request', async () => {
       const { db } = install(requestedSeed());
       const rejected = await postAdminPayoutDecision(
-        req(`/api/tenant/e2e/sellers/payout-requests/${REQUEST_ID}`, { method: 'POST', body: { action: 'reject' } }),
+        req(`/api/admin/sellers/payout-requests/${REQUEST_ID}`, { method: 'POST', body: { action: 'reject' } }),
         adminParams({ requestId: REQUEST_ID })
       );
       expect(rejected.status).toBe(200);
@@ -719,7 +715,7 @@ describe('sellers routes', () => {
       expect(comm?.['status']).toBe('payable');
       expect(comm?.['payout_request_id']).toBeNull();
       const again = await postAdminPayoutDecision(
-        req(`/api/tenant/e2e/sellers/payout-requests/${REQUEST_ID}`, { method: 'POST', body: { action: 'reject' } }),
+        req(`/api/admin/sellers/payout-requests/${REQUEST_ID}`, { method: 'POST', body: { action: 'reject' } }),
         adminParams({ requestId: REQUEST_ID })
       );
       expect(again.status).toBe(409);
