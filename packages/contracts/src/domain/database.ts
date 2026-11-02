@@ -242,7 +242,13 @@ export const DatabaseUnifiedQueueItemRowSchema = z
     // per-platform strictness lives in the per-platform options
     // schemas, not in this row boundary.
     platform_options: z.record(z.unknown()),
-    scheduled_time: z.string().datetime({ offset: true }),
+    // Boundary correction (2026-11-02, stuck-post root cause):
+    // the column has been NULLABLE since 20261027130000
+    // (ALTER COLUMN scheduled_time DROP NOT NULL), and the
+    // Facebook retry/deferred settle NULLs it — so a real row
+    // legitimately carries NULL here, and requiring a string threw
+    // ValidationError in the consumer before publishing.
+    scheduled_time: z.string().datetime({ offset: true }).nullable(),
     slot_id: z.string().uuid().nullable(),
     status: z.enum(['queued', 'publishing', 'published', 'failed', 'cancelled']),
     claimed_at: z.string().datetime({ offset: true }).nullable(),
