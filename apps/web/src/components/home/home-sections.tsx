@@ -20,15 +20,16 @@
  *
  * Ask Muse: there is no in-app Muse chat in the code (only the ⌘K
  * command palette), so the Ask Muse button has no destination yet.
- * It is rendered as an inert button — visual-only for now — and
- * must be wired to a real destination, or removed, before merge.
- * No fake route or fake chat is invented here.
+ * Owner decision 2026-11-03: Muse is being built separately, so this
+ * button ships as rendered and will be linked later in that separate
+ * build. No fake route or fake chat is invented here.
  *
  * Creator Finder "Unlimited use": the wording is as approved in the
  * mockup. It sits alongside a live 100 TikWM API calls/day/user cap
- * (the Creator Finder cap PR) that this change does not touch — the
- * wording-vs-cap discrepancy is flagged for the merge gate, not
- * resolved here.
+ * (the Creator Finder cap PR) that this change does not touch.
+ * Owner decision 2026-11-03: Shahzeb accepts the wording as is
+ * ("its okay its a false promise"); the cap stays and the row is
+ * not reworded.
  */
 import * as React from 'react';
 import Link from 'next/link';
@@ -388,9 +389,9 @@ export function MuseAssistantCard() {
         Ask Muse to schedule, publish, or check your pages — while you sleep.
       </p>
       <div>
-        {/* Destination undecided: no in-app Muse chat exists yet, so this
-            button is visual-only for now. It must be wired to a real
-            destination, or removed, before merge. */}
+        {/* Owner decision 2026-11-03: Muse is being built separately, so
+            this button ships as rendered and will be linked later in that
+            separate build. No destination is invented here. */}
         <Button data-testid="ask-muse-button">Ask Muse →</Button>
       </div>
     </Card>
