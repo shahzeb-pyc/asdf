@@ -1,10 +1,11 @@
 import * as React from 'react';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { createQueryClient } from '@/lib/data/query-client';
 
-import { BillingView } from '@/components/billing/billing-view';
+import { PurchaseView } from '@/components/billing/purchase-view';
+import { MyPlanView } from '@/components/billing/my-plan-view';
 import { EntitlementProvider } from '@/components/billing/entitlement-provider';
 import { AdminApprovalsView } from '@/components/billing/admin-approvals-view';
 import { abortedError, httpError, networkError, parseError, sessionExpiredError } from '@/lib/api';
@@ -101,16 +102,46 @@ function mockBillingApi<T extends { entitlement: object; payments: unknown[] }>(
       const entitlement = status.entitlement as Record<string, unknown>;
       return { ...entitlement, hasPriorPeriod: entitlement.hasPriorPeriod ?? false };
     }
+    if (url.includes('/billing/storage')) {
+      return {
+        quotaBytes: 5 * 1024 * 1024 * 1024,
+        usedBytes: 0,
+        remainingBytes: 5 * 1024 * 1024 * 1024,
+        overBytes: 0,
+        state: 'normal',
+        hasActivePeriod: true,
+      };
+    }
+    if (url.includes('/billing/refunds')) {
+      return { requests: [], eligibility: { eligible: false, reason: null } };
+    }
     return status;
   });
 }
 
-/** Render BillingView the way the tenant layout does: inside the shared entitlement provider. */
+/** Render the split views the way the tenant layout does: inside
+ * the shared entitlement provider. Purchase renders the builder
+ * step; checkout tests re-render with step="checkout" after the
+ * builder saves its draft (see goToCheckout). */
 function renderBilling(section: 'purchase' | 'my-plan') {
   return render(
     <QueryClientProvider client={createQueryClient('acme')}>
       <EntitlementProvider subdomain="acme" adminOnly={false}>
-        <BillingView subdomain="acme" initialSection={section} />
+        {section === 'purchase' ? (
+          <PurchaseView subdomain="acme" step="builder" />
+        ) : (
+          <MyPlanView subdomain="acme" />
+        )}
+      </EntitlementProvider>
+    </QueryClientProvider>
+  );
+}
+
+function renderCheckout() {
+  return render(
+    <QueryClientProvider client={createQueryClient('acme')}>
+      <EntitlementProvider subdomain="acme" adminOnly={false}>
+        <PurchaseView subdomain="acme" step="checkout" />
       </EntitlementProvider>
     </QueryClientProvider>
   );
@@ -123,6 +154,12 @@ async function goToCheckout() {
   await screen.findByText('Choose your pages and accounts');
   fireEvent.change(screen.getByLabelText('Facebook pages'), { target: { value: '1' } });
   fireEvent.click(screen.getByRole('button', { name: 'Continue to checkout' }));
+  // The split build makes checkout a sub-route: the click pushes
+  // /purchase/checkout (mocked here), so re-render at that step.
+  // The builder saved its draft to session storage, which the
+  // checkout step restores — the same handoff the real routes use.
+  cleanup();
+  renderCheckout();
 }
 
 /**
@@ -164,6 +201,11 @@ async function pickScreenshot(): Promise<void> {
 describe('Billing Purchase', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    try {
+      sessionStorage.clear();
+    } catch {
+      // jsdom without storage: drafts simply do not persist.
+    }
     mockBillingApi(statusFixture());
     mockApiPost.mockResolvedValue(paymentItem({ status: 'pending' }));
   });
@@ -279,7 +321,7 @@ describe('Billing Purchase', () => {
     await waitFor(() => expect(screen.getByText('15 GB')).toBeInTheDocument());
   });
 
-  it('My Plan still shows all six platforms', async () => {
+  it('My Plan shows all six platforms in the paid counts line', async () => {
     // Free users get a deliberately shorter My Plan (no per-platform
     // list — all zeros, useless for Free), so this needs a paid
     // entitlement: the Purchase platform filter must not leak here.
@@ -298,13 +340,13 @@ describe('Billing Purchase', () => {
       payments: [],
     });
     renderBilling('my-plan');
-    await screen.findByText('Pages and accounts by platform');
-    expect(screen.getByText('Facebook')).toBeInTheDocument();
-    expect(screen.getByText('Instagram')).toBeInTheDocument();
-    expect(screen.getByText('Threads')).toBeInTheDocument();
-    expect(screen.getByText('X')).toBeInTheDocument();
-    expect(screen.getByText('TikTok')).toBeInTheDocument();
-    expect(screen.getByText('YouTube')).toBeInTheDocument();
+    await screen.findByText('Monthly plan');
+    expect(screen.getByText(/2 Facebook pages/)).toBeInTheDocument();
+    expect(screen.getByText(/1 Instagram account/)).toBeInTheDocument();
+    expect(screen.getByText(/1 Threads account/)).toBeInTheDocument();
+    expect(screen.getByText(/1 X account/)).toBeInTheDocument();
+    expect(screen.getByText(/1 TikTok account/)).toBeInTheDocument();
+    expect(screen.getByText(/1 YouTube account/)).toBeInTheDocument();
   });
 
   it('My Plan shows Free for a never-paid user and Expired for a lapsed user', async () => {
@@ -321,21 +363,21 @@ describe('Billing Purchase', () => {
     expect(await screen.findByText('Expired')).toBeInTheDocument();
   });
 
-  it('My Plan shows pending verification instead of Free when a payment is pending', async () => {
+  it('My Plan shows Free plus a submitted-for-approval card when a payment is pending', async () => {
     mockBillingApi(statusFixture([paymentItem()]));
     renderBilling('my-plan');
-    expect(await screen.findByText('Payment in progress')).toBeInTheDocument();
-    expect(screen.getByText('Waiting for approval')).toBeInTheDocument();
+    expect(await screen.findByText('Submitted for approval')).toBeInTheDocument();
+    expect(screen.getByText('Waiting')).toBeInTheDocument();
     expect(screen.getAllByText(/70 PKR/).length).toBeGreaterThan(0);
     expect(
-      screen.getByText('Your plan activates once the payment is approved.')
+      screen.getByText(
+        'Your monthly plan starts when we approve your payment, not when you paid. If approval takes a few days, those days are not added to your plan.'
+      )
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'View payments' })).toBeInTheDocument();
-    // The Free card is replaced, not stacked: no Free title, no Free
-    // feature list, and no upgrade button in this state.
-    expect(screen.queryByText('Free')).toBeNull();
-    expect(screen.queryByText('Posting and scheduling')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Buy or upgrade' })).toBeNull();
+    // Separate-sections state flow: the Free card stays, and the
+    // pending card is added — the payment is never hidden.
+    expect(screen.getByText('Free')).toBeInTheDocument();
   });
 
   it('My Plan keeps Expired for a lapsed user even with a payment pending', async () => {
@@ -345,6 +387,7 @@ describe('Billing Purchase', () => {
     });
     renderBilling('my-plan');
     expect(await screen.findByText('Expired')).toBeInTheDocument();
+    expect(await screen.findByText('Renewal waiting for approval')).toBeInTheDocument();
     expect(screen.queryByText('Payment in progress')).toBeNull();
   });
 
@@ -364,8 +407,9 @@ describe('Billing Purchase', () => {
       payments: [paymentItem({ isUpgrade: true })],
     });
     renderBilling('my-plan');
-    expect(await screen.findByText('Your plan')).toBeInTheDocument();
-    expect(screen.getByText('Paid')).toBeInTheDocument();
+    expect(await screen.findByText('My plan')).toBeInTheDocument();
+    expect(screen.getByText('Monthly plan')).toBeInTheDocument();
+    expect(await screen.findByText('Upgrade waiting for approval')).toBeInTheDocument();
     expect(screen.queryByText('Payment in progress')).toBeNull();
   });
 
@@ -866,6 +910,11 @@ describe('Billing Purchase', () => {
 describe('Admin approvals view', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    try {
+      sessionStorage.clear();
+    } catch {
+      // jsdom without storage: drafts simply do not persist.
+    }
   });
 
   it('a Binance pending payment shows the Binance label, not UBL', async () => {

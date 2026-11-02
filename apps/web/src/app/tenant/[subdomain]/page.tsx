@@ -97,8 +97,8 @@ export default async function TenantIndexPage({ params }: Readonly<TenantIndexPa
   const accountsHref = href('/accounts');
   const mediaHref = href('/media');
   const promptsHref = href('/prompts');
-  const billingHref = href('/billing');
-  const billingPurchaseHref = href('/billing?view=purchase');
+  const billingHref = href('/my-plan');
+  const billingPurchaseHref = href('/purchase');
   const aduHref = href('/auto-download-upload');
 
   const data = await loadHomeData(subdomain);
