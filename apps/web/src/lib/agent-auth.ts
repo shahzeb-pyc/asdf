@@ -141,8 +141,15 @@ async function resolveAgentSession(
       .from('agent_keys')
       .update({ last_used_at: new Date().toISOString() })
       .eq('id', key.id);
-  } catch {
-    // Intentionally ignored: last-used is audit metadata, not auth.
+  } catch (error) {
+    // Logged, not fatal: last-used is audit metadata, not auth, so a
+    // failed update must never turn a valid upload into a failure.
+    // Only the key id is logged — never the key itself.
+    console.error(
+      '[agent-auth] Failed to update last_used_at for agent key',
+      key.id,
+      error
+    );
   }
 
   return { session, agentKeyId: key.id };

@@ -617,6 +617,12 @@
         "firstLoadRawBytes": 546269,
         "routeSpecificGzipBytes": 24145,
         "routeSpecificRawBytes": 72797
+      },
+      "/tenant/[subdomain]/muse": {
+        "firstLoadGzipBytes": 170657,
+        "firstLoadRawBytes": 567683,
+        "routeSpecificGzipBytes": 30139,
+        "routeSpecificRawBytes": 94238
       }
     },
     "totalClientJs": {
