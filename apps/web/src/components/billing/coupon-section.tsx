@@ -99,6 +99,11 @@ export function CouponSection({
                 ? 'This coupon covers the full amount — no payment needed.'
                 : `New amount due: ${applied.amountAfterDiscountPkr} PKR (was ${applied.amountDuePkr} PKR).`}
             </p>
+            {applied.cappedAt70Percent ? (
+              <p className="text-body text-ink-sub">
+                This coupon is capped at 70% off, so you still pay at least 30% of the amount due.
+              </p>
+            ) : null}
             <div className="flex flex-wrap gap-2">
               {applied.fullyCovered ? (
                 <Button

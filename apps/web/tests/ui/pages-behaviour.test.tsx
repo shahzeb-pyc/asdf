@@ -147,6 +147,26 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
+// The shells under test render the feature-cap hook, which reads the
+// shared entitlement. In the app the tenant shell provides it; these
+// standalone shell tests do not mount that shell, so the hook reads
+// the neutral unproven state (cap renders nothing) instead of
+// throwing for a missing provider. The real provider path is covered
+// by the feature-cap tests.
+vi.mock('@/components/billing/entitlement-provider', async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...actual,
+    useSharedEntitlement: () => ({
+      entitlement: null,
+      isProven: false,
+      isLoading: false,
+      isUnproven: true,
+      refetch: async () => undefined,
+    }),
+  };
+});
+
 describe('PagesScaleToolbar behaviour', () => {
   it('typing updates the search, Escape clears it, and status tabs report selection', () => {
     const onSearchChange = vi.fn();

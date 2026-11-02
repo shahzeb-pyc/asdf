@@ -242,6 +242,13 @@ vi.mock('@/lib/storage', () => ({
       db.putObjectCalls += 1;
     }),
   }),
+  // The payments route verifies a bank screenshot exists in R2
+  // before accepting the submission (HeadObject). The fake client
+  // reports a small PNG, so submissions with a screenshot pass.
+  getR2Config: () => ({ bucketName: 'test-bucket' }),
+  createR2S3Client: () => ({
+    send: vi.fn(async () => ({ ContentLength: 1234, ContentType: 'image/png' })),
+  }),
 }));
 
 vi.mock('@/lib/billing/nowpayments', () => ({
@@ -387,6 +394,22 @@ describe('one pending payment per user', () => {
     const res = await postBank(bankRequest(), ctx);
     expect(res.status).toBe(409);
     expect(db.payments).toHaveLength(1);
+  });
+
+  it('bank submission while a scheduled downgrade is outstanding → 409, no row (PR #120 send-back B2)', async () => {
+    seedPayment({
+      status: 'approved',
+      period_id: null,
+      is_downgrade: true,
+      scheduled_starts_at: '2099-01-01T00:00:00.000Z',
+    });
+    const res = await postBank(bankRequest(), ctx);
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toBe('PAYMENT_ALREADY_DECIDED');
+    expect(body.message).toContain('already have a lower plan scheduled');
+    expect(db.payments).toHaveLength(1);
+    expect(db.putObjectCalls).toBe(0);
   });
 
   it('after rejection of the pending payment, a new bank submission succeeds', async () => {

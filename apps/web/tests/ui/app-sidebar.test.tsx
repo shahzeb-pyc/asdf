@@ -150,6 +150,7 @@ describe('sidebar section configs (structural)', () => {
       'My Plan',
       'Purchase',
       'Payments',
+      'Refund',
     ]);
     // Testing platforms render only the note, no leaves.
     const platformSection = sections.find((s) => s.key === 'platform');
@@ -160,14 +161,23 @@ describe('sidebar section configs (structural)', () => {
         expect(item.testingNote).toBeTruthy();
       }
     }
-    // Billing leaves are ?view= leaves behind one route.
+    // Billing is four separate top-level leaves, not a Billing
+    // group and not ?view= leaves (PR #120 send-back fix B1):
+    // the old /billing?view= routes are deleted, so a group
+    // pointing at them would 404.
     const billingSection = sections.find((s) => s.key === 'billing');
-    const billingGroup = billingSection?.items.find((i) => i.kind === 'group');
-    expect(billingGroup?.kind === 'group' ? billingGroup.leaves.map((l) => l.view) : []).toEqual([
-      'my-plan',
-      'purchase',
-      'payments',
+    expect(billingSection?.items.every((i) => i.kind === 'leaf')).toBe(true);
+    expect(
+      (billingSection?.items ?? []).map((i) => (i.kind === 'leaf' ? i.href : ''))
+    ).toEqual([
+      '/tenant/acme/my-plan',
+      '/tenant/acme/purchase',
+      '/tenant/acme/payments',
+      '/tenant/acme/refund',
     ]);
+    expect(
+      (billingSection?.items ?? []).every((i) => i.kind === 'leaf' && i.match === 'prefix')
+    ).toBe(true);
   });
 
   it('seller sections are exactly one Dashboard leaf', () => {
@@ -209,12 +219,13 @@ describe('AppSidebar rendering (separation matrix)', () => {
 
   it('user sidebar renders user leaves and ZERO admin/seller leaves', () => {
     renderSidebar(getUserSections('acme', false));
-    for (const label of ['Home', 'Media Library', 'Fdola Studio', 'Prompt Library', 'Creator Finder', 'My Plan', 'Purchase', 'Payments']) {
+    for (const label of ['Home', 'Media Library', 'Fdola Studio', 'Prompt Library', 'Creator Finder', 'My Plan', 'Purchase', 'Payments', 'Refund']) {
       expect(screen.getByRole('link', { name: new RegExp(`^${label}$`) }).getAttribute('href')).toBeTruthy();
     }
-    // Platform and Billing are collapsible groups (buttons), not leaves.
+    // Facebook is a collapsible group (button); Billing is NOT a
+    // group any more — its four sections are top-level leaves.
     expect(screen.getByRole('button', { name: /Facebook/ })).toBeTruthy();
-    expect(screen.getByRole('button', { name: /Billing/ })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Billing/ })).toBeNull();
     for (const label of USER_FORBIDDEN) {
       expect(screen.queryByRole('link', { name: label })).toBeNull();
     }
@@ -249,13 +260,16 @@ describe('AppSidebar rendering (separation matrix)', () => {
     expect(screen.getByRole('link', { name: 'Schedule' })).toBeTruthy();
   });
 
-  it('billing view leaves highlight by ?view=', () => {
-    mockPathname = '/tenant/acme/billing';
-    mockSearch = new URLSearchParams('view=purchase');
+  it('billing leaves highlight by prefix on their own routes', () => {
+    mockPathname = '/tenant/acme/purchase/checkout';
+    mockSearch = new URLSearchParams();
     renderSidebar(getUserSections('acme', false));
     const purchase = screen.getByRole('link', { name: 'Purchase' });
     expect(purchase.getAttribute('data-active')).toBe('true');
     expect(screen.getByRole('link', { name: 'My Plan' }).getAttribute('data-active')).not.toBe(
+      'true'
+    );
+    expect(screen.getByRole('link', { name: 'Refund' }).getAttribute('data-active')).not.toBe(
       'true'
     );
   });

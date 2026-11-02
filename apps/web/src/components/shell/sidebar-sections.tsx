@@ -8,7 +8,9 @@
  * - getUserSections(subdomain, useCleanPaths): exactly the user
  *   sidebar list — primary section, Platform section (Facebook group
  *   + one group per UPCOMING_PLATFORMS entry, which stays the user
- *   platform data source), Billing section last with ?view= leaves.
+ *   platform data source), Billing section last with four separate
+ *   top-level leaves (My Plan, Purchase, Payments, Refund — no
+ *   Billing group, no ?view= leaves, PR 120 send-back fix B1).
  *   User hrefs resolve through buildTenantHref exactly as before
  *   (clean paths on the tenant's own host, /tenant/<sub> paths
  *   elsewhere), so the config is built per workspace.
@@ -249,21 +251,16 @@ export function getUserSections(subdomain: string, useCleanPaths = false): Sideb
     {
       key: 'billing',
       items: [
-        {
-          kind: 'group',
-          key: 'billing',
-          label: 'Billing',
-          tooltip: 'Billing — My Plan, Purchase & Payments',
-          icon: BILLING_ICON,
-          defaultOpen: true,
-          parentHref: href('/billing?view=my-plan'),
-          matchPath: href('/billing'),
-          leaves: [
-            { label: 'My Plan', href: href('/billing?view=my-plan'), match: 'view', view: 'my-plan' },
-            { label: 'Purchase', href: href('/billing?view=purchase'), match: 'view', view: 'purchase' },
-            { label: 'Payments', href: href('/billing?view=payments'), match: 'view', view: 'payments' },
-          ],
-        },
+        // Separate sections, not a Billing group (owner decision
+        // 2026-11-02; PR 120 send-back fix B1): each leaf is a
+        // top-level sidebar item on its own route, prefix-matched.
+        // There is deliberately no collapsible Billing parent and
+        // no ?view= leaf — the old /billing?view= routes are
+        // deleted, so any surviving group would 404.
+        { kind: 'leaf', label: 'My Plan', href: href('/my-plan'), icon: BILLING_ICON, match: 'prefix' },
+        { kind: 'leaf', label: 'Purchase', href: href('/purchase'), match: 'prefix' },
+        { kind: 'leaf', label: 'Payments', href: href('/payments'), match: 'prefix' },
+        { kind: 'leaf', label: 'Refund', href: href('/refund'), match: 'prefix' },
       ],
     },
   ];

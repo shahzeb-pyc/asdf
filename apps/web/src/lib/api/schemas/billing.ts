@@ -33,6 +33,7 @@ export {
 export type {
   AdminPaymentsResponse,
   AdminRefundItem,
+  BillingPaymentItem,
   AdminRefundsResponse,
   BillingStatusResponse,
   Coupon,

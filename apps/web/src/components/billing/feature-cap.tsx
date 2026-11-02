@@ -15,14 +15,9 @@
  * a list re-reads the entitlement; no polling.
  */
 import * as React from 'react';
-import { useQuery } from '@tanstack/react-query';
 
-import {
-  EntitlementResponseSchema,
-  type SubscriptionPlatform,
-} from '@fbuploadpro/contracts';
-import { api, buildTenantApiPath } from '@/lib/api';
-import { queryKeys } from '@/lib/data';
+import type { SubscriptionPlatform } from '@fbuploadpro/contracts';
+import { useSharedEntitlement } from './entitlement-provider';
 
 export interface FeatureCap {
   used: number;
@@ -37,16 +32,13 @@ export function useFeatureCap(
   subdomain: string,
   platform: CapPlatform
 ): { cap: FeatureCap | null; isLoading: boolean } {
-  const query = useQuery({
-    queryKey: queryKeys.tenant(subdomain).billing.entitlement,
-    queryFn: ({ signal }) =>
-      api.get(buildTenantApiPath(subdomain, '/billing/entitlement'), {
-        schema: EntitlementResponseSchema,
-        signal,
-      }),
-    staleTime: 0,
-  });
-  const data = query.data;
+  void subdomain;
+  // Proven-only (billing audit fix, this build): read the shared
+  // entitlement, never a private query's retained last success, so
+  // a failed refetch clears the cap to neutral like the gate, the
+  // sidebar word and My Plan do, instead of showing stale numbers.
+  const shared = useSharedEntitlement();
+  const data = shared.entitlement;
   const cap = React.useMemo<FeatureCap | null>(() => {
     if (!data || data.plan !== 'paid' || !data.active) return null;
     const used = data.usage[platform];
@@ -54,7 +46,7 @@ export function useFeatureCap(
     const remaining = Math.max(0, allowed - used);
     return { used, allowed, remaining, atCap: remaining === 0 };
   }, [data, platform]);
-  return { cap, isLoading: query.isPending };
+  return { cap, isLoading: shared.isLoading };
 }
 
 export function FeatureCapText({

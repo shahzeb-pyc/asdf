@@ -11,6 +11,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 import { RefundSection } from '@/components/billing/refund-section';
+import { RefundView } from '@/components/billing/refund-view';
 
 const mockedApiGet = vi.fn();
 const mockedApiPost = vi.fn();
@@ -439,5 +440,32 @@ describe('RefundSection extended paths', () => {
     // No "· N days used" figure — the words "days used" still appear
     // in the explanatory sentence, so assert on the figure itself.
     expect(screen.queryByText(/· \d+ days used/)).toBeNull();
+  });
+});
+
+/**
+ * RefundView (split build): the standalone Refund page renders its
+ * header copy plus the section, even when the user is not eligible
+ * (the section itself renders nothing then, but the page must not
+ * look empty or broken).
+ */
+describe('RefundView', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('renders the page header and the refund section', async () => {
+    mockedApiGet.mockResolvedValue(eligibleData);
+    render(<RefundView subdomain="acme" />);
+    expect(await screen.findByText('Refund')).toBeTruthy();
+    expect(screen.getByText(/Your monthly plan refunds/)).toBeTruthy();
+    expect(await screen.findByText('Request refund')).toBeTruthy();
+  });
+
+  it('renders the page header even when the section is empty', async () => {
+    mockedApiGet.mockResolvedValue(ineligibleData);
+    render(<RefundView subdomain="acme" />);
+    expect(await screen.findByText('Refund')).toBeTruthy();
+    expect(screen.getByText(/Your monthly plan refunds/)).toBeTruthy();
   });
 });

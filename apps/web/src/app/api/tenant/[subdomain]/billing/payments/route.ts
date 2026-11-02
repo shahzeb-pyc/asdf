@@ -8,6 +8,7 @@ import { logServerError } from '@/lib/server-analytics';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
 import { readJsonBody } from '@/lib/request-body';
 import {
+  assertNoOutstandingScheduledDowngrade,
   getActivePeriod,
   hasPendingPayment,
   paymentFromRow,
@@ -29,6 +30,8 @@ import {
   mapPaymentToItem,
   storeBillingIdempotency,
 } from '@/lib/billing/route-helpers';
+import { createR2S3Client, getR2Config } from '@/lib/storage';
+import { HeadObjectCommand } from '@aws-sdk/client-s3';
 
 /**
  * POST /api/tenant/[subdomain]/billing/payments
@@ -182,6 +185,62 @@ export async function POST(
     );
   }
 
+  // Screenshot existence verification (owner correction 2026-11-02):
+  // a key that points at nothing must be refused HERE, with a
+  // re-upload action, not discovered at admin review days later.
+  const r2Config = getR2Config();
+  if (!r2Config) {
+    return NextResponse.json(
+      { error: 'SCREENSHOTS_UNAVAILABLE', message: 'Screenshots are not available right now. Please try again.' },
+      { status: 503 }
+    );
+  }
+  try {
+    const head = await createR2S3Client(r2Config).send(
+      new HeadObjectCommand({ Bucket: r2Config.bucketName, Key: screenshotStorageKey })
+    );
+    const size = typeof head.ContentLength === 'number' ? head.ContentLength : null;
+    if (size !== null && size > 10 * 1024 * 1024) {
+      return NextResponse.json(
+        {
+          error: 'SCREENSHOT_TOO_LARGE',
+          message: 'Screenshot missing, re-upload: the screenshot must be under 10 MB. Please re-upload it and try again.',
+        },
+        { status: 400 }
+      );
+    }
+    const contentType = typeof head.ContentType === 'string' ? head.ContentType : '';
+    if (contentType && !contentType.startsWith('image/')) {
+      return NextResponse.json(
+        {
+          error: 'SCREENSHOT_INVALID',
+          message: 'Screenshot missing, re-upload: the screenshot must be a PNG, JPG, WebP, or GIF image. Please re-upload it and try again.',
+        },
+        { status: 400 }
+      );
+    }
+  } catch (err) {
+    const name = (err as { name?: string; $metadata?: { httpStatusCode?: number } }).name;
+    const statusCode = (err as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
+    if (name === 'NoSuchKey' || name === 'NotFound' || statusCode === 404) {
+      return NextResponse.json(
+        {
+          error: 'SCREENSHOT_MISSING',
+          message: 'Screenshot missing, re-upload: we could not find your uploaded screenshot. Please re-upload it and try again.',
+        },
+        { status: 400 }
+      );
+    }
+    logServerError('[billing] screenshot verification failed', err, { source: 'billing' });
+    return NextResponse.json(
+      {
+        error: 'SCREENSHOT_UNVERIFIED',
+        message: 'Your screenshot could not be verified right now. Please try again.',
+      },
+      { status: 502 }
+    );
+  }
+
   // Coupon hold (if any): the claim lands before any money moves,
   // so a failed submission never strands a discount. The payment
   // row is inserted with the REDUCED amount; the redemption is
@@ -199,13 +258,32 @@ export async function POST(
         { status: 409 }
       );
     }
+    // Later-purchase rule (PR 120 send-back fix B2): while a
+    // downgrade schedule is outstanding, no new purchase is
+    // accepted — an upgrade bought now would be superseded by
+    // the scheduled downgrade anyway, and a second schedule
+    // would compete with the first. A due schedule activates
+    // first inside the guard, so it stops blocking once live.
+    try {
+      await assertNoOutstandingScheduledDowngrade(client, session.userId);
+    } catch (err) {
+      if (err instanceof SubscriptionGateError) {
+        return NextResponse.json(
+          { error: err.code, message: err.message },
+          { status: err.code === 'PAYMENT_ALREADY_DECIDED' ? 409 : 500 }
+        );
+      }
+      throw err;
+    }
     const activePeriod = await getActivePeriod(client, session.userId, new Date());
     let amountPkr: number;
     let isUpgrade: boolean;
+    let isDowngrade = false;
     try {
       const priced = pricePurchase(counts, activePeriod);
       amountPkr = priced.amountPkr;
       isUpgrade = priced.isUpgrade;
+      isDowngrade = priced.isDowngrade;
     } catch (err) {
       if (err instanceof SubscriptionGateError) {
         return NextResponse.json({ error: 'INVALID_REQUEST', message: err.message }, { status: 400 });
@@ -274,6 +352,23 @@ export async function POST(
         'id,user_id,method,bank_method,status,facebook_count,instagram_count,threads_count,x_count,tiktok_count,youtube_count,amount_pkr,is_upgrade,screenshot_storage_key,nowpayments_payment_id,nowpayments_pay_address,nowpayments_pay_amount,nowpayments_network,coupon_code,discount_pkr,period_id,approved_at,created_at'
       )
       .single();
+    if (!error && data && isDowngrade) {
+      // is_downgrade column ships with a new migration (unapplied
+      // until the owner applies it): record best-effort, never
+      // fail the payment for it.
+      try {
+        await client
+          .from('subscription_payments')
+          .update({ is_downgrade: true })
+          .eq('id', (data as Record<string, unknown>)['id']);
+      } catch (err) {
+        // Tolerated: the payment itself is already created. Logged
+        // so an unapplied migration stays visible instead of silent.
+        logServerError('[billing] downgrade flag write failed (migration may be unapplied)', err, {
+          source: 'billing',
+        });
+      }
+    }
     if (error?.code === '23505') {
       // Race backstop: two submissions that both passed the pending
       // check can still collide on the one-pending-per-user index.

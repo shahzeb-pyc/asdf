@@ -68,7 +68,11 @@ export interface FreePlanGateProps {
 }
 
 /** First path segments that never show the dialog. '' is the tenant home. */
-const EXEMPT_FIRST_SEGMENTS = new Set(['', 'prompts', 'billing']);
+// Separate billing sections (2026-11-02): My Plan, Purchase,
+// Payments and Refund are all exempt, or a Free user clicking
+// Purchase would be hard-blocked on the very page they were
+// sent to buy from, with Upgrade pointing back at itself.
+const EXEMPT_FIRST_SEGMENTS = new Set(['', 'prompts', 'my-plan', 'purchase', 'payments', 'refund']);
 
 export function isFreePlanExemptRoute(pathname: string | null, subdomain: string): boolean {
   const normalized = normalizeTenantPath(pathname ?? '', subdomain);
@@ -85,7 +89,20 @@ export function FreePlanGate({
   const pathname = usePathname();
   const router = useRouter();
   const exempt = isFreePlanExemptRoute(pathname, subdomain);
-  const { entitlement, isProven, isLoading, isUnproven } = useSharedEntitlement();
+  const { entitlement, isProven, isLoading, isUnproven, refetch } = useSharedEntitlement();
+  // Client timeout on gated loading (billing audit fix): a hung
+  // entitlement fetch must not leave a section on skeletons
+  // indefinitely. After 15s, offer a retry; fail-open still applies
+  // once a fetch settles unproven.
+  const [loadingTimedOut, setLoadingTimedOut] = React.useState(false);
+  React.useEffect(() => {
+    if (!isLoading) {
+      setLoadingTimedOut(false);
+      return;
+    }
+    const timer = setTimeout(() => setLoadingTimedOut(true), 15_000);
+    return () => clearTimeout(timer);
+  }, [isLoading]);
 
   // Sticky fail-open (see the header note): once a fetch has settled
   // unproven, later refetches keep the children instead of flashing
@@ -106,6 +123,18 @@ export function FreePlanGate({
           <Skeleton className="h-5 w-1/3" />
           <Skeleton className="h-4 w-full" />
           <Skeleton className="h-4 w-2/3" />
+          {loadingTimedOut ? (
+            <div className="flex flex-col gap-2 pt-2">
+              <p className="text-body text-ink-sub">
+                Checking your plan is taking longer than usual.
+              </p>
+              <div>
+                <Button variant="outline" onClick={() => void refetch()}>
+                  Try checking again
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </div>
       );
     }
@@ -115,7 +144,7 @@ export function FreePlanGate({
   if (entitlement.canPost) return <>{children}</>;
 
   const homeHref = buildTenantHref(subdomain, '/', useCleanPaths);
-  const upgradeHref = buildTenantHref(subdomain, '/billing?view=purchase', useCleanPaths);
+  const upgradeHref = buildTenantHref(subdomain, '/purchase', useCleanPaths);
 
   return (
     <Dialog

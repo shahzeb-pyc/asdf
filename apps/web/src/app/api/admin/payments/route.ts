@@ -4,6 +4,7 @@ import { logServerError } from '@/lib/server-analytics';
 import { paymentFromRow } from '@/lib/billing/entitlement';
 import {
   getBillingAdminClient,
+  loadNewPaymentFields,
   mapPaymentToItem,
 } from '@/lib/billing/route-helpers';
 
@@ -105,12 +106,30 @@ export async function GET(
         );
       }
     }
+    const newFields = await loadNewPaymentFields(
+      client,
+      payments.map((payment) => payment.id)
+    );
     return NextResponse.json({
-      payments: payments.map((payment) => ({
-        ...mapPaymentToItem(payment),
-        userId: payment.userId,
-        userEmail: emails.get(payment.userId) ?? null,
-      })),
+      payments: payments.map((payment) => {
+        const item = mapPaymentToItem(payment);
+        const extra = newFields.get(payment.id);
+        return {
+          ...item,
+          ...(extra
+            ? {
+                isDowngrade: extra.isDowngrade,
+                scheduledStartsAt: extra.scheduledStartsAt,
+                rejectionReason: extra.rejectionReason,
+                rejectionDetail: extra.rejectionDetail,
+                overrideReason: extra.overrideReason,
+                decidedAt: extra.decidedAt,
+              }
+            : {}),
+          userId: payment.userId,
+          userEmail: emails.get(payment.userId) ?? null,
+        };
+      }),
       page,
       pendingTotal: pendingCount,
     });

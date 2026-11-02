@@ -14,6 +14,7 @@ import { releaseHeldRedemptionsForPayment } from '@/lib/billing/coupons';
 import { recordCommissionForPayment } from '@/lib/billing/sellers';
 import {
   getBillingAdminClient,
+  loadNewPaymentFields,
   mapPaymentToItem,
 } from '@/lib/billing/route-helpers';
 
@@ -71,7 +72,26 @@ export async function POST(
 
   try {
     if (parsed.data.decision === 'reject') {
-      const payment = await rejectPayment(client, paymentId);
+      // Required reason (owner decision 2026-11-02): an admin cannot
+      // reject without choosing one; "Other" needs free text.
+      const reason = parsed.data.rejectionReason?.trim();
+      const detail = parsed.data.rejectionDetail?.trim() ?? null;
+      if (!reason || (reason === 'Other' && !detail)) {
+        return NextResponse.json(
+          {
+            error: 'INVALID_REQUEST',
+            message: reason === 'Other'
+              ? 'For "Other", write what was wrong with this payment.'
+              : 'Choose a reason for rejecting this payment.',
+          },
+          { status: 400 }
+        );
+      }
+      const payment = await rejectPayment(client, paymentId, new Date(), {
+        reason,
+        detail,
+        adminUserId: auth.session.userId,
+      });
       return NextResponse.json({ payment: mapPaymentToItem(payment), period: null });
     }
 
@@ -88,11 +108,18 @@ export async function POST(
     // row is a 404, not the crypto 400 below (audit fix 2026-11-01:
     // approving a nonexistent payment used to report "crypto
     // payments activate automatically", which is wrong twice over).
-    const { data } = await client
+    const { data, error: loadError } = await client
       .from('subscription_payments')
-      .select('method')
+      .select('method,screenshot_storage_key')
       .eq('id', paymentId)
       .maybeSingle();
+    if (loadError) {
+      logServerError('[billing] admin decision load failed', loadError, { source: 'billing' });
+      return NextResponse.json(
+        { error: 'That payment could not be loaded right now. Please try again.' },
+        { status: 500 }
+      );
+    }
     if (!data) {
       return NextResponse.json(
         { error: 'PAYMENT_NOT_FOUND', message: 'That payment could not be found.' },
@@ -112,8 +139,40 @@ export async function POST(
         { status: 400 }
       );
     }
+    const screenshotKey =
+      data !== null && typeof data === 'object'
+        ? (data as Record<string, unknown>)['screenshot_storage_key']
+        : null;
+    const overrideReason = parsed.data.overrideReason?.trim() ?? null;
+    if (typeof screenshotKey !== 'string' || screenshotKey.length === 0) {
+      // Admin override (owner decision 2026-11-02): approve without
+      // a screenshot only with a recorded reason.
+      if (!overrideReason) {
+        return NextResponse.json(
+          {
+            error: 'INVALID_REQUEST',
+            message: 'This payment has no screenshot. Approve it only with a recorded reason, or reject it.',
+          },
+          { status: 400 }
+        );
+      }
+    }
 
-    const { payment, period } = await approvePayment(client, paymentId, auth.session.userId);
+    const { payment, period } = await approvePayment(client, paymentId, auth.session.userId, new Date(), {
+      overrideReason,
+    });
+    // A scheduled downgrade has no period yet (option A): the
+    // schedule lives on the payment and the period is created
+    // when it goes live. Returning a period here would be a lie.
+    if (!period) {
+      return NextResponse.json({
+        payment: mapPaymentToItem(payment),
+        scheduled: true,
+        scheduledStartsAt: payment.scheduledStartsAt
+          ? payment.scheduledStartsAt.toISOString()
+          : null,
+      });
+    }
     return NextResponse.json({
       payment: mapPaymentToItem(payment),
       period: {
@@ -152,13 +211,35 @@ async function handleCryptoRescue(
     )
     .eq('id', paymentId)
     .maybeSingle();
-  if (error || !data) {
+  if (error) {
+    logServerError('[billing] crypto rescue load failed', error, { source: 'billing' });
+    return NextResponse.json(
+      { error: 'That payment could not be loaded right now. Please try again.' },
+      { status: 500 }
+    );
+  }
+  if (!data) {
     return NextResponse.json(
       { error: 'PAYMENT_NOT_FOUND', message: 'That payment could not be found.' },
       { status: 404 }
     );
   }
-  const payment = paymentFromRow(data as Record<string, unknown>);
+  let payment = paymentFromRow(data as Record<string, unknown>);
+  if (payment) {
+    const fields = await loadNewPaymentFields(client, [payment.id]);
+    const extra = fields.get(payment.id);
+    if (extra) {
+      payment = {
+        ...payment,
+        isDowngrade: extra.isDowngrade,
+        scheduledStartsAt: extra.scheduledStartsAt ? new Date(extra.scheduledStartsAt) : null,
+        rejectionReason: extra.rejectionReason,
+        rejectionDetail: extra.rejectionDetail,
+        overrideReason: extra.overrideReason,
+        decidedAt: extra.decidedAt,
+      };
+    }
+  }
   if (!payment) {
     return NextResponse.json(
       { error: 'PAYMENT_NOT_FOUND', message: 'That payment could not be found.' },
@@ -186,6 +267,15 @@ async function handleCryptoRescue(
 
   if (decision === 'approve-crypto') {
     const result = await activateCryptoPayment(client, payment);
+    // A scheduled downgrade has no period yet (option A): no
+    // commission is due until activation creates the period, and
+    // recording one now would need a period that does not exist.
+    if (!result.period) {
+      return NextResponse.json({
+        payment: mapPaymentToItem(result.payment),
+        scheduled: true,
+      });
+    }
     // A rescued payment is an approved/finished payment, so the
     // referral commission is due exactly as on a webhook finish.
     // This THROWS on failure (fail loud, mapped to a JSON 500 by
@@ -221,6 +311,17 @@ async function handleCryptoRescue(
       { error: 'PAYMENT_ALREADY_DECIDED', message: 'That payment has already been decided.' },
       { status: 409 }
     );
+  }
+  try {
+    await client
+      .from('subscription_payments')
+      .update({ decided_at: new Date().toISOString() })
+      .eq('id', payment.id);
+  } catch (err) {
+    // Best-effort: decided_at column ships with the new migration.
+    logServerError('[billing] decided_at write failed (migration may be unapplied)', err, {
+      source: 'billing',
+    });
   }
   try {
     await releaseHeldRedemptionsForPayment(client, payment.id);

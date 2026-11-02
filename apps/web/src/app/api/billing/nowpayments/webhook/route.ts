@@ -16,7 +16,7 @@ import {
   releaseHeldRedemptionsForPayment,
 } from '@/lib/billing/coupons';
 import { recordCommissionForPayment } from '@/lib/billing/sellers';
-import { getBillingAdminClient } from '@/lib/billing/route-helpers';
+import { getBillingAdminClient, loadNewPaymentFields } from '@/lib/billing/route-helpers';
 import { getNowPaymentsConfig } from '@/lib/billing/nowpayments';
 import { recordWebhookIssue } from '@/lib/billing/webhook-issues';
 
@@ -151,7 +151,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ received: true, unknownPayment: true });
     }
 
-    const payment = paymentFromRow(paymentRow);
+    let payment = paymentFromRow(paymentRow);
+    if (payment && client) {
+      const fields = await loadNewPaymentFields(client, [payment.id]);
+      const extra = fields.get(payment.id);
+      if (extra) {
+        payment = {
+          ...payment,
+          isDowngrade: extra.isDowngrade,
+          scheduledStartsAt: extra.scheduledStartsAt ? new Date(extra.scheduledStartsAt) : null,
+        };
+      }
+    }
     if (!payment) {
       await releaseDedupe();
       return NextResponse.json({ received: true, unknownPayment: true });
@@ -289,6 +300,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           paymentId: payment.id,
           reason: 'coupon_released_before_finish',
           detail: 'A failed/expired notification released this payment’s coupon before the finished notification arrived. The period was still activated because the user paid — check whether the coupon should be re-applied manually.',
+        });
+      }
+      // A scheduled downgrade has no period yet (option A): the
+      // commission is recorded at activation, not here, and the
+      // webhook must acknowledge the schedule, not claim activation.
+      if (!result.period) {
+        return NextResponse.json({
+          received: true,
+          scheduled: true,
+          activated: false,
+          alreadyActivated: false,
         });
       }
       // Seller commission, by contrast, THROWS on failure: the

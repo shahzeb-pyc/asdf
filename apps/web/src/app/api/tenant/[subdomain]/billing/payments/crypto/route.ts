@@ -9,6 +9,7 @@ import { logServerError } from '@/lib/server-analytics';
 import { readJsonBody } from '@/lib/request-body';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
 import {
+  assertNoOutstandingScheduledDowngrade,
   getActivePeriod,
   hasPendingPayment,
   PENDING_PAYMENT_EXISTS_MESSAGE,
@@ -182,13 +183,29 @@ export async function POST(
         { status: 409 }
       );
     }
+    // Later-purchase rule (PR 120 send-back fix B2): blocked
+    // while a downgrade schedule is outstanding; a due schedule
+    // activates first inside the guard, so it stops blocking.
+    try {
+      await assertNoOutstandingScheduledDowngrade(client, session.userId);
+    } catch (err) {
+      if (err instanceof SubscriptionGateError) {
+        return NextResponse.json(
+          { error: err.code, message: err.message },
+          { status: err.code === 'PAYMENT_ALREADY_DECIDED' ? 409 : 500 }
+        );
+      }
+      throw err;
+    }
     const activePeriod = await getActivePeriod(client, session.userId, new Date());
     let amountPkr: number;
     let isUpgrade: boolean;
+    let isDowngrade = false;
     try {
       const priced = pricePurchase(counts, activePeriod);
       amountPkr = priced.amountPkr;
       isUpgrade = priced.isUpgrade;
+      isDowngrade = priced.isDowngrade;
     } catch (err) {
       if (err instanceof SubscriptionGateError) {
         return NextResponse.json({ error: 'INVALID_REQUEST', message: err.message }, { status: 400 });
@@ -315,6 +332,17 @@ export async function POST(
       throw new Error('Crypto payment record could not be created');
     }
     const paymentId = inserted.id as string;
+    if (isDowngrade) {
+      try {
+        await client.from('subscription_payments').update({ is_downgrade: true }).eq('id', paymentId);
+      } catch (err) {
+        // Best-effort: migration may be unapplied. Logged so an
+        // unapplied migration stays visible instead of silent.
+        logServerError('[billing] downgrade flag write failed (migration may be unapplied)', err, {
+          source: 'billing',
+        });
+      }
+    }
 
     if (heldRedemption) {
       // Link the held redemption to this payment. If the link

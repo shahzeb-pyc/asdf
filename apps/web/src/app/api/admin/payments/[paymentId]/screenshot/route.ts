@@ -67,15 +67,33 @@ export async function GET(
         { status: 500 }
       );
     }
+    if (!data) {
+      return NextResponse.json({ error: 'Payment not found' }, { status: 404 });
+    }
     if (typeof key !== 'string' || key.length === 0 || key.includes('..')) {
-      return NextResponse.json({ error: 'Screenshot not found' }, { status: 404 });
+      return NextResponse.json(
+        { error: 'SCREENSHOT_MISSING', message: 'No screenshot for this payment.' },
+        { status: 404 }
+      );
     }
     const extension = key.split('.').pop() ?? '';
     const contentType = CONTENT_TYPES[extension] ?? 'application/octet-stream';
     const s3 = createR2S3Client(config);
-    const object = await s3.send(
-      new GetObjectCommand({ Bucket: config.bucketName, Key: key })
-    );
+    let object;
+    try {
+      object = await s3.send(
+        new GetObjectCommand({ Bucket: config.bucketName, Key: key })
+      );
+    } catch (getErr) {
+      const name = (getErr as { name?: string }).name;
+      if (name === 'NoSuchKey' || name === 'NotFound') {
+        return NextResponse.json(
+          { error: 'SCREENSHOT_MISSING', message: 'This screenshot file is no longer available.' },
+          { status: 404 }
+        );
+      }
+      throw getErr;
+    }
     const body = object.Body as
       | { transformToByteArray: () => Promise<Uint8Array> }
       | undefined;
@@ -93,7 +111,7 @@ export async function GET(
       },
     });
   } catch (err) {
-    logServerError('[billing] screenshot stream failed', err, { source: 'billing' });
+    logServerError('[billing] screenshot stream failed', err, { source: 'billing', bucket: config.bucketName });
     return NextResponse.json(
       { error: 'Screenshot could not be loaded. Please try again.' },
       { status: 500 }

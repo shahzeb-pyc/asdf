@@ -103,6 +103,63 @@ export interface UpgradeQuote {
   amountToPayPkr: number;
 }
 
+/** Owner decision 2026-11-02: no coupon may discount more than 70%. */
+export const MAX_COUPON_PERCENT = 70;
+
+/** Preset rejection reasons, shown to the user (owner decision 2026-11-02). */
+export const PAYMENT_REJECTION_REASONS = [
+  'Wrong amount',
+  'Unreadable screenshot',
+  'Wrong account',
+  'Duplicate',
+  'Other',
+] as const;
+export type PaymentRejectionReason = (typeof PAYMENT_REJECTION_REASONS)[number];
+
+export interface DowngradeQuote {
+  oldMonthlyTotalPkr: number;
+  newMonthlyTotalPkr: number;
+  /** Amount to pay now: the new monthly total, prepaid for next month. No credit. */
+  amountToPayPkr: number;
+}
+
+/**
+ * Downgrade, period-end only (owner decision 2026-11-02): the new
+ * plan must cost less in total AND must not raise any single
+ * platform's count (that would be an upgrade). No credit is given
+ * for remaining days; the user pays the new monthly total now for
+ * the month that starts after the current plan ends.
+ * Throws DomainError on any increase, same-total change, or empty plan.
+ */
+export function quoteDowngrade(
+  oldCounts: PlatformCounts,
+  newCounts: PlatformCounts
+): DowngradeQuote {
+  const oldTotal = totalPricePkr(oldCounts);
+  const newTotal = totalPricePkr(newCounts);
+  if (totalUnits(newCounts) === 0) {
+    throw new DomainError(
+      DomainErrorCode.VALIDATION_FAILED,
+      'A downgrade needs at least one page or account.'
+    );
+  }
+  for (const platform of SUBSCRIPTION_PLATFORMS) {
+    if (newCounts[platform] > oldCounts[platform]) {
+      throw new DomainError(
+        DomainErrorCode.VALIDATION_FAILED,
+        'A downgrade cannot raise any page or account count. Raise a count as an upgrade instead.'
+      );
+    }
+  }
+  if (newTotal >= oldTotal) {
+    throw new DomainError(
+      DomainErrorCode.VALIDATION_FAILED,
+      'A downgrade must cost less per month than your current plan.'
+    );
+  }
+  return { oldMonthlyTotalPkr: oldTotal, newMonthlyTotalPkr: newTotal, amountToPayPkr: newTotal };
+}
+
 /**
  * Upgrades only, mid-cycle: the new plan must cost more in total
  * AND must not reduce any single platform's count (otherwise a
@@ -225,6 +282,12 @@ export const AdminDecisionRequestSchema = z.object({
   // payments, and never for a crypto payment that already has a
   // period; the route enforces both.
   decision: z.enum(['approve', 'reject', 'approve-crypto', 'expire-crypto']),
+  // Required for reject (owner decision 2026-11-02); optional free
+  // text alongside any preset. Required for approve without a
+  // screenshot (override reason), otherwise optional.
+  rejectionReason: z.string().min(1).max(200).optional(),
+  rejectionDetail: z.string().max(500).optional(),
+  overrideReason: z.string().min(1).max(500).optional(),
 });
 export type AdminDecisionRequest = z.infer<typeof AdminDecisionRequestSchema>;
 
@@ -264,6 +327,12 @@ export const BillingPaymentItemSchema = z.object({
   counts: PlatformCountsSchema,
   amountPkr: z.number().int().min(0),
   isUpgrade: z.boolean(),
+  isDowngrade: z.boolean().default(false),
+  scheduledStartsAt: z.string().nullable().default(null),
+  rejectionReason: z.string().nullable().default(null),
+  rejectionDetail: z.string().nullable().default(null),
+  overrideReason: z.string().nullable().default(null),
+  decidedAt: z.string().nullable().default(null),
   screenshotStorageKey: z.string().nullable(),
   nowpaymentsPaymentId: z.string().nullable(),
   nowpaymentsPayAddress: z.string().nullable(),
@@ -359,6 +428,8 @@ export type AdminPaymentItem = z.infer<typeof AdminPaymentItemSchema>;
 
 export const AdminPaymentsResponseSchema = z.object({
   payments: z.array(AdminPaymentItemSchema),
+  page: z.number().int().default(1),
+  pendingTotal: z.number().int().default(0),
 });
 export type AdminPaymentsResponse = z.infer<typeof AdminPaymentsResponseSchema>;
 

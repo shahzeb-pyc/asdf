@@ -195,13 +195,29 @@ export function computeDiscount(coupon: CouponRow, amountDuePkr: number): number
     }
     discount = balanceDiscountPkr(amountDuePkr, remaining);
   }
-  if (discount <= 0) {
+  // Owner decision 2026-11-02: no coupon may discount more than 70%
+  // of the amount due, percent or balance alike. A coupon can
+  // therefore never cover the full amount, and the zero-due path
+  // is unreachable through a coupon.
+  const cappedDiscount = Math.min(discount, Math.floor((amountDuePkr * 70) / 100));
+  if (cappedDiscount <= 0) {
     throw new CouponError(
       'COUPON_NO_DISCOUNT',
       'This coupon gives no discount on this purchase.'
     );
   }
-  return discount;
+  return cappedDiscount;
+}
+
+/** True when the uncapped discount would have exceeded the 70% cap. */
+export function wasDiscountCapped(coupon: CouponRow, amountDuePkr: number): boolean {
+  let raw = 0;
+  if (coupon.kind === 'percent_once' || coupon.kind === 'percent_multi') {
+    raw = percentDiscountPkr(amountDuePkr, coupon.percent ?? 0);
+  } else {
+    raw = balanceDiscountPkr(amountDuePkr, coupon.remainingBalancePkr ?? 0);
+  }
+  return raw > Math.floor((amountDuePkr * 70) / 100);
 }
 
 /** Validate a coupon for preview only: no writes, no holds. */
@@ -209,12 +225,16 @@ export async function previewCoupon(
   client: SupabaseClient,
   rawCode: string,
   amountDuePkr: number
-): Promise<{ coupon: CouponRow; discountPkr: number }> {
+): Promise<{ coupon: CouponRow; discountPkr: number; cappedAt70Percent: boolean }> {
   const coupon = await loadCouponByCode(client, rawCode);
   if (!coupon) {
     throw new CouponError('COUPON_NOT_FOUND', 'Invalid coupon code, try another.');
   }
-  return { coupon, discountPkr: computeDiscount(coupon, amountDuePkr) };
+  return {
+    coupon,
+    discountPkr: computeDiscount(coupon, amountDuePkr),
+    cappedAt70Percent: wasDiscountCapped(coupon, amountDuePkr),
+  };
 }
 
 async function claimCoupon(
@@ -224,8 +244,13 @@ async function claimCoupon(
 ): Promise<{ claimed: boolean; discountPkr: number }> {
   const now = nowIso();
   if (coupon.kind === 'balance') {
-    // First attempt with the computed discount; the guard makes a
-    // concurrent draw fail closed instead of overdrawing.
+    // First attempt with the computed discount; the guards make a
+    // concurrent draw fail closed instead of overdrawing. The
+    // exact-value guard matters as much as the sufficient-balance
+    // one: without it, a stale write that still passes the balance
+    // guard (two small concurrent draws) silently un-draws the
+    // other draw — the pool would later pay out more than it holds.
+    // A lost race reloads once and retries with the fresh balance.
     let attemptDiscount = discountPkr;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const remaining = coupon.remainingBalancePkr ?? 0;
@@ -237,6 +262,7 @@ async function claimCoupon(
         })
         .eq('id', coupon.id)
         .eq('status', 'active')
+        .eq('remaining_balance_pkr', remaining)
         .gte('remaining_balance_pkr', attemptDiscount)
         .select('id');
       if (error) {

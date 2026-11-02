@@ -67,11 +67,12 @@ export async function POST(
       }
       throw err;
     }
-    const { coupon, discountPkr } = await previewCoupon(client, code, amountDuePkr);
+    const { coupon, discountPkr, cappedAt70Percent } = await previewCoupon(client, code, amountDuePkr);
     return NextResponse.json({
       code: coupon.code,
       kind: coupon.kind,
-      percent: coupon.percent,
+      percent: coupon.percent === null ? null : Math.min(coupon.percent, 70),
+      cappedAt70Percent,
       discountPkr,
       amountDuePkr,
       amountAfterDiscountPkr: amountDuePkr - discountPkr,

@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   activateCryptoPayment,
+  activateDueScheduledDowngrades,
   approvePayment,
+  hasOutstandingScheduledDowngrade,
   loadPaymentActuals,
   savePaymentActuals,
   assertCanPost,
@@ -119,6 +121,12 @@ function paymentObject(overrides: Partial<SubscriptionPaymentRow> = {}): Subscri
     counts: { ...ZERO_COUNTS, facebook: 2, instagram: 2, threads: 2 },
     amountPkr: 420,
     isUpgrade: false,
+    isDowngrade: false,
+    scheduledStartsAt: null,
+    rejectionReason: null,
+    rejectionDetail: null,
+    overrideReason: null,
+    decidedAt: null,
     screenshotStorageKey: null,
     nowpaymentsPaymentId: null,
     nowpaymentsPayAddress: null,
@@ -140,6 +148,11 @@ interface FakeState {
   usageRows: Row[];
   usageCounts: Partial<Record<string, number>>;
   paymentRow: Row | null;
+  // Row-list view of subscription_payments for the scheduled-
+  // downgrade guards (hasOutstanding / activation), which query
+  // the payments table as a list. Null (default) keeps the old
+  // behaviour: list selects on payments return no rows.
+  paymentRows: Row[] | null;
   periodById: Row | null;
   createdPeriodRow: Row | null;
   selectErrors: Partial<Record<string, unknown>>;
@@ -173,6 +186,7 @@ function baseState(overrides: Partial<FakeState> = {}): FakeState {
     usageRows: [],
     usageCounts: {},
     paymentRow: null,
+    paymentRows: null,
     periodById: null,
     createdPeriodRow: null,
     selectErrors: {},
@@ -293,6 +307,13 @@ class FakeBuilder {
     const err = this.state.selectErrors[this.table];
     if (err) return { data: null, error: err };
     if (this.table === 'subscription_payments') {
+      if (this.state.paymentRows !== null) {
+        const idFilter = this.filters.find((f) => f.op === 'eq' && f.col === 'id');
+        const row = idFilter
+          ? this.state.paymentRows.find((r) => r['id'] === idFilter.val) ?? null
+          : (this.state.paymentRows[0] ?? null);
+        return { data: row, error: null };
+      }
       return { data: this.state.paymentRow, error: null };
     }
     if (this.table === 'subscription_periods') {
@@ -437,7 +458,9 @@ class FakeBuilder {
     let rows =
       this.table === 'subscription_periods'
         ? [...this.state.periods]
-        : this.table === 'subscription_usage'
+        : this.table === 'subscription_payments' && this.state.paymentRows !== null
+          ? [...this.state.paymentRows]
+          : this.table === 'subscription_usage'
           ? [...this.state.usageRows]
           : this.table === 'workspaces'
             ? [...this.state.workspaces]
@@ -1304,7 +1327,7 @@ describe('approvePayment', () => {
       periodById: periodRow(),
     });
     const result = await approvePayment(fakeClient(state), 'payment-1', 'admin-1', now);
-    expect(result.period.id).toBe('period-1');
+    expect(result.period?.id).toBe('period-1');
     expect(result.payment.status).toBe('approved');
     expect(state.inserted).toHaveLength(0);
   });
@@ -1320,7 +1343,7 @@ describe('approvePayment', () => {
       periodId: 'period-new',
       approvedAt: '2026-06-01T00:00:00.000Z',
     });
-    expect(result.period.id).toBe('period-new');
+    expect(result.period?.id).toBe('period-new');
     // Claim-first approval writes twice: the claim (status +
     // approved_by) and then the period link. The link update is
     // the one carrying period_id.
@@ -1341,7 +1364,7 @@ describe('approvePayment', () => {
       createdPeriodRow: periodRow({ id: 'period-new' }),
     });
     const result = await approvePayment(fakeClient(state), 'payment-1', 'admin-1', now);
-    expect(result.period.id).toBe('period-new');
+    expect(result.period?.id).toBe('period-new');
   });
 
   it('reports a missing payment', async () => {
@@ -1352,9 +1375,12 @@ describe('approvePayment', () => {
     const errorState = baseState({
       selectErrors: { subscription_payments: { message: 'db down' } },
     });
+    // Audit fix: a database error during load must fail loud as
+    // unavailable, never masquerade as a missing payment (404 is
+    // reserved for a clean empty result, asserted above).
     await expect(
       approvePayment(fakeClient(errorState), 'payment-1', 'admin-1', now)
-    ).rejects.toMatchObject({ code: 'PAYMENT_NOT_FOUND' });
+    ).rejects.toMatchObject({ code: 'ENTITLEMENT_UNAVAILABLE' });
     const badRowState = baseState({ paymentRow: { nonsense: true } });
     await expect(
       approvePayment(fakeClient(badRowState), 'payment-1', 'admin-1', now)
@@ -1382,6 +1408,236 @@ describe('approvePayment', () => {
       expect.anything(),
       { source: 'billing' }
     );
+  });
+});
+
+describe('approvePayment downgrade, option A (owner decision 2026-11-02, PR #120 send-back B2)', () => {
+  const now = new Date('2026-06-01T00:00:00.000Z');
+
+  it('schedules on the payment only: no period row, live period untouched', async () => {
+    const state = baseState({
+      paymentRow: paymentRow({ is_downgrade: true }),
+      periods: [periodRow({ id: 'period-live', ends_at: '2026-06-20T00:00:00.000Z' })],
+    });
+    const result = await approvePayment(fakeClient(state), 'payment-1', 'admin-1', now);
+    expect(result.payment.status).toBe('approved');
+    expect(result.period).toBeNull();
+    expect(result.payment.scheduledStartsAt?.toISOString()).toBe('2026-06-20T00:00:00.000Z');
+    // No future period row coexists with the live one — that was
+    // the one-live-index violation this fix removes.
+    expect(state.inserted.filter((i) => i.table === 'subscription_periods')).toHaveLength(0);
+    expect(
+      state.updated.filter(
+        (u) => u.table === 'subscription_periods' && 'superseded_at' in u.patch
+      )
+    ).toHaveLength(0);
+    expect(
+      state.updated.find(
+        (u) =>
+          u.table === 'subscription_payments' &&
+          u.patch['scheduled_starts_at'] === '2026-06-20T00:00:00.000Z'
+      )
+    ).toBeTruthy();
+  });
+
+  it('starts at approval, never backdated, when the live period has lapsed', async () => {
+    const state = baseState({
+      paymentRow: paymentRow({ is_downgrade: true }),
+      periods: [periodRow({ id: 'period-old', ends_at: '2026-05-20T00:00:00.000Z' })],
+      createdPeriodRow: periodRow({
+        id: 'period-new',
+        starts_at: '2026-06-01T00:00:00.000Z',
+        ends_at: '2026-07-01T00:00:00.000Z',
+      }),
+    });
+    const result = await approvePayment(fakeClient(state), 'payment-1', 'admin-1', now);
+    expect(result.period?.id).toBe('period-new');
+    const inserted = state.inserted.find((i) => i.table === 'subscription_periods');
+    expect(inserted?.row).toMatchObject({ starts_at: '2026-06-01T00:00:00.000Z' });
+  });
+
+  it('fails closed when the lapsed downgrade period insert errors', async () => {
+    const state = baseState({
+      paymentRow: paymentRow({ is_downgrade: true }),
+      periods: [periodRow({ id: 'period-old', ends_at: '2026-05-20T00:00:00.000Z' })],
+      periodInsertError: { message: 'db down' },
+    });
+    await expect(approvePayment(fakeClient(state), 'payment-1', 'admin-1', now)).rejects.toMatchObject({
+      code: 'ENTITLEMENT_UNAVAILABLE',
+    });
+    expect(mockedLogServerError).toHaveBeenCalledWith(
+      '[billing] period insert failed',
+      expect.anything(),
+      { source: 'billing' }
+    );
+  });
+
+  it('blocks a second scheduled downgrade while one is outstanding', async () => {
+    const pending = paymentRow({ is_downgrade: true });
+    const outstanding = paymentRow({
+      id: 'payment-2',
+      status: 'approved',
+      period_id: null,
+      is_downgrade: true,
+      scheduled_starts_at: '2026-06-20T00:00:00.000Z',
+    });
+    const state = baseState({
+      paymentRow: pending,
+      paymentRows: [pending, outstanding],
+      periods: [periodRow({ id: 'period-live', ends_at: '2026-06-20T00:00:00.000Z' })],
+    });
+    await expect(approvePayment(fakeClient(state), 'payment-1', 'admin-1', now)).rejects.toMatchObject({
+      code: 'PAYMENT_ALREADY_DECIDED',
+    });
+    expect(state.inserted.filter((i) => i.table === 'subscription_periods')).toHaveLength(0);
+  });
+
+  it('hasOutstandingScheduledDowngrade ignores non-downgrade approved payments', async () => {
+    const state = baseState({
+      paymentRows: [
+        paymentRow({ id: 'payment-2', status: 'approved', period_id: null, is_downgrade: false }),
+      ],
+    });
+    await expect(hasOutstandingScheduledDowngrade(fakeClient(state), 'user-1')).resolves.toBe(
+      false
+    );
+  });
+});
+
+describe('activateDueScheduledDowngrades (option A activation path)', () => {
+  const now = new Date('2026-06-01T00:00:00.000Z');
+
+  it('creates and links the period at activation time, not the scheduled date', async () => {
+    const scheduled = paymentRow({
+      status: 'approved',
+      period_id: null,
+      is_downgrade: true,
+      scheduled_starts_at: '2026-05-20T00:00:00.000Z',
+    });
+    const state = baseState({
+      paymentRow: scheduled,
+      paymentRows: [scheduled],
+      periods: [],
+      createdPeriodRow: periodRow({
+        id: 'period-new',
+        starts_at: '2026-06-01T00:00:00.000Z',
+        ends_at: '2026-07-01T00:00:00.000Z',
+      }),
+    });
+    const period = await activateDueScheduledDowngrades(fakeClient(state), 'user-1', now);
+    expect(period?.id).toBe('period-new');
+    const inserted = state.inserted.find((i) => i.table === 'subscription_periods');
+    expect(inserted?.row).toMatchObject({
+      user_id: 'user-1',
+      payment_id: 'payment-1',
+      starts_at: '2026-06-01T00:00:00.000Z',
+    });
+    expect(scheduled['period_id']).toBe('period-new');
+  });
+
+  it('does not activate while a period is still live', async () => {
+    const scheduled = paymentRow({
+      status: 'approved',
+      period_id: null,
+      is_downgrade: true,
+      scheduled_starts_at: '2026-05-20T00:00:00.000Z',
+    });
+    const state = baseState({
+      paymentRow: scheduled,
+      paymentRows: [scheduled],
+      periods: [periodRow({ id: 'period-live', ends_at: '2099-01-01T00:00:00.000Z' })],
+    });
+    await expect(activateDueScheduledDowngrades(fakeClient(state), 'user-1', now)).resolves.toBe(
+      null
+    );
+    expect(state.inserted.filter((i) => i.table === 'subscription_periods')).toHaveLength(0);
+  });
+
+  it('does not activate a schedule whose start is still in the future', async () => {
+    const scheduled = paymentRow({
+      status: 'approved',
+      period_id: null,
+      is_downgrade: true,
+      scheduled_starts_at: '2026-06-20T00:00:00.000Z',
+    });
+    const state = baseState({
+      paymentRow: scheduled,
+      paymentRows: [scheduled],
+      periods: [],
+    });
+    await expect(activateDueScheduledDowngrades(fakeClient(state), 'user-1', now)).resolves.toBe(
+      null
+    );
+    expect(state.inserted.filter((i) => i.table === 'subscription_periods')).toHaveLength(0);
+  });
+
+  it('a second activation after linking is a no-op', async () => {
+    const scheduled = paymentRow({
+      status: 'approved',
+      period_id: null,
+      is_downgrade: true,
+      scheduled_starts_at: '2026-05-20T00:00:00.000Z',
+    });
+    const state = baseState({
+      paymentRow: scheduled,
+      paymentRows: [scheduled],
+      periods: [],
+      createdPeriodRow: periodRow({ id: 'period-new' }),
+    });
+    const first = await activateDueScheduledDowngrades(fakeClient(state), 'user-1', now);
+    expect(first?.id).toBe('period-new');
+    const second = await activateDueScheduledDowngrades(fakeClient(state), 'user-1', now);
+    expect(second).toBeNull();
+    expect(state.inserted.filter((i) => i.table === 'subscription_periods')).toHaveLength(1);
+  });
+});
+
+describe('approvePayment screenshot override (owner decision 2026-11-02)', () => {
+  const now = new Date('2026-06-01T00:00:00.000Z');
+
+  it('refuses a screenshot-less bank approval without a recorded reason', async () => {
+    const state = baseState({
+      paymentRow: paymentRow({ screenshot_storage_key: null }),
+    });
+    await expect(approvePayment(fakeClient(state), 'payment-1', 'admin-1', now)).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+    });
+  });
+
+  it('records the override reason on approval', async () => {
+    const state = baseState({
+      paymentRow: paymentRow({ screenshot_storage_key: null }),
+      createdPeriodRow: periodRow({ id: 'period-new' }),
+    });
+    const result = await approvePayment(fakeClient(state), 'payment-1', 'admin-1', now, {
+      overrideReason: 'Screenshot verified on file',
+    });
+    expect(result.payment.status).toBe('approved');
+    expect(
+      state.updated.find(
+        (u) =>
+          u.table === 'subscription_payments' &&
+          u.patch['override_reason'] === 'Screenshot verified on file'
+      )
+    ).toBeTruthy();
+  });
+});
+
+describe('payment load tolerates non-object rows', () => {
+  const now = new Date('2026-06-01T00:00:00.000Z');
+
+  it('approvePayment reports a non-object row as missing, not as a crash', async () => {
+    const state = baseState({ paymentRow: 'nonsense' as unknown as Row });
+    await expect(approvePayment(fakeClient(state), 'payment-1', 'admin-1', now)).rejects.toMatchObject({
+      code: 'PAYMENT_NOT_FOUND',
+    });
+  });
+
+  it('rejectPayment reports a non-object row as missing, not as a crash', async () => {
+    const state = baseState({ paymentRow: 'nonsense' as unknown as Row });
+    await expect(rejectPayment(fakeClient(state), 'payment-1', now)).rejects.toMatchObject({
+      code: 'PAYMENT_NOT_FOUND',
+    });
   });
 });
 
@@ -1423,6 +1679,48 @@ describe('rejectPayment', () => {
       { source: 'billing' }
     );
   });
+
+  it('records a rejection reason and detail, in memory and on the row', async () => {
+    const state = baseState({ paymentRow: paymentRow() });
+    const payment = await rejectPayment(fakeClient(state), 'payment-1', now, {
+      reason: 'Wrong amount',
+      detail: 'Sent 60, not 70',
+    });
+    expect(payment.status).toBe('rejected');
+    expect(payment.rejectionReason).toBe('Wrong amount');
+    expect(payment.rejectionDetail).toBe('Sent 60, not 70');
+    expect(
+      state.updated.find(
+        (u) =>
+          u.table === 'subscription_payments' &&
+          u.patch['rejection_reason'] === 'Wrong amount' &&
+          u.patch['rejection_detail'] === 'Sent 60, not 70'
+      )
+    ).toBeTruthy();
+  });
+
+  it('records a reason without detail as null', async () => {
+    const state = baseState({ paymentRow: paymentRow() });
+    const payment = await rejectPayment(fakeClient(state), 'payment-1', now, {
+      reason: 'Wrong amount',
+    });
+    expect(payment.rejectionReason).toBe('Wrong amount');
+    expect(payment.rejectionDetail).toBeNull();
+  });
+
+  it('fails closed when the reject load errors', async () => {
+    const state = baseState({
+      selectErrors: { subscription_payments: { message: 'db down' } },
+    });
+    await expect(rejectPayment(fakeClient(state), 'payment-1', now)).rejects.toMatchObject({
+      code: 'ENTITLEMENT_UNAVAILABLE',
+    });
+    expect(mockedLogServerError).toHaveBeenCalledWith(
+      '[billing] payment reject load failed',
+      expect.anything(),
+      { source: 'billing' }
+    );
+  });
 });
 
 describe('pricePurchase', () => {
@@ -1431,11 +1729,13 @@ describe('pricePurchase', () => {
     expect(pricePurchase(counts, null, NOW)).toEqual({
       amountPkr: 420,
       isUpgrade: false,
+      isDowngrade: false,
       quote: null,
+      downgradeQuote: null,
     });
   });
 
-  it('refuses a downgrade as a plain gate error, not a server failure', () => {
+  it('prices a downgrade as the new monthly total, prepaid, with no credit', () => {
     const oldCounts = { ...ZERO_COUNTS, facebook: 20 };
     const newCounts = { ...ZERO_COUNTS, facebook: 10 };
     const activePeriod = {
@@ -1446,17 +1746,20 @@ describe('pricePurchase', () => {
       endsAt: new Date('2026-06-11T00:00:00.000Z'),
       supersededAt: null,
     };
-    let caught: unknown = null;
-    try {
-      pricePurchase(newCounts, activePeriod, NOW);
-    } catch (err) {
-      caught = err;
-    }
-    // The checkout routes turn SubscriptionGateError into a plain
-    // 400; a raw DomainError would have fallen through to a 500.
-    expect(caught).toBeInstanceOf(SubscriptionGateError);
-    expect(caught).toMatchObject({ code: 'INVALID_REQUEST' });
-    expect((caught as Error).message).toContain('Counts can only be increased');
+    // Downgrade is a supported flow since the separate-sections
+    // build: the user pays the new lower monthly total now, the
+    // lower plan starts after the current plan ends, and no credit
+    // is given for the days left on the old plan.
+    const priced = pricePurchase(newCounts, activePeriod, NOW);
+    expect(priced.isDowngrade).toBe(true);
+    expect(priced.isUpgrade).toBe(false);
+    expect(priced.amountPkr).toBe(700);
+    expect(priced.quote).toBeNull();
+    expect(priced.downgradeQuote).toMatchObject({
+      oldMonthlyTotalPkr: 1400,
+      newMonthlyTotalPkr: 700,
+      amountToPayPkr: 700,
+    });
   });
 
   it('prices the 10-to-20 upgrade with 10 days left as credit 233, pay 1167', () => {
@@ -1479,6 +1782,35 @@ describe('pricePurchase', () => {
       newMonthlyTotalPkr: 1400,
     });
   });
+
+  it('reports the downgrade reason for a mixed change that raises a count', () => {
+    const oldCounts = { ...ZERO_COUNTS, facebook: 2, instagram: 2 };
+    const newCounts = { ...ZERO_COUNTS, facebook: 3, instagram: 1 };
+    const activePeriod = {
+      id: 'period-1',
+      userId: 'user-1',
+      counts: oldCounts,
+      startsAt: new Date('2026-05-02T00:00:00.000Z'),
+      endsAt: new Date('2026-06-11T00:00:00.000Z'),
+      supersededAt: null,
+    };
+    expect(() => pricePurchase(newCounts, activePeriod, NOW)).toThrowError(/cannot raise/);
+  });
+
+  it('reports the upgrade reason for an unchanged plan', () => {
+    const oldCounts = { ...ZERO_COUNTS, facebook: 2 };
+    const activePeriod = {
+      id: 'period-1',
+      userId: 'user-1',
+      counts: oldCounts,
+      startsAt: new Date('2026-05-02T00:00:00.000Z'),
+      endsAt: new Date('2026-06-11T00:00:00.000Z'),
+      supersededAt: null,
+    };
+    expect(() => pricePurchase(oldCounts, activePeriod, NOW)).toThrowError(
+      /must cost more than the current plan/
+    );
+  });
 });
 
 describe('approvePayment races (audit fix 2026-11-01, fix 14)', () => {
@@ -1491,7 +1823,7 @@ describe('approvePayment races (audit fix 2026-11-01, fix 14)', () => {
       loseClaimOnce: true,
     });
     const result = await approvePayment(fakeClient(state), 'payment-1', 'admin-1', now);
-    expect(result.period.id).toBe('period-winner');
+    expect(result.period?.id).toBe('period-winner');
     expect(result.payment.status).toBe('approved');
     expect(state.inserted.filter((i) => i.table === 'subscription_periods')).toHaveLength(0);
   });
@@ -1504,7 +1836,7 @@ describe('approvePayment races (audit fix 2026-11-01, fix 14)', () => {
       loseLinkOnce: true,
     });
     const result = await approvePayment(fakeClient(state), 'payment-1', 'admin-1', now);
-    expect(result.period.id).toBe('period-winner');
+    expect(result.period?.id).toBe('period-winner');
     // The orphan period created by the loser is superseded at once,
     // so it can never become the live period.
     const supersede = state.updated.find(
@@ -1587,7 +1919,7 @@ describe('approvePayment stale link (audit fix 2026-11-01, fix 14)', () => {
       createdPeriodRow: periodRow({ id: 'period-new' }),
     });
     const result = await approvePayment(fakeClient(state), 'payment-1', 'admin-1', now);
-    expect(result.period.id).toBe('period-new');
+    expect(result.period?.id).toBe('period-new');
     const linkUpdate = state.updated.find(
       (u) => u.table === 'subscription_payments' && u.patch['period_id'] === 'period-new'
     );
@@ -1605,7 +1937,7 @@ describe('approvePayment stale link (audit fix 2026-11-01, fix 14)', () => {
     // The winner linked 'period-winner', but that row does not
     // resolve here, so the repair path treats it as a stale link
     // and overwrites it with the period it just created.
-    expect(result.period.id).toBe('period-new');
+    expect(result.period?.id).toBe('period-new');
     const linkUpdate = state.updated.find(
       (u) => u.table === 'subscription_payments' && u.patch['period_id'] === 'period-new'
     );
@@ -1629,7 +1961,7 @@ describe('activateCryptoPayment branches (audit fix 2026-11-01, fix 7)', () => {
       now
     );
     expect(result.alreadyActivated).toBe(true);
-    expect(result.period.id).toBe('period-1');
+    expect(result.period?.id).toBe('period-1');
     expect(result.couponReleasedBeforeFinish).toBe(false);
   });
 
@@ -1669,7 +2001,7 @@ describe('activateCryptoPayment branches (audit fix 2026-11-01, fix 7)', () => {
       now
     );
     expect(result.alreadyActivated).toBe(true);
-    expect(result.period.id).toBe('period-winner');
+    expect(result.period?.id).toBe('period-winner');
   });
 
   it('refuses when the claim loser finds a decided-but-unlinked winner', async () => {
@@ -1696,7 +2028,29 @@ describe('activateCryptoPayment branches (audit fix 2026-11-01, fix 7)', () => {
       now
     );
     expect(result.alreadyActivated).toBe(false);
-    expect(result.period.id).toBe('period-new');
+    expect(result.period?.id).toBe('period-new');
+  });
+
+  it('schedules a crypto downgrade (option A): no period, scheduled flag set', async () => {
+    const state = baseState({
+      paymentRow: paymentRow({ status: 'failed', is_downgrade: true }),
+      periods: [periodRow({ id: 'period-live', ends_at: '2026-06-20T00:00:00.000Z' })],
+    });
+    const result = await activateCryptoPayment(
+      fakeClient(state),
+      payment({ status: 'failed', is_downgrade: true }),
+      now
+    );
+    expect(result.period).toBeNull();
+    expect(result.scheduled).toBe(true);
+    expect(state.inserted.filter((i) => i.table === 'subscription_periods')).toHaveLength(0);
+    expect(
+      state.updated.find(
+        (u) =>
+          u.table === 'subscription_payments' &&
+          u.patch['scheduled_starts_at'] === '2026-06-20T00:00:00.000Z'
+      )
+    ).toBeTruthy();
   });
 });
 

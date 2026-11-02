@@ -1,21 +1,39 @@
 'use client';
 
+/**
+ * PurchaseView — the Purchase route tree only (builder, checkout,
+ * confirmation), split out of the old BillingView in the 2026-11-02
+ * separate-sections build. My Plan, Payments and Refund live in
+ * their own views; this file owns nothing else.
+ *
+ * Routes: /purchase (builder), /purchase/checkout, and
+ * /purchase/confirmation?payment=<paymentId>. The builder draft
+ * (counts, coupon, payment type/method) is kept in this tab's
+ * session storage so moving builder -> checkout keeps it; checkout
+ * and confirmation are backed by the payment row on the server, so
+ * a refresh on confirmation re-reads the same payment by id.
+ * A successful zero-due activation has no payment row, so it goes
+ * straight to My Plan instead of a confirmation page.
+ */
+
 import * as React from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import Image from 'next/image';
+import { useRouter } from 'next/navigation';
 import { ArrowLeftIcon, CheckIcon, Loader2Icon, UploadIcon, XIcon } from 'lucide-react';
 import { apiGet, apiPost, buildTenantApiPath, getErrorMessage, isApiError } from '@/lib/api';
 import {
   BillingPaymentItemSchema,
+  UserRefundsResponseSchema,
   BillingStatusResponseSchema,
   CryptoCheckoutResponseSchema,
   ZeroDueCheckoutResponseSchema,
   type BillingStatusResponse,
   type CouponValidateResponse,
-  type CryptoCheckoutResponse,
   type PlatformCounts,
 } from '@/lib/api/schemas/billing';
 import {
   daysRemainingBetween,
+  quoteDowngrade,
   quoteUpgrade,
   SUBSCRIPTION_PLATFORMS,
   SUBSCRIPTION_PRICE_PKR_PER_UNIT,
@@ -24,6 +42,7 @@ import {
   totalUnits,
   ZERO_PLATFORM_COUNTS,
   type BillingPaymentItem,
+  type DowngradeQuote,
   type UpgradeQuote,
 } from '@fbuploadpro/contracts';
 import { BANK_PAYMENT_DETAILS } from '@/lib/billing/payment-details';
@@ -37,12 +56,10 @@ import { cn } from '@/lib/utils';
 import { Alert, AlertDescription, AlertTitle } from '@/components/shared/ui/alert';
 import { Button } from '@/components/shared/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/shared/ui/card';
-import { EmptyState } from '@/components/shared/ui/empty-state';
 import { Input } from '@/components/shared/ui/input';
 import { Skeleton } from '@/components/shared/ui/skeleton';
 import { BillingStatusMark } from './billing-status-mark';
 import { CouponSection } from './coupon-section';
-import { RefundSection } from './refund-section';
 import { useSharedEntitlement } from './entitlement-provider';
 
 const PLATFORM_LABELS: Record<keyof PlatformCounts, string> = {
@@ -71,19 +88,8 @@ function purchasableCounts(counts: PlatformCounts): PlatformCounts {
 }
 
 type BankMethod = 'easypaisa' | 'nayapay' | 'ubl' | 'binance';
-/** Billing's three sections. Purchase-internal steps are separate, below. */
-type Section = 'my-plan' | 'purchase' | 'payments';
 type PurchaseStep = 'builder' | 'checkout' | 'confirmation';
 type PaymentType = 'bank' | 'crypto';
-
-interface ConfirmationData {
-  kind: 'bank' | 'crypto' | 'coupon';
-  amountPkr: number;
-  counts: PlatformCounts;
-  isUpgrade: boolean;
-  crypto: CryptoCheckoutResponse | null;
-  couponCode: string | null;
-}
 
 function formatDate(value: string | null): string {
   if (!value) return '—';
@@ -245,10 +251,15 @@ function MethodCard({
   );
 }
 
-export function BillingView({
+export function PurchaseView({
   subdomain,
-  initialSection,
-}: Readonly<{ subdomain: string; initialSection: Section }>) {
+  step,
+  confirmationPaymentId,
+}: Readonly<{
+  subdomain: string;
+  step: PurchaseStep;
+  confirmationPaymentId?: string | null;
+}>) {
   const [status, setStatus] = React.useState<BillingStatusResponse | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [reloading, setReloading] = React.useState(false);
@@ -271,27 +282,8 @@ export function BillingView({
   // shows mid-edit so an invalid keystroke can be reverted on blur
   // without ever touching the totals.
   const [countDrafts, setCountDrafts] = React.useState<Partial<Record<keyof PlatformCounts, string>>>({});
-  const [section, setSection] = React.useState<Section>(initialSection);
-  const [purchaseStep, setPurchaseStep] = React.useState<PurchaseStep>('builder');
   const router = useRouter();
-  const pathname = usePathname();
 
-  /**
-   * Sidebar leaves and the browser back button navigate by ?view=, which
-   * re-renders this component with a new initialSection. Only follow
-   * the prop when it actually changes — Purchase-internal steps
-   * (builder → checkout → confirmation) are view state only and must
-   * not be reset by this effect. Landing on a section always starts
-   * Purchase at its builder step.
-   */
-  const prevInitialSectionRef = React.useRef<Section>(initialSection);
-  React.useEffect(() => {
-    if (prevInitialSectionRef.current !== initialSection) {
-      prevInitialSectionRef.current = initialSection;
-      setSection(initialSection);
-      setPurchaseStep('builder');
-    }
-  }, [initialSection]);
   const [paymentType, setPaymentType] = React.useState<PaymentType>('bank');
   const [bankMethod, setBankMethod] = React.useState<BankMethod>('easypaisa');
   const [screenshot, setScreenshot] = React.useState<File | null>(null);
@@ -325,13 +317,93 @@ export function BillingView({
   const submissionKeyRef = React.useRef<string | null>(null);
   const [bankSubmitFailed, setBankSubmitFailed] = React.useState(false);
   const [cryptoNetwork, setCryptoNetwork] = React.useState<'trc20' | 'bep20'>('trc20');
-  const [confirmation, setConfirmation] = React.useState<ConfirmationData | null>(null);
   const [appliedCoupon, setAppliedCoupon] = React.useState<CouponValidateResponse | null>(null);
+  const [refundPending, setRefundPending] = React.useState(false);
+  const [prefillNote, setPrefillNote] = React.useState<string | null>(null);
+  const DRAFT_KEY = 'fbuploadpro-purchase-draft';
+  // Restore the builder draft when entering checkout (the builder
+  // unmounts on the route change, so the draft rides in session
+  // storage for this tab only; it is cleared on a successful
+  // submission). Checkout without a draft goes back to the builder.
+  // Back from checkout to the builder keeps the draft too: the
+  // builder restores the same session-storage draft on mount.
+  React.useEffect(() => {
+    if (step !== 'builder') return;
+    try {
+      const raw = sessionStorage.getItem(DRAFT_KEY);
+      if (!raw) return;
+      const draft = JSON.parse(raw) as {
+        counts?: PlatformCounts;
+        paymentType?: PaymentType;
+        bankMethod?: BankMethod;
+        cryptoNetwork?: 'trc20' | 'bep20';
+      };
+      if (draft.counts) setCounts(draft.counts);
+      if (draft.paymentType) setPaymentType(draft.paymentType);
+      if (draft.bankMethod) setBankMethod(draft.bankMethod);
+      if (draft.cryptoNetwork) setCryptoNetwork(draft.cryptoNetwork);
+    } catch (err) {
+      // A corrupt draft is ignored; the builder starts fresh.
+      // Logged, not swallowed: a persistently corrupt draft means
+      // the draft format changed and users keep losing their builder.
+      reportError(err, { source: 'purchase-draft' });
+    }
+  }, [step]);
+  React.useEffect(() => {
+    if (step !== 'checkout') return;
+    try {
+      const raw = sessionStorage.getItem(DRAFT_KEY);
+      if (!raw) {
+        router.push(`/tenant/${subdomain}/purchase`);
+        return;
+      }
+      const draft = JSON.parse(raw) as {
+        counts?: PlatformCounts;
+        paymentType?: PaymentType;
+        bankMethod?: BankMethod;
+        cryptoNetwork?: 'trc20' | 'bep20';
+      };
+      if (draft.counts) setCounts(draft.counts);
+      if (draft.paymentType) setPaymentType(draft.paymentType);
+      if (draft.bankMethod) setBankMethod(draft.bankMethod);
+      if (draft.cryptoNetwork) setCryptoNetwork(draft.cryptoNetwork);
+    } catch {
+      router.push(`/tenant/${subdomain}/purchase`);
+    }
+  }, [step]);
   const [activatingZeroDue, setActivatingZeroDue] = React.useState(false);
   const [copied, setCopied] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState<'bank' | 'crypto' | null>(null);
   const [formError, setFormError] = React.useState<string | null>(null);
   const screenshotInputRef = React.useRef<HTMLInputElement | null>(null);
+  const [screenshotPreviewUrl, setScreenshotPreviewUrl] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    if (!screenshot) {
+      setScreenshotPreviewUrl(null);
+      return;
+    }
+    // jsdom's URL.createObjectURL cannot wrap a jsdom File (it is
+    // not a real Blob), and a missing preview must never crash
+    // checkout: fall back to no preview image, the upload itself
+    // is unaffected.
+    let url: string | null = null;
+    try {
+      url = typeof URL.createObjectURL === 'function' ? URL.createObjectURL(screenshot) : null;
+    } catch {
+      url = null;
+    }
+    setScreenshotPreviewUrl(url);
+    return () => {
+      if (url) {
+        try {
+          URL.revokeObjectURL(url);
+        } catch (err) {
+          // Revocation is best-effort; a failure only leaks a blob URL.
+          reportError(err, { source: 'purchase-screenshot-revoke' });
+        }
+      }
+    };
+  }, [screenshot]);
 
   const load = React.useCallback(async () => {
     try {
@@ -348,6 +420,25 @@ export function BillingView({
   React.useEffect(() => {
     void load();
   }, [load]);
+  React.useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await apiGet(buildTenantApiPath(subdomain, '/billing/refunds'), {
+          schema: UserRefundsResponseSchema,
+        });
+        if (!cancelled) {
+          setRefundPending(result.requests.some((item) => item.status === 'requested'));
+        }
+      } catch (err) {
+        // Refund state is advisory here; never block Purchase on it.
+        reportError(err, { source: 'purchase-refund-flag' });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [subdomain]);
 
   /**
    * Returning to Purchase must re-read payments: a pending payment
@@ -355,10 +446,27 @@ export function BillingView({
    * not leave a stale disabled checkout behind.
    */
   React.useEffect(() => {
-    if (section === 'purchase') {
-      void load();
-    }
-  }, [section, load]);
+    void load();
+  }, [load]);
+  React.useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await apiGet(buildTenantApiPath(subdomain, '/billing/refunds'), {
+          schema: UserRefundsResponseSchema,
+        });
+        if (!cancelled) {
+          setRefundPending(result.requests.some((item) => item.status === 'requested'));
+        }
+      } catch (err) {
+        // Refund state is advisory here; never block Purchase on it.
+        reportError(err, { source: 'purchase-refund-flag' });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [subdomain]);
 
   async function handleRetry() {
     setReloading(true);
@@ -371,6 +479,40 @@ export function BillingView({
   }
 
   const entitlement = sharedEntitlement.entitlement;
+  // Prefill (separate-sections build): an expired plan renews from
+  // its most recent approved payment's counts, and a rejected order
+  // prefills the builder from that order, with its reason shown.
+  // Runs once per loaded payments list, only while counts are
+  // still untouched (null) and there is no live period.
+  const prefillDoneRef = React.useRef(false);
+  React.useEffect(() => {
+    if (prefillDoneRef.current || !status || !entitlement || entitlement.active) return;
+    const sorted = [...status.payments].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+    const rejected = sorted.find((payment) => payment.status === 'rejected');
+    if (rejected) {
+      prefillDoneRef.current = true;
+      setCounts(rejected.counts);
+      setPrefillNote(
+        `Your last payment was rejected${rejected.rejectionReason ? `: ${rejected.rejectionReason}` : ''}. ` +
+          'Your counts below are from that order — change them, or continue with the same plan.'
+      );
+      return;
+    }
+    const approved = sorted.find(
+      (payment) => payment.status === 'approved' || payment.status === 'paid'
+    );
+    if (approved) {
+      prefillDoneRef.current = true;
+      setCounts(approved.counts);
+      setPrefillNote(
+        'Your previous monthly plan was ' +
+          countsSummary(approved.counts) +
+          '. Change it, or continue with the same plan.'
+      );
+    }
+  }, [status, entitlement]);
   /**
    * One pending payment per user: while one exists, Purchase shows it
    * and hides the builder instead of offering a fresh one.
@@ -391,20 +533,35 @@ export function BillingView({
   let quoteError: string | null = null;
   let amountToPay = total;
   let quote: UpgradeQuote | null = null;
+  let downgradeQuote: DowngradeQuote | null = null;
   if (entitlement?.periodEndsAt && countsChanged) {
     const daysLeft = daysRemainingBetween(new Date(), new Date(entitlement.periodEndsAt));
     try {
       quote = quoteUpgrade(entitlement.counts, effectiveCounts, daysLeft);
       amountToPay = quote.amountToPayPkr;
-    } catch (err) {
-      quoteError = err instanceof Error ? err.message : 'That change is not an upgrade.';
+    } catch {
+      // Not an upgrade: try the downgrade path (owner decision
+      // 2026-11-02, period-end only, prepaid, no credit). A
+      // platform increase fails here too, and stays an error.
+      try {
+        downgradeQuote = quoteDowngrade(entitlement.counts, effectiveCounts);
+        amountToPay = downgradeQuote.amountToPayPkr;
+      } catch (err) {
+        quoteError = err instanceof Error ? err.message : 'That change is not available.';
+      }
     }
   }
   const isUpgrade = Boolean(quote && entitlement?.periodEndsAt);
+  const isDowngrade = Boolean(downgradeQuote && entitlement?.periodEndsAt);
 
   function setCount(platform: keyof PlatformCounts, value: number) {
     const next = { ...effectiveCounts, [platform]: Math.max(0, Math.floor(value) || 0) };
     setCounts(next);
+    // Coupon revalidation (separate-sections build): a preview is
+    // priced for the counts at apply time, so changing a count
+    // drops the preview rather than showing an amount the payment
+    // row will contradict. The user applies again to reprice.
+    setAppliedCoupon(null);
   }
 
   /**
@@ -433,36 +590,19 @@ export function BillingView({
     });
   }
 
-  /**
-   * Moving between Billing's three sections goes through the ?view=
-   * URL param with a push (not replace), so the sidebar group
-   * highlights the right sub-leaf and the browser back button moves
-   * between sections. Sidebar leaves themselves are plain Links;
-   * this is only for in-page actions (Buy or upgrade, View payments,
-   * Back buttons).
-   */
-  function navigateToSection(target: Section) {
-    setSection(target);
-    setPurchaseStep('builder');
-    if (pathname) router.push(`${pathname}?view=${target}`, { scroll: false });
-    window.scrollTo({ top: 0 });
+  // In-page navigation between the separate sections is by route,
+  // never by ?view= (deleted 2026-11-02). Purchase steps are
+  // sub-routes: builder /purchase, checkout /purchase/checkout,
+  // confirmation /purchase/confirmation?payment=<id>.
+  function tenantPath(path: string): string {
+    return `/tenant/${subdomain}${path}`;
   }
-
   function goToMyPlan() {
-    navigateToSection('my-plan');
+    router.push(tenantPath('/my-plan'));
   }
-
-  function goToPurchase() {
-    navigateToSection('purchase');
-  }
-
-  function goToPayments() {
-    navigateToSection('payments');
-  }
-
-  /** Steps inside Purchase only — no URL change, no section change. */
   function goToPurchaseStep(target: PurchaseStep) {
-    setPurchaseStep(target);
+    if (target === 'builder') router.push(tenantPath('/purchase'));
+    else if (target === 'checkout') router.push(tenantPath('/purchase/checkout'));
     window.scrollTo({ top: 0 });
   }
 
@@ -472,7 +612,21 @@ export function BillingView({
 
   function goToCheckout() {
     setFormError(null);
-    setConfirmation(null);
+    try {
+      sessionStorage.setItem(
+        DRAFT_KEY,
+        JSON.stringify({
+          counts: effectiveCounts,
+          paymentType,
+          bankMethod,
+          cryptoNetwork,
+        })
+      );
+    } catch (err) {
+      // Session storage unavailable: checkout still works from
+      // the counts the user just chose if the tab stays alive.
+      reportError(err, { source: 'purchase-draft-save' });
+    }
     // A coupon preview is priced for the counts at apply time;
     // re-entering checkout always starts without one, so a stale
     // discount can never ride along with changed counts.
@@ -659,35 +813,28 @@ export function BillingView({
       setFormError('Add a screenshot of your payment so we can approve it.');
       return;
     }
-    // WAIT FOR THE UPLOAD: submit never fires while the screenshot
-    // is still in flight. The button is disabled during upload, but
-    // this await is the backstop — any path that reaches here
-    // mid-upload waits for the upload promise instead of submitting
-    // without a key. A failed upload stops here with the upload's
-    // own error, never the generic submit error. Busy is set before
-    // the wait so the form locks while submit is pending.
+    // Owner screenshot rule (2026-11-02): submit NEVER waits out
+    // an upload and NEVER fires without a verified key. The button
+    // is disabled while uploading, and this handler rejects
+    // immediately if it is reached in any other state than
+    // uploaded — the old await-upload backstop is deleted.
     submitBusyRef.current = true;
     setBusy('bank');
     setFormError(null);
     setBankSubmitFailed(false);
     try {
-      let storageKey: string | null = null;
-      if (screenshotUpload.status === 'uploaded') {
-        storageKey = screenshotUpload.storageKey;
-      } else if (screenshotUpload.status === 'uploading' && screenshotUploadPromiseRef.current) {
-        storageKey = await screenshotUploadPromiseRef.current;
-      }
-      if (!storageKey) {
+      if (screenshotUpload.status !== 'uploaded') {
         setFormError(
           screenshotUpload.status === 'failed'
-            ? 'Your screenshot couldn\'t be uploaded. Retry the upload to submit.'
-            : 'Wait for your screenshot to finish uploading, then submit.'
+            ? 'Screenshot missing, re-upload: your screenshot could not be uploaded. Pick it again, wait for the verified tick, then submit.'
+            : 'Screenshot missing, re-upload: wait for your screenshot to finish uploading and show the verified tick, then submit.'
         );
         return;
       }
+      const storageKey = screenshotUpload.storageKey;
       const submissionKey = submissionKeyRef.current ?? crypto.randomUUID();
       submissionKeyRef.current = submissionKey;
-      await postBankPayment(submissionKey, storageKey);
+      const createdPayment = await postBankPayment(submissionKey, storageKey);
       // Order matters (checkout flicker fix): the checkout step renders
       // the screenshot-upload CTA whenever `screenshot` is null, so
       // clearing it BEFORE the refetch + navigation made the UI flash
@@ -699,17 +846,16 @@ export function BillingView({
       // same ordering also keeps the screenshot attached if the POST
       // or the refetch fails, so a retry needs no re-upload.
       await load();
-      setConfirmation({
-        kind: 'bank',
-        amountPkr: appliedCoupon ? appliedCoupon.amountAfterDiscountPkr : amountToPay,
-        counts: effectiveCounts,
-        isUpgrade,
-        crypto: null,
-        couponCode: appliedCoupon ? appliedCoupon.code : null,
-      });
-      goToPurchaseStep('confirmation');
+      try {
+        sessionStorage.removeItem(DRAFT_KEY);
+      } catch (err) {
+        // Draft cleanup is best-effort; a stale draft only
+        // pre-fills the next builder.
+        reportError(err, { source: 'purchase-draft-cleanup' });
+      }
       clearScreenshot();
       submissionKeyRef.current = null;
+      router.push(`/tenant/${subdomain}/purchase/confirmation?payment=${createdPayment.id}`);
     } catch (err) {
       const message = mapSubmitError(err);
       setFormError(message);
@@ -756,15 +902,14 @@ export function BillingView({
         { schema: CryptoCheckoutResponseSchema }
       );
       await load();
-      setConfirmation({
-        kind: 'crypto',
-        amountPkr: appliedCoupon ? appliedCoupon.amountAfterDiscountPkr : amountToPay,
-        counts: effectiveCounts,
-        isUpgrade,
-        crypto: result,
-        couponCode: appliedCoupon ? appliedCoupon.code : null,
-      });
-      goToPurchaseStep('confirmation');
+      try {
+        sessionStorage.removeItem(DRAFT_KEY);
+      } catch (err) {
+        // Draft cleanup is best-effort; a stale draft only
+        // pre-fills the next builder.
+        reportError(err, { source: 'purchase-draft-cleanup' });
+      }
+      router.push(`/tenant/${subdomain}/purchase/confirmation?payment=${result.paymentId}`);
     } catch (err) {
       setFormError(getErrorMessage(err));
     } finally {
@@ -788,22 +933,21 @@ export function BillingView({
     setActivatingZeroDue(true);
     setFormError(null);
     try {
-      const result = await apiPost(
+      await apiPost(
         buildTenantApiPath(subdomain, '/billing/payments/zero-due'),
         { counts: effectiveCounts, couponCode: appliedCoupon.code },
         { schema: ZeroDueCheckoutResponseSchema }
       );
       await load();
-      setConfirmation({
-        kind: 'coupon',
-        amountPkr: 0,
-        counts: result.counts,
-        isUpgrade: result.isUpgrade,
-        crypto: null,
-        couponCode: result.couponCode,
-      });
       setAppliedCoupon(null);
-      goToPurchaseStep('confirmation');
+      try {
+        sessionStorage.removeItem(DRAFT_KEY);
+      } catch (err) {
+        // Draft cleanup is best-effort; a stale draft only
+        // pre-fills the next builder.
+        reportError(err, { source: 'purchase-draft-cleanup' });
+      }
+      router.push(`/tenant/${subdomain}/my-plan`);
     } catch (err) {
       setFormError(getErrorMessage(err));
     } finally {
@@ -854,8 +998,6 @@ export function BillingView({
   }
 
   const details = BANK_PAYMENT_DETAILS[bankMethod];
-  const includedUnits = totalUnits(entitlement.counts);
-  const usedUnits = totalUnits(entitlement.usage);
   // A fully-covering coupon disables both payment submits: there is
   // nothing to pay, and activation happens from the coupon section.
   // A pending payment also disables checkout (#79 one-pending block).
@@ -957,7 +1099,28 @@ export function BillingView({
             <dt className="text-ink-sub">Monthly total</dt>
             <dd className="font-semibold tabular-nums text-ink">{total} PKR</dd>
           </div>
-          {isUpgrade && quote ? (
+          {isDowngrade && downgradeQuote ? (
+            <>
+              <div className="flex items-baseline justify-between gap-3">
+                <dt className="text-ink-sub">Current monthly plan</dt>
+                <dd className="font-medium tabular-nums text-ink">{downgradeQuote.oldMonthlyTotalPkr} PKR</dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-3">
+                <dt className="text-ink-sub">New monthly plan</dt>
+                <dd className="font-medium tabular-nums text-ink">{downgradeQuote.newMonthlyTotalPkr} PKR</dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-3 border-t border-line pt-2">
+                <dt className="font-medium text-ink">You pay now</dt>
+                <dd className="font-semibold tabular-nums text-ink">{downgradeQuote.amountToPayPkr} PKR</dd>
+              </div>
+              <p className="text-body text-ink-sub">
+                Lower monthly plan for next month. Your current plan runs unchanged until{' '}
+                {entitlement?.periodEndsAt ? formatDate(entitlement.periodEndsAt) : 'it ends'}, then
+                the new lower plan starts. No credit was given for the days left on your current
+                plan — you pay the new lower monthly price now, in advance.
+              </p>
+            </>
+          ) : isUpgrade && quote ? (
             <>
               <div className="flex items-baseline justify-between gap-3">
                 <dt className="text-ink-sub">Current plan</dt>
@@ -1012,61 +1175,16 @@ export function BillingView({
           )}
         </dl>
         <p className="text-body text-ink-sub">
-          {isUpgrade
-            ? 'Your new month starts when your upgrade is approved.'
-            : 'Your month runs for 30 days from approval. If you do not renew, posting pauses and you can only view your account until you renew.'}
+          {isDowngrade
+            ? 'Your lower monthly plan starts after your current plan ends, or at approval if approval arrives after expiry — never backdated.'
+            : isUpgrade
+              ? 'Your new month starts when your upgrade is approved.'
+              : 'Your month runs for 30 days from approval. If you do not renew, posting pauses and you can only view your account until you renew.'}
         </p>
       </CardContent>
     </Card>
   );
 
-  const paymentsHistory = (
-    <Card id="billing-payments" className="scroll-mt-20">
-      <CardHeader>
-        <CardTitle>Your payments</CardTitle>
-        <CardDescription>Manual payments start after we approve them. Crypto payments start as soon as we receive them.</CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        {status.payments.length === 0 ? (
-          <EmptyState
-            type="first-use"
-            title="No payments yet"
-            description="Payments you make will show here, with their status."
-            action={
-              <Button variant="link" onClick={goToPurchase}>
-                Buy or upgrade
-              </Button>
-            }
-          />
-        ) : null}
-        {status.payments.map((payment) => (
-          <div
-            key={payment.id}
-            className="flex flex-wrap items-center justify-between gap-3 border-t border-line py-3 first:border-t-0 first:pt-0"
-          >
-            <div className="flex min-w-0 flex-col gap-1">
-              <span className="text-body font-medium tabular-nums text-ink">
-                {payment.amountPkr} PKR ·{' '}
-                {paymentMethodLabel(payment)}
-                {payment.isUpgrade ? ' · Upgrade' : ''}
-                {payment.couponCode
-                  ? ` · Coupon ${payment.couponCode} (−${payment.discountPkr} PKR)`
-                  : ''}
-              </span>
-              <span className="text-metadata text-ink-sub">{formatDate(payment.createdAt)}</span>
-            </div>
-            {payment.status === 'approved' || payment.status === 'paid' ? (
-              <BillingStatusMark kind="ok" label={paymentStatusLabel(payment.status)} />
-            ) : payment.status === 'rejected' || payment.status === 'failed' || payment.status === 'expired' ? (
-              <BillingStatusMark kind="failed" label={paymentStatusLabel(payment.status)} />
-            ) : (
-              <BillingStatusMark kind="pending" label={payment.method === 'bank' ? 'Waiting for approval' : 'Waiting for payment'} />
-            )}
-          </div>
-        ))}
-      </CardContent>
-    </Card>
-  );
 
   /**
    * Pending payment card for Purchase only: while one payment is in
@@ -1094,6 +1212,17 @@ export function BillingView({
           {pendingPayment.isUpgrade ? ' · Upgrade' : ''} · Submitted{' '}
           {formatDateTime(pendingPayment.createdAt)}
         </p>
+        {pendingPayment.method === 'nowpayments' && pendingPayment.nowpaymentsPayAddress ? (
+          <p className="break-all text-body text-ink-sub">
+            Send exactly{' '}
+            {pendingPayment.nowpaymentsPayAmount !== null &&
+            pendingPayment.nowpaymentsPayAmount !== undefined
+              ? `${pendingPayment.nowpaymentsPayAmount} USDT`
+              : 'the amount shown in your wallet'}{' '}
+            to {pendingPayment.nowpaymentsPayAddress} on{' '}
+            {pendingPayment.nowpaymentsNetwork === 'trc20' ? 'TRC20' : 'BEP20'}.
+          </p>
+        ) : null}
         <div>
           <Button variant="outline" onClick={() => void load()}>
             Check again
@@ -1104,86 +1233,18 @@ export function BillingView({
   ) : null;
 
   /* ---------- Confirmation step (inside Purchase) ---------- */
-  if (section === 'purchase' && purchaseStep === 'confirmation' && confirmation) {
-    const cryptoAmount = confirmation.crypto
-      ? (confirmation.crypto.payAmount ?? confirmation.crypto.estimatedUsdt)
-      : null;
+  /* ---------- Confirmation step (server-backed) ---------- */
+  if (step === 'confirmation') {
     return (
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-xl leading-heading font-semibold text-ink">Purchase</h1>
-          <p className="text-body text-ink-sub">
-            {confirmation.kind === 'bank'
-              ? 'We have received your payment.'
-              : confirmation.kind === 'coupon'
-                ? 'Your plan is active now.'
-                : 'One step left: send your payment.'}
-          </p>
-        </div>
-        <PurchaseStepIndicator current="confirmation" />
-        <Card>
-          <CardHeader>
-            <CardTitle>
-              {confirmation.kind === 'bank'
-                ? 'Payment submitted'
-                : confirmation.kind === 'coupon'
-                  ? 'Plan activated'
-                  : 'Send your crypto payment'}
-            </CardTitle>
-            <CardDescription>
-              {confirmation.kind === 'bank'
-                ? 'Your plan starts when we approve it, and runs for 30 days.'
-                : confirmation.kind === 'coupon'
-                  ? 'Your coupon covered the full amount — no payment was needed.'
-                  : 'Your plan starts automatically once we receive your payment.'}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4">
-            <BillingStatusMark
-              kind={confirmation.kind === 'coupon' ? 'ok' : 'pending'}
-              label={
-                confirmation.kind === 'bank'
-                  ? 'Waiting for approval'
-                  : confirmation.kind === 'coupon'
-                    ? 'Active'
-                    : 'Waiting for payment'
-              }
-            />
-            <p className="text-body text-ink">
-              {countsSummary(purchasableCounts(confirmation.counts))} · {confirmation.amountPkr} PKR
-              {confirmation.isUpgrade ? ' · Upgrade' : ''}
-              {confirmation.couponCode ? ` · Coupon ${confirmation.couponCode}` : ''}
-            </p>
-            {confirmation.kind === 'crypto' && confirmation.crypto && cryptoAmount !== null ? (
-              <Alert variant="success">
-                <AlertTitle>Send exactly {cryptoAmount} USDT</AlertTitle>
-                <AlertDescription>
-                  <span className="block break-all">To: {confirmation.crypto.payAddress}</span>
-                  <span className="block">
-                    Network: {confirmation.crypto.network === 'trc20' ? 'TRC20' : 'BEP20'}
-                  </span>
-                </AlertDescription>
-              </Alert>
-            ) : null}
-            <p className="text-body text-ink-sub">
-              {confirmation.kind === 'coupon'
-                ? 'Your plan runs for 30 days from today.'
-                : 'Manual payments start after we approve them. Crypto payments start as soon as we receive them. You can see this payment under Payments.'}
-            </p>
-            <div className="flex flex-wrap gap-2">
-              <Button onClick={goToMyPlan}>Back to My Plan</Button>
-              <Button variant="outline" onClick={goToPayments}>
-                View payments
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      <PurchaseConfirmationView
+        subdomain={subdomain}
+        paymentId={confirmationPaymentId ?? null}
+      />
     );
   }
 
   /* ---------- Checkout step (inside Purchase) ---------- */
-  if (section === 'purchase' && purchaseStep === 'checkout') {
+  if (step === 'checkout') {
     return (
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
         <div className="flex flex-col gap-1">
@@ -1193,6 +1254,7 @@ export function BillingView({
           <h1 className="text-xl leading-heading font-semibold text-ink">Checkout</h1>
           <p className="text-body text-ink-sub">
             {isUpgrade ? 'Upgrade · ' : ''}
+            {isDowngrade ? 'Lower monthly plan for next month · ' : ''}
             {countsSummary(purchasableCounts(effectiveCounts))} ·{' '}
             {appliedCoupon ? appliedCoupon.amountAfterDiscountPkr : amountToPay} PKR
             {isUpgrade ? ' to pay now' : ' / month'}
@@ -1207,8 +1269,17 @@ export function BillingView({
             deliberately not repeated here. */}
         {quoteError ? (
           <Alert variant="destructive">
-            <AlertTitle>You can only increase your plan</AlertTitle>
+            <AlertTitle>Check your plan change</AlertTitle>
             <AlertDescription>{plainQuoteError(quoteError)}</AlertDescription>
+          </Alert>
+        ) : null}
+        {refundPending && (isUpgrade || isDowngrade) ? (
+          <Alert variant="destructive">
+            <AlertTitle>Upgrading will cancel your pending refund request</AlertTitle>
+            <AlertDescription>
+              You have a refund request waiting for a decision. Changing your plan now cancels
+              that request — the upgrade credit already covers the unused value of your old plan.
+            </AlertDescription>
           </Alert>
         ) : null}
         <div className="flex flex-col items-start gap-6 lg:flex-row">
@@ -1341,6 +1412,21 @@ export function BillingView({
                               <XIcon aria-hidden className="size-4" /> Remove
                             </Button>
                           </div>
+                          {screenshotPreviewUrl ? (
+                            <Image
+                              src={screenshotPreviewUrl}
+                              alt="Screenshot preview"
+                              width={640}
+                              height={853}
+                              unoptimized
+                              className="h-auto w-full max-w-xs rounded-md border border-line"
+                            />
+                          ) : null}
+                          <p className="text-metadata text-ink-sub">
+                            {screenshot.size
+                              ? `${screenshot.name} · ${(screenshot.size / 1024).toFixed(0)} KB`
+                              : screenshot.name}
+                          </p>
                           {screenshotUpload.status === 'failed' ? (
                             <div className="flex flex-wrap items-center justify-between gap-3">
                               <p className="text-body text-ink-sub">{screenshotUpload.error}</p>
@@ -1428,6 +1514,25 @@ export function BillingView({
                   <Alert variant="destructive">
                     <AlertTitle>Couldn&apos;t complete that</AlertTitle>
                     <AlertDescription>{formError}</AlertDescription>
+                    {formError.includes('Screenshot missing') ? (
+                      <div className="mt-3 flex flex-col gap-2">
+                        <div>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setFormError(null);
+                              screenshotInputRef.current?.click();
+                            }}
+                          >
+                            Re-upload screenshot
+                          </Button>
+                        </div>
+                        <p className="text-body text-ink-sub">
+                          Your order details are kept — only the screenshot needs picking again.
+                        </p>
+                      </div>
+                    ) : null}
                     {bankSubmitFailed && screenshotUpload.status === 'uploaded' ? (
                       <div className="mt-3">
                         <Button
@@ -1453,7 +1558,7 @@ export function BillingView({
   }
 
   /* ---------- Purchase: builder step ---------- */
-  if (section === 'purchase' && purchaseStep === 'builder') {
+  if (step === 'builder') {
     /**
      * While a payment is pending, the builder is hidden entirely:
      * the draft builder (priced on current usage) sitting next to a
@@ -1495,7 +1600,7 @@ export function BillingView({
       units === 0
         ? 'Choose at least one page or account first.'
         : isPaid && countsUnchanged
-          ? 'This is the same as your current plan. Increase a count to upgrade.'
+          ? 'This is the same as your current plan. Increase a count to upgrade, or choose fewer to schedule a downgrade for next month.'
           : null;
     return (
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
@@ -1514,10 +1619,38 @@ export function BillingView({
         </div>
         <PurchaseStepIndicator current="builder" />
         {pendingPaymentCard}
+        {prefillNote ? (
+          <Alert>
+            <AlertTitle>Starting from your last plan</AlertTitle>
+            <AlertDescription>{prefillNote}</AlertDescription>
+          </Alert>
+        ) : null}
+        {entitlement && (entitlement.counts.x > 0 || entitlement.counts.tiktok > 0 || entitlement.counts.youtube > 0) ? (
+          <p className="text-body text-ink-sub">
+            Carried from your previous monthly plan:{' '}
+            {(['x', 'tiktok', 'youtube'] as const)
+              .filter((platform) => entitlement.counts[platform] > 0)
+              .map(
+                (platform) =>
+                  `${entitlement.counts[platform]} ${PLATFORM_LABELS[platform]} ${subscriptionUnitLabel(platform)} (${entitlement.counts[platform] * SUBSCRIPTION_PRICE_PKR_PER_UNIT} PKR / month)`
+              )
+              .join(', ')}{' '}
+            — these cannot be changed here, and they are included in your total.
+          </p>
+        ) : null}
         {quoteError ? (
           <Alert variant="destructive">
-            <AlertTitle>You can only increase your plan</AlertTitle>
+            <AlertTitle>Check your plan change</AlertTitle>
             <AlertDescription>{plainQuoteError(quoteError)}</AlertDescription>
+          </Alert>
+        ) : null}
+        {refundPending && (isUpgrade || isDowngrade) ? (
+          <Alert variant="destructive">
+            <AlertTitle>Upgrading will cancel your pending refund request</AlertTitle>
+            <AlertDescription>
+              You have a refund request waiting for a decision. Changing your plan now cancels
+              that request — the upgrade credit already covers the unused value of your old plan.
+            </AlertDescription>
           </Alert>
         ) : null}
         <Card>
@@ -1572,213 +1705,178 @@ export function BillingView({
     );
   }
 
-  /* ---------- Payments section ---------- */
-  if (section === 'payments') {
-    return (
-      <div className="mx-auto flex w-full max-w-4xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
-        <div className="flex flex-col gap-2">
-          <h1 className="text-xl leading-heading font-semibold text-ink">Payments</h1>
-          <p className="text-body text-ink-sub">
-            Every payment you have made, and its status.
-          </p>
-        </div>
-        {paymentsHistory}
-      </div>
-    );
-  }
-
-  /* ---------- My Plan section (default) ----------
-     Only information about the plan the user is currently on. No
-     pricing cards, no builder, no checkout, no payment methods, no
-     payments history here — just one link to Purchase. */
-  if (!isPaid) {
-    /* Pending verification, not Free: a user with no live period
-       whose payment is still waiting for approval must see that
-       payment in flight, not the plain Free card as if nothing had
-       happened. Expired users keep the Expired card unchanged — a
-       lapsed plan with a renewal pending still reads Expired here,
-       and the pending stays visible in Payments. Paid users never
-       reach this branch. */
-    if (!entitlement.hasPriorPeriod && pendingPayment !== null) {
-      return (
-        <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
-          <div className="flex flex-col gap-1">
-            <h1 className="text-xl leading-heading font-semibold text-ink">My plan</h1>
-            <p className="text-body text-ink-sub">What your current plan includes.</p>
-          </div>
-          {pendingPaymentCard}
-          <p className="text-body text-ink-sub">
-            Your plan activates once the payment is approved.
-          </p>
-          <div>
-            <Button onClick={goToPayments}>View payments</Button>
-          </div>
-        </div>
-      );
-    }
-    /* Free only: no summary-card stats and no per-platform list
-       (all zeros, useless for Free) — just what Free includes, what
-       it does not, and the upgrade button. Paid falls through to the
-       full summary below, unchanged. */
-    return (
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-xl leading-heading font-semibold text-ink">My plan</h1>
-          <p className="text-body text-ink-sub">What your current plan includes.</p>
-        </div>
-        <Card>
-          <CardHeader>
-            {/* Expired, not Free (audit fix 2026-11-01): a lapsed
-                user had a paid plan before, matching the sidebar
-                word. The button below already buys again. */}
-            <CardTitle>{entitlement.hasPriorPeriod ? 'Expired' : 'Free'}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ul className="flex flex-col gap-3 text-body">
-              <li>
-                <BillingStatusMark kind="ok" label="Prompt Library" />
-              </li>
-              <li>
-                <BillingStatusMark kind="failed" label="Posting and scheduling" />
-              </li>
-              <li>
-                <BillingStatusMark kind="failed" label="Auto download-upload" />
-              </li>
-              <li>
-                <BillingStatusMark kind="failed" label="Auto repost" />
-              </li>
-            </ul>
-          </CardContent>
-        </Card>
-        <div>
-          <Button onClick={goToPurchase}>Buy or upgrade</Button>
-        </div>
-      </div>
-    );
-  }
+  // Fallback: an unknown step renders the builder.
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
       <div className="flex flex-col gap-1">
-        <h1 className="text-xl leading-heading font-semibold text-ink">My plan</h1>
-        <p className="text-body text-ink-sub">What your current plan includes.</p>
+        <h1 className="text-xl leading-heading font-semibold text-ink">Purchase</h1>
+        <p className="text-body text-ink-sub">70 PKR per page or account, paid monthly.</p>
       </div>
-
-      {/* Current-plan summary — plan identity on the left, facts as a
-          compact divided metric group on the right. Free is a plan,
-          not a failure, so it gets no red mark; "No paid plan"
-          replaces the bare dash. The counts share one unit label
-          instead of repeating "pages / accounts" per column. */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Your plan</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-6 sm:flex-row sm:flex-wrap sm:items-start sm:gap-10">
-          <div className="flex flex-col gap-1">
-            <span className="text-2xl leading-heading font-semibold text-ink">
-              {isPaid ? 'Paid' : 'Free'}
-            </span>
-            {isPaid ? (
-              <BillingStatusMark kind="ok" label="Active" />
-            ) : (
-              <span className="text-body text-ink-sub">Prompt Library only</span>
-            )}
-          </div>
-          <div className="flex flex-col gap-1">
-            <span className="text-body text-ink-sub">Paid until</span>
-            <span className="text-body font-medium text-ink">
-              {entitlement.periodEndsAt ? formatDate(entitlement.periodEndsAt) : 'No paid plan'}
-            </span>
-          </div>
-          <div className="flex flex-col gap-1">
-            <span className="text-metadata text-ink-sub">Pages / accounts</span>
-            <div className="flex divide-x divide-line">
-              <div className="flex flex-col gap-1 pr-4">
-                <span className="text-body text-ink-sub">Included</span>
-                <span className="text-lg leading-heading font-semibold tabular-nums text-ink">
-                  {includedUnits}
-                </span>
-              </div>
-              <div className="flex flex-col gap-1 pl-4">
-                <span className="text-body text-ink-sub">In use</span>
-                <span className="text-lg leading-heading font-semibold tabular-nums text-ink">
-                  {usedUnits}
-                </span>
-              </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* What this plan covers, in plain language. */}
-      <Card>
-        <CardHeader>
-          <CardTitle>What your plan covers</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ul className="flex flex-col gap-2 text-body">
-            <li className="flex items-start gap-2">
-              <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
-              <span>Prompt Library</span>
-            </li>
-            {isPaid ? (
-              <>
-                <li className="flex items-start gap-2">
-                  <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
-                  <span>Posting and scheduling</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-operational" />
-                  <span>
-                    Scheduling, auto download-upload and auto repost, up to the pages and
-                    accounts in your plan
-                  </span>
-                </li>
-              </>
-            ) : (
-              <>
-                <li className="flex items-start gap-2">
-                  <XIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-critical" />
-                  <span>Posting and scheduling</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <XIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-signal-critical" />
-                  <span>Scheduling, auto download-upload and auto repost</span>
-                </li>
-              </>
-            )}
-          </ul>
-        </CardContent>
-      </Card>
-
-      {/* Included and in-use counts, per platform. Read-only — no
-          steppers, no prices, no purchasing controls on this page. */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Pages and accounts by platform</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col">
-          {SUBSCRIPTION_PLATFORMS.map((platform) => (
-            <div
-              key={platform}
-              className="flex flex-wrap items-baseline justify-between gap-3 border-t border-line py-3 first:border-t-0 first:pt-0"
-            >
-              <span className="text-body font-medium text-ink">{PLATFORM_LABELS[platform]}</span>
-              <span className="text-body tabular-nums text-ink-sub">
-                Included: {entitlement.counts[platform]} · In use: {entitlement.usage[platform]}
-              </span>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
-
-      {/* Refund section: renders nothing unless the user is eligible or
-          has past refund requests — the button appears only when the
-          server says eligible. */}
-      <RefundSection subdomain={subdomain} />
-
       <div>
-        <Button onClick={goToPurchase}>Buy or upgrade</Button>
+        <Button onClick={goToBuilder}>Build your plan</Button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * PurchaseConfirmationView — server-backed confirmation, keyed by
+ * payment id (separate-sections build). Refreshing this page
+ * re-reads the payment from the server, so a closed tab never
+ * loses the crypto pay address, exact USDT amount, or network.
+ */
+function PurchaseConfirmationView({
+  subdomain,
+  paymentId,
+}: Readonly<{ subdomain: string; paymentId: string | null }>) {
+  const router = useRouter();
+  const [payment, setPayment] = React.useState<BillingPaymentItem | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+  const [loading, setLoading] = React.useState(true);
+  const [copied, setCopied] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!paymentId) {
+      setLoading(false);
+      setError('No payment was selected. Open Payments to find it, or build a new plan in Purchase.');
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        // Page 1 is newest-first; a just-created payment is there.
+        // Fall back to pages 2-3 before calling it missing.
+        for (const page of [1, 2, 3]) {
+          const result = await apiGet(buildTenantApiPath(subdomain, `/billing?page=${page}`), {
+            schema: BillingStatusResponseSchema,
+          });
+          const found = result.payments.find((item) => item.id === paymentId);
+          if (found) {
+            if (!cancelled) {
+              setPayment(found);
+              setLoading(false);
+            }
+            return;
+          }
+          if (result.payments.length === 0) break;
+        }
+        if (!cancelled) {
+          setError('That payment could not be found. Check Payments for its status.');
+          setLoading(false);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(getErrorMessage(err));
+          setLoading(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [subdomain, paymentId]);
+
+  if (loading) return <BillingSkeleton />;
+  if (error || !payment) {
+    return (
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
+        <h1 className="text-xl leading-heading font-semibold text-ink">Purchase</h1>
+        <Alert variant="destructive">
+          <AlertTitle>Couldn&apos;t load that payment</AlertTitle>
+          <AlertDescription>{error ?? 'Payment not found.'}</AlertDescription>
+        </Alert>
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={() => router.push(`/tenant/${subdomain}/payments`)}>View payments</Button>
+          <Button variant="outline" onClick={() => router.push(`/tenant/${subdomain}/purchase`)}>
+            Back to Purchase
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  const isCrypto = payment.method === 'nowpayments';
+  const isPaid = payment.status === 'approved' || payment.status === 'paid';
+  return (
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
+      <div className="flex flex-col gap-1">
+        <h1 className="text-xl leading-heading font-semibold text-ink">Purchase</h1>
+        <p className="text-body text-ink-sub">
+          {isCrypto
+            ? isPaid
+              ? 'Your crypto payment arrived. Your monthly plan is active.'
+              : 'Send your crypto payment to the address below.'
+            : isPaid
+              ? 'Your payment was approved. Your monthly plan is active.'
+              : 'We have received your payment.'}
+        </p>
+      </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            {payment.amountPkr} PKR · {paymentMethodLabel(payment)}
+            {payment.isUpgrade ? ' · Upgrade' : ''}
+            {payment.isDowngrade ? ' · Downgrade' : ''}
+          </CardTitle>
+          <CardDescription>
+            {countsSummary(payment.counts)}
+            {payment.isDowngrade && payment.scheduledStartsAt
+              ? ` · Lower plan starts ${formatDate(payment.scheduledStartsAt)}`
+              : ''}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          <BillingStatusMark
+            kind={isPaid ? 'ok' : payment.status === 'rejected' ? 'failed' : 'pending'}
+            label={paymentStatusLabel(payment.status)}
+          />
+          {isCrypto && payment.nowpaymentsPayAddress ? (
+            <div className="flex flex-col gap-2">
+              <p className="text-body text-ink">
+                Send exactly{' '}
+                {payment.nowpaymentsPayAmount !== null && payment.nowpaymentsPayAmount !== undefined
+                  ? `${payment.nowpaymentsPayAmount} USDT`
+                  : 'the amount shown in your wallet'}{' '}
+                to this address on{' '}
+                {payment.nowpaymentsNetwork === 'trc20' ? 'TRC20' : 'BEP20'}:
+              </p>
+              <p className="break-all rounded-md border border-line bg-panel px-3 py-2 text-body text-ink">
+                {payment.nowpaymentsPayAddress}
+              </p>
+              <div>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    void navigator.clipboard.writeText(payment.nowpaymentsPayAddress ?? '');
+                    setCopied(true);
+                  }}
+                >
+                  {copied ? 'Copied' : 'Copy address'}
+                </Button>
+              </div>
+            </div>
+          ) : null}
+          {!isCrypto && !isPaid ? (
+            <p className="text-body text-ink-sub">
+              Your monthly plan starts when we approve your payment, not when you paid. If
+              approval takes a few days, those days are not added to your plan. Your plan runs
+              for 30 days from approval.
+            </p>
+          ) : null}
+          {payment.rejectionReason ? (
+            <p className="text-body text-ink-sub">
+              Rejected: {payment.rejectionReason}
+              {payment.rejectionDetail ? ` — ${payment.rejectionDetail}` : ''}
+            </p>
+          ) : null}
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={() => router.push(`/tenant/${subdomain}/payments`)}>View payments</Button>
+            <Button variant="outline" onClick={() => router.push(`/tenant/${subdomain}/my-plan`)}>
+              Back to My Plan
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

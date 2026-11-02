@@ -18,13 +18,20 @@ vi.mock('@/lib/api', () => ({
   api: {
     get: (...args: unknown[]) => apiGet(...args),
   },
+  // The shared entitlement provider fetches through apiGet.
+  apiGet: (...args: unknown[]) => apiGet(...args),
   buildTenantApiPath: (subdomain: string, path: string) =>
     `/api/tenant/${encodeURIComponent(subdomain)}${path.startsWith('/') ? path : `/${path}`}`,
   buildUrl: (path: string) => path,
   isApiError: () => false,
 }));
 
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/tenant/acme/pages',
+}));
+
 import { FeatureCapText, useFeatureCap } from '@/components/billing/feature-cap';
+import { EntitlementProvider } from '@/components/billing/entitlement-provider';
 
 const ZERO = { facebook: 0, instagram: 0, threads: 0, x: 0, tiktok: 0, youtube: 0 };
 
@@ -59,7 +66,12 @@ function renderProbe(props: React.ComponentProps<typeof Probe> = {}) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
-      <Probe {...props} />
+      {/* useFeatureCap reads the shared entitlement, so the probe
+          must render under the provider (mounted by the tenant
+          layout in the app). */}
+      <EntitlementProvider subdomain="acme" adminOnly={false}>
+        <Probe {...props} />
+      </EntitlementProvider>
     </QueryClientProvider>
   );
 }
