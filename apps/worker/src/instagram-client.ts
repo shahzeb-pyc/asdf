@@ -122,7 +122,16 @@ export class InstagramPublishClient implements IInstagramPublishClient {
     this.apiBaseUrl = trimTrailingSlashes(
       options?.apiBaseUrl ?? INSTAGRAM_API_BASE_URL
     );
-    this.fetchFn = options?.fetchFn ?? globalThis.fetch;
+    // Workerd brand-checks its native fetch: storing `globalThis.fetch`
+    // as an instance field and calling it as `this.fetchFn(...)` binds
+    // `this` to this client, and workerd rejects that receiver with
+    // "Illegal invocation". Node/bun permit detached fetch, so tests
+    // never caught it — every publish died before reaching Instagram.
+    // The arrow wrapper calls fetch as a bare identifier, so the
+    // receiver is never the client. Do NOT "simplify" this back to
+    // `globalThis.fetch`.
+    this.fetchFn =
+      options?.fetchFn ?? ((input: RequestInfo | URL, init?: RequestInit) => fetch(input, init));
   }
 
   async createContainer(

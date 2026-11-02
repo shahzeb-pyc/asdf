@@ -211,7 +211,16 @@ export class XClient implements IXClient {
 
   constructor(options?: XClientOptions) {
     this.baseUrl = trimTrailingSlashes(options?.baseUrl ?? X_API_BASE_URL);
-    this.fetchFn = options?.fetchFn ?? globalThis.fetch;
+    // Workerd brand-checks its native fetch: storing `globalThis.fetch`
+    // as an instance field and calling it as `this.fetchFn(...)` binds
+    // `this` to this client, and workerd rejects that receiver with
+    // "Illegal invocation". Node/bun permit detached fetch, so tests
+    // never caught it — every publish died before reaching X.
+    // The arrow wrapper calls fetch as a bare identifier, so the
+    // receiver is never the client. Do NOT "simplify" this back to
+    // `globalThis.fetch`.
+    this.fetchFn =
+      options?.fetchFn ?? ((input: RequestInfo | URL, init?: RequestInit) => fetch(input, init));
     this.segmentSizeBytes = options?.segmentSizeBytes ?? X_MEDIA_SEGMENT_BYTES;
     this.statusPollIntervalMs = options?.statusPollIntervalMs ?? DEFAULT_STATUS_POLL_INTERVAL_MS;
     this.maxStatusPolls = options?.maxStatusPolls ?? DEFAULT_MAX_STATUS_POLLS;
