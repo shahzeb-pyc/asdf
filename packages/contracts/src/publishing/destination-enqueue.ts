@@ -112,7 +112,7 @@ const destinationEnqueueBaseFields = {
   title: z.string().max(500).nullable().optional(),
   firstComment: z
     .string()
-    .max(2000)
+    .max(8000)
     .nullable()
     .optional()
     .transform(emptyToNull),
