@@ -39,10 +39,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
 
 import { api, buildTenantApiPath, isApiError } from '@/lib/api';
-import {
-  assignQueueEstimates,
-  IDEMPOTENCY_KEY_HEADER,
-} from '@fbuploadpro/contracts';
+import { assignQueueEstimates } from '@fbuploadpro/contracts';
 import {
   DisconnectPageResponseSchema,
   ListFacebookPagesResponseSchema,
@@ -529,34 +526,6 @@ export default function TenantDedicatedPageView({
       .mutateAsync({ nextStatus: 'active', source: 'reactivate' })
       .catch(() => undefined);
   }, [statusMutation]);
-
-  const publishNowMutation = useMutation({
-    // One fresh idempotency key per tap: a retried request whose
-    // response was lost returns the stored acknowledgement instead
-    // of dispatching the item a second time.
-    mutationFn: (itemId: string) =>
-      api.post(
-        buildTenantApiPath(subdomain, `/publishing/queue/${itemId}/publish-now`),
-        undefined,
-        {
-          schema: AckSchema,
-          headers: { [IDEMPOTENCY_KEY_HEADER]: crypto.randomUUID() },
-        }
-      ),
-    onSuccess: () => {
-      invalidateQueue();
-      toast.success('Publishing triggered successfully.');
-    },
-    onError: (error) => {
-      toast.error(errorMessage(error, 'Publication trigger failed'));
-    },
-  });
-  const handlePublishNow = React.useCallback(
-    async (itemId: string) => {
-      await publishNowMutation.mutateAsync(itemId).catch(() => undefined);
-    },
-    [publishNowMutation]
-  );
 
   const addSlotMutation = useMutation({
     mutationFn: (slotData: { slotTime: string; timezone: string; allowedFormats?: string[] }) =>
@@ -1071,7 +1040,6 @@ export default function TenantDedicatedPageView({
                   page={page}
                   queueItems={dashboardQueueItems}
                   slots={slots}
-                  onPublishNow={handlePublishNow}
                   onSwitchTab={switchTab}
                   queueError={queueError}
                   slotsError={slotsError}

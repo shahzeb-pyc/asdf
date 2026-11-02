@@ -178,7 +178,7 @@ describe('QueuePanel', () => {
     apiPatch.mockImplementation(async () => seed[0]);
     apiPost.mockImplementation(async () => ({}));
     apiDelete.mockImplementation(async () => ({ success: true, itemId: ID_A }));
-    // Publish-now / retry mint crypto.randomUUID() per tap; jsdom may
+    // Retry mints crypto.randomUUID() per tap; jsdom may
     // not provide Web Crypto, so stub only when it is missing.
     if (typeof globalThis.crypto === 'undefined' || typeof globalThis.crypto.randomUUID !== 'function') {
       vi.stubGlobal('crypto', {
@@ -303,19 +303,27 @@ describe('QueuePanel', () => {
     expect(row.queryByTestId('queue-row-menu')).toBeNull();
   });
 
-  it('disables Publish Now and Retry with a plain reason on a paused page', async () => {
+  it('disables Retry with a plain reason on a paused page, no Publish now anywhere', async () => {
     renderPanel({ pageStatus: 'paused' });
     await waitFor(() => expect(screen.getByTestId(`queue-row-${ID_A}`)).toBeTruthy());
     expect(screen.getByTestId('queue-publish-blocked-note').textContent).toContain('Paused');
     const queuedRow = within(screen.getByTestId(`queue-row-${ID_A}`));
-    const publishBtn = queuedRow.getByTestId('queue-row-publish-now') as HTMLButtonElement;
-    expect(publishBtn.disabled).toBe(true);
-    expect(publishBtn.getAttribute('title')).toContain('Paused');
+    expect(queuedRow.queryByTestId('queue-row-publish-now')).toBeNull();
     const failedRow = within(screen.getByTestId(`queue-row-${ID_C}`));
     const retryBtn = failedRow.getByTestId('queue-row-retry') as HTMLButtonElement;
     expect(retryBtn.disabled).toBe(true);
     expect(retryBtn.getAttribute('title')).toContain('Paused');
     expect(apiPost).not.toHaveBeenCalled();
+  });
+
+  it('renders no Publish now control on queued rows', async () => {
+    renderPanel();
+    await waitFor(() => expect(screen.getByTestId(`queue-row-${ID_A}`)).toBeTruthy());
+    const row = within(screen.getByTestId(`queue-row-${ID_A}`));
+    expect(row.queryByTestId('queue-row-publish-now')).toBeNull();
+    expect(row.queryByText('Publish now')).toBeNull();
+    expect(row.getByTestId('queue-row-edit')).toBeTruthy();
+    expect(row.getByTestId('queue-row-delete')).toBeTruthy();
   });
 
   it('shows Retry as the primary action on failed rows, no Publish now', async () => {
@@ -337,21 +345,6 @@ describe('QueuePanel', () => {
     await waitFor(() => expect(apiPost).toHaveBeenCalled());
     const call = apiPost.mock.calls.find((args) =>
       String(args[0]).includes(`/destinations/${PAGE_ID}/queue/${ID_C}/retry`)
-    );
-    expect(call).toBeDefined();
-    const headers = (call![2] as ApiFetchOptions).headers ?? {};
-    expect(UUID_RE.test(headers['Idempotency-Key'] ?? '')).toBe(true);
-  });
-
-  it('publishes now with a fresh idempotency key per tap', async () => {
-    const user = userEvent.setup();
-    renderPanel();
-    await waitFor(() => expect(screen.getByTestId(`queue-row-${ID_A}`)).toBeTruthy());
-    const row = within(screen.getByTestId(`queue-row-${ID_A}`));
-    await user.click(row.getByTestId('queue-row-publish-now'));
-    await waitFor(() => expect(apiPost).toHaveBeenCalled());
-    const call = apiPost.mock.calls.find((args) =>
-      String(args[0]).includes(`/publishing/queue/${ID_A}/publish-now`)
     );
     expect(call).toBeDefined();
     const headers = (call![2] as ApiFetchOptions).headers ?? {};

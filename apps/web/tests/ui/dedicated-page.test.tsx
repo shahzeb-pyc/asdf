@@ -736,7 +736,6 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
           page={samplePage}
           queueItems={sampleQueueItems}
           slots={sampleSlots}
-          onPublishNow={vi.fn()}
           onSwitchTab={vi.fn()}
         />
       );
@@ -763,7 +762,6 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
           page={samplePage}
           queueItems={sampleQueueItems}
           slots={slotsWithSeconds}
-          onPublishNow={vi.fn()}
           onSwitchTab={vi.fn()}
         />
       );
@@ -773,33 +771,12 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
       expect(html).not.toContain('09:00:00');
     });
 
-    it('triggers immediate publication when Publish Now is clicked', async () => {
-      const onPublishNow = vi.fn().mockResolvedValue(undefined);
-
-      const tree = renderAndCaptureTree(() =>
-        PageTabDashboard({
-          page: samplePage,
-          queueItems: sampleQueueItems,
-          slots: sampleSlots,
-          onPublishNow,
-          onSwitchTab: vi.fn(),
-        })
-      );
-
-      const publishBtn = findElementByTestId(tree, 'publish-now-btn-q-item-1');
-      expect(publishBtn).not.toBeNull();
-      await publishBtn?.props.onClick();
-
-      expect(onPublishNow).toHaveBeenCalledWith('q-item-1');
-    });
-
-    it('shows Disconnected (not Running) and disables Publish Now on a disconnected page', () => {
+    it('shows Disconnected (not Running) on a disconnected page, no Publish now control', () => {
       const { container } = rtlRender(
         <PageTabDashboard
           page={{ ...samplePage, status: 'disconnected' }}
           queueItems={sampleQueueItems}
           slots={sampleSlots}
-          onPublishNow={vi.fn()}
           onSwitchTab={vi.fn()}
         />
       );
@@ -807,11 +784,9 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
       expect(
         container.querySelector('[data-testid="metric-automation-status"]')?.textContent
       ).toContain('Disconnected');
-      const publishBtn = container.querySelector(
-        '[data-testid="publish-now-btn-q-item-1"]'
-      ) as HTMLButtonElement;
-      expect(publishBtn.hasAttribute('disabled')).toBe(true);
-      expect(publishBtn.getAttribute('title')).toContain('Disconnected');
+      expect(
+        container.querySelector('[data-testid="publish-now-btn-q-item-1"]')
+      ).toBeNull();
     });
 
     it('allows navigating to full queue tab from view all link', () => {
@@ -822,7 +797,6 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
           page: samplePage,
           queueItems: sampleQueueItems,
           slots: sampleSlots,
-          onPublishNow: vi.fn(),
           onSwitchTab,
         })
       );

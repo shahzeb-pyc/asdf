@@ -141,16 +141,20 @@ test.describe('queue section (dedicated page)', () => {
     await expect(page.getByTestId(`queue-row-${ID_C}`)).toContainText('Queued');
   });
 
-  test('publish now triggers without breaking the list', async ({ page, context }) => {
+  test('no Publish now control on queued rows; the list stays intact', async ({
+    page,
+    context,
+  }) => {
     await context.addCookies([SESSION_COOKIE]);
     await installApiFixtures(page, seedQueue());
     await openQueueTab(page);
 
-    await page.getByTestId(`queue-row-${ID_A}`).getByTestId('queue-row-publish-now').click();
-    await expect(page.getByText('Publishing triggered successfully.')).toBeVisible({
-      timeout: 15_000,
-    });
-    await expect(page.getByTestId(`queue-row-${ID_A}`)).toBeVisible();
+    const row = page.getByTestId(`queue-row-${ID_A}`);
+    await expect(row).toBeVisible();
+    await expect(row.getByTestId('queue-row-publish-now')).toHaveCount(0);
+    // Edit/Delete remain as the row's actions.
+    await expect(row.getByTestId('queue-row-edit')).toBeVisible();
+    await expect(row.getByTestId('queue-row-delete')).toBeVisible();
   });
 
   test('published rows refuse edit and delete in the UI', async ({ page, context }) => {

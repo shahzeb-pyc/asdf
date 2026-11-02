@@ -21,7 +21,6 @@ import { EmptyState } from '@/components/shared/ui/empty-state';
 import { StatusDot } from '@/components/shared/ui/status-dot';
 import { Tag } from '@/components/shared/ui/tag';
 import type { FacebookPageItem } from '../page-card';
-import { getPageStatusLabel } from '../page-card';
 import type { PostFormat } from '@fbuploadpro/contracts';
 import { formatSlotDisplay } from './posting-times/posting-time-utils';
 import { formatQueueTime } from './queue/queue-utils';
@@ -59,7 +58,6 @@ export interface PageTabDashboardProps {
   page: FacebookPageItem;
   queueItems: PageQueueItemSummary[];
   slots: PageSlotSummary[];
-  onPublishNow: (itemId: string) => Promise<void>;
   onSwitchTab: (tab: 'queue' | 'calendar' | 'insights') => void;
   /**
    * R5: the shell's queue fetch failed. The queue count, the next
@@ -94,14 +92,12 @@ export function PageTabDashboard({
   page,
   queueItems,
   slots,
-  onPublishNow,
   onSwitchTab,
   queueError = false,
   slotsError = false,
   queueTruncated = false,
   onRetryData,
 }: Readonly<PageTabDashboardProps>) {
-  const [publishingId, setPublishingId] = React.useState<string | null>(null);
   // R8: estimates and the next publication render in the PAGE
   // timezone (the same formatter the queue rows use), never the
   // browser timezone's bare toLocale* output.
@@ -115,25 +111,8 @@ export function PageTabDashboard({
   const upcomingSlice = activeQueuedItems.slice(0, 3);
   const activeSlots = slots.filter((s) => s.isActive);
 
-  const handlePublishClick = async (itemId: string) => {
-    setPublishingId(itemId);
-    try {
-      await onPublishNow(itemId);
-    } finally {
-      setPublishingId(null);
-    }
-  };
-
   const isPaused = page.status === 'paused';
   const isDisconnected = page.status === 'disconnected';
-  // Status family 2A/4A: Publish Now is only publishable on an
-  // active page. On any other status the button is disabled with a
-  // plain status reason (title + aria-label), never hidden and
-  // never a fake success — the server gate enforces the same rule.
-  const isPublishable = page.status === 'active';
-  const publishBlockedReason = isPublishable
-    ? null
-    : `Publish now unavailable — page is ${getPageStatusLabel(page.status)}`;
   const delta = page.followersGained ?? 0;
 
   const dataError = queueError || slotsError;
@@ -301,20 +280,6 @@ export function PageTabDashboard({
                           : 'Waiting for a matching posting time'}
                     </span>
                   </div>
-
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    data-testid={`publish-now-btn-${item.id}`}
-                    disabled={publishingId === item.id || !isPublishable}
-                    title={publishBlockedReason ?? undefined}
-                    aria-label={publishBlockedReason ?? undefined}
-                    onClick={() => void handlePublishClick(item.id)}
-                    className="shrink-0"
-                  >
-                    {publishingId === item.id ? 'Publishing...' : 'Publish Now'}
-                  </Button>
                 </div>
               ))}
             </div>
