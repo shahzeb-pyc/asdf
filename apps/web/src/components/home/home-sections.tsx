@@ -26,8 +26,9 @@
  *
  * Creator Finder "Unlimited use": the wording is as approved in the
  * mockup. It sits alongside a live 100 TikWM API calls/day/user cap
- * (PR #103) that this change does not touch — the wording-vs-cap
- * discrepancy is flagged for the merge gate, not resolved here.
+ * (the Creator Finder cap PR) that this change does not touch — the
+ * wording-vs-cap discrepancy is flagged for the merge gate, not
+ * resolved here.
  */
 import * as React from 'react';
 import Link from 'next/link';

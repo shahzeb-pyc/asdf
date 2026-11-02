@@ -27,7 +27,7 @@ describe('daysLeftUntil', () => {
   it('counts calendar days, never rounds up, and is 0 on the final day', () => {
     // 2 November -> 2 December 2026 is 30 calendar days (the mockup example).
     expect(daysLeftUntil(new Date(2026, 11, 2, 9, 0, 0), new Date(2026, 10, 2, 12, 0, 0))).toBe(30);
-    // Final calendar day: any time on 2 December against an end on 2 December is 0,
+    // Final calendar day — any time on 2 December against an end on 2 December is 0,
     // not 1 — the old ceil-based count would have shown "1 day left" here.
     expect(daysLeftUntil(new Date(2026, 11, 2, 23, 59, 0), new Date(2026, 11, 2, 12, 0, 0))).toBe(0);
     expect(daysLeftUntil(new Date(2026, 10, 3, 0, 0, 0), new Date(2026, 10, 2, 12, 0, 0))).toBe(1);
