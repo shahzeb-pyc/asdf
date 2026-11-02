@@ -566,7 +566,21 @@ export async function getEntitlement(
   userId: string,
   now: Date = new Date()
 ): Promise<Entitlement> {
-  const period = await getActivePeriod(client, userId, now);
+  let period = await getActivePeriod(client, userId, now);
+  if (!period) {
+    // A scheduled downgrade whose start has arrived activates
+    // here, on any entitlement check — not only when the user
+    // opens a page. A failed activation never breaks the read:
+    // it is logged loudly and retried on the next check, and the
+    // worker tick path activates independently of this one.
+    try {
+      period = (await activateDueScheduledDowngrades(client, userId, now)) ?? period;
+    } catch (err) {
+      logServerError('[billing] scheduled downgrade activation failed on entitlement check', err, {
+        source: 'billing',
+      });
+    }
+  }
   const usage = await getUsageCounts(client, userId);
   if (!period) {
     return {
@@ -1025,50 +1039,222 @@ export async function createPeriodForPurchase(
   return period;
 }
 
-/** Create a future period WITHOUT superseding the live period (downgrade, owner decision 2026-11-02).
- * The live period keeps running to its end; getActivePeriod only
- * returns periods whose window contains now, so the scheduled row
- * becomes live automatically at its startsAt. NOTE: the
- * one-live-per-user unique index migration (20261101090000) ships
- * UNAPPLIED; if it is ever applied it must be scoped to started
- * periods, or it will block a scheduled row coexisting with a live
- * one. Until then, app-level claim-first approval is the guard. */
-export async function createScheduledPeriod(
+/**
+ * Scheduled downgrades, option A (owner choice 2026-11-02, PR #120
+ * send-back fix B2): the schedule lives ON THE PAYMENT ROW ONLY
+ * (is_downgrade + scheduled_starts_at). Approval NEVER inserts a
+ * future period row — a future non-superseded row coexisting with
+ * the live period violates the shipped one-live-per-user partial
+ * unique index (20261101090000_billing_audit_period_index.sql),
+ * and a static partial-index predicate cannot express "started"
+ * (now() is not immutable), so no index tweak can rescue that
+ * design. The period is created only by activateDueScheduled-
+ * Downgrades, when the schedule goes live, through the same
+ * createPeriodForPurchase path every other activation uses — so
+ * at most one non-superseded period ever exists, with or without
+ * the index applied.
+ *
+ * Timing consequences, stated plainly (fresh verification must
+ * re-check these): the coupon is applied at APPROVAL (held ->
+ * applied, period link null), and so is the seller commission —
+ * commission is earned when the payment is approved, and the
+ * worker cannot import the sellers logic, so recording it at
+ * activation would lose it whenever a worker tick activates
+ * first. The commission row is therefore recorded at approval
+ * with period_id null and period_starts_at set to the scheduled
+ * start, and activation backfills period_id to the real period
+ * (a raw update, in both the web and worker activation paths).
+ * A period created late (no entitlement check or worker tick ran
+ * exactly at the scheduled start) starts at activation time and
+ * runs a full 30 days from there — a late activation must never
+ * silently shorten a month the user already paid for.
+ */
+export const SCHEDULED_DOWNGRADE_EXISTS_MESSAGE =
+  'You already have a lower plan scheduled for next month. Wait until it starts before choosing another plan.';
+
+/** True when the user has an approved downgrade payment whose
+ * period has not been created yet. Pre-migration (new columns
+ * unapplied) the tolerant load returns no flags, so this is
+ * best-effort until migration 20261102150000 is applied — which
+ * the merge instruction names as a required pre-live step. */
+export async function hasOutstandingScheduledDowngrade(
   client: SupabaseClient,
-  args: { userId: string; counts: PlatformCounts; paymentId: string | null },
-  startsAt: Date
-): Promise<SubscriptionPeriodRow> {
-  const endsAt = new Date(startsAt.getTime() + SUBSCRIPTION_PERIOD_DAYS * 86_400_000);
+  userId: string,
+  excludePaymentId?: string | null
+): Promise<boolean> {
   const { data, error } = await client
-    .from('subscription_periods')
-    .insert({
-      user_id: args.userId,
-      payment_id: args.paymentId,
-      facebook_count: args.counts.facebook,
-      instagram_count: args.counts.instagram,
-      threads_count: args.counts.threads,
-      x_count: args.counts.x,
-      tiktok_count: args.counts.tiktok,
-      youtube_count: args.counts.youtube,
-      starts_at: startsAt.toISOString(),
-      ends_at: endsAt.toISOString(),
-    })
-    .select(`id,user_id,${COUNT_COLUMNS},starts_at,ends_at,superseded_at`)
-    .single();
-  if (error || !data) {
-    logServerError('[billing] scheduled period insert failed', error, { source: 'billing' });
+    .from('subscription_payments')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('status', 'approved')
+    .is('period_id', null);
+  if (error) {
+    logServerError('[billing] scheduled downgrade lookup failed', error, { source: 'billing' });
     throw new SubscriptionGateError(
       'ENTITLEMENT_UNAVAILABLE',
-      'Your scheduled plan could not be saved right now. Please try again.'
+      'Your plan could not be checked right now. Please try again.'
     );
   }
-  const period = periodFromRow(asRow(data) ?? {});
-  if (!period) {
+  const ids = (Array.isArray(data) ? data : [])
+    .map((row) => asRow(row)?.['id'])
+    .filter((id): id is string => typeof id === 'string' && id !== excludePaymentId);
+  for (const id of ids) {
+    const fields = await loadNewPaymentFieldsForRow(client, id);
+    if (fields.isDowngrade) return true;
+  }
+  return false;
+}
+
+/** Block a new purchase/upgrade while a downgrade schedule is
+ * outstanding. Activation runs first: a schedule that is already
+ * due is activated (and then no longer blocks) instead of
+ * blocking a purchase the user should be allowed to make. */
+export async function assertNoOutstandingScheduledDowngrade(
+  client: SupabaseClient,
+  userId: string,
+  now: Date = new Date()
+): Promise<void> {
+  await activateDueScheduledDowngrades(client, userId, now);
+  if (await hasOutstandingScheduledDowngrade(client, userId)) {
+    throw new SubscriptionGateError('PAYMENT_ALREADY_DECIDED', SCHEDULED_DOWNGRADE_EXISTS_MESSAGE);
+  }
+}
+
+/**
+ * The ONE defined activation path for scheduled downgrades.
+ * Claim-first and idempotent: the period is created through
+ * createPeriodForPurchase (which supersedes every non-superseded
+ * row, so the lapsed old period can never coexist with the new
+ * one), then linked conditionally on period_id IS NULL. A loser
+ * that finds the payment already linked returns the winner's
+ * period; a link failure with no winner period still returns the
+ * created period, because the period row itself is live by its
+ * time window and superseding it would kill the plan just
+ * activated — the link is then repaired by the already-linked
+ * re-approve path. At most one schedule activates per call, and
+ * activation never runs while a period is still active.
+ *
+ * Called from getEntitlement (web: every API/gate/entitlement
+ * check) and from the worker's period check — never only from a
+ * page the user happens to visit, so a publishing plan activates
+ * on a worker tick even if the user never opens the app.
+ */
+export async function activateDueScheduledDowngrades(
+  client: SupabaseClient,
+  userId: string,
+  now: Date = new Date()
+): Promise<SubscriptionPeriodRow | null> {
+  if (await getActivePeriod(client, userId, now)) return null;
+  const { data, error } = await client
+    .from('subscription_payments')
+    .select(
+      `id,user_id,method,bank_method,status,${COUNT_COLUMNS},amount_pkr,is_upgrade,screenshot_storage_key,nowpayments_payment_id,nowpayments_pay_address,nowpayments_pay_amount,nowpayments_network,coupon_code,discount_pkr,period_id,approved_at,created_at`
+    )
+    .eq('user_id', userId)
+    .eq('status', 'approved')
+    .is('period_id', null);
+  if (error) {
+    logServerError('[billing] scheduled downgrade activation lookup failed', error, {
+      source: 'billing',
+    });
     throw new SubscriptionGateError(
       'ENTITLEMENT_UNAVAILABLE',
-      'Your scheduled plan could not be saved right now. Please try again.'
+      'Your plan could not be checked right now. Please try again.'
     );
   }
+  const candidates: SubscriptionPaymentRow[] = [];
+  for (const raw of Array.isArray(data) ? data : []) {
+    const base = paymentFromRow(asRow(raw) ?? {});
+    if (!base) continue;
+    const payment = { ...base, ...(await loadNewPaymentFieldsForRow(client, base.id)) };
+    if (
+      payment.isDowngrade &&
+      payment.scheduledStartsAt &&
+      payment.scheduledStartsAt.getTime() <= now.getTime()
+    ) {
+      candidates.push(payment);
+    }
+  }
+  if (candidates.length === 0) return null;
+  candidates.sort(
+    (a, b) => (a.scheduledStartsAt?.getTime() ?? 0) - (b.scheduledStartsAt?.getTime() ?? 0)
+  );
+  if (candidates.length > 1) {
+    // Should not happen: the submit/approval guards allow only one
+    // outstanding schedule. Activating the earliest only; the rest
+    // stay approved-but-unlinked and need an admin decision — never
+    // activate two competing periods in one call.
+    logServerError('[billing] multiple due scheduled downgrades; activating earliest only', null, {
+      source: 'billing',
+      userId,
+      count: candidates.length,
+    });
+  }
+  const candidate = candidates[0];
+  // Commission was recorded at approval with period_id null
+  // (option A); activation backfills the real period id. This
+  // update is best-effort and never fails activation — a missed
+  // backfill leaves a valid commission row pointing at no period,
+  // which the already-linked re-approve path also repairs.
+  const backfillCommissionPeriod = async (periodId: string): Promise<void> => {
+    try {
+      await client
+        .from('seller_commissions')
+        .update({ period_id: periodId })
+        .eq('payment_id', candidate.id)
+        .is('period_id', null);
+    } catch (err) {
+      logServerError('[billing] scheduled downgrade commission backfill failed', err, {
+        source: 'billing',
+        paymentId: candidate.id,
+      });
+    }
+  };
+  const period = await createPeriodForPurchase(
+    client,
+    { userId, counts: candidate.counts, paymentId: candidate.id, isUpgrade: false },
+    now
+  );
+  const { data: linked, error: linkError } = await client
+    .from('subscription_payments')
+    .update({ period_id: period.id, updated_at: now.toISOString() })
+    .eq('id', candidate.id)
+    .is('period_id', null)
+    .select('id');
+  if (linkError || !Array.isArray(linked) || linked.length === 0) {
+    if (linkError) {
+      logServerError('[billing] scheduled downgrade link failed; period is live anyway', linkError, {
+        source: 'billing',
+        paymentId: candidate.id,
+        periodId: period.id,
+      });
+    }
+    // A winner may have linked a different period for this payment.
+    const { data: reloaded } = await client
+      .from('subscription_payments')
+      .select('period_id')
+      .eq('id', candidate.id)
+      .maybeSingle();
+    const winnerPeriodId = reloaded ? stringField(asRow(reloaded) ?? {}, 'period_id') : null;
+    if (winnerPeriodId && winnerPeriodId !== period.id) {
+      const { data: winnerData } = await client
+        .from('subscription_periods')
+        .select(`id,user_id,${COUNT_COLUMNS},starts_at,ends_at,superseded_at`)
+        .eq('id', winnerPeriodId)
+        .maybeSingle();
+      const winnerPeriod = winnerData ? periodFromRow(asRow(winnerData) ?? {}) : null;
+      if (winnerPeriod) {
+        await client
+          .from('subscription_periods')
+          .update({ superseded_at: now.toISOString() })
+          .eq('id', period.id)
+          .is('superseded_at', null);
+        await backfillCommissionPeriod(winnerPeriod.id);
+        return winnerPeriod;
+      }
+    }
+  }
+  await backfillCommissionPeriod(period.id);
   return period;
 }
 
@@ -1106,7 +1292,7 @@ export async function approvePayment(
   adminUserId: string,
   now: Date = new Date(),
   options: { overrideReason?: string | null } = {}
-): Promise<{ payment: SubscriptionPaymentRow; period: SubscriptionPeriodRow }> {
+): Promise<{ payment: SubscriptionPaymentRow; period: SubscriptionPeriodRow | null }> {
   const loadPayment = async (): Promise<SubscriptionPaymentRow | null> => {
     const { data, error } = await client
       .from('subscription_payments')
@@ -1178,6 +1364,20 @@ export async function approvePayment(
       'INVALID_REQUEST',
       'This payment has no screenshot. Approve it only with a recorded reason, or reject it.'
     );
+  }
+  if (payment.isDowngrade) {
+    // Second-schedule guard, BEFORE the claim: once claimed, a
+    // blocked approval would strand an approved-but-unscheduled
+    // payment. A due older schedule activates first, so it no
+    // longer blocks; an activation failure fails closed here
+    // (retryable 500) rather than creating a second schedule.
+    await activateDueScheduledDowngrades(client, payment.userId, now);
+    if (await hasOutstandingScheduledDowngrade(client, payment.userId, payment.id)) {
+      throw new SubscriptionGateError(
+        'PAYMENT_ALREADY_DECIDED',
+        SCHEDULED_DOWNGRADE_EXISTS_MESSAGE
+      );
+    }
   }
   // Claim FIRST: exactly one concurrent approve wins this update.
   const { data: claimed, error: claimError } = await client
@@ -1258,6 +1458,9 @@ export async function approvePayment(
  * Create the period for an already-claimed (approved) payment and
  * link it conditionally. If the link loses, the orphan period is
  * superseded immediately and the winner's period is returned.
+ * A scheduled downgrade returns period null: approval records
+ * the schedule only (option A, PR #120 send-back fix B2) — the
+ * period is created later by activateDueScheduledDowngrades.
  */
 async function linkPeriodForApprovedPayment(
   client: SupabaseClient,
@@ -1265,7 +1468,7 @@ async function linkPeriodForApprovedPayment(
   adminUserId: string,
   now: Date,
   loadPeriod: (periodId: string) => Promise<SubscriptionPeriodRow | null>
-): Promise<{ payment: SubscriptionPaymentRow; period: SubscriptionPeriodRow }> {
+): Promise<{ payment: SubscriptionPaymentRow; period: SubscriptionPeriodRow | null }> {
   void adminUserId;
   // Re-check before creating: a repair racing the winner's link
   // must not mint a second period when the link already landed.
@@ -1294,31 +1497,80 @@ async function linkPeriodForApprovedPayment(
     // link at all — otherwise a payment whose period row is gone
     // could never activate.
   }
-  let period: SubscriptionPeriodRow;
+  let period: SubscriptionPeriodRow | null = null;
   if (payment.isDowngrade) {
-    // Downgrade (owner decision 2026-11-02): do NOT supersede the live
-    // plan. If it is still live, the new period starts at its end;
-    // if it has already lapsed, it starts at approval, never backdated.
-    const live = await getActivePeriod(client, payment.userId, now);
-    const scheduledStartsAt = live && live.endsAt > now ? live.endsAt : now;
-    period = await createScheduledPeriod(
-      client,
-      { userId: payment.userId, counts: payment.counts, paymentId: payment.id },
-      scheduledStartsAt
-    );
-    // scheduled_starts_at is a new column (migration ships unapplied):
-    // record it best-effort, never fail the approval for it.
-    try {
-      await client
-        .from('subscription_payments')
-        .update({ scheduled_starts_at: scheduledStartsAt.toISOString(), updated_at: now.toISOString() })
-        .eq('id', payment.id);
-    } catch (err) {
-      logServerError('[billing] scheduled starts_at record failed (migration may be unapplied)', err, {
-        source: 'billing',
-      });
+    // Repair case: activation already created this payment's period
+    // but the link failed. Link to that period instead of minting
+    // a second one — and instead of re-scheduling a payment whose
+    // plan is already live.
+    const { data: existingPeriods } = await client
+      .from('subscription_periods')
+      .select(`id,user_id,${COUNT_COLUMNS},starts_at,ends_at,superseded_at`)
+      .eq('payment_id', payment.id)
+      .is('superseded_at', null)
+      .order('ends_at', { ascending: false })
+      .limit(1);
+    const existing =
+      Array.isArray(existingPeriods) && existingPeriods.length > 0
+        ? periodFromRow(asRow(existingPeriods[0]) ?? {})
+        : null;
+    if (existing) {
+      period = existing;
+    } else {
+      // Second-schedule guard, repair path too: scheduling this
+      // payment while another schedule is outstanding would leave
+      // two competing future plans. The payment stays approved;
+      // the admin rejects it (or waits for the other schedule).
+      if (await hasOutstandingScheduledDowngrade(client, payment.userId, payment.id)) {
+        throw new SubscriptionGateError(
+          'PAYMENT_ALREADY_DECIDED',
+          SCHEDULED_DOWNGRADE_EXISTS_MESSAGE
+        );
+      }
+      const live = await getActivePeriod(client, payment.userId, now);
+      if (live && live.endsAt > now) {
+        // Schedule ONLY (option A): record the schedule on the
+        // payment, apply the coupon now (period link null), and
+        // record NO commission yet — commission is recorded at
+        // activation, with the real period. No period row is
+        // inserted here, so the one-live-per-user index can never
+        // see a live + scheduled pair.
+        const scheduledStartsAt = live.endsAt;
+        try {
+          await client
+            .from('subscription_payments')
+            .update({
+              scheduled_starts_at: scheduledStartsAt.toISOString(),
+              updated_at: now.toISOString(),
+            })
+            .eq('id', payment.id);
+        } catch (err) {
+          logServerError('[billing] scheduled starts_at record failed (migration may be unapplied)', err, {
+            source: 'billing',
+          });
+        }
+        await applyHeldRedemptionsForPayment(client, payment.id, null);
+        // Commission is earned at approval, not activation (see
+        // the option-A comment above): recorded with a null
+        // period id and the scheduled start; activation backfills
+        // period_id. It throws on failure, fail loud, like every
+        // other approval path — a re-approve through the repair
+        // path retries it idempotently per payment.
+        await recordCommissionForPayment(
+          client,
+          { ...payment, scheduledStartsAt },
+          null
+        );
+        return {
+          payment: { ...payment, scheduledStartsAt },
+          period: null,
+        };
+      }
+      // Lapsed: no live plan to preserve, so a downgrade approved
+      // now is an immediate period, never backdated.
     }
-  } else {
+  }
+  if (!period) {
     period = await createPeriodForPayment(client, payment, now);
   }
   // The period exists now; applying the held coupon redemption is
@@ -1404,9 +1656,11 @@ export async function activateCryptoPayment(
   now: Date = new Date()
 ): Promise<{
   payment: SubscriptionPaymentRow;
-  period: SubscriptionPeriodRow;
+  period: SubscriptionPeriodRow | null;
   alreadyActivated: boolean;
   couponReleasedBeforeFinish: boolean;
+  /** True when a downgrade was scheduled instead of activated: no period exists yet. */
+  scheduled: boolean;
 }> {
   const loadPeriodById = async (periodId: string): Promise<SubscriptionPeriodRow | null> => {
     const { data } = await client
@@ -1416,9 +1670,13 @@ export async function activateCryptoPayment(
       .maybeSingle();
     return data ? periodFromRow(asRow(data) ?? {}) : null;
   };
+  // The caller may not have merged the new payment columns; the
+  // downgrade decision below must not depend on that.
+  payment = { ...payment, ...(await loadNewPaymentFieldsForRow(client, payment.id)) };
   if (payment.periodId) {
     const period = await loadPeriodById(payment.periodId);
-    if (period) return { payment, period, alreadyActivated: true, couponReleasedBeforeFinish: false };
+    if (period)
+      return { payment, period, alreadyActivated: true, couponReleasedBeforeFinish: false, scheduled: false };
   }
   if (payment.status === 'rejected') {
     throw new SubscriptionGateError(
@@ -1431,6 +1689,19 @@ export async function activateCryptoPayment(
       'PAYMENT_ALREADY_DECIDED',
       'That payment has already been decided.'
     );
+  }
+  if (payment.isDowngrade) {
+    // Same second-schedule guard as bank approval, before the
+    // claim: a due older schedule activates first, then an
+    // outstanding one blocks this activation with a plain error
+    // instead of creating a second competing schedule.
+    await activateDueScheduledDowngrades(client, payment.userId, now);
+    if (await hasOutstandingScheduledDowngrade(client, payment.userId, payment.id)) {
+      throw new SubscriptionGateError(
+        'PAYMENT_ALREADY_DECIDED',
+        SCHEDULED_DOWNGRADE_EXISTS_MESSAGE
+      );
+    }
   }
   const { data: claimed, error: claimError } = await client
     .from('subscription_payments')
@@ -1461,7 +1732,7 @@ export async function activateCryptoPayment(
     if (currentPeriodId) {
       const period = await loadPeriodById(currentPeriodId);
       if (period) {
-        return { payment, period, alreadyActivated: true, couponReleasedBeforeFinish: false };
+        return { payment, period, alreadyActivated: true, couponReleasedBeforeFinish: false, scheduled: false };
       }
     }
     const currentStatus = currentRow ? stringField(currentRow, 'status') : null;
@@ -1480,7 +1751,7 @@ export async function activateCryptoPayment(
       now,
       loadPeriodById
     );
-    return { ...repaired, alreadyActivated: false, couponReleasedBeforeFinish: await hadReleasedRedemption(client, payment.id) };
+    return { ...repaired, alreadyActivated: false, couponReleasedBeforeFinish: await hadReleasedRedemption(client, payment.id), scheduled: repaired.period === null };
   }
   const linked = await linkPeriodForApprovedPayment(
     client,
@@ -1489,7 +1760,7 @@ export async function activateCryptoPayment(
     now,
     loadPeriodById
   );
-  return { ...linked, alreadyActivated: false, couponReleasedBeforeFinish: await hadReleasedRedemption(client, payment.id) };
+  return { ...linked, alreadyActivated: false, couponReleasedBeforeFinish: await hadReleasedRedemption(client, payment.id), scheduled: linked.period === null };
 }
 
 async function hadReleasedRedemption(

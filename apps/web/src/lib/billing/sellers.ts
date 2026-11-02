@@ -317,10 +317,25 @@ export async function changeReferralCode(
  * than this one — a refunded or zero-due first purchase still
  * spent it, because the period row survives).
  */
+/**
+ * Commission for a payment, recorded once per payment (unique
+ * index on payment_id; the existing-row check above makes
+ * re-runs safe). period may be null for a SCHEDULED downgrade
+ * (PR #120 send-back fix B2): the commission is earned when the
+ * payment is approved, but no period exists yet, so the row is
+ * recorded with period_id null and period_starts_at set to the
+ * scheduled start, and activation backfills period_id to the
+ * real period (web activation and worker activation both do
+ * that raw update — no sellers logic is duplicated in the
+ * worker). A null period therefore never means "no commission
+ * due"; it means "not yet activated".
+ */
 export async function recordCommissionForPayment(
   client: SupabaseClient,
-  payment: Pick<SubscriptionPaymentRow, 'id' | 'userId' | 'amountPkr'>,
-  period: Pick<SubscriptionPeriodRow, 'id' | 'startsAt'>
+  payment: Pick<SubscriptionPaymentRow, 'id' | 'userId' | 'amountPkr'> & {
+    scheduledStartsAt?: Date | null;
+  },
+  period: Pick<SubscriptionPeriodRow, 'id' | 'startsAt'> | null
 ): Promise<SellerCommission | null> {
   const { data: existing, error: existingError } = await client
     .from('seller_commissions')
@@ -358,12 +373,13 @@ export async function recordCommissionForPayment(
   if (!settings || settings.status !== 'active') return null;
 
   if (settings.scope === 'one-time') {
-    const { data: priorPeriods, error: priorError } = await client
+    const priorQuery = client
       .from('subscription_periods')
       .select('id')
-      .eq('user_id', payment.userId)
-      .neq('id', period.id)
-      .limit(1);
+      .eq('user_id', payment.userId);
+    const { data: priorPeriods, error: priorError } = await (period
+      ? priorQuery.neq('id', period.id).limit(1)
+      : priorQuery.limit(1));
     if (priorError) {
       logServerError('[sellers] prior period check failed', priorError, { source: 'sellers' });
       throw new SellerError(
@@ -381,8 +397,8 @@ export async function recordCommissionForPayment(
       seller_id: sellerId,
       user_id: payment.userId,
       payment_id: payment.id,
-      period_id: period.id,
-      period_starts_at: period.startsAt.toISOString(),
+      period_id: period ? period.id : null,
+      period_starts_at: (period ? period.startsAt : payment.scheduledStartsAt ?? new Date()).toISOString(),
       rate_snapshot: settings.rate,
       scope_snapshot: settings.scope,
       amount_pkr: amountPkr,

@@ -302,6 +302,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           detail: 'A failed/expired notification released this payment’s coupon before the finished notification arrived. The period was still activated because the user paid — check whether the coupon should be re-applied manually.',
         });
       }
+      // A scheduled downgrade has no period yet (option A): the
+      // commission is recorded at activation, not here, and the
+      // webhook must acknowledge the schedule, not claim activation.
+      if (!result.period) {
+        return NextResponse.json({
+          received: true,
+          scheduled: true,
+          activated: false,
+          alreadyActivated: false,
+        });
+      }
       // Seller commission, by contrast, THROWS on failure: the
       // outer catch releases the dedupe row, so the provider
       // retry reprocesses through the alreadyActivated branch

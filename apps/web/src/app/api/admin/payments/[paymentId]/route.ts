@@ -161,6 +161,18 @@ export async function POST(
     const { payment, period } = await approvePayment(client, paymentId, auth.session.userId, new Date(), {
       overrideReason,
     });
+    // A scheduled downgrade has no period yet (option A): the
+    // schedule lives on the payment and the period is created
+    // when it goes live. Returning a period here would be a lie.
+    if (!period) {
+      return NextResponse.json({
+        payment: mapPaymentToItem(payment),
+        scheduled: true,
+        scheduledStartsAt: payment.scheduledStartsAt
+          ? payment.scheduledStartsAt.toISOString()
+          : null,
+      });
+    }
     return NextResponse.json({
       payment: mapPaymentToItem(payment),
       period: {
@@ -255,6 +267,15 @@ async function handleCryptoRescue(
 
   if (decision === 'approve-crypto') {
     const result = await activateCryptoPayment(client, payment);
+    // A scheduled downgrade has no period yet (option A): no
+    // commission is due until activation creates the period, and
+    // recording one now would need a period that does not exist.
+    if (!result.period) {
+      return NextResponse.json({
+        payment: mapPaymentToItem(result.payment),
+        scheduled: true,
+      });
+    }
     // A rescued payment is an approved/finished payment, so the
     // referral commission is due exactly as on a webhook finish.
     // This THROWS on failure (fail loud, mapped to a JSON 500 by

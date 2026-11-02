@@ -8,6 +8,7 @@ import { logServerError } from '@/lib/server-analytics';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
 import { readJsonBody } from '@/lib/request-body';
 import {
+  assertNoOutstandingScheduledDowngrade,
   getActivePeriod,
   hasPendingPayment,
   paymentFromRow,
@@ -256,6 +257,23 @@ export async function POST(
         { error: 'PENDING_PAYMENT_EXISTS', message: PENDING_PAYMENT_EXISTS_MESSAGE },
         { status: 409 }
       );
+    }
+    // Later-purchase rule (PR #120 send-back fix B2): while a
+    // downgrade schedule is outstanding, no new purchase is
+    // accepted — an upgrade bought now would be superseded by
+    // the scheduled downgrade anyway, and a second schedule
+    // would compete with the first. A due schedule activates
+    // first inside the guard, so it stops blocking once live.
+    try {
+      await assertNoOutstandingScheduledDowngrade(client, session.userId);
+    } catch (err) {
+      if (err instanceof SubscriptionGateError) {
+        return NextResponse.json(
+          { error: err.code, message: err.message },
+          { status: err.code === 'PAYMENT_ALREADY_DECIDED' ? 409 : 500 }
+        );
+      }
+      throw err;
     }
     const activePeriod = await getActivePeriod(client, session.userId, new Date());
     let amountPkr: number;
