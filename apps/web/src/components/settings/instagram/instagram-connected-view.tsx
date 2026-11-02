@@ -59,12 +59,13 @@ function CopyRow({
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(value);
+      setCopied(true);
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      timeoutRef.current = setTimeout(() => setCopied(false), COPY_FEEDBACK_DURATION_MS);
     } catch {
       // Clipboard unavailable: the value is still selectable text.
+      setCopied(false);
     }
-    setCopied(true);
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    timeoutRef.current = setTimeout(() => setCopied(false), COPY_FEEDBACK_DURATION_MS);
   };
   return (
     <div className="flex flex-col gap-2">

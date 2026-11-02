@@ -167,7 +167,7 @@ export type InstagramUnifiedProbeOutcome =
   | { kind: 'unknown' };
 
 /**
- * Belt-and-braces scope probe (PR #113 precedent): compares the BISU
+ * Belt-and-braces scope probe (Facebook PR 113 precedent): compares the BISU
  * token's /me/permissions list against the four hard-required names.
  * A proven decline/missing name is 'missing'; a failed or unusable
  * probe is 'unknown' and the caller must fail OPEN (connect as today,

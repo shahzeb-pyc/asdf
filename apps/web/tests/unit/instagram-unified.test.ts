@@ -3,6 +3,7 @@ import { INSTAGRAM_UNIFIED_OAUTH_SCOPES } from '@fbuploadpro/contracts';
 import {
   buildInstagramScopeRejectionMessage,
   findMissingInstagramScopes,
+  parseInstagramPermissions,
   parseMissingInstagramScopesParam,
 } from '../../src/lib/instagram-permissions';
 import {
@@ -55,6 +56,29 @@ describe('Instagram Unified Login scopes', () => {
         parseMissingInstagramScopesParam('instagram_manage_comments,instagram_manage_insights')
       )
     ).toContain('viewing insights');
+  });
+
+  it('uses the singular form when exactly one permission is missing', () => {
+    expect(buildInstagramScopeRejectionMessage(['instagram_basic'])).toContain(
+      'A required permission — reading your profile and media — was declined.'
+    );
+  });
+
+  it('uses the generic form when the missing list is empty', () => {
+    expect(buildInstagramScopeRejectionMessage([])).toContain(
+      'A required permission was declined.'
+    );
+  });
+
+  it('treats malformed permission payloads as an empty list, never as granted', () => {
+    expect(parseInstagramPermissions(null)).toEqual([]);
+    expect(parseInstagramPermissions({})).toEqual([]);
+    expect(parseInstagramPermissions({ data: 'not-an-array' })).toEqual([]);
+    expect(
+      parseInstagramPermissions({
+        data: [null, 'not-an-object', { permission: 'instagram_basic', status: 'granted' }],
+      })
+    ).toEqual([{ permission: 'instagram_basic', status: 'granted' }]);
   });
 });
 

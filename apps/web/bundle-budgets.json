@@ -316,7 +316,7 @@
         "firstLoadGzipBytes": 152237,
         "firstLoadRawBytes": 502437,
         "routeSpecificGzipBytes": 11696,
-        "routeSpecificRawBytes": 28937
+        "routeSpecificRawBytes": 30527
       },
       "/connect/instagram/success": {
         "firstLoadGzipBytes": 150309,

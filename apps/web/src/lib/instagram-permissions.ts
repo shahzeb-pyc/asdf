@@ -6,7 +6,7 @@
  * The callback must refuse to save accounts that did not grant all of
  * them. This module owns what "granted" means and how a rejection reads;
  * the callback owns the Graph call. It mirrors the Facebook permissions
- * module (PR #113) so the two flows can never drift in semantics.
+ * module (Facebook PR 113) so the two flows can never drift in semantics.
  *
  * A scope counts as granted only when /me/permissions lists it with
  * status "granted". A scope that is absent, declined, or listed with any

@@ -97,12 +97,13 @@ function CopyAddressRow({
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(url);
+      setCopied(true);
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      timeoutRef.current = setTimeout(() => setCopied(false), 2000);
     } catch {
       // Clipboard unavailable: the address is still selectable text.
+      setCopied(false);
     }
-    setCopied(true);
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    timeoutRef.current = setTimeout(() => setCopied(false), 2000);
   };
   return (
     <div className="flex flex-col gap-2">
