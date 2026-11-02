@@ -70,13 +70,14 @@ export function TikTokDashboardTab({
   const mark = mirrorStatusMark(mirror.status);
   const last = mirror.lastMirroredPost;
 
-  // Manual retry for one pending post. Pending posts are never
-  // auto-retried; this mutation is the only retry path. The tab is
-  // shared by the Facebook detail view and the Instagram Auto
-  // Repost detail view, so both query-key families are invalidated
-  // (the miss is a no-op). A failed publish returns a 200 outcome
-  // with the row still pending, so the specific message toasts here
-  // instead of a generic failure.
+  // Manual retry for one failed post (pre-existing `pending`
+  // rows are also retryable — see the retry route). Failed posts
+  // are never auto-retried; this mutation is the only retry path.
+  // The tab is shared by the Facebook detail view and the Instagram
+  // Auto Repost detail view, so both query-key families are
+  // invalidated (the miss is a no-op). A failed publish returns a
+  // 200 outcome with the row still failed, so the specific message
+  // toasts here instead of a generic failure.
   const retryMutation = useMutation({
     mutationFn: (postId: string) =>
       api.post(
@@ -207,7 +208,7 @@ export function TikTokDashboardTab({
                   {post.error ? (
                     <p className="mt-1 text-metadata text-signal-critical">{mapStoredMirrorErrorToDisplay(post.error)}</p>
                   ) : null}
-                  {post.status === 'pending' &&
+                  {(post.status === 'failed' || post.status === 'pending') &&
                   (mirror.targetPlatform === 'facebook' ||
                     mirror.targetPlatform === 'instagram') ? (
                     <Button

@@ -29,6 +29,12 @@ function mirrorView() {
     lastCheckedAt: '2026-10-29T11:00:00.000Z',
     nextCheckAt: '2026-10-29T12:00:00.000Z',
     lastError: null,
+    targetAddedAt: '2026-11-02T00:00:00.000Z',
+    targetFollowers: 0,
+    targetCategory: 'Digital creator',
+    targetAccountDisplayName: 'E2E FB Account',
+    postCounts: { posted: 1, failed: 0 },
+    postCountsError: false,
     lastMirroredPost: {
       id: '55555555-5555-4555-a555-555555555555',
       sourcePostId: 'v1',
@@ -134,7 +140,7 @@ test.describe('tiktok mirrors section (phone width)', () => {
     await installMirrorRoutes(page);
     await page.goto(`/tenant/${SUB}/tiktok-mirrors`);
     await expect(page.getByTestId('tiktok-mirrors-grid')).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText('@alice')).toBeVisible();
+    await expect(page.getByText('source: @alice')).toBeVisible();
     await assertNoHorizontalOverflow(page);
 
     await page.getByTestId('header-add-mirror-btn').click();

@@ -3,7 +3,7 @@
  * newer-only oldest-first posting, claim-then-post (overlapping
  * checks never double-post), watermarked-only skipped with
  * error, tikwm failure → mirror error, publish failure → post
- * stays pending + mirror error, success clears the mirror
+ * recorded failed + mirror error, success clears the mirror
  * error, caption verbatim. (Paused/deleted skipping lives in
  * the consumer tests — the consumer fetches the mirror fresh
  * and skips before this runs.)
@@ -167,7 +167,7 @@ describe('processMirrorCheck', () => {
     expect(state.published).toHaveLength(0);
   });
 
-  it('keeps a failed post pending, marks the mirror error, and stops that mirror', async () => {
+  it('records a failed post as failed, marks the mirror error, and stops that mirror', async () => {
     const state = newState();
     state.publishFailsFor.add('https://example.com/v1.mp4');
     const feed = [reel('v1', 100), reel('v2', 200)];
@@ -178,13 +178,13 @@ describe('processMirrorCheck', () => {
     expect(state.published).toHaveLength(0);
     expect(state.claimed.map((c) => c.post.sourcePostId)).toEqual(['v1']);
     const postUpdate = state.postUpdates.find((u) => u.id === 'post-v1');
-    expect(postUpdate?.patch.status).toBe('pending');
+    expect(postUpdate?.patch.status).toBe('failed');
     const stamp = state.mirrorUpdates[state.mirrorUpdates.length - 1];
     expect(stamp?.patch.status).toBe('error');
     expect(stamp?.patch.lastError).toContain('Graph exploded');
   });
 
-  it('shows the plain restriction message on a restricted publish failure, post still pending', async () => {
+  it('shows the plain restriction message on a restricted publish failure, post failed', async () => {
     const state = newState();
     const restrictedError = Object.assign(
       new Error(
@@ -202,7 +202,7 @@ describe('processMirrorCheck', () => {
     expect(result.posted).toBe(0);
     expect(result.failed).toBe(1);
     const postUpdate = state.postUpdates.find((u) => u.id === 'post-v1');
-    expect(postUpdate?.patch.status).toBe('pending');
+    expect(postUpdate?.patch.status).toBe('failed');
     expect(postUpdate?.patch.error).toBe(MIRROR_FACEBOOK_RESTRICTED_MESSAGE);
     const stamp = state.mirrorUpdates[state.mirrorUpdates.length - 1];
     expect(stamp?.patch.status).toBe('error');
@@ -225,7 +225,7 @@ describe('processMirrorCheck', () => {
     expect(stamp?.patch.lastError).toBe(MIRROR_FACEBOOK_RESTRICTED_MESSAGE);
   });
 
-  it('keeps a resolve failure pending, marks the mirror error, and stops that mirror', async () => {
+  it('records a resolve failure as failed, marks the mirror error, and stops that mirror', async () => {
     const state = newState();
     const deps = fakeDeps(state, [reel('v1', 100), reel('v2', 200)]);
     deps.resolveVideo = async () => {
@@ -235,9 +235,9 @@ describe('processMirrorCheck', () => {
     expect(result.posted).toBe(0);
     expect(result.failed).toBe(1);
     expect(state.published).toHaveLength(0);
-    // Only v1 claimed (pending with the resolve error); v2 never attempted.
+    // Only v1 claimed (failed with the resolve error); v2 never attempted.
     expect(state.claimed.map((c) => c.post.sourcePostId)).toEqual(['v1']);
-    expect(state.claimed[0]?.post.status).toBe('pending');
+    expect(state.claimed[0]?.post.status).toBe('failed');
     expect(state.claimed[0]?.post.error).toContain('Could not resolve video');
     const stamp = state.mirrorUpdates[state.mirrorUpdates.length - 1];
     expect(stamp?.patch.status).toBe('error');

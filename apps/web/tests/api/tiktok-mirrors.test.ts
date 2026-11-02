@@ -3,7 +3,7 @@
  * exact-duplicate block (same username + same page) with
  * same-username-different-page allowed, feed-verification failure
  * creating nothing, immediate latest-reel post on setup +
- * failure-stays-pending, and existing-destination reuse without
+ * failure-recorded-as-failed, and existing-destination reuse without
  * touching its status.
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
@@ -157,6 +157,9 @@ function fakeDb(options: FakeDbOptions = {}) {
           options.mirrorMissing ? [] : [mirrorRow(options.mirrorRowOverride ?? {})]
         );
       }
+      if (sql.includes('GROUP BY mirror_id')) {
+        return Promise.resolve([{ mirror_id: mirrorId, posted: 2, failed: 1 }]);
+      }
       if (sql.includes('COUNT(*)')) {
         const rows = options.mirrorRows ?? [mirrorRow()];
         return Promise.resolve([{ total: rows.length }]);
@@ -174,6 +177,17 @@ function fakeDb(options: FakeDbOptions = {}) {
         return Promise.resolve(
           options.postMissing ? [] : [postRow(options.postRowOverride ?? {})]
         );
+      }
+      if (sql.includes('LEFT JOIN social_accounts')) {
+        return Promise.resolve([
+          {
+            id: destId,
+            created_at: '2026-11-02T00:00:00.000Z',
+            category: 'Digital creator',
+            current_followers: 0,
+            account_display_name: 'Shahzeb Malik',
+          },
+        ]);
       }
       if (sql.includes('FROM mirror_posts WHERE mirror_id = ANY')) {
         return Promise.resolve([]);
@@ -330,7 +344,7 @@ describe('POST /tiktok-mirrors', () => {
     );
   });
 
-  it('keeps the post pending and the mirror in error when the immediate post fails', async () => {
+  it('records the post failed and the mirror in error when the immediate post fails', async () => {
     const { db, calls } = fakeDb();
     const deps = createDeps({
       publish: vi.fn().mockRejectedValue(new Error('Graph exploded')),
@@ -343,10 +357,10 @@ describe('POST /tiktok-mirrors', () => {
     );
     expect(res.status).toBe(201);
     const body = await res.json();
-    expect(body.immediatePost.status).toBe('pending');
+    expect(body.immediatePost.status).toBe('failed');
     expect(body.immediatePost.error).toContain('Graph exploded');
     const postUpdate = calls.find((c) => c.sql.includes('UPDATE mirror_posts'));
-    expect(postUpdate?.params?.[1]).toBe('pending');
+    expect(postUpdate?.params?.[1]).toBe('failed');
     const mirrorUpdate = calls.find((c) => c.sql.includes('UPDATE mirrors'));
     expect(mirrorUpdate?.params).toContain('error');
   });
@@ -370,7 +384,7 @@ describe('POST /tiktok-mirrors', () => {
     );
     expect(res.status).toBe(201);
     const body = await res.json();
-    expect(body.immediatePost.status).toBe('pending');
+    expect(body.immediatePost.status).toBe('failed');
     expect(body.immediatePost.error).toBe(
       "This Facebook page can't post right now because the connected account is temporarily restricted on Facebook. It should work again once the restriction lifts — check Facebook Account Status for details."
     );
@@ -382,7 +396,7 @@ describe('POST /tiktok-mirrors', () => {
     expect(mirrorUpdate?.params).toContain(body.immediatePost.error);
   });
 
-  it('keeps the post pending and the mirror in error when video resolve fails', async () => {
+  it('records the post failed and the mirror in error when video resolve fails', async () => {
     const { db, calls } = fakeDb();
     const deps = createDeps();
     deps.resolveTikwmVideo = vi.fn().mockRejectedValue(new Error('Could not resolve video'));
@@ -394,7 +408,7 @@ describe('POST /tiktok-mirrors', () => {
     );
     expect(res.status).toBe(201);
     const body = await res.json();
-    expect(body.immediatePost.status).toBe('pending');
+    expect(body.immediatePost.status).toBe('failed');
     expect(body.immediatePost.error).toContain('Could not resolve video');
     expect(deps.publishReel).not.toHaveBeenCalled();
     const mirrorUpdate = calls.find((c) => c.sql.includes('UPDATE mirrors'));
@@ -511,6 +525,16 @@ describe('GET /tiktok-mirrors', () => {
     expect(body.mirrors).toHaveLength(1);
     expect(body.mirrors[0].sourceUsername).toBe('alice');
     expect(body.mirrors[0].targetDisplayName).toBe('Test Page');
+    // List view only: no lastMirroredPost, no nextCheckAt (detail
+    // view only), plus page details + all-time post counts.
+    expect('lastMirroredPost' in body.mirrors[0]).toBe(false);
+    expect('nextCheckAt' in body.mirrors[0]).toBe(false);
+    expect(body.mirrors[0].targetAddedAt).toBe('2026-11-02T00:00:00.000Z');
+    expect(body.mirrors[0].targetFollowers).toBe(0);
+    expect(body.mirrors[0].targetCategory).toBe('Digital creator');
+    expect(body.mirrors[0].targetAccountDisplayName).toBe('Shahzeb Malik');
+    expect(body.mirrors[0].postCounts).toEqual({ posted: 2, failed: 1 });
+    expect(body.mirrors[0].postCountsError).toBe(false);
   });
 
   it('paginates: page 1 + page 2 of a 35-mirror workspace cover all 35 rows exactly once', async () => {
@@ -622,7 +646,20 @@ describe('POST /tiktok-mirrors/[mirrorId]/posts/[postId]/retry', () => {
     expect(mirrorUpdate?.params).toEqual([mirrorId, 'active', null]);
   });
 
-  it('leaves the row pending with the error when publishing fails', async () => {
+  it('publishes a failed post with its stored video URL and marks it posted', async () => {
+    const { db } = fakeDb({ postRowOverride: { status: 'failed' } });
+    const publishReel = vi.fn().mockResolvedValue('fb_post_998');
+    const res = await handleRetryMirrorPost(retryRequest(), 'acme', mirrorId, postId, db, {
+      publishReel,
+    } as never);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.post.status).toBe('posted');
+    expect(body.post.publishedPostId).toBe('fb_post_998');
+    expect(publishReel).toHaveBeenCalled();
+  });
+
+  it('leaves the row failed with the error when publishing fails', async () => {
     const { db, calls } = fakeDb();
     const publishReel = vi.fn().mockRejectedValue(new Error('Facebook rejected this reel.'));
     const res = await handleRetryMirrorPost(retryRequest(), 'acme', mirrorId, postId, db, {
@@ -630,13 +667,13 @@ describe('POST /tiktok-mirrors/[mirrorId]/posts/[postId]/retry', () => {
     } as never);
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.post.status).toBe('pending');
+    expect(body.post.status).toBe('failed');
     expect(body.post.publishedPostId).toBeNull();
     expect(body.post.error).toBe('Facebook rejected this reel.');
     const postUpdate = calls.find((c) => c.sql.includes('UPDATE mirror_posts'));
     expect(postUpdate?.params).toEqual([
       postId,
-      'pending',
+      'failed',
       null,
       'Facebook rejected this reel.',
       'https://example.com/v1.mp4',
@@ -650,14 +687,14 @@ describe('POST /tiktok-mirrors/[mirrorId]/posts/[postId]/retry', () => {
     ]);
   });
 
-  it('rejects a non-pending post with 409 and never publishes', async () => {
+  it('rejects a posted post with 409 and never publishes', async () => {
     const { db } = fakeDb({ postRowOverride: { status: 'posted' } });
     const publishReel = vi.fn();
     const res = await handleRetryMirrorPost(retryRequest(), 'acme', mirrorId, postId, db, {
       publishReel,
     } as never);
     expect(res.status).toBe(409);
-    expect((await res.json()).error).toBe('NOT_PENDING');
+    expect((await res.json()).error).toBe('NOT_RETRYABLE');
     expect(publishReel).not.toHaveBeenCalled();
   });
 
@@ -670,7 +707,7 @@ describe('POST /tiktok-mirrors/[mirrorId]/posts/[postId]/retry', () => {
     expect(res2.status).toBe(404);
   });
 
-  it('keeps the row pending with the reconnect message when the token is missing', async () => {
+  it('keeps the row failed with the reconnect message when the token is missing', async () => {
     const { db, calls } = fakeDb({ destinationMissing: true });
     const publishReel = vi.fn();
     const res = await handleRetryMirrorPost(retryRequest(), 'acme', mirrorId, postId, db, {
@@ -678,11 +715,11 @@ describe('POST /tiktok-mirrors/[mirrorId]/posts/[postId]/retry', () => {
     } as never);
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.post.status).toBe('pending');
+    expect(body.post.status).toBe('failed');
     expect(body.post.error).toContain('Reconnect the page');
     expect(publishReel).not.toHaveBeenCalled();
     const postUpdate = calls.find((c) => c.sql.includes('UPDATE mirror_posts'));
-    expect(postUpdate?.params[1]).toBe('pending');
+    expect(postUpdate?.params[1]).toBe('failed');
   });
 
   it('re-resolves a null video URL before publishing, and persists it', async () => {
@@ -718,7 +755,7 @@ describe('POST /tiktok-mirrors/[mirrorId]/posts/[postId]/retry', () => {
     ]);
   });
 
-  it('keeps the row pending when the re-resolve fails and never publishes', async () => {
+  it('keeps the row failed when the re-resolve fails and never publishes', async () => {
     const { db } = fakeDb({ postRowOverride: { video_url: null } });
     const publishReel = vi.fn();
     const resolveTikwmVideo = vi.fn().mockRejectedValue(new Error('Resolve failed.'));
@@ -728,7 +765,7 @@ describe('POST /tiktok-mirrors/[mirrorId]/posts/[postId]/retry', () => {
     } as never);
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.post.status).toBe('pending');
+    expect(body.post.status).toBe('failed');
     expect(body.post.error).toBe('Resolve failed.');
     expect(publishReel).not.toHaveBeenCalled();
   });

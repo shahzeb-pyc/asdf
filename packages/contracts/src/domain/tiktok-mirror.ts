@@ -262,12 +262,66 @@ export const MirrorViewSchema = z.object({
 export type MirrorView = z.infer<typeof MirrorViewSchema>;
 
 /**
+ * All-time mirror post counts for the Pages-style list card.
+ * `posted` counts `mirror_posts` rows with status `posted`;
+ * `failed` counts rows with status `failed` (failures are recorded
+ * as `failed`, never `pending` — see the failure discipline in the
+ * worker tick and the setup/retry routes). Skipped rows are never
+ * counted. Both are all-time totals, like the Pages card counts.
+ */
+export const MirrorPostCountsSchema = z.object({
+  posted: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+});
+export type MirrorPostCounts = z.infer<typeof MirrorPostCountsSchema>;
+
+/**
+ * List view — the card view, split from the detail view
+ * (MirrorViewSchema) in the Pages-card rebuild: the list card shows
+ * the target PAGE, not the TikTok creator, and shows Posted/Failed
+ * counts, so it carries the target page's details (resolved from
+ * the existing destinations + social_accounts rows — never invented)
+ * and the counts. It deliberately OMITS `lastMirroredPost` and
+ * `nextCheckAt`: those live on the detail view only (the detail
+ * route still returns the full MirrorViewSchema). `lastCheckedAt`
+ * stays: it is not a card field and other list consumers may rely
+ * on it. `postCountsError` follows the Pages rule: on a counts
+ * failure the card shows dashes, never fake zeros.
+ */
+export const MirrorListViewSchema = MirrorViewSchema.omit({
+  lastMirroredPost: true,
+  nextCheckAt: true,
+}).extend({
+  /** Target page's import date (destinations.created_at) — never the
+   *  mirror's own createdAt relabelled. Null when the destination
+   *  row is gone. */
+  targetAddedAt: z.string().nullable(),
+  /** Target page followers (destinations.metadata.current_followers,
+   *  Pages extract rule: Facebook targets default to 0 when the
+   *  stored value is absent). Null for non-Facebook targets with
+   *  no stored value, and for missing destinations. */
+  targetFollowers: z.number().int().nonnegative().nullable(),
+  /** Target page category (destinations.metadata.category). */
+  targetCategory: z.string().nullable(),
+  /** Owning account's display name (social_accounts.display_name). */
+  targetAccountDisplayName: z.string().nullable(),
+  postCounts: MirrorPostCountsSchema,
+  postCountsError: z.boolean(),
+});
+export type MirrorListView = z.infer<typeof MirrorListViewSchema>;
+
+/**
  * List response — paginated like the Pages list (30 per page, ?page=):
  * `total` is the workspace-wide mirror count; `page`/`limit`/
  * `totalPages` describe the returned slice. The batch lookups behind
  * the list (destinations, last posts) run over the page slice only,
  * never the full set — an unbounded list would hit PostgREST's silent
  * 1,000-row truncation and render an incomplete list with no error.
+ *
+ * This shape is the Threads Auto Repost list shape (its card still
+ * shows last mirrored / next check) and is unchanged by the
+ * Facebook Pages-card rebuild. The Facebook/Instagram list uses
+ * MirrorListResponseSchema below instead.
  */
 export const ListMirrorsResponseSchema = z.object({
   mirrors: z.array(MirrorViewSchema),
@@ -277,6 +331,21 @@ export const ListMirrorsResponseSchema = z.object({
   totalPages: z.number().int().nonnegative().optional(),
 });
 export type ListMirrorsResponse = z.infer<typeof ListMirrorsResponseSchema>;
+
+/**
+ * Pages-card list response (Facebook + Instagram Auto Repost
+ * lists, via the tiktok-mirrors route): same pagination, but each
+ * mirror is a MirrorListView — target page details + Posted/Failed
+ * counts, no lastMirroredPost, no nextCheckAt.
+ */
+export const MirrorListResponseSchema = z.object({
+  mirrors: z.array(MirrorListViewSchema),
+  total: z.number().int().nonnegative(),
+  page: z.number().int().positive().optional(),
+  limit: z.number().int().positive().optional(),
+  totalPages: z.number().int().nonnegative().optional(),
+});
+export type MirrorListResponse = z.infer<typeof MirrorListResponseSchema>;
 
 export const CreateMirrorResponseSchema = z.object({
   mirror: MirrorViewSchema,
@@ -312,14 +381,16 @@ export type DeleteMirrorResponse = z.infer<typeof DeleteMirrorResponseSchema>;
  * POST …/tiktok-mirrors/[mirrorId]/posts/[postId]/retry response.
  * A failed publish is a business outcome, not a transport error, so
  * it rides a 200 outcome body (same shape as setup's failed
- * immediate post): the row stays `pending` with the message, and
+ * immediate post): the row stays `failed` with the message, and
  * the UI shows that message. Success is `posted` with the new
- * platform post id.
+ * platform post id. `pending` is no longer a retry outcome: a
+ * retry failure records `failed`, and a retry success records
+ * `posted`.
  */
 export const RetryMirrorPostResponseSchema = z.object({
   post: z.object({
     id: z.string().uuid(),
-    status: z.enum(['posted', 'pending']),
+    status: z.enum(['posted', 'failed']),
     publishedPostId: z.string().nullable(),
     error: z.string().nullable(),
   }),

@@ -20,28 +20,31 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { DatabaseClient } from '@fbuploadpro/contracts';
 
 /**
- * Manual retry for one pending TikTok mirror post.
+ * Manual retry for one failed TikTok mirror post.
  *
  * POST …/tiktok-mirrors/[mirrorId]/posts/[postId]/retry (no body).
  *
- * This is the manual counterpart to the tick's failure-stays-pending
- * rule: pending posts are NEVER auto-retried, but the owner may
+ * This is the manual counterpart to the tick's failure discipline:
+ * failed posts are NEVER auto-retried, but the owner may
  * re-attempt one explicitly. The publish itself reuses the mirror
  * setup path's publishers (web `publishFacebookReel` /
  * `publishInstagramReel`) — there is no second publish
  * implementation, no worker change, and no scheduler change.
  *
  * Rules (all server-enforced):
- * - Only a row currently `pending` may be retried; anything else is
- *   a 409. Mirror + post are workspace-scoped (foreign ids 404).
+ * - Only a row currently `failed` may be retried; pre-existing
+ *   `pending` rows (written by older builds before failures moved
+ *   to `failed`) are also accepted, so nothing already in the
+ *   database loses its retry. Anything else is a 409. Mirror +
+ *   post are workspace-scoped (foreign ids 404).
  * - A stored `video_url` publishes as-is with the stored caption;
  *   a null one (an earlier resolve failure) is re-resolved via the
  *   free tikwm POST endpoint first, and a resolve failure keeps
- *   the row pending with the error.
- * - A missing target token keeps the row pending with the same
+ *   the row `failed` with the error.
+ * - A missing target token keeps the row `failed` with the same
  *   reconnect message setup uses.
  * - Success moves the row to `posted` with the platform post id.
- *   Failure leaves the row `pending` with the message — and the
+ *   Failure leaves the row `failed` with the message — and the
  *   message rides the 200 outcome body (like setup's failed
  *   immediate post), so the UI shows the specific reason instead
  *   of a generic failure.
@@ -284,7 +287,7 @@ async function loadInstagramAccountToken(
 
 function respond(
   postId: string,
-  status: 'posted' | 'pending',
+  status: 'posted' | 'failed',
   publishedPostId: string | null,
   error: string | null
 ): NextResponse {
@@ -318,9 +321,12 @@ export async function handleRetryMirrorPost(
     if (!post) {
       return NextResponse.json({ error: 'Mirror post not found' }, { status: 404 });
     }
-    if (post.status !== 'pending') {
+    if (post.status !== 'failed' && post.status !== 'pending') {
       return NextResponse.json(
-        { error: 'NOT_PENDING', message: 'Only pending posts can be retried.' },
+        {
+          error: 'NOT_RETRYABLE',
+          message: 'Only failed or pending posts can be retried.',
+        },
         { status: 409 }
       );
     }
@@ -337,7 +343,7 @@ export async function handleRetryMirrorPost(
 
     // Resolve the publishable video URL: the stored one, or a fresh
     // resolve when the earlier attempt never resolved one. A
-    // resolve failure keeps the row pending with the error.
+    // resolve failure keeps the row failed with the error.
     let videoUrl = post.video_url;
     let caption = post.caption;
     if (!videoUrl) {
@@ -352,14 +358,14 @@ export async function handleRetryMirrorPost(
         const message =
           err instanceof Error ? err.message : 'The reel could not be resolved.';
         await updateMirrorPostOutcome(db, post.id, {
-          status: 'pending',
+          status: 'failed',
           publishedPostId: null,
           error: message,
           videoUrl: null,
           caption,
         });
         await stampMirrorAfterRetry(db, mirror, { ok: false, error: message });
-        return respond(post.id, 'pending', null, message);
+        return respond(post.id, 'failed', null, message);
       }
     }
 
@@ -389,14 +395,14 @@ export async function handleRetryMirrorPost(
           ? 'This Instagram account has no posting token. Reconnect the account and try again.'
           : 'This page has no posting token. Reconnect the page and try again.';
       await updateMirrorPostOutcome(db, post.id, {
-        status: 'pending',
+        status: 'failed',
         publishedPostId: null,
         error: message,
         videoUrl,
         caption,
       });
       await stampMirrorAfterRetry(db, mirror, { ok: false, error: message });
-      return respond(post.id, 'pending', null, message);
+      return respond(post.id, 'failed', null, message);
     }
 
     // Publish via the setup path's publishers.
@@ -450,14 +456,14 @@ export async function handleRetryMirrorPost(
         });
       }
       await updateMirrorPostOutcome(db, post.id, {
-        status: 'pending',
+        status: 'failed',
         publishedPostId: null,
         error: message,
         videoUrl,
         caption,
       });
       await stampMirrorAfterRetry(db, mirror, { ok: false, error: message });
-      return respond(post.id, 'pending', null, message);
+      return respond(post.id, 'failed', null, message);
     }
   } catch (err) {
     logServerError('[tiktok-mirrors] Retry failed', err, {
