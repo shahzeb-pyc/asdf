@@ -66,8 +66,9 @@ import { captureWorkerError, type PostHogEnv } from './analytics.js';
 // Oldest-first posting keeps the Facebook page in TikTok order.
 //
 // Failure discipline (fail loud, self-healing):
-//   - A failed post stays `pending` and the mirror goes to `error`
-//     with last_error; the next tick retries the check, not the post.
+//   - A failed post is recorded as `failed` and the mirror goes
+//     to `error` with last_error; the next tick retries the check,
+//     not the post (the failed row is manually retryable only).
 //   - A watermarked-only item gets a `skipped` row + mirror error
 //     note; it is never posted.
 //   - A tikwm failure marks the mirror `error` and continues with
@@ -401,7 +402,7 @@ export async function processMirrorCheck(
       // Post new reels oldest-first (a catch-up tick posts only
       // the newest, above). Each reel is resolved via the FREE
       // tikwm POST endpoint (no-watermark URL + verbatim title)
-      // before claiming; a resolve failure claims a pending row
+      // before claiming; a resolve failure claims a failed row
       // with the error (mirror error, stop this mirror) — never
       // silently skipped, and the resolved URL is what posts.
       for (const reel of reelsToPost) {
@@ -420,7 +421,7 @@ export async function processMirrorCheck(
             videoUrl: null,
             coverUrl: reel.cover ?? null,
             sourceCreatedAt: toIso(reel.create_time),
-            status: 'pending',
+            status: 'failed',
             error: message,
           });
           if (failedId) {
@@ -467,7 +468,7 @@ export async function processMirrorCheck(
             ? 'This target has no posting token. Reconnect the target and try again.'
             : 'This target is no longer connected. Reconnect it and try again.';
           await deps.updatePost(claimedId, {
-            status: 'pending',
+            status: 'failed',
             error: message,
           });
           mirrorError = message;
@@ -509,7 +510,7 @@ export async function processMirrorCheck(
               `[mirror-tick] mirror=${mirror.id} publish restricted by Facebook; raw: ${rawMessage}`
             );
           }
-          await deps.updatePost(claimedId, { status: 'pending', error: message });
+          await deps.updatePost(claimedId, { status: 'failed', error: message });
           mirrorError = message;
           result.failed += 1;
           // Stop this mirror's loop: later reels stay unclaimed for

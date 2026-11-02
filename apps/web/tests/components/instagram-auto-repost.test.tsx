@@ -50,6 +50,12 @@ function mirrorView(overrides: Record<string, unknown> = {}) {
     lastCheckedAt: '2026-10-29T11:00:00.000Z',
     nextCheckAt: '2026-10-29T12:00:00.000Z',
     lastError: null,
+    targetAddedAt: null,
+    targetFollowers: null,
+    targetCategory: null,
+    targetAccountDisplayName: null,
+    postCounts: { posted: 1, failed: 0 },
+    postCountsError: false,
     lastMirroredPost: {
       id: '55555555-5555-4555-a555-555555555555',
       sourcePostId: 'v1',
@@ -106,7 +112,7 @@ describe('Instagram Auto Repost list', () => {
     });
     renderWithQuery(<IgAutoRepostShell subdomain="acme" />);
     expect(await screen.findByTestId('ig-auto-repost-mirrors-grid')).toBeTruthy();
-    expect(screen.getByText('@alice')).toBeTruthy();
+    expect(screen.getByTestId('tiktok-mirror-source').textContent).toBe('source: @alice');
     expect(screen.getByText(/Alice on IG/)).toBeTruthy();
     // The shell now fetches the entitlement first (cap display), so
     // the mirrors list is no longer necessarily the first api call —

@@ -7,8 +7,9 @@ import {
   fetchAllFacebookPages,
   getTokenEncryptionKey,
   isFacebookAccountRestricted,
-  ListMirrorsResponseSchema,
   MIRROR_FACEBOOK_RESTRICTED_MESSAGE,
+  MirrorListResponseSchema,
+  type MirrorListView,
   type MirrorView,
 } from '@fbuploadpro/contracts';
 import {
@@ -56,9 +57,9 @@ import type { DatabaseClient } from '@fbuploadpro/contracts';
  * may exist only once. Creation verifies the username's feed with
  * the paid tikwmapi endpoint BEFORE creating anything, then
  * resolves and immediately posts the account's current latest reel
- * via the free tikwm POST endpoint; a failed immediate post stays
- * pending for the next hourly tick and puts the mirror in error —
- * never silently dropped.
+ * via the free tikwm POST endpoint; a failed immediate post is
+ * recorded as `failed` and puts the mirror in error — it stays
+ * manually retryable and is never silently dropped.
  *
  * Mirror posts bypass queue/slots entirely. The mirrors table is
  * platform-agnostic, so Instagram targets need no migration.
@@ -244,6 +245,258 @@ export function toMirrorView(
 }
 
 /**
+ * Target page details for the Pages-style list card, resolved from
+ * existing data only: the destination row's created_at (the page's
+ * Added date, exactly as the Pages list uses it), metadata.category,
+ * metadata.current_followers, and the owning account's display name.
+ * No Graph fetch, no invented value: a field with no stored value
+ * stays null (and the card omits that line), except Facebook
+ * followers, which follow the Pages extract rule and default to 0.
+ * Keyed by destination row id.
+ */
+export interface TargetPageDetails {
+  addedAt: string | null;
+  followers: number | null;
+  category: string | null;
+  accountDisplayName: string | null;
+}
+
+function parsePageDetailsRow(
+  row: Record<string, unknown>,
+  targetPlatform: string
+): TargetPageDetails {
+  const metadata = row.metadata;
+  const meta =
+    typeof metadata === 'object' && metadata !== null
+      ? (metadata as Record<string, unknown>)
+      : {};
+  const category = typeof meta.category === 'string' ? meta.category : null;
+  const rawFollowers =
+    typeof row.current_followers === 'number'
+      ? row.current_followers
+      : typeof meta.current_followers === 'number'
+        ? meta.current_followers
+        : typeof meta.current_followers === 'string'
+          ? Number(meta.current_followers)
+          : null;
+  const followers =
+    rawFollowers !== null && Number.isFinite(rawFollowers) && rawFollowers >= 0
+      ? Math.trunc(rawFollowers)
+      : targetPlatform === 'facebook'
+        ? 0
+        : null;
+  return {
+    addedAt: typeof row.created_at === 'string' ? row.created_at : null,
+    followers,
+    category,
+    accountDisplayName:
+      typeof row.account_display_name === 'string' ? row.account_display_name : null,
+  };
+}
+
+export async function loadTargetPageDetails(
+  db: Db,
+  targets: Array<{ destinationId: string; platform: string }>
+): Promise<Map<string, TargetPageDetails>> {
+  const details = new Map<string, TargetPageDetails>();
+  if (targets.length === 0) return details;
+  const platformById = new Map(targets.map((t) => [t.destinationId, t.platform]));
+  const destinationIds = targets.map((t) => t.destinationId);
+  if (isLegacyClient(db)) {
+    const rows = (await db.query(
+      `SELECT d.id, d.created_at,
+              (d.metadata->>'category') AS category,
+              (d.metadata->>'current_followers')::int AS current_followers,
+              a.display_name AS account_display_name
+       FROM destinations d
+       LEFT JOIN social_accounts a ON a.id = d.account_id
+       WHERE d.id = ANY($1::uuid[])`,
+      [destinationIds]
+    )) as Record<string, unknown>[];
+    for (const row of rows) {
+      if (typeof row.id !== 'string') continue;
+      const platform = platformById.get(row.id) ?? '';
+      details.set(row.id, {
+        addedAt: typeof row.created_at === 'string' ? row.created_at : null,
+        followers:
+          typeof row.current_followers === 'number'
+            ? row.current_followers
+            : platform === 'facebook'
+              ? 0
+              : null,
+        category: typeof row.category === 'string' ? row.category : null,
+        accountDisplayName:
+          typeof row.account_display_name === 'string' ? row.account_display_name : null,
+      });
+    }
+    return details;
+  }
+  const supabase = db as SupabaseClient;
+  const { data, error } = await supabase
+    .from('destinations')
+    .select('id, account_id, created_at, metadata')
+    .in('id', destinationIds);
+  if (error) throw new Error(`Failed to load target page details: ${error.message}`);
+  const accountIds = Array.from(
+    new Set(
+      (data ?? [])
+        .map((r) => (r as Record<string, unknown>).account_id)
+        .filter((v): v is string => typeof v === 'string')
+    )
+  );
+  const accountNames = new Map<string, string>();
+  if (accountIds.length > 0) {
+    const { data: accounts, error: accountError } = await supabase
+      .from('social_accounts')
+      .select('id, display_name')
+      .in('id', accountIds);
+    if (accountError) {
+      throw new Error(`Failed to load target accounts: ${accountError.message}`);
+    }
+    for (const account of accounts ?? []) {
+      const row = account as Record<string, unknown>;
+      if (typeof row.id === 'string' && typeof row.display_name === 'string') {
+        accountNames.set(row.id, row.display_name);
+      }
+    }
+  }
+  for (const row of data ?? []) {
+    const record = row as Record<string, unknown>;
+    if (typeof record.id !== 'string') continue;
+    const platform = platformById.get(record.id) ?? '';
+    const parsed = parsePageDetailsRow(record, platform);
+    parsed.accountDisplayName =
+      typeof record.account_id === 'string'
+        ? (accountNames.get(record.account_id) ?? null)
+        : null;
+    details.set(record.id, parsed);
+  }
+  return details;
+}
+
+/**
+ * All-time Posted/Failed counts for the page slice, in ONE grouped
+ * query (SQL path) or one chunked two-column fetch aggregated in
+ * code (Supabase path, the Pages pattern — PostgREST has no GROUP
+ * BY). Never one query per mirror. On failure the caller must
+ * render dashes, never zeros (Pages R6 rule).
+ */
+export interface MirrorPostCountsResult {
+  counts: Map<string, { posted: number; failed: number }>;
+  error: boolean;
+}
+
+function toMirrorCount(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? Math.trunc(n) : 0;
+}
+
+export async function fetchMirrorPostCounts(
+  db: Db,
+  mirrorIds: string[]
+): Promise<MirrorPostCountsResult> {
+  const counts = new Map<string, { posted: number; failed: number }>();
+  if (mirrorIds.length === 0) return { counts, error: false };
+  if (isLegacyClient(db)) {
+    try {
+      const rows = (await db.query(
+        `SELECT mirror_id,
+           COUNT(*) FILTER (WHERE status = 'posted')::int AS posted,
+           COUNT(*) FILTER (WHERE status = 'failed')::int AS failed
+         FROM mirror_posts WHERE mirror_id = ANY($1::uuid[]) GROUP BY mirror_id`,
+        [mirrorIds]
+      )) as Record<string, unknown>[];
+      for (const row of rows ?? []) {
+        if (typeof row.mirror_id !== 'string') continue;
+        counts.set(row.mirror_id, {
+          posted: toMirrorCount(row.posted),
+          failed: toMirrorCount(row.failed),
+        });
+      }
+    } catch (err) {
+      logServerError('[tiktok-mirrors] List post-count query failed', err, {
+        source: 'tiktok-mirrors-list-counts',
+      });
+      return { counts: new Map(), error: true };
+    }
+    return { counts, error: false };
+  }
+  const supabase = db as SupabaseClient;
+  try {
+    const CHUNK_SIZE = 1000;
+    let from = 0;
+    for (;;) {
+      const { data, error, count } = await supabase
+        .from('mirror_posts')
+        .select('mirror_id,status', { count: 'exact' })
+        .in('mirror_id', mirrorIds)
+        .in('status', ['posted', 'failed'])
+        .range(from, from + CHUNK_SIZE - 1);
+      if (error) throw new Error(error.message);
+      const rows = (Array.isArray(data) ? data : []) as Array<{
+        mirror_id?: unknown;
+        status?: unknown;
+      }>;
+      for (const row of rows) {
+        if (typeof row.mirror_id !== 'string' || typeof row.status !== 'string') continue;
+        const current = counts.get(row.mirror_id) ?? { posted: 0, failed: 0 };
+        if (row.status === 'posted') current.posted += 1;
+        else if (row.status === 'failed') current.failed += 1;
+        counts.set(row.mirror_id, current);
+      }
+      if (rows.length === 0) break;
+      if (typeof count === 'number' && from + rows.length >= count) break;
+      if (rows.length < CHUNK_SIZE) break;
+      from += CHUNK_SIZE;
+    }
+  } catch (err) {
+    logServerError('[tiktok-mirrors] List post-count query failed', err, {
+      source: 'tiktok-mirrors-list-counts',
+    });
+    return { counts: new Map(), error: true };
+  }
+  return { counts, error: false };
+}
+
+/**
+ * Build the LIST view from a mirror row. Unlike toMirrorView (the
+ * detail view), this omits lastMirroredPost and nextCheckAt and
+ * carries the target page details + post counts for the Pages-style
+ * card. The detail route keeps using toMirrorView unchanged.
+ */
+export function toMirrorListView(
+  mirror: MirrorRow,
+  destination: DestinationRow | null,
+  details: TargetPageDetails | null,
+  postCounts: { posted: number; failed: number },
+  postCountsError: boolean
+): MirrorListView {
+  return {
+    id: mirror.id,
+    sourcePlatform: mirror.source_platform,
+    sourceUsername: mirror.source_username,
+    sourceDisplayName: mirror.source_display_name,
+    sourceAvatarUrl: mirror.source_avatar_url,
+    targetPlatform: mirror.target_platform,
+    targetExternalId: mirror.target_external_id,
+    targetDisplayName: destination?.name ?? mirror.target_display_name,
+    targetAvatarUrl: destination?.avatar_url ?? mirror.target_avatar_url,
+    targetDestinationId: destination?.id ?? null,
+    status: mirror.status as MirrorListView['status'],
+    lastPostedSourceId: mirror.last_posted_source_id,
+    lastCheckedAt: mirror.last_checked_at,
+    lastError: mirror.last_error,
+    createdAt: mirror.created_at,
+    targetAddedAt: details?.addedAt ?? null,
+    targetFollowers: details?.followers ?? null,
+    targetCategory: details?.category ?? null,
+    targetAccountDisplayName: details?.accountDisplayName ?? null,
+    postCounts,
+    postCountsError,
+  };
+}
+
+/**
  * Resolve target destinations by (workspace, platform, external id)
  * — the generic target lookup. The mirror row carries no destination
  * foreign key; the destination row is found at request time from
@@ -381,8 +634,9 @@ export async function handleListMirrors(
     // Paginated exactly like the Pages list: the count is taken first
     // so an out-of-range ?page= clamps to the last page (never an
     // empty grid with no explanation), then only the page slice is
-    // fetched. The destination + last-post batch lookups below run
-    // over this slice only, so no query on the list path is unbounded
+    // fetched. The destination + page-details + post-count batch
+    // lookups below run over this slice only, so no query on the
+    // list path is unbounded
     // (PostgREST silently truncates at 1,000 rows — an unbounded list
     // would render silently incomplete past that point).
     const { page: requestedPage, limit } = parsePaginationParams(
@@ -483,19 +737,44 @@ export async function handleListMirrors(
       );
       for (const [key, dest] of resolved) destinations.set(key, dest);
     }
-    const lastPosts = await loadLastPostsByMirror(
+    // List card data only: target page details + all-time post
+    // counts, both batched over the page slice. The list view
+    // deliberately carries NO lastMirroredPost and NO nextCheckAt —
+    // those live on the detail view only. A mirror whose target
+    // row is gone still renders from its stored target copies
+    // (Insights reports it unavailable); its page details are
+    // simply null and the card omits those lines.
+    const resolvedDestinations = mirrors.map((mirror) => ({
+      mirror,
+      dest:
+        destinations.get(`${mirror.target_platform}:${mirror.target_external_id}`) ?? null,
+    }));
+    const pageDetails = await loadTargetPageDetails(
+      db,
+      resolvedDestinations
+        .filter((entry) => entry.dest !== null)
+        .map((entry) => ({
+          destinationId: entry.dest!.id,
+          platform: entry.mirror.target_platform,
+        }))
+    );
+    const postCountsResult = await fetchMirrorPostCounts(
       db,
       mirrors.map((m) => m.id)
     );
-    const views: MirrorView[] = [];
-    for (const mirror of mirrors) {
-      // A mirror whose target row is gone still renders from its
-      // stored target copies (Insights reports it unavailable).
-      const dest =
-        destinations.get(`${mirror.target_platform}:${mirror.target_external_id}`) ?? null;
-      views.push(toMirrorView(mirror, dest, lastPosts.get(mirror.id) ?? null));
+    const views: MirrorListView[] = [];
+    for (const { mirror, dest } of resolvedDestinations) {
+      views.push(
+        toMirrorListView(
+          mirror,
+          dest,
+          dest ? (pageDetails.get(dest.id) ?? null) : null,
+          postCountsResult.counts.get(mirror.id) ?? { posted: 0, failed: 0 },
+          postCountsResult.error
+        )
+      );
     }
-    const parsed = ListMirrorsResponseSchema.safeParse({
+    const parsed = MirrorListResponseSchema.safeParse({
       mirrors: views,
       total: meta.total,
       page: meta.page,
@@ -1354,9 +1633,10 @@ export async function handleCreateMirror(
     //    via the FREE tikwm POST endpoint (no-watermark URL +
     //    verbatim title), then claim, then post, then update —
     //    the same claim discipline as the hourly tick, so a
-    //    failure stays pending for the next tick. A resolve
-    //    failure claims a pending row with the error (mirror
-    //    error), never silently skipped.
+    //    failure is recorded as `failed` with the error (mirror
+    //    error) and stays manually retryable — the next tick does
+    //    not auto-retry the post. A resolve failure claims a
+    //    failed row with the error, never silently skipped.
     const latest = selectLatestReel(videos);
     let immediatePost: {
       attempted: boolean;
@@ -1420,13 +1700,13 @@ export async function handleCreateMirror(
 
       if (postRowId && resolveError) {
         await updatePostAndMirror(db, mirror.id, postRowId, {
-          status: 'pending',
+          status: 'failed',
           error: resolveError,
           mirrorStatus: 'error',
         });
         immediatePost = {
           attempted: true,
-          status: 'pending',
+          status: 'failed',
           sourcePostId: latest.video_id,
           publishedPostId: null,
           error: resolveError,
@@ -1444,20 +1724,20 @@ export async function handleCreateMirror(
               ? await decryptToken(destination.encrypted_destination_token, encryptionKey)
               : null;
         if (!publishToken) {
-          // Pending, not failed: the tick retries it, and reconnecting
-          // the target restores the token, so the reel can still post.
+          // Failed, not pending: the row stays manually retryable,
+          // and reconnecting the target restores the token for a retry.
           const missingTokenMessage =
             targetPlatform === 'instagram'
               ? 'This Instagram account has no posting token. Reconnect the account and try again.'
               : 'This page has no posting token. Reconnect the page and try again.';
           await updatePostAndMirror(db, mirror.id, postRowId, {
-            status: 'pending',
+            status: 'failed',
             error: missingTokenMessage,
             mirrorStatus: 'error',
           });
           immediatePost = {
             attempted: true,
-            status: 'pending',
+            status: 'failed',
             sourcePostId: latest.video_id,
             publishedPostId: null,
             error: missingTokenMessage,
@@ -1506,13 +1786,13 @@ export async function handleCreateMirror(
                   ? err.message
                   : 'The latest reel could not be posted.';
             await updatePostAndMirror(db, mirror.id, postRowId, {
-              status: 'pending',
+              status: 'failed',
               error: message,
               mirrorStatus: 'error',
             });
             immediatePost = {
               attempted: true,
-              status: 'pending',
+              status: 'failed',
               sourcePostId: latest.video_id,
               publishedPostId: null,
               error: message,
@@ -1564,13 +1844,13 @@ export async function handleCreateMirror(
               });
             }
             await updatePostAndMirror(db, mirror.id, postRowId, {
-              status: 'pending',
+              status: 'failed',
               error: message,
               mirrorStatus: 'error',
             });
             immediatePost = {
               attempted: true,
-              status: 'pending',
+              status: 'failed',
               sourcePostId: latest.video_id,
               publishedPostId: null,
               error: message,

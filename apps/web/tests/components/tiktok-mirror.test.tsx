@@ -59,6 +59,12 @@ function mirrorView(overrides: Record<string, unknown> = {}) {
     lastCheckedAt: '2026-10-29T11:00:00.000Z',
     nextCheckAt: '2026-10-29T12:00:00.000Z',
     lastError: null,
+    targetAddedAt: '2026-11-02T00:00:00.000Z',
+    targetFollowers: 0,
+    targetCategory: 'Digital creator',
+    targetAccountDisplayName: 'Shahzeb Malik',
+    postCounts: { posted: 1, failed: 0 },
+    postCountsError: false,
     lastMirroredPost: {
       id: '55555555-5555-4555-a555-555555555555',
       sourcePostId: 'v1',
@@ -105,7 +111,7 @@ describe('TikTok list', () => {
     vi.clearAllMocks();
   });
 
-  it('renders mirror cards with username and linked page', async () => {
+  it('renders mirror cards with the page primary, a source line, and Posted/Failed counts', async () => {
     apiGetMock.mockResolvedValue({
       mirrors: [mirrorView()],
       total: 1,
@@ -115,8 +121,13 @@ describe('TikTok list', () => {
     });
     renderWithQuery(<TikTokShell subdomain="acme" />);
     expect(await screen.findByTestId('tiktok-mirrors-grid')).toBeTruthy();
-    expect(screen.getByText('@alice')).toBeTruthy();
-    expect(screen.getByText(/Test Page/)).toBeTruthy();
+    expect(screen.getByTestId('tiktok-mirror-page-name').textContent).toBe('Test Page');
+    expect(screen.getByTestId('tiktok-mirror-page-added').textContent).toBe('Added 2 Nov 2026');
+    expect(screen.getByTestId('tiktok-mirror-source').textContent).toBe('source: @alice');
+    expect(screen.getByTestId('tiktok-mirror-posted-count').textContent).toBe('1');
+    expect(screen.getByTestId('tiktok-mirror-failed-count').textContent).toBe('0');
+    expect(screen.queryByTestId('tiktok-mirror-next')).toBeNull();
+    expect(screen.queryByText('Queued')).toBeNull();
   });
 
   it('renders the empty state when there are no mirrors', async () => {
@@ -300,7 +311,7 @@ describe('TikTok mirror history retry button', () => {
   const renderDetail = () =>
     renderWithQuery(<TikTokDetailShell subdomain="acme" mirrorId={MIRROR_ID} />);
 
-  it('shows Retry only on pending posts, and only for Facebook/Instagram targets', async () => {
+  it('shows Retry on failed or pending posts, and only for Facebook/Instagram targets', async () => {
     apiGetMock.mockResolvedValue(retryDetailResponse());
     const first = renderDetail();
     expect(
@@ -314,6 +325,13 @@ describe('TikTok mirror history retry button', () => {
     renderDetail();
     await screen.findByTestId('tiktok-detail-page');
     expect(screen.queryByTestId(`tiktok-retry-btn-${POST_ID}`)).toBeNull();
+
+    apiGetMock.mockResolvedValue(retryDetailResponse({ status: 'failed' }));
+    const failed = renderDetail();
+    expect(
+      await screen.findByTestId(`tiktok-retry-btn-${POST_ID}`)
+    ).toBeTruthy();
+    failed.unmount();
   });
 
   it('shows Retry for a pending Instagram post but not for an unsupported target', async () => {
@@ -375,11 +393,11 @@ describe('TikTok mirror history retry button', () => {
     expect(button.textContent).toBe('Retry');
   });
 
-  it('refetches the detail when the retry outcome stays pending (failure shows on the row)', async () => {
+  it('refetches the detail when the retry outcome stays failed (failure shows on the row)', async () => {
     const user = userEvent.setup();
     apiGetMock.mockResolvedValue(retryDetailResponse());
     apiPostMock.mockResolvedValue({
-      post: { id: POST_ID, status: 'pending', publishedPostId: null, error: 'Facebook rejected this reel.' },
+      post: { id: POST_ID, status: 'failed', publishedPostId: null, error: 'Facebook rejected this reel.' },
     });
     renderDetail();
     const button = await screen.findByTestId(`tiktok-retry-btn-${POST_ID}`);

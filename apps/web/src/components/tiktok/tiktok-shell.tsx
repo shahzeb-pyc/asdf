@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { PlusIcon } from 'lucide-react';
 
 import { api, buildTenantApiPath, buildUrl } from '@/lib/api';
-import { ListMirrorsResponseSchema } from '@/lib/api/schemas/tiktok-mirrors';
+import { MirrorListResponseSchema } from '@/lib/api/schemas/tiktok-mirrors';
 import { queryKeys } from '@/lib/data/query-keys';
 import { DEFAULT_PAGE_SIZE } from '@/lib/server/pagination';
 import { buildTenantHref, isTenantSubdomainHost } from '@/lib/tenant-href';
@@ -57,7 +57,7 @@ export function TikTokShell({ subdomain }: Readonly<TikTokShellProps>) {
           limit: DEFAULT_PAGE_SIZE,
         }),
         {
-          schema: ListMirrorsResponseSchema,
+          schema: MirrorListResponseSchema,
           signal,
         }
       ),
