@@ -4,23 +4,19 @@
  * Everything here is a pure function over already-fetched data so the
  * rules below are unit-testable without a database:
  *
- * - Plan state: admin first, then paid-active, then expired (a lapsed
- *   period — paid-but-inactive, or no active period with a prior one),
- *   then free (never paid). Mirrors the sidebar plan word.
  * - Days left: a CALENDAR-day difference in local time, never a
  *   round-up. On the final calendar day of a period the answer is 0
  *   ("Expires today"), not 1. (The old ceil-based count would show
  *   "1 day left" on the final day.)
- * - Setup checklist (paid users only, retained for its tests; the
- *   redesigned Home no longer renders it): connect an account, add a
- *   first page, set posting times. Hidden once every step is done.
- * - Needs-attention reasons: the six wire page statuses mapped to
- *   plain-language reasons. Page status only — never queue/post data.
  * - Quick links: the redesigned Home links. Paid: Media Library,
  *   Creator Finder, Facebook Accounts, Facebook Pages, Billing — in
  *   that order. Free: Prompt Library and Billing only. Queue and
  *   Calendar are deliberately absent: Home carries no queue or post
  *   data at all.
+ * - Plan state is derived by the loader from the entitlement, not
+ *   here. The old dashboard's plan-state, setup-checklist and
+ *   needs-attention helpers were deleted with the sections that
+ *   rendered them (2026-11-02 Home redesign) — no dead exports.
  */
 
 import {
@@ -28,20 +24,6 @@ import {
   type PlatformCounts,
   type SubscriptionPlatform,
 } from '@fbuploadpro/contracts';
-
-export type HomePlanState = 'paid' | 'expired' | 'free' | 'admin';
-
-export function deriveHomePlanState(args: {
-  role: string;
-  plan: 'free' | 'paid';
-  active: boolean;
-  hasPriorPeriod: boolean;
-}): HomePlanState {
-  if (args.role === 'admin') return 'admin';
-  if (args.plan === 'paid' && args.active) return 'paid';
-  if (args.plan === 'paid' || args.hasPriorPeriod) return 'expired';
-  return 'free';
-}
 
 function localCalendarDay(date: Date): number {
   return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
@@ -51,17 +33,6 @@ function localCalendarDay(date: Date): number {
 export function daysLeftUntil(endsAt: Date, now: Date): number {
   const msPerDay = 24 * 60 * 60 * 1000;
   return Math.max(0, Math.round((localCalendarDay(endsAt) - localCalendarDay(now)) / msPerDay));
-}
-
-/** At or under this many days left, the paid banner prompts renewal. */
-export const EXPIRING_SOON_DAYS = 7;
-
-export function formatExpiryDate(endsAt: Date): string {
-  return endsAt.toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
 }
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -88,67 +59,6 @@ export function formatHeaderDate(date: Date): string {
 /** "Wednesday, 2 December 2026" — the Paid plan card period line. */
 export function formatExpiryDateLong(endsAt: Date): string {
   return `${WEEKDAYS[endsAt.getDay()]}, ${endsAt.getDate()} ${MONTHS[endsAt.getMonth()]} ${endsAt.getFullYear()}`;
-}
-
-export interface HomeChecklistStep {
-  id: 'account' | 'page' | 'posting-times';
-  label: string;
-  done: boolean;
-  href: string;
-}
-
-export function buildChecklist(args: {
-  accountsCount: number;
-  totalDestinations: number;
-  hasActiveSlot: boolean;
-  accountsHref: string;
-  pagesHref: string;
-  postingTimesHref: string;
-}): HomeChecklistStep[] {
-  return [
-    {
-      id: 'account',
-      label: 'Connect an account',
-      done: args.accountsCount > 0,
-      href: args.accountsHref,
-    },
-    {
-      id: 'page',
-      label: 'Add your first page',
-      done: args.totalDestinations > 0,
-      href: args.pagesHref,
-    },
-    {
-      id: 'posting-times',
-      label: 'Set posting times',
-      done: args.hasActiveSlot,
-      href: args.postingTimesHref,
-    },
-  ];
-}
-
-export function isChecklistComplete(steps: HomeChecklistStep[]): boolean {
-  return steps.length > 0 && steps.every((step) => step.done);
-}
-
-/** Wire page statuses (see lib/server/facebook-wire.ts). */
-export type HomeAttentionStatus =
-  | 'paused'
-  | 'fb_rate_limited'
-  | 'page_checkpoint'
-  | 'invalid_token'
-  | 'disconnected';
-
-const ATTENTION_REASONS: Record<HomeAttentionStatus, string> = {
-  paused: 'Paused',
-  fb_rate_limited: 'Facebook rate limit',
-  page_checkpoint: 'Facebook checkpoint — action needed',
-  invalid_token: 'Session expired — reconnect the account',
-  disconnected: 'Disconnected',
-};
-
-export function attentionReason(status: HomeAttentionStatus): string {
-  return ATTENTION_REASONS[status];
 }
 
 export interface HomeQuickLink {

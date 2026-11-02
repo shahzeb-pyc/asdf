@@ -71,7 +71,9 @@ describe('PaidPlanCard', () => {
     renderPaidPlanCard();
     expect(screen.getByText('Prompt Library')).toBeTruthy();
     expect(screen.getByText('Creator Finder')).toBeTruthy();
-    expect(screen.getAllByText('Unlimited use')).toHaveLength(2);
+    // 3, not 2: the "Unlimited use" section title itself matches, plus the
+    // two feature rows. A row added or removed changes this count.
+    expect(screen.getAllByText('Unlimited use')).toHaveLength(3);
     expect(screen.getByText('Auto Download/Upload')).toBeTruthy();
     expect(screen.getByText('TikTok Repost')).toBeTruthy();
     expect(screen.getAllByText('Included')).toHaveLength(2);
@@ -100,7 +102,10 @@ describe('FreePlanCard and UpgradeCard', () => {
     expect(screen.getByText('0 PKR')).toBeTruthy();
     expect(screen.getByText('Prompt Library')).toBeTruthy();
     expect(screen.getByText('Posting and scheduling')).toBeTruthy();
-    expect(screen.getAllByText('Not included')).toHaveLength(3);
+    // 6, not 3: each crossed row renders "Not included" twice — once
+    // visibly as the row value, once as the sr-only mark label.
+    // A row added or removed changes this count.
+    expect(screen.getAllByText('Not included')).toHaveLength(6);
     expect(screen.queryByText('Facebook')).toBeNull();
   });
 
@@ -130,12 +135,15 @@ describe('QuickLinks', () => {
         ]}
       />
     );
+    // The chevron is a lucide SVG icon, not text, so link text is the
+    // label alone — asserting "›" here was a matcher mistake, not a
+    // rendering difference.
     expect(screen.getAllByRole('link').map((link) => link.textContent)).toEqual([
-      'Media Library›',
-      'Creator Finder›',
-      'Facebook Accounts›',
-      'Facebook Pages›',
-      'Billing›',
+      'Media Library',
+      'Creator Finder',
+      'Facebook Accounts',
+      'Facebook Pages',
+      'Billing',
     ]);
   });
 });

@@ -16,8 +16,11 @@
  * the home card, so no route shows another page's skeleton). The
  * 2026-11-01 home dashboard rebuild replaces the §4.2 welcome-card-only
  * contract with the paid/free/expired/admin sections (and the
- * no-queues-or-posts-data rule) asserted below. No assertion below
- * replaces or weakens the PR-130-1 suite above it.
+ * no-queues-or-posts-data rule) asserted below, and the 2026-11-02
+ * Home redesign replaces that dashboard contract again: the plan
+ * card, quick links and Muse rail only — no summary cards, no
+ * setup checklist, no needs-attention list, no empty state.
+ * No assertion below replaces or weakens the PR-130-1 suite above it.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React from 'react';
@@ -38,35 +41,33 @@ vi.mock('@/components/home/home-data', () => ({
   loadHomeData: (...args: unknown[]) => mockLoadHomeData(...args),
 }));
 
+const GB = 1073741824;
+
 const PAID_HOME = {
   kind: 'paid',
-  periodEndsAt: new Date('2099-01-01T00:00:00.000Z'),
-  units: 5,
-  totalDestinations: 3,
-  activeDestinations: 2,
-  facebookAccounts: 1,
-  accountsCount: 1,
-  hasActiveSlot: true,
-  firstFacebookPageId: 'page-1',
-  attention: [
-    {
-      id: 'page-2',
-      name: 'Paused Page',
-      platform: 'facebook',
-      status: 'paused',
-      reason: 'Paused',
-    },
-  ],
-  attentionTotal: 1,
-  followersGained: 120,
-  storageUsedBytes: 1073741824,
-  storageQuotaBytes: 26843545600,
+  periodStartsAt: new Date('2026-11-02T00:00:00.000Z'),
+  periodEndsAt: new Date('2026-12-02T00:00:00.000Z'),
+  units: 21,
+  platformCounts: {
+    facebook: 12,
+    instagram: 4,
+    threads: 3,
+    x: 0,
+    tiktok: 1,
+    youtube: 1,
+  },
+  storageUsedBytes: 0,
+  storageQuotaBytes: 105 * GB,
 };
+
+const FREE_HOME = { kind: 'free' };
+
+const EXPIRED_HOME = { kind: 'expired' };
 
 import TenantLayout, { generateMetadata } from '../../src/app/tenant/[subdomain]/layout';
 import TenantIndexPage, { metadata as homeMetadata } from '../../src/app/tenant/[subdomain]/page';
 import TenantLoading from '../../src/app/tenant/[subdomain]/loading';
-import { HomeHero } from '@/components/home/home-sections';
+import { HomeHeader } from '@/components/home/home-sections';
 import { UserShell } from '@/components/shell/user-shell';
 import { Toaster } from '@/components/shared/ui/toast';
 import { Card } from '@/components/shared/ui/card';
@@ -176,7 +177,7 @@ describe('Tenant Workspace Shell', () => {
   });
 });
 
-describe('Tenant workspace home — overview dashboard rebuild (2026-11-01)', () => {
+describe('Tenant workspace home — redesign (2026-11-02)', () => {
   beforeEach(() => {
     mockGetDisplayName.mockReset();
     mockGetDisplayName.mockResolvedValue('Acme Corp');
@@ -190,7 +191,7 @@ describe('Tenant workspace home — overview dashboard rebuild (2026-11-01)', ()
     });
   }
 
-  it('renders the paid dashboard — hero, plan banner, summary, attention, quick links, no queue or calendar links', async () => {
+  it('renders the paid redesign — header, plan card, quick links, Muse rail, no queue or calendar links', async () => {
     const pageJsx = await renderHome();
     const html = renderToStaticMarkup(pageJsx).replaceAll('<!-- -->', '');
 
@@ -199,13 +200,37 @@ describe('Tenant workspace home — overview dashboard rebuild (2026-11-01)', ()
     expect(html).toContain('Welcome, Acme Corp');
 
     // Paid sections render.
-    expect(html).toContain('data-testid="plan-banner"');
-    expect(html).toContain('data-testid="summary-cards"');
-    expect(html).toContain('data-testid="needs-attention"');
+    expect(html).toContain('data-testid="home-header"');
+    expect(html).toContain('data-testid="plan-card"');
     expect(html).toContain('data-testid="quick-links"');
+    expect(html).toContain('data-testid="muse-assistant-card"');
 
-    // Checklist hidden once complete (account + page + slot all done).
+    // Plan card content: headline total, price from the same counts,
+    // per-platform split, unlimited and included-feature rows.
+    expect(html).toContain('21 pages or accounts');
+    expect(html).toContain('1,470 PKR / month');
+    expect(html).toContain('12 pages');
+    expect(html).toContain('Auto Download/Upload');
+    expect(html).toContain('TikTok Repost');
+
+    // Quick links in the approved order, and only those five.
+    const quickLinks = ['Media Library', 'Creator Finder', 'Facebook Accounts', 'Facebook Pages', 'Billing'];
+    let lastIndex = -1;
+    for (const label of quickLinks) {
+      const index = html.indexOf(label, lastIndex + 1);
+      expect(index).toBeGreaterThan(lastIndex);
+      lastIndex = index;
+    }
+
+    // Removed sections are gone, not hidden: no summary cards,
+    // no checklist, no needs-attention, no empty state, no old
+    // plan banner on the paid variant.
+    expect(html).not.toContain('data-testid="summary-cards"');
     expect(html).not.toContain('data-testid="setup-checklist"');
+    expect(html).not.toContain('data-testid="needs-attention"');
+    expect(html).not.toContain('data-testid="pages-empty-state"');
+    expect(html).not.toContain('Connected pages');
+    expect(html).not.toContain('Followers gained');
 
     // HARD CONSTRAINT: no queues or posts data anywhere on Home —
     // no Queue/Calendar links and no queue wording at all.
@@ -214,23 +239,28 @@ describe('Tenant workspace home — overview dashboard rebuild (2026-11-01)', ()
     expect(html).not.toContain('/queue');
   });
 
-  it('shows the setup checklist while steps are incomplete, and the empty state at zero pages', async () => {
-    mockLoadHomeData.mockResolvedValue({
-      ...PAID_HOME,
-      totalDestinations: 0,
-      activeDestinations: 0,
-      accountsCount: 0,
-      hasActiveSlot: false,
-      firstFacebookPageId: null,
-      attention: [],
-      attentionTotal: 0,
-    });
+  it('renders the free redesign — free card, upgrade card, Prompt Library + Billing links only', async () => {
+    mockLoadHomeData.mockResolvedValue(FREE_HOME);
 
     const html = renderToStaticMarkup(await renderHome()).replaceAll('<!-- -->', '');
-    expect(html).toContain('data-testid="setup-checklist"');
-    expect(html).toContain('data-testid="pages-empty-state"');
-    expect(html).not.toContain('data-testid="summary-cards"');
-    expect(html).not.toContain('data-testid="needs-attention"');
+    expect(html).toContain('data-testid="free-plan-card"');
+    expect(html).toContain('data-testid="upgrade-card"');
+    expect(html).toContain('data-testid="quick-links"');
+    expect(html).toContain('data-testid="muse-assistant-card"');
+    expect(html).not.toContain('data-testid="plan-card"');
+    // The upgrade card sells Media Library storage capped at 5 GB
+    // per unit — it must never be worded as unlimited.
+    expect(html).toContain('5 GB per page or account');
+  });
+
+  it('renders the expired variant — expired banner and renew, no plan card', async () => {
+    mockLoadHomeData.mockResolvedValue(EXPIRED_HOME);
+
+    const html = renderToStaticMarkup(await renderHome()).replaceAll('<!-- -->', '');
+    expect(html).toContain('data-testid="plan-banner"');
+    expect(html).toContain('Your plan has expired');
+    expect(html).not.toContain('data-testid="plan-card"');
+    expect(html).not.toContain('data-testid="free-plan-card"');
   });
 
   it('falls back to the subdomain slug when the display-name lookup returns null', async () => {
@@ -265,8 +295,8 @@ describe('Tenant workspace home — overview dashboard rebuild (2026-11-01)', ()
     const loadingElements = collectElements(loadingJsx);
     const loadingOuter = loadingJsx as AnyElement;
 
-    // The home page itself still ships its welcome hero.
-    expect(pageElements.some((el) => el.type === HomeHero)).toBe(true);
+    // The home page itself still ships its welcome header.
+    expect(pageElements.some((el) => el.type === HomeHeader)).toBe(true);
 
     // The shared fallback must NOT render that Card (or any page's cards):
     // it previously mirrored the home card, so every route without its own

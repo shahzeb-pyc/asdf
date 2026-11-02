@@ -36,7 +36,7 @@ test.describe('Tenant Home at 360px', () => {
     await page.goto(`/tenant/${TENANT.subdomain}`);
 
     await expect(
-      page.getByTestId('home-hero').getByRole('heading', { name: 'Welcome, e2e' })
+      page.getByTestId('home-header').getByRole('heading', { name: 'Welcome, e2e' })
     ).toBeVisible();
     await expect(page.getByTestId('old-users-notice-banner')).toBeVisible();
     await expect(page.getByTestId('old-users-notice-banner')).toContainText(
