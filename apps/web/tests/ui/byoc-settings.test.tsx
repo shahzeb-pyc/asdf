@@ -9,10 +9,14 @@
  * dehydrates into) and stub `fetch` at the boundary the typed API
  * client calls, exactly like production traffic.
  *
- * Copy and validation messages are spec §5.2 verbatim — the strings
- * asserted here are the finalized 2026-10-16 contract, not
- * decoration. The forbidden strings ("Permissions your app needs",
- * "last tested") are asserted absent in both states.
+ * Copy and validation messages are spec §5.2 verbatim, except where
+ * the approved Facebook App settings fixes supersede them: the
+ * professional failure sentences, the shortened connected subtitle,
+ * and the Step 1–4 form order (the sign-in address and Privacy Policy
+ * URL live inside the form as Steps 2 and 3, never as separate panels
+ * and never in the connected summary). The forbidden strings
+ * ("Permissions your app needs", "last tested") are asserted absent
+ * in both states.
  *
  * Spec 139 N3: the seeded payload carries a secret HINT, never the
  * secret — Show drives the reveal endpoint (stubbed below) and only
@@ -282,7 +286,7 @@ describe('FacebookSettingsView — loading and load failure', () => {
     getResponder = async () => jsonResponse({ error: 'Failed' }, 500);
     renderView();
     expect(
-      await screen.findByText("Couldn't load your Facebook app details. Please try again.")
+      await screen.findByText('Your Facebook app details could not be loaded. Please try again.')
     ).toBeTruthy();
     expect(screen.queryByTestId('fb-connect-btn')).toBeNull();
 
@@ -312,19 +316,35 @@ describe('FacebookSettingsView — not connected', () => {
       screen.getByText('Link your Facebook app to start publishing from this workspace.')
     ).toBeTruthy();
 
+    // Step 1 — first connect only, with the video-guide placeholder above it.
+    expect(screen.getByTestId('fb-video-guide-coming-soon').textContent).toContain(
+      'Video guide coming soon'
+    );
     expect(screen.getByText('Find your app details')).toBeTruthy();
     const dashboardLink = screen.getByTestId('fb-meta-dashboard-link');
     expect(dashboardLink.getAttribute('href')).toBe('https://developers.facebook.com');
     expect(dashboardLink.textContent).toBe('Meta developer dashboard →');
-    expect(
-      screen.getByText(/and copy your App ID and App Secret from Settings → Basic\./)
-    ).toBeTruthy();
+    // Step 1's sentence is split by the dashboard link element, so it
+    // cannot be matched as one element's text — assert on the page text.
+    expect(document.body.textContent).toContain(
+      'then copy your App ID and App Secret from Settings → Basic.'
+    );
 
+    // Step 2 — the sign-in address, before any details are typed.
+    expect(screen.getByText('Before you connect')).toBeTruthy();
+    // Step 3 — Privacy Policy URL, workspace-subdomain address.
+    // Step 3 heading plus the row's own label: two elements share the text.
+    expect(screen.getAllByText('Privacy Policy URL')).toHaveLength(2);
+    expect(screen.getByTestId('fb-privacy-url').textContent).toBe(
+      'https://acme.fbuploadpro.com/privacy'
+    );
+
+    // Step 4 — the details form itself.
     expect(screen.getByText('Add your app details here')).toBeTruthy();
     const appIdInput = screen.getByTestId('fb-app-id-input') as HTMLInputElement;
     expect(appIdInput.getAttribute('placeholder')).toBe('e.g. 123456789012345');
     expect(
-      screen.getByText("You'll find this in your Meta app under Settings → Basic.")
+      screen.getByText('You will find this in your Meta app under Settings → Basic.')
     ).toBeTruthy();
 
     const secretInput = screen.getByTestId('fb-app-secret-input') as HTMLInputElement;
@@ -332,31 +352,29 @@ describe('FacebookSettingsView — not connected', () => {
     expect(secretInput.type).toBe('password');
     expect(screen.getByTestId('fb-app-secret-toggle').textContent).toBe('Show');
     expect(
-      screen.getByText('Only you can see this — it stays hidden until you choose to show it.')
+      screen.getByText(/Only you can see this — it stays hidden until you choose to show it\./)
     ).toBeTruthy();
 
     expect(screen.getByTestId('fb-connect-btn').textContent).toContain('Connect Facebook');
     expect(
       screen.getByText('Your details are checked as soon as you connect.')
     ).toBeTruthy();
-
-    // Privacy Policy URL row: workspace-subdomain address, both states.
-    expect(screen.getByTestId('fb-privacy-url').textContent).toBe(
-      'https://acme.fbuploadpro.com/privacy'
-    );
   });
 
-  it('renders the "One more step" card with the real Facebook OAuth callback address', async () => {
+  it('renders the Step 2 sign-in address with the real Facebook OAuth callback address', async () => {
     renderView(NOT_CONNECTED);
 
     expect(screen.getByTestId('fb-one-more-step-card')).toBeTruthy();
-    expect(screen.getByText('One more step')).toBeTruthy();
+    // The old standalone "One more step" panel is gone: the address
+    // now lives inside the form as Step 2 ("Before you connect").
+    expect(screen.getByText('Before you connect')).toBeTruthy();
+    expect(screen.queryByText('One more step')).toBeNull();
     expect(
       screen.getByText(
-        'Add this address to your Meta app so Facebook can bring you back here after you sign in.'
+        'Add this address to your Meta app so Facebook can return you here after you sign in.'
       )
     ).toBeTruthy();
-    expect(screen.getByText('Sign-in address')).toBeTruthy();
+    expect(screen.getByText('Sign-in address (Valid OAuth Redirect URIs)')).toBeTruthy();
     const address = screen.getByTestId('fb-signin-address').textContent ?? '';
     // The address must match the redirect_uri the Facebook OAuth flow
     // actually sends (see buildSubdomainOAuthRedirectUri) — the generic
@@ -367,7 +385,9 @@ describe('FacebookSettingsView — not connected', () => {
     expect(address).toContain('acme.fbuploadpro.com/api/auth/facebook/callback');
     expect(address).not.toContain('/api/connect/facebook/callback');
     expect(
-      screen.getByText('Paste this into the "Valid OAuth Redirect URIs" field in your Meta app.')
+      screen.getByText(
+        'Paste this into the "Valid OAuth Redirect URIs" field in your Meta app, under Facebook Login → Settings.'
+      )
     ).toBeTruthy();
 
     const user = userEvent.setup();
@@ -392,7 +412,7 @@ describe('FacebookSettingsView — not connected', () => {
     renderView(NOT_CONNECTED);
     const notice = screen.getByTestId('byoc-reconnect-notice');
     expect(notice.textContent).toContain(
-      'To reconnect accounts, add your App ID and App Secret below, then reconnect.'
+      'To reconnect accounts, add your App ID and App Secret below and then reconnect.'
     );
   });
 
@@ -461,7 +481,10 @@ describe('FacebookSettingsView — connect submit', () => {
     await user.type(screen.getByTestId('fb-app-secret-input'), 'brand-new-secret');
     await user.click(screen.getByTestId('fb-connect-btn'));
 
-    expect(await screen.findByText('Your Facebook app is connected.')).toBeTruthy();
+    // The connected subtitle is now the same sentence as the success
+    // toast, so a text query is ambiguous — the saved App ID row is
+    // the connected-state proof.
+    expect(await screen.findByTestId('fb-saved-app-id')).toBeTruthy();
     expect(putCalls).toHaveLength(1);
     expect(putCalls[0]?.body).toEqual({
       fbAppId: '123456789012345',
@@ -520,15 +543,17 @@ describe('FacebookSettingsView — connected state', () => {
     ).toBe('connected');
     expect(document.querySelector('[data-slot="status-dot"]')).toBeNull();
     expect(
-      screen.getByText('Your Facebook app is connected and ready to publish.')
+      screen.getByText('Your Facebook app is connected.')
     ).toBeTruthy();
+    expect(screen.getByTestId('fb-next-step-connect-account').textContent).toBe(
+      'Connect a Page or account'
+    );
 
     expect(screen.getByTestId('fb-saved-app-id').textContent).toBe(SAVED_APP_ID);
     expect(screen.getByTestId('fb-copy-app-id-btn').textContent).toBe('Copy App ID');
-    // Privacy Policy URL row is present in the connected state too.
-    expect(screen.getByTestId('fb-privacy-url').textContent).toBe(
-      'https://acme.fbuploadpro.com/privacy'
-    );
+    // The Privacy Policy URL is Step 3 of the form only — it is
+    // never shown in the connected summary.
+    expect(screen.queryByTestId('fb-privacy-url')).toBeNull();
 
     expect(screen.getByTestId('fb-saved-app-secret').textContent).toBe('•'.repeat(24));
     expect(screen.getByTestId('fb-state2-secret-toggle').textContent).toBe('Show');
@@ -559,7 +584,7 @@ describe('FacebookSettingsView — connected state', () => {
     expect(screen.queryByTestId('fb-saved-app-name')).toBeNull();
     expect(screen.getByTestId('fb-saved-app-id').textContent).toBe(SAVED_APP_ID);
     expect(
-      screen.getByText('Your Facebook app is connected and ready to publish.')
+      screen.getByText('Your Facebook app is connected.')
     ).toBeTruthy();
   });
 
@@ -603,7 +628,7 @@ describe('FacebookSettingsView — connected state', () => {
 
     expect(await screen.findByTestId('fb-secret-reveal-error')).toBeTruthy();
     expect(screen.getByTestId('fb-secret-reveal-error').textContent).toBe(
-      "Couldn't show your App Secret. Please try again."
+      'Your App Secret could not be shown. Please try again.'
     );
     expect(screen.getByTestId('fb-saved-app-secret').textContent).toBe('•'.repeat(24));
     expect(screen.getByTestId('fb-state2-secret-toggle').textContent).toBe('Show');
@@ -611,26 +636,31 @@ describe('FacebookSettingsView — connected state', () => {
 });
 
 describe('FacebookSettingsView — edit mode', () => {
-  it('Edit details re-opens the form with the App ID pre-filled, the secret blank, and the card back', async () => {
+  it('Edit details re-opens the form with the App ID pre-filled, the secret blank, and the steps back', async () => {
     const user = userEvent.setup();
     renderView(CONNECTED);
 
     await user.click(screen.getByTestId('fb-edit-details-btn'));
 
-    expect(screen.getByText('Find your app details')).toBeTruthy();
+    // Step 1 is first-connect only, so edit mode starts at Step 2.
+    expect(screen.queryByText('Find your app details')).toBeNull();
+    expect(screen.getByText('Before you connect')).toBeTruthy();
+    // Step 3 heading plus the row's own label: two elements share the text.
+    expect(screen.getAllByText('Privacy Policy URL')).toHaveLength(2);
     expect(screen.getByText('Add your app details here')).toBeTruthy();
+    expect(screen.getByTestId('fb-unsaved-changes-note').textContent).toContain(
+      'Unsaved changes. Your previously saved app remains connected until you save.'
+    );
+    expect(screen.getByTestId('fb-connect-btn').textContent).toBe('Save changes');
     // While editing, the app is still connected: tick, not a cross.
     expect(
       screen.getByTestId('facebook-status-mark').getAttribute('data-status')
     ).toBe('connected');
-    // "One more step" is its own panel below the main panel in the
-    // single-column layout — a sibling, not nested inside the main card.
-    expect(
-      screen
-        .getByTestId('fb-one-more-step-card')
-        .closest('[data-testid="facebook-settings-card"]')
-    ).toBeNull();
+    // The sign-in address is Step 2 inside the form now, not a
+    // standalone "One more step" panel — its card testid stays, but
+    // the old heading is gone and the card sits inside the main card.
     expect(screen.getByTestId('fb-one-more-step-card')).toBeTruthy();
+    expect(screen.queryByText('One more step')).toBeNull();
     expect((screen.getByTestId('fb-app-id-input') as HTMLInputElement).value).toBe(
       SAVED_APP_ID
     );
@@ -646,7 +676,9 @@ describe('FacebookSettingsView — edit mode', () => {
     await user.click(screen.getByTestId('fb-edit-details-btn'));
     await user.click(screen.getByTestId('fb-connect-btn'));
 
-    expect(await screen.findByText('Your Facebook app is connected.')).toBeTruthy();
+    // Same ambiguity as the connect-submit test: the connected
+    // subtitle duplicates the success toast, so use the saved row.
+    expect(await screen.findByTestId('fb-saved-app-id')).toBeTruthy();
     expect(putCalls).toHaveLength(1);
     expect(putCalls[0]?.body).toEqual({ fbAppId: SAVED_APP_ID });
     expect(await screen.findByTestId('fb-saved-app-id')).toBeTruthy();
@@ -678,7 +710,7 @@ describe('FacebookSettingsView — disconnect dialog (OD-135-2a)', () => {
     );
     expect(
       screen.getByText(
-        /We'll remove your App ID and App Secret from this workspace\. Your connected accounts and posting will keep working, but you won't be able to reconnect or add new accounts until you add new details\./
+        /Your App ID and App Secret will be removed from this workspace\. Your connected accounts and posting will continue to work, but you will not be able to reconnect or add new accounts until you add new details\./
       )
     ).toBeTruthy();
     expect(screen.getByTestId('fb-disconnect-keep-btn').textContent).toBe(
@@ -738,7 +770,7 @@ describe('FacebookSettingsView — disconnect dialog (OD-135-2a)', () => {
     await user.click(screen.getByTestId('fb-disconnect-confirm-btn'));
 
     expect(
-      await screen.findByText("Couldn't disconnect Facebook. Please try again.")
+      await screen.findByText('Your Facebook app could not be disconnected. Please try again.')
     ).toBeTruthy();
     expect(screen.getByTestId('fb-disconnect-modal')).toBeTruthy();
     expect(screen.getByTestId('fb-saved-app-id')).toBeTruthy();

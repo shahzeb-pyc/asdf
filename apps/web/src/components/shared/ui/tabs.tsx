@@ -73,13 +73,18 @@ const tabsTriggerVariants = cva(
         // Segmented / default: active tab is a raised panel.
         default:
           "border-b-2 data-[state=active]:bg-panel data-[state=active]:text-ink data-[state=active]:shadow-card",
-        // Line: active tab is bold ink text with a thick 3px ink
+        // Line: active tab is bold ink text with a thick 4px ink
         // underline that overlaps the list hairline (-mb-px), so the
         // row shows one clean hairline and one strong active mark.
+        // The underline is drawn as an ::after bar inset by the
+        // trigger's horizontal padding, so it spans the label's
+        // content width — not the full padded trigger width — and
+        // stays the same fixed width whatever the label length is.
         // No background or shadow on active, and no faint underline
         // under inactive tabs. Ink is a theme token, so this works
-        // in both light and dark themes.
-        line: "-mb-px border-b-3 data-[state=active]:border-ink data-[state=active]:font-bold data-[state=active]:text-ink",
+        // in both light and dark themes. This is the shared row for
+        // General, Instagram, and Threads settings tabs alike.
+        line: "relative -mb-px after:absolute after:bottom-0 after:left-3 after:right-3 after:h-1 after:bg-transparent data-[state=active]:after:bg-ink data-[state=active]:font-bold data-[state=active]:text-ink",
         // Line-gold: line geometry with a link active mark
         // (link label text + link underline). Dedicated page tab
         // row only; inactive tabs stay muted, hover unchanged.

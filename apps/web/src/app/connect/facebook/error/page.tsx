@@ -6,6 +6,10 @@ import { useSearchParams } from 'next/navigation';
 
 import { ConnectStatusLayout } from '@/components/accounts/connect-status-layout';
 import { Button } from '@/components/shared/ui/button';
+import {
+  buildScopeRejectionMessage,
+  parseMissingScopesParam,
+} from '@/lib/facebook-permissions';
 
 /**
  * Reason → copy mapping (spec 136 §3.4, OD-136-4 default: keep the
@@ -19,10 +23,24 @@ import { Button } from '@/components/shared/ui/button';
  * invalid-link copy, and only genuinely unknown reasons fall
  * through to the expired/invalid default.
  */
-export function getConnectErrorCopy(reason?: string | null): {
+export function getConnectErrorCopy(
+  reason?: string | null,
+  missing?: string | null
+): {
   title: string;
   description: string;
 } {
+  if (reason === 'scope_rejected') {
+    // Same hard rejection as the direct flow's Accounts banner:
+    // nothing was saved, and the missing scopes are named in plain
+    // language instead of a generic permissions line.
+    return {
+      title: 'Facebook Account Not Connected',
+      description: buildScopeRejectionMessage(
+        parseMissingScopesParam(missing)
+      ),
+    };
+  }
   if (reason === 'cancelled') {
     return {
       title: 'Connection Canceled',
@@ -76,8 +94,12 @@ export function getConnectErrorCopy(reason?: string | null): {
 
 export function ConnectErrorView({
   reason,
-}: Readonly<{ reason?: string | null | undefined }>) {
-  const { title, description } = getConnectErrorCopy(reason);
+  missing,
+}: Readonly<{
+  reason?: string | null | undefined;
+  missing?: string | null | undefined;
+}>) {
+  const { title, description } = getConnectErrorCopy(reason, missing);
 
   return (
     <ConnectStatusLayout
@@ -105,7 +127,8 @@ export function ConnectErrorView({
 function ConnectErrorQueryReader() {
   const searchParams = useSearchParams();
   const reason = searchParams.get('reason');
-  return <ConnectErrorView reason={reason} />;
+  const missing = searchParams.get('missing');
+  return <ConnectErrorView reason={reason} missing={missing} />;
 }
 
 export default function FacebookConnectErrorPage() {

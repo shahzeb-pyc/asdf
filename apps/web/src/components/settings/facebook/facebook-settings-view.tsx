@@ -52,7 +52,6 @@ import { Banner } from '@/components/shared/ui/banner';
 import { Button } from '@/components/shared/ui/button';
 import { Skeleton } from '@/components/shared/ui/skeleton';
 import { FacebookStatusMark } from './facebook-status-mark';
-import { FacebookPrivacyUrlRow } from './facebook-privacy-url-row';
 import { buildPrivacyPolicyUrl } from '@/lib/privacy-url';
 import { toast } from '@/components/shared/ui/toast';
 
@@ -62,10 +61,11 @@ import {
 } from './facebook-connect-form';
 import { FacebookConnectedView } from './facebook-connected-view';
 import { FacebookDisconnectDialog } from './facebook-disconnect-dialog';
-import { FacebookSetupCard } from './facebook-setup-card';
 
-const SAVE_FAILURE_MESSAGE = "Couldn't save your Facebook app details. Please try again.";
-const DISCONNECT_FAILURE_MESSAGE = "Couldn't disconnect Facebook. Please try again.";
+const SAVE_FAILURE_MESSAGE =
+  'Your Facebook app details could not be saved. Please try again.';
+const DISCONNECT_FAILURE_MESSAGE =
+  'Your Facebook app could not be disconnected. Please try again.';
 const CONNECT_NETWORK_MESSAGE = 'Could not connect Facebook. Check your connection and try again.';
 const DISCONNECT_NETWORK_MESSAGE = 'Could not disconnect Facebook. Try again.';
 
@@ -199,7 +199,7 @@ export function FacebookSettingsView({ subdomain }: Readonly<FacebookSettingsVie
       <div className="flex w-full max-w-3xl flex-col gap-6">
         <Banner
           variant="critical"
-          title="Couldn't load your Facebook app details. Please try again."
+          title="Your Facebook app details could not be loaded. Please try again."
           action={
             <Button
               type="button"
@@ -229,7 +229,7 @@ export function FacebookSettingsView({ subdomain }: Readonly<FacebookSettingsVie
   const headerDescription = isEditMode
     ? 'Edit your saved Facebook app details.'
     : isConnectedState
-      ? 'Your Facebook app is connected and ready to publish.'
+      ? 'Your Facebook app is connected.'
       : 'Link your Facebook app to start publishing from this workspace.';
 
   return (
@@ -238,7 +238,7 @@ export function FacebookSettingsView({ subdomain }: Readonly<FacebookSettingsVie
         <Banner
           variant="warning"
           data-testid="byoc-reconnect-notice"
-          title="To reconnect accounts, add your App ID and App Secret below, then reconnect."
+          title="To reconnect accounts, add your App ID and App Secret below and then reconnect."
         />
       )}
 
@@ -247,6 +247,19 @@ export function FacebookSettingsView({ subdomain }: Readonly<FacebookSettingsVie
           Facebook App
         </h2>
         <p className="mt-1 text-body text-ink-sub">{headerDescription}</p>
+        {isConnectedState && (
+          <p className="mt-1 text-body text-ink-sub">
+            Next step:{' '}
+            <a
+              href={`/tenant/${subdomain}/accounts`}
+              data-testid="fb-next-step-connect-account"
+              className="font-semibold text-link hover:underline"
+            >
+              Connect a Page or account
+            </a>{' '}
+            to start publishing.
+          </p>
+        )}
         <div data-testid="facebook-status-badge" className="mt-3">
           <FacebookStatusMark connected={hasSavedCredentials} />
         </div>
@@ -272,6 +285,8 @@ export function FacebookSettingsView({ subdomain }: Readonly<FacebookSettingsVie
         ) : (
           <FacebookConnectForm
             key={isEditMode ? 'edit' : 'connect'}
+            subdomain={subdomain}
+            privacyUrl={buildPrivacyPolicyUrl(subdomain)}
             initialAppId={credentials.fbAppId}
             hasExistingSecret={credentials.hasSecret}
             isEditMode={isEditMode}
@@ -286,19 +301,10 @@ export function FacebookSettingsView({ subdomain }: Readonly<FacebookSettingsVie
         )}
       </section>
 
-      {/* "One more step" — its own panel below the main panel,
-          add/edit only, never in the connected state (§5.2). */}
-      {(!hasSavedCredentials || isEditMode) && (
-        <section className="flex flex-col gap-6 rounded-md border border-line bg-panel p-6 shadow-card">
-          <FacebookSetupCard subdomain={subdomain} />
-        </section>
-      )}
-
-      {/* Privacy Policy URL — its own panel, both states: Facebook
-          needs this address regardless of connection state. */}
-      <section className="flex flex-col gap-6 rounded-md border border-line bg-panel p-6 shadow-card">
-        <FacebookPrivacyUrlRow privacyUrl={buildPrivacyPolicyUrl(subdomain)} />
-      </section>
+      {/* The sign-in address and Privacy Policy URL now live inside
+          the form as Steps 2 and 3 — never as separate panels, and
+          never in the connected summary. The connected state shows
+          only the saved details plus the next step above. */}
 
       <FacebookDisconnectDialog
         open={disconnectOpen}

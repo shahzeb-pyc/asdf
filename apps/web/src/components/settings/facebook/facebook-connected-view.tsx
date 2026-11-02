@@ -109,7 +109,7 @@ export function FacebookConnectedView({
       setRevealedSecret(secret);
       setShowSecret(true);
     } catch {
-      setRevealError("Couldn't show your App Secret. Please try again.");
+      setRevealError('Your App Secret could not be shown. Please try again.');
     } finally {
       setIsRevealing(false);
     }
