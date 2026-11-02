@@ -211,7 +211,15 @@ export function asMirrorRow(row: unknown): MirrorRow | null {
 export function toMirrorView(
   mirror: MirrorRow,
   destination: DestinationRow | null,
-  lastPost: MirrorPostRow | null
+  lastPost: MirrorPostRow | null,
+  /**
+   * Target page details for the detail header (Added date,
+   * followers, category, account, starting followers). Null when
+   * the destination row is gone or details were not loaded — the
+   * header then degrades to the stored target copies and omits
+   * the detail lines, exactly like the list card does.
+   */
+  details: TargetPageDetails | null = null
 ): MirrorView {
   return {
     id: mirror.id,
@@ -224,6 +232,12 @@ export function toMirrorView(
     targetDisplayName: destination?.name ?? mirror.target_display_name,
     targetAvatarUrl: destination?.avatar_url ?? mirror.target_avatar_url,
     targetDestinationId: destination?.id ?? null,
+    targetAddedAt: details?.addedAt ?? null,
+    targetFollowers: details?.followers ?? null,
+    targetCategory: details?.category ?? null,
+    targetAccountDisplayName: details?.accountDisplayName ?? null,
+    targetAccountAvatarUrl: details?.accountAvatarUrl ?? null,
+    targetStartingFollowers: details?.startingFollowers ?? null,
     status: mirror.status as MirrorView['status'],
     lastPostedSourceId: mirror.last_posted_source_id,
     lastCheckedAt: mirror.last_checked_at,
@@ -259,6 +273,28 @@ export interface TargetPageDetails {
   followers: number | null;
   category: string | null;
   accountDisplayName: string | null;
+  /** Owning account's avatar (social_accounts.avatar_url); null when none stored. */
+  accountAvatarUrl: string | null;
+  /**
+   * Starting followers (destinations.metadata.starting_followers)
+   * for the detail header's guarded "+N gained": null when no
+   * starting value was ever recorded, and the header must hide
+   * the gain entirely in that case — never compute it against a
+   * missing baseline (which would just echo current followers).
+   */
+  startingFollowers: number | null;
+}
+
+function parseStoredInt(value: unknown): number | null {
+  const parsed =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value !== ''
+        ? Number(value)
+        : null;
+  return parsed !== null && Number.isFinite(parsed) && parsed >= 0
+    ? Math.trunc(parsed)
+    : null;
 }
 
 function parsePageDetailsRow(
@@ -291,6 +327,9 @@ function parsePageDetailsRow(
     category,
     accountDisplayName:
       typeof row.account_display_name === 'string' ? row.account_display_name : null,
+    accountAvatarUrl:
+      typeof row.account_avatar_url === 'string' ? row.account_avatar_url : null,
+    startingFollowers: parseStoredInt(meta.starting_followers),
   };
 }
 
@@ -307,7 +346,9 @@ export async function loadTargetPageDetails(
       `SELECT d.id, d.created_at,
               (d.metadata->>'category') AS category,
               (d.metadata->>'current_followers')::int AS current_followers,
-              a.display_name AS account_display_name
+              (d.metadata->>'starting_followers')::int AS starting_followers,
+              a.display_name AS account_display_name,
+              a.avatar_url AS account_avatar_url
        FROM destinations d
        LEFT JOIN social_accounts a ON a.id = d.account_id
        WHERE d.id = ANY($1::uuid[])`,
@@ -327,6 +368,9 @@ export async function loadTargetPageDetails(
         category: typeof row.category === 'string' ? row.category : null,
         accountDisplayName:
           typeof row.account_display_name === 'string' ? row.account_display_name : null,
+        accountAvatarUrl:
+          typeof row.account_avatar_url === 'string' ? row.account_avatar_url : null,
+        startingFollowers: parseStoredInt(row.starting_followers),
       });
     }
     return details;
@@ -345,10 +389,11 @@ export async function loadTargetPageDetails(
     )
   );
   const accountNames = new Map<string, string>();
+  const accountAvatars = new Map<string, string>();
   if (accountIds.length > 0) {
     const { data: accounts, error: accountError } = await supabase
       .from('social_accounts')
-      .select('id, display_name')
+      .select('id, display_name, avatar_url')
       .in('id', accountIds);
     if (accountError) {
       throw new Error(`Failed to load target accounts: ${accountError.message}`);
@@ -357,6 +402,9 @@ export async function loadTargetPageDetails(
       const row = account as Record<string, unknown>;
       if (typeof row.id === 'string' && typeof row.display_name === 'string') {
         accountNames.set(row.id, row.display_name);
+      }
+      if (typeof row.id === 'string' && typeof row.avatar_url === 'string') {
+        accountAvatars.set(row.id, row.avatar_url);
       }
     }
   }
@@ -368,6 +416,10 @@ export async function loadTargetPageDetails(
     parsed.accountDisplayName =
       typeof record.account_id === 'string'
         ? (accountNames.get(record.account_id) ?? null)
+        : null;
+    parsed.accountAvatarUrl =
+      typeof record.account_id === 'string'
+        ? (accountAvatars.get(record.account_id) ?? null)
         : null;
     details.set(record.id, parsed);
   }

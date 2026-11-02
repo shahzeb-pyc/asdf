@@ -241,6 +241,25 @@ export const MirrorViewSchema = z.object({
    *  tab; null when the target row is gone (Dashboard still works).
    *  This is a view-time resolution, never a stored mirror column. */
   targetDestinationId: z.string().uuid().nullable(),
+  /**
+   * Target page details for the Pages-style detail header. These
+   * are DETAIL-view fields (the list view carries its own copies
+   * via MirrorListViewSchema): the page's import date, followers,
+   * category, owning account name/avatar, and starting followers
+   * for the guarded "+N gained" computation. All optional so
+   * existing MirrorView producers (notably the Threads routes,
+   * which share this schema) keep parsing unchanged — a Threads
+   * view simply omits them. The tiktok-mirrors detail route
+   * always supplies them (possibly null) when it resolves the
+   * destination; null means "no stored value, omit the line",
+   * never an invented value.
+   */
+  targetAddedAt: z.string().nullable().optional(),
+  targetFollowers: z.number().int().nonnegative().nullable().optional(),
+  targetCategory: z.string().nullable().optional(),
+  targetAccountDisplayName: z.string().nullable().optional(),
+  targetAccountAvatarUrl: z.string().nullable().optional(),
+  targetStartingFollowers: z.number().int().nonnegative().nullable().optional(),
   status: MirrorStatusSchema,
   lastPostedSourceId: z.string().nullable(),
   lastCheckedAt: z.string().nullable(),
@@ -291,6 +310,13 @@ export type MirrorPostCounts = z.infer<typeof MirrorPostCountsSchema>;
 export const MirrorListViewSchema = MirrorViewSchema.omit({
   lastMirroredPost: true,
   nextCheckAt: true,
+  // The detail-view copies of these fields (optional on
+  // MirrorViewSchema) are omitted here so the extend below stays
+  // the single definition of the list view's required copies.
+  targetAddedAt: true,
+  targetFollowers: true,
+  targetCategory: true,
+  targetAccountDisplayName: true,
 }).extend({
   /** Target page's import date (destinations.created_at) — never the
    *  mirror's own createdAt relabelled. Null when the destination

@@ -13,7 +13,10 @@ import {
   handleCreateMirror,
   handleListMirrors,
 } from '../../src/app/api/tenant/[subdomain]/tiktok-mirrors/route';
-import { handleUpdateMirror } from '../../src/app/api/tenant/[subdomain]/tiktok-mirrors/[mirrorId]/route';
+import {
+  handleGetMirror,
+  handleUpdateMirror,
+} from '../../src/app/api/tenant/[subdomain]/tiktok-mirrors/[mirrorId]/route';
 import { handleRetryMirrorPost } from '../../src/app/api/tenant/[subdomain]/tiktok-mirrors/[mirrorId]/posts/[postId]/retry/route';
 import { TikwmError } from '../../src/lib/server/tikwm';
 import type { DatabaseClient } from '@fbuploadpro/contracts';
@@ -497,6 +500,62 @@ describe('PATCH /tiktok-mirrors/[mirrorId] (resume arms catch-up)', () => {
     expect(res.status).toBe(200);
     const update = calls.find((c) => c.sql.includes('UPDATE mirrors'));
     expect(update?.sql).not.toContain('catch_up_pending');
+  });
+});
+
+describe('GET /tiktok-mirrors/[mirrorId] (detail header fields)', () => {
+  beforeEach(async () => {
+    process.env.SESSION_SECRET = TEST_SECRET;
+    const token = await signSessionToken(
+      {
+        userId,
+        email: 'alexander@gmail.com',
+        name: 'Alex Acme',
+        subdomain: 'acme',
+        role: 'user',
+        status: 'active',
+      },
+      TEST_SECRET
+    );
+    validSessionCookie = `fbup_session=${token}`;
+  });
+
+  function detailRequest(cookie = validSessionCookie): NextRequest {
+    return new NextRequest(
+      `http://localhost:3000/api/tenant/acme/tiktok-mirrors/${mirrorId}`,
+      { headers: { cookie } }
+    );
+  }
+
+  it('resolves target page details for the detail header from existing rows', async () => {
+    const { db } = fakeDb();
+    const res = await handleGetMirror(detailRequest(), 'acme', mirrorId, db);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      mirror: Record<string, unknown>;
+      posts: unknown[];
+    };
+    expect(body.mirror.targetDisplayName).toBe('Test Page');
+    expect(body.mirror.targetAddedAt).toBe('2026-11-02T00:00:00.000Z');
+    expect(body.mirror.targetFollowers).toBe(0);
+    expect(body.mirror.targetCategory).toBe('Digital creator');
+    expect(body.mirror.targetAccountDisplayName).toBe('Shahzeb Malik');
+    expect(body.mirror.targetAccountAvatarUrl).toBeNull();
+    expect(body.mirror.targetStartingFollowers).toBeNull();
+    expect(body.posts).toEqual([]);
+  });
+
+  it('still returns the mirror with null detail fields when the destination is gone', async () => {
+    const { db } = fakeDb({ destinationMissing: true });
+    const res = await handleGetMirror(detailRequest(), 'acme', mirrorId, db);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { mirror: Record<string, unknown> };
+    expect(body.mirror.targetDisplayName).toBe('Test Page');
+    expect(body.mirror.targetDestinationId).toBeNull();
+    expect(body.mirror.targetAddedAt).toBeNull();
+    expect(body.mirror.targetFollowers).toBeNull();
+    expect(body.mirror.targetCategory).toBeNull();
+    expect(body.mirror.targetAccountDisplayName).toBeNull();
   });
 });
 

@@ -63,6 +63,8 @@ function mirrorView(overrides: Record<string, unknown> = {}) {
     targetFollowers: 0,
     targetCategory: 'Digital creator',
     targetAccountDisplayName: 'Shahzeb Malik',
+    targetAccountAvatarUrl: null,
+    targetStartingFollowers: null,
     postCounts: { posted: 1, failed: 0 },
     postCountsError: false,
     lastMirroredPost: {
@@ -197,7 +199,7 @@ describe('TikTok dedicated view', () => {
     ],
   });
 
-  it('renders Dashboard + Insights tabs and the dashboard fields', async () => {
+  it('renders Dashboard + Insights tabs and the target-first header', async () => {
     apiGetMock.mockResolvedValue(detailResponse());
     renderWithQuery(
       <TikTokDetailShell subdomain="acme" mirrorId="44444444-4444-4444-a444-444444444444" />
@@ -206,11 +208,137 @@ describe('TikTok dedicated view', () => {
     expect(screen.getByTestId('tiktok-detail-tabs')).toBeTruthy();
     expect(screen.getByText('Dashboard')).toBeTruthy();
     expect(screen.getByText('Insights')).toBeTruthy();
-    // Username + linked page appear in both the header and the dashboard card.
-    expect(screen.getAllByText('@alice').length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/Mirroring to/).length).toBeGreaterThan(0);
+    // Target-first header (Pages-style): the page is the heading,
+    // the creator is only the muted source line, and the old
+    // "Mirroring to" duplication is gone entirely.
+    expect(screen.getByTestId('mirror-detail-target-name').textContent).toBe('Test Page');
+    expect(screen.getByTestId('mirror-detail-source').textContent).toBe('source: @alice');
+    expect(screen.queryByText(/Mirroring to/)).toBeNull();
+    expect(screen.getByTestId('mirror-detail-back-link').textContent).toContain('Auto Repost');
+    expect(screen.getByTestId('mirror-detail-platform-tag').textContent).toBe('Facebook');
+    expect(screen.getByTestId('mirror-detail-facebook-link')).toBeTruthy();
+    expect(screen.getByTestId('mirror-detail-account').textContent).toBe(
+      'Connected via Shahzeb Malik'
+    );
+    expect(screen.getByTestId('mirror-detail-added').textContent).toBe('Added 2 Nov 2026');
+    expect(screen.getByTestId('mirror-detail-followers').textContent).toContain('0');
+    expect(screen.getByTestId('mirror-detail-followers').textContent).toContain('followers');
+    expect(screen.getByTestId('mirror-detail-category').textContent).toBe('Digital creator');
+    expect(screen.getByTestId('mirror-detail-mirror-added').textContent).toContain('Mirror added');
+    expect(screen.getByTestId('mirror-detail-mirror-added').textContent).toContain('Mirroring for');
+    const timing = screen.getByTestId('mirror-detail-timing').textContent ?? '';
+    expect(timing).toContain('Last mirrored:');
+    expect(timing).toContain('Next check:');
+    expect(timing).toContain('Last checked:');
+    expect(timing).toContain('Checks hourly');
+    // No all-time totals in the header — those belong in the
+    // Dashboard tab in a later job, not here.
+    expect(screen.queryByTestId('tiktok-mirror-post-counts')).toBeNull();
     expect(screen.getByText('Mirror history')).toBeTruthy();
     expect(screen.getByText('My exact caption')).toBeTruthy();
+  });
+
+  it('shows +N gained only with a valid starting baseline and a nonzero gain', async () => {
+    apiGetMock.mockResolvedValue(
+      detailResponse({ targetFollowers: 120, targetStartingFollowers: 100 })
+    );
+    renderWithQuery(
+      <TikTokDetailShell subdomain="acme" mirrorId="44444444-4444-4444-a444-444444444444" />
+    );
+    expect(await screen.findByTestId('mirror-detail-followers-gained')).toBeTruthy();
+    expect(screen.getByTestId('mirror-detail-followers-gained').textContent).toContain('+20');
+  });
+
+  it('shows a negative gain when followers fell', async () => {
+    apiGetMock.mockResolvedValue(
+      detailResponse({ targetFollowers: 90, targetStartingFollowers: 100 })
+    );
+    renderWithQuery(
+      <TikTokDetailShell subdomain="acme" mirrorId="44444444-4444-4444-a444-444444444444" />
+    );
+    expect(await screen.findByTestId('mirror-detail-followers-gained')).toBeTruthy();
+    expect(screen.getByTestId('mirror-detail-followers-gained').textContent).toContain('-10');
+  });
+
+  it('hides gained with no starting baseline, and hides a zero gain', async () => {
+    apiGetMock.mockResolvedValue(
+      detailResponse({ targetFollowers: 120, targetStartingFollowers: null })
+    );
+    renderWithQuery(
+      <TikTokDetailShell subdomain="acme" mirrorId="44444444-4444-4444-a444-444444444444" />
+    );
+    expect(await screen.findByTestId('tiktok-detail-page')).toBeTruthy();
+    expect(screen.queryByTestId('mirror-detail-followers-gained')).toBeNull();
+    apiGetMock.mockResolvedValue(
+      detailResponse({ targetFollowers: 100, targetStartingFollowers: 100 })
+    );
+    renderWithQuery(
+      <TikTokDetailShell subdomain="acme" mirrorId="44444444-4444-4444-a444-444444444444" />
+    );
+    // Second render in the same test uses a fresh QueryClient, so
+    // the page re-queries with the zero-gain mirror.
+    expect(await screen.findAllByTestId('tiktok-detail-page')).toBeTruthy();
+    expect(screen.queryByTestId('mirror-detail-followers-gained')).toBeNull();
+  });
+
+  it('pauses from the header menu and opens the delete confirmation', async () => {
+    const user = userEvent.setup();
+    apiGetMock.mockResolvedValue(detailResponse());
+    renderWithQuery(
+      <TikTokDetailShell subdomain="acme" mirrorId="44444444-4444-4444-a444-444444444444" />
+    );
+    expect(await screen.findByTestId('tiktok-detail-page')).toBeTruthy();
+    await user.click(screen.getByTestId('mirror-detail-menu-btn'));
+    await user.click(screen.getByTestId('mirror-detail-menu-pause'));
+    expect(apiPatchMock).toHaveBeenCalled();
+    const patchCall = apiPatchMock.mock.calls[0] ?? [];
+    expect(String(patchCall[0])).toContain('/tiktok-mirrors/44444444-4444-4444-a444-444444444444');
+    expect(patchCall[1]).toEqual({ status: 'paused' });
+    await user.click(screen.getByTestId('mirror-detail-menu-btn'));
+    await user.click(screen.getByTestId('mirror-detail-menu-delete'));
+    expect(await screen.findByTestId('tiktok-delete-confirm')).toBeTruthy();
+    expect(screen.getByText(/The Facebook page itself is not deleted/)).toBeTruthy();
+  });
+
+  it('shows no error banner and no bogus countdown for a healthy paused mirror', async () => {
+    apiGetMock.mockResolvedValue(detailResponse({ status: 'paused', nextCheckAt: null }));
+    renderWithQuery(
+      <TikTokDetailShell subdomain="acme" mirrorId="44444444-4444-4444-a444-444444444444" />
+    );
+    expect(await screen.findByTestId('tiktok-detail-page')).toBeTruthy();
+    expect(screen.queryByTestId('tiktok-detail-error')).toBeNull();
+    const timing = screen.getByTestId('mirror-detail-timing').textContent ?? '';
+    expect(timing).not.toContain('(in ');
+    expect(screen.getByTestId('mirror-detail-menu-btn')).toBeTruthy();
+  });
+
+  it('degrades gracefully when the target destination is gone', async () => {
+    const user = userEvent.setup();
+    apiGetMock.mockResolvedValue(
+      detailResponse({
+        targetDestinationId: null,
+        targetAddedAt: null,
+        targetFollowers: null,
+        targetCategory: null,
+        targetAccountDisplayName: null,
+        targetAccountAvatarUrl: null,
+        targetStartingFollowers: null,
+      })
+    );
+    renderWithQuery(
+      <TikTokDetailShell subdomain="acme" mirrorId="44444444-4444-4444-a444-444444444444" />
+    );
+    expect(await screen.findByTestId('tiktok-detail-page')).toBeTruthy();
+    // Stored target copy still renders as the heading; the
+    // destination-derived lines are omitted, not faked.
+    expect(screen.getByTestId('mirror-detail-target-name').textContent).toBe('Test Page');
+    expect(screen.queryByTestId('mirror-detail-added')).toBeNull();
+    expect(screen.queryByTestId('mirror-detail-followers')).toBeNull();
+    expect(screen.queryByTestId('mirror-detail-account')).toBeNull();
+    await user.click(screen.getByText('Insights'));
+    await waitFor(() => {
+      expect(screen.getByTestId('tiktok-insights-unavailable')).toBeTruthy();
+    });
   });
 
   it('switches to the Insights tab on click', async () => {
