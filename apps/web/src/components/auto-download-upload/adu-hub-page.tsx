@@ -651,14 +651,21 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
 
   // Accounts are partitioned like the Pages picker: active accounts
   // are selectable; expired accounts render dimmed with "Session
-  // expired"; anything else (error, revoked, unknown) renders dimmed
-  // with "Connection issue" — an unhealthy account is shown, never
-  // silently selectable and never vanished. ADU has no in-dialog
+  // expired"; broken accounts render dimmed with "Connection issue".
+  // The partition follows the canonical account-health model
+  // (getAccountHealth: 'expired' wins, 'disconnected' is an error,
+  // everything else is connected) — ADU options carry no token
+  // expiry, so the expiry branch cannot fire here. Two raw statuses
+  // the accounts surface itself treats as critical ('error',
+  // 'revoked') are additionally routed to the error section rather
+  // than left selectable on a broken account. ADU has no in-dialog
   // reconnect, so the dimmed sections link to Facebook Accounts
   // instead of offering a Reconnect button.
-  const activeAccounts = accounts.filter((a) => a.status === 'active');
+  const activeAccounts = accounts.filter((a) =>
+    a.status !== 'expired' && a.status !== 'disconnected' && a.status !== 'error' && a.status !== 'revoked');
   const expiredAccounts = accounts.filter((a) => a.status === 'expired');
-  const errorAccounts = accounts.filter((a) => a.status !== 'active' && a.status !== 'expired');
+  const errorAccounts = accounts.filter((a) =>
+    a.status === 'disconnected' || a.status === 'error' || a.status === 'revoked');
   const filteredAccounts = activeAccounts.filter((a) => a.display_name.toLowerCase().includes(accountSearch.toLowerCase()));
   const linkedPagesCount = (accountId: string) => pages.filter((p) => p.account_id === accountId).length;
   // Step 2 shows ONLY the union of the selected accounts' pages —
