@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   activateCryptoPayment,
+  activateDueScheduledDowngrades,
   approvePayment,
+  hasOutstandingScheduledDowngrade,
   loadPaymentActuals,
   savePaymentActuals,
   assertCanPost,
@@ -11,7 +13,6 @@ import {
   assertPaidPlan,
   countsFromRow,
   createPeriodForPayment,
-  createScheduledPeriod,
   getActivePeriod,
   getEntitlement,
   getUsageCount,
@@ -147,6 +148,11 @@ interface FakeState {
   usageRows: Row[];
   usageCounts: Partial<Record<string, number>>;
   paymentRow: Row | null;
+  // Row-list view of subscription_payments for the scheduled-
+  // downgrade guards (hasOutstanding / activation), which query
+  // the payments table as a list. Null (default) keeps the old
+  // behaviour: list selects on payments return no rows.
+  paymentRows: Row[] | null;
   periodById: Row | null;
   createdPeriodRow: Row | null;
   selectErrors: Partial<Record<string, unknown>>;
@@ -180,6 +186,7 @@ function baseState(overrides: Partial<FakeState> = {}): FakeState {
     usageRows: [],
     usageCounts: {},
     paymentRow: null,
+    paymentRows: null,
     periodById: null,
     createdPeriodRow: null,
     selectErrors: {},
@@ -300,6 +307,13 @@ class FakeBuilder {
     const err = this.state.selectErrors[this.table];
     if (err) return { data: null, error: err };
     if (this.table === 'subscription_payments') {
+      if (this.state.paymentRows !== null) {
+        const idFilter = this.filters.find((f) => f.op === 'eq' && f.col === 'id');
+        const row = idFilter
+          ? this.state.paymentRows.find((r) => r['id'] === idFilter.val) ?? null
+          : (this.state.paymentRows[0] ?? null);
+        return { data: row, error: null };
+      }
       return { data: this.state.paymentRow, error: null };
     }
     if (this.table === 'subscription_periods') {
@@ -444,7 +458,9 @@ class FakeBuilder {
     let rows =
       this.table === 'subscription_periods'
         ? [...this.state.periods]
-        : this.table === 'subscription_usage'
+        : this.table === 'subscription_payments' && this.state.paymentRows !== null
+          ? [...this.state.paymentRows]
+          : this.table === 'subscription_usage'
           ? [...this.state.usageRows]
           : this.table === 'workspaces'
             ? [...this.state.workspaces]
@@ -1395,36 +1411,26 @@ describe('approvePayment', () => {
   });
 });
 
-describe('approvePayment downgrade (owner decision 2026-11-02)', () => {
+describe('approvePayment downgrade, option A (owner decision 2026-11-02, PR #120 send-back B2)', () => {
   const now = new Date('2026-06-01T00:00:00.000Z');
 
-  it('schedules the new period at the live period end without superseding it', async () => {
+  it('schedules on the payment only: no period row, live period untouched', async () => {
     const state = baseState({
       paymentRow: paymentRow({ is_downgrade: true }),
       periods: [periodRow({ id: 'period-live', ends_at: '2026-06-20T00:00:00.000Z' })],
-      createdPeriodRow: periodRow({
-        id: 'period-new',
-        starts_at: '2026-06-20T00:00:00.000Z',
-        ends_at: '2026-07-20T00:00:00.000Z',
-      }),
     });
     const result = await approvePayment(fakeClient(state), 'payment-1', 'admin-1', now);
     expect(result.payment.status).toBe('approved');
-    expect(result.period.id).toBe('period-new');
-    const inserted = state.inserted.find((i) => i.table === 'subscription_periods');
-    expect(inserted?.row).toMatchObject({
-      user_id: 'user-1',
-      payment_id: 'payment-1',
-      starts_at: '2026-06-20T00:00:00.000Z',
-      ends_at: '2026-07-20T00:00:00.000Z',
-    });
-    // The live period is never superseded by a downgrade approval.
+    expect(result.period).toBeNull();
+    expect(result.payment.scheduledStartsAt?.toISOString()).toBe('2026-06-20T00:00:00.000Z');
+    // No future period row coexists with the live one — that was
+    // the one-live-index violation this fix removes.
+    expect(state.inserted.filter((i) => i.table === 'subscription_periods')).toHaveLength(0);
     expect(
       state.updated.filter(
         (u) => u.table === 'subscription_periods' && 'superseded_at' in u.patch
       )
     ).toHaveLength(0);
-    // The scheduled start is recorded best-effort on the payment.
     expect(
       state.updated.find(
         (u) =>
@@ -1445,62 +1451,144 @@ describe('approvePayment downgrade (owner decision 2026-11-02)', () => {
       }),
     });
     const result = await approvePayment(fakeClient(state), 'payment-1', 'admin-1', now);
-    expect(result.period.id).toBe('period-new');
+    expect(result.period?.id).toBe('period-new');
     const inserted = state.inserted.find((i) => i.table === 'subscription_periods');
     expect(inserted?.row).toMatchObject({ starts_at: '2026-06-01T00:00:00.000Z' });
   });
 
-  it('fails closed when the scheduled period insert errors', async () => {
+  it('fails closed when the lapsed downgrade period insert errors', async () => {
     const state = baseState({
       paymentRow: paymentRow({ is_downgrade: true }),
-      periods: [periodRow({ id: 'period-live', ends_at: '2026-06-20T00:00:00.000Z' })],
+      periods: [periodRow({ id: 'period-old', ends_at: '2026-05-20T00:00:00.000Z' })],
       periodInsertError: { message: 'db down' },
     });
     await expect(approvePayment(fakeClient(state), 'payment-1', 'admin-1', now)).rejects.toMatchObject({
       code: 'ENTITLEMENT_UNAVAILABLE',
     });
     expect(mockedLogServerError).toHaveBeenCalledWith(
-      '[billing] scheduled period insert failed',
+      '[billing] period insert failed',
       expect.anything(),
       { source: 'billing' }
     );
   });
 
-  it('fails closed when the scheduled insert returns an unreadable row', async () => {
+  it('blocks a second scheduled downgrade while one is outstanding', async () => {
+    const pending = paymentRow({ is_downgrade: true });
+    const outstanding = paymentRow({
+      id: 'payment-2',
+      status: 'approved',
+      period_id: null,
+      is_downgrade: true,
+      scheduled_starts_at: '2026-06-20T00:00:00.000Z',
+    });
     const state = baseState({
-      paymentRow: paymentRow({ is_downgrade: true }),
+      paymentRow: pending,
+      paymentRows: [pending, outstanding],
       periods: [periodRow({ id: 'period-live', ends_at: '2026-06-20T00:00:00.000Z' })],
-      createdPeriodRow: { nonsense: true },
     });
     await expect(approvePayment(fakeClient(state), 'payment-1', 'admin-1', now)).rejects.toMatchObject({
-      code: 'ENTITLEMENT_UNAVAILABLE',
+      code: 'PAYMENT_ALREADY_DECIDED',
     });
+    expect(state.inserted.filter((i) => i.table === 'subscription_periods')).toHaveLength(0);
   });
 
-  it('createScheduledPeriod starts a 30-day period at the given start', async () => {
+  it('hasOutstandingScheduledDowngrade ignores non-downgrade approved payments', async () => {
     const state = baseState({
+      paymentRows: [
+        paymentRow({ id: 'payment-2', status: 'approved', period_id: null, is_downgrade: false }),
+      ],
+    });
+    await expect(hasOutstandingScheduledDowngrade(fakeClient(state), 'user-1')).resolves.toBe(
+      false
+    );
+  });
+});
+
+describe('activateDueScheduledDowngrades (option A activation path)', () => {
+  const now = new Date('2026-06-01T00:00:00.000Z');
+
+  it('creates and links the period at activation time, not the scheduled date', async () => {
+    const scheduled = paymentRow({
+      status: 'approved',
+      period_id: null,
+      is_downgrade: true,
+      scheduled_starts_at: '2026-05-20T00:00:00.000Z',
+    });
+    const state = baseState({
+      paymentRow: scheduled,
+      paymentRows: [scheduled],
+      periods: [],
       createdPeriodRow: periodRow({
         id: 'period-new',
-        starts_at: '2026-06-20T00:00:00.000Z',
-        ends_at: '2026-07-20T00:00:00.000Z',
+        starts_at: '2026-06-01T00:00:00.000Z',
+        ends_at: '2026-07-01T00:00:00.000Z',
       }),
     });
-    const period = await createScheduledPeriod(
-      fakeClient(state),
-      { userId: 'user-1', counts: { ...ZERO_COUNTS, facebook: 1 }, paymentId: 'payment-1' },
-      new Date('2026-06-20T00:00:00.000Z')
-    );
-    expect(period.id).toBe('period-new');
+    const period = await activateDueScheduledDowngrades(fakeClient(state), 'user-1', now);
+    expect(period?.id).toBe('period-new');
     const inserted = state.inserted.find((i) => i.table === 'subscription_periods');
     expect(inserted?.row).toMatchObject({
-      starts_at: '2026-06-20T00:00:00.000Z',
-      ends_at: '2026-07-20T00:00:00.000Z',
+      user_id: 'user-1',
+      payment_id: 'payment-1',
+      starts_at: '2026-06-01T00:00:00.000Z',
     });
-    expect(
-      state.updated.filter(
-        (u) => u.table === 'subscription_periods' && 'superseded_at' in u.patch
-      )
-    ).toHaveLength(0);
+    expect(scheduled['period_id']).toBe('period-new');
+  });
+
+  it('does not activate while a period is still live', async () => {
+    const scheduled = paymentRow({
+      status: 'approved',
+      period_id: null,
+      is_downgrade: true,
+      scheduled_starts_at: '2026-05-20T00:00:00.000Z',
+    });
+    const state = baseState({
+      paymentRow: scheduled,
+      paymentRows: [scheduled],
+      periods: [periodRow({ id: 'period-live', ends_at: '2099-01-01T00:00:00.000Z' })],
+    });
+    await expect(activateDueScheduledDowngrades(fakeClient(state), 'user-1', now)).resolves.toBe(
+      null
+    );
+    expect(state.inserted.filter((i) => i.table === 'subscription_periods')).toHaveLength(0);
+  });
+
+  it('does not activate a schedule whose start is still in the future', async () => {
+    const scheduled = paymentRow({
+      status: 'approved',
+      period_id: null,
+      is_downgrade: true,
+      scheduled_starts_at: '2026-06-20T00:00:00.000Z',
+    });
+    const state = baseState({
+      paymentRow: scheduled,
+      paymentRows: [scheduled],
+      periods: [],
+    });
+    await expect(activateDueScheduledDowngrades(fakeClient(state), 'user-1', now)).resolves.toBe(
+      null
+    );
+    expect(state.inserted.filter((i) => i.table === 'subscription_periods')).toHaveLength(0);
+  });
+
+  it('a second activation after linking is a no-op', async () => {
+    const scheduled = paymentRow({
+      status: 'approved',
+      period_id: null,
+      is_downgrade: true,
+      scheduled_starts_at: '2026-05-20T00:00:00.000Z',
+    });
+    const state = baseState({
+      paymentRow: scheduled,
+      paymentRows: [scheduled],
+      periods: [],
+      createdPeriodRow: periodRow({ id: 'period-new' }),
+    });
+    const first = await activateDueScheduledDowngrades(fakeClient(state), 'user-1', now);
+    expect(first?.id).toBe('period-new');
+    const second = await activateDueScheduledDowngrades(fakeClient(state), 'user-1', now);
+    expect(second).toBeNull();
+    expect(state.inserted.filter((i) => i.table === 'subscription_periods')).toHaveLength(1);
   });
 });
 
@@ -1941,6 +2029,28 @@ describe('activateCryptoPayment branches (audit fix 2026-11-01, fix 7)', () => {
     );
     expect(result.alreadyActivated).toBe(false);
     expect(result.period.id).toBe('period-new');
+  });
+
+  it('schedules a crypto downgrade (option A): no period, scheduled flag set', async () => {
+    const state = baseState({
+      paymentRow: paymentRow({ status: 'failed', is_downgrade: true }),
+      periods: [periodRow({ id: 'period-live', ends_at: '2026-06-20T00:00:00.000Z' })],
+    });
+    const result = await activateCryptoPayment(
+      fakeClient(state),
+      payment({ status: 'failed', is_downgrade: true }),
+      now
+    );
+    expect(result.period).toBeNull();
+    expect(result.scheduled).toBe(true);
+    expect(state.inserted.filter((i) => i.table === 'subscription_periods')).toHaveLength(0);
+    expect(
+      state.updated.find(
+        (u) =>
+          u.table === 'subscription_payments' &&
+          u.patch['scheduled_starts_at'] === '2026-06-20T00:00:00.000Z'
+      )
+    ).toBeTruthy();
   });
 });
 
