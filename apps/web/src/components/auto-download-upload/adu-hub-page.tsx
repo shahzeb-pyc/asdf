@@ -160,20 +160,24 @@ export function AduHubPage({ subdomain }: { subdomain: string }) {
       ) : null}
       {error ? <Banner variant="critical" title="Could not load pages" description={error} /> : null}
 
-      <div className="grid gap-4 sm:grid-cols-3">
-        {[
-          { label: 'Total Pages', value: stats.totalPages },
-          { label: 'Followers Gained', value: stats.followersGained },
-          { label: 'Total Followers', value: stats.totalFollowers },
-        ].map((stat) => (
-          <Card key={stat.label}>
-            <CardHeader><CardTitle className="text-metadata font-medium text-ink-dim">{stat.label}</CardTitle></CardHeader>
-            <CardContent><p className="text-lg leading-heading font-semibold text-ink">{stat.value}</p></CardContent>
-          </Card>
-        ))}
-      </div>
+      <Card className="py-0">
+        <CardContent className="px-0">
+          <div className="grid divide-y divide-line sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+            {[
+              { label: 'Total Pages', value: stats.totalPages },
+              { label: 'Followers Gained', value: stats.followersGained },
+              { label: 'Total Followers', value: stats.totalFollowers },
+            ].map((stat) => (
+              <div key={stat.label} className="px-6 py-4">
+                <p className="text-metadata font-medium text-ink-dim">{stat.label}</p>
+                <p className="mt-1 text-xxl leading-heading font-bold text-ink">{stat.value}</p>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
 
-      <div className="flex flex-wrap items-center gap-4">
+      <div className="flex flex-wrap items-center gap-3">
         <Input type="search" aria-label="Search pages or sources" placeholder="Search pages or sources…" value={searchQuery} onChange={(e) => { setSearchQuery(e.target.value); setPage(1); }} className="min-w-55 flex-1 sm:max-w-80" />
         <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setPage(1); }}>
           <SelectTrigger aria-label="Filter by status"><SelectValue /></SelectTrigger>
