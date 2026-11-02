@@ -51,6 +51,7 @@ interface ConfigView {
   destinationExternalId: string;
   destinationAvatarUrl: string | null;
   accountName: string | null;
+  accountAvatarUrl: string | null;
   sourcePlatform: string;
   sourceUsername: string;
   sourceLink: string;
@@ -341,6 +342,7 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
   const [editIdentity, setEditIdentity] = React.useState(false);
   const [displayName, setDisplayName] = React.useState('');
   const [failedAvatarUrl, setFailedAvatarUrl] = React.useState<string | null>(null);
+  const [failedAccountAvatarUrl, setFailedAccountAvatarUrl] = React.useState<string | null>(null);
 
   const base = buildTenantApiPath(subdomain, `/auto-download-upload/${configId}`);
   const load = React.useCallback(async () => {
@@ -465,7 +467,33 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
     <StatusMark key="status" kind={statusKind} label={config.displayStatus} testId="adu-detail-status-mark" />,
   ];
   if (config.accountName) {
-    metaItems.push(<span key="account">Connected via {config.accountName}</span>);
+    metaItems.push(
+      <span key="account" className="inline-flex items-center gap-1.5">
+        <span
+          data-testid="adu-detail-account-avatar"
+          aria-hidden
+          className="flex size-5 shrink-0 items-center justify-center overflow-hidden rounded-full bg-subtle text-xs font-bold text-link"
+        >
+          {config.accountAvatarUrl &&
+          failedAccountAvatarUrl !== config.accountAvatarUrl ? (
+            <Image
+              src={config.accountAvatarUrl}
+              alt=""
+              width={20}
+              height={20}
+              data-testid="adu-detail-account-avatar-img"
+              onError={() =>
+                setFailedAccountAvatarUrl(config.accountAvatarUrl ?? '__error__')
+              }
+              className="size-5 shrink-0 rounded-full object-cover"
+            />
+          ) : (
+            getUserInitials(config.accountName)
+          )}
+        </span>
+        <span>Connected via {config.accountName}</span>
+      </span>
+    );
   }
   if (addedDate) {
     metaItems.push(<span key="added">Added {addedDate}</span>);

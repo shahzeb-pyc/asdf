@@ -49,6 +49,7 @@ function makeConfig(overrides: Record<string, unknown> = {}) {
     destinationExternalId: '432724216597352',
     destinationAvatarUrl: null,
     accountName: 'Shahzeb Malik',
+    accountAvatarUrl: null,
     sourcePlatform: 'tiktok',
     sourceUsername: 'sdf',
     sourceLink: 'https://www.tiktok.com/@sdf',
@@ -123,6 +124,28 @@ describe('header', () => {
     expect(img).toHaveAttribute('src', 'https://example.com/avatar.jpg');
     fireEvent.error(img);
     expect(await screen.findByTestId('adu-detail-avatar-initials')).toHaveTextContent('EB');
+  });
+
+  it('shows the account photo beside Connected via when an account avatar URL exists', async () => {
+    installFetch({ accountAvatarUrl: 'https://example.com/account.jpg' });
+    renderDetail();
+    const img = await screen.findByTestId('adu-detail-account-avatar-img');
+    expect(img).toHaveAttribute('src', 'https://example.com/account.jpg');
+    expect(screen.getByText('Connected via Shahzeb Malik')).toBeInTheDocument();
+  });
+
+  it('shows account initials beside Connected via when there is no account avatar photo', async () => {
+    installFetch();
+    renderDetail();
+    expect(await screen.findByTestId('adu-detail-account-avatar')).toHaveTextContent('SM');
+  });
+
+  it('falls back to account initials when the account photo fails to load', async () => {
+    installFetch({ accountAvatarUrl: 'https://example.com/account.jpg' });
+    renderDetail();
+    const img = await screen.findByTestId('adu-detail-account-avatar-img');
+    fireEvent.error(img);
+    expect(await screen.findByTestId('adu-detail-account-avatar')).toHaveTextContent('SM');
   });
 
   it('formats followers with separators and shows +N gained only when nonzero', async () => {
