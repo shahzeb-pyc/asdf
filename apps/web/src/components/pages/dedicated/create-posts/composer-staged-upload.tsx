@@ -74,7 +74,9 @@ export interface ComposerStagedUploadProps {
   onSuccess: (media: ComposerMedia) => void;
   onActiveChange?: (
     count: number,
-    furthestAlong: { name: string; progressPercent: number } | null
+    furthestAlong: { name: string; progressPercent: number } | null,
+    /** Files accepted but not yet uploading (sequential queue). */
+    waitingCount?: number
   ) => void;
 }
 
@@ -245,7 +247,8 @@ export function ComposerStagedUpload({
             progressPercent: uploading[0].progressPercent,
           }
         : null;
-    onActiveChange?.(uploading.length, furthest);
+    const waiting = current.filter((f) => f.status === 'queued').length;
+    onActiveChange?.(uploading.length, furthest, waiting);
   }, [onActiveChange]);
 
   const setFileState = React.useCallback(
@@ -474,9 +477,13 @@ export function ComposerStagedUpload({
       }
       if (accepted.length === 0) return;
       setFiles((prev) => [...prev, ...accepted]);
-      void runQueue();
+      // No runQueue() here on purpose: the queue is started by the
+      // effect below. filesRef is only assigned during render, so
+      // a runQueue() issued in this handler still sees the
+      // PRE-update list — that is exactly how the first batch
+      // never started (it sat 'queued' forever).
     },
-    [mode, runQueue]
+    [mode]
   );
 
   const retryFile = React.useCallback(
@@ -488,9 +495,11 @@ export function ComposerStagedUpload({
             : f
         )
       );
-      void runQueue();
+      // Same as addFiles: the effect below starts the queue once
+      // the render has synced the ref (a direct runQueue() here
+      // would still see the file as 'error', so Retry did nothing).
     },
-    [runQueue]
+    []
   );
 
   const cancelFile = React.useCallback((id: string) => {
@@ -532,6 +541,17 @@ export function ComposerStagedUpload({
   React.useEffect(() => {
     reportActive();
   }, [files, reportActive]);
+
+  // Start the queue from the RENDERED list. This effect runs after
+  // the render that syncs filesRef, so a 'queued' file always finds
+  // a runner — the runningRef guard keeps a second trigger from
+  // doubling up, and the loop itself drains sequentially until no
+  // 'queued' file remains.
+  React.useEffect(() => {
+    if (runningRef.current) return;
+    if (!files.some((f) => f.status === 'queued')) return;
+    void runQueue();
+  }, [files, runQueue]);
 
   return (
     <div
@@ -604,6 +624,11 @@ export function ComposerStagedUpload({
                         fill="currentColor"
                       />
                     </svg>
+                  </span>
+                )}
+                {f.status === 'queued' && (
+                  <span className="block text-body text-ink-sub">
+                    Waiting…
                   </span>
                 )}
                 {f.status === 'error' && f.error && (
