@@ -10,6 +10,7 @@ import {
   selectNewReels,
   type TikwmApiKeyPauseStore,
   type TikwmVideoItem,
+  truncateThreadsCaption,
   validateThreadsText,
 } from '@fbuploadpro/contracts';
 import { FacebookPublishClient } from './fb-client.js';
@@ -40,7 +41,10 @@ import { captureWorkerError, type PostHogEnv } from './analytics.js';
 // endpoint (no-watermark URL + verbatim title), and post it to
 // the linked target — a Facebook page as a Facebook Reel, or an
 // Instagram account as an Instagram Reel (container flow) —
-// caption verbatim.
+// caption verbatim, EXCEPT Threads mirrors: an over-limit
+// Threads caption is truncated to fit and posted (owner
+// decision, replacing the old mirror rule that skipped such
+// captions instead of truncating them).
 //
 // One mirror's failure never blocks other mirrors: each job is
 // independent, jobs in a tick run in parallel chunks, and a job
@@ -430,28 +434,37 @@ export async function processMirrorCheck(
           }
           break;
         }
-        const caption = resolved.title || reel.title || '';
-        // Threads-only rule: a caption over Threads' 500 weighted
-        // characters / 5 links is SKIPPED with the plain reason —
-        // never truncated (that would fabricate the post) and never
-        // silently dropped. Later reels are still tried.
+        let caption = resolved.title || reel.title || '';
+        // Threads-only rule (owner decision): a caption over
+        // Threads' 500 weighted characters / 5 links is truncated
+        // to fit and posted, NOT skipped. The posted row carries
+        // the truncated text, so history shows what actually went
+        // out. If truncation still leaves an invalid text, the
+        // reel fails loudly with the reason — never silently
+        // dropped, never posted invalid — and the loop stops,
+        // as on any publish failure today. Later reels are
+        // still tried after a successful truncated post.
         if (mirror.targetPlatform === 'threads') {
           const captionError = validateThreadsText(caption);
           if (captionError) {
-            const skippedId = await deps.claimPost(mirror.id, {
-              sourcePostId: reel.video_id,
-              caption,
-              videoUrl: resolved.playUrl,
-              coverUrl: reel.cover ?? null,
-              sourceCreatedAt: toIso(reel.create_time),
-              status: 'skipped',
-              error: captionError,
-            });
-            if (skippedId) {
-              result.skipped += 1;
-              mirrorError = captionError;
+            caption = truncateThreadsCaption(caption);
+            const truncatedError = validateThreadsText(caption);
+            if (truncatedError) {
+              const failedId = await deps.claimPost(mirror.id, {
+                sourcePostId: reel.video_id,
+                caption,
+                videoUrl: resolved.playUrl,
+                coverUrl: reel.cover ?? null,
+                sourceCreatedAt: toIso(reel.create_time),
+                status: 'failed',
+                error: truncatedError,
+              });
+              if (failedId) {
+                result.failed += 1;
+                mirrorError = truncatedError;
+              }
+              break;
             }
-            continue;
           }
         }
         const claimedId = await deps.claimPost(mirror.id, {

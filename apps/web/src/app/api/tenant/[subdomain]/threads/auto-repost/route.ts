@@ -6,6 +6,7 @@ import {
   getTokenEncryptionKey,
   ListMirrorsResponseSchema,
   selectLatestReel,
+  truncateThreadsCaption,
   validateThreadsText,
   type MirrorView,
 } from '@fbuploadpro/contracts';
@@ -617,179 +618,160 @@ export async function handleCreateThreadsMirror(
         typeof latest.create_time === 'number'
           ? new Date(latest.create_time * 1000).toISOString()
           : null;
-      const captionError = validateThreadsText(caption);
-      if (captionError) {
-        // Over-long Threads caption: skipped with the plain reason,
-        // never truncated. Later reels are still tried by the tick.
-        const { error: skipError } = await db.from('mirror_posts').insert({
+      let resolvedUrl: string | null = null;
+      let resolveError: string | null = null;
+      try {
+        const resolveVideo = deps.resolveTikwmVideo ?? resolveTikwmVideo;
+        const resolved = await resolveVideo(
+          `https://www.tiktok.com/@${username}/video/${latest.video_id}`
+        );
+        resolvedUrl = resolved.playUrl;
+        // Resolved title is verbatim; fall back to the feed title.
+        if (resolved.title) caption = resolved.title;
+      } catch (err) {
+        resolveError = err instanceof Error ? err.message : 'The latest reel could not be resolved.';
+      }
+      // Mirror rule (owner decision): an over-limit Threads caption
+      // is truncated to fit and posted, not skipped. The claim
+      // below carries the truncated caption, so history shows
+      // what actually went out. A caption error after truncation
+      // is defensive-only: the publish guard below still rejects
+      // it, and the failure branch marks the reel failed.
+      if (validateThreadsText(caption)) {
+        caption = truncateThreadsCaption(caption);
+      }
+      if (!resolvedUrl) {
+        const { error: claimError } = await db.from('mirror_posts').insert({
           mirror_id: mirror.id,
           source_post_id: latest.video_id,
           caption,
           video_url: null,
           cover_url: latest.cover ?? null,
           source_created_at: sourceCreatedAt,
-          status: 'skipped',
-          error: captionError,
+          status: 'pending',
+          error: resolveError,
         });
-        if (skipError && skipError.code !== '23505') {
-          throw new Error(`Failed to record skipped reel: ${skipError.message}`);
+        if (claimError && claimError.code !== '23505') {
+          throw new Error(`Failed to claim latest reel: ${claimError.message}`);
         }
         await db
           .from('mirrors')
-          .update({ status: 'error', last_error: captionError })
+          .update({ status: 'error', last_error: resolveError })
           .eq('id', mirror.id);
         immediatePost = {
           attempted: true,
-          status: 'skipped',
+          status: 'pending',
           sourcePostId: latest.video_id,
           publishedPostId: null,
-          error: captionError,
+          error: resolveError,
         };
       } else {
-        let resolvedUrl: string | null = null;
-        let resolveError: string | null = null;
-        try {
-          const resolveVideo = deps.resolveTikwmVideo ?? resolveTikwmVideo;
-          const resolved = await resolveVideo(
-            `https://www.tiktok.com/@${username}/video/${latest.video_id}`
-          );
-          resolvedUrl = resolved.playUrl;
-          // Resolved title is verbatim; fall back to the feed title.
-          if (resolved.title) caption = resolved.title;
-        } catch (err) {
-          resolveError = err instanceof Error ? err.message : 'The latest reel could not be resolved.';
-        }
-        if (!resolvedUrl) {
-          const { error: claimError } = await db.from('mirror_posts').insert({
+        // Claim BEFORE publishing: the unique constraint means an
+        // overlapping tick can never double-post this reel.
+        const { data: postData, error: claimError } = await db
+          .from('mirror_posts')
+          .insert({
             mirror_id: mirror.id,
             source_post_id: latest.video_id,
             caption,
-            video_url: null,
+            video_url: resolvedUrl,
             cover_url: latest.cover ?? null,
             source_created_at: sourceCreatedAt,
             status: 'pending',
-            error: resolveError,
-          });
-          if (claimError && claimError.code !== '23505') {
-            throw new Error(`Failed to claim latest reel: ${claimError.message}`);
-          }
-          await db
-            .from('mirrors')
-            .update({ status: 'error', last_error: resolveError })
-            .eq('id', mirror.id);
-          immediatePost = {
-            attempted: true,
-            status: 'pending',
-            sourcePostId: latest.video_id,
-            publishedPostId: null,
-            error: resolveError,
-          };
-        } else {
-          // Claim BEFORE publishing: the unique constraint means an
-          // overlapping tick can never double-post this reel.
-          const { data: postData, error: claimError } = await db
-            .from('mirror_posts')
-            .insert({
-              mirror_id: mirror.id,
-              source_post_id: latest.video_id,
-              caption,
-              video_url: resolvedUrl,
-              cover_url: latest.cover ?? null,
-              source_created_at: sourceCreatedAt,
+          })
+          .select('id')
+          .single();
+        if (claimError && claimError.code !== '23505') {
+          throw new Error(`Failed to claim latest reel: ${claimError.message}`);
+        }
+        const postId = (postData as { id?: unknown } | null)?.id;
+        if (typeof postId === 'string') {
+          const encryptionKey = getTokenEncryptionKey();
+          const accessToken = destination.encrypted_destination_token
+            ? await decryptToken(destination.encrypted_destination_token, encryptionKey)
+            : null;
+          if (!accessToken) {
+            const message = 'This Threads account has no posting token. Reconnect it in Accounts.';
+            await db
+              .from('mirror_posts')
+              .update({ error: message })
+              .eq('id', postId);
+            await db
+              .from('mirrors')
+              .update({ status: 'error', last_error: message })
+              .eq('id', mirror.id);
+            immediatePost = {
+              attempted: true,
               status: 'pending',
-            })
-            .select('id')
-            .single();
-          if (claimError && claimError.code !== '23505') {
-            throw new Error(`Failed to claim latest reel: ${claimError.message}`);
-          }
-          const postId = (postData as { id?: unknown } | null)?.id;
-          if (typeof postId === 'string') {
-            const encryptionKey = getTokenEncryptionKey();
-            const accessToken = destination.encrypted_destination_token
-              ? await decryptToken(destination.encrypted_destination_token, encryptionKey)
-              : null;
-            if (!accessToken) {
-              const message = 'This Threads account has no posting token. Reconnect it in Accounts.';
+              sourcePostId: latest.video_id,
+              publishedPostId: null,
+              error: message,
+            };
+          } else {
+            try {
+              const publish = deps.publishThreadsVideo ?? publishThreadsVideo;
+              const publishedId = await publish({
+                threadsUserId: destination.external_destination_id,
+                accessToken,
+                videoUrl: resolvedUrl,
+                caption,
+              });
               await db
                 .from('mirror_posts')
-                .update({ error: message })
+                .update({ status: 'posted', published_post_id: publishedId, error: null })
                 .eq('id', postId);
+              await db
+                .from('mirrors')
+                .update({
+                  last_posted_source_id: latest.video_id,
+                  last_posted_create_time:
+                    typeof latest.create_time === 'number' ? latest.create_time : null,
+                  last_error: null,
+                })
+                .eq('id', mirror.id);
+              immediatePost = {
+                attempted: true,
+                status: 'posted',
+                sourcePostId: latest.video_id,
+                publishedPostId: publishedId,
+                error: null,
+              };
+            } catch (err) {
+              const message =
+                err instanceof ThreadsVideoError
+                  ? err.message
+                  : err instanceof Error
+                    ? err.message
+                    : 'The latest reel could not be posted to Threads.';
+              // A caption error here is defensive-only (the
+              // caption was already truncated before claiming):
+              // it fails the reel, never a skip and never a
+              // retryable pending post — the tick applies the
+              // same rule.
+              const isCaptionError =
+                err instanceof ThreadsVideoError && err.step === 'caption';
+              if (isCaptionError) {
+                await db
+                  .from('mirror_posts')
+                  .update({ status: 'failed', error: message })
+                  .eq('id', postId);
+              } else {
+                await db
+                  .from('mirror_posts')
+                  .update({ error: message })
+                  .eq('id', postId);
+              }
               await db
                 .from('mirrors')
                 .update({ status: 'error', last_error: message })
                 .eq('id', mirror.id);
               immediatePost = {
                 attempted: true,
-                status: 'pending',
+                status: isCaptionError ? 'failed' : 'pending',
                 sourcePostId: latest.video_id,
                 publishedPostId: null,
                 error: message,
               };
-            } else {
-              try {
-                const publish = deps.publishThreadsVideo ?? publishThreadsVideo;
-                const publishedId = await publish({
-                  threadsUserId: destination.external_destination_id,
-                  accessToken,
-                  videoUrl: resolvedUrl,
-                  caption,
-                });
-                await db
-                  .from('mirror_posts')
-                  .update({ status: 'posted', published_post_id: publishedId, error: null })
-                  .eq('id', postId);
-                await db
-                  .from('mirrors')
-                  .update({
-                    last_posted_source_id: latest.video_id,
-                    last_posted_create_time:
-                      typeof latest.create_time === 'number' ? latest.create_time : null,
-                    last_error: null,
-                  })
-                  .eq('id', mirror.id);
-                immediatePost = {
-                  attempted: true,
-                  status: 'posted',
-                  sourcePostId: latest.video_id,
-                  publishedPostId: publishedId,
-                  error: null,
-                };
-              } catch (err) {
-                const message =
-                  err instanceof ThreadsVideoError
-                    ? err.message
-                    : err instanceof Error
-                      ? err.message
-                      : 'The latest reel could not be posted to Threads.';
-                // A resolved title that exceeds Threads' caption cap
-                // is a skip (never a truncation), not a retryable
-                // pending post — the tick applies the same rule.
-                const isCaptionSkip =
-                  err instanceof ThreadsVideoError && err.step === 'caption';
-                if (isCaptionSkip) {
-                  await db
-                    .from('mirror_posts')
-                    .update({ status: 'skipped', error: message })
-                    .eq('id', postId);
-                } else {
-                  await db
-                    .from('mirror_posts')
-                    .update({ error: message })
-                    .eq('id', postId);
-                }
-                await db
-                  .from('mirrors')
-                  .update({ status: 'error', last_error: message })
-                  .eq('id', mirror.id);
-                immediatePost = {
-                  attempted: true,
-                  status: isCaptionSkip ? 'skipped' : 'pending',
-                  sourcePostId: latest.video_id,
-                  publishedPostId: null,
-                  error: message,
-                };
-              }
             }
           }
         }

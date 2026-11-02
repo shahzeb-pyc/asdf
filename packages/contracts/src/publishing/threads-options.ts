@@ -105,6 +105,134 @@ export function validateThreadsText(text: string): string | null {
 }
 
 // ==========================================
+// Mirror caption truncation (owner decision)
+// ==========================================
+//
+// For TikTok-mirror posts to Threads ONLY, an over-limit caption is
+// truncated to fit and then posted — it is NOT skipped. The owner
+// explicitly overrode the old mirror rule ("never truncated, that
+// would fabricate the post") for mirrors: the posted row's caption
+// is the truncated text actually posted, so history stays honest
+// about what went out. This helper is NOT used by user-written
+// Threads posts: those still go through validateThreadsText and
+// are rejected when over the limit, never silently cut down.
+
+const THREADS_LINK_PATTERN = /https?:\/\/[^\s]+/gi;
+
+/** Split text into grapheme clusters (never split an emoji). */
+function graphemeSegments(text: string): string[] {
+  const segmenterCtor = (
+    Intl as {
+      Segmenter?: new (
+        locale: string | undefined,
+        options: { granularity: 'grapheme' },
+      ) => { segment(input: string): Iterable<{ segment: string }> };
+    }
+  ).Segmenter;
+  if (typeof segmenterCtor === 'function') {
+    return Array.from(
+      new segmenterCtor(undefined, { granularity: 'grapheme' }).segment(text),
+      (part) => part.segment,
+    );
+  }
+  // Fallback: code points keep surrogate pairs intact, though a
+  // multi-code-point cluster (ZWJ sequence, combining mark) may
+  // be cut between code points on runtimes without Segmenter.
+  return Array.from(text);
+}
+
+/**
+ * Remove link URLs beyond the first THREADS_MAX_LINKS, keeping the
+ * surrounding non-link words. A removed link also consumes the
+ * whitespace run that followed it, so the words around it do not
+ * end up double-spaced. Text with no extra links is returned
+ * byte-for-byte unchanged.
+ */
+function removeExtraThreadsLinks(text: string): string {
+  const pattern = new RegExp(THREADS_LINK_PATTERN.source, 'gi');
+  let kept = 0;
+  let changed = false;
+  let out = '';
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) {
+    kept += 1;
+    if (kept <= THREADS_MAX_LINKS) continue;
+    changed = true;
+    out += text.slice(lastIndex, match.index);
+    let end = match.index + match[0].length;
+    while (
+      end < text.length &&
+      (text[end] === ' ' ||
+        text[end] === '\t' ||
+        text[end] === '\n' ||
+        text[end] === '\r')
+    ) {
+      end += 1;
+    }
+    lastIndex = end;
+  }
+  if (!changed) return text;
+  out += text.slice(lastIndex);
+  return out.replace(/\s+$/, '');
+}
+
+/**
+ * Cut text to at most THREADS_MAX_TEXT_WEIGHTED_CHARACTERS of
+ * UTF-8-weighted length, without splitting a grapheme cluster and
+ * without cutting in the middle of a link (a cut that would land
+ * inside a link cuts before that link instead). No ellipsis or
+ * other marker is added. Text already within the limit is
+ * returned unchanged.
+ */
+function truncateToThreadsWeightedLength(text: string): string {
+  if (threadsWeightedTextLength(text) <= THREADS_MAX_TEXT_WEIGHTED_CHARACTERS) {
+    return text;
+  }
+  const linkRanges: Array<{ start: number; end: number }> = [];
+  const pattern = new RegExp(THREADS_LINK_PATTERN.source, 'gi');
+  let linkMatch: RegExpExecArray | null;
+  while ((linkMatch = pattern.exec(text)) !== null) {
+    linkRanges.push({
+      start: linkMatch.index,
+      end: linkMatch.index + linkMatch[0].length,
+    });
+  }
+  let kept = '';
+  let keptWeight = 0;
+  let keptUtf16Length = 0;
+  for (const segment of graphemeSegments(text)) {
+    const weight = textEncoder.encode(segment).length;
+    if (keptWeight + weight > THREADS_MAX_TEXT_WEIGHTED_CHARACTERS) break;
+    kept += segment;
+    keptWeight += weight;
+    keptUtf16Length += segment.length;
+  }
+  // A cut inside a link is not a cut at all: back up to the link start.
+  for (const range of linkRanges) {
+    if (keptUtf16Length > range.start && keptUtf16Length < range.end) {
+      kept = text.slice(0, range.start);
+      break;
+    }
+  }
+  return kept.replace(/\s+$/, '');
+}
+
+/**
+ * Truncate a mirror caption so it fits BOTH Threads limits, in
+ * order: links first (keep the first 5, remove the rest), then
+ * weighted length (cut to 500, never splitting a grapheme or a
+ * link, no ellipsis). The result always satisfies
+ * validateThreadsText, unless the input is pathological in a way
+ * this helper cannot fix — callers must still validate the result
+ * and fail the reel loudly rather than posting an invalid text.
+ */
+export function truncateThreadsCaption(text: string): string {
+  const afterLinks = removeExtraThreadsLinks(text);
+  return truncateToThreadsWeightedLength(afterLinks);
+}
+
+// ==========================================
 // Media descriptors
 // ==========================================
 
