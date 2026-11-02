@@ -414,7 +414,7 @@ test.describe('billing at phone widths', () => {
     });
 
     await gotoBilling(page, 'my-plan');
-    await expect(page.getByText('Monthly plan')).toBeVisible();
+    await expect(page.getByText('Monthly plan', { exact: true })).toBeVisible();
     await expect(page.getByText('7 included, 0 in use')).toBeVisible();
     await expectNoDocumentOverflow(page);
 
