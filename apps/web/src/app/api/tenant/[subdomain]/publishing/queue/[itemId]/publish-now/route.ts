@@ -182,8 +182,13 @@ async function fetchPublishNowGate(
  * Publish-now for the Facebook Page section, on the unified
  * `queue_items` table (Phase 7): the item is re-queued for immediate
  * dispatch (scheduled_time = now, any stale claim marker cleared —
- * the same requeue semantics as the destination queue's publish-now).
- * Scoping is by workspace, the unified tables' isolation boundary.
+ * the same requeue semantics as the destination queue's publish-now)
+ * AND marked with publish_now_requested_at, which the worker's
+ * immediate tick claims directly (20261102140000). The marker is
+ * what keeps the item out of posting slots: the slot claim excludes
+ * marked rows, so a publish-now post goes out extra, never as a
+ * slot post. Scoping is by workspace, the unified tables' isolation
+ * boundary.
  */
 export async function handlePublishNow(
   request: NextRequest,
@@ -291,6 +296,18 @@ export async function handlePublishNow(
       );
     }
 
+    // In-flight guard (20261102140000): a second tap while the
+    // worker already holds the row must not re-queue it — the
+    // consumer's in-flight message plus a fresh queued copy would
+    // double-post. The row hides the button while publishing, so
+    // this is an API-level backstop, not a UI path.
+    if (existing.status === 'publishing') {
+      return NextResponse.json(
+        { error: 'ALREADY_PUBLISHING', message: 'This post is already publishing.' },
+        { status: 409 }
+      );
+    }
+
     // Status gate, after the idempotency replay above (a replayed
     // acknowledgement is not a new dispatch) and after the
     // published check: a non-active destination is a 409 here.
@@ -309,15 +326,17 @@ export async function handlePublishNow(
       if (gate) return gate;
     }
 
-    // Update scheduled_time to now() and status to 'queued'.
-    // R12: publish-now of a failed item is a re-queue, so it gets
-    // a fresh retry budget; the CASE reads the pre-update status,
-    // so any other status keeps its stored count.
+    // Update scheduled_time to now() and status to 'queued', and
+    // mark the publish-now request for the worker's immediate tick
+    // (20261102140000). R12: publish-now of a failed item is a
+    // re-queue, so it gets a fresh retry budget; the CASE reads the
+    // pre-update status, so any other status keeps its stored count.
     await dbClient.query(
       `UPDATE queue_items
        SET scheduled_time = now(),
            status = 'queued',
            claimed_at = NULL,
+           publish_now_requested_at = now(),
            retry_count = CASE WHEN status = 'failed' THEN 0 ELSE retry_count END,
            updated_at = now()
        WHERE id = $1 AND workspace_id = $2`,
@@ -376,6 +395,15 @@ export async function handlePublishNow(
     );
   }
 
+  // Same in-flight guard as the SQL branch above: never re-queue a
+  // row the worker already holds.
+  if (existing.status === 'publishing') {
+    return NextResponse.json(
+      { error: 'ALREADY_PUBLISHING', message: 'This post is already publishing.' },
+      { status: 409 }
+    );
+  }
+
   // Same fail-loud rule as the SQL branch above: a missing
   // destination_id must not skip the gate and proceed to update.
   if (!existing.destination_id) {
@@ -396,6 +424,8 @@ export async function handlePublishNow(
       scheduled_time: new Date().toISOString(),
       status: 'queued',
       claimed_at: null,
+      // Immediate-dispatch marker for the worker tick (20261102140000).
+      publish_now_requested_at: new Date().toISOString(),
       // R12: same failed-only fresh budget as the SQL branch.
       ...(existing.status === 'failed' ? { retry_count: 0 } : {}),
       updated_at: new Date().toISOString(),

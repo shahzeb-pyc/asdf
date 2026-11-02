@@ -285,14 +285,22 @@ class FakeDb {
     }
     if (sql.includes('UPDATE queue_items')) {
       if (sql.includes('SET caption')) {
-        // updateDestinationQueueItem: params[9]=status, [12]=id
-        // (R12: retry_count is $12, shifting the WHERE params).
-        const row = this.queueItems.find((q) => q.id === params[12]);
+        // updateDestinationQueueItem: params[9]=status, [11]=retry_count.
+        // The id param shifts with the publish-now marker (20261102140000):
+        // with the marker, publish_now_requested_at is $13 and the id
+        // is params[13]; without it (retry), the id stays params[12].
+        const withMarker = sql.includes('publish_now_requested_at');
+        const idParam = withMarker ? params[13] : params[12];
+        const row = this.queueItems.find((q) => q.id === idParam);
         if (!row) return [];
         row.caption = String(params[0]);
         row.status = String(params[9]);
         row.scheduled_time = params[7] == null ? null : String(params[7]);
         row.retry_count = Number(params[11]);
+        if (withMarker) {
+          (row as unknown as Record<string, unknown>).publish_now_requested_at =
+            String(params[12]);
+        }
         return [row];
       }
       // Publish-now legacy update: params[0]=id, [1]=workspace.

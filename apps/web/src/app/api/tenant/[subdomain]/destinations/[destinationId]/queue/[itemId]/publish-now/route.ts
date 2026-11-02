@@ -105,6 +105,17 @@ export async function handleDestinationPublishNow(
     );
   }
 
+  // In-flight guard (20261102140000): never re-queue a row the
+  // worker already holds — the consumer's in-flight message plus a
+  // fresh queued copy would double-post. Mirrors the queue
+  // publish-now route's guard.
+  if (existing.status === 'publishing') {
+    return NextResponse.json(
+      { error: 'ALREADY_PUBLISHING', message: 'This post is already publishing.' },
+      { status: 409 }
+    );
+  }
+
   // Status family 3A: the same PAGE_NOT_PUBLISHABLE gate the retry
   // route applies. Only an active destination may publish now; every
   // other wire status is a 409, never a fake success for a post that
@@ -169,6 +180,10 @@ export async function handleDestinationPublishNow(
       slotId: existing.slot_id,
       status: 'queued',
       claimedAt: null,
+      // Immediate-dispatch marker for the worker tick
+      // (20261102140000): the slot claim excludes marked rows, so
+      // this post goes out extra, never as a slot post.
+      publishNowRequestedAt: new Date().toISOString(),
       // R12: publish-now of a failed item is a re-queue, so it
       // gets the same fresh retry budget as a retry. Any other
       // status keeps its stored count.

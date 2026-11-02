@@ -202,6 +202,14 @@ export interface DestinationQueueItemState {
   /** Null clears a stale claim marker when an item is requeued. */
   claimedAt: string | null;
   /**
+   * Publish-now request timestamp (20261102140000). Optional and
+   * write-only-when-present: only the publish-now route sets it.
+   * Callers that omit it leave the stored marker untouched — so a
+   * retry preserves a publish-now item's marker and the item
+   * re-enters the immediate path instead of falling back to slots.
+   */
+  publishNowRequestedAt?: string | null;
+  /**
    * R12: the full-state write carries the retry budget too, so a
    * re-queue can reset it. Callers pass the stored count to
    * preserve it, or 0 when the item re-enters the queue after a
@@ -220,6 +228,7 @@ export async function updateDestinationQueueItem(
   state: DestinationQueueItemState
 ): Promise<DestinationQueueItemRow | null> {
   if (isLegacyClient(client)) {
+    const withMarker = state.publishNowRequestedAt !== undefined;
     const rows = (await (client as DatabaseClient).query(
       `UPDATE queue_items
        SET caption = $1,
@@ -233,9 +242,13 @@ export async function updateDestinationQueueItem(
            slot_id = $9,
            status = $10,
            claimed_at = $11,
-           retry_count = $12,
+           retry_count = $12${
+             withMarker ? ',\n           publish_now_requested_at = $13' : ''
+           },
            updated_at = now()
-       WHERE id = $13 AND workspace_id = $14 AND destination_id = $15
+       WHERE id = ${withMarker ? '$14' : '$13'} AND workspace_id = ${
+         withMarker ? '$15' : '$14'
+       } AND destination_id = ${withMarker ? '$16' : '$15'}
        RETURNING ${QUEUE_ITEM_COLUMNS}`,
       [
         state.caption,
@@ -250,6 +263,7 @@ export async function updateDestinationQueueItem(
         state.status,
         state.claimedAt,
         state.retryCount,
+        ...(withMarker ? [state.publishNowRequestedAt] : []),
         itemId,
         workspaceId,
         destinationId,
@@ -275,6 +289,9 @@ export async function updateDestinationQueueItem(
       status: state.status,
       claimed_at: state.claimedAt,
       retry_count: state.retryCount,
+      ...(state.publishNowRequestedAt !== undefined
+        ? { publish_now_requested_at: state.publishNowRequestedAt }
+        : {}),
       updated_at: new Date().toISOString(),
     })
     .eq('id', itemId)
