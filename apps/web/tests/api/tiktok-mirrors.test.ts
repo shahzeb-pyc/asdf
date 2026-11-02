@@ -746,6 +746,9 @@ describe('POST /tiktok-mirrors/[mirrorId]/posts/[postId]/retry', () => {
     expect(publishInstagramReel).toHaveBeenCalledWith({
       igUserId: 'ig_123',
       accessToken: 'acct-token-plain',
+      // Mock account row carries no metadata, so it resolves as
+      // legacy (never guessed as BISU) and stays on the legacy host.
+      isBisu: false,
       videoUrl: 'https://example.com/v1.mp4',
       caption: 'My exact caption',
     });

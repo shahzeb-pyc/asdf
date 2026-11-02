@@ -107,6 +107,14 @@ type SupabaseChain = {
 const ACCOUNT_MAP: Record<string, string> = {
   '11111111-1111-4111-a111-111111111111': 'ig-user-1',
   '22222222-2222-4222-a222-222222222222': 'ig-user-2',
+  '33333333-3333-4333-a333-333333333333': 'ig-user-3',
+};
+
+// Metadata per account row: only the BISU account carries
+// token_kind 'bisu'; the legacy accounts carry no metadata at all,
+// exactly like pre-Unified rows.
+const ACCOUNT_METADATA: Record<string, unknown> = {
+  '33333333-3333-4333-a333-333333333333': { token_kind: 'bisu' },
 };
 
 let mediaRow: {
@@ -133,6 +141,7 @@ let publishShouldFail = false;
 let containerStatus = 'FINISHED';
 let containerCounter = 0;
 let publishedContainers = new Set<string>();
+let graphUrls: string[] = [];
 
 let periodRow: Record<string, unknown> = {};
 let periodPresent = true;
@@ -168,6 +177,7 @@ function supabaseBuilder(table: string): SupabaseChain {
           data: {
             external_account_id: igUserId,
             encrypted_access_token: 'enc-token',
+            metadata: id ? (ACCOUNT_METADATA[id] ?? null) : null,
           },
           error: null,
         };
@@ -209,6 +219,7 @@ beforeEach(() => {
   containerStatus = 'FINISHED';
   containerCounter = 0;
   publishedContainers = new Set<string>();
+  graphUrls = [];
   idempotencyStore.clear();
   periodRow = {
     id: 'period-1',
@@ -238,6 +249,7 @@ beforeEach(() => {
 
   vi.stubGlobal('fetch', async (input: unknown, init?: { method?: string; body?: unknown }) => {
     const url = String(input);
+    if (url.startsWith('https://graph.')) graphUrls.push(url);
     if (url.includes('media.example.com') || url.includes('r2.example.com')) {
       const isVideo = url.endsWith('.mp4');
       return {
@@ -457,6 +469,41 @@ describe('POST instagram/publish-now', () => {
     );
     expect(second.status).toBe(200);
     expect(second.body.results[0].status).toBe('published');
+  });
+
+  it('sends a BISU account to graph.facebook.com for every Graph call', async () => {
+    const { status, body } = await callPost({
+      ...photoBody([
+        { accountId: '33333333-3333-4333-a333-333333333333', accountName: 'Bisu Creator' },
+      ]),
+      firstComment: 'Nice!',
+    });
+    expect(status).toBe(200);
+    expect(body.results[0].status).toBe('published');
+    // Container-create, status poll, media_publish, and first
+    // comment must ALL go to the Unified host for a BISU token —
+    // this is the regression for error 190 on a just-connected
+    // account, which the old hardcoded legacy host caused.
+    expect(graphUrls.length).toBeGreaterThan(0);
+    for (const url of graphUrls) {
+      expect(url.startsWith('https://graph.facebook.com/v26.0/')).toBe(true);
+    }
+    expect(graphUrls.some((url) => url.includes('/media'))).toBe(true);
+    expect(graphUrls.some((url) => url.includes('/media_publish'))).toBe(true);
+    expect(graphUrls.some((url) => url.includes('/comments'))).toBe(true);
+  });
+
+  it('keeps a legacy account (no token_kind) on graph.instagram.com', async () => {
+    const { status, body } = await callPost({
+      ...photoBody([{ accountId: ACCOUNT_1, accountName: 'Creator One' }]),
+      firstComment: 'Nice!',
+    });
+    expect(status).toBe(200);
+    expect(body.results[0].status).toBe('published');
+    expect(graphUrls.length).toBeGreaterThan(0);
+    for (const url of graphUrls) {
+      expect(url.startsWith('https://graph.instagram.com/v26.0/')).toBe(true);
+    }
   });
 
   it('returns plain-language validation messages, never a bare code', async () => {

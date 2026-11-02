@@ -937,6 +937,44 @@ async function resolveInstagramDestination(
 }
 
 /** Decrypted Instagram account token for one account id (in memory only). */
+/**
+ * Whether an Instagram account row is a Unified Login (BISU)
+ * account: metadata.token_kind === 'bisu' exactly. Anything else
+ * (absent metadata, absent token_kind, any other value) is legacy
+ * and must never be guessed as BISU. Mirrors the worker and
+ * Publish Now rule.
+ */
+async function loadInstagramAccountIsBisu(
+  db: Db,
+  workspaceId: string,
+  accountId: string
+): Promise<boolean> {
+  let metadata: unknown = null;
+  if (isLegacyClient(db)) {
+    const rows = (await db.query(
+      `SELECT metadata FROM social_accounts WHERE id = $1 AND workspace_id = $2 AND platform = 'instagram' LIMIT 1`,
+      [accountId, workspaceId]
+    )) as Record<string, unknown>[];
+    metadata = rows[0]?.metadata ?? null;
+  } else {
+    const supabase = db as SupabaseClient;
+    const { data, error } = await supabase
+      .from('social_accounts')
+      .select('metadata')
+      .eq('id', accountId)
+      .eq('workspace_id', workspaceId)
+      .eq('platform', 'instagram')
+      .maybeSingle();
+    if (error) throw new Error(`Failed to load Instagram account: ${error.message}`);
+    metadata = (data as Record<string, unknown> | null)?.metadata ?? null;
+  }
+  return (
+    typeof metadata === 'object' &&
+    metadata !== null &&
+    (metadata as Record<string, unknown>).token_kind === 'bisu'
+  );
+}
+
 async function loadInstagramAccountToken(
   db: Db,
   workspaceId: string,
@@ -1430,6 +1468,16 @@ export async function handleCreateMirror(
             const postId = await publishIgReel({
               igUserId: destination.external_destination_id,
               accessToken: publishToken,
+              // accountId is optional in the schema; without it
+              // there is no account row to be BISU, so default to
+              // the legacy host rather than guessing.
+              isBisu: parsed.data.accountId
+                ? await loadInstagramAccountIsBisu(
+                    db,
+                    workspaceId,
+                    parsed.data.accountId
+                  )
+                : false,
               videoUrl,
               caption,
             });

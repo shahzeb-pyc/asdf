@@ -18,7 +18,8 @@
  * failure-stays-pending semantics as the Facebook immediate post.
  */
 
-const GRAPH_BASE_URL = 'https://graph.instagram.com/v26.0';
+const LEGACY_GRAPH_BASE_URL = 'https://graph.instagram.com/v26.0';
+const UNIFIED_GRAPH_BASE_URL = 'https://graph.facebook.com/v26.0';
 
 export class InstagramReelError extends Error {
   readonly step: string;
@@ -91,6 +92,15 @@ export async function publishInstagramReel(params: {
   videoUrl: string;
   caption: string;
   coverUrl?: string | null;
+  /**
+   * Unified Login (BISU) token? True routes every Graph call to
+   * graph.facebook.com; false or omitted keeps the legacy
+   * graph.instagram.com host. Unknown must never guess BISU — the
+   * caller resolves this from the account row's metadata
+   * (token_kind === 'bisu'), exactly like the worker and Publish
+   * Now do.
+   */
+  isBisu?: boolean;
   fetchFn?: FetchFn;
   /** Poll interval between container status reads (tests pass 0). */
   pollIntervalMs?: number;
@@ -104,12 +114,16 @@ export async function publishInstagramReel(params: {
     videoUrl,
     caption,
     coverUrl,
+    isBisu = false,
     fetchFn = fetch,
     pollIntervalMs = 5_000,
     maxPolls = 12,
     sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)),
   } = params;
   const encodedIgUserId = encodeURIComponent(igUserId);
+  const GRAPH_BASE_URL = isBisu
+    ? UNIFIED_GRAPH_BASE_URL
+    : LEGACY_GRAPH_BASE_URL;
 
   const created = await graphRequest(
     `${GRAPH_BASE_URL}/${encodedIgUserId}/media`,
