@@ -6,29 +6,24 @@ import { getServerSessionContext } from '@/lib/auth';
 
 import { loadHomeData } from '@/components/home/home-data';
 import {
-  buildChecklist,
   buildFreeQuickLinks,
   buildPaidQuickLinks,
-  isChecklistComplete,
 } from '@/components/home/home-helpers';
 import {
   AdminPanelCard,
   ExpiredBanner,
   FreePlanCard,
   HomeErrorCard,
-  HomeHero,
-  NeedsAttention,
-  PagesEmptyState,
-  PaidPlanBanner,
+  HomeHeader,
+  HomeOldUsersBanner,
+  MuseAssistantCard,
+  PaidPlanCard,
   QuickLinks,
-  SetupChecklist,
-  SummaryCards,
   UpgradeCard,
 } from '@/components/home/home-sections';
 import { buildTenantHref, shouldUseCleanTenantPaths } from '@/lib/tenant-href';
 
 import { getWorkspaceDisplayName } from './workspace-display-name';
-import { OldUsersNoticeBanner } from '@/components/shared/old-users-notice-banner';
 
 /** Title resolves through the tenant layout's `<Section> · <Workspace>` template (§3.3.4). */
 export const metadata: Metadata = { title: 'Home' };
@@ -38,32 +33,29 @@ interface TenantIndexPageProps {
 }
 
 /**
- * Workspace home — the overview dashboard, rebuilt from the old agency
- * dashboard's shape (welcome hero, setup checklist, at-a-glance
- * numbers, pages needing attention, quick links) adapted to today's
- * subscription model (plan instead of token balance, storage quota
- * instead of token tiers).
+ * Workspace home — the redesigned overview dashboard.
  *
  * HARD CONSTRAINT (owner): no queues or posts data anywhere on Home.
  * Nothing here reads queue items, counts scheduled/published/failed
- * posts, or links to Queue or Calendar. Posting times appear only as
- * a setup-checklist step (a time configured, not a post) and as a
- * quick link to the page tab that manages them.
+ * posts, or links to Queue or Calendar.
  *
  * Sections by plan (Home stays exempt from the free-plan dialog):
- * - Paid: hero, plan banner, setup checklist (hidden once complete),
- *   summary cards (or the add-first-page empty state at zero pages),
- *   needs-attention pages, quick links.
- * - Free: hero, free plan card, upgrade card, Prompt Library + Billing
- *   links only (nothing that would throw the upgrade dialog).
- * - Expired: hero plus the expired banner and renew button only.
+ * - Paid: header, old-users banner, paid plan card, quick links
+ *   (Media Library, Creator Finder, Facebook Accounts, Facebook
+ *   Pages, Billing), Muse Assistant rail card.
+ * - Free: header, old-users banner, free plan card, upgrade card,
+ *   Prompt Library + Billing links only, Muse Assistant rail card.
+ * - Expired: header, old-users banner, expired banner and renew only.
  * - Admin: redirected to the admin section (/admin/subscriptions)
  *   before render, so the admin branch below is only a fallback and
  *   never the landing an admin sees.
  *
+ * The old dashboard's Connected Pages / Followers Gained summary
+ * cards, setup checklist, needs-attention list and add-first-page
+ * empty state are not in the approved redesign and are not rendered.
+ *
  * Server-first: all data loads in `loadHomeData` (one server module,
- * session + service-role client, every row scoped to the resolved
- * workspace or the session user). Any load failure renders a visible
+ * session + service-role client). Any load failure renders a visible
  * error card, never invented numbers.
  */
 export default async function TenantIndexPage({ params }: Readonly<TenantIndexPageProps>) {
@@ -96,86 +88,73 @@ export default async function TenantIndexPage({ params }: Readonly<TenantIndexPa
   const pagesHref = href('/pages');
   const accountsHref = href('/accounts');
   const mediaHref = href('/media');
+  const creatorFinderHref = href('/creator-finder');
   const promptsHref = href('/prompts');
   const billingHref = href('/my-plan');
   const billingPurchaseHref = href('/purchase');
-  const aduHref = href('/auto-download-upload');
+  const paymentsHref = href('/payments');
 
   const data = await loadHomeData(subdomain);
 
-  // Posting times live on a page's Posting Times tab: link the user's
-  // first Facebook page's tab when one exists, else the Pages section
-  // where a page is added first.
-  const postingTimesHref =
-    data.kind === 'paid' && data.firstFacebookPageId
-      ? href(`/pages/${data.firstFacebookPageId}?tab=calendar`)
-      : pagesHref;
-
-  const checklist =
-    data.kind === 'paid'
-      ? buildChecklist({
-          accountsCount: data.accountsCount,
-          totalDestinations: data.totalDestinations,
-          hasActiveSlot: data.hasActiveSlot,
-          accountsHref,
-          pagesHref,
-          postingTimesHref,
-        })
-      : [];
-
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-6 px-6 py-6">
-      <OldUsersNoticeBanner />
-      <HomeHero workspaceName={workspaceName} />
+    <div className="mx-auto w-full max-w-6xl space-y-6 px-4 py-6 sm:px-6">
+      <HomeHeader
+        workspaceName={workspaceName}
+        subheading={
+          data.kind === 'paid'
+            ? 'Your paid workspace is active and ready to post.'
+            : data.kind === 'free'
+              ? 'You are on the Free plan — Prompt Library only.'
+              : 'Your workspace at a glance.'
+        }
+        promptsHref={promptsHref}
+      />
+      <HomeOldUsersBanner />
 
       {data.kind === 'error' ? <HomeErrorCard message={data.message} /> : null}
 
       {data.kind === 'admin' ? <AdminPanelCard billingHref={billingHref} /> : null}
 
-      {data.kind === 'free' ? (
-        <>
-          <FreePlanCard />
-          <UpgradeCard billingPurchaseHref={billingPurchaseHref} />
-          <QuickLinks links={buildFreeQuickLinks({ promptsHref, billingHref })} />
-        </>
-      ) : null}
-
       {data.kind === 'expired' ? (
         <ExpiredBanner billingPurchaseHref={billingPurchaseHref} />
       ) : null}
 
+      {data.kind === 'free' ? (
+        <div className="grid items-start gap-6 lg:grid-cols-3">
+          <main className="space-y-6 lg:col-span-2">
+            <FreePlanCard />
+            <UpgradeCard billingPurchaseHref={billingPurchaseHref} billingHref={billingHref} />
+            <QuickLinks links={buildFreeQuickLinks({ promptsHref, billingHref })} />
+          </main>
+          <aside>
+            <MuseAssistantCard />
+          </aside>
+        </div>
+      ) : null}
+
       {data.kind === 'paid' ? (
-        <>
-          <PaidPlanBanner data={data} billingPurchaseHref={billingPurchaseHref} />
-          {!isChecklistComplete(checklist) ? <SetupChecklist steps={checklist} /> : null}
-          {data.totalDestinations === 0 ? (
-            <PagesEmptyState pagesHref={pagesHref} />
-          ) : (
-            <SummaryCards
+        <div className="grid items-start gap-6 lg:grid-cols-3">
+          <main className="space-y-6 lg:col-span-2">
+            <PaidPlanCard
               data={data}
-              pagesHref={pagesHref}
-              aduHref={aduHref}
-              mediaHref={mediaHref}
+              billingHref={billingHref}
+              billingPurchaseHref={billingPurchaseHref}
+              paymentsHref={paymentsHref}
             />
-          )}
-          {data.attention.length > 0 ? (
-            <NeedsAttention
-              items={data.attention}
-              totalCount={data.attentionTotal}
-              pagesHref={pagesHref}
+            <QuickLinks
+              links={buildPaidQuickLinks({
+                mediaHref,
+                creatorFinderHref,
+                accountsHref,
+                pagesHref,
+                billingHref,
+              })}
             />
-          ) : null}
-          <QuickLinks
-            links={buildPaidQuickLinks({
-              pagesHref,
-              accountsHref,
-              postingTimesHref,
-              mediaHref,
-              promptsHref,
-              billingHref,
-            })}
-          />
-        </>
+          </main>
+          <aside>
+            <MuseAssistantCard />
+          </aside>
+        </div>
       ) : null}
     </div>
   );

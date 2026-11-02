@@ -9,48 +9,36 @@
  *
  * HARD CONSTRAINT: no queues or posts data anywhere. This module
  * never reads `queue_items`, never counts scheduled/published/failed
- * posts, and never links to Queue or Calendar. The only scheduling
- * fact it reads is slot existence for the setup checklist (a posting
- * time configured, not a post).
+ * posts, and never links to Queue or Calendar.
+ *
+ * The redesigned Home renders only the plan card, quick links and
+ * the Muse rail, so the loader loads only what those render: the
+ * active subscription period (per-platform counts, start and end)
+ * and the media storage quota state. Destination, attention and
+ * follower queries from the old dashboard were removed with the
+ * sections that rendered them — they are not loaded speculatively.
  *
  * Failure contract: every failure (no session, no admin client,
- * unknown workspace, a failed query) is logged loudly and resolves to
- * the `error` variant — the page renders a visible error card, never
- * invented numbers and never a silent partial dashboard.
+ * unknown workspace, an active entitlement without a period, a
+ * failed query) is logged loudly and resolves to the `error`
+ * variant — the page renders a visible error card, never invented
+ * numbers and never a silent partial dashboard.
  */
-import { totalUnits } from '@fbuploadpro/contracts';
+import { totalUnits, type PlatformCounts } from '@fbuploadpro/contracts';
 
 import { getServerSessionContext } from '@/lib/auth';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import { getEntitlement } from '@/lib/billing/entitlement';
 import { getStorageQuotaState as getStorageState } from '@/lib/billing/storage-quota';
 import { logServerError } from '@/lib/server-analytics';
-import { unifiedDestinationStatusToWire } from '@/lib/server/facebook-wire';
 import { getWorkspaceIdentity } from '../../app/tenant/[subdomain]/workspace-display-name';
-
-import type { HomeAttentionStatus } from './home-helpers';
-
-export interface HomeAttentionItem {
-  id: string;
-  name: string;
-  platform: string;
-  status: HomeAttentionStatus;
-  reason: string;
-}
 
 export interface HomePaidData {
   kind: 'paid';
+  periodStartsAt: Date;
   periodEndsAt: Date;
   units: number;
-  totalDestinations: number;
-  activeDestinations: number;
-  facebookAccounts: number;
-  accountsCount: number;
-  hasActiveSlot: boolean;
-  firstFacebookPageId: string | null;
-  attention: HomeAttentionItem[];
-  attentionTotal: number;
-  followersGained: number;
+  platformCounts: PlatformCounts;
   storageUsedBytes: number;
   storageQuotaBytes: number;
 }
@@ -61,52 +49,6 @@ export type HomeData =
   | { kind: 'expired' }
   | HomePaidData
   | { kind: 'error'; message: string };
-
-const ATTENTION_PAGE_LIMIT = 20;
-const FOLLOWERS_PAGE_SIZE = 1000;
-
-const ATTENTION_REASONS: Record<HomeAttentionStatus, string> = {
-  paused: 'Paused',
-  fb_rate_limited: 'Facebook rate limit',
-  page_checkpoint: 'Facebook checkpoint — action needed',
-  invalid_token: 'Session expired — reconnect the account',
-  disconnected: 'Disconnected',
-};
-
-interface DestinationRow {
-  id: string;
-  name: string;
-  platform: string;
-  status: string;
-  metadata: Record<string, unknown> | null;
-  created_at: string;
-}
-
-function asDestinationRow(value: unknown): DestinationRow | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  const row = value as Record<string, unknown>;
-  if (
-    typeof row.id !== 'string' ||
-    typeof row.name !== 'string' ||
-    typeof row.platform !== 'string' ||
-    typeof row.status !== 'string' ||
-    typeof row.created_at !== 'string'
-  ) {
-    return null;
-  }
-  const metadata =
-    row.metadata !== null && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
-      ? (row.metadata as Record<string, unknown>)
-      : null;
-  return {
-    id: row.id,
-    name: row.name,
-    platform: row.platform,
-    status: row.status,
-    metadata,
-    created_at: row.created_at,
-  };
-}
 
 function errorResult(message: string, err: unknown): { kind: 'error'; message: string } {
   logServerError('[home] data load failed', err, { source: 'home' });
@@ -139,8 +81,7 @@ export async function loadHomeData(subdomain: string): Promise<HomeData> {
     // not exist for this owner (a lookup failure is already reported
     // loudly by the resolver itself).
     const identity = await getWorkspaceIdentity(subdomain);
-    const workspaceId = identity?.id;
-    if (typeof workspaceId !== 'string') {
+    if (typeof identity?.id !== 'string') {
       return {
         kind: 'error',
         message: 'This workspace could not be found.',
@@ -163,142 +104,14 @@ export async function loadHomeData(subdomain: string): Promise<HomeData> {
       );
     }
 
-    const [
-      totalCount,
-      activeCount,
-      nonActiveCount,
-      facebookAccountsCount,
-      accountsCount,
-      nonActiveRows,
-      firstFacebookPage,
-      activeSlotRows,
-      storage,
-      followersGained,
-    ] = await Promise.all([
-      supabase
-        .from('destinations')
-        .select('id', { count: 'exact', head: true })
-        .eq('workspace_id', workspaceId),
-      supabase
-        .from('destinations')
-        .select('id', { count: 'exact', head: true })
-        .eq('workspace_id', workspaceId)
-        .eq('status', 'active'),
-      supabase
-        .from('destinations')
-        .select('id', { count: 'exact', head: true })
-        .eq('workspace_id', workspaceId)
-        .neq('status', 'active'),
-      supabase
-        .from('social_accounts')
-        .select('id', { count: 'exact', head: true })
-        .eq('workspace_id', workspaceId)
-        .eq('platform', 'facebook'),
-      supabase
-        .from('social_accounts')
-        .select('id', { count: 'exact', head: true })
-        .eq('workspace_id', workspaceId),
-      supabase
-        .from('destinations')
-        .select('id, name, platform, status, metadata, created_at')
-        .eq('workspace_id', workspaceId)
-        .neq('status', 'active')
-        .order('created_at', { ascending: true })
-        .limit(ATTENTION_PAGE_LIMIT),
-      supabase
-        .from('destinations')
-        .select('id')
-        .eq('workspace_id', workspaceId)
-        .eq('platform', 'facebook')
-        .order('created_at', { ascending: true })
-        .limit(1),
-      supabase
-        .from('posting_slots')
-        .select('id, destinations!inner(workspace_id)')
-        .eq('destinations.workspace_id', workspaceId)
-        .eq('is_active', true)
-        .limit(1),
-      getStorageState(supabase, session.userId),
-      (async () => {
-        // Paged, never unbounded: PostgREST silently truncates at
-        // 1,000 rows, which would under-report the total.
-        let total = 0;
-        let from = 0;
-        for (;;) {
-          const { data, error } = await supabase
-            .from('adu_configs')
-            .select('followers_gained')
-            .eq('workspace_id', workspaceId)
-            .range(from, from + FOLLOWERS_PAGE_SIZE - 1);
-          if (error) throw error;
-          const rows = (
-            Array.isArray(data) ? data : []
-          ) as Array<{ followers_gained?: unknown }>;
-          for (const row of rows) {
-            const value =
-              typeof row.followers_gained === 'number' ? row.followers_gained : 0;
-            total += value;
-          }
-          if (rows.length < FOLLOWERS_PAGE_SIZE) break;
-          from += FOLLOWERS_PAGE_SIZE;
-        }
-        return total;
-      })(),
-    ]);
-
-    const queryErrors = [
-      totalCount.error,
-      activeCount.error,
-      nonActiveCount.error,
-      facebookAccountsCount.error,
-      accountsCount.error,
-      nonActiveRows.error,
-      firstFacebookPage.error,
-      activeSlotRows.error,
-    ].filter(Boolean);
-    if (queryErrors.length > 0) {
-      return errorResult(
-        'Home data could not be loaded. Please try again.',
-        queryErrors[0]
-      );
-    }
-
-    const attention: HomeAttentionItem[] = [];
-    for (const raw of (nonActiveRows.data ?? []) as unknown[]) {
-      const row = asDestinationRow(raw);
-      if (!row) continue;
-      const wire = unifiedDestinationStatusToWire(row.status, row.metadata);
-      if (wire === 'active') continue;
-      attention.push({
-        id: row.id,
-        name: row.name,
-        platform: row.platform,
-        status: wire,
-        reason: ATTENTION_REASONS[wire],
-      });
-    }
-
-    const firstFacebookPageRow = (firstFacebookPage.data ?? []) as Array<{
-      id?: unknown;
-    }>;
-    const firstFacebookPageId =
-      typeof firstFacebookPageRow[0]?.id === 'string'
-        ? (firstFacebookPageRow[0].id as string)
-        : null;
+    const storage = await getStorageState(supabase, session.userId);
 
     return {
       kind: 'paid',
+      periodStartsAt: period.startsAt,
       periodEndsAt: period.endsAt,
       units: totalUnits(period.counts),
-      totalDestinations: totalCount.count ?? 0,
-      activeDestinations: activeCount.count ?? 0,
-      facebookAccounts: facebookAccountsCount.count ?? 0,
-      accountsCount: accountsCount.count ?? 0,
-      hasActiveSlot: Array.isArray(activeSlotRows.data) && activeSlotRows.data.length > 0,
-      firstFacebookPageId,
-      attention,
-      attentionTotal: nonActiveCount.count ?? attention.length,
-      followersGained,
+      platformCounts: period.counts,
       storageUsedBytes: storage.usedBytes,
       storageQuotaBytes: storage.quotaBytes,
     };
