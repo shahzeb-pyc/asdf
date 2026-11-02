@@ -303,8 +303,8 @@
       "/connect/facebook/error": {
         "firstLoadGzipBytes": 152237,
         "firstLoadRawBytes": 502437,
-        "routeSpecificGzipBytes": 11696,
-        "routeSpecificRawBytes": 28937
+        "routeSpecificGzipBytes": 12330,
+        "routeSpecificRawBytes": 31431
       },
       "/connect/facebook/success": {
         "firstLoadGzipBytes": 150309,
