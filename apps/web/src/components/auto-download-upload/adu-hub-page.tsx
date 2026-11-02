@@ -2,12 +2,12 @@
 
 // Vercel rebuild trigger (comment only, no behaviour change) — PR #43, new Vercel account.
 import * as React from 'react';
-import Link from 'next/link';
-import { PlusIcon } from 'lucide-react';
+import Image from 'next/image';
+import { MoveUpRightIcon, PlusIcon } from 'lucide-react';
 import { parseAduBulkPaste } from '@fbuploadpro/contracts';
 import { Banner } from '@/components/shared/ui/banner';
 import { Button } from '@/components/shared/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/shared/ui/card';
+import { Card, CardContent } from '@/components/shared/ui/card';
 import { Checkbox } from '@/components/shared/ui/checkbox';
 import {
   Dialog,
@@ -26,7 +26,10 @@ import {
   SelectValue,
 } from '@/components/shared/ui/select';
 import { Textarea } from '@/components/shared/ui/textarea';
+import { StatusMark } from '@/components/shared/ui/status-mark';
 import { buildTenantApiPath } from '@/lib/api/client';
+import { getUserInitials } from '@/lib/user-initials';
+import { cn } from '@/lib/utils';
 import { FeatureCapText, useFeatureCap } from '@/components/billing/feature-cap';
 
 const STATUS_OPTIONS = [
@@ -43,9 +46,11 @@ interface AduConfigView {
   destinationId: string;
   destinationName: string;
   destinationExternalId: string;
+  destinationAvatarUrl: string | null;
   sourcePlatform: Platform;
   sourceUsername: string;
   sourceIdentity: string;
+  sourceLink: string;
   destinationStatus: string;
   accountName: string | null;
   status: string;
@@ -92,13 +97,308 @@ export async function fetchAduOptions(subdomain: string): Promise<{
   };
 }
 
-function pageAge(createdAt: string): string {
-  const days = Math.max(0, Math.floor((Date.now() - new Date(createdAt).getTime()) / 86_400_000));
-  if (days < 1) return 'today';
-  if (days === 1) return '1 day';
-  if (days < 30) return `${days} days`;
-  const months = Math.floor(days / 30);
-  return months === 1 ? '1 month' : `${months} months`;
+/**
+ * Added date for the card, from the page's import date (`createdAt`),
+ * formatted like "2 Nov 2026" — the same rule as page-card's
+ * `formatAddedDate`. Returns '' for an unparseable date so the card
+ * simply omits the line instead of rendering garbage.
+ */
+function formatAduAddedDate(createdAt: string): string {
+  const date = new Date(createdAt);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  }).format(date);
+}
+
+export type AduStatusMarkKind = 'operational' | 'queued' | 'critical';
+
+/**
+ * Maps an ADU display status (the label `aduDisplayStatus` produces)
+ * to a shared `StatusMark` kind, following page-card's kind
+ * semantics: operational = healthy, queued = waiting, critical =
+ * needs attention. Unknown labels map to critical — an unexpected
+ * value must never read as healthy.
+ *
+ * - operational: 'Active posting' (active), 'All reels posted'
+ *   (completed — a healthy terminal state, nothing wrong).
+ * - queued: 'Scrape pending' (pending/browser_pending),
+ *   'Scraping reels' (processing), 'Posting inactive' (inactive —
+ *   paused, like page-card's paused → queued).
+ * - critical: everything else — 'Source not found' (sync error),
+ *   'Verification required', 'Invalid token', 'Rate limited',
+ *   'Page not accessible', 'Source disabled', 'Creator suspended',
+ *   'BM 2FA required', 'Check developer app', 'Account suspended'.
+ */
+export function getAduStatusMarkKind(displayStatus: string): AduStatusMarkKind {
+  if (displayStatus === 'Active posting' || displayStatus === 'All reels posted') {
+    return 'operational';
+  }
+  if (
+    displayStatus === 'Scrape pending' ||
+    displayStatus === 'Scraping reels' ||
+    displayStatus === 'Posting inactive'
+  ) {
+    return 'queued';
+  }
+  return 'critical';
+}
+
+const ADU_RING_CLASSES: Record<AduStatusMarkKind, string> = {
+  operational: 'border-2 border-signal-operational',
+  queued: 'border-2 border-signal-queued',
+  critical: 'border-2 border-signal-critical',
+};
+
+/**
+ * ADU hub list card, mirroring `components/pages/page-card.tsx`
+ * structure with ADU data: avatar with status ring + identity +
+ * circled arrow, source link row, status mark + account footer,
+ * big coloured counts, and the ADU-specific Today line. The whole
+ * card navigates to the detail page on click and on Enter/Space,
+ * except when the event target is inside a link (the source link
+ * stays independently clickable via stopPropagation) — page-card
+ * behaviour exactly.
+ */
+function AduPageCard({ config, subdomain }: { config: AduConfigView; subdomain: string }) {
+  const [failedAvatarUrl, setFailedAvatarUrl] = React.useState<string | null>(null);
+
+  const kind = getAduStatusMarkKind(config.displayStatus);
+  const ringClass = ADU_RING_CLASSES[kind];
+  const addedDate = formatAduAddedDate(config.createdAt);
+  const initials = getUserInitials(config.destinationName);
+  const showAvatarImg =
+    Boolean(config.destinationAvatarUrl) &&
+    failedAvatarUrl !== config.destinationAvatarUrl;
+  const targetHref = `/tenant/${subdomain}/auto-download-upload/${config.id}`;
+
+  // Followers semantics, verified from code: `adu_hub_stats` sums
+  // `followers_gained` as the total and `followers_gained minus
+  // followers_count` (floored at 0) as the net growth — so
+  // followersGained is the CURRENT count and followersCount the
+  // starting baseline. Net gained is current minus starting,
+  // floored at 0, so it can never be negative.
+  const currentFollowers = config.followersGained;
+  const netGained = Math.max(currentFollowers - config.followersCount, 0);
+
+  // The source link inside the card must never trigger the card's own
+  // navigation: clicks stopPropagation on the link itself, and keyboard
+  // activation is ignored here when the event target is (or is inside) a
+  // link, so the link stays independently tab-focusable and activatable.
+  const isLinkEventTarget = (e: React.SyntheticEvent): boolean => {
+    const target = e.target as HTMLElement | null;
+    return Boolean(target && typeof target.closest === 'function' && target.closest('a'));
+  };
+
+  const handleActivate = (e?: React.SyntheticEvent) => {
+    if (e && isLinkEventTarget(e)) return;
+    if (typeof window !== 'undefined') {
+      window.location.href = targetHref;
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (isLinkEventTarget(e)) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      handleActivate();
+    }
+  };
+
+  return (
+    <div
+      role="link"
+      tabIndex={0}
+      data-testid={`adu-page-card-${config.id}`}
+      data-href={targetHref}
+      aria-label={`Open ${config.destinationName} page details`}
+      onClick={handleActivate}
+      onKeyDown={handleKeyDown}
+      className="group flex min-w-0 cursor-pointer flex-col rounded-md border border-line bg-panel p-6 shadow-card transition outline-none hover:-translate-y-0.5 hover:shadow-elevated focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link"
+    >
+      {/* Top row: avatar with status ring + identity + circled arrow. */}
+      <div className="flex items-start gap-4">
+        {showAvatarImg ? (
+          <Image
+            src={config.destinationAvatarUrl!}
+            alt={config.destinationName}
+            width={42}
+            height={42}
+            data-testid="adu-page-avatar-img"
+            onError={() =>
+              setFailedAvatarUrl(config.destinationAvatarUrl ?? '__error__')
+            }
+            className={cn('size-10.5 shrink-0 rounded-full object-cover', ringClass)}
+          />
+        ) : (
+          <div
+            data-testid="adu-page-avatar-initials"
+            className={cn(
+              'flex size-10.5 shrink-0 items-center justify-center rounded-full bg-subtle text-body font-bold text-ink',
+              ringClass
+            )}
+          >
+            {initials}
+          </div>
+        )}
+
+        <div className="min-w-0 flex-1">
+          <h3
+            data-testid="adu-page-name"
+            className="m-0 truncate text-body font-semibold text-ink"
+          >
+            {config.destinationName}
+          </h3>
+          {addedDate && (
+            <span
+              data-testid="adu-page-added-line"
+              className="mt-0.5 block truncate text-metadata text-ink-dim"
+            >
+              Added {addedDate}
+            </span>
+          )}
+          <span
+            data-testid="adu-page-followers-line"
+            className="mt-0.5 block truncate text-metadata text-ink-sub"
+          >
+            <span
+              data-testid="adu-page-current-followers"
+              className="text-body font-bold text-ink tabular-nums"
+            >
+              {currentFollowers.toLocaleString('en-US')}
+            </span>{' '}
+            followers · {config.sourcePlatform}
+          </span>
+        </div>
+
+        {/* Circled arrow affordance (muted, gold on hover). */}
+        <span
+          data-testid="adu-page-card-arrow"
+          aria-hidden
+          className="flex size-7 shrink-0 items-center justify-center rounded-full border border-line text-ink-sub transition group-hover:border-link group-hover:text-link"
+        >
+          <MoveUpRightIcon className="size-4" />
+        </span>
+      </div>
+
+      {/* Source link row: source identity link left, gained right
+          only when net gained > 0 (page-card behaviour). */}
+      <div
+        data-testid="adu-page-source-link-row"
+        className="mt-3 flex items-center justify-between gap-4"
+      >
+        <a
+          data-testid="adu-page-source-link"
+          href={config.sourceLink}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="min-w-0 shrink-0 truncate text-metadata text-link hover:underline"
+        >
+          {config.sourceIdentity}{' '}
+          <MoveUpRightIcon aria-hidden className="inline size-3 shrink-0" />
+        </a>
+        {netGained > 0 && (
+          <span
+            data-testid="adu-page-followers-gained"
+            className="shrink-0 text-metadata tabular-nums text-signal-operational"
+          >
+            +{netGained.toLocaleString('en-US')} gained
+          </span>
+        )}
+      </div>
+
+      {/* Divider + footer: status mark left, account right. */}
+      <div aria-hidden className="pt-3">
+        <div className="border-t border-line" />
+      </div>
+      <div className="mt-3 flex items-center justify-between gap-4">
+        <StatusMark
+          kind={kind}
+          label={config.displayStatus}
+          testId="adu-page-status"
+          className="min-w-0 font-semibold tracking-wide"
+          labelClassName="truncate"
+        />
+
+        <div
+          data-testid="adu-page-parent-account"
+          className="min-w-0 max-w-45 shrink-0 truncate text-right text-metadata text-ink-sub"
+        >
+          Account: {config.accountName || 'Connected Account'}
+        </div>
+      </div>
+
+      {/* Divider + counts row: big signal-coloured numbers on top,
+          labels below, in Queued / Posted / Failed order. */}
+      <div aria-hidden className="pt-3">
+        <div className="border-t border-line" />
+      </div>
+      <div
+        data-testid="adu-page-queue-counts"
+        className="mt-3 grid grid-cols-3 gap-4"
+      >
+        <span
+          data-testid="adu-page-queued-stat"
+          className="flex flex-col items-center text-center"
+        >
+          <span
+            data-testid="adu-page-queued-count"
+            className="text-xxl font-bold tabular-nums text-signal-queued"
+          >
+            {config.pendingCount.toLocaleString('en-US')}
+          </span>
+          <span className="mt-1 text-metadata text-ink-sub">Queued</span>
+        </span>
+        <span
+          data-testid="adu-page-posted-stat"
+          className="flex flex-col items-center text-center"
+        >
+          <span
+            data-testid="adu-page-posted-count"
+            className="text-xxl font-bold tabular-nums text-signal-operational"
+          >
+            {config.postedCount.toLocaleString('en-US')}
+          </span>
+          <span className="mt-1 text-metadata text-ink-sub">Posted</span>
+        </span>
+        <span
+          data-testid="adu-page-failed-stat"
+          className="flex flex-col items-center text-center"
+        >
+          <span
+            data-testid="adu-page-failed-count"
+            className="text-xxl font-bold tabular-nums text-signal-critical"
+          >
+            {config.failedCount.toLocaleString('en-US')}
+          </span>
+          <span className="mt-1 text-metadata text-ink-sub">Failed</span>
+        </span>
+      </div>
+
+      {/* ADU-specific Today line, kept: centred, muted, with
+          nonzero counts in dark semibold and zeros muted. */}
+      <p
+        data-testid="adu-page-today-line"
+        className="mt-3 text-center text-body text-ink-sub"
+      >
+        Today: Pending{' '}
+        <span className={config.pendingToday > 0 ? 'font-semibold text-ink' : undefined}>
+          {config.pendingToday}
+        </span>{' '}
+        · Posted{' '}
+        <span className={config.postedToday > 0 ? 'font-semibold text-ink' : undefined}>
+          {config.postedToday}
+        </span>{' '}
+        · Failed{' '}
+        <span className={config.failedToday > 0 ? 'font-semibold text-ink' : undefined}>
+          {config.failedToday}
+        </span>
+      </p>
+    </div>
+  );
 }
 
 export function AduHubPage({ subdomain }: { subdomain: string }) {
@@ -203,23 +503,7 @@ export function AduHubPage({ subdomain }: { subdomain: string }) {
         <>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {configs.map((config) => (
-              <Card key={config.id} className="flex flex-col gap-3">
-                <CardHeader className="flex flex-row items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <CardTitle className="truncate">{config.destinationName}</CardTitle>
-                    <p className="font-mono text-metadata text-ink-dim">{config.destinationExternalId}</p>
-                  </div>
-                  <span className="shrink-0 rounded-full bg-surface px-2 py-1 text-metadata text-ink">{config.displayStatus}</span>
-                </CardHeader>
-                <CardContent className="flex flex-col gap-2">
-                  <p className="text-body text-ink-sub">{config.sourceIdentity} · {config.sourcePlatform}</p>
-                  {config.accountName ? <p className="text-body text-ink-sub">via {config.accountName}</p> : null}
-                  <p className="text-body">Posted {config.postedCount} · Pending {config.pendingCount} · Failed {config.failedCount}</p>
-                  <p className="text-body text-ink-sub">Today: Pending {config.pendingToday} · Posted {config.postedToday} · Failed {config.failedToday}</p>
-                  <p className="text-metadata text-ink-dim">Starting {config.followersCount} · Added {new Date(config.createdAt).toLocaleDateString()} · {pageAge(config.createdAt)}</p>
-                  <Link href={`/tenant/${subdomain}/auto-download-upload/${config.id}`} className="text-body font-medium text-link">Open page →</Link>
-                </CardContent>
-              </Card>
+              <AduPageCard key={config.id} config={config} subdomain={subdomain} />
             ))}
           </div>
           {totalPages > 1 ? (
