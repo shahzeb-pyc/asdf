@@ -20,7 +20,7 @@
  * - No 5-minute edit lock (no scheduled_at lock concept here).
  * - No bulk-batch chip, no calendar view.
  * Published rows refuse edit/delete in the UI (the server 400s
- * regardless); move + publish-now exist on queued rows only, retry
+ * regardless); move exists on queued rows only, retry
  * on failed rows only. Cancelled rows keep their current treatment:
  * no position, no pill, no primary button — Edit/Delete as usual.
  */
@@ -58,9 +58,9 @@ export interface QueueRowProps {
   unmatched: boolean;
   pageTimezone: string;
   /**
-   * Status-family gate: when non-null, Publish Now and Retry are
-   * disabled with this plain reason (title + aria-label) — the
-   * server gate enforces the same rule. Null = page is active.
+   * Status-family gate: when non-null, Retry is disabled with this
+   * plain reason (title + aria-label) — the server gate enforces
+   * the same rule. Null = page is active.
    */
   publishBlockedReason?: string | null;
   /** True while any mutation for this row is in flight. */
@@ -71,7 +71,6 @@ export interface QueueRowProps {
   onMoveDown: () => void;
   onEdit: () => void;
   onDelete: () => void;
-  onPublishNow: () => void;
   onRetry: () => void;
 }
 
@@ -89,7 +88,6 @@ export function QueueRow({
   onMoveDown,
   onEdit,
   onDelete,
-  onPublishNow,
   onRetry,
 }: Readonly<QueueRowProps>) {
   const isPublished = item.status === 'published';
@@ -225,20 +223,6 @@ export function QueueRow({
           Shrinkable + wrapping: at narrow tablet widths the buttons
           drop to a second line instead of pushing the row off-screen. */}
       <div className="flex min-w-0 flex-wrap items-center gap-2">
-        {isQueued ? (
-          <Button
-            type="button"
-            variant="default"
-            size="sm"
-            data-testid="queue-row-publish-now"
-            disabled={busy || publishBlockedReason !== null}
-            title={publishBlockedReason ?? undefined}
-            aria-label={publishBlockedReason ?? undefined}
-            onClick={onPublishNow}
-          >
-            Publish now
-          </Button>
-        ) : null}
         {isFailed ? (
           <Button
             type="button"

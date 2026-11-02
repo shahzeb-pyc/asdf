@@ -34,7 +34,6 @@ function renderDashboard(
     page: PAGE,
     queueItems: [],
     slots: [],
-    onPublishNow: vi.fn().mockResolvedValue(undefined),
     onSwitchTab: vi.fn(),
     ...overrides,
   };
@@ -97,5 +96,24 @@ describe('PageTabDashboard page timezone (R8)', () => {
     expect(screen.getByTestId('metric-next-post')).toHaveTextContent('10:00 am');
     expect(screen.getByTestId('metric-next-post')).not.toHaveTextContent('2:00 PM');
     expect(screen.getByText(/Expected .*10:00 am/)).toBeInTheDocument();
+  });
+});
+
+describe('PageTabDashboard Publish now removal', () => {
+  it('renders no Publish now control on upcoming queued cards', () => {
+    const queued: PageQueueItemSummary[] = [
+      {
+        id: 'q1',
+        postFormat: 'image',
+        caption: 'Upcoming post',
+        scheduledTime: null,
+        estimatedTime: '2026-10-28T14:00:00.000Z',
+        status: 'queued',
+      },
+    ];
+    renderDashboard({ queueItems: queued });
+    expect(screen.getByTestId('dashboard-queue-item-card')).toBeInTheDocument();
+    expect(screen.queryByTestId('publish-now-btn-q1')).not.toBeInTheDocument();
+    expect(screen.queryByText('Publish Now')).not.toBeInTheDocument();
   });
 });

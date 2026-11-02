@@ -108,7 +108,6 @@ describe('dashboard queue estimates', () => {
           },
         ]}
         slots={[]}
-        onPublishNow={vi.fn().mockResolvedValue(undefined)}
         onSwitchTab={vi.fn()}
       />
     );
@@ -135,7 +134,6 @@ describe('dashboard queue estimates', () => {
           },
         ]}
         slots={[]}
-        onPublishNow={vi.fn().mockResolvedValue(undefined)}
         onSwitchTab={vi.fn()}
       />
     );

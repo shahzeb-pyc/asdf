@@ -20,8 +20,7 @@
  *   reorder POST syncs in the background; buttons stay live during
  *   the sync, rapid clicks coalesce to the newest order, and a
  *   failed sync rolls back to the last server-confirmed order),
- *   publish now (queued rows, fresh idempotency key per tap), retry
- *   (failed rows, fresh idempotency key per tap).
+ *   retry (failed rows, fresh idempotency key per tap).
  *   Published rows refuse edit/delete in the UI (server 400s
  *   regardless). Every mutation invalidates the whole queue cache,
  *   so the shell summary and dashboard stay in sync.
@@ -58,7 +57,7 @@ import { QueueRow } from './queue-row';
 import { QueueEditDialog } from './queue-edit-dialog';
 import { QueueDeleteConfirm } from './queue-delete-confirm';
 
-/** Ack-style responses (publish-now, retry, delete): success is all the UI needs. */
+/** Ack-style responses (retry, delete): success is all the UI needs. */
 const AckSchema = z.object({}).passthrough();
 
 const PAGE_LIMIT = 30;
@@ -134,9 +133,9 @@ export interface QueuePanelProps {
   pageTimezone: string;
   /**
    * Status-family gate: the dedicated page's wire status. When
-   * present and not 'active', Publish Now and Retry are disabled
-   * with a plain reason. Optional only so existing renders without
-   * a page stay publishable; the shell always passes it.
+   * present and not 'active', Retry is disabled with a plain
+   * reason. Optional only so existing renders without a page stay
+   * publishable; the shell always passes it.
    */
   pageStatus?: FacebookPageStatus | undefined;
   /** Active + paused posting times, from the shell's slots cache. */
@@ -248,13 +247,12 @@ export function QueuePanel({
   });
 
   const items = displayQuery.data?.items ?? [];
-  // Status family 2A/3A: only an active page may Publish Now or
-  // Retry. Any other status disables both with a plain reason
-  // (the note below + each button's title/aria-label); the server
-  // gate enforces the same rule.
+  // Status family 2A/3A: only an active page may Retry. Any other
+  // status disables it with a plain reason (the note below + the
+  // button's title/aria-label); the server gate enforces the same rule.
   const publishBlockedReason =
     pageStatus !== undefined && pageStatus !== 'active'
-      ? `Publish now and Retry unavailable — page is ${getPageStatusLabel(pageStatus)}`
+      ? `Retry unavailable — page is ${getPageStatusLabel(pageStatus)}`
       : null;
   const total = displayQuery.data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_LIMIT));
@@ -311,25 +309,6 @@ export function QueuePanel({
     },
     onError: (error) => {
       toast.error(errorMessage(error, "Couldn't update the caption. Please try again."));
-    },
-  });
-
-  const publishNowMutation = useMutation({
-    mutationFn: (itemId: string) =>
-      api.post(
-        buildTenantApiPath(subdomain, `/publishing/queue/${itemId}/publish-now`),
-        undefined,
-        {
-          schema: AckSchema,
-          headers: { [IDEMPOTENCY_KEY_HEADER]: crypto.randomUUID() },
-        }
-      ),
-    onSuccess: () => {
-      invalidateQueue();
-      toast.success('Publishing triggered successfully.');
-    },
-    onError: (error) => {
-      toast.error(errorMessage(error, 'Publication trigger failed'));
     },
   });
 
@@ -725,11 +704,6 @@ export function QueuePanel({
                   onMoveDown={() => void handleMove(item, 1)}
                   onEdit={() => setItemToEdit(item)}
                   onDelete={() => setItemToDelete(item)}
-                  onPublishNow={() =>
-                    void runMutation('publish-now', item.id, () =>
-                      publishNowMutation.mutateAsync(item.id)
-                    )
-                  }
                   onRetry={() =>
                     void runMutation('retry', item.id, () =>
                       retryMutation.mutateAsync(item.id)
