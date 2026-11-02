@@ -17,9 +17,10 @@ in filename order, that the unified `settle_queue_item_outcome` —
 - no-ops on a duplicate/late settle (`'already_settled'`: no status
   regression, no second log row, no destination side effects), on a
   merely-queued item, and on a missing item;
-- never shortens a destination cooldown (`GREATEST` — a 300s success
-  cooldown cannot erase a live 259200s rate-limit cooldown) while still
-  extending it and still applying to a NULL existing value;
+- writes NO destination cooldown on any settle (migration
+  `20261102160000_remove_cooldown_pacing.sql`): a caller-supplied
+  cooldown value is accepted and ignored, and marking `rate_limited`
+  stamps the 3-day anchor `metadata.rate_limited_at` instead;
 - merges `p_detail` into `publish_logs.detail` (the carrier specs
   124–126 need for platform session ids), with the error-code object
   winning key conflicts and `p_detail = NULL` preserving the previous
@@ -30,8 +31,8 @@ in filename order, that the unified `settle_queue_item_outcome` —
   recorded and its `retry_count` **unchanged** — even when the caller
   passes an inflated `p_retry_count` — across repeated defers; the
   publish log records result `'deferred'`; the terminal-state guard
-  and the monotonic destination cooldown hold for defers, and the
-  retry branch still advances the count.
+  holds for defers and defers write no destination cooldown or anchor,
+  and the retry branch still advances the count.
 
 Modelled on the spec 117 rls-rpc rig (`apps/worker/tests/rls-rpc/`).
 
@@ -69,9 +70,9 @@ SETTLE_RPC_PG_URL='postgres://postgres@/settle139?host=<socket dir>&port=<port>'
 
 ## Results (2026-10-24, PostgreSQL 16.2, full migration chain incl. the defer-outcome migration)
 
-- **58 assertions, 0 failures** — sections: (a) catalog 6, (b) ACL 3,
+- **60 assertions, 0 failures** — sections: (a) catalog 6, (b) ACL 3,
   (c) normal settle 7, (d) old-signature callers 4, (e) double-settle
-  no-op 10, (f) monotonic cooldown 5, (g) p_detail 4, (h) deferred
+  no-op 10, (f) no cooldown 7, (g) p_detail 4, (h) deferred
   outcome 19 (counts include the section sub-assertions as run; see
   check.ts).
 

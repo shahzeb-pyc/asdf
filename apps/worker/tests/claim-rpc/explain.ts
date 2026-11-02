@@ -5,12 +5,13 @@
  * script expects the scale database to be seeded; it reuses the seed if
  * the destinations are already present by simply not reseeding).
  *
- * The CTE text below mirrors the snapshot construction in
- * supabase/migrations/20261022140000_claim_rpc_grouped_usage.sql
- * (due_destinations + rules verbatim; then each grouped pass in turn),
- * with the RPC's parameters bound for the scale scenario:
+ * The CTE text below mirrors the snapshot construction in the
+ * current claim migration (20261102160000; due_destinations +
+ * rules), with the RPC's parameters bound for the scale scenario:
  * platform 'instagram', fast-lane kind set ['text','image','carousel'].
- *
+ * (It previously mirrored 20261022140000; the predicates below were
+ * updated for the cooldown removal — the anchor rule replaced the
+ * cooldown tests.)
  * Usage:
  *   CLAIM_RPC_PG_URL=postgres://postgres@/claimrpc138scale?host=<socket dir> \
  *     pnpm --filter @fbuploadpro/worker exec tsx tests/claim-rpc/explain.ts
@@ -37,9 +38,8 @@ const DUE_AND_RULES = `
       AND sa.status = 'active'
       AND (
         d.status = 'active'
-        OR (d.status = 'rate_limited' AND d.next_allowed_publish_at IS NOT NULL AND d.next_allowed_publish_at <= now())
+        OR (d.status = 'rate_limited' AND COALESCE((d.metadata->>'rate_limited_at')::timestamptz, d.updated_at) <= now() - interval '3 days')
       )
-      AND (d.next_allowed_publish_at IS NULL OR d.next_allowed_publish_at <= now())
       AND (
         qi.kind = 'text'
         OR qi.media_url IS NOT NULL

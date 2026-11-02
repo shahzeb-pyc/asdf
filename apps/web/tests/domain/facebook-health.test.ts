@@ -68,11 +68,9 @@ describe('Facebook Multi-Account Health Monitoring & Expiration (User Story 3 - 
       expect(rateLimitBlock?.pageStatus).toBe('fb_rate_limited');
       expect(rateLimitBlock?.isTransient).toBe(true);
       expect(rateLimitBlock?.requiresReauth).toBe(false);
-      expect(rateLimitBlock?.cooldownDays).toBe(3);
 
       const default368 = evaluateGraphApiError(368);
       expect(default368?.pageStatus).toBe('fb_rate_limited');
-      expect(default368?.cooldownDays).toBe(3);
     });
 
     it('maps error 368 + subcode 4854002 to page_checkpoint requiring mobile verification and manual reactivation', () => {

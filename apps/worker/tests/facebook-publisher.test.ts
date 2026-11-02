@@ -68,7 +68,6 @@ function makeDestination(
     timezone: 'UTC',
     status: 'active',
     encrypted_destination_token: 'encrypted-page-token',
-    next_allowed_publish_at: null,
     rate_usage_pct: 0,
     metadata: {},
     created_at: new Date().toISOString(),
@@ -382,8 +381,8 @@ describe('FacebookPublisher — first comment (old flow: 3 attempts, warning set
 // Telemetry / BUC pacing parity
 // ==========================================
 
-describe('FacebookPublisher — telemetry pacing (old dispatcher §4)', () => {
-  it('reports BUC usage as rateUsagePct and cools down at >= 85% for the estimated regain time', async () => {
+describe('FacebookPublisher — telemetry metering, no pacing (20261102160000)', () => {
+  it('reports BUC usage as rateUsagePct with no cooldown at >= 85%', async () => {
     const mock = new MockFacebookPublishClient();
     mock.telemetryToReturn = { bucUsageMaxPct: 90, estimatedTimeToRegainAccessMinutes: 12 };
     const publisher = new FacebookPublisher(mock);
@@ -394,7 +393,7 @@ describe('FacebookPublisher — telemetry pacing (old dispatcher §4)', () => {
     );
     expect(outcome.status).toBe('published');
     expect(outcome.rateUsagePct).toBe(90);
-    expect(outcome.destinationCooldownSeconds).toBe(720);
+    expect('destinationCooldownSeconds' in outcome).toBe(false);
   });
 
   it('reports BUC usage below 85% with no cooldown', async () => {
@@ -407,10 +406,10 @@ describe('FacebookPublisher — telemetry pacing (old dispatcher §4)', () => {
       TOKENS
     );
     expect(outcome.rateUsagePct).toBe(50);
-    expect(outcome.destinationCooldownSeconds).toBeUndefined();
+    expect('destinationCooldownSeconds' in outcome).toBe(false);
   });
 
-  it('uses the 5-minute default cooldown at >= 85% when no regain estimate is present', async () => {
+  it('reports BUC usage at 100% with no cooldown when no regain estimate is present', async () => {
     const mock = new MockFacebookPublishClient();
     mock.telemetryToReturn = { bucUsageMaxPct: 100 };
     const publisher = new FacebookPublisher(mock);
@@ -419,7 +418,8 @@ describe('FacebookPublisher — telemetry pacing (old dispatcher §4)', () => {
       makeDestination(),
       TOKENS
     );
-    expect(outcome.destinationCooldownSeconds).toBe(300);
+    expect(outcome.rateUsagePct).toBe(100);
+    expect('destinationCooldownSeconds' in outcome).toBe(false);
   });
 });
 
@@ -436,7 +436,6 @@ interface ErrorCase {
   retryDelaySeconds?: number;
   targetDestinationStatus?: string;
   targetAccountStatus?: string;
-  destinationCooldownSeconds?: number;
   expectedMessage?: string;
 }
 
@@ -478,19 +477,18 @@ const ERROR_CASES: ErrorCase[] = [
   { name: '1609005 bad link', code: 1609005, kind: 'permanent', status: 'failed' },
   { name: '100 invalid parameter', code: 100, kind: 'permanent', status: 'failed' },
   { name: '400 bad request (4xx client)', code: 400, kind: 'permanent', status: 'failed' },
-  // Transient rate limits — page stays active; retry delay 300s at
-  // retry_count 0; destination cooldown equals the retry delay (the
-  // old pageCooldownSeconds = retryDelaySeconds rule for rate limits).
-  { name: '4 app rate limit', code: 4, kind: 'retryable', status: 'retry', retryDelaySeconds: 300, destinationCooldownSeconds: 300 },
-  { name: '17 user rate limit', code: 17, kind: 'retryable', status: 'retry', retryDelaySeconds: 300, destinationCooldownSeconds: 300 },
-  { name: '32 page rate limit', code: 32, kind: 'retryable', status: 'retry', retryDelaySeconds: 300, destinationCooldownSeconds: 300 },
-  { name: '341 app limit reached', code: 341, kind: 'retryable', status: 'retry', retryDelaySeconds: 300, destinationCooldownSeconds: 300 },
-  { name: '613 custom rate limit', code: 613, kind: 'retryable', status: 'retry', retryDelaySeconds: 300, destinationCooldownSeconds: 300 },
-  { name: '80001 BUC rate limit', code: 80001, kind: 'retryable', status: 'retry', retryDelaySeconds: 300, destinationCooldownSeconds: 300 },
-  // 368 non-policy: fb_rate_limited -> rate_limited with the 3-day
-  // recovery cooldown carried explicitly (see publisher header).
-  { name: '368 plain (rate limited)', code: 368, kind: 'retryable', status: 'retry', retryDelaySeconds: 300, targetDestinationStatus: 'rate_limited', destinationCooldownSeconds: 259200 },
-  { name: '368/1390008 rate limited', code: 368, subcode: 1390008, kind: 'retryable', status: 'retry', retryDelaySeconds: 300, targetDestinationStatus: 'rate_limited', destinationCooldownSeconds: 259200 },
+  // Transient rate limits — page stays active, no status flip, no
+  // cooldown; retry delay 300s at retry_count 0.
+  { name: '4 app rate limit', code: 4, kind: 'retryable', status: 'retry', retryDelaySeconds: 300 },
+  { name: '17 user rate limit', code: 17, kind: 'retryable', status: 'retry', retryDelaySeconds: 300 },
+  { name: '32 page rate limit', code: 32, kind: 'retryable', status: 'retry', retryDelaySeconds: 300 },
+  { name: '341 app limit reached', code: 341, kind: 'retryable', status: 'retry', retryDelaySeconds: 300 },
+  { name: '613 custom rate limit', code: 613, kind: 'retryable', status: 'retry', retryDelaySeconds: 300 },
+  { name: '80001 BUC rate limit', code: 80001, kind: 'retryable', status: 'retry', retryDelaySeconds: 300 },
+  // 368 non-policy: fb_rate_limited -> rate_limited; the 3-day anchor
+  // is stamped by the settle RPC, never carried on the outcome.
+  { name: '368 plain (rate limited)', code: 368, kind: 'retryable', status: 'retry', retryDelaySeconds: 300, targetDestinationStatus: 'rate_limited' },
+  { name: '368/1390008 rate limited', code: 368, subcode: 1390008, kind: 'retryable', status: 'retry', retryDelaySeconds: 300, targetDestinationStatus: 'rate_limited' },
 ];
 
 describe('FacebookPublisher — error-classification parity (publish outcomes)', () => {
@@ -515,7 +513,7 @@ describe('FacebookPublisher — error-classification parity (publish outcomes)',
       expect(outcome.retryDelaySeconds).toBe(c.retryDelaySeconds);
       expect(outcome.targetDestinationStatus).toBe(c.targetDestinationStatus);
       expect(outcome.targetAccountStatus).toBe(c.targetAccountStatus);
-      expect(outcome.destinationCooldownSeconds).toBe(c.destinationCooldownSeconds);
+      expect('destinationCooldownSeconds' in outcome).toBe(false);
     });
   }
 
@@ -572,7 +570,7 @@ describe('FacebookPublisher — error-classification parity (publish outcomes)',
     const outcome = await publisher.publish(makeItem(), makeDestination(), TOKENS);
     expect(outcome.status).toBe('retry');
     expect(outcome.retryDelaySeconds).toBe(420);
-    expect(outcome.destinationCooldownSeconds).toBe(420);
+    expect('destinationCooldownSeconds' in outcome).toBe(false);
   });
 
   it('max retries exhausted: a transient error settles failed with no retry delay (old canRetry rule)', async () => {

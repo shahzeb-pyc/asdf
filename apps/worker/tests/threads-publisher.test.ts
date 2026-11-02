@@ -68,7 +68,6 @@ function makeDestination(
     timezone: 'UTC',
     status: 'active',
     encrypted_destination_token: null,
-    next_allowed_publish_at: null,
     rate_usage_pct: 0,
     metadata: {},
     created_at: new Date().toISOString(),

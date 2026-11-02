@@ -18,7 +18,6 @@ import {
   handleDlqBatch,
   mapPublishOutcomeToSettleArgs,
   DEFER_ACCOUNT_NOT_ACTIVE_CODE,
-  DEFER_DESTINATION_COOLDOWN_CODE,
   DEFER_DESTINATION_NOT_ACTIVE_CODE,
   DEFAULT_RETRY_DELAY_SECONDS,
   DLQ_ERROR_CODE,
@@ -351,7 +350,6 @@ async function makeConsumerDb(opts: {
     timezone: 'UTC',
     status: 'active',
     encrypted_destination_token: encryptedDest,
-    next_allowed_publish_at: null,
     rate_usage_pct: 0,
     metadata: {},
     created_at: new Date().toISOString(),
@@ -852,12 +850,14 @@ describe('Publish consumers — spec 139 publish safety', () => {
     expect('p_detail' in withoutDetail).toBe(false);
   });
 
-  it('defers without publishing while the destination is in cooldown, delaying until the cooldown ends', async () => {
+  it('defers without publishing while the destination is freshly rate_limited', async () => {
     const item = await makeItem();
-    const cooldownEnd = new Date(Date.now() + 10 * 60 * 1000).toISOString();
     const { db, settleCalls } = await makeConsumerDb({
       item,
-      destination: { status: 'rate_limited', next_allowed_publish_at: cooldownEnd },
+      destination: {
+        status: 'rate_limited',
+        metadata: { rate_limited_at: new Date().toISOString() },
+      },
     });
     const publisher = fakePublisher('facebook', async () => ({ status: 'published' }));
     const message = fakeMessage({ itemId: item.id, platform: 'facebook', lane: 'publish-fast' });
@@ -873,13 +873,11 @@ describe('Publish consumers — spec 139 publish safety', () => {
     expect(settleCalls).toHaveLength(1);
     expect(settleCalls[0]).toMatchObject({
       p_outcome_status: 'deferred',
-      p_error_code: DEFER_DESTINATION_COOLDOWN_CODE,
+      p_error_code: DEFER_DESTINATION_NOT_ACTIVE_CODE,
       // No publish attempt was made: the retry budget is untouched.
       p_retry_count: 0,
+      p_retry_delay_seconds: DEFAULT_RETRY_DELAY_SECONDS,
     });
-    const delay = settleCalls[0]?.p_retry_delay_seconds as number;
-    expect(delay).toBeGreaterThan(500);
-    expect(delay).toBeLessThanOrEqual(600);
     expect(message.ack).toHaveBeenCalledTimes(1);
   });
 
@@ -1032,16 +1030,16 @@ describe('Publish consumers — spec 139 publish safety', () => {
     expect(message.ack).toHaveBeenCalledTimes(1);
   });
 
-  it('still publishes when a rate_limited destination cooldown has already elapsed (claim-mirroring)', async () => {
+  it('still publishes when a rate_limited destination 3-day window has elapsed (claim-mirroring)', async () => {
     const item = await makeItem();
-    const elapsed = new Date(Date.now() - 60 * 1000).toISOString();
+    const anchor = new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString();
     const { db, settleCalls } = await makeConsumerDb({
       item,
-      destination: { status: 'rate_limited', next_allowed_publish_at: elapsed },
+      destination: { status: 'rate_limited', metadata: { rate_limited_at: anchor } },
     });
     const publisher = fakePublisher('facebook', async () => ({
       status: 'published',
-      externalPostId: 'post-after-cooldown',
+      externalPostId: 'post-after-window',
     }));
     const message = fakeMessage({ itemId: item.id, platform: 'facebook', lane: 'publish-fast' });
 
@@ -1055,7 +1053,7 @@ describe('Publish consumers — spec 139 publish safety', () => {
     expect(publisher.publish).toHaveBeenCalledTimes(1);
     expect(settleCalls[0]).toMatchObject({
       p_outcome_status: 'published',
-      p_external_post_id: 'post-after-cooldown',
+      p_external_post_id: 'post-after-window',
     });
     expect(message.ack).toHaveBeenCalledTimes(1);
   });

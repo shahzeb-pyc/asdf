@@ -47,7 +47,6 @@ export interface DispatchOutcome {
   targetPageStatus?: FacebookPageStatus | undefined;
   targetAccountStatus?: FacebookAccountStatus | 'active' | 'expired' | undefined;
   retryDelaySeconds?: number | undefined;
-  pageCooldownSeconds?: number | undefined;
   bucUsagePct?: number | undefined;
 }
 
@@ -62,7 +61,6 @@ export const DispatchOutcomeSchema = z.object({
   targetPageStatus: z.string().optional(),
   targetAccountStatus: z.string().optional(),
   retryDelaySeconds: z.number().int().optional(),
-  pageCooldownSeconds: z.number().int().optional(),
   bucUsagePct: z.number().int().min(0).max(100).optional(),
 });
 

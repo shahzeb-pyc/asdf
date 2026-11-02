@@ -45,8 +45,11 @@ import {
 //    deferral, and NO account expiry. See `creditsExhaustedOutcome`
 //    for the exact deferral rule (settles `deferred`; no retry budget
 //    is consumed).
-//  - `x-rate-limit-*` headers tighten the destination via
-//    `destinationCooldownSeconds` (mapping in `rateLimitOutcomeParts`).
+//  - `x-rate-limit-*` headers are metered as `rateUsagePct` only.
+//    Migration 20261102160000 removed the destination-wide cooldown
+//    they used to feed: a 429's reset time now only sets this item's
+//    own retry delay (mapping in `rateLimitOutcomeParts`), never a
+//    destination gate.
 
 export const X_PLATFORM: Platform = 'x';
 
@@ -357,20 +360,21 @@ export class XPublisher implements Publisher {
   }
 
   /**
-   * Rate-limit header tightening (spec 127 Scope.6). Mapping, stated in
-   * the PR: whenever X reports headers, `rateUsagePct` is the used
-   * share of the window ((limit − remaining) / limit × 100); when the
-   * window is EXHAUSTED (remaining = 0 with a future reset), the
-   * destination's next publish is deferred until the reset via
-   * `destinationCooldownSeconds` = reset − now. Partial headroom never
-   * invents a cooldown the platform did not report.
+   * Rate-limit header mapping (spec 127 Scope.6, as amended by
+   * migration 20261102160000). Whenever X reports headers,
+   * `rateUsagePct` is the used share of the window
+   * ((limit − remaining) / limit × 100); when the window is
+   * EXHAUSTED (remaining = 0 with a future reset), the reset time
+   * is returned as this item's own retry delay only — it never
+   * gates the destination. Partial headroom never invents a delay
+   * the platform did not report.
    */
   private rateLimitOutcomeParts(rateLimit: XRateLimitInfo | undefined): {
     rateUsagePct?: number;
-    destinationCooldownSeconds?: number;
+    resetDelaySeconds?: number;
   } {
     if (!rateLimit) return {};
-    const parts: { rateUsagePct?: number; destinationCooldownSeconds?: number } = {};
+    const parts: { rateUsagePct?: number; resetDelaySeconds?: number } = {};
     if (
       rateLimit.limit !== undefined &&
       rateLimit.limit > 0 &&
@@ -382,8 +386,8 @@ export class XPublisher implements Publisher {
     }
     if (rateLimit.remaining === 0 && rateLimit.resetEpochSeconds !== undefined) {
       const nowSeconds = Math.floor(this.now().getTime() / 1000);
-      const cooldown = rateLimit.resetEpochSeconds - nowSeconds;
-      if (cooldown > 0) parts.destinationCooldownSeconds = cooldown;
+      const delay = rateLimit.resetEpochSeconds - nowSeconds;
+      if (delay > 0) parts.resetDelaySeconds = delay;
     }
     return parts;
   }
@@ -392,13 +396,14 @@ export class XPublisher implements Publisher {
    * The platform-wide 402 outcome (spec 127 Scope.5), settled via the
    * `deferred` outcome (spec 139 defer outcome, Shahzeb 2026-10-24):
    * a 402 returns `deferred` with the distinct code
-   * `x_platform_credits_exhausted`, a one-hour deferral delay AND a
-   * one-hour destination cooldown, no account-status side effect
-   * (accounts never expire over our balance), plus a platform-level
-   * PostHog exception. The settle RPC's deferred branch does not
-   * write retry_count, so an item paused by an empty shared balance
-   * consumes NO retry budget while it waits — the vocabulary tension
-   * this path originally flagged is resolved.
+   * `x_platform_credits_exhausted` and a one-hour deferral delay, no
+   * account-status side effect (accounts never expire over our
+   * balance), plus a platform-level PostHog exception. The settle
+   * RPC's deferred branch does not write retry_count, so an item
+   * paused by an empty shared balance consumes NO retry budget while
+   * it waits — the vocabulary tension this path originally flagged
+   * is resolved. There is no destination cooldown: the one-hour
+   * value is this item's deferral delay only.
    */
   private creditsExhaustedOutcome(extracted: ExtractedXError): PublishOutcome {
     captureWorkerError(
@@ -418,7 +423,6 @@ export class XPublisher implements Publisher {
           'Posting to X is paused because the shared X balance is empty. Posts will go out once the balance is topped up.',
       },
       retryDelaySeconds: X_CREDITS_EXHAUSTED_DELAY_SECONDS,
-      destinationCooldownSeconds: X_CREDITS_EXHAUSTED_DELAY_SECONDS,
       detail: { platformWide: true, reason: 'credits_exhausted' },
     };
   }
@@ -495,11 +499,14 @@ export class XPublisher implements Publisher {
 
     if (classified.kind === 'retryable') {
       const canRetry = item.retry_count < (item.max_retries ?? 3);
-      // A 429's reset header, when reported, is the honest delay.
+      // A 429's reset header, when reported, is the honest delay for
+      // THIS item's retry. It never gates the destination: the
+      // destination-wide cooldown was removed by migration
+      // 20261102160000.
       let retryDelaySeconds: number | undefined;
       const parts = this.rateLimitOutcomeParts(extracted.rateLimit);
-      if (extracted.isRateLimit && parts.destinationCooldownSeconds !== undefined) {
-        retryDelaySeconds = parts.destinationCooldownSeconds;
+      if (extracted.isRateLimit && parts.resetDelaySeconds !== undefined) {
+        retryDelaySeconds = parts.resetDelaySeconds;
       } else if (canRetry) {
         retryDelaySeconds = Math.min(
           X_RETRY_MAX_DELAY_SECONDS,
@@ -510,9 +517,6 @@ export class XPublisher implements Publisher {
         status: canRetry ? 'retry' : 'failed',
         error: classified,
         ...(canRetry && retryDelaySeconds !== undefined ? { retryDelaySeconds } : {}),
-        ...(parts.destinationCooldownSeconds !== undefined
-          ? { destinationCooldownSeconds: parts.destinationCooldownSeconds }
-          : {}),
         ...(parts.rateUsagePct !== undefined ? { rateUsagePct: parts.rateUsagePct } : {}),
       };
     }

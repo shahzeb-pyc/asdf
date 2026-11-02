@@ -60,7 +60,6 @@ function makeDestination(metadata: Record<string, unknown>): DatabaseDestination
     timezone: 'UTC',
     status: 'active',
     encrypted_destination_token: null,
-    next_allowed_publish_at: null,
     rate_usage_pct: 0,
     metadata: metadata as never,
     created_at: new Date().toISOString(),

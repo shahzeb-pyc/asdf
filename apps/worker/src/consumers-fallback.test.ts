@@ -79,7 +79,6 @@ async function makeRows() {
     timezone: 'UTC',
     status: 'active',
     encrypted_destination_token: await encryptToken('stale_page_token', MASTER_KEY),
-    next_allowed_publish_at: null,
     rate_usage_pct: 0,
     metadata: {},
     created_at: NOW,

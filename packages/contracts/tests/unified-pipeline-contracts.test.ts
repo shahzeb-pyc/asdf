@@ -78,7 +78,6 @@ const settleArgsMatchMigration: Equals<
     p_comment_warning?: string | null;
     p_target_destination_status?: string | null;
     p_target_account_status?: string | null;
-    p_destination_cooldown_seconds?: number | null;
     p_rate_usage_pct?: number | null;
     p_detail?: Record<string, unknown> | null;
   }
@@ -232,7 +231,6 @@ const validDestinationRow: DatabaseDestinationRow = {
   timezone: 'UTC',
   status: 'active',
   encrypted_destination_token: 'ciphertext',
-  next_allowed_publish_at: null,
   rate_usage_pct: 0,
   metadata: {},
   created_at: '2026-10-22T00:00:00.000Z',
@@ -466,7 +464,6 @@ describe('PublishOutcomeSchema', () => {
       error: { kind: 'retryable', code: 'rate_limited', message: 'slow down', retryDelaySeconds: 60 },
       retryDelaySeconds: 60,
       targetDestinationStatus: 'rate_limited',
-      destinationCooldownSeconds: 60,
       rateUsagePct: 99.5,
     };
     expect(PublishOutcomeSchema.parse(JSON.parse(JSON.stringify(retry)))).toEqual(retry);

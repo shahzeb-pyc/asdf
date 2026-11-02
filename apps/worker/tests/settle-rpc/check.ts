@@ -21,10 +21,10 @@
  *       settle of a merely-queued item, and a settle of a missing item
  *       all return 'already_settled' with no status regression, no
  *       second publish_logs row and no destination side effect;
- *   (f) the destination cooldown is monotonic: a 300s settle cooldown
- *       never shortens a live 259200s rate-limit cooldown, a longer
- *       cooldown still extends it, and a NULL existing value still
- *       receives the new cooldown;
+ *   (f) NO destination cooldown is written by any settle (migration
+ *       20261102160000): a caller-supplied cooldown value is accepted
+ *       and IGNORED, and marking rate_limited stamps the 3-day anchor
+ *       metadata.rate_limited_at instead;
  *   (g) p_detail lands in publish_logs.detail merged with (and losing
  *       key conflicts to) the existing error-code object; p_detail NULL
  *       preserves the pre-existing detail behaviour exactly;
@@ -33,8 +33,8 @@
  *       reason recorded and its retry_count UNCHANGED — even when the
  *       caller passes an inflated p_retry_count — across repeated
  *       defers; the publish log records result 'deferred' with p_detail
- *       merged; the [139-1] terminal-state guard and the monotonic
- *       destination cooldown both hold for defers; the `queued`
+ *       merged; the [139-1] terminal-state guard holds for defers and
+ *       defers write no destination cooldown or anchor; the `queued`
  *       (retry) branch still advances the count (branches stay
  *       distinct).
  *
@@ -116,6 +116,7 @@ interface SettleArgs {
   errorCode?: string | null;
   errorSubcode?: string | null;
   errorMessage?: string | null;
+  targetDestinationStatus?: string | null;
   cooldownSeconds?: number | null;
   detail?: Record<string, unknown> | null;
 }
@@ -134,9 +135,9 @@ function settleParams(a: SettleArgs): unknown[] {
     a.errorSubcode ?? null,
     a.errorMessage ?? null,
     null, // p_comment_warning
-    null, // p_target_destination_status
+    a.targetDestinationStatus ?? null,
     null, // p_target_account_status
-    a.cooldownSeconds ?? null,
+    a.cooldownSeconds ?? null, // p_destination_cooldown_seconds: RETAINED BUT IGNORED (20261102160000 compat shim)
     null, // p_rate_usage_pct
     a.detail ? JSON.stringify(a.detail) : null,
   ];
@@ -325,7 +326,7 @@ async function sectionDoubleSettle(pool: Pool): Promise<void> {
   check((await logRows(pool, ITEM_MAIN)).length === 1, 'no second publish_logs row inserted');
   const destAfterSecond = await destRow(pool);
   check(
-    String(asDate(destAfterSecond.next_allowed_publish_at)?.getTime()) === String(asDate(destAfterFirst.next_allowed_publish_at)?.getTime())
+    JSON.stringify(destAfterSecond.metadata) === JSON.stringify(destAfterFirst.metadata)
       && destAfterSecond.status === destAfterFirst.status,
     'no destination side effect from the duplicate settle'
   );
@@ -342,40 +343,45 @@ async function sectionDoubleSettle(pool: Pool): Promise<void> {
 }
 
 async function sectionCooldown(pool: Pool): Promise<void> {
-  console.log('\n(f) monotonic destination cooldown');
+  console.log('\n(f) no destination cooldown (20261102160000: pacing removed)');
   await reset(pool);
-  await pool.query(
-    `UPDATE public.destinations SET next_allowed_publish_at = now() + INTERVAL '259200 seconds' WHERE id = $1::uuid`,
-    [DEST]
-  );
-  const before = asDate((await destRow(pool)).next_allowed_publish_at);
-  const r = await settle(pool, { outcome: 'published', externalPostId: 'post-rl', cooldownSeconds: 300 });
-  check(r === 'settled', 'rate-limited settle applies', `got ${r}`);
-  const afterShort = asDate((await destRow(pool)).next_allowed_publish_at);
-  check(
-    before !== null && afterShort !== null && afterShort.getTime() === before.getTime(),
-    '300s cooldown does NOT shorten the live 259200s cooldown',
-    `before=${before?.toISOString()} after=${afterShort?.toISOString()}`
-  );
-
-  await addItem(pool, ITEM_B, 'publishing');
-  await settle(pool, { item: ITEM_B, outcome: 'published', externalPostId: 'post-long', cooldownSeconds: 400000 });
-  const afterLong = asDate((await destRow(pool)).next_allowed_publish_at);
-  check(
-    before !== null && afterLong !== null && afterLong.getTime() > before.getTime() + 100_000_000,
-    '400000s cooldown still EXTENDS the existing cooldown',
-    `after=${afterLong?.toISOString()}`
-  );
-
-  await reset(pool);
-  check(asDate((await destRow(pool)).next_allowed_publish_at) === null, 'fresh destination starts with NULL cooldown');
+  // An old caller passing a cooldown value must settle fine — and the
+  // value must be IGNORED: the column is gone, nothing is written.
   const t0 = Date.now();
-  await settle(pool, { outcome: 'published', externalPostId: 'post-fresh', cooldownSeconds: 300 });
-  const fresh = asDate((await destRow(pool)).next_allowed_publish_at);
+  const r = await settle(pool, { outcome: 'published', externalPostId: 'post-nocd', cooldownSeconds: 300 });
+  check(r === 'settled', 'settle carrying a cooldown value still settles', `got ${r}`);
+  const destAfter = await destRow(pool);
+  check(destAfter.status === 'active', 'published settle with a cooldown value leaves the destination active');
   check(
-    fresh !== null && fresh.getTime() - t0 > 250_000 && fresh.getTime() - t0 < 305_000,
-    'NULL existing cooldown still receives the new 300s cooldown',
-    `delta=${fresh ? fresh.getTime() - t0 : 'null'}ms`
+    (destAfter.metadata as Record<string, unknown> | null)?.rate_limited_at === undefined,
+    'published settle stamps no rate-limit anchor'
+  );
+
+  // Marking rate_limited stamps the anchor but writes no cooldown.
+  await reset(pool);
+  const r2 = await settle(pool, {
+    outcome: 'failed', errorCode: 'x_rate', errorMessage: 'throttled',
+    targetDestinationStatus: 'rate_limited', cooldownSeconds: 259200,
+  });
+  check(r2 === 'settled', 'rate_limited settle applies', `got ${r2}`);
+  const destRl = await destRow(pool);
+  check(destRl.status === 'rate_limited', 'rate_limited settle flips the destination status');
+  const anchor = asDate((destRl.metadata as Record<string, unknown> | null)?.rate_limited_at);
+  check(
+    anchor !== null && anchor.getTime() >= t0 && anchor.getTime() <= Date.now(),
+    'rate_limited settle stamps a fresh metadata.rate_limited_at anchor',
+    String((destRl.metadata as Record<string, unknown> | null)?.rate_limited_at)
+  );
+
+  // A second rate_limited settle re-stamps the anchor (window restarts).
+  await pool.query("UPDATE public.queue_items SET status = 'publishing' WHERE id = $1::uuid", [ITEM_MAIN]);
+  await settle(pool, { outcome: 'failed', errorCode: 'x_rate', targetDestinationStatus: 'rate_limited', cooldownSeconds: 60 });
+  const destRl2 = await destRow(pool);
+  const anchor2 = asDate((destRl2.metadata as Record<string, unknown> | null)?.rate_limited_at);
+  check(
+    anchor2 !== null && anchor !== null && anchor2.getTime() >= anchor.getTime(),
+    'repeat rate_limited marking re-stamps the anchor (never earlier)',
+    `${anchor?.toISOString()} -> ${anchor2?.toISOString()}`
   );
 }
 
@@ -436,9 +442,6 @@ async function sectionDeferred(pool: Pool): Promise<void> {
 
   // Defer #1 — the caller deliberately passes an inflated count (99):
   // the deferred branch must ignore it for the stored count.
-  // `before` anchors the cooldown assertion below (destination
-  // next_allowed_publish_at must be >= before + ~3590s).
-  const before = new Date();
   const r1 = await settle(pool, {
     outcome: 'deferred', retryCount: 99, errorCode: 'publishing_limit_reached',
     errorMessage: 'This account has reached its publishing limit for now.',
@@ -486,11 +489,11 @@ async function sectionDeferred(pool: Pool): Promise<void> {
     JSON.stringify(dd)
   );
   const dest1 = await destRow(pool);
-  const cd1 = asDate(dest1?.next_allowed_publish_at);
   check(
-    cd1 !== null && cd1.getTime() >= before.getTime() + 3590 * 1000,
-    'deferred settle still applies the destination cooldown (X 402 path)',
-    String(dest1?.next_allowed_publish_at)
+    dest1.status === 'active' &&
+      (dest1.metadata as Record<string, unknown> | null)?.rate_limited_at === undefined,
+    'deferred settle writes no destination cooldown or anchor (the X 402 path passes a value that is now ignored)',
+    JSON.stringify(dest1.metadata)
   );
 
   // Defer #2 and #3 (item re-claimed to 'publishing' between passes):
@@ -519,19 +522,19 @@ async function sectionDeferred(pool: Pool): Promise<void> {
     String(logsAll.length)
   );
 
-  // Monotonic cooldown holds for defers: a short defer cooldown must
-  // not shrink the live one-hour cooldown from defer #1.
-  const destBefore = asDate((await destRow(pool))?.next_allowed_publish_at);
+  // No destination side effect from defers, even with a cooldown value:
+  const destBefore = await destRow(pool);
   await pool.query(
     "UPDATE public.queue_items SET status = 'publishing', claimed_at = now() WHERE id = $1::uuid",
     [ITEM_MAIN]
   );
   await settle(pool, { outcome: 'deferred', retryCount: 2, errorCode: 'x', cooldownSeconds: 60 });
-  const destAfter = asDate((await destRow(pool))?.next_allowed_publish_at);
+  const destAfter = await destRow(pool);
   check(
-    destBefore !== null && destAfter !== null && destAfter.getTime() === destBefore.getTime(),
-    'a shorter defer cooldown never shrinks a live destination cooldown',
-    `${String(destBefore)} -> ${String(destAfter)}`
+    destAfter.status === destBefore.status &&
+      JSON.stringify(destAfter.metadata) === JSON.stringify(destBefore.metadata),
+    'a defer carrying a cooldown value leaves the destination untouched',
+    `${String(destBefore.status)} -> ${String(destAfter.status)}`
   );
 
   // [139-1] guard holds for defers: a terminal item no-ops.
