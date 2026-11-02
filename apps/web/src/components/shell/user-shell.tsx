@@ -108,6 +108,15 @@ export function UserShell({
               <div aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-line" />
               <WorkspaceBreadcrumb subdomain={subdomain} useCleanPaths={useCleanPaths} />
               {/*
+                Right cluster: plan pill immediately left of the ⌘K
+                search, gap-2 only. The cluster carries the header
+                row's SINGLE auto margin: exactly one ml-auto, on
+                this wrapper. The pill itself carries no auto margin
+                and the search button's own ml-auto has no free
+                space inside this shrink-0 cluster, so the two can
+                never split the free space again and float the pill
+                into the middle of the header (the merged #134 bug:
+                two auto margins distribute free space equally).
                 ⌘K palette trigger (spec 130 §5.6, OD130-6: YES — the
                 visible search-style header button ships alongside the
                 keyboard shortcut). The host is the palette's only
@@ -115,8 +124,10 @@ export function UserShell({
                 next/dynamic on first open (PR-130-4's one mount edit
                 to this layout).
               */}
-              <TopbarPlanPill subdomain={subdomain} useCleanPaths={useCleanPaths} />
-              <CommandPaletteHost subdomain={subdomain} useCleanPaths={useCleanPaths} />
+              <div className="ml-auto flex shrink-0 items-center gap-2">
+                <TopbarPlanPill subdomain={subdomain} useCleanPaths={useCleanPaths} />
+                <CommandPaletteHost subdomain={subdomain} useCleanPaths={useCleanPaths} />
+              </div>
             </header>
             {/*
               Banner slot (spec 130 §5.1): the shell-level region directly

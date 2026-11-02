@@ -39,11 +39,15 @@ export function calendarDaysLeft(periodEndsAt: string, today: Date = new Date())
  *
  * Paid: "Paid · N days left", final calendar day "Paid · Expires
  * today", phone short form "Nd left" for numeric counts only.
- * The pill itself carries ml-auto: the header is flex with no spacer
- * and the search button also carries ml-auto, so the pill's auto
- * margin absorbs the free space and the pill sits immediately left
- * of the search (without it, the pill would sit right of the
- * breadcrumb with a large gap to the search).
+ * Paid colour (whole pill text): green (text-brand-emerald) when
+ * 7 or more days remain, red (text-signal-critical) when fewer
+ * than 7 remain, including the final day. 7 exactly stays green.
+ * Placement is owned by the pill+search cluster wrapper in
+ * user-shell.tsx, which carries the header row's single auto
+ * margin; this pill itself carries NO auto margin. (Two auto
+ * margins in one flex row split the free space equally between
+ * them — that is what floated the merged pill into the middle of
+ * the header in the owner's screenshot.)
  * Expired: "Expired". Free: "Upgrade". Null entitlement (loading
  * or a failed check that cleared the proven value): nothing — a
  * stale or placeholder count must never flash. Admin: nothing;
@@ -65,7 +69,7 @@ export function TopbarPlanPill({
         href={buildTenantHref(subdomain, '/my-plan', useCleanPaths)}
         aria-label="Plan expired, open My Plan"
         data-testid="topbar-plan-pill"
-        className="ml-auto flex h-control shrink-0 items-center rounded-sm border border-line bg-panel px-3 text-body font-medium text-signal-critical outline-none transition-colors duration-base ease-standard hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link"
+        className="flex h-control shrink-0 items-center rounded-sm border border-line bg-panel px-3 text-body font-medium text-signal-critical outline-none transition-colors duration-base ease-standard hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link"
       >
         Expired
       </Link>
@@ -78,7 +82,7 @@ export function TopbarPlanPill({
         href={buildTenantHref(subdomain, '/purchase', useCleanPaths)}
         aria-label="Upgrade your plan, open Purchase"
         data-testid="topbar-plan-pill"
-        className="ml-auto flex h-control shrink-0 items-center rounded-sm border border-line bg-panel px-3 text-body font-medium text-brand-gold outline-none transition-colors duration-base ease-standard hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link"
+        className="flex h-control shrink-0 items-center rounded-sm border border-line bg-panel px-3 text-body font-medium text-brand-gold outline-none transition-colors duration-base ease-standard hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link"
       >
         Upgrade
       </Link>
@@ -87,12 +91,15 @@ export function TopbarPlanPill({
 
   // Paid. An active period without an end date is defensive-only:
   // show the word with no count rather than inventing a date.
+  // The colour class lives on the Link so the WHOLE pill text
+  // (word + count, desktop and phone short form) changes colour;
+  // the inner spans carry no colour class of their own.
   const href = buildTenantHref(subdomain, '/my-plan', useCleanPaths);
   const baseClassName =
-    'ml-auto flex h-control shrink-0 items-center gap-2 rounded-sm border border-line bg-panel px-3 text-body font-medium text-ink outline-none transition-colors duration-base ease-standard hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link';
+    'flex h-control shrink-0 items-center gap-2 rounded-sm border border-line bg-panel px-3 text-body font-medium outline-none transition-colors duration-base ease-standard hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link';
   if (entitlement.periodEndsAt === null) {
     return (
-      <Link href={href} aria-label="Paid plan, open My Plan" data-testid="topbar-plan-pill" className={baseClassName}>
+      <Link href={href} aria-label="Paid plan, open My Plan" data-testid="topbar-plan-pill" className={`${baseClassName} text-ink`}>
         Paid
       </Link>
     );
@@ -100,21 +107,25 @@ export function TopbarPlanPill({
   const days = calendarDaysLeft(entitlement.periodEndsAt);
   if (days === null || days < 0) {
     return (
-      <Link href={href} aria-label="Paid plan, open My Plan" data-testid="topbar-plan-pill" className={baseClassName}>
+      <Link href={href} aria-label="Paid plan, open My Plan" data-testid="topbar-plan-pill" className={`${baseClassName} text-ink`}>
         Paid
       </Link>
     );
   }
+  // Green at 7+ days, red below 7 (including the final day, 0).
+  // 7 exactly stays green: the rule is "less than 7", not "<= 7".
+  const paidColourClass = days < 7 ? 'text-signal-critical' : 'text-brand-emerald';
+  const paidClassName = `${baseClassName} ${paidColourClass}`;
   if (days === 0) {
     return (
       <Link
         href={href}
         aria-label="Paid plan, expires today, open My Plan"
         data-testid="topbar-plan-pill"
-        className={baseClassName}
+        className={paidClassName}
       >
         <span>Paid ·</span>
-        <span className="text-brand-gold">Expires today</span>
+        <span>Expires today</span>
       </Link>
     );
   }
@@ -123,14 +134,14 @@ export function TopbarPlanPill({
       href={href}
       aria-label={`Paid plan, ${days} days left, open My Plan`}
       data-testid="topbar-plan-pill"
-      className={baseClassName}
+      className={paidClassName}
     >
       {/* Desktop: full wording. Phone (below sm, the search button's
           own breakpoint): numeric counts only shorten to "Nd left";
           the "Paid ·" word drops with the full wording. */}
       <span className="hidden sm:inline">Paid ·</span>
-      <span className="hidden text-brand-gold sm:inline">{days} days left</span>
-      <span className="text-brand-gold sm:hidden">{days}d left</span>
+      <span className="hidden sm:inline">{days} days left</span>
+      <span className="sm:hidden">{days}d left</span>
     </Link>
   );
 }
