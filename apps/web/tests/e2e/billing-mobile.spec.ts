@@ -115,8 +115,28 @@ async function installBillingFixture(
   );
 }
 
+/**
+ * Separate billing sections (2026-11-02): the old /billing?view=
+ * route is deleted. Each section is its own route now.
+ */
+const SECTION_ROUTES: Record<string, string> = {
+  'my-plan': 'my-plan',
+  purchase: 'purchase',
+  payments: 'payments',
+};
+
 async function gotoBilling(page: Page, view: string) {
-  await page.goto(`/tenant/${TENANT.subdomain}/billing?view=${view}`);
+  await page.goto(`/tenant/${TENANT.subdomain}/${SECTION_ROUTES[view] ?? view}`);
+}
+
+/** Paginated status fixture for views that fetch /billing?page=N. */
+async function installBillingPageFixture(
+  page: Page,
+  status: { entitlement: unknown; payments: unknown[] }
+) {
+  await page.route(`**/api/tenant/${TENANT.subdomain}/billing?page=*`, (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(status) })
+  );
 }
 
 /**
@@ -194,7 +214,7 @@ test.describe('billing at phone widths', () => {
     });
   }
 
-  test('My Plan fits 360px: pending verification instead of Free', async ({
+  test('My Plan fits 360px: submitted-for-approval card under the Free card', async ({
     page,
     context,
   }) => {
@@ -208,20 +228,20 @@ test.describe('billing at phone widths', () => {
     });
     await gotoBilling(page, 'my-plan');
 
-    await expect(page.getByText('Payment in progress')).toBeVisible();
-    await expect(page.getByText('Waiting for approval', { exact: true })).toBeVisible();
+    // The split My Plan keeps the Free card and adds a submitted
+    // card below it (it no longer replaces the Free card).
+    await expect(page.getByText('Free', { exact: true })).toBeVisible();
+    await expect(page.getByText('Submitted for approval')).toBeVisible();
     await expect(
-      page.getByText('Your plan activates once the payment is approved.')
+      page.getByText(
+        'Your monthly plan starts when we approve your payment, not when you paid. If approval takes a few days, those days are not added to your plan.'
+      )
     ).toBeVisible();
     await expect(page.getByRole('button', { name: 'View payments' })).toBeVisible();
-    // The Free card is replaced, not stacked: no Free title, no Free
-    // feature list, no upgrade button — and no Purchase-only copy.
-    await expect(page.getByText('Free', { exact: true })).toHaveCount(0);
-    await expect(page.getByText('Posting and scheduling')).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Buy or upgrade' })).toHaveCount(0);
     await expect(
       page.getByText('You can build a new plan once this payment is decided.')
-    ).toHaveCount(0);
+    ).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Buy or upgrade' })).toHaveCount(0);
 
     await expectNoDocumentOverflow(page);
   });
@@ -271,6 +291,12 @@ test.describe('billing at phone widths', () => {
         body: JSON.stringify(paymentItem()),
       })
     );
+    // The confirmation sub-route fetches /billing?page=1 for the
+    // just-created payment.
+    await installBillingPageFixture(page, {
+      entitlement: freeEntitlement(),
+      payments: [paymentItem()],
+    });
     await installScreenshotUploadFixtures(page);
     await gotoBilling(page, 'purchase');
 
@@ -294,7 +320,8 @@ test.describe('billing at phone widths', () => {
     // Submit unlocks only once the upload lands.
     await expect(page.getByText('Uploaded')).toBeVisible();
     await page.getByRole('button', { name: 'Submit payment for approval' }).click();
-    await expect(page.getByText('Payment submitted')).toBeVisible();
+    // Submit pushes the server-backed confirmation sub-route.
+    await expect(page.getByText('We have received your payment.')).toBeVisible();
     await expectNoDocumentOverflow(page);
   });
 
@@ -317,6 +344,10 @@ test.describe('billing at phone widths', () => {
         body: JSON.stringify(paymentItem()),
       })
     );
+    await installBillingPageFixture(page, {
+      entitlement: freeEntitlement(),
+      payments: [paymentItem()],
+    });
     await installScreenshotUploadFixtures(page, 900);
     await gotoBilling(page, 'purchase');
 
@@ -342,7 +373,7 @@ test.describe('billing at phone widths', () => {
       page.getByRole('button', { name: 'Submit payment for approval' })
     ).toBeEnabled();
     await page.getByRole('button', { name: 'Submit payment for approval' }).click();
-    await expect(page.getByText('Payment submitted')).toBeVisible();
+    await expect(page.getByText('We have received your payment.')).toBeVisible();
     await expectNoDocumentOverflow(page);
   });
 
@@ -366,8 +397,25 @@ test.describe('billing at phone widths', () => {
       ],
     });
 
+    // The Payments view fetches the paginated status endpoint.
+    await installBillingPageFixture(page, {
+      entitlement: paidEntitlement(),
+      payments: [
+        paymentItem({ status: 'approved', approvedAt: '2026-10-31T13:00:00.000Z' }),
+        paymentItem({
+          id: '22222222-2222-4222-a222-222222222222',
+          method: 'nowpayments',
+          bankMethod: null,
+          status: 'paid',
+          nowpaymentsPayAddress: 'TXYZ1234567890abcdefghijklmnopqrstuv',
+          nowpaymentsNetwork: 'trc20',
+        }),
+      ],
+    });
+
     await gotoBilling(page, 'my-plan');
-    await expect(page.getByText('Pages and accounts by platform')).toBeVisible();
+    await expect(page.getByText('Monthly plan')).toBeVisible();
+    await expect(page.getByText('7 included, 0 in use')).toBeVisible();
     await expectNoDocumentOverflow(page);
 
     await gotoBilling(page, 'payments');
@@ -382,9 +430,9 @@ test.describe('billing at phone widths', () => {
     context,
   }) => {
     await page.setViewportSize({ width: 360, height: 844 });
-    // Admin session, minted explicitly: the old billing URL
-    // redirects to the admin section, which renders the approvals
-    // view there.
+    // Admin session, minted explicitly: the tenant layout redirects
+    // admins to the admin section, which renders the approvals view
+    // there.
     await context.addCookies([
       { ...SESSION_COOKIE, value: mintSessionToken('admin') },
       { ...SESSION_COOKIE, value: mintSessionToken('admin'), domain: `${TENANT.subdomain}.localhost` },
@@ -413,6 +461,8 @@ test.describe('billing at phone widths', () => {
         body: JSON.stringify({}),
       });
     });
+    // Admins are redirected out of the tenant frame to the admin
+    // section, which renders the approvals view there.
     await gotoBilling(page, 'my-plan');
 
     await expect(page.getByText('Subscriptions approval')).toBeVisible();
@@ -421,8 +471,15 @@ test.describe('billing at phone widths', () => {
     await expect(approveBtn).toBeVisible();
     await expectWithinViewport(approveBtn, page);
     await approveBtn.click();
+    // Decisions confirm through a dialog first; the dialog's
+    // confirm shares the card button's label, so scope it to the
+    // dialog. The notice then shows twice (top + card).
+    await page
+      .getByRole('alertdialog')
+      .getByRole('button', { name: 'Approve payment' })
+      .click();
     await expect(
-      page.getByText('Approved. The plan starts now and runs for 30 days.')
+      page.getByText('Approved. The plan starts now and runs for 30 days.').first()
     ).toBeVisible();
     await expectNoDocumentOverflow(page);
   });

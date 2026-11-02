@@ -343,8 +343,12 @@ export async function POST(
           .from('subscription_payments')
           .update({ is_downgrade: true })
           .eq('id', (data as Record<string, unknown>)['id']);
-      } catch {
-        // Tolerated: the payment itself is already created.
+      } catch (err) {
+        // Tolerated: the payment itself is already created. Logged
+        // so an unapplied migration stays visible instead of silent.
+        logServerError('[billing] downgrade flag write failed (migration may be unapplied)', err, {
+          source: 'billing',
+        });
       }
     }
     if (error?.code === '23505') {

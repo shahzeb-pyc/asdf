@@ -22,7 +22,7 @@ import type { IdempotencyAction } from '@fbuploadpro/contracts';
 import { logServerError } from '@/lib/server-analytics';
 
 export function getBillingAdminClient(): SupabaseClient | null {
-  // Privilege proof (PR #108) throws in production on a bad key.
+  // Privilege proof (PR 108) throws in production on a bad key.
   // Map that throw to null here, once, so every billing/admin
   // route that checks for null returns the mapped 503 instead of
   // an unhandled 500 — the gap the billing audit found on most

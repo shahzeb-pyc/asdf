@@ -6,6 +6,7 @@ import { createQueryClient } from '@/lib/data/query-client';
 
 import { PurchaseView } from '@/components/billing/purchase-view';
 import { MyPlanView } from '@/components/billing/my-plan-view';
+import { PaymentsView } from '@/components/billing/payments-view';
 import { EntitlementProvider } from '@/components/billing/entitlement-provider';
 import { AdminApprovalsView } from '@/components/billing/admin-approvals-view';
 import { abortedError, httpError, networkError, parseError, sessionExpiredError } from '@/lib/api';
@@ -96,26 +97,38 @@ function statusFixture(payments: unknown[] = []) {
  * everything else returns the full status object.
  */
 function mockBillingApi<T extends { entitlement: object; payments: unknown[] }>(
-  status: T
+  status: T,
+  opts: {
+    storage?: unknown;
+    refunds?: unknown;
+    failBilling?: boolean;
+    failStorage?: boolean;
+    failEntitlement?: boolean;
+  } = {}
 ): void {
   mockApiGet.mockImplementation(async (url: string) => {
     if (url.includes('/billing/entitlement')) {
+      if (opts.failEntitlement) throw new Error('entitlement down');
       const entitlement = status.entitlement as Record<string, unknown>;
       return { ...entitlement, hasPriorPeriod: entitlement.hasPriorPeriod ?? false };
     }
     if (url.includes('/billing/storage')) {
-      return {
-        quotaBytes: 5 * 1024 * 1024 * 1024,
-        usedBytes: 0,
-        remainingBytes: 5 * 1024 * 1024 * 1024,
-        overBytes: 0,
-        state: 'normal',
-        hasActivePeriod: true,
-      };
+      if (opts.failStorage) throw new Error('storage down');
+      return (
+        opts.storage ?? {
+          quotaBytes: 5 * 1024 * 1024 * 1024,
+          usedBytes: 0,
+          remainingBytes: 5 * 1024 * 1024 * 1024,
+          overBytes: 0,
+          state: 'normal',
+          hasActivePeriod: true,
+        }
+      );
     }
     if (url.includes('/billing/refunds')) {
-      return { requests: [], eligibility: { eligible: false, reason: null } };
+      return opts.refunds ?? { requests: [], eligibility: { eligible: false, reason: null } };
     }
+    if (opts.failBilling) throw new Error('billing down');
     return status;
   });
 }
@@ -143,6 +156,16 @@ function renderCheckout() {
     <QueryClientProvider client={createQueryClient('acme')}>
       <EntitlementProvider subdomain="acme" adminOnly={false}>
         <PurchaseView subdomain="acme" step="checkout" />
+      </EntitlementProvider>
+    </QueryClientProvider>
+  );
+}
+
+function renderPayments() {
+  return render(
+    <QueryClientProvider client={createQueryClient('acme')}>
+      <EntitlementProvider subdomain="acme" adminOnly={false}>
+        <PaymentsView subdomain="acme" />
       </EntitlementProvider>
     </QueryClientProvider>
   );
@@ -999,5 +1022,348 @@ describe('Admin approvals view', () => {
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Approve payment' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reject payment' })).toBeInTheDocument();
+  });
+});
+
+/**
+ * My Plan view states (split build): the plan card follows the
+ * proven entitlement, and the payment-derived cards (submitted,
+ * rejected, upgrade waiting, scheduled downgrade, renewal waiting,
+ * refund waiting) follow the /billing payment list. Storage states
+ * follow the /billing/storage answer; failures in payments or
+ * storage never hide the plan itself.
+ */
+describe('My Plan view', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockBillingApi(statusFixture());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    resetReportErrorTransport();
+  });
+
+  function paidEntitlement() {
+    return {
+      plan: 'paid',
+      active: true,
+      counts: { ...ZERO_COUNTS, facebook: 2, instagram: 1, threads: 1, x: 1, tiktok: 1, youtube: 1 },
+      usage: { ...ZERO_COUNTS },
+      periodEndsAt: '2026-11-30T00:00:00.000Z',
+      periodStartsAt: '2026-10-31T00:00:00.000Z',
+      canPost: true,
+      readOnly: false,
+      reason: null,
+      hasPriorPeriod: true,
+    };
+  }
+
+  function expiredEntitlement() {
+    return {
+      plan: 'paid',
+      active: false,
+      counts: { ...ZERO_COUNTS },
+      usage: { ...ZERO_COUNTS },
+      periodEndsAt: '2026-10-31T00:00:00.000Z',
+      periodStartsAt: '2026-10-01T00:00:00.000Z',
+      canPost: false,
+      readOnly: true,
+      reason: 'Your monthly plan has ended.',
+      hasPriorPeriod: true,
+    };
+  }
+
+  it('Free shows the Free card and a buy button', async () => {
+    renderBilling('my-plan');
+    expect(await screen.findByText('Free', { exact: true })).toBeInTheDocument();
+    expect(
+      screen.getByText('You are on the Free plan. Posting needs a monthly plan.')
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Buy a monthly plan' })).toBeInTheDocument();
+  });
+
+  it('Paid shows counts, monthly price, and included vs in-use', async () => {
+    mockBillingApi({ entitlement: paidEntitlement(), payments: [] });
+    renderBilling('my-plan');
+    expect(await screen.findByText('Monthly plan')).toBeInTheDocument();
+    expect(screen.getByText(/490 PKR \/ month/)).toBeInTheDocument();
+    expect(screen.getByText(/7 included, 0 in use/)).toBeInTheDocument();
+    expect(screen.getByText(/70 PKR per page or account, paid monthly/)).toBeInTheDocument();
+  });
+
+  it('Expired shows the previous plan counts and a renew button', async () => {
+    mockBillingApi({
+      entitlement: expiredEntitlement(),
+      payments: [paymentItem({ status: 'approved', counts: { ...ZERO_COUNTS, facebook: 2 } })],
+    });
+    renderBilling('my-plan');
+    expect(await screen.findByText('Expired')).toBeInTheDocument();
+    expect(screen.getByText(/Your previous monthly plan was/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Renew your plan' })).toBeInTheDocument();
+  });
+
+  it('Free plus a pending payment shows the submitted card, not an active plan', async () => {
+    mockBillingApi(statusFixture([paymentItem()]));
+    renderBilling('my-plan');
+    expect(await screen.findByText('Submitted for approval')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Your monthly plan starts when we approve your payment, not when you paid. If approval takes a few days, those days are not added to your plan.'
+      )
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'View payments' })).toBeInTheDocument();
+    expect(
+      screen.getByText('You can build a new plan once this payment is decided.')
+    ).toBeInTheDocument();
+  });
+
+  it('Rejected shows the reason and Pay again prefills Purchase', async () => {
+    mockBillingApi(
+      statusFixture([
+        paymentItem({
+          status: 'rejected',
+          rejectionReason: 'Wrong amount',
+          rejectionDetail: 'Sent 60, not 70.',
+        }),
+      ])
+    );
+    renderBilling('my-plan');
+    expect(await screen.findByText('Payment rejected')).toBeInTheDocument();
+    expect(screen.getByText(/Reason: Wrong amount — Sent 60, not 70\./)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Pay again' }));
+    expect(mockPush).toHaveBeenCalledWith('/tenant/acme/purchase');
+  });
+
+  it('Paid plus a pending upgrade shows the upgrade-waiting card', async () => {
+    mockBillingApi({
+      entitlement: paidEntitlement(),
+      payments: [paymentItem({ isUpgrade: true })],
+    });
+    renderBilling('my-plan');
+    expect(await screen.findByText('Upgrade waiting for approval')).toBeInTheDocument();
+    expect(
+      screen.getByText('Your current plan keeps running unchanged until this upgrade is approved.')
+    ).toBeInTheDocument();
+  });
+
+  it('Approved downgrade with a future start shows the scheduled card, no credit', async () => {
+    mockBillingApi({
+      entitlement: paidEntitlement(),
+      payments: [
+        paymentItem({
+          status: 'approved',
+          isDowngrade: true,
+          scheduledStartsAt: '2099-01-01T00:00:00.000Z',
+        }),
+      ],
+    });
+    renderBilling('my-plan');
+    expect(await screen.findByText('Scheduled downgrade')).toBeInTheDocument();
+    expect(screen.getByText(/New monthly plan:/)).toBeInTheDocument();
+    expect(screen.getByText(/No credit was given for the days left/)).toBeInTheDocument();
+  });
+
+  it('Expired plus a pending payment shows renewal waiting', async () => {
+    mockBillingApi({
+      entitlement: expiredEntitlement(),
+      payments: [paymentItem()],
+    });
+    renderBilling('my-plan');
+    expect(await screen.findByText('Renewal waiting for approval')).toBeInTheDocument();
+  });
+
+  it('A pending refund shows the refund-waiting card', async () => {
+    mockBillingApi(statusFixture(), {
+      refunds: { requests: [{ id: 'r1', status: 'requested' }], eligibility: { eligible: false, reason: null } },
+    });
+    renderBilling('my-plan');
+    expect(await screen.findByText('Refund request waiting')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'View refund' })).toBeInTheDocument();
+  });
+
+  it('Storage nearly full warns, full and over quota offer more units', async () => {
+    const GB = 1024 * 1024 * 1024;
+    mockBillingApi(statusFixture(), {
+      storage: { quotaBytes: 5 * GB, usedBytes: 4.5 * GB, state: 'near' },
+    });
+    const { unmount } = renderBilling('my-plan');
+    expect(await screen.findByText(/4\.5 GB used of 5\.0 GB — nearly full/)).toBeInTheDocument();
+    expect(screen.getByText(/You are close to your limit/)).toBeInTheDocument();
+    unmount();
+
+    mockBillingApi(statusFixture(), {
+      storage: { quotaBytes: 5 * GB, usedBytes: 6 * GB, state: 'over' },
+    });
+    renderBilling('my-plan');
+    expect(await screen.findByText(/6\.0 GB used of 5\.0 GB — over quota/)).toBeInTheDocument();
+    expect(screen.getByText(/You are out of space/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add pages or accounts' })).toBeInTheDocument();
+  });
+
+  it('A payments failure shows an alert but the plan stays correct', async () => {
+    mockBillingApi({ entitlement: paidEntitlement(), payments: [] }, { failBilling: true });
+    renderBilling('my-plan');
+    expect(await screen.findByText('Monthly plan')).toBeInTheDocument();
+    expect(screen.getByText(/Couldn.t load your payments/)).toBeInTheDocument();
+  });
+
+  it('A storage failure shows a storage alert with retry', async () => {
+    mockBillingApi(statusFixture(), { failStorage: true });
+    renderBilling('my-plan');
+    expect(await screen.findByText(/Couldn.t check storage/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+  });
+
+  it('An unproven entitlement shows the plan-check error, not a Free card', async () => {
+    mockBillingApi(statusFixture(), { failEntitlement: true });
+    renderBilling('my-plan');
+    // The shared query retries once before settling unproven, so
+    // allow more than the default 1s find timeout.
+    expect(
+      await screen.findByText(/Couldn.t check your plan/, {}, { timeout: 10000 })
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Free', { exact: true })).toBeNull();
+  });
+});
+
+/**
+ * Payments view (split build): rows from the paginated status
+ * endpoint, crypto pay details on pending crypto rows, rejection
+ * reasons, load-more paging, and the empty and error states.
+ */
+describe('Payments view', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    resetReportErrorTransport();
+  });
+
+  function mockPaymentsApi(pages: Record<number, unknown[]>) {
+    mockApiGet.mockImplementation(async (url: string) => {
+      if (url.includes('/billing/entitlement')) {
+        return { ...freeEntitlement(), hasPriorPeriod: false };
+      }
+      const page = Number(new URL(url, 'https://example.com').searchParams.get('page') ?? 1);
+      return { entitlement: freeEntitlement(), payments: pages[page] ?? [] };
+    });
+  }
+
+  it('Rows show amount, method, status, and crypto pay details', async () => {
+    mockPaymentsApi({
+      1: [
+        paymentItem(),
+        paymentItem({
+          id: '22222222-2222-4222-a222-222222222222',
+          method: 'nowpayments',
+          bankMethod: null,
+          nowpaymentsPayAddress: 'TXYZ1234567890abcdefghijklmnopqrstuv',
+          nowpaymentsPayAmount: 10,
+          nowpaymentsNetwork: 'trc20',
+        }),
+      ],
+    });
+    renderPayments();
+    expect(await screen.findByText('70 PKR · Easypaisa')).toBeInTheDocument();
+    expect(screen.getByText('70 PKR · Crypto · USDT (TRC20)')).toBeInTheDocument();
+    expect(screen.getByText(/Send exactly 10 USDT to/)).toBeInTheDocument();
+    expect(screen.getByText(/TXYZ1234567890abcdefghijklmnopqrstuv/)).toBeInTheDocument();
+  });
+
+  it('Rejected rows show the reason; empty shows the first-use state', async () => {
+    mockPaymentsApi({
+      1: [paymentItem({ status: 'rejected', rejectionReason: 'Wrong amount' })],
+    });
+    const { unmount } = renderPayments();
+    expect(await screen.findByText(/Rejected: Wrong amount/)).toBeInTheDocument();
+    unmount();
+
+    mockPaymentsApi({ 1: [] });
+    renderPayments();
+    expect(await screen.findByText('No payments yet')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Buy a monthly plan' })).toBeInTheDocument();
+  });
+
+  it('A full first page offers load-more and appends page two', async () => {
+    const page1 = Array.from({ length: 50 }, (_, i) => paymentItem({ id: `page1-${i}` }));
+    mockPaymentsApi({ 1: page1, 2: [paymentItem({ id: 'page2-0' })] });
+    renderPayments();
+    expect(await screen.findByText('Showing 50 payments — more below')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Load more payments' }));
+    await waitFor(() =>
+      expect(screen.getByText('Showing 51 payments.')).toBeInTheDocument()
+    );
+  });
+
+  it('A load failure shows the error with a retry', async () => {
+    mockApiGet.mockImplementation(async (url: string) => {
+      if (url.includes('/billing/entitlement')) {
+        return { ...freeEntitlement(), hasPriorPeriod: false };
+      }
+      throw new Error('payments down');
+    });
+    renderPayments();
+    expect(await screen.findByText(/Couldn.t load payments/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+  });
+});
+
+/**
+ * Purchase downgrade builder (split build): a paid user who lowers a
+ * count gets the prepaid next-month quote — old vs new monthly total,
+ * pay-now = the new total, no credit for the days left — and checkout
+ * carries the downgrade label.
+ */
+describe('Purchase downgrade builder', () => {
+  it('lowering a count quotes the new monthly total prepaid, with no credit', async () => {
+    sessionStorage.clear();
+    const paidEntitlement = {
+      plan: 'paid',
+      active: true,
+      counts: { ...ZERO_COUNTS, facebook: 2 },
+      usage: { ...ZERO_COUNTS, facebook: 1 },
+      periodEndsAt: '2099-01-01T00:00:00.000Z',
+      periodStartsAt: '2026-10-01T00:00:00.000Z',
+      canPost: true,
+      readOnly: false,
+      reason: null,
+    };
+    mockBillingApi({
+      entitlement: paidEntitlement,
+      payments: [
+        paymentItem({
+          status: 'approved',
+          counts: { ...ZERO_COUNTS, facebook: 2 },
+          amountPkr: 140,
+          approvedAt: '2026-10-01T00:00:00.000Z',
+        }),
+      ],
+    });
+    renderBilling('purchase');
+    await screen.findByText('Choose your pages and accounts');
+    const facebook = screen.getByLabelText('Facebook pages') as HTMLInputElement;
+    // Prefilled from the most recent approved payment.
+    expect(facebook.value).toBe('2');
+    fireEvent.change(facebook, { target: { value: '1' } });
+    fireEvent.blur(facebook);
+    expect(await screen.findByText('Current monthly plan')).toBeInTheDocument();
+    expect(screen.getByText('New monthly plan')).toBeInTheDocument();
+    expect(screen.getByText('You pay now')).toBeInTheDocument();
+    expect(
+      screen.getByText(/Lower monthly plan for next month\. Your current plan runs unchanged until/)
+    ).toBeInTheDocument();
+    expect(screen.getByText(/No credit was given for the days left/)).toBeInTheDocument();
+    // Checkout is a sub-route: the click pushes /purchase/checkout
+    // (mocked here), so follow it the way the real routes do —
+    // re-render at the checkout step with the builder's saved draft.
+    fireEvent.click(screen.getByRole('button', { name: 'Continue to checkout' }));
+    cleanup();
+    renderCheckout();
+    expect(await screen.findByRole('heading', { name: 'Checkout' })).toBeInTheDocument();
+    // Header line only (the summary card uses a period, not the middot).
+    expect(screen.getByText(/Lower monthly plan for next month · 1 Facebook pages/)).toBeInTheDocument();
   });
 });

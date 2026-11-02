@@ -283,10 +283,10 @@
         "routeSpecificRawBytes": 25426
       },
       "/admin/subscriptions": {
-        "firstLoadGzipBytes": 158276,
-        "firstLoadRawBytes": 532984,
-        "routeSpecificGzipBytes": 17743,
-        "routeSpecificRawBytes": 59511
+        "firstLoadGzipBytes": 160411,
+        "firstLoadRawBytes": 541079,
+        "routeSpecificGzipBytes": 19875,
+        "routeSpecificRawBytes": 67607
       },
       "/admin/sellers": {
         "firstLoadGzipBytes": 158897,
@@ -510,12 +510,6 @@
         "routeSpecificGzipBytes": 35744,
         "routeSpecificRawBytes": 115532
       },
-      "/tenant/[subdomain]/billing": {
-        "firstLoadGzipBytes": 176478,
-        "firstLoadRawBytes": 642966,
-        "routeSpecificGzipBytes": 43378,
-        "routeSpecificRawBytes": 169521
-      },
       "/tenant/[subdomain]/creator-finder": {
         "firstLoadGzipBytes": 175174,
         "firstLoadRawBytes": 587782,
@@ -587,6 +581,42 @@
         "firstLoadRawBytes": 535070,
         "routeSpecificGzipBytes": 19364,
         "routeSpecificRawBytes": 61598
+      },
+      "/tenant/[subdomain]/my-plan": {
+        "firstLoadGzipBytes": 169948,
+        "firstLoadRawBytes": 563822,
+        "routeSpecificGzipBytes": 29412,
+        "routeSpecificRawBytes": 90350
+      },
+      "/tenant/[subdomain]/refund": {
+        "firstLoadGzipBytes": 168543,
+        "firstLoadRawBytes": 559904,
+        "routeSpecificGzipBytes": 28007,
+        "routeSpecificRawBytes": 86431
+      },
+      "/tenant/[subdomain]/payments": {
+        "firstLoadGzipBytes": 168351,
+        "firstLoadRawBytes": 557436,
+        "routeSpecificGzipBytes": 27815,
+        "routeSpecificRawBytes": 83964
+      },
+      "/tenant/[subdomain]/purchase/checkout": {
+        "firstLoadGzipBytes": 164682,
+        "firstLoadRawBytes": 546269,
+        "routeSpecificGzipBytes": 24146,
+        "routeSpecificRawBytes": 72797
+      },
+      "/tenant/[subdomain]/purchase/confirmation": {
+        "firstLoadGzipBytes": 164681,
+        "firstLoadRawBytes": 546269,
+        "routeSpecificGzipBytes": 24145,
+        "routeSpecificRawBytes": 72797
+      },
+      "/tenant/[subdomain]/purchase": {
+        "firstLoadGzipBytes": 164681,
+        "firstLoadRawBytes": 546269,
+        "routeSpecificGzipBytes": 24145,
+        "routeSpecificRawBytes": 72797
       }
     },
     "totalClientJs": {

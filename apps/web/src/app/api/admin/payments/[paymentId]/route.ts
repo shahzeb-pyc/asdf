@@ -296,8 +296,11 @@ async function handleCryptoRescue(
       .from('subscription_payments')
       .update({ decided_at: new Date().toISOString() })
       .eq('id', payment.id);
-  } catch {
+  } catch (err) {
     // Best-effort: decided_at column ships with the new migration.
+    logServerError('[billing] decided_at write failed (migration may be unapplied)', err, {
+      source: 'billing',
+    });
   }
   try {
     await releaseHeldRedemptionsForPayment(client, payment.id);

@@ -12,6 +12,8 @@
  * no in-app refund payout.
  */
 
+import * as React from 'react';
+
 import { RefundSection } from './refund-section';
 
 export function RefundView({ subdomain }: Readonly<{ subdomain: string }>) {

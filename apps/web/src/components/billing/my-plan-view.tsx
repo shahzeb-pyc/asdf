@@ -21,6 +21,7 @@
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { apiGet, buildTenantApiPath, getErrorMessage } from '@/lib/api';
+import { reportError } from '@/lib/report-error';
 import {
   BillingStatusResponseSchema,
   MediaStorageResponseSchema,
@@ -146,8 +147,9 @@ export function MyPlanView({ subdomain }: Readonly<{ subdomain: string }>) {
         if (!cancelled) {
           setRefundPending(result.requests.some((item) => item.status === 'requested'));
         }
-      } catch {
+      } catch (err) {
         // Refund flag is advisory; never block My Plan on it.
+        reportError(err, { source: 'my-plan-refund-flag' });
       }
     })();
     return () => {

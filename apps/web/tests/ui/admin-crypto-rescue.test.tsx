@@ -172,3 +172,119 @@ describe('AdminApprovalsView crypto rescue', () => {
     );
   });
 });
+
+/**
+ * Split-build admin coverage: override approval, load-more, screenshot
+ * states, refresh, and the decided section — the branches the rescue
+ * tests above do not reach.
+ */
+describe('AdminApprovalsView split-build paths', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('approving a screenshot-less payment requires and posts the override reason', async () => {
+    mockPayments([
+      payment({
+        method: 'bank',
+        bankMethod: 'easypaisa',
+        screenshotStorageKey: null,
+        nowpaymentsPaymentId: null,
+        nowpaymentsPayAddress: null,
+        nowpaymentsPayAmount: null,
+        nowpaymentsNetwork: null,
+      }),
+    ]);
+    render(<AdminApprovalsView />);
+    expect(await screen.findByText(/No screenshot attached to this payment/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Approve payment' }));
+    // The dialog confirm stays disabled until the override reason is filled.
+    expect(screen.getAllByRole('button', { name: 'Approve payment' }).at(-1)).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Override reason (required)'), {
+      target: { value: 'Screenshot verified on file' },
+    });
+    // The card button and the dialog confirm share a label; the
+    // dialog renders after the card, so its button is the last.
+    fireEvent.click(screen.getAllByRole('button', { name: 'Approve payment' }).at(-1)!);
+    await waitFor(() =>
+      expect(mockedApiPost).toHaveBeenCalledWith(
+        '/api/admin/payments/payment-1',
+        { decision: 'approve', overrideReason: 'Screenshot verified on file' },
+      ),
+    );
+  });
+
+  it('loads more payments and appends page 2', async () => {
+    const page1 = Array.from({ length: 100 }, (_, i) =>
+      payment({ id: `payment-${i + 1}`, userEmail: `buyer${i + 1}@example.com` }),
+    );
+    mockedApiGet.mockImplementation(async (path: string) => {
+      if (path.includes('webhook-issues')) return { issues: [] };
+      if (path.includes('page=2')) {
+        return { payments: [payment({ id: 'payment-101', userEmail: 'buyer101@example.com' })], page: 2, pendingTotal: 150 };
+      }
+      return { payments: page1, page: 1, pendingTotal: 150 };
+    });
+    render(<AdminApprovalsView />);
+    expect(await screen.findByText(/Showing 100 of 150/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Load more payments' }));
+    expect(await screen.findByText(/Showing 101 of 150/)).toBeTruthy();
+    expect(await screen.findByText('buyer101@example.com')).toBeTruthy();
+  });
+
+  it('shows a loaded screenshot preview with an open-full-size link', async () => {
+    const origCreateObjectURL = URL.createObjectURL;
+    URL.createObjectURL = () => 'blob:mock-screenshot';
+    vi.stubGlobal(
+      'fetch',
+      async () => ({ ok: true, status: 200, blob: async () => new Blob(['x'], { type: 'image/png' }) }),
+    );
+    mockPayments([
+      payment({
+        method: 'bank',
+        bankMethod: 'easypaisa',
+        screenshotStorageKey: 'screenshots/payment-1.png',
+        nowpaymentsPaymentId: null,
+        nowpaymentsPayAddress: null,
+        nowpaymentsPayAmount: null,
+        nowpaymentsNetwork: null,
+      }),
+    ]);
+    render(<AdminApprovalsView />);
+    expect(await screen.findByText('Open full size')).toBeTruthy();
+    URL.createObjectURL = origCreateObjectURL;
+    vi.unstubAllGlobals();
+  });
+
+  it('refresh reloads the payments list', async () => {
+    mockPayments([payment({ userEmail: 'buyer@example.com' })]);
+    render(<AdminApprovalsView />);
+    expect(await screen.findByText('buyer@example.com')).toBeTruthy();
+    const callsBefore = mockedApiGet.mock.calls.length;
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(mockedApiGet.mock.calls.length).toBeGreaterThan(callsBefore));
+  });
+
+  it('lists decided payments in the Recently decided section', async () => {
+    mockPayments([
+      payment({
+        id: 'payment-decided',
+        status: 'approved',
+        method: 'bank',
+        bankMethod: 'easypaisa',
+        screenshotStorageKey: null,
+        nowpaymentsPaymentId: null,
+        nowpaymentsPayAddress: null,
+        nowpaymentsPayAmount: null,
+        nowpaymentsNetwork: null,
+        approvedAt: '2026-06-02T00:00:00.000Z',
+        decidedAt: '2026-06-02T00:00:00.000Z',
+        userEmail: 'decided@example.com',
+      }),
+    ]);
+    render(<AdminApprovalsView />);
+    expect(await screen.findByText('Recently decided')).toBeTruthy();
+    expect(await screen.findByText('decided@example.com')).toBeTruthy();
+    expect(screen.queryByText('No decided payments yet')).toBeNull();
+  });
+});

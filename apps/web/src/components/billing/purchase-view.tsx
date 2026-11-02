@@ -342,8 +342,11 @@ export function PurchaseView({
       if (draft.paymentType) setPaymentType(draft.paymentType);
       if (draft.bankMethod) setBankMethod(draft.bankMethod);
       if (draft.cryptoNetwork) setCryptoNetwork(draft.cryptoNetwork);
-    } catch {
+    } catch (err) {
       // A corrupt draft is ignored; the builder starts fresh.
+      // Logged, not swallowed: a persistently corrupt draft means
+      // the draft format changed and users keep losing their builder.
+      reportError(err, { source: 'purchase-draft' });
     }
   }, [step]);
   React.useEffect(() => {
@@ -394,8 +397,9 @@ export function PurchaseView({
       if (url) {
         try {
           URL.revokeObjectURL(url);
-        } catch {
-          // Revocation is best-effort.
+        } catch (err) {
+          // Revocation is best-effort; a failure only leaks a blob URL.
+          reportError(err, { source: 'purchase-screenshot-revoke' });
         }
       }
     };
@@ -426,8 +430,9 @@ export function PurchaseView({
         if (!cancelled) {
           setRefundPending(result.requests.some((item) => item.status === 'requested'));
         }
-      } catch {
+      } catch (err) {
         // Refund state is advisory here; never block Purchase on it.
+        reportError(err, { source: 'purchase-refund-flag' });
       }
     })();
     return () => {
@@ -453,8 +458,9 @@ export function PurchaseView({
         if (!cancelled) {
           setRefundPending(result.requests.some((item) => item.status === 'requested'));
         }
-      } catch {
+      } catch (err) {
         // Refund state is advisory here; never block Purchase on it.
+        reportError(err, { source: 'purchase-refund-flag' });
       }
     })();
     return () => {
@@ -616,9 +622,10 @@ export function PurchaseView({
           cryptoNetwork,
         })
       );
-    } catch {
+    } catch (err) {
       // Session storage unavailable: checkout still works from
       // the counts the user just chose if the tab stays alive.
+      reportError(err, { source: 'purchase-draft-save' });
     }
     // A coupon preview is priced for the counts at apply time;
     // re-entering checkout always starts without one, so a stale
@@ -841,8 +848,10 @@ export function PurchaseView({
       await load();
       try {
         sessionStorage.removeItem(DRAFT_KEY);
-      } catch {
-        // Draft cleanup is best-effort.
+      } catch (err) {
+        // Draft cleanup is best-effort; a stale draft only
+        // pre-fills the next builder.
+        reportError(err, { source: 'purchase-draft-cleanup' });
       }
       clearScreenshot();
       submissionKeyRef.current = null;
@@ -895,8 +904,10 @@ export function PurchaseView({
       await load();
       try {
         sessionStorage.removeItem(DRAFT_KEY);
-      } catch {
-        // Draft cleanup is best-effort.
+      } catch (err) {
+        // Draft cleanup is best-effort; a stale draft only
+        // pre-fills the next builder.
+        reportError(err, { source: 'purchase-draft-cleanup' });
       }
       router.push(`/tenant/${subdomain}/purchase/confirmation?payment=${result.paymentId}`);
     } catch (err) {
@@ -931,8 +942,10 @@ export function PurchaseView({
       setAppliedCoupon(null);
       try {
         sessionStorage.removeItem(DRAFT_KEY);
-      } catch {
-        // Draft cleanup is best-effort.
+      } catch (err) {
+        // Draft cleanup is best-effort; a stale draft only
+        // pre-fills the next builder.
+        reportError(err, { source: 'purchase-draft-cleanup' });
       }
       router.push(`/tenant/${subdomain}/my-plan`);
     } catch (err) {

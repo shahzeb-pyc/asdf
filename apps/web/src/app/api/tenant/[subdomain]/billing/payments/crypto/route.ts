@@ -320,8 +320,12 @@ export async function POST(
     if (isDowngrade) {
       try {
         await client.from('subscription_payments').update({ is_downgrade: true }).eq('id', paymentId);
-      } catch {
-        // Best-effort: migration may be unapplied.
+      } catch (err) {
+        // Best-effort: migration may be unapplied. Logged so an
+        // unapplied migration stays visible instead of silent.
+        logServerError('[billing] downgrade flag write failed (migration may be unapplied)', err, {
+          source: 'billing',
+        });
       }
     }
 
