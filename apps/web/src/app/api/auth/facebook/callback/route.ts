@@ -162,7 +162,7 @@ function buildScopeRejectionRedirect(
   if (isMagic) {
     const magicErrorUrl = buildMagicConnectUrl(
       '/connect/facebook/error',
-      request.url,
+      requestUrl,
       rootDomain ?? '',
       appUrl ?? ''
     );
