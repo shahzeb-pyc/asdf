@@ -182,6 +182,17 @@ export interface MediaLibraryPickerProps {
    * 'staged'; no other caller is affected.
    */
   deviceUploads?: 'library' | 'staged';
+  /**
+   * Composer-only (single-file Add button): when set, a single staged
+   * device upload does NOT auto-attach and close. It joins the pending
+   * uploaded list and attaches only when the user taps the Add button,
+   * exactly like the multi-file flow. Every other caller leaves this
+   * unset and keeps single auto-attach-and-close exactly as before —
+   * including the FB Publish Now page, which shares the staged-single
+   * path. Library-tab selection and the import-modal ('library')
+   * single path are unaffected either way.
+   */
+  confirmSingleStagedUpload?: boolean | undefined;
   onSingleAttach: (media: ComposerMedia) => void;
   onMultiAttach: (media: ComposerMedia[]) => void;
   /**
@@ -216,6 +227,7 @@ export function MediaLibraryPicker({
   pageName,
   mode,
   deviceUploads = 'library',
+  confirmSingleStagedUpload = false,
   onSingleAttach,
   onMultiAttach,
   sessionKey = 0,
@@ -675,25 +687,31 @@ export function MediaLibraryPicker({
     setStagedFiles([]);
   }, []);
 
-  // Staged device uploads (deviceUploads === 'staged', Facebook
-  // composer only): the file lives under the post-staging prefix
-  // and is NOT a library item — so, unlike the import-modal path,
-  // nothing is inserted into the library cache and no library
-  // invalidation is scheduled. Single mode attaches at once and
-  // closes through the uploads guard (P1); a second success after
-  // the close is ignored, so it can never overwrite the attached
-  // file. Multi mode: a freshly uploaded file is chosen by
-  // definition, so it joins the selection and Add selected
-  // includes it.
+  // Staged device uploads (deviceUploads === 'staged'): the file lives
+  // under the post-staging prefix and is NOT a library item — so,
+  // unlike the import-modal path, nothing is inserted into the
+  // library cache and no library invalidation is scheduled. Single
+  // mode attaches at once and closes through the uploads guard (P1);
+  // a second success after the close is ignored, so it can never
+  // overwrite the attached file — UNLESS confirmSingleStagedUpload
+  // is set (Pages composer only): then a single upload joins the
+  // pending uploaded list like multi mode, and attaches only when
+  // the user taps Add. A later success while one file already
+  // awaits Add is ignored: a block takes exactly one medium, so
+  // Add must attach deterministically the first file, never a
+  // silently queued second one. Multi mode: a freshly uploaded file
+  // is chosen by definition, so it joins the selection and Add
+  // selected includes it.
   const handleStagedSuccess = React.useCallback(
     (media: ComposerMedia) => {
-      if (mode === 'single') {
+      if (mode === 'single' && !confirmSingleStagedUpload) {
         if (singleAttachedRef.current) return;
         singleAttachedRef.current = true;
         onSingleAttach(media);
         handlePickerOpenChange(false);
         return;
       }
+      if (mode === 'single' && uploadedItems.length > 0) return;
       setUploadedItems((prev) =>
         prev.some((u) => u.id === media.id) ? prev : [...prev, media]
       );
@@ -701,7 +719,13 @@ export function MediaLibraryPicker({
         prev.includes(media.id) ? prev : [...prev, media.id]
       );
     },
-    [mode, onSingleAttach, handlePickerOpenChange]
+    [
+      mode,
+      confirmSingleStagedUpload,
+      uploadedItems.length,
+      onSingleAttach,
+      handlePickerOpenChange,
+    ]
   );
 
   // Live upload state for the leave guard, shared by the staged
@@ -773,6 +797,20 @@ export function MediaLibraryPicker({
     setUploadedItems([]);
     onOpenChange(false);
   }, [uploadedItems, onMultiAttach, onOpenChange]);
+
+  // Single-confirm counterpart of handleAddUploaded: the pending
+  // file fills the target block via onSingleAttach — NOT
+  // onMultiAttach, which would create new blocks and leave the
+  // target block empty. Consumed the same way: cleared, then close,
+  // so reopening the picker can never re-add it.
+  const handleAddSingleUploaded = React.useCallback(() => {
+    const first = uploadedItems[0];
+    if (!first) return;
+    onSingleAttach(first);
+    setSelectedIds([]);
+    setUploadedItems([]);
+    onOpenChange(false);
+  }, [uploadedItems, onSingleAttach, onOpenChange]);
 
   const emptyState = getEmptyStateInfo(null, debouncedSearch);
   const totalMediaCount = mediaItems.length;
@@ -1512,16 +1550,24 @@ export function MediaLibraryPicker({
             {/* P5: one prominent next step after a batch finishes —
                 no auto-append on Done, and Close no longer discards
                 the finished batch's setup unnoticed. */}
-            {mode === 'multi' && uploadedItems.length > 0 && !uploadsActive && (
-              <Button
-                type="button"
-                data-testid="media-library-picker-add-uploaded-btn"
-                onClick={handleAddUploaded}
-                className="mt-3 h-11"
-              >
-                Add {uploadedItems.length} uploaded file{uploadedItems.length === 1 ? '' : 's'} as posts
-              </Button>
-            )}
+            {/* In the || right side, mode is already narrowed to
+                'single', so the prop alone gates the single case. */}
+            {(mode === 'multi' || confirmSingleStagedUpload) &&
+              uploadedItems.length > 0 &&
+              !uploadsActive && (
+                <Button
+                  type="button"
+                  data-testid="media-library-picker-add-uploaded-btn"
+                  onClick={
+                    mode === 'multi' ? handleAddUploaded : handleAddSingleUploaded
+                  }
+                  className="mt-3 h-11"
+                >
+                  {mode === 'multi'
+                    ? `Add ${uploadedItems.length} uploaded file${uploadedItems.length === 1 ? '' : 's'} as posts`
+                    : 'Add uploaded file'}
+                </Button>
+              )}
           </TabsContent>
         </Tabs>
 

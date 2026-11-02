@@ -1239,6 +1239,7 @@ export function CreatePostsDialog({
         pageName={page.pageName}
         mode={pickerMode}
         deviceUploads="staged"
+        confirmSingleStagedUpload
         onSingleAttach={handleSingleAttach}
         onMultiAttach={handleMultiAttach}
         sessionKey={pickerSession}
