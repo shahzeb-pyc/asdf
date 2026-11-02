@@ -12,13 +12,17 @@
  * one below). There is deliberately no "+ Add another post" button:
  * adding posts never costs a click per post.
  *
- * Flat composer styling, deliberately: a block is NOT a card.
- * There is no per-post background, border, rounded box, or shadow
- * — the dialogue surface is the only surface. Posts are separated
- * by spacing, their header row, and the hairline divider the
- * dialogue list puts between them (see create-posts-dialog.tsx),
- * the way a Facebook composer reads as one continuous flow
- * rather than boxes inside a box.
+ * Block layout, deliberately: a block is NOT a card. There is no
+ * per-post card background, border, rounded box, or shadow around
+ * the block — posts are separated by spacing, their header row,
+ * and the hairline divider the dialogue list puts between them
+ * (see create-posts-dialog.tsx), the way a Facebook composer reads
+ * as one continuous flow rather than boxes inside a box. The post
+ * text field itself, however, IS a standard input box (the shared
+ * Textarea primitive's own styling, no overrides) — same look as
+ * the first-comment fields — per the owner's 2026-11-02 decision:
+ * a flat, borderless post field blended into the dialogue and was
+ * indistinguishable from it.
  */
 
 import * as React from 'react';
@@ -126,7 +130,7 @@ export function PostBlock({
         value={block.text}
         disabled={disabled}
         onChange={(event) => onTextChange(event.target.value)}
-        className="min-h-20 border-0 bg-transparent px-0 py-0 focus-visible:border-0"
+        className="min-h-20"
       />
 
       {/* Count and attach share one inline row on the flat surface:
