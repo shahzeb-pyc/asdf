@@ -2,16 +2,14 @@ import { type NextRequest, NextResponse } from 'next/server';
 import {
   type DatabaseMediaFolderRow,
   type DatabaseMediaItemRow,
-  canAccessTenant,
   DeleteFolderResponseSchema,
   FolderResponseSchema,
-  getSessionSecret,
   type IStorageService,
   UpdateFolderRequestSchema,
-  verifySessionToken,
   type DatabaseClient,
 } from '@fbuploadpro/contracts';
 import { isLegacyClient, getRouteSupabase } from '@/lib/route-auth';
+import { resolveTenantSession } from '@/lib/agent-auth';
 import { logServerError } from '@/lib/server-analytics';
 import {
   MEDIA_STORAGE_READ_ONLY_CODE,
@@ -27,24 +25,11 @@ export async function handleUpdateFolder(
   folderId: string,
   dbClient?: DatabaseClient | SupabaseClient
 ): Promise<NextResponse> {
-  const sessionSecret = getSessionSecret();
-
-  const sessionCookie = request.cookies.get('fbup_session')?.value;
-  if (!sessionCookie) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  let session;
-  try {
-    session = await verifySessionToken(sessionCookie, sessionSecret);
-  } catch (_e) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const access = canAccessTenant(session, subdomain);
-  if (!access.allowed) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
+  const resolved = await resolveTenantSession(request, subdomain, {
+    allowAgentKey: true, dbClient,
+  });
+  if ('errorResponse' in resolved) return resolved.errorResponse;
+  const session = resolved.session;
 
   let rawBody: unknown;
   try {
@@ -467,24 +452,11 @@ export async function handleDeleteFolder(
   dbClient?: DatabaseClient | SupabaseClient,
   storageService?: IStorageService
 ): Promise<NextResponse> {
-  const sessionSecret = getSessionSecret();
-
-  const sessionCookie = request.cookies.get('fbup_session')?.value;
-  if (!sessionCookie) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  let session;
-  try {
-    session = await verifySessionToken(sessionCookie, sessionSecret);
-  } catch (_e) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const access = canAccessTenant(session, subdomain);
-  if (!access.allowed) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
+  const resolved = await resolveTenantSession(request, subdomain, {
+    allowAgentKey: true, dbClient,
+  });
+  if ('errorResponse' in resolved) return resolved.errorResponse;
+  const session = resolved.session;
 
   if (isLegacyClient(dbClient)) {
     const storage = storageService ?? getStorageService();

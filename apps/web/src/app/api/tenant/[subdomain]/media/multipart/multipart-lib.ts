@@ -1,10 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
-import {
-  canAccessTenant,
-  getSessionSecret,
-  verifySessionToken,
-} from '@fbuploadpro/contracts';
 import { createR2S3Client, getR2Config, type R2Config } from '@/lib/storage';
+import { resolveTenantSession } from '@/lib/agent-auth';
 import type { S3Client } from '@aws-sdk/client-s3';
 
 /**
@@ -38,26 +34,11 @@ export async function authenticateMultipartRequest(
   request: NextRequest,
   subdomain: string
 ): Promise<{ session: MultipartSession } | NextResponse> {
-  const sessionSecret = getSessionSecret();
-
-  const sessionCookie = request.cookies.get('fbup_session')?.value;
-  if (!sessionCookie) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  let session;
-  try {
-    session = await verifySessionToken(sessionCookie, sessionSecret);
-  } catch {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const access = canAccessTenant(session, subdomain);
-  if (!access.allowed) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
-
-  return { session: { userId: session.userId } };
+  const resolved = await resolveTenantSession(request, subdomain, {
+    allowAgentKey: true,
+  });
+  if ('errorResponse' in resolved) return resolved.errorResponse;
+  return { session: { userId: resolved.session.userId } };
 }
 
 /** A multipart key must live under the caller's own users/ prefix. */

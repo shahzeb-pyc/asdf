@@ -8,3 +8,4 @@ export * from './workspaces';
 export * from './connect';
 export * from './auth';
 export * from './downloader';
+export * from './muse';

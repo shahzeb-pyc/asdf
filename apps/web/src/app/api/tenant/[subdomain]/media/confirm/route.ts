@@ -2,14 +2,12 @@ import { type NextRequest, NextResponse } from 'next/server';
 import { HeadObjectCommand } from '@aws-sdk/client-s3';
 import {
   type DatabaseMediaItemRow,
-  canAccessTenant,
   ConfirmUploadRequestSchema,
   deriveDefaultCaptionFromFilename,
-  getSessionSecret,
   MediaItemResponseSchema,
-  verifySessionToken,
   type DatabaseClient,
 } from '@fbuploadpro/contracts';
+import { resolveTenantSession } from '@/lib/agent-auth';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import { logServerError, trackServerEvent } from '@/lib/server-analytics';
 import {
@@ -172,26 +170,12 @@ export async function handleConfirmUpload(
   storageVerifier?: MediaStorageVerifier,
   quotaStateProvider?: ConfirmQuotaStateProvider
 ): Promise<NextResponse> {
-  const sessionSecret = getSessionSecret();
-
-  // 1. Session auth guard
-  const sessionCookie = request.cookies.get('fbup_session')?.value;
-  if (!sessionCookie) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  let session;
-  try {
-    session = await verifySessionToken(sessionCookie, sessionSecret);
-  } catch (_e) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  // 2. Tenant isolation check
-  const access = canAccessTenant(session, subdomain);
-  if (!access.allowed) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
+  const resolved = await resolveTenantSession(request, subdomain, {
+    allowAgentKey: true, dbClient,
+  });
+  if ('errorResponse' in resolved) return resolved.errorResponse;
+  const session = resolved.session;
+  const agentKeyId = resolved.agentKeyId;
 
   // 3. Request payload validation
   let rawBody: unknown;
@@ -440,6 +424,43 @@ export async function handleConfirmUpload(
       createdAt: new Date(insertedRow.created_at).toISOString(),
       updatedAt: new Date(insertedRow.updated_at).toISOString(),
     });
+
+    // Muse activity: only for uploads that arrived with an agent
+    // key, written server-side from the confirmed row — never from
+    // a client claim. A failed activity write is logged loudly but
+    // does not undo the upload itself (audit, not the upload).
+    if (agentKeyId) {
+      try {
+        const activityClient = (
+          dbClient && 'from' in dbClient ? dbClient : getSupabaseAdminClient()
+        ) as SupabaseClient | null;
+        if (activityClient) {
+          const { error: activityError } = await activityClient
+            .from('agent_activity')
+            .insert({
+              user_id: session.userId,
+              agent_key_id: agentKeyId,
+              media_id: insertedRow.id,
+              name: body.name,
+              media_type: body.mediaType,
+              folder_id: body.folderId ?? null,
+            });
+          if (activityError) {
+            logServerError(
+              '[media/confirm] Failed to record agent activity',
+              activityError,
+              { source: 'media-confirm', subdomain }
+            );
+          }
+        }
+      } catch (activityErr) {
+        logServerError(
+          '[media/confirm] Failed to record agent activity',
+          activityErr,
+          { source: 'media-confirm', subdomain }
+        );
+      }
+    }
 
     // Analytics: the media row landed. Fire-and-forget — never blocks
     // the response.
