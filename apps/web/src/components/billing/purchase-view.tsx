@@ -1242,6 +1242,17 @@ export function PurchaseView({
           {pendingPayment.isUpgrade ? ' · Upgrade' : ''} · Submitted{' '}
           {formatDateTime(pendingPayment.createdAt)}
         </p>
+        {pendingPayment.method === 'nowpayments' && pendingPayment.nowpaymentsPayAddress ? (
+          <p className="break-all text-body text-ink-sub">
+            Send exactly{' '}
+            {pendingPayment.nowpaymentsPayAmount !== null &&
+            pendingPayment.nowpaymentsPayAmount !== undefined
+              ? `${pendingPayment.nowpaymentsPayAmount} USDT`
+              : 'the amount shown in your wallet'}{' '}
+            to {pendingPayment.nowpaymentsPayAddress} on{' '}
+            {pendingPayment.nowpaymentsNetwork === 'trc20' ? 'TRC20' : 'BEP20'}.
+          </p>
+        ) : null}
         <div>
           <Button variant="outline" onClick={() => void load()}>
             Check again

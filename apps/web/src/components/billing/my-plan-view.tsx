@@ -333,6 +333,17 @@ export function MyPlanView({ subdomain }: Readonly<{ subdomain: string }>) {
               {pendingPayment.isDowngrade ? ' · Downgrade' : ''} · Submitted{' '}
               {formatDateTime(pendingPayment.createdAt)}
             </p>
+            {pendingPayment.method === 'nowpayments' && pendingPayment.nowpaymentsPayAddress ? (
+              <p className="break-all text-body text-ink-sub">
+                Send exactly{' '}
+                {pendingPayment.nowpaymentsPayAmount !== null &&
+                pendingPayment.nowpaymentsPayAmount !== undefined
+                  ? `${pendingPayment.nowpaymentsPayAmount} USDT`
+                  : 'the amount shown in your wallet'}{' '}
+                to {pendingPayment.nowpaymentsPayAddress} on{' '}
+                {pendingPayment.nowpaymentsNetwork === 'trc20' ? 'TRC20' : 'BEP20'}.
+              </p>
+            ) : null}
             <p className="text-body text-ink-sub">
               {pendingUpgrade
                 ? 'Your current plan keeps running unchanged until this upgrade is approved.'
