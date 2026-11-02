@@ -251,3 +251,90 @@ describe('DataProvider 401-handler registration', () => {
     expect(screen.getByTestId('child').textContent).toBe('inside');
   });
 });
+
+describe('DataProvider global session check', () => {
+  let sessionStatus = 200;
+  let sessionCalls = 0;
+
+  beforeEach(() => {
+    sessionStatus = 200;
+    sessionCalls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url === '/api/auth/session') {
+          sessionCalls += 1;
+          return new Response(JSON.stringify({ active: sessionStatus === 200 }), {
+            status: sessionStatus,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return new Response(JSON.stringify({}), { status: 200 });
+      })
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('checks the session on mount', async () => {
+    render(
+      <DataProvider subdomain="acme">
+        <ClientProbe />
+      </DataProvider>
+    );
+    await waitFor(() => {
+      expect(sessionCalls).toBe(1);
+    });
+  });
+
+  it('a proven-dead session clears the cache through the existing handler', async () => {
+    sessionStatus = 401;
+    render(
+      <DataProvider subdomain="acme">
+        <ClientProbe />
+      </DataProvider>
+    );
+    const client = capturedClient;
+    expect(client).not.toBeNull();
+    client?.setQueryData(tenant.pages.list, ['cached']);
+    // The global check's dead verdict runs the registered handler:
+    // cache cleared (the navigation itself is jsdom noise here).
+    await waitFor(() => {
+      expect(client?.getQueryData(tenant.pages.list)).toBeUndefined();
+    });
+  });
+
+  it('a failed check is neutral: cache untouched, no bounce', async () => {
+    sessionStatus = 503;
+    render(
+      <DataProvider subdomain="acme">
+        <ClientProbe />
+      </DataProvider>
+    );
+    const client = capturedClient;
+    expect(client).not.toBeNull();
+    client?.setQueryData(tenant.pages.list, ['cached']);
+    await waitFor(() => {
+      expect(sessionCalls).toBe(1);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(client?.getQueryData(tenant.pages.list)).toEqual(['cached']);
+  });
+
+  it('a focus event within the throttle does not re-check', async () => {
+    render(
+      <DataProvider subdomain="acme">
+        <ClientProbe />
+      </DataProvider>
+    );
+    await waitFor(() => {
+      expect(sessionCalls).toBe(1);
+    });
+    window.dispatchEvent(new Event('focus'));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(sessionCalls).toBe(1);
+  });
+});

@@ -62,9 +62,15 @@ export async function authenticateTenantRoute(
     };
   }
 
-  const { validateSessionActive } = await import('@/lib/auth/session');
-  const isActive = await validateSessionActive(session);
-  if (!isActive) {
+  // JWT-only (session-global-check spec §2.1): no database lookup
+  // per call. The token's own status claim is the session proof
+  // here — the same proof middleware already uses. Database-backed
+  // state (suspension after login, user deletion, password change)
+  // is enforced by the single global session check
+  // (`GET /api/auth/session`), not on every API call. A lookup
+  // failure therefore cannot surface as a 401 from this helper at
+  // all: there is no lookup left to fail.
+  if (session.status !== 'active') {
     return {
       errorResponse: NextResponse.json(
         { error: 'Unauthorized' },
@@ -85,7 +91,7 @@ export async function authenticateTenantRoute(
 
 /**
  * Global admin authentication for /api/admin/* routes (shell
- * isolation): the same session + active checks as
+ * isolation): the same JWT-only session check as
  * authenticateTenantRoute, but with NO tenant — admin data is
  * global, and the admin section has no subdomain to check access
  * against. Non-admins get 403, exactly like the tenant admin
@@ -120,9 +126,8 @@ export async function authenticateAdminRoute(
     };
   }
 
-  const { validateSessionActive } = await import('@/lib/auth/session');
-  const isActive = await validateSessionActive(session);
-  if (!isActive) {
+  // JWT-only, as in authenticateTenantRoute (spec §2.1).
+  if (session.status !== 'active') {
     return {
       errorResponse: NextResponse.json(
         { error: 'Unauthorized' },

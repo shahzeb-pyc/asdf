@@ -16,7 +16,7 @@ import {
   resetUserPasswordWithOtp,
 } from '../../src/lib/auth/password-reset';
 import {
-  validateSessionActive,
+  validateSessionDetailed,
 } from '../../src/lib/auth/session';
 import {
   signUpTenantUser,
@@ -120,8 +120,8 @@ describe('Password Reset OTP Flow (Spec 018)', () => {
       const initialSession = await verifySessionToken(originalToken, SESSION_SECRET);
 
       // Original session is initially valid
-      const initialActive = await validateSessionActive(initialSession);
-      expect(initialActive).toBe(true);
+      const initialActive = await validateSessionDetailed(initialSession);
+      expect(initialActive).toBe('active');
 
       // 2. Request password reset OTP
       const { otp } = await createPasswordResetOtp('target.user@gmail.com');
@@ -135,8 +135,8 @@ describe('Password Reset OTP Flow (Spec 018)', () => {
       expect(resetResult.message).toContain('successfully updated');
 
       // 4. Verify previous session token is now INVALID
-      const postResetActive = await validateSessionActive(initialSession);
-      expect(postResetActive).toBe(false);
+      const postResetActive = await validateSessionDetailed(initialSession);
+      expect(postResetActive).toBe('dead');
 
       // 5. Verify old password fails and new password succeeds
       await expect(
@@ -155,8 +155,8 @@ describe('Password Reset OTP Flow (Spec 018)', () => {
 
       // 6. Verify new session is valid
       const newSession = await verifySessionToken(loginResult.token, SESSION_SECRET);
-      const newActive = await validateSessionActive(newSession);
-      expect(newActive).toBe(true);
+      const newActive = await validateSessionDetailed(newSession);
+      expect(newActive).toBe('active');
     });
   });
 });

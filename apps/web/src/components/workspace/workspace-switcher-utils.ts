@@ -7,7 +7,6 @@
  * this module. No re-export shim of the old path exists.
  */
 
-import { buildCentralAppUrl } from '@fbuploadpro/contracts';
 import { broadcastAuthEvent } from '@/lib/auth-broadcast';
 import { getUserInitials } from '@/lib/user-initials';
 import type { WorkspaceItem } from '@/lib/api/schemas/workspaces';
@@ -59,13 +58,19 @@ export function clearClientSessionCookies(): void {
   document.cookie = 'fbup_session=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; SameSite=Lax';
 }
 
+/**
+ * Degraded-network sign-out landing pad (session-global-check
+ * spec §7.3): navigate to the same-host logout endpoint, which
+ * performs the server cookie clears and then redirects to the
+ * central login page. Same-host matters: only a response from the
+ * current host can delete that host's host-only session cookie.
+ * Navigating straight to `/login` instead would let middleware
+ * see the surviving cookie and bounce the user back home still
+ * logged in. If the network is fully down this navigation itself
+ * fails (browser error page) — the user is never left inside the
+ * app believing they signed out.
+ */
 export function redirectToLogout(): void {
   if (typeof window === 'undefined') return;
-  const targetLoginUrl = buildCentralAppUrl(
-    '/login?logout=success',
-    window.location.href,
-    process.env.NEXT_PUBLIC_ROOT_DOMAIN
-  ).toString();
-
-  window.location.href = targetLoginUrl;
+  window.location.href = '/api/auth/logout';
 }
