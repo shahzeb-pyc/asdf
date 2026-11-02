@@ -29,6 +29,9 @@ import type { PublishQueueMessage } from '../src/claimer.js';
 // Real-row shapes the schemas must ACCEPT are pinned here too:
 //   - a queue item whose platform_credentials_id is NULL (managed /
 //     global-app platforms hold no per-workspace credentials row);
+//   - a queue item whose scheduled_time is NULL (column nullable
+//     since 20261027130000; the Facebook retry/deferred settle
+//     NULLs it — a NULL here must reach the publisher, not throw);
 //   - a queue item whose platform_options carry platform keys the
 //     contracts do not model (e.g. a TikTok soundId);
 //   - a destination row carrying an unmodelled platform_options
@@ -435,6 +438,52 @@ describe('Boundary validation — consumers (spec 139 B15)', () => {
     expect(seenOptions).toEqual({ soundId: 'sound-123', autoAddMusic: true });
     expect(settleCalls).toHaveLength(1);
     expect(settleCalls[0]).toMatchObject({ p_outcome_status: 'published' });
+    expect(captureWith('row_validation_failed')).toBe(false);
+  });
+
+  it('accepts a queue item with NULL scheduled_time and publishes it (2026-11-02 stuck post)', async () => {
+    // Live shape: a Facebook row that went through a retry settle
+    // carries scheduled_time = NULL. Pre-fix the consumer threw
+    // ValidationError at load, before any publish attempt, and the
+    // row looped forever through DLQ-ack + sweep + re-claim.
+    const item = await makeItem({ scheduled_time: null });
+    const { db, settleCalls } = await makeConsumerDb({ item });
+    const publisher = fakePublisher('facebook', async () => ({
+      status: 'published',
+      externalPostId: 'post-null-sched',
+    }));
+    const message = fakeMessage({ itemId: ITEM_ID, platform: 'facebook', lane: 'publish-fast' });
+
+    await handlePublishBatch(fakeBatch('publish-fast', [message]) as never, {
+      db: db as never,
+      registry: registryWith(publisher),
+      masterKey: MASTER_KEY,
+      env: { POSTHOG_KEY: 'test-key' },
+    });
+
+    expect(message.ack).toHaveBeenCalledTimes(1);
+    expect(publisher.publish).toHaveBeenCalledTimes(1);
+    expect(settleCalls).toHaveLength(1);
+    expect(settleCalls[0]).toMatchObject({ p_outcome_status: 'published' });
+    expect(captureWith('row_validation_failed')).toBe(false);
+  });
+
+  it('accepts a queue item with NULL scheduled_time on the DLQ path too', async () => {
+    // Same NULL row arriving via the DLQ must load, not throw: the
+    // DLQ path validates with the same schema, so the pre-fix throw
+    // is what acked these rows without settling them.
+    const item = await makeItem({ scheduled_time: null, status: 'publishing' });
+    const { db, settleCalls } = await makeConsumerDb({ item });
+    const message = fakeMessage({ itemId: ITEM_ID, platform: 'facebook', lane: 'publish-fast' });
+
+    await handleDlqBatch(fakeBatch('publish-fast-dlq', [message]) as never, {
+      db: db as never,
+      env: { POSTHOG_KEY: 'test-key' },
+    });
+
+    expect(message.ack).toHaveBeenCalledTimes(1);
+    expect(settleCalls).toHaveLength(1);
+    expect(settleCalls[0]).toMatchObject({ p_outcome_status: 'failed' });
     expect(captureWith('row_validation_failed')).toBe(false);
   });
 

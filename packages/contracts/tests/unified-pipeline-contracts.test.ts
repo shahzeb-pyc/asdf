@@ -282,6 +282,17 @@ describe('DatabaseUnifiedQueueItemRowSchema', () => {
     ).toBe(false);
   });
 
+  it('accepts a NULL scheduled_time (2026-11-02 stuck post)', () => {
+    // The column has been nullable since 20261027130000 and the
+    // Facebook retry/deferred settle NULLs it; requiring a string
+    // threw ValidationError in the consumer before publishing.
+    const parsed = DatabaseUnifiedQueueItemRowSchema.parse({
+      ...validQueueItemRow,
+      scheduled_time: null,
+    });
+    expect(parsed.scheduled_time).toBeNull();
+  });
+
   it('rejects malformed rows', () => {
     expect(
       DatabaseUnifiedQueueItemRowSchema.safeParse({ ...validQueueItemRow, error_code: 190 }).success
