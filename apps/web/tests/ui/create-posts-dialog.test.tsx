@@ -122,6 +122,26 @@ describe('CreatePostsDialog rendering and blocks', () => {
     expect(queueButton().textContent).toBe('Add all to Queue');
   });
 
+  it('post textareas render as input boxes matching the first-comment field (no flat overrides)', () => {
+    renderDialog();
+    const post = textareas()[0];
+    const firstComment = screen.getByTestId(
+      'create-posts-composer-first-comment'
+    ) as HTMLTextAreaElement;
+    // The shared Textarea primitive's input-box styling, which the
+    // first-comment field carries unmodified: the post field must
+    // carry the same set, not the old borderless flat overrides.
+    const inputBox = ['bg-canvas', 'border', 'border-line', 'rounded-sm', 'px-3', 'py-2'];
+    for (const cls of inputBox) {
+      expect(post.classList.contains(cls)).toBe(true);
+      expect(firstComment.classList.contains(cls)).toBe(true);
+    }
+    expect(post.classList.contains('border-0')).toBe(false);
+    expect(post.classList.contains('bg-transparent')).toBe(false);
+    expect(post.classList.contains('px-0')).toBe(false);
+    expect(post.classList.contains('py-0')).toBe(false);
+  });
+
   it('typing in the trailing block turns it into Post 1 and appends a fresh New post block', () => {
     renderDialog();
     typePost('hello world');
