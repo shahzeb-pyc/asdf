@@ -1,18 +1,9 @@
-import {
-  InternalError,
-  PublishQueueMessageSchema,
-  PUBLISH_LANE_FAST,
-  routePublishLaneForItem,
-  type PublishLane,
-} from '@fbuploadpro/contracts';
-// Note: the heavy lane is selected by the else branch below, so
-// PUBLISH_LANE_HEAVY is intentionally not imported here.
+import { InternalError } from '@fbuploadpro/contracts';
 import { captureWorkerError, type PostHogEnv } from './analytics.js';
 import {
-  SEND_BATCH_CHUNK_SIZE,
+  enqueueClaimedRows,
   type ClaimerDbClient,
   type ClaimerQueues,
-  type PublishQueueMessage,
 } from './claimer.js';
 
 // ==========================================
@@ -56,10 +47,6 @@ export interface PublishNowClaimTickResult {
   enqueuedHeavy: number;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
 export async function runPublishNowClaimTick(
   deps: PublishNowClaimTickDeps
 ): Promise<PublishNowClaimTickResult> {
@@ -89,45 +76,12 @@ export async function runPublishNowClaimTick(
     );
   }
 
-  const pendingByLane = new Map<PublishLane, PublishQueueMessage[]>();
-  for (const row of data) {
-    if (!isRecord(row)) continue;
-    const itemId = row.id;
-    const kind = row.kind;
-    const platformFormat = row.platform_format;
-    if (typeof itemId !== 'string' || typeof kind !== 'string') continue;
-    const lane = routePublishLaneForItem({
-      platform: 'facebook',
-      kind: kind as 'text' | 'image' | 'video' | 'story' | 'carousel',
-      platform_format: typeof platformFormat === 'string' ? platformFormat : null,
-    });
-    const parsed = PublishQueueMessageSchema.safeParse({
-      itemId,
-      platform: 'facebook',
-      lane,
-    });
-    if (!parsed.success) continue;
-    const list = pendingByLane.get(lane) ?? [];
-    list.push(parsed.data);
-    pendingByLane.set(lane, list);
-    result.claimed += 1;
-  }
-
-  for (const [lane, messages] of pendingByLane) {
-    const queue = lane === PUBLISH_LANE_FAST ? deps.queues.fast : deps.queues.heavy;
-    if (!queue) {
-      throw new InternalError(`Queue producer binding for lane "${lane}" is not configured`);
-    }
-    for (let i = 0; i < messages.length; i += SEND_BATCH_CHUNK_SIZE) {
-      const chunk = messages.slice(i, i + SEND_BATCH_CHUNK_SIZE);
-      await queue.sendBatch(chunk.map((body) => ({ body })));
-      if (lane === PUBLISH_LANE_FAST) {
-        result.enqueuedFast += chunk.length;
-      } else {
-        result.enqueuedHeavy += chunk.length;
-      }
-    }
-  }
+  // Shared with the slot-claim tick: validates, lanes, and
+  // sendBatches the claimed rows.
+  const enqueued = await enqueueClaimedRows(data, 'facebook', deps.queues);
+  result.claimed += enqueued.claimed;
+  result.enqueuedFast += enqueued.enqueuedFast;
+  result.enqueuedHeavy += enqueued.enqueuedHeavy;
 
   if (result.claimed > 0) {
     console.info(
