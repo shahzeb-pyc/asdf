@@ -446,7 +446,7 @@ describe('Persistence edge cases (legacy client)', () => {
       workspaceId,
       'threads'
     );
-    expect(resolved).toEqual({ clientId: 'app-9', clientSecret: 'the-secret' });
+    expect(resolved).toEqual({ clientId: 'app-9', clientSecret: 'the-secret', configId: null });
   });
 });
 
