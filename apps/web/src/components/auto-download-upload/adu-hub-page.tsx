@@ -526,6 +526,53 @@ export function AduHubPage({ subdomain }: { subdomain: string }) {
   );
 }
 
+/**
+ * Picker avatar (page-card pattern): the photo when a URL is present
+ * and loads, initials otherwise. Per-row state lives here because a
+ * hook cannot live inside the row map below.
+ */
+function PickerAvatar({ url, name }: { url: string | null; name: string }) {
+  const [failed, setFailed] = React.useState(false);
+  if (url && !failed) {
+    return (
+      <Image
+        src={url}
+        alt=""
+        width={32}
+        height={32}
+        data-testid="picker-avatar-img"
+        onError={() => setFailed(true)}
+        className="size-8 shrink-0 rounded-full object-cover"
+      />
+    );
+  }
+  return (
+    <span
+      data-testid="picker-avatar-initials"
+      className="flex size-8 shrink-0 items-center justify-center rounded-full bg-subtle text-metadata font-bold text-ink"
+    >
+      {getUserInitials(name)}
+    </span>
+  );
+}
+
+/**
+ * Page picker meta line from the destinations metadata already in the
+ * options payload (category + current followers, the same fields the
+ * Pages list reads). Only the parts that exist are shown, joined with
+ * " · "; neither means no second line at all — never a dangling
+ * separator, and never the page id (the picker no longer renders it).
+ */
+function pageMetaLine(page: PickerPage): string | null {
+  const metadata = page.metadata ?? {};
+  const category = typeof metadata.category === 'string' ? metadata.category.trim() : '';
+  const followers = typeof metadata.current_followers === 'number' ? metadata.current_followers : null;
+  const parts: string[] = [];
+  if (category) parts.push(category);
+  if (followers !== null) parts.push(`${followers.toLocaleString('en-US')} ${followers === 1 ? 'follower' : 'followers'}`);
+  return parts.length > 0 ? parts.join(' · ') : null;
+}
+
 function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
   subdomain: string; open: boolean; onOpenChange: (open: boolean) => void; onCreated: () => void;
 }) {
@@ -676,7 +723,8 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
       const body = await response.json().catch(() => ({}));
       if (!response.ok && !(body.created ?? []).length) throw new Error(body.error ?? 'Could not add these pages.');
       const failedText = (body.failed ?? []).map((f: { destinationId: string; error: string }) => f.error).join(' ');
-      setResult(`Created ${(body.created ?? []).length} pages.${failedText ? ` Failed: ${failedText}` : ''}`);
+      const createdCount = (body.created ?? []).length;
+      setResult(`Created ${createdCount} ${createdCount === 1 ? 'page' : 'pages'}.${failedText ? ` Failed: ${failedText}` : ''}`);
       if ((body.failed ?? []).length === 0) onCreated();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not add this page.');
@@ -722,6 +770,7 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
                       checked={selectedAccountIds.includes(account.id)}
                       onCheckedChange={() => toggle(selectedAccountIds, account.id, setSelectedAccountIds)}
                     />
+                    <PickerAvatar url={account.avatar_url} name={account.display_name} />
                     <span className="min-w-0 flex-1 truncate">{account.display_name}</span>
                     <span className="font-mono text-metadata text-ink-dim">{account.external_account_id}</span>
                   </label>
@@ -738,6 +787,7 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
               <div className="mt-2 flex max-h-64 flex-col gap-1 overflow-y-auto">
                 {visiblePages.map((page) => {
                   const configuredAlready = isConfigured(page.id);
+                  const metaLine = pageMetaLine(page);
                   return (
                     <label key={page.id} className="flex items-center gap-2 rounded-md border p-2">
                       <Checkbox
@@ -745,9 +795,12 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
                         checked={selectedPageIds.includes(page.id)}
                         onCheckedChange={() => toggle(selectedPageIds, page.id, setSelectedPageIds)}
                       />
-                      <span className="min-w-0 flex-1 truncate">{page.name}</span>
-                      <span className="font-mono text-metadata text-ink-dim">{page.external_destination_id}</span>
-                      {configuredAlready ? <span className="text-metadata text-ink-dim">Already configured</span> : null}
+                      <PickerAvatar url={page.avatar_url} name={page.name} />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate">{page.name}</span>
+                        {metaLine ? <span className="block truncate text-metadata text-ink-sub">{metaLine}</span> : null}
+                      </span>
+                      {configuredAlready ? <span className="shrink-0 text-metadata text-ink-dim">Already configured</span> : null}
                     </label>
                   );
                 })}
