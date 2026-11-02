@@ -230,7 +230,9 @@ test.describe('billing at phone widths', () => {
 
     // The split My Plan keeps the Free card and adds a submitted
     // card below it (it no longer replaces the Free card).
-    await expect(page.getByText('Free', { exact: true })).toBeVisible();
+    // Scoped to the content area: the sidebar branding also renders
+    // the plan word 'Free', which strict-mode would otherwise match.
+    await expect(page.locator('#tenant-content').getByText('Free', { exact: true })).toBeVisible();
     await expect(page.getByText('Submitted for approval')).toBeVisible();
     await expect(
       page.getByText(
