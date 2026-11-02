@@ -213,6 +213,44 @@ async function stampMirrorAfterRetry(
  * and destination rows carry no token). Scoped to the workspace +
  * the mirror's target external id; decrypted in memory only.
  */
+/**
+ * Whether the Instagram account for a mirror target is a Unified
+ * Login (BISU) account: metadata.token_kind === 'bisu' exactly.
+ * Anything else is legacy and must never be guessed as BISU.
+ * Mirrors the worker and Publish Now rule.
+ */
+async function loadInstagramAccountIsBisu(
+  db: Db,
+  workspaceId: string,
+  targetExternalId: string
+): Promise<boolean> {
+  let metadata: unknown = null;
+  if (isLegacyClient(db)) {
+    const rows = (await db.query(
+      `SELECT metadata FROM social_accounts
+       WHERE workspace_id = $1 AND platform = 'instagram' AND external_account_id = $2 LIMIT 1`,
+      [workspaceId, targetExternalId]
+    )) as Record<string, unknown>[];
+    metadata = rows[0]?.metadata ?? null;
+  } else {
+    const supabase = db as SupabaseClient;
+    const { data, error } = await supabase
+      .from('social_accounts')
+      .select('metadata')
+      .eq('workspace_id', workspaceId)
+      .eq('platform', 'instagram')
+      .eq('external_account_id', targetExternalId)
+      .maybeSingle();
+    if (error) throw new Error(`Failed to load Instagram account: ${error.message}`);
+    metadata = (data as Record<string, unknown> | null)?.metadata ?? null;
+  }
+  return (
+    typeof metadata === 'object' &&
+    metadata !== null &&
+    (metadata as Record<string, unknown>).token_kind === 'bisu'
+  );
+}
+
 async function loadInstagramAccountToken(
   db: Db,
   workspaceId: string,
@@ -368,6 +406,11 @@ export async function handleRetryMirrorPost(
           ? await (deps.publishInstagramReel ?? publishInstagramReel)({
               igUserId: mirror.target_external_id,
               accessToken: publishToken,
+              isBisu: await loadInstagramAccountIsBisu(
+                db,
+                workspaceId,
+                mirror.target_external_id
+              ),
               videoUrl,
               caption,
             })

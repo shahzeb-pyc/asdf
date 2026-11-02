@@ -52,6 +52,32 @@ describe('publishInstagramReel', () => {
     expect(JSON.parse(publishCall[1].body)).toMatchObject({ creation_id: 'container_1' });
   });
 
+  it('routes a BISU account to graph.facebook.com and a legacy account to graph.instagram.com', async () => {
+    const bisuFetch = vi
+      .fn()
+      .mockResolvedValueOnce(okJson({ id: 'container_1' }))
+      .mockResolvedValueOnce(okJson({ status_code: 'FINISHED' }))
+      .mockResolvedValueOnce(okJson({ id: 'ig_media_123' }));
+    await publishInstagramReel({
+      ...base,
+      isBisu: true,
+      fetchFn: bisuFetch as never,
+    });
+    for (const [url] of bisuFetch.mock.calls as unknown as [string][]) {
+      expect(String(url).startsWith('https://graph.facebook.com/v26.0/')).toBe(true);
+    }
+
+    const legacyFetch = vi
+      .fn()
+      .mockResolvedValueOnce(okJson({ id: 'container_1' }))
+      .mockResolvedValueOnce(okJson({ status_code: 'FINISHED' }))
+      .mockResolvedValueOnce(okJson({ id: 'ig_media_123' }));
+    await publishInstagramReel({ ...base, fetchFn: legacyFetch as never });
+    for (const [url] of legacyFetch.mock.calls as unknown as [string][]) {
+      expect(String(url).startsWith('https://graph.instagram.com/v26.0/')).toBe(true);
+    }
+  });
+
   it('settles PUBLISHED on recheck after a publish failure without publishing twice', async () => {
     const fetchFn = vi
       .fn()

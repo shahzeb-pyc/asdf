@@ -48,10 +48,11 @@ import {
  * decision 2026-10-31), gated only on an active paid period.
  *
  * Per account, sequentially, continuing on failure: create a
- * container at graph.instagram.com, poll its status_code, then
- * media_publish it. First comment is posted only after that
- * account's post succeeds; a comment failure is a warning on an
- * otherwise published row, never a failed row.
+ * container at graph.instagram.com — or at graph.facebook.com for
+ * an account connected through Unified Login (BISU token) — poll
+ * its status_code, then media_publish it. First comment is posted
+ * only after that account's post succeeds; a comment failure is a
+ * warning on an otherwise published row, never a failed row.
  *
  * Container polling budget: the worker polls once a minute for up
  * to 5 minutes, which a synchronous web route cannot faithfully
@@ -71,7 +72,31 @@ import {
  * published releases the claim so the same key retries immediately.
  */
 
-const GRAPH_BASE_URL = 'https://graph.instagram.com/v26.0';
+const LEGACY_GRAPH_BASE_URL = 'https://graph.instagram.com/v26.0';
+const UNIFIED_GRAPH_BASE_URL = 'https://graph.facebook.com/v26.0';
+
+/**
+ * A Unified Login (BISU) account carries metadata.token_kind ===
+ * 'bisu' (written by the Instagram OAuth callback). Anything else —
+ * absent metadata, absent token_kind, any other value — is a legacy
+ * Instagram Login account and must NEVER be guessed as BISU: a
+ * legacy token sent to graph.facebook.com fails exactly as a BISU
+ * token sent to graph.instagram.com does. Mirrors the worker's
+ * isBisuDestination / isBisuAccount rule.
+ */
+function isBisuAccountMetadata(metadata: unknown): boolean {
+  return (
+    typeof metadata === 'object' &&
+    metadata !== null &&
+    (metadata as Record<string, unknown>).token_kind === 'bisu'
+  );
+}
+
+function graphBaseUrlForAccount(metadata: unknown): string {
+  return isBisuAccountMetadata(metadata)
+    ? UNIFIED_GRAPH_BASE_URL
+    : LEGACY_GRAPH_BASE_URL;
+}
 const GRAPH_TIMEOUT_MS = 60_000;
 const MEDIA_HEAD_TIMEOUT_MS = 15_000;
 const CONTAINER_POLL_INTERVAL_MS = 5_000;
@@ -173,9 +198,10 @@ async function graphRequest(
   path: string,
   accessToken: string,
   init: { method: string; body?: Record<string, unknown> },
-  step: InstagramPublishNowStep
+  step: InstagramPublishNowStep,
+  graphBaseUrl: string
 ): Promise<Record<string, unknown>> {
-  const response = await fetch(`${GRAPH_BASE_URL}${path}`, {
+  const response = await fetch(`${graphBaseUrl}${path}`, {
     method: init.method,
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -226,14 +252,16 @@ type ContainerStatusResult = {
 
 async function getContainerStatus(
   containerId: string,
-  accessToken: string
+  accessToken: string,
+  graphBaseUrl: string
 ): Promise<ContainerStatusResult> {
   try {
     const data = await graphRequest(
       `/${encodeURIComponent(containerId)}?fields=status_code`,
       accessToken,
       { method: 'GET' },
-      'container-poll'
+      'container-poll',
+      graphBaseUrl
     );
     return {
       status: typeof data.status_code === 'string' ? data.status_code : null,
@@ -251,12 +279,14 @@ async function postFirstComment(params: {
   mediaId: string;
   accessToken: string;
   message: string;
+  graphBaseUrl: string;
 }): Promise<void> {
   await graphRequest(
     `/${encodeURIComponent(params.mediaId)}/comments`,
     params.accessToken,
     { method: 'POST', body: { message: params.message } },
-    'comment'
+    'comment',
+    params.graphBaseUrl
   );
 }
 
@@ -269,11 +299,13 @@ async function postFirstComment(params: {
 async function publishToInstagramAccount(params: {
   igUserId: string;
   accessToken: string;
+  graphBaseUrl: string;
   postType: 'photo' | 'reel';
   caption: string;
   mediaUrl: string;
 }): Promise<string> {
-  const { igUserId, accessToken, postType, caption, mediaUrl } = params;
+  const { igUserId, accessToken, graphBaseUrl, postType, caption, mediaUrl } =
+    params;
   const encodedUserId = encodeURIComponent(igUserId);
   const containerBody: Record<string, unknown> = {
     ...(postType === 'reel'
@@ -285,7 +317,8 @@ async function publishToInstagramAccount(params: {
     `/${encodedUserId}/media`,
     accessToken,
     { method: 'POST', body: containerBody },
-    'container-create'
+    'container-create',
+    graphBaseUrl
   );
   const containerId = created.id;
   if (typeof containerId !== 'string' || !containerId) {
@@ -298,7 +331,11 @@ async function publishToInstagramAccount(params: {
   let statusCode: string | null = null;
   let lastPollError: unknown = null;
   for (let attempt = 0; attempt < CONTAINER_MAX_POLLS; attempt += 1) {
-    const checked = await getContainerStatus(containerId, accessToken);
+    const checked = await getContainerStatus(
+      containerId,
+      accessToken,
+      graphBaseUrl
+    );
     statusCode = checked.status;
     lastPollError = checked.pollError;
     if (statusCode === 'FINISHED' || statusCode === 'PUBLISHED') break;
@@ -331,7 +368,8 @@ async function publishToInstagramAccount(params: {
       `/${encodedUserId}/media_publish`,
       accessToken,
       { method: 'POST', body: { creation_id: containerId } },
-      'media-publish'
+      'media-publish',
+      graphBaseUrl
     );
     const mediaId = published.id;
     if (typeof mediaId !== 'string' || !mediaId) {
@@ -342,7 +380,11 @@ async function publishToInstagramAccount(params: {
     }
     return mediaId;
   } catch (error) {
-    const recheck = await getContainerStatus(containerId, accessToken);
+    const recheck = await getContainerStatus(
+      containerId,
+      accessToken,
+      graphBaseUrl
+    );
     if (recheck.status === 'PUBLISHED') return containerId;
     throw error;
   }
@@ -393,6 +435,7 @@ async function probeMediaUrl(
 interface ResolvedAccount {
   igUserId: string;
   accessToken: string;
+  graphBaseUrl: string;
 }
 
 export async function POST(
@@ -491,7 +534,7 @@ export async function POST(
     }
     const { data: account, error: accountError } = await supabase
       .from('social_accounts')
-      .select('external_account_id, encrypted_access_token')
+      .select('external_account_id, encrypted_access_token, metadata')
       .eq('id', target.accountId)
       .eq('workspace_id', workspaceId)
       .eq('platform', 'instagram')
@@ -516,6 +559,9 @@ export async function POST(
       accountCache.set(target.accountId, {
         igUserId: account.external_account_id,
         accessToken,
+        graphBaseUrl: graphBaseUrlForAccount(
+          (account as Record<string, unknown>).metadata
+        ),
       });
     } catch {
       accountFailures.set(
@@ -693,6 +739,7 @@ export async function POST(
             await postFirstComment({
               mediaId: result.postId,
               accessToken: cached.accessToken,
+              graphBaseUrl: cached.graphBaseUrl,
               message: trimmedFirstComment,
             });
             result.firstCommentFailed = null;
@@ -751,6 +798,7 @@ export async function POST(
       const postId = await publishToInstagramAccount({
         igUserId: cached.igUserId,
         accessToken: cached.accessToken,
+        graphBaseUrl: cached.graphBaseUrl,
         postType,
         caption,
         mediaUrl,
@@ -762,6 +810,7 @@ export async function POST(
           await postFirstComment({
             mediaId: postId,
             accessToken: cached.accessToken,
+            graphBaseUrl: cached.graphBaseUrl,
             message: trimmedFirstComment,
           });
         } catch (commentError) {
