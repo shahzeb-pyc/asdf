@@ -420,7 +420,24 @@ describe('Multi-Account Facebook OAuth Connection (User Story 1 - T059 & Spec 03
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ id: 'fb-john', name: 'John Doe' }))
       )
-      // 4. /me/accounts?fields=id,access_token (includes 3 linked pages + 1 unlinked page)
+      // 4. /me/permissions — hard scope check: all five requested
+      // scopes granted, so the reconnect proceeds (inserted by the
+      // Facebook settings fixes; without it the accounts response
+      // below would be consumed here and misread as no scopes granted).
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: [
+              { permission: 'pages_show_list', status: 'granted' },
+              { permission: 'pages_read_engagement', status: 'granted' },
+              { permission: 'pages_manage_posts', status: 'granted' },
+              { permission: 'pages_manage_engagement', status: 'granted' },
+              { permission: 'business_management', status: 'granted' },
+            ],
+          })
+        )
+      )
+      // 5. /me/accounts?fields=id,access_token (includes 3 linked pages + 1 unlinked page)
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
