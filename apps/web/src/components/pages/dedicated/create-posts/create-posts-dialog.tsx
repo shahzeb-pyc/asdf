@@ -89,6 +89,7 @@ import { queryKeys } from '@/lib/data/query-keys';
 import { buildTenantHref, isTenantSubdomainHost } from '@/lib/tenant-href';
 import Link from 'next/link';
 import { Button } from '@/components/shared/ui/button';
+import { Textarea } from '@/components/shared/ui/textarea';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -113,6 +114,7 @@ import { LeavePageGuardDialog } from '@/components/media/leave-page-guard-dialog
 import { BulkTextDialog } from './bulk-text-dialog';
 import { MediaLibraryPicker } from './media-library-picker';
 import { PostBlock } from './post-block';
+import { FIRST_COMMENT_MAX_LENGTH } from './create-posts-types';
 
 export interface CreatePostsDialogProps {
   open: boolean;
@@ -219,6 +221,18 @@ export function CreatePostsDialog({
   const router = useRouter();
   const searchParams = useSearchParams();
   const [blocks, setBlocks] = React.useState<ComposerDraftBlock[]>([newEmptyBlock()]);
+  // First comments, composer-session only (no setting anywhere):
+  // one composer-wide value, plus one optional value per block,
+  // keyed by block id. Per-block values are deliberately NOT part
+  // of ComposerDraftBlock — that contracts type is untouched, and
+  // block validation runs on text/media only. Resolution happens
+  // at queue time: a block's own value wins, else the composer-wide
+  // value, else nothing. Bulk Post / Bulk Text blocks have no own
+  // value, so the composer-wide value covers them automatically.
+  const [composerFirstComment, setComposerFirstComment] = React.useState('');
+  const [blockFirstComments, setBlockFirstComments] = React.useState<
+    Record<string, string>
+  >({});
   const [pickerOpen, setPickerOpen] = React.useState(false);
   const [pickerMode, setPickerMode] = React.useState<'single' | 'multi'>('multi');
   const [pickerTargetId, setPickerTargetId] = React.useState<string | null>(null);
@@ -291,6 +305,8 @@ export function CreatePostsDialog({
       if (!preserveDraftsRef.current) {
         setBlocks([newEmptyBlock()]);
         idempotencyKeysRef.current.clear();
+        setComposerFirstComment('');
+        setBlockFirstComments({});
       }
       preserveDraftsRef.current = false;
       setPickerOpen(false);
@@ -406,11 +422,30 @@ export function CreatePostsDialog({
   );
 
   const removeBlock = React.useCallback((id: string) => {
+    setBlockFirstComments((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
     setBlocks((prev) => {
       const next = prev.filter((block) => block.id !== id);
       return next.length === 0 ? [newEmptyBlock()] : next;
     });
   }, []);
+
+  /**
+   * A first-comment edit rotates the block's key exactly like a
+   * text/media edit: an edit-after-enqueue retries the EDITED post,
+   * while a pure retry of an unedited block still replays safely.
+   */
+  const updateBlockFirstComment = React.useCallback(
+    (id: string, value: string) => {
+      rotateKeyIfAttempted(id);
+      setBlockFirstComments((prev) => ({ ...prev, [id]: value }));
+    },
+    [rotateKeyIfAttempted]
+  );
 
   /** Appends new blocks ahead of the trailing empty block, capped
    *  at the batch cap: bulk adds beyond the cap are refused with
@@ -579,6 +614,31 @@ export function CreatePostsDialog({
       toast.error(`${details}. Shorten them and try again.`);
       return;
     }
+    // First-comment over-limit refusal, same pattern as captions:
+    // the composer-wide value once, plus each ready block's OWN
+    // value (a block's effective value can only exceed the limit
+    // through its own value or the composer-wide one, both checked
+    // here). Never truncated — refused with a plain message naming
+    // every offending value, before any network call.
+    const firstCommentOverLimit: string[] = [];
+    if (composerFirstComment.length > FIRST_COMMENT_MAX_LENGTH) {
+      firstCommentOverLimit.push(
+        `The first comment for all posts is over the ${FIRST_COMMENT_MAX_LENGTH.toLocaleString('en-US')}-character limit by ${(composerFirstComment.length - FIRST_COMMENT_MAX_LENGTH).toLocaleString('en-US')} characters`
+      );
+    }
+    blocks.forEach((block, index) => {
+      if (isBlockEmpty(block)) return;
+      const ownLength = (blockFirstComments[block.id] ?? '').length;
+      if (ownLength > FIRST_COMMENT_MAX_LENGTH) {
+        firstCommentOverLimit.push(
+          `Post ${index + 1}’s first comment is over the ${FIRST_COMMENT_MAX_LENGTH.toLocaleString('en-US')}-character limit by ${(ownLength - FIRST_COMMENT_MAX_LENGTH).toLocaleString('en-US')} characters`
+        );
+      }
+    });
+    if (firstCommentOverLimit.length > 0) {
+      toast.error(`${firstCommentOverLimit.join('; ')}. Shorten them and try again.`);
+      return;
+    }
     const parsed = ComposerDraftBlockSchema.array().safeParse(readyBlocks);
     if (!parsed.success) {
       toast.error('One of the posts is too long. Shorten it and try again.');
@@ -732,6 +792,13 @@ export function CreatePostsDialog({
         if (abortQueueingRef.current) break;
         const item = toComposerEnqueueItem(block);
         if (!item) continue;
+        // First-comment resolution: the block's own value wins, else
+        // the composer-wide value, else nothing. The conditional
+        // spread keeps the body byte-identical to before when no
+        // first comment is used anywhere in the session.
+        const ownFirstComment = (blockFirstComments[block.id] ?? '').trim();
+        const resolvedFirstComment =
+          ownFirstComment || composerFirstComment.trim();
         let idempotencyKey = idempotencyKeysRef.current.get(block.id);
         if (!idempotencyKey) {
           // newKey() (not crypto.randomUUID() directly): without a
@@ -762,6 +829,9 @@ export function CreatePostsDialog({
               kind: item.kind,
               platformFormat: item.platformFormat,
               caption: item.caption,
+              ...(resolvedFirstComment
+                ? { firstComment: resolvedFirstComment }
+                : {}),
               mediaItemIds: item.mediaItemIds,
               // Staged media (device uploads from the composer):
               // post-owned bytes, adopted by the route — never a
@@ -897,7 +967,7 @@ export function CreatePostsDialog({
       setQueueProgress(null);
       setAbortRequested(false);
     }
-  }, [blocks, readyBlocks, statusGate, subdomain, page.id, queryClient, onOpenChange, router, searchParams, startTimedRequest]);
+  }, [blocks, readyBlocks, statusGate, subdomain, page.id, queryClient, onOpenChange, router, searchParams, startTimedRequest, blockFirstComments, composerFirstComment]);
 
   const monogram = (page.pageName || 'P').slice(0, 2).toUpperCase();
 
@@ -1017,6 +1087,54 @@ export function CreatePostsDialog({
             ) : null}
           </div>
 
+          {/* Composer-wide first comment: one value for every post
+              queued from this session that has no own first comment.
+              Session-only — there is no setting behind this, and it
+              never leaves the dialogue except inside the enqueue
+              bodies below. */}
+          <div className="shrink-0 border-b border-line pb-4">
+            <p className="text-body font-semibold text-ink">
+              First comment for all posts (optional)
+            </p>
+            <p className="mt-1 text-metadata text-ink-sub">
+              Applies to every post below that doesn’t have its own
+              first comment.
+            </p>
+            <Textarea
+              data-testid="create-posts-composer-first-comment"
+              aria-label="First comment for all posts"
+              placeholder="First comment for all posts (optional)"
+              value={composerFirstComment}
+              disabled={isQueueing}
+              onChange={(event) => setComposerFirstComment(event.target.value)}
+              className="mt-2 min-h-16"
+            />
+            <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+              <span
+                data-testid="create-posts-composer-first-comment-count"
+                className={
+                  composerFirstComment.length > FIRST_COMMENT_MAX_LENGTH
+                    ? 'text-metadata text-signal-critical'
+                    : 'text-metadata text-ink-dim'
+                }
+              >
+                {composerFirstComment.length.toLocaleString('en-US')} /{' '}
+                {FIRST_COMMENT_MAX_LENGTH.toLocaleString('en-US')}
+              </span>
+              {composerFirstComment.length > FIRST_COMMENT_MAX_LENGTH ? (
+                <span
+                  data-testid="create-posts-composer-first-comment-over-limit"
+                  className="text-metadata text-signal-critical"
+                >
+                  Over the {FIRST_COMMENT_MAX_LENGTH.toLocaleString('en-US')}
+                  -character first comment limit by{' '}
+                  {(composerFirstComment.length - FIRST_COMMENT_MAX_LENGTH).toLocaleString('en-US')}{' '}
+                  characters.
+                </span>
+              ) : null}
+            </div>
+          </div>
+
           {/* Blocks list: flexes with the dialogue height, internal
               scroll only once the dialogue's own height is the
               limit — the footer below stays pinned, however many
@@ -1042,6 +1160,10 @@ export function CreatePostsDialog({
                   }}
                   onRemoveMedia={() => removeMediaFromBlock(block.id)}
                   onRemove={() => removeBlock(block.id)}
+                  firstComment={blockFirstComments[block.id] ?? ''}
+                  onFirstCommentChange={(value) =>
+                    updateBlockFirstComment(block.id, value)
+                  }
                 />
               );
             })}
