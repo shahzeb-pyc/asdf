@@ -30,6 +30,31 @@ export const INSTAGRAM_OAUTH_SCOPES: readonly string[] = [
   'instagram_business_manage_comments',
 ];
 
+/**
+ * Scopes for the Instagram API with Unified Login connect flow (single
+ * source of truth — the callback probe, the settings copy and the tests
+ * must all import this list, never a second copy). The configuration
+ * owns the permission set at dialog time (no `scope` parameter is sent);
+ * these four are the hard-required set: a proven decline of any one of
+ * them rejects the connect with nothing saved. Insights is a read
+ * permission here, not an Insights product surface. No messages, ads,
+ * or events permissions are requested.
+ */
+export const INSTAGRAM_UNIFIED_OAUTH_SCOPES: readonly string[] = [
+  'instagram_basic',
+  'instagram_content_publish',
+  'instagram_manage_comments',
+  'instagram_manage_insights',
+];
+
+/** Facebook Login for Business dialog host for Unified Login connects. */
+export const INSTAGRAM_UNIFIED_DIALOG_URL =
+  'https://www.facebook.com/dialog/oauth';
+
+/** Graph host for Unified Login (BISU) token calls and publishing. */
+export const INSTAGRAM_UNIFIED_GRAPH_BASE_URL =
+  'https://graph.facebook.com/v26.0';
+
 // --- Caption limits (enforced by Meta at container creation) ---
 
 /** Captions are capped at 2,200 characters. */

@@ -281,22 +281,27 @@ export async function resolvePlatformClientCredentials(
   client: ConnectDbClient | null | undefined,
   workspaceId: string,
   platform: Platform
-): Promise<{ clientId: string; clientSecret: string } | null> {
+): Promise<{ clientId: string; clientSecret: string; configId: string | null } | null> {
   const encryptionKey = getTokenEncryptionKey();
 
   if (isLegacyClient(client ?? undefined)) {
     const rows = (await (client as DatabaseClient).query(
-      `SELECT client_id, encrypted_client_secret
+      `SELECT client_id, encrypted_client_secret, config_id
        FROM platform_credentials
        WHERE workspace_id = $1 AND platform = $2
        LIMIT 1`,
       [workspaceId, platform]
-    )) as Array<{ client_id?: string; encrypted_client_secret?: string }>;
+    )) as Array<{
+      client_id?: string;
+      encrypted_client_secret?: string;
+      config_id?: string | null;
+    }>;
     const row = rows?.[0];
     if (!row?.client_id || !row?.encrypted_client_secret) return null;
     return {
       clientId: row.client_id,
       clientSecret: await decryptToken(row.encrypted_client_secret, encryptionKey),
+      configId: row.config_id ?? null,
     };
   }
 
@@ -304,7 +309,7 @@ export async function resolvePlatformClientCredentials(
   if (!supabase) return null;
   const { data, error } = await supabase
     .from('platform_credentials')
-    .select('client_id, encrypted_client_secret')
+    .select('client_id, encrypted_client_secret, config_id')
     .eq('workspace_id', workspaceId)
     .eq('platform', platform)
     .maybeSingle();
@@ -317,6 +322,7 @@ export async function resolvePlatformClientCredentials(
       data.encrypted_client_secret as string,
       encryptionKey
     ),
+    configId: (data.config_id as string | null) ?? null,
   };
 }
 

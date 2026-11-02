@@ -4,7 +4,6 @@ import {
   getSessionSecret,
   signOAuthState,
   verifySessionToken,
-  INSTAGRAM_OAUTH_SCOPES,
 } from '@fbuploadpro/contracts';
 import { sanitizeAuthErrorMessage } from '@/lib/auth-errors';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
@@ -12,7 +11,7 @@ import type { DatabaseClient } from '@fbuploadpro/contracts';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
 import { resolvePlatformClientCredentials } from '@/lib/connect/persist';
-import { INSTAGRAM_AUTHORIZE_URL } from '@/lib/connect/platforms/instagram';
+import { buildInstagramUnifiedDialogUrl } from '@/lib/connect/platforms/instagram-unified';
 
 /**
  * Direct Instagram OAuth initiate — Facebook's `/api/auth/facebook`
@@ -64,7 +63,14 @@ export async function handleInitiateInstagramOAuth(
         ? null
         : await resolvePlatformClientCredentials(client, workspaceId, 'instagram');
 
-    if (!credentials) {
+    // Triple gate: a connect may only start when the workspace has its
+    // Meta App ID, App Secret AND Unified Login Configuration ID. A
+    // partial triple goes to Settings, never to a dialog Meta will
+    // reject. Old Instagram Login pairs have no configuration, so they
+    // cannot start a new connect — they keep working only as already
+    // connected tokens until the workspace reconnects through Unified
+    // Login with its own app and configuration.
+    if (!credentials || !credentials.configId) {
       const settingsUrl = new URL(
         `/tenant/${session.subdomain}/settings`,
         request.url
@@ -75,6 +81,7 @@ export async function handleInitiateInstagramOAuth(
     }
 
     const effectiveAppId = credentials.clientId;
+    const effectiveConfigId = credentials.configId;
     const redirectUri = buildSubdomainOAuthRedirectUriForCallback(
       session.subdomain,
       '/api/auth/instagram/callback',
@@ -105,16 +112,20 @@ export async function handleInitiateInstagramOAuth(
       sessionSecret
     );
 
-    // 4. Construct the Instagram-Login OAuth dialog URL (Instagram-Login
-    // ONLY — never the Facebook-Login dialog, spec 124 D2).
-    const oauthUrl = new URL(INSTAGRAM_AUTHORIZE_URL);
-    oauthUrl.searchParams.set('client_id', effectiveAppId);
-    oauthUrl.searchParams.set('redirect_uri', redirectUri);
-    oauthUrl.searchParams.set('state', state);
-    oauthUrl.searchParams.set('scope', [...INSTAGRAM_OAUTH_SCOPES].join(' '));
-    oauthUrl.searchParams.set('response_type', 'code');
+    // 4. Construct the Unified Login dialog URL. The configuration owns
+    // the permission set, so no `scope` parameter is sent. The button
+    // and the pre-dialog copy are labelled for Instagram only, and the
+    // copy tells the client to choose Instagram on the login screen —
+    // Meta documents no way to restrict the dialog itself to Instagram
+    // login, and nothing here claims otherwise.
+    const oauthUrl = buildInstagramUnifiedDialogUrl({
+      appId: effectiveAppId,
+      configId: effectiveConfigId,
+      redirectUri,
+      state,
+    });
 
-    return NextResponse.redirect(oauthUrl.toString());
+    return NextResponse.redirect(oauthUrl);
   } catch (err) {
     const safeError = sanitizeAuthErrorMessage(err);
     console.error('[handleInitiateInstagramOAuth] Initialization error:', safeError);

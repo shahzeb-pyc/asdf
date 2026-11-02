@@ -73,6 +73,9 @@ export interface DatabasePlatformCredentialsRow {
   last_tested_at: string | null;
   /** Meta app display name, fetched from the Graph API at connect time (migration 20261102032000). NULL until first verification. */
   app_name: string | null;
+  /** Unified Login configuration ID (migration 20261102150000). NULL for
+   * pre-Unified rows, which have no configuration. Not a secret. */
+  config_id: string | null;
   created_at: string;
   updated_at: string;
 }
