@@ -164,8 +164,8 @@
       "/reset-password": {
         "firstLoadGzipBytes": 144081,
         "firstLoadRawBytes": 476662,
-        "routeSpecificGzipBytes": 11221,
-        "routeSpecificRawBytes": 28120
+        "routeSpecificGzipBytes": 13122,
+        "routeSpecificRawBytes": 34161
       },
       "/account-suspended": {
         "firstLoadGzipBytes": 143151,
@@ -357,8 +357,8 @@
       "/reset-password": {
         "firstLoadGzipBytes": 151286,
         "firstLoadRawBytes": 500496,
-        "routeSpecificGzipBytes": 11782,
-        "routeSpecificRawBytes": 29526
+        "routeSpecificGzipBytes": 13778,
+        "routeSpecificRawBytes": 35869
       },
       "/signup": {
         "firstLoadGzipBytes": 156377,
