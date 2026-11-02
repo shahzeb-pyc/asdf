@@ -86,7 +86,7 @@ export const CreateCouponRequestSchema = z
   .object({
     code: couponCodeField,
     kind: CouponKindSchema,
-    percent: z.number().int().min(1).max(100).optional(),
+    percent: z.number().int().min(1).max(70).optional(),
     valuePkr: z.number().int().min(1).max(100000000).optional(),
   })
   .refine(
@@ -96,7 +96,7 @@ export const CreateCouponRequestSchema = z
         : value.percent !== undefined && value.valuePkr === undefined,
     {
       message:
-        'Percent coupons need a percent (1–100); balance coupons need a PKR value, not a percent.',
+        'Percent coupons need a percent (1–70); balance coupons need a PKR value, not a percent.',
     }
   );
 export type CreateCouponRequest = z.infer<typeof CreateCouponRequestSchema>;
@@ -115,7 +115,8 @@ export type CouponValidateRequest = z.infer<typeof CouponValidateRequestSchema>;
 export const CouponValidateResponseSchema = z.object({
   code: z.string().min(1),
   kind: CouponKindSchema,
-  percent: z.number().int().min(1).max(100).nullable(),
+  percent: z.number().int().min(1).max(70).nullable(),
+  cappedAt70Percent: z.boolean().default(false),
   discountPkr: z.number().int().min(0),
   amountDuePkr: z.number().int().min(0),
   amountAfterDiscountPkr: z.number().int().min(0),

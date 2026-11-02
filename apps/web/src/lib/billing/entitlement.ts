@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   DomainError,
   isPeriodActive,
+  quoteDowngrade,
   quoteUpgrade,
   totalPricePkr,
   SUBSCRIPTION_PERIOD_DAYS,
@@ -66,6 +67,12 @@ export interface SubscriptionPaymentRow {
   counts: PlatformCounts;
   amountPkr: number;
   isUpgrade: boolean;
+  isDowngrade: boolean;
+  scheduledStartsAt: Date | null;
+  rejectionReason: string | null;
+  rejectionDetail: string | null;
+  overrideReason: string | null;
+  decidedAt: string | null;
   screenshotStorageKey: string | null;
   nowpaymentsPaymentId: string | null;
   nowpaymentsPayAddress: string | null;
@@ -193,6 +200,12 @@ export function paymentFromRow(row: UnknownRow): SubscriptionPaymentRow | null {
     counts: countsFromRow(row),
     amountPkr: numberField(row, 'amount_pkr'),
     isUpgrade: boolField(row, 'is_upgrade'),
+    isDowngrade: boolField(row, 'is_downgrade'),
+    scheduledStartsAt: dateField(row, 'scheduled_starts_at'),
+    rejectionReason: stringField(row, 'rejection_reason'),
+    rejectionDetail: stringField(row, 'rejection_detail'),
+    overrideReason: stringField(row, 'override_reason'),
+    decidedAt: stringField(row, 'decided_at'),
     screenshotStorageKey: stringField(row, 'screenshot_storage_key'),
     nowpaymentsPaymentId: stringField(row, 'nowpayments_payment_id'),
     nowpaymentsPayAddress: stringField(row, 'nowpayments_pay_address'),
@@ -211,6 +224,35 @@ export function paymentFromRow(row: UnknownRow): SubscriptionPaymentRow | null {
     approvedAt: stringField(row, 'approved_at'),
     createdAt: stringField(row, 'created_at') ?? '',
   };
+}
+
+
+/** Load new payment columns tolerantly: if the migration that adds
+ * them is unapplied, the select errors and defaults are returned
+ * instead of failing the whole load. */
+async function loadNewPaymentFieldsForRow(
+  client: SupabaseClient,
+  paymentId: string
+): Promise<Partial<SubscriptionPaymentRow>> {
+  try {
+    const { data, error } = await client
+      .from('subscription_payments')
+      .select('is_downgrade,scheduled_starts_at,rejection_reason,rejection_detail,override_reason,decided_at')
+      .eq('id', paymentId)
+      .maybeSingle();
+    if (error || !data) return {};
+    const row = asRow(data) ?? {};
+    return {
+      isDowngrade: boolField(row, 'is_downgrade'),
+      scheduledStartsAt: dateField(row, 'scheduled_starts_at'),
+      rejectionReason: stringField(row, 'rejection_reason'),
+      rejectionDetail: stringField(row, 'rejection_detail'),
+      overrideReason: stringField(row, 'override_reason'),
+      decidedAt: stringField(row, 'decided_at'),
+    };
+  } catch {
+    return {};
+  }
 }
 
 const COUNT_COLUMNS =
@@ -983,6 +1025,53 @@ export async function createPeriodForPurchase(
   return period;
 }
 
+/** Create a future period WITHOUT superseding the live period (downgrade, owner decision 2026-11-02).
+ * The live period keeps running to its end; getActivePeriod only
+ * returns periods whose window contains now, so the scheduled row
+ * becomes live automatically at its startsAt. NOTE: the
+ * one-live-per-user unique index migration (20261101090000) ships
+ * UNAPPLIED; if it is ever applied it must be scoped to started
+ * periods, or it will block a scheduled row coexisting with a live
+ * one. Until then, app-level claim-first approval is the guard. */
+export async function createScheduledPeriod(
+  client: SupabaseClient,
+  args: { userId: string; counts: PlatformCounts; paymentId: string | null },
+  startsAt: Date
+): Promise<SubscriptionPeriodRow> {
+  const endsAt = new Date(startsAt.getTime() + SUBSCRIPTION_PERIOD_DAYS * 86_400_000);
+  const { data, error } = await client
+    .from('subscription_periods')
+    .insert({
+      user_id: args.userId,
+      payment_id: args.paymentId,
+      facebook_count: args.counts.facebook,
+      instagram_count: args.counts.instagram,
+      threads_count: args.counts.threads,
+      x_count: args.counts.x,
+      tiktok_count: args.counts.tiktok,
+      youtube_count: args.counts.youtube,
+      starts_at: startsAt.toISOString(),
+      ends_at: endsAt.toISOString(),
+    })
+    .select(`id,user_id,${COUNT_COLUMNS},starts_at,ends_at,superseded_at`)
+    .single();
+  if (error || !data) {
+    logServerError('[billing] scheduled period insert failed', error, { source: 'billing' });
+    throw new SubscriptionGateError(
+      'ENTITLEMENT_UNAVAILABLE',
+      'Your scheduled plan could not be saved right now. Please try again.'
+    );
+  }
+  const period = periodFromRow(asRow(data) ?? {});
+  if (!period) {
+    throw new SubscriptionGateError(
+      'ENTITLEMENT_UNAVAILABLE',
+      'Your scheduled plan could not be saved right now. Please try again.'
+    );
+  }
+  return period;
+}
+
 /** Supersede the user's current periods and start a fresh 30-day period for a payment. */
 export async function createPeriodForPayment(
   client: SupabaseClient,
@@ -1015,7 +1104,8 @@ export async function approvePayment(
   client: SupabaseClient,
   paymentId: string,
   adminUserId: string,
-  now: Date = new Date()
+  now: Date = new Date(),
+  options: { overrideReason?: string | null } = {}
 ): Promise<{ payment: SubscriptionPaymentRow; period: SubscriptionPeriodRow }> {
   const loadPayment = async (): Promise<SubscriptionPaymentRow | null> => {
     const { data, error } = await client
@@ -1025,8 +1115,19 @@ export async function approvePayment(
       )
       .eq('id', paymentId)
       .maybeSingle();
-    if (error || !data) return null;
-    return paymentFromRow(asRow(data) ?? {});
+    // DB errors are NOT a missing payment: fail loud with a retryable
+    // error instead of the old 404 masquerade (audit fix, this build).
+    if (error) {
+      logServerError('[billing] payment approve load failed', error, { source: 'billing' });
+      throw new SubscriptionGateError(
+        'ENTITLEMENT_UNAVAILABLE',
+        'That payment could not be loaded right now. Please try again.'
+      );
+    }
+    if (!data) return null;
+    const base = paymentFromRow(asRow(data) ?? {});
+    if (!base) return null;
+    return { ...base, ...(await loadNewPaymentFieldsForRow(client, paymentId)) };
   };
   const loadPeriod = async (periodId: string): Promise<SubscriptionPeriodRow | null> => {
     const { data } = await client
@@ -1068,6 +1169,16 @@ export async function approvePayment(
     );
   }
 
+  // Screenshot override (owner decisions 2026-11-02): a bank payment
+  // may be approved without a screenshot ONLY with a recorded reason.
+  // The user side can never submit without one; the admin side may
+  // rescue a genuine upload failure, auditable via override_reason.
+  if (payment.method === 'bank' && !payment.screenshotStorageKey && !options.overrideReason) {
+    throw new SubscriptionGateError(
+      'INVALID_REQUEST',
+      'This payment has no screenshot. Approve it only with a recorded reason, or reject it.'
+    );
+  }
   // Claim FIRST: exactly one concurrent approve wins this update.
   const { data: claimed, error: claimError } = await client
     .from('subscription_payments')
@@ -1122,9 +1233,21 @@ export async function approvePayment(
     return linkPeriodForApprovedPayment(client, repaired, adminUserId, now, loadPeriod);
   }
 
+  if (options.overrideReason) {
+    try {
+      await client
+        .from('subscription_payments')
+        .update({ override_reason: options.overrideReason, decided_at: now.toISOString(), updated_at: now.toISOString() })
+        .eq('id', payment.id);
+    } catch (err) {
+      logServerError('[billing] override reason record failed (migration may be unapplied)', err, {
+        source: 'billing',
+      });
+    }
+  }
   return linkPeriodForApprovedPayment(
     client,
-    { ...payment, status: 'approved', approvedAt: now.toISOString() },
+    { ...payment, status: 'approved', approvedAt: now.toISOString(), overrideReason: options.overrideReason ?? payment.overrideReason },
     adminUserId,
     now,
     loadPeriod
@@ -1171,7 +1294,33 @@ async function linkPeriodForApprovedPayment(
     // link at all — otherwise a payment whose period row is gone
     // could never activate.
   }
-  const period = await createPeriodForPayment(client, payment, now);
+  let period: SubscriptionPeriodRow;
+  if (payment.isDowngrade) {
+    // Downgrade (owner decision 2026-11-02): do NOT supersede the live
+    // plan. If it is still live, the new period starts at its end;
+    // if it has already lapsed, it starts at approval, never backdated.
+    const live = await getActivePeriod(client, payment.userId, now);
+    const scheduledStartsAt = live && live.endsAt > now ? live.endsAt : now;
+    period = await createScheduledPeriod(
+      client,
+      { userId: payment.userId, counts: payment.counts, paymentId: payment.id },
+      scheduledStartsAt
+    );
+    // scheduled_starts_at is a new column (migration ships unapplied):
+    // record it best-effort, never fail the approval for it.
+    try {
+      await client
+        .from('subscription_payments')
+        .update({ scheduled_starts_at: scheduledStartsAt.toISOString(), updated_at: now.toISOString() })
+        .eq('id', payment.id);
+    } catch (err) {
+      logServerError('[billing] scheduled starts_at record failed (migration may be unapplied)', err, {
+        source: 'billing',
+      });
+    }
+  } else {
+    period = await createPeriodForPayment(client, payment, now);
+  }
   // The period exists now; applying the held coupon redemption is
   // part of the same approval, and now records the period link.
   await applyHeldRedemptionsForPayment(client, payment.id, period.id);
@@ -1456,7 +1605,8 @@ export async function savePaymentActuals(
 export async function rejectPayment(
   client: SupabaseClient,
   paymentId: string,
-  now: Date = new Date()
+  now: Date = new Date(),
+  options: { reason?: string | null; detail?: string | null; adminUserId?: string | null } = {}
 ): Promise<SubscriptionPaymentRow> {
   const { data, error } = await client
     .from('subscription_payments')
@@ -1465,13 +1615,21 @@ export async function rejectPayment(
     )
     .eq('id', paymentId)
     .maybeSingle();
-  if (error || !data) {
+  if (error) {
+    logServerError('[billing] payment reject load failed', error, { source: 'billing' });
+    throw new SubscriptionGateError(
+      'ENTITLEMENT_UNAVAILABLE',
+      'That payment could not be loaded right now. Please try again.'
+    );
+  }
+  if (!data) {
     throw new SubscriptionGateError('PAYMENT_NOT_FOUND', 'That payment could not be found.');
   }
-  const payment = paymentFromRow(asRow(data) ?? {});
+  let payment = paymentFromRow(asRow(data) ?? {});
   if (!payment) {
     throw new SubscriptionGateError('PAYMENT_NOT_FOUND', 'That payment could not be found.');
   }
+  payment = { ...payment, ...(await loadNewPaymentFieldsForRow(client, paymentId)) };
   if (payment.status !== 'pending') {
     throw new SubscriptionGateError(
       'PAYMENT_ALREADY_DECIDED',
@@ -1487,6 +1645,27 @@ export async function rejectPayment(
     .update({ status: 'rejected', updated_at: now.toISOString() })
     .eq('id', payment.id)
     .eq('status', 'pending');
+  // Reason columns ship with a new migration (unapplied until the
+  // owner applies it): record best-effort, never fail the rejection
+  // for them, but always return the reason in memory so the UI
+  // shows it for this decision.
+  if (options.reason) {
+    try {
+      await client
+        .from('subscription_payments')
+        .update({
+          rejection_reason: options.reason,
+          rejection_detail: options.detail ?? null,
+          decided_at: now.toISOString(),
+          updated_at: now.toISOString(),
+        })
+        .eq('id', payment.id);
+    } catch (err) {
+      logServerError('[billing] rejection reason record failed (migration may be unapplied)', err, {
+        source: 'billing',
+      });
+    }
+  }
   if (updateError) {
     logServerError('[billing] payment reject update failed', updateError, {
       source: 'billing',
@@ -1496,7 +1675,13 @@ export async function rejectPayment(
       'That payment could not be rejected right now. Please try again.'
     );
   }
-  return { ...payment, status: 'rejected' };
+  return {
+    ...payment,
+    status: 'rejected',
+    rejectionReason: options.reason ?? payment.rejectionReason,
+    rejectionDetail: options.detail ?? payment.rejectionDetail,
+    decidedAt: now.toISOString(),
+  };
 }
 
 /** Price a purchase: fresh purchase pays the full total; an upgrade pays new total minus credit. */
@@ -1504,26 +1689,39 @@ export function pricePurchase(
   counts: import('@fbuploadpro/contracts').PlatformCounts,
   activePeriod: SubscriptionPeriodRow | null,
   now: Date = new Date()
-): { amountPkr: number; isUpgrade: boolean; quote: ReturnType<typeof quoteUpgrade> | null } {
+): {
+  amountPkr: number;
+  isUpgrade: boolean;
+  isDowngrade: boolean;
+  quote: ReturnType<typeof quoteUpgrade> | null;
+  downgradeQuote: ReturnType<typeof quoteDowngrade> | null;
+} {
   if (!activePeriod) {
-    return { amountPkr: totalPricePkr(counts), isUpgrade: false, quote: null };
+    return { amountPkr: totalPricePkr(counts), isUpgrade: false, isDowngrade: false, quote: null, downgradeQuote: null };
   }
   const daysRemaining = Math.ceil(
     Math.max(0, activePeriod.endsAt.getTime() - now.getTime()) / 86_400_000
   );
-  let quote: ReturnType<typeof quoteUpgrade>;
   try {
-    quote = quoteUpgrade(activePeriod.counts, counts, daysRemaining);
-  } catch (err) {
-    // Boundary conversion: the checkout routes turn a
-    // SubscriptionGateError into a plain 400, but a raw DomainError
-    // (downgrade, per-platform decrease, same-total change) would
-    // fall through to a misleading 500. Convert here so both
-    // checkout routes refuse a downgrade with the plain message.
-    if (err instanceof DomainError) {
-      throw new SubscriptionGateError('INVALID_REQUEST', err.message);
+    const quote = quoteUpgrade(activePeriod.counts, counts, daysRemaining);
+    return { amountPkr: quote.amountToPayPkr, isUpgrade: true, isDowngrade: false, quote, downgradeQuote: null };
+  } catch (upgradeErr) {
+    // Downgrade (owner decision 2026-11-02): lower total, no platform
+    // raised. It is priced at the new monthly total with NO credit.
+    try {
+      const downgradeQuote = quoteDowngrade(activePeriod.counts, counts);
+      return { amountPkr: downgradeQuote.amountToPayPkr, isUpgrade: false, isDowngrade: true, quote: null, downgradeQuote };
+    } catch (downgradeErr) {
+      // Mixed change (some up, some down) or same total: report the
+      // downgrade reason when a platform was raised (that is what
+      // blocks a downgrade), otherwise the upgrade reason.
+      const message =
+        downgradeErr instanceof DomainError && downgradeErr.message.includes('cannot raise')
+          ? downgradeErr.message
+          : upgradeErr instanceof Error
+            ? upgradeErr.message
+            : 'That change is not an upgrade or a downgrade.';
+      throw new SubscriptionGateError('INVALID_REQUEST', message);
     }
-    throw err;
   }
-  return { amountPkr: quote.amountToPayPkr, isUpgrade: true, quote };
 }

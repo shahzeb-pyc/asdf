@@ -108,7 +108,7 @@ export async function POST(
     return NextResponse.json(
       {
         error: 'INVALID_REQUEST',
-        message: 'Percent coupons need a percent (1–100); balance coupons need a PKR value, not a percent.',
+        message: 'Percent coupons need a percent (1–70); balance coupons need a PKR value, not a percent.',
       },
       { status: 400 }
     );
