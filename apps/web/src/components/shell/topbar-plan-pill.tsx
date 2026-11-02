@@ -39,6 +39,11 @@ export function calendarDaysLeft(periodEndsAt: string, today: Date = new Date())
  *
  * Paid: "Paid · N days left", final calendar day "Paid · Expires
  * today", phone short form "Nd left" for numeric counts only.
+ * The pill itself carries ml-auto: the header is flex with no spacer
+ * and the search button also carries ml-auto, so the pill's auto
+ * margin absorbs the free space and the pill sits immediately left
+ * of the search (without it, the pill would sit right of the
+ * breadcrumb with a large gap to the search).
  * Expired: "Expired". Free: "Upgrade". Null entitlement (loading
  * or a failed check that cleared the proven value): nothing — a
  * stale or placeholder count must never flash. Admin: nothing;
@@ -60,7 +65,7 @@ export function TopbarPlanPill({
         href={buildTenantHref(subdomain, '/my-plan', useCleanPaths)}
         aria-label="Plan expired, open My Plan"
         data-testid="topbar-plan-pill"
-        className="flex h-control shrink-0 items-center rounded-sm border border-line bg-panel px-3 text-body font-medium text-signal-critical outline-none transition-colors duration-base ease-standard hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link"
+        className="ml-auto flex h-control shrink-0 items-center rounded-sm border border-line bg-panel px-3 text-body font-medium text-signal-critical outline-none transition-colors duration-base ease-standard hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link"
       >
         Expired
       </Link>
@@ -73,7 +78,7 @@ export function TopbarPlanPill({
         href={buildTenantHref(subdomain, '/purchase', useCleanPaths)}
         aria-label="Upgrade your plan, open Purchase"
         data-testid="topbar-plan-pill"
-        className="flex h-control shrink-0 items-center rounded-sm border border-line bg-panel px-3 text-body font-medium text-brand-gold outline-none transition-colors duration-base ease-standard hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link"
+        className="ml-auto flex h-control shrink-0 items-center rounded-sm border border-line bg-panel px-3 text-body font-medium text-brand-gold outline-none transition-colors duration-base ease-standard hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link"
       >
         Upgrade
       </Link>
@@ -84,7 +89,7 @@ export function TopbarPlanPill({
   // show the word with no count rather than inventing a date.
   const href = buildTenantHref(subdomain, '/my-plan', useCleanPaths);
   const baseClassName =
-    'flex h-control shrink-0 items-center gap-2 rounded-sm border border-line bg-panel px-3 text-body font-medium text-ink outline-none transition-colors duration-base ease-standard hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link';
+    'ml-auto flex h-control shrink-0 items-center gap-2 rounded-sm border border-line bg-panel px-3 text-body font-medium text-ink outline-none transition-colors duration-base ease-standard hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link';
   if (entitlement.periodEndsAt === null) {
     return (
       <Link href={href} aria-label="Paid plan, open My Plan" data-testid="topbar-plan-pill" className={baseClassName}>

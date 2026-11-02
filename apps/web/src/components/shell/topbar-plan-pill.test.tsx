@@ -54,6 +54,32 @@ describe('TopbarPlanPill', () => {
     expect(pill).toHaveAttribute('href', '/tenant/creatorstack/my-plan');
   });
 
+  // Regression: the pill itself must carry ml-auto so it sits immediately
+  // left of the ⌘K search. The header is flex with no spacer and the
+  // search button also carries ml-auto; without ml-auto on the pill,
+  // the pill would sit right of the breadcrumb instead. jsdom does no
+  // layout, so this class-presence check is the only test-level guard.
+  it('carries ml-auto on the Paid pill so it clusters with the search', () => {
+    entitlementState.value = entitlement({
+      active: true,
+      periodEndsAt: addDays(new Date(), 12).toISOString(),
+    });
+    renderPill();
+    expect(screen.getByTestId('topbar-plan-pill').className).toContain('ml-auto');
+  });
+
+  it('carries ml-auto on the Expired pill so it clusters with the search', () => {
+    entitlementState.value = entitlement({ active: false, hasPriorPeriod: true, periodEndsAt: null });
+    renderPill();
+    expect(screen.getByTestId('topbar-plan-pill').className).toContain('ml-auto');
+  });
+
+  it('carries ml-auto on the Free pill so it clusters with the search', () => {
+    entitlementState.value = entitlement({ active: false, hasPriorPeriod: false, periodEndsAt: null });
+    renderPill();
+    expect(screen.getByTestId('topbar-plan-pill').className).toContain('ml-auto');
+  });
+
   it('shows Expires today on the final calendar day, not 1 day left', () => {
     const today = new Date();
     const endsToday = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59);
