@@ -12,13 +12,19 @@
  */
 import React from 'react';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('next/link', () => ({
   default: ({ href, children }: { href: string; children: React.ReactNode }) => (
     <a href={href}>{children}</a>
+  ),
+}));
+
+vi.mock('next/image', () => ({
+  default: ({ src, alt, ...props }: { src: string; alt: string }) => (
+    <img src={src} alt={alt} {...props} />
   ),
 }));
 
@@ -296,5 +302,245 @@ describe('AduHubPage Add Page dialog 2-step flow', () => {
     await user.click(screen.getByRole('button', { name: 'Back' }));
     expect(await screen.findByText('Step 1 of 2: Select Pages')).toBeTruthy();
     expect(screen.getByText('1 pages selected')).toBeTruthy();
+  });
+});
+
+/**
+ * ADU hub list cards — Pages-section structure with ADU data.
+ *
+ * The card mirrors `components/pages/page-card.tsx`: avatar with a
+ * status ring + identity lines + circled arrow, source link row,
+ * status mark + account footer, big signal-coloured counts, and the
+ * ADU-specific Today line. The whole card navigates to the detail
+ * page, except clicks inside the source link.
+ */
+import { getAduStatusMarkKind } from '@/components/auto-download-upload/adu-hub-page';
+
+const CARD_CONFIG = {
+  id: 'cfg-1',
+  destinationId: 'dest-1',
+  destinationName: 'Ellie Blossom',
+  destinationExternalId: '432724216597352',
+  destinationAvatarUrl: null,
+  sourcePlatform: 'tiktok',
+  sourceUsername: 'sdf',
+  sourceIdentity: '@sdf',
+  sourceLink: 'https://www.tiktok.com/@sdf',
+  destinationStatus: 'active',
+  accountName: 'Shahzeb Malik',
+  status: 'active',
+  displayStatus: 'Scrape pending',
+  followersCount: 0,
+  followersGained: 0,
+  createdAt: '2026-11-02T10:00:00.000Z',
+  postedCount: 0,
+  pendingCount: 0,
+  failedCount: 0,
+  postedToday: 0,
+  pendingToday: 1,
+  failedToday: 0,
+  postsPerDay: 1,
+};
+
+function installFetchCards(configs: unknown[]) {
+  fetchMock.mockImplementation((url: string) => {
+    if (url.includes('/auto-download-upload/options')) return jsonResponse(OPTIONS_BODY);
+    return jsonResponse({
+      configs,
+      stats: { totalPages: configs.length, followersGained: 0, totalFollowers: 0 },
+      totalPages: 1,
+      page: 1,
+    });
+  });
+}
+
+async function renderCards(configs: unknown[] = [CARD_CONFIG]) {
+  renderWithQuery(<AduHubPage subdomain="acme" />);
+  return screen.findByTestId('adu-page-card-cfg-1');
+}
+
+/** Stubs window.location with a plain getter/setter so card
+ * navigation (window.location.href = ...) is observable in jsdom
+ * without jsdom's "not implemented: navigation" path. Restores the
+ * original descriptor afterwards. */
+function stubLocation() {
+  let href = '';
+  const original = Object.getOwnPropertyDescriptor(window, 'location');
+  Object.defineProperty(window, 'location', {
+    configurable: true,
+    value: {
+      get href() {
+        return href;
+      },
+      set href(next: string) {
+        href = next;
+      },
+    },
+  });
+  return {
+    get href() {
+      return href;
+    },
+    restore() {
+      if (original) Object.defineProperty(window, 'location', original);
+    },
+  };
+}
+
+describe('AduHubPage list cards (Pages-section structure)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  it('renders avatar initials, name, Added date, bold current followers, source link, status mark, account, counts, Today line', async () => {
+    installFetchCards([CARD_CONFIG]);
+    const card = await renderCards();
+    expect(card.textContent).toContain('EB');
+    expect(screen.getByTestId('adu-page-name').textContent).toBe('Ellie Blossom');
+    expect(screen.getByTestId('adu-page-added-line').textContent).toBe('Added 2 Nov 2026');
+    const followers = screen.getByTestId('adu-page-current-followers');
+    expect(followers.textContent).toBe('0');
+    expect(followers.className).toContain('font-bold');
+    expect(screen.getByTestId('adu-page-followers-line').textContent).toContain('followers · tiktok');
+    const sourceLink = screen.getByTestId('adu-page-source-link');
+    expect(sourceLink.textContent).toContain('@sdf');
+    expect(sourceLink.getAttribute('href')).toBe('https://www.tiktok.com/@sdf');
+    const status = screen.getByTestId('adu-page-status');
+    expect(status.textContent).toContain('Scrape pending');
+    expect(status.getAttribute('data-status')).toBe('queued');
+    expect(screen.getByTestId('adu-page-parent-account').textContent).toBe('Account: Shahzeb Malik');
+    expect(screen.getByTestId('adu-page-queued-count').textContent).toBe('0');
+    expect(screen.getByTestId('adu-page-posted-count').textContent).toBe('0');
+    expect(screen.getByTestId('adu-page-failed-count').textContent).toBe('0');
+    expect(screen.getByTestId('adu-page-today-line').textContent).toContain('Today: Pending 1 · Posted 0 · Failed 0');
+  });
+
+  it('shows the page photo when destinationAvatarUrl is set, initials otherwise', async () => {
+    installFetchCards([
+      { ...CARD_CONFIG, destinationAvatarUrl: 'https://example.invalid/avatar.jpg' },
+    ]);
+    await renderCards();
+    const img = screen.getByTestId('adu-page-avatar-img');
+    expect(img.getAttribute('src')).toBe('https://example.invalid/avatar.jpg');
+    expect(screen.queryByTestId('adu-page-avatar-initials')).toBeNull();
+  });
+
+  it('shows ADU totals with signal colours in Queued / Posted / Failed order', async () => {
+    installFetchCards([
+      { ...CARD_CONFIG, pendingCount: 5, postedCount: 12, failedCount: 2 },
+    ]);
+    await renderCards();
+    const row = screen.getByTestId('adu-page-queue-counts');
+    expect(Array.from(row.children).map((el) => el.getAttribute('data-testid'))).toEqual([
+      'adu-page-queued-stat',
+      'adu-page-posted-stat',
+      'adu-page-failed-stat',
+    ]);
+    const queued = screen.getByTestId('adu-page-queued-count');
+    const posted = screen.getByTestId('adu-page-posted-count');
+    const failed = screen.getByTestId('adu-page-failed-count');
+    expect(queued.textContent).toBe('5');
+    expect(posted.textContent).toBe('12');
+    expect(failed.textContent).toBe('2');
+    expect(queued.className).toContain('text-signal-queued');
+    expect(posted.className).toContain('text-signal-operational');
+    expect(failed.className).toContain('text-signal-critical');
+    expect(queued.className).toContain('text-xxl');
+  });
+
+  it('followers line shows the CURRENT count and the gained indicator when net gained > 0', async () => {
+    installFetchCards([
+      { ...CARD_CONFIG, followersCount: 100, followersGained: 150 },
+    ]);
+    await renderCards();
+    expect(screen.getByTestId('adu-page-current-followers').textContent).toBe('150');
+    expect(screen.getByTestId('adu-page-followers-gained').textContent).toBe('+50 gained');
+  });
+
+  it('hides the gained indicator when net gained is 0', async () => {
+    installFetchCards([
+      { ...CARD_CONFIG, followersCount: 100, followersGained: 100 },
+    ]);
+    await renderCards();
+    expect(screen.queryByTestId('adu-page-followers-gained')).toBeNull();
+  });
+
+  it('Today line emphasises nonzero counts and mutes zeros', async () => {
+    installFetchCards([{ ...CARD_CONFIG, pendingToday: 1, postedToday: 0, failedToday: 3 }]);
+    await renderCards();
+    const line = screen.getByTestId('adu-page-today-line');
+    const pending = within(line).getByText('1');
+    const failed = within(line).getByText('3');
+    expect(pending.className).toContain('font-semibold');
+    expect(failed.className).toContain('font-semibold');
+    expect(within(line).getByText('0').className).not.toContain('font-semibold');
+  });
+
+  it('omits the Added line for an unparseable date, never garbage', async () => {
+    installFetchCards([{ ...CARD_CONFIG, createdAt: 'not-a-date' }]);
+    await renderCards();
+    expect(screen.queryByTestId('adu-page-added-line')).toBeNull();
+  });
+
+  it('drops the old card lines: no external id, no Starting, no Open page link', async () => {
+    installFetchCards([CARD_CONFIG]);
+    await renderCards();
+    expect(screen.queryByText('432724216597352')).toBeNull();
+    expect(screen.queryByText(/Starting/)).toBeNull();
+    expect(screen.queryByText(/Open page/)).toBeNull();
+  });
+
+  it('whole-card click, Enter, and Space navigate to the detail page', async () => {
+    installFetchCards([CARD_CONFIG]);
+    const card = await renderCards();
+    const loc = stubLocation();
+    try {
+      fireEvent.click(card);
+      expect(loc.href).toBe('/tenant/acme/auto-download-upload/cfg-1');
+      loc.restore();
+      const loc2 = stubLocation();
+      try {
+        fireEvent.keyDown(card, { key: 'Enter' });
+        expect(loc2.href).toBe('/tenant/acme/auto-download-upload/cfg-1');
+        fireEvent.keyDown(card, { key: ' ' });
+        expect(loc2.href).toBe('/tenant/acme/auto-download-upload/cfg-1');
+      } finally {
+        loc2.restore();
+      }
+    } finally {
+      loc.restore();
+    }
+  });
+
+  it('clicking the source link does not navigate the card', async () => {
+    installFetchCards([CARD_CONFIG]);
+    await renderCards();
+    const loc = stubLocation();
+    try {
+      fireEvent.click(screen.getByTestId('adu-page-source-link'));
+      expect(loc.href).toBe('');
+    } finally {
+      loc.restore();
+    }
+  });
+
+  it('maps every ADU display status to the right StatusMark kind', () => {
+    expect(getAduStatusMarkKind('Active posting')).toBe('operational');
+    expect(getAduStatusMarkKind('All reels posted')).toBe('operational');
+    expect(getAduStatusMarkKind('Scrape pending')).toBe('queued');
+    expect(getAduStatusMarkKind('Scraping reels')).toBe('queued');
+    expect(getAduStatusMarkKind('Posting inactive')).toBe('queued');
+    expect(getAduStatusMarkKind('Source not found')).toBe('critical');
+    expect(getAduStatusMarkKind('Verification required')).toBe('critical');
+    expect(getAduStatusMarkKind('Invalid token')).toBe('critical');
+    expect(getAduStatusMarkKind('Rate limited')).toBe('critical');
+    expect(getAduStatusMarkKind('Page not accessible')).toBe('critical');
+    expect(getAduStatusMarkKind('Source disabled')).toBe('critical');
+    expect(getAduStatusMarkKind('Creator suspended')).toBe('critical');
+    expect(getAduStatusMarkKind('BM 2FA required')).toBe('critical');
+    expect(getAduStatusMarkKind('Check developer app')).toBe('critical');
+    expect(getAduStatusMarkKind('Account suspended')).toBe('critical');
+    expect(getAduStatusMarkKind('Something unexpected')).toBe('critical');
   });
 });
