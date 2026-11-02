@@ -108,6 +108,7 @@ export function MusePage({
             </p>
             {activity.days.length === 0 ? (
               <EmptyState
+                type="no-results"
                 className="mt-3"
                 title="No uploads by Muse yet"
                 description="When Muse uploads media with your key, it will appear here."

@@ -53,7 +53,10 @@ export async function authenticateTenantRoute(
     if ('errorResponse' in resolved) {
       return { errorResponse: resolved.errorResponse };
     }
-    return { session: resolved.session, agentKeyId: resolved.agentKeyId };
+    return {
+      session: resolved.session,
+      ...(resolved.agentKeyId ? { agentKeyId: resolved.agentKeyId } : {}),
+    };
   }
 
   const sessionSecret = getSessionSecret();

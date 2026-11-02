@@ -123,7 +123,7 @@ async function cookieRequest(
   const token = await signSessionToken(
     {
       userId: USER_ID,
-      email: 'user@gmail.com',
+      email: 'testuser@gmail.com',
       subdomain: SUBDOMAIN,
       allowedSubdomains: [SUBDOMAIN],
       role: 'user',
@@ -137,7 +137,7 @@ async function cookieRequest(
       'Content-Type': 'application/json',
       Cookie: `fbup_session=${token}`,
     },
-    body: body ? JSON.stringify(body) : undefined,
+    ...(body ? { body: JSON.stringify(body) } : {}),
   });
 }
 
@@ -223,24 +223,27 @@ describe('Muse activity API', () => {
       agent_keys: [] as Record<string, unknown>[],
       agent_activity: [
         {
-          id: 'a1',
-          media_id: 'm1',
+          id: 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaa1',
+          user_id: USER_ID,
+          media_id: 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbb1',
           name: 'today-reel.mp4',
           media_type: 'video',
           folder_id: null,
           created_at: '2026-11-03T10:00:00.000Z',
         },
         {
-          id: 'a2',
-          media_id: 'm2',
+          id: 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaa2',
+          user_id: USER_ID,
+          media_id: 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbb2',
           name: 'today-cover.jpg',
           media_type: 'image',
           folder_id: null,
           created_at: '2026-11-03T11:00:00.000Z',
         },
         {
-          id: 'a3',
-          media_id: 'm3',
+          id: 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaa3',
+          user_id: USER_ID,
+          media_id: 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbb3',
           name: 'yesterday-reel.mp4',
           media_type: 'video',
           folder_id: null,
