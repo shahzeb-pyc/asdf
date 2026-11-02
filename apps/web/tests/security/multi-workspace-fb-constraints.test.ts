@@ -18,7 +18,7 @@ import {
   _setMockSupabaseClient,
 } from '@/lib/auth/clients';
 import {
-  validateSessionActive,
+  validateSessionDetailed,
 } from '@/lib/auth/session';
 import {
   _resetAuthStores,
@@ -191,8 +191,8 @@ describe('ISSUES.md Security & Architecture Regressions', () => {
       };
 
       _setMockSupabaseClient(mockSupabase as any);
-      const active = await validateSessionActive(session);
-      expect(active).toBe(false);
+      const verdict = await validateSessionDetailed(session);
+      expect(verdict).toBe('dead');
     });
 
     it('revokes session for suspended user', async () => {
@@ -251,8 +251,8 @@ describe('ISSUES.md Security & Architecture Regressions', () => {
       };
 
       _setMockSupabaseClient(mockSupabase as any);
-      const active = await validateSessionActive(session);
-      expect(active).toBe(false);
+      const verdict = await validateSessionDetailed(session);
+      expect(verdict).toBe('dead');
     });
   });
 

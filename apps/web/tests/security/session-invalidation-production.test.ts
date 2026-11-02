@@ -2,7 +2,7 @@
  * @file session-invalidation-production.test.ts
  * @description Security regression tests for ISSUE-02: Existing Sessions Are Never Invalidated After Password Reset in Production
  * Verifies that password resets persist password_updated_at to Supabase PostgREST,
- * findUserByEmail selects it, and validateSessionActive rejects sessions created prior to the update.
+ * findUserByEmail selects it, and validateSessionDetailed rejects sessions created prior to the update.
  */
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
@@ -221,8 +221,8 @@ describe('ISSUE-02: Production Session Invalidation on Password Reset', () => {
     authModule._setMockSupabaseClient(mockSupabase as any);
 
     // Initial session is valid before password reset
-    const isValidBefore = await authModule.validateSessionActive(initialSession);
-    expect(isValidBefore).toBe(true);
+    const isValidBefore = await authModule.validateSessionDetailed(initialSession);
+    expect(isValidBefore).toBe('active');
 
     // Perform password reset
     await authModule.resetUserPasswordWithOtp({
@@ -232,8 +232,8 @@ describe('ISSUE-02: Production Session Invalidation on Password Reset', () => {
     });
 
     // Session issued BEFORE the reset MUST now be invalid
-    const isValidAfter = await authModule.validateSessionActive(initialSession);
-    expect(isValidAfter).toBe(false);
+    const isValidAfter = await authModule.validateSessionDetailed(initialSession);
+    expect(isValidAfter).toBe('dead');
   });
 
   it('persists password_updated_at to Supabase in resetUserPassword', async () => {

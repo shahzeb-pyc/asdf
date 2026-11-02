@@ -8,6 +8,16 @@
  * throws an `ApiError`. It never retries and never swallows a failure.
  * An `AbortSignal` passed in (e.g. React Query's) is forwarded to
  * `fetch` untouched.
+ *
+ * Session-expiry navigation (session-global-check spec §2.3): a
+ * 401 always throws a `session-expired` ApiError, but it only
+ * navigates to login from foreground mutations. Queries, polls,
+ * and refetches (GET) never navigate — their 401 surfaces as a
+ * retryable error in that query, so one failed background call
+ * cannot yank the whole page. `bounceOnUnauthorized` overrides
+ * the method default either way for call sites that need the
+ * other behaviour. The global session check (not this client) is
+ * what bounces a proven-dead session in the background.
  */
 
 import type { z } from 'zod';
@@ -39,6 +49,13 @@ export interface ApiFetchOptions<S extends z.ZodTypeAny = z.ZodTypeAny> {
   signal?: AbortSignal;
   /** Test seam: replaces the global `fetch`. */
   fetchFn?: typeof fetch;
+  /**
+   * Whether a 401 from this call navigates to login (session-global-
+   * check spec §2.3). Defaults by method: mutations navigate,
+   * GETs do not. Pass `false` to keep a foreground mutation from
+   * navigating, or `true` to make a GET navigate.
+   */
+  bounceOnUnauthorized?: boolean;
 }
 
 /**
@@ -152,7 +169,9 @@ function parseJsonBody(rawText: string): { parsed: unknown; parsedOk: boolean } 
 function throwForErrorResponse(
   response: Response,
   parsed: unknown,
-  parsedOk: boolean
+  parsedOk: boolean,
+  method: string,
+  bounceOnUnauthorized?: boolean
 ): never {
   const server = readServerError(parsedOk ? parsed : undefined, response.status);
   const errorOptions = {
@@ -160,7 +179,14 @@ function throwForErrorResponse(
     ...(server.code !== undefined ? { code: server.code } : {}),
   };
   if (response.status === 401) {
-    void handleSessionExpired();
+    // Session-global-check spec §2.3: only foreground mutations
+    // navigate on 401 by default. A GET 401 (query, poll, refetch)
+    // still throws session-expired, but navigating on it is what
+    // turned one failed background call into a full-page bounce.
+    const shouldBounce = bounceOnUnauthorized ?? method !== 'GET';
+    if (shouldBounce) {
+      void handleSessionExpired();
+    }
     throw sessionExpiredError(errorOptions);
   }
   throw httpError(response.status, server.message, errorOptions);
@@ -230,7 +256,9 @@ export async function apiFetch(
   const response = await performRequest(fetchFn, url, init, options.signal);
   const rawText = await readResponseText(response, options.signal);
   const { parsed, parsedOk } = parseJsonBody(rawText);
-  if (!response.ok) throwForErrorResponse(response, parsed, parsedOk);
+  if (!response.ok) {
+    throwForErrorResponse(response, parsed, parsedOk, method, options.bounceOnUnauthorized);
+  }
   return parseSuccessResponse(
     response,
     rawText,

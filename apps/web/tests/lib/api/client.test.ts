@@ -346,11 +346,13 @@ describe('apiFetch 401 handling', () => {
     resetSessionExpiredGuard();
   });
 
-  it('maps a 401 to session-expired and triggers the global handler once', async () => {
+  it('maps a mutation 401 to session-expired and triggers the global handler once', async () => {
     const handler = vi.fn();
     unregister = registerSessionExpiredHandler(handler);
     const fetchFn = fetchReturning(jsonResponse({ error: 'Unauthorized' }, 401));
-    const error = await captureError(apiFetch('/api/protected', { fetchFn }));
+    const error = await captureError(
+      apiFetch('/api/protected', { fetchFn, method: 'POST', body: { a: 1 } })
+    );
     expect(error.kind).toBe('session-expired');
     expect(error.status).toBe(401);
     // The handler is fired without blocking the throw; let it run.
@@ -358,13 +360,48 @@ describe('apiFetch 401 handling', () => {
     expect(handler).toHaveBeenCalledWith({ path: '/' });
   });
 
-  it('does not re-trigger the handler for a second racing 401', async () => {
+  it('does not re-trigger the handler for a second racing mutation 401', async () => {
     const handler = vi.fn();
     unregister = registerSessionExpiredHandler(handler);
     const makeFetch = () =>
       fetchReturning(jsonResponse({ error: 'Unauthorized' }, 401));
-    await captureError(apiFetch('/api/one', { fetchFn: makeFetch() }));
-    await captureError(apiFetch('/api/two', { fetchFn: makeFetch() }));
+    await captureError(apiFetch('/api/one', { fetchFn: makeFetch(), method: 'POST' }));
+    await captureError(apiFetch('/api/two', { fetchFn: makeFetch(), method: 'POST' }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('maps a GET 401 to session-expired but never navigates on it', async () => {
+    const handler = vi.fn();
+    unregister = registerSessionExpiredHandler(handler);
+    const fetchFn = fetchReturning(jsonResponse({ error: 'Unauthorized' }, 401));
+    // Default apiFetch method is GET: a background query/poll/
+    // refetch 401 must surface as a retryable error in that query,
+    // not yank the whole page to login (spec §2.3).
+    const error = await captureError(apiFetch('/api/protected', { fetchFn }));
+    expect(error.kind).toBe('session-expired');
+    expect(error.status).toBe(401);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('bounceOnUnauthorized overrides the method default both ways', async () => {
+    const handler = vi.fn();
+    unregister = registerSessionExpiredHandler(handler);
+    const getFetch = fetchReturning(jsonResponse({ error: 'Unauthorized' }, 401));
+    await captureError(
+      apiFetch('/api/get-bounce', { fetchFn: getFetch, bounceOnUnauthorized: true })
+    );
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+    resetSessionExpiredGuard();
+    const postFetch = fetchReturning(jsonResponse({ error: 'Unauthorized' }, 401));
+    await captureError(
+      apiFetch('/api/post-no-bounce', {
+        fetchFn: postFetch,
+        method: 'POST',
+        bounceOnUnauthorized: false,
+      })
+    );
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(handler).toHaveBeenCalledTimes(1);
   });

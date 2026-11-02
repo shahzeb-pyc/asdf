@@ -1,11 +1,17 @@
 /**
- * Global 401 / session-expired handling (spec 137 §3.1).
+ * Global 401 / session-expired handling (spec 137 §3.1, as narrowed
+ * by the session-global-check spec §2.3).
  *
- * The API client maps every 401 to a `session-expired` ApiError and
- * calls `handleSessionExpired()`. Exactly one reaction happens per
- * session expiry — no matter how many requests race to 401 at once:
- * the registered handler runs (PR-A1b's provider registers one that
- * clears the query cache), then the browser is sent to
+ * A 401 still maps to a `session-expired` ApiError, but it only
+ * navigates from two sources: the global session check (the shell's
+ * periodic revalidation proving the session dead) and foreground
+ * mutations (see `lib/api/client.ts` — queries/polls/refetches
+ * never navigate, so a single failed background call can no longer
+ * yank the whole page to login). Whichever source fires, exactly
+ * one reaction happens per session expiry — no matter how many
+ * requests race to 401 at once: the registered handler runs
+ * (PR-A1b's provider registers one that clears the query cache),
+ * then the browser is sent to
  * `/login?next=<current path>&reason=session-expired`.
  *
  * The login route itself is excluded, and a re-entrancy latch keeps
