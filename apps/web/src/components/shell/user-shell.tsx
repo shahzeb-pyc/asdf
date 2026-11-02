@@ -115,7 +115,7 @@ export function UserShell({
                 and the search button's own ml-auto has no free
                 space inside this shrink-0 cluster, so the two can
                 never split the free space again and float the pill
-                into the middle of the header (the merged #134 bug:
+                into the middle of the header (the merged pill bug:
                 two auto margins distribute free space equally).
                 ⌘K palette trigger (spec 130 §5.6, OD130-6: YES — the
                 visible search-style header button ships alongside the
