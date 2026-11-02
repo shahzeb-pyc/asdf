@@ -4,7 +4,6 @@ import {
   getSessionSecret,
   signOAuthState,
   verifyMagicLinkToken,
-  INSTAGRAM_OAUTH_SCOPES,
   type Database,
   type DatabaseClient,
 } from '@fbuploadpro/contracts';
@@ -12,7 +11,7 @@ import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
 import { resolvePlatformClientCredentials } from '@/lib/connect/persist';
-import { INSTAGRAM_AUTHORIZE_URL } from '@/lib/connect/platforms/instagram';
+import { buildInstagramUnifiedDialogUrl } from '@/lib/connect/platforms/instagram-unified';
 
 /**
  * Instagram magic-link forwarder — Facebook's `/connect/facebook`
@@ -63,13 +62,17 @@ export async function handleConnectInstagram(
       ? null
       : await resolvePlatformClientCredentials(client, workspaceId, 'instagram');
 
-  if (!credentials) {
+  // Same triple gate as the direct initiate: no Configuration ID, no
+  // dialog. A workspace with only an old Instagram Login pair must
+  // complete its Unified Login details in Settings first.
+  if (!credentials || !credentials.configId) {
     const errorUrl = new URL('/connect/instagram/error', request.url);
     errorUrl.searchParams.set('reason', 'app_not_configured');
     return NextResponse.redirect(errorUrl);
   }
 
   const effectiveAppId = credentials.clientId;
+  const effectiveConfigId = credentials.configId;
   const redirectUri = buildSubdomainOAuthRedirectUriForCallback(
     payload.tenantSubdomain,
     '/api/auth/instagram/callback',
@@ -100,16 +103,17 @@ export async function handleConnectInstagram(
     sessionSecret
   );
 
-  // 4. Construct the Instagram-Login OAuth dialog URL (Instagram-Login
-  // ONLY — never the Facebook-Login dialog, spec 124 D2).
-  const oauthUrl = new URL(INSTAGRAM_AUTHORIZE_URL);
-  oauthUrl.searchParams.set('client_id', effectiveAppId);
-  oauthUrl.searchParams.set('redirect_uri', redirectUri);
-  oauthUrl.searchParams.set('state', state);
-  oauthUrl.searchParams.set('scope', [...INSTAGRAM_OAUTH_SCOPES].join(' '));
-  oauthUrl.searchParams.set('response_type', 'code');
+  // 4. Construct the Unified Login dialog URL (same dialog and triple
+  // gate as the direct initiate; the configuration owns the set, so
+  // no `scope` parameter is sent).
+  const oauthUrl = buildInstagramUnifiedDialogUrl({
+    appId: effectiveAppId,
+    configId: effectiveConfigId,
+    redirectUri,
+    state,
+  });
 
-  return NextResponse.redirect(oauthUrl.toString());
+  return NextResponse.redirect(oauthUrl);
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {

@@ -196,6 +196,8 @@ describe('Platform Credentials Settings API Routes (instagram/threads)', () => {
           'subdomain',
           'platform',
           'appId',
+          'appName',
+          'configId',
           'secretHint',
           'hasSecret',
           'status',
@@ -203,6 +205,9 @@ describe('Platform Credentials Settings API Routes (instagram/threads)', () => {
           'connectedAt',
         ].sort()
       );
+      // Pre-Unified rows carry neither an app name nor a configuration.
+      expect(json.appName).toBeNull();
+      expect(json.configId).toBeNull();
       expect(json.workspaceId).toBe(workspaceId);
       expect(json.subdomain).toBe(subdomain);
       expect(json.platform).toBe('instagram');
@@ -383,7 +388,7 @@ describe('Platform Credentials Settings API Routes (instagram/threads)', () => {
         reqFor('instagram', {
           method: 'PUT',
           headers: { cookie: validSessionCookie, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ appId: '123456789' }),
+          body: JSON.stringify({ appId: '123456789', configId: 'cfg_123' }),
         }),
         ctx('instagram')
       );
@@ -404,20 +409,40 @@ describe('Platform Credentials Settings API Routes (instagram/threads)', () => {
           updateMock,
         }) as any
       );
+      // Instagram PUT now verifies against Meta before saving: the
+      // changed App ID + stored secret must prove out on the app node.
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => ({
+          ok: true,
+          status: 200,
+          headers: { get: () => null },
+          body: null,
+          arrayBuffer: async () =>
+            new TextEncoder().encode(JSON.stringify({ name: 'Test App' })),
+        }))
+      );
 
       const res = await savePlatformCredentials(
         reqFor('instagram', {
           method: 'PUT',
           headers: { cookie: validSessionCookie, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ appId: '555444333' }),
+          body: JSON.stringify({ appId: '555444333', configId: 'cfg_123' }),
         }),
         ctx('instagram')
       );
       expect(res.status).toBe(200);
       const json = await res.json();
       expect(json.success).toBe(true);
+      expect(json.status).toBe('valid');
+      expect(json.appName).toBe('Test App');
+      expect(json.configId).toBe('cfg_123');
       expect(updateMock).toHaveBeenCalledWith(
-        expect.objectContaining({ client_id: '555444333', status: 'unverified' })
+        expect.objectContaining({
+          client_id: '555444333',
+          status: 'valid',
+          config_id: 'cfg_123',
+        })
       );
     });
   });

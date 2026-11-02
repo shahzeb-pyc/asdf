@@ -121,6 +121,11 @@ export async function GET(
       status: credentials?.status || 'unverified',
       lastTestedAt: credentials?.lastTestedAt || null,
       connectedAt: credentials?.createdAt || credentials?.updatedAt || null,
+      // Instagram Unified Login only: the Configuration ID is an
+      // identifier, not a secret, so it travels in the GET like the
+      // App ID. Other platforms omit it (null).
+      configId: credentials?.configId ?? null,
+      appName: credentials?.appName ?? null,
     });
   } catch (err) {
     console.error('[Platform Credentials API] Unhandled GET exception:', err);
@@ -164,6 +169,102 @@ export async function PUT(
     const workspaceId = await resolveTenantWorkspaceId(supabase, subdomain, session.userId);
     if (!workspaceId) {
       return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
+    }
+
+    // Instagram Unified Login branch (Threads is untouched): the triple
+    // is required and the pair is verified against Meta BEFORE saving,
+    // mirroring the Facebook BYOC guarantee. A rejected pair or an
+    // unreachable Meta saves nothing, and the two failures stay
+    // distinguishable in both the response and the log.
+    if (byocPlatform === 'instagram') {
+      const submittedConfigId = (parseResult.data.configId ?? '').trim();
+      if (!submittedConfigId) {
+        return NextResponse.json(
+          { error: 'Enter your Configuration ID to complete setup.' },
+          { status: 400 }
+        );
+      }
+      const submittedSecret = parseResult.data.appSecret;
+      const hasNewSecret = Boolean(submittedSecret && submittedSecret.length > 0);
+      const existing = await getCredentials(workspaceId, 'instagram', supabase);
+
+      // Nothing changed: same App ID, same Configuration ID, no new
+      // secret — keep the stored name and status exactly as they are,
+      // with no Graph call and no write.
+      if (
+        existing &&
+        existing.clientId === parseResult.data.appId &&
+        existing.configId === submittedConfigId &&
+        !hasNewSecret
+      ) {
+        return NextResponse.json({
+          success: true,
+          hasSecret: true,
+          status: existing.status,
+          connectedAt: existing.createdAt ?? existing.updatedAt ?? new Date().toISOString(),
+          appName: existing.appName ?? null,
+          configId: existing.configId,
+        });
+      }
+
+      let effectiveSecret: string | null = null;
+      if (hasNewSecret) {
+        effectiveSecret = submittedSecret as string;
+      } else if (existing?.encryptedClientSecret) {
+        try {
+          effectiveSecret = await decryptToken(
+            existing.encryptedClientSecret,
+            getTokenEncryptionKey()
+          );
+        } catch (err) {
+          console.error('[Platform Credentials API] Failed to decrypt stored app secret for verification:', err);
+          return NextResponse.json({ error: 'Failed to save app details' }, { status: 500 });
+        }
+      }
+      if (!effectiveSecret) {
+        return NextResponse.json(
+          { error: 'Enter your Instagram App Secret to complete setup.' },
+          { status: 400 }
+        );
+      }
+
+      const { verifyInstagramApp } = await import('@/lib/server/instagram-app-verify');
+      const verification = await verifyInstagramApp(parseResult.data.appId, effectiveSecret);
+      if (!verification.ok) {
+        if (verification.kind === 'rejected') {
+          return NextResponse.json(
+            { error: 'Meta rejected this App ID and App Secret. Please check them and try again.' },
+            { status: 400 }
+          );
+        }
+        return NextResponse.json(
+          { error: 'Meta could not be reached to verify your app. Please try again.' },
+          { status: 503 }
+        );
+      }
+
+      const instagramSave = await saveCredentials(
+        workspaceId,
+        'instagram',
+        {
+          clientId: parseResult.data.appId,
+          clientSecret: hasNewSecret ? (submittedSecret as string) : undefined,
+          configId: submittedConfigId,
+          verifiedAppName: verification.appName,
+        },
+        supabase
+      );
+      if (!instagramSave.ok) {
+        return NextResponse.json({ error: instagramSave.error }, { status: instagramSave.status });
+      }
+      return NextResponse.json({
+        success: true,
+        hasSecret: true,
+        status: 'valid',
+        connectedAt: new Date().toISOString(),
+        appName: verification.appName,
+        configId: submittedConfigId,
+      });
     }
 
     const saveResult = await saveCredentials(

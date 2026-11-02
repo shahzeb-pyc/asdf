@@ -12,6 +12,11 @@
  * changed here. It is implemented so the IG page handles any return
  * that does land here with exactly Facebook's notice semantics.
  */
+import {
+  buildInstagramScopeRejectionMessage,
+  parseMissingInstagramScopesParam,
+} from '@/lib/instagram-permissions';
+
 export function resolveInstagramOAuthRedirectNotice(searchParams: {
   get: (key: string) => string | null;
 }): {
@@ -60,12 +65,26 @@ export function resolveInstagramOAuthRedirectNotice(searchParams: {
 
   const error = searchParams.get('error');
   if (error) {
+    if (error === 'scope_rejected') {
+      // Hard scope rejection: nothing was saved, so the banner offers
+      // a fresh connect and names the actually missing scopes in plain
+      // language (mirroring the Facebook Accounts banner).
+      return {
+        notice: {
+          type: 'error',
+          message: buildInstagramScopeRejectionMessage(
+            parseMissingInstagramScopesParam(searchParams.get('missing'))
+          ),
+        },
+        keysToRemove: ['error', 'missing'],
+      };
+    }
     if (error === 'credentials_required') {
       return {
         notice: {
           type: 'error',
           message:
-            'Instagram App credentials are required before connecting accounts. Please configure your App ID and Secret in Workspace Settings.',
+            'Instagram App credentials are required before connecting accounts. Please configure your Meta App ID, App Secret and Configuration ID in Workspace Settings.',
         },
         keysToRemove: ['error', 'tab'],
       };

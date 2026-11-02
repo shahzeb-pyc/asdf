@@ -1,5 +1,14 @@
 /**
- * Instagram connect (Spec 124).
+ * Instagram connect (Spec 124) — LEGACY Instagram Login path.
+ *
+ * New connects and reconnects use Unified Login
+ * (`platforms/instagram-unified.ts`) since the Unified Login build.
+ * This module's exchange is retained, unchanged, for the tokens it
+ * already issued: old workspaces keep working until they reconnect,
+ * and their tokens keep the graph.instagram.com path. It is not
+ * called by any new connect flow.
+ *
+ * Instagram connect (Spec 124, legacy).
  *
  * BYOC: the workspace supplies its own Meta app details (Settings →
  * Instagram tab, stored in `platform_credentials`); the pair used is

@@ -67,6 +67,7 @@ describe('Magic Link Instagram Connection Endpoints', () => {
               data: {
                 client_id: 'ig_app_id_123',
                 encrypted_client_secret: validEncryptedIgAppSecret,
+                config_id: 'cfg_123',
               },
               error: null,
             }),
@@ -255,10 +256,12 @@ describe('Magic Link Instagram Connection Endpoints', () => {
       expect(res.status).toBe(307);
       const location = res.headers.get('location') ?? '';
       const url = new URL(location);
-      expect(url.origin).toBe('https://api.instagram.com');
-      expect(url.pathname).toBe('/oauth/authorize');
+      expect(url.origin).toBe('https://www.facebook.com');
+      expect(url.pathname).toBe('/dialog/oauth');
       expect(url.searchParams.get('client_id')).toBe('ig_app_id_123');
+      expect(url.searchParams.get('config_id')).toBe('cfg_123');
       expect(url.searchParams.get('response_type')).toBe('code');
+      expect(url.searchParams.get('scope')).toBeNull();
       const state = url.searchParams.get('state') ?? '';
       const payload = await verifyOAuthState(state, TEST_SECRET);
       expect(payload.isMagic).toBe(true);
@@ -285,7 +288,7 @@ describe('Magic Link Instagram Connection Endpoints', () => {
         const res = await forwardInstagramMagicLink(req);
         expect(res.status).toBe(307);
         expect(res.headers.get('location')).toContain(
-          'https://api.instagram.com/oauth/authorize'
+          'https://www.facebook.com/dialog/oauth'
         );
       }
     });
@@ -333,9 +336,12 @@ describe('Magic Link Instagram Connection Endpoints', () => {
       expect(res.status).toBe(307);
       const location = res.headers.get('location') ?? '';
       const url = new URL(location);
-      expect(url.origin).toBe('https://api.instagram.com');
-      expect(url.pathname).toBe('/oauth/authorize');
+      expect(url.origin).toBe('https://www.facebook.com');
+      expect(url.pathname).toBe('/dialog/oauth');
       expect(url.searchParams.get('client_id')).toBe('ig_app_id_123');
+      expect(url.searchParams.get('config_id')).toBe('cfg_123');
+      expect(url.searchParams.get('response_type')).toBe('code');
+      expect(url.searchParams.get('scope')).toBeNull();
       expect(url.searchParams.get('redirect_uri')).toBe(
         'http://localhost:3000/api/auth/instagram/callback'
       );
@@ -359,27 +365,39 @@ describe('Magic Link Instagram Connection Endpoints', () => {
   });
 
   describe('Instagram OAuth Callback', () => {
-    function mockInstagramFetch(profileOverrides: Record<string, unknown> = {}) {
-      const profile = {
-        id: 'ig_user_999',
-        username: 'sunsetbakery',
-        name: 'Sunset Bakery',
-        account_type: 'BUSINESS',
-        profile_picture_url: 'https://cdn.example/pic.jpg',
-        ...profileOverrides,
+    // Unified Login exchange sequence: code -> BISU token, business
+    // ID, shared Instagram accounts, permissions probe. The display
+    // name on the success redirect is the shared account username:
+    // BISU assigned accounts carry no display name or account type.
+    function unifiedResponse(body: unknown, ok = true): unknown {
+      return {
+        ok,
+        status: ok ? 200 : 400,
+        headers: { get: () => null },
+        body: null,
+        arrayBuffer: async () => new TextEncoder().encode(JSON.stringify(body)),
+        json: async () => body,
       };
+    }
+    function mockInstagramFetch() {
+      const granted = [
+        'instagram_basic',
+        'instagram_content_publish',
+        'instagram_manage_comments',
+        'instagram_manage_insights',
+      ].map((permission) => ({ permission, status: 'granted' }));
       global.fetch = vi
         .fn()
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({ access_token: 'ig_short_token', user_id: 'ig_user_999' }),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({ access_token: 'ig_long_token', expires_in: 5184000 }),
-        })
-        .mockResolvedValueOnce({ ok: true, json: async () => profile })
-        .mockResolvedValueOnce({ ok: true, json: async () => profile });
+        .mockResolvedValueOnce(
+          unifiedResponse({ access_token: 'bisu_token', token_type: 'bearer' })
+        )
+        .mockResolvedValueOnce(
+          unifiedResponse({ client_business_id: 'biz_1', id: 'sys_1' })
+        )
+        .mockResolvedValueOnce(
+          unifiedResponse({ data: [{ id: 'ig_user_999', username: 'sunsetbakery' }] })
+        )
+        .mockResolvedValueOnce(unifiedResponse({ data: granted }));
     }
 
     function mockDb(options: { creds?: boolean; existing?: boolean } = {}): DatabaseClient {
@@ -396,6 +414,7 @@ describe('Magic Link Instagram Connection Endpoints', () => {
                     {
                       client_id: 'ig_app_id_123',
                       encrypted_client_secret: validEncryptedIgAppSecret,
+                      config_id: 'cfg_123',
                     },
                   ]
                 : []
@@ -438,7 +457,7 @@ describe('Magic Link Instagram Connection Endpoints', () => {
 
       expect(res.status).toBe(307);
       expect(res.headers.get('location')).toBe(
-        'http://localhost:3000/connect/instagram/success?accountName=Sunset+Bakery'
+        'http://localhost:3000/connect/instagram/success?accountName=sunsetbakery'
       );
     });
 
@@ -453,7 +472,7 @@ describe('Magic Link Instagram Connection Endpoints', () => {
 
       expect(res.status).toBe(307);
       expect(res.headers.get('location')).toBe(
-        'http://localhost:3000/tenant/acme/instagram/accounts?connected=1&accountName=Sunset+Bakery'
+        'http://localhost:3000/tenant/acme/instagram/accounts?connected=1&accountName=sunsetbakery'
       );
     });
 
@@ -468,7 +487,7 @@ describe('Magic Link Instagram Connection Endpoints', () => {
 
       expect(res.status).toBe(307);
       expect(res.headers.get('location')).toBe(
-        'http://localhost:3000/tenant/acme/instagram/accounts?connected=already&accountName=Sunset+Bakery'
+        'http://localhost:3000/tenant/acme/instagram/accounts?connected=already&accountName=sunsetbakery'
       );
     });
 
@@ -486,7 +505,7 @@ describe('Magic Link Instagram Connection Endpoints', () => {
 
       expect(res.status).toBe(307);
       expect(res.headers.get('location')).toBe(
-        'http://localhost:3000/connect/instagram/success?reconnected_mismatch=1&newAccountName=Sunset+Bakery&expectedAccountName=Old+Account'
+        'http://localhost:3000/connect/instagram/success?reconnected_mismatch=1&newAccountName=sunsetbakery&expectedAccountName=Old+Account'
       );
     });
 
@@ -530,8 +549,16 @@ describe('Magic Link Instagram Connection Endpoints', () => {
       );
     });
 
-    it('refuses a personal Instagram account with an oauth error (magic)', async () => {
-      mockInstagramFetch({ account_type: 'PERSONAL' });
+    it('fails the connect when no Instagram accounts are shared (magic)', async () => {
+      global.fetch = vi
+        .fn()
+        .mockResolvedValueOnce(
+          unifiedResponse({ access_token: 'bisu_token', token_type: 'bearer' })
+        )
+        .mockResolvedValueOnce(
+          unifiedResponse({ client_business_id: 'biz_1', id: 'sys_1' })
+        )
+        .mockResolvedValueOnce(unifiedResponse({ data: [] }));
       const state = await signState({ isMagic: true });
       const req = new NextRequest(
         `http://localhost:3000/api/auth/instagram/callback?code=mock_code&state=${state}`
@@ -539,6 +566,8 @@ describe('Magic Link Instagram Connection Endpoints', () => {
       const res = await handleInstagramCallback(req, mockDb());
 
       expect(res.status).toBe(307);
+      // Magic step errors collapse to the generic oauth_failed reason
+      // on the app-host error page (same mapping as an exchange throw).
       expect(res.headers.get('location')).toBe(
         'http://localhost:3000/connect/instagram/error?reason=oauth_failed'
       );
@@ -587,25 +616,28 @@ describe('Magic Link Instagram Connection Endpoints', () => {
     });
 
     function mockInstagramFetch() {
-      const profile = {
-        id: 'ig_user_999',
-        username: 'sunsetbakery',
-        name: 'Sunset Bakery',
-        account_type: 'BUSINESS',
-        profile_picture_url: 'https://cdn.example/pic.jpg',
-      };
+      const granted = [
+        'instagram_basic',
+        'instagram_content_publish',
+        'instagram_manage_comments',
+        'instagram_manage_insights',
+      ].map((permission) => ({ permission, status: 'granted' }));
+      const body = (value: unknown) => ({
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        body: null,
+        arrayBuffer: async () => new TextEncoder().encode(JSON.stringify(value)),
+        json: async () => value,
+      });
       global.fetch = vi
         .fn()
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({ access_token: 'ig_short_token', user_id: 'ig_user_999' }),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({ access_token: 'ig_long_token', expires_in: 5184000 }),
-        })
-        .mockResolvedValueOnce({ ok: true, json: async () => profile })
-        .mockResolvedValueOnce({ ok: true, json: async () => profile });
+        .mockResolvedValueOnce(body({ access_token: 'bisu_token', token_type: 'bearer' }))
+        .mockResolvedValueOnce(body({ client_business_id: 'biz_1', id: 'sys_1' }))
+        .mockResolvedValueOnce(
+          body({ data: [{ id: 'ig_user_999', username: 'sunsetbakery' }] })
+        )
+        .mockResolvedValueOnce(body({ data: granted }));
     }
 
     function mockDb(): DatabaseClient {
@@ -619,6 +651,7 @@ describe('Magic Link Instagram Connection Endpoints', () => {
               {
                 client_id: 'ig_app_id_123',
                 encrypted_client_secret: validEncryptedIgAppSecret,
+                config_id: 'cfg_123',
               },
             ]);
           }
@@ -656,7 +689,7 @@ describe('Magic Link Instagram Connection Endpoints', () => {
 
       expect(res.status).toBe(307);
       expect(res.headers.get('location')).toBe(
-        'https://app.fbuploadpro.com/connect/instagram/success?accountName=Sunset+Bakery'
+        'https://app.fbuploadpro.com/connect/instagram/success?accountName=sunsetbakery'
       );
     });
 

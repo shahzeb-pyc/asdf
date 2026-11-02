@@ -71,6 +71,8 @@ export const PlatformCredentialsResponseSchema = z.object({
   status: CredentialsStatusSchema,
   lastTestedAt: z.string().nullable(),
   connectedAt: z.string().nullable(),
+  configId: z.string().nullable().optional(),
+  appName: z.string().nullable().optional(),
 });
 export type PlatformCredentialsResponse = z.infer<
   typeof PlatformCredentialsResponseSchema

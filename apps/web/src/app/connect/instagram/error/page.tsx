@@ -23,6 +23,13 @@ export function getInstagramConnectErrorCopy(reason?: string | null): {
       description: 'Connection canceled. No changes were made. You can close this tab.',
     };
   }
+  if (reason === 'scope_rejected') {
+    return {
+      title: 'Instagram Account Not Connected',
+      description:
+        'This Instagram account was not connected. A required permission was declined. Please reconnect and allow all requested permissions to continue.',
+    };
+  }
   if (reason === 'oauth_failed' || reason === 'internal_oauth_error') {
     return {
       title: "Couldn't Connect to Instagram",

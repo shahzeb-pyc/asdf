@@ -80,6 +80,8 @@ export interface PlatformCredentialsRecord {
   lastTestedAt: string | null;
   /** Provider app display name from a verification fetch (null until first verification). */
   appName: string | null;
+  /** Unified Login configuration ID (null for pre-Unified rows). Not a secret. */
+  configId: string | null;
   createdAt: string | null;
   updatedAt: string | null;
 }
@@ -87,6 +89,12 @@ export interface PlatformCredentialsRecord {
 export interface SavePlatformCredentialsInput {
   clientId: string;
   clientSecret?: string | undefined;
+  /**
+   * Unified Login configuration ID. When supplied, the same write stores
+   * it; when absent, the stored value is left untouched (so a Threads
+   * save, which has no configuration, never wipes an Instagram one).
+   */
+  configId?: string | undefined;
   /**
    * App display name fetched from the provider's API by a verification
    * step the caller performed BEFORE saving (Facebook BYOC connect).
@@ -121,7 +129,7 @@ type CredentialsClient = DatabaseClient | SupabaseClient | null | undefined;
 type WriteOutcome = 'ok' | 'error' | 'unavailable';
 
 const CREDENTIAL_COLUMNS =
-  'id, workspace_id, platform, client_id, encrypted_client_secret, status, last_tested_at, app_name, created_at, updated_at';
+  'id, workspace_id, platform, client_id, encrypted_client_secret, status, last_tested_at, app_name, config_id, created_at, updated_at';
 
 interface CredentialsRowShape {
   id?: string | null;
@@ -132,6 +140,7 @@ interface CredentialsRowShape {
   status?: string;
   last_tested_at?: string | null;
   app_name?: string | null;
+  config_id?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -146,6 +155,7 @@ function toRecord(row: CredentialsRowShape, workspaceId: string, platform: ByocP
     status: (row.status as PlatformCredentialStatus) || 'unverified',
     lastTestedAt: row.last_tested_at ?? null,
     appName: row.app_name ?? null,
+    configId: row.config_id ?? null,
     createdAt: row.created_at ?? null,
     updatedAt: row.updated_at ?? null,
   };
@@ -162,6 +172,14 @@ export const SavePlatformCredentialsRequestSchema = z.object({
     .string()
     .trim()
     .max(128, 'That App Secret is too long. Check it and try again.')
+    .optional()
+    .or(z.literal('')),
+  /** Unified Login configuration ID. Only Instagram sends it; other
+   * platforms omit it and their stored value is left untouched. */
+  configId: z
+    .string()
+    .trim()
+    .max(100, 'That Configuration ID is too long. Check it and try again.')
     .optional()
     .or(z.literal('')),
 });
@@ -223,7 +241,8 @@ async function upsertRow(
   encryptedClientSecret: string,
   now: string,
   client: CredentialsClient,
-  verification: VerifiedWrite | null
+  verification: VerifiedWrite | null,
+  configId?: string | undefined
 ): Promise<WriteOutcome> {
   const legacy = legacyDb(client);
   if (legacy) {
@@ -261,6 +280,12 @@ async function upsertRow(
           [workspaceId, platform, clientId, encryptedClientSecret, now]
         );
       }
+      if (configId !== undefined) {
+        await legacy.query(
+          `UPDATE platform_credentials SET config_id = $3 WHERE workspace_id = $1 AND platform = $2`,
+          [workspaceId, platform, configId]
+        );
+      }
       return 'ok';
     } catch (err) {
       console.error('[Platform Credentials] Failed to save credentials (legacy client):', err);
@@ -281,6 +306,7 @@ async function upsertRow(
       ...(verification
         ? { last_tested_at: verification.lastTestedAt, app_name: verification.appName }
         : {}),
+      ...(configId !== undefined ? { config_id: configId } : {}),
       updated_at: now,
     },
     { onConflict: 'workspace_id,platform' }
@@ -300,6 +326,7 @@ async function updateRow(
     status: PlatformCredentialStatus;
     last_tested_at?: string;
     app_name?: string;
+    config_id?: string;
   },
   client: CredentialsClient,
   now: string
@@ -328,6 +355,10 @@ async function updateRow(
       if (patch.app_name !== undefined) {
         sets.push(`app_name = $${nextParam++}`);
         params.push(patch.app_name);
+      }
+      if (patch.config_id !== undefined) {
+        sets.push(`config_id = $${nextParam++}`);
+        params.push(patch.config_id);
       }
       sets.push(`updated_at = $${nextParam++}`);
       params.push(now);
@@ -458,6 +489,7 @@ export async function saveCredentials(
         ...(verification
           ? { last_tested_at: verification.lastTestedAt, app_name: verification.appName }
           : {}),
+        ...(input.configId !== undefined ? { config_id: input.configId } : {}),
       },
       client,
       now
@@ -480,7 +512,8 @@ export async function saveCredentials(
     encryptedSecret,
     now,
     client,
-    verification
+    verification,
+    input.configId
   );
   return outcomeToResult(outcome, 'Failed to save credentials');
 }

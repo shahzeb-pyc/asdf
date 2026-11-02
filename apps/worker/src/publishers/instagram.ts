@@ -1,4 +1,5 @@
 import {
+  INSTAGRAM_UNIFIED_GRAPH_BASE_URL,
   InstagramPlatformOptionsSchema,
   resolvePublishLimit,
   validateInstagramCaption,
@@ -69,6 +70,35 @@ export interface InstagramPublisherOptions {
   pollIntervalMs?: number | undefined;
   maxPolls?: number | undefined;
   sleep?: ((ms: number) => Promise<void>) | undefined;
+  /**
+   * Client for BISU (Unified Login) destinations, on
+   * graph.facebook.com. Injected for tests; defaults to a real client
+   * on the Unified host.
+   */
+  bisuClient?: IInstagramPublishClient | undefined;
+  /**
+   * Internal delegation guard: when set, publish() uses this client
+   * directly instead of selecting one by destination. Never set by
+   * callers — publish() sets it on the one-shot delegate it creates
+   * for a BISU destination, so the delegate cannot delegate again.
+   */
+  fixedClient?: IInstagramPublishClient | undefined;
+}
+
+/**
+ * A destination connected through Unified Login carries
+ * metadata.token_kind === 'bisu' (set by the web callback). Old
+ * Instagram Login destinations carry no token_kind and keep the
+ * graph.instagram.com path. Unknown metadata never guesses BISU.
+ */
+export function isBisuDestination(destination: DatabaseDestinationRow): boolean {
+  const metadata = destination.metadata as Record<string, unknown> | null | undefined;
+  return metadata?.token_kind === 'bisu';
+}
+
+function isBisuAccount(account: DatabaseSocialAccountRow): boolean {
+  const metadata = account.metadata as Record<string, unknown> | null | undefined;
+  return metadata?.token_kind === 'bisu';
 }
 
 function sleepMs(ms: number): Promise<void> {
@@ -193,6 +223,8 @@ function retryDelay(retryCount: number): number {
 export class InstagramPublisher implements Publisher {
   readonly platform: Platform = INSTAGRAM_PLATFORM;
   private readonly client: IInstagramPublishClient;
+  private readonly bisuClient: IInstagramPublishClient;
+  private readonly publisherOptions: InstagramPublisherOptions | undefined;
   private readonly pollIntervalMs: number;
   private readonly maxPolls: number;
   private readonly sleep: (ms: number) => Promise<void>;
@@ -202,6 +234,10 @@ export class InstagramPublisher implements Publisher {
     options?: InstagramPublisherOptions
   ) {
     this.client = client;
+    this.bisuClient =
+      options?.bisuClient ??
+      new InstagramPublishClient({ baseUrl: INSTAGRAM_UNIFIED_GRAPH_BASE_URL });
+    this.publisherOptions = options;
     this.pollIntervalMs =
       options?.pollIntervalMs ?? INSTAGRAM_CONTAINER_POLL_INTERVAL_MS;
     this.maxPolls = options?.maxPolls ?? INSTAGRAM_CONTAINER_MAX_POLLS;
@@ -219,9 +255,22 @@ export class InstagramPublisher implements Publisher {
    * gate is the job's, via the contracts thresholds).
    */
   async refreshTokens(
-    _account: DatabaseSocialAccountRow,
+    account: DatabaseSocialAccountRow,
     tokens: PublisherTokenSet
   ): Promise<RefreshedTokenSet> {
+    // BISU tokens are configuration-expiry (default never expiring)
+    // and the token-management API needs business_management, which
+    // the locked publish-only set deliberately does not request.
+    // Reconnect-only recovery: a dead BISU token is never refreshed
+    // here — Meta's own instruction is to ask the client to connect
+    // again, and error 190 elsewhere settles the account expired.
+    if (isBisuAccount(account)) {
+      return {
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken ?? null,
+        tokenExpiresAt: tokens.tokenExpiresAt ?? null,
+      };
+    }
     const refreshed = await this.client.refreshLongLivedToken({
       accessToken: tokens.accessToken,
     });
@@ -240,6 +289,22 @@ export class InstagramPublisher implements Publisher {
     destination: DatabaseDestinationRow,
     tokens: PublisherTokenSet
   ): Promise<PublishOutcome> {
+    // BISU destinations publish on graph.facebook.com, not
+    // graph.instagram.com, but the container/status/publish/comment
+    // call shapes are identical. The singleton publisher cannot
+    // mutate its client per destination (concurrent publishes would
+    // race), so a BISU destination delegates once to a one-shot
+    // publisher bound to the BISU client; that delegate's fixedClient
+    // guard stops it delegating again. Old destinations never enter
+    // this branch and keep the existing client untouched.
+    if (!this.publisherOptions?.fixedClient && isBisuDestination(destination)) {
+      const delegate = new InstagramPublisher(this.bisuClient, {
+        ...this.publisherOptions,
+        bisuClient: this.bisuClient,
+        fixedClient: this.bisuClient,
+      });
+      return delegate.publish(item, destination, tokens);
+    }
     const igUserId = destination.external_destination_id;
     const accessToken = tokens.accessToken;
     if (!accessToken) {

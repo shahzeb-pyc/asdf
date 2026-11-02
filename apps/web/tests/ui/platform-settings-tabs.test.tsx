@@ -75,6 +75,10 @@ interface PlatformPayload {
   status: 'unverified' | 'valid' | 'invalid';
   lastTestedAt: string | null;
   connectedAt: string | null;
+  // Instagram Unified Login only: the verified app name and the
+  // Configuration ID. Threads rows carry neither.
+  appName?: string | null;
+  configId?: string | null;
 }
 
 interface PlatformCase {
@@ -133,6 +137,9 @@ function connectedPayload(c: PlatformCase): PlatformPayload {
     status: 'valid',
     lastTestedAt: '2026-10-16T10:00:00.000Z',
     connectedAt: '2026-10-16T12:00:00.000Z',
+    ...(c.platform === 'instagram'
+      ? { appName: 'Test App', configId: 'cfg_123' }
+      : {}),
   };
 }
 
@@ -168,11 +175,18 @@ function installFetchStub() {
   revealResponders = new Map();
   putResponder = async (platform, body) => {
     const c = PLATFORM_CASES.find((entry) => entry.platform === platform) as PlatformCase;
-    const savedSecret = String(body.appSecret ?? c.savedSecret);
+    const rawSecret = body.appSecret;
+    const savedSecret =
+      typeof rawSecret === 'string' && rawSecret.length > 0
+        ? rawSecret
+        : c.savedSecret;
     currentPayloads.set(platform, {
       ...connectedPayload(c),
       appId: String(body.appId ?? ''),
       secretHint: `••••${savedSecret.slice(-4)}`,
+      ...(platform === 'instagram'
+        ? { configId: String(body.configId ?? 'cfg_123'), appName: 'Test App' }
+        : {}),
     });
     return jsonResponse({
       success: true,
@@ -331,7 +345,7 @@ describe('formatPlatformConnectedDate', () => {
   });
 });
 
-for (const c of PLATFORM_CASES) {
+for (const c of PLATFORM_CASES.filter((entry) => entry.platform === 'threads')) {
   const p = c.platform;
 
   describe(`${c.displayName} credentials view — loading and load failure`, () => {
@@ -773,108 +787,397 @@ for (const c of PLATFORM_CASES) {
   });
 }
 
-describe('Instagram redesign (2026-10-25)', () => {
-  it('shows NO setup guide in the not-connected state — the guide is removed', () => {
-    const c = PLATFORM_CASES[0] as PlatformCase;
-    renderView(c, notConnectedPayload('instagram'));
+describe('Instagram Unified Login (BYOC) — dedicated view', () => {
+  const ig = PLATFORM_CASES[0] as PlatformCase;
+  const SIGN_IN_URL = 'http://localhost:3000/api/auth/instagram/callback';
+  const PRIVACY_URL = 'https://acme.fbuploadpro.com/privacy';
 
-    expect(screen.queryByTestId('instagram-setup-guide')).toBeNull();
-    expect(screen.queryByText('Create your Meta app')).toBeNull();
-    expect(screen.queryByText('Add Instagram to your app')).toBeNull();
-    expect(screen.queryByText('Finish the Instagram sign-in setup')).toBeNull();
-    expect(screen.queryByText('Add the sign-in address we show')).toBeNull();
-    expect(screen.queryByTestId('instagram-meta-dashboard-link')).toBeNull();
-    // The form itself (and its helper) is still there.
+  function partialPayload(): PlatformPayload {
+    return {
+      ...notConnectedPayload('instagram'),
+      appId: '123456789012345',
+      hasSecret: false,
+    };
+  }
+
+  function submitButton(): HTMLElement {
+    return screen.getByRole('button', { name: /Connect Instagram|Save changes/ });
+  }
+
+  async function fillConnectForm(
+    user: ReturnType<typeof userEvent.setup>,
+    appId = '123456789012345',
+    secret = 'instagram-secret-value',
+    configId = 'cfg_123'
+  ) {
+    await user.type(screen.getByLabelText('Meta App ID'), appId);
+    await user.type(screen.getByLabelText('App Secret'), secret);
+    await user.type(screen.getByLabelText('Configuration ID'), configId);
+  }
+
+  it('shows the loading state while details load', async () => {
+    getResponders.set('instagram', () => new Promise<Response>(() => {}));
+    renderView(ig);
+    expect(screen.getByText('Loading Instagram app details')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Connect Instagram' })).toBeNull();
+  });
+
+  it('shows a load-failure state with a working retry instead of the form', async () => {
+    getResponders.set('instagram', async () => jsonResponse({ error: 'Failed' }, 500));
+    renderView(ig);
+    expect(
+      await screen.findByText(
+        'Your Instagram app details could not be loaded. Please try again.'
+      )
+    ).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Connect Instagram' })).toBeNull();
+
+    getResponders.delete('instagram');
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('instagram-load-retry-btn'));
+    expect(
+      await screen.findByRole('button', { name: 'Connect Instagram' }, { timeout: 10_000 })
+    ).toBeTruthy();
+  }, INTERACTION_TIMEOUT);
+
+  it('renders the not-connected state: header, status, video card, Steps 1-4, permissions', () => {
+    renderView(ig, notConnectedPayload('instagram'));
+
+    expect(screen.getByRole('heading', { name: 'Instagram App' })).toBeTruthy();
+    expect(
+      screen.getByText('Link your Instagram app to start publishing from this workspace.')
+    ).toBeTruthy();
+    expect(
+      screen.getByText('Next step: Connect an Instagram account to start publishing.')
+    ).toBeTruthy();
+    expect(screen.getByTestId('instagram-status-badge').textContent).toContain('Not connected');
+    expect(screen.getByText('Video guide coming soon')).toBeTruthy();
+    expect(screen.getByText('Find your app details')).toBeTruthy();
+    expect(screen.getByText('Before you connect')).toBeTruthy();
+    expect(screen.getAllByText('Privacy Policy URL').length).toBe(2);
     expect(screen.getByText('Add your app details here')).toBeTruthy();
+    expect(screen.getByText('Read your profile and media.')).toBeTruthy();
+    expect(screen.getByText('Publish posts and reels.')).toBeTruthy();
+    expect(screen.getByText('Manage comments.')).toBeTruthy();
+    expect(screen.getByText('View insights.')).toBeTruthy();
+    expect(screen.getByText('No messages and no ads are requested.')).toBeTruthy();
+    expect(screen.getByText('When the login screen opens, choose Instagram.')).toBeTruthy();
     expect(
-      screen.getByText("You'll find this in your Meta app under Settings → Basic.")
+      screen.getByText(
+        'Your details are checked as soon as you connect. All three details are required before you can connect.'
+      )
+    ).toBeTruthy();
+    // No account-eligibility facts in the app-details section.
+    expect(screen.queryByText(/professional account/i)).toBeNull();
+    expect(screen.queryByText(/business portfolio/i)).toBeNull();
+    expect(screen.queryByText(/No Facebook Page is needed/i)).toBeNull();
+  });
+
+  it('shows the sign-in address with the direct callback path and the Redirect URL helper', () => {
+    renderView(ig, notConnectedPayload('instagram'));
+
+    expect(
+      screen.getByText((_, element) =>
+        element?.tagName === 'SPAN' &&
+        (element.textContent ?? '').endsWith('/api/auth/instagram/callback')
+      )
+    ).toBeTruthy();
+    expect(screen.queryByText(/\/api\/connect\//)).toBeNull();
+    expect(
+      screen.getByText(
+        'Paste this into the Redirect URL list in your Unified Login configuration in your Meta app. If this address is not registered there, the sign-in will fail at Meta before you return here.'
+      )
+    ).toBeTruthy();
+    expect(screen.queryByText(/Valid OAuth Redirect URIs/i)).toBeNull();
+  });
+
+  it('copies the sign-in address with Copied feedback', async () => {
+    renderView(ig, notConnectedPayload('instagram'));
+    const user = userEvent.setup();
+    installClipboardMock();
+    // Step 2's Copy button is the first Copy button in the form.
+    const button = screen.getAllByRole('button', { name: 'Copy' })[0] as HTMLElement;
+    await user.click(button);
+    expect(clipboardWriteText).toHaveBeenCalledWith(
+      expect.stringContaining('/api/auth/instagram/callback')
+    );
+    await waitFor(() => expect(button.textContent).toBe('Copied'));
+  }, INTERACTION_TIMEOUT);
+
+  it('shows the incomplete-details prompt when only some of the three details are saved', () => {
+    renderView(ig, partialPayload());
+    expect(
+      screen.getByText('Complete all three details before you connect.')
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        'To connect an Instagram account, add your Meta App ID, App Secret and Configuration ID below. A workspace with only some of the three details cannot start a connection.'
+      )
     ).toBeTruthy();
   });
 
-  it('shows the sign-in address step with the §5.3 description, label, and helper', () => {
-    const c = PLATFORM_CASES[0] as PlatformCase;
-    renderView(c, notConnectedPayload('instagram'));
+  it('empty submit: inline messages name each missing field and no PUT runs', async () => {
+    renderView(ig, notConnectedPayload('instagram'));
+    const user = userEvent.setup();
+    await user.click(submitButton());
+    expect(await screen.findByText('Please enter your Meta App ID.')).toBeTruthy();
+    expect(screen.getByText('Please enter your App Secret.')).toBeTruthy();
+    expect(screen.getByText('Please enter your Configuration ID.')).toBeTruthy();
+    expect(putCalls.filter((call) => call.platform === 'instagram')).toEqual([]);
+  }, INTERACTION_TIMEOUT);
 
+  it('non-numeric App ID fails with the numeric sentence and preserves the input', async () => {
+    renderView(ig, notConnectedPayload('instagram'));
+    const user = userEvent.setup();
+    await fillConnectForm(user, 'abc', 'instagram-secret-value', 'cfg_123');
+    await user.click(submitButton());
     expect(
-      screen.getByText(
-        'Add this address to your Meta app so Instagram can bring you back here after you sign in.'
+      await screen.findByText('Meta App ID must be numeric (10–20 digits).')
+    ).toBeTruthy();
+    expect((screen.getByLabelText('Meta App ID') as HTMLInputElement).value).toBe('abc');
+    expect(putCalls.filter((call) => call.platform === 'instagram')).toEqual([]);
+  }, INTERACTION_TIMEOUT);
+
+  it('valid submit PUTs the frozen body shape, toasts success, and lands on the connected state', async () => {
+    renderView(ig, notConnectedPayload('instagram'));
+    const user = userEvent.setup();
+    await fillConnectForm(user);
+    await user.click(submitButton());
+    // The connected view (not the toast, which carries the same
+    // sentence) proves the save landed.
+    expect(await screen.findByText('Connected on Oct 16, 2026.')).toBeTruthy();
+    const call = putCalls.find((entry) => entry.platform === 'instagram');
+    expect(call?.body).toEqual({
+      appId: '123456789012345',
+      appSecret: 'instagram-secret-value',
+      configId: 'cfg_123',
+    });
+    expect(screen.getByText('Meta App ID')).toBeTruthy();
+    expect(screen.getByText('123456789012345')).toBeTruthy();
+    expect(screen.getByText('Configuration ID')).toBeTruthy();
+    expect(screen.getByText('cfg_123')).toBeTruthy();
+    // The Privacy Policy URL row lives in the form states only.
+    expect(screen.queryByText(PRIVACY_URL)).toBeNull();
+  }, INTERACTION_TIMEOUT);
+
+  it('server failure surfaces at form scope and preserves the input', async () => {
+    putResponder = async () =>
+      jsonResponse({ error: 'Meta rejected this App ID and App Secret. Please check them and try again.' }, 400);
+    renderView(ig, notConnectedPayload('instagram'));
+    const user = userEvent.setup();
+    await fillConnectForm(user);
+    await user.click(submitButton());
+    expect(
+      await screen.findByText(
+        'Meta rejected this App ID and App Secret. Please check them and try again.'
       )
     ).toBeTruthy();
-    expect(screen.getByText('Sign-in address')).toBeTruthy();
+    expect((screen.getByLabelText('Meta App ID') as HTMLInputElement).value).toBe(
+      '123456789012345'
+    );
+  }, INTERACTION_TIMEOUT);
+
+  it('network failure toasts the fixed sentence', async () => {
+    putResponder = async () => {
+      throw new Error('network down');
+    };
+    renderView(ig, notConnectedPayload('instagram'));
+    const user = userEvent.setup();
+    await fillConnectForm(user);
+    await user.click(submitButton());
     expect(
-      screen.getByText(
-        'Paste this into the address field in the Instagram sign-in settings in your Meta app.'
-      )
+      await screen.findByText('Could not connect Instagram. Check your connection and try again.')
     ).toBeTruthy();
-    expect(screen.getByTestId('instagram-copy-signin-btn')).toBeTruthy();
-    // Callback address uses the direct /api/auth path — the address
-    // the connect flow actually sends to Meta — never the framework
-    // /api/connect path; its origin is window.location.origin in
-    // production, i.e. the workspace subdomain when the user is in
-    // their workspace — jsdom's origin is localhost here, so only the
-    // path is asserted.
-    const address = screen.getByTestId('instagram-setup-address-signin').textContent ?? '';
-    expect(address.endsWith('/api/auth/instagram/callback')).toBe(true);
-    expect(address).not.toContain('/api/connect/');
+  }, INTERACTION_TIMEOUT);
+
+  it('renders the connected presentation verbatim, with the app name and no Privacy Policy URL row', () => {
+    renderView(ig, connectedPayload(ig));
+    expect(screen.getByText('Your Instagram app is connected.')).toBeTruthy();
+    expect(screen.queryByText('Next step: Connect an Instagram account to start publishing.')).toBeNull();
+    expect(screen.getByText('Test App')).toBeTruthy();
+    expect(screen.getByText('123456789012345')).toBeTruthy();
+    expect(screen.getByText('cfg_123')).toBeTruthy();
+    expect(screen.getByText('This is not a secret. It identifies your configuration.')).toBeTruthy();
+    expect(screen.getByText('Connected on Oct 16, 2026.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Edit details' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Disconnect' })).toBeTruthy();
+    expect(screen.queryByText(PRIVACY_URL)).toBeNull();
   });
+
+  it('Copy App ID writes to the clipboard and shows Copied feedback', async () => {
+    renderView(ig, connectedPayload(ig));
+    const user = userEvent.setup();
+    installClipboardMock();
+    await user.click(screen.getByRole('button', { name: 'Copy App ID' }));
+    expect(clipboardWriteText).toHaveBeenCalledWith('123456789012345');
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Copied' })).toBeTruthy()
+    );
+  }, INTERACTION_TIMEOUT);
+
+  it('Show fetches the saved secret through the reveal action and Hide masks it again', async () => {
+    renderView(ig, connectedPayload(ig));
+    const user = userEvent.setup();
+    expect(screen.getByText('••••••••••••••••••••••••')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Show' }));
+    expect(await screen.findByText('instagram-secret-value')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Hide' }));
+    expect(screen.getByText('••••••••••••••••••••••••')).toBeTruthy();
+    expect(screen.queryByText('instagram-secret-value')).toBeNull();
+  }, INTERACTION_TIMEOUT);
+
+  it('a failed reveal reports at the field and keeps the secret masked', async () => {
+    revealResponders.set('instagram', async () => jsonResponse({ error: 'Failed' }, 500));
+    renderView(ig, connectedPayload(ig));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Show' }));
+    expect(
+      await screen.findByText('Your App Secret could not be shown. Please try again.')
+    ).toBeTruthy();
+    expect(screen.getByText('••••••••••••••••••••••••')).toBeTruthy();
+  }, INTERACTION_TIMEOUT);
+
+  it('Edit details re-opens the form with the App ID and Configuration ID pre-filled and the secret blank', async () => {
+    renderView(ig, connectedPayload(ig));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Edit details' }));
+    expect(
+      await screen.findByText(
+        'Unsaved changes. Your previously saved app remains connected until you save.'
+      )
+    ).toBeTruthy();
+    expect((screen.getByLabelText('Meta App ID') as HTMLInputElement).value).toBe(
+      '123456789012345'
+    );
+    expect((screen.getByLabelText('App Secret') as HTMLInputElement).value).toBe('');
+    expect((screen.getByLabelText('Configuration ID') as HTMLInputElement).value).toBe(
+      'cfg_123'
+    );
+    expect(screen.getByText(/Leave this blank to keep your current secret\./)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeTruthy();
+  }, INTERACTION_TIMEOUT);
+
+  it('a blank secret in edit mode keeps the existing secret and returns to the connected view', async () => {
+    renderView(ig, connectedPayload(ig));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Edit details' }));
+    await user.click(await screen.findByRole('button', { name: 'Save changes' }));
+    // The connected view (not the toast, which carries the same
+    // sentence) proves the save landed.
+    expect(await screen.findByText('Connected on Oct 16, 2026.')).toBeTruthy();
+    const call = putCalls.find((entry) => entry.platform === 'instagram');
+    expect(call?.body.appSecret).toBe('');
+    expect(screen.getByText('••••••••••••••••••••••••')).toBeTruthy();
+  }, INTERACTION_TIMEOUT);
+
+  it('Cancel returns to the connected view without saving', async () => {
+    renderView(ig, connectedPayload(ig));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Edit details' }));
+    await user.click(await screen.findByRole('button', { name: 'Cancel' }));
+    expect(await screen.findByText('Your Instagram app is connected.')).toBeTruthy();
+    expect(putCalls.filter((entry) => entry.platform === 'instagram')).toEqual([]);
+  }, INTERACTION_TIMEOUT);
+
+  it('opens the disconnect dialog with the three-details body; Keep connected closes it', async () => {
+    renderView(ig, connectedPayload(ig));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Disconnect' }));
+    expect(await screen.findByText('Disconnect Instagram?')).toBeTruthy();
+    expect(
+      screen.getByText(
+        /Your Meta App ID, App Secret and Configuration ID will be removed from this workspace/
+      )
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/connected accounts and posting will continue to work/)
+    ).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Keep connected' }));
+    await waitFor(() =>
+      expect(screen.queryByText('Disconnect Instagram?')).toBeNull()
+    );
+  }, INTERACTION_TIMEOUT);
+
+  it('confirm disconnects: DELETE runs, the success toast shows, and the tab returns to the form', async () => {
+    renderView(ig, connectedPayload(ig));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Disconnect' }));
+    const dialog = await screen.findByTestId('instagram-disconnect-modal');
+    const confirm = dialog.querySelector('button');
+    // The dialog's confirm is the last Disconnect button in the dialog.
+    const confirmButtons = Array.from(dialog.querySelectorAll('button')).filter(
+      (button) => button.textContent === 'Disconnect'
+    );
+    expect(confirmButtons.length).toBe(1);
+    void confirm;
+    await user.click(confirmButtons[0] as HTMLElement);
+    expect(await screen.findByText('Your Instagram app has been disconnected.')).toBeTruthy();
+    expect(deleteCalls).toContain('instagram');
+    expect(await screen.findByRole('button', { name: 'Connect Instagram' })).toBeTruthy();
+  }, INTERACTION_TIMEOUT);
+
+  it('a failed disconnect toasts the failure sentence and keeps the dialog open', async () => {
+    deleteResponder = async () => jsonResponse({ error: 'Failed' }, 500);
+    renderView(ig, connectedPayload(ig));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Disconnect' }));
+    const dialog = await screen.findByTestId('instagram-disconnect-modal');
+    const confirmButtons = Array.from(dialog.querySelectorAll('button')).filter(
+      (button) => button.textContent === 'Disconnect'
+    );
+    expect(confirmButtons.length).toBe(1);
+    await user.click(confirmButtons[0] as HTMLElement);
+    expect(
+      await screen.findByText('Your Instagram app could not be disconnected. Please try again.')
+    ).toBeTruthy();
+    expect(screen.getByText('Disconnect Instagram?')).toBeTruthy();
+  }, INTERACTION_TIMEOUT);
 
   it('renders single-column: header stacked above the panel, never split side by side', () => {
-    const c = PLATFORM_CASES[0] as PlatformCase;
-    renderView(c, notConnectedPayload('instagram'));
-
-    // No two-column grid anywhere in the Instagram tab: the header
-    // (title + description + status) sits above the full-width
-    // panel, on desktop and mobile alike.
+    renderView(ig, notConnectedPayload('instagram'));
     expect(document.querySelector('[class*="grid-cols"]')).toBeNull();
     const heading = screen.getByRole('heading', { name: 'Instagram App' });
     const card = screen.getByTestId('instagram-settings-card');
     expect(
       Boolean(heading.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING)
     ).toBe(true);
-    // Status still travels with the header, not the panel.
     expect(screen.getByTestId('instagram-status-badge').textContent).toContain(
       'Not connected'
     );
   });
 
   it('shows the tick/cross status mark (never a dot) in both states', () => {
-    const c = PLATFORM_CASES[0] as PlatformCase;
-    renderView(c, notConnectedPayload('instagram'));
+    renderView(ig, notConnectedPayload('instagram'));
     expect(screen.getByTestId('instagram-status-mark').getAttribute('data-status')).toBe(
       'not-connected'
     );
     expect(screen.getByTestId('instagram-status-badge').textContent).toContain('Not connected');
 
     cleanup();
-    renderView(c, connectedPayload(c));
+    renderView(ig, connectedPayload(ig));
     expect(screen.getByTestId('instagram-status-mark').getAttribute('data-status')).toBe(
       'connected'
     );
     expect(screen.getByTestId('instagram-status-badge').textContent).toContain('Connected');
   });
 
-  it('shows the Privacy Policy URL row in both states, with Copy feedback', async () => {
-    const c = PLATFORM_CASES[0] as PlatformCase;
-    renderView(c, notConnectedPayload('instagram'));
-    expect(screen.getByTestId('instagram-privacy-url').textContent).toBe(
-      'https://acme.fbuploadpro.com/privacy'
-    );
-
-    cleanup();
-    renderView(c, connectedPayload(c));
-    expect(screen.getByTestId('instagram-privacy-url').textContent).toBe(
-      'https://acme.fbuploadpro.com/privacy'
-    );
-
+  it('shows the Privacy Policy URL in the form state only, with Copy feedback', async () => {
+    renderView(ig, notConnectedPayload('instagram'));
+    expect(screen.getByText(PRIVACY_URL)).toBeTruthy();
     const user = userEvent.setup();
     installClipboardMock();
-    await user.click(screen.getByTestId('instagram-copy-privacy-url-btn'));
-    expect(clipboardWriteText).toHaveBeenCalledWith('https://acme.fbuploadpro.com/privacy');
-    await waitFor(() =>
-      expect(screen.getByTestId('instagram-copy-privacy-url-btn').textContent).toBe('Copied')
-    );
+    // Step 3's Copy button is the second Copy button in the form.
+    const button = screen.getAllByRole('button', { name: 'Copy' })[1] as HTMLElement;
+    await user.click(button);
+    expect(clipboardWriteText).toHaveBeenCalledWith(PRIVACY_URL);
+    await waitFor(() => expect(button.textContent).toBe('Copied'));
+
+    cleanup();
+    renderView(ig, connectedPayload(ig));
+    expect(screen.queryByText(PRIVACY_URL)).toBeNull();
   }, INTERACTION_TIMEOUT);
 });
+
 
 describe('Threads guide removed (2026-10-25 redesign)', () => {
   it('renders no setup guide, but keeps the Threads pair warning as the App ID helper', () => {
@@ -998,7 +1301,7 @@ describe('plain-language lint over user-facing copy (§5.3/§5.4)', () => {
   it('no banned terms appear in any tab copy', () => {
     const htmls: string[] = [];
 
-    for (const c of PLATFORM_CASES) {
+    for (const c of PLATFORM_CASES.filter((entry) => entry.platform === 'threads')) {
       const notConnected = renderView(c, notConnectedPayload(c.platform));
       htmls.push(document.body.innerHTML);
       cleanup();

@@ -2,8 +2,8 @@ import { type NextRequest, NextResponse } from 'next/server';
 import {
   buildPlatformAccountsUrl,
   buildSubdomainOAuthRedirectUriForCallback,
-  DatabaseDestinationMetadataSchema,
   getSessionSecret,
+  INSTAGRAM_UNIFIED_OAUTH_SCOPES,
   verifyOAuthState,
   verifySessionToken,
   type Database,
@@ -20,7 +20,10 @@ import {
   resolvePlatformClientCredentials,
   type ConnectDbClient,
 } from '@/lib/connect/persist';
-import { createInstagramConnectConfig } from '@/lib/connect/platforms/instagram';
+import {
+  exchangeInstagramUnifiedCode,
+  probeInstagramUnifiedPermissions,
+} from '@/lib/connect/platforms/instagram-unified';
 import { getRouteSupabase, isLegacyClient } from '@/lib/route-auth';
 
 /**
@@ -187,6 +190,39 @@ function buildOAuthStepErrorRedirect(
   return NextResponse.redirect(destinationUrl);
 }
 
+/**
+ * Scope-rejection redirect: an account that declined any requested
+ * permission is saved nowhere. Direct flows land on Instagram Accounts
+ * with the missing scopes carried in the `missing` param (the Accounts
+ * banner names them in plain language); magic flows land on the
+ * app-host error page with the same reason and param. The caller must
+ * return this redirect without touching the database.
+ */
+function buildScopeRejectionRedirect(
+  requestUrl: string,
+  destinationUrl: URL,
+  isMagic: boolean | undefined,
+  missing: readonly string[],
+  rootDomain?: string,
+  appUrl?: string
+): NextResponse {
+  const missingParam = missing.join(',');
+  if (isMagic) {
+    const magicErrorUrl = buildInstagramMagicConnectUrl(
+      '/connect/instagram/error',
+      requestUrl,
+      rootDomain ?? '',
+      appUrl ?? ''
+    );
+    magicErrorUrl.searchParams.set('reason', 'scope_rejected');
+    magicErrorUrl.searchParams.set('missing', missingParam);
+    return NextResponse.redirect(magicErrorUrl);
+  }
+  destinationUrl.searchParams.set('error', 'scope_rejected');
+  destinationUrl.searchParams.set('missing', missingParam);
+  return NextResponse.redirect(destinationUrl);
+}
+
 function buildPostConnectRedirect(
   requestUrl: string,
   destinationUrl: URL,
@@ -282,28 +318,6 @@ async function instagramAccountExistedBefore(
     .maybeSingle();
   if (error) return false;
   return Boolean(data?.id);
-}
-
-/**
- * The provider-reported account type, validated against the contracts
- * metadata schema before it is written into the destination row's
- * metadata (where the story gate reads it). A malformed value is never
- * persisted.
- */
-function accountTypeOf(destination: { accountType?: unknown }): string | null {
-  const raw = destination.accountType;
-  if (typeof raw !== 'string') return null;
-  const parsed = DatabaseDestinationMetadataSchema.safeParse({
-    account_type: raw,
-  });
-  if (!parsed.success) {
-    console.error(
-      '[connect/instagram] Provider reported an account type the contracts reject; not persisting it:',
-      raw
-    );
-    return null;
-  }
-  return parsed.data.account_type ?? null;
 }
 
 export async function handleInstagramCallback(
@@ -404,7 +418,11 @@ export async function handleInstagramCallback(
 
     // A missing workspace means no credentials can resolve either, so
     // both collapse to the same branch (and narrow workspaceId below).
-    if (workspaceId == null || !credentials) {
+    // A workspace without a Configuration ID cannot complete a Unified
+    // Login connect at all: the triple gate belongs in the initiate,
+    // but the callback re-checks it so a hand-built state can never
+    // reach the exchange with a partial triple.
+    if (workspaceId == null || !credentials || !credentials.configId) {
       if (statePayload.isMagic) {
         const magicErrorUrl = buildInstagramMagicConnectUrl(
           '/connect/instagram/error',
@@ -429,24 +447,24 @@ export async function handleInstagramCallback(
         redirectUri
       );
 
-    // 2. Exchange the code through the Instagram connect config
-    // (code → 1-hour short-lived → 60-day long-lived → profile +
-    // Professional-account check). Any failure is a step error, never
-    // a silent success.
-    const config = createInstagramConnectConfig(fetchFn);
-    let exchanged;
+    // 2. Exchange the code for a BISU token, then read the client
+    // business ID and every shared Instagram account. Any failure is
+    // a step error, never a silent success. The old Instagram Login
+    // exchange (code → short-lived → 60-day token) is intentionally
+    // NOT called here: Unified Login is the only path for new
+    // connects and reconnects, and that code stays in the platform
+    // module for the old tokens it already issued, not for new ones.
+    let unified;
     try {
-      exchanged = await config.exchangeCode(code, {
+      unified = await exchangeInstagramUnifiedCode({
         code,
         redirectUri: effectiveRedirectUri,
-        codeVerifier: null,
-        clientId: credentials.clientId,
-        clientSecret: credentials.clientSecret,
-        workspaceId,
-        userId,
+        appId: credentials.clientId,
+        appSecret: credentials.clientSecret,
+        fetchFn,
       });
     } catch (err) {
-      console.error('[InstagramOAuth] Code exchange failed:', err);
+      console.error('[InstagramOAuth] Unified Login code exchange failed:', err);
       return buildOAuthStepErrorRedirect(
         request.url,
         destinationUrl,
@@ -457,20 +475,111 @@ export async function handleInstagramCallback(
       );
     }
 
-    // 3. Check existing & upsert into the unified social_accounts row
-    const alreadyExisted = await instagramAccountExistedBefore(
-      db,
-      workspaceId,
-      exchanged.externalAccountId
-    );
-    let accountId: string;
+    // An empty shared-accounts list is a failed connect, not a saved
+    // account with nothing to publish to.
+    if (unified.accounts.length === 0) {
+      console.error('[InstagramOAuth] Unified Login returned no shared Instagram accounts; nothing saved.');
+      return buildOAuthStepErrorRedirect(
+        request.url,
+        destinationUrl,
+        statePayload.isMagic,
+        'token_exchange_failed',
+        rootDomain,
+        appUrl
+      );
+    }
+
+    // 3. Hard scope check, before saving anything. A proven decline of
+    // any of the four hard-required permissions saves nothing and
+    // redirects to the rejection banner. If the probe itself fails,
+    // the outcome is unknown — connect as before, but log loudly,
+    // never silently. Already-connected accounts are untouched by
+    // this check: it runs only on a fresh connect, and never
+    // disconnects anyone.
+    const probe = await probeInstagramUnifiedPermissions({
+      accessToken: unified.accessToken,
+      fetchFn,
+    });
+    if (probe.kind === 'missing') {
+      return buildScopeRejectionRedirect(
+        request.url,
+        destinationUrl,
+        statePayload.isMagic,
+        probe.missing,
+        rootDomain,
+        appUrl
+      );
+    }
+    if (probe.kind === 'unknown') {
+      console.warn(
+        '[InstagramOAuth] Permissions probe failed (Graph error or unreadable response) — scope outcome unknown, connecting as before; no scope was proven missing.'
+      );
+    }
+
+    // 4. Persist EVERY shared account (one BISU token covers them
+    // all) and each account itself as its destination — there is no
+    // picker in this flow. A destination write failing must not
+    // report the connect as failed, but it must not be silent either.
+    let firstAccountId: string | null = null;
+    let firstAlreadyExisted = false;
     try {
-      const persisted = await persistConnectedAccount(db as ConnectDbClient, {
-        workspaceId,
-        platform: 'instagram',
-        exchanged,
-      });
-      accountId = persisted.accountId;
+      for (const shared of unified.accounts) {
+        const alreadyExisted = await instagramAccountExistedBefore(
+          db,
+          workspaceId,
+          shared.id
+        );
+        const persisted = await persistConnectedAccount(db as ConnectDbClient, {
+          workspaceId,
+          platform: 'instagram',
+          exchanged: {
+            externalAccountId: shared.id,
+            displayName: shared.username,
+            accessToken: unified.accessToken,
+            refreshToken: null,
+            // BISU tokens are configuration-expiry, not a reported
+            // value: no expiry is recorded, and no refresh is attempted
+            // (reconnect-only recovery when a token dies).
+            expiresIn: null,
+            scopes: [...INSTAGRAM_UNIFIED_OAUTH_SCOPES],
+          },
+        });
+        await mergeRowMetadata(
+          db as ConnectDbClient,
+          'social_accounts',
+          { id: persisted.accountId },
+          {
+            token_kind: 'bisu',
+            client_business_id: unified.clientBusinessId,
+            config_id: credentials.configId,
+          }
+        );
+        try {
+          await persistPickedDestinations(db as ConnectDbClient, {
+            workspaceId,
+            accountId: persisted.accountId,
+            platform: 'instagram',
+            destinations: [
+              { externalDestinationId: shared.id, name: shared.username },
+            ],
+          });
+          await mergeRowMetadata(
+            db as ConnectDbClient,
+            'destinations',
+            {
+              account_id: persisted.accountId,
+              external_destination_id: shared.id,
+            },
+            { token_kind: 'bisu' }
+          );
+        } catch (err) {
+          console.error('[InstagramOAuth] Destination persist failed:', err);
+        }
+        if (firstAccountId === null) {
+          firstAccountId = persisted.accountId;
+          firstAlreadyExisted = alreadyExisted;
+        }
+      }
     } catch (err) {
       console.error('[InstagramOAuth] Failed to persist account:', err);
       return buildOAuthStepErrorRedirect(
@@ -483,50 +592,22 @@ export async function handleInstagramCallback(
       );
     }
 
-    // 4. Persist the destination row (the account itself) — there is
-    // no picker in this flow — and the provider-reported account type
-    // the story gate reads.
-    try {
-      const destinations = await config.fetchDestinations(
-        exchanged.accessToken,
-        exchanged
+    if (firstAccountId === null) {
+      return buildOAuthStepErrorRedirect(
+        request.url,
+        destinationUrl,
+        statePayload.isMagic,
+        'token_exchange_failed',
+        rootDomain,
+        appUrl
       );
-      if (destinations && destinations.length > 0) {
-        await persistPickedDestinations(db as ConnectDbClient, {
-          workspaceId,
-          accountId,
-          platform: 'instagram',
-          destinations,
-        });
-        for (const destination of destinations) {
-          const accountType = accountTypeOf(
-            destination as { accountType?: unknown }
-          );
-          if (!accountType) continue;
-          await mergeRowMetadata(
-            db as ConnectDbClient,
-            'destinations',
-            {
-              account_id: accountId,
-              external_destination_id: destination.externalDestinationId,
-            },
-            { account_type: accountType }
-          );
-        }
-      }
-    } catch (err) {
-      // The account is saved; a destination write failing must not
-      // report the connect as failed — but it must not be silent
-      // either. Log loudly; the account appears in the list and a
-      // reconnect rewrites the destination.
-      console.error('[InstagramOAuth] Destination persist failed:', err);
     }
 
-    // Analytics: the account row landed. Fire-and-forget — never
+    // Analytics: the account rows landed. Fire-and-forget — never
     // blocks the redirect.
     void trackServerEvent('account_connected', userId, {
       platform: 'instagram',
-      reconnected: alreadyExisted,
+      reconnected: firstAlreadyExisted,
     });
 
     return buildPostConnectRedirect(
@@ -534,10 +615,10 @@ export async function handleInstagramCallback(
       destinationUrl,
       statePayload,
       {
-        id: exchanged.externalAccountId,
-        displayName: exchanged.displayName,
+        id: unified.accounts[0].id,
+        displayName: unified.accounts[0].username,
       },
-      alreadyExisted,
+      firstAlreadyExisted,
       rootDomain,
       appUrl
     );
