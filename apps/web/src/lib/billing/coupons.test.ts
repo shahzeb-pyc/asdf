@@ -8,6 +8,7 @@ import {
   holdCoupon,
   loadCouponByCode,
   previewCoupon,
+  wasDiscountCapped,
   releaseHeldRedemptionsForPayment,
   releaseRedemption,
   type CouponRow,
@@ -477,5 +478,64 @@ describe('preview and guards', () => {
     } catch (err) {
       expect(couponErrorCode(err)).toBe('COUPON_NO_DISCOUNT');
     }
+  });
+});
+
+/**
+ * wasDiscountCapped (70% cap, owner decision 2026-11-02): true only
+ * when the uncapped discount would have exceeded 70% of the amount
+ * due — for percent coupons and for balance coupons alike.
+ */
+describe('wasDiscountCapped', () => {
+  function couponRow(partial: Partial<CouponRow>): CouponRow {
+    return {
+      id: 'coupon-1',
+      code: 'TEST',
+      kind: 'percent_multi',
+      percent: null,
+      initialBalancePkr: null,
+      remainingBalancePkr: null,
+      consumedAt: null,
+      status: 'active',
+      createdBy: 'admin-1',
+      createdAt: '2026-06-01T00:00:00.000Z',
+      ...partial,
+    };
+  }
+
+  it('flags a 100% percent coupon on a 400 purchase', () => {
+    expect(wasDiscountCapped(couponRow({ percent: 100 }), 400)).toBe(true);
+  });
+
+  it('does not flag a 20% percent coupon on a 400 purchase', () => {
+    expect(wasDiscountCapped(couponRow({ percent: 20 }), 400)).toBe(false);
+  });
+
+  it('flags a balance coupon whose balance covers the purchase', () => {
+    expect(
+      wasDiscountCapped(
+        couponRow({ kind: 'balance', initialBalancePkr: 1000, remainingBalancePkr: 1000 }),
+        400
+      )
+    ).toBe(true);
+  });
+
+  it('does not flag a balance coupon below the cap', () => {
+    expect(
+      wasDiscountCapped(
+        couponRow({ kind: 'balance', initialBalancePkr: 100, remainingBalancePkr: 100 }),
+        400
+      )
+    ).toBe(false);
+  });
+
+  it('treats a null percent and a null balance as no discount', () => {
+    expect(wasDiscountCapped(couponRow({ percent: null }), 400)).toBe(false);
+    expect(
+      wasDiscountCapped(
+        couponRow({ kind: 'balance', initialBalancePkr: null, remainingBalancePkr: null }),
+        400
+      )
+    ).toBe(false);
   });
 });

@@ -11,6 +11,7 @@ import {
   assertPaidPlan,
   countsFromRow,
   createPeriodForPayment,
+  createScheduledPeriod,
   getActivePeriod,
   getEntitlement,
   getUsageCount,
@@ -1394,6 +1395,164 @@ describe('approvePayment', () => {
   });
 });
 
+describe('approvePayment downgrade (owner decision 2026-11-02)', () => {
+  const now = new Date('2026-06-01T00:00:00.000Z');
+
+  it('schedules the new period at the live period end without superseding it', async () => {
+    const state = baseState({
+      paymentRow: paymentRow({ is_downgrade: true }),
+      periods: [periodRow({ id: 'period-live', ends_at: '2026-06-20T00:00:00.000Z' })],
+      createdPeriodRow: periodRow({
+        id: 'period-new',
+        starts_at: '2026-06-20T00:00:00.000Z',
+        ends_at: '2026-07-20T00:00:00.000Z',
+      }),
+    });
+    const result = await approvePayment(fakeClient(state), 'payment-1', 'admin-1', now);
+    expect(result.payment.status).toBe('approved');
+    expect(result.period.id).toBe('period-new');
+    const inserted = state.inserted.find((i) => i.table === 'subscription_periods');
+    expect(inserted?.row).toMatchObject({
+      user_id: 'user-1',
+      payment_id: 'payment-1',
+      starts_at: '2026-06-20T00:00:00.000Z',
+      ends_at: '2026-07-20T00:00:00.000Z',
+    });
+    // The live period is never superseded by a downgrade approval.
+    expect(
+      state.updated.filter(
+        (u) => u.table === 'subscription_periods' && 'superseded_at' in u.patch
+      )
+    ).toHaveLength(0);
+    // The scheduled start is recorded best-effort on the payment.
+    expect(
+      state.updated.find(
+        (u) =>
+          u.table === 'subscription_payments' &&
+          u.patch['scheduled_starts_at'] === '2026-06-20T00:00:00.000Z'
+      )
+    ).toBeTruthy();
+  });
+
+  it('starts at approval, never backdated, when the live period has lapsed', async () => {
+    const state = baseState({
+      paymentRow: paymentRow({ is_downgrade: true }),
+      periods: [periodRow({ id: 'period-old', ends_at: '2026-05-20T00:00:00.000Z' })],
+      createdPeriodRow: periodRow({
+        id: 'period-new',
+        starts_at: '2026-06-01T00:00:00.000Z',
+        ends_at: '2026-07-01T00:00:00.000Z',
+      }),
+    });
+    const result = await approvePayment(fakeClient(state), 'payment-1', 'admin-1', now);
+    expect(result.period.id).toBe('period-new');
+    const inserted = state.inserted.find((i) => i.table === 'subscription_periods');
+    expect(inserted?.row).toMatchObject({ starts_at: '2026-06-01T00:00:00.000Z' });
+  });
+
+  it('fails closed when the scheduled period insert errors', async () => {
+    const state = baseState({
+      paymentRow: paymentRow({ is_downgrade: true }),
+      periods: [periodRow({ id: 'period-live', ends_at: '2026-06-20T00:00:00.000Z' })],
+      periodInsertError: { message: 'db down' },
+    });
+    await expect(approvePayment(fakeClient(state), 'payment-1', 'admin-1', now)).rejects.toMatchObject({
+      code: 'ENTITLEMENT_UNAVAILABLE',
+    });
+    expect(mockedLogServerError).toHaveBeenCalledWith(
+      '[billing] scheduled period insert failed',
+      expect.anything(),
+      { source: 'billing' }
+    );
+  });
+
+  it('fails closed when the scheduled insert returns an unreadable row', async () => {
+    const state = baseState({
+      paymentRow: paymentRow({ is_downgrade: true }),
+      periods: [periodRow({ id: 'period-live', ends_at: '2026-06-20T00:00:00.000Z' })],
+      createdPeriodRow: { nonsense: true },
+    });
+    await expect(approvePayment(fakeClient(state), 'payment-1', 'admin-1', now)).rejects.toMatchObject({
+      code: 'ENTITLEMENT_UNAVAILABLE',
+    });
+  });
+
+  it('createScheduledPeriod starts a 30-day period at the given start', async () => {
+    const state = baseState({
+      createdPeriodRow: periodRow({
+        id: 'period-new',
+        starts_at: '2026-06-20T00:00:00.000Z',
+        ends_at: '2026-07-20T00:00:00.000Z',
+      }),
+    });
+    const period = await createScheduledPeriod(
+      fakeClient(state),
+      { userId: 'user-1', counts: { ...ZERO_COUNTS, facebook: 1 }, paymentId: 'payment-1' },
+      new Date('2026-06-20T00:00:00.000Z')
+    );
+    expect(period.id).toBe('period-new');
+    const inserted = state.inserted.find((i) => i.table === 'subscription_periods');
+    expect(inserted?.row).toMatchObject({
+      starts_at: '2026-06-20T00:00:00.000Z',
+      ends_at: '2026-07-20T00:00:00.000Z',
+    });
+    expect(
+      state.updated.filter(
+        (u) => u.table === 'subscription_periods' && 'superseded_at' in u.patch
+      )
+    ).toHaveLength(0);
+  });
+});
+
+describe('approvePayment screenshot override (owner decision 2026-11-02)', () => {
+  const now = new Date('2026-06-01T00:00:00.000Z');
+
+  it('refuses a screenshot-less bank approval without a recorded reason', async () => {
+    const state = baseState({
+      paymentRow: paymentRow({ screenshot_storage_key: null }),
+    });
+    await expect(approvePayment(fakeClient(state), 'payment-1', 'admin-1', now)).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+    });
+  });
+
+  it('records the override reason on approval', async () => {
+    const state = baseState({
+      paymentRow: paymentRow({ screenshot_storage_key: null }),
+      createdPeriodRow: periodRow({ id: 'period-new' }),
+    });
+    const result = await approvePayment(fakeClient(state), 'payment-1', 'admin-1', now, {
+      overrideReason: 'Screenshot verified on file',
+    });
+    expect(result.payment.status).toBe('approved');
+    expect(
+      state.updated.find(
+        (u) =>
+          u.table === 'subscription_payments' &&
+          u.patch['override_reason'] === 'Screenshot verified on file'
+      )
+    ).toBeTruthy();
+  });
+});
+
+describe('payment load tolerates non-object rows', () => {
+  const now = new Date('2026-06-01T00:00:00.000Z');
+
+  it('approvePayment reports a non-object row as missing, not as a crash', async () => {
+    const state = baseState({ paymentRow: 'nonsense' as unknown as Row });
+    await expect(approvePayment(fakeClient(state), 'payment-1', 'admin-1', now)).rejects.toMatchObject({
+      code: 'PAYMENT_NOT_FOUND',
+    });
+  });
+
+  it('rejectPayment reports a non-object row as missing, not as a crash', async () => {
+    const state = baseState({ paymentRow: 'nonsense' as unknown as Row });
+    await expect(rejectPayment(fakeClient(state), 'payment-1', now)).rejects.toMatchObject({
+      code: 'PAYMENT_NOT_FOUND',
+    });
+  });
+});
+
 describe('rejectPayment', () => {
   const now = new Date('2026-06-01T00:00:00.000Z');
 
@@ -1428,6 +1587,48 @@ describe('rejectPayment', () => {
     });
     expect(mockedLogServerError).toHaveBeenCalledWith(
       '[billing] payment reject update failed',
+      expect.anything(),
+      { source: 'billing' }
+    );
+  });
+
+  it('records a rejection reason and detail, in memory and on the row', async () => {
+    const state = baseState({ paymentRow: paymentRow() });
+    const payment = await rejectPayment(fakeClient(state), 'payment-1', now, {
+      reason: 'Wrong amount',
+      detail: 'Sent 60, not 70',
+    });
+    expect(payment.status).toBe('rejected');
+    expect(payment.rejectionReason).toBe('Wrong amount');
+    expect(payment.rejectionDetail).toBe('Sent 60, not 70');
+    expect(
+      state.updated.find(
+        (u) =>
+          u.table === 'subscription_payments' &&
+          u.patch['rejection_reason'] === 'Wrong amount' &&
+          u.patch['rejection_detail'] === 'Sent 60, not 70'
+      )
+    ).toBeTruthy();
+  });
+
+  it('records a reason without detail as null', async () => {
+    const state = baseState({ paymentRow: paymentRow() });
+    const payment = await rejectPayment(fakeClient(state), 'payment-1', now, {
+      reason: 'Wrong amount',
+    });
+    expect(payment.rejectionReason).toBe('Wrong amount');
+    expect(payment.rejectionDetail).toBeNull();
+  });
+
+  it('fails closed when the reject load errors', async () => {
+    const state = baseState({
+      selectErrors: { subscription_payments: { message: 'db down' } },
+    });
+    await expect(rejectPayment(fakeClient(state), 'payment-1', now)).rejects.toMatchObject({
+      code: 'ENTITLEMENT_UNAVAILABLE',
+    });
+    expect(mockedLogServerError).toHaveBeenCalledWith(
+      '[billing] payment reject load failed',
       expect.anything(),
       { source: 'billing' }
     );
@@ -1492,6 +1693,35 @@ describe('pricePurchase', () => {
       oldMonthlyTotalPkr: 700,
       newMonthlyTotalPkr: 1400,
     });
+  });
+
+  it('reports the downgrade reason for a mixed change that raises a count', () => {
+    const oldCounts = { ...ZERO_COUNTS, facebook: 2, instagram: 2 };
+    const newCounts = { ...ZERO_COUNTS, facebook: 3, instagram: 1 };
+    const activePeriod = {
+      id: 'period-1',
+      userId: 'user-1',
+      counts: oldCounts,
+      startsAt: new Date('2026-05-02T00:00:00.000Z'),
+      endsAt: new Date('2026-06-11T00:00:00.000Z'),
+      supersededAt: null,
+    };
+    expect(() => pricePurchase(newCounts, activePeriod, NOW)).toThrowError(/cannot raise/);
+  });
+
+  it('reports the upgrade reason for an unchanged plan', () => {
+    const oldCounts = { ...ZERO_COUNTS, facebook: 2 };
+    const activePeriod = {
+      id: 'period-1',
+      userId: 'user-1',
+      counts: oldCounts,
+      startsAt: new Date('2026-05-02T00:00:00.000Z'),
+      endsAt: new Date('2026-06-11T00:00:00.000Z'),
+      supersededAt: null,
+    };
+    expect(() => pricePurchase(oldCounts, activePeriod, NOW)).toThrowError(
+      /must cost more than the current plan/
+    );
   });
 });
 

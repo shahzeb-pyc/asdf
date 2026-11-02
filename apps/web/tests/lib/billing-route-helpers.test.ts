@@ -1,8 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import type { SupabaseClient } from '@supabase/supabase-js';
+
 import { BANK_PAYMENT_DETAILS } from '@/lib/billing/payment-details';
 import {
   getBillingAdminClient,
+  loadNewPaymentFields,
   mapEntitlementToResponse,
   mapPaymentToItem,
   paymentRowToItem,
@@ -388,5 +391,107 @@ describe('billing idempotency helpers', () => {
     await storeBillingIdempotency(client, null, 'user-1', 'billing-bank', KEY, { status: 201, body: {} });
     await storeBillingIdempotency(client, 'ws-1', 'user-1', 'billing-bank', null, { status: 201, body: {} });
     expect(rows).toHaveLength(0);
+  });
+});
+
+/**
+ * loadNewPaymentFields (split build, migration ships unapplied):
+ * tolerant by design — an empty id list, a failed select, a
+ * non-array payload, and malformed rows must never fail the
+ * payments list; they fall back to defaults.
+ */
+describe('loadNewPaymentFields', () => {
+  function fieldsClient(result: { data: unknown; error: unknown }): SupabaseClient {
+    return {
+      from: () => ({
+        select: () => ({
+          in: async () => result,
+        }),
+      }),
+    } as unknown as SupabaseClient;
+  }
+
+  it('returns an empty map without querying for an empty id list', async () => {
+    let queried = false;
+    const client = {
+      from: () => {
+        queried = true;
+        return { select: () => ({ in: async () => ({ data: [], error: null }) }) };
+      },
+    } as unknown as SupabaseClient;
+    await expect(loadNewPaymentFields(client, [])).resolves.toEqual(new Map());
+    expect(queried).toBe(false);
+  });
+
+  it('returns an empty map when the select errors (missing column)', async () => {
+    const map = await loadNewPaymentFields(
+      fieldsClient({ data: null, error: { message: 'column does not exist' } }),
+      ['payment-1']
+    );
+    expect(map).toEqual(new Map());
+  });
+
+  it('returns an empty map when the payload is not an array', async () => {
+    const map = await loadNewPaymentFields(fieldsClient({ data: null, error: null }), [
+      'payment-1',
+    ]);
+    expect(map).toEqual(new Map());
+  });
+
+  it('maps full rows, skips malformed rows, and nulls non-string fields', async () => {
+    const map = await loadNewPaymentFields(
+      fieldsClient({
+        data: [
+          null,
+          { id: 42, is_downgrade: true },
+          {
+            id: 'payment-1',
+            is_downgrade: true,
+            scheduled_starts_at: '2026-06-20T00:00:00.000Z',
+            rejection_reason: 'Wrong amount',
+            rejection_detail: 'Sent 60, not 70',
+            override_reason: null,
+            decided_at: '2026-06-02T00:00:00.000Z',
+          },
+          {
+            id: 'payment-2',
+            is_downgrade: false,
+            scheduled_starts_at: 123,
+            rejection_reason: 7,
+            rejection_detail: null,
+            override_reason: 'Screenshot verified on file',
+            decided_at: null,
+          },
+        ],
+        error: null,
+      }),
+      ['payment-1', 'payment-2']
+    );
+    expect(map.size).toBe(2);
+    expect(map.get('payment-1')).toEqual({
+      isDowngrade: true,
+      scheduledStartsAt: '2026-06-20T00:00:00.000Z',
+      rejectionReason: 'Wrong amount',
+      rejectionDetail: 'Sent 60, not 70',
+      overrideReason: null,
+      decidedAt: '2026-06-02T00:00:00.000Z',
+    });
+    expect(map.get('payment-2')).toEqual({
+      isDowngrade: false,
+      scheduledStartsAt: null,
+      rejectionReason: null,
+      rejectionDetail: null,
+      overrideReason: 'Screenshot verified on file',
+      decidedAt: null,
+    });
+  });
+});
+
+describe('mapPaymentToItem scheduled start', () => {
+  it('renders a set scheduled start as its ISO string', () => {
+    const item = mapPaymentToItem(
+      payment({ scheduledStartsAt: new Date('2026-06-20T00:00:00.000Z') })
+    );
+    expect(item?.scheduledStartsAt).toBe('2026-06-20T00:00:00.000Z');
   });
 });
