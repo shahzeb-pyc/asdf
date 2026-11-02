@@ -20,6 +20,52 @@ describe('FacebookPublishClient', () => {
     vi.restoreAllMocks();
   });
 
+  describe('default fetch binding (workerd receiver check)', () => {
+    it('publishes through the default fetch even when the runtime brand-checks fetch', async () => {
+      const originalFetch = globalThis.fetch;
+      const seenReceivers: unknown[] = [];
+      function workerdLikeFetch(
+        this: unknown,
+        _input: RequestInfo | URL,
+        _init?: RequestInit,
+      ): Promise<Response> {
+        seenReceivers.push(this);
+        // Mimic workerd: native fetch rejects any receiver that is
+        // neither a bare call (undefined under strict mode) nor
+        // globalThis. Pre-fix code calls the stored fetch as a method
+        // on the client, so this test fails on pre-fix code.
+        if (this !== undefined && this !== globalThis) {
+          throw new TypeError(
+            'Illegal invocation: function called with incorrect `this` reference.',
+          );
+        }
+        return Promise.resolve(
+          new Response(JSON.stringify({ id: `${pageId}_post_999` }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        );
+      }
+      globalThis.fetch = workerdLikeFetch as unknown as typeof fetch;
+      try {
+        // No fetchFn injected: the client must use the default fetch path.
+        const client = new FacebookPublishClient();
+        const result = await client.publishTextPost({
+          pageId,
+          accessToken,
+          message: 'hello',
+        });
+        expect(result.postId).toBe(`${pageId}_post_999`);
+        expect(seenReceivers.length).toBeGreaterThan(0);
+        for (const receiver of seenReceivers) {
+          expect(receiver === undefined || receiver === globalThis).toBe(true);
+        }
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+  });
+
   describe('publishReel (3-phase session)', () => {
     it('executes start, stream upload, and finish phases successfully', async () => {
       const mockFetch = vi.fn();
