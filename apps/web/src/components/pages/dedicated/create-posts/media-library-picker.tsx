@@ -240,6 +240,10 @@ export function MediaLibraryPicker({
   const [stagedFiles, setStagedFiles] = React.useState<File[]>([]);
   const [importOpen, setImportOpen] = React.useState(false);
   const [importActiveCount, setImportActiveCount] = React.useState(0);
+  // Staged files accepted but not yet uploading (sequential queue):
+  // picker-local only — the dialog's leave guard keeps its
+  // uploading-only contract via onUploadsActiveChange below.
+  const [waitingUploadCount, setWaitingUploadCount] = React.useState(0);
   const [furthestAlongUpload, setFurthestAlongUpload] = React.useState<{
     name: string;
     progressPercent: number;
@@ -259,7 +263,8 @@ export function MediaLibraryPicker({
     count: number;
     name: string | null;
     progressPercent: number | null;
-  }>({ count: 0, name: null, progressPercent: null });
+    waiting: number;
+  }>({ count: 0, name: null, progressPercent: null, waiting: 0 });
 
   // Library browsing state — the explorer's state shape, minus
   // smart views (the library page exposes no in-page switcher for
@@ -324,6 +329,7 @@ export function MediaLibraryPicker({
     setStagedFiles([]);
     setImportOpen(false);
     setImportActiveCount(0);
+    setWaitingUploadCount(0);
     setFurthestAlongUpload(null);
     setUploadedItems([]);
     setDeviceError(null);
@@ -704,21 +710,27 @@ export function MediaLibraryPicker({
   const handleActiveUploadsChange = React.useCallback(
     (
       count: number,
-      furthest: { name: string; progressPercent: number } | null
+      furthest: { name: string; progressPercent: number } | null,
+      waitingCount = 0
     ) => {
       setImportActiveCount(count);
+      setWaitingUploadCount(waitingCount);
       setFurthestAlongUpload(furthest);
       const prev = prevReportedUploadsRef.current;
       if (
         count !== prev.count ||
         (furthest?.name ?? null) !== prev.name ||
-        (furthest?.progressPercent ?? null) !== prev.progressPercent
+        (furthest?.progressPercent ?? null) !== prev.progressPercent ||
+        waitingCount !== prev.waiting
       ) {
         prevReportedUploadsRef.current = {
           count,
           name: furthest?.name ?? null,
           progressPercent: furthest?.progressPercent ?? null,
+          waiting: waitingCount,
         };
+        // Upstream contract unchanged: the dialog's leave guard
+        // keeps its uploading-only count; waiting is picker-local.
         onUploadsActiveChange?.(count, furthest);
       }
     },
@@ -1435,23 +1447,43 @@ export function MediaLibraryPicker({
             {/* P5: the batch's live state on the device tab itself —
                 visible while the import modal is minimised to its
                 chip, instead of uploads running invisibly. */}
-            {uploadsActive && (
+            {(uploadsActive || waitingUploadCount > 0) && (
               <p
                 data-testid="media-picker-upload-status"
                 className="mt-3 text-body text-ink-sub"
               >
-                Uploading {importActiveCount} file{importActiveCount === 1 ? '' : 's'}…
-                {furthestAlongUpload && (
-                  <span className="tabular-nums">
-                    {' '}
-                    {furthestAlongUpload.name} · {furthestAlongUpload.progressPercent}%
-                  </span>
-                )}
-                {uploadedItems.length > 0 && (
-                  <span>
-                    {' '}
-                    · {uploadedItems.length} uploaded
-                  </span>
+                {uploadsActive ? (
+                  <>
+                    Uploading {importActiveCount} file{importActiveCount === 1 ? '' : 's'}…
+                    {furthestAlongUpload && (
+                      <span className="tabular-nums">
+                        {' '}
+                        {furthestAlongUpload.name} · {furthestAlongUpload.progressPercent}%
+                      </span>
+                    )}
+                    {waitingUploadCount > 0 && (
+                      <span>
+                        {' '}
+                        · {waitingUploadCount} waiting
+                      </span>
+                    )}
+                    {uploadedItems.length > 0 && (
+                      <span>
+                        {' '}
+                        · {uploadedItems.length} uploaded
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    Waiting to upload {waitingUploadCount} file{waitingUploadCount === 1 ? '' : 's'}…
+                    {uploadedItems.length > 0 && (
+                      <span>
+                        {' '}
+                        · {uploadedItems.length} uploaded
+                      </span>
+                    )}
+                  </>
                 )}
               </p>
             )}
