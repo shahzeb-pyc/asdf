@@ -52,7 +52,10 @@ function statusLabel(item: RefundRequestItem): string {
  * while still inside the window, and past requests always stay
  * visible here.
  */
-export function RefundSection({ subdomain }: Readonly<{ subdomain: string }>) {
+export function RefundSection({
+  subdomain,
+  standalone = false,
+}: Readonly<{ subdomain: string; standalone?: boolean }>) {
   const [data, setData] = React.useState<UserRefundsResponse | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [showForm, setShowForm] = React.useState(false);
@@ -107,7 +110,27 @@ export function RefundSection({ subdomain }: Readonly<{ subdomain: string }>) {
   }
 
   if (error && !data) {
-    return null;
+    // Standalone Refund page: an error must read as an error, never
+    // as "no refunds". Embedded use keeps the old null behaviour
+    // so a refunds blip never crashes My Plan.
+    if (!standalone) return null;
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Refund</CardTitle>
+          <CardDescription>Your refund requests and eligibility.</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          <Alert variant="destructive">
+            <AlertTitle>Couldn&apos;t load refunds</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+          <div>
+            <Button onClick={() => void load()}>Try again</Button>
+          </div>
+        </CardContent>
+      </Card>
+    );
   }
   if (!data) {
     return (
@@ -130,11 +153,38 @@ export function RefundSection({ subdomain }: Readonly<{ subdomain: string }>) {
   }
   const destinationType = eligibility.destinationType;
 
-  // Nothing to show: no eligibility and no request history. My Plan
-  // shows "Request refund" ONLY when the server says eligible — an
-  // ineligibility notice on every Free or expired plan would be noise.
-  if (!eligibility.eligible && requests.length === 0) {
+  // Nothing to show in embedded use: no eligibility and no request
+  // history. Standalone use always shows the reason, so a user can
+  // tell "window closed" from "never eligible" from "already
+  // refunded" (owner decision 2026-11-02: reason + history shown
+  // unconditionally on the standalone Refund section).
+  if (!eligibility.eligible && requests.length === 0 && !standalone) {
     return null;
+  }
+  if (!eligibility.eligible && requests.length === 0 && standalone) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Refund</CardTitle>
+          <CardDescription>
+            Only your first purchase can be refunded, within 7 days of approval. The refund is
+            what you paid, minus the days you used.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          <p className="text-body text-ink">
+            You cannot request a refund right now.
+          </p>
+          {eligibility.reason ? (
+            <p className="text-body text-ink-sub">{eligibility.reason}</p>
+          ) : null}
+          <p className="text-body text-ink-sub">
+            Refunds are paid outside the app and then marked sent here. If you think this is
+            wrong, contact us from the plan you paid for.
+          </p>
+        </CardContent>
+      </Card>
+    );
   }
 
   return (
@@ -158,6 +208,9 @@ export function RefundSection({ subdomain }: Readonly<{ subdomain: string }>) {
             <AlertTitle>Couldn&apos;t submit that request</AlertTitle>
             <AlertDescription>{formError}</AlertDescription>
           </Alert>
+        ) : null}
+        {standalone && !eligibility.eligible && eligibility.reason ? (
+          <p className="text-body text-ink-sub">{eligibility.reason}</p>
         ) : null}
 
         {eligibility.eligible && destinationType && !showForm ? (
