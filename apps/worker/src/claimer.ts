@@ -4,6 +4,7 @@ import {
   PublishQueueMessageSchema,
   PUBLISH_LANE_FAST,
   PUBLISH_LANE_HEAVY,
+  routePublishLaneForItem,
   ValidationError,
   type Platform,
   type PublishLane,
@@ -133,6 +134,74 @@ function queueForLane(queues: ClaimerQueues, lane: PublishLane): LaneQueueProduc
     );
   }
   return queue;
+}
+
+/**
+ * Shared claim-and-enqueue step, used by the due-based claimer above
+ * (via its own lane loop) and by the slot-claim and publish-now
+ * ticks: validates claimed rows, routes each to its lane, and
+ * sendBatches them chunked. A malformed row is skipped, never
+ * enqueued — the claim RPCs are the authority on what was claimed,
+ * and a malformed projection must not become a publish message. A
+ * missing queue binding throws, like the ticks did before this
+ * helper existed.
+ */
+export interface EnqueuedClaimedRows {
+  claimed: number;
+  enqueuedFast: number;
+  enqueuedHeavy: number;
+}
+
+function isClaimRow(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+export async function enqueueClaimedRows(
+  rows: unknown[],
+  platform: Platform,
+  queues: ClaimerQueues
+): Promise<EnqueuedClaimedRows> {
+  const result: EnqueuedClaimedRows = {
+    claimed: 0,
+    enqueuedFast: 0,
+    enqueuedHeavy: 0,
+  };
+  const pendingByLane = new Map<PublishLane, PublishQueueMessage[]>();
+  for (const row of rows) {
+    if (!isClaimRow(row)) continue;
+    const itemId = row.id;
+    const kind = row.kind;
+    const platformFormat = row.platform_format;
+    if (typeof itemId !== 'string' || typeof kind !== 'string') continue;
+    const lane = routePublishLaneForItem({
+      platform,
+      kind: kind as 'text' | 'image' | 'video' | 'story' | 'carousel',
+      platform_format: typeof platformFormat === 'string' ? platformFormat : null,
+    });
+    const parsed = PublishQueueMessageSchema.safeParse({
+      itemId,
+      platform,
+      lane,
+    });
+    if (!parsed.success) continue;
+    const list = pendingByLane.get(lane) ?? [];
+    list.push(parsed.data);
+    pendingByLane.set(lane, list);
+    result.claimed += 1;
+  }
+  for (const [lane, messages] of pendingByLane) {
+    const queue = queueForLane(queues, lane);
+    for (let i = 0; i < messages.length; i += SEND_BATCH_CHUNK_SIZE) {
+      const chunk = messages.slice(i, i + SEND_BATCH_CHUNK_SIZE);
+      await queue.sendBatch(chunk.map((body) => ({ body })));
+      if (lane === PUBLISH_LANE_FAST) {
+        result.enqueuedFast += chunk.length;
+      } else {
+        result.enqueuedHeavy += chunk.length;
+      }
+    }
+  }
+  return result;
 }
 
 /** Mark an error as already captured so the per-pair wrapper does not double-report it. */

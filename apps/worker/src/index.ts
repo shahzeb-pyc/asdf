@@ -7,6 +7,7 @@ import {
   type PublishQueueMessage,
 } from './claimer.js';
 import { runSlotClaimTick } from './slot-claim.js';
+import { runPublishNowClaimTick } from './publish-now-claim.js';
 import {
   buildMirrorTickDeps,
   MIRROR_DISPATCH_CRON,
@@ -275,10 +276,12 @@ export async function handleScheduled(
     return;
   }
 
-  // First sub-tick failure across the slot, mirror-job, and ADU
-  // ticks below. It never fails the tick itself, but it DOES fail
-  // the tick's heartbeat (see the heartbeat write at the end).
+  // First sub-tick failure across the publish-now, slot,
+  // mirror-job, and ADU ticks below. It never fails the tick itself,
+  // but it DOES fail the tick's heartbeat (see the heartbeat write
+  // at the end).
   let firstSubTickFailure:
+    | 'publish_now_claim_tick_failed'
     | 'slot_claim_tick_failed'
     | 'mirror_job_tick_failed'
     | 'adu_tick_failed'
@@ -293,6 +296,31 @@ export async function handleScheduled(
       now: options?.now ?? new Date(controller.scheduledTime),
       waitUntil,
     });
+
+    // Publish-now immediate claims (Facebook): marked rows go out
+    // extra, on top of scheduled posts — claimed here, BEFORE the
+    // slot tick below, so a marked row is already publishing by the
+    // time slots are considered (and the slot claim excludes marked
+    // rows outright). Isolated like the slot claim: a failure here
+    // never fails the tick itself — marked rows simply wait for the
+    // next minute. It DOES fail the tick's heartbeat (below).
+    try {
+      await runPublishNowClaimTick({
+        db,
+        queues: queuesFromEnv(env, options?.queues),
+        env,
+        waitUntil,
+      });
+    } catch (publishNowErr) {
+      captureWorkerError(
+        env,
+        publishNowErr,
+        { site: 'handleScheduled', kind: 'publish_now_claim_tick_failed' },
+        waitUntil
+      );
+      console.error('[handleScheduled] publish-now claim tick failed; continuing:', publishNowErr);
+      firstSubTickFailure ??= 'publish_now_claim_tick_failed';
+    }
 
     // Publisher-driven posting times (Facebook): due-slot claims run
     // on the same tick, isolated from the due-based claim above.

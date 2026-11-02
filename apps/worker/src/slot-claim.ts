@@ -1,19 +1,9 @@
-import {
-  findDueSlots,
-  InternalError,
-  PublishQueueMessageSchema,
-  PUBLISH_LANE_FAST,
-  routePublishLaneForItem,
-  type PublishLane,
-} from '@fbuploadpro/contracts';
-// Note: the heavy lane is selected by the else branch below, so
-// PUBLISH_LANE_HEAVY is intentionally not imported here.
+import { findDueSlots, InternalError } from '@fbuploadpro/contracts';
 import { captureWorkerError, type PostHogEnv } from './analytics.js';
 import {
-  SEND_BATCH_CHUNK_SIZE,
+  enqueueClaimedRows,
   type ClaimerDbClient,
   type ClaimerQueues,
-  type PublishQueueMessage,
 } from './claimer.js';
 
 // ==========================================
@@ -142,7 +132,10 @@ export async function runSlotClaimTick(
     group.slots.push(row);
   }
 
-  const pendingByLane = new Map<PublishLane, PublishQueueMessage[]>();
+  // Claimed rows accumulate across slots; the shared enqueue step
+  // below validates, lanes, and sendBatches them exactly as the
+  // inline loop did before the publish-now tick shared it.
+  const claimedRows: unknown[] = [];
 
   for (const [destinationId, group] of byDestination) {
     const due = findDueSlots({
@@ -174,28 +167,9 @@ export async function runSlotClaimTick(
             `claim_posting_slot_item returned a non-array payload for destination "${destinationId}" slot "${slot.id}"`
           );
         }
-        for (const row of data) {
-          if (!isRecord(row)) continue;
-          const itemId = row.id;
-          const kind = row.kind;
-          const platformFormat = row.platform_format;
-          if (typeof itemId !== 'string' || typeof kind !== 'string') continue;
-          const lane = routePublishLaneForItem({
-            platform: 'facebook',
-            kind: kind as 'text' | 'image' | 'video' | 'story' | 'carousel',
-            platform_format: typeof platformFormat === 'string' ? platformFormat : null,
-          });
-          const parsed = PublishQueueMessageSchema.safeParse({
-            itemId,
-            platform: 'facebook',
-            lane,
-          });
-          if (!parsed.success) continue;
-          const list = pendingByLane.get(lane) ?? [];
-          list.push(parsed.data);
-          pendingByLane.set(lane, list);
-          result.claimed += 1;
-        }
+        // Malformed rows are filtered by the shared enqueue step,
+        // exactly as the inline loop filtered them before.
+        claimedRows.push(...data);
       } catch (err) {
         captureWorkerError(
           deps.env ?? {},
@@ -217,21 +191,10 @@ export async function runSlotClaimTick(
     }
   }
 
-  for (const [lane, messages] of pendingByLane) {
-    const queue = lane === PUBLISH_LANE_FAST ? deps.queues.fast : deps.queues.heavy;
-    if (!queue) {
-      throw new InternalError(`Queue producer binding for lane "${lane}" is not configured`);
-    }
-    for (let i = 0; i < messages.length; i += SEND_BATCH_CHUNK_SIZE) {
-      const chunk = messages.slice(i, i + SEND_BATCH_CHUNK_SIZE);
-      await queue.sendBatch(chunk.map((body) => ({ body })));
-      if (lane === PUBLISH_LANE_FAST) {
-        result.enqueuedFast += chunk.length;
-      } else {
-        result.enqueuedHeavy += chunk.length;
-      }
-    }
-  }
+  const enqueued = await enqueueClaimedRows(claimedRows, 'facebook', deps.queues);
+  result.claimed += enqueued.claimed;
+  result.enqueuedFast += enqueued.enqueuedFast;
+  result.enqueuedHeavy += enqueued.enqueuedHeavy;
 
   if (result.claimed > 0) {
     console.info(

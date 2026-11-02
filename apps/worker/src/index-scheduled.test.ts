@@ -33,6 +33,12 @@ describe('handleScheduled slot-claim isolation', () => {
       if (fn === 'claim_due_queue_items') {
         return { data: [], error: null };
       }
+      // The publish-now tick runs before the slot tick and must stay
+      // healthy here, or its failure would claim the first-failure
+      // heartbeat slot the slot failure is meant to occupy.
+      if (fn === 'claim_publish_now_items') {
+        return { data: [], error: null };
+      }
       if (fn === 'list_active_facebook_posting_slots') {
         return { data: null, error: new Error('list boom') };
       }

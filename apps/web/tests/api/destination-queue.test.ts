@@ -121,12 +121,17 @@ class FakeDb {
     }
     if (sql.includes('UPDATE queue_items')) {
       // R12: updateDestinationQueueItem now writes retry_count as
-      // $12, shifting the WHERE params to $13/$14/$15.
+      // $12, shifting the WHERE params to $13/$14/$15. The
+      // publish-now marker (20261102140000) shifts them once more
+      // when present: publish_now_requested_at is $13, and the id /
+      // workspace / destination move to $14/$15/$16.
+      const withMarker = sql.includes('publish_now_requested_at');
+      const idIndex = withMarker ? 13 : 12;
       const row = this.queueItems.find(
         (q) =>
-          q.id === params[12] &&
-          q.workspace_id === params[13] &&
-          q.destination_id === params[14]
+          q.id === params[idIndex] &&
+          q.workspace_id === params[idIndex + 1] &&
+          q.destination_id === params[idIndex + 2]
       );
       if (!row) return [];
       row.caption = String(params[0]);
@@ -143,6 +148,10 @@ class FakeDb {
       row.status = String(params[9]);
       row.claimed_at = (params[10] as string | null) ?? null;
       row.retry_count = Number(params[11]);
+      if (withMarker) {
+        (row as unknown as Record<string, unknown>).publish_now_requested_at =
+          String(params[12]);
+      }
       row.updated_at = new Date().toISOString();
       return [row];
     }
