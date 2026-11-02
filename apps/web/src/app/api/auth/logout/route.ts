@@ -51,9 +51,11 @@ async function signOutSupabaseBestEffort(): Promise<void> {
     if (supabase) {
       await supabase.auth.signOut().catch(() => {});
     }
-  } catch {
+  } catch (error: unknown) {
     // Supabase sign-out is best-effort; the cookie clears below
-    // are what actually end the app session.
+    // are what actually end the app session. Surfaced in server
+    // logs, never swallowed (silent-failure ban).
+    logServerError('[auth/logout] Supabase sign-out failed', error, { source: 'auth-logout' });
   }
 }
 
@@ -68,11 +70,8 @@ export async function POST(request?: NextRequest) {
     },
     { status: 200 }
   );
-  try {
-    await signOutSupabaseBestEffort();
-  } catch (error: unknown) {
-    logServerError('[auth/logout] Supabase sign-out failed', error, { source: 'auth-logout' });
-  }
+  // Never throws: failures are logged inside the helper.
+  await signOutSupabaseBestEffort();
   try {
     clearSessionCookiesBestEffort(response, request?.headers.get('host'));
   } catch (error: unknown) {
@@ -86,11 +85,8 @@ export async function POST(request?: NextRequest) {
 export async function GET(request: NextRequest) {
   const redirectUrl = buildLogoutRedirectUrl(request);
   const response = NextResponse.redirect(redirectUrl, 307);
-  try {
-    await signOutSupabaseBestEffort();
-  } catch (error: unknown) {
-    logServerError('[auth/logout] Supabase sign-out failed', error, { source: 'auth-logout' });
-  }
+  // Never throws: failures are logged inside the helper.
+  await signOutSupabaseBestEffort();
   try {
     clearSessionCookiesBestEffort(response, request.headers.get('host'));
   } catch (error: unknown) {

@@ -10,6 +10,7 @@ import type { NextResponse } from 'next/server';
 import type { SessionPayload } from '@fbuploadpro/contracts';
 import { getCookieDomain } from './clients';
 import { findUserByEmailDetailed } from './users';
+import { logServerError } from '@/lib/server-analytics';
 
 /**
  * Claim-only session validity (session-global-check spec §2.1).
@@ -83,9 +84,13 @@ export function clearSessionCookiesBestEffort(
         'Set-Cookie',
         `fbup_session=; ${baseAttributes}${domainAttribute}`
       );
-    } catch {
-      // Clearing is best-effort; a header failure on one variant
-      // must not stop the remaining variants.
+    } catch (error: unknown) {
+      // Clearing is best-effort — a header failure on one variant
+      // must not stop the remaining variants — but it is surfaced
+      // in server logs, never swallowed (silent-failure ban).
+      logServerError('[auth/session] Session cookie clear failed', error, {
+        source: 'auth-session-clear',
+      });
     }
   };
 
@@ -136,8 +141,12 @@ export function clearSessionCookiesBestEffort(
         appendClear(`; Domain=${shared}`);
       }
     }
-  } catch {
+  } catch (error: unknown) {
     // Shared variant skipped; host-only + exact-host still apply.
+    // Surfaced, not swallowed (silent-failure ban).
+    logServerError('[auth/session] Shared-domain cookie clear skipped', error, {
+      source: 'auth-session-clear',
+    });
   }
 
   // Exact-host variant (covers a cookie set with Domain=<host>).

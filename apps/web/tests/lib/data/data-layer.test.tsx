@@ -337,4 +337,77 @@ describe('DataProvider global session check', () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(sessionCalls).toBe(1);
   });
+
+  it('re-checks on the 5-minute interval', async () => {
+    vi.useFakeTimers();
+    try {
+      render(
+        <DataProvider subdomain="acme">
+          <ClientProbe />
+        </DataProvider>
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(sessionCalls).toBe(1);
+      await vi.advanceTimersByTimeAsync(300_000);
+      expect(sessionCalls).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('skips a re-check while one is already in flight', async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveFetch!: (response: Response) => void;
+      const gatedFetch = new Promise<Response>((resolve) => {
+        resolveFetch = resolve;
+      });
+      let gatedCalls = 0;
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(() => {
+          gatedCalls += 1;
+          return gatedFetch;
+        })
+      );
+      render(
+        <DataProvider subdomain="acme">
+          <ClientProbe />
+        </DataProvider>
+      );
+      // Mount check starts and its fetch is still pending.
+      expect(gatedCalls).toBe(1);
+      await vi.advanceTimersByTimeAsync(61_000);
+      window.dispatchEvent(new Event('focus'));
+      await vi.advanceTimersByTimeAsync(0);
+      // The focus re-check hit the in-flight guard: no second fetch.
+      expect(gatedCalls).toBe(1);
+      resolveFetch(new Response(JSON.stringify({ active: true }), { status: 200 }));
+      await vi.advanceTimersByTimeAsync(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('re-checks on focus after the throttle window', async () => {
+    vi.useFakeTimers();
+    try {
+      render(
+        <DataProvider subdomain="acme">
+          <ClientProbe />
+        </DataProvider>
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(sessionCalls).toBe(1);
+      // 61s: past the 60s focus throttle, short of the 5-minute
+      // interval, so only the focus handler fires the re-check.
+      await vi.advanceTimersByTimeAsync(61_000);
+      expect(sessionCalls).toBe(1);
+      window.dispatchEvent(new Event('focus'));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(sessionCalls).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
