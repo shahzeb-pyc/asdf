@@ -135,6 +135,8 @@ function paymentObject(overrides: Partial<SubscriptionPaymentRow> = {}): Subscri
 
 interface FakeState {
   periods: Row[];
+  workspaces: Row[];
+  destinations: Row[];
   usageRows: Row[];
   usageCounts: Partial<Record<string, number>>;
   paymentRow: Row | null;
@@ -166,6 +168,8 @@ interface FakeState {
 function baseState(overrides: Partial<FakeState> = {}): FakeState {
   return {
     periods: [],
+    workspaces: [],
+    destinations: [],
     usageRows: [],
     usageCounts: {},
     paymentRow: null,
@@ -418,6 +422,10 @@ class FakeBuilder {
       for (const f of this.filters) {
         if (f.op === 'eq') rows = rows.filter((row) => row[f.col] === f.val);
         if (f.op === 'neq') rows = rows.filter((row) => row[f.col] !== f.val);
+        if (f.op === 'in')
+          rows = rows.filter(
+            (row) => Array.isArray(f.val) && (f.val as unknown[]).includes(row[f.col])
+          );
       }
       return { count: rows.length, error: null };
     }
@@ -431,7 +439,11 @@ class FakeBuilder {
         ? [...this.state.periods]
         : this.table === 'subscription_usage'
           ? [...this.state.usageRows]
-          : [];
+          : this.table === 'workspaces'
+            ? [...this.state.workspaces]
+            : this.table === 'destinations'
+              ? [...this.state.destinations]
+              : [];
     for (const f of this.filters) {
       rows = rows.filter((row) => {
         const v = row[f.col];
@@ -749,6 +761,126 @@ describe('Cap scope: per user across workspaces (owner decision 2026-10-31)', ()
     });
     const period = await assertCanPost(fakeClient(state), 'user-1', 'facebook', 'page-c', NOW);
     expect(period.id).toBe('period-1');
+  });
+});
+
+describe('Disconnected destinations do not count (owner decision 2026-11-02)', () => {
+  // Boundary is EXACT: ONLY status 'disconnected' is excluded.
+  // invalid_token, page_checkpoint, paused, and rate-limited rows
+  // keep counting. The exclusion is a read-time filter on the
+  // destination_id link — no usage row is deleted, so a reconnected
+  // destination counts again with no re-registration.
+  function disconnectedState(overrides: Partial<FakeState> = {}): FakeState {
+    return baseState({
+      workspaces: [{ id: 'ws-1', owner_id: 'user-1' }],
+      ...overrides,
+    });
+  }
+
+  function destinationRow(id: string, status: string, platform = 'facebook'): Row {
+    return { id, workspace_id: 'ws-1', platform, status };
+  }
+
+  function usageRow(key: string, destinationId: string | null, platform = 'facebook'): Row {
+    return {
+      user_id: 'user-1',
+      platform,
+      destination_key: key,
+      destination_id: destinationId,
+      feature: 'destination-queue',
+    };
+  }
+
+  it('excludes a disconnected destination from the count', async () => {
+    const state = disconnectedState({
+      destinations: [
+        destinationRow('dest-active', 'active'),
+        destinationRow('dest-disc', 'disconnected'),
+      ],
+      usageRows: [usageRow('page-a', 'dest-active'), usageRow('page-b', 'dest-disc')],
+    });
+    await expect(getUsageCount(fakeClient(state), 'user-1', 'facebook')).resolves.toBe(1);
+    await expect(getUsageCounts(fakeClient(state), 'user-1')).resolves.toMatchObject({
+      facebook: 1,
+    });
+  });
+
+  it('excludes ONLY disconnected: expired, checkpoint, and paused keep counting', async () => {
+    const state = disconnectedState({
+      destinations: [
+        destinationRow('dest-active', 'active'),
+        destinationRow('dest-expired', 'invalid_token'),
+        destinationRow('dest-checkpoint', 'page_checkpoint'),
+        destinationRow('dest-paused', 'paused'),
+        destinationRow('dest-disc', 'disconnected'),
+      ],
+      usageRows: [
+        usageRow('page-a', 'dest-active'),
+        usageRow('page-b', 'dest-expired'),
+        usageRow('page-c', 'dest-checkpoint'),
+        usageRow('page-d', 'dest-paused'),
+        usageRow('page-e', 'dest-disc'),
+      ],
+    });
+    await expect(getUsageCount(fakeClient(state), 'user-1', 'facebook')).resolves.toBe(4);
+  });
+
+  it('counts a reconnected destination again with no new registration', async () => {
+    const state = disconnectedState({
+      destinations: [destinationRow('dest-disc', 'disconnected')],
+      usageRows: [usageRow('page-b', 'dest-disc')],
+    });
+    await expect(getUsageCount(fakeClient(state), 'user-1', 'facebook')).resolves.toBe(0);
+    // The status flips back; the SAME usage row is still there.
+    state.destinations = [destinationRow('dest-disc', 'active')];
+    await expect(getUsageCount(fakeClient(state), 'user-1', 'facebook')).resolves.toBe(1);
+  });
+
+  it('keeps unlinked and legacy usage rows counting unchanged', async () => {
+    const state = disconnectedState({
+      destinations: [destinationRow('dest-disc', 'disconnected')],
+      usageRows: [
+        usageRow('page-legacy', null),
+        { user_id: 'user-1', platform: 'facebook', destination_key: 'page-old', feature: 'destination-queue' },
+        usageRow('page-b', 'dest-disc'),
+      ],
+    });
+    await expect(getUsageCount(fakeClient(state), 'user-1', 'facebook')).resolves.toBe(2);
+  });
+
+  it('does not exclude a disconnected destination owned by another user', async () => {
+    const state = disconnectedState({
+      workspaces: [
+        { id: 'ws-1', owner_id: 'user-1' },
+        { id: 'ws-2', owner_id: 'user-2' },
+      ],
+      // dest-other lives in user-2's workspace, so user-1's count
+      // keeps it: the exclusion only follows the user's own rows.
+      destinations: [
+        { id: 'dest-other', workspace_id: 'ws-2', platform: 'facebook', status: 'disconnected' },
+      ],
+      usageRows: [usageRow('page-x', 'dest-other')],
+    });
+    await expect(getUsageCount(fakeClient(state), 'user-1', 'facebook')).resolves.toBe(1);
+  });
+
+  it('allows a new destination when the only used slots are disconnected rows', async () => {
+    const state = disconnectedState({
+      periods: [periodRow({ facebook_count: 1 })],
+      destinations: [destinationRow('dest-disc', 'disconnected')],
+      usageRows: [usageRow('page-b', 'dest-disc')],
+    });
+    const period = await assertCanPost(fakeClient(state), 'user-1', 'facebook', 'page-c', NOW);
+    expect(period.id).toBe('period-1');
+  });
+
+  it('fails closed when the disconnected-destinations lookup errors', async () => {
+    const state = disconnectedState({
+      selectErrors: { workspaces: { message: 'db down' } },
+    });
+    await expect(getUsageCount(fakeClient(state), 'user-1', 'facebook')).rejects.toMatchObject({
+      code: 'ENTITLEMENT_UNAVAILABLE',
+    });
   });
 });
 

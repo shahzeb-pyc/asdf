@@ -300,6 +300,141 @@ export async function hasPendingPayment(
   return Array.isArray(data) && data.length > 0;
 }
 
+/**
+ * Disconnected destinations do NOT count toward the cap (owner
+ * decision 2026-11-02, exact boundary: ONLY status 'disconnected').
+ * Expired tokens (invalid_token), identity checks (page_checkpoint),
+ * paused, and rate-limited destinations KEEP counting.
+ *
+ * The exclusion is a read-time filter, never a row deletion: a
+ * disconnected destination that is later reconnected (status flips
+ * back) counts again automatically, with no re-registration step.
+ *
+ * Link rule: a usage row links to a destinations row ONLY through
+ * `subscription_usage.destination_id` (= `destinations.id`; every
+ * current registerUsage call site passes the row id). The
+ * `destination_key` column is NOT a link — it carries
+ * `external_destination_id ?? id`, a platform id in the common
+ * case — so it is never matched against `destinations.id`. Rows
+ * with a NULL `destination_id` (legacy / generic-feature rows) link
+ * to nothing and keep counting exactly as before.
+ */
+async function getDisconnectedDestinationIdsByPlatform(
+  client: SupabaseClient,
+  userId: string
+): Promise<Map<SubscriptionPlatform, string[]>> {
+  const byPlatform = new Map<SubscriptionPlatform, string[]>();
+  const { data: workspaceRows, error: workspaceError } = await client
+    .from('workspaces')
+    .select('id')
+    .eq('owner_id', userId);
+  if (workspaceError) {
+    logServerError('[billing] user workspaces query failed', workspaceError, {
+      source: 'billing',
+    });
+    throw new SubscriptionGateError(
+      'ENTITLEMENT_UNAVAILABLE',
+      'Your plan could not be checked right now. Please try again.'
+    );
+  }
+  const workspaceIds = (Array.isArray(workspaceRows) ? workspaceRows : [])
+    .map((row) => asRow(row)?.['id'])
+    .filter((id): id is string => typeof id === 'string' && id.length > 0);
+  if (workspaceIds.length === 0) return byPlatform;
+  const { data: destinationRows, error: destinationError } = await client
+    .from('destinations')
+    .select('id, platform')
+    .in('workspace_id', workspaceIds)
+    .eq('status', 'disconnected');
+  if (destinationError) {
+    logServerError('[billing] disconnected destinations query failed', destinationError, {
+      source: 'billing',
+    });
+    throw new SubscriptionGateError(
+      'ENTITLEMENT_UNAVAILABLE',
+      'Your plan could not be checked right now. Please try again.'
+    );
+  }
+  const knownPlatforms = new Set<string>(SUBSCRIPTION_PLATFORMS);
+  for (const row of Array.isArray(destinationRows) ? destinationRows : []) {
+    const parsed = asRow(row);
+    const id = parsed?.['id'];
+    const platform = parsed?.['platform'];
+    if (
+      typeof id !== 'string' ||
+      id.length === 0 ||
+      typeof platform !== 'string' ||
+      !knownPlatforms.has(platform)
+    ) {
+      continue;
+    }
+    const list = byPlatform.get(platform as SubscriptionPlatform) ?? [];
+    list.push(id);
+    byPlatform.set(platform as SubscriptionPlatform, list);
+  }
+  return byPlatform;
+}
+
+/**
+ * Exact usage count for one platform, via count queries — never a
+ * row list. A row list would silently truncate at PostgREST's
+ * 1,000-row limit and under-report usage; the count queries do not.
+ * When disconnected destination ids are supplied, usage rows linked
+ * to them are subtracted (same publish-now exclusions on both
+ * counts, so a disconnected destination's legacy publish-now row
+ * can never over-subtract). The result is clamped at zero: a
+ * registry that somehow holds more disconnected-linked rows than
+ * total rows must never report a negative count.
+ */
+async function countUsageForPlatform(
+  client: SupabaseClient,
+  userId: string,
+  platform: SubscriptionPlatform,
+  disconnectedDestinationIds: string[],
+  // The two callers keep their distinct log messages (existing
+  // tests assert each one); the shared helper must not merge them.
+  failureLogMessage: string
+): Promise<number> {
+  const { count, error } = await client
+    .from('subscription_usage')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .eq('platform', platform)
+    // Publish Now rows never count toward any cap.
+    .neq('feature', 'publish-now')
+    .neq('feature', 'instagram-publish-now')
+    .neq('feature', 'threads-publish-now');
+  if (error) {
+    logServerError(failureLogMessage, error, { source: 'billing' });
+    throw new SubscriptionGateError(
+      'ENTITLEMENT_UNAVAILABLE',
+      'Your plan could not be checked right now. Please try again.'
+    );
+  }
+  const raw = typeof count === 'number' ? count : 0;
+  if (disconnectedDestinationIds.length === 0) return raw;
+  const { count: disconnectedCount, error: disconnectedError } = await client
+    .from('subscription_usage')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .eq('platform', platform)
+    .neq('feature', 'publish-now')
+    .neq('feature', 'instagram-publish-now')
+    .neq('feature', 'threads-publish-now')
+    .in('destination_id', disconnectedDestinationIds);
+  if (disconnectedError) {
+    logServerError('[billing] disconnected usage count query failed', disconnectedError, {
+      source: 'billing',
+    });
+    throw new SubscriptionGateError(
+      'ENTITLEMENT_UNAVAILABLE',
+      'Your plan could not be checked right now. Please try again.'
+    );
+  }
+  const disconnected = typeof disconnectedCount === 'number' ? disconnectedCount : 0;
+  return Math.max(0, raw - disconnected);
+}
+
 export async function getUsageCounts(
   client: SupabaseClient,
   userId: string
@@ -312,24 +447,18 @@ export async function getUsageCounts(
     tiktok: 0,
     youtube: 0,
   };
+  const disconnectedByPlatform = await getDisconnectedDestinationIdsByPlatform(
+    client,
+    userId
+  );
   for (const platform of SUBSCRIPTION_PLATFORMS) {
-    const { count, error } = await client
-      .from('subscription_usage')
-      .select('id', { count: 'exact', head: true })
-      .eq('user_id', userId)
-      .eq('platform', platform)
-      // Publish Now rows never count toward any cap.
-      .neq('feature', 'publish-now')
-      .neq('feature', 'instagram-publish-now')
-      .neq('feature', 'threads-publish-now');
-    if (error) {
-      logServerError('[billing] usage counts query failed', error, { source: 'billing' });
-      throw new SubscriptionGateError(
-        'ENTITLEMENT_UNAVAILABLE',
-        'Your plan could not be checked right now. Please try again.'
-      );
-    }
-    usage[platform] = typeof count === 'number' ? count : 0;
+    usage[platform] = await countUsageForPlatform(
+      client,
+      userId,
+      platform,
+      disconnectedByPlatform.get(platform) ?? [],
+      '[billing] usage counts query failed'
+    );
   }
   return usage;
 }
@@ -338,29 +467,25 @@ export async function getUsageCounts(
  * Exact usage count for one platform, via a count query — never a
  * row list. A row list would silently truncate at PostgREST's
  * 1,000-row limit and under-report usage; the count query does not.
+ * Usage rows linked to a 'disconnected' destinations row are
+ * excluded (see getDisconnectedDestinationIdsByPlatform).
  */
 export async function getUsageCount(
   client: SupabaseClient,
   userId: string,
   platform: SubscriptionPlatform
 ): Promise<number> {
-  const { count, error } = await client
-    .from('subscription_usage')
-    .select('id', { count: 'exact', head: true })
-    .eq('user_id', userId)
-    .eq('platform', platform)
-    // Publish Now rows never count toward any cap.
-    .neq('feature', 'publish-now')
-    .neq('feature', 'instagram-publish-now')
-    .neq('feature', 'threads-publish-now');
-  if (error) {
-    logServerError('[billing] usage count query failed', error, { source: 'billing' });
-    throw new SubscriptionGateError(
-      'ENTITLEMENT_UNAVAILABLE',
-      'Your plan could not be checked right now. Please try again.'
-    );
-  }
-  return typeof count === 'number' ? count : 0;
+  const disconnectedByPlatform = await getDisconnectedDestinationIdsByPlatform(
+    client,
+    userId
+  );
+  return countUsageForPlatform(
+    client,
+    userId,
+    platform,
+    disconnectedByPlatform.get(platform) ?? [],
+    '[billing] usage count query failed'
+  );
 }
 
 /** Single-row existence check for one destination in the registry. */
