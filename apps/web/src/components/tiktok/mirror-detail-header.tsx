@@ -211,7 +211,7 @@ export function MirrorDetailHeader({
                     ) : (
                       <span
                         aria-hidden
-                        className="flex size-5 shrink-0 items-center justify-center rounded-full bg-subtle text-[10px] font-bold text-ink"
+                        className="flex size-5 shrink-0 items-center justify-center rounded-full bg-subtle text-xs font-bold text-ink"
                       >
                         {getUserInitials(mirror.targetAccountDisplayName)}
                       </span>
@@ -277,7 +277,7 @@ export function MirrorDetailHeader({
               ) : (
                 <span
                   aria-hidden
-                  className="flex size-5 shrink-0 items-center justify-center rounded-full bg-subtle text-[10px] font-bold text-ink"
+                  className="flex size-5 shrink-0 items-center justify-center rounded-full bg-subtle text-xs font-bold text-ink"
                 >
                   {sourceInitial}
                 </span>
@@ -327,6 +327,7 @@ export function MirrorDetailHeader({
           {menuOpen ? (
             <div
               role="menu"
+              tabIndex={-1}
               data-testid="mirror-detail-menu"
               onKeyDown={(e) => {
                 if (e.key === 'Escape') setMenuOpen(false);
