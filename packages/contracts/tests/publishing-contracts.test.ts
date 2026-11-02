@@ -266,9 +266,12 @@ describe('Publishing Engine Domain Contracts', () => {
       it('enforces character limits on updates', () => {
         // R13: the edit cap matches creation (63,206), not the old
         // 5,000 — a long created post must stay editable.
+        // First-comment edit cap is 8,000, matching the enqueue cap:
+        // an 8,000-char comment that queued must stay editable.
         expect(UpdateQueueItemRequestSchema.safeParse({ caption: 'C'.repeat(63206) }).success).toBe(true);
         expect(UpdateQueueItemRequestSchema.safeParse({ caption: 'C'.repeat(63207) }).success).toBe(false);
-        expect(UpdateQueueItemRequestSchema.safeParse({ firstComment: 'D'.repeat(2001) }).success).toBe(false);
+        expect(UpdateQueueItemRequestSchema.safeParse({ firstComment: 'D'.repeat(8000) }).success).toBe(true);
+        expect(UpdateQueueItemRequestSchema.safeParse({ firstComment: 'D'.repeat(8001) }).success).toBe(false);
       });
 
       it('holds reel edits to 2,200 characters (R13)', () => {

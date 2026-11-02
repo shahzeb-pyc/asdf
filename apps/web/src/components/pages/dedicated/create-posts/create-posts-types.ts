@@ -57,6 +57,16 @@ export function composerPostTypeLabel(
   return 'Video post';
 }
 
+/**
+ * First-comment limit, shared by the per-block and composer-wide
+ * fields. Same as the direct Publish Now page's field (8,000), which
+ * is Facebook's comment length. NOTE: the destination-queue enqueue
+ * contract still caps firstComment at 2,000 — see the spec's known
+ * limitation — so values above 2,000 are refused by the server at
+ * enqueue time until that contract is widened.
+ */
+export const FIRST_COMMENT_MAX_LENGTH = 8000;
+
 /** Derives a block's type label from its text + attached media. */
 export function blockTypeLabel(
   text: string,

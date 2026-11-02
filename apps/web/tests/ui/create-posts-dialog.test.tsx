@@ -424,3 +424,123 @@ describe('CreatePostsDialog K8 pages-cache invalidation', () => {
     expect(keys).toContainEqual(['tenant', 'acme', 'pages', PAGE_ID]);
   });
 });
+
+describe('CreatePostsDialog first comments', () => {
+  function composerFirstCommentBox() {
+    return screen.getByTestId(
+      'create-posts-composer-first-comment'
+    ) as HTMLTextAreaElement;
+  }
+
+  function blockAddButtons() {
+    return screen.getAllByTestId('create-posts-block-add-first-comment-btn');
+  }
+
+  function blockFirstCommentBoxes() {
+    return screen.getAllByTestId(
+      'create-posts-block-first-comment'
+    ) as HTMLTextAreaElement[];
+  }
+
+  function enqueueBodies() {
+    return apiPost.mock.calls.map(
+      (call) => call[1] as Record<string, unknown>
+    );
+  }
+
+  async function queueOnce() {
+    fireEvent.click(queueButton());
+    await waitFor(() => {
+      expect(apiPost).toHaveBeenCalled();
+    });
+  }
+
+  it('sends a block’s own first comment with its enqueue', async () => {
+    renderDialog();
+    typePost('hello');
+    fireEvent.click(blockAddButtons()[0]);
+    fireEvent.change(blockFirstCommentBoxes()[0], {
+      target: { value: 'my first comment' },
+    });
+    await queueOnce();
+    expect(apiPost).toHaveBeenCalledTimes(1);
+    expect(enqueueBodies()[0]).toMatchObject({
+      caption: 'hello',
+      firstComment: 'my first comment',
+    });
+  });
+
+  it('composer-wide value fills blocks without their own comment, including bulk text blocks', async () => {
+    renderDialog();
+    fireEvent.change(composerFirstCommentBox(), {
+      target: { value: 'applies to all' },
+    });
+    fireEvent.click(screen.getByTestId('create-posts-bulk-text-btn'));
+    const input = screen.getByTestId('bulk-text-input') as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: 'one\ntwo' } });
+    fireEvent.click(screen.getByTestId('bulk-text-add-btn'));
+    await waitFor(() => {
+      expect(screen.getByText('Post 2')).not.toBeNull();
+    });
+    await queueOnce();
+    expect(apiPost).toHaveBeenCalledTimes(2);
+    expect(enqueueBodies()[0].firstComment).toBe('applies to all');
+    expect(enqueueBodies()[1].firstComment).toBe('applies to all');
+  });
+
+  it('a block’s own comment overrides the composer-wide value for that block only', async () => {
+    renderDialog();
+    fireEvent.change(composerFirstCommentBox(), {
+      target: { value: 'wide comment' },
+    });
+    typePost('first');
+    typePost('second', 1);
+    fireEvent.click(blockAddButtons()[0]);
+    fireEvent.change(blockFirstCommentBoxes()[0], {
+      target: { value: 'own comment' },
+    });
+    await queueOnce();
+    expect(apiPost).toHaveBeenCalledTimes(2);
+    expect(enqueueBodies()[0].firstComment).toBe('own comment');
+    expect(enqueueBodies()[1].firstComment).toBe('wide comment');
+  });
+
+  it('sends no firstComment key when both values are empty', async () => {
+    renderDialog();
+    typePost('hello');
+    await queueOnce();
+    expect(apiPost).toHaveBeenCalledTimes(1);
+    expect('firstComment' in enqueueBodies()[0]).toBe(false);
+  });
+
+  it('refuses an over-8,000 composer-wide first comment without calling the API', async () => {
+    renderDialog();
+    fireEvent.change(composerFirstCommentBox(), {
+      target: { value: 'x'.repeat(8001) },
+    });
+    typePost('hello');
+    fireEvent.click(queueButton());
+    await waitFor(() => {
+      expect(toastError).toHaveBeenCalled();
+    });
+    expect(apiPost).not.toHaveBeenCalled();
+    expect(toastError.mock.calls[0][0]).toContain('first comment for all posts');
+    expect(toastError.mock.calls[0][0]).toContain('8,000-character');
+  });
+
+  it('refuses an over-8,000 per-block first comment without calling the API', async () => {
+    renderDialog();
+    typePost('hello');
+    fireEvent.click(blockAddButtons()[0]);
+    fireEvent.change(blockFirstCommentBoxes()[0], {
+      target: { value: 'y'.repeat(8001) },
+    });
+    fireEvent.click(queueButton());
+    await waitFor(() => {
+      expect(toastError).toHaveBeenCalled();
+    });
+    expect(apiPost).not.toHaveBeenCalled();
+    expect(toastError.mock.calls[0][0]).toContain('Post 1');
+    expect(toastError.mock.calls[0][0]).toContain('first comment');
+  });
+});

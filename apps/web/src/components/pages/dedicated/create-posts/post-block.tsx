@@ -32,7 +32,7 @@ import {
   deriveComposerPostType,
   type ComposerDraftBlock,
 } from '@fbuploadpro/contracts';
-import { blockTypeLabel } from './create-posts-types';
+import { blockTypeLabel, FIRST_COMMENT_MAX_LENGTH } from './create-posts-types';
 
 const TYPE_NOUNS = {
   text: 'text post',
@@ -51,6 +51,11 @@ export interface PostBlockProps {
   onAttachRequest: () => void;
   onRemoveMedia: () => void;
   onRemove: () => void;
+  /** This block's own first comment (dialogue state, keyed by id —
+   *  deliberately not part of ComposerDraftBlock). Empty means "fall
+   *  back to the composer's composer-wide value at queue time". */
+  firstComment: string;
+  onFirstCommentChange: (value: string) => void;
 }
 
 export function PostBlock({
@@ -62,7 +67,16 @@ export function PostBlock({
   onAttachRequest,
   onRemoveMedia,
   onRemove,
+  firstComment,
+  onFirstCommentChange,
 }: Readonly<PostBlockProps>) {
+  // Collapsed until opened or filled: a full textarea on every block
+  // would double the composer's height for a rarely-used field. The
+  // value itself lives in the dialogue; this is only the disclosure.
+  const [firstCommentOpen, setFirstCommentOpen] = React.useState(false);
+  const showFirstComment = firstCommentOpen || firstComment.length > 0;
+  const firstCommentCount = firstComment.length;
+  const firstCommentOver = firstCommentCount - FIRST_COMMENT_MAX_LENGTH;
   const typeLabel = blockTypeLabel(block.text, block.media);
   // The limit follows the block's CURRENT derived type: attaching
   // or removing media flips the type (and the limit with it). Text
@@ -191,6 +205,75 @@ export function PostBlock({
           </p>
         </>
       ) : null}
+
+      {/* Per-post first comment, optional. Collapsed to one quiet
+          button until opened or filled, so blocks stay compact.
+          At queue time this value wins over the composer's
+          composer-wide value for this block only; empty means
+          "use the composer-wide value". Over-limit input stays
+          fully visible and is refused at queue time, like caption
+          over-limit — never truncated here. */}
+      {showFirstComment ? (
+        <div className="mt-3">
+          <Textarea
+            data-testid="create-posts-block-first-comment"
+            aria-label={`First comment for ${label}`}
+            placeholder="First comment (optional)"
+            value={firstComment}
+            disabled={disabled}
+            onChange={(event) => onFirstCommentChange(event.target.value)}
+            className="min-h-16"
+          />
+          <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+            <span
+              data-testid="create-posts-block-first-comment-count"
+              className={
+                firstCommentOver > 0
+                  ? 'text-metadata text-signal-critical'
+                  : 'text-metadata text-ink-dim'
+              }
+            >
+              {firstCommentCount.toLocaleString('en-US')} /{' '}
+              {FIRST_COMMENT_MAX_LENGTH.toLocaleString('en-US')}
+            </span>
+            {firstCommentOver > 0 ? (
+              <span
+                data-testid="create-posts-block-first-comment-over-limit"
+                className="text-metadata text-signal-critical"
+              >
+                Over the {FIRST_COMMENT_MAX_LENGTH.toLocaleString('en-US')}
+                -character first comment limit by{' '}
+                {firstCommentOver.toLocaleString('en-US')} characters.
+              </span>
+            ) : null}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              data-testid="create-posts-block-remove-first-comment-btn"
+              disabled={disabled}
+              onClick={() => {
+                onFirstCommentChange('');
+                setFirstCommentOpen(false);
+              }}
+            >
+              Remove first comment
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          data-testid="create-posts-block-add-first-comment-btn"
+          disabled={disabled}
+          onClick={() => setFirstCommentOpen(true)}
+          className="mt-3"
+        >
+          Add first comment
+        </Button>
+      )}
     </div>
   );
 }

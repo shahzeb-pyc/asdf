@@ -196,7 +196,7 @@ export type EnqueueRequest = z.infer<typeof EnqueueRequestSchema>;
 export const UpdateQueueItemRequestSchema = z
   .object({
     caption: z.string().max(63206).optional(),
-    firstComment: z.string().max(2000).nullable().optional(),
+    firstComment: z.string().max(8000).nullable().optional(),
     scheduledTime: z.string().datetime().optional(),
     status: z.enum(['queued', 'skipped', 'cancelled']).optional(),
     postFormat: PostFormatSchema.optional(),
