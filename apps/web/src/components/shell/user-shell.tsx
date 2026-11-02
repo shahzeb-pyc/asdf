@@ -9,6 +9,7 @@ import {
 import { Toaster } from '@/components/shared/ui/toast';
 import { WorkspaceBreadcrumb } from '@/components/workspace/workspace-breadcrumb';
 import { CommandPaletteHost } from '@/components/shell/command-palette-host';
+import { TopbarPlanPill } from '@/components/shell/topbar-plan-pill';
 import { DownloadTray } from '@/components/shell/download-tray';
 import { WorkspaceLifecycleGuard } from '@/components/workspace/workspace-lifecycle-guard';
 import { FreePlanGate } from '@/components/billing/free-plan-gate';
@@ -114,6 +115,7 @@ export function UserShell({
                 next/dynamic on first open (PR-130-4's one mount edit
                 to this layout).
               */}
+              <TopbarPlanPill subdomain={subdomain} useCleanPaths={useCleanPaths} />
               <CommandPaletteHost subdomain={subdomain} useCleanPaths={useCleanPaths} />
             </header>
             {/*
