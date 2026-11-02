@@ -174,7 +174,7 @@ function removeExtraThreadsLinks(text: string): string {
   }
   if (!changed) return text;
   out += text.slice(lastIndex);
-  return out.replace(/\s+$/, '');
+  return out.trimEnd();
 }
 
 /**
@@ -215,7 +215,7 @@ function truncateToThreadsWeightedLength(text: string): string {
       break;
     }
   }
-  return kept.replace(/\s+$/, '');
+  return kept.trimEnd();
 }
 
 /**

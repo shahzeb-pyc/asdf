@@ -109,6 +109,15 @@ describe('Threads options (spec 124)', () => {
     expect(validateThreadsText(truncated)).toBeNull();
   });
 
+  it('mirror caption truncation strips trailing whitespace left by a cut', () => {
+    // 499 characters, then a space at the 500 boundary, then more text:
+    // the cut keeps the space, and the trailing whitespace must be stripped.
+    const truncated = truncateThreadsCaption(`${'x'.repeat(499)} ${'y'.repeat(100)}`);
+    expect(truncated).toBe('x'.repeat(499));
+    expect(truncated.endsWith(' ')).toBe(false);
+    expect(validateThreadsText(truncated)).toBeNull();
+  });
+
   it('mirror caption truncation never splits an emoji at the boundary', () => {
     // 124 party emoji = 496 weighted characters; one more would be 500,
     // the next would push it to 504, so the cut keeps exactly 125.
