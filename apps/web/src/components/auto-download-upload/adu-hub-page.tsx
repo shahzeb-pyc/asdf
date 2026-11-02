@@ -4,7 +4,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { PlusIcon } from 'lucide-react';
-import { parseAduBulkPaste, parseAduCsv } from '@fbuploadpro/contracts';
+import { parseAduBulkPaste } from '@fbuploadpro/contracts';
 import { Banner } from '@/components/shared/ui/banner';
 import { Button } from '@/components/shared/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/shared/ui/card';
@@ -245,7 +245,6 @@ export function AduHubPage({ subdomain }: { subdomain: string }) {
 function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
   subdomain: string; open: boolean; onOpenChange: (open: boolean) => void; onCreated: () => void;
 }) {
-  const [mode, setMode] = React.useState<'single' | 'bulk' | 'multi'>('single');
   const [step, setStep] = React.useState(1);
   const [accounts, setAccounts] = React.useState<PickerAccount[]>([]);
   const [pages, setPages] = React.useState<PickerPage[]>([]);
@@ -258,14 +257,12 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
   const [pasteOpen, setPasteOpen] = React.useState(false);
   const [pasteText, setPasteText] = React.useState('');
   const [pasteFeedback, setPasteFeedback] = React.useState<string | null>(null);
-  const [csvFeedback, setCsvFeedback] = React.useState<string | null>(null);
   const [postsPerDay, setPostsPerDay] = React.useState(1);
   const [timezone, setTimezone] = React.useState('Asia/Karachi');
   const [scheduleType, setScheduleType] = React.useState<'dailyrandom' | 'fixed'>('dailyrandom');
   const [fixedTimes, setFixedTimes] = React.useState<string[]>(['09:00']);
-  // Bulk / multi only: old 'Apply Schedule' scope. 'all' is the shared
-  // schedule above; 'separate' keeps one schedule per selected page,
-  // exactly like the old AddPageDialog (bulkScheduleByPage).
+  // 'all' is the shared schedule below; 'separate' keeps one schedule
+  // per selected page.
   type PageSchedule = { postsPerDay: number; timezone: string; postingTimes: string[] };
   const [timingScope, setTimingScope] = React.useState<'all' | 'separate'>('all');
   const [schedulesByPage, setSchedulesByPage] = React.useState<Record<string, PageSchedule>>({});
@@ -309,10 +306,9 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
       .finally(() => setOptionsLoading(false));
   }, [open, subdomain]);
 
-  const totalSteps = mode === 'single' ? 2 : 3;
   const filteredAccounts = accounts.filter((a) => a.display_name.toLowerCase().includes(accountSearch.toLowerCase()));
   const visiblePages = pages.filter((p) =>
-    (mode === 'single' || selectedAccountIds.length === 0 || selectedAccountIds.includes(p.account_id)) &&
+    (selectedAccountIds.length === 0 || selectedAccountIds.includes(p.account_id)) &&
     p.name.toLowerCase().includes(pageSearch.toLowerCase())
   );
   const selectedPages = pages.filter((p) => selectedPageIds.includes(p.id));
@@ -322,6 +318,9 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
   const toggle = (list: string[], id: string, set: (v: string[]) => void) => {
     set(list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
   };
+
+  const sourcePlaceholder = (platform: Platform) =>
+    platform === 'youtube' ? 'channel_id' : platform === 'facebook' ? 'page_or_user_id' : '@username';
 
   const applyPaste = () => {
     const parsed = parseAduBulkPaste(pasteText, 'tiktok');
@@ -345,88 +344,56 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
     setPasteOpen(false);
   };
 
-  const applyCsv = async (file: File) => {
-    const text = await file.text();
-    const parsed = parseAduCsv(text);
-    const next = { ...sources };
-    let applied = 0;
-    for (const row of parsed.rows) {
-      const page = selectedPages.find((p) => p.name.trim().replace(/\s+/g, ' ').toLowerCase() === row.pageName.toLowerCase());
-      if (page) { next[page.id] = { platform: row.platform, username: row.username }; applied += 1; }
-    }
-    setSources(next);
-    setCsvFeedback(`Applied ${applied} rows. ${parsed.warnings.join(' ')}`);
-  };
-
   const submit = async () => {
     setSubmitting(true); setError(null); setResult(null);
     try {
-      if (mode === 'single') {
-        const page = selectedPages[0];
-        const source = page ? sources[page.id] : undefined;
-        if (!page || !source?.username.trim()) throw new Error('Select a page and enter a source username.');
-        const response = await fetch(buildTenantApiPath(subdomain, '/auto-download-upload'), {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            destinationId: page.id, sourcePlatform: source.platform, sourceUsername: source.username,
-            timezone, postsPerDay, scheduleType,
-            postingTimes: scheduleType === 'fixed' ? fixedTimes.slice(0, postsPerDay) : undefined,
-          }),
-        });
-        const body = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(body.error ?? 'Could not add this page.');
-        setResult('Page added. Automation will discover its reels on the next run.');
-      } else {
-        // Bulk / multi: 'all' uses the shared schedule below; 'separate'
-        // sends one schedule per page, exactly like the old dialog.
-        // Per-page failures are reported individually.
-        if (timingScope === 'separate' && scheduleType === 'fixed') {
-          for (const p of selectedPages) {
-            const s = pageSchedule(p.id);
-            if (s.postingTimes.length !== s.postsPerDay || s.postingTimes.some((t) => !String(t ?? '').trim())) {
-              throw new Error(`Fixed posting requires ${s.postsPerDay} posting times for "${p.name}".`);
-            }
-          }
-        }
-        if (timingScope === 'separate') {
-          for (const p of selectedPages) {
-            const s = pageSchedule(p.id);
-            if (!s.timezone.trim() || !Number.isInteger(s.postsPerDay) || s.postsPerDay < 1 || s.postsPerDay > 12) {
-              throw new Error(`Please complete timezone and posts per day for "${p.name}".`);
-            }
-          }
-        }
-        const items = selectedPages.map((p) => {
-          const base = {
-            destinationId: p.id,
-            sourcePlatform: sources[p.id]?.platform ?? 'tiktok',
-            sourceUsername: sources[p.id]?.username ?? '',
-          };
-          if (timingScope !== 'separate') return base;
+      // 'all' uses the shared schedule below; 'separate' sends one
+      // schedule per page. Per-page failures are reported individually.
+      if (timingScope === 'separate' && scheduleType === 'fixed') {
+        for (const p of selectedPages) {
           const s = pageSchedule(p.id);
-          return {
-            ...base,
-            schedule: {
-              timezone: s.timezone,
-              postsPerDay: s.postsPerDay,
-              postingTimes: scheduleType === 'fixed' ? s.postingTimes : undefined,
-            },
-          };
-        });
-        const response = await fetch(buildTenantApiPath(subdomain, '/auto-download-upload'), {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            items, timezone, postsPerDay, scheduleType,
-            postingTimes: scheduleType === 'fixed' ? fixedTimes.slice(0, postsPerDay) : undefined,
-          }),
-        });
-        const body = await response.json().catch(() => ({}));
-        if (!response.ok && !(body.created ?? []).length) throw new Error(body.error ?? 'Could not add these pages.');
-        const failedText = (body.failed ?? []).map((f: { destinationId: string; error: string }) => f.error).join(' ');
-        setResult(`Created ${(body.created ?? []).length} pages.${failedText ? ` Failed: ${failedText}` : ''}`);
-        if ((body.failed ?? []).length === 0) onCreated();
+          if (s.postingTimes.length !== s.postsPerDay || s.postingTimes.some((t) => !String(t ?? '').trim())) {
+            throw new Error(`Fixed posting requires ${s.postsPerDay} posting times for "${p.name}".`);
+          }
+        }
       }
-      if (mode === 'single') onCreated();
+      if (timingScope === 'separate') {
+        for (const p of selectedPages) {
+          const s = pageSchedule(p.id);
+          if (!s.timezone.trim() || !Number.isInteger(s.postsPerDay) || s.postsPerDay < 1 || s.postsPerDay > 12) {
+            throw new Error(`Please complete timezone and posts per day for "${p.name}".`);
+          }
+        }
+      }
+      const items = selectedPages.map((p) => {
+        const base = {
+          destinationId: p.id,
+          sourcePlatform: sources[p.id]?.platform ?? 'tiktok',
+          sourceUsername: sources[p.id]?.username ?? '',
+        };
+        if (timingScope !== 'separate') return base;
+        const s = pageSchedule(p.id);
+        return {
+          ...base,
+          schedule: {
+            timezone: s.timezone,
+            postsPerDay: s.postsPerDay,
+            postingTimes: scheduleType === 'fixed' ? s.postingTimes : undefined,
+          },
+        };
+      });
+      const response = await fetch(buildTenantApiPath(subdomain, '/auto-download-upload'), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items, timezone, postsPerDay, scheduleType,
+          postingTimes: scheduleType === 'fixed' ? fixedTimes.slice(0, postsPerDay) : undefined,
+        }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok && !(body.created ?? []).length) throw new Error(body.error ?? 'Could not add these pages.');
+      const failedText = (body.failed ?? []).map((f: { destinationId: string; error: string }) => f.error).join(' ');
+      setResult(`Created ${(body.created ?? []).length} pages.${failedText ? ` Failed: ${failedText}` : ''}`);
+      if ((body.failed ?? []).length === 0) onCreated();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not add this page.');
     } finally {
@@ -434,25 +401,16 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
     }
   };
 
-  const stepSubtitle = mode === 'single'
-    ? (step === 1 ? 'Select Page' : 'Configure Settings')
-    : (step === 1 ? 'Select Pages' : step === 2 ? 'Add Source Usernames' : 'Schedule');
+  const stepSubtitle = step === 1 ? 'Select Pages' : 'Configure';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-dvh overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Add New Page</DialogTitle>
-          <DialogDescription>Step {step} of {totalSteps}: {stepSubtitle}</DialogDescription>
+          <DialogDescription>Step {step} of 2: {stepSubtitle}</DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-wrap gap-2">
-          {(['single', 'bulk', 'multi'] as const).map((m) => (
-            <Button key={m} type="button" variant={mode === m ? 'default' : 'outline'} onClick={() => { setMode(m); setStep(1); }}>
-              {m === 'single' ? 'Single Add' : m === 'bulk' ? 'Bulk Add' : 'Multi-Account + CSV'}
-            </Button>
-          ))}
-        </div>
         <p className="text-body text-ink-sub">{selectedPages.length} pages selected</p>
         {optionsMigrationMissing ? (
           <Banner variant="warning" title="ADU tables are not created yet" description="Apply migration 20261030120001_adu.sql to the database, then refresh this page. Until then, no ADU pages can be added." />
@@ -478,22 +436,17 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
                   <label key={account.id} className="flex items-center gap-2 rounded-md border p-2">
                     <Checkbox
                       checked={selectedAccountIds.includes(account.id)}
-                      onCheckedChange={() => {
-                        toggle(selectedAccountIds, account.id, setSelectedAccountIds);
-                        if (mode === 'single') setSelectedAccountIds([account.id]);
-                      }}
+                      onCheckedChange={() => toggle(selectedAccountIds, account.id, setSelectedAccountIds)}
                     />
                     <span className="min-w-0 flex-1 truncate">{account.display_name}</span>
                     <span className="font-mono text-metadata text-ink-dim">{account.external_account_id}</span>
                   </label>
                 ))}
               </div>
-              {mode !== 'single' ? (
-                <div className="mt-2 flex gap-2">
-                  <Button type="button" variant="outline" onClick={() => setSelectedAccountIds(accounts.map((a) => a.id))}>Select all accounts</Button>
-                  <Button type="button" variant="outline" onClick={() => setSelectedAccountIds([])}>Deselect all</Button>
-                </div>
-              ) : null}
+              <div className="mt-2 flex gap-2">
+                <Button type="button" variant="outline" onClick={() => setSelectedAccountIds(accounts.map((a) => a.id))}>Select all accounts</Button>
+                <Button type="button" variant="outline" onClick={() => setSelectedAccountIds([])}>Deselect all</Button>
+              </div>
             </div>
             <div>
               <h3 className="font-medium">Select Managed Page(s)</h3>
@@ -506,10 +459,7 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
                       <Checkbox
                         disabled={configuredAlready}
                         checked={selectedPageIds.includes(page.id)}
-                        onCheckedChange={() => {
-                          if (mode === 'single') setSelectedPageIds([page.id]);
-                          else toggle(selectedPageIds, page.id, setSelectedPageIds);
-                        }}
+                        onCheckedChange={() => toggle(selectedPageIds, page.id, setSelectedPageIds)}
                       />
                       <span className="min-w-0 flex-1 truncate">{page.name}</span>
                       <span className="font-mono text-metadata text-ink-dim">{page.external_destination_id}</span>
@@ -518,12 +468,10 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
                   );
                 })}
               </div>
-              {mode !== 'single' ? (
-                <div className="mt-2 flex gap-2">
-                  <Button type="button" variant="outline" onClick={() => setSelectedPageIds(visiblePages.filter((p) => !isConfigured(p.id)).map((p) => p.id))}>Select all pages</Button>
-                  <Button type="button" variant="outline" onClick={() => setSelectedPageIds([])}>Clear</Button>
-                </div>
-              ) : null}
+              <div className="mt-2 flex gap-2">
+                <Button type="button" variant="outline" onClick={() => setSelectedPageIds(visiblePages.filter((p) => !isConfigured(p.id)).map((p) => p.id))}>Select all pages</Button>
+                <Button type="button" variant="outline" onClick={() => setSelectedPageIds([])}>Clear</Button>
+              </div>
             </div>
               </>
             )}
@@ -531,205 +479,151 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
           </div>
         ) : null}
 
-        {step === 2 && mode === 'single' ? (
+        {step === 2 ? (
           <div className="flex flex-col gap-4">
             <div>
-              <label className="font-medium" htmlFor="adu-source-platform">Source platform</label>
-              <Select value={sources[selectedPages[0]?.id ?? '']?.platform ?? 'tiktok'} onValueChange={(v) => {
-                const page = selectedPages[0]; if (!page) return;
-                setSources({ ...sources, [page.id]: { platform: v as Platform, username: sources[page.id]?.username ?? '' } });
-              }}>
-                <SelectTrigger id="adu-source-platform"><SelectValue /></SelectTrigger>
-                <SelectContent>{PLATFORMS.map((p) => <SelectItem key={p} value={p} disabled={p !== 'tiktok'}>{p}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-            <div>
-              <label className="font-medium" htmlFor="adu-source-username">Source Identity</label>
-              <Input id="adu-source-username" placeholder={sources[selectedPages[0]?.id ?? '']?.platform === 'youtube' ? 'channel_id' : sources[selectedPages[0]?.id ?? '']?.platform === 'facebook' ? 'page_or_user_id' : '@username'} value={sources[selectedPages[0]?.id ?? '']?.username ?? ''} onChange={(e) => {
-                const page = selectedPages[0]; if (!page) return;
-                setSources({ ...sources, [page.id]: { platform: sources[page.id]?.platform ?? 'tiktok', username: e.target.value } });
-              }} />
-            </div>
-            <div>
-              <label className="font-medium" htmlFor="adu-single-posts-per-day">Posts Per Day</label>
-              <Input id="adu-single-posts-per-day" type="number" min={1} max={12} value={postsPerDay} onChange={(e) => { const n = Math.max(1, Math.min(12, Number(e.target.value) || 1)); setPostsPerDay(n); setFixedTimes(Array.from({ length: n }, (_, i) => fixedTimes[i] ?? '09:00')); }} />
-            </div>
-            <div>
-              <label className="font-medium" htmlFor="adu-single-timezone">Posting Timezone</label>
-              <Input id="adu-single-timezone" value={timezone} onChange={(e) => setTimezone(e.target.value)} />
-            </div>
-            <div className="flex gap-2">
-              <Button type="button" variant={scheduleType === 'dailyrandom' ? 'default' : 'outline'} onClick={() => setScheduleType('dailyrandom')}>Random Posting Times</Button>
-              <Button type="button" variant={scheduleType === 'fixed' ? 'default' : 'outline'} onClick={() => setScheduleType('fixed')}>Fixed Posting Times</Button>
-            </div>
-            {scheduleType === 'fixed' ? (
-              <div className="flex flex-col gap-2">
-                {Array.from({ length: postsPerDay }, (_, i) => (
-                  <Input key={i} type="time" value={fixedTimes[i] ?? '09:00'} onChange={(e) => { const next = [...fixedTimes]; next[i] = e.target.value; setFixedTimes(next); }} />
+              <h3 className="font-medium">Sources</h3>
+              <p className="text-body text-ink-sub">One source per page. Sources are assigned to the pages you picked.</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Button type="button" variant="outline" onClick={() => setPasteOpen(true)}>Paste sources (random assign)</Button>
+              </div>
+              {pasteFeedback ? <p className="text-body text-ink-sub">{pasteFeedback}</p> : null}
+              {pasteOpen ? (
+                <div className="mt-2 flex flex-col gap-2 rounded-md border p-3">
+                  <p className="text-body">One source per line, platform|username — for example instagram|ronaldo, facebook|messi. Sources are assigned randomly to empty page slots only.</p>
+                  <Textarea rows={6} value={pasteText} onChange={(e) => setPasteText(e.target.value)} placeholder={'instagram|ronaldo\nfacebook|messi'} />
+                  <div className="flex gap-2">
+                    <Button type="button" onClick={applyPaste}>Apply assignment</Button>
+                    <Button type="button" variant="outline" onClick={() => setPasteOpen(false)}>Cancel</Button>
+                  </div>
+                </div>
+              ) : null}
+              <div className="mt-2 flex flex-col gap-2">
+                {selectedPages.map((page) => (
+                  <div key={page.id} className="flex flex-wrap items-center gap-2 rounded-md border p-2">
+                    <span className="min-w-0 flex-1 truncate">{page.name}</span>
+                    <Select value={sources[page.id]?.platform ?? 'tiktok'} onValueChange={(v) => setSources({ ...sources, [page.id]: { platform: v as Platform, username: sources[page.id]?.username ?? '' } })}>
+                      <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+                      <SelectContent>{PLATFORMS.map((p) => <SelectItem key={p} value={p} disabled={p !== 'tiktok'}>{p}</SelectItem>)}</SelectContent>
+                    </Select>
+                    <Input placeholder={sourcePlaceholder(sources[page.id]?.platform ?? 'tiktok')} value={sources[page.id]?.username ?? ''} onChange={(e) => setSources({ ...sources, [page.id]: { platform: sources[page.id]?.platform ?? 'tiktok', username: e.target.value } })} className="w-48" />
+                  </div>
                 ))}
               </div>
-            ) : (
-              <p className="text-body text-ink-sub">Balanced random times will be automatically generated upon saving to ensure a minimum 5-hour gap between posts.</p>
-            )}
-            <div className="flex gap-2">
-              <Button type="button" variant="outline" onClick={() => setStep(1)}>Back</Button>
-              <Button type="button" disabled={submitting || !(sources[selectedPages[0]?.id ?? '']?.username ?? '').trim()} onClick={() => void submit()}>Start Automation</Button>
             </div>
-          </div>
-        ) : null}
 
-        {step === 2 && mode !== 'single' ? (
-          <div className="flex flex-col gap-4">
-            <h3 className="font-medium">Per-Page Source Mapping</h3>
-            <div className="flex flex-wrap gap-2">
-              <Button type="button" variant="outline" onClick={() => setPasteOpen(true)}>Paste sources (random assign)</Button>
-              {mode === 'multi' ? (
-                <label className="inline-flex cursor-pointer items-center rounded-md border px-3 py-2 text-body">
-                  Import CSV
-                  <input type="file" accept=".csv" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void applyCsv(f); }} />
-                </label>
-              ) : null}
-            </div>
-            {pasteFeedback ? <p className="text-body text-ink-sub">{pasteFeedback}</p> : null}
-            {csvFeedback ? <p className="text-body text-ink-sub">{csvFeedback}</p> : null}
-            {pasteOpen ? (
-              <div className="flex flex-col gap-2 rounded-md border p-3">
-                <p className="text-body">One source per line, platform|username — for example instagram|ronaldo, facebook|messi. Sources are assigned randomly to empty page slots only.</p>
-                <Textarea rows={6} value={pasteText} onChange={(e) => setPasteText(e.target.value)} placeholder={'instagram|ronaldo\nfacebook|messi'} />
-                <div className="flex gap-2">
-                  <Button type="button" onClick={applyPaste}>Apply assignment</Button>
-                  <Button type="button" variant="outline" onClick={() => setPasteOpen(false)}>Cancel</Button>
-                </div>
-              </div>
-            ) : null}
-            <div className="flex flex-col gap-2">
-              {selectedPages.map((page) => (
-                <div key={page.id} className="flex flex-wrap items-center gap-2 rounded-md border p-2">
-                  <span className="min-w-0 flex-1 truncate">{page.name}</span>
-                  <Select value={sources[page.id]?.platform ?? 'tiktok'} onValueChange={(v) => setSources({ ...sources, [page.id]: { platform: v as Platform, username: sources[page.id]?.username ?? '' } })}>
-                    <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
-                    <SelectContent>{PLATFORMS.map((p) => <SelectItem key={p} value={p} disabled={p !== 'tiktok'}>{p}</SelectItem>)}</SelectContent>
-                  </Select>
-                  <Input placeholder="@username" value={sources[page.id]?.username ?? ''} onChange={(e) => setSources({ ...sources, [page.id]: { platform: sources[page.id]?.platform ?? 'tiktok', username: e.target.value } })} className="w-48" />
-                </div>
-              ))}
-            </div>
-            <div className="flex gap-2">
-              <Button type="button" variant="outline" onClick={() => setStep(1)}>Back</Button>
-              <Button type="button" disabled={!allSourcesFilled} onClick={() => setStep(3)}>Next</Button>
-            </div>
-          </div>
-        ) : null}
+            <div aria-hidden className="border-t border-line" />
 
-        {(mode !== 'single' && step === 3) ? (
-          <div className="flex flex-col gap-4">
-            <h3 className="font-medium">Schedule</h3>
-            <div className="flex gap-2">
-              <Button type="button" variant={scheduleType === 'dailyrandom' ? 'default' : 'outline'} onClick={() => {
-                setScheduleType('dailyrandom');
-                setSchedulesByPage((prev) => {
-                  const next: Record<string, { postsPerDay: number; timezone: string; postingTimes: string[] }> = {};
-                  for (const [k, v] of Object.entries(prev)) next[k] = { ...v, postingTimes: [] };
-                  return next;
-                });
-              }}>Random Posting Times</Button>
-              <Button type="button" variant={scheduleType === 'fixed' ? 'default' : 'outline'} onClick={() => {
-                setScheduleType('fixed');
-                setSchedulesByPage((prev) => {
-                  const next: Record<string, { postsPerDay: number; timezone: string; postingTimes: string[] }> = {};
-                  for (const [k, v] of Object.entries(prev)) next[k] = { ...v, postingTimes: ensureTimesLength(v.postingTimes, v.postsPerDay) };
-                  return next;
-                });
-              }}>Fixed Posting Times</Button>
-            </div>
             <div>
-              <p className="font-medium">Apply Schedule</p>
-              <div className="mt-2 flex items-center gap-2">
-                <Button type="button" variant={timingScope === 'all' ? 'default' : 'outline'} onClick={() => setTimingScope('all')}>One for all pages</Button>
-                <Button type="button" variant={timingScope === 'separate' ? 'default' : 'outline'} onClick={() => setTimingScope('separate')}>Set separately</Button>
+              <h3 className="font-medium">Schedule</h3>
+              <div className="mt-2 flex gap-2">
+                <Button type="button" variant={scheduleType === 'dailyrandom' ? 'default' : 'outline'} onClick={() => {
+                  setScheduleType('dailyrandom');
+                  setSchedulesByPage((prev) => {
+                    const next: Record<string, { postsPerDay: number; timezone: string; postingTimes: string[] }> = {};
+                    for (const [k, v] of Object.entries(prev)) next[k] = { ...v, postingTimes: [] };
+                    return next;
+                  });
+                }}>Random Posting Times</Button>
+                <Button type="button" variant={scheduleType === 'fixed' ? 'default' : 'outline'} onClick={() => {
+                  setScheduleType('fixed');
+                  setSchedulesByPage((prev) => {
+                    const next: Record<string, { postsPerDay: number; timezone: string; postingTimes: string[] }> = {};
+                    for (const [k, v] of Object.entries(prev)) next[k] = { ...v, postingTimes: ensureTimesLength(v.postingTimes, v.postsPerDay) };
+                    return next;
+                  });
+                }}>Fixed Posting Times</Button>
               </div>
-            </div>
-            {timingScope === 'all' ? (
-              <>
-                <p className="text-body text-ink-sub">These settings will be used for all selected pages.</p>
-                <div>
-                  <label className="font-medium" htmlFor="adu-posts-per-day">Posts Per Day</label>
-                  <Input id="adu-posts-per-day" type="number" min={1} max={12} value={postsPerDay} onChange={(e) => {
-                    const n = Math.max(1, Math.min(12, Number(e.target.value) || 1));
-                    setPostsPerDay(n);
-                    setFixedTimes(Array.from({ length: n }, (_, i) => fixedTimes[i] ?? '09:00'));
-                  }} />
+              <div className="mt-4">
+                <p className="font-medium">Apply Schedule</p>
+                <div className="mt-2 flex items-center gap-2">
+                  <Button type="button" variant={timingScope === 'all' ? 'default' : 'outline'} onClick={() => setTimingScope('all')}>One for all pages</Button>
+                  <Button type="button" variant={timingScope === 'separate' ? 'default' : 'outline'} onClick={() => setTimingScope('separate')}>Set separately</Button>
                 </div>
-                <div>
-                  <label className="font-medium" htmlFor="adu-timezone">Posting Timezone</label>
-                  <Input id="adu-timezone" value={timezone} onChange={(e) => setTimezone(e.target.value)} />
-                </div>
-                {scheduleType === 'dailyrandom' ? (
-                  <p className="text-body text-ink-sub">Balanced random times will be automatically generated upon saving to ensure a minimum 5-hour gap between posts.</p>
-                ) : (
-                  <div className="flex flex-col gap-2">
-                    <p className="text-body">One time per post, per day:</p>
-                    {Array.from({ length: postsPerDay }, (_, i) => (
-                      <Input key={i} type="time" value={fixedTimes[i] ?? '09:00'} onChange={(e) => {
-                        const next = [...fixedTimes]; next[i] = e.target.value; setFixedTimes(next);
-                      }} />
-                    ))}
+              </div>
+              {timingScope === 'all' ? (
+                <>
+                  <p className="mt-2 text-body text-ink-sub">These settings will be used for all selected pages.</p>
+                  <div className="mt-2">
+                    <label className="font-medium" htmlFor="adu-posts-per-day">Posts Per Day</label>
+                    <Input id="adu-posts-per-day" type="number" min={1} max={12} value={postsPerDay} onChange={(e) => {
+                      const n = Math.max(1, Math.min(12, Number(e.target.value) || 1));
+                      setPostsPerDay(n);
+                      setFixedTimes(Array.from({ length: n }, (_, i) => fixedTimes[i] ?? '09:00'));
+                    }} />
                   </div>
-                )}
-              </>
-            ) : (
-              <>
-                {scheduleType === 'dailyrandom' ? (
-                  <p className="text-body text-ink-sub">Balanced random times will be automatically generated upon saving to ensure a minimum 5-hour gap between posts.</p>
-                ) : null}
-                <div className="flex max-h-80 flex-col gap-2 overflow-y-auto pr-2">
-                  {selectedPages.map((page) => {
-                    const s = pageSchedule(page.id);
-                    const accountName = mode === 'multi' ? accounts.find((a) => a.id === page.account_id)?.display_name : undefined;
-                    const label = accountName ? `${page.name} · ${accountName}` : page.name;
-                    return (
-                      <div key={`schedule-${page.id}`} className="flex flex-col gap-3 rounded-lg border p-3">
-                        <p className="text-body font-semibold">{label}</p>
-                        <div>
-                          <label className="font-medium" htmlFor={`adu-bulk-${page.id}-posts-per-day`}>Posts Per Day</label>
-                          <Input id={`adu-bulk-${page.id}-posts-per-day`} type="number" min={1} max={12} value={s.postsPerDay} onChange={(e) => {
-                            const n = Math.max(1, Math.min(12, Number(e.target.value) || 1));
-                            updatePageSchedule(page.id, {
-                              postsPerDay: n,
-                              postingTimes: scheduleType === 'fixed' ? ensureTimesLength(s.postingTimes, n) : [],
-                            });
-                          }} />
-                        </div>
-                        <div>
-                          <label className="font-medium" htmlFor={`adu-bulk-${page.id}-timezone`}>Posting Timezone</label>
-                          <Input id={`adu-bulk-${page.id}-timezone`} value={s.timezone} onChange={(e) => updatePageSchedule(page.id, { timezone: e.target.value })} />
-                        </div>
-                        {scheduleType === 'fixed' ? (
-                          <div className="flex flex-col gap-2">
-                            <p className="text-body">Fixed Posting Times</p>
-                            {ensureTimesLength(s.postingTimes, s.postsPerDay).map((time, index) => (
-                              <Input key={index} type="time" value={time} onChange={(e) => {
-                                const next = ensureTimesLength(s.postingTimes, s.postsPerDay);
-                                next[index] = e.target.value;
-                                updatePageSchedule(page.id, { postingTimes: next });
-                              }} />
-                            ))}
+                  <div className="mt-2">
+                    <label className="font-medium" htmlFor="adu-timezone">Posting Timezone</label>
+                    <Input id="adu-timezone" value={timezone} onChange={(e) => setTimezone(e.target.value)} />
+                  </div>
+                  {scheduleType === 'dailyrandom' ? (
+                    <p className="mt-2 text-body text-ink-sub">Balanced random times will be automatically generated upon saving to ensure a minimum 5-hour gap between posts.</p>
+                  ) : (
+                    <div className="mt-2 flex flex-col gap-2">
+                      <p className="text-body">One time per post, per day:</p>
+                      {Array.from({ length: postsPerDay }, (_, i) => (
+                        <Input key={i} type="time" value={fixedTimes[i] ?? '09:00'} onChange={(e) => {
+                          const next = [...fixedTimes]; next[i] = e.target.value; setFixedTimes(next);
+                        }} />
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  {scheduleType === 'dailyrandom' ? (
+                    <p className="mt-2 text-body text-ink-sub">Balanced random times will be automatically generated upon saving to ensure a minimum 5-hour gap between posts.</p>
+                  ) : null}
+                  <div className="mt-2 flex max-h-80 flex-col gap-2 overflow-y-auto pr-2">
+                    {selectedPages.map((page) => {
+                      const s = pageSchedule(page.id);
+                      const accountName = accounts.find((a) => a.id === page.account_id)?.display_name;
+                      const label = accountName ? `${page.name} · ${accountName}` : page.name;
+                      return (
+                        <div key={`schedule-${page.id}`} className="flex flex-col gap-3 rounded-lg border p-3">
+                          <p className="text-body font-semibold">{label}</p>
+                          <div>
+                            <label className="font-medium" htmlFor={`adu-bulk-${page.id}-posts-per-day`}>Posts Per Day</label>
+                            <Input id={`adu-bulk-${page.id}-posts-per-day`} type="number" min={1} max={12} value={s.postsPerDay} onChange={(e) => {
+                              const n = Math.max(1, Math.min(12, Number(e.target.value) || 1));
+                              updatePageSchedule(page.id, {
+                                postsPerDay: n,
+                                postingTimes: scheduleType === 'fixed' ? ensureTimesLength(s.postingTimes, n) : [],
+                              });
+                            }} />
                           </div>
-                        ) : null}
-                      </div>
-                    );
-                  })}
-                </div>
-              </>
-            )}
+                          <div>
+                            <label className="font-medium" htmlFor={`adu-bulk-${page.id}-timezone`}>Posting Timezone</label>
+                            <Input id={`adu-bulk-${page.id}-timezone`} value={s.timezone} onChange={(e) => updatePageSchedule(page.id, { timezone: e.target.value })} />
+                          </div>
+                          {scheduleType === 'fixed' ? (
+                            <div className="flex flex-col gap-2">
+                              <p className="text-body">Fixed Posting Times</p>
+                              {ensureTimesLength(s.postingTimes, s.postsPerDay).map((time, index) => (
+                                <Input key={index} type="time" value={time} onChange={(e) => {
+                                  const next = ensureTimesLength(s.postingTimes, s.postsPerDay);
+                                  next[index] = e.target.value;
+                                  updatePageSchedule(page.id, { postingTimes: next });
+                                }} />
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+
             <div className="flex gap-2">
-              <Button type="button" variant="outline" onClick={() => setStep(2)}>Back</Button>
+              <Button type="button" variant="outline" onClick={() => setStep(1)}>Back</Button>
               <Button
                 type="button"
-                disabled={submitting || (timingScope === 'separate' && !selectedPages.every((p) => pageScheduleComplete(p.id)))}
+                disabled={submitting || !allSourcesFilled || (timingScope === 'separate' && !selectedPages.every((p) => pageScheduleComplete(p.id)))}
                 onClick={() => void submit()}
               >
-                Create Selected Pages
+                Start Automation
               </Button>
             </div>
           </div>
