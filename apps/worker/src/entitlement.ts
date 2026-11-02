@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 /**
- * Scheduled-downgrade activation, worker side of option A (PR #120
+ * Scheduled-downgrade activation, worker side of option A (PR 120
  * send-back fix B2; the web side is activateDueScheduledDowngrades
  * in apps/web/src/lib/billing/entitlement.ts). The schedule lives
  * on the payment row only (is_downgrade + scheduled_starts_at);

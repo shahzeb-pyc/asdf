@@ -183,7 +183,7 @@ export async function POST(
         { status: 409 }
       );
     }
-    // Later-purchase rule (PR #120 send-back fix B2): blocked
+    // Later-purchase rule (PR 120 send-back fix B2): blocked
     // while a downgrade schedule is outstanding; a due schedule
     // activates first inside the guard, so it stops blocking.
     try {

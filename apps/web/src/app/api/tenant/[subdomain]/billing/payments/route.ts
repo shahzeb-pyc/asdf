@@ -258,7 +258,7 @@ export async function POST(
         { status: 409 }
       );
     }
-    // Later-purchase rule (PR #120 send-back fix B2): while a
+    // Later-purchase rule (PR 120 send-back fix B2): while a
     // downgrade schedule is outstanding, no new purchase is
     // accepted — an upgrade bought now would be superseded by
     // the scheduled downgrade anyway, and a second schedule

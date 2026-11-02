@@ -321,7 +321,7 @@ export async function changeReferralCode(
  * Commission for a payment, recorded once per payment (unique
  * index on payment_id; the existing-row check above makes
  * re-runs safe). period may be null for a SCHEDULED downgrade
- * (PR #120 send-back fix B2): the commission is earned when the
+ * (PR 120 send-back fix B2): the commission is earned when the
  * payment is approved, but no period exists yet, so the row is
  * recorded with period_id null and period_starts_at set to the
  * scheduled start, and activation backfills period_id to the

@@ -1,5 +1,5 @@
 /**
- * Worker-side scheduled-downgrade activation (PR #120 send-back
+ * Worker-side scheduled-downgrade activation (PR 120 send-back
  * fix B2, option A): a due schedule activates on the worker
  * tick, so a publishing plan never waits for the user to open
  * the app. Tested against a small fake Supabase client — no real

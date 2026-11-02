@@ -140,7 +140,7 @@ export async function POST(
         { status: 409 }
       );
     }
-    // Later-purchase rule (PR #120 send-back fix B2): blocked
+    // Later-purchase rule (PR 120 send-back fix B2): blocked
     // while a downgrade schedule is outstanding, even though
     // this route is unreachable under the 70% coupon cap — the
     // guard must not be re-addable by forgetting it here.

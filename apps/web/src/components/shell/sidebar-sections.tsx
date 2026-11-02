@@ -10,7 +10,7 @@
  *   + one group per UPCOMING_PLATFORMS entry, which stays the user
  *   platform data source), Billing section last with four separate
  *   top-level leaves (My Plan, Purchase, Payments, Refund — no
- *   Billing group, no ?view= leaves, PR #120 send-back fix B1).
+ *   Billing group, no ?view= leaves, PR 120 send-back fix B1).
  *   User hrefs resolve through buildTenantHref exactly as before
  *   (clean paths on the tenant's own host, /tenant/<sub> paths
  *   elsewhere), so the config is built per workspace.
@@ -252,7 +252,7 @@ export function getUserSections(subdomain: string, useCleanPaths = false): Sideb
       key: 'billing',
       items: [
         // Separate sections, not a Billing group (owner decision
-        // 2026-11-02; PR #120 send-back fix B1): each leaf is a
+        // 2026-11-02; PR 120 send-back fix B1): each leaf is a
         // top-level sidebar item on its own route, prefix-matched.
         // There is deliberately no collapsible Billing parent and
         // no ?view= leaf — the old /billing?view= routes are

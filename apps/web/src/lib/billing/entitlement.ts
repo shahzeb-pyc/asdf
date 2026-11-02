@@ -1040,7 +1040,7 @@ export async function createPeriodForPurchase(
 }
 
 /**
- * Scheduled downgrades, option A (owner choice 2026-11-02, PR #120
+ * Scheduled downgrades, option A (owner choice 2026-11-02, PR 120
  * send-back fix B2): the schedule lives ON THE PAYMENT ROW ONLY
  * (is_downgrade + scheduled_starts_at). Approval NEVER inserts a
  * future period row — a future non-superseded row coexisting with
@@ -1459,7 +1459,7 @@ export async function approvePayment(
  * link it conditionally. If the link loses, the orphan period is
  * superseded immediately and the winner's period is returned.
  * A scheduled downgrade returns period null: approval records
- * the schedule only (option A, PR #120 send-back fix B2) — the
+ * the schedule only (option A, PR 120 send-back fix B2) — the
  * period is created later by activateDueScheduledDowngrades.
  */
 async function linkPeriodForApprovedPayment(
