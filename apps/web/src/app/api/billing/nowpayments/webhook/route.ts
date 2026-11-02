@@ -16,7 +16,7 @@ import {
   releaseHeldRedemptionsForPayment,
 } from '@/lib/billing/coupons';
 import { recordCommissionForPayment } from '@/lib/billing/sellers';
-import { getBillingAdminClient } from '@/lib/billing/route-helpers';
+import { getBillingAdminClient, loadNewPaymentFields } from '@/lib/billing/route-helpers';
 import { getNowPaymentsConfig } from '@/lib/billing/nowpayments';
 import { recordWebhookIssue } from '@/lib/billing/webhook-issues';
 
@@ -151,7 +151,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ received: true, unknownPayment: true });
     }
 
-    const payment = paymentFromRow(paymentRow);
+    let payment = paymentFromRow(paymentRow);
+    if (payment && client) {
+      const fields = await loadNewPaymentFields(client, [payment.id]);
+      const extra = fields.get(payment.id);
+      if (extra) {
+        payment = {
+          ...payment,
+          isDowngrade: extra.isDowngrade,
+          scheduledStartsAt: extra.scheduledStartsAt ? new Date(extra.scheduledStartsAt) : null,
+        };
+      }
+    }
     if (!payment) {
       await releaseDedupe();
       return NextResponse.json({ received: true, unknownPayment: true });

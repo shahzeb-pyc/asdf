@@ -185,10 +185,12 @@ export async function POST(
     const activePeriod = await getActivePeriod(client, session.userId, new Date());
     let amountPkr: number;
     let isUpgrade: boolean;
+    let isDowngrade = false;
     try {
       const priced = pricePurchase(counts, activePeriod);
       amountPkr = priced.amountPkr;
       isUpgrade = priced.isUpgrade;
+      isDowngrade = priced.isDowngrade;
     } catch (err) {
       if (err instanceof SubscriptionGateError) {
         return NextResponse.json({ error: 'INVALID_REQUEST', message: err.message }, { status: 400 });
@@ -315,6 +317,13 @@ export async function POST(
       throw new Error('Crypto payment record could not be created');
     }
     const paymentId = inserted.id as string;
+    if (isDowngrade) {
+      try {
+        await client.from('subscription_payments').update({ is_downgrade: true }).eq('id', paymentId);
+      } catch {
+        // Best-effort: migration may be unapplied.
+      }
+    }
 
     if (heldRedemption) {
       // Link the held redemption to this payment. If the link

@@ -4,6 +4,7 @@ import { logServerError } from '@/lib/server-analytics';
 import { getEntitlement, paymentFromRow } from '@/lib/billing/entitlement';
 import {
   getBillingAdminClient,
+  loadNewPaymentFields,
   mapEntitlementToResponse,
   mapPaymentToItem,
 } from '@/lib/billing/route-helpers';
@@ -48,10 +49,28 @@ export async function GET(
       .order('created_at', { ascending: false })
       .range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1);
     if (error) throw error;
-    const payments = (Array.isArray(data) ? data : [])
+    const paymentRows = (Array.isArray(data) ? data : [])
       .map((row) => paymentFromRow(row as Record<string, unknown>))
-      .filter((payment) => payment !== null)
-      .map((payment) => mapPaymentToItem(payment));
+      .filter((payment) => payment !== null);
+    const newFields = await loadNewPaymentFields(
+      client,
+      paymentRows.map((payment) => payment.id)
+    );
+    const payments = paymentRows.map((payment) => {
+      const item = mapPaymentToItem(payment);
+      const extra = newFields.get(payment.id);
+      return extra
+        ? {
+            ...item,
+            isDowngrade: extra.isDowngrade,
+            scheduledStartsAt: extra.scheduledStartsAt,
+            rejectionReason: extra.rejectionReason,
+            rejectionDetail: extra.rejectionDetail,
+            overrideReason: extra.overrideReason,
+            decidedAt: extra.decidedAt,
+          }
+        : item;
+    });
     return NextResponse.json({
       entitlement: mapEntitlementToResponse(entitlement),
       payments,

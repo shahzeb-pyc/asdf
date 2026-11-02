@@ -428,6 +428,8 @@ export type AdminPaymentItem = z.infer<typeof AdminPaymentItemSchema>;
 
 export const AdminPaymentsResponseSchema = z.object({
   payments: z.array(AdminPaymentItemSchema),
+  page: z.number().int().default(1),
+  pendingTotal: z.number().int().default(0),
 });
 export type AdminPaymentsResponse = z.infer<typeof AdminPaymentsResponseSchema>;
 
