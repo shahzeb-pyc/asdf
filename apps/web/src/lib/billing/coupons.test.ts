@@ -310,7 +310,7 @@ describe('percent_multi lifecycle', () => {
 });
 
 describe('balance lifecycle', () => {
-  it('1000 pool, 400 purchase → 600 remains and is reusable', async () => {
+  it('1000 pool, 400 purchase → 280 (70% cap), 720 remains and is reusable', async () => {
     const { client, tables } = makeClient();
     seedCoupon(tables, {
       code: 'POOL1000',
@@ -325,8 +325,8 @@ describe('balance lifecycle', () => {
       paymentId: null,
       discountPkr: computeDiscount(first, 400),
     });
-    expect(r1.amountPkr).toBe(400);
-    expect((await loadCoupon(client, 'POOL1000')).remainingBalancePkr).toBe(600);
+    expect(r1.amountPkr).toBe(280);
+    expect((await loadCoupon(client, 'POOL1000')).remainingBalancePkr).toBe(720);
     const second = await loadCoupon(client, 'POOL1000');
     const r2 = await holdCoupon(client, {
       coupon: second,
@@ -334,8 +334,8 @@ describe('balance lifecycle', () => {
       paymentId: null,
       discountPkr: computeDiscount(second, 400),
     });
-    expect(r2.amountPkr).toBe(400);
-    expect((await loadCoupon(client, 'POOL1000')).remainingBalancePkr).toBe(200);
+    expect(r2.amountPkr).toBe(280);
+    expect((await loadCoupon(client, 'POOL1000')).remainingBalancePkr).toBe(440);
   });
 
   it('purchase over balance → discount capped, balance 0 afterward', async () => {
@@ -402,10 +402,10 @@ describe('balance lifecycle', () => {
       discountPkr: computeDiscount(coupon, 400),
     });
     await applyHeldRedemptionsForPayment(client, 'payment-1');
-    expect((await loadCoupon(client, 'POOL1000')).remainingBalancePkr).toBe(600);
+    expect((await loadCoupon(client, 'POOL1000')).remainingBalancePkr).toBe(720);
     expect(await applyRedemption(client, redemption.id)).toBe(false);
     await releaseHeldRedemptionsForPayment(client, 'payment-1');
-    expect((await loadCoupon(client, 'POOL1000')).remainingBalancePkr).toBe(600);
+    expect((await loadCoupon(client, 'POOL1000')).remainingBalancePkr).toBe(720);
   });
 
   it('concurrent applications cannot overdraw the shared pool', async () => {
@@ -432,8 +432,10 @@ describe('balance lifecycle', () => {
         discountPkr: computeDiscount(b, 600),
       }),
     ]);
-    expect(r1.amountPkr + r2.amountPkr).toBe(1000);
-    expect((await loadCoupon(client, 'POOL1000')).remainingBalancePkr).toBe(0);
+    // Each 600 purchase is capped at 420 (70%), so the two holds
+    // draw 840 of the 1000 pool and never overdraw it.
+    expect(r1.amountPkr + r2.amountPkr).toBe(840);
+    expect((await loadCoupon(client, 'POOL1000')).remainingBalancePkr).toBe(160);
   });
 });
 
@@ -447,7 +449,7 @@ describe('preview and guards', () => {
       remaining_balance_pkr: 1000,
     });
     const { discountPkr } = await previewCoupon(client, ' pool1000 ', 400);
-    expect(discountPkr).toBe(400);
+    expect(discountPkr).toBe(280);
     expect((await loadCoupon(client, 'POOL1000')).remainingBalancePkr).toBe(1000);
     expect(tables['coupon_redemptions']).toHaveLength(0);
   });

@@ -29,6 +29,8 @@ import {
   mapPaymentToItem,
   storeBillingIdempotency,
 } from '@/lib/billing/route-helpers';
+import { createR2S3Client, getR2Config } from '@/lib/storage';
+import { HeadObjectCommand } from '@aws-sdk/client-s3';
 
 /**
  * POST /api/tenant/[subdomain]/billing/payments

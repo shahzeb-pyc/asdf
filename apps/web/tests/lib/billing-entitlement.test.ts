@@ -119,6 +119,12 @@ function paymentObject(overrides: Partial<SubscriptionPaymentRow> = {}): Subscri
     counts: { ...ZERO_COUNTS, facebook: 2, instagram: 2, threads: 2 },
     amountPkr: 420,
     isUpgrade: false,
+    isDowngrade: false,
+    scheduledStartsAt: null,
+    rejectionReason: null,
+    rejectionDetail: null,
+    overrideReason: null,
+    decidedAt: null,
     screenshotStorageKey: null,
     nowpaymentsPaymentId: null,
     nowpaymentsPayAddress: null,
@@ -1352,9 +1358,12 @@ describe('approvePayment', () => {
     const errorState = baseState({
       selectErrors: { subscription_payments: { message: 'db down' } },
     });
+    // Audit fix: a database error during load must fail loud as
+    // unavailable, never masquerade as a missing payment (404 is
+    // reserved for a clean empty result, asserted above).
     await expect(
       approvePayment(fakeClient(errorState), 'payment-1', 'admin-1', now)
-    ).rejects.toMatchObject({ code: 'PAYMENT_NOT_FOUND' });
+    ).rejects.toMatchObject({ code: 'ENTITLEMENT_UNAVAILABLE' });
     const badRowState = baseState({ paymentRow: { nonsense: true } });
     await expect(
       approvePayment(fakeClient(badRowState), 'payment-1', 'admin-1', now)
@@ -1431,11 +1440,13 @@ describe('pricePurchase', () => {
     expect(pricePurchase(counts, null, NOW)).toEqual({
       amountPkr: 420,
       isUpgrade: false,
+      isDowngrade: false,
       quote: null,
+      downgradeQuote: null,
     });
   });
 
-  it('refuses a downgrade as a plain gate error, not a server failure', () => {
+  it('prices a downgrade as the new monthly total, prepaid, with no credit', () => {
     const oldCounts = { ...ZERO_COUNTS, facebook: 20 };
     const newCounts = { ...ZERO_COUNTS, facebook: 10 };
     const activePeriod = {
@@ -1446,17 +1457,20 @@ describe('pricePurchase', () => {
       endsAt: new Date('2026-06-11T00:00:00.000Z'),
       supersededAt: null,
     };
-    let caught: unknown = null;
-    try {
-      pricePurchase(newCounts, activePeriod, NOW);
-    } catch (err) {
-      caught = err;
-    }
-    // The checkout routes turn SubscriptionGateError into a plain
-    // 400; a raw DomainError would have fallen through to a 500.
-    expect(caught).toBeInstanceOf(SubscriptionGateError);
-    expect(caught).toMatchObject({ code: 'INVALID_REQUEST' });
-    expect((caught as Error).message).toContain('Counts can only be increased');
+    // Downgrade is a supported flow since the separate-sections
+    // build: the user pays the new lower monthly total now, the
+    // lower plan starts after the current plan ends, and no credit
+    // is given for the days left on the old plan.
+    const priced = pricePurchase(newCounts, activePeriod, NOW);
+    expect(priced.isDowngrade).toBe(true);
+    expect(priced.isUpgrade).toBe(false);
+    expect(priced.amountPkr).toBe(700);
+    expect(priced.quote).toBeNull();
+    expect(priced.downgradeQuote).toMatchObject({
+      oldMonthlyTotalPkr: 1400,
+      newMonthlyTotalPkr: 700,
+      amountToPayPkr: 700,
+    });
   });
 
   it('prices the 10-to-20 upgrade with 10 days left as credit 233, pay 1167', () => {

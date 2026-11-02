@@ -24,13 +24,14 @@ import {
  * returns to the screenshot-upload state while it waits.
  */
 
-const { mockApiGet, mockApiPost } = vi.hoisted(() => ({
+const { mockApiGet, mockApiPost, mockPush } = vi.hoisted(() => ({
   mockApiGet: vi.fn(),
   mockApiPost: vi.fn(),
+  mockPush: vi.fn(),
 }));
 
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ push: mockPush }),
   usePathname: () => '/tenant/acme/billing',
 }));
 
@@ -163,6 +164,59 @@ async function goToCheckout() {
 }
 
 /**
+ * Confirmation is a server-backed sub-route in the split build, not
+ * an in-component step: after a successful submit the view pushes
+ * /purchase/confirmation?payment=<id>. Follow that handoff the way
+ * the real routes do — re-render at the confirmation step with the
+ * pushed payment id, serving the created payment from the server —
+ * and assert the confirmation copy there.
+ */
+async function goToConfirmation(): Promise<void> {
+  // Submit is async (post, then refetch, then push): wait for the
+  // confirmation navigation to land before following it.
+  await waitFor(() => {
+    const found = mockPush.mock.calls
+      .map((call) => String(call[0]))
+      .find((url) => url.includes('/purchase/confirmation'));
+    expect(found).toBeDefined();
+  });
+  const confirmation = mockPush.mock.calls
+    .map((call) => String(call[0]))
+    .find((url) => url.includes('/purchase/confirmation'));
+  expect(confirmation).toBeDefined();
+  const paymentId = new URL(confirmation as string, 'https://example.com').searchParams.get('payment');
+  const created = paymentItem();
+  mockApiGet.mockImplementation(async (url: string) => {
+    if (url.includes('/billing/entitlement')) {
+      return { ...freeEntitlement(), hasPriorPeriod: false };
+    }
+    if (url.includes('/billing/storage')) {
+      return {
+        quotaBytes: 5 * 1024 * 1024 * 1024,
+        usedBytes: 0,
+        remainingBytes: 5 * 1024 * 1024 * 1024,
+        overBytes: 0,
+        state: 'normal',
+        hasActivePeriod: true,
+      };
+    }
+    if (url.includes('/billing/refunds')) {
+      return { requests: [], eligibility: { eligible: false, reason: null } };
+    }
+    return { entitlement: freeEntitlement(), payments: [created] };
+  });
+  cleanup();
+  render(
+    <QueryClientProvider client={createQueryClient('acme')}>
+      <EntitlementProvider subdomain="acme" adminOnly={false}>
+        <PurchaseView subdomain="acme" step="confirmation" confirmationPaymentId={paymentId} />
+      </EntitlementProvider>
+    </QueryClientProvider>
+  );
+  await screen.findByText('We have received your payment.');
+}
+
+/**
  * Submit-flow test plumbing (submit rewrite 2026-11-01): picking a
  * screenshot now mints a presigned URL (apiPost) and PUTs the bytes
  * (global fetch) before submit is enabled, so tests route the mint
@@ -191,6 +245,10 @@ function stubPutOk(): ReturnType<typeof vi.fn> {
 }
 
 async function pickScreenshot(): Promise<void> {
+  // Checkout is a fresh mount in the split build: it shows a
+  // loading skeleton until the billing load resolves, so wait for
+  // the upload control before querying the (sr-only) input.
+  await screen.findByText('Upload your payment screenshot');
   const input = document.querySelector('#billing-screenshot') as HTMLInputElement;
   fireEvent.change(input, {
     target: { files: [new File(['bytes'], 'proof.png', { type: 'image/png' })] },
@@ -433,7 +491,7 @@ describe('Billing Purchase', () => {
     expect(screen.getByText('Shahzebpyc')).toBeInTheDocument();
     await pickScreenshot();
     fireEvent.click(screen.getByRole('button', { name: 'Submit payment for approval' }));
-    await screen.findByText('Payment submitted');
+    await goToConfirmation();
     expect(capturedBody).not.toBeNull();
     expect(capturedBody?.['bankMethod']).toBe('binance');
     expect(capturedBody?.['screenshotStorageKey']).toBe(MINT_RESPONSE.storageKey);
@@ -485,7 +543,7 @@ describe('Billing Purchase', () => {
 
     loadGateOpen = true;
     loadGate.release?.();
-    await screen.findByText('Payment submitted');
+    await goToConfirmation();
     expect(screen.queryByText('Upload your payment screenshot')).toBeNull();
   });
 
@@ -566,7 +624,7 @@ describe('Billing Purchase', () => {
     const submit = screen.getByRole('button', { name: 'Submit payment for approval' });
     fireEvent.click(submit);
     fireEvent.click(submit);
-    await screen.findByText('Payment submitted');
+    await goToConfirmation();
     expect(paymentsCalls).toBe(1);
     expect(put).toHaveBeenCalledTimes(1);
   });
@@ -586,7 +644,7 @@ describe('Billing Purchase', () => {
     await goToCheckout();
     await pickScreenshot();
     fireEvent.click(screen.getByRole('button', { name: 'Submit payment for approval' }));
-    await screen.findByText('Payment submitted');
+    await goToConfirmation();
     expect(paymentsCalls).toBe(2);
     expect(keys[0]).toMatch(/^[0-9a-f-]{36}$/);
     expect(keys[1]).toBe(keys[0]);
@@ -608,7 +666,7 @@ describe('Billing Purchase', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Submit payment for approval' }));
     await screen.findByText('The payment could not be priced.');
     fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
-    await screen.findByText('Payment submitted');
+    await goToConfirmation();
     expect(paymentsCalls).toBe(2);
     expect(put).toHaveBeenCalledTimes(1);
   });
@@ -691,6 +749,7 @@ describe('Billing Purchase', () => {
 
     renderBilling('purchase');
     await goToCheckout();
+    await screen.findByText('Upload your payment screenshot');
     const input = document.querySelector('#billing-screenshot') as HTMLInputElement;
     fireEvent.change(input, {
       target: { files: [new File(['bytes'], 'proof.png', { type: 'image/png' })] },
@@ -716,6 +775,7 @@ describe('Billing Purchase', () => {
 
     renderBilling('purchase');
     await goToCheckout();
+    await screen.findByText('Upload your payment screenshot');
     const input = document.querySelector('#billing-screenshot') as HTMLInputElement;
     fireEvent.change(input, {
       target: { files: [new File(['bytes'], 'proof.png', { type: 'image/png' })] },
@@ -735,6 +795,7 @@ describe('Billing Purchase', () => {
 
     renderBilling('purchase');
     await goToCheckout();
+    await screen.findByText('Upload your payment screenshot');
     const input = document.querySelector('#billing-screenshot') as HTMLInputElement;
     fireEvent.change(input, {
       target: { files: [new File(['bytes'], 'proof.png', { type: 'image/png' })] },
@@ -831,7 +892,7 @@ describe('Billing Purchase', () => {
     putGate.release?.();
     await screen.findByText('Uploaded');
     fireEvent.click(screen.getByRole('button', { name: 'Submit payment for approval' }));
-    await screen.findByText('Payment submitted');
+    await goToConfirmation();
     expect(paymentsCalls).toBe(1);
   });
 
@@ -858,7 +919,7 @@ describe('Billing Purchase', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry upload' }));
     await screen.findByText('Uploaded');
     fireEvent.click(screen.getByRole('button', { name: 'Submit payment for approval' }));
-    await screen.findByText('Payment submitted');
+    await goToConfirmation();
     expect(paymentsCalls).toBe(1);
   });
 
@@ -890,6 +951,7 @@ describe('Billing Purchase', () => {
 
     renderBilling('purchase');
     await goToCheckout();
+    await screen.findByText('Upload your payment screenshot');
     const input = document.querySelector('#billing-screenshot') as HTMLInputElement;
     fireEvent.change(input, {
       target: { files: [new File(['bytes'], 'proof-a.png', { type: 'image/png' })] },
@@ -902,7 +964,7 @@ describe('Billing Purchase', () => {
     // The stale first upload landing late must not clobber the second.
     putGate.release?.();
     fireEvent.click(screen.getByRole('button', { name: 'Submit payment for approval' }));
-    await screen.findByText('Payment submitted');
+    await goToConfirmation();
     expect(capturedBody?.['screenshotStorageKey']).toBe(mintB.storageKey);
   });
 });
@@ -929,7 +991,12 @@ describe('Admin approvals view', () => {
     });
     render(<AdminApprovalsView />);
     expect(await screen.findByText(/Binance/)).toBeInTheDocument();
-    expect(screen.getByText('View payment screenshot')).toBeInTheDocument();
+    // Screenshot is inline in the new admin view (loading, then
+    // the preview or a load failure), not a separate
+    // 'View payment screenshot' button.
+    expect(
+      await screen.findByText(/Loading screenshot…|The screenshot could not be loaded/)
+    ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Approve payment' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reject payment' })).toBeInTheDocument();
   });

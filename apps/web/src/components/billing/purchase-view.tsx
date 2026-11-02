@@ -17,6 +17,7 @@
  */
 
 import * as React from 'react';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { ArrowLeftIcon, CheckIcon, Loader2Icon, UploadIcon, XIcon } from 'lucide-react';
 import { apiGet, apiPost, buildTenantApiPath, getErrorMessage, isApiError } from '@/lib/api';
@@ -28,7 +29,6 @@ import {
   ZeroDueCheckoutResponseSchema,
   type BillingStatusResponse,
   type CouponValidateResponse,
-  type CryptoCheckoutResponse,
   type PlatformCounts,
 } from '@/lib/api/schemas/billing';
 import {
@@ -56,7 +56,6 @@ import { cn } from '@/lib/utils';
 import { Alert, AlertDescription, AlertTitle } from '@/components/shared/ui/alert';
 import { Button } from '@/components/shared/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/shared/ui/card';
-import { EmptyState } from '@/components/shared/ui/empty-state';
 import { Input } from '@/components/shared/ui/input';
 import { Skeleton } from '@/components/shared/ui/skeleton';
 import { BillingStatusMark } from './billing-status-mark';
@@ -283,7 +282,6 @@ export function PurchaseView({
   // shows mid-edit so an invalid keystroke can be reverted on blur
   // without ever touching the totals.
   const [countDrafts, setCountDrafts] = React.useState<Partial<Record<keyof PlatformCounts, string>>>({});
-  const purchaseStep = step;
   const router = useRouter();
 
   const [paymentType, setPaymentType] = React.useState<PaymentType>('bank');
@@ -347,7 +345,6 @@ export function PurchaseView({
     } catch {
       // A corrupt draft is ignored; the builder starts fresh.
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step]);
   React.useEffect(() => {
     if (step !== 'checkout') return;
@@ -370,7 +367,6 @@ export function PurchaseView({
     } catch {
       router.push(`/tenant/${subdomain}/purchase`);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step]);
   const [activatingZeroDue, setActivatingZeroDue] = React.useState(false);
   const [copied, setCopied] = React.useState<string | null>(null);
@@ -383,9 +379,26 @@ export function PurchaseView({
       setScreenshotPreviewUrl(null);
       return;
     }
-    const url = URL.createObjectURL(screenshot);
+    // jsdom's URL.createObjectURL cannot wrap a jsdom File (it is
+    // not a real Blob), and a missing preview must never crash
+    // checkout: fall back to no preview image, the upload itself
+    // is unaffected.
+    let url: string | null = null;
+    try {
+      url = typeof URL.createObjectURL === 'function' ? URL.createObjectURL(screenshot) : null;
+    } catch {
+      url = null;
+    }
     setScreenshotPreviewUrl(url);
-    return () => URL.revokeObjectURL(url);
+    return () => {
+      if (url) {
+        try {
+          URL.revokeObjectURL(url);
+        } catch {
+          // Revocation is best-effort.
+        }
+      }
+    };
   }, [screenshot]);
 
   const load = React.useCallback(async () => {
@@ -405,7 +418,7 @@ export function PurchaseView({
   }, [load]);
   React.useEffect(() => {
     let cancelled = false;
-    (async () => {
+    void (async () => {
       try {
         const result = await apiGet(buildTenantApiPath(subdomain, '/billing/refunds'), {
           schema: UserRefundsResponseSchema,
@@ -432,7 +445,7 @@ export function PurchaseView({
   }, [load]);
   React.useEffect(() => {
     let cancelled = false;
-    (async () => {
+    void (async () => {
       try {
         const result = await apiGet(buildTenantApiPath(subdomain, '/billing/refunds'), {
           schema: UserRefundsResponseSchema,
@@ -581,13 +594,6 @@ export function PurchaseView({
   function goToMyPlan() {
     router.push(tenantPath('/my-plan'));
   }
-  function goToPurchase() {
-    router.push(tenantPath('/purchase'));
-  }
-  function goToPayments() {
-    router.push(tenantPath('/payments'));
-  }
-
   function goToPurchaseStep(target: PurchaseStep) {
     if (target === 'builder') router.push(tenantPath('/purchase'));
     else if (target === 'checkout') router.push(tenantPath('/purchase/checkout'));
@@ -916,7 +922,7 @@ export function PurchaseView({
     setActivatingZeroDue(true);
     setFormError(null);
     try {
-      const result = await apiPost(
+      await apiPost(
         buildTenantApiPath(subdomain, '/billing/payments/zero-due'),
         { counts: effectiveCounts, couponCode: appliedCoupon.code },
         { schema: ZeroDueCheckoutResponseSchema }
@@ -979,8 +985,6 @@ export function PurchaseView({
   }
 
   const details = BANK_PAYMENT_DETAILS[bankMethod];
-  const includedUnits = totalUnits(entitlement.counts);
-  const usedUnits = totalUnits(entitlement.usage);
   // A fully-covering coupon disables both payment submits: there is
   // nothing to pay, and activation happens from the coupon section.
   // A pending payment also disables checkout (#79 one-pending block).
@@ -1168,53 +1172,6 @@ export function PurchaseView({
     </Card>
   );
 
-  const paymentsHistory = (
-    <Card id="billing-payments" className="scroll-mt-20">
-      <CardHeader>
-        <CardTitle>Your payments</CardTitle>
-        <CardDescription>Manual payments start after we approve them. Crypto payments start as soon as we receive them.</CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        {status.payments.length === 0 ? (
-          <EmptyState
-            type="first-use"
-            title="No payments yet"
-            description="Payments you make will show here, with their status."
-            action={
-              <Button variant="link" onClick={goToPurchase}>
-                Buy or upgrade
-              </Button>
-            }
-          />
-        ) : null}
-        {status.payments.map((payment) => (
-          <div
-            key={payment.id}
-            className="flex flex-wrap items-center justify-between gap-3 border-t border-line py-3 first:border-t-0 first:pt-0"
-          >
-            <div className="flex min-w-0 flex-col gap-1">
-              <span className="text-body font-medium tabular-nums text-ink">
-                {payment.amountPkr} PKR ·{' '}
-                {paymentMethodLabel(payment)}
-                {payment.isUpgrade ? ' · Upgrade' : ''}
-                {payment.couponCode
-                  ? ` · Coupon ${payment.couponCode} (−${payment.discountPkr} PKR)`
-                  : ''}
-              </span>
-              <span className="text-metadata text-ink-sub">{formatDate(payment.createdAt)}</span>
-            </div>
-            {payment.status === 'approved' || payment.status === 'paid' ? (
-              <BillingStatusMark kind="ok" label={paymentStatusLabel(payment.status)} />
-            ) : payment.status === 'rejected' || payment.status === 'failed' || payment.status === 'expired' ? (
-              <BillingStatusMark kind="failed" label={paymentStatusLabel(payment.status)} />
-            ) : (
-              <BillingStatusMark kind="pending" label={payment.method === 'bank' ? 'Waiting for approval' : 'Waiting for payment'} />
-            )}
-          </div>
-        ))}
-      </CardContent>
-    </Card>
-  );
 
   /**
    * Pending payment card for Purchase only: while one payment is in
@@ -1443,9 +1400,12 @@ export function PurchaseView({
                             </Button>
                           </div>
                           {screenshotPreviewUrl ? (
-                            <img
+                            <Image
                               src={screenshotPreviewUrl}
                               alt="Screenshot preview"
+                              width={640}
+                              height={853}
+                              unoptimized
                               className="h-auto w-full max-w-xs rounded-md border border-line"
                             />
                           ) : null}
@@ -1769,7 +1729,7 @@ function PurchaseConfirmationView({
       return;
     }
     let cancelled = false;
-    (async () => {
+    void (async () => {
       try {
         // Page 1 is newest-first; a just-created payment is there.
         // Fall back to pages 2-3 before calling it missing.

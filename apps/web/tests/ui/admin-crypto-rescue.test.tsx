@@ -74,13 +74,18 @@ describe('AdminApprovalsView crypto rescue', () => {
     mockedApiPost.mockResolvedValue({});
     render(<AdminApprovalsView />);
     fireEvent.click(await screen.findByText('Approve crypto'));
+    // Decisions now confirm through a dialog first.
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve payment' }));
     await waitFor(() =>
       expect(mockedApiPost).toHaveBeenCalledWith(
         '/api/admin/payments/payment-1',
         { decision: 'approve-crypto' }
       )
     );
-    expect(await screen.findByText('Crypto payment approved. The plan starts now and runs for 30 days.')).toBeInTheDocument();
+    // The view shows the notice both at the top and on the card.
+    expect(
+      await screen.findAllByText('Crypto payment approved. The plan starts now and runs for 30 days.')
+    ).toHaveLength(2);
   });
 
   it('expiring crypto posts expire-crypto and shows the expiry notice', async () => {
@@ -88,13 +93,16 @@ describe('AdminApprovalsView crypto rescue', () => {
     mockedApiPost.mockResolvedValue({});
     render(<AdminApprovalsView />);
     fireEvent.click(await screen.findByText('Expire crypto'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Expire crypto payment' }));
     await waitFor(() =>
       expect(mockedApiPost).toHaveBeenCalledWith(
         '/api/admin/payments/payment-1',
         { decision: 'expire-crypto' }
       )
     );
-    expect(await screen.findByText('Crypto payment expired. No plan started; any held coupon was released.')).toBeInTheDocument();
+    expect(
+      await screen.findAllByText('Crypto payment expired. No plan started; any held coupon was released.')
+    ).toHaveLength(2);
   });
 
   it('bank pending payments show Approve and Reject buttons that post the decision', async () => {
@@ -104,17 +112,30 @@ describe('AdminApprovalsView crypto rescue', () => {
     mockedApiPost.mockResolvedValue({});
     render(<AdminApprovalsView />);
     fireEvent.click(await screen.findByText('Approve payment'));
+    // This bank payment has no screenshot, so approving through
+    // the dialog requires a recorded override reason first.
+    fireEvent.change(screen.getByLabelText('Override reason (required)'), {
+      target: { value: 'Screenshot verified on file' },
+    });
+    // The card button and the dialog confirm share a label; the
+    // dialog renders after the card, so its button is the last.
+    fireEvent.click(screen.getAllByRole('button', { name: 'Approve payment' }).at(-1)!);
     await waitFor(() =>
       expect(mockedApiPost).toHaveBeenCalledWith(
         '/api/admin/payments/payment-bank',
-        { decision: 'approve' }
+        { decision: 'approve', overrideReason: 'Screenshot verified on file' }
       )
     );
     fireEvent.click(screen.getByText('Reject payment'));
+    // Reject now requires a reason, chosen in the dialog.
+    fireEvent.change(screen.getByLabelText('Reason (required)'), {
+      target: { value: 'Wrong amount' },
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Reject payment' }).at(-1)!);
     await waitFor(() =>
       expect(mockedApiPost).toHaveBeenCalledWith(
         '/api/admin/payments/payment-bank',
-        { decision: 'reject' }
+        { decision: 'reject', rejectionReason: 'Wrong amount' }
       )
     );
   });
@@ -134,6 +155,7 @@ describe('AdminApprovalsView crypto rescue', () => {
     render(<AdminApprovalsView />);
     await screen.findByText('Stuck crypto payments');
     fireEvent.click(screen.getAllByText('Approve crypto')[0]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve payment' }));
     await waitFor(() =>
       expect(mockedApiPost).toHaveBeenCalledWith(
         '/api/admin/payments/payment-2',
@@ -141,6 +163,7 @@ describe('AdminApprovalsView crypto rescue', () => {
       )
     );
     fireEvent.click(screen.getAllByText('Expire crypto')[0]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Expire crypto payment' }));
     await waitFor(() =>
       expect(mockedApiPost).toHaveBeenCalledWith(
         '/api/admin/payments/payment-2',

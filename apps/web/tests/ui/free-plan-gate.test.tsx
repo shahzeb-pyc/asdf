@@ -145,7 +145,7 @@ describe('FreePlanGate', () => {
   });
 
   it('shows no dialog on exempt routes', async () => {
-    for (const path of ['/tenant/acme', '/tenant/acme/', '/prompts', '/tenant/acme/prompts', '/tenant/acme/billing', '/tenant/acme/billing/payments']) {
+    for (const path of ['/tenant/acme', '/tenant/acme/', '/prompts', '/tenant/acme/prompts', '/tenant/acme/my-plan', '/tenant/acme/purchase', '/tenant/acme/purchase/checkout', '/tenant/acme/payments', '/tenant/acme/refund']) {
       mocks.pathname = path;
       const { unmount } = renderGate();
       expect(screen.getByText('Section content')).toBeInTheDocument();
@@ -172,7 +172,7 @@ describe('FreePlanGate', () => {
     renderGate();
     await screen.findByTestId('free-plan-upgrade-dialog');
     fireEvent.click(screen.getByTestId('free-plan-upgrade-btn'));
-    expect(mockPush).toHaveBeenCalledWith('/tenant/acme/billing?view=purchase');
+    expect(mockPush).toHaveBeenCalledWith('/tenant/acme/purchase');
     fireEvent.click(screen.getByTestId('free-plan-home-btn'));
     expect(mockPush).toHaveBeenCalledWith('/tenant/acme/');
   });
@@ -181,7 +181,7 @@ describe('FreePlanGate', () => {
     renderGate({ useCleanPaths: true });
     await screen.findByTestId('free-plan-upgrade-dialog');
     fireEvent.click(screen.getByTestId('free-plan-upgrade-btn'));
-    expect(mockPush).toHaveBeenCalledWith('/billing?view=purchase');
+    expect(mockPush).toHaveBeenCalledWith('/purchase');
     fireEvent.click(screen.getByTestId('free-plan-home-btn'));
     expect(mockPush).toHaveBeenCalledWith('/');
   });

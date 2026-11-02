@@ -16,6 +16,7 @@ vi.mock('next/link', () => ({
 }));
 
 import { IgAduHubPage } from '@/components/instagram/auto-download-upload/ig-adu-hub-page';
+import { EntitlementProvider } from '@/components/billing/entitlement-provider';
 
 const fetchMock = vi.fn();
 
@@ -116,8 +117,22 @@ function renderWithQuery(node: React.ReactElement) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return render(<QueryClientProvider client={client}>{node}</QueryClientProvider>);
+  return render(
+    <QueryClientProvider client={client}>
+      <EntitlementProvider subdomain="acme" adminOnly={false}>
+        {node}
+      </EntitlementProvider>
+    </QueryClientProvider>
+  );
 }
+
+// The hub renders the feature-cap hook, which reads the shared
+// entitlement. The real provider is mounted here (the tenant shell
+// provides it in the app) so the cap-disable tests exercise the
+// real provider path against the mocked entitlement fetch.
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/tenant/acme/instagram/auto-download-upload',
+}));
 
 describe('IgAduHubPage', () => {
   beforeEach(() => {
@@ -271,6 +286,7 @@ describe('IgAduHubPage', () => {
       if (url.includes('/billing/entitlement'))
         return Promise.resolve({
           ok: true,
+          status: 200,
           text: () => Promise.resolve(JSON.stringify(entitlement)),
           json: () => Promise.resolve(entitlement),
         });

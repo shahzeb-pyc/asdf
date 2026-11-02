@@ -122,7 +122,9 @@ describe('admin payment screenshot stream', () => {
     const res = await streamScreenshot(streamRequest(), ctx);
 
     expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({ error: 'Screenshot not found' });
+    // The split admin view distinguishes a missing payment row from
+    // a missing screenshot file (its missing state depends on it).
+    expect(await res.json()).toEqual({ error: 'Payment not found' });
     expect(logServerError).not.toHaveBeenCalled();
   });
 
@@ -132,7 +134,10 @@ describe('admin payment screenshot stream', () => {
     const res = await streamScreenshot(streamRequest(), ctx);
 
     expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({ error: 'Screenshot not found' });
+    expect(await res.json()).toEqual({
+      error: 'SCREENSHOT_MISSING',
+      message: 'No screenshot for this payment.',
+    });
   });
 
   it('returns 404 when the key contains a path traversal', async () => {
@@ -141,7 +146,10 @@ describe('admin payment screenshot stream', () => {
     const res = await streamScreenshot(streamRequest(), ctx);
 
     expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({ error: 'Screenshot not found' });
+    expect(await res.json()).toEqual({
+      error: 'SCREENSHOT_MISSING',
+      message: 'No screenshot for this payment.',
+    });
   });
 
   it('streams the R2 object with the extension content type for a valid key', async () => {

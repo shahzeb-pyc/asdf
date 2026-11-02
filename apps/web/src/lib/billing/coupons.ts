@@ -244,8 +244,13 @@ async function claimCoupon(
 ): Promise<{ claimed: boolean; discountPkr: number }> {
   const now = nowIso();
   if (coupon.kind === 'balance') {
-    // First attempt with the computed discount; the guard makes a
-    // concurrent draw fail closed instead of overdrawing.
+    // First attempt with the computed discount; the guards make a
+    // concurrent draw fail closed instead of overdrawing. The
+    // exact-value guard matters as much as the sufficient-balance
+    // one: without it, a stale write that still passes the balance
+    // guard (two small concurrent draws) silently un-draws the
+    // other draw — the pool would later pay out more than it holds.
+    // A lost race reloads once and retries with the fresh balance.
     let attemptDiscount = discountPkr;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const remaining = coupon.remainingBalancePkr ?? 0;
@@ -257,6 +262,7 @@ async function claimCoupon(
         })
         .eq('id', coupon.id)
         .eq('status', 'active')
+        .eq('remaining_balance_pkr', remaining)
         .gte('remaining_balance_pkr', attemptDiscount)
         .select('id');
       if (error) {

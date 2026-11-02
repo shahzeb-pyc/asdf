@@ -29,7 +29,6 @@ import {
 } from '@/lib/api/schemas/billing';
 import {
   SUBSCRIPTION_PLATFORMS,
-  SUBSCRIPTION_PRICE_PKR_PER_UNIT,
   subscriptionUnitLabel,
   totalPricePkr,
   totalUnits,
@@ -129,7 +128,7 @@ export function MyPlanView({ subdomain }: Readonly<{ subdomain: string }>) {
 
   React.useEffect(() => {
     let cancelled = false;
-    (async () => {
+    void (async () => {
       try {
         const result = await apiGet(buildTenantApiPath(subdomain, '/billing/storage'), {
           schema: MediaStorageResponseSchema,
@@ -139,7 +138,7 @@ export function MyPlanView({ subdomain }: Readonly<{ subdomain: string }>) {
         if (!cancelled) setStorageError(getErrorMessage(err));
       }
     })();
-    (async () => {
+    void (async () => {
       try {
         const result = await apiGet(buildTenantApiPath(subdomain, '/billing/refunds'), {
           schema: UserRefundsResponseSchema,

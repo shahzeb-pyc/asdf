@@ -810,7 +810,7 @@ describe('release paths', () => {
     const row = tables['coupon_redemptions'].find((r) => r['id'] === redemption.id);
     if (row) row['balance_restored'] = true;
     expect(await releaseRedemption(client, redemption)).toBe(true);
-    expect(tables['coupons'][0]['remaining_balance_pkr']).toBe(600);
+    expect(tables['coupons'][0]['remaining_balance_pkr']).toBe(720);
   });
 
   it('a restore with no coupon row left reports unavailable instead of restoring blindly', async () => {
@@ -959,7 +959,7 @@ describe('payment-level release recovery', () => {
       row['balance_restored'] = true;
     }
     await releaseHeldRedemptionsForPayment(client, 'payment-1');
-    expect(tables['coupons'][0]['remaining_balance_pkr']).toBe(600);
+    expect(tables['coupons'][0]['remaining_balance_pkr']).toBe(720);
   });
 
   it('a released balance row with a zero amount restores nothing', async () => {
@@ -983,7 +983,7 @@ describe('payment-level release recovery', () => {
       row['amount_pkr'] = 0;
     }
     await releaseHeldRedemptionsForPayment(client, 'payment-1');
-    expect(tables['coupons'][0]['remaining_balance_pkr']).toBe(600);
+    expect(tables['coupons'][0]['remaining_balance_pkr']).toBe(720);
   });
 
   it('a released balance row whose restore never landed is restored by payment release', async () => {

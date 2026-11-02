@@ -303,23 +303,19 @@ describe('zero-due coupon checkout', () => {
     };
   });
 
-  it('activates a period immediately when the coupon covers the full amount', async () => {
+  it('refuses zero-due activation now that the 70% coupon cap applies', async () => {
+    // Owner decision 2026-11-02: no coupon may discount more than
+    // 70%, so a coupon can never cover the full amount and the
+    // zero-due path is unreachable through a coupon. The route
+    // refuses at the pre-hold check: no hold, no period, no
+    // activation, and the user pays the remainder by bank/crypto.
     const res = await postZeroDue(zeroDueRequest(), ctx);
-    expect(res.status).toBe(201);
-    const body = (await res.json()) as {
-      period: { id: string };
-      couponCode: string;
-      discountPkr: number;
-    };
-    expect(body.couponCode).toBe('FREE100');
-    expect(body.discountPkr).toBe(70);
-    expect(db.periods).toHaveLength(1);
-    // The insert omits superseded_at (the column defaults to NULL);
-    // the fake carries no defaults, so assert absence-or-null.
-    expect(db.periods[0]['superseded_at'] ?? null).toBeNull();
-    expect(db.redemptions).toHaveLength(1);
-    expect(db.redemptions[0]).toMatchObject({ status: 'applied', period_id: body.period.id });
-    expect(storeCalls).toHaveLength(1);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('INVALID_REQUEST');
+    expect(db.periods).toHaveLength(0);
+    expect(db.redemptions).toHaveLength(0);
+    expect(storeCalls).toHaveLength(0);
   });
 
   it('refuses admins with 403', async () => {
@@ -352,31 +348,17 @@ describe('zero-due coupon checkout', () => {
     expect(db.redemptions).toHaveLength(0);
   });
 
-  it('refuses when the settled discount no longer covers the amount, and releases the hold', async () => {
+  it('refuses before any hold even when the settled discount would be smaller', async () => {
+    // The settled-less branch is unreachable under the 70% cap:
+    // the pre-hold check refuses first, so no hold is ever created
+    // and there is nothing to release.
     db.settleSmaller = true;
     const res = await postZeroDue(zeroDueRequest(), ctx);
     expect(res.status).toBe(400);
-    const body = (await res.json()) as {
-      error: string;
-      amountDuePkr: number;
-      settledDiscountPkr: number;
-    };
-    expect(body.error).toBe('COUPON_SETTLED_LESS');
-    expect(body.amountDuePkr).toBe(70);
-    expect(body.settledDiscountPkr).toBe(60);
-    expect(db.periods).toHaveLength(0);
-    expect(db.redemptions[0]).toMatchObject({ status: 'released' });
-  });
-
-  it('supersedes the just-created period when applying the redemption fails', async () => {
-    db.applyFailsOnce = true;
-    const res = await postZeroDue(zeroDueRequest(), ctx);
-    expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
-    expect(body.error).toBe('COUPON_UNAVAILABLE');
-    expect(db.periods).toHaveLength(1);
-    expect(db.periods[0]['superseded_at']).not.toBeNull();
-    expect(db.redemptions[0]).toMatchObject({ status: 'released' });
+    expect(body.error).toBe('INVALID_REQUEST');
+    expect(db.periods).toHaveLength(0);
+    expect(db.redemptions).toHaveLength(0);
   });
 
   it('rejects an invalid Idempotency-Key with 400', async () => {
@@ -422,11 +404,14 @@ describe('zero-due checkout failure branches', () => {
     };
   });
 
-  it('an unresolvable workspace is logged and the checkout still proceeds', async () => {
+  it('an unresolvable workspace is logged and the checkout still reaches the coupon refusal', async () => {
+    // Workspace failure must not crash the checkout; under the 70%
+    // cap the checkout then refuses at the coupon check, creating
+    // no period.
     workspaceMock.rejectOnce = true;
     const res = await postZeroDue(zeroDueRequest(), ctx);
-    expect(res.status).toBe(201);
-    expect(db.periods).toHaveLength(1);
+    expect(res.status).toBe(400);
+    expect(db.periods).toHaveLength(0);
   });
 
   it('an idempotency store failure returns 500 without a period', async () => {
@@ -438,24 +423,14 @@ describe('zero-due checkout failure branches', () => {
     expect(db.periods).toHaveLength(0);
   });
 
-  it('a failing settled-release is logged and the refusal still lands', async () => {
+  it('a failing settled-release never fires because no hold is created under the cap', async () => {
     db.settleSmaller = true;
     db.failReleaseOnce = true;
     const res = await postZeroDue(zeroDueRequest(), ctx);
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
-    expect(body.error).toBe('COUPON_SETTLED_LESS');
+    expect(body.error).toBe('INVALID_REQUEST');
     expect(db.periods).toHaveLength(0);
-    expect(db.redemptions[0]).toMatchObject({ status: 'held' });
-  });
-
-  it('a failing orphan supersede is logged and the coupon is still released', async () => {
-    db.applyFailsOnce = true;
-    db.failSupersedeOnce = true;
-    const res = await postZeroDue(zeroDueRequest(), ctx);
-    expect(res.status).toBe(400);
-    expect(db.periods).toHaveLength(1);
-    expect(db.periods[0]['superseded_at'] ?? null).toBeNull();
-    expect(db.redemptions[0]).toMatchObject({ status: 'released' });
+    expect(db.redemptions).toHaveLength(0);
   });
 });

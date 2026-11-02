@@ -242,6 +242,13 @@ vi.mock('@/lib/storage', () => ({
       db.putObjectCalls += 1;
     }),
   }),
+  // The payments route verifies a bank screenshot exists in R2
+  // before accepting the submission (HeadObject). The fake client
+  // reports a small PNG, so submissions with a screenshot pass.
+  getR2Config: () => ({ bucketName: 'test-bucket' }),
+  createR2S3Client: () => ({
+    send: vi.fn(async () => ({ ContentLength: 1234, ContentType: 'image/png' })),
+  }),
 }));
 
 vi.mock('@/lib/billing/nowpayments', () => ({

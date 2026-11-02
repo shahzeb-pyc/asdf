@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import Image from 'next/image';
 import { apiGet, apiPost, getErrorMessage } from '@/lib/api';
 import {
   AdminPaymentsResponseSchema,
@@ -81,7 +82,7 @@ function AdminScreenshot({
     }
     let cancelled = false;
     setState({ kind: 'loading' });
-    (async () => {
+    void (async () => {
       try {
         const res = await fetch(`/api/admin/payments/${paymentId}/screenshot`);
         if (res.status === 404) {
@@ -156,9 +157,12 @@ function AdminScreenshot({
   }
   return (
     <div className="flex flex-col gap-2">
-      <img
+      <Image
         src={state.url}
         alt="Payment screenshot"
+        width={768}
+        height={1024}
+        unoptimized
         className="h-auto w-full max-w-md rounded-md border border-line"
       />
       <div>
@@ -246,7 +250,7 @@ export function AdminApprovalsView() {
   async function decide(
     paymentId: string,
     decision: 'approve' | 'reject' | 'approve-crypto' | 'expire-crypto',
-    extra?: { rejectionReason?: string; rejectionDetail?: string; overrideReason?: string }
+    extra?: { rejectionReason?: string | undefined; rejectionDetail?: string | undefined; overrideReason?: string | undefined }
   ) {
     setBusy({ id: paymentId, decision });
     setNotice(null);
