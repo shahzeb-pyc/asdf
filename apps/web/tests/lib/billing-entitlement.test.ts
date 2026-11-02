@@ -1327,7 +1327,7 @@ describe('approvePayment', () => {
       periodById: periodRow(),
     });
     const result = await approvePayment(fakeClient(state), 'payment-1', 'admin-1', now);
-    expect(result.period.id).toBe('period-1');
+    expect(result.period?.id).toBe('period-1');
     expect(result.payment.status).toBe('approved');
     expect(state.inserted).toHaveLength(0);
   });
@@ -1343,7 +1343,7 @@ describe('approvePayment', () => {
       periodId: 'period-new',
       approvedAt: '2026-06-01T00:00:00.000Z',
     });
-    expect(result.period.id).toBe('period-new');
+    expect(result.period?.id).toBe('period-new');
     // Claim-first approval writes twice: the claim (status +
     // approved_by) and then the period link. The link update is
     // the one carrying period_id.
@@ -1364,7 +1364,7 @@ describe('approvePayment', () => {
       createdPeriodRow: periodRow({ id: 'period-new' }),
     });
     const result = await approvePayment(fakeClient(state), 'payment-1', 'admin-1', now);
-    expect(result.period.id).toBe('period-new');
+    expect(result.period?.id).toBe('period-new');
   });
 
   it('reports a missing payment', async () => {
@@ -1823,7 +1823,7 @@ describe('approvePayment races (audit fix 2026-11-01, fix 14)', () => {
       loseClaimOnce: true,
     });
     const result = await approvePayment(fakeClient(state), 'payment-1', 'admin-1', now);
-    expect(result.period.id).toBe('period-winner');
+    expect(result.period?.id).toBe('period-winner');
     expect(result.payment.status).toBe('approved');
     expect(state.inserted.filter((i) => i.table === 'subscription_periods')).toHaveLength(0);
   });
@@ -1836,7 +1836,7 @@ describe('approvePayment races (audit fix 2026-11-01, fix 14)', () => {
       loseLinkOnce: true,
     });
     const result = await approvePayment(fakeClient(state), 'payment-1', 'admin-1', now);
-    expect(result.period.id).toBe('period-winner');
+    expect(result.period?.id).toBe('period-winner');
     // The orphan period created by the loser is superseded at once,
     // so it can never become the live period.
     const supersede = state.updated.find(
@@ -1919,7 +1919,7 @@ describe('approvePayment stale link (audit fix 2026-11-01, fix 14)', () => {
       createdPeriodRow: periodRow({ id: 'period-new' }),
     });
     const result = await approvePayment(fakeClient(state), 'payment-1', 'admin-1', now);
-    expect(result.period.id).toBe('period-new');
+    expect(result.period?.id).toBe('period-new');
     const linkUpdate = state.updated.find(
       (u) => u.table === 'subscription_payments' && u.patch['period_id'] === 'period-new'
     );
@@ -1937,7 +1937,7 @@ describe('approvePayment stale link (audit fix 2026-11-01, fix 14)', () => {
     // The winner linked 'period-winner', but that row does not
     // resolve here, so the repair path treats it as a stale link
     // and overwrites it with the period it just created.
-    expect(result.period.id).toBe('period-new');
+    expect(result.period?.id).toBe('period-new');
     const linkUpdate = state.updated.find(
       (u) => u.table === 'subscription_payments' && u.patch['period_id'] === 'period-new'
     );
@@ -1961,7 +1961,7 @@ describe('activateCryptoPayment branches (audit fix 2026-11-01, fix 7)', () => {
       now
     );
     expect(result.alreadyActivated).toBe(true);
-    expect(result.period.id).toBe('period-1');
+    expect(result.period?.id).toBe('period-1');
     expect(result.couponReleasedBeforeFinish).toBe(false);
   });
 
@@ -2001,7 +2001,7 @@ describe('activateCryptoPayment branches (audit fix 2026-11-01, fix 7)', () => {
       now
     );
     expect(result.alreadyActivated).toBe(true);
-    expect(result.period.id).toBe('period-winner');
+    expect(result.period?.id).toBe('period-winner');
   });
 
   it('refuses when the claim loser finds a decided-but-unlinked winner', async () => {
@@ -2028,7 +2028,7 @@ describe('activateCryptoPayment branches (audit fix 2026-11-01, fix 7)', () => {
       now
     );
     expect(result.alreadyActivated).toBe(false);
-    expect(result.period.id).toBe('period-new');
+    expect(result.period?.id).toBe('period-new');
   });
 
   it('schedules a crypto downgrade (option A): no period, scheduled flag set', async () => {
