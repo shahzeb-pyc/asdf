@@ -130,8 +130,6 @@ export const PublishOutcomeSchema = z.object({
     .optional(),
   /** Account status side effect for settlement (`expired` on auth errors). */
   targetAccountStatus: z.enum(['active', 'expired', 'revoked', 'error']).optional(),
-  /** Per-destination cooldown for settlement, in seconds. */
-  destinationCooldownSeconds: z.number().nonnegative().optional(),
   /** Latest per-destination rate usage (0–100), when the platform reports it. */
   rateUsagePct: z.number().min(0).max(100).optional(),
 });

@@ -36,7 +36,6 @@ interface DestinationRow {
   timezone: string;
   status: string;
   rate_usage_pct: number;
-  next_allowed_publish_at: string | null;
   metadata: Record<string, unknown> | null;
 }
 
@@ -223,7 +222,6 @@ function seed() {
     timezone: 'UTC',
     status: 'active',
     rate_usage_pct: 12,
-    next_allowed_publish_at: null,
     metadata: null,
   });
   db.destinations.set(foreignDestinationId, {
@@ -233,7 +231,6 @@ function seed() {
     timezone: 'UTC',
     status: 'active',
     rate_usage_pct: 0,
-    next_allowed_publish_at: null,
     metadata: null,
   });
   db.destinations.set(fbDestinationId, {
@@ -243,7 +240,6 @@ function seed() {
     timezone: 'UTC',
     status: 'active',
     rate_usage_pct: 0,
-    next_allowed_publish_at: null,
     metadata: null,
   });
   db.slots.push({

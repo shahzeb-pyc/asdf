@@ -405,7 +405,7 @@ jobs:
           SETTLE_RPC_PG_URL: postgres://postgres:postgres@localhost:5432/settle139
         run: pnpm --filter @fbuploadpro/worker exec tsx tests/settle-rpc/db/run-migrations.ts
 
-      - name: Spec 139 settle-RPC rig — 58 assertions (incl. deferred outcome)
+      - name: Spec 139 settle-RPC rig — 60 assertions (incl. deferred outcome, no cooldown)
         env:
           SETTLE_RPC_PG_URL: postgres://postgres:postgres@localhost:5432/settle139
         run: pnpm --filter @fbuploadpro/worker exec tsx tests/settle-rpc/check.ts
@@ -429,6 +429,11 @@ jobs:
         env:
           CLAIM_RPC_PG_URL: postgres://postgres:postgres@localhost:5432/claim138_parity
         run: pnpm --filter @fbuploadpro/worker exec tsx tests/claim-rpc/parity.ts
+
+      - name: Cooldown-removal flip-paths rig — slot + publish-now 3-day flips
+        env:
+          CLAIM_RPC_PG_URL: postgres://postgres:postgres@localhost:5432/claim138_parity
+        run: pnpm --filter @fbuploadpro/worker exec tsx tests/claim-rpc/flip-paths.ts
 
       - name: Spec 138 claim-RPC rig — apply bootstrap + migrations (scale DB)
         env:

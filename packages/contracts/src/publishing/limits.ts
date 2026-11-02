@@ -116,9 +116,10 @@ export const X_PUBLISHED_POSTS_LIMIT: PublishLimitWindow = {
 /**
  * Default per-platform limits, keyed by platform.
  *
- *   - `null` (Facebook): no centred platform cap — per-destination
- *     throttling happens via `destinations.next_allowed_publish_at` /
- *     the `rate_limited` cooldown, not this config.
+ *   - `null` (Facebook): no centred platform cap — the only pacing
+ *     left is the user's own posting times plus the 3-day
+ *     `rate_limited` mark (migration 20261102160000 removed the
+ *     per-destination cooldown column entirely), not this config.
  *   - `{}` (YouTube/TikTok): provider-imposed effective limits, supplied
  *     by specs 125/126 once verified. For TikTok the verified position
  *     is "no per-destination cap" — see the shared pool-cap record in the

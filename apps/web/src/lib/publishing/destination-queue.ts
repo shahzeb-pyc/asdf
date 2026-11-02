@@ -31,7 +31,6 @@ export interface DestinationQueueContext {
   timezone: string;
   status: string;
   rateUsagePct: number;
-  nextAllowedPublishAt: string | null;
   /** Raw `destinations.metadata` (carries the claim_limits override). */
   metadata: Record<string, unknown> | null;
 }
@@ -42,7 +41,6 @@ type DestinationContextRaw = {
   timezone?: string | null;
   status: string;
   rate_usage_pct?: number | string | null;
-  next_allowed_publish_at?: string | null;
   metadata?: Record<string, unknown> | string | null;
 };
 
@@ -73,7 +71,6 @@ function toContext(row: DestinationContextRaw): DestinationQueueContext {
     timezone: row.timezone || 'UTC',
     status: row.status,
     rateUsagePct: Number(row.rate_usage_pct ?? 0),
-    nextAllowedPublishAt: row.next_allowed_publish_at ?? null,
     metadata: toMetadata(row.metadata),
   };
 }
@@ -86,7 +83,7 @@ export async function fetchDestinationQueueContext(
   if (isLegacyClient(client)) {
     const rows = (await (client as DatabaseClient).query(
       `SELECT id, platform, timezone, status, rate_usage_pct,
-              next_allowed_publish_at, metadata
+              metadata
        FROM destinations
        WHERE id = $1 AND workspace_id = $2
        LIMIT 1`,
@@ -100,7 +97,7 @@ export async function fetchDestinationQueueContext(
   const { data, error } = await supabase
     .from('destinations')
     .select(
-      'id, platform, timezone, status, rate_usage_pct, next_allowed_publish_at, metadata'
+      'id, platform, timezone, status, rate_usage_pct, metadata'
     )
     .eq('id', destinationId)
     .eq('workspace_id', workspaceId)

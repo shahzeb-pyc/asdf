@@ -26,8 +26,9 @@ import {
 //
 // Rate-limit state (`x-rate-limit-limit/-remaining/-reset`) is parsed
 // from every response and returned/thrown alongside the result so the
-// publisher can tighten the destination's next publish (spec 127
-// Scope.6) via the outcome's destinationCooldownSeconds seam.
+// publisher can meter usage and set this item's retry delay (spec 127
+// Scope.6, as amended by migration 20261102160000: no destination
+// gate is fed from these headers anymore).
 
 const X_API_BASE_URL = 'https://api.x.com/2';
 

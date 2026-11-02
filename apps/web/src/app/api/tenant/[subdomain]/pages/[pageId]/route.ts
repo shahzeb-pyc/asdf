@@ -559,7 +559,6 @@ export async function handleUpdatePage(
                ELSE (d.metadata - 'fb_status' - 'rate_limited_at')
              END,
              timezone = COALESCE($2, d.timezone),
-             next_allowed_publish_at = CASE WHEN $1 = 'active' THEN NULL ELSE d.next_allowed_publish_at END,
              updated_at = now()
          WHERE d.id = $3 AND d.workspace_id = $5 AND d.platform = 'facebook'
            AND (d.status != 'disconnected' OR d.metadata->>'fb_status' = 'paused')`,
@@ -665,7 +664,6 @@ export async function handleUpdatePage(
         const updates: {
           status?: string;
           timezone?: string;
-          next_allowed_publish_at?: string | null;
           metadata?: Record<string, unknown>;
           updated_at: string;
         } = {
@@ -681,9 +679,6 @@ export async function handleUpdatePage(
             delete nextMetadata.rate_limited_at;
           }
           updates.metadata = nextMetadata;
-          if (parsed.data.status === 'active') {
-            updates.next_allowed_publish_at = null;
-          }
         }
         if (parsed.data.timezone) {
           updates.timezone = parsed.data.timezone;

@@ -15,6 +15,7 @@ load harness (`apps/worker/load-harness/` on that branch).
 | `db/run-migrations.ts` | Applies `bootstrap.sql`, then every file in `supabase/migrations/` in filename order; `CLAIM_RPC_MIGRATIONS_UNTIL=<file>` stops after that file (builds the pre-fix DB) |
 | `fixtures.sql` | Deterministic fixture helpers (`claim138_reset`, `claim138_destination`, `claim138_item`, `claim138_logs`, md5-derived ids) applied by the runners |
 | `parity.ts` | The 12-case behaviour-parity suite (plan.md §2). Expected values derive from the documented spec 121 semantics, never from the implementation under test |
+| `flip-paths.ts` | Cooldown-removal flip paths (migration 20261102160000): the slot claim and the publish-now claim must each flip a 3-day-expired `rate_limited` destination to `active` (anchor cleared) and claim its item in the same call; fresh-anchor and legacy no-anchor controls included. The due-claim path is covered by `parity.ts` case 9 |
 | `scale.ts` | Scale regression test (plan.md §3): instagram-shaped seed (5,000 destinations / 2 rules / 3,000 due / ~6,000 in-flight / 21,867 logs); one claim call must complete < 5 s with the fixture's expected outcome counts |
 | `explain.ts` | `EXPLAIN (ANALYZE, BUFFERS)` for both grouped passes on the scale seed (plan.md §4) |
 

@@ -4,6 +4,7 @@ import {
   DatabaseUnifiedQueueItemRowSchema,
   decryptToken,
   encryptToken,
+  FB_RATE_LIMITED_COOLDOWN_MS,
   fetchAllFacebookPages,
   InternalError,
   ValidationError,
@@ -54,8 +55,8 @@ import type { PublishQueueMessage } from './claimer.js';
 //   - Idempotency: an item already carrying `external_post_id` is
 //     settled `published` from the stored ids, never re-published.
 //   - Readiness: destination/account state is re-read before every
-//     publish; a destination in cooldown or no longer claimable, or a
-//     non-active account, defers the item back to `queued`.
+//     publish; a destination no longer claimable, or a non-active
+//     account, defers the item back to `queued`.
 //   - DLQ: only an item still in `publishing` is settled failed; every
 //     other status is a no-op (the recovery sweep may have reclaimed
 //     it, or another path already settled it).
@@ -79,7 +80,6 @@ export const DLQ_ERROR_CODE = 'queue_dlq_exhausted';
  * rather than silent.
  */
 export const DEFER_ACCOUNT_NOT_ACTIVE_CODE = 'account_not_active';
-export const DEFER_DESTINATION_COOLDOWN_CODE = 'destination_cooldown';
 export const DEFER_DESTINATION_NOT_ACTIVE_CODE = 'destination_not_active';
 
 export interface ConsumerDbClient {
@@ -412,7 +412,6 @@ export function mapPublishOutcomeToSettleArgs(
     p_comment_warning: outcome.commentWarning ?? null,
     p_target_destination_status: outcome.targetDestinationStatus ?? null,
     p_target_account_status: outcome.targetAccountStatus ?? null,
-    p_destination_cooldown_seconds: outcome.destinationCooldownSeconds ?? null,
     p_rate_usage_pct:
       outcome.rateUsagePct !== undefined ? Math.round(outcome.rateUsagePct) : null,
     ...(outcome.detail !== undefined ? { p_detail: outcome.detail } : {}),
@@ -479,7 +478,6 @@ export function buildDlqSettleArgs(
     p_comment_warning: null,
     p_target_destination_status: null,
     p_target_account_status: null,
-    p_destination_cooldown_seconds: null,
     p_rate_usage_pct: null,
   };
 }
@@ -495,18 +493,34 @@ export interface PublishDeferral {
  * Re-checks destination/account state at publish time (spec 139),
  * mirroring the claim RPC's eligibility rules exactly: the claimer only
  * claims an item when its account is `active` and its destination is
- * claimable — `active`, or `rate_limited` once its
- * `next_allowed_publish_at` cooldown has elapsed — with no cooldown in
- * the future. State can change between claim and consume (a sibling
- * publish trips a rate limit and imposes a cooldown, the destination
- * is disconnected, the account expires), so the consumer re-reads both
- * rows and re-applies the same test before spending a platform call.
+ * claimable — `active`, or `rate_limited` once its 3-day window has
+ * elapsed (see `isRateLimitWindowElapsed`). State can change between
+ * claim and consume (a sibling publish trips a rate limit, the
+ * destination is disconnected, the account expires), so the consumer
+ * re-reads both rows and re-applies the same test before spending a
+ * platform call.
  *
  * Returns the deferral to settle, or null when publishing may proceed.
- * Check order: account first (the most fundamental blocker), then the
- * cooldown (the binding constraint for a `rate_limited` destination),
- * then destination claimability.
+ * Check order: account first (the most fundamental blocker), then
+ * destination claimability.
  */
+export function isRateLimitWindowElapsed(
+  destination: DatabaseDestinationRow,
+  now: Date = new Date()
+): boolean {
+  // The anchor is the settle-written `metadata.rate_limited_at`;
+  // rows marked before the anchor existed fall back to `updated_at`
+  // (legacy-only — the same fallback the web display rule uses). A
+  // present-but-unparseable anchor fails closed: the destination is
+  // not treated as expired.
+  const metadata = (destination.metadata ?? {}) as Record<string, unknown>;
+  const anchorRaw =
+    typeof metadata.rate_limited_at === 'string' ? metadata.rate_limited_at : null;
+  const anchor = anchorRaw ? new Date(anchorRaw) : new Date(destination.updated_at);
+  if (Number.isNaN(anchor.getTime())) return false;
+  return now.getTime() - anchor.getTime() >= FB_RATE_LIMITED_COOLDOWN_MS;
+}
+
 export function evaluatePublishReadiness(
   destination: DatabaseDestinationRow,
   account: DatabaseSocialAccountRow,
@@ -542,30 +556,9 @@ export function evaluatePublishReadiness(
     };
   }
 
-  const nextAllowedAt = destination.next_allowed_publish_at
-    ? new Date(destination.next_allowed_publish_at)
-    : null;
-  const nextAllowedMs =
-    nextAllowedAt && !Number.isNaN(nextAllowedAt.getTime())
-      ? nextAllowedAt.getTime()
-      : null;
-  if (nextAllowedMs !== null && nextAllowedMs > now.getTime()) {
-    return {
-      code: DEFER_DESTINATION_COOLDOWN_CODE,
-      message:
-        `Destination ${destination.id} is in cooldown until ` +
-        `${destination.next_allowed_publish_at}; deferred without publishing.`,
-      retryDelaySeconds: Math.max(
-        1,
-        Math.ceil((nextAllowedMs - now.getTime()) / 1000)
-      ),
-    };
-  }
-
-  const cooldownElapsed = nextAllowedMs !== null && nextAllowedMs <= now.getTime();
   const claimable =
     destination.status === 'active' ||
-    (destination.status === 'rate_limited' && cooldownElapsed);
+    (destination.status === 'rate_limited' && isRateLimitWindowElapsed(destination, now));
   if (!claimable) {
     return {
       code: DEFER_DESTINATION_NOT_ACTIVE_CODE,
@@ -594,9 +587,10 @@ export function evaluatePublishReadiness(
  *     publish attempt was made, so no retry budget is consumed (the
  *     stored count is unchanged whatever is passed here; claim-time
  *     D5 deferral likewise reschedules without touching the count).
- *   - the delay is the deferral's own: for a cooldown it is the exact
- *     time until `next_allowed_publish_at`, so the item becomes due in
- *     step with the destination becoming eligible.
+ *   - the delay is the deferral's own (the default retry delay for a
+ *     not-active destination or account); the item becomes due again
+ *     once the destination is eligible, and the claim RPC re-applies
+ *     the same eligibility test.
  */
 export function buildDeferSettleArgs(
   item: DatabaseUnifiedQueueItemRow,
@@ -617,7 +611,6 @@ export function buildDeferSettleArgs(
     p_comment_warning: null,
     p_target_destination_status: null,
     p_target_account_status: null,
-    p_destination_cooldown_seconds: null,
     p_rate_usage_pct: null,
   };
 }

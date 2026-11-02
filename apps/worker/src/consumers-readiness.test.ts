@@ -10,7 +10,8 @@ import { evaluatePublishReadiness } from './consumers.js';
 const DEST = {
   id: '22222222-2222-4222-a222-222222222222',
   status: 'active',
-  next_allowed_publish_at: null,
+  metadata: {},
+  updated_at: '2026-10-30T00:00:00.000Z',
 };
 
 const BASE_ACCOUNT = {
@@ -40,5 +41,57 @@ describe('evaluatePublishReadiness (BG4)', () => {
       token_expires_at: '2026-01-01T00:00:00.000Z',
     } as never;
     expect(evaluatePublishReadiness(DEST as never, account, new Date('2026-10-30T00:00:00.000Z'))).toBeNull();
+  });
+});
+
+describe('evaluatePublishReadiness (3-day rate_limited anchor, 20261102160000)', () => {
+  const NOW = new Date('2026-10-30T00:00:00.000Z');
+  const account = { ...BASE_ACCOUNT } as never;
+
+  it('defers a rate_limited destination whose anchor is fresh', () => {
+    const dest = {
+      ...DEST,
+      status: 'rate_limited',
+      metadata: { rate_limited_at: '2026-10-29T00:00:00.000Z' },
+    } as never;
+    const result = evaluatePublishReadiness(dest, account, NOW);
+    expect(result).not.toBeNull();
+    expect(result?.code).toBe('destination_not_active');
+  });
+
+  it('proceeds for a rate_limited destination whose anchor is 3+ days old', () => {
+    const dest = {
+      ...DEST,
+      status: 'rate_limited',
+      metadata: { rate_limited_at: '2026-10-26T00:00:00.000Z' },
+    } as never;
+    expect(evaluatePublishReadiness(dest, account, NOW)).toBeNull();
+  });
+
+  it('falls back to updated_at for a rate_limited destination with no anchor', () => {
+    const fresh = {
+      ...DEST,
+      status: 'rate_limited',
+      metadata: {},
+      updated_at: '2026-10-29T00:00:00.000Z',
+    } as never;
+    expect(evaluatePublishReadiness(fresh, account, NOW)).not.toBeNull();
+    const stale = {
+      ...DEST,
+      status: 'rate_limited',
+      metadata: {},
+      updated_at: '2026-10-26T00:00:00.000Z',
+    } as never;
+    expect(evaluatePublishReadiness(stale, account, NOW)).toBeNull();
+  });
+
+  it('fails closed on a present-but-unparseable anchor', () => {
+    const dest = {
+      ...DEST,
+      status: 'rate_limited',
+      metadata: { rate_limited_at: 'not-a-date' },
+      updated_at: '2026-10-26T00:00:00.000Z',
+    } as never;
+    expect(evaluatePublishReadiness(dest, account, NOW)).not.toBeNull();
   });
 });

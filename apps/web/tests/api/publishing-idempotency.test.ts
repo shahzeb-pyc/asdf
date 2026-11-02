@@ -121,8 +121,7 @@ class FakeDb {
       timezone: string;
       status: string;
       rate_usage_pct: number;
-      next_allowed_publish_at: string | null;
-      metadata: Record<string, unknown> | null;
+          metadata: Record<string, unknown> | null;
       account_id: string;
       account_status: string;
       account_token_expires_at: string | null;
@@ -374,7 +373,6 @@ function seed() {
     timezone: 'UTC',
     status: 'active',
     rate_usage_pct: 0,
-    next_allowed_publish_at: null,
     metadata: null,
     // Audit BG1: the enqueue account gate fails closed when the
     // destination carries no account, so the fixture account must

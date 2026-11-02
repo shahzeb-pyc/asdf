@@ -68,7 +68,6 @@ function makeDestination(): DatabaseDestinationRow {
     timezone: 'Asia/Karachi',
     status: 'active',
     encrypted_destination_token: null,
-    next_allowed_publish_at: null,
     rate_usage_pct: 0,
     metadata: { scheduled: true, account_type: 'CREATOR' },
     created_at: new Date().toISOString(),

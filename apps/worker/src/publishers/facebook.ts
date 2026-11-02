@@ -1,6 +1,5 @@
 import {
   evaluateGraphApiError,
-  FB_RATE_LIMITED_COOLDOWN_DAYS,
   ValidationError,
   type ClassifiedPublishError,
   type DatabaseDestinationRow,
@@ -36,12 +35,12 @@ import { FacebookGraphError, FacebookPublishClient } from '../fb-client.js';
 //     this publisher emits the new names directly).
 //   - Account status `expired` is spelled the same in both vocabularies.
 //   - The old 3-day `fb_rate_limited` recovery was driven by the page
-//     status timestamp in the old claim SQL. The new claim RPC recovers
-//     a `rate_limited` destination only when its
-//     `next_allowed_publish_at` cooldown has expired, so the
-//     evaluation's 3-day cooldown (`cooldownDays`) is carried here as
-//     an explicit `destinationCooldownSeconds` — same 3-day recovery
-//     window, mechanism translated to the new schema.
+//     status timestamp in the old claim SQL. The claim RPCs now flip a
+//     `rate_limited` destination back to `active` once its
+//     `metadata.rate_limited_at` anchor (written by the settle RPC on
+//     marking, `updated_at` as the legacy-only fallback) is 3+ days old
+//     — the same 3-day window, kept as a status anchor, not a cooldown
+//     write (migration 20261102160000 removed cooldown pacing).
 //   - Graph telemetry `bucUsageMaxPct` -> `rateUsagePct` (the old
 //     `buc_usage_pct` page column is `destinations.rate_usage_pct`).
 
@@ -54,10 +53,6 @@ const DISPATCH_RETRY_MAX_DELAY_SECONDS = 3600;
 /** First-comment retry tuning — identical to the old dispatcher. */
 const FIRST_COMMENT_MAX_ATTEMPTS = 3;
 const FIRST_COMMENT_RETRY_DELAY_MS = 500;
-
-/** BUC usage at/above which a published post cools the destination down. */
-const BUC_COOLDOWN_THRESHOLD_PCT = 85;
-const BUC_DEFAULT_COOLDOWN_MINUTES = 5;
 
 type FacebookFormat = 'text' | 'image' | 'reel' | 'video' | 'story' | 'carousel';
 
@@ -386,24 +381,16 @@ export class FacebookPublisher implements Publisher {
       commentWarning = comment.warning ?? undefined;
     }
 
-    // Proactive telemetry pacing check (old dispatcher §4): BUC usage
-    // is reported on every published outcome that carried it, and at
-    // >= 85% the destination cools down for the estimated regain time
-    // (5 minutes by default).
+    // BUC usage is reported on every published outcome that carried
+    // it, as the `rateUsagePct` meter only. There is no cooldown on
+    // success: migration 20261102160000 removed the >= 85% pacing
+    // trigger, so a high BUC reading never gates the destination.
     let rateUsagePct: number | undefined;
-    let destinationCooldownSeconds: number | undefined;
     if (
       publishResult.telemetry?.bucUsageMaxPct !== undefined &&
       publishResult.telemetry.bucUsageMaxPct !== null
     ) {
-      const usage = publishResult.telemetry.bucUsageMaxPct;
-      rateUsagePct = usage;
-      if (usage >= BUC_COOLDOWN_THRESHOLD_PCT) {
-        const waitMins =
-          publishResult.telemetry.estimatedTimeToRegainAccessMinutes ||
-          BUC_DEFAULT_COOLDOWN_MINUTES;
-        destinationCooldownSeconds = waitMins * 60;
-      }
+      rateUsagePct = publishResult.telemetry.bucUsageMaxPct;
     }
 
     return {
@@ -412,9 +399,6 @@ export class FacebookPublisher implements Publisher {
       ...(externalCommentId !== undefined ? { externalCommentId } : {}),
       ...(commentWarning ? { commentWarning } : {}),
       ...(rateUsagePct !== undefined ? { rateUsagePct } : {}),
-      ...(destinationCooldownSeconds !== undefined
-        ? { destinationCooldownSeconds }
-        : {}),
     };
   }
 
@@ -555,11 +539,13 @@ export class FacebookPublisher implements Publisher {
    *   - account status: `expired` when the evaluation says expired or
    *     an auth error carries code 190/102 (the old dispatcher's exact
    *     condition — it cascaded even the 190/492 case whose evaluation
-   *     keeps the account `active`);
-   *   - destination cooldown: for a `rate_limited` destination the
-   *     evaluation's 3-day cooldown (see header); otherwise, on a
-   *     retryable rate-limit error, the retry delay (the old
-   *     `pageCooldownSeconds = retryDelaySeconds` rule).
+   *     keeps the account `active`).
+   *   Volume-limit errors (4/17/32/341/613/80000-80014) never park the
+   *   page: they retry with the existing backoff and no status flip.
+   *   Only the 368 spam throttle (and the temporarily-blocked signal)
+   *   marks the destination `rate_limited`, and the settle RPC stamps
+   *   the 3-day anchor when it does — there is no cooldown write
+   *   (migration 20261102160000).
    */
   private failureOutcome(
     err: unknown,
@@ -595,7 +581,6 @@ export class FacebookPublisher implements Publisher {
     const canRetry = isTransient && retryCount < effectiveMaxRetries;
 
     let retryDelaySeconds: number | undefined;
-    let destinationCooldownSeconds: number | undefined;
 
     if (canRetry) {
       if (
@@ -609,14 +594,6 @@ export class FacebookPublisher implements Publisher {
           DISPATCH_RETRY_BASE_DELAY_SECONDS * Math.pow(2, retryCount || 0)
         );
       }
-      if (isRateLimitErrorCode(code, subcode)) {
-        destinationCooldownSeconds = retryDelaySeconds;
-      }
-    }
-
-    if (targetDestinationStatus === 'rate_limited') {
-      const cooldownDays = evaluation?.cooldownDays ?? FB_RATE_LIMITED_COOLDOWN_DAYS;
-      destinationCooldownSeconds = cooldownDays * 24 * 60 * 60;
     }
 
     return {
@@ -625,7 +602,6 @@ export class FacebookPublisher implements Publisher {
       ...(retryDelaySeconds !== undefined ? { retryDelaySeconds } : {}),
       ...(targetDestinationStatus !== undefined ? { targetDestinationStatus } : {}),
       ...(targetAccountStatus !== undefined ? { targetAccountStatus } : {}),
-      ...(destinationCooldownSeconds !== undefined ? { destinationCooldownSeconds } : {}),
     };
   }
 }

@@ -134,6 +134,14 @@ export type DatabaseSocialAccountRow = z.infer<typeof DatabaseSocialAccountRowSc
 export const DatabaseDestinationMetadataSchema = z
   .object({
     account_type: z.string().min(1).max(64).optional(),
+    /**
+     * When the destination was last marked `rate_limited` (written by
+     * the settle RPC on every rate_limited marking, migration
+     * 20261102160000). The 3-day reactivation clock reads this, with
+     * `updated_at` as the legacy-only fallback for rows marked before
+     * the anchor existed. Cleared on manual resume to `active`.
+     */
+    rate_limited_at: z.string().datetime({ offset: true }).optional(),
   })
   .passthrough();
 
@@ -174,7 +182,6 @@ export const DatabaseDestinationRowSchema = z
     timezone: z.string().min(1).max(50),
     status: z.enum(['active', 'rate_limited', 'disconnected', 'error']),
     encrypted_destination_token: z.string().nullable(),
-    next_allowed_publish_at: z.string().datetime({ offset: true }).nullable(),
     rate_usage_pct: z.number().int().min(0).max(100),
     metadata: DatabaseDestinationMetadataSchema,
     created_at: z.string().datetime({ offset: true }),
@@ -344,7 +351,6 @@ export interface SettleQueueItemOutcomeUnifiedArgs {
   p_comment_warning?: string | null;
   p_target_destination_status?: string | null;
   p_target_account_status?: string | null;
-  p_destination_cooldown_seconds?: number | null;
   p_rate_usage_pct?: number | null;
   /**
    * Platform session state persisted to `publish_logs.detail`

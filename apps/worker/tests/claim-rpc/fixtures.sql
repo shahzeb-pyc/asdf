@@ -60,12 +60,14 @@ $$;
 
 -- Create one active social account + one destination for a platform.
 -- n must be unique per (platform) within a case. Returns destination id.
+-- p_rate_limited_at, when given, is merged into metadata as the 3-day
+-- anchor (migration 20261102160000 removed the cooldown column).
 CREATE OR REPLACE FUNCTION public.claim138_destination(
   p_platform TEXT,
   p_n INT,
   p_status TEXT DEFAULT 'active',
   p_metadata JSONB DEFAULT '{}'::jsonb,
-  p_next_allowed TIMESTAMPTZ DEFAULT NULL
+  p_rate_limited_at TIMESTAMPTZ DEFAULT NULL
 )
 RETURNS UUID
 LANGUAGE plpgsql
@@ -84,11 +86,14 @@ BEGIN
   ON CONFLICT (id) DO NOTHING;
   INSERT INTO public.destinations
     (id, workspace_id, account_id, platform, external_destination_id, name,
-     encrypted_destination_token, status, metadata, next_allowed_publish_at)
+     encrypted_destination_token, status, metadata)
   VALUES
     (v_dest, public.claim138_test_id('ws', 1), v_account, p_platform::public.platform,
      'ext-dest-' || p_platform || '-' || p_n, 'Rig ' || p_platform || ' destination ' || p_n,
-     'rig-destination-token', p_status, p_metadata, p_next_allowed);
+     'rig-destination-token', p_status,
+     CASE WHEN p_rate_limited_at IS NULL THEN p_metadata
+          ELSE COALESCE(p_metadata, '{}'::jsonb) || jsonb_build_object('rate_limited_at', to_jsonb(p_rate_limited_at))
+     END);
   RETURN v_dest;
 END;
 $$;

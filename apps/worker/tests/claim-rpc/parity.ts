@@ -8,11 +8,13 @@
  * current semantics (spec 138 parity contract §1–§8), NOT captured from
  * the implementation under test.
  *
- * The suite MUST pass identically against the PRE-FIX function
- * (migrations applied only up to 20261022130000) and against the fixed
- * function (all migrations) — that is what makes it a parity suite.
- * The runner prints which body it found (grouped vs correlated) so the
- * two runs are distinguishable in the recorded evidence.
+ * The suite asserts the CURRENT claim semantics. Case 9 (3-day
+ * rate_limited flip, migration 20261102160000) is NOT pre-fix
+ * comparable: the pre-fix body (migrations up to 20261022130000)
+ * keyed recovery off the removed cooldown column, so case 9 only
+ * passes against the current body. Every other case still passes
+ * identically against the pre-fix and current bodies — that is what
+ * makes the rest of the suite a parity suite.
  *
  * Cases run inside a single transaction each, seeding timestamps
  * relative to the transaction's now() — the same now() the RPC uses —
@@ -64,7 +66,7 @@ async function dest(
   ctx: Ctx,
   platform: string,
   n: number,
-  opts: { status?: string; metadata?: unknown; nextAllowed?: Date | null } = {}
+  opts: { status?: string; metadata?: unknown; rateLimitedAt?: Date | null } = {}
 ): Promise<string> {
   const { rows } = await ctx.client.query<{ id: string }>(
     `SELECT public.claim138_destination($1, $2, $3, $4::jsonb, $5) AS id`,
@@ -73,7 +75,7 @@ async function dest(
       n,
       opts.status ?? 'active',
       JSON.stringify(opts.metadata ?? {}),
-      opts.nextAllowed ?? null,
+      opts.rateLimitedAt ?? null,
     ]
   );
   return rows[0]?.id as string;
@@ -461,40 +463,72 @@ async function case8(ctx: Ctx): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Case 9: rate_limited auto-recovery (pass (a), untouched by spec 138).
+// Case 9: 3-day rate_limited flip (migration 20261102160000 — the
+// cooldown-column recovery it replaces is gone).
 // ---------------------------------------------------------------------------
 async function case9(ctx: Ctx): Promise<void> {
   const dPast = await dest(ctx, 'facebook', 1, {
     status: 'rate_limited',
-    nextAllowed: at(ctx, -5 * MIN),
+    rateLimitedAt: at(ctx, -4 * 24 * HOUR),
   });
   const pastItem = await item(ctx, dPast, 'facebook', 1);
+  // Legacy fallback: no anchor at all, updated_at 4 days old. The
+  // destinations updated_at trigger would rewrite a plain UPDATE back
+  // to now(), so the backdate runs with triggers suspended (superuser
+  // rig only) and trigger behaviour is restored before the RPC call.
+  const dLegacy = await dest(ctx, 'facebook', 3, { status: 'rate_limited' });
+  await ctx.client.query(`SET LOCAL session_replication_role = replica`);
+  await ctx.client.query(
+    `UPDATE public.destinations SET updated_at = $2 WHERE id = $1`,
+    [dLegacy, at(ctx, -4 * 24 * HOUR)]
+  );
+  await ctx.client.query(`SET LOCAL session_replication_role = origin`);
+  const legacyItem = await item(ctx, dLegacy, 'facebook', 1);
   const futureAt = at(ctx, 1 * HOUR);
   const dFuture = await dest(ctx, 'facebook', 2, {
     status: 'rate_limited',
-    nextAllowed: futureAt,
+    rateLimitedAt: futureAt,
   });
   await item(ctx, dFuture, 'facebook', 1);
 
   const claimed = await callRpc(ctx, 'facebook', null, 500, 3);
-  check(claimed.length === 1 && claimed[0]?.id === pastItem, 'c9: recovered destination claims in the same call');
-  const { rows: pastRows } = await ctx.client.query<{ status: string; next_allowed_publish_at: Date | null }>(
-    `SELECT status, next_allowed_publish_at FROM public.destinations WHERE id = $1`,
+  const claimedIds = new Set(claimed.map((c) => c.id));
+  check(
+    claimed.length === 2 && claimedIds.has(pastItem) && claimedIds.has(legacyItem),
+    'c9: anchor-expired and legacy-fallback destinations claim in the same call',
+    `claimed=${claimed.length}`
+  );
+  const { rows: pastRows } = await ctx.client.query<{
+    status: string;
+    metadata: Record<string, unknown> | null;
+  }>(
+    `SELECT status, metadata FROM public.destinations WHERE id = $1`,
     [dPast]
   );
-  check(pastRows[0]?.status === 'active', 'c9: expired rate_limited destination restored to active');
-  check(pastRows[0]?.next_allowed_publish_at === null, 'c9: cooldown cleared on recovery');
-  const { rows: futureRows } = await ctx.client.query<{ status: string; next_allowed_publish_at: Date | null }>(
-    `SELECT status, next_allowed_publish_at FROM public.destinations WHERE id = $1`,
+  check(pastRows[0]?.status === 'active', 'c9: anchor-expired rate_limited destination restored to active');
+  check(
+    pastRows[0]?.metadata?.rate_limited_at === undefined,
+    'c9: anchor cleared on flip'
+  );
+  const { rows: legacyRows } = await ctx.client.query<{ status: string }>(
+    `SELECT status FROM public.destinations WHERE id = $1`,
+    [dLegacy]
+  );
+  check(legacyRows[0]?.status === 'active', 'c9: legacy no-anchor destination restored to active via updated_at fallback');
+  const { rows: futureRows } = await ctx.client.query<{
+    status: string;
+    metadata: Record<string, unknown> | null;
+  }>(
+    `SELECT status, metadata FROM public.destinations WHERE id = $1`,
     [dFuture]
   );
-  check(futureRows[0]?.status === 'rate_limited', 'c9: future-cooldown destination untouched');
+  check(futureRows[0]?.status === 'rate_limited', 'c9: fresh-anchor destination untouched');
   eqTime(
-    futureRows[0]?.next_allowed_publish_at as Date,
+    new Date(futureRows[0]?.metadata?.rate_limited_at as string),
     futureAt,
-    'c9: future cooldown timestamp unchanged'
+    'c9: fresh anchor timestamp unchanged'
   );
-  await expectUntouched(ctx, dFuture, 1, at(ctx, -1 * MIN), 'c9 future-cooldown item');
+  await expectUntouched(ctx, dFuture, 1, at(ctx, -1 * MIN), 'c9 fresh-anchor item');
 }
 
 // ---------------------------------------------------------------------------

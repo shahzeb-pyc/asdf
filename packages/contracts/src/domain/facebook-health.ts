@@ -10,7 +10,6 @@ export interface GraphApiErrorEvaluation {
   isTransient: boolean;
   requiresReauth: boolean;
   requiresManualVerification?: boolean;
-  cooldownDays?: number;
   message: string;
 }
 
@@ -143,7 +142,6 @@ export function evaluateGraphApiError(
       pageStatus: 'fb_rate_limited',
       isTransient: true,
       requiresReauth: false,
-      cooldownDays: FB_RATE_LIMITED_COOLDOWN_DAYS,
       message:
         'We limit how often you can post, comment or do other things. Page is marked fb_rate_limited and will automatically turn active after 3 days.',
     };

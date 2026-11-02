@@ -80,7 +80,6 @@ function makeDestination(
     timezone: 'UTC',
     status: 'active',
     encrypted_destination_token: null,
-    next_allowed_publish_at: null,
     rate_usage_pct: 0,
     metadata: {},
     created_at: NOW.toISOString(),
@@ -370,7 +369,7 @@ describe('XPublisher — 402 platform-wide handling', () => {
     expect(outcome.error?.code).toBe(X_CREDITS_EXHAUSTED_CODE);
     expect(outcome.error?.kind).toBe('retryable');
     expect(outcome.retryDelaySeconds).toBe(3600);
-    expect(outcome.destinationCooldownSeconds).toBe(3600);
+    expect('destinationCooldownSeconds' in outcome).toBe(false);
     expect(outcome.targetAccountStatus).toBeUndefined();
     expect(outcome.detail).toMatchObject({ platformWide: true });
     expect(captured.some((body) => body.includes('$exception'))).toBe(true);
@@ -386,11 +385,12 @@ describe('XPublisher — 402 platform-wide handling', () => {
 });
 
 // ==========================================
-// Rate-limit headers → destination tightening
+// Rate-limit headers → usage metering only (20261102160000: the
+// destination-wide cooldown they used to feed is gone)
 // ==========================================
 
-describe('XPublisher — x-rate-limit header tightening', () => {
-  it('published with an exhausted window cools the destination until reset and reports usage', async () => {
+describe('XPublisher — x-rate-limit header metering', () => {
+  it('published with an exhausted window reports usage with no destination cooldown', async () => {
     const mock = new MockXClient();
     mock.rateLimitToReturn = {
       limit: 100,
@@ -400,7 +400,7 @@ describe('XPublisher — x-rate-limit header tightening', () => {
     const outcome = await makePublisher(mock).publish(makeItem(), makeDestination(), TOKENS);
     expect(outcome.status).toBe('published');
     expect(outcome.rateUsagePct).toBe(100);
-    expect(outcome.destinationCooldownSeconds).toBe(600);
+    expect('destinationCooldownSeconds' in outcome).toBe(false);
   });
 
   it('published with headroom reports usage with no invented cooldown', async () => {
@@ -412,7 +412,7 @@ describe('XPublisher — x-rate-limit header tightening', () => {
     };
     const outcome = await makePublisher(mock).publish(makeItem(), makeDestination(), TOKENS);
     expect(outcome.rateUsagePct).toBe(25);
-    expect(outcome.destinationCooldownSeconds).toBeUndefined();
+    expect('destinationCooldownSeconds' in outcome).toBe(false);
   });
 
   it('429 → retry whose delay comes from the reset header', async () => {
@@ -426,7 +426,7 @@ describe('XPublisher — x-rate-limit header tightening', () => {
     expect(outcome.status).toBe('retry');
     expect(outcome.error?.kind).toBe('retryable');
     expect(outcome.retryDelaySeconds).toBe(900);
-    expect(outcome.destinationCooldownSeconds).toBe(900);
+    expect('destinationCooldownSeconds' in outcome).toBe(false);
   });
 
   it('401 → failed with the account-expired cascade', async () => {
