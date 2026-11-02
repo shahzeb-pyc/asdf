@@ -9,6 +9,10 @@
  * enabled, and the default source platform is TikTok — so the dialog
  * never opens with a disabled platform pre-selected and a bare username
  * entry never silently creates a non-TikTok source.
+ * Step 1 rows carry a photo avatar (initials fallback) plus, for pages,
+ * a "category · followers" meta line from the destinations metadata —
+ * the page id is not rendered. The result message is singular for one
+ * created page ("Created 1 page.") and plural otherwise.
  */
 import React from 'react';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
@@ -302,6 +306,119 @@ describe('AduHubPage Add Page dialog 2-step flow', () => {
     await user.click(screen.getByRole('button', { name: 'Back' }));
     expect(await screen.findByText('Step 1 of 2: Select Pages')).toBeTruthy();
     expect(screen.getByText('1 pages selected')).toBeTruthy();
+  });
+
+  it('step 1: rows show photos when avatar URLs exist, initials otherwise', async () => {
+    const user = userEvent.setup();
+    installFetch({
+      ...OPTIONS_BODY,
+      accounts: [
+        { id: 'acct-1', external_account_id: '111', display_name: 'My FB Account', avatar_url: 'https://images.example.com/acct.jpg', status: 'connected' },
+        { id: 'acct-2', external_account_id: '444', display_name: 'Second Account', avatar_url: null, status: 'connected' },
+      ],
+      pages: [
+        { id: 'page-1', account_id: 'acct-1', external_destination_id: '222', name: 'My Page', avatar_url: 'https://images.example.com/page.jpg', status: 'connected', metadata: null },
+        { id: 'page-2', account_id: 'acct-1', external_destination_id: '333', name: 'Second Page', avatar_url: null, status: 'connected', metadata: null },
+        { id: 'page-3', account_id: 'acct-2', external_destination_id: '555', name: 'Third Page', avatar_url: null, status: 'connected', metadata: null },
+      ],
+    });
+    await openDialog(user);
+    const accountLabel = screen.getByText('My FB Account').closest('label');
+    const accountImg = within(accountLabel as HTMLElement).getByTestId('picker-avatar-img');
+    expect(accountImg.getAttribute('src')).toBe('https://images.example.com/acct.jpg');
+    const pageLabel = screen.getByText('My Page').closest('label');
+    const pageImg = within(pageLabel as HTMLElement).getByTestId('picker-avatar-img');
+    expect(pageImg.getAttribute('src')).toBe('https://images.example.com/page.jpg');
+    const secondAccountLabel = screen.getByText('Second Account').closest('label');
+    expect(within(secondAccountLabel as HTMLElement).getByText('SA')).toBeTruthy();
+    const secondPageLabel = screen.getByText('Second Page').closest('label');
+    expect(within(secondPageLabel as HTMLElement).getByText('SP')).toBeTruthy();
+  });
+
+  it('step 1: a failed avatar photo falls back to initials', async () => {
+    const user = userEvent.setup();
+    installFetch({
+      ...OPTIONS_BODY,
+      pages: [
+        { id: 'page-1', account_id: 'acct-1', external_destination_id: '222', name: 'My Page', avatar_url: 'https://images.example.com/broken.jpg', status: 'connected', metadata: null },
+        ...OPTIONS_BODY.pages.slice(1),
+      ],
+    });
+    await openDialog(user);
+    const label = screen.getByText('My Page').closest('label');
+    const img = within(label as HTMLElement).getByTestId('picker-avatar-img');
+    fireEvent.error(img);
+    expect(within(label as HTMLElement).getByTestId('picker-avatar-initials')).toBeTruthy();
+    expect(within(label as HTMLElement).queryByTestId('picker-avatar-img')).toBeNull();
+    expect(within(label as HTMLElement).getByText('MP')).toBeTruthy();
+  });
+
+  it('step 1: page rows show category and followers, never the page id', async () => {
+    const user = userEvent.setup();
+    installFetch({
+      ...OPTIONS_BODY,
+      pages: [
+        { id: 'page-1', account_id: 'acct-1', external_destination_id: '222', name: 'My Page', avatar_url: null, status: 'connected', metadata: { category: 'Digital creator', current_followers: 23108 } },
+        { id: 'page-2', account_id: 'acct-1', external_destination_id: '333', name: 'Second Page', avatar_url: null, status: 'connected', metadata: { category: 'Music video' } },
+        { id: 'page-3', account_id: 'acct-2', external_destination_id: '555', name: 'Third Page', avatar_url: null, status: 'connected', metadata: { current_followers: 1 } },
+        { id: 'page-4', account_id: 'acct-2', external_destination_id: '666', name: 'Fourth Page', avatar_url: null, status: 'connected', metadata: {} },
+      ],
+    });
+    await openDialog(user);
+    expect(screen.getByText('Digital creator · 23,108 followers')).toBeTruthy();
+    expect(screen.getByText('Music video')).toBeTruthy();
+    expect(screen.getByText('1 follower')).toBeTruthy();
+    // Neither meta part means no second line: the fourth label has no
+    // muted meta span at all (the meta line is the only text-ink-sub
+    // span in a page row).
+    const fourthLabel = screen.getByText('Fourth Page').closest('label');
+    const muted = Array.from((fourthLabel as HTMLElement).querySelectorAll('span')).filter((s) =>
+      s.className.includes('text-ink-sub'),
+    );
+    expect(muted).toHaveLength(0);
+    // Page ids are gone from page rows; account ids stay.
+    expect(screen.queryByText('222')).toBeNull();
+    expect(screen.queryByText('333')).toBeNull();
+    expect(screen.queryByText('555')).toBeNull();
+    expect(screen.queryByText('666')).toBeNull();
+    expect(screen.getByText('111')).toBeTruthy();
+  });
+
+  it('step 2: result message is singular for one created page', async () => {
+    const user = userEvent.setup();
+    // One created + one failed: partial failure keeps the dialog open
+    // so the banner stays visible (a clean success closes it).
+    fetchMock.mockImplementation((url: string, init?: { method?: string }) => {
+      if (url.includes('/auto-download-upload/options')) return jsonResponse(OPTIONS_BODY);
+      if (init?.method === 'POST') return jsonResponse({ id: 'cfg-new', created: [{ id: 'cfg-a' }], failed: [{ destinationId: 'page-2', error: 'boom' }] });
+      return jsonResponse(HUB_BODY);
+    });
+    await openDialog(user);
+    await pickCheckboxFor(user, 'My Page');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    const dialog = screen.getByRole('dialog');
+    await user.type(within(dialog).getByPlaceholderText('@username'), 'creator_one');
+    await user.click(screen.getByRole('button', { name: 'Start Automation' }));
+    expect(await screen.findByText(/Created 1 page\./)).toBeTruthy();
+  });
+
+  it('step 2: result message stays plural for multiple created pages', async () => {
+    const user = userEvent.setup();
+    fetchMock.mockImplementation((url: string, init?: { method?: string }) => {
+      if (url.includes('/auto-download-upload/options')) return jsonResponse(OPTIONS_BODY);
+      if (init?.method === 'POST') return jsonResponse({ id: 'cfg-new', created: [{ id: 'cfg-a' }, { id: 'cfg-b' }], failed: [{ destinationId: 'page-3', error: 'boom' }] });
+      return jsonResponse(HUB_BODY);
+    });
+    await openDialog(user);
+    await pickCheckboxFor(user, 'My Page');
+    await pickCheckboxFor(user, 'Second Page');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    const dialog = screen.getByRole('dialog');
+    const inputs = within(dialog).getAllByPlaceholderText('@username');
+    await user.type(inputs[0]!, 'creator_one');
+    await user.type(inputs[1]!, 'creator_two');
+    await user.click(screen.getByRole('button', { name: 'Start Automation' }));
+    expect(await screen.findByText(/Created 2 pages\./)).toBeTruthy();
   });
 });
 
