@@ -269,6 +269,160 @@ describe('Muse activity API', () => {
   });
 });
 
+describe('Muse keys API — validation, ownership, and missing-table paths', () => {
+  let store: {
+    agent_keys: Record<string, unknown>[];
+    agent_activity: Record<string, unknown>[];
+  };
+  let db: ReturnType<typeof createFakeSupabase>;
+
+  beforeEach(() => {
+    store = { agent_keys: [], agent_activity: [] };
+    db = createFakeSupabase(store);
+  });
+
+  it('rejects an empty, missing, or over-long key name with 400', async () => {
+    for (const body of [{ name: '' }, {}, { name: 'x'.repeat(101) }]) {
+      const res = await handleCreateKey(await cookieRequest('POST', body), SUBDOMAIN, db);
+      expect(res.status).toBe(400);
+    }
+    expect(store.agent_keys).toHaveLength(0);
+  });
+
+  it('rejects list and delete without a session with 401', async () => {
+    const anon = new NextRequest('http://localhost:3000/api/x', { method: 'GET' });
+    expect((await handleListKeys(anon, SUBDOMAIN, db)).status).toBe(401);
+    const anonDel = new NextRequest('http://localhost:3000/api/x', { method: 'DELETE' });
+    expect(
+      (await handleDeleteKey(anonDel, SUBDOMAIN, '44444444-4444-4444-8444-444444444444', db)).status
+    ).toBe(401);
+  });
+
+  it('rejects delete with a malformed key id with 400', async () => {
+    const res = await handleDeleteKey(await cookieRequest('DELETE'), SUBDOMAIN, 'not-a-uuid', db);
+    expect(res.status).toBe(400);
+  });
+
+  it('lists only the caller’s own keys', async () => {
+    await handleCreateKey(await cookieRequest('POST', { name: 'Mine' }), SUBDOMAIN, db);
+    store.agent_keys.push({
+      id: '55555555-5555-4555-8555-555555555555',
+      user_id: '99999999-9999-4999-8999-999999999999',
+      name: 'Someone else',
+      key_prefix: 'fbu_…zzzz',
+      scopes: ['media:read', 'media:write'],
+      expires_at: null,
+      created_at: new Date().toISOString(),
+      last_used_at: null,
+    });
+    const listed = await handleListKeys(await cookieRequest('GET'), SUBDOMAIN, db);
+    const json = await listed.json();
+    expect(json.keys).toHaveLength(1);
+    expect(json.keys[0].name).toBe('Mine');
+  });
+
+  it('reports a plain not-set-up-yet 500 when the keys table is missing', async () => {
+    const missingTable = {
+      from() {
+        const chain: Record<string, unknown> = {};
+        chain.select = () => chain;
+        chain.eq = () => chain;
+        chain.order = () => chain;
+        chain.insert = () => chain;
+        chain.single = () => Promise.resolve({ data: null, error: { code: '42P01' } });
+        chain.then = (resolve: (v: unknown) => void) =>
+          resolve({ data: null, error: { code: '42P01' } });
+        return chain;
+      },
+    } as never;
+    const listed = await handleListKeys(await cookieRequest('GET'), SUBDOMAIN, missingTable);
+    expect(listed.status).toBe(500);
+    expect((await listed.json()).error).toBe('Muse keys are not set up yet');
+    const created = await handleCreateKey(
+      await cookieRequest('POST', { name: 'X' }),
+      SUBDOMAIN,
+      missingTable
+    );
+    expect(created.status).toBe(500);
+  });
+});
+
+describe('Muse activity API — ownership, labels, and auth', () => {
+  it('rejects activity without a session and excludes other users’ rows', async () => {
+    const store = {
+      agent_keys: [] as Record<string, unknown>[],
+      agent_activity: [
+        {
+          id: 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaa9',
+          user_id: '99999999-9999-4999-8999-999999999999',
+          media_id: 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbb9',
+          name: 'someone-else.mp4',
+          media_type: 'video',
+          folder_id: null,
+          created_at: '2026-11-03T09:00:00.000Z',
+        },
+      ] as Record<string, unknown>[],
+    };
+    const db = createFakeSupabase(store);
+    const anon = new NextRequest('http://localhost:3000/api/x', { method: 'GET' });
+    expect((await handleMuseActivity(anon, SUBDOMAIN, db)).status).toBe(401);
+    const res = await handleMuseActivity(
+      await cookieRequest('GET'),
+      SUBDOMAIN,
+      db,
+      new Date('2026-11-03T12:00:00.000Z')
+    );
+    const json = await res.json();
+    expect(json.today).toEqual({ videos: 0, images: 0, total: 0 });
+    expect(json.days).toEqual([]);
+  });
+
+  it('labels an older day with its date, not Today or Yesterday', async () => {
+    const store = {
+      agent_keys: [] as Record<string, unknown>[],
+      agent_activity: [
+        {
+          id: 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaa8',
+          user_id: USER_ID,
+          media_id: 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbb8',
+          name: 'old-reel.mp4',
+          media_type: 'video',
+          folder_id: null,
+          created_at: '2026-10-30T09:00:00.000Z',
+        },
+      ] as Record<string, unknown>[],
+    };
+    const db = createFakeSupabase(store);
+    const res = await handleMuseActivity(
+      await cookieRequest('GET'),
+      SUBDOMAIN,
+      db,
+      new Date('2026-11-03T12:00:00.000Z')
+    );
+    const json = await res.json();
+    expect(json.days.map((d: { label: string }) => d.label)).toEqual(['30 Oct 2026']);
+    expect(json.today).toEqual({ videos: 0, images: 0, total: 0 });
+  });
+
+  it('reports a plain not-set-up-yet 500 when the activity table is missing', async () => {
+    const missingTable = {
+      from() {
+        const chain: Record<string, unknown> = {};
+        chain.select = () => chain;
+        chain.eq = () => chain;
+        chain.order = () => chain;
+        chain.limit = () => chain;
+        chain.then = (resolve: (v: unknown) => void) =>
+          resolve({ data: null, error: { code: '42P01' } });
+        return chain;
+      },
+    } as never;
+    const res = await handleMuseActivity(await cookieRequest('GET'), SUBDOMAIN, missingTable);
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe('Muse activity is not set up yet');
+  });
+});
+
 describe('agent key generation', () => {
   it('generates distinct keys whose hash is deterministic and one-way', () => {
     const keyA = generateAgentKey();

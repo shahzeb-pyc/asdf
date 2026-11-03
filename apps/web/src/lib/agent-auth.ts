@@ -36,10 +36,16 @@ export function hashAgentKey(key: string): string {
 function parseBearerKey(request: NextRequest): string | null {
   const header = request.headers.get('authorization');
   if (!header) return null;
-  const match = /^Bearer\s+(.+)$/i.exec(header.trim());
-  if (!match) return null;
-  const key = match[1]?.trim();
-  return key && isMuseKeyFormat(key) ? key : null;
+  // No regex here: the previous /^Bearer\s+(.+)$/ pattern had
+  // overlapping quantifiers (\s+ then .+) that Sonar flagged for
+  // super-linear backtracking. Splitting on whitespace is exact:
+  // exactly two tokens, first "Bearer" (any case), second the key.
+  const parts = header.trim().split(/\s+/);
+  if (parts.length !== 2) return null;
+  const [scheme, candidate] = parts;
+  // Length is exactly 2 here, so both tokens are present.
+  if (scheme.toLowerCase() !== 'bearer') return null;
+  return candidate && isMuseKeyFormat(candidate) ? candidate : null;
 }
 
 type SupabaseLike = Pick<SupabaseClient, 'from'>;
