@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SupabaseRpc } from './supabase.js';
+import { SupabaseRpc, stripTrailingSlashes } from './supabase.js';
 import type { FetchImpl } from './tikwm.js';
 
 const URL = 'https://example.supabase.co';
@@ -109,5 +109,16 @@ describe('SupabaseRpc', () => {
   it('requires URL and key at construction', () => {
     expect(() => new SupabaseRpc('', KEY)).toThrow();
     expect(() => new SupabaseRpc(URL, '')).toThrow();
+  });
+});
+
+describe('stripTrailingSlashes', () => {
+  it('removes all trailing slashes and leaves everything else untouched', () => {
+    expect(stripTrailingSlashes('https://example.com///')).toBe('https://example.com');
+    expect(stripTrailingSlashes('https://example.com/')).toBe('https://example.com');
+    expect(stripTrailingSlashes('https://example.com')).toBe('https://example.com');
+    expect(stripTrailingSlashes('https://example.com/a/b/')).toBe('https://example.com/a/b');
+    expect(stripTrailingSlashes('')).toBe('');
+    expect(stripTrailingSlashes('///')).toBe('');
   });
 });

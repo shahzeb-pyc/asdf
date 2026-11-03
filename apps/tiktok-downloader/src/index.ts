@@ -60,7 +60,7 @@ export default {
     await run;
   },
 
-  async fetch(): Promise<Response> {
+  async fetch(_request: Request, _env: Env, _ctx: ExecutionContext): Promise<Response> {
     return new Response('Not found', { status: 404 });
   },
 };

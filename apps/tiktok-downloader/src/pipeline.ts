@@ -21,6 +21,7 @@ import { normalizeReelCaption, DEFAULT_REEL_CAPTION } from './caption.js';
 import { Sha256 } from './sha256.js';
 import { probeMp4Audio } from './mp4-audio.js';
 import type { SupabaseRpc, ClaimedReel } from './supabase.js';
+import { stripTrailingSlashes } from './supabase.js';
 import {
   resolveTikwmStream,
   openVideoStream,
@@ -240,7 +241,7 @@ async function processOne(deps: TickDeps, reel: ClaimedReel): Promise<'downloade
       contentType: CONTENT_TYPE_MP4,
       sha256: outcome.sha256Hex,
       caption,
-      mediaUrl: `${r2PublicUrl.replace(/\/+$/, '')}/${key}`,
+      mediaUrl: `${stripTrailingSlashes(r2PublicUrl)}/${key}`,
     });
   } catch (err) {
     // The bytes are already in R2 under a deterministic key, so a later

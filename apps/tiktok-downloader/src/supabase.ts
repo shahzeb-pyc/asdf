@@ -34,6 +34,20 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
 }
 
+/**
+ * Strip every trailing `/` from a URL prefix, without a regular expression:
+ * the naive `/\/+$/` form is flagged as super-linear backtracking (Sonar
+ * typescript:S8786), while this scan is linear and preserves the exact
+ * semantics (all trailing slashes removed, interior slashes untouched).
+ */
+export function stripTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === '/') {
+    end--;
+  }
+  return value.slice(0, end);
+}
+
 export class SupabaseRpc {
   private readonly baseUrl: string;
   private readonly serviceKey: string;
@@ -43,7 +57,7 @@ export class SupabaseRpc {
     if (!supabaseUrl || !serviceRoleKey) {
       throw new Error('SupabaseRpc: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required');
     }
-    this.baseUrl = supabaseUrl.replace(/\/+$/, '');
+    this.baseUrl = stripTrailingSlashes(supabaseUrl);
     this.serviceKey = serviceRoleKey;
     this.fetchImpl = fetchImpl;
   }

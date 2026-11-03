@@ -36,6 +36,7 @@ export default [
           allowDefaultProject: [
             "apps/worker/vitest.config.ts",
             "apps/secuid-worker/vitest.config.ts",
+            "apps/tiktok-downloader/vitest.config.ts",
             "apps/download-worker/vitest.config.ts",
             "packages/contracts/vitest.config.ts",
             "packages/downloader-engine/vitest.config.ts",
