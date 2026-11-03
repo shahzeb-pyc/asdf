@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
-import { handleSecUidRequest } from './index.js';
+import { handleProxyRequest, handleSecUidRequest } from './index.js';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -122,5 +122,158 @@ describe('secuid worker', () => {
       new Request('https://secuid.example/?username=courtroom62', { method: 'POST' }),
     );
     expect(res.status).toBe(405);
+  });
+});
+
+describe('countik proxy routes', () => {
+  const SECRET = 'test-proxy-secret';
+  const auth = { 'x-countik-proxy-secret': SECRET };
+
+  it('fails closed with 503 when no secret is configured', async () => {
+    mockFetch(async () => {
+      throw new Error('must not fetch without a secret configured');
+    });
+    const res = await handleProxyRequest(
+      new Request('https://proxy.example/proxy/exist/alice', { headers: auth }),
+      {},
+    );
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'PROXY_NOT_CONFIGURED' });
+  });
+
+  it('rejects proxy calls without the secret with 401 and no upstream call', async () => {
+    mockFetch(async () => {
+      throw new Error('must not fetch unauthenticated');
+    });
+    const res = await handleProxyRequest(
+      new Request('https://proxy.example/proxy/exist/alice'),
+      { proxySecret: SECRET },
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it('forwards exist through the proxy and returns upstream JSON unchanged', async () => {
+    let seenUrl = '';
+    let seenUa = '';
+    mockFetch(async (url: string, init?: RequestInit) => {
+      seenUrl = url;
+      seenUa = (init?.headers as Record<string, string>)['User-Agent'] ?? '';
+      return jsonResponse({ status: 'success', sec_uid: 'SEC123' }, 200);
+    });
+    const res = await handleProxyRequest(
+      new Request('https://proxy.example/proxy/exist/alice', { headers: auth }),
+      { proxySecret: SECRET },
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: 'success', sec_uid: 'SEC123' });
+    expect(seenUrl).toBe('https://countik.com/api/exist/alice');
+    expect(seenUa).toContain('Chrome/');
+  });
+
+  it('forwards analyze with validated params', async () => {
+    let seenUrl = '';
+    mockFetch(async (url: string) => {
+      seenUrl = url;
+      return jsonResponse({ author: { verified: true } }, 200);
+    });
+    const res = await handleProxyRequest(
+      new Request(
+        'https://proxy.example/proxy/analyze?sec_user_id=SEC123&username=alice',
+        { headers: auth },
+      ),
+      { proxySecret: SECRET },
+    );
+    expect(res.status).toBe(200);
+    expect(seenUrl).toBe(
+      'https://countik.com/api/analyze/?sec_user_id=SEC123&username=alice',
+    );
+    const bad = await handleProxyRequest(
+      new Request('https://proxy.example/proxy/analyze?username=alice', {
+        headers: auth,
+      }),
+      { proxySecret: SECRET },
+    );
+    expect(bad.status).toBe(400);
+  });
+
+  it('forwards video/exist and videoinfo, rejecting non-TikTok URLs and bad ids', async () => {
+    const urls: string[] = [];
+    mockFetch(async (url: string) => {
+      urls.push(url);
+      if (url.endsWith('/video/exist')) {
+        return jsonResponse({ video_id: '7417197815434169631' }, 200);
+      }
+      return jsonResponse({ plays: 100 }, 200);
+    });
+    const existRes = await handleProxyRequest(
+      new Request('https://proxy.example/proxy/video/exist', {
+        method: 'POST',
+        headers: { ...auth, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: 'https://www.tiktok.com/@alice/video/123' }),
+      }),
+      { proxySecret: SECRET },
+    );
+    expect(existRes.status).toBe(200);
+    expect(urls[0]).toBe('https://countik.com/api/video/exist');
+    const infoRes = await handleProxyRequest(
+      new Request('https://proxy.example/proxy/videoinfo/7417197815434169631', {
+        headers: auth,
+      }),
+      { proxySecret: SECRET },
+    );
+    expect(infoRes.status).toBe(200);
+    const badUrl = await handleProxyRequest(
+      new Request('https://proxy.example/proxy/video/exist', {
+        method: 'POST',
+        headers: { ...auth, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: 'https://example.com/video/123' }),
+      }),
+      { proxySecret: SECRET },
+    );
+    expect(badUrl.status).toBe(400);
+    const badId = await handleProxyRequest(
+      new Request('https://proxy.example/proxy/videoinfo/abc', { headers: auth }),
+      { proxySecret: SECRET },
+    );
+    expect(badId.status).toBe(400);
+  });
+
+  it('forwards generateHashtags and never leaks an upstream challenge body on non-200', async () => {
+    mockFetch(async () => jsonResponse({ hashtags: ['viral'] }, 200));
+    const ok = await handleProxyRequest(
+      new Request('https://proxy.example/proxy/generateHashtags', {
+        method: 'POST',
+        headers: { ...auth, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: 'viral' }),
+      }),
+      { proxySecret: SECRET },
+    );
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ hashtags: ['viral'] });
+
+    mockFetch(async () => new Response('<html>challenge page</html>', { status: 403 }));
+    const blocked = await handleProxyRequest(
+      new Request('https://proxy.example/proxy/generateHashtags', {
+        method: 'POST',
+        headers: { ...auth, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: 'viral' }),
+      }),
+      { proxySecret: SECRET },
+    );
+    expect(blocked.status).toBe(502);
+    const blockedBody = (await blocked.json()) as Record<string, unknown>;
+    expect(blockedBody.error).toBe('UPSTREAM_ERROR');
+    expect(JSON.stringify(blockedBody)).not.toContain('challenge page');
+  });
+
+  it('rejects unknown proxy routes with 404', async () => {
+    mockFetch(async () => {
+      throw new Error('must not fetch unknown routes');
+    });
+    const res = await handleProxyRequest(
+      new Request('https://proxy.example/proxy/anything-else', { headers: auth }),
+      { proxySecret: SECRET },
+    );
+    expect(res.status).toBe(404);
   });
 });

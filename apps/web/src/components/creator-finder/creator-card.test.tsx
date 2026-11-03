@@ -179,14 +179,14 @@ describe('CreatorCard', () => {
     expect(screen.queryByLabelText('Verified creator')).toBeNull();
   });
 
-  it('renders the Countik-failure variant: note, no counts, no tick, no detail', () => {
+  it('renders the enrichment-failure variant: note, no counts, no tick, no detail', () => {
     render(
       <CreatorCard
         creator={makeCreator({ countikUnavailable: true })}
       />,
     );
     expect(
-      screen.getByText('Countik data unavailable for this creator.'),
+      screen.getByText('Details unavailable for this creator.'),
     ).toBeTruthy();
     expect(screen.queryByLabelText('Verified creator')).toBeNull();
     expect(screen.queryByText(/followers/)).toBeNull();
@@ -194,7 +194,7 @@ describe('CreatorCard', () => {
     expect(screen.getByText('View on TikTok ↗')).toBeTruthy();
   });
 
-  it('keeps the TikWM follower count and tick on a Similar Countik failure', () => {
+  it('keeps the TikWM follower count and tick on a Similar enrichment failure', () => {
     render(
       <CreatorCard
         creator={makeCreator({
@@ -207,7 +207,7 @@ describe('CreatorCard', () => {
     expect(screen.getByText('1.2M followers')).toBeTruthy();
     expect(screen.getByLabelText('Verified creator')).toBeTruthy();
     expect(
-      screen.queryByText('Countik data unavailable for this creator.'),
+      screen.queryByText('Details unavailable for this creator.'),
     ).toBeNull();
     expect(screen.queryByText('Engagement')).toBeNull();
   });
@@ -221,7 +221,7 @@ describe('CreatorCard', () => {
     expect(screen.getByText('500 followers')).toBeTruthy();
     expect(screen.getByLabelText('Verified creator')).toBeTruthy();
     expect(
-      screen.queryByText('Countik data unavailable for this creator.'),
+      screen.queryByText('Details unavailable for this creator.'),
     ).toBeNull();
     expect(screen.queryByText('Engagement')).toBeNull();
   });

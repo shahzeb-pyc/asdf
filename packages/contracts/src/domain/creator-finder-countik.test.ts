@@ -376,3 +376,92 @@ describe('saved enrichment round-trip and CSV', () => {
     expect(lines[2]?.endsWith(',,,,,,,,,,,,,,')).toBe(true);
   });
 });
+
+describe('proxy + generic messages (countik-proxy fix)', () => {
+  it('picks the live analyze keys: *_rate engagement and avg* averages', async () => {
+    const fetchFn = stubFetch((url) => {
+      if (url.includes('/exist/')) return { ok: true, body: EXIST_BODY };
+      return {
+        ok: true,
+        body: {
+          author: { nickname: 'Alice Fit', verified: true },
+          engagement_rates: {
+            total_rate: 14.32,
+            likes_rate: 11.1,
+            comments_rate: 2.2,
+            shares_rate: 1.0,
+          },
+          performance: {
+            avgViews: 64_441_655,
+            avgLikes: 180_000,
+            avgComments: 9500,
+            avgShares: 12_000,
+          },
+        },
+      };
+    });
+    const enrichment = await fetchCountikEnrichment('alice', { fetchFn });
+    expect(enrichment.engagementTotal).toBe(14.32);
+    expect(enrichment.engagementLikes).toBe(11.1);
+    expect(enrichment.engagementComments).toBe(2.2);
+    expect(enrichment.engagementShares).toBe(1.0);
+    expect(enrichment.averageViews).toBe(64_441_655);
+    expect(enrichment.averageLikes).toBe(180_000);
+    expect(enrichment.averageComments).toBe(9500);
+    expect(enrichment.averageShares).toBe(12_000);
+  });
+
+  it('never passes an upstream reason through: non-200 gives the fixed generic message', async () => {
+    const fetchFn = stubFetch(() => ({
+      ok: false,
+      body: { message: 'upstream internal wording that must not surface' },
+    }));
+    await expect(fetchCountikEnrichment('alice', { fetchFn })).rejects.toThrow(
+      'Details could not be loaded. Please try again.',
+    );
+    try {
+      await fetchCountikEnrichment('alice', { fetchFn });
+      throw new Error('should have thrown');
+    } catch (err) {
+      expect((err as Error).message).not.toContain('upstream internal wording');
+    }
+  });
+
+  it('sends a browser User-Agent and routes through the proxy base with its secret', async () => {
+    const seen: Array<{ url: string; headers: Record<string, string> }> = [];
+    const fetchFn = (async (url: string, init?: RequestInit) => {
+      seen.push({
+        url,
+        headers: (init?.headers ?? {}) as Record<string, string>,
+      });
+      if (url.includes('/exist/')) {
+        return { ok: true, json: async () => EXIST_BODY } as Response;
+      }
+      return { ok: true, json: async () => ANALYZE_BODY } as Response;
+    }) as unknown as typeof fetch;
+    await fetchCountikEnrichment('alice', {
+      fetchFn,
+      baseUrl: 'https://proxy.example',
+      proxySecret: 'test-secret',
+    });
+    expect(seen[0]?.url).toBe('https://proxy.example/exist/alice');
+    expect(seen[0]?.headers['User-Agent']).toContain('Chrome/');
+    expect(seen[0]?.headers['x-countik-proxy-secret']).toBe('test-secret');
+    expect(seen[1]?.url).toBe(
+      'https://proxy.example/analyze/?sec_user_id=SEC123&username=alice',
+    );
+  });
+
+  it('sends no proxy secret header on the direct path', async () => {
+    const seen: Array<Record<string, string>> = [];
+    const fetchFn = (async (url: string, init?: RequestInit) => {
+      seen.push((init?.headers ?? {}) as Record<string, string>);
+      if (url.includes('/exist/')) {
+        return { ok: true, json: async () => EXIST_BODY } as Response;
+      }
+      return { ok: true, json: async () => ANALYZE_BODY } as Response;
+    }) as unknown as typeof fetch;
+    await fetchCountikEnrichment('alice', { fetchFn });
+    expect(seen[0]?.['x-countik-proxy-secret']).toBeUndefined();
+  });
+});

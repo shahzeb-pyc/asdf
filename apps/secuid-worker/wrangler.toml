@@ -3,7 +3,10 @@ main = "src/index.ts"
 compatibility_date = "2026-10-01"
 compatibility_flags = ["nodejs_compat"]
 
-# Pure fetch Worker: no bindings, no secrets, no cron. The only caller is
-# the VPS ADU scraper (server-side), so no CORS surface is exposed.
+# Pure fetch Worker: no bindings, no cron, no CORS surface (all
+# callers are server-side). The legacy sec_uid route needs no
+# secret; the /proxy/* routes require PROXY_SECRET, set via
+# `wrangler secret put PROXY_SECRET` (never in this file) and
+# matched by the backend's COUNTIK_PROXY_SECRET env var.
 # Deploys to https://fbuploadpro-secuid.<account-subdomain>.workers.dev
 # via .github/workflows/deploy-secuid-worker.yml on push to main.

@@ -307,7 +307,7 @@ export function creatorFinderErrorResponse(err: unknown): NextResponse {
             : 502;
     const message =
       err.code === 'NO_KEYS_CONFIGURED'
-        ? 'Creator search is not available yet — no TikTok data key is set up for this workspace.'
+        ? 'Creator search is not available right now. Please try again.'
         : err.message;
     return NextResponse.json({ error: err.code, message }, { status });
   }

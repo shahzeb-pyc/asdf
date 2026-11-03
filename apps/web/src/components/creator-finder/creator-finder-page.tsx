@@ -765,11 +765,6 @@ export function CreatorFinderPage({
                 </Select>
               </label>
             </div>
-            <p className="text-metadata text-ink-dim">
-              Country filters video results and videos under matching hashtags.
-              Time and sort apply to the video search only — not to matching
-              hashtags or their videos.
-            </p>
             <div>
               <Button type="submit" disabled={niche.status === 'loading'}>
                 Find creators
