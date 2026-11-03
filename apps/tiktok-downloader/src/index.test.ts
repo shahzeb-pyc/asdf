@@ -64,6 +64,71 @@ describe('tiktok-downloader worker entry', () => {
     ).resolves.toBeUndefined();
   });
 
+  it('invokes the scheduled fetch wrapper on a full one-reel tick', async () => {
+    // The index.ts wrapper line is only covered when the tick actually
+    // downloads: the empty-tick tests create the wrapper but never
+    // invoke it. This routes a whole tick through the production
+    // wiring (Supabase RPCs + tikwm + video stream + R2 + settle).
+    const ftyp = new Uint8Array(16);
+    new DataView(ftyp.buffer).setUint32(0, 16);
+    new TextEncoder().encodeInto('ftyp', ftyp.subarray(4, 8));
+    const videoBody = new Uint8Array(12000);
+    videoBody.set(ftyp, 0);
+    const markDownloadedHits: string[] = [];
+    const fullMock = async (url: string): Promise<Response> => {
+      if (url.includes('reset_stale_adu_reel_downloads')) {
+        return new Response(JSON.stringify(0), { status: 200 });
+      }
+      if (url.includes('claim_tiktok_buffer_downloads')) {
+        return new Response(
+          JSON.stringify([
+            {
+              reel_id: 'r1',
+              config_id: 'c1',
+              source_platform: 'tiktok',
+              source_username: 'someone',
+              source_reel_id: '740123',
+            },
+          ]),
+          { status: 200 },
+        );
+      }
+      if (url.includes('mark_adu_reel_downloaded')) {
+        markDownloadedHits.push(url);
+        return new Response(null, { status: 204 });
+      }
+      if (url.includes('mark_adu_reel_download_failed')) {
+        return new Response(null, { status: 204 });
+      }
+      if (url.includes('tikwm.com/api')) {
+        return new Response(
+          JSON.stringify({ code: 0, data: { play: 'https://cdn.example/v.mp4', title: 'My day' } }),
+          { status: 200 },
+        );
+      }
+      return new Response(videoBody as unknown as BodyInit, { status: 200 });
+    };
+    vi.stubGlobal('fetch', vi.fn(fullMock));
+    // The pipeline only counts bytes the R2 put actually drains from
+    // the upload stream, so this fake must read it to completion like
+    // the real R2 put does — a no-op put would report size 0.
+    const r2put = vi.fn(async (_key: string, value: ReadableStream<Uint8Array>) => {
+      const reader = value.getReader();
+      for (;;) {
+        const res = await reader.read();
+        if (res.done) break;
+      }
+      return {};
+    });
+    const env = { ...FULL_ENV, ADU_BUFFER: { put: r2put, delete: vi.fn(async () => ({})) } } as unknown as Env;
+    await expect(
+      worker.scheduled({} as ScheduledEvent, env, { waitUntil: () => {} } as unknown as ExecutionContext),
+    ).resolves.toBeUndefined();
+    expect(r2put).toHaveBeenCalledOnce();
+    expect(r2put.mock.calls[0][0]).toBe('adu-buffer/c1/r1.mp4');
+    expect(markDownloadedHits).toHaveLength(1);
+  });
+
   it('fails loudly when required secrets are missing', async () => {
     await expect(
       worker.scheduled(
