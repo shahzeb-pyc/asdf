@@ -7,6 +7,7 @@ import {
   type SessionPayload,
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
+import { resolveTenantSession } from '@/lib/agent-auth';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 export function isLegacyClient(
@@ -34,11 +35,30 @@ export function getRouteSupabase(
 
 export async function authenticateTenantRoute(
   request: NextRequest,
-  subdomain: string
+  subdomain: string,
+  options: { allowAgentKey?: boolean } = {}
 ): Promise<
-  | { session: SessionPayload; errorResponse?: never }
+  | { session: SessionPayload; agentKeyId?: string; errorResponse?: never }
   | { session?: never; errorResponse: NextResponse }
 > {
+  // Bearer agent keys are OPT-IN only (media routes). The default
+  // stays cookie-only, so existing callers (billing, downloader,
+  // publishing, etc.) do not gain Bearer access from this change.
+  // A media-only key must never be able to create keys, read
+  // activity, or touch non-media routes through this helper.
+  if (options.allowAgentKey) {
+    const resolved = await resolveTenantSession(request, subdomain, {
+      allowAgentKey: true,
+    });
+    if ('errorResponse' in resolved) {
+      return { errorResponse: resolved.errorResponse };
+    }
+    return {
+      session: resolved.session,
+      ...(resolved.agentKeyId ? { agentKeyId: resolved.agentKeyId } : {}),
+    };
+  }
+
   const sessionSecret = getSessionSecret();
   const sessionCookie = request.cookies.get('fbup_session')?.value;
   if (!sessionCookie) {

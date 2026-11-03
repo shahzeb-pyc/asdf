@@ -1,16 +1,14 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import {
-  canAccessTenant,
   DeleteMediaItemResponseSchema,
-  getSessionSecret,
   type IStorageService,
   MediaItemResponseSchema,
   UpdateMediaItemRequestSchema,
-  verifySessionToken,
   type DatabaseClient,
   type DatabaseMediaItemRow,
 } from '@fbuploadpro/contracts';
 import { isLegacyClient, getRouteSupabase } from '@/lib/route-auth';
+import { resolveTenantSession } from '@/lib/agent-auth';
 import { logServerError } from '@/lib/server-analytics';
 import {
   MEDIA_STORAGE_READ_ONLY_CODE,
@@ -24,32 +22,13 @@ const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 async function authenticateUser(request: NextRequest, subdomain: string) {
-  const sessionSecret = getSessionSecret();
-
-  const sessionCookie = request.cookies.get('fbup_session')?.value;
-  if (!sessionCookie) {
-    return {
-      error: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }),
-    };
+  const resolved = await resolveTenantSession(request, subdomain, {
+    allowAgentKey: true,
+  });
+  if ('errorResponse' in resolved) {
+    return { error: resolved.errorResponse };
   }
-
-  let session;
-  try {
-    session = await verifySessionToken(sessionCookie, sessionSecret);
-  } catch (_e) {
-    return {
-      error: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }),
-    };
-  }
-
-  const access = canAccessTenant(session, subdomain);
-  if (!access.allowed) {
-    return {
-      error: NextResponse.json({ error: 'Forbidden' }, { status: 403 }),
-    };
-  }
-
-  return { session };
+  return { session: resolved.session };
 }
 
 

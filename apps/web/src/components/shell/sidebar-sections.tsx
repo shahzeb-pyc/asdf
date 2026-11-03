@@ -98,6 +98,12 @@ const HOME_ICON = svgIcon(
   </>
 );
 
+const MUSE_ICON = svgIcon(
+  <>
+    <path d="M12 2l2.2 7.8L22 12l-7.8 2.2L12 22l-2.2-7.8L2 12l7.8-2.2z" />
+  </>
+);
+
 const MEDIA_ICON = svgIcon(
   <>
     <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
@@ -219,6 +225,7 @@ export function getUserSections(subdomain: string, useCleanPaths = false): Sideb
       key: 'primary',
       items: [
         { kind: 'leaf', label: 'Home', href: href('/'), icon: HOME_ICON, match: 'exact' },
+        { kind: 'leaf', label: 'Muse', href: href('/muse'), icon: MUSE_ICON, match: 'prefix' },
         { kind: 'leaf', label: 'Media Library', href: href('/media'), icon: MEDIA_ICON, match: 'prefix' },
         { kind: 'leaf', label: 'Fdola Studio', href: href('/fdola-studio'), icon: FDOLA_ICON, match: 'prefix' },
         { kind: 'leaf', label: 'Prompt Library', href: href('/prompts'), icon: PROMPTS_ICON, match: 'prefix' },

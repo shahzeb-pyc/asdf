@@ -1,14 +1,12 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import {
   type DatabaseMediaItemRow,
-  canAccessTenant,
-  getSessionSecret,
   MediaListQuerySchema,
   MediaListResponseSchema,
-  verifySessionToken,
   type DatabaseClient,
   type Database,
 } from '@fbuploadpro/contracts';
+import { resolveTenantSession } from '@/lib/agent-auth';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -38,24 +36,11 @@ export async function handleListMedia(
   subdomain: string,
   dbClient?: DatabaseClient | SupabaseClient<Database>
 ): Promise<NextResponse> {
-  const sessionSecret = getSessionSecret();
-
-  const sessionCookie = request.cookies.get('fbup_session')?.value;
-  if (!sessionCookie) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  let session;
-  try {
-    session = await verifySessionToken(sessionCookie, sessionSecret);
-  } catch (_e) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const access = canAccessTenant(session, subdomain);
-  if (!access.allowed) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
+  const resolved = await resolveTenantSession(request, subdomain, {
+    allowAgentKey: true, dbClient,
+  });
+  if ('errorResponse' in resolved) return resolved.errorResponse;
+  const session = resolved.session;
 
   const { searchParams } = new URL(request.url);
   const parsedQuery = MediaListQuerySchema.safeParse({
