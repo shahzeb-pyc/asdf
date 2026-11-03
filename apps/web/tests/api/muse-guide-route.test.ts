@@ -99,10 +99,15 @@ describe('muse_guide.md route', () => {
     expect(text).not.toContain('no login required');
     // Living document: re-read fresh, never trust a stale copy.
     expect(text).toContain('This guide is a living document');
-    expect(text).toContain('Re-read the full, current guide at https://app.fbuploadpro.com/muse_guide.md fresh');
-    expect(text).toContain('Do not rely on a version you read earlier');
+    expect(text).toContain('Re-read the full, current guide fresh again');
+    expect(text).toContain('Note the version you last read');
     expect(text).toContain('do not assume a feature works the way it did before an update');
-    expect(text).toContain('Re-reading the whole current guide is the check');
+    // Version line at the very top, and version-change re-read rule.
+    expect(text.startsWith('Guide version: 1.0')).toBe(true);
+    expect(text).toContain('its version increases with each update and new feature');
+    expect(text).toContain('a changed version means the guide has changed');
+    expect(text).toContain('whenever the version there is different from the version you last read');
+    expect(text).toContain('re-read the full guide fresh before helping or answering');
     // BYOC per platform, fresh wording.
     expect(text).toContain('All three are required before a connection can start');
     expect(text).toContain('No deauthorize or data-deletion addresses are given anywhere');
