@@ -1068,7 +1068,7 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
   });
 
   describe('TenantDedicatedPageView (/tenant/[subdomain]/pages/[pageId]/page.tsx)', () => {
-    it('renders the dedicated page placeholder (dedicated-page-placeholder) and "Back to Pages" navigation (back-to-pages-btn)', () => {
+    it('renders the dedicated page placeholder (dedicated-page-placeholder) and "Back to Schedule" navigation (back-to-pages-btn)', () => {
       // PR-131-3: the frame reads through React Query — the static
       // render needs a provider (fresh client, queries stay pending).
       const { hasAttribute, hasText } = render(
@@ -1085,12 +1085,12 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
         true
       );
       expect(hasAttribute('data-testid', 'back-to-pages-btn')).toBe(true);
-      expect(hasText('Back to Pages')).toBe(true);
+      expect(hasText('Back to Schedule')).toBe(true);
       expect(hasText('Cyberdyne Reels')).toBe(true);
       expect(hasText('Page reference: page-uuid-1')).toBe(true);
       expect(hasText('Dedicated Page Management Workspace')).toBe(true);
 
-      // Verify clicking "Back to Pages" navigates to /tenant/acme/pages
+      // Verify clicking "Back to Schedule" navigates to /tenant/acme/pages
       const tree = renderAndCaptureTree(() =>
         TenantDedicatedPageView({
           subdomainProp: 'acme',

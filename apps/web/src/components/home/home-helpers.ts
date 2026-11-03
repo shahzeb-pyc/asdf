@@ -9,7 +9,7 @@
  *   ("Expires today"), not 1. (The old ceil-based count would show
  *   "1 day left" on the final day.)
  * - Quick links: the redesigned Home links. Paid: Media Library,
- *   Creator Finder, Facebook Accounts, Facebook Pages, Billing — in
+ *   Creator Finder, Facebook Accounts, Facebook Schedule, Billing — in
  *   that order. Free: Prompt Library and Billing only. Queue and
  *   Calendar are deliberately absent: Home carries no queue or post
  *   data at all.
@@ -82,7 +82,7 @@ export function buildPaidQuickLinks(args: {
     { label: 'Media Library', href: args.mediaHref },
     { label: 'Creator Finder', href: args.creatorFinderHref },
     { label: 'Facebook Accounts', href: args.accountsHref },
-    { label: 'Facebook Pages', href: args.pagesHref },
+    { label: 'Facebook Schedule', href: args.pagesHref },
     { label: 'Billing', href: args.billingHref },
   ];
 }

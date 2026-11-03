@@ -996,7 +996,7 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
 
       expect(hasAttribute('data-testid', 'dedicated-page-placeholder')).toBe(true);
       expect(hasAttribute('data-testid', 'back-to-pages-btn')).toBe(true);
-      expect(hasText('Back to Pages')).toBe(true);
+      expect(hasText('Back to Schedule')).toBe(true);
       expect(hasText('Page reference: page-101')).toBe(true);
       expect(hasText('Dedicated Page Management Workspace')).toBe(true);
     });
