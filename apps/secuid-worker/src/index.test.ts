@@ -108,6 +108,15 @@ describe('secuid worker', () => {
     expect(await res.json()).toEqual({ error: 'UPSTREAM_ERROR' });
   });
 
+  it('fails loud when Countik answers 200 with an unparseable body', async () => {
+    mockFetch(async () => new Response('not json{', { status: 200 }));
+    const res = await handleSecUidRequest(
+      new Request('https://secuid.example/?username=courtroom62'),
+    );
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({ error: 'UPSTREAM_ERROR' });
+  });
+
   it('rejects non-GET methods', async () => {
     const res = await handleSecUidRequest(
       new Request('https://secuid.example/?username=courtroom62', { method: 'POST' }),
