@@ -487,7 +487,7 @@ async function fetchTikwmJson(
   } catch {
     throw new CreatorFinderError(
       'UNREACHABLE',
-      'Could not reach the TikTok creator service. Please try again.',
+      'Creator search could not be completed. Please try again.',
     );
   }
   if (!res.ok) {
@@ -500,12 +500,12 @@ async function fetchTikwmJson(
     if (res.status >= 500) {
       throw new CreatorFinderError(
         'UPSTREAM_ERROR',
-        'The TikTok creator service is having trouble right now. Please try again shortly, or search by niche instead.',
+        'Creator search could not be completed. Please try again.',
       );
     }
     throw new CreatorFinderError(
       'HTTP_ERROR',
-      `TikTok creator service returned HTTP ${res.status}. Please try again.`,
+      'Creator search could not be completed. Please try again.',
     );
   }
   try {
@@ -513,36 +513,35 @@ async function fetchTikwmJson(
   } catch {
     throw new CreatorFinderError(
       'BAD_RESPONSE',
-      'TikTok creator service returned an unreadable response.',
+      'Creator search could not be completed. Please try again.',
     );
   }
 }
 
-function codeToError(code: number, msg: string | undefined): CreatorFinderError {
+function codeToError(code: number, _msg: string | undefined): CreatorFinderError {
+  // All provider codes map to one generic user-facing sentence.
+  // The provider's own message is never passed through to the UI.
   if (code === 10401) {
     return new CreatorFinderError(
       'KEY_INVALID',
-      'The TikTok creator API key is invalid. Check the configured key and try again.',
+      'Creator search could not be completed. Please try again.',
     );
   }
   if (code === 10429) {
     return new CreatorFinderError(
       'RATE_LIMITED',
-      'TikTok creator service is rate-limited right now. Please try again shortly.',
+      'Creator search could not be completed. Please try again.',
     );
   }
   if (code === 10430) {
     return new CreatorFinderError(
       'QUOTA_EXHAUSTED',
-      'The TikTok creator quota for this period is exhausted.',
+      'Creator search could not be completed. Please try again.',
     );
   }
-  const detail = msg?.trim();
   return new CreatorFinderError(
     'FEED_UNAVAILABLE',
-    detail
-      ? `TikTok creator service could not complete this search: ${detail}`
-      : 'TikTok creator service could not complete this search.',
+    'Creator search could not be completed. Please try again.',
   );
 }
 
@@ -551,7 +550,7 @@ function unwrapData(body: unknown): Record<string, unknown> {
   if (!root) {
     throw new CreatorFinderError(
       'BAD_RESPONSE',
-      'TikTok creator service returned an unexpected response.',
+      'Creator search could not be completed. Please try again.',
     );
   }
   const code = typeof root.code === 'number' ? root.code : -1;
@@ -566,7 +565,7 @@ function unwrapData(body: unknown): Record<string, unknown> {
   if (!record) {
     throw new CreatorFinderError(
       'BAD_RESPONSE',
-      'TikTok creator service returned an unexpected response.',
+      'Creator search could not be completed. Please try again.',
     );
   }
   return record;
@@ -579,7 +578,7 @@ async function callWithKeys<T>(
   if (keys.length === 0) {
     throw new CreatorFinderError(
       'NO_KEYS_CONFIGURED',
-      'No TikTok creator API key is configured. Set TIKWMAPI_KEYS (or TIKWMAPI_KEY) in the environment.',
+      'Creator search is not available right now. Please try again.',
     );
   }
   let lastError: unknown = null;
@@ -605,7 +604,7 @@ async function callWithKeys<T>(
   if (lastError instanceof Error) throw lastError;
   throw new CreatorFinderError(
     'FEED_UNAVAILABLE',
-    'TikTok creator service could not complete this search.',
+    'Creator search could not be completed. Please try again.',
   );
 }
 
@@ -644,7 +643,7 @@ export async function fetchRegionList(
   if (regions.length === 0) {
     throw new CreatorFinderError(
       'BAD_RESPONSE',
-      'TikTok creator service returned an empty region list.',
+      'Creator search could not be completed. Please try again.',
     );
   }
   regions.sort((a, b) => a.name.localeCompare(b.name));
@@ -1256,29 +1255,101 @@ export async function fetchSimilarCreators(
  */
 export const COUNTIK_BASE_URL = 'https://countik.com/api';
 const COUNTIK_TIMEOUT_MS = 30_000;
+// Same browser header the secuid Worker sends to this upstream:
+// a minimal-header datacenter request is the profile most likely
+// to be challenged, so this matches the Worker's proven header.
+/** Browser User-Agent sent on upstream calls (server-side only). */
+const COUNTIK_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+/**
+ * Server-side-only env access. Read dynamically (never a literal
+ * `process.env.X` reference) so a bundler cannot inline these
+ * values into any client bundle: the proxy URL and especially
+ * the proxy secret must never reach the browser.
+ */
+function countikEnv(name: string): string | undefined {
+  const proc = (
+    globalThis as {
+      process?: { env?: Record<string, string | undefined> };
+    }
+  ).process;
+  const value = proc?.env?.[name];
+  return value && value.trim() ? value.trim() : undefined;
+}
+
+/**
+ * Upstream base URL for Countik calls. When COUNTIK_PROXY_URL is
+ * set, calls go through the Cloudflare Worker proxy (which
+ * changes only egress IP + headers, never the logic); otherwise
+ * they go direct. This is a configuration fallback for
+ * environments where the proxy is not yet provisioned — it is
+ * NOT a failure fallback: a proxy failure is never retried
+ * direct, so a proxy outage stays diagnosable instead of being
+ * silently masked by a direct call.
+ */
+export function resolveCountikBaseUrl(): string {
+  const proxy = countikEnv('COUNTIK_PROXY_URL');
+  if (proxy) return proxy.replace(/\/+$/, '');
+  return COUNTIK_BASE_URL;
+}
+
+/** Proxy secret header name, sent only when proxying. */
+export const COUNTIK_PROXY_SECRET_HEADER = 'x-countik-proxy-secret';
 /** Countik enrichment runs at most this many creators at once:
  * a Similar search can return hundreds of creators, and firing
  * 2 calls per creator all at once would exhaust sockets. This
  * bounds concurrency only — it caps no call count. */
 const COUNTIK_ENRICH_CONCURRENCY = 20;
 
+export type CountikFailureKind = 'network' | 'upstream' | 'shape';
+export type CountikEndpoint =
+  | 'exist'
+  | 'analyze'
+  | 'video-exist'
+  | 'videoinfo'
+  | 'generateHashtags';
+
 export class CountikError extends Error {
-  constructor(message: string) {
+  readonly endpoint: CountikEndpoint | undefined;
+  readonly kind: CountikFailureKind;
+  readonly upstreamStatus: number | undefined;
+  constructor(
+    message: string,
+    options: {
+      endpoint?: CountikEndpoint;
+      kind?: CountikFailureKind;
+      upstreamStatus?: number;
+    } = {},
+  ) {
     super(message);
     this.name = 'CountikError';
+    this.endpoint = options.endpoint;
+    this.kind = options.kind ?? 'shape';
+    this.upstreamStatus = options.upstreamStatus;
   }
 }
 
 type CountikFetchFn = typeof fetch;
 
 async function fetchCountikJson(
-  url: string,
+  path: string,
   options: {
     fetchFn: CountikFetchFn;
     method?: 'GET' | 'POST' | undefined;
     body?: unknown | undefined;
+    endpoint: CountikEndpoint;
+    /** Test override for the base URL; production reads env. */
+    baseUrl?: string | undefined;
+    /** Test override for the proxy secret; production reads env. */
+    proxySecret?: string | undefined;
   },
 ): Promise<unknown> {
+  const baseUrl = options.baseUrl ?? resolveCountikBaseUrl();
+  const isProxy = baseUrl !== COUNTIK_BASE_URL;
+  const proxySecret =
+    options.proxySecret ?? (isProxy ? countikEnv('COUNTIK_PROXY_SECRET') : undefined);
+  const url = `${baseUrl}${path}`;
   let res: Response;
   try {
     res = await options.fetchFn(url, {
@@ -1286,18 +1357,21 @@ async function fetchCountikJson(
       method: options.method ?? 'GET',
       headers: {
         Accept: 'application/json',
+        'User-Agent': COUNTIK_UA,
         ...(options.body !== undefined
           ? { 'Content-Type': 'application/json' }
           : {}),
+        ...(proxySecret ? { [COUNTIK_PROXY_SECRET_HEADER]: proxySecret } : {}),
       },
       ...(options.body !== undefined
         ? { body: JSON.stringify(options.body) }
         : {}),
     });
   } catch {
-    throw new CountikError(
-      'Countik could not be reached. Please try again.',
-    );
+    throw new CountikError('Details could not be loaded. Please try again.', {
+      endpoint: options.endpoint,
+      kind: 'network',
+    });
   }
   let body: unknown = null;
   try {
@@ -1306,13 +1380,14 @@ async function fetchCountikJson(
     body = null;
   }
   if (!res.ok) {
-    const reason =
-      asString(asRecord(body)?.message) ??
-      asString(asRecord(body)?.error) ??
-      asString(asRecord(body)?.detail);
-    throw new CountikError(
-      reason ?? 'Countik could not complete this request. Please try again.',
-    );
+    // Never pass the upstream body's wording through to the UI:
+    // it can name the provider or leak internal wording, and a
+    // challenge page is not a usable message at all.
+    throw new CountikError('Details could not be loaded. Please try again.', {
+      endpoint: options.endpoint,
+      kind: 'upstream',
+      upstreamStatus: res.status,
+    });
   }
   return body;
 }
@@ -1391,6 +1466,10 @@ function countikData(body: unknown): Record<string, unknown> | null {
 
 export interface CountikCallOptions {
   fetchFn?: CountikFetchFn | undefined;
+  /** Test override for the upstream base URL; production reads env. */
+  baseUrl?: string | undefined;
+  /** Test override for the proxy secret; production reads env. */
+  proxySecret?: string | undefined;
 }
 
 /**
@@ -1405,26 +1484,35 @@ export async function fetchCountikEnrichment(
   const fetchFn = options.fetchFn ?? fetch;
   const cleanHandle = handle.trim().replace(/^@+/, '');
   if (!cleanHandle) {
-    throw new CountikError('Countik data is unavailable for this creator.');
+    throw new CountikError('Details unavailable for this creator.', {
+      endpoint: 'exist',
+      kind: 'shape',
+    });
   }
   const existBody = await fetchCountikJson(
-    `${COUNTIK_BASE_URL}/exist/${encodeURIComponent(cleanHandle)}`,
-    { fetchFn },
+    `/exist/${encodeURIComponent(cleanHandle)}`,
+    { fetchFn, endpoint: 'exist', baseUrl: options.baseUrl, proxySecret: options.proxySecret },
   );
   const exist = countikData(existBody);
   // NOTE: exist.verified is deliberately never read — it is
   // unreliable. Only analyze author.verified feeds the tick.
   const secUid = pickString(exist, ['sec_uid', 'secUid', 'sec_user_id']);
   if (!secUid) {
-    throw new CountikError('Countik data is unavailable for this creator.');
+    throw new CountikError('Details unavailable for this creator.', {
+      endpoint: 'exist',
+      kind: 'shape',
+    });
   }
   const analyzeBody = await fetchCountikJson(
-    `${COUNTIK_BASE_URL}/analyze/?sec_user_id=${encodeURIComponent(secUid)}&username=${encodeURIComponent(cleanHandle)}`,
-    { fetchFn },
+    `/analyze/?sec_user_id=${encodeURIComponent(secUid)}&username=${encodeURIComponent(cleanHandle)}`,
+    { fetchFn, endpoint: 'analyze', baseUrl: options.baseUrl, proxySecret: options.proxySecret },
   );
   const data = countikData(analyzeBody);
   if (!data) {
-    throw new CountikError('Countik data is unavailable for this creator.');
+    throw new CountikError('Details unavailable for this creator.', {
+      endpoint: 'analyze',
+      kind: 'shape',
+    });
   }
   const author = asRecord(data.author) ?? data;
   const rates = asRecord(data.engagement_rates) ?? asRecord(data.engagementRates);
@@ -1473,30 +1561,44 @@ export async function fetchCountikEnrichment(
     'engagement_rate',
   ]);
   if (engagementTotal !== undefined) enrichment.engagementTotal = engagementTotal;
-  const engagementLikes = pickCountikNumber(rates, ['likes', 'like_rate']);
+  // Live analyze keys first: the *_rate / avg* forms are what the
+  // upstream actually returns; the older variants stay as fallbacks.
+  const engagementLikes = pickCountikNumber(rates, [
+    'likes_rate',
+    'likes',
+    'like_rate',
+  ]);
   if (engagementLikes !== undefined) enrichment.engagementLikes = engagementLikes;
   const engagementComments = pickCountikNumber(rates, [
+    'comments_rate',
     'comments',
     'comment_rate',
   ]);
   if (engagementComments !== undefined) {
     enrichment.engagementComments = engagementComments;
   }
-  const engagementShares = pickCountikNumber(rates, ['shares', 'share_rate']);
+  const engagementShares = pickCountikNumber(rates, [
+    'shares_rate',
+    'shares',
+    'share_rate',
+  ]);
   if (engagementShares !== undefined) enrichment.engagementShares = engagementShares;
   const averageViews = pickCountikNumber(performance, [
+    'avgViews',
     'average_views',
     'avg_views',
     'averageViews',
   ]);
   if (averageViews !== undefined) enrichment.averageViews = Math.trunc(averageViews);
   const averageLikes = pickCountikNumber(performance, [
+    'avgLikes',
     'average_likes',
     'avg_likes',
     'averageLikes',
   ]);
   if (averageLikes !== undefined) enrichment.averageLikes = Math.trunc(averageLikes);
   const averageComments = pickCountikNumber(performance, [
+    'avgComments',
     'average_comments',
     'avg_comments',
     'averageComments',
@@ -1505,6 +1607,7 @@ export async function fetchCountikEnrichment(
     enrichment.averageComments = Math.trunc(averageComments);
   }
   const averageShares = pickCountikNumber(performance, [
+    'avgShares',
     'average_shares',
     'avg_shares',
     'averageShares',
@@ -1537,7 +1640,25 @@ export async function enrichCreators(
       try {
         const enrichment = await fetchCountikEnrichment(creator.handle, options);
         results[index] = { ...creator, enrichment };
-      } catch {
+      } catch (err) {
+        // Log the failure CLASS only — endpoint, kind, status.
+        // Never a handle, username, or response body: this log is
+        // the only way to tell a block from a timeout from a shape
+        // change on the next total failure, and it must not leak
+        // who was being looked up.
+        if (err instanceof CountikError) {
+          console.error('creator enrichment failed', {
+            endpoint: err.endpoint ?? 'unknown',
+            kind: err.kind,
+            upstreamStatus: err.upstreamStatus ?? null,
+          });
+        } else {
+          console.error('creator enrichment failed', {
+            endpoint: 'unknown',
+            kind: 'unknown',
+            upstreamStatus: null,
+          });
+        }
         results[index] = { ...creator, countikUnavailable: true };
       }
     }
@@ -1613,8 +1734,8 @@ export async function checkCountikVideo(
     throw new CountikError('Enter a TikTok video link to check.');
   }
   const existBody = await fetchCountikJson(
-    `${COUNTIK_BASE_URL}/video/exist`,
-    { fetchFn, method: 'POST', body: { url: cleanUrl } },
+    '/video/exist',
+    { fetchFn, method: 'POST', body: { url: cleanUrl }, endpoint: 'video-exist', baseUrl: options.baseUrl, proxySecret: options.proxySecret },
   );
   const exist = countikData(existBody);
   const videoId = pickString(exist, ['video_id', 'videoId', 'aweme_id', 'id']);
@@ -1624,8 +1745,8 @@ export async function checkCountikVideo(
     );
   }
   const infoBody = await fetchCountikJson(
-    `${COUNTIK_BASE_URL}/videoinfo/${encodeURIComponent(videoId)}`,
-    { fetchFn },
+    `/videoinfo/${encodeURIComponent(videoId)}`,
+    { fetchFn, endpoint: 'videoinfo', baseUrl: options.baseUrl, proxySecret: options.proxySecret },
   );
   const data = countikData(infoBody);
   if (!data) {
@@ -1698,8 +1819,8 @@ export async function generateCountikHashtags(
     throw new CountikError('Enter a keyword to generate hashtags.');
   }
   const body = await fetchCountikJson(
-    `${COUNTIK_BASE_URL}/generateHashtags`,
-    { fetchFn, method: 'POST', body: { query: cleanQuery } },
+    '/generateHashtags',
+    { fetchFn, method: 'POST', body: { query: cleanQuery }, endpoint: 'generateHashtags', baseUrl: options.baseUrl, proxySecret: options.proxySecret },
   );
   const root = asRecord(body);
   const data = countikData(body);

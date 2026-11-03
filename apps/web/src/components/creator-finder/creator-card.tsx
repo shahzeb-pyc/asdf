@@ -66,9 +66,9 @@ function formatRate(value: number): string {
  *
  * Without enrichment and without any TikWM follower/verified
  * value, the card is the no-data variant: header and View on
- * TikTok only, plus the visible "Countik data unavailable"
+ * TikTok only, plus the visible "Details unavailable"
  * note, no detail section, no tick. That covers both a fresh
- * Countik failure on trending/niche and an old saved row that
+ * enrichment failure on trending/niche and an old saved row that
  * never had data.
  */
 export function CreatorCard({ creator }: Readonly<{ creator: Creator }>) {
@@ -267,7 +267,7 @@ export function CreatorCard({ creator }: Readonly<{ creator: Creator }>) {
         </Button>
         {showNoDataNote ? (
           <p className="mt-3 w-full text-center text-metadata text-ink-dim">
-            Countik data unavailable for this creator.
+            Details unavailable for this creator.
           </p>
         ) : null}
       </CardContent>
