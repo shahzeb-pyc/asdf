@@ -196,6 +196,46 @@ describe('countik proxy routes', () => {
     expect(bad.status).toBe(400);
   });
 
+  it('routes analyze with a trailing slash (the app calls /analyze/?...)', async () => {
+    let seenUrl = '';
+    mockFetch(async (url: string) => {
+      seenUrl = url;
+      return jsonResponse({ author: { verified: true } }, 200);
+    });
+    // Trailing slash: this is the exact shape the app sends, and
+    // it previously fell through to 404 because the route check
+    // compared against 'analyze' exactly.
+    const slashed = await handleProxyRequest(
+      new Request(
+        'https://proxy.example/proxy/analyze/?sec_user_id=SEC123&username=alice',
+        { headers: auth },
+      ),
+      { proxySecret: SECRET },
+    );
+    expect(slashed.status).toBe(200);
+    expect(seenUrl).toBe(
+      'https://countik.com/api/analyze/?sec_user_id=SEC123&username=alice',
+    );
+    // No slash: still routes exactly as before.
+    const plain = await handleProxyRequest(
+      new Request(
+        'https://proxy.example/proxy/analyze?sec_user_id=SEC123&username=alice',
+        { headers: auth },
+      ),
+      { proxySecret: SECRET },
+    );
+    expect(plain.status).toBe(200);
+    // Genuinely unknown routes still 404.
+    mockFetch(async () => {
+      throw new Error('must not fetch unknown routes');
+    });
+    const unknown = await handleProxyRequest(
+      new Request('https://proxy.example/proxy/anything-else/', { headers: auth }),
+      { proxySecret: SECRET },
+    );
+    expect(unknown.status).toBe(404);
+  });
+
   it('forwards video/exist and videoinfo, rejecting non-TikTok URLs and bad ids', async () => {
     const urls: string[] = [];
     mockFetch(async (url: string) => {
