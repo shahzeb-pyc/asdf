@@ -1,0 +1,22 @@
+name = "fbuploadpro-tiktok-downloader"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+
+# TikTok ADU downloads ONLY (see src/pipeline.ts). No request handler of
+# consequence: fetch returns 404; all work happens on the cron trigger.
+# Secrets are NOT set here; they are provided by the deploy workflow
+# (wrangler secret / CI env), following apps/worker.
+[vars]
+ENVIRONMENT = "production"
+
+[triggers]
+# "*" = every minute, matching the VPS downloader's 60 s idle cadence.
+crons = ["* * * * *"]
+
+# ADU buffer bucket, shared with the VPS downloader (same bucket, same key
+# layout). The bucket must already exist in the deploy account; wrangler
+# fails the deploy loudly if it does not.
+[[r2_buckets]]
+binding = "ADU_BUFFER"
+bucket_name = "fbuploadpro-adu-buffer"

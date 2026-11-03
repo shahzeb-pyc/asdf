@@ -1,0 +1,69 @@
+name: Deploy TikTok Downloader Worker
+
+# Mirrors deploy-worker.yml for the TikTok-only ADU downloader
+# (apps/tiktok-downloader). Secrets come from repository secrets/vars
+# that already exist: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID,
+# SUPABASE_SERVICE_ROLE_KEY, R2_PUBLIC_URL, and NEXT_PUBLIC_SUPABASE_URL
+# (as a variable). No new secret provisioning is needed.
+# There is no /health smoke check here by design: this Worker's fetch
+# handler returns 404 and all work happens on the cron trigger.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'apps/tiktok-downloader/**'
+      - '.github/workflows/deploy-tiktok-downloader.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy TikTok Downloader Worker
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@7088e561eb65bb68695d245aa206f005ef30921d # v4.1.0
+        with:
+          version: 9.15.9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Check Cloudflare credentials
+        id: check-credentials
+        run: |
+          if [ -z "${CLOUDFLARE_API_TOKEN}" ]; then
+            echo "has_token=false" >> $GITHUB_OUTPUT
+            echo "CLOUDFLARE_API_TOKEN secret is not set in repository secrets. Skipping worker deployment."
+          else
+            echo "has_token=true" >> $GITHUB_OUTPUT
+          fi
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      - name: Deploy to Cloudflare Workers
+        if: steps.check-credentials.outputs.has_token == 'true'
+        uses: cloudflare/wrangler-action@392082e81ffbcb9ebdde27400634aa004b35ea37 # v3.14.0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: 'apps/tiktok-downloader'
+          packageManager: pnpm
+          secrets: |
+            SUPABASE_URL
+            SUPABASE_SERVICE_ROLE_KEY
+            R2_PUBLIC_URL
+        env:
+          SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL || vars.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
