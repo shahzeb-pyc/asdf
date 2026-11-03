@@ -667,7 +667,20 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
   const errorAccounts = accounts.filter((a) =>
     a.status === 'disconnected' || a.status === 'error' || a.status === 'revoked');
   const filteredAccounts = activeAccounts.filter((a) => a.display_name.toLowerCase().includes(accountSearch.toLowerCase()));
-  const linkedPagesCount = (accountId: string) => pages.filter((p) => p.account_id === accountId).length;
+  // "Pages linked" counts connected pages only, exactly as the Pages
+  // accounts list counts: a destination counts unless it is
+  // disconnected, except a disconnected destination that is paused
+  // still counts (SQL: d.status != 'disconnected' OR
+  // d.metadata->>'fb_status' = 'paused'; same filter in the Supabase
+  // path — apps/web/src/app/api/tenant/[subdomain]/accounts/route.ts).
+  // NOTE: this is a count-only parity fix. The step-2 union below is
+  // intentionally NOT filtered the same way: a disconnected page can
+  // still appear (and be picked) there, so the count may read lower
+  // than the number of rows step 2 lists for an account.
+  const isLinkedPage = (p: PickerPage) =>
+    p.status !== 'disconnected' || (p.metadata?.fb_status === 'paused');
+  const linkedPagesCount = (accountId: string) =>
+    pages.filter((p) => p.account_id === accountId && isLinkedPage(p)).length;
   // Step 2 shows ONLY the union of the selected accounts' pages —
   // never pages of unselected accounts, never the whole list.
   const unionPages = pages.filter((p) => selectedAccountIds.includes(p.account_id));

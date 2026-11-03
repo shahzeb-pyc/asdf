@@ -233,4 +233,29 @@ describe('ADU Add Page dialog — Pages picker flow', () => {
     expect(body.postsPerDay).toBe(1);
     expect(body.scheduleType).toBe('dailyrandom');
   });
+
+  it('pages-linked count excludes disconnected pages but keeps disconnected-paused pages (Pages parity)', async () => {
+    const pages = [
+      ...PAGES,
+      { id: 'p7', account_id: 'a1', external_destination_id: 'fb-page-107', name: 'Gone Page', avatar_url: null, status: 'disconnected', metadata: { category: 'Gone' } },
+      { id: 'p8', account_id: 'a1', external_destination_id: 'fb-page-108', name: 'Paused Page', avatar_url: null, status: 'disconnected', metadata: { category: 'Paused', fb_status: 'paused' } },
+    ];
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ accounts: ACCOUNTS, pages, configured: CONFIGURED, migrationMissing: false }),
+    })));
+    render(
+      <AddPageDialog subdomain="testws" open onOpenChange={() => {}} onCreated={() => {}} />
+    );
+    await screen.findByText('Shahzeb Malik');
+    // 3 connected + 1 disconnected-paused = 4; the plain disconnected page is excluded.
+    expect(screen.getByText('4 pages linked')).toBeTruthy();
+    // Count-only fix: the disconnected row still appears in the step-2 union.
+    fireEvent.click(screen.getByText('Shahzeb Malik'));
+    fireEvent.click(screen.getByTestId('adu-accounts-next-btn'));
+    await screen.findByTestId('adu-pages-list');
+    expect(screen.getByText('5 pages found')).toBeTruthy();
+    expect(screen.getByText('Gone Page')).toBeTruthy();
+    expect(screen.getByText('Paused Page')).toBeTruthy();
+  });
 });
