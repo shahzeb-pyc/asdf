@@ -11,8 +11,6 @@
  * and the caller falls back to the standard profile URL, as before.
  */
 
-import { SECUID_CONFIG } from '../config.js';
-
 const COUNTIK_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
@@ -80,7 +78,11 @@ export async function resolveTiktokSecUid(username, options = {}) {
   }
 
   // 1. Worker first (egress passes Countik's challenge; VPS direct fetch does not).
-  const workerBase = (options.workerUrl || options.workerBaseUrl || SECUID_CONFIG.WORKER_URL || DEFAULT_WORKER_URL).replace(/\/+$/, '');
+  // NOTE: the Worker URL is read from process.env at call time (not via config.js)
+  // on purpose: this module must stay dependency-free so the standalone CI scraper
+  // test step (which runs without npm install) keeps passing. Importing config.js
+  // would pull in dotenv and break that step.
+  const workerBase = (options.workerUrl || options.workerBaseUrl || process.env.SECUID_WORKER_URL || DEFAULT_WORKER_URL).replace(/\/+$/, '');
   if (workerBase) {
     const data = await fetchJsonWithTimeout(`${workerBase}/?username=${encodeURIComponent(clean)}`, {
       headers: {
