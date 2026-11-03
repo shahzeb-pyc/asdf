@@ -1,0 +1,9 @@
+name = "fbuploadpro-secuid"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Pure fetch Worker: no bindings, no secrets, no cron. The only caller is
+# the VPS ADU scraper (server-side), so no CORS surface is exposed.
+# Deploys to https://fbuploadpro-secuid.<account-subdomain>.workers.dev
+# via .github/workflows/deploy-secuid-worker.yml on push to main.
