@@ -217,8 +217,12 @@ describe('fetchTrendingCreators', () => {
     }).catch((caught: unknown) => caught);
     expect(err).toBeInstanceOf(CreatorFinderError);
     expect((err as CreatorFinderError).code).toBe('UPSTREAM_ERROR');
+    // Generic copy fix (Countik proxy PR): the old "TikTok creator
+    // service is having trouble" wording is replaced by one generic
+    // sentence. The test's intent stands: plain message, no quoted
+    // status, UPSTREAM_ERROR code.
     expect((err as CreatorFinderError).message).toContain(
-      'having trouble right now',
+      'Creator search could not be completed',
     );
   });
 });
