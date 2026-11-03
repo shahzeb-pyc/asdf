@@ -3,7 +3,8 @@
 // Vercel rebuild trigger (comment only, no behaviour change) — PR #43, new Vercel account.
 import * as React from 'react';
 import Image from 'next/image';
-import { MoveUpRightIcon, PlusIcon } from 'lucide-react';
+import Link from 'next/link';
+import { MoveUpRightIcon, PlusIcon, SearchIcon } from 'lucide-react';
 import { parseAduBulkPaste } from '@fbuploadpro/contracts';
 import { Banner } from '@/components/shared/ui/banner';
 import { Button } from '@/components/shared/ui/button';
@@ -557,23 +558,34 @@ function PickerAvatar({ url, name }: { url: string | null; name: string }) {
 }
 
 /**
- * Page picker meta line from the destinations metadata already in the
- * options payload (category + current followers, the same fields the
- * Pages list reads). Only the parts that exist are shown, joined with
- * " · "; neither means no second line at all — never a dangling
- * separator, and never the page id (the picker no longer renders it).
+ * Page picker meta line, mirroring the Pages picker row exactly:
+ * "{category} • {N} followers". The category falls back to
+ * 'Facebook Page' and followers always render via
+ * `current_followers ?? 0` from the destinations metadata already in
+ * the options payload — never a dangling separator, never a missing
+ * count, and never the page id (the picker no longer renders it).
  */
-function pageMetaLine(page: PickerPage): string | null {
+function pageMetaLine(page: PickerPage): string {
   const metadata = page.metadata ?? {};
-  const category = typeof metadata.category === 'string' ? metadata.category.trim() : '';
-  const followers = typeof metadata.current_followers === 'number' ? metadata.current_followers : null;
-  const parts: string[] = [];
-  if (category) parts.push(category);
-  if (followers !== null) parts.push(`${followers.toLocaleString('en-US')} ${followers === 1 ? 'follower' : 'followers'}`);
-  return parts.length > 0 ? parts.join(' · ') : null;
+  const category = typeof metadata.category === 'string' && metadata.category.trim()
+    ? metadata.category.trim()
+    : 'Facebook Page';
+  const followers = typeof metadata.current_followers === 'number' ? metadata.current_followers : 0;
+  return `${category} • ${followers.toLocaleString('en-US')} followers`;
 }
 
-function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
+/**
+ * Pages picker's `pagesLinkedLabel`: "N page(s) linked" for an
+ * account. Pages counts the account's connected pages; here the
+ * count is the options-payload pages under that account — the same
+ * population (workspace Facebook destinations), so the label means
+ * the same thing.
+ */
+function pagesLinkedLabel(count: number): string {
+  return `${count} ${count === 1 ? 'page linked' : 'pages linked'}`;
+}
+
+export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
   subdomain: string; open: boolean; onOpenChange: (open: boolean) => void; onCreated: () => void;
 }) {
   const [step, setStep] = React.useState(1);
@@ -637,17 +649,80 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
       .finally(() => setOptionsLoading(false));
   }, [open, subdomain]);
 
-  const filteredAccounts = accounts.filter((a) => a.display_name.toLowerCase().includes(accountSearch.toLowerCase()));
-  const visiblePages = pages.filter((p) =>
-    (selectedAccountIds.length === 0 || selectedAccountIds.includes(p.account_id)) &&
-    p.name.toLowerCase().includes(pageSearch.toLowerCase())
-  );
+  // Accounts are partitioned like the Pages picker: active accounts
+  // are selectable; expired accounts render dimmed with "Session
+  // expired"; broken accounts render dimmed with "Connection issue".
+  // The partition follows the canonical account-health model
+  // (getAccountHealth: 'expired' wins, 'disconnected' is an error,
+  // everything else is connected) — ADU options carry no token
+  // expiry, so the expiry branch cannot fire here. Two raw statuses
+  // the accounts surface itself treats as critical ('error',
+  // 'revoked') are additionally routed to the error section rather
+  // than left selectable on a broken account. ADU has no in-dialog
+  // reconnect, so the dimmed sections link to Facebook Accounts
+  // instead of offering a Reconnect button.
+  const activeAccounts = accounts.filter((a) =>
+    a.status !== 'expired' && a.status !== 'disconnected' && a.status !== 'error' && a.status !== 'revoked');
+  const expiredAccounts = accounts.filter((a) => a.status === 'expired');
+  const errorAccounts = accounts.filter((a) =>
+    a.status === 'disconnected' || a.status === 'error' || a.status === 'revoked');
+  const filteredAccounts = activeAccounts.filter((a) => a.display_name.toLowerCase().includes(accountSearch.toLowerCase()));
+  // "Pages linked" counts connected pages only, exactly as the Pages
+  // accounts list counts: a destination counts unless it is
+  // disconnected, except a disconnected destination that is paused
+  // still counts (SQL: d.status != 'disconnected' OR
+  // d.metadata->>'fb_status' = 'paused'; same filter in the Supabase
+  // path — apps/web/src/app/api/tenant/[subdomain]/accounts/route.ts).
+  // NOTE: this is a count-only parity fix. The step-2 union below is
+  // intentionally NOT filtered the same way: a disconnected page can
+  // still appear (and be picked) there, so the count may read lower
+  // than the number of rows step 2 lists for an account.
+  const isLinkedPage = (p: PickerPage) =>
+    p.status !== 'disconnected' || (p.metadata?.fb_status === 'paused');
+  const linkedPagesCount = (accountId: string) =>
+    pages.filter((p) => p.account_id === accountId && isLinkedPage(p)).length;
+  // Step 2 shows ONLY the union of the selected accounts' pages —
+  // never pages of unselected accounts, never the whole list.
+  const unionPages = pages.filter((p) => selectedAccountIds.includes(p.account_id));
+  const visiblePages = unionPages.filter((p) => p.name.toLowerCase().includes(pageSearch.toLowerCase()));
+  const selectablePageIds = unionPages.filter((p) => !configured.some((c) => c.destination_id === p.id)).map((p) => p.id);
+  const allAccountsChecked = activeAccounts.length > 0 && activeAccounts.every((a) => selectedAccountIds.includes(a.id));
+  const allPagesChecked = selectablePageIds.length > 0 && selectablePageIds.every((id) => selectedPageIds.includes(id));
   const selectedPages = pages.filter((p) => selectedPageIds.includes(p.id));
   const isConfigured = (pageId: string) => configured.some((c) => c.destination_id === pageId);
   const allSourcesFilled = selectedPages.every((p) => (sources[p.id]?.username ?? '').trim() !== '');
 
   const toggle = (list: string[], id: string, set: (v: string[]) => void) => {
     set(list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
+  };
+
+  // Deselecting an account drops its pages from the page selection
+  // (and from the step-2 list, which is the union of selected
+  // accounts). Re-selecting does not restore them.
+  const toggleAccount = (id: string) => {
+    const next = selectedAccountIds.includes(id)
+      ? selectedAccountIds.filter((x) => x !== id)
+      : [...selectedAccountIds, id];
+    setSelectedAccountIds(next);
+    if (!next.includes(id)) {
+      setSelectedPageIds((prev) => prev.filter((pid) => {
+        const page = pages.find((p) => p.id === pid);
+        return page ? next.includes(page.account_id) : false;
+      }));
+    }
+  };
+
+  const toggleAllAccounts = () => {
+    if (allAccountsChecked) {
+      setSelectedAccountIds([]);
+      setSelectedPageIds([]);
+    } else {
+      setSelectedAccountIds(activeAccounts.map((a) => a.id));
+    }
+  };
+
+  const toggleAllPages = () => {
+    setSelectedPageIds(allPagesChecked ? [] : selectablePageIds);
   };
 
   const sourcePlaceholder = (platform: Platform) =>
@@ -733,17 +808,16 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
     }
   };
 
-  const stepSubtitle = step === 1 ? 'Select Pages' : 'Configure';
+  const stepSubtitle = step === 1 ? 'Select Accounts' : step === 2 ? 'Select Pages' : 'Sources & Schedule';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-dvh overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Add New Page</DialogTitle>
-          <DialogDescription>Step {step} of 2: {stepSubtitle}</DialogDescription>
+          <DialogDescription>Step {step} of 3: {stepSubtitle}</DialogDescription>
         </DialogHeader>
 
-        <p className="text-body text-ink-sub">{selectedPages.length} pages selected</p>
         {optionsMigrationMissing ? (
           <Banner variant="warning" title="ADU tables are not created yet" description="Apply migration 20261030120001_adu.sql to the database, then refresh this page. Until then, no ADU pages can be added." />
         ) : null}
@@ -753,70 +827,253 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
         {step === 1 ? (
           <div className="flex flex-col gap-4">
             {optionsLoading ? (
-              // Never render "0 Connected" while the picker data is
-              // still loading: the count line only means something
+              // Never render "0 accounts found" while the picker data
+              // is still loading: the count line only means something
               // once the fetch has resolved (or failed loudly above).
               <p className="text-body text-ink-sub">Loading accounts and pages…</p>
             ) : (
               <>
-            <div>
-              <h3 className="font-medium">Select Facebook Account</h3>
-              <p className="text-metadata text-ink-dim">{accounts.length} Connected</p>
-              <Input placeholder="Search accounts…" value={accountSearch} onChange={(e) => setAccountSearch(e.target.value)} className="mt-2" />
-              <div className="mt-2 flex max-h-48 flex-col gap-1 overflow-y-auto">
-                {filteredAccounts.map((account) => (
-                  <label key={account.id} className="flex items-center gap-2 rounded-md border p-2">
-                    <Checkbox
-                      checked={selectedAccountIds.includes(account.id)}
-                      onCheckedChange={() => toggle(selectedAccountIds, account.id, setSelectedAccountIds)}
-                    />
-                    <PickerAvatar url={account.avatar_url} name={account.display_name} />
-                    <span className="min-w-0 flex-1 truncate">{account.display_name}</span>
-                    <span className="font-mono text-metadata text-ink-dim">{account.external_account_id}</span>
-                  </label>
-                ))}
-              </div>
-              <div className="mt-2 flex gap-2">
-                <Button type="button" variant="outline" onClick={() => setSelectedAccountIds(accounts.map((a) => a.id))}>Select all accounts</Button>
-                <Button type="button" variant="outline" onClick={() => setSelectedAccountIds([])}>Deselect all</Button>
-              </div>
-            </div>
-            <div>
-              <h3 className="font-medium">Select Managed Page(s)</h3>
-              <Input placeholder="Search pages…" value={pageSearch} onChange={(e) => setPageSearch(e.target.value)} className="mt-2" />
-              <div className="mt-2 flex max-h-64 flex-col gap-1 overflow-y-auto">
-                {visiblePages.map((page) => {
-                  const configuredAlready = isConfigured(page.id);
-                  const metaLine = pageMetaLine(page);
-                  return (
-                    <label key={page.id} className="flex items-center gap-2 rounded-md border p-2">
-                      <Checkbox
-                        disabled={configuredAlready}
-                        checked={selectedPageIds.includes(page.id)}
-                        onCheckedChange={() => toggle(selectedPageIds, page.id, setSelectedPageIds)}
+                <div>
+                  <div className="mb-1 flex flex-wrap items-center justify-between gap-4 px-0.5">
+                    <div className="relative flex max-w-60 flex-1 items-center">
+                      <SearchIcon
+                        className="pointer-events-none absolute left-2.5 size-3.5 text-ink-dim"
+                        aria-hidden
                       />
-                      <PickerAvatar url={page.avatar_url} name={page.name} />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate">{page.name}</span>
-                        {metaLine ? <span className="block truncate text-metadata text-ink-sub">{metaLine}</span> : null}
+                      <Input
+                        type="text"
+                        data-testid="adu-accounts-search-input"
+                        value={accountSearch}
+                        onChange={(e) => setAccountSearch(e.target.value)}
+                        placeholder="Filter accounts..."
+                        aria-label="Filter accounts"
+                        className="border-line bg-canvas pl-8 shadow-none"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-metadata text-ink-sub">
+                        {activeAccounts.length}{' '}
+                        {activeAccounts.length === 1 ? 'account found' : 'accounts found'}
                       </span>
-                      {configuredAlready ? <span className="shrink-0 text-metadata text-ink-dim">Already configured</span> : null}
-                    </label>
-                  );
-                })}
-              </div>
-              <div className="mt-2 flex gap-2">
-                <Button type="button" variant="outline" onClick={() => setSelectedPageIds(visiblePages.filter((p) => !isConfigured(p.id)).map((p) => p.id))}>Select all pages</Button>
-                <Button type="button" variant="outline" onClick={() => setSelectedPageIds([])}>Clear</Button>
-              </div>
-            </div>
+                      {activeAccounts.length > 0 ? (
+                        <button
+                          type="button"
+                          data-testid="adu-select-all-accounts-btn"
+                          aria-pressed={allAccountsChecked}
+                          onClick={toggleAllAccounts}
+                          className="inline-flex min-h-11 items-center px-2 text-metadata font-semibold text-link outline-none focus-visible:outline-2 focus-visible:outline-link"
+                        >
+                          {allAccountsChecked ? 'Deselect All' : 'Select All'}
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div
+                    data-testid="adu-accounts-list"
+                    className="flex max-h-85 flex-col overflow-y-auto border-t border-line"
+                  >
+                    {filteredAccounts.map((account) => {
+                      const checked = selectedAccountIds.includes(account.id);
+                      return (
+                        <label
+                          key={account.id}
+                          data-testid={`adu-account-row-${account.id}`}
+                          className={cn(
+                            'flex cursor-pointer items-center gap-4 rounded-xs border-b border-line px-3 py-2.5 transition-colors hover:bg-hover',
+                            checked ? 'bg-subtle' : 'bg-transparent'
+                          )}
+                        >
+                          <Checkbox
+                            data-testid={`adu-account-checkbox-${account.id}`}
+                            checked={checked}
+                            onCheckedChange={() => toggleAccount(account.id)}
+                          />
+                          <PickerAvatar url={account.avatar_url} name={account.display_name} />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-body font-semibold text-ink">
+                              {account.display_name}
+                            </span>
+                            <span className="mt-0.5 block text-metadata text-ink-sub">
+                              {pagesLinkedLabel(linkedPagesCount(account.id))}
+                            </span>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {filteredAccounts.length === 0 ? (
+                    <p className="p-6 text-center text-body text-ink-sub">
+                      {activeAccounts.length === 0
+                        ? 'No active Facebook accounts connected.'
+                        : 'No accounts match your search.'}
+                    </p>
+                  ) : null}
+                </div>
+                {expiredAccounts.length > 0 ? (
+                  <div data-testid="adu-expired-accounts-list" className="flex flex-col gap-1">
+                    {expiredAccounts.map((account) => (
+                      <div
+                        key={account.id}
+                        data-testid={`adu-expired-account-${account.id}`}
+                        className="flex items-center justify-between gap-4 rounded-sm px-3.5 py-3 opacity-55"
+                      >
+                        <div className="flex min-w-0 items-center gap-4">
+                          <PickerAvatar url={account.avatar_url} name={account.display_name} />
+                          <div className="min-w-0">
+                            <div className="truncate text-body font-semibold text-ink">
+                              {account.display_name}
+                            </div>
+                            <div className="mt-0.5 text-metadata text-ink-sub">
+                              {pagesLinkedLabel(linkedPagesCount(account.id))} · Session expired
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                {errorAccounts.length > 0 ? (
+                  <div data-testid="adu-error-accounts-list" className="flex flex-col gap-1">
+                    {errorAccounts.map((account) => (
+                      <div
+                        key={account.id}
+                        data-testid={`adu-error-account-${account.id}`}
+                        className="flex items-center justify-between gap-4 rounded-sm px-3.5 py-3 opacity-55"
+                      >
+                        <div className="flex min-w-0 items-center gap-4">
+                          <PickerAvatar url={account.avatar_url} name={account.display_name} />
+                          <div className="min-w-0">
+                            <div className="truncate text-body font-semibold text-ink">
+                              {account.display_name}
+                            </div>
+                            <div className="mt-0.5 text-metadata text-ink-sub">
+                              {pagesLinkedLabel(linkedPagesCount(account.id))} · Connection issue
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                {expiredAccounts.length > 0 || errorAccounts.length > 0 ? (
+                  <Button type="button" variant="outline" asChild>
+                    <Link href={`/tenant/${subdomain}/accounts`}>Go to Facebook Accounts</Link>
+                  </Button>
+                ) : null}
+                <Button
+                  type="button"
+                  data-testid="adu-accounts-next-btn"
+                  disabled={selectedAccountIds.length === 0}
+                  onClick={() => setStep(2)}
+                >
+                  Next
+                </Button>
               </>
             )}
-            <Button type="button" disabled={selectedPages.length === 0} onClick={() => setStep(2)}>Next</Button>
           </div>
         ) : null}
 
         {step === 2 ? (
+          <div className="flex flex-col gap-2">
+            <div className="mb-1 flex flex-wrap items-center justify-between gap-4 px-0.5">
+              <div className="relative flex max-w-60 flex-1 items-center">
+                <SearchIcon
+                  className="pointer-events-none absolute left-2.5 size-3.5 text-ink-dim"
+                  aria-hidden
+                />
+                <Input
+                  type="text"
+                  data-testid="adu-pages-search-input"
+                  value={pageSearch}
+                  onChange={(e) => setPageSearch(e.target.value)}
+                  placeholder="Filter pages..."
+                  aria-label="Filter pages"
+                  className="border-line bg-canvas pl-8 shadow-none"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-metadata text-ink-sub">
+                  {unionPages.length} {unionPages.length === 1 ? 'page found' : 'pages found'}
+                </span>
+                {selectablePageIds.length > 0 ? (
+                  <button
+                    type="button"
+                    data-testid="adu-select-all-pages-btn"
+                    aria-pressed={allPagesChecked}
+                    onClick={toggleAllPages}
+                    className="inline-flex min-h-11 items-center px-2 text-metadata font-semibold text-link outline-none focus-visible:outline-2 focus-visible:outline-link"
+                  >
+                    {allPagesChecked ? 'Deselect All' : 'Select All'}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+            <div
+              data-testid="adu-pages-list"
+              className="flex max-h-85 flex-col overflow-y-auto border-t border-line"
+            >
+              {visiblePages.map((page) => {
+                const configuredAlready = isConfigured(page.id);
+                const checked = configuredAlready || selectedPageIds.includes(page.id);
+                const isSelected = !configuredAlready && checked;
+                return (
+                  <label
+                    key={page.id}
+                    data-testid={`adu-page-row-${page.id}`}
+                    className={cn(
+                      'flex items-center gap-4 rounded-xs border-b border-line px-3 py-2.5 transition-colors',
+                      isSelected ? 'bg-subtle' : 'bg-transparent',
+                      configuredAlready ? 'cursor-default opacity-60' : 'cursor-pointer hover:bg-hover'
+                    )}
+                  >
+                    <Checkbox
+                      data-testid={`adu-page-checkbox-${page.id}`}
+                      checked={checked}
+                      disabled={configuredAlready}
+                      onCheckedChange={() => {
+                        if (!configuredAlready) {
+                          toggle(selectedPageIds, page.id, setSelectedPageIds);
+                        }
+                      }}
+                    />
+                    <PickerAvatar url={page.avatar_url} name={page.name} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-body font-semibold text-ink">{page.name}</span>
+                      <span className="mt-0.5 block truncate text-metadata text-ink-sub">
+                        {pageMetaLine(page)}
+                      </span>
+                    </span>
+                    {configuredAlready ? (
+                      <span className="shrink-0 text-metadata font-medium text-ink-dim">Already added</span>
+                    ) : null}
+                  </label>
+                );
+              })}
+            </div>
+            {visiblePages.length === 0 ? (
+              <p className="p-6 text-center text-body text-ink-sub">
+                {unionPages.length === 0
+                  ? 'No pages on the selected accounts.'
+                  : 'No pages match your search.'}
+              </p>
+            ) : null}
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" data-testid="adu-pages-back-btn" onClick={() => setStep(1)}>
+                Back
+              </Button>
+              <Button
+                type="button"
+                data-testid="adu-pages-next-btn"
+                disabled={selectedPageIds.length === 0}
+                onClick={() => setStep(3)}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
+        {step === 3 ? (
           <div className="flex flex-col gap-4">
             <div>
               <h3 className="font-medium">Sources</h3>
@@ -954,7 +1211,7 @@ function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
             </div>
 
             <div className="flex gap-2">
-              <Button type="button" variant="outline" onClick={() => setStep(1)}>Back</Button>
+              <Button type="button" variant="outline" onClick={() => setStep(2)}>Back</Button>
               <Button
                 type="button"
                 disabled={submitting || !allSourcesFilled || (timingScope === 'separate' && !selectedPages.every((p) => pageScheduleComplete(p.id)))}

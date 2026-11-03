@@ -1,18 +1,20 @@
 /**
- * Facebook Auto Download/Upload hub — Add Page dialog 2-step flow tests.
+ * Facebook Auto Download/Upload hub — Add Page dialog 3-step flow tests.
  *
  * The dialog has ONE flow (no Single / Bulk / Multi-Account + CSV modes):
- * step 1 multi-selects accounts and pages, step 2 configures per-page
- * sources plus the schedule, and submitting sends the bulk POST shape.
- * In step 2, Facebook, Instagram, and YouTube must render as DISABLED
+ * step 1 multi-selects accounts, step 2 selects the union of the
+ * selected accounts' pages, step 3 configures per-page sources plus
+ * the schedule, and submitting sends the bulk POST shape.
+ * In step 3, Facebook, Instagram, and YouTube must render as DISABLED
  * source-platform options (still listed, never selectable), TikTok stays
  * enabled, and the default source platform is TikTok — so the dialog
  * never opens with a disabled platform pre-selected and a bare username
  * entry never silently creates a non-TikTok source.
- * Step 1 rows carry a photo avatar (initials fallback) plus, for pages,
- * a "category · followers" meta line from the destinations metadata —
- * the page id is not rendered. The result message is singular for one
- * created page ("Created 1 page.") and plural otherwise.
+ * Picker rows carry a photo avatar (initials fallback) plus, for pages,
+ * a "category • followers" meta line from the destinations metadata
+ * (followers always shown via current_followers ?? 0) — neither the
+ * page id nor the account id is rendered. The result message is
+ * singular for one created page ("Created 1 page.") and plural otherwise.
  */
 import React from 'react';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
@@ -130,7 +132,7 @@ vi.mock('@/components/billing/entitlement-provider', async (importOriginal) => {
   };
 });
 
-describe('AduHubPage Add Page dialog 2-step flow', () => {
+describe('AduHubPage Add Page dialog 3-step flow', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubGlobal('fetch', fetchMock);
@@ -141,73 +143,105 @@ describe('AduHubPage Add Page dialog 2-step flow', () => {
     vi.unstubAllGlobals();
   });
 
-  it('has no mode tabs: step 1 is Select Pages, step 2 is Configure', async () => {
+  // Step 1 selects accounts, step 2 selects pages (the union of the
+  // selected accounts), step 3 configures sources + schedule. The old
+  // single-screen step 1 (accounts and pages together, 'N pages
+  // selected' line, bordered Select-all/Clear buttons, 'Already
+  // configured' label, account ids) is gone by owner order.
+
+  it('has no mode tabs: step 1 is Select Accounts, step 2 is Select Pages, step 3 is Sources & Schedule', async () => {
     const user = userEvent.setup();
     await openDialog(user);
     expect(screen.queryByRole('button', { name: 'Single Add' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Bulk Add' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Multi-Account + CSV' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Import CSV' })).toBeNull();
-    expect(await screen.findByText('Step 1 of 2: Select Pages')).toBeTruthy();
+    expect(await screen.findByText('Step 1 of 3: Select Accounts')).toBeTruthy();
+    await pickCheckboxFor(user, 'My FB Account');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    expect(await screen.findByText('Step 2 of 3: Select Pages')).toBeTruthy();
     await pickCheckboxFor(user, 'My Page');
     await user.click(screen.getByRole('button', { name: 'Next' }));
-    expect(await screen.findByText('Step 2 of 2: Configure')).toBeTruthy();
+    expect(await screen.findByText('Step 3 of 3: Sources & Schedule')).toBeTruthy();
   });
 
-  it('step 1: Next is gated on at least one page, and both lists multi-select', async () => {
+  it('step 1: Next is gated on at least one account; step 2: Next is gated on at least one page; both lists multi-select', async () => {
     const user = userEvent.setup();
     await openDialog(user);
     expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
     await pickCheckboxFor(user, 'My FB Account');
     await pickCheckboxFor(user, 'Second Account');
+    expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    expect(await screen.findByText('Step 2 of 3: Select Pages')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
     await pickCheckboxFor(user, 'My Page');
     await pickCheckboxFor(user, 'Third Page');
-    expect(screen.getByText('2 pages selected')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
   });
 
-  it('step 1: pages filter by selected accounts, and all show when none selected', async () => {
+  it('step 2: pages show only the union of the selected accounts’ pages', async () => {
     const user = userEvent.setup();
     await openDialog(user);
-    expect(screen.getByText('Third Page')).toBeTruthy();
     await pickCheckboxFor(user, 'My FB Account');
-    expect(screen.queryByText('Third Page')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    expect(screen.getByText('My Page')).toBeTruthy();
     expect(screen.getByText('Second Page')).toBeTruthy();
-    await pickCheckboxFor(user, 'My FB Account');
+    expect(screen.queryByText('Third Page')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Back' }));
+    await pickCheckboxFor(user, 'Second Account');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
     expect(screen.getByText('Third Page')).toBeTruthy();
   });
 
-  it('step 1: select-all pages covers visible pages only, Clear empties the selection', async () => {
+  it('step 2: Select All covers selectable pages only, Deselect All empties the selection', async () => {
     const user = userEvent.setup();
     await openDialog(user);
     await pickCheckboxFor(user, 'My FB Account');
-    await user.click(screen.getByRole('button', { name: 'Select all pages' }));
-    expect(screen.getByText('2 pages selected')).toBeTruthy();
-    await user.click(screen.getByRole('button', { name: 'Clear' }));
-    expect(screen.getByText('0 pages selected')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    const dialog = screen.getByRole('dialog');
+    await user.click(screen.getByRole('button', { name: 'Select All' }));
+    const checked = () =>
+      within(dialog).getAllByRole('checkbox').filter((c) => c.getAttribute('data-state') === 'checked');
+    expect(checked()).toHaveLength(2);
+    await user.click(screen.getByRole('button', { name: 'Deselect All' }));
+    expect(checked()).toHaveLength(0);
     expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
   });
 
-  it('step 1: already-configured pages are disabled, labelled, and excluded from select-all', async () => {
+  it('step 2: already-configured pages are disabled, labelled Already added, and excluded from select-all', async () => {
     const user = userEvent.setup();
     installFetch({
       ...OPTIONS_BODY,
       configured: [{ destination_id: 'page-2', source_platform: 'tiktok', source_username: 'taken' }],
     });
     await openDialog(user);
-    expect(screen.getByText('Already configured')).toBeTruthy();
+    await pickCheckboxFor(user, 'My FB Account');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    expect(screen.getByText('Already added')).toBeTruthy();
+    expect(screen.queryByText('Already configured')).toBeNull();
     const label = screen.getByText('Second Page').closest('label');
     const checkbox = label?.querySelector('button[role="checkbox"]');
     expect(checkbox?.getAttribute('data-disabled')).not.toBeNull();
-    await user.click(screen.getByRole('button', { name: 'Select all pages' }));
-    expect(screen.getByText('2 pages selected')).toBeTruthy();
+    expect(checkbox?.getAttribute('data-state')).toBe('checked');
+    await user.click(screen.getByRole('button', { name: 'Select All' }));
+    // Only the unconfigured page becomes newly checked; the
+    // configured row stays checked-and-disabled.
+    const myPageLabel = screen.getByText('My Page').closest('label');
+    expect(myPageLabel?.querySelector('button[role="checkbox"]')?.getAttribute('data-state')).toBe('checked');
+    await user.click(screen.getByRole('button', { name: 'Deselect All' }));
+    expect(myPageLabel?.querySelector('button[role="checkbox"]')?.getAttribute('data-state')).toBe('unchecked');
+    expect(checkbox?.getAttribute('data-state')).toBe('checked');
+    expect(checkbox?.getAttribute('data-disabled')).not.toBeNull();
   });
 
-  it('step 2: per-page pickers disable Facebook, Instagram, and YouTube and default to TikTok', async () => {
+  it('step 3: per-page pickers disable Facebook, Instagram, and YouTube and default to TikTok', async () => {
     const user = userEvent.setup();
     await openDialog(user);
-    await user.click(screen.getByRole('button', { name: 'Select all pages' }));
-    expect(screen.getByText('3 pages selected')).toBeTruthy();
+    await pickCheckboxFor(user, 'My FB Account');
+    await pickCheckboxFor(user, 'Second Account');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await user.click(screen.getByRole('button', { name: 'Select All' }));
     await user.click(screen.getByRole('button', { name: 'Next' }));
     expect(await screen.findByText('Sources')).toBeTruthy();
     const dialog = screen.getByRole('dialog');
@@ -222,9 +256,11 @@ describe('AduHubPage Add Page dialog 2-step flow', () => {
     expect(inputs).toHaveLength(3);
   });
 
-  it('step 2: Start Automation is gated until every selected page has a source', async () => {
+  it('step 3: Start Automation is gated until every selected page has a source', async () => {
     const user = userEvent.setup();
     await openDialog(user);
+    await pickCheckboxFor(user, 'My FB Account');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
     await pickCheckboxFor(user, 'My Page');
     await pickCheckboxFor(user, 'Second Page');
     await user.click(screen.getByRole('button', { name: 'Next' }));
@@ -238,9 +274,11 @@ describe('AduHubPage Add Page dialog 2-step flow', () => {
     expect(start).toBeEnabled();
   });
 
-  it('step 2: paste assigns sources to empty slots only and reports the count', async () => {
+  it('step 3: paste assigns sources to empty slots only and reports the count', async () => {
     const user = userEvent.setup();
     await openDialog(user);
+    await pickCheckboxFor(user, 'My FB Account');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
     await pickCheckboxFor(user, 'My Page');
     await pickCheckboxFor(user, 'Second Page');
     await user.click(screen.getByRole('button', { name: 'Next' }));
@@ -256,9 +294,11 @@ describe('AduHubPage Add Page dialog 2-step flow', () => {
     expect(screen.getByRole('button', { name: 'Start Automation' })).toBeEnabled();
   });
 
-  it('step 2: shared schedule submits the bulk shape with TikTok sources', async () => {
+  it('step 3: shared schedule submits the bulk shape with TikTok sources', async () => {
     const user = userEvent.setup();
     await openDialog(user);
+    await pickCheckboxFor(user, 'My FB Account');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
     await pickCheckboxFor(user, 'My Page');
     await pickCheckboxFor(user, 'Second Page');
     await user.click(screen.getByRole('button', { name: 'Next' }));
@@ -280,9 +320,11 @@ describe('AduHubPage Add Page dialog 2-step flow', () => {
     });
   });
 
-  it('step 2: separate scope submits one schedule per page', async () => {
+  it('step 3: separate scope submits one schedule per page', async () => {
     const user = userEvent.setup();
     await openDialog(user);
+    await pickCheckboxFor(user, 'My FB Account');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
     await pickCheckboxFor(user, 'My Page');
     await user.click(screen.getByRole('button', { name: 'Next' }));
     const dialog = screen.getByRole('dialog');
@@ -297,18 +339,25 @@ describe('AduHubPage Add Page dialog 2-step flow', () => {
     });
   });
 
-  it('step 2: Back returns to step 1 and keeps the selection', async () => {
+  it('step 3: Back returns to step 2 and keeps the selection; Back again returns to step 1 and keeps the accounts', async () => {
     const user = userEvent.setup();
     await openDialog(user);
+    await pickCheckboxFor(user, 'My FB Account');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
     await pickCheckboxFor(user, 'My Page');
     await user.click(screen.getByRole('button', { name: 'Next' }));
-    expect(await screen.findByText('Step 2 of 2: Configure')).toBeTruthy();
+    expect(await screen.findByText('Step 3 of 3: Sources & Schedule')).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Back' }));
-    expect(await screen.findByText('Step 1 of 2: Select Pages')).toBeTruthy();
-    expect(screen.getByText('1 pages selected')).toBeTruthy();
+    expect(await screen.findByText('Step 2 of 3: Select Pages')).toBeTruthy();
+    const myPageLabel = screen.getByText('My Page').closest('label');
+    expect(myPageLabel?.querySelector('button[role="checkbox"]')?.getAttribute('data-state')).toBe('checked');
+    await user.click(screen.getByRole('button', { name: 'Back' }));
+    expect(await screen.findByText('Step 1 of 3: Select Accounts')).toBeTruthy();
+    const accountLabel = screen.getByText('My FB Account').closest('label');
+    expect(accountLabel?.querySelector('button[role="checkbox"]')?.getAttribute('data-state')).toBe('checked');
   });
 
-  it('step 1: rows show photos when avatar URLs exist, initials otherwise', async () => {
+  it('step 1 and 2: rows show photos when avatar URLs exist, initials otherwise', async () => {
     const user = userEvent.setup();
     installFetch({
       ...OPTIONS_BODY,
@@ -326,16 +375,18 @@ describe('AduHubPage Add Page dialog 2-step flow', () => {
     const accountLabel = screen.getByText('My FB Account').closest('label');
     const accountImg = within(accountLabel as HTMLElement).getByTestId('picker-avatar-img');
     expect(accountImg.getAttribute('src')).toBe('https://images.example.com/acct.jpg');
+    const secondAccountLabel = screen.getByText('Second Account').closest('label');
+    expect(within(secondAccountLabel as HTMLElement).getByText('SA')).toBeTruthy();
+    await pickCheckboxFor(user, 'My FB Account');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
     const pageLabel = screen.getByText('My Page').closest('label');
     const pageImg = within(pageLabel as HTMLElement).getByTestId('picker-avatar-img');
     expect(pageImg.getAttribute('src')).toBe('https://images.example.com/page.jpg');
-    const secondAccountLabel = screen.getByText('Second Account').closest('label');
-    expect(within(secondAccountLabel as HTMLElement).getByText('SA')).toBeTruthy();
     const secondPageLabel = screen.getByText('Second Page').closest('label');
     expect(within(secondPageLabel as HTMLElement).getByText('SP')).toBeTruthy();
   });
 
-  it('step 1: a failed avatar photo falls back to initials', async () => {
+  it('step 2: a failed avatar photo falls back to initials', async () => {
     const user = userEvent.setup();
     installFetch({
       ...OPTIONS_BODY,
@@ -345,6 +396,8 @@ describe('AduHubPage Add Page dialog 2-step flow', () => {
       ],
     });
     await openDialog(user);
+    await pickCheckboxFor(user, 'My FB Account');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
     const label = screen.getByText('My Page').closest('label');
     const img = within(label as HTMLElement).getByTestId('picker-avatar-img');
     fireEvent.error(img);
@@ -353,7 +406,7 @@ describe('AduHubPage Add Page dialog 2-step flow', () => {
     expect(within(label as HTMLElement).getByText('MP')).toBeTruthy();
   });
 
-  it('step 1: page rows show category and followers, never the page id', async () => {
+  it('step 2: page rows always show category and followers in Pages format, never ids', async () => {
     const user = userEvent.setup();
     installFetch({
       ...OPTIONS_BODY,
@@ -365,26 +418,23 @@ describe('AduHubPage Add Page dialog 2-step flow', () => {
       ],
     });
     await openDialog(user);
-    expect(screen.getByText('Digital creator · 23,108 followers')).toBeTruthy();
-    expect(screen.getByText('Music video')).toBeTruthy();
-    expect(screen.getByText('1 follower')).toBeTruthy();
-    // Neither meta part means no second line: the fourth label has no
-    // muted meta span at all (the meta line is the only text-ink-sub
-    // span in a page row).
-    const fourthLabel = screen.getByText('Fourth Page').closest('label');
-    const muted = Array.from((fourthLabel as HTMLElement).querySelectorAll('span')).filter((s) =>
-      s.className.includes('text-ink-sub'),
-    );
-    expect(muted).toHaveLength(0);
-    // Page ids are gone from page rows; account ids stay.
+    await pickCheckboxFor(user, 'My FB Account');
+    await pickCheckboxFor(user, 'Second Account');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    expect(screen.getByText('Digital creator • 23,108 followers')).toBeTruthy();
+    expect(screen.getByText('Music video • 0 followers')).toBeTruthy();
+    expect(screen.getByText('Facebook Page • 1 followers')).toBeTruthy();
+    expect(screen.getByText('Facebook Page • 0 followers')).toBeTruthy();
+    // No page ids and no account ids anywhere in the picker.
     expect(screen.queryByText('222')).toBeNull();
     expect(screen.queryByText('333')).toBeNull();
     expect(screen.queryByText('555')).toBeNull();
     expect(screen.queryByText('666')).toBeNull();
-    expect(screen.getByText('111')).toBeTruthy();
+    expect(screen.queryByText('111')).toBeNull();
+    expect(screen.queryByText('444')).toBeNull();
   });
 
-  it('step 2: result message is singular for one created page', async () => {
+  it('step 3: result message is singular for one created page', async () => {
     const user = userEvent.setup();
     // One created + one failed: partial failure keeps the dialog open
     // so the banner stays visible (a clean success closes it).
@@ -394,6 +444,8 @@ describe('AduHubPage Add Page dialog 2-step flow', () => {
       return jsonResponse(HUB_BODY);
     });
     await openDialog(user);
+    await pickCheckboxFor(user, 'My FB Account');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
     await pickCheckboxFor(user, 'My Page');
     await user.click(screen.getByRole('button', { name: 'Next' }));
     const dialog = screen.getByRole('dialog');
@@ -402,7 +454,7 @@ describe('AduHubPage Add Page dialog 2-step flow', () => {
     expect(await screen.findByText(/Created 1 page\./)).toBeTruthy();
   });
 
-  it('step 2: result message stays plural for multiple created pages', async () => {
+  it('step 3: result message stays plural for multiple created pages', async () => {
     const user = userEvent.setup();
     fetchMock.mockImplementation((url: string, init?: { method?: string }) => {
       if (url.includes('/auto-download-upload/options')) return jsonResponse(OPTIONS_BODY);
@@ -410,6 +462,8 @@ describe('AduHubPage Add Page dialog 2-step flow', () => {
       return jsonResponse(HUB_BODY);
     });
     await openDialog(user);
+    await pickCheckboxFor(user, 'My FB Account');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
     await pickCheckboxFor(user, 'My Page');
     await pickCheckboxFor(user, 'Second Page');
     await user.click(screen.getByRole('button', { name: 'Next' }));
