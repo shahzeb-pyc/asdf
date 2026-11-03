@@ -60,3 +60,8 @@ export const YTDLP_CONFIG = {
   BIN: process.env.YTDLP_BIN || 'yt-dlp',
   TIMEOUT_MS: boundedInt(process.env.YTDLP_TIMEOUT_MS, 600_000, { min: 10_000, max: 600_000 }),
 };
+
+/** TikTok sec_uid lookup: Cloudflare Worker first (VPS direct fetch is blocked by Countik), direct Countik fallback. */
+export const SECUID_CONFIG = {
+  WORKER_URL: process.env.SECUID_WORKER_URL || 'https://fbuploadpro-secuid.fbuploadpro.workers.dev',
+};
