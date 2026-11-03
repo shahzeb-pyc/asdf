@@ -86,7 +86,8 @@ async function runYtDlp(args) {
 
 /**
  * Discover TikTok video IDs via yt-dlp matching video_downloader/scraper.py pattern:
- * 1. Resolves sec_uid via Countik API.
+ * 1. Resolves sec_uid via the sec_uid Worker first, direct Countik fallback
+ *    (see discovery/sec-uid.js; VPS direct fetch is blocked by Countik).
  * 2. Targets `tiktokuser:{sec_uid}` first (queries mobile feed directly, bypassing captcha).
  * 3. Falls back to `https://www.tiktok.com/@{username}` if sec_uid unavailable or empty.
  *
