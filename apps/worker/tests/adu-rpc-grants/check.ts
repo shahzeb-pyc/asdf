@@ -51,6 +51,11 @@ const CLAIM_FUNCTIONS = [
   'reset_stuck_adu_configs',
   'reset_stale_adu_reel_downloads',
   'claim_adu_buffer_downloads',
+  // Claim split (migration 20261103150000): the Worker claims TikTok
+  // rows, the VPS downloader everything else; both keep the same grant
+  // closure as the original claim.
+  'claim_tiktok_buffer_downloads',
+  'claim_non_tiktok_buffer_downloads',
   'mark_adu_reel_downloaded',
   'mark_adu_reel_download_failed',
 ] as const;

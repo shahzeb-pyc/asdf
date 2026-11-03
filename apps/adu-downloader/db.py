@@ -65,8 +65,12 @@ def reset_stale_reel_downloads(stale_minutes: int):
 
 
 def claim_buffer_downloads(limit: int):
+    # TikTok rows are claimed ONLY by the Cloudflare Worker
+    # (apps/tiktok-downloader) via claim_tiktok_buffer_downloads; this
+    # service claims everything else, so the two downloaders never race
+    # over the same reel. See migration 20261103150000.
     return _rpc_execute(
-        lambda: get_client().rpc("claim_adu_buffer_downloads", {"p_limit": limit}).execute()
+        lambda: get_client().rpc("claim_non_tiktok_buffer_downloads", {"p_limit": limit}).execute()
     )
 
 
