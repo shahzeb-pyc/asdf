@@ -6,6 +6,7 @@
  */
 
 import type { FetchImpl } from './tikwm.js';
+import type { DownloadFailure } from './failure.js';
 
 export interface ClaimedReel {
   reelId: string;
@@ -172,7 +173,23 @@ export class SupabaseRpc {
     });
   }
 
-  async markDownloadFailed(reelId: string): Promise<void> {
-    await this.callRpc<void>('mark_adu_reel_download_failed', { p_reel_id: reelId });
+  /**
+   * Records the exact failure on the reel row (stage + reason + detail
+   * + attempt time) via the RPC's optional p_failure. Omitting it keeps
+   * the old 1-arg behavior: the RPC then preserves any previously
+   * recorded reason instead of clearing it.
+   */
+  async markDownloadFailed(reelId: string, failure?: DownloadFailure): Promise<void> {
+    await this.callRpc<void>('mark_adu_reel_download_failed', {
+      p_reel_id: reelId,
+      p_failure: failure
+        ? {
+            stage: failure.stage,
+            reason: failure.reason,
+            ...(failure.detail ? { detail: truncate(failure.detail) } : {}),
+            at: new Date().toISOString(),
+          }
+        : null,
+    });
   }
 }

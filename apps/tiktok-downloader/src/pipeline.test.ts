@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   runDownloadTick,
   streamToR2,
   r2ObjectKey,
+  FileTooLargeError,
   type R2BucketLike,
   type TickDeps,
 } from './pipeline.js';
@@ -60,9 +61,11 @@ class FakeR2 implements R2BucketLike {
   objects = new Map<string, Uint8Array>();
   puts: string[] = [];
   deletes: string[] = [];
+  throwOnPut = false;
 
   async put(key: string, value: ReadableStream<Uint8Array>): Promise<unknown> {
     this.puts.push(key);
+    if (this.throwOnPut) throw new Error('r2 down');
     const reader = value.getReader();
     const chunks: Uint8Array[] = [];
     for (;;) {
@@ -84,7 +87,7 @@ class FakeR2 implements R2BucketLike {
 interface FakeSupabaseState {
   rows: ClaimedReel[];
   downloaded: MarkDownloadedArgs[];
-  failed: string[];
+  failed: Array<{ reelId: string; failure?: unknown }>;
   throwOnDownloaded?: boolean;
 }
 
@@ -96,8 +99,8 @@ function fakeSupabase(state: FakeSupabaseState): SupabaseRpc {
       if (state.throwOnDownloaded) throw new Error('db down');
       state.downloaded.push(args);
     },
-    markDownloadFailed: async (reelId: string) => {
-      state.failed.push(reelId);
+    markDownloadFailed: async (reelId: string, failure?: unknown) => {
+      state.failed.push({ reelId, failure });
     },
   } as unknown as SupabaseRpc;
 }
@@ -119,6 +122,15 @@ function fakeFetch(videoBody: Uint8Array | null, apiBody: unknown): FetchImpl {
       return new Response(streamOf(videoBody), { status: 200 });
     }
     return new Response('no', { status: 404 });
+  }) as unknown as FetchImpl;
+}
+
+function fakeFetchStream(videoStream: ReadableStream<Uint8Array>, apiBody: unknown): FetchImpl {
+  return (async (url: string) => {
+    if (url === TIKWM_API_URL) {
+      return new Response(JSON.stringify(apiBody), { status: 200 });
+    }
+    return new Response(videoStream, { status: 200 });
   }) as unknown as FetchImpl;
 }
 
@@ -144,10 +156,69 @@ describe('runDownloadTick', () => {
     );
     expect(result.claimed).toBe(1);
     expect(result.failed).toBe(1);
-    expect(result.failedReasons).toEqual({ api: 1 });
-    expect(state.failed).toEqual(['reel-1']);
+    expect(result.failedReasons).toEqual({ 'tikwm_resolve:tikwm_api_body_code': 1 });
+    expect(state.failed).toEqual([
+      {
+        reelId: 'reel-1',
+        failure: { stage: 'tikwm_resolve', reason: 'tikwm_api_body_code', detail: 'body_code=1' },
+      },
+    ]);
     expect(state.downloaded).toEqual([]);
     expect(r2.puts).toEqual([]);
+  });
+
+  it('records the HTTP status when the video stream 404s', async () => {
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [] };
+    const r2 = new FakeR2();
+    const result = await runDownloadTick(
+      deps(state, r2, fakeFetch(null, { code: 0, data: { play: 'https://cdn.example/v.mp4' } })),
+    );
+    expect(result.failedReasons).toEqual({ 'stream_open:stream_http_status': 1 });
+    expect(state.failed).toEqual([
+      {
+        reelId: 'reel-1',
+        failure: { stage: 'stream_open', reason: 'stream_http_status', detail: 'http_status=404' },
+      },
+    ]);
+    expect(r2.puts).toEqual([]);
+  });
+
+  it('records an R2 put failure distinctly from a stream failure', async () => {
+    const body = padTo(box('ftyp', new Uint8Array(8)), 12000);
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [] };
+    const r2 = new FakeR2();
+    r2.throwOnPut = true;
+    const result = await runDownloadTick(
+      deps(state, r2, fakeFetch(body, { code: 0, data: { play: 'https://cdn.example/v.mp4' } })),
+    );
+    expect(result.failedReasons).toEqual({ 'stream_upload:r2_put_error': 1 });
+    expect(state.failed).toEqual([
+      {
+        reelId: 'reel-1',
+        failure: { stage: 'stream_upload', reason: 'r2_put_error', detail: 'r2 down' },
+      },
+    ]);
+    expect(r2.deletes).toEqual(['adu-buffer/cfg-1/reel-1.mp4']);
+  });
+
+  it('records a stream read failure distinctly from an R2 failure', async () => {
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [] };
+    const r2 = new FakeR2();
+    const erroring = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(new Error('read boom'));
+      },
+    });
+    const result = await runDownloadTick(
+      deps(state, r2, fakeFetchStream(erroring, { code: 0, data: { play: 'https://cdn.example/v.mp4' } })),
+    );
+    expect(result.failedReasons).toEqual({ 'stream_upload:stream_read_error': 1 });
+    expect(state.failed).toEqual([
+      {
+        reelId: 'reel-1',
+        failure: { stage: 'stream_upload', reason: 'stream_read_error', detail: 'read boom' },
+      },
+    ]);
   });
 
   it('rejects a small file and deletes the partial object', async () => {
@@ -157,8 +228,13 @@ describe('runDownloadTick', () => {
     const result = await runDownloadTick(
       deps(state, r2, fakeFetch(small, { code: 0, data: { play: 'https://cdn.example/v.mp4' } })),
     );
-    expect(result.failedReasons).toEqual({ too_small: 1 });
-    expect(state.failed).toEqual(['reel-1']);
+    expect(result.failedReasons).toEqual({ 'size_check:too_small': 1 });
+    expect(state.failed).toEqual([
+      {
+        reelId: 'reel-1',
+        failure: { stage: 'size_check', reason: 'too_small', detail: 'size_bytes=5000' },
+      },
+    ]);
     expect(r2.deletes).toEqual(['adu-buffer/cfg-1/reel-1.mp4']);
     expect(r2.objects.has('adu-buffer/cfg-1/reel-1.mp4')).toBe(false);
   });
@@ -170,8 +246,13 @@ describe('runDownloadTick', () => {
     const result = await runDownloadTick(
       deps(state, r2, fakeFetch(body, { code: 0, data: { play: 'https://cdn.example/v.mp4' } })),
     );
-    expect(result.failedReasons).toEqual({ no_audio: 1 });
-    expect(state.failed).toEqual(['reel-1']);
+    expect(result.failedReasons).toEqual({ 'audio_check:no_audio': 1 });
+    expect(state.failed).toEqual([
+      {
+        reelId: 'reel-1',
+        failure: { stage: 'audio_check', reason: 'no_audio' },
+      },
+    ]);
     expect(r2.objects.has('adu-buffer/cfg-1/reel-1.mp4')).toBe(false);
   });
 
@@ -239,5 +320,39 @@ describe('streamToR2 cap', () => {
     await expect(
       streamToR2(streamOf(body), r2, 'k', { maxBytes: 100 }),
     ).rejects.toThrow(/cap/);
+  });
+
+  it('reports the cap breach as a typed error carrying the cap', async () => {
+    const r2 = new FakeR2();
+    const body = new Uint8Array(200);
+    const err = await streamToR2(streamOf(body), r2, 'k', { maxBytes: 100 }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(FileTooLargeError);
+    expect((err as FileTooLargeError).capBytes).toBe(100);
+  });
+
+  it('maps a stalled stream to stream_stalled', async () => {
+    vi.useFakeTimers();
+    try {
+      const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [] };
+      const r2 = new FakeR2();
+      const never = new ReadableStream<Uint8Array>({});
+      const tick = runDownloadTick(
+        deps(state, r2, fakeFetchStream(never, { code: 0, data: { play: 'https://cdn.example/v.mp4' } })),
+      );
+      await vi.advanceTimersByTimeAsync(31_000);
+      const result = await tick;
+      expect(result.failedReasons).toEqual({ 'stream_upload:stream_stalled': 1 });
+      expect(state.failed).toEqual([
+        {
+          reelId: 'reel-1',
+          failure: { stage: 'stream_upload', reason: 'stream_stalled', detail: 'timeout_ms=30000' },
+        },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

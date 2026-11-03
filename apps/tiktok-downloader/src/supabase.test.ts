@@ -87,6 +87,41 @@ describe('SupabaseRpc', () => {
     });
   });
 
+  it('sends the failure reason to markDownloadFailed', async () => {
+    let seenBody: unknown;
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      seenBody = JSON.parse(init.body as string);
+      return new Response(null, { status: 204 });
+    }) as unknown as FetchImpl;
+    const rpc = new SupabaseRpc(URL, KEY, fetchImpl);
+    await rpc.markDownloadFailed('r1', {
+      stage: 'tikwm_resolve',
+      reason: 'tikwm_api_http_status',
+      detail: 'http_status=403',
+    });
+    expect(seenBody).toMatchObject({
+      p_reel_id: 'r1',
+      p_failure: {
+        stage: 'tikwm_resolve',
+        reason: 'tikwm_api_http_status',
+        detail: 'http_status=403',
+      },
+    });
+    const failure = (seenBody as { p_failure: { at: unknown } }).p_failure;
+    expect(typeof failure.at).toBe('string');
+  });
+
+  it('sends null failure when no reason is given', async () => {
+    let seenBody: unknown;
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      seenBody = JSON.parse(init.body as string);
+      return new Response(null, { status: 204 });
+    }) as unknown as FetchImpl;
+    const rpc = new SupabaseRpc(URL, KEY, fetchImpl);
+    await rpc.markDownloadFailed('r1');
+    expect(seenBody).toEqual({ p_reel_id: 'r1', p_failure: null });
+  });
+
   it('fails loud on RPC HTTP errors without leaking the key', async () => {
     const fetchImpl = (async () => new Response('permission denied', { status: 401 })) as unknown as FetchImpl;
     const rpc = new SupabaseRpc(URL, KEY, fetchImpl);

@@ -28,16 +28,50 @@ export interface TikwmStream {
 
 export type FetchImpl = typeof fetch;
 
+export type TikwmResolveFailure =
+  | { reason: 'tikwm_api_timeout' }
+  | { reason: 'tikwm_api_fetch_error'; detail: string }
+  | { reason: 'tikwm_api_http_status'; status: number }
+  | { reason: 'tikwm_api_body_unparsable' }
+  | { reason: 'tikwm_api_bad_body' }
+  | { reason: 'tikwm_api_body_code'; code: string }
+  | { reason: 'tikwm_api_no_data' }
+  | { reason: 'tikwm_no_stream_url' };
+
+export type TikwmResolveResult =
+  | { ok: true; streamUrl: string; rawTitle: string | null }
+  | { ok: false; failure: TikwmResolveFailure };
+
+export type StreamOpenFailure =
+  | { reason: 'stream_fetch_error'; detail: string }
+  | { reason: 'stream_http_status'; status: number }
+  | { reason: 'stream_no_body' };
+
+export type StreamOpenResult =
+  | { ok: true; body: ReadableStream<Uint8Array> }
+  | { ok: false; failure: StreamOpenFailure };
+
+function isTimeout(err: unknown): boolean {
+  // AbortSignal.timeout rejects with a DOMException named 'TimeoutError'.
+  return err instanceof Error && err.name === 'TimeoutError';
+}
+
+function errorDetail(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 /**
  * Resolve a TikTok video URL to its HD stream URL via the tikwm API.
- * Returns null on ANY failure: non-200, unparsable body, code != 0,
- * missing data, or no stream URL — exactly like the old code's None.
+ * Returns a discriminated result instead of null: every failure carries
+ * its exact reason, so the caller can persist it. Success semantics are
+ * unchanged (non-200, unparsable body, code != 0, missing data, or no
+ * stream URL all fail — exactly like the old code's None).
  */
 export async function resolveTikwmStream(
   videoUrl: string,
   // Workerd brand-check: arrow wrapper, never bare `fetch` (see supabase.ts).
   fetchImpl: FetchImpl = (input: RequestInfo | URL, init?: RequestInit) => fetch(input, init),
-): Promise<TikwmStream | null> {
+): Promise<TikwmResolveResult> {
   let res: Response;
   try {
     res = await fetchImpl(TIKWM_API_URL, {
@@ -51,25 +85,37 @@ export async function resolveTikwmStream(
       signal: AbortSignal.timeout(TIKWM_API_TIMEOUT_MS),
       redirect: 'follow',
     });
-  } catch {
-    return null;
+  } catch (err) {
+    if (isTimeout(err)) {
+      return { ok: false, failure: { reason: 'tikwm_api_timeout' } };
+    }
+    return { ok: false, failure: { reason: 'tikwm_api_fetch_error', detail: errorDetail(err) } };
   }
   // The old code required status_code == 200 exactly.
   if (res.status !== 200) {
-    return null;
+    return { ok: false, failure: { reason: 'tikwm_api_http_status', status: res.status } };
   }
   let body: unknown;
   try {
     body = await res.json();
   } catch {
-    return null;
+    return { ok: false, failure: { reason: 'tikwm_api_body_unparsable' } };
   }
   if (typeof body !== 'object' || body === null) {
-    return null;
+    return { ok: false, failure: { reason: 'tikwm_api_bad_body' } };
   }
   const { code, data } = body as { code?: unknown; data?: unknown };
-  if (code !== 0 || typeof data !== 'object' || data === null) {
-    return null;
+  if (code !== 0) {
+    return {
+      ok: false,
+      failure: {
+        reason: 'tikwm_api_body_code',
+        code: typeof code === 'number' || typeof code === 'string' ? String(code) : 'missing',
+      },
+    };
+  }
+  if (typeof data !== 'object' || data === null) {
+    return { ok: false, failure: { reason: 'tikwm_api_no_data' } };
   }
   const { hdplay, play, title } = data as {
     hdplay?: unknown;
@@ -83,23 +129,25 @@ export async function resolveTikwmStream(
       ? play
       : null;
   if (!streamUrl) {
-    return null;
+    return { ok: false, failure: { reason: 'tikwm_no_stream_url' } };
   }
   return {
+    ok: true,
     streamUrl: streamUrl.startsWith('/') ? `${TIKWM_ORIGIN}${streamUrl.slice(1)}` : streamUrl,
     rawTitle: typeof title === 'string' ? title : null,
   };
 }
 
 /**
- * Open the video stream GET with the old code's headers. Returns null
- * unless the response is HTTP 200 (the old code's raise_for_status).
+ * Open the video stream GET with the old code's headers. Returns a
+ * discriminated result: null body or non-200 fails, as before (the old
+ * code's raise_for_status), but now with the exact reason attached.
  */
 export async function openVideoStream(
   streamUrl: string,
   // Workerd brand-check: arrow wrapper, never bare `fetch` (see supabase.ts).
   fetchImpl: FetchImpl = (input: RequestInfo | URL, init?: RequestInit) => fetch(input, init),
-): Promise<ReadableStream<Uint8Array> | null> {
+): Promise<StreamOpenResult> {
   let res: Response;
   try {
     res = await fetchImpl(streamUrl, {
@@ -109,11 +157,14 @@ export async function openVideoStream(
       },
       redirect: 'follow',
     });
-  } catch {
-    return null;
+  } catch (err) {
+    return { ok: false, failure: { reason: 'stream_fetch_error', detail: errorDetail(err) } };
   }
-  if (res.status !== 200 || !res.body) {
-    return null;
+  if (res.status !== 200) {
+    return { ok: false, failure: { reason: 'stream_http_status', status: res.status } };
   }
-  return res.body;
+  if (!res.body) {
+    return { ok: false, failure: { reason: 'stream_no_body' } };
+  }
+  return { ok: true, body: res.body };
 }
