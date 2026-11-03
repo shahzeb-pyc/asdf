@@ -141,9 +141,11 @@ export async function POST(
       );
     }
     // Later-purchase rule (PR 120 send-back fix B2): blocked
-    // while a downgrade schedule is outstanding, even though
-    // this route is unreachable under the 70% coupon cap — the
-    // guard must not be re-addable by forgetting it here.
+    // while a downgrade schedule is outstanding. (This route was
+    // unreachable under the blanket 70% coupon cap; since
+    // 2026-11-04 balance coupons are exempt from the cap, it is
+    // reachable through a balance coupon — the guard must not be
+    // re-addable by forgetting it here.)
     try {
       await assertNoOutstandingScheduledDowngrade(client, session.userId);
     } catch (err) {

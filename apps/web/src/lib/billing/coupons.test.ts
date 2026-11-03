@@ -311,7 +311,7 @@ describe('percent_multi lifecycle', () => {
 });
 
 describe('balance lifecycle', () => {
-  it('1000 pool, 400 purchase → 280 (70% cap), 720 remains and is reusable', async () => {
+  it('1000 pool, 400 purchase → 400 (balance exempt from the 70% cap), 600 remains and is reusable', async () => {
     const { client, tables } = makeClient();
     seedCoupon(tables, {
       code: 'POOL1000',
@@ -326,8 +326,8 @@ describe('balance lifecycle', () => {
       paymentId: null,
       discountPkr: computeDiscount(first, 400),
     });
-    expect(r1.amountPkr).toBe(280);
-    expect((await loadCoupon(client, 'POOL1000')).remainingBalancePkr).toBe(720);
+    expect(r1.amountPkr).toBe(400);
+    expect((await loadCoupon(client, 'POOL1000')).remainingBalancePkr).toBe(600);
     const second = await loadCoupon(client, 'POOL1000');
     const r2 = await holdCoupon(client, {
       coupon: second,
@@ -335,11 +335,11 @@ describe('balance lifecycle', () => {
       paymentId: null,
       discountPkr: computeDiscount(second, 400),
     });
-    expect(r2.amountPkr).toBe(280);
-    expect((await loadCoupon(client, 'POOL1000')).remainingBalancePkr).toBe(440);
+    expect(r2.amountPkr).toBe(400);
+    expect((await loadCoupon(client, 'POOL1000')).remainingBalancePkr).toBe(200);
   });
 
-  it('purchase over balance → discount capped, balance 0 afterward', async () => {
+  it('purchase over balance → discount capped at the balance, balance 0 afterward', async () => {
     const { client, tables } = makeClient();
     seedCoupon(tables, {
       code: 'POOL1000',
@@ -403,10 +403,10 @@ describe('balance lifecycle', () => {
       discountPkr: computeDiscount(coupon, 400),
     });
     await applyHeldRedemptionsForPayment(client, 'payment-1');
-    expect((await loadCoupon(client, 'POOL1000')).remainingBalancePkr).toBe(720);
+    expect((await loadCoupon(client, 'POOL1000')).remainingBalancePkr).toBe(600);
     expect(await applyRedemption(client, redemption.id)).toBe(false);
     await releaseHeldRedemptionsForPayment(client, 'payment-1');
-    expect((await loadCoupon(client, 'POOL1000')).remainingBalancePkr).toBe(720);
+    expect((await loadCoupon(client, 'POOL1000')).remainingBalancePkr).toBe(600);
   });
 
   it('concurrent applications cannot overdraw the shared pool', async () => {
@@ -433,10 +433,12 @@ describe('balance lifecycle', () => {
         discountPkr: computeDiscount(b, 600),
       }),
     ]);
-    // Each 600 purchase is capped at 420 (70%), so the two holds
-    // draw 840 of the 1000 pool and never overdraw it.
-    expect(r1.amountPkr + r2.amountPkr).toBe(840);
-    expect((await loadCoupon(client, 'POOL1000')).remainingBalancePkr).toBe(160);
+    // Balance coupons are exempt from the 70% cap: each 600
+    // purchase draws 600, the second hold's race retry settles at
+    // the 400 still in the pool, and the two holds draw exactly
+    // the 1000 pool without overdrawing it.
+    expect(r1.amountPkr + r2.amountPkr).toBe(1000);
+    expect((await loadCoupon(client, 'POOL1000')).remainingBalancePkr).toBe(0);
   });
 });
 
@@ -450,7 +452,7 @@ describe('preview and guards', () => {
       remaining_balance_pkr: 1000,
     });
     const { discountPkr } = await previewCoupon(client, ' pool1000 ', 400);
-    expect(discountPkr).toBe(280);
+    expect(discountPkr).toBe(400);
     expect((await loadCoupon(client, 'POOL1000')).remainingBalancePkr).toBe(1000);
     expect(tables['coupon_redemptions']).toHaveLength(0);
   });
@@ -482,9 +484,10 @@ describe('preview and guards', () => {
 });
 
 /**
- * wasDiscountCapped (70% cap, owner decision 2026-11-02): true only
- * when the uncapped discount would have exceeded 70% of the amount
- * due — for percent coupons and for balance coupons alike.
+ * wasDiscountCapped (70% cap on PERCENT coupons, owner decision
+ * 2026-11-02, narrowed 2026-11-04): true only when the uncapped
+ * percent discount would have exceeded 70% of the amount due.
+ * Balance (PKR) coupons are exempt and are never flagged.
  */
 describe('wasDiscountCapped', () => {
   function couponRow(partial: Partial<CouponRow>): CouponRow {
@@ -511,16 +514,16 @@ describe('wasDiscountCapped', () => {
     expect(wasDiscountCapped(couponRow({ percent: 20 }), 400)).toBe(false);
   });
 
-  it('flags a balance coupon whose balance covers the purchase', () => {
+  it('does not flag a balance coupon whose balance covers the purchase (exempt)', () => {
     expect(
       wasDiscountCapped(
         couponRow({ kind: 'balance', initialBalancePkr: 1000, remainingBalancePkr: 1000 }),
         400
       )
-    ).toBe(true);
+    ).toBe(false);
   });
 
-  it('does not flag a balance coupon below the cap', () => {
+  it('does not flag a balance coupon below the amount due', () => {
     expect(
       wasDiscountCapped(
         couponRow({ kind: 'balance', initialBalancePkr: 100, remainingBalancePkr: 100 }),
@@ -537,5 +540,82 @@ describe('wasDiscountCapped', () => {
         400
       )
     ).toBe(false);
+  });
+});
+
+/**
+ * Balance exemption from the 70% cap (owner decision 2026-11-04):
+ * PKR (balance-kind) coupons may cover 100% of the amount due,
+ * while percent coupons stay capped at 70% exactly as before.
+ */
+describe('balance exemption from the 70% cap', () => {
+  function balanceRow(remaining: number): CouponRow {
+    return {
+      id: 'coupon-1',
+      code: 'POOL',
+      kind: 'balance',
+      percent: null,
+      initialBalancePkr: remaining,
+      remainingBalancePkr: remaining,
+      consumedAt: null,
+      status: 'active',
+      createdBy: 'admin-1',
+      createdAt: '2026-06-01T00:00:00.000Z',
+    };
+  }
+
+  function percentRow(percent: number): CouponRow {
+    return {
+      id: 'coupon-1',
+      code: 'PCT',
+      kind: 'percent_multi',
+      percent,
+      initialBalancePkr: null,
+      remainingBalancePkr: null,
+      consumedAt: null,
+      status: 'active',
+      createdBy: 'admin-1',
+      createdAt: '2026-06-01T00:00:00.000Z',
+    };
+  }
+
+  it('balance coupon with balance above the amount due covers it in full, unflagged', async () => {
+    const { client, tables } = makeClient();
+    seedCoupon(tables, {
+      code: 'POOL1000',
+      kind: 'balance',
+      initial_balance_pkr: 1000,
+      remaining_balance_pkr: 1000,
+    });
+    const preview = await previewCoupon(client, 'POOL1000', 400);
+    expect(preview.discountPkr).toBe(400);
+    expect(preview.cappedAt70Percent).toBe(false);
+    // The validate route derives full coverage from the discount
+    // reaching the amount due — the preview discount is the whole
+    // input to that derivation.
+    expect(preview.discountPkr >= 400).toBe(true);
+    const row = await loadCoupon(client, 'POOL1000');
+    expect(computeDiscount(row, 400)).toBe(400);
+    expect(wasDiscountCapped(row, 400)).toBe(false);
+  });
+
+  it('balance coupon with balance below the amount due discounts exactly the balance', () => {
+    expect(computeDiscount(balanceRow(100), 400)).toBe(100);
+    expect(wasDiscountCapped(balanceRow(100), 400)).toBe(false);
+  });
+
+  it('balance coupon never discounts more than the amount due', () => {
+    expect(computeDiscount(balanceRow(10000), 400)).toBe(400);
+    expect(wasDiscountCapped(balanceRow(10000), 400)).toBe(false);
+  });
+
+  it('percent coupon over 70% is still capped at 70% and flagged', () => {
+    expect(computeDiscount(percentRow(100), 400)).toBe(280);
+    expect(wasDiscountCapped(percentRow(100), 400)).toBe(true);
+  });
+
+  it('percent coupon at exactly 70% is not flagged', () => {
+    expect(computeDiscount(percentRow(70), 400)).toBe(280);
+    expect(wasDiscountCapped(percentRow(70), 400)).toBe(false);
   });
 });

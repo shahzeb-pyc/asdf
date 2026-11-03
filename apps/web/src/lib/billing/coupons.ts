@@ -195,11 +195,16 @@ export function computeDiscount(coupon: CouponRow, amountDuePkr: number): number
     }
     discount = balanceDiscountPkr(amountDuePkr, remaining);
   }
-  // Owner decision 2026-11-02: no coupon may discount more than 70%
-  // of the amount due, percent or balance alike. A coupon can
-  // therefore never cover the full amount, and the zero-due path
-  // is unreachable through a coupon.
-  const cappedDiscount = Math.min(discount, Math.floor((amountDuePkr * 70) / 100));
+  // Owner decision 2026-11-02, narrowed 2026-11-04: PERCENT coupons
+  // may discount at most 70% of the amount due. BALANCE (PKR)
+  // coupons are exempt from the cap: a balance coupon may cover
+  // 100% of the amount due, and the zero-due path is reachable
+  // through a balance coupon. A percent coupon can therefore
+  // never cover the full amount; a balance coupon can.
+  const cappedDiscount =
+    coupon.kind === 'balance'
+      ? discount
+      : Math.min(discount, Math.floor((amountDuePkr * 70) / 100));
   if (cappedDiscount <= 0) {
     throw new CouponError(
       'COUPON_NO_DISCOUNT',
@@ -209,14 +214,15 @@ export function computeDiscount(coupon: CouponRow, amountDuePkr: number): number
   return cappedDiscount;
 }
 
-/** True when the uncapped discount would have exceeded the 70% cap. */
+/**
+ * True when the uncapped discount would have exceeded the 70% cap.
+ * Percent coupons only: balance (PKR) coupons are exempt from the
+ * cap (owner decision 2026-11-04) and are never flagged, however
+ * much of the amount due they cover.
+ */
 export function wasDiscountCapped(coupon: CouponRow, amountDuePkr: number): boolean {
-  let raw = 0;
-  if (coupon.kind === 'percent_once' || coupon.kind === 'percent_multi') {
-    raw = percentDiscountPkr(amountDuePkr, coupon.percent ?? 0);
-  } else {
-    raw = balanceDiscountPkr(amountDuePkr, coupon.remainingBalancePkr ?? 0);
-  }
+  if (coupon.kind === 'balance') return false;
+  const raw = percentDiscountPkr(amountDuePkr, coupon.percent ?? 0);
   return raw > Math.floor((amountDuePkr * 70) / 100);
 }
 

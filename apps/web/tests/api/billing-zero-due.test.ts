@@ -303,12 +303,13 @@ describe('zero-due coupon checkout', () => {
     };
   });
 
-  it('refuses zero-due activation now that the 70% coupon cap applies', async () => {
-    // Owner decision 2026-11-02: no coupon may discount more than
-    // 70%, so a coupon can never cover the full amount and the
-    // zero-due path is unreachable through a coupon. The route
-    // refuses at the pre-hold check: no hold, no period, no
-    // activation, and the user pays the remainder by bank/crypto.
+  it('refuses zero-due activation for a percent coupon capped at 70%', async () => {
+    // Owner decision 2026-11-02 (percent coupons only since
+    // 2026-11-04): a percent coupon may discount at most 70%, so
+    // this 100% percent coupon can never cover the full amount.
+    // The route refuses at the pre-hold check: no hold, no
+    // period, no activation, and the user pays the remainder by
+    // bank/crypto.
     const res = await postZeroDue(zeroDueRequest(), ctx);
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
@@ -323,6 +324,41 @@ describe('zero-due coupon checkout', () => {
     const res = await postZeroDue(zeroDueRequest(), ctx);
     expect(res.status).toBe(403);
     expect(db.periods).toHaveLength(0);
+  });
+
+  it('activates a period for a balance coupon covering the full amount, with no payment row', async () => {
+    // Owner decision 2026-11-04: balance (PKR) coupons are exempt
+    // from the 70% cap, so a 1000-PKR pool covers the 70-PKR due
+    // (1 Facebook unit) in full and the zero-due path activates.
+    db.coupons = [
+      couponRow({
+        kind: 'balance',
+        percent: null,
+        initial_balance_pkr: 1000,
+        remaining_balance_pkr: 1000,
+      }),
+    ];
+    const res = await postZeroDue(zeroDueRequest(), ctx);
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as {
+      couponCode: string;
+      discountPkr: number;
+      period: { id: string };
+    };
+    expect(body.couponCode).toBe('FREE100');
+    expect(body.discountPkr).toBe(70);
+    // Exactly one period, and it is period-direct: no payment row
+    // exists anywhere, so no commission can be recorded for it.
+    expect(db.periods).toHaveLength(1);
+    expect(db.periods[0]['payment_id']).toBeNull();
+    expect(db.payments).toHaveLength(0);
+    // The redemption is applied and linked to the period, and the
+    // pool drew exactly the amount due.
+    expect(db.redemptions).toHaveLength(1);
+    expect(db.redemptions[0]['status']).toBe('applied');
+    expect(db.redemptions[0]['period_id']).toBe(db.periods[0]['id']);
+    expect(db.redemptions[0]['amount_pkr']).toBe(70);
+    expect(db.coupons[0]['remaining_balance_pkr']).toBe(930);
   });
 
   it('refuses when a payment is already pending, creating no period', async () => {
@@ -349,9 +385,10 @@ describe('zero-due coupon checkout', () => {
   });
 
   it('refuses before any hold even when the settled discount would be smaller', async () => {
-    // The settled-less branch is unreachable under the 70% cap:
-    // the pre-hold check refuses first, so no hold is ever created
-    // and there is nothing to release.
+    // For this capped percent coupon the pre-hold check refuses
+    // first, so no hold is ever created and there is nothing to
+    // release. (The settled-less branch itself is reachable
+    // through a balance coupon since 2026-11-04.)
     db.settleSmaller = true;
     const res = await postZeroDue(zeroDueRequest(), ctx);
     expect(res.status).toBe(400);
@@ -405,8 +442,8 @@ describe('zero-due checkout failure branches', () => {
   });
 
   it('an unresolvable workspace is logged and the checkout still reaches the coupon refusal', async () => {
-    // Workspace failure must not crash the checkout; under the 70%
-    // cap the checkout then refuses at the coupon check, creating
+    // Workspace failure must not crash the checkout; the capped
+    // percent coupon then refuses at the coupon check, creating
     // no period.
     workspaceMock.rejectOnce = true;
     const res = await postZeroDue(zeroDueRequest(), ctx);
@@ -423,7 +460,7 @@ describe('zero-due checkout failure branches', () => {
     expect(db.periods).toHaveLength(0);
   });
 
-  it('a failing settled-release never fires because no hold is created under the cap', async () => {
+  it('a failing settled-release never fires because no hold is created for the capped percent coupon', async () => {
     db.settleSmaller = true;
     db.failReleaseOnce = true;
     const res = await postZeroDue(zeroDueRequest(), ctx);
