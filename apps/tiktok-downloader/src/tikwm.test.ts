@@ -152,6 +152,18 @@ describe('openVideoStream', () => {
       failure: { reason: 'stream_no_body' },
     });
   });
+
+  it('sends the tikwm Referer by default and omits it when null', async () => {
+    const seen: Array<RequestInit> = [];
+    const capture = vi.fn(async (_url: string, init: RequestInit) => {
+      seen.push(init);
+      return new Response(new ReadableStream({ start(c) { c.enqueue(new Uint8Array([1])); c.close(); } }), { status: 200 });
+    }) as unknown as FetchImpl;
+    await openVideoStream('https://cdn.example/v.mp4', capture);
+    expect((seen[0].headers as Record<string, string>).Referer).toBe('https://www.tikwm.com/');
+    await openVideoStream('https://v16.tokcdn.com/v.mp4', capture, null);
+    expect((seen[1].headers as Record<string, string>).Referer).toBeUndefined();
+  });
 });
 
 describe('workerd fetch binding defaults', () => {

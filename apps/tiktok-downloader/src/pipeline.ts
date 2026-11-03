@@ -3,18 +3,22 @@
  *
  * Flow per claimed reel (sequential: one stream at a time, so peak memory
  * is one chunk and CPU stays predictable inside a Worker tick):
- *   resolve via tikwm -> open the video stream -> stream straight to R2
+ *   resolve via tikwm, falling back to Countik on ANY tikwm resolve
+ *   failure -> open the video stream -> stream straight to R2
  *   (hashing + 1 GiB cap + audio-probe window in the same pass) ->
  *   size/audio decision -> settle with the existing RPCs.
  *
- * There is NO fallback anywhere in this file. Any failure settles the
- * reel through `mark_adu_reel_download_failed`, which applies the
- * existing retry rules (retries < 3 -> pending, at 3 -> download_failed,
- * > 50 lifetime failures -> config creator_suspended) — and is preceded
- * by a `record_adu_reel_download_failure` call that records the exact
- * failure (stage + reason + detail) on the reel row, so the next
- * failure is diagnosable instead of just counted. Download semantics
- * are unchanged; only observability was added.
+ * Resolver order is fixed: tikwm FIRST, exactly as before; Countik is
+ * tried only when tikwm resolve fails, and a tikwm success never calls
+ * Countik. A Countik success flows through the identical downstream
+ * path (same size/audio/cap/hash/R2 key/caption/settle). Any failure
+ * settles the reel through `mark_adu_reel_download_failed`, which
+ * applies the existing retry rules (retries < 3 -> pending, at 3 ->
+ * download_failed, > 50 lifetime failures -> config creator_suspended)
+ * — and is preceded by a `record_adu_reel_download_failure` call that
+ * records the exact failure on the reel row. When both resolvers fail,
+ * the record carries BOTH attempts (primary tikwm + fallback Countik),
+ * so the next failure is diagnosable instead of just counted.
  *
  * Exclusivity: this file only ever claims through
  * `claim_tiktok_buffer_downloads` (see supabase.ts) and refuses any
@@ -34,6 +38,7 @@ import {
 import {
   resolveTikwmStream,
   openVideoStream,
+  TIKWM_ORIGIN,
   MIN_FILE_BYTES,
   MAX_FILE_BYTES,
   PROBE_WINDOW_BYTES,
@@ -42,6 +47,10 @@ import {
   type StreamOpenFailure,
   type TikwmResolveFailure,
 } from './tikwm.js';
+import {
+  resolveCountikStream,
+  type CountikResolveFailure,
+} from './countik.js';
 
 /** Structural subset of the Cloudflare R2 binding used here (testable). */
 export interface R2BucketLike {
@@ -231,7 +240,7 @@ async function deleteBestEffort(r2: R2BucketLike, key: string, reelId: string): 
 }
 
 type ProcessOutcome =
-  | { kind: 'downloaded' }
+  | { kind: 'downloaded'; resolver: 'tikwm' | 'countik' }
   | { kind: 'settle_downloaded' }
   | { kind: 'failed'; failure: DownloadFailure };
 
@@ -258,6 +267,29 @@ export function resolveFailure(failure: TikwmResolveFailure): DownloadFailure {
       return { stage: 'tikwm_resolve', reason: 'tikwm_api_no_data' };
     case 'tikwm_no_stream_url':
       return { stage: 'tikwm_resolve', reason: 'tikwm_no_stream_url' };
+  }
+}
+
+/** Pure Countik reason mapper, same test-seam pattern as resolveFailure.
+ * Every Countik failure names the step it failed on (exist/info), so a
+ * both-fail record shows which Countik call broke, not just that
+ * Countik broke. */
+export function countikFailure(failure: CountikResolveFailure): DownloadFailure {
+  switch (failure.reason) {
+    case 'countik_api_timeout':
+      return { stage: 'countik_resolve', reason: 'countik_api_timeout', detail: `step=${failure.step}` };
+    case 'countik_api_fetch_error':
+      return { stage: 'countik_resolve', reason: 'countik_api_fetch_error', detail: `step=${failure.step}; ${truncateDetail(failure.detail)}` };
+    case 'countik_api_http_status':
+      return { stage: 'countik_resolve', reason: 'countik_api_http_status', detail: `step=${failure.step}; http_status=${failure.status}` };
+    case 'countik_api_body_unparsable':
+      return { stage: 'countik_resolve', reason: 'countik_api_body_unparsable', detail: `step=${failure.step}` };
+    case 'countik_api_bad_body':
+      return { stage: 'countik_resolve', reason: 'countik_api_bad_body', detail: `step=${failure.step}` };
+    case 'countik_no_video_id':
+      return { stage: 'countik_resolve', reason: 'countik_no_video_id', detail: 'step=exist' };
+    case 'countik_no_download_link':
+      return { stage: 'countik_resolve', reason: 'countik_no_download_link', detail: 'step=info' };
   }
 }
 
@@ -292,11 +324,34 @@ export function uploadFailure(err: unknown): DownloadFailure {
 async function processOne(deps: TickDeps, reel: ClaimedReel): Promise<ProcessOutcome> {
   const { supabase, r2, r2PublicUrl, fetchImpl } = deps;
   const videoUrl = tiktokVideoUrl(reel.sourceUsername, reel.sourceReelId);
-  const resolved = await resolveTikwmStream(videoUrl, fetchImpl);
-  if (!resolved.ok) {
-    return { kind: 'failed', failure: resolveFailure(resolved.failure) };
+  // Tikwm first, exactly as before. Countik runs ONLY when tikwm
+  // resolve fails — any tikwm_resolve reason — and a tikwm success
+  // never touches Countik. Production evidence for the fallback:
+  // tikwm answers this Worker's requests with body_code=-1 while
+  // answering the identical request from elsewhere with code 0.
+  const tikwm = await resolveTikwmStream(videoUrl, fetchImpl);
+  let streamUrl: string;
+  let rawTitle: string | null;
+  let resolver: 'tikwm' | 'countik';
+  if (tikwm.ok) {
+    streamUrl = tikwm.streamUrl;
+    rawTitle = tikwm.rawTitle;
+    resolver = 'tikwm';
+  } else {
+    const countik = await resolveCountikStream(videoUrl, fetchImpl);
+    if (!countik.ok) {
+      // Both resolvers failed: record both attempts, primary first.
+      return {
+        kind: 'failed',
+        failure: { ...resolveFailure(tikwm.failure), fallback: countikFailure(countik.failure) },
+      };
+    }
+    streamUrl = countik.streamUrl;
+    rawTitle = countik.rawTitle;
+    resolver = 'countik';
   }
-  const opened = await openVideoStream(resolved.streamUrl, fetchImpl);
+  // A Countik-resolved stream is a direct CDN link: no tikwm Referer.
+  const opened = await openVideoStream(streamUrl, fetchImpl, resolver === 'tikwm' ? TIKWM_ORIGIN : null);
   if (!opened.ok) {
     return { kind: 'failed', failure: streamOpenFailure(opened.failure) };
   }
@@ -320,7 +375,7 @@ async function processOne(deps: TickDeps, reel: ClaimedReel): Promise<ProcessOut
     await deleteBestEffort(r2, key, reel.reelId);
     return { kind: 'failed', failure: { stage: 'audio_check', reason: 'no_audio' } };
   }
-  const caption = normalizeReelCaption(resolved.rawTitle ?? DEFAULT_REEL_CAPTION, reel.sourceReelId);
+  const caption = normalizeReelCaption(rawTitle ?? DEFAULT_REEL_CAPTION, reel.sourceReelId);
   try {
     await supabase.markDownloaded({
       reelId: reel.reelId,
@@ -342,7 +397,7 @@ async function processOne(deps: TickDeps, reel: ClaimedReel): Promise<ProcessOut
     });
     return { kind: 'settle_downloaded' };
   }
-  return { kind: 'downloaded' };
+  return { kind: 'downloaded', resolver };
 }
 
 export async function runDownloadTick(deps: TickDeps): Promise<TickResult> {
@@ -383,7 +438,9 @@ export async function runDownloadTick(deps: TickDeps): Promise<TickResult> {
     }
     if (outcome.kind === 'downloaded') {
       result.downloaded += 1;
-      log('download_ok', { reelId: reel.reelId });
+      // The resolver is observable in the tick log: a Countik success
+      // leaves no failure row, so this is where the fallback path shows.
+      log('download_ok', { reelId: reel.reelId, resolver: outcome.resolver });
     } else if (outcome.kind === 'settle_downloaded') {
       result.settleErrors += 1;
     } else {
