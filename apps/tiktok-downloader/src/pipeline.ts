@@ -235,7 +235,12 @@ type ProcessOutcome =
   | { kind: 'settle_downloaded' }
   | { kind: 'failed'; failure: DownloadFailure };
 
-function resolveFailure(failure: TikwmResolveFailure): DownloadFailure {
+/** Pure reason mappers, exported as a test seam (like streamToR2): the
+ * tick-level tests drive most of them end to end, but file_too_large
+ * cannot be driven through processOne without a >1 GiB stream, and the
+ * unexpected-error path needs a contract-violating dependency, so those
+ * are pinned here directly. */
+export function resolveFailure(failure: TikwmResolveFailure): DownloadFailure {
   switch (failure.reason) {
     case 'tikwm_api_timeout':
       return { stage: 'tikwm_resolve', reason: 'tikwm_api_timeout' };
@@ -256,7 +261,7 @@ function resolveFailure(failure: TikwmResolveFailure): DownloadFailure {
   }
 }
 
-function streamOpenFailure(failure: StreamOpenFailure): DownloadFailure {
+export function streamOpenFailure(failure: StreamOpenFailure): DownloadFailure {
   switch (failure.reason) {
     case 'stream_fetch_error':
       return { stage: 'stream_open', reason: 'stream_fetch_error', detail: truncateDetail(failure.detail) };
@@ -267,7 +272,7 @@ function streamOpenFailure(failure: StreamOpenFailure): DownloadFailure {
   }
 }
 
-function uploadFailure(err: unknown): DownloadFailure {
+export function uploadFailure(err: unknown): DownloadFailure {
   if (err instanceof FileTooLargeError) {
     return { stage: 'stream_upload', reason: 'file_too_large', detail: `cap_bytes=${err.capBytes}` };
   }

@@ -3,12 +3,23 @@ import {
   runDownloadTick,
   streamToR2,
   r2ObjectKey,
+  resolveFailure,
+  streamOpenFailure,
+  uploadFailure,
   FileTooLargeError,
+  StreamStalledError,
+  R2PutError,
   type R2BucketLike,
   type TickDeps,
 } from './pipeline.js';
 import type { SupabaseRpc, ClaimedReel, MarkDownloadedArgs } from './supabase.js';
-import { TIKWM_API_URL, type FetchImpl } from './tikwm.js';
+import {
+  TIKWM_API_URL,
+  STREAM_CHUNK_TIMEOUT_MS,
+  type FetchImpl,
+  type TikwmResolveFailure,
+  type StreamOpenFailure,
+} from './tikwm.js';
 
 function u32(n: number): Uint8Array {
   const b = new Uint8Array(4);
@@ -386,5 +397,135 @@ describe('streamToR2 cap', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+/** Fetch double where the tikwm call and the stream call are scripted
+ * independently; a scripted Error is thrown, anything else is returned. */
+function scriptedFetch(
+  tikwm: unknown,
+  stream: unknown = new Response('no', { status: 404 }),
+): FetchImpl {
+  return (async (url: string) => {
+    const scripted = url === TIKWM_API_URL ? tikwm : stream;
+    if (scripted instanceof Error) throw scripted;
+    return scripted as Response;
+  }) as unknown as FetchImpl;
+}
+
+function tikwmJson(body: unknown): Response {
+  return new Response(JSON.stringify(body), { status: 200 });
+}
+
+function goodTikwm(): Response {
+  return tikwmJson({ code: 0, data: { play: 'https://cdn.example/v.mp4' } });
+}
+
+describe('runDownloadTick reason mapping (remaining stages)', () => {
+  it.each([
+    ['tikwm_api_timeout', (() => { const e = new Error('timed out'); e.name = 'TimeoutError'; return e; })(), { stage: 'tikwm_resolve', reason: 'tikwm_api_timeout' }],
+    ['tikwm_api_fetch_error', new Error('tikwm down'), { stage: 'tikwm_resolve', reason: 'tikwm_api_fetch_error', detail: 'tikwm down' }],
+    ['tikwm_api_http_status', new Response('err', { status: 500 }), { stage: 'tikwm_resolve', reason: 'tikwm_api_http_status', detail: 'http_status=500' }],
+    ['tikwm_api_body_unparsable', new Response('not json', { status: 200 }), { stage: 'tikwm_resolve', reason: 'tikwm_api_body_unparsable' }],
+    ['tikwm_api_bad_body', tikwmJson('just a string'), { stage: 'tikwm_resolve', reason: 'tikwm_api_bad_body' }],
+    ['tikwm_api_no_data', tikwmJson({ code: 0, data: null }), { stage: 'tikwm_resolve', reason: 'tikwm_api_no_data' }],
+    ['tikwm_no_stream_url', tikwmJson({ code: 0, data: {} }), { stage: 'tikwm_resolve', reason: 'tikwm_no_stream_url' }],
+  ])('records %s from the tikwm resolve stage', async (_name, tikwm, failure) => {
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+    const r2 = new FakeR2();
+    const result = await runDownloadTick(deps(state, r2, scriptedFetch(tikwm)));
+    expect(result.failed).toBe(1);
+    expect(result.failedReasons).toEqual({ [`tikwm_resolve:${(failure as { reason: string }).reason}`]: 1 });
+    expect(state.failed).toEqual(['reel-1']);
+    expect(state.recorded).toEqual([{ reelId: 'reel-1', failure }]);
+    expect(state.downloaded).toEqual([]);
+    expect(r2.puts).toEqual([]);
+  });
+
+  it('records stream_fetch_error when the video stream GET throws', async () => {
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+    const r2 = new FakeR2();
+    const result = await runDownloadTick(
+      deps(state, r2, scriptedFetch(goodTikwm(), new Error('stream down'))),
+    );
+    expect(result.failedReasons).toEqual({ 'stream_open:stream_fetch_error': 1 });
+    expect(state.recorded).toEqual([
+      { reelId: 'reel-1', failure: { stage: 'stream_open', reason: 'stream_fetch_error', detail: 'stream down' } },
+    ]);
+    expect(r2.puts).toEqual([]);
+  });
+
+  it('records stream_no_body when the video stream responds without a body', async () => {
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+    const r2 = new FakeR2();
+    const result = await runDownloadTick(
+      deps(state, r2, scriptedFetch(goodTikwm(), new Response(null, { status: 200 }))),
+    );
+    expect(result.failedReasons).toEqual({ 'stream_open:stream_no_body': 1 });
+    expect(state.recorded).toEqual([
+      { reelId: 'reel-1', failure: { stage: 'stream_open', reason: 'stream_no_body' } },
+    ]);
+    expect(r2.puts).toEqual([]);
+  });
+
+  it('records pipeline:unexpected_error when processOne throws outside its mapped paths', async () => {
+    // A fetch impl that violates its contract (returns undefined) makes
+    // resolveTikwmStream throw a TypeError reading .status — nothing in
+    // processOne maps that, so the tick catch must record it loudly and
+    // still run the failed path instead of stalling the tick.
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+    const r2 = new FakeR2();
+    const result = await runDownloadTick(deps(state, r2, scriptedFetch(undefined)));
+    expect(result.failed).toBe(1);
+    expect(result.failedReasons).toEqual({ 'pipeline:unexpected_error': 1 });
+    expect(state.failed).toEqual(['reel-1']);
+    expect(state.recorded).toHaveLength(1);
+    expect(state.recorded[0].reelId).toBe('reel-1');
+    const failure = state.recorded[0].failure as { stage: string; reason: string; detail?: string };
+    expect(failure.stage).toBe('pipeline');
+    expect(failure.reason).toBe('unexpected_error');
+    expect(typeof failure.detail).toBe('string');
+  });
+});
+
+describe('reason mappers (pure table)', () => {
+  it('maps every tikwm resolve failure to its recorded reason', () => {
+    const cases: Array<[TikwmResolveFailure, unknown]> = [
+      [{ reason: 'tikwm_api_timeout' }, { stage: 'tikwm_resolve', reason: 'tikwm_api_timeout' }],
+      [{ reason: 'tikwm_api_fetch_error', detail: 'boom' }, { stage: 'tikwm_resolve', reason: 'tikwm_api_fetch_error', detail: 'boom' }],
+      [{ reason: 'tikwm_api_http_status', status: 403 }, { stage: 'tikwm_resolve', reason: 'tikwm_api_http_status', detail: 'http_status=403' }],
+      [{ reason: 'tikwm_api_body_unparsable' }, { stage: 'tikwm_resolve', reason: 'tikwm_api_body_unparsable' }],
+      [{ reason: 'tikwm_api_bad_body' }, { stage: 'tikwm_resolve', reason: 'tikwm_api_bad_body' }],
+      [{ reason: 'tikwm_api_body_code', code: '7' }, { stage: 'tikwm_resolve', reason: 'tikwm_api_body_code', detail: 'body_code=7' }],
+      [{ reason: 'tikwm_api_no_data' }, { stage: 'tikwm_resolve', reason: 'tikwm_api_no_data' }],
+      [{ reason: 'tikwm_no_stream_url' }, { stage: 'tikwm_resolve', reason: 'tikwm_no_stream_url' }],
+    ];
+    for (const [input, expected] of cases) expect(resolveFailure(input)).toEqual(expected);
+  });
+
+  it('maps every stream open failure to its recorded reason', () => {
+    const cases: Array<[StreamOpenFailure, unknown]> = [
+      [{ reason: 'stream_fetch_error', detail: 'down' }, { stage: 'stream_open', reason: 'stream_fetch_error', detail: 'down' }],
+      [{ reason: 'stream_http_status', status: 404 }, { stage: 'stream_open', reason: 'stream_http_status', detail: 'http_status=404' }],
+      [{ reason: 'stream_no_body' }, { stage: 'stream_open', reason: 'stream_no_body' }],
+    ];
+    for (const [input, expected] of cases) expect(streamOpenFailure(input)).toEqual(expected);
+  });
+
+  it('maps every upload failure, including the cap breach processOne cannot reach', () => {
+    // file_too_large needs a >1 GiB stream through processOne, so it is
+    // pinned here directly against the pure mapper instead.
+    expect(uploadFailure(new FileTooLargeError(100))).toEqual({
+      stage: 'stream_upload', reason: 'file_too_large', detail: 'cap_bytes=100',
+    });
+    expect(uploadFailure(new StreamStalledError('stalled'))).toEqual({
+      stage: 'stream_upload', reason: 'stream_stalled', detail: `timeout_ms=${STREAM_CHUNK_TIMEOUT_MS}`,
+    });
+    expect(uploadFailure(new R2PutError('r2 down'))).toEqual({
+      stage: 'stream_upload', reason: 'r2_put_error', detail: 'r2 down',
+    });
+    expect(uploadFailure(new Error('read boom'))).toEqual({
+      stage: 'stream_upload', reason: 'stream_read_error', detail: 'read boom',
+    });
   });
 });
