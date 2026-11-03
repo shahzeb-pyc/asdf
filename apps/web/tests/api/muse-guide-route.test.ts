@@ -1,11 +1,12 @@
 /**
- * Public Muse guide route — behavioural tests.
+ * Muse guide route — behavioural tests.
  *
- * The guide must be public (no login), served as markdown, and
- * carry the exact app-host guide link and the acting rules the
+ * The guide is served as markdown, and
+ * carries the acting rules the
  * Connect prompt promises: API for Media Library only, browser
  * for everything else, act without asking again until revoke or
- * log out.
+ * log out. This test makes no claim about live public access,
+ * which still needs a live check.
  */
 import { describe, expect, it } from 'vitest';
 import { GET } from '../../src/app/muse_guide.md/route';
@@ -67,5 +68,43 @@ describe('muse_guide.md route', () => {
     expect(text).toContain('Your Threads app is connected and ready to publish');
     expect(text).toContain('blank secret keeps');
     expect(text).toContain('BYOC setup alone does not connect an account');
+  });
+
+  it('rewrites Workspaces accurately: manage properly, multiple owned workspaces, test-user BYOC workaround, no single-workspace framing', async () => {
+    const res = await GET();
+    const text = await res.text();
+    // Purpose, in the owner's logic.
+    expect(text).toContain('manage more properly');
+    expect(text).toContain('can own more than one workspace');
+    expect(text).toContain("exceeds the limit of their developer app's test users");
+    expect(text).toContain('create another workspace and add another BYOC app');
+    expect(text).toContain('BYOC settings are per-workspace');
+    // Per-workspace vs per-user split.
+    expect(text).toContain('does not appear in another workspace');
+    expect(text).toContain('Media Library: storage, folders, and uploads belong to the user');
+    expect(text).toContain('Billing and Plan: plan, payments, refunds, and storage quota are per user account');
+    // Isolation, qualified by ownership and current workspace — never the
+    // unqualified single-workspace framing of the previous draft.
+    expect(text).toContain('Never work in a workspace the signed-in user does not own');
+    expect(text).not.toContain('each user works in their own signed-in workspace');
+    expect(text).not.toContain("never work in another user's workspace");
+    // Create/switch as the UI shows it.
+    expect(text).toContain('Create Workspace');
+    expect(text).toContain('Workspace Name');
+    // Two jobs, check-in-the-app rule, and no public-access claim.
+    expect(text).toContain('Your two jobs');
+    expect(text).toContain('Answering questions about FBUploadPro');
+    expect(text).toContain('do not guess and do not answer from general knowledge');
+    expect(text).toContain('checked it in the app');
+    expect(text).not.toContain('no login required');
+    // Living document: re-read fresh, never trust a stale copy.
+    expect(text).toContain('This guide is a living document');
+    expect(text).toContain('Re-read the full, current guide at https://app.fbuploadpro.com/muse_guide.md fresh');
+    expect(text).toContain('Do not rely on a version you read earlier');
+    expect(text).toContain('do not assume a feature works the way it did before an update');
+    expect(text).toContain('Re-reading the whole current guide is the check');
+    // BYOC per platform, fresh wording.
+    expect(text).toContain('All three are required before a connection can start');
+    expect(text).toContain('No deauthorize or data-deletion addresses are given anywhere');
   });
 });
