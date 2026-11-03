@@ -2,9 +2,9 @@
  * Threads Auto Repost tick behaviour: the tick passes the mirror's
  * target platform through to publishReel (so the built deps can
  * dispatch Threads → Threads publisher, Facebook → Facebook client),
- * an over-long Threads caption is skipped with the plain reason and
- * never posted (later reels are still tried), and the Facebook path
- * is unchanged.
+ * an over-long Threads caption is truncated to fit and posted
+ * (owner decision, replacing the old skip rule), and the
+ * Facebook path is unchanged.
  */
 import { describe, expect, it } from 'vitest';
 import {
@@ -88,7 +88,7 @@ describe('processMirrorCheck for Threads targets', () => {
     expect(state.published[0]?.caption).toBe('Hello');
   });
 
-  it('skips an over-long Threads caption with the plain reason and still posts later reels', async () => {
+  it('truncates an over-long Threads caption to 500 and posts it, then still posts later reels', async () => {
     const state: FakeState = { claimed: [], published: [] };
     const longTitle = 'x'.repeat(600);
     const feed = [reel('v1', 100, longTitle), reel('v2', 200, 'Short')];
@@ -96,12 +96,57 @@ describe('processMirrorCheck for Threads targets', () => {
       fakeDeps(state, feed, { v1: longTitle, v2: 'Short' }),
       mirror()
     );
-    expect(result.skipped).toBe(1);
+    expect(result.posted).toBe(2);
+    expect(result.skipped).toBe(0);
+    expect(result.failed).toBe(0);
+    expect(state.published.map((p) => p.videoUrl)).toEqual([
+      'https://example.com/v1.mp4',
+      'https://example.com/v2.mp4',
+    ]);
+    // The stored claim and the published caption are both the
+    // truncated text actually posted — not the original, not a skip.
+    const claimed = state.claimed.find((c) => c.post.sourcePostId === 'v1');
+    expect(claimed?.post.status).toBe('pending');
+    expect(claimed?.post.caption).toBe('x'.repeat(500));
+    expect(state.published[0]?.caption).toBe('x'.repeat(500));
+    expect(state.published[1]?.caption).toBe('Short');
+  });
+
+  it('truncates a Threads caption with too many links to the first 5 and posts it', async () => {
+    const state: FakeState = { claimed: [], published: [] };
+    const links = Array.from({ length: 7 }, (_, i) => `https://example.com/${i}`);
+    const longCaption = `start ${links.join(' ')} end`;
+    const feed = [reel('v1', 100, longCaption)];
+    const result = await processMirrorCheck(
+      fakeDeps(state, feed, { v1: longCaption }),
+      mirror()
+    );
     expect(result.posted).toBe(1);
-    expect(state.published.map((p) => p.videoUrl)).toEqual(['https://example.com/v2.mp4']);
-    const skipped = state.claimed.find((c) => c.post.sourcePostId === 'v1');
-    expect(skipped?.post.status).toBe('skipped');
-    expect(skipped?.post.error).toContain('500');
+    const published = state.published[0]?.caption ?? '';
+    expect(published).toContain('https://example.com/4');
+    expect(published).not.toContain('https://example.com/5');
+    expect(published).not.toContain('https://example.com/6');
+    expect(published).toContain('start');
+    expect(published).toContain('end');
+  });
+
+  it('does not truncate over-long captions for Facebook or Instagram mirrors', async () => {
+    const longTitle = 'x'.repeat(600);
+    for (const targetPlatform of ['facebook', 'instagram'] as const) {
+      const state: FakeState = { claimed: [], published: [] };
+      const result = await processMirrorCheck(
+        fakeDeps(state, [reel('v1', 100, longTitle)], { v1: longTitle }),
+        mirror({
+          targetPlatform,
+          targetExternalId: targetPlatform === 'facebook' ? 'fb_123' : 'ig_123',
+          targetToken: 'token',
+        })
+      );
+      expect(result.posted).toBe(1);
+      expect(state.published[0]?.caption).toBe(longTitle);
+      const claimed = state.claimed.find((c) => c.post.sourcePostId === 'v1');
+      expect(claimed?.post.caption).toBe(longTitle);
+    }
   });
 
   it('keeps the Facebook path passing its own platform through', async () => {
