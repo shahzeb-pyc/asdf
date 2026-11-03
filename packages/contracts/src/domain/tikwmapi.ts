@@ -4,6 +4,7 @@ import {
   TikwmUserPostsResponseSchema,
   type TikwmVideoItem,
 } from './tiktok-mirror.js';
+import { resolveCountikVideo } from './countik-video.js';
 
 // ==========================================
 // tikwmapi (paid) feed/profile + tikwm (free) video resolve
@@ -378,17 +379,43 @@ export const TikwmResolveResponseSchema = z.object({
 export type TikwmResolveResponse = z.infer<typeof TikwmResolveResponseSchema>;
 
 /**
- * Resolve one known TikTok video via the FREE tikwm POST endpoint
- * (form {url, hd: 1}) to its no-watermark URL (hdplay preferred,
- * play fallback) + verbatim title. No key is involved. Throws
- * TikwmApiError on any failure — callers treat a resolve failure
- * like a publish failure (post stays pending, mirror errors).
+ * User-facing resolve failures (owner decision 2026-11-03): the
+ * displayed/stored error is friendly text plus an OPAQUE code
+ * only. It must never contain provider wording — no "free",
+ * no "limit", no provider name. The mapping lives in code and
+ * server logs only, never on screen:
+ * - E01: the free resolve failed with its daily-cap response.
+ * - E02: both providers failed for any other reason.
+ * The raw provider detail is logged loudly at the resolve layer
+ * before mapping, so the friendly stored error never destroys
+ * the evidence. If the fallback succeeds, there is no error
+ * and no code at all.
  */
-export async function resolveTikwmVideo(
+export const MIRROR_RESOLVE_ERROR_E01 =
+  'That reel could not be resolved. (Code: MIRROR_RESOLVE_E01)';
+export const MIRROR_RESOLVE_ERROR_E02 =
+  'That reel could not be resolved. (Code: MIRROR_RESOLVE_E02)';
+
+/** True when a free resolve response message is its daily-cap message. */
+function isFreeResolveLimitMessage(detail: string | undefined): boolean {
+  return detail !== undefined && /free api limit/i.test(detail);
+}
+
+type FreeResolveOutcome =
+  | { failed: false; playUrl: string; title: string }
+  | { failed: true; wasLimit: boolean; raw: string };
+
+/**
+ * One attempt at the FREE tikwm POST endpoint (form {url, hd: 1})
+ * to its no-watermark URL (hdplay preferred, play fallback) +
+ * verbatim title. No key is involved. Never throws: every
+ * failure is returned so the caller can fall back, and the raw
+ * detail is preserved for logging (never for display).
+ */
+async function tryFreeResolve(
   videoUrl: string,
-  options: { fetchFn?: FetchFn | undefined } = {}
-): Promise<{ playUrl: string; title: string }> {
-  const fetchFn = options.fetchFn ?? fetch;
+  fetchFn: FetchFn
+): Promise<FreeResolveOutcome> {
   let res: Response;
   try {
     res = await fetchFn(TIKWM_RESOLVE_BASE_URL, {
@@ -403,42 +430,71 @@ export async function resolveTikwmVideo(
       body: new URLSearchParams({ url: videoUrl, hd: '1' }).toString(),
     });
   } catch {
-    throw new TikwmApiError(
-      'UNREACHABLE',
-      'Could not reach the TikTok video service. Please try again.'
-    );
+    return { failed: true, wasLimit: false, raw: 'free fetch threw' };
   }
   if (!res.ok) {
-    throw new TikwmApiError(
-      'HTTP_ERROR',
-      `TikTok video service returned HTTP ${res.status}. Please try again.`
-    );
+    return { failed: true, wasLimit: false, raw: `HTTP ${res.status}` };
   }
   let raw: unknown;
   try {
     raw = await res.json();
   } catch {
-    throw new TikwmApiError(
-      'BAD_RESPONSE',
-      'TikTok video service returned an unreadable response.'
-    );
+    return { failed: true, wasLimit: false, raw: 'unreadable response' };
   }
   const parsed = TikwmResolveResponseSchema.safeParse(raw);
   if (!parsed.success || parsed.data.code !== 0 || !parsed.data.data) {
     const detail = parsed.success ? parsed.data.msg?.trim() : undefined;
-    throw new TikwmApiError(
-      'RESOLVE_FAILED',
-      detail
-        ? `Could not resolve that TikTok video: ${detail}`
-        : 'Could not resolve that TikTok video.'
-    );
+    return {
+      failed: true,
+      wasLimit: isFreeResolveLimitMessage(detail),
+      raw: detail ?? 'unparseable response',
+    };
   }
   const playUrl = parsed.data.data.hdplay ?? parsed.data.data.play;
   if (!playUrl) {
+    return { failed: true, wasLimit: false, raw: 'no playable version returned' };
+  }
+  return { failed: false, playUrl, title: parsed.data.data.title ?? '' };
+}
+
+/**
+ * Resolve one known TikTok video (owner decision 2026-11-03):
+ * FREE tikwm first, Countik fallback on ANY free failure.
+ * Countik: POST video/exist -> video id, GET videoinfo/<id> ->
+ * download_link + description (see countik-video.ts; the link
+ * was verified watermark-free on a real public reel before this
+ * shipped in a mirror path). A Countik result with no
+ * download_link counts as a failure, not a postable result.
+ * An empty resolved title is acceptable — mirror callers fall
+ * back to the feed title.
+ *
+ * Throws TikwmApiError (code RESOLVE_FAILED) on failure, with
+ * the opaque friendly message only — callers treat a resolve
+ * failure like a publish failure (post stays failed, mirror
+ * errors). All callers (worker tick, web create route, web
+ * retry route, Threads setup route) surface this thrown message,
+ * so the mapping here covers every path; no caller passes
+ * provider wording through anymore.
+ */
+export async function resolveTikwmVideo(
+  videoUrl: string,
+  options: { fetchFn?: FetchFn | undefined } = {}
+): Promise<{ playUrl: string; title: string }> {
+  const fetchFn = options.fetchFn ?? fetch;
+  const free = await tryFreeResolve(videoUrl, fetchFn);
+  if (!free.failed) return { playUrl: free.playUrl, title: free.title };
+  console.error(
+    `[resolveTikwmVideo] free resolve failed (limit=${free.wasLimit}): ${free.raw}`
+  );
+  try {
+    return await resolveCountikVideo(videoUrl, { fetchFn });
+  } catch (err) {
+    console.error(
+      `[resolveTikwmVideo] Countik fallback failed: ${err instanceof Error ? err.message : 'unknown'}`
+    );
     throw new TikwmApiError(
       'RESOLVE_FAILED',
-      'Could not resolve that TikTok video: no playable version was returned.'
+      free.wasLimit ? MIRROR_RESOLVE_ERROR_E01 : MIRROR_RESOLVE_ERROR_E02
     );
   }
-  return { playUrl, title: parsed.data.data.title ?? '' };
 }

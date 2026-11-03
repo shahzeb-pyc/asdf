@@ -11,6 +11,8 @@ import {
   callWithTikwmApiKeyRotation,
   fetchTikwmApiUserInfo,
   fetchTikwmApiUserPosts,
+  MIRROR_RESOLVE_ERROR_E01,
+  MIRROR_RESOLVE_ERROR_E02,
   parseTikwmApiKeys,
   resolveTikwmVideo,
   tikwmApiKeyFingerprint,
@@ -366,5 +368,133 @@ describe('resolveTikwmVideo', () => {
         fetchFn: empty as never,
       })
     ).rejects.toMatchObject({ code: 'RESOLVE_FAILED' });
+  });
+});
+
+describe('resolveTikwmVideo Countik fallback + opaque error codes', () => {
+  const FREE_URL = 'https://www.tikwm.com/api/';
+  const COUNTIK_EXIST = 'https://countik.com/api/video/exist';
+  const COUNTIK_INFO = 'https://countik.com/api/videoinfo/vid-1';
+
+  /** Routes a single fetchFn by URL: free body, Countik exist body, Countik info body. */
+  function routingFetch(free: unknown, exist?: unknown, info?: unknown) {
+    const calls: string[] = [];
+    const fetchFn = vi.fn(async (url: string) => {
+      calls.push(url);
+      if (url === FREE_URL) {
+        if (free instanceof Error) throw free;
+        return jsonResponse(free);
+      }
+      if (url === COUNTIK_EXIST) {
+        if (exist instanceof Error) throw exist;
+        return jsonResponse(exist);
+      }
+      if (url === COUNTIK_INFO) {
+        if (info instanceof Error) throw info;
+        return jsonResponse(info);
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+    return { fetchFn, calls };
+  }
+
+  const countikOk = {
+    exist: { video_id: 'vid-1' },
+    info: { download_link: 'https://cdn.example.com/countik.mp4', desc: 'Countik cap' },
+  };
+
+  it('free success makes no Countik call', async () => {
+    const { fetchFn, calls } = routingFetch({
+      code: 0,
+      data: { play: 'https://x/play.mp4', hdplay: 'https://x/hd.mp4', title: 'Cap' },
+    });
+    await expect(
+      resolveTikwmVideo('https://www.tiktok.com/@alice/video/123', {
+        fetchFn: fetchFn as never,
+      })
+    ).resolves.toEqual({ playUrl: 'https://x/hd.mp4', title: 'Cap' });
+    expect(calls).toEqual([FREE_URL]);
+  });
+
+  it('free limit + Countik success returns the Countik link, with no error', async () => {
+    const { fetchFn } = routingFetch(
+      { code: -1, msg: 'Free Api Limit: 10000 request/ 1 day' },
+      countikOk.exist,
+      countikOk.info
+    );
+    await expect(
+      resolveTikwmVideo('https://www.tiktok.com/@alice/video/123', {
+        fetchFn: fetchFn as never,
+      })
+    ).resolves.toEqual({ playUrl: 'https://cdn.example.com/countik.mp4', title: 'Countik cap' });
+  });
+
+  it('free unreachable + Countik success also falls back', async () => {
+    const { fetchFn } = routingFetch(
+      new Error('network down'),
+      countikOk.exist,
+      countikOk.info
+    );
+    await expect(
+      resolveTikwmVideo('https://www.tiktok.com/@alice/video/123', {
+        fetchFn: fetchFn as never,
+      })
+    ).resolves.toEqual({ playUrl: 'https://cdn.example.com/countik.mp4', title: 'Countik cap' });
+  });
+
+  it('free limit + Countik failure throws exactly E01, with no provider wording', async () => {
+    const { fetchFn } = routingFetch(
+      { code: -1, msg: 'Free Api Limit: 10000 request/ 1 day' },
+      { status: 'not found' },
+      undefined
+    );
+    const err = await resolveTikwmVideo('https://www.tiktok.com/@alice/video/123', {
+      fetchFn: fetchFn as never,
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TikwmApiError);
+    expect((err as TikwmApiError).code).toBe('RESOLVE_FAILED');
+    expect((err as Error).message).toBe(MIRROR_RESOLVE_ERROR_E01);
+    expect((err as Error).message.toLowerCase()).not.toContain('free');
+    expect((err as Error).message.toLowerCase()).not.toContain('limit');
+    expect((err as Error).message.toLowerCase()).not.toContain('tikwm');
+  });
+
+  it('free other-failure + Countik failure throws exactly E02', async () => {
+    const { fetchFn } = routingFetch(
+      { code: -1, msg: 'Url parsing is failed!' },
+      { status: 'not found' },
+      undefined
+    );
+    const err = await resolveTikwmVideo('https://www.tiktok.com/@alice/video/123', {
+      fetchFn: fetchFn as never,
+    }).catch((e: unknown) => e);
+    expect((err as Error).message).toBe(MIRROR_RESOLVE_ERROR_E02);
+    expect((err as Error).message.toLowerCase()).not.toContain('free');
+    expect((err as Error).message.toLowerCase()).not.toContain('limit');
+    expect((err as Error).message.toLowerCase()).not.toContain('tikwm');
+  });
+
+  it('Countik download_link null is a failure (E01 when free was the limit)', async () => {
+    const { fetchFn } = routingFetch(
+      { code: -1, msg: 'Free Api Limit: 10000 request/ 1 day' },
+      { video_id: 'vid-1' },
+      { download_link: null, desc: 'No link' }
+    );
+    const err = await resolveTikwmVideo('https://www.tiktok.com/@alice/video/123', {
+      fetchFn: fetchFn as never,
+    }).catch((e: unknown) => e);
+    expect((err as Error).message).toBe(MIRROR_RESOLVE_ERROR_E01);
+  });
+
+  it('free limit detection is case-insensitive', async () => {
+    const { fetchFn } = routingFetch(
+      { code: -1, msg: 'FREE API LIMIT reached' },
+      { status: 'not found' },
+      undefined
+    );
+    const err = await resolveTikwmVideo('https://www.tiktok.com/@alice/video/123', {
+      fetchFn: fetchFn as never,
+    }).catch((e: unknown) => e);
+    expect((err as Error).message).toBe(MIRROR_RESOLVE_ERROR_E01);
   });
 });
