@@ -164,13 +164,15 @@ describe('HomeHeader and MuseAssistantCard', () => {
     );
   });
 
-  it('Muse card renders an inert Ask Muse button — no invented destination', () => {
-    render(<MuseAssistantCard />);
+  it('Muse card links Ask Muse to the Muse section', () => {
+    render(<MuseAssistantCard museHref="/tenant/acme/muse" />);
     expect(screen.getByText('Muse Assistant')).toBeTruthy();
     expect(
       screen.getByText('Ask Muse to schedule, publish, or check your pages — while you sleep.')
     ).toBeTruthy();
-    expect(screen.getByRole('button', { name: /Ask Muse/ })).toBeTruthy();
-    expect(screen.queryByRole('link', { name: /Ask Muse/ })).toBeNull();
+    expect(screen.getByRole('link', { name: /Ask Muse/ }).getAttribute('href')).toBe(
+      '/tenant/acme/muse'
+    );
+    expect(screen.queryByRole('button', { name: /Ask Muse/ })).toBeNull();
   });
 });

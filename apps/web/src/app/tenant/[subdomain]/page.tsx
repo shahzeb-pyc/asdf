@@ -88,6 +88,7 @@ export default async function TenantIndexPage({ params }: Readonly<TenantIndexPa
   const pagesHref = href('/pages');
   const accountsHref = href('/accounts');
   const mediaHref = href('/media');
+  const museHref = href('/muse');
   const creatorFinderHref = href('/creator-finder');
   const promptsHref = href('/prompts');
   const billingHref = href('/my-plan');
@@ -127,7 +128,7 @@ export default async function TenantIndexPage({ params }: Readonly<TenantIndexPa
             <QuickLinks links={buildFreeQuickLinks({ promptsHref, billingHref })} />
           </main>
           <aside>
-            <MuseAssistantCard />
+            <MuseAssistantCard museHref={museHref} />
           </aside>
         </div>
       ) : null}
@@ -152,7 +153,7 @@ export default async function TenantIndexPage({ params }: Readonly<TenantIndexPa
             />
           </main>
           <aside>
-            <MuseAssistantCard />
+            <MuseAssistantCard museHref={museHref} />
           </aside>
         </div>
       ) : null}
