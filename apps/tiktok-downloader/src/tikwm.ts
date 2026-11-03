@@ -35,7 +35,8 @@ export type FetchImpl = typeof fetch;
  */
 export async function resolveTikwmStream(
   videoUrl: string,
-  fetchImpl: FetchImpl = fetch,
+  // Workerd brand-check: arrow wrapper, never bare `fetch` (see supabase.ts).
+  fetchImpl: FetchImpl = (input: RequestInfo | URL, init?: RequestInit) => fetch(input, init),
 ): Promise<TikwmStream | null> {
   let res: Response;
   try {
@@ -96,7 +97,8 @@ export async function resolveTikwmStream(
  */
 export async function openVideoStream(
   streamUrl: string,
-  fetchImpl: FetchImpl = fetch,
+  // Workerd brand-check: arrow wrapper, never bare `fetch` (see supabase.ts).
+  fetchImpl: FetchImpl = (input: RequestInfo | URL, init?: RequestInit) => fetch(input, init),
 ): Promise<ReadableStream<Uint8Array> | null> {
   let res: Response;
   try {

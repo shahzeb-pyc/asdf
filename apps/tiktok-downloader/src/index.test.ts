@@ -43,6 +43,27 @@ describe('tiktok-downloader worker entry', () => {
     ).resolves.toBeUndefined();
   });
 
+  it('runs the scheduled tick through a workerd-brand-checked fetch', async () => {
+    // Same brand check as supabase.test.ts, exercised through the
+    // production scheduled wiring: the SupabaseRpc default and the
+    // pipeline injection must both call fetch without a client
+    // receiver, or the tick dies with "Illegal invocation" in workerd.
+    const brandCheckedRpcMock = function (this: unknown, url: string): Promise<Response> {
+      if (this !== undefined && this !== globalThis) {
+        throw new Error('Illegal invocation: function called with incorrect `this` reference');
+      }
+      return rpcMock(url);
+    };
+    vi.stubGlobal('fetch', brandCheckedRpcMock);
+    await expect(
+      worker.scheduled(
+        {} as ScheduledEvent,
+        FULL_ENV,
+        { waitUntil: () => {} } as unknown as ExecutionContext,
+      ),
+    ).resolves.toBeUndefined();
+  });
+
   it('fails loudly when required secrets are missing', async () => {
     await expect(
       worker.scheduled(

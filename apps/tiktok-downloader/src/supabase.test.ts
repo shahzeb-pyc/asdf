@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { SupabaseRpc, stripTrailingSlashes } from './supabase.js';
 import type { FetchImpl } from './tikwm.js';
 
@@ -109,6 +109,36 @@ describe('SupabaseRpc', () => {
   it('requires URL and key at construction', () => {
     expect(() => new SupabaseRpc('', KEY)).toThrow();
     expect(() => new SupabaseRpc(URL, '')).toThrow();
+  });
+});
+
+describe('workerd fetch binding', () => {
+  // Mimics workerd's brand check on its native fetch: the call is
+  // rejected unless the receiver is undefined (bare call) or the
+  // global object. A stored reference invoked as `this.fetchImpl(...)`
+  // binds `this` to the client and throws — exactly the production
+  // failure, where every tick died on the first RPC call with
+  // "Illegal invocation". Node/bun permit detached fetch, so a plain
+  // mock can never catch this; the brand check is the whole point.
+  function workerdBrandCheckedFetch(this: unknown, url: string): Promise<Response> {
+    if (this !== undefined && this !== globalThis) {
+      throw new Error('Illegal invocation: function called with incorrect `this` reference');
+    }
+    return Promise.resolve(okJson(0));
+  }
+
+  it('uses the default fetch wiring without a client receiver', async () => {
+    vi.stubGlobal('fetch', workerdBrandCheckedFetch);
+    try {
+      await expect(new SupabaseRpc(URL, KEY).resetStaleDownloads(40)).resolves.toBe(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('fails when a raw fetch reference is stored and method-called', async () => {
+    const rpc = new SupabaseRpc(URL, KEY, workerdBrandCheckedFetch as unknown as FetchImpl);
+    await expect(rpc.resetStaleDownloads(40)).rejects.toThrow(/Illegal invocation/);
   });
 });
 
