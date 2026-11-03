@@ -127,21 +127,34 @@ describe('openVideoStream', () => {
       ok: false,
       failure: { reason: 'stream_http_status', status: 404 },
     });
+    expect(bad).toHaveBeenCalledTimes(1);
     const body = new ReadableStream({ start(c) { c.enqueue(new Uint8Array([1, 2])); c.close(); } });
-    const good = vi.fn(async () => new Response(body, { status: 200 })) as unknown as FetchImpl;
+    const good = vi.fn(async () => new Response(body, { status: 200, headers: { 'content-length': '2' } })) as unknown as FetchImpl;
     const opened = await openVideoStream('https://cdn.example/v.mp4', good);
     expect(opened.ok).toBe(true);
-    if (opened.ok) expect(opened.body).toBe(body);
+    if (opened.ok) {
+      expect(opened.body).toBe(body);
+      expect(opened.contentLength).toBe(2);
+    }
   });
 
-  it('reports a fetch throw with its message', async () => {
-    const throwing = vi.fn(async () => {
-      throw new Error('conn reset');
-    }) as unknown as FetchImpl;
-    expect(await openVideoStream('https://cdn.example/v.mp4', throwing)).toEqual({
-      ok: false,
-      failure: { reason: 'stream_fetch_error', detail: 'conn reset' },
-    });
+  it('reports a fetch throw with its message after retries exhaust', async () => {
+    vi.useFakeTimers();
+    try {
+      const throwing = vi.fn(async () => {
+        throw new Error('conn reset');
+      }) as unknown as FetchImpl;
+      const pending = openVideoStream('https://cdn.example/v.mp4', throwing);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(await pending).toEqual({
+        ok: false,
+        failure: { reason: 'stream_fetch_error', detail: 'conn reset' },
+      });
+      // In-attempt retries: the same open tried 3 times, not 3 attempts.
+      expect(throwing).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('reports a 200 with no body', async () => {
@@ -151,6 +164,72 @@ describe('openVideoStream', () => {
       ok: false,
       failure: { reason: 'stream_no_body' },
     });
+    expect(noBody).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries transient statuses and succeeds when the edge recovers', async () => {
+    vi.useFakeTimers();
+    try {
+      const body = new ReadableStream({ start(c) { c.enqueue(new Uint8Array([1, 2])); c.close(); } });
+      const flaky = vi.fn()
+        .mockResolvedValueOnce(new Response('no', { status: 525 }))
+        .mockResolvedValueOnce(new Response('no', { status: 429 }))
+        .mockResolvedValueOnce(new Response(body, { status: 200, headers: { 'content-length': '2' } })) as unknown as FetchImpl;
+      const pending = openVideoStream('https://cdn.example/v.mp4', flaky);
+      await vi.advanceTimersByTimeAsync(10_000);
+      const opened = await pending;
+      expect(opened.ok).toBe(true);
+      if (opened.ok) expect(opened.contentLength).toBe(2);
+      expect(flaky).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('returns the last failure when transient statuses never recover', async () => {
+    vi.useFakeTimers();
+    try {
+      const failing = vi.fn(async () => new Response('no', { status: 525 })) as unknown as FetchImpl;
+      const pending = openVideoStream('https://cdn.example/v.mp4', failing);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(await pending).toEqual({
+        ok: false,
+        failure: { reason: 'stream_http_status', status: 525 },
+      });
+      expect(failing).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not retry a deterministic 404', async () => {
+    const bad = vi.fn(async () => new Response('no', { status: 404 })) as unknown as FetchImpl;
+    expect(await openVideoStream('https://cdn.example/v.mp4', bad)).toEqual({
+      ok: false,
+      failure: { reason: 'stream_http_status', status: 404 },
+    });
+    expect(bad).toHaveBeenCalledTimes(1);
+  });
+
+  it('parses Content-Length only when it is a positive integer', async () => {
+    const cases: Array<[string | null, number | null]> = [
+      ['123', 123],
+      [null, null],
+      ['abc', null],
+      ['0', null],
+      ['-5', null],
+      ['12.5', null],
+    ];
+    for (const [header, expected] of cases) {
+      const body = new ReadableStream({ start(c) { c.enqueue(new Uint8Array([1])); c.close(); } });
+      const fetchMock = vi.fn(async () => new Response(body, {
+        status: 200,
+        headers: header === null ? {} : { 'content-length': header },
+      })) as unknown as FetchImpl;
+      const opened = await openVideoStream('https://cdn.example/v.mp4', fetchMock);
+      expect(opened.ok).toBe(true);
+      if (opened.ok) expect(opened.contentLength).toBe(expected);
+    }
   });
 
   it('sends the tikwm Referer by default and omits it when null', async () => {

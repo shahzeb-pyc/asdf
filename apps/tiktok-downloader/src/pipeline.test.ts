@@ -25,6 +25,9 @@ import {
   COUNTIK_VIDEO_BASE_URL,
   type CountikResolveFailure,
 } from './countik.js';
+import { installFixedLengthStreamShim } from './fixed-length-stream-shim.js';
+
+installFixedLengthStreamShim();
 
 function u32(n: number): Uint8Array {
   const b = new Uint8Array(4);
@@ -76,11 +79,13 @@ function padTo(data: Uint8Array, total: number): Uint8Array {
 class FakeR2 implements R2BucketLike {
   objects = new Map<string, Uint8Array>();
   puts: string[] = [];
+  putStreams: Array<ReadableStream<Uint8Array>> = [];
   deletes: string[] = [];
   throwOnPut = false;
 
   async put(key: string, value: ReadableStream<Uint8Array>): Promise<unknown> {
     this.puts.push(key);
+    this.putStreams.push(value);
     if (this.throwOnPut) throw new Error('r2 down');
     const reader = value.getReader();
     const chunks: Uint8Array[] = [];
@@ -139,18 +144,25 @@ function fakeFetch(videoBody: Uint8Array | null, apiBody: unknown): FetchImpl {
       return new Response(JSON.stringify(apiBody), { status: 200 });
     }
     if (videoBody !== null) {
-      return new Response(streamOf(videoBody), { status: 200 });
+      // The CDN declares the length, and the production put requires it.
+      return new Response(streamOf(videoBody), {
+        status: 200,
+        headers: { 'content-length': String(videoBody.length) },
+      });
     }
     return new Response('no', { status: 404 });
   }) as unknown as FetchImpl;
 }
 
-function fakeFetchStream(videoStream: ReadableStream<Uint8Array>, apiBody: unknown): FetchImpl {
+function fakeFetchStream(videoStream: ReadableStream<Uint8Array>, apiBody: unknown, contentLength = 12000): FetchImpl {
   return (async (url: string) => {
     if (url === TIKWM_API_URL) {
       return new Response(JSON.stringify(apiBody), { status: 200 });
     }
-    return new Response(videoStream, { status: 200 });
+    return new Response(videoStream, {
+      status: 200,
+      headers: { 'content-length': String(contentLength) },
+    });
   }) as unknown as FetchImpl;
 }
 
@@ -206,7 +218,7 @@ describe('runDownloadTick', () => {
     expect(state.recorded).toEqual([
       {
         reelId: 'reel-1',
-        failure: { stage: 'stream_open', reason: 'stream_http_status', detail: 'http_status=404' },
+        failure: { stage: 'stream_open', reason: 'stream_http_status', detail: 'http_status=404; resolver=tikwm; host=cdn.example' },
       },
     ]);
     expect(r2.puts).toEqual([]);
@@ -225,7 +237,7 @@ describe('runDownloadTick', () => {
     expect(state.recorded).toEqual([
       {
         reelId: 'reel-1',
-        failure: { stage: 'stream_upload', reason: 'r2_put_error', detail: 'r2 down' },
+        failure: { stage: 'stream_upload', reason: 'r2_put_error', detail: 'r2 down; resolver=tikwm; host=cdn.example' },
       },
     ]);
     expect(r2.deletes).toEqual(['adu-buffer/cfg-1/reel-1.mp4']);
@@ -247,7 +259,7 @@ describe('runDownloadTick', () => {
     expect(state.recorded).toEqual([
       {
         reelId: 'reel-1',
-        failure: { stage: 'stream_upload', reason: 'stream_read_error', detail: 'read boom' },
+        failure: { stage: 'stream_upload', reason: 'stream_read_error', detail: 'read boom; resolver=tikwm; host=cdn.example' },
       },
     ]);
   });
@@ -372,19 +384,50 @@ describe('streamToR2 cap', () => {
     const r2 = new FakeR2();
     const body = new Uint8Array(200);
     await expect(
-      streamToR2(streamOf(body), r2, 'k', { maxBytes: 100 }),
+      streamToR2(streamOf(body), r2, 'k', { maxBytes: 100, expectedBytes: 200 }),
     ).rejects.toThrow(/cap/);
   });
 
   it('reports the cap breach as a typed error carrying the cap', async () => {
     const r2 = new FakeR2();
     const body = new Uint8Array(200);
-    const err = await streamToR2(streamOf(body), r2, 'k', { maxBytes: 100 }).then(
+    const err = await streamToR2(streamOf(body), r2, 'k', { maxBytes: 100, expectedBytes: 200 }).then(
       () => null,
       (e: unknown) => e,
     );
     expect(err).toBeInstanceOf(FileTooLargeError);
     expect((err as FileTooLargeError).capBytes).toBe(100);
+  });
+
+  it('saves through the declared-length stream when the count matches', async () => {
+    // The previously failing shape: the wrapped stream went straight to
+    // put and workerd rejected it for an unknown length. Now the put
+    // receives a FixedLengthStream declared with the response length,
+    // so an exact-count stream saves with its hash intact.
+    const r2 = new FakeR2();
+    const body = new Uint8Array(100);
+    const outcome = await streamToR2(streamOf(body), r2, 'k', { expectedBytes: 100 });
+    expect(outcome.sizeBytes).toBe(100);
+    expect(r2.putStreams).toHaveLength(1);
+    expect(r2.objects.get('k')).toEqual(body);
+  });
+
+  it('fails loud instead of saving a short stream', async () => {
+    const r2 = new FakeR2();
+    const body = new Uint8Array(100);
+    await expect(
+      streamToR2(streamOf(body), r2, 'k', { expectedBytes: 200 }),
+    ).rejects.toThrow(/delivered 100 bytes, expected 200/);
+    expect(r2.objects.has('k')).toBe(false);
+  });
+
+  it('fails loud instead of saving an overlong stream', async () => {
+    const r2 = new FakeR2();
+    const body = new Uint8Array(200);
+    await expect(
+      streamToR2(streamOf(body), r2, 'k', { expectedBytes: 100 }),
+    ).rejects.toThrow(/delivered 200 bytes, expected 100/);
+    expect(r2.objects.has('k')).toBe(false);
   });
 
   it('maps a stalled stream to stream_stalled', async () => {
@@ -403,7 +446,7 @@ describe('streamToR2 cap', () => {
       expect(state.recorded).toEqual([
         {
           reelId: 'reel-1',
-          failure: { stage: 'stream_upload', reason: 'stream_stalled', detail: 'timeout_ms=30000' },
+          failure: { stage: 'stream_upload', reason: 'stream_stalled', detail: 'timeout_ms=30000; resolver=tikwm; host=cdn.example' },
         },
       ]);
     } finally {
@@ -465,16 +508,26 @@ describe('runDownloadTick reason mapping (remaining stages)', () => {
   });
 
   it('records stream_fetch_error when the video stream GET throws', async () => {
-    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
-    const r2 = new FakeR2();
-    const result = await runDownloadTick(
-      deps(state, r2, scriptedFetch(goodTikwm(), new Error('stream down'))),
-    );
-    expect(result.failedReasons).toEqual({ 'stream_open:stream_fetch_error': 1 });
-    expect(state.recorded).toEqual([
-      { reelId: 'reel-1', failure: { stage: 'stream_open', reason: 'stream_fetch_error', detail: 'stream down' } },
-    ]);
-    expect(r2.puts).toEqual([]);
+    // The throw is transient, so the open retries inside the attempt
+    // (fake timers cover the backoff); the attempt still settles once.
+    vi.useFakeTimers();
+    try {
+      const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+      const r2 = new FakeR2();
+      const tick = runDownloadTick(
+        deps(state, r2, scriptedFetch(goodTikwm(), new Error('stream down'))),
+      );
+      await vi.advanceTimersByTimeAsync(10_000);
+      const result = await tick;
+      expect(result.failedReasons).toEqual({ 'stream_open:stream_fetch_error': 1 });
+      expect(state.recorded).toEqual([
+        { reelId: 'reel-1', failure: { stage: 'stream_open', reason: 'stream_fetch_error', detail: 'stream down; resolver=tikwm; host=cdn.example' } },
+      ]);
+      expect(state.failed).toEqual(['reel-1']);
+      expect(r2.puts).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('records stream_no_body when the video stream responds without a body', async () => {
@@ -485,7 +538,7 @@ describe('runDownloadTick reason mapping (remaining stages)', () => {
     );
     expect(result.failedReasons).toEqual({ 'stream_open:stream_no_body': 1 });
     expect(state.recorded).toEqual([
-      { reelId: 'reel-1', failure: { stage: 'stream_open', reason: 'stream_no_body' } },
+      { reelId: 'reel-1', failure: { stage: 'stream_open', reason: 'stream_no_body', detail: 'resolver=tikwm; host=cdn.example' } },
     ]);
     expect(r2.puts).toEqual([]);
   });
@@ -527,27 +580,31 @@ describe('reason mappers (pure table)', () => {
 
   it('maps every stream open failure to its recorded reason', () => {
     const cases: Array<[StreamOpenFailure, unknown]> = [
-      [{ reason: 'stream_fetch_error', detail: 'down' }, { stage: 'stream_open', reason: 'stream_fetch_error', detail: 'down' }],
-      [{ reason: 'stream_http_status', status: 404 }, { stage: 'stream_open', reason: 'stream_http_status', detail: 'http_status=404' }],
-      [{ reason: 'stream_no_body' }, { stage: 'stream_open', reason: 'stream_no_body' }],
+      [{ reason: 'stream_fetch_error', detail: 'down' }, { stage: 'stream_open', reason: 'stream_fetch_error', detail: 'down; resolver=tikwm; host=cdn.example' }],
+      [{ reason: 'stream_http_status', status: 404 }, { stage: 'stream_open', reason: 'stream_http_status', detail: 'http_status=404; resolver=tikwm; host=cdn.example' }],
+      [{ reason: 'stream_no_body' }, { stage: 'stream_open', reason: 'stream_no_body', detail: 'resolver=tikwm; host=cdn.example' }],
     ];
-    for (const [input, expected] of cases) expect(streamOpenFailure(input)).toEqual(expected);
+    for (const [input, expected] of cases) expect(streamOpenFailure(input, 'tikwm', 'https://cdn.example/v.mp4')).toEqual(expected);
+    // An unparsable URL still records the resolver, with an unknown host.
+    expect(streamOpenFailure({ reason: 'stream_http_status', status: 525 }, 'countik', 'not a url')).toEqual({
+      stage: 'stream_open', reason: 'stream_http_status', detail: 'http_status=525; resolver=countik; host=unknown',
+    });
   });
 
   it('maps every upload failure, including the cap breach processOne cannot reach', () => {
     // file_too_large needs a >1 GiB stream through processOne, so it is
     // pinned here directly against the pure mapper instead.
-    expect(uploadFailure(new FileTooLargeError(100))).toEqual({
-      stage: 'stream_upload', reason: 'file_too_large', detail: 'cap_bytes=100',
+    expect(uploadFailure(new FileTooLargeError(100), 'tikwm', 'https://cdn.example/v.mp4')).toEqual({
+      stage: 'stream_upload', reason: 'file_too_large', detail: 'cap_bytes=100; resolver=tikwm; host=cdn.example',
     });
-    expect(uploadFailure(new StreamStalledError('stalled'))).toEqual({
-      stage: 'stream_upload', reason: 'stream_stalled', detail: `timeout_ms=${STREAM_CHUNK_TIMEOUT_MS}`,
+    expect(uploadFailure(new StreamStalledError('stalled'), 'tikwm', 'https://cdn.example/v.mp4')).toEqual({
+      stage: 'stream_upload', reason: 'stream_stalled', detail: `timeout_ms=${STREAM_CHUNK_TIMEOUT_MS}; resolver=tikwm; host=cdn.example`,
     });
-    expect(uploadFailure(new R2PutError('r2 down'))).toEqual({
-      stage: 'stream_upload', reason: 'r2_put_error', detail: 'r2 down',
+    expect(uploadFailure(new R2PutError('r2 down'), 'tikwm', 'https://cdn.example/v.mp4')).toEqual({
+      stage: 'stream_upload', reason: 'r2_put_error', detail: 'r2 down; resolver=tikwm; host=cdn.example',
     });
-    expect(uploadFailure(new Error('read boom'))).toEqual({
-      stage: 'stream_upload', reason: 'stream_read_error', detail: 'read boom',
+    expect(uploadFailure(new Error('read boom'), 'tikwm', 'https://cdn.example/v.mp4')).toEqual({
+      stage: 'stream_upload', reason: 'stream_read_error', detail: 'read boom; resolver=tikwm; host=cdn.example',
     });
   });
 });
@@ -594,7 +651,7 @@ describe('Countik fallback', () => {
     const r2 = new FakeR2();
     const { fetchImpl, calls } = fallbackFetch({
       tikwm: tikwmJson({ code: 0, data: { play: 'https://cdn.example/v.mp4' } }),
-      stream: new Response(streamOf(downloadableBody()), { status: 200 }),
+      stream: new Response(streamOf(downloadableBody()), { status: 200, headers: { 'content-length': '12000' } }),
     });
     const result = await runDownloadTick(deps(state, r2, fetchImpl));
     expect(result.downloaded).toBe(1);
@@ -618,7 +675,7 @@ describe('Countik fallback', () => {
       tikwm,
       exist,
       info,
-      stream: new Response(streamOf(downloadableBody()), { status: 200 }),
+      stream: new Response(streamOf(downloadableBody()), { status: 200, headers: { 'content-length': '12000' } }),
     });
     const result = await runDownloadTick(deps(state, r2, fetchImpl));
     expect(result.downloaded).toBe(1);
@@ -636,7 +693,7 @@ describe('Countik fallback', () => {
       tikwm: tikwmJson({ code: -1, data: null }),
       exist,
       info,
-      stream: new Response(streamOf(downloadableBody()), { status: 200 }),
+      stream: new Response(streamOf(downloadableBody()), { status: 200, headers: { 'content-length': '12000' } }),
     });
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
@@ -675,7 +732,7 @@ describe('Countik fallback', () => {
       tikwm: tikwmJson({ code: -1, data: null }),
       exist: new Response(JSON.stringify({ video_id: '740123' }), { status: 200 }),
       info: new Response(JSON.stringify({ download_link: 'https://v16.tokcdn.com/v.mp4' }), { status: 200 }),
-      stream: new Response(streamOf(downloadableBody()), { status: 200 }),
+      stream: new Response(streamOf(downloadableBody()), { status: 200, headers: { 'content-length': '12000' } }),
     });
     const result = await runDownloadTick(deps(state, r2, fetchImpl));
     expect(result.downloaded).toBe(1);
@@ -738,5 +795,98 @@ describe('Countik fallback', () => {
       [{ reason: 'countik_no_download_link' }, { stage: 'countik_resolve', reason: 'countik_no_download_link', detail: 'step=info' }],
     ];
     for (const [input, expected] of cases) expect(countikFailure(input)).toEqual(expected);
+  });
+});
+
+/** Fetch double routing the tikwm call and a scripted stream sequence
+ * (one entry per stream attempt; the last entry repeats). */
+function sequencedStreamFetch(
+  tikwm: Response,
+  streamScript: Array<Response | Error>,
+): { fetchImpl: FetchImpl; streamCalls: string[] } {
+  const streamCalls: string[] = [];
+  const fetchImpl = (async (url: string) => {
+    if (url === TIKWM_API_URL) return tikwm;
+    streamCalls.push(url);
+    const next = streamScript[Math.min(streamCalls.length - 1, streamScript.length - 1)];
+    if (next instanceof Error) throw next;
+    return next;
+  }) as unknown as FetchImpl;
+  return { fetchImpl, streamCalls };
+}
+
+describe('stream fixes (retry + known length + attribution)', () => {
+  it('retries a transient 525 inside one attempt and then downloads', async () => {
+    vi.useFakeTimers();
+    try {
+      const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+      const r2 = new FakeR2();
+      const body = downloadableBody();
+      const { fetchImpl, streamCalls } = sequencedStreamFetch(
+        tikwmJson({ code: 0, data: { play: 'https://cdn.example/v.mp4' } }),
+        [
+          new Response('no', { status: 525 }),
+          new Response('no', { status: 525 }),
+          new Response(streamOf(body), { status: 200, headers: { 'content-length': '12000' } }),
+        ],
+      );
+      const tick = runDownloadTick(deps(state, r2, fetchImpl));
+      await vi.advanceTimersByTimeAsync(10_000);
+      const result = await tick;
+      expect(result.downloaded).toBe(1);
+      expect(result.failed).toBe(0);
+      expect(streamCalls).toHaveLength(3);
+      expect(r2.objects.get('adu-buffer/cfg-1/reel-1.mp4')).toEqual(body);
+      expect(r2.putStreams).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('records resolver + host when a Countik stream 525 exhausts, and settles exactly once', async () => {
+    vi.useFakeTimers();
+    try {
+      const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+      const r2 = new FakeR2();
+      const { exist, info } = countikSuccess();
+      const { fetchImpl, streamCalls } = sequencedStreamFetch(
+        tikwmJson({ code: -1, data: null }),
+        [new Response('no', { status: 525 })],
+      );
+      // Route the Countik calls through the sequenced double: tikwm -1
+      // triggers the fallback, which needs exist/info answers.
+      const routed = (async (url: string, init?: RequestInit) => {
+        if (url === `${COUNTIK_VIDEO_BASE_URL}/video/exist`) return exist;
+        if (url.startsWith(`${COUNTIK_VIDEO_BASE_URL}/videoinfo/`)) return info;
+        return fetchImpl(url, init);
+      }) as unknown as FetchImpl;
+      const tick = runDownloadTick(deps(state, r2, routed));
+      await vi.advanceTimersByTimeAsync(10_000);
+      const result = await tick;
+      expect(result.failedReasons).toEqual({ 'stream_open:stream_http_status': 1 });
+      expect(state.recorded).toEqual([
+        { reelId: 'reel-1', failure: { stage: 'stream_open', reason: 'stream_http_status', detail: 'http_status=525; resolver=countik; host=v16.tokcdn.com' } },
+      ]);
+      // In-attempt retries never consume extra download_retries: the
+      // attempt settles exactly once.
+      expect(state.failed).toEqual(['reel-1']);
+      expect(streamCalls).toHaveLength(3);
+      expect(r2.puts).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('fails loud without attempting a put when Content-Length is absent', async () => {
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+    const r2 = new FakeR2();
+    const result = await runDownloadTick(
+      deps(state, r2, scriptedFetch(goodTikwm(), new Response(streamOf(downloadableBody()), { status: 200 }))),
+    );
+    expect(result.failedReasons).toEqual({ 'stream_open:stream_no_content_length': 1 });
+    expect(state.recorded).toEqual([
+      { reelId: 'reel-1', failure: { stage: 'stream_open', reason: 'stream_no_content_length', detail: 'resolver=tikwm; host=cdn.example' } },
+    ]);
+    expect(r2.puts).toEqual([]);
   });
 });

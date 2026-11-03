@@ -148,20 +148,36 @@ interface StreamOutcome {
  * SHA-256, enforces the 1 GiB cap, and feeds the audio-probe window.
  * Throws on cap breach, stream stall, or any read error; the caller then
  * deletes the partial object (best effort) and follows the failed path.
+ *
+ * The put goes through a FixedLengthStream declared with the response's
+ * Content-Length: workerd's R2 binding rejects a plain stream ("Provided
+ * readable stream must have a known length"), which is what the wrapped
+ * upload stream used to be. The declared length also makes a short
+ * stream fail loud instead of silently saving a truncated file — the
+ * pipe rejects when fewer (or more) bytes arrive than declared. The
+ * caller must pass the length it read from the response; there is no
+ * unknown-length fallback here by design.
  */
 export async function streamToR2(
   body: ReadableStream<Uint8Array>,
   r2: R2BucketLike,
   key: string,
-  opts?: { maxBytes?: number },
+  opts: { maxBytes?: number; expectedBytes: number },
 ): Promise<StreamOutcome> {
-  const cap = opts?.maxBytes ?? MAX_FILE_BYTES;
+  const cap = opts.maxBytes ?? MAX_FILE_BYTES;
   const reader = body.getReader();
   const hasher = new Sha256();
   const probeChunks: Uint8Array[] = [];
   let probeBytes = 0;
   let totalBytes = 0;
   let done = false;
+  // Set when the upload stream ends cleanly (used below to tell a
+  // genuinely short stream from a pipe aborted mid-stream by a put
+  // failure: only an ended stream with the wrong count is a length
+  // mismatch). A holder object, not a plain flag: assignments inside
+  // the pull closure must stay visible to the check below, and a
+  // narrowed literal flag would not.
+  const streamState = { ended: false };
   // Set when the upload stream itself errors (read failure, stall, cap
   // breach): r2.put then rejects with that same error, so the caller
   // must not misread it as an R2 failure. Only a put throw with no
@@ -184,6 +200,7 @@ export async function streamToR2(
       }
       if (result.done) {
         done = true;
+        streamState.ended = true;
         controller.close();
         return;
       }
@@ -208,12 +225,46 @@ export async function streamToR2(
     },
   });
 
+  // The upload stream feeds a FixedLengthStream, so the put always
+  // carries a known length. Drain both sides before deciding, with a
+  // fixed precedence that is race-free: a stream error (stall, cap,
+  // read failure) beats everything; a cleanly ended stream with the
+  // wrong count — or any overrun — is a length mismatch even if the
+  // put also rejected as a consequence; only then is a put throw an
+  // R2 failure. The put handler attaches immediately (and aborts the
+  // pipe on put failure, so a dead put does not buffer the whole file)
+  // so the put rejection is never unhandled while the pipe drains.
+  const fixed = new FixedLengthStream(opts.expectedBytes);
+  const putPromise = r2.put(key, fixed.readable, { httpMetadata: { contentType: CONTENT_TYPE_MP4 } });
+  const aborter = new AbortController();
+  void putPromise.then(
+    () => undefined,
+    () => aborter.abort(),
+  );
+  let pipeError: unknown;
+  let pipeFailed = false;
   try {
-    await r2.put(key, uploadStream, { httpMetadata: { contentType: CONTENT_TYPE_MP4 } });
+    await uploadStream.pipeTo(fixed.writable, { signal: aborter.signal });
   } catch (err) {
-    if (streamError !== undefined) throw streamError;
-    throw new R2PutError(err instanceof Error ? err.message : String(err));
+    pipeFailed = true;
+    pipeError = err;
   }
+  let putError: unknown;
+  let putFailed = false;
+  try {
+    await putPromise;
+  } catch (err) {
+    putFailed = true;
+    putError = err;
+  }
+  if (streamError !== undefined) throw streamError;
+  if ((streamState.ended || totalBytes > opts.expectedBytes) && totalBytes !== opts.expectedBytes) {
+    throw new Error(`stream delivered ${totalBytes} bytes, expected ${opts.expectedBytes}`);
+  }
+  if (putFailed) {
+    throw new R2PutError(putError instanceof Error ? putError.message : String(putError));
+  }
+  if (pipeFailed) throw pipeError;
   const digest = hasher.digest();
   const probeWindow = new Uint8Array(probeBytes);
   let offset = 0;
@@ -293,31 +344,65 @@ export function countikFailure(failure: CountikResolveFailure): DownloadFailure 
   }
 }
 
-export function streamOpenFailure(failure: StreamOpenFailure): DownloadFailure {
-  switch (failure.reason) {
-    case 'stream_fetch_error':
-      return { stage: 'stream_open', reason: 'stream_fetch_error', detail: truncateDetail(failure.detail) };
-    case 'stream_http_status':
-      return { stage: 'stream_open', reason: 'stream_http_status', detail: `http_status=${failure.status}` };
-    case 'stream_no_body':
-      return { stage: 'stream_open', reason: 'stream_no_body' };
+/** Hostname only — never the full stream URL, which may carry a
+ * signature. An unparsable URL records as 'unknown' rather than
+ * dropping the attribution. */
+function streamHost(streamUrl: string): string {
+  try {
+    return new URL(streamUrl).hostname;
+  } catch {
+    return 'unknown';
   }
 }
 
-export function uploadFailure(err: unknown): DownloadFailure {
+/** Resolver + host attribution for stream-stage reasons: without it a
+ * 525 row cannot say whether tikwm or Countik resolved it or which
+ * host failed, and the next diagnosis starts from inference again. */
+function streamAttribution(resolver: 'tikwm' | 'countik', streamUrl: string): string {
+  return `resolver=${resolver}; host=${streamHost(streamUrl)}`;
+}
+
+function withAttribution(
+  base: string | undefined,
+  resolver: 'tikwm' | 'countik',
+  streamUrl: string,
+): string {
+  return [base, streamAttribution(resolver, streamUrl)].filter(Boolean).join('; ');
+}
+
+export function streamOpenFailure(
+  failure: StreamOpenFailure,
+  resolver: 'tikwm' | 'countik',
+  streamUrl: string,
+): DownloadFailure {
+  switch (failure.reason) {
+    case 'stream_fetch_error':
+      return { stage: 'stream_open', reason: 'stream_fetch_error', detail: withAttribution(truncateDetail(failure.detail), resolver, streamUrl) };
+    case 'stream_http_status':
+      return { stage: 'stream_open', reason: 'stream_http_status', detail: withAttribution(`http_status=${failure.status}`, resolver, streamUrl) };
+    case 'stream_no_body':
+      return { stage: 'stream_open', reason: 'stream_no_body', detail: streamAttribution(resolver, streamUrl) };
+  }
+}
+
+export function uploadFailure(
+  err: unknown,
+  resolver: 'tikwm' | 'countik',
+  streamUrl: string,
+): DownloadFailure {
   if (err instanceof FileTooLargeError) {
-    return { stage: 'stream_upload', reason: 'file_too_large', detail: `cap_bytes=${err.capBytes}` };
+    return { stage: 'stream_upload', reason: 'file_too_large', detail: withAttribution(`cap_bytes=${err.capBytes}`, resolver, streamUrl) };
   }
   if (err instanceof StreamStalledError) {
-    return { stage: 'stream_upload', reason: 'stream_stalled', detail: `timeout_ms=${STREAM_CHUNK_TIMEOUT_MS}` };
+    return { stage: 'stream_upload', reason: 'stream_stalled', detail: withAttribution(`timeout_ms=${STREAM_CHUNK_TIMEOUT_MS}`, resolver, streamUrl) };
   }
   if (err instanceof R2PutError) {
-    return { stage: 'stream_upload', reason: 'r2_put_error', detail: truncateDetail(err.message) };
+    return { stage: 'stream_upload', reason: 'r2_put_error', detail: withAttribution(truncateDetail(err.message), resolver, streamUrl) };
   }
   return {
     stage: 'stream_upload',
     reason: 'stream_read_error',
-    detail: truncateDetail(err instanceof Error ? err.message : String(err)),
+    detail: withAttribution(truncateDetail(err instanceof Error ? err.message : String(err)), resolver, streamUrl),
   };
 }
 
@@ -353,15 +438,23 @@ async function processOne(deps: TickDeps, reel: ClaimedReel): Promise<ProcessOut
   // A Countik-resolved stream is a direct CDN link: no tikwm Referer.
   const opened = await openVideoStream(streamUrl, fetchImpl, resolver === 'tikwm' ? TIKWM_ORIGIN : null);
   if (!opened.ok) {
-    return { kind: 'failed', failure: streamOpenFailure(opened.failure) };
+    return { kind: 'failed', failure: streamOpenFailure(opened.failure, resolver, streamUrl) };
+  }
+  if (opened.contentLength === null) {
+    // Fail loud: without a declared length the R2 put would be
+    // rejected for an unknown-length stream, so never attempt it.
+    return {
+      kind: 'failed',
+      failure: { stage: 'stream_open', reason: 'stream_no_content_length', detail: streamAttribution(resolver, streamUrl) },
+    };
   }
   const key = r2ObjectKey(reel.configId, reel.reelId);
   let outcome: StreamOutcome;
   try {
-    outcome = await streamToR2(opened.body, r2, key);
+    outcome = await streamToR2(opened.body, r2, key, { expectedBytes: opened.contentLength });
   } catch (err) {
     await deleteBestEffort(r2, key, reel.reelId);
-    return { kind: 'failed', failure: uploadFailure(err) };
+    return { kind: 'failed', failure: uploadFailure(err, resolver, streamUrl) };
   }
   if (outcome.sizeBytes <= MIN_FILE_BYTES) {
     await deleteBestEffort(r2, key, reel.reelId);

@@ -48,8 +48,45 @@ export type StreamOpenFailure =
   | { reason: 'stream_no_body' };
 
 export type StreamOpenResult =
-  | { ok: true; body: ReadableStream<Uint8Array> }
+  | { ok: true; body: ReadableStream<Uint8Array>; contentLength: number | null }
   | { ok: false; failure: StreamOpenFailure };
+
+/** Stream-open retry policy, mirroring the mirror path's fetchWithRetry
+ * (apps/worker/src/fb-client.ts): 3 attempts, 1 s then 2 s backoff
+ * capped at 8 s. Retries cover exactly the transient class — a fetch
+ * throw (network/TLS edge failure, which is how a 525 can also surface)
+ * and HTTP 429/5xx (including the 525s seen from this egress). Any
+ * other status (notably 404: link gone) and a body-less 200 are
+ * deterministic and fail on the first attempt. When retries exhaust,
+ * the LAST failure is returned so the caller's existing error mapping
+ * applies unchanged — and because the retries happen inside one open,
+ * they never consume extra download_retries (the attempt still settles
+ * exactly once downstream). */
+export const STREAM_OPEN_MAX_ATTEMPTS = 3;
+export const STREAM_OPEN_BASE_DELAY_MS = 1000;
+export const STREAM_OPEN_MAX_DELAY_MS = 8000;
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function streamOpenDelayMs(attempt: number): number {
+  return Math.min(STREAM_OPEN_MAX_DELAY_MS, STREAM_OPEN_BASE_DELAY_MS * 2 ** (attempt - 1));
+}
+
+function isRetryableStreamStatus(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+/** The response's declared length, or null when it is absent, malformed,
+ * or non-positive. The caller fails loud on null: R2's put refuses an
+ * unknown-length stream, so an absent length must never reach it. */
+function parseContentLength(res: Response): number | null {
+  const raw = res.headers.get('content-length');
+  if (raw === null) return null;
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
 
 function isTimeout(err: unknown): boolean {
   // AbortSignal.timeout rejects with a DOMException named 'TimeoutError'.
@@ -145,6 +182,9 @@ export async function resolveTikwmStream(
  * The Referer is tikwm's origin for tikwm-resolved streams; a
  * Countik-resolved stream (a direct CDN link) sends no Referer —
  * passing null omits the header instead of misattributing the fetch.
+ * Transient failures retry inside this call (see
+ * STREAM_OPEN_MAX_ATTEMPTS); a success also carries the response's
+ * Content-Length, which the R2 upload needs as a known length.
  */
 export async function openVideoStream(
   streamUrl: string,
@@ -152,23 +192,34 @@ export async function openVideoStream(
   fetchImpl: FetchImpl = (input: RequestInfo | URL, init?: RequestInit) => fetch(input, init),
   referer: string | null = TIKWM_ORIGIN,
 ): Promise<StreamOpenResult> {
-  let res: Response;
-  try {
-    res = await fetchImpl(streamUrl, {
-      headers: {
-        'User-Agent': DESKTOP_CHROME_UA,
-        ...(referer ? { Referer: referer } : {}),
-      },
-      redirect: 'follow',
-    });
-  } catch (err) {
-    return { ok: false, failure: { reason: 'stream_fetch_error', detail: errorDetail(err) } };
+  for (let attempt = 1; ; attempt += 1) {
+    const lastAttempt = attempt >= STREAM_OPEN_MAX_ATTEMPTS;
+    let res: Response;
+    try {
+      res = await fetchImpl(streamUrl, {
+        headers: {
+          'User-Agent': DESKTOP_CHROME_UA,
+          ...(referer ? { Referer: referer } : {}),
+        },
+        redirect: 'follow',
+      });
+    } catch (err) {
+      if (lastAttempt) {
+        return { ok: false, failure: { reason: 'stream_fetch_error', detail: errorDetail(err) } };
+      }
+      await sleepMs(streamOpenDelayMs(attempt));
+      continue;
+    }
+    if (res.status !== 200) {
+      if (!lastAttempt && isRetryableStreamStatus(res.status)) {
+        await sleepMs(streamOpenDelayMs(attempt));
+        continue;
+      }
+      return { ok: false, failure: { reason: 'stream_http_status', status: res.status } };
+    }
+    if (!res.body) {
+      return { ok: false, failure: { reason: 'stream_no_body' } };
+    }
+    return { ok: true, body: res.body, contentLength: parseContentLength(res) };
   }
-  if (res.status !== 200) {
-    return { ok: false, failure: { reason: 'stream_http_status', status: res.status } };
-  }
-  if (!res.body) {
-    return { ok: false, failure: { reason: 'stream_no_body' } };
-  }
-  return { ok: true, body: res.body };
 }
