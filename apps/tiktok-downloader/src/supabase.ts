@@ -6,6 +6,7 @@
  */
 
 import type { FetchImpl } from './tikwm.js';
+import type { DownloadFailure } from './failure.js';
 
 export interface ClaimedReel {
   reelId: string;
@@ -169,6 +170,24 @@ export class SupabaseRpc {
       p_media_sha256: args.sha256,
       p_reel_caption: args.caption,
       p_media_url: args.mediaUrl,
+    });
+  }
+
+  /**
+   * Records the exact failure on the reel row (stage + reason + detail
+   * + attempt time) via the dedicated record RPC. Called BEFORE
+   * markDownloadFailed on each failure, so the reason survives even if
+   * the retry-accounting call itself fails.
+   */
+  async recordDownloadFailure(reelId: string, failure: DownloadFailure): Promise<void> {
+    await this.callRpc<void>('record_adu_reel_download_failure', {
+      p_reel_id: reelId,
+      p_failure: {
+        stage: failure.stage,
+        reason: failure.reason,
+        ...(failure.detail ? { detail: truncate(failure.detail) } : {}),
+        at: new Date().toISOString(),
+      },
     });
   }
 

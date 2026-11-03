@@ -10,38 +10,99 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status });
 }
 
+const VIDEO = 'https://www.tiktok.com/@u/video/1';
+
 describe('resolveTikwmStream', () => {
-  it('returns null on API non-200', async () => {
+  it('reports the HTTP status on API non-200', async () => {
     const fetchImpl = vi.fn(async () => new Response('err', { status: 500 })) as unknown as FetchImpl;
-    expect(await resolveTikwmStream('https://www.tiktok.com/@u/video/1', fetchImpl)).toBeNull();
+    expect(await resolveTikwmStream(VIDEO, fetchImpl)).toEqual({
+      ok: false,
+      failure: { reason: 'tikwm_api_http_status', status: 500 },
+    });
   });
 
-  it('returns null on bad code, missing data, or no stream URL', async () => {
-    for (const body of [
-      { code: 1, data: { play: 'https://cdn.example/v.mp4' } },
-      { code: 0 },
-      { code: 0, data: {} },
-      { code: 0, data: { title: 'x' } },
-    ]) {
+  it('reports the body code on code != 0', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ code: 11001, data: { play: 'https://cdn.example/v.mp4' } })) as unknown as FetchImpl;
+    expect(await resolveTikwmStream(VIDEO, fetchImpl)).toEqual({
+      ok: false,
+      failure: { reason: 'tikwm_api_body_code', code: '11001' },
+    });
+  });
+
+  it('reports missing code as body_code missing', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ data: { play: 'https://cdn.example/v.mp4' } })) as unknown as FetchImpl;
+    expect(await resolveTikwmStream(VIDEO, fetchImpl)).toEqual({
+      ok: false,
+      failure: { reason: 'tikwm_api_body_code', code: 'missing' },
+    });
+  });
+
+  it('reports missing data and missing stream URL distinctly', async () => {
+    for (const [body, reason] of [
+      [{ code: 0 }, 'tikwm_api_no_data'],
+      [{ code: 0, data: {} }, 'tikwm_no_stream_url'],
+      [{ code: 0, data: { title: 'x' } }, 'tikwm_no_stream_url'],
+    ] as const) {
       const fetchImpl = vi.fn(async () => jsonResponse(body)) as unknown as FetchImpl;
-      expect(await resolveTikwmStream('https://www.tiktok.com/@u/video/1', fetchImpl)).toBeNull();
+      expect(await resolveTikwmStream(VIDEO, fetchImpl)).toEqual({
+        ok: false,
+        failure: { reason },
+      });
     }
+  });
+
+  it('reports an unparsable body and a non-object body distinctly', async () => {
+    const badJson = vi.fn(async () => new Response('{not json', { status: 200 })) as unknown as FetchImpl;
+    expect(await resolveTikwmStream(VIDEO, badJson)).toEqual({
+      ok: false,
+      failure: { reason: 'tikwm_api_body_unparsable' },
+    });
+    const stringBody = vi.fn(async () => jsonResponse('nope')) as unknown as FetchImpl;
+    expect(await resolveTikwmStream(VIDEO, stringBody)).toEqual({
+      ok: false,
+      failure: { reason: 'tikwm_api_bad_body' },
+    });
+  });
+
+  it('reports a timeout distinctly from other fetch errors', async () => {
+    const timeoutErr = new Error('timed out');
+    timeoutErr.name = 'TimeoutError';
+    const timeoutImpl = vi.fn(async () => {
+      throw timeoutErr;
+    }) as unknown as FetchImpl;
+    expect(await resolveTikwmStream(VIDEO, timeoutImpl)).toEqual({
+      ok: false,
+      failure: { reason: 'tikwm_api_timeout' },
+    });
+    const netImpl = vi.fn(async () => {
+      throw new Error('network down');
+    }) as unknown as FetchImpl;
+    expect(await resolveTikwmStream(VIDEO, netImpl)).toEqual({
+      ok: false,
+      failure: { reason: 'tikwm_api_fetch_error', detail: 'network down' },
+    });
   });
 
   it('prefers hdplay over play and keeps the title', async () => {
     const fetchImpl = vi.fn(async () =>
       jsonResponse({ code: 0, data: { hdplay: 'https://cdn.example/hd.mp4', play: 'https://cdn.example/sd.mp4', title: 'Hi' } }),
     ) as unknown as FetchImpl;
-    const res = await resolveTikwmStream('https://www.tiktok.com/@u/video/1', fetchImpl);
-    expect(res).toEqual({ streamUrl: 'https://cdn.example/hd.mp4', rawTitle: 'Hi' });
+    expect(await resolveTikwmStream(VIDEO, fetchImpl)).toEqual({
+      ok: true,
+      streamUrl: 'https://cdn.example/hd.mp4',
+      rawTitle: 'Hi',
+    });
   });
 
   it('falls back to play and prefixes relative URLs', async () => {
     const fetchImpl = vi.fn(async () =>
       jsonResponse({ code: 0, data: { play: '/video/abc.mp4', title: null } }),
     ) as unknown as FetchImpl;
-    const res = await resolveTikwmStream('https://www.tiktok.com/@u/video/1', fetchImpl);
-    expect(res).toEqual({ streamUrl: 'https://www.tikwm.com/video/abc.mp4', rawTitle: null });
+    expect(await resolveTikwmStream(VIDEO, fetchImpl)).toEqual({
+      ok: true,
+      streamUrl: 'https://www.tikwm.com/video/abc.mp4',
+      rawTitle: null,
+    });
   });
 
   it('posts form data with hd=1 to the tikwm endpoint', async () => {
@@ -57,23 +118,39 @@ describe('resolveTikwmStream', () => {
     expect(params.get('url')).toBe('https://www.tiktok.com/@u/video/9');
     expect(params.get('hd')).toBe('1');
   });
-
-  it('returns null when fetch throws', async () => {
-    const fetchImpl = vi.fn(async () => {
-      throw new Error('network down');
-    }) as unknown as FetchImpl;
-    expect(await resolveTikwmStream('https://www.tiktok.com/@u/video/1', fetchImpl)).toBeNull();
-  });
 });
 
 describe('openVideoStream', () => {
-  it('returns null on non-200 and the body on 200', async () => {
+  it('reports the HTTP status on non-200 and the body on 200', async () => {
     const bad = vi.fn(async () => new Response('no', { status: 404 })) as unknown as FetchImpl;
-    expect(await openVideoStream('https://cdn.example/v.mp4', bad)).toBeNull();
+    expect(await openVideoStream('https://cdn.example/v.mp4', bad)).toEqual({
+      ok: false,
+      failure: { reason: 'stream_http_status', status: 404 },
+    });
     const body = new ReadableStream({ start(c) { c.enqueue(new Uint8Array([1, 2])); c.close(); } });
     const good = vi.fn(async () => new Response(body, { status: 200 })) as unknown as FetchImpl;
-    const stream = await openVideoStream('https://cdn.example/v.mp4', good);
-    expect(stream).not.toBeNull();
+    const opened = await openVideoStream('https://cdn.example/v.mp4', good);
+    expect(opened.ok).toBe(true);
+    if (opened.ok) expect(opened.body).toBe(body);
+  });
+
+  it('reports a fetch throw with its message', async () => {
+    const throwing = vi.fn(async () => {
+      throw new Error('conn reset');
+    }) as unknown as FetchImpl;
+    expect(await openVideoStream('https://cdn.example/v.mp4', throwing)).toEqual({
+      ok: false,
+      failure: { reason: 'stream_fetch_error', detail: 'conn reset' },
+    });
+  });
+
+  it('reports a 200 with no body', async () => {
+    // A Response constructed without a body has a null body in Node.
+    const noBody = vi.fn(async () => new Response(null, { status: 200 })) as unknown as FetchImpl;
+    expect(await openVideoStream('https://cdn.example/v.mp4', noBody)).toEqual({
+      ok: false,
+      failure: { reason: 'stream_no_body' },
+    });
   });
 });
 
@@ -91,7 +168,8 @@ describe('workerd fetch binding defaults', () => {
       ),
     );
     try {
-      await expect(resolveTikwmStream('https://www.tiktok.com/@u/video/1')).resolves.toEqual({
+      await expect(resolveTikwmStream(VIDEO)).resolves.toEqual({
+        ok: true,
         streamUrl: 'https://cdn.example/v.mp4',
         rawTitle: 'Hi',
       });
@@ -104,7 +182,8 @@ describe('workerd fetch binding defaults', () => {
     const body = new ReadableStream({ start(c) { c.enqueue(new Uint8Array([1, 2])); c.close(); } });
     vi.stubGlobal('fetch', vi.fn(async () => new Response(body, { status: 200 })));
     try {
-      await expect(openVideoStream('https://cdn.example/v.mp4')).resolves.not.toBeNull();
+      const opened = await openVideoStream('https://cdn.example/v.mp4');
+      expect(opened.ok).toBe(true);
     } finally {
       vi.unstubAllGlobals();
     }

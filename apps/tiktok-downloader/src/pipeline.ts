@@ -10,7 +10,11 @@
  * There is NO fallback anywhere in this file. Any failure settles the
  * reel through `mark_adu_reel_download_failed`, which applies the
  * existing retry rules (retries < 3 -> pending, at 3 -> download_failed,
- * > 50 lifetime failures -> config creator_suspended).
+ * > 50 lifetime failures -> config creator_suspended) — and is preceded
+ * by a `record_adu_reel_download_failure` call that records the exact
+ * failure (stage + reason + detail) on the reel row, so the next
+ * failure is diagnosable instead of just counted. Download semantics
+ * are unchanged; only observability was added.
  *
  * Exclusivity: this file only ever claims through
  * `claim_tiktok_buffer_downloads` (see supabase.ts) and refuses any
@@ -23,6 +27,11 @@ import { probeMp4Audio } from './mp4-audio.js';
 import type { SupabaseRpc, ClaimedReel } from './supabase.js';
 import { stripTrailingSlashes } from './supabase.js';
 import {
+  failureKey,
+  truncateDetail,
+  type DownloadFailure,
+} from './failure.js';
+import {
   resolveTikwmStream,
   openVideoStream,
   MIN_FILE_BYTES,
@@ -30,6 +39,8 @@ import {
   PROBE_WINDOW_BYTES,
   STREAM_CHUNK_TIMEOUT_MS,
   type FetchImpl,
+  type StreamOpenFailure,
+  type TikwmResolveFailure,
 } from './tikwm.js';
 
 /** Structural subset of the Cloudflare R2 binding used here (testable). */
@@ -46,20 +57,13 @@ export const CLAIM_LIMIT = 10;
 export const STALE_MINUTES = 40;
 export const CONTENT_TYPE_MP4 = 'video/mp4';
 
-export type FailReason =
-  | 'api'
-  | 'stream'
-  | 'upload'
-  | 'too_small'
-  | 'no_audio'
-  | 'settle_downloaded';
-
 export interface TickResult {
   resetCount: number;
   claimed: number;
   downloaded: number;
   failed: number;
-  failedReasons: Partial<Record<FailReason, number>>;
+  /** Counts keyed by `stage:reason` (detail varies per reel, so it is not a key). */
+  failedReasons: Record<string, number>;
   settleErrors: number;
 }
 
@@ -85,7 +89,18 @@ function log(event: string, fields: Record<string, unknown>): void {
   console.log(JSON.stringify({ event, ...fields }));
 }
 
-class StreamAbortedError extends Error {}
+/** The video stream stalled: no chunk within the per-chunk budget. */
+export class StreamStalledError extends Error {}
+
+/** The video stream breached the 1 GiB cap. */
+export class FileTooLargeError extends Error {
+  constructor(readonly capBytes: number) {
+    super(`file exceeds the ${capBytes} byte cap`);
+  }
+}
+
+/** The R2 binding itself rejected the put (distinct from a stream error). */
+export class R2PutError extends Error {}
 
 async function readWithTimeout(
   reader: ReadableStreamDefaultReader<Uint8Array>,
@@ -97,8 +112,14 @@ async function readWithTimeout(
       reader.read(),
       new Promise<never>((_resolve, reject) => {
         timer = setTimeout(() => {
+          // Reject FIRST, then cancel: cancelling resolves the pending
+          // read as done=true, and promise reactions queue in order, so
+          // a cancel-then-reject would let the done=true win the race
+          // and a stalled stream would silently look complete (partial
+          // bytes "downloaded", or a misleading too_small). Rejecting
+          // first guarantees the stall surfaces as an error.
+          reject(new StreamStalledError(`no chunk within ${timeoutMs} ms`));
           void reader.cancel().catch(() => undefined);
-          reject(new StreamAbortedError(`no chunk within ${timeoutMs} ms`));
         }, timeoutMs);
       }),
     ]);
@@ -132,6 +153,11 @@ export async function streamToR2(
   let probeBytes = 0;
   let totalBytes = 0;
   let done = false;
+  // Set when the upload stream itself errors (read failure, stall, cap
+  // breach): r2.put then rejects with that same error, so the caller
+  // must not misread it as an R2 failure. Only a put throw with no
+  // stream error is an R2 failure.
+  let streamError: unknown;
 
   const uploadStream = new ReadableStream<Uint8Array>({
     async pull(controller) {
@@ -143,6 +169,7 @@ export async function streamToR2(
       try {
         result = await readWithTimeout(reader, STREAM_CHUNK_TIMEOUT_MS);
       } catch (err) {
+        streamError = err;
         controller.error(err);
         return;
       }
@@ -154,9 +181,9 @@ export async function streamToR2(
       const chunk = result.value;
       totalBytes += chunk.length;
       if (totalBytes > cap) {
-        controller.error(
-          new StreamAbortedError(`file exceeds the ${cap} byte cap`),
-        );
+        const err = new FileTooLargeError(cap);
+        streamError = err;
+        controller.error(err);
         return;
       }
       hasher.update(chunk);
@@ -172,7 +199,12 @@ export async function streamToR2(
     },
   });
 
-  await r2.put(key, uploadStream, { httpMetadata: { contentType: CONTENT_TYPE_MP4 } });
+  try {
+    await r2.put(key, uploadStream, { httpMetadata: { contentType: CONTENT_TYPE_MP4 } });
+  } catch (err) {
+    if (streamError !== undefined) throw streamError;
+    throw new R2PutError(err instanceof Error ? err.message : String(err));
+  }
   const digest = hasher.digest();
   const probeWindow = new Uint8Array(probeBytes);
   let offset = 0;
@@ -198,39 +230,95 @@ async function deleteBestEffort(r2: R2BucketLike, key: string, reelId: string): 
   }
 }
 
-async function processOne(deps: TickDeps, reel: ClaimedReel): Promise<'downloaded' | FailReason> {
+type ProcessOutcome =
+  | { kind: 'downloaded' }
+  | { kind: 'settle_downloaded' }
+  | { kind: 'failed'; failure: DownloadFailure };
+
+/** Pure reason mappers, exported as a test seam (like streamToR2): the
+ * tick-level tests drive most of them end to end, but file_too_large
+ * cannot be driven through processOne without a >1 GiB stream, and the
+ * unexpected-error path needs a contract-violating dependency, so those
+ * are pinned here directly. */
+export function resolveFailure(failure: TikwmResolveFailure): DownloadFailure {
+  switch (failure.reason) {
+    case 'tikwm_api_timeout':
+      return { stage: 'tikwm_resolve', reason: 'tikwm_api_timeout' };
+    case 'tikwm_api_fetch_error':
+      return { stage: 'tikwm_resolve', reason: 'tikwm_api_fetch_error', detail: truncateDetail(failure.detail) };
+    case 'tikwm_api_http_status':
+      return { stage: 'tikwm_resolve', reason: 'tikwm_api_http_status', detail: `http_status=${failure.status}` };
+    case 'tikwm_api_body_unparsable':
+      return { stage: 'tikwm_resolve', reason: 'tikwm_api_body_unparsable' };
+    case 'tikwm_api_bad_body':
+      return { stage: 'tikwm_resolve', reason: 'tikwm_api_bad_body' };
+    case 'tikwm_api_body_code':
+      return { stage: 'tikwm_resolve', reason: 'tikwm_api_body_code', detail: `body_code=${failure.code}` };
+    case 'tikwm_api_no_data':
+      return { stage: 'tikwm_resolve', reason: 'tikwm_api_no_data' };
+    case 'tikwm_no_stream_url':
+      return { stage: 'tikwm_resolve', reason: 'tikwm_no_stream_url' };
+  }
+}
+
+export function streamOpenFailure(failure: StreamOpenFailure): DownloadFailure {
+  switch (failure.reason) {
+    case 'stream_fetch_error':
+      return { stage: 'stream_open', reason: 'stream_fetch_error', detail: truncateDetail(failure.detail) };
+    case 'stream_http_status':
+      return { stage: 'stream_open', reason: 'stream_http_status', detail: `http_status=${failure.status}` };
+    case 'stream_no_body':
+      return { stage: 'stream_open', reason: 'stream_no_body' };
+  }
+}
+
+export function uploadFailure(err: unknown): DownloadFailure {
+  if (err instanceof FileTooLargeError) {
+    return { stage: 'stream_upload', reason: 'file_too_large', detail: `cap_bytes=${err.capBytes}` };
+  }
+  if (err instanceof StreamStalledError) {
+    return { stage: 'stream_upload', reason: 'stream_stalled', detail: `timeout_ms=${STREAM_CHUNK_TIMEOUT_MS}` };
+  }
+  if (err instanceof R2PutError) {
+    return { stage: 'stream_upload', reason: 'r2_put_error', detail: truncateDetail(err.message) };
+  }
+  return {
+    stage: 'stream_upload',
+    reason: 'stream_read_error',
+    detail: truncateDetail(err instanceof Error ? err.message : String(err)),
+  };
+}
+
+async function processOne(deps: TickDeps, reel: ClaimedReel): Promise<ProcessOutcome> {
   const { supabase, r2, r2PublicUrl, fetchImpl } = deps;
   const videoUrl = tiktokVideoUrl(reel.sourceUsername, reel.sourceReelId);
   const resolved = await resolveTikwmStream(videoUrl, fetchImpl);
-  if (!resolved) {
-    return 'api';
+  if (!resolved.ok) {
+    return { kind: 'failed', failure: resolveFailure(resolved.failure) };
   }
-  const body = await openVideoStream(resolved.streamUrl, fetchImpl);
-  if (!body) {
-    return 'stream';
+  const opened = await openVideoStream(resolved.streamUrl, fetchImpl);
+  if (!opened.ok) {
+    return { kind: 'failed', failure: streamOpenFailure(opened.failure) };
   }
   const key = r2ObjectKey(reel.configId, reel.reelId);
   let outcome: StreamOutcome;
   try {
-    outcome = await streamToR2(body, r2, key);
+    outcome = await streamToR2(opened.body, r2, key);
   } catch (err) {
-    log('download_stream_failed', {
-      reelId: reel.reelId,
-      error: err instanceof Error ? err.message : String(err),
-    });
     await deleteBestEffort(r2, key, reel.reelId);
-    return 'upload';
+    return { kind: 'failed', failure: uploadFailure(err) };
   }
   if (outcome.sizeBytes <= MIN_FILE_BYTES) {
-    log('download_rejected', { reelId: reel.reelId, reason: 'too_small', sizeBytes: outcome.sizeBytes });
     await deleteBestEffort(r2, key, reel.reelId);
-    return 'too_small';
+    return {
+      kind: 'failed',
+      failure: { stage: 'size_check', reason: 'too_small', detail: `size_bytes=${outcome.sizeBytes}` },
+    };
   }
   const audio = probeMp4Audio(outcome.probeWindow);
   if (audio === 'no-audio') {
-    log('download_rejected', { reelId: reel.reelId, reason: 'no_audio' });
     await deleteBestEffort(r2, key, reel.reelId);
-    return 'no_audio';
+    return { kind: 'failed', failure: { stage: 'audio_check', reason: 'no_audio' } };
   }
   const caption = normalizeReelCaption(resolved.rawTitle ?? DEFAULT_REEL_CAPTION, reel.sourceReelId);
   try {
@@ -252,9 +340,9 @@ async function processOne(deps: TickDeps, reel: ClaimedReel): Promise<'downloade
       reelId: reel.reelId,
       error: err instanceof Error ? err.message : String(err),
     });
-    return 'settle_downloaded';
+    return { kind: 'settle_downloaded' };
   }
-  return 'downloaded';
+  return { kind: 'downloaded' };
 }
 
 export async function runDownloadTick(deps: TickDeps): Promise<TickResult> {
@@ -272,27 +360,49 @@ export async function runDownloadTick(deps: TickDeps): Promise<TickResult> {
   const claimed = await deps.supabase.claimTikTokDownloads(CLAIM_LIMIT);
   result.claimed = claimed.length;
   for (const reel of claimed) {
-    let outcome: 'downloaded' | FailReason;
+    let outcome: ProcessOutcome;
     try {
       outcome = await processOne(deps, reel);
     } catch (err) {
       // processOne is not expected to throw (all known failures map to a
       // reason), so an unexpected throw is logged loudly and the reel
-      // follows the failed path rather than stalling the tick.
+      // follows the failed path — with the throw recorded — rather than
+      // stalling the tick.
       log('download_unexpected_error', {
         reelId: reel.reelId,
         error: err instanceof Error ? err.message : String(err),
       });
-      outcome = 'upload';
+      outcome = {
+        kind: 'failed',
+        failure: {
+          stage: 'pipeline',
+          reason: 'unexpected_error',
+          detail: truncateDetail(err instanceof Error ? err.message : String(err)),
+        },
+      };
     }
-    if (outcome === 'downloaded') {
+    if (outcome.kind === 'downloaded') {
       result.downloaded += 1;
       log('download_ok', { reelId: reel.reelId });
-    } else if (outcome === 'settle_downloaded') {
+    } else if (outcome.kind === 'settle_downloaded') {
       result.settleErrors += 1;
     } else {
       result.failed += 1;
-      result.failedReasons[outcome] = (result.failedReasons[outcome] ?? 0) + 1;
+      const key = failureKey(outcome.failure);
+      result.failedReasons[key] = (result.failedReasons[key] ?? 0) + 1;
+      log('download_failed', { reelId: reel.reelId, ...outcome.failure });
+      // Record first: the reason must survive even if the retry
+      // accounting below fails. A record failure is loud (settle error)
+      // but never blocks the status transition.
+      try {
+        await deps.supabase.recordDownloadFailure(reel.reelId, outcome.failure);
+      } catch (err) {
+        log('record_failure_failed', {
+          reelId: reel.reelId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        result.settleErrors += 1;
+      }
       try {
         await deps.supabase.markDownloadFailed(reel.reelId);
       } catch (err) {
