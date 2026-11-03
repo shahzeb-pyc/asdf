@@ -53,7 +53,19 @@ export class SupabaseRpc {
   private readonly serviceKey: string;
   private readonly fetchImpl: FetchImpl;
 
-  constructor(supabaseUrl: string, serviceRoleKey: string, fetchImpl: FetchImpl = fetch) {
+  constructor(
+    supabaseUrl: string,
+    serviceRoleKey: string,
+    // Workerd brand-checks its native fetch: storing `fetch` (or
+    // `globalThis.fetch`) as an instance field and calling it as
+    // `this.fetchImpl(...)` binds `this` to this client, and workerd
+    // rejects that receiver with "Illegal invocation". Node/bun permit
+    // detached fetch, so tests never caught it — every tick died before
+    // reaching Supabase. The arrow wrapper calls fetch as a bare
+    // identifier, so the receiver is never the client. Do NOT
+    // "simplify" this back to `fetch` or `globalThis.fetch`.
+    fetchImpl: FetchImpl = (input: RequestInfo | URL, init?: RequestInit) => fetch(input, init),
+  ) {
     if (!supabaseUrl || !serviceRoleKey) {
       throw new Error('SupabaseRpc: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required');
     }

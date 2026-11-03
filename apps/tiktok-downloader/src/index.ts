@@ -52,7 +52,11 @@ export default {
       supabase: new SupabaseRpc(supabaseUrl, serviceKey),
       r2,
       r2PublicUrl,
-      fetchImpl: fetch,
+      // Workerd brand-check (see supabase.ts): never pass bare `fetch`
+      // here — the arrow wrapper calls it as a bare identifier, so
+      // workerd never sees a client receiver. Do NOT "simplify" this
+      // back to `fetch`.
+      fetchImpl: (input: RequestInfo | URL, init?: RequestInit) => fetch(input, init),
     });
     if (typeof ctx.waitUntil === 'function') {
       ctx.waitUntil(run);

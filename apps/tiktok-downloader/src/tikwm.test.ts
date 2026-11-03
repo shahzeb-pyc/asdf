@@ -76,3 +76,37 @@ describe('openVideoStream', () => {
     expect(stream).not.toBeNull();
   });
 });
+
+describe('workerd fetch binding defaults', () => {
+  // These defaults are only invoked when the caller omits fetchImpl —
+  // production always passes one explicitly, so without these tests the
+  // default arrows stay uncovered (which is what failed the SonarCloud
+  // new-code coverage gate). They also pin the wrapper shape: a bare
+  // global fetch read at call time, never a stored reference.
+  it('resolveTikwmStream uses the default wrapper', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse({ code: 0, data: { play: 'https://cdn.example/v.mp4', title: 'Hi' } }),
+      ),
+    );
+    try {
+      await expect(resolveTikwmStream('https://www.tiktok.com/@u/video/1')).resolves.toEqual({
+        streamUrl: 'https://cdn.example/v.mp4',
+        rawTitle: 'Hi',
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('openVideoStream uses the default wrapper', async () => {
+    const body = new ReadableStream({ start(c) { c.enqueue(new Uint8Array([1, 2])); c.close(); } });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(body, { status: 200 })));
+    try {
+      await expect(openVideoStream('https://cdn.example/v.mp4')).resolves.not.toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
