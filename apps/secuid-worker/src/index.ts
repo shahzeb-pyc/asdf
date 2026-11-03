@@ -66,6 +66,63 @@ function json(body: unknown, status: number): Response {
   });
 }
 
+type UpstreamFetchResult =
+  | { data: unknown }
+  | { error: 'UPSTREAM_TIMEOUT' | 'UPSTREAM_ERROR'; upstreamStatus?: number };
+
+/**
+ * One upstream fetch with timeout, shared by the sec_uid lookup
+ * and the proxy routes (they previously duplicated this block
+ * almost verbatim, which tripped Sonar's duplication gate).
+ * Returns the parsed JSON on success, or a fixed error class —
+ * never the upstream body, which may be a challenge page.
+ */
+async function fetchUpstreamJson(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  logPrefix: string,
+): Promise<UpstreamFetchResult> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+  let res: Response;
+  try {
+    res = await fetch(url, { ...init, signal: controller.signal });
+  } catch {
+    clearTimeout(timer);
+    // The timer is the only abort source for this signal, so an
+    // aborted signal here means the upstream hung past the timeout.
+    if (controller.signal.aborted) {
+      console.error(`${logPrefix} timed out`);
+      return { error: 'UPSTREAM_TIMEOUT' };
+    }
+    console.error(`${logPrefix} upstream fetch failed`);
+    return { error: 'UPSTREAM_ERROR' };
+  }
+  clearTimeout(timer);
+  if (!res.ok) {
+    console.error(`${logPrefix} upstream non-200`, res.status);
+    return { error: 'UPSTREAM_ERROR', upstreamStatus: res.status };
+  }
+  try {
+    return { data: await res.json() };
+  } catch {
+    console.error(`${logPrefix} upstream returned unparseable body`);
+    return { error: 'UPSTREAM_ERROR' };
+  }
+}
+
+/** Read a JSON request body, or null when it is absent/unparseable. */
+async function readJsonBody(request: Request): Promise<unknown> {
+  try {
+    return await request.json();
+  } catch {
+    return null;
+  }
+}
+
 export interface SecUidHandlerOptions {
   timeoutMs?: number;
 }
@@ -86,45 +143,26 @@ export async function handleSecUidRequest(
   }
 
   const timeoutMs = options.timeoutMs ?? COUNTIK_TIMEOUT_MS;
-  const controller = new AbortController();
-  const timer = setTimeout(() => {
-    controller.abort();
-  }, timeoutMs);
-
-  let res: Response;
-  try {
-    res = await fetch(`https://countik.com/api/exist/${encodeURIComponent(username)}`, {
+  const result = await fetchUpstreamJson(
+    `https://countik.com/api/exist/${encodeURIComponent(username)}`,
+    {
       headers: {
         'User-Agent': COUNTIK_UA,
         Accept: 'application/json, text/plain, */*',
       },
-      signal: controller.signal,
-    });
-  } catch {
-    clearTimeout(timer);
-    // The timer is the only abort source for this signal, so an aborted
-    // signal here means the upstream hung past the timeout.
-    if (controller.signal.aborted) {
-      console.error('secuid lookup timed out');
-      return json({ error: 'UPSTREAM_TIMEOUT' }, 502);
-    }
-    console.error('secuid lookup upstream fetch failed');
-    return json({ error: 'UPSTREAM_ERROR' }, 502);
+    },
+    timeoutMs,
+    'secuid lookup',
+  );
+  if ('error' in result) {
+    return json(
+      result.upstreamStatus !== undefined
+        ? { error: result.error, upstreamStatus: result.upstreamStatus }
+        : { error: result.error },
+      502,
+    );
   }
-  clearTimeout(timer);
-
-  if (!res.ok) {
-    console.error('secuid lookup upstream non-200', res.status);
-    return json({ error: 'UPSTREAM_ERROR', upstreamStatus: res.status }, 502);
-  }
-
-  let data: unknown;
-  try {
-    data = await res.json();
-  } catch {
-    console.error('secuid lookup upstream returned unparseable body');
-    return json({ error: 'UPSTREAM_ERROR' }, 502);
-  }
+  const data = result.data;
 
   const record = data as { status?: unknown; sec_uid?: unknown } | null;
   const secUid =
@@ -193,12 +231,7 @@ export async function handleProxyRequest(
     }
     upstreamUrl = `https://countik.com/api/analyze/?sec_user_id=${encodeURIComponent(secUid)}&username=${encodeURIComponent(username)}`;
   } else if (request.method === 'POST' && path === 'video/exist') {
-    let parsed: unknown = null;
-    try {
-      parsed = await request.json();
-    } catch {
-      parsed = null;
-    }
+    const parsed = await readJsonBody(request);
     const videoUrl = (parsed as { url?: unknown } | null)?.url;
     if (typeof videoUrl !== 'string') return json({ error: 'INVALID_REQUEST' }, 400);
     let host = '';
@@ -216,12 +249,7 @@ export async function handleProxyRequest(
     if (!VIDEO_ID_PATTERN.test(videoId)) return json({ error: 'INVALID_REQUEST' }, 400);
     upstreamUrl = `https://countik.com/api/videoinfo/${encodeURIComponent(videoId)}`;
   } else if (request.method === 'POST' && path === 'generateHashtags') {
-    let parsed: unknown = null;
-    try {
-      parsed = await request.json();
-    } catch {
-      parsed = null;
-    }
+    const parsed = await readJsonBody(request);
     const query = (parsed as { query?: unknown } | null)?.query;
     if (typeof query !== 'string' || !query.trim() || query.trim().length > 200) {
       return json({ error: 'INVALID_REQUEST' }, 400);
@@ -234,13 +262,9 @@ export async function handleProxyRequest(
   }
 
   const timeoutMs = options.timeoutMs ?? PROXY_TIMEOUT_MS;
-  const controller = new AbortController();
-  const timer = setTimeout(() => {
-    controller.abort();
-  }, timeoutMs);
-  let res: Response;
-  try {
-    res = await fetch(upstreamUrl, {
+  const result = await fetchUpstreamJson(
+    upstreamUrl,
+    {
       method,
       headers: {
         'User-Agent': COUNTIK_UA,
@@ -248,31 +272,19 @@ export async function handleProxyRequest(
         ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-      signal: controller.signal,
-    });
-  } catch {
-    clearTimeout(timer);
-    if (controller.signal.aborted) {
-      console.error('countik proxy timed out');
-      return json({ error: 'UPSTREAM_TIMEOUT' }, 502);
-    }
-    console.error('countik proxy upstream fetch failed');
-    return json({ error: 'UPSTREAM_ERROR' }, 502);
+    },
+    timeoutMs,
+    'countik proxy',
+  );
+  if ('error' in result) {
+    return json(
+      result.upstreamStatus !== undefined
+        ? { error: result.error, upstreamStatus: result.upstreamStatus }
+        : { error: result.error },
+      502,
+    );
   }
-  clearTimeout(timer);
-
-  if (!res.ok) {
-    console.error('countik proxy upstream non-200', res.status);
-    return json({ error: 'UPSTREAM_ERROR', upstreamStatus: res.status }, 502);
-  }
-  let data: unknown;
-  try {
-    data = await res.json();
-  } catch {
-    console.error('countik proxy upstream returned unparseable body');
-    return json({ error: 'UPSTREAM_ERROR' }, 502);
-  }
-  return json(data, 200);
+  return json(result.data, 200);
 }
 
 export interface SecUidWorkerEnv {

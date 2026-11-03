@@ -1290,7 +1290,15 @@ function countikEnv(name: string): string | undefined {
  */
 export function resolveCountikBaseUrl(): string {
   const proxy = countikEnv('COUNTIK_PROXY_URL');
-  if (proxy) return proxy.replace(/\/+$/, '');
+  if (proxy) {
+    // No regex strip here: Sonar flags /\/+$/ as a super-linear
+    // backtracking risk (the same smell that sent PR #152 back),
+    // and a loop over endsWith('/') is byte-identical on every
+    // input including empty and all-slashes strings.
+    let base = proxy;
+    while (base.endsWith('/')) base = base.slice(0, -1);
+    return base;
+  }
   return COUNTIK_BASE_URL;
 }
 
