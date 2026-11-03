@@ -1,3 +1,5 @@
+import { MIRROR_RESOLVE_ERROR_E01 } from './tikwmapi.js';
+
 /**
  * Facebook active-account restriction detection — the single source for
  * every feature that surfaces a Facebook publish failure.
@@ -100,11 +102,21 @@ export function isFacebookAccountRestricted(
  * renders unchanged, and the already-plain message passes through
  * untouched (it contains no "limited access" phrase). The raw detail
  * stays in the stored row and in server/worker logs for debugging.
+ *
+ * Same treatment for resolve failures recorded before the opaque
+ * error codes shipped (owner decision 2026-11-03): a stored string
+ * carrying a provider's daily-cap wording renders as the opaque
+ * friendly message (E01), so legacy rows never show provider
+ * wording either. The code text itself contains neither "free"
+ * nor "limit" — the mapping lives here, not on screen.
  */
 export function mapStoredMirrorErrorToDisplay(
   error: string | null | undefined
 ): string | null {
   if (!error) return error ?? null;
+  if (/free api limit/i.test(error)) {
+    return MIRROR_RESOLVE_ERROR_E01;
+  }
   return isFacebookAccountRestricted({ message: error })
     ? MIRROR_FACEBOOK_RESTRICTED_MESSAGE
     : error;

@@ -5,6 +5,7 @@ import {
   mapStoredMirrorErrorToDisplay,
   MIRROR_FACEBOOK_RESTRICTED_MESSAGE,
 } from '../src/domain/facebook-restriction.js';
+import { MIRROR_RESOLVE_ERROR_E01 } from '../src/domain/tikwmapi.js';
 
 describe('isFacebookAccountRestricted', () => {
   it('matches both known restriction subcodes under Graph code 1', () => {
@@ -107,5 +108,16 @@ describe('mapStoredMirrorErrorToDisplay', () => {
     expect(mapStoredMirrorErrorToDisplay(null)).toBeNull();
     expect(mapStoredMirrorErrorToDisplay(undefined)).toBeNull();
     expect(mapStoredMirrorErrorToDisplay('')).toBe('');
+  });
+
+  it('maps a legacy stored raw daily-cap resolve error to the opaque E01 message', () => {
+    expect(
+      mapStoredMirrorErrorToDisplay(
+        'Could not resolve that TikTok video: Free Api Limit: 10000 request/ 1 day.'
+      )
+    ).toBe(MIRROR_RESOLVE_ERROR_E01);
+    expect(mapStoredMirrorErrorToDisplay(MIRROR_RESOLVE_ERROR_E01)).toBe(
+      MIRROR_RESOLVE_ERROR_E01
+    );
   });
 });
