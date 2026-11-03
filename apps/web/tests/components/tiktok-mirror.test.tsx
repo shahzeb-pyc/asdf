@@ -1,8 +1,9 @@
 /** @vitest-environment jsdom */
 /**
  * TikTok mirrors UI: list renders cards (or the empty state),
- * the dedicated view renders Dashboard + Insights tabs, and the
- * dashboard shows the linked page, status, and history.
+ * the dedicated view renders Dashboard + History + Insights tabs, and
+ * the dashboard shows the linked page, status, and totals, while the
+ * history list (with Retry) lives on the History tab.
  * (Insights internals are pre-existing; the panel is stubbed here
  * so this test pins the tab wiring, not the insights fetch.)
  */
@@ -199,7 +200,7 @@ describe('TikTok dedicated view', () => {
     ],
   });
 
-  it('renders Dashboard + Insights tabs and the target-first header', async () => {
+  it('renders Dashboard + History + Insights tabs and the target-first header', async () => {
     apiGetMock.mockResolvedValue(detailResponse());
     renderWithQuery(
       <TikTokDetailShell subdomain="acme" mirrorId="44444444-4444-4444-a444-444444444444" />
@@ -207,6 +208,7 @@ describe('TikTok dedicated view', () => {
     expect(await screen.findByTestId('tiktok-detail-page')).toBeTruthy();
     expect(screen.getByTestId('tiktok-detail-tabs')).toBeTruthy();
     expect(screen.getByText('Dashboard')).toBeTruthy();
+    expect(screen.getByText('History')).toBeTruthy();
     expect(screen.getByText('Insights')).toBeTruthy();
     // Target-first header (Pages-style): the page is the heading,
     // the creator is only the muted source line, and the old
@@ -232,8 +234,11 @@ describe('TikTok dedicated view', () => {
     expect(timing).toContain('Last checked:');
     expect(timing).toContain('Checks hourly');
     // No all-time totals in the header — those belong in the
-    // Dashboard tab in a later job, not here.
+    // Dashboard tab, not here.
     expect(screen.queryByTestId('tiktok-mirror-post-counts')).toBeNull();
+    // History lives on the History tab now, not on Dashboard.
+    const user = userEvent.setup();
+    await user.click(screen.getByText('History'));
     expect(screen.getByText('Mirror history')).toBeTruthy();
     expect(screen.getByText('My exact caption')).toBeTruthy();
   });
@@ -400,6 +405,9 @@ describe('TikTok dedicated view', () => {
       <TikTokDetailShell subdomain="acme" mirrorId="44444444-4444-4444-a444-444444444444" />
     );
     expect(await screen.findByTestId('tiktok-detail-page')).toBeTruthy();
+    // The post row lives on the History tab, not on Dashboard.
+    const user = userEvent.setup();
+    await user.click(screen.getByText('History'));
     expect(screen.getByText(/can't post right now/)).toBeTruthy();
     expect(screen.queryByText(raw)).toBeNull();
   });
@@ -439,9 +447,17 @@ describe('TikTok mirror history retry button', () => {
   const renderDetail = () =>
     renderWithQuery(<TikTokDetailShell subdomain="acme" mirrorId={MIRROR_ID} />);
 
+  // Retry buttons live on the History tab, not on Dashboard.
+  const openHistory = async () => {
+    const user = userEvent.setup();
+    await screen.findByTestId('tiktok-detail-page');
+    await user.click(screen.getByText('History'));
+  };
+
   it('shows Retry on failed or pending posts, and only for Facebook/Instagram targets', async () => {
     apiGetMock.mockResolvedValue(retryDetailResponse());
     const first = renderDetail();
+    await openHistory();
     expect(
       await screen.findByTestId(`tiktok-retry-btn-${POST_ID}`)
     ).toBeTruthy();
@@ -450,12 +466,14 @@ describe('TikTok mirror history retry button', () => {
     apiGetMock.mockResolvedValue(
       retryDetailResponse({ status: 'posted', published_post_id: 'fb_post_1', error: null })
     );
-    renderDetail();
-    await screen.findByTestId('tiktok-detail-page');
+    const posted = renderDetail();
+    await openHistory();
     expect(screen.queryByTestId(`tiktok-retry-btn-${POST_ID}`)).toBeNull();
+    posted.unmount();
 
     apiGetMock.mockResolvedValue(retryDetailResponse({ status: 'failed' }));
     const failed = renderDetail();
+    await openHistory();
     expect(
       await screen.findByTestId(`tiktok-retry-btn-${POST_ID}`)
     ).toBeTruthy();
@@ -467,6 +485,7 @@ describe('TikTok mirror history retry button', () => {
       retryDetailResponse({}, { targetPlatform: 'instagram' })
     );
     const first = renderDetail();
+    await openHistory();
     expect(
       await screen.findByTestId(`tiktok-retry-btn-${POST_ID}`)
     ).toBeTruthy();
@@ -476,7 +495,7 @@ describe('TikTok mirror history retry button', () => {
       retryDetailResponse({}, { targetPlatform: 'threads' })
     );
     renderDetail();
-    await screen.findByTestId('tiktok-detail-page');
+    await openHistory();
     expect(screen.queryByTestId(`tiktok-retry-btn-${POST_ID}`)).toBeNull();
   });
 
@@ -487,6 +506,7 @@ describe('TikTok mirror history retry button', () => {
       post: { id: POST_ID, status: 'posted', publishedPostId: 'fb_post_999', error: null },
     });
     renderDetail();
+    await openHistory();
     const button = await screen.findByTestId(`tiktok-retry-btn-${POST_ID}`);
     await user.click(button);
     await waitFor(() =>
@@ -510,6 +530,7 @@ describe('TikTok mirror history retry button', () => {
         })
     );
     renderDetail();
+    await openHistory();
     const button = await screen.findByTestId(`tiktok-retry-btn-${POST_ID}`);
     await user.click(button);
     await waitFor(() => expect(button).toHaveProperty('disabled', true));
@@ -528,6 +549,7 @@ describe('TikTok mirror history retry button', () => {
       post: { id: POST_ID, status: 'failed', publishedPostId: null, error: 'Facebook rejected this reel.' },
     });
     renderDetail();
+    await openHistory();
     const button = await screen.findByTestId(`tiktok-retry-btn-${POST_ID}`);
     await user.click(button);
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1));
