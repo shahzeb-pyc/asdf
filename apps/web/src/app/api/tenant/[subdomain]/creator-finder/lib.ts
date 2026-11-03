@@ -8,6 +8,7 @@ import {
   savedCreatorFromRow,
   savedCreatorUpsertRow,
   type Creator,
+  type CreatorEnrichment,
   type SavedCreator,
   type SavedCreatorSource,
   type SessionPayload,
@@ -134,7 +135,9 @@ export async function saveCreatorsToDb(
     const handles = [...new Set(creators.map((creator) => creator.handle))];
     const { data: existingRows, error: readError } = await supabase
       .from(SAVED_CREATORS_TABLE)
-      .select('handle, follower_count, verified')
+      .select(
+        'handle, follower_count, verified, bio, countik_enriched, countik_follower_count, following_count, hearts_count, video_count, countik_verified, engagement_total, engagement_likes, engagement_comments, engagement_shares, average_views, average_likes, average_comments, average_shares, hashtags, mentions',
+      )
       .eq('workspace_id', workspaceId)
       .eq('user_id', userId)
       .in('handle', handles);
@@ -144,15 +147,19 @@ export async function saveCreatorsToDb(
     }
     const existingByHandle = new Map<
       string,
-      { followerCount?: number | undefined; verified?: boolean | undefined }
+      {
+        followerCount?: number | undefined;
+        verified?: boolean | undefined;
+        enrichment?: CreatorEnrichment | null | undefined;
+      }
     >();
     for (const row of existingRows ?? []) {
-      const record = row as {
-        handle?: unknown;
-        follower_count?: unknown;
-        verified?: unknown;
-      };
+      const record = row as Record<string, unknown>;
       if (typeof record.handle !== 'string') continue;
+      // Rebuild the stored enrichment through the same row
+      // mapping the Saved list uses, so a re-save without fresh
+      // enrichment keeps exactly what was stored before.
+      const stored = savedCreatorFromRow(record);
       existingByHandle.set(record.handle, {
         followerCount:
           typeof record.follower_count === 'number'
@@ -160,6 +167,7 @@ export async function saveCreatorsToDb(
             : undefined,
         verified:
           typeof record.verified === 'boolean' ? record.verified : undefined,
+        enrichment: stored?.enrichment ?? null,
       });
     }
     const savedAt = new Date().toISOString();

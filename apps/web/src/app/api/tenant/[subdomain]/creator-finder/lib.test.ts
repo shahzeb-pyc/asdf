@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { listSavedCreators } from './lib';
+import { listSavedCreators, saveCreatorsToDb } from './lib';
 
 /**
  * listSavedCreators paged fetch (verification SEND BACK B1).
@@ -139,5 +139,116 @@ describe('listSavedCreators paged fetch', () => {
     } finally {
       consoleSpy.mockRestore();
     }
+  });
+});
+
+describe('saveCreatorsToDb enrichment merge', () => {
+  /** Minimal fake for the save read + upsert chains. */
+  class SaveFake {
+    public upserted: Record<string, unknown>[] = [];
+
+    public constructor(
+      private readonly existing: Record<string, unknown>[],
+    ) {}
+
+    public from(): SaveFake {
+      return this;
+    }
+
+    public select(): SaveFake {
+      return this;
+    }
+
+    public eq(): SaveFake {
+      return this;
+    }
+
+    public async in(): Promise<{ data: unknown[]; error: null }> {
+      return { data: this.existing, error: null };
+    }
+
+    public async upsert(
+      rows: Record<string, unknown>[],
+    ): Promise<{ error: null }> {
+      this.upserted = rows;
+      return { error: null };
+    }
+  }
+
+  const storedRow = {
+    ...makeRow(0),
+    bio: 'Stored bio',
+    countik_enriched: true,
+    countik_follower_count: 100,
+    following_count: 10,
+    hearts_count: 20,
+    video_count: 30,
+    countik_verified: false,
+    engagement_total: 5,
+    engagement_likes: 4,
+    engagement_comments: 0.5,
+    engagement_shares: 0.5,
+    average_views: 1000,
+    average_likes: 100,
+    average_comments: 10,
+    average_shares: 5,
+    hashtags: ['stored'],
+    mentions: [],
+  };
+
+  it('keeps stored enrichment when the new save has none', async () => {
+    const fake = new SaveFake([storedRow]);
+    const ok = await saveCreatorsToDb(
+      fake as unknown as SupabaseClient,
+      'workspace-1',
+      'user-1',
+      [
+        {
+          handle: 'user0',
+          displayName: 'User 0',
+          avatarUrl: null,
+          latestVideoTitle: null,
+          latestVideoCover: null,
+          profileUrl: 'https://www.tiktok.com/@user0',
+        },
+      ],
+      'trending',
+      'PK',
+    );
+    expect(ok).toBe(true);
+    expect(fake.upserted[0]?.bio).toBe('Stored bio');
+    expect(fake.upserted[0]?.countik_enriched).toBe(true);
+    expect(fake.upserted[0]?.hashtags).toEqual(['stored']);
+  });
+
+  it('replaces stored enrichment wholesale when the new save has fresh data', async () => {
+    const fake = new SaveFake([storedRow]);
+    const ok = await saveCreatorsToDb(
+      fake as unknown as SupabaseClient,
+      'workspace-1',
+      'user-1',
+      [
+        {
+          handle: 'user0',
+          displayName: 'User 0',
+          avatarUrl: null,
+          latestVideoTitle: null,
+          latestVideoCover: null,
+          profileUrl: 'https://www.tiktok.com/@user0',
+          enrichment: {
+            bio: 'Fresh bio',
+            followingCount: 99,
+            hashtags: ['fresh'],
+            mentions: [],
+          },
+        },
+      ],
+      'trending',
+      'PK',
+    );
+    expect(ok).toBe(true);
+    expect(fake.upserted[0]?.bio).toBe('Fresh bio');
+    expect(fake.upserted[0]?.following_count).toBe(99);
+    expect(fake.upserted[0]?.hashtags).toEqual(['fresh']);
   });
 });

@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import {
   fetchCreatorsByKeyword,
+  enrichCreators,
   NicheResponseSchema,
   NicheSearchFiltersQuerySchema,
 } from '@fbuploadpro/contracts';
@@ -72,6 +73,13 @@ export async function GET(
           : undefined,
       },
     });
+    // Countik enrichment, awaited before responding or saving:
+    // a search shows NO cards until every creator's enrichment
+    // is back (wait-for-all), and Saved stores the enriched data
+    // as it was at search time. Per-creator Countik failures are
+    // isolated inside enrichCreators and never fail the search.
+    const enrichedCreators = await enrichCreators(result.creators);
+    const enrichedResult = { ...result, creators: enrichedCreators };
     // Auto-save: results still render if the save fails; the
     // response carries saveFailed so the page warns visibly.
     let saveFailed = false;
@@ -89,7 +97,7 @@ export async function GET(
           supabase,
           workspaceId,
           session.userId,
-          result.creators,
+          enrichedResult.creators,
           'niche',
           result.keyword,
         ));
@@ -98,7 +106,7 @@ export async function GET(
       saveFailed = true;
     }
     return NextResponse.json(
-      NicheResponseSchema.parse({ ...result, saveFailed }),
+      NicheResponseSchema.parse({ ...enrichedResult, saveFailed }),
     );
   } catch (err) {
     return (

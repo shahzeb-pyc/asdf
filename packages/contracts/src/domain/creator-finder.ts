@@ -102,6 +102,39 @@ export function parseCreatorFinderKeys(
   return keys;
 }
 
+/**
+ * Countik user data for one creator, as saved at search time.
+ * Every field is optional except bio/hashtags/mentions defaults:
+ * Countik responses are untrusted and field shapes vary, so a
+ * missing field is omitted, never fabricated — the card renders
+ * only the groups that actually carry a value. `verified` here
+ * comes ONLY from the analyze response's author.verified: the
+ * exist response's verified field is known-unreliable and is
+ * never read. Engagement rates are stored exactly as Countik
+ * returns them (percent or fraction); the card normalises for
+ * display (a value in (0, 1] renders as a percent).
+ */
+export const CreatorEnrichmentSchema = z.object({
+  bio: z.string().nullable(),
+  followerCount: z.number().int().nonnegative().optional(),
+  followingCount: z.number().int().nonnegative().optional(),
+  heartsCount: z.number().int().nonnegative().optional(),
+  videoCount: z.number().int().nonnegative().optional(),
+  /** From analyze author.verified only. Absent means unknown. */
+  verified: z.boolean().optional(),
+  engagementTotal: z.number().nonnegative().optional(),
+  engagementLikes: z.number().nonnegative().optional(),
+  engagementComments: z.number().nonnegative().optional(),
+  engagementShares: z.number().nonnegative().optional(),
+  averageViews: z.number().int().nonnegative().optional(),
+  averageLikes: z.number().int().nonnegative().optional(),
+  averageComments: z.number().int().nonnegative().optional(),
+  averageShares: z.number().int().nonnegative().optional(),
+  hashtags: z.array(z.string()),
+  mentions: z.array(z.string()),
+});
+export type CreatorEnrichment = z.infer<typeof CreatorEnrichmentSchema>;
+
 export const CreatorSchema = z.object({
   handle: z.string().min(1),
   displayName: z.string().nullable(),
@@ -113,6 +146,22 @@ export const CreatorSchema = z.object({
   followerCount: z.number().int().nonnegative().optional(),
   /** Similar sources only; absent for trending/niche creators. */
   verified: z.boolean().optional(),
+  /**
+   * Countik enrichment for this creator, or null when Countik
+   * had no data for them. Absent (undefined) means the creator
+   * predates enrichment entirely (an old saved row) — the card
+   * renders it as it always did. Present-but-empty enrichment
+   * (countik_enriched in the database) still counts as enriched.
+   */
+  enrichment: CreatorEnrichmentSchema.nullable().optional(),
+  /**
+   * True when this search's Countik enrichment failed for this
+   * creator. Search responses only — never persisted: the Saved
+   * tab derives the same rendering from the stored row (stored
+   * enrichment absent + no TikWM follower/verified = no-data
+   * variant; stored TikWM fields present = fallback rendering).
+   */
+  countikUnavailable: z.boolean().optional(),
 });
 export type Creator = z.infer<typeof CreatorSchema>;
 
@@ -1189,6 +1238,491 @@ export async function fetchSimilarCreators(
 }
 
 /**
+ * Countik user-data API — server-side only, never browser-direct,
+ * no key, no cookie. Discovery stays on TikWM; Countik enriches
+ * user data only. Verified endpoints:
+ * - GET https://countik.com/api/exist/<username> — flat fields
+ *   including sec_uid. Its verified field is UNRELIABLE and is
+ *   never read; the tick comes only from analyze author.verified.
+ * - GET https://countik.com/api/analyze/?sec_user_id=<sec_uid>
+ *   &username=<username> — author.verified (the tick source),
+ *   engagement_rates, performance, hashtags, mentions.
+ * Enrichment is 2 calls per creator, no cache, no Countik cap
+ * (owner-confirmed cost). A per-creator failure never fails the
+ * search: enrichCreators marks that creator countikUnavailable.
+ * Countik responses are untrusted: every field is picked
+ * defensively from known variants, and a missing field is
+ * omitted, never fabricated.
+ */
+export const COUNTIK_BASE_URL = 'https://countik.com/api';
+const COUNTIK_TIMEOUT_MS = 30_000;
+/** Countik enrichment runs at most this many creators at once:
+ * a Similar search can return hundreds of creators, and firing
+ * 2 calls per creator all at once would exhaust sockets. This
+ * bounds concurrency only — it caps no call count. */
+const COUNTIK_ENRICH_CONCURRENCY = 20;
+
+export class CountikError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CountikError';
+  }
+}
+
+type CountikFetchFn = typeof fetch;
+
+async function fetchCountikJson(
+  url: string,
+  options: {
+    fetchFn: CountikFetchFn;
+    method?: 'GET' | 'POST' | undefined;
+    body?: unknown | undefined;
+  },
+): Promise<unknown> {
+  let res: Response;
+  try {
+    res = await options.fetchFn(url, {
+      signal: AbortSignal.timeout(COUNTIK_TIMEOUT_MS),
+      method: options.method ?? 'GET',
+      headers: {
+        Accept: 'application/json',
+        ...(options.body !== undefined
+          ? { 'Content-Type': 'application/json' }
+          : {}),
+      },
+      ...(options.body !== undefined
+        ? { body: JSON.stringify(options.body) }
+        : {}),
+    });
+  } catch {
+    throw new CountikError(
+      'Countik could not be reached. Please try again.',
+    );
+  }
+  let body: unknown = null;
+  try {
+    body = await res.json();
+  } catch {
+    body = null;
+  }
+  if (!res.ok) {
+    const reason =
+      asString(asRecord(body)?.message) ??
+      asString(asRecord(body)?.error) ??
+      asString(asRecord(body)?.detail);
+    throw new CountikError(
+      reason ?? 'Countik could not complete this request. Please try again.',
+    );
+  }
+  return body;
+}
+
+/** First non-empty string among the record's candidate keys. */
+function pickString(
+  record: Record<string, unknown> | null,
+  keys: string[],
+): string | null {
+  if (!record) return null;
+  for (const key of keys) {
+    const value = asString(record[key]);
+    if (value) return value;
+  }
+  return null;
+}
+
+/** First usable non-negative number among candidate keys. */
+function pickCountikNumber(
+  record: Record<string, unknown> | null,
+  keys: string[],
+): number | undefined {
+  if (!record) return undefined;
+  for (const key of keys) {
+    const raw = record[key];
+    if (typeof raw === 'number' && Number.isFinite(raw) && raw >= 0) {
+      return raw;
+    }
+    if (typeof raw === 'string' && /^\d+(\.\d+)?$/.test(raw.trim())) {
+      return Number(raw.trim());
+    }
+  }
+  return undefined;
+}
+
+/**
+ * String list from an array of strings or of objects carrying a
+ * name-like field. A leading # (hashtags) or @ (mentions) is
+ * stripped so stored tags are bare; the UI re-adds the marker.
+ * Deduplicated case-insensitively, first-appearance order kept.
+ */
+function pickTagList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const tags: string[] = [];
+  for (const item of value) {
+    const raw =
+      typeof item === 'string'
+        ? item
+        : pickString(asRecord(item), [
+            'hashtag',
+            'name',
+            'tag',
+            'title',
+            'username',
+            'unique_id',
+            'text',
+          ]);
+    if (!raw) continue;
+    const tag = raw.trim().replace(/^[#@]/, '');
+    if (!tag) continue;
+    const key = tag.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    tags.push(tag);
+  }
+  return tags;
+}
+
+/** Unwrap a Countik body: {data: {...}} or the flat object itself. */
+function countikData(body: unknown): Record<string, unknown> | null {
+  const root = asRecord(body);
+  if (!root) return null;
+  return asRecord(root.data) ?? root;
+}
+
+export interface CountikCallOptions {
+  fetchFn?: CountikFetchFn | undefined;
+}
+
+/**
+ * Enrich one creator via exist → analyze. Throws CountikError
+ * when either call fails or the shape is unusable; callers that
+ * enrich a list catch per creator (see enrichCreators).
+ */
+export async function fetchCountikEnrichment(
+  handle: string,
+  options: CountikCallOptions = {},
+): Promise<CreatorEnrichment> {
+  const fetchFn = options.fetchFn ?? fetch;
+  const cleanHandle = handle.trim().replace(/^@+/, '');
+  if (!cleanHandle) {
+    throw new CountikError('Countik data is unavailable for this creator.');
+  }
+  const existBody = await fetchCountikJson(
+    `${COUNTIK_BASE_URL}/exist/${encodeURIComponent(cleanHandle)}`,
+    { fetchFn },
+  );
+  const exist = countikData(existBody);
+  // NOTE: exist.verified is deliberately never read — it is
+  // unreliable. Only analyze author.verified feeds the tick.
+  const secUid = pickString(exist, ['sec_uid', 'secUid', 'sec_user_id']);
+  if (!secUid) {
+    throw new CountikError('Countik data is unavailable for this creator.');
+  }
+  const analyzeBody = await fetchCountikJson(
+    `${COUNTIK_BASE_URL}/analyze/?sec_user_id=${encodeURIComponent(secUid)}&username=${encodeURIComponent(cleanHandle)}`,
+    { fetchFn },
+  );
+  const data = countikData(analyzeBody);
+  if (!data) {
+    throw new CountikError('Countik data is unavailable for this creator.');
+  }
+  const author = asRecord(data.author) ?? data;
+  const rates = asRecord(data.engagement_rates) ?? asRecord(data.engagementRates);
+  const performance = asRecord(data.performance);
+  const enrichment: CreatorEnrichment = {
+    bio: pickString(author, ['signature', 'bio', 'description']),
+    hashtags: pickTagList(data.hashtags),
+    mentions: pickTagList(data.mentions),
+  };
+  const followerCount = pickCountikNumber(author, [
+    'follower_count',
+    'followerCount',
+    'followers',
+  ]);
+  if (followerCount !== undefined) {
+    enrichment.followerCount = Math.trunc(followerCount);
+  }
+  const followingCount = pickCountikNumber(author, [
+    'following_count',
+    'followingCount',
+    'following',
+  ]);
+  if (followingCount !== undefined) {
+    enrichment.followingCount = Math.trunc(followingCount);
+  }
+  const heartsCount = pickCountikNumber(author, [
+    'total_heart',
+    'heart_count',
+    'heartCount',
+    'hearts',
+  ]);
+  if (heartsCount !== undefined) enrichment.heartsCount = Math.trunc(heartsCount);
+  const videoCount = pickCountikNumber(author, [
+    'video_count',
+    'videoCount',
+    'videos',
+  ]);
+  if (videoCount !== undefined) enrichment.videoCount = Math.trunc(videoCount);
+  // The ONLY verified source: analyze author.verified, boolean only.
+  if (typeof author.verified === 'boolean') {
+    enrichment.verified = author.verified;
+  }
+  const engagementTotal = pickCountikNumber(rates, [
+    'total',
+    'total_rate',
+    'engagement_rate',
+  ]);
+  if (engagementTotal !== undefined) enrichment.engagementTotal = engagementTotal;
+  const engagementLikes = pickCountikNumber(rates, ['likes', 'like_rate']);
+  if (engagementLikes !== undefined) enrichment.engagementLikes = engagementLikes;
+  const engagementComments = pickCountikNumber(rates, [
+    'comments',
+    'comment_rate',
+  ]);
+  if (engagementComments !== undefined) {
+    enrichment.engagementComments = engagementComments;
+  }
+  const engagementShares = pickCountikNumber(rates, ['shares', 'share_rate']);
+  if (engagementShares !== undefined) enrichment.engagementShares = engagementShares;
+  const averageViews = pickCountikNumber(performance, [
+    'average_views',
+    'avg_views',
+    'averageViews',
+  ]);
+  if (averageViews !== undefined) enrichment.averageViews = Math.trunc(averageViews);
+  const averageLikes = pickCountikNumber(performance, [
+    'average_likes',
+    'avg_likes',
+    'averageLikes',
+  ]);
+  if (averageLikes !== undefined) enrichment.averageLikes = Math.trunc(averageLikes);
+  const averageComments = pickCountikNumber(performance, [
+    'average_comments',
+    'avg_comments',
+    'averageComments',
+  ]);
+  if (averageComments !== undefined) {
+    enrichment.averageComments = Math.trunc(averageComments);
+  }
+  const averageShares = pickCountikNumber(performance, [
+    'average_shares',
+    'avg_shares',
+    'averageShares',
+  ]);
+  if (averageShares !== undefined) enrichment.averageShares = Math.trunc(averageShares);
+  return enrichment;
+}
+
+/**
+ * Enrich every creator in a result list, in order. A search
+ * shows NO cards until this resolves (wait-for-all): routes await
+ * it before responding, so the page's loading state covers the
+ * whole enrichment. Each creator's failure is isolated — that
+ * creator alone is marked countikUnavailable and the rest keep
+ * their enrichment. The original TikWM followerCount/verified
+ * stay on the creator, so Similar fallback rendering works.
+ */
+export async function enrichCreators(
+  creators: ReadonlyArray<Creator>,
+  options: CountikCallOptions = {},
+): Promise<Creator[]> {
+  const results: Creator[] = new Array(creators.length);
+  let next = 0;
+  async function worker(): Promise<void> {
+    for (;;) {
+      const index = next;
+      next += 1;
+      if (index >= creators.length) return;
+      const creator = creators[index] as Creator;
+      try {
+        const enrichment = await fetchCountikEnrichment(creator.handle, options);
+        results[index] = { ...creator, enrichment };
+      } catch {
+        results[index] = { ...creator, countikUnavailable: true };
+      }
+    }
+  }
+  const workers = Array.from(
+    { length: Math.min(COUNTIK_ENRICH_CONCURRENCY, Math.max(1, creators.length)) },
+    () => worker(),
+  );
+  await Promise.all(workers);
+  return results;
+}
+
+/**
+ * Countik video check — server-side only. Verified endpoints:
+ * - POST https://countik.com/api/video/exist {"url": "<video url>"}
+ * - GET https://countik.com/api/videoinfo/<video_id>
+ * The download is videoinfo's direct download_link (a direct mp4
+ * link), never a server proxy. Video checks are never saved.
+ */
+export const VideoCheckRequestSchema = z.object({
+  url: z.string().trim().min(1).max(2048),
+});
+export type VideoCheckRequest = z.infer<typeof VideoCheckRequestSchema>;
+
+export const VideoInfoSchema = z.object({
+  videoId: z.string().nullable(),
+  coverUrl: z.string().nullable(),
+  creatorHandle: z.string().nullable(),
+  creatorName: z.string().nullable(),
+  description: z.string().nullable(),
+  /** ISO timestamp when the source gave a usable date, else null. */
+  postedAt: z.string().nullable(),
+  plays: z.number().int().nonnegative().optional(),
+  likes: z.number().int().nonnegative().optional(),
+  comments: z.number().int().nonnegative().optional(),
+  shares: z.number().int().nonnegative().optional(),
+  saves: z.number().int().nonnegative().optional(),
+  musicTitle: z.string().nullable(),
+  musicArtist: z.string().nullable(),
+  /** Direct mp4 link from videoinfo, or null when absent. */
+  downloadUrl: z.string().nullable(),
+});
+export type VideoInfo = z.infer<typeof VideoInfoSchema>;
+
+export const VideoCheckResponseSchema = z.object({
+  url: z.string().min(1),
+  video: VideoInfoSchema,
+});
+export type VideoCheckResponse = z.infer<typeof VideoCheckResponseSchema>;
+
+/** Normalise a posted date: epoch seconds/millis → ISO, a
+ *  parseable date string kept as-is, anything else → null. */
+function pickPostedAt(value: unknown): string | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    const millis = value < 1e11 ? value * 1000 : value;
+    const date = new Date(millis);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const date = new Date(value.trim());
+    return Number.isNaN(date.getTime()) ? value.trim() : date.toISOString();
+  }
+  return null;
+}
+
+export async function checkCountikVideo(
+  url: string,
+  options: CountikCallOptions = {},
+): Promise<VideoCheckResponse> {
+  const fetchFn = options.fetchFn ?? fetch;
+  const cleanUrl = url.trim();
+  if (!cleanUrl) {
+    throw new CountikError('Enter a TikTok video link to check.');
+  }
+  const existBody = await fetchCountikJson(
+    `${COUNTIK_BASE_URL}/video/exist`,
+    { fetchFn, method: 'POST', body: { url: cleanUrl } },
+  );
+  const exist = countikData(existBody);
+  const videoId = pickString(exist, ['video_id', 'videoId', 'aweme_id', 'id']);
+  if (!videoId) {
+    throw new CountikError(
+      'That video could not be found. Try a different TikTok video link.',
+    );
+  }
+  const infoBody = await fetchCountikJson(
+    `${COUNTIK_BASE_URL}/videoinfo/${encodeURIComponent(videoId)}`,
+    { fetchFn },
+  );
+  const data = countikData(infoBody);
+  if (!data) {
+    throw new CountikError(
+      'That video could not be found. Try a different TikTok video link.',
+    );
+  }
+  const author = asRecord(data.author) ?? asRecord(data.creator);
+  const music = asRecord(data.music);
+  const video: VideoInfo = {
+    videoId,
+    coverUrl: pickString(data, ['cover_url', 'coverUrl', 'cover']),
+    creatorHandle: pickString(author, ['unique_id', 'uniqueId']),
+    creatorName: pickString(author, ['nickname', 'name']),
+    description: pickString(data, ['desc', 'description', 'title']),
+    postedAt: pickPostedAt(data.create_time ?? data.createTime ?? data.posted_at),
+    musicTitle: pickString(music, ['title', 'name']),
+    musicArtist: pickString(music, ['author', 'artist']),
+    downloadUrl: pickString(data, ['download_link', 'downloadUrl', 'download_url']),
+  };
+  const plays = pickCountikNumber(data, ['play_count', 'playCount', 'plays']);
+  if (plays !== undefined) video.plays = Math.trunc(plays);
+  const likes = pickCountikNumber(data, ['digg_count', 'like_count', 'likeCount', 'likes']);
+  if (likes !== undefined) video.likes = Math.trunc(likes);
+  const comments = pickCountikNumber(data, ['comment_count', 'commentCount', 'comments']);
+  if (comments !== undefined) video.comments = Math.trunc(comments);
+  const shares = pickCountikNumber(data, ['share_count', 'shareCount', 'shares']);
+  if (shares !== undefined) video.shares = Math.trunc(shares);
+  const saves = pickCountikNumber(data, [
+    'collect_count',
+    'save_count',
+    'bookmark_count',
+    'saves',
+  ]);
+  if (saves !== undefined) video.saves = Math.trunc(saves);
+  return { url: cleanUrl, video };
+}
+
+/**
+ * Countik hashtag generation — server-side only. Verified
+ * endpoint: POST https://countik.com/api/generateHashtags
+ * {"query": "<keyword>"} (POST-only; GET returns 405). The raw
+ * JSON field names were not captured, so the result list is
+ * extracted defensively from the common shapes (a bare array,
+ * or hashtags/tags/data/result/suggestions) — never a claimed
+ * field name. Generations are never saved.
+ */
+export const HashtagGenerateRequestSchema = z.object({
+  query: z.string().trim().min(1).max(200),
+});
+export type HashtagGenerateRequest = z.infer<
+  typeof HashtagGenerateRequestSchema
+>;
+
+export const HashtagGenerateResponseSchema = z.object({
+  keyword: z.string().min(1),
+  hashtags: z.array(z.string()),
+});
+export type HashtagGenerateResponse = z.infer<
+  typeof HashtagGenerateResponseSchema
+>;
+
+export async function generateCountikHashtags(
+  query: string,
+  options: CountikCallOptions = {},
+): Promise<HashtagGenerateResponse> {
+  const fetchFn = options.fetchFn ?? fetch;
+  const cleanQuery = query.trim();
+  if (!cleanQuery) {
+    throw new CountikError('Enter a keyword to generate hashtags.');
+  }
+  const body = await fetchCountikJson(
+    `${COUNTIK_BASE_URL}/generateHashtags`,
+    { fetchFn, method: 'POST', body: { query: cleanQuery } },
+  );
+  const root = asRecord(body);
+  const data = countikData(body);
+  const candidates: unknown[] = [
+    body,
+    root?.hashtags,
+    root?.tags,
+    data?.hashtags,
+    data?.tags,
+    data?.result,
+    data?.suggestions,
+    data,
+  ];
+  for (const candidate of candidates) {
+    const tags = pickTagList(candidate);
+    if (tags.length > 0) return { keyword: cleanQuery, hashtags: tags };
+  }
+  throw new CountikError(
+    'No hashtags were generated for that keyword. Try a different keyword.',
+  );
+}
+
+/**
  * Saved-creator database row (snake_case, as stored in
  * creator_finder_saved_creators). savedAt maps to updated_at: the
  * last time this creator was saved, which is also the "newest
@@ -1203,6 +1737,24 @@ export interface SavedCreatorRow {
   profile_url: string | null;
   follower_count: number | null;
   verified: boolean | null;
+  /** Countik data as saved at search time; null fields = absent. */
+  bio: string | null;
+  countik_enriched: boolean;
+  countik_follower_count: number | null;
+  following_count: number | null;
+  hearts_count: number | null;
+  video_count: number | null;
+  countik_verified: boolean | null;
+  engagement_total: number | null;
+  engagement_likes: number | null;
+  engagement_comments: number | null;
+  engagement_shares: number | null;
+  average_views: number | null;
+  average_likes: number | null;
+  average_comments: number | null;
+  average_shares: number | null;
+  hashtags: string[] | null;
+  mentions: string[] | null;
   source: SavedCreatorSource;
   search_term: string;
   updated_at: string | null;
@@ -1240,6 +1792,54 @@ export function savedCreatorFromRow(
   if (followerCount !== undefined) creator.followerCount = followerCount;
   const verified = pickVerified(row);
   if (verified !== undefined) creator.verified = verified;
+  // Countik enrichment, only when the row was saved enriched:
+  // old rows (countik_enriched false/absent) keep enrichment
+  // undefined, so the card renders them exactly as before —
+  // stored follower/verified when present, else the no-data
+  // variant. Nothing is backfilled or rewritten here.
+  if (row.countik_enriched === true) {
+    const enrichment: CreatorEnrichment = {
+      bio: asString(row.bio),
+      hashtags: pickTagList(row.hashtags),
+      mentions: pickTagList(row.mentions),
+    };
+    const countikFollower = asNonnegativeInt(row.countik_follower_count);
+    if (countikFollower !== undefined) enrichment.followerCount = countikFollower;
+    const following = asNonnegativeInt(row.following_count);
+    if (following !== undefined) enrichment.followingCount = following;
+    const hearts = asNonnegativeInt(row.hearts_count);
+    if (hearts !== undefined) enrichment.heartsCount = hearts;
+    const videos = asNonnegativeInt(row.video_count);
+    if (videos !== undefined) enrichment.videoCount = videos;
+    if (typeof row.countik_verified === 'boolean') {
+      enrichment.verified = row.countik_verified;
+    }
+    const rate = (value: unknown): number | undefined => {
+      if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+        return value;
+      }
+      return undefined;
+    };
+    const engagementTotal = rate(row.engagement_total);
+    if (engagementTotal !== undefined) enrichment.engagementTotal = engagementTotal;
+    const engagementLikes = rate(row.engagement_likes);
+    if (engagementLikes !== undefined) enrichment.engagementLikes = engagementLikes;
+    const engagementComments = rate(row.engagement_comments);
+    if (engagementComments !== undefined) {
+      enrichment.engagementComments = engagementComments;
+    }
+    const engagementShares = rate(row.engagement_shares);
+    if (engagementShares !== undefined) enrichment.engagementShares = engagementShares;
+    const averageViews = asNonnegativeInt(row.average_views);
+    if (averageViews !== undefined) enrichment.averageViews = averageViews;
+    const averageLikes = asNonnegativeInt(row.average_likes);
+    if (averageLikes !== undefined) enrichment.averageLikes = averageLikes;
+    const averageComments = asNonnegativeInt(row.average_comments);
+    if (averageComments !== undefined) enrichment.averageComments = averageComments;
+    const averageShares = asNonnegativeInt(row.average_shares);
+    if (averageShares !== undefined) enrichment.averageShares = averageShares;
+    creator.enrichment = enrichment;
+  }
   return creator;
 }
 
@@ -1260,9 +1860,16 @@ export function savedCreatorUpsertRow(
   existing: {
     followerCount?: number | undefined;
     verified?: boolean | undefined;
+    enrichment?: CreatorEnrichment | null | undefined;
   } | null,
   savedAt: string,
 ): SavedCreatorRow {
+  // Enrichment merge follows the existing rule: a fresh
+  // enrichment replaces the stored one wholesale (never a mix
+  // of two searches' numbers); a save without enrichment keeps
+  // whatever was stored, so a later Countik failure never wipes
+  // data saved earlier.
+  const enrichment = creator.enrichment ?? existing?.enrichment ?? null;
   return {
     workspace_id: workspaceId,
     user_id: userId,
@@ -1272,6 +1879,23 @@ export function savedCreatorUpsertRow(
     profile_url: creator.profileUrl,
     follower_count: creator.followerCount ?? existing?.followerCount ?? null,
     verified: creator.verified ?? existing?.verified ?? null,
+    bio: enrichment?.bio ?? null,
+    countik_enriched: enrichment !== null,
+    countik_follower_count: enrichment?.followerCount ?? null,
+    following_count: enrichment?.followingCount ?? null,
+    hearts_count: enrichment?.heartsCount ?? null,
+    video_count: enrichment?.videoCount ?? null,
+    countik_verified: enrichment?.verified ?? null,
+    engagement_total: enrichment?.engagementTotal ?? null,
+    engagement_likes: enrichment?.engagementLikes ?? null,
+    engagement_comments: enrichment?.engagementComments ?? null,
+    engagement_shares: enrichment?.engagementShares ?? null,
+    average_views: enrichment?.averageViews ?? null,
+    average_likes: enrichment?.averageLikes ?? null,
+    average_comments: enrichment?.averageComments ?? null,
+    average_shares: enrichment?.averageShares ?? null,
+    hashtags: enrichment ? enrichment.hashtags : null,
+    mentions: enrichment ? enrichment.mentions : null,
     source,
     search_term: searchTerm,
     updated_at: savedAt,
@@ -1288,16 +1912,20 @@ function csvEscape(value: string): string {
 /**
  * Saved creators as CSV (RFC 4180 escaping: fields containing a
  * comma, quote, or newline are quoted, quotes doubled). Column
- * order is fixed: handle, display_name, avatar_url, profile_url,
- * follower_count, verified, source, search_term, saved_at.
+ * order is fixed: the original columns first, then the Countik
+ * fields (bio, following/hearts/video counts, engagement rates,
+ * averages, hashtags, mentions). Hashtags render as "#a #b" and
+ * mentions as "@a @b" so the exported values are directly usable.
+ * Old rows without enrichment export empty Countik columns.
  */
 export function savedCreatorsToCsv(
   creators: ReadonlyArray<SavedCreator>,
 ): string {
   const header =
-    'handle,display_name,avatar_url,profile_url,follower_count,verified,source,search_term,saved_at';
-  const lines = creators.map((creator) =>
-    [
+    'handle,display_name,avatar_url,profile_url,follower_count,verified,source,search_term,saved_at,bio,following_count,hearts_count,video_count,engagement_total,engagement_likes,engagement_comments,engagement_shares,average_views,average_likes,average_comments,average_shares,hashtags,mentions';
+  const lines = creators.map((creator) => {
+    const enrichment = creator.enrichment ?? null;
+    return [
       creator.handle,
       creator.displayName ?? '',
       creator.avatarUrl ?? '',
@@ -1309,10 +1937,46 @@ export function savedCreatorsToCsv(
       creator.source,
       creator.searchTerm,
       creator.savedAt,
+      enrichment?.bio ?? '',
+      enrichment?.followingCount !== undefined
+        ? String(enrichment.followingCount)
+        : '',
+      enrichment?.heartsCount !== undefined
+        ? String(enrichment.heartsCount)
+        : '',
+      enrichment?.videoCount !== undefined
+        ? String(enrichment.videoCount)
+        : '',
+      enrichment?.engagementTotal !== undefined
+        ? String(enrichment.engagementTotal)
+        : '',
+      enrichment?.engagementLikes !== undefined
+        ? String(enrichment.engagementLikes)
+        : '',
+      enrichment?.engagementComments !== undefined
+        ? String(enrichment.engagementComments)
+        : '',
+      enrichment?.engagementShares !== undefined
+        ? String(enrichment.engagementShares)
+        : '',
+      enrichment?.averageViews !== undefined
+        ? String(enrichment.averageViews)
+        : '',
+      enrichment?.averageLikes !== undefined
+        ? String(enrichment.averageLikes)
+        : '',
+      enrichment?.averageComments !== undefined
+        ? String(enrichment.averageComments)
+        : '',
+      enrichment?.averageShares !== undefined
+        ? String(enrichment.averageShares)
+        : '',
+      enrichment ? enrichment.hashtags.map((tag) => `#${tag}`).join(' ') : '',
+      enrichment ? enrichment.mentions.map((tag) => `@${tag}`).join(' ') : '',
     ]
       .map(csvEscape)
-      .join(','),
-  );
+      .join(',');
+  });
   return [header, ...lines].join('\n') + '\n';
 }
 

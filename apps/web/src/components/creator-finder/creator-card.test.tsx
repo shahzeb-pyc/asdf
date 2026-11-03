@@ -121,4 +121,108 @@ describe('CreatorCard', () => {
     expect(screen.getByText('1.2M followers')).toBeTruthy();
     expect(screen.getByLabelText('Verified creator')).toBeTruthy();
   });
+
+  it('renders the enriched v2 card in field order, with no earnings', () => {
+    render(
+      <CreatorCard
+        creator={makeCreator({
+          enrichment: {
+            bio: 'Making short videos about everyday life.',
+            followerCount: 1200000,
+            followingCount: 850,
+            heartsCount: 42000000,
+            videoCount: 480,
+            verified: true,
+            engagementTotal: 8.4,
+            engagementLikes: 6.1,
+            engagementComments: 1.4,
+            engagementShares: 0.9,
+            averageViews: 2100000,
+            averageLikes: 180000,
+            averageComments: 9500,
+            averageShares: 12000,
+            hashtags: ['fitness'],
+            mentions: ['bob'],
+          },
+        })}
+      />,
+    );
+    expect(screen.getByText('Making short videos about everyday life.')).toBeTruthy();
+    expect(screen.getByText('1.2M followers')).toBeTruthy();
+    expect(screen.getByText('850')).toBeTruthy();
+    expect(screen.getByText('42M')).toBeTruthy();
+    expect(screen.getByText('480')).toBeTruthy();
+    expect(screen.getByText('Engagement')).toBeTruthy();
+    expect(screen.getByText('8.4%')).toBeTruthy();
+    expect(screen.getByText('Averages')).toBeTruthy();
+    expect(screen.getByText('2.1M')).toBeTruthy();
+    expect(screen.getByText('#fitness')).toBeTruthy();
+    expect(screen.getByText('@bob')).toBeTruthy();
+    expect(screen.getByLabelText('Verified creator')).toBeTruthy();
+    expect(screen.queryByText(/earnings/i)).toBeNull();
+  });
+
+  it('takes the tick from enrichment only, never from TikWM, when enriched', () => {
+    render(
+      <CreatorCard
+        creator={makeCreator({
+          verified: true,
+          enrichment: {
+            bio: null,
+            verified: false,
+            hashtags: [],
+            mentions: [],
+          },
+        })}
+      />,
+    );
+    expect(screen.queryByLabelText('Verified creator')).toBeNull();
+  });
+
+  it('renders the Countik-failure variant: note, no counts, no tick, no detail', () => {
+    render(
+      <CreatorCard
+        creator={makeCreator({ countikUnavailable: true })}
+      />,
+    );
+    expect(
+      screen.getByText('Countik data unavailable for this creator.'),
+    ).toBeTruthy();
+    expect(screen.queryByLabelText('Verified creator')).toBeNull();
+    expect(screen.queryByText(/followers/)).toBeNull();
+    expect(screen.queryByText('Engagement')).toBeNull();
+    expect(screen.getByText('View on TikTok ↗')).toBeTruthy();
+  });
+
+  it('keeps the TikWM follower count and tick on a Similar Countik failure', () => {
+    render(
+      <CreatorCard
+        creator={makeCreator({
+          followerCount: 1200000,
+          verified: true,
+          countikUnavailable: true,
+        })}
+      />,
+    );
+    expect(screen.getByText('1.2M followers')).toBeTruthy();
+    expect(screen.getByLabelText('Verified creator')).toBeTruthy();
+    expect(
+      screen.queryByText('Countik data unavailable for this creator.'),
+    ).toBeNull();
+    expect(screen.queryByText('Engagement')).toBeNull();
+  });
+
+  it('renders an old saved row as before: stored fields, no note, no detail', () => {
+    render(
+      <CreatorCard
+        creator={makeCreator({ followerCount: 500, verified: true })}
+      />,
+    );
+    expect(screen.getByText('500 followers')).toBeTruthy();
+    expect(screen.getByLabelText('Verified creator')).toBeTruthy();
+    expect(
+      screen.queryByText('Countik data unavailable for this creator.'),
+    ).toBeNull();
+    expect(screen.queryByText('Engagement')).toBeNull();
+  });
 });
