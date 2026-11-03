@@ -87,7 +87,8 @@ class FakeR2 implements R2BucketLike {
 interface FakeSupabaseState {
   rows: ClaimedReel[];
   downloaded: MarkDownloadedArgs[];
-  failed: Array<{ reelId: string; failure?: unknown }>;
+  failed: string[];
+  recorded: Array<{ reelId: string; failure: unknown }>;
   throwOnDownloaded?: boolean;
 }
 
@@ -99,8 +100,11 @@ function fakeSupabase(state: FakeSupabaseState): SupabaseRpc {
       if (state.throwOnDownloaded) throw new Error('db down');
       state.downloaded.push(args);
     },
-    markDownloadFailed: async (reelId: string, failure?: unknown) => {
-      state.failed.push({ reelId, failure });
+    recordDownloadFailure: async (reelId: string, failure: unknown) => {
+      state.recorded.push({ reelId, failure });
+    },
+    markDownloadFailed: async (reelId: string) => {
+      state.failed.push(reelId);
     },
   } as unknown as SupabaseRpc;
 }
@@ -149,7 +153,7 @@ function deps(
 
 describe('runDownloadTick', () => {
   it('follows the failed path on API failure, without uploading', async () => {
-    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [] };
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
     const r2 = new FakeR2();
     const result = await runDownloadTick(
       deps(state, r2, fakeFetch(null, { code: 1, data: null })),
@@ -157,7 +161,8 @@ describe('runDownloadTick', () => {
     expect(result.claimed).toBe(1);
     expect(result.failed).toBe(1);
     expect(result.failedReasons).toEqual({ 'tikwm_resolve:tikwm_api_body_code': 1 });
-    expect(state.failed).toEqual([
+    expect(state.failed).toEqual(['reel-1']);
+    expect(state.recorded).toEqual([
       {
         reelId: 'reel-1',
         failure: { stage: 'tikwm_resolve', reason: 'tikwm_api_body_code', detail: 'body_code=1' },
@@ -168,13 +173,14 @@ describe('runDownloadTick', () => {
   });
 
   it('records the HTTP status when the video stream 404s', async () => {
-    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [] };
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
     const r2 = new FakeR2();
     const result = await runDownloadTick(
       deps(state, r2, fakeFetch(null, { code: 0, data: { play: 'https://cdn.example/v.mp4' } })),
     );
     expect(result.failedReasons).toEqual({ 'stream_open:stream_http_status': 1 });
-    expect(state.failed).toEqual([
+    expect(state.failed).toEqual(['reel-1']);
+    expect(state.recorded).toEqual([
       {
         reelId: 'reel-1',
         failure: { stage: 'stream_open', reason: 'stream_http_status', detail: 'http_status=404' },
@@ -185,14 +191,15 @@ describe('runDownloadTick', () => {
 
   it('records an R2 put failure distinctly from a stream failure', async () => {
     const body = padTo(box('ftyp', new Uint8Array(8)), 12000);
-    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [] };
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
     const r2 = new FakeR2();
     r2.throwOnPut = true;
     const result = await runDownloadTick(
       deps(state, r2, fakeFetch(body, { code: 0, data: { play: 'https://cdn.example/v.mp4' } })),
     );
     expect(result.failedReasons).toEqual({ 'stream_upload:r2_put_error': 1 });
-    expect(state.failed).toEqual([
+    expect(state.failed).toEqual(['reel-1']);
+    expect(state.recorded).toEqual([
       {
         reelId: 'reel-1',
         failure: { stage: 'stream_upload', reason: 'r2_put_error', detail: 'r2 down' },
@@ -202,7 +209,7 @@ describe('runDownloadTick', () => {
   });
 
   it('records a stream read failure distinctly from an R2 failure', async () => {
-    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [] };
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
     const r2 = new FakeR2();
     const erroring = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -213,7 +220,8 @@ describe('runDownloadTick', () => {
       deps(state, r2, fakeFetchStream(erroring, { code: 0, data: { play: 'https://cdn.example/v.mp4' } })),
     );
     expect(result.failedReasons).toEqual({ 'stream_upload:stream_read_error': 1 });
-    expect(state.failed).toEqual([
+    expect(state.failed).toEqual(['reel-1']);
+    expect(state.recorded).toEqual([
       {
         reelId: 'reel-1',
         failure: { stage: 'stream_upload', reason: 'stream_read_error', detail: 'read boom' },
@@ -223,13 +231,14 @@ describe('runDownloadTick', () => {
 
   it('rejects a small file and deletes the partial object', async () => {
     const small = new Uint8Array(5000);
-    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [] };
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
     const r2 = new FakeR2();
     const result = await runDownloadTick(
       deps(state, r2, fakeFetch(small, { code: 0, data: { play: 'https://cdn.example/v.mp4' } })),
     );
     expect(result.failedReasons).toEqual({ 'size_check:too_small': 1 });
-    expect(state.failed).toEqual([
+    expect(state.failed).toEqual(['reel-1']);
+    expect(state.recorded).toEqual([
       {
         reelId: 'reel-1',
         failure: { stage: 'size_check', reason: 'too_small', detail: 'size_bytes=5000' },
@@ -241,13 +250,14 @@ describe('runDownloadTick', () => {
 
   it('rejects a video-only moov and deletes the object', async () => {
     const body = padTo(concat(box('ftyp', new Uint8Array(8)), box('moov', videoTrak())), 12000);
-    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [] };
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
     const r2 = new FakeR2();
     const result = await runDownloadTick(
       deps(state, r2, fakeFetch(body, { code: 0, data: { play: 'https://cdn.example/v.mp4' } })),
     );
     expect(result.failedReasons).toEqual({ 'audio_check:no_audio': 1 });
-    expect(state.failed).toEqual([
+    expect(state.failed).toEqual(['reel-1']);
+    expect(state.recorded).toEqual([
       {
         reelId: 'reel-1',
         failure: { stage: 'audio_check', reason: 'no_audio' },
@@ -258,7 +268,7 @@ describe('runDownloadTick', () => {
 
   it('downloads an inconclusive-audio file with identical R2 rows', async () => {
     const body = padTo(box('ftyp', new Uint8Array(8)), 12000);
-    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [] };
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
     const r2 = new FakeR2();
     const result = await runDownloadTick(
       deps(
@@ -281,7 +291,7 @@ describe('runDownloadTick', () => {
 
   it('normalizes a generic API title to the default caption', async () => {
     const body = padTo(box('ftyp', new Uint8Array(8)), 12000);
-    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [] };
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
     const r2 = new FakeR2();
     await runDownloadTick(
       deps(state, r2, fakeFetch(body, { code: 0, data: { play: 'https://cdn.example/v.mp4', title: 'TikTok' } })),
@@ -289,9 +299,30 @@ describe('runDownloadTick', () => {
     expect(state.downloaded[0].caption).toBe('❤️');
   });
 
+  it('still moves the retry accounting when recording the reason fails', async () => {
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+    const r2 = new FakeR2();
+    const supabase = fakeSupabase(state);
+    const failing = {
+      ...supabase,
+      recordDownloadFailure: async () => {
+        throw new Error('record down');
+      },
+    } as unknown as SupabaseRpc;
+    const result = await runDownloadTick({
+      supabase: failing,
+      r2,
+      r2PublicUrl: 'https://pub.example',
+      fetchImpl: fakeFetch(null, { code: 1, data: null }),
+    });
+    expect(result.failed).toBe(1);
+    expect(result.settleErrors).toBe(1);
+    expect(state.failed).toEqual(['reel-1']);
+  });
+
   it('leaves the row processing when settling the download fails', async () => {
     const body = padTo(box('ftyp', new Uint8Array(8)), 12000);
-    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], throwOnDownloaded: true };
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [], throwOnDownloaded: true };
     const r2 = new FakeR2();
     const result = await runDownloadTick(
       deps(state, r2, fakeFetch(body, { code: 0, data: { play: 'https://cdn.example/v.mp4' } })),
@@ -302,7 +333,7 @@ describe('runDownloadTick', () => {
   });
 
   it('handles zero claims without settling anything', async () => {
-    const state: FakeSupabaseState = { rows: [], downloaded: [], failed: [] };
+    const state: FakeSupabaseState = { rows: [], downloaded: [], failed: [], recorded: [] };
     const r2 = new FakeR2();
     const result = await runDownloadTick(deps(state, r2, fakeFetch(null, {})));
     expect(result).toMatchObject({ claimed: 0, downloaded: 0, failed: 0 });
@@ -336,7 +367,7 @@ describe('streamToR2 cap', () => {
   it('maps a stalled stream to stream_stalled', async () => {
     vi.useFakeTimers();
     try {
-      const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [] };
+      const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
       const r2 = new FakeR2();
       const never = new ReadableStream<Uint8Array>({});
       const tick = runDownloadTick(
@@ -345,7 +376,8 @@ describe('streamToR2 cap', () => {
       await vi.advanceTimersByTimeAsync(31_000);
       const result = await tick;
       expect(result.failedReasons).toEqual({ 'stream_upload:stream_stalled': 1 });
-      expect(state.failed).toEqual([
+      expect(state.failed).toEqual(['reel-1']);
+      expect(state.recorded).toEqual([
         {
           reelId: 'reel-1',
           failure: { stage: 'stream_upload', reason: 'stream_stalled', detail: 'timeout_ms=30000' },

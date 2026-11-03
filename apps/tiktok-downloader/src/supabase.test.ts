@@ -87,14 +87,14 @@ describe('SupabaseRpc', () => {
     });
   });
 
-  it('sends the failure reason to markDownloadFailed', async () => {
+  it('sends the failure reason to recordDownloadFailure', async () => {
     let seenBody: unknown;
     const fetchImpl = (async (_url: string, init: RequestInit) => {
       seenBody = JSON.parse(init.body as string);
       return new Response(null, { status: 204 });
     }) as unknown as FetchImpl;
     const rpc = new SupabaseRpc(URL, KEY, fetchImpl);
-    await rpc.markDownloadFailed('r1', {
+    await rpc.recordDownloadFailure('r1', {
       stage: 'tikwm_resolve',
       reason: 'tikwm_api_http_status',
       detail: 'http_status=403',
@@ -111,7 +111,7 @@ describe('SupabaseRpc', () => {
     expect(typeof failure.at).toBe('string');
   });
 
-  it('sends null failure when no reason is given', async () => {
+  it('markDownloadFailed still sends only the reel id', async () => {
     let seenBody: unknown;
     const fetchImpl = (async (_url: string, init: RequestInit) => {
       seenBody = JSON.parse(init.body as string);
@@ -119,7 +119,7 @@ describe('SupabaseRpc', () => {
     }) as unknown as FetchImpl;
     const rpc = new SupabaseRpc(URL, KEY, fetchImpl);
     await rpc.markDownloadFailed('r1');
-    expect(seenBody).toEqual({ p_reel_id: 'r1', p_failure: null });
+    expect(seenBody).toEqual({ p_reel_id: 'r1' });
   });
 
   it('fails loud on RPC HTTP errors without leaking the key', async () => {

@@ -10,10 +10,11 @@
  * There is NO fallback anywhere in this file. Any failure settles the
  * reel through `mark_adu_reel_download_failed`, which applies the
  * existing retry rules (retries < 3 -> pending, at 3 -> download_failed,
- * > 50 lifetime failures -> config creator_suspended) — and now records
- * the exact failure (stage + reason + detail) on the reel row, so the
- * next failure is diagnosable instead of just counted. Download
- * semantics are unchanged; only observability was added.
+ * > 50 lifetime failures -> config creator_suspended) — and is preceded
+ * by a `record_adu_reel_download_failure` call that records the exact
+ * failure (stage + reason + detail) on the reel row, so the next
+ * failure is diagnosable instead of just counted. Download semantics
+ * are unchanged; only observability was added.
  *
  * Exclusivity: this file only ever claims through
  * `claim_tiktok_buffer_downloads` (see supabase.ts) and refuses any
@@ -385,8 +386,20 @@ export async function runDownloadTick(deps: TickDeps): Promise<TickResult> {
       const key = failureKey(outcome.failure);
       result.failedReasons[key] = (result.failedReasons[key] ?? 0) + 1;
       log('download_failed', { reelId: reel.reelId, ...outcome.failure });
+      // Record first: the reason must survive even if the retry
+      // accounting below fails. A record failure is loud (settle error)
+      // but never blocks the status transition.
       try {
-        await deps.supabase.markDownloadFailed(reel.reelId, outcome.failure);
+        await deps.supabase.recordDownloadFailure(reel.reelId, outcome.failure);
+      } catch (err) {
+        log('record_failure_failed', {
+          reelId: reel.reelId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        result.settleErrors += 1;
+      }
+      try {
+        await deps.supabase.markDownloadFailed(reel.reelId);
       } catch (err) {
         log('settle_failed_failed', {
           reelId: reel.reelId,

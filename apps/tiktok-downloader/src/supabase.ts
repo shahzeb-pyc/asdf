@@ -175,21 +175,23 @@ export class SupabaseRpc {
 
   /**
    * Records the exact failure on the reel row (stage + reason + detail
-   * + attempt time) via the RPC's optional p_failure. Omitting it keeps
-   * the old 1-arg behavior: the RPC then preserves any previously
-   * recorded reason instead of clearing it.
+   * + attempt time) via the dedicated record RPC. Called BEFORE
+   * markDownloadFailed on each failure, so the reason survives even if
+   * the retry-accounting call itself fails.
    */
-  async markDownloadFailed(reelId: string, failure?: DownloadFailure): Promise<void> {
-    await this.callRpc<void>('mark_adu_reel_download_failed', {
+  async recordDownloadFailure(reelId: string, failure: DownloadFailure): Promise<void> {
+    await this.callRpc<void>('record_adu_reel_download_failure', {
       p_reel_id: reelId,
-      p_failure: failure
-        ? {
-            stage: failure.stage,
-            reason: failure.reason,
-            ...(failure.detail ? { detail: truncate(failure.detail) } : {}),
-            at: new Date().toISOString(),
-          }
-        : null,
+      p_failure: {
+        stage: failure.stage,
+        reason: failure.reason,
+        ...(failure.detail ? { detail: truncate(failure.detail) } : {}),
+        at: new Date().toISOString(),
+      },
     });
+  }
+
+  async markDownloadFailed(reelId: string): Promise<void> {
+    await this.callRpc<void>('mark_adu_reel_download_failed', { p_reel_id: reelId });
   }
 }
