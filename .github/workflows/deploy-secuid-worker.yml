@@ -43,9 +43,35 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
-      # No secrets are uploaded: the secuid Worker needs none (Countik
-      # requires no key). Mirrors deploy-worker.yml's credential guard
-      # so a missing token skips cleanly instead of failing the deploy.
+      # The Worker secret PROXY_SECRET is sourced from Doppler at deploy
+      # time, never set by hand in Cloudflare. Doppler prd syncs to
+      # GitHub Actions, so the single Doppler value COUNTIK_PROXY_SECRET
+      # arrives here as a GitHub secret and is mapped to the Worker
+      # secret name PROXY_SECRET below; the same Doppler value reaches
+      # the app as COUNTIK_PROXY_SECRET via the Vercel sync. The
+      # wrangler-action aborts the whole deploy when a listed secret
+      # has no value, so the list is built dynamically following
+      # deploy-worker.yml: PROXY_SECRET is uploaded only once
+      # COUNTIK_PROXY_SECRET is set, and the legacy secuid route keeps
+      # deploying without it in the meantime.
+      - name: Build secuid worker secret list
+        id: secuid-worker-secrets
+        if: steps.check-credentials.outputs.has_token == 'true'
+        env:
+          COUNTIK_PROXY_SECRET: ${{ secrets.COUNTIK_PROXY_SECRET }}
+        run: |
+          {
+            echo "list<<EOF"
+            if [ -n "$COUNTIK_PROXY_SECRET" ]; then
+              echo "PROXY_SECRET"
+            else
+              # NOTE: anything echoed inside this block lands in the
+              # secret list itself — log lines must go to stderr.
+              echo "COUNTIK_PROXY_SECRET is not set yet; deploying without PROXY_SECRET (/proxy/* calls will fail closed with 503 until the Doppler prd entry is set; the legacy secuid route is unaffected)." >&2
+            fi
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+
       - name: Deploy to Cloudflare Workers
         if: steps.check-credentials.outputs.has_token == 'true'
         uses: cloudflare/wrangler-action@392082e81ffbcb9ebdde27400634aa004b35ea37 # v3.14.0
@@ -54,3 +80,6 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: 'apps/secuid-worker'
           packageManager: pnpm
+          secrets: ${{ steps.secuid-worker-secrets.outputs.list }}
+        env:
+          PROXY_SECRET: ${{ secrets.COUNTIK_PROXY_SECRET }}
