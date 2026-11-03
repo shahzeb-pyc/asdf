@@ -57,11 +57,11 @@ export function MusePage({
   }, [load]);
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
+    <div className="mx-auto box-border flex w-full max-w-300 flex-col gap-6 px-6 py-6">
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold">Muse</h1>
-          <p className="mt-2 max-w-2xl text-ink-sub">
+          <h1 className="mb-1 text-xxl font-bold tracking-h1 text-ink">Muse</h1>
+          <p className="m-0 max-w-2xl text-body text-ink-sub">
             You tell Muse what you want. Muse puts your media in your
             Media Library, handles Pages, Publish Now, Queue and
             Schedule, Auto Download/Upload, and Auto Repost in your
