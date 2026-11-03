@@ -137,6 +137,28 @@ describe('MusePage', () => {
     );
   });
 
+  it('uses the Facebook Pages container and header structure, not a stretched full-width root', async () => {
+    const { container } = render(<MusePage subdomain="creatorstack" />);
+    await screen.findByText(/You tell Muse what you want/);
+    // Pages shell: mx-auto box-border w-full max-w-300 px-6 py-6, with
+    // the page's own flex-col gap-6 stacking (ADU hub form).
+    const root = container.querySelector('div.mx-auto.max-w-300');
+    expect(root).toBeTruthy();
+    expect(root?.className).toContain('box-border');
+    expect(root?.className).toContain('w-full');
+    expect(root?.className).toContain('px-6');
+    expect(root?.className).toContain('py-6');
+    expect(root?.className).toContain('flex-col');
+    expect(root?.className).toContain('gap-6');
+    // Pages header: mb-6, title text-xxl bold, subtitle text-body.
+    const title = screen.getByRole('heading', { name: 'Muse' });
+    expect(title.className).toContain('text-xxl');
+    expect(title.className).toContain('font-bold');
+    const header = title.parentElement?.parentElement;
+    expect(header?.className).toContain('mb-6');
+    expect(header?.className).toContain('justify-between');
+  });
+
   it('opens the Connect Muse dialogue from the header button', async () => {
     const user = userEvent.setup();
     render(<MusePage subdomain="creatorstack" />);
