@@ -142,18 +142,22 @@ export async function resolveTikwmStream(
  * Open the video stream GET with the old code's headers. Returns a
  * discriminated result: null body or non-200 fails, as before (the old
  * code's raise_for_status), but now with the exact reason attached.
+ * The Referer is tikwm's origin for tikwm-resolved streams; a
+ * Countik-resolved stream (a direct CDN link) sends no Referer —
+ * passing null omits the header instead of misattributing the fetch.
  */
 export async function openVideoStream(
   streamUrl: string,
   // Workerd brand-check: arrow wrapper, never bare `fetch` (see supabase.ts).
   fetchImpl: FetchImpl = (input: RequestInfo | URL, init?: RequestInit) => fetch(input, init),
+  referer: string | null = TIKWM_ORIGIN,
 ): Promise<StreamOpenResult> {
   let res: Response;
   try {
     res = await fetchImpl(streamUrl, {
       headers: {
         'User-Agent': DESKTOP_CHROME_UA,
-        Referer: TIKWM_ORIGIN,
+        ...(referer ? { Referer: referer } : {}),
       },
       redirect: 'follow',
     });

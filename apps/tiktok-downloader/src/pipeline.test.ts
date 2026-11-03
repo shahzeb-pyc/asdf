@@ -4,6 +4,7 @@ import {
   streamToR2,
   r2ObjectKey,
   resolveFailure,
+  countikFailure,
   streamOpenFailure,
   uploadFailure,
   FileTooLargeError,
@@ -20,6 +21,10 @@ import {
   type TikwmResolveFailure,
   type StreamOpenFailure,
 } from './tikwm.js';
+import {
+  COUNTIK_VIDEO_BASE_URL,
+  type CountikResolveFailure,
+} from './countik.js';
 
 function u32(n: number): Uint8Array {
   const b = new Uint8Array(4);
@@ -171,12 +176,19 @@ describe('runDownloadTick', () => {
     );
     expect(result.claimed).toBe(1);
     expect(result.failed).toBe(1);
-    expect(result.failedReasons).toEqual({ 'tikwm_resolve:tikwm_api_body_code': 1 });
+    // Tikwm failed, so the fallback ran too: the stub answers the
+    // Countik exist call with 404, so the record carries BOTH attempts.
+    expect(result.failedReasons).toEqual({ 'tikwm_resolve:tikwm_api_body_code+countik_resolve:countik_api_http_status': 1 });
     expect(state.failed).toEqual(['reel-1']);
     expect(state.recorded).toEqual([
       {
         reelId: 'reel-1',
-        failure: { stage: 'tikwm_resolve', reason: 'tikwm_api_body_code', detail: 'body_code=1' },
+        failure: {
+          stage: 'tikwm_resolve',
+          reason: 'tikwm_api_body_code',
+          detail: 'body_code=1',
+          fallback: { stage: 'countik_resolve', reason: 'countik_api_http_status', detail: 'step=exist; http_status=404' },
+        },
       },
     ]);
     expect(state.downloaded).toEqual([]);
@@ -435,9 +447,19 @@ describe('runDownloadTick reason mapping (remaining stages)', () => {
     const r2 = new FakeR2();
     const result = await runDownloadTick(deps(state, r2, scriptedFetch(tikwm)));
     expect(result.failed).toBe(1);
-    expect(result.failedReasons).toEqual({ [`tikwm_resolve:${(failure as { reason: string }).reason}`]: 1 });
+    // The fallback ran after the tikwm failure; the scripted stub
+    // answers the Countik exist call with 404, so the record carries
+    // both attempts and the summary key names both reasons.
+    const reason = (failure as { reason: string }).reason;
+    expect(result.failedReasons).toEqual({ [`tikwm_resolve:${reason}+countik_resolve:countik_api_http_status`]: 1 });
     expect(state.failed).toEqual(['reel-1']);
-    expect(state.recorded).toEqual([{ reelId: 'reel-1', failure }]);
+    expect(state.recorded).toEqual([{
+      reelId: 'reel-1',
+      failure: {
+        ...failure,
+        fallback: { stage: 'countik_resolve', reason: 'countik_api_http_status', detail: 'step=exist; http_status=404' },
+      },
+    }]);
     expect(state.downloaded).toEqual([]);
     expect(r2.puts).toEqual([]);
   });
@@ -527,5 +549,194 @@ describe('reason mappers (pure table)', () => {
     expect(uploadFailure(new Error('read boom'))).toEqual({
       stage: 'stream_upload', reason: 'stream_read_error', detail: 'read boom',
     });
+  });
+});
+
+/** Fetch double routing tikwm / Countik exist / Countik info / stream by URL. */
+function fallbackFetch(scripts: {
+  tikwm: unknown;
+  exist?: unknown;
+  info?: unknown;
+  stream?: unknown;
+}): { fetchImpl: FetchImpl; calls: Array<{ url: string; init: RequestInit }> } {
+  const calls: Array<{ url: string; init: RequestInit }> = [];
+  const fetchImpl = (async (url: string, init?: RequestInit) => {
+    calls.push({ url, init: init ?? {} });
+    let scripted: unknown;
+    if (url === TIKWM_API_URL) scripted = scripts.tikwm;
+    else if (url === `${COUNTIK_VIDEO_BASE_URL}/video/exist`) scripted = scripts.exist;
+    else if (url.startsWith(`${COUNTIK_VIDEO_BASE_URL}/videoinfo/`)) scripted = scripts.info;
+    else scripted = scripts.stream;
+    if (scripted instanceof Error) throw scripted;
+    return scripted as Response;
+  }) as unknown as FetchImpl;
+  return { fetchImpl, calls };
+}
+
+function countikSuccess(): { exist: Response; info: Response } {
+  return {
+    exist: new Response(JSON.stringify({ video_id: '740123' }), { status: 200 }),
+    info: new Response(
+      JSON.stringify({ download_link: 'https://v16.tokcdn.com/v.mp4', desc: 'My Countik day' }),
+      { status: 200 },
+    ),
+  };
+}
+
+function downloadableBody(): Uint8Array {
+  // Inconclusive-audio ftyp file, exactly like the tikwm success tests.
+  return padTo(box('ftyp', new Uint8Array(8)), 12000);
+}
+
+describe('Countik fallback', () => {
+  it('never calls Countik when tikwm succeeds', async () => {
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+    const r2 = new FakeR2();
+    const { fetchImpl, calls } = fallbackFetch({
+      tikwm: tikwmJson({ code: 0, data: { play: 'https://cdn.example/v.mp4' } }),
+      stream: new Response(streamOf(downloadableBody()), { status: 200 }),
+    });
+    const result = await runDownloadTick(deps(state, r2, fetchImpl));
+    expect(result.downloaded).toBe(1);
+    expect(calls.some((c) => c.url.includes('countik.com'))).toBe(false);
+  });
+
+  it.each([
+    ['tikwm_api_timeout', (() => { const e = new Error('timed out'); e.name = 'TimeoutError'; return e; })()],
+    ['tikwm_api_fetch_error', new Error('tikwm down')],
+    ['tikwm_api_http_status', new Response('err', { status: 500 })],
+    ['tikwm_api_body_unparsable', new Response('not json', { status: 200 })],
+    ['tikwm_api_bad_body', tikwmJson('just a string')],
+    ['tikwm_api_body_code', tikwmJson({ code: -1, data: null })],
+    ['tikwm_api_no_data', tikwmJson({ code: 0, data: null })],
+    ['tikwm_no_stream_url', tikwmJson({ code: 0, data: {} })],
+  ])('falls back to Countik when tikwm fails with %s', async (_name, tikwm) => {
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+    const r2 = new FakeR2();
+    const { exist, info } = countikSuccess();
+    const { fetchImpl } = fallbackFetch({
+      tikwm,
+      exist,
+      info,
+      stream: new Response(streamOf(downloadableBody()), { status: 200 }),
+    });
+    const result = await runDownloadTick(deps(state, r2, fetchImpl));
+    expect(result.downloaded).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(state.failed).toEqual([]);
+    expect(state.recorded).toEqual([]);
+    expect(state.downloaded).toHaveLength(1);
+  });
+
+  it('downloads through the full pipeline on fallback success, with the Countik caption', async () => {
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+    const r2 = new FakeR2();
+    const { exist, info } = countikSuccess();
+    const { fetchImpl } = fallbackFetch({
+      tikwm: tikwmJson({ code: -1, data: null }),
+      exist,
+      info,
+      stream: new Response(streamOf(downloadableBody()), { status: 200 }),
+    });
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const result = await runDownloadTick(deps(state, r2, fetchImpl));
+      expect(result.downloaded).toBe(1);
+      const row = state.downloaded[0];
+      expect(row.objectKey).toBe('adu-buffer/cfg-1/reel-1.mp4');
+      expect(row.mediaUrl).toBe('https://pub.example/adu-buffer/cfg-1/reel-1.mp4');
+      expect(row.contentType).toBe('video/mp4');
+      expect(row.sizeBytes).toBe(12000);
+      // The Countik description survives as the caption, through the
+      // same normalization as a tikwm title.
+      expect(row.caption).toBe('My Countik day');
+      expect(r2.objects.get('adu-buffer/cfg-1/reel-1.mp4')).toEqual(downloadableBody());
+      // The resolver is observable in the tick log: a Countik success
+      // leaves no failure row, so this is where the fallback path shows.
+      const okLogs = logSpy.mock.calls
+        .map(([arg]) => {
+          try {
+            return JSON.parse(String(arg)) as Record<string, unknown>;
+          } catch {
+            return {};
+          }
+        })
+        .filter((entry) => entry.event === 'download_ok');
+      expect(okLogs).toEqual([{ event: 'download_ok', reelId: 'reel-1', resolver: 'countik' }]);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it('falls back to the default caption when Countik carries no description', async () => {
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+    const r2 = new FakeR2();
+    const { fetchImpl } = fallbackFetch({
+      tikwm: tikwmJson({ code: -1, data: null }),
+      exist: new Response(JSON.stringify({ video_id: '740123' }), { status: 200 }),
+      info: new Response(JSON.stringify({ download_link: 'https://v16.tokcdn.com/v.mp4' }), { status: 200 }),
+      stream: new Response(streamOf(downloadableBody()), { status: 200 }),
+    });
+    const result = await runDownloadTick(deps(state, r2, fetchImpl));
+    expect(result.downloaded).toBe(1);
+    expect(state.downloaded[0].caption).toBe('❤️');
+  });
+
+  it('records both attempts when tikwm and Countik both fail', async () => {
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+    const r2 = new FakeR2();
+    const { fetchImpl } = fallbackFetch({
+      tikwm: tikwmJson({ code: -1, data: null }),
+      exist: new Response('blocked', { status: 403 }),
+    });
+    const result = await runDownloadTick(deps(state, r2, fetchImpl));
+    expect(result.failed).toBe(1);
+    expect(result.failedReasons).toEqual({
+      'tikwm_resolve:tikwm_api_body_code+countik_resolve:countik_api_http_status': 1,
+    });
+    expect(state.failed).toEqual(['reel-1']);
+    expect(state.recorded).toEqual([
+      {
+        reelId: 'reel-1',
+        failure: {
+          stage: 'tikwm_resolve',
+          reason: 'tikwm_api_body_code',
+          detail: 'body_code=-1',
+          fallback: { stage: 'countik_resolve', reason: 'countik_api_http_status', detail: 'step=exist; http_status=403' },
+        },
+      },
+    ]);
+    expect(state.downloaded).toEqual([]);
+    expect(r2.puts).toEqual([]);
+  });
+
+  it('opens the Countik stream without a tikwm Referer', async () => {
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+    const r2 = new FakeR2();
+    const { exist, info } = countikSuccess();
+    const { fetchImpl, calls } = fallbackFetch({
+      tikwm: tikwmJson({ code: -1, data: null }),
+      exist,
+      info,
+      stream: new Response('no', { status: 404 }),
+    });
+    const result = await runDownloadTick(deps(state, r2, fetchImpl));
+    expect(result.failedReasons).toEqual({ 'stream_open:stream_http_status': 1 });
+    const streamCall = calls.find((c) => c.url === 'https://v16.tokcdn.com/v.mp4');
+    expect(streamCall).toBeDefined();
+    expect((streamCall?.init.headers as Record<string, string>).Referer).toBeUndefined();
+  });
+
+  it('maps every Countik resolve failure to its recorded reason', () => {
+    const cases: Array<[CountikResolveFailure, unknown]> = [
+      [{ reason: 'countik_api_timeout', step: 'exist' }, { stage: 'countik_resolve', reason: 'countik_api_timeout', detail: 'step=exist' }],
+      [{ reason: 'countik_api_fetch_error', step: 'info', detail: 'boom' }, { stage: 'countik_resolve', reason: 'countik_api_fetch_error', detail: 'step=info; boom' }],
+      [{ reason: 'countik_api_http_status', step: 'exist', status: 403 }, { stage: 'countik_resolve', reason: 'countik_api_http_status', detail: 'step=exist; http_status=403' }],
+      [{ reason: 'countik_api_body_unparsable', step: 'info' }, { stage: 'countik_resolve', reason: 'countik_api_body_unparsable', detail: 'step=info' }],
+      [{ reason: 'countik_api_bad_body', step: 'exist' }, { stage: 'countik_resolve', reason: 'countik_api_bad_body', detail: 'step=exist' }],
+      [{ reason: 'countik_no_video_id' }, { stage: 'countik_resolve', reason: 'countik_no_video_id', detail: 'step=exist' }],
+      [{ reason: 'countik_no_download_link' }, { stage: 'countik_resolve', reason: 'countik_no_download_link', detail: 'step=info' }],
+    ];
+    for (const [input, expected] of cases) expect(countikFailure(input)).toEqual(expected);
   });
 });

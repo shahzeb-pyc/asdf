@@ -111,6 +111,30 @@ describe('SupabaseRpc', () => {
     expect(typeof failure.at).toBe('string');
   });
 
+  it('sends the fallback attempt inside a both-fail record', async () => {
+    let seenBody: unknown;
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      seenBody = JSON.parse(init.body as string);
+      return new Response(null, { status: 204 });
+    }) as unknown as FetchImpl;
+    const rpc = new SupabaseRpc(URL, KEY, fetchImpl);
+    await rpc.recordDownloadFailure('r1', {
+      stage: 'tikwm_resolve',
+      reason: 'tikwm_api_body_code',
+      detail: 'body_code=-1',
+      fallback: { stage: 'countik_resolve', reason: 'countik_api_http_status', detail: 'step=exist; http_status=403' },
+    });
+    expect(seenBody).toMatchObject({
+      p_reel_id: 'r1',
+      p_failure: {
+        stage: 'tikwm_resolve',
+        reason: 'tikwm_api_body_code',
+        detail: 'body_code=-1',
+        fallback: { stage: 'countik_resolve', reason: 'countik_api_http_status', detail: 'step=exist; http_status=403' },
+      },
+    });
+  });
+
   it('markDownloadFailed still sends only the reel id', async () => {
     let seenBody: unknown;
     const fetchImpl = (async (_url: string, init: RequestInit) => {

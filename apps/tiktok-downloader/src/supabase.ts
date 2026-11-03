@@ -186,6 +186,20 @@ export class SupabaseRpc {
         stage: failure.stage,
         reason: failure.reason,
         ...(failure.detail ? { detail: truncate(failure.detail) } : {}),
+        // A both-fail record carries the fallback attempt verbatim
+        // (stage + reason + detail), so the row shows both attempts.
+        // No schema change: the column is jsonb and holds it as-is.
+        ...(failure.fallback
+          ? {
+              fallback: {
+                stage: failure.fallback.stage,
+                reason: failure.fallback.reason,
+                ...(failure.fallback.detail
+                  ? { detail: truncate(failure.fallback.detail) }
+                  : {}),
+              },
+            }
+          : {}),
         at: new Date().toISOString(),
       },
     });

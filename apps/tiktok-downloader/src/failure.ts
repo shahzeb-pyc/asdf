@@ -10,21 +10,39 @@
 
 export type DownloadFailureStage =
   | 'tikwm_resolve'
+  | 'countik_resolve'
   | 'stream_open'
   | 'stream_upload'
   | 'size_check'
   | 'audio_check'
   | 'pipeline';
 
-export interface DownloadFailure {
+/** One recorded attempt: stage + reason + optional detail. */
+export interface DownloadFailureAttempt {
   stage: DownloadFailureStage;
   reason: string;
   detail?: string;
 }
 
-/** Tick-summary key: groups attempts by stage + reason, not by detail. */
+export interface DownloadFailure extends DownloadFailureAttempt {
+  /**
+   * The fallback attempt, when the primary resolver failed and the
+   * fallback also failed. Only one level deep: the primary failure
+   * stays the record's stage/reason, and the fallback attempt rides
+   * along so the next diagnosis never hides one attempt. A success
+   * on either resolver records nothing.
+   */
+  fallback?: DownloadFailureAttempt;
+}
+
+/** Tick-summary key: groups attempts by stage + reason, not by detail.
+ * A both-fail record keys on both attempts, so the fallback reason
+ * stays visible in the summary instead of collapsing into the primary. */
 export function failureKey(failure: DownloadFailure): string {
-  return `${failure.stage}:${failure.reason}`;
+  const primary = `${failure.stage}:${failure.reason}`;
+  return failure.fallback
+    ? `${primary}+${failure.fallback.stage}:${failure.fallback.reason}`
+    : primary;
 }
 
 export function truncateDetail(text: string, limit = 200): string {
