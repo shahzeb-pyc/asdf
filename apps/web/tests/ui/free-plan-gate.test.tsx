@@ -319,4 +319,160 @@ describe('FreePlanGate', () => {
     window.dispatchEvent(new Event('visibilitychange'));
     expect(mockApiGet).not.toHaveBeenCalled();
   });
+
+  // Capped auto re-check tests: fake timers drive the 30-second
+  // interval; visibility is mocked because jsdom defaults to
+  // 'prerender', which the gate correctly treats as not visible.
+  const setVisibility = (value: string) => {
+    Object.defineProperty(document, 'visibilityState', {
+      value,
+      configurable: true,
+    });
+  };
+  const findDialogWithFakeTimers = async () => {
+    const found = screen.findByTestId('free-plan-upgrade-dialog');
+    await vi.advanceTimersByTimeAsync(100);
+    return found;
+  };
+
+  it('clears without a reload when a capped re-check returns Paid', async () => {
+    vi.useFakeTimers();
+    try {
+      setVisibility('visible');
+      renderGate();
+      await findDialogWithFakeTimers();
+      expect(mockApiGet).toHaveBeenCalledTimes(1);
+      mockApiGet.mockResolvedValue(entitlement(true, true));
+      await vi.advanceTimersByTimeAsync(30_000);
+      // findBy polls on timers, which are fake here: advance once
+      // more so its polling interval can observe the new render.
+      const content = screen.findByText('Section content');
+      await vi.advanceTimersByTimeAsync(100);
+      expect(await content).toBeInTheDocument();
+      expect(screen.queryByTestId('free-plan-upgrade-dialog')).not.toBeInTheDocument();
+      expect(mockApiGet).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops auto re-checking after 10 checks and shows a Check again button', async () => {
+    vi.useFakeTimers();
+    try {
+      setVisibility('visible');
+      renderGate();
+      await findDialogWithFakeTimers();
+      for (let i = 0; i < 10; i++) {
+        await vi.advanceTimersByTimeAsync(30_000);
+      }
+      expect(mockApiGet).toHaveBeenCalledTimes(11);
+      expect(screen.getByTestId('free-plan-recheck-btn')).toBeInTheDocument();
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(mockApiGet).toHaveBeenCalledTimes(11);
+      expect(screen.getByTestId('free-plan-recheck-btn')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not burn auto checks while the tab is hidden', async () => {
+    vi.useFakeTimers();
+    try {
+      setVisibility('hidden');
+      renderGate();
+      await findDialogWithFakeTimers();
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(mockApiGet).toHaveBeenCalledTimes(1);
+      expect(screen.queryByTestId('free-plan-recheck-btn')).not.toBeInTheDocument();
+      setVisibility('visible');
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(mockApiGet).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('manual Check again clears the dialog on Paid', async () => {
+    vi.useFakeTimers();
+    try {
+      setVisibility('visible');
+      renderGate();
+      await findDialogWithFakeTimers();
+      for (let i = 0; i < 10; i++) {
+        await vi.advanceTimersByTimeAsync(30_000);
+      }
+      expect(screen.getByTestId('free-plan-recheck-btn')).toBeInTheDocument();
+      mockApiGet.mockResolvedValue(entitlement(true, true));
+      fireEvent.click(screen.getByTestId('free-plan-recheck-btn'));
+      const content = screen.findByText('Section content');
+      await vi.advanceTimersByTimeAsync(100);
+      expect(await content).toBeInTheDocument();
+      expect(screen.queryByTestId('free-plan-upgrade-dialog')).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('manual Check again on still-Free keeps the button and does not restart auto polling', async () => {
+    vi.useFakeTimers();
+    try {
+      setVisibility('visible');
+      renderGate();
+      await findDialogWithFakeTimers();
+      for (let i = 0; i < 10; i++) {
+        await vi.advanceTimersByTimeAsync(30_000);
+      }
+      expect(mockApiGet).toHaveBeenCalledTimes(11);
+      fireEvent.click(screen.getByTestId('free-plan-recheck-btn'));
+      await vi.advanceTimersByTimeAsync(100);
+      expect(mockApiGet).toHaveBeenCalledTimes(12);
+      expect(screen.getByTestId('free-plan-recheck-btn')).toBeInTheDocument();
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(mockApiGet).toHaveBeenCalledTimes(12);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('fail-opens when a capped re-check errors, instead of looping', async () => {
+    vi.useFakeTimers();
+    try {
+      setVisibility('visible');
+      renderGate();
+      await findDialogWithFakeTimers();
+      mockApiGet.mockRejectedValue(new Error('entitlement down'));
+      await vi.advanceTimersByTimeAsync(30_000);
+      const content = screen.findByText('Section content');
+      await vi.advanceTimersByTimeAsync(100);
+      expect(await content).toBeInTheDocument();
+      expect(screen.queryByTestId('free-plan-upgrade-dialog')).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not auto re-check on exempt routes or for admins', async () => {
+    vi.useFakeTimers();
+    try {
+      setVisibility('visible');
+      mocks.pathname = '/tenant/acme';
+      const { unmount } = renderGate();
+      expect(screen.getByText('Section content')).toBeInTheDocument();
+      await vi.advanceTimersByTimeAsync(100);
+      const callsAfterExemptMount = mockApiGet.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(mockApiGet.mock.calls.length).toBe(callsAfterExemptMount);
+      unmount();
+      mocks.pathname = '/tenant/acme/accounts';
+      mockApiGet.mockClear();
+      renderGate({ isAdmin: true });
+      expect(screen.getByText('Section content')).toBeInTheDocument();
+      expect(mockApiGet).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(mockApiGet).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      mocks.pathname = '/tenant/acme/accounts';
+    }
+  });
 });
