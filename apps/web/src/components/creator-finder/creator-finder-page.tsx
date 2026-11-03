@@ -1,18 +1,22 @@
 'use client';
 
 import * as React from 'react';
+import Image from 'next/image';
 import { useQuery } from '@tanstack/react-query';
 import {
   CreatorFinderUsageResponseSchema,
+  HashtagGenerateResponseSchema,
   NicheResponseSchema,
   RegionListResponseSchema,
   SavedCreatorDeleteResponseSchema,
   SavedCreatorListResponseSchema,
   SimilarResponseSchema,
   TrendingResponseSchema,
+  VideoCheckResponseSchema,
   type Creator,
   type Region,
   type SavedCreator,
+  type VideoInfo,
 } from '@fbuploadpro/contracts';
 import { api, buildTenantApiPath, isApiError } from '@/lib/api';
 import {
@@ -37,9 +41,10 @@ import {
   SelectValue,
 } from '@/components/shared/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shared/ui/tabs';
+import { Tag } from '@/components/shared/ui/tag';
 import { CreatorCard } from './creator-card';
 
-type TabId = 'trending' | 'niche' | 'similar' | 'saved';
+type TabId = 'trending' | 'niche' | 'similar' | 'saved' | 'video' | 'hashtag';
 
 interface SearchState {
   status: 'idle' | 'loading' | 'done' | 'error';
@@ -129,6 +134,22 @@ export function CreatorFinderPage({
   // Saved tab controls. The applied search/source/page are what the
   // query runs on; typing in the search box alone does not refetch.
   // Any new search, source choice, or Clear-all resets to page 1.
+  // Video tab: one check at a time, never saved to Saved.
+  const [videoUrl, setVideoUrl] = React.useState('');
+  const [videoStatus, setVideoStatus] = React.useState<
+    'idle' | 'loading' | 'done' | 'error'
+  >('idle');
+  const [videoResult, setVideoResult] = React.useState<VideoInfo | null>(null);
+  const [videoMessage, setVideoMessage] = React.useState<string | null>(null);
+  // Hashtag tab: generations are never saved to Saved.
+  const [hashtagKeyword, setHashtagKeyword] = React.useState('');
+  const [hashtagStatus, setHashtagStatus] = React.useState<
+    'idle' | 'loading' | 'done' | 'error'
+  >('idle');
+  const [hashtagResult, setHashtagResult] = React.useState<string[]>([]);
+  const [hashtagResultKeyword, setHashtagResultKeyword] = React.useState('');
+  const [hashtagMessage, setHashtagMessage] = React.useState<string | null>(null);
+  const [hashtagsCopied, setHashtagsCopied] = React.useState(false);
   const [savedSearchInput, setSavedSearchInput] = React.useState('');
   const [savedSearch, setSavedSearch] = React.useState('');
   const [savedSource, setSavedSource] = React.useState('all');
@@ -405,6 +426,74 @@ export function CreatorFinderPage({
     void usageQuery.refetch();
   }
 
+  async function checkVideo(event: React.FormEvent) {
+    event.preventDefault();
+    setVideoStatus('loading');
+    setVideoResult(null);
+    setVideoMessage(null);
+    try {
+      const result = await api.post(
+        buildTenantApiPath(subdomain, '/creator-finder/video'),
+        { url: videoUrl.trim() },
+        { schema: VideoCheckResponseSchema },
+      );
+      setVideoResult(result.video);
+      setVideoStatus('done');
+    } catch (err) {
+      setVideoStatus('error');
+      setVideoMessage(errorMessage(err));
+    }
+  }
+
+  async function generateHashtags(event: React.FormEvent) {
+    event.preventDefault();
+    setHashtagStatus('loading');
+    setHashtagResult([]);
+    setHashtagMessage(null);
+    setHashtagsCopied(false);
+    try {
+      const result = await api.post(
+        buildTenantApiPath(subdomain, '/creator-finder/hashtags'),
+        { query: hashtagKeyword.trim() },
+        { schema: HashtagGenerateResponseSchema },
+      );
+      setHashtagResult(result.hashtags);
+      setHashtagResultKeyword(result.keyword);
+      setHashtagStatus('done');
+    } catch (err) {
+      setHashtagStatus('error');
+      setHashtagMessage(errorMessage(err));
+    }
+  }
+
+  /**
+   * Copy all generated hashtags on ONE line, space-separated,
+   * with the # marker each chip shows. Clipboard API first, with
+   * a textarea fallback for browsers without it; the Copied
+   * confirmation shows only after a copy actually succeeded.
+   */
+  async function copyAllHashtags() {
+    const text = hashtagResult.map((tag) => `#${tag}`).join(' ');
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setHashtagsCopied(true);
+    } catch {
+      // Clipboard API unavailable or denied: textarea fallback.
+      try {
+        const area = document.createElement('textarea');
+        area.value = text;
+        document.body.appendChild(area);
+        area.select();
+        document.execCommand('copy');
+        area.remove();
+        setHashtagsCopied(true);
+      } catch {
+        setHashtagsCopied(false);
+      }
+    }
+  }
+
   function renderResults(state: SearchState) {
     if (state.status === 'loading') {
       return <p className="text-body text-ink-sub">Finding creators…</p>;
@@ -490,6 +579,8 @@ export function CreatorFinderPage({
           <TabsTrigger value="niche">By niche / words</TabsTrigger>
           <TabsTrigger value="similar">Similar creators</TabsTrigger>
           <TabsTrigger value="saved">Saved</TabsTrigger>
+          <TabsTrigger value="video">Video</TabsTrigger>
+          <TabsTrigger value="hashtag">Hashtag</TabsTrigger>
         </TabsList>
 
         <TabsContent value="trending">
@@ -866,6 +957,183 @@ export function CreatorFinderPage({
               </AlertDialogContent>
             </AlertDialog>
           ) : null}
+        </TabsContent>
+
+        <TabsContent value="video">
+          <form onSubmit={checkVideo} className="flex flex-col gap-3">
+            <label className="flex flex-col gap-2 text-body font-medium text-ink">
+              TikTok video link
+              <Input
+                value={videoUrl}
+                onChange={(event) => setVideoUrl(event.target.value)}
+                placeholder="Paste a TikTok video link here"
+                required
+              />
+            </label>
+            <p className="text-metadata text-ink-dim">
+              Paste a TikTok video link to see its counts.
+            </p>
+            <div>
+              <Button type="submit" disabled={videoStatus === 'loading'}>
+                Check video
+              </Button>
+            </div>
+          </form>
+          <div className="mt-4">
+            {videoStatus === 'loading' ? (
+              <p className="text-body text-ink-sub">Checking video…</p>
+            ) : videoStatus === 'error' ? (
+              <Banner
+                variant="critical"
+                title="Couldn't check this video"
+                description={videoMessage ?? 'Please try again.'}
+              />
+            ) : videoStatus === 'done' && videoResult ? (
+              <div className="flex flex-col gap-3">
+                <div className="flex gap-3">
+                  {videoResult.coverUrl ? (
+                    <Image
+                      src={videoResult.coverUrl}
+                      alt="Video cover"
+                      width={120}
+                      height={160}
+                      loading="lazy"
+                      className="h-40 w-30 shrink-0 rounded-md border border-line object-cover"
+                    />
+                  ) : null}
+                  <div className="flex min-w-0 flex-col gap-1">
+                    {videoResult.creatorName || videoResult.creatorHandle ? (
+                      <p className="text-body font-semibold text-ink">
+                        {videoResult.creatorName ?? ''}
+                        {videoResult.creatorName && videoResult.creatorHandle
+                          ? ' '
+                          : ''}
+                        {videoResult.creatorHandle
+                          ? `@${videoResult.creatorHandle}`
+                          : ''}
+                      </p>
+                    ) : null}
+                    {videoResult.description ? (
+                      <p className="text-body text-ink-sub">{videoResult.description}</p>
+                    ) : null}
+                    {videoResult.postedAt ? (
+                      <p className="text-metadata text-ink-dim">
+                        Posted:{' '}
+                        {new Date(videoResult.postedAt).toLocaleDateString(
+                          undefined,
+                          { year: 'numeric', month: 'short', day: 'numeric' },
+                        )}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { label: 'Plays', value: videoResult.plays },
+                    { label: 'Likes', value: videoResult.likes },
+                    { label: 'Comments', value: videoResult.comments },
+                    { label: 'Shares', value: videoResult.shares },
+                    { label: 'Saves', value: videoResult.saves },
+                  ]
+                    .filter((entry) => typeof entry.value === 'number')
+                    .map((entry) => (
+                      <div key={entry.label} className="flex flex-col gap-0.5">
+                        <span className="text-body font-semibold text-ink">
+                          {entry.value?.toLocaleString()}
+                        </span>
+                        <span className="text-metadata text-ink-dim">{entry.label}</span>
+                      </div>
+                    ))}
+                </div>
+                {videoResult.musicTitle || videoResult.musicArtist ? (
+                  <p className="text-body text-ink-sub">
+                    Music:{' '}
+                    {[videoResult.musicTitle, videoResult.musicArtist]
+                      .filter(Boolean)
+                      .join(' — ')}
+                  </p>
+                ) : null}
+                {videoResult.downloadUrl ? (
+                  <div>
+                    <Button asChild>
+                      <a
+                        href={videoResult.downloadUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Download
+                      </a>
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="hashtag">
+          <form onSubmit={generateHashtags} className="flex flex-col gap-3">
+            <label className="flex flex-col gap-2 text-body font-medium text-ink">
+              Keyword
+              <Input
+                value={hashtagKeyword}
+                onChange={(event) => setHashtagKeyword(event.target.value)}
+                placeholder="Keyword, for example: viral"
+                required
+              />
+            </label>
+            <p className="text-metadata text-ink-dim">
+              Enter a keyword to generate hashtags for it.
+            </p>
+            <div>
+              <Button type="submit" disabled={hashtagStatus === 'loading'}>
+                Generate hashtags
+              </Button>
+            </div>
+          </form>
+          <div className="mt-4">
+            {hashtagStatus === 'loading' ? (
+              <p className="text-body text-ink-sub">Generating hashtags…</p>
+            ) : hashtagStatus === 'error' ? (
+              <Banner
+                variant="critical"
+                title="Couldn't generate hashtags"
+                description={hashtagMessage ?? 'Please try again.'}
+              />
+            ) : hashtagStatus === 'done' ? (
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <h2 className="text-lg font-semibold text-ink">
+                    Hashtags for “{hashtagResultKeyword}”
+                  </h2>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void copyAllHashtags()}
+                    disabled={hashtagResult.length === 0}
+                  >
+                    Copy all
+                  </Button>
+                </div>
+                {hashtagsCopied ? (
+                  <p role="status" className="text-body text-ink-sub">
+                    Copied
+                  </p>
+                ) : null}
+                {hashtagResult.length === 0 ? (
+                  <p className="text-body text-ink-sub">
+                    No hashtags were generated. Try a different keyword.
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {hashtagResult.map((tag) => (
+                      <Tag key={tag} variant="secondary">#{tag}</Tag>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : null}
+          </div>
         </TabsContent>
       </Tabs>
     </div>

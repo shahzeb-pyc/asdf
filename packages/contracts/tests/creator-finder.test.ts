@@ -729,14 +729,16 @@ describe('saved creators', () => {
     // Note: the first creator's display name itself contains a
     // newline, so the CSV is asserted on the raw string, not split
     // into lines — a split would cut inside the quoted field.
+    // The header carries the original columns first, then the
+    // Countik columns; rows without enrichment leave those empty.
     expect(csv).toContain(
-      'handle,display_name,avatar_url,profile_url,follower_count,verified,source,search_term,saved_at\n',
+      'handle,display_name,avatar_url,profile_url,follower_count,verified,source,search_term,saved_at,bio,following_count,hearts_count,video_count,engagement_total,engagement_likes,engagement_comments,engagement_shares,average_views,average_likes,average_comments,average_shares,hashtags,mentions\n',
     );
     expect(csv).toContain(
-      'alice,"Alice, ""The"" Creator\nSecond line",https://example.com/a.jpg,https://www.tiktok.com/@alice,,,niche,fitness,2026-10-30T08:00:00.000Z',
+      'alice,"Alice, ""The"" Creator\nSecond line",https://example.com/a.jpg,https://www.tiktok.com/@alice,,,niche,fitness,2026-10-30T08:00:00.000Z,,,,,,,,,,,,,,',
     );
     expect(csv).toContain(
-      'bob,,,https://www.tiktok.com/@bob,,,trending,PK,2026-10-30T08:01:00.000Z',
+      'bob,,,https://www.tiktok.com/@bob,,,trending,PK,2026-10-30T08:01:00.000Z,,,,,,,,,,,,,,',
     );
   });
 
