@@ -16,6 +16,7 @@ import { logServerError } from '@/lib/server-analytics';
 import {
   asMirrorRow,
   loadDestinationsByExternalIds,
+  loadTargetPageDetails,
   toMirrorView,
   type MirrorRow,
 } from '../route';
@@ -123,6 +124,19 @@ export async function handleGetMirror(
     );
     const destination =
       destinations.get(`${mirror.target_platform}:${mirror.target_external_id}`) ?? null;
+    // Target page details for the detail header, resolved from
+    // the same existing rows the list card uses (no Graph fetch,
+    // no invented values). A missing destination still does not
+    // 404 the mirror: details stay null and the header degrades
+    // to the stored target copies.
+    const pageDetails = destination
+      ? await loadTargetPageDetails(db, [
+          { destinationId: destination.id, platform: mirror.target_platform },
+        ])
+      : null;
+    const targetDetails = destination
+      ? (pageDetails?.get(destination.id) ?? null)
+      : null;
 
     let posts: unknown[] = [];
     if (isLegacyClient(db)) {
@@ -164,7 +178,7 @@ export async function handleGetMirror(
             created_at: typeof firstPost.created_at === 'string' ? firstPost.created_at : '',
           }
         : null;
-    const view = toMirrorView(mirror, destination, lastPost);
+    const view = toMirrorView(mirror, destination, lastPost, targetDetails);
     const parsed = MirrorDetailResponseSchema.safeParse({ mirror: view, posts });
     if (!parsed.success) {
       logServerError('[tiktok-mirrors] Detail response failed validation', parsed.error, {

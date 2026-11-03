@@ -8,6 +8,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const pushMock = vi.fn();
@@ -150,9 +151,31 @@ describe('Instagram Auto Repost detail', () => {
       <IgAutoRepostDetailShell subdomain="acme" mirrorId="44444444-4444-4444-a444-444444444444" />
     );
     expect(await screen.findByTestId('ig-auto-repost-detail-page')).toBeTruthy();
-    expect(screen.getByText('Mirroring to Alice on IG')).toBeTruthy();
+    // Shared target-first header: the Instagram account is the
+    // heading, the creator is only the source line, and there is
+    // deliberately no Facebook link for an Instagram target.
+    expect(screen.getByTestId('mirror-detail-target-name').textContent).toBe('Alice on IG');
+    expect(screen.getByTestId('mirror-detail-source').textContent).toBe('source: @alice');
+    expect(screen.getByTestId('mirror-detail-platform-tag').textContent).toBe('Instagram');
+    expect(screen.queryByTestId('mirror-detail-facebook-link')).toBeNull();
     expect(screen.queryByText('Insights')).toBeNull();
     const detailUrl = String(apiGetMock.mock.calls[0]?.[0] ?? '');
     expect(detailUrl).toContain('targetPlatform=instagram');
+  });
+
+  it('opens the delete confirmation with Instagram wording from the header menu', async () => {
+    const user = userEvent.setup();
+    apiGetMock.mockResolvedValue({
+      mirror: mirrorView(),
+      posts: [],
+    });
+    renderWithQuery(
+      <IgAutoRepostDetailShell subdomain="acme" mirrorId="44444444-4444-4444-a444-444444444444" />
+    );
+    expect(await screen.findByTestId('ig-auto-repost-detail-page')).toBeTruthy();
+    await user.click(screen.getByTestId('mirror-detail-menu-btn'));
+    await user.click(screen.getByTestId('mirror-detail-menu-delete'));
+    expect(await screen.findByTestId('ig-auto-repost-delete-confirm')).toBeTruthy();
+    expect(screen.getByText(/The Instagram account itself is not deleted/)).toBeTruthy();
   });
 });

@@ -3,8 +3,6 @@
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import Image from 'next/image';
-
 import { api, buildTenantApiPath, buildUrl, isApiError } from '@/lib/api';
 import {
   MirrorDetailResponseSchema,
@@ -25,18 +23,18 @@ import {
 import { Button } from '@/components/shared/ui/button';
 import { EmptyState } from '@/components/shared/ui/empty-state';
 import { Skeleton } from '@/components/shared/ui/skeleton';
-import { Switch } from '@/components/shared/ui/switch';
 import { toast } from '@/components/shared/ui/toast';
-import { StatusMark } from '@/components/shared/ui/status-mark';
 import { TikTokDashboardTab } from '@/components/tiktok/tiktok-dashboard-tab';
-import { mirrorStatusMark } from '@/components/tiktok/tiktok-card';
+import { MirrorDetailHeader } from '@/components/tiktok/mirror-detail-header';
 
 /**
  * Instagram mirror dedicated view — the Facebook mirror detail
  * pattern with Dashboard only. There is deliberately no Insights
  * tab: the Facebook insights panel is page-specific and no
- * Instagram destination insights panel exists. Pause/resume is a
- * switch; delete asks first.
+ * Instagram destination insights panel exists. The header is the
+ * shared MirrorDetailHeader (target-first, Pages-style, no
+ * Facebook link for Instagram); pause/resume and delete live in
+ * its three-dots menu, and delete asks first.
  */
 
 export interface IgAutoRepostDetailShellProps {
@@ -125,7 +123,6 @@ export function IgAutoRepostDetailShell({ subdomain, mirrorId }: Readonly<IgAuto
   }
 
   const { mirror, posts } = detailQuery.data;
-  const mark = mirrorStatusMark(mirror.status);
   const isPaused = mirror.status === 'paused';
 
   return (
@@ -133,57 +130,13 @@ export function IgAutoRepostDetailShell({ subdomain, mirrorId }: Readonly<IgAuto
       data-testid="ig-auto-repost-detail-page"
       className="mx-auto box-border w-full max-w-300 px-6 py-6"
     >
-      <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
-        <div className="flex min-w-0 items-start gap-3">
-          {mirror.sourceAvatarUrl ? (
-            <Image
-              src={mirror.sourceAvatarUrl}
-              alt=""
-              width={56}
-              height={56}
-              className="size-14 shrink-0 rounded-full object-cover"
-              unoptimized
-            />
-          ) : (
-            <span
-              aria-hidden
-              className="flex size-14 shrink-0 items-center justify-center rounded-full bg-subtle text-body font-bold text-ink"
-            >
-              {(mirror.sourceUsername[0] ?? '?').toUpperCase()}
-            </span>
-          )}
-          <div className="min-w-0">
-            <h1 className="truncate text-xxl font-bold tracking-h1 text-ink">
-              @{mirror.sourceUsername}
-            </h1>
-            <p className="truncate text-body text-ink-sub">
-              Mirroring to {mirror.targetDisplayName}
-            </p>
-            <StatusMark kind={mark.kind} label={mark.label} testId="ig-auto-repost-detail-status-mark" />
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <label className="inline-flex items-center gap-2 text-body text-ink">
-            <Switch
-              data-testid="ig-auto-repost-pause-switch"
-              checked={!isPaused}
-              disabled={updateMutation.isPending}
-              onCheckedChange={(checked) => {
-                updateMutation.mutate(checked ? 'active' : 'paused');
-              }}
-            />
-            {isPaused ? 'Paused' : 'Active'}
-          </label>
-          <Button
-            type="button"
-            variant="outline"
-            data-testid="ig-auto-repost-delete-btn"
-            onClick={() => setIsDeleteOpen(true)}
-          >
-            Delete
-          </Button>
-        </div>
-      </div>
+      <MirrorDetailHeader
+        mirror={mirror}
+        backHref={buildTenantHref(subdomain, '/instagram/auto-repost', isTenantSubdomainHost(window.location.hostname, subdomain))}
+        onPauseResume={() => updateMutation.mutate(isPaused ? 'active' : 'paused')}
+        pausePending={updateMutation.isPending}
+        onDeleteRequest={() => setIsDeleteOpen(true)}
+      />
 
       <TikTokDashboardTab
         mirror={mirror}

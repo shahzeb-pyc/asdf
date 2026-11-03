@@ -41,7 +41,7 @@ export function mirrorStatusMark(status: MirrorListView['status']): {
   }
 }
 
-const RING_CLASSES = {
+export const MIRROR_STATUS_RING_CLASSES = {
   operational: 'border-2 border-signal-operational',
   queued: 'border-2 border-signal-queued',
   critical: 'border-2 border-signal-critical',
@@ -71,7 +71,7 @@ const STATUS_TEXT_CLASSES = {
  * The shared `StatusMark` renders a bare icon, not a circle, so the
  * card uses this circled form to match the approved mockup.
  */
-function MirrorStatusCircle({ status, label }: Readonly<{ status: MirrorListView['status']; label: string }>) {
+export function MirrorStatusCircle({ status, label }: Readonly<{ status: MirrorListView['status']; label: string }>) {
   const mark = mirrorStatusMark(status);
   const Icon = CIRCLE_ICONS[mark.kind];
   return (
@@ -106,7 +106,7 @@ export interface TikTokCardProps {
 
 export function TikTokCard({ mirror, onSelect, highlighted }: Readonly<TikTokCardProps>) {
   const mark = mirrorStatusMark(mirror.status);
-  const ringClass = RING_CLASSES[mark.kind];
+  const ringClass = MIRROR_STATUS_RING_CLASSES[mark.kind];
   const addedDate = mirror.targetAddedAt ? formatAddedDate(mirror.targetAddedAt) : '';
   const facebookUrl =
     mirror.targetPlatform === 'facebook'
