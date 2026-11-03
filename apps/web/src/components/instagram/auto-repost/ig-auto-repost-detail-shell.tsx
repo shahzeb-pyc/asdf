@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, buildTenantApiPath, buildUrl, isApiError } from '@/lib/api';
 import {
@@ -23,19 +23,34 @@ import {
 import { Button } from '@/components/shared/ui/button';
 import { EmptyState } from '@/components/shared/ui/empty-state';
 import { Skeleton } from '@/components/shared/ui/skeleton';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shared/ui/tabs';
 import { toast } from '@/components/shared/ui/toast';
 import { TikTokDashboardTab } from '@/components/tiktok/tiktok-dashboard-tab';
+import { TikTokHistoryTab, type HistoryStatusFilter } from '@/components/tiktok/tiktok-history-tab';
 import { MirrorDetailHeader } from '@/components/tiktok/mirror-detail-header';
 
 /**
  * Instagram mirror dedicated view — the Facebook mirror detail
- * pattern with Dashboard only. There is deliberately no Insights
- * tab: the Facebook insights panel is page-specific and no
- * Instagram destination insights panel exists. The header is the
- * shared MirrorDetailHeader (target-first, Pages-style, no
- * Facebook link for Instagram); pause/resume and delete live in
- * its three-dots menu, and delete asks first.
+ * pattern with Dashboard + History tabs. There is deliberately no
+ * Insights tab: the Facebook insights panel is page-specific and
+ * no Instagram destination insights panel exists. Tab state lives
+ * in ?tab= and the History filter in ?status=, like the Facebook
+ * shell. The header is the shared MirrorDetailHeader (target-first,
+ * Pages-style, no Facebook link for Instagram); pause/resume and
+ * delete live in its three-dots menu, and delete asks first.
  */
+
+type DetailTab = 'dashboard' | 'history';
+
+const TAB_IDS: ReadonlySet<string> = new Set(['dashboard', 'history']);
+
+function resolveTab(raw: string | null): DetailTab {
+  return raw !== null && TAB_IDS.has(raw) ? (raw as DetailTab) : 'dashboard';
+}
+
+function resolveHistoryStatus(raw: string | null): HistoryStatusFilter {
+  return raw === 'posted' || raw === 'failed' || raw === 'skipped' ? raw : 'all';
+}
 
 export interface IgAutoRepostDetailShellProps {
   subdomain: string;
@@ -44,9 +59,16 @@ export interface IgAutoRepostDetailShellProps {
 
 export function IgAutoRepostDetailShell({ subdomain, mirrorId }: Readonly<IgAutoRepostDetailShellProps>) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const tenant = queryKeys.tenant(subdomain);
   const [isDeleteOpen, setIsDeleteOpen] = React.useState(false);
+  const [activeTab, setActiveTab] = React.useState<DetailTab>(() =>
+    resolveTab(searchParams.get('tab'))
+  );
+  const [historyStatus, setHistoryStatus] = React.useState<HistoryStatusFilter>(() =>
+    resolveHistoryStatus(searchParams.get('status'))
+  );
 
   const detailQuery = useQuery({
     queryKey: tenant.instagramAutoRepost.detail(mirrorId),
@@ -122,8 +144,46 @@ export function IgAutoRepostDetailShell({ subdomain, mirrorId }: Readonly<IgAuto
     );
   }
 
-  const { mirror, posts } = detailQuery.data;
+  const { mirror, posts, postCounts, postCountsError } = detailQuery.data;
   const isPaused = mirror.status === 'paused';
+
+  const detailHref = (params: URLSearchParams): string => {
+    const query = params.toString();
+    return buildTenantHref(
+      subdomain,
+      query ? `/instagram/auto-repost/${mirrorId}?${query}` : `/instagram/auto-repost/${mirrorId}`,
+      isTenantSubdomainHost(window.location.hostname, subdomain)
+    );
+  };
+
+  const handleTabChange = (value: string) => {
+    const tab = resolveTab(value);
+    setActiveTab(tab);
+    const params = new URLSearchParams(searchParams.toString());
+    if (tab === 'dashboard') params.delete('tab');
+    else params.set('tab', tab);
+    if (tab !== 'history') params.delete('status');
+    else if (historyStatus !== 'all') params.set('status', historyStatus);
+    router.replace(detailHref(params), { scroll: false });
+  };
+
+  const handleHistoryStatusChange = (next: HistoryStatusFilter) => {
+    setHistoryStatus(next);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set('tab', 'history');
+    if (next === 'all') params.delete('status');
+    else params.set('status', next);
+    router.replace(detailHref(params), { scroll: false });
+  };
+
+  const handleViewFailed = () => {
+    setHistoryStatus('failed');
+    setActiveTab('history');
+    const params = new URLSearchParams(searchParams.toString());
+    params.set('tab', 'history');
+    params.set('status', 'failed');
+    router.replace(detailHref(params), { scroll: false });
+  };
 
   return (
     <div
@@ -138,12 +198,29 @@ export function IgAutoRepostDetailShell({ subdomain, mirrorId }: Readonly<IgAuto
         onDeleteRequest={() => setIsDeleteOpen(true)}
       />
 
-      <TikTokDashboardTab
-        mirror={mirror}
-        posts={posts}
-        subdomain={subdomain}
-        mirrorId={mirrorId}
-      />
+      <Tabs value={activeTab} onValueChange={handleTabChange}>
+        <TabsList data-testid="ig-auto-repost-detail-tabs">
+          <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
+          <TabsTrigger value="history">History</TabsTrigger>
+        </TabsList>
+        <TabsContent value="dashboard">
+          <TikTokDashboardTab
+            posts={posts}
+            postCounts={postCounts}
+            postCountsError={postCountsError ?? false}
+            onViewFailed={handleViewFailed}
+          />
+        </TabsContent>
+        <TabsContent value="history">
+          <TikTokHistoryTab
+            mirror={mirror}
+            subdomain={subdomain}
+            mirrorId={mirrorId}
+            status={historyStatus}
+            onStatusChange={handleHistoryStatusChange}
+          />
+        </TabsContent>
+      </Tabs>
 
       <AlertDialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen}>
         <AlertDialogContent data-testid="ig-auto-repost-delete-confirm">

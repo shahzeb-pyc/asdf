@@ -89,6 +89,69 @@ export async function authenticate(
   return { db, workspaceId, session };
 }
 
+/**
+ * All-time Posted / Failed / Skipped counts for ONE mirror, in one
+ * grouped query (SQL path) or one chunked two-column fetch
+ * aggregated in code (Supabase path, the Pages pattern — PostgREST
+ * has no GROUP BY). On failure returns null: the caller renders
+ * dashes, never zeros, and never fails the whole page for a
+ * counts failure (Pages R6 rule, same as the list card).
+ */
+async function fetchMirrorDashboardCounts(
+  db: Db,
+  mirrorId: string
+): Promise<{ posted: number; failed: number; skipped: number } | null> {
+  const counts = { posted: 0, failed: 0, skipped: 0 };
+  try {
+    if (isLegacyClient(db)) {
+      const rows = (await db.query(
+        `SELECT COUNT(*) FILTER (WHERE status = 'posted')::int AS posted,
+                COUNT(*) FILTER (WHERE status = 'failed')::int AS failed,
+                COUNT(*) FILTER (WHERE status = 'skipped')::int AS skipped
+         FROM mirror_posts WHERE mirror_id = $1`,
+        [mirrorId]
+      )) as Record<string, unknown>[];
+      const row = rows[0] ?? {};
+      const toCount = (value: unknown): number => {
+        const n = Number(value);
+        return Number.isFinite(n) && n >= 0 ? Math.trunc(n) : 0;
+      };
+      return {
+        posted: toCount(row.posted),
+        failed: toCount(row.failed),
+        skipped: toCount(row.skipped),
+      };
+    }
+    const supabase = db as SupabaseClient;
+    const CHUNK_SIZE = 1000;
+    let from = 0;
+    for (;;) {
+      const { data, error, count } = await supabase
+        .from('mirror_posts')
+        .select('status', { count: 'exact' })
+        .eq('mirror_id', mirrorId)
+        .in('status', ['posted', 'failed', 'skipped'])
+        .range(from, from + CHUNK_SIZE - 1);
+      if (error) throw new Error(error.message);
+      const rows = (Array.isArray(data) ? data : []) as Array<{ status?: unknown }>;
+      for (const row of rows) {
+        if (row.status === 'posted') counts.posted += 1;
+        else if (row.status === 'failed') counts.failed += 1;
+        else if (row.status === 'skipped') counts.skipped += 1;
+      }
+      if (rows.length === 0) break;
+      if (typeof count === 'number' && from + rows.length >= count) break;
+      from += rows.length;
+    }
+    return counts;
+  } catch (err) {
+    logServerError('[tiktok-mirrors] Detail post-count query failed', err, {
+      source: 'tiktok-mirrors-detail-counts',
+    });
+    return null;
+  }
+}
+
 export async function handleGetMirror(
   request: NextRequest,
   subdomain: string,
@@ -138,28 +201,64 @@ export async function handleGetMirror(
       ? (pageDetails?.get(destination.id) ?? null)
       : null;
 
+    // History filter + pagination, both server-side so filtering
+    // and Load more work past the first page, not just over loaded
+    // rows. `status` is one post status (or absent = all); `page`
+    // is 1-based, 30 rows per page, fetched as 31 to learn hasMore.
+    const params = new URL(request.url).searchParams;
+    const statusParam = params.get('status');
+    const statusFilter =
+      statusParam === 'posted' ||
+      statusParam === 'failed' ||
+      statusParam === 'skipped' ||
+      statusParam === 'pending'
+        ? statusParam
+        : null;
+    const rawPage = Number(params.get('page'));
+    const page = Number.isInteger(rawPage) && rawPage >= 1 ? Math.trunc(rawPage) : 1;
+    const PAGE_SIZE = 30;
+
     let posts: unknown[] = [];
     if (isLegacyClient(db)) {
-      posts = (await db.query(
-        `SELECT id, mirror_id, source_post_id, caption, video_url, cover_url,
-                source_created_at, status, published_post_id, error, created_at
-         FROM mirror_posts WHERE mirror_id = $1 ORDER BY created_at DESC LIMIT 30`,
-        [mirrorId]
+      const rows = (await db.query(
+        statusFilter
+          ? `SELECT id, mirror_id, source_post_id, caption, video_url, cover_url,
+                    source_created_at, status, published_post_id, error, created_at
+             FROM mirror_posts WHERE mirror_id = $1 AND status = $2
+             ORDER BY created_at DESC LIMIT 31 OFFSET $3`
+          : `SELECT id, mirror_id, source_post_id, caption, video_url, cover_url,
+                    source_created_at, status, published_post_id, error, created_at
+             FROM mirror_posts WHERE mirror_id = $1
+             ORDER BY created_at DESC LIMIT 31 OFFSET $2`,
+        statusFilter
+          ? [mirrorId, statusFilter, (page - 1) * PAGE_SIZE]
+          : [mirrorId, (page - 1) * PAGE_SIZE]
       )) as unknown[];
+      posts = rows;
     } else {
       const supabase = db as SupabaseClient;
-      const { data, error } = await supabase
+      let query = supabase
         .from('mirror_posts')
         .select(
           'id, mirror_id, source_post_id, caption, video_url, cover_url, source_created_at, status, published_post_id, error, created_at'
         )
         .eq('mirror_id', mirrorId)
         .order('created_at', { ascending: false })
-        .limit(30);
+        .range((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+      if (statusFilter) query = query.eq('status', statusFilter);
+      const { data, error } = await query;
       if (error) throw new Error(`Failed to load mirror posts: ${error.message}`);
       posts = data ?? [];
     }
+    const postsHasMore = posts.length > PAGE_SIZE;
+    if (postsHasMore) posts = posts.slice(0, PAGE_SIZE);
 
+    const postCounts = await fetchMirrorDashboardCounts(db, mirrorId);
+
+    // Note: this first-row derivation feeds MirrorView.lastMirroredPost.
+    // Filtered/paged History responses reuse it only for their posts
+    // slice; the shells' own detail fetch is unfiltered page 1, so
+    // the view they render is the true latest post.
     const firstPost = (posts[0] ?? null) as Record<string, unknown> | null;
     const lastPost =
       firstPost &&
@@ -179,7 +278,13 @@ export async function handleGetMirror(
           }
         : null;
     const view = toMirrorView(mirror, destination, lastPost, targetDetails);
-    const parsed = MirrorDetailResponseSchema.safeParse({ mirror: view, posts });
+    const parsed = MirrorDetailResponseSchema.safeParse({
+      mirror: view,
+      posts,
+      postCounts,
+      postCountsError: postCounts === null,
+      postsHasMore,
+    });
     if (!parsed.success) {
       logServerError('[tiktok-mirrors] Detail response failed validation', parsed.error, {
         source: 'tiktok-mirrors-detail',
