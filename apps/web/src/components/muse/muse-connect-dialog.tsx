@@ -45,10 +45,10 @@ import {
  * Connect Muse dialogue — not a page section.
  *
  * Flow, in order: create a key, copy the prompt and give it to
- * Muse, Muse asks for the key with its FBUploadPro connector,
- * then reads the entire guide, then asks for login via secure
- * store. The key itself goes in the connector, never in chat,
- * and is shown exactly once after creation.
+ * Muse the first time, Muse asks for the key, then reads the
+ * entire guide, then asks for FBUploadPro sign-in. The key
+ * itself is never pasted in chat, and is shown exactly once
+ * after creation.
  */
 export function MuseConnectDialog({
   subdomain,
@@ -91,8 +91,8 @@ export function MuseConnectDialog({
       await navigator.clipboard.writeText(text);
       toast(doneMessage);
     } catch {
-      toast('Copy failed', {
-        description: 'Select the text and copy it manually.',
+      toast("Copy didn't work", {
+        description: 'Select the text and copy it yourself.',
       });
     }
   }
@@ -100,7 +100,7 @@ export function MuseConnectDialog({
   async function handleCreate() {
     const parsed = AgentKeyCreateSchema.safeParse({ name });
     if (!parsed.success) {
-      toast('Enter a key name.');
+      toast('Please enter a name for the key.');
       return;
     }
     setCreating(true);
@@ -113,8 +113,8 @@ export function MuseConnectDialog({
       setNewKey(created.key);
       setName('');
       await loadKeys();
-    } catch (error) {
-      toast('Could not create the key', { description: getErrorMessage(error) });
+    } catch {
+      toast("We couldn't create the key. Try again.");
     } finally {
       setCreating(false);
     }
@@ -132,12 +132,14 @@ export function MuseConnectDialog({
       setKeys((current) => current.filter((key) => key.id !== keyToRevoke.id));
       setKeyToRevoke(null);
       toast('Key revoked and removed.');
-    } catch (error) {
-      toast('Could not revoke the key', { description: getErrorMessage(error) });
+    } catch {
+      toast("We couldn't revoke the key. Try again.");
     } finally {
       setRevoking(false);
     }
   }
+
+  const isKeysSetupMissing = keysError === 'Muse keys are not set up yet';
 
   return (
     <>
@@ -146,7 +148,8 @@ export function MuseConnectDialog({
           <DialogHeader>
             <DialogTitle>Connect Muse</DialogTitle>
             <DialogDescription>
-              Create a key for Muse to use your Media Library.
+              Create a key so Muse can add media to your Media Library.
+              You will only see the key once, so copy it straight away.
             </DialogDescription>
           </DialogHeader>
 
@@ -154,7 +157,7 @@ export function MuseConnectDialog({
             <div className="flex gap-2">
               <Input
                 aria-label="Key name"
-                placeholder="Key name, e.g. My Muse"
+                placeholder="For example: Home computer"
                 value={name}
                 onChange={(event) => setName(event.target.value)}
               />
@@ -163,8 +166,9 @@ export function MuseConnectDialog({
               </Button>
             </div>
             <p className="text-ink-sub text-sm">
-              <strong className="text-ink">Scope:</strong> Media Library,
-              read and write only.
+              Muse can only add media to, and view, your Media Library
+              with this key. It cannot publish, schedule, change
+              settings, or view billing.
             </p>
 
             {newKey ? (
@@ -179,7 +183,9 @@ export function MuseConnectDialog({
                     Copy key
                   </Button>
                   <p className="text-ink-sub text-sm">
-                    Copy it now. It will not be shown again.
+                    Copy it now. It will not be shown again. Give it to
+                    Muse when Muse asks for it — do not paste it in
+                    chat.
                   </p>
                 </div>
               </div>
@@ -188,10 +194,9 @@ export function MuseConnectDialog({
             <div className="border-t border-line pt-4">
               <p className="font-medium">Prompt for Muse</p>
               <p className="text-ink-sub text-sm">
-                Copy this prompt and give it to Muse. Muse will first
-                ask for your key with its FBUploadPro connector, then
-                read the entire guide, then ask for your login via
-                secure store.
+                Copy this prompt and give it to Muse the first time.
+                Muse will first ask for your key, then read the entire
+                guide, then ask for your FBUploadPro sign-in.
               </p>
               <p className="mt-2 text-sm leading-relaxed">
                 {MUSE_CONNECT_PROMPT}
@@ -206,21 +211,21 @@ export function MuseConnectDialog({
                 </Button>
                 <p className="text-ink-sub text-sm">Then paste it into Muse.</p>
               </div>
-              <p className="text-ink-sub mt-2 text-sm">
-                Next, in order: 1. Muse asks for your key with its
-                FBUploadPro connector. 2. Muse reads the entire guide
-                at the link in the prompt. 3. Muse asks for your login
-                via secure store. Put your key in the connector — not
-                in the chat.
-              </p>
             </div>
 
             <div className="border-t border-line pt-4">
               <p className="font-medium">Your keys</p>
               {keysError ? (
-                <p className="text-ink-sub text-sm">{keysError}</p>
+                <p className="text-ink-sub text-sm">
+                  {isKeysSetupMissing
+                    ? "Muse isn't set up for this workspace yet. Ask the workspace owner to finish setup, then try again."
+                    : 'We couldn\'t load your keys. Close and reopen this dialog to try again.'}
+                </p>
               ) : keys.length === 0 ? (
-                <p className="text-ink-sub text-sm">No keys yet.</p>
+                <p className="text-ink-sub text-sm">
+                  You haven&apos;t created a key yet. Create one above to
+                  connect Muse.
+                </p>
               ) : (
                 <ul className="flex flex-col divide-y divide-line">
                   {keys.map((key) => (
@@ -272,9 +277,10 @@ export function MuseConnectDialog({
           <AlertDialogHeader>
             <AlertDialogTitle>Revoke this key?</AlertDialogTitle>
             <AlertDialogDescription>
-              Muse will lose Media Library access with this key
-              immediately, and the key will be removed from this list.
-              You will need to create a new key to reconnect.
+              Muse will immediately lose access to your Media Library
+              through this key, and the key will be removed from this
+              list. Media already added stays in your Media Library.
+              To reconnect, create a new key.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

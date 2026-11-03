@@ -79,16 +79,16 @@ describe('Muse key contracts', () => {
     expect(bad.success).toBe(false);
   });
 
-  it('keeps the connect prompt exact: connector key first, guide, secure login', () => {
+  it('keeps the connect prompt exact: key first, guide, sign-in for browser help', () => {
     expect(MUSE_CONNECT_PROMPT).toContain(
       'https://app.fbuploadpro.com/muse_guide.md'
     );
     expect(MUSE_CONNECT_PROMPT).toContain(
-      'Do not ask me to paste the key in chat'
+      'Never ask me to paste the key in chat'
     );
-    expect(MUSE_CONNECT_PROMPT).toContain('via secure store');
+    expect(MUSE_CONNECT_PROMPT).toContain('FBUploadPro sign-in');
     expect(MUSE_CONNECT_PROMPT).toContain(
-      'For everything else, use FBUploadPro in my browser'
+      'help me use everything else in my browser'
     );
   });
 
