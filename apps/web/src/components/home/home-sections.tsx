@@ -18,11 +18,11 @@
  * copied hex-for-hex — notably the Muse orb, which renders as a
  * token gold disc rather than a copied gradient.
  *
- * Ask Muse: there is no in-app Muse chat in the code (only the ⌘K
- * command palette), so the Ask Muse button has no destination yet.
- * Owner decision 2026-11-03: Muse is being built separately, so this
- * button ships as rendered and will be linked later in that separate
- * build. No fake route or fake chat is invented here.
+ * Ask Muse: the card's Ask Muse action links to the Muse section
+ * (the tenant /muse page), where a user connects Muse with a
+ * Media Library key. There is no in-app Muse chat in the code
+ * (only the ⌘K command palette); the link goes to the Muse
+ * section, not to a chat, and no fake chat is invented here.
  *
  * Creator Finder "Unlimited use": the wording is as approved in the
  * mockup. It sits alongside a live 100 TikWM API calls/day/user cap
@@ -374,7 +374,7 @@ export function QuickLinks({ links }: { links: HomeQuickLink[] }) {
   );
 }
 
-export function MuseAssistantCard() {
+export function MuseAssistantCard({ museHref }: { museHref: string }) {
   return (
     <Card data-testid="muse-assistant-card" className="gap-4 px-6 text-center">
       <h2 className="flex items-center justify-between text-left text-body leading-heading font-bold text-ink">
@@ -389,10 +389,9 @@ export function MuseAssistantCard() {
         Ask Muse to schedule, publish, or check your pages — while you sleep.
       </p>
       <div>
-        {/* Owner decision 2026-11-03: Muse is being built separately, so
-            this button ships as rendered and will be linked later in that
-            separate build. No destination is invented here. */}
-        <Button data-testid="ask-muse-button">Ask Muse →</Button>
+        <Button asChild data-testid="ask-muse-button">
+          <Link href={museHref}>Ask Muse →</Link>
+        </Button>
       </div>
     </Card>
   );
