@@ -144,7 +144,7 @@ Home is the starting page. Its header says "Welcome" with the current workspace 
 
 What Home shows depends on the plan:
 
-- Paid: the paid plan card (total pages and accounts, price, 30-day period with end date and days left — 0 days left reads "Expires today" — per-platform rows, storage used and quota with a progress bar, "Unlimited use" for Prompt Library and Creator Finder, and Auto Download/Upload and TikTok Repost listed as included), quick links in this order — Media Library, Creator Finder, Facebook Accounts, Facebook Pages, Billing — and a Muse Assistant rail card.
+- Paid: the paid plan card (total pages and accounts, price, 30-day period with end date and days left — 0 days left reads "Expires today" — per-platform rows, storage used and quota with a progress bar, "Unlimited use" for Prompt Library and Creator Finder, and Auto Download/Upload and TikTok Repost listed as included), quick links in this order — Media Library, Creator Finder, Facebook Accounts, Facebook Schedule, Billing — and a Muse Assistant rail card.
 - Free: the free plan card at 0 PKR, "Prompt Library only", with posting, scheduling, Auto Download/Upload, and Auto Repost shown as not included, an Upgrade card, and quick links for Prompt Library and Billing only.
 - Expired: a banner that the plan has expired, with a Renew button only.
 - Home also shows a banner for old FBUploadPro users, and the Muse Assistant rail card.

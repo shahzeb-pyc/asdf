@@ -128,5 +128,9 @@ describe('muse_guide.md route', () => {
     expect(text).toContain('### Facebook — Schedule');
     // Leaves: Schedule (Facebook, formerly Pages), Schedule (Instagram), In-app Schedule (Threads).
     expect(text).toContain('Facebook leaves, in order: Accounts, Schedule, Publish Now');
+    // Home quick links use the renamed label too (PR #162 renames the
+    // app's Home link to Facebook Schedule, not Facebook Pages).
+    expect(text).toContain('Facebook Accounts, Facebook Schedule, Billing');
+    expect(text).not.toContain('Facebook Accounts, Facebook Pages, Billing');
   });
 });
