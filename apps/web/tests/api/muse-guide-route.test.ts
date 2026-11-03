@@ -32,7 +32,7 @@ describe('muse_guide.md route', () => {
   it('covers every sidebar section, workspaces, Settings/BYOC, and billing leaves in full detail', async () => {
     const res = await GET();
     const text = await res.text();
-    // Two jobs: operate in the browser AND explain FBUploadPro.
+    // Two jobs: operate in your own browser AND explain FBUploadPro.
     expect(text).toContain('Answering questions about FBUploadPro');
     expect(text).toContain('do not guess and do not answer from general knowledge');
     expect(text).toContain('checked it in the app');
@@ -111,5 +111,21 @@ describe('muse_guide.md route', () => {
     // BYOC per platform, fresh wording.
     expect(text).toContain('All three are required before a connection can start');
     expect(text).toContain('No deauthorize or data-deletion addresses are given anywhere');
+  });
+
+  it('states Muse works in its own browser, and that Facebook Pages IS the in-app schedule', async () => {
+    const res = await GET();
+    const text = await res.text();
+    // Own-browser correction: never the user's/device browser.
+    expect(text).toContain('in your own browser');
+    expect(text).toContain('Use FBUploadPro for the user, in your own browser');
+    expect(text).toContain('in your own browser yourself');
+    expect(text).not.toContain('in their browser');
+    // Facebook Pages IS the in-app schedule, just named Pages.
+    expect(text).toContain("Pages IS Facebook's in-app schedule");
+    expect(text).toContain("ARE Facebook's in-app schedule");
+    expect(text).toContain('Facebook has no separate Schedule leaf');
+    // Leaves themselves are unchanged: Pages, Schedule, In-app Schedule.
+    expect(text).toContain('Facebook leaves, in order: Accounts, Pages, Publish Now');
   });
 });
