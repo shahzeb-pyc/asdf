@@ -45,6 +45,22 @@
  * and outside-pointer dismissal explicitly prevented, onOpenChange
  * ignored. The only exits are Upgrade (Billing Purchase view) and
  * Back to Home.
+ *
+ * Capped self-healing re-check: while the dialog is shown for a
+ * proven Free decision, the dialog itself covers the sidebar, so
+ * the sidebar navigation that would normally trigger a pathname
+ * re-check cannot happen — a blocked same-tab session previously
+ * only recovered by a full reload. To fix that without polling
+ * genuine Free users forever, the gate re-checks the shared query
+ * every 30 seconds, at most 10 times, and only while the tab is
+ * visible (ticks while hidden are skipped and never counted).
+ * When a re-check returns Paid the dialog clears on its own; when
+ * the 10th check still returns Free, auto re-checking stops and a
+ * "Check again" button appears for manual re-checks. Manual taps
+ * never restart auto polling, and the counter resets whenever the
+ * dialog clears, the user leaves to an exempt route, or the gate
+ * unmounts. A fetch error still fail-opens through the proven-only
+ * path and never loops.
  */
 
 import * as React from 'react';
@@ -73,6 +89,10 @@ export interface FreePlanGateProps {
 // Purchase would be hard-blocked on the very page they were
 // sent to buy from, with Upgrade pointing back at itself.
 const EXEMPT_FIRST_SEGMENTS = new Set(['', 'prompts', 'my-plan', 'purchase', 'payments', 'refund']);
+
+/** Capped auto re-check while the Free dialog is shown. */
+const AUTO_RECHECK_INTERVAL_MS = 30_000;
+const MAX_AUTO_RECHECKS = 10;
 
 export function isFreePlanExemptRoute(pathname: string | null, subdomain: string): boolean {
   const normalized = normalizeTenantPath(pathname ?? '', subdomain);
@@ -114,6 +134,48 @@ export function FreePlanGate({
   React.useEffect(() => {
     if (isUnproven) hasFailOpenedRef.current = true;
   }, [isUnproven]);
+
+  // Capped self-healing re-check (see the header note). These hooks
+  // run unconditionally, before the early returns below, so the
+  // interval is owned by the gate regardless of which branch renders.
+  // `blocked` is true exactly while the dialog renders.
+  const blocked = !exempt && !isAdmin && isProven && !!entitlement && !entitlement.canPost;
+  const [autoRecheckCount, setAutoRecheckCount] = React.useState(0);
+  const autoRecheckCountRef = React.useRef(0);
+  // The shared query's refetch identity can change between renders;
+  // the interval reads it through a ref so a new identity never
+  // restarts (and thereby postpones) the 30-second cadence.
+  const refetchRef = React.useRef(refetch);
+  React.useEffect(() => {
+    refetchRef.current = refetch;
+  });
+  // A new blocked episode starts from zero, and clearing to Paid,
+  // leaving to an exempt route, or unmounting (cleanup below) all
+  // end the current episode, so the next one is capped afresh.
+  React.useEffect(() => {
+    if (!blocked) {
+      autoRecheckCountRef.current = 0;
+      setAutoRecheckCount((previous) => (previous === 0 ? previous : 0));
+    }
+  }, [blocked]);
+  React.useEffect(() => {
+    if (!blocked) return undefined;
+    if (autoRecheckCountRef.current >= MAX_AUTO_RECHECKS) return undefined;
+    const timer = setInterval(() => {
+      // Pause while hidden: a hidden tab must never burn checks.
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+        return;
+      }
+      autoRecheckCountRef.current += 1;
+      const performed = autoRecheckCountRef.current;
+      setAutoRecheckCount(performed);
+      if (performed >= MAX_AUTO_RECHECKS) clearInterval(timer);
+      void refetchRef.current();
+    }, AUTO_RECHECK_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [blocked]);
+
+  const capped = blocked && autoRecheckCount >= MAX_AUTO_RECHECKS;
 
   if (exempt || isAdmin) return <>{children}</>;
   if (!isProven || !entitlement) {
@@ -172,6 +234,18 @@ export function FreePlanGate({
           >
             Back to Home
           </Button>
+          {capped ? (
+            <Button
+              variant="outline"
+              data-testid="free-plan-recheck-btn"
+              onClick={() => {
+                // Manual re-check only: this never restarts auto polling.
+                void refetch();
+              }}
+            >
+              Check again
+            </Button>
+          ) : null}
           <Button data-testid="free-plan-upgrade-btn" onClick={() => router.push(upgradeHref)}>
             Upgrade
           </Button>
