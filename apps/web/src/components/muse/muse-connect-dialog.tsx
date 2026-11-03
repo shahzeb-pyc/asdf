@@ -165,12 +165,6 @@ export function MuseConnectDialog({
                 {creating ? 'Creating…' : 'Create key'}
               </Button>
             </div>
-            <p className="text-ink-sub text-sm">
-              Muse can only add media to, and view, your Media Library
-              with this key. It cannot publish, schedule, change
-              settings, or view billing.
-            </p>
-
             {newKey ? (
               <div className="border-t border-line pt-4">
                 <p className="font-medium">New key — shown once</p>

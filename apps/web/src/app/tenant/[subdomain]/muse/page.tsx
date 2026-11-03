@@ -4,7 +4,7 @@ import React from 'react';
 import { MusePage } from '@/components/muse/muse-page';
 
 /** Title resolves through the tenant layout's `<Section> · <Workspace>` template. */
-export const metadata: Metadata = { title: 'Muse' };
+export const metadata: Metadata = { title: 'Muse Assistant' };
 
 /**
  * Muse — the page where a user connects Muse with a Media
