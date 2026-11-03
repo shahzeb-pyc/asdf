@@ -86,8 +86,8 @@ export type MuseActivityResponse = z.infer<typeof MuseActivityResponseSchema>;
 /**
  * The exact prompt the Connect Muse dialogue offers to copy.
  * The guide link is the public app-host .md file; the order is
- * contractual: connector key first, then the entire guide, then
- * login via secure store. The key itself never goes in the prompt.
+ * contractual: key first, then the entire guide, then FBUploadPro
+ * sign-in for browser help. The key itself never goes in the prompt.
  */
 export const MUSE_CONNECT_PROMPT =
-  'Connect to my FBUploadPro account, in this order: 1. First, ask me for my FBUploadPro Media Library key using your FBUploadPro connector. Do not ask me to paste the key in chat. 2. Then read the entire Muse guide at https://app.fbuploadpro.com/muse_guide.md — read it all, not just a summary. 3. Then ask me for my FBUploadPro login via secure store, so you can use FBUploadPro in my browser. After that: upload media directly to my Media Library using my key. For everything else, use FBUploadPro in my browser. Guide me through every feature, step by step, using the guide. Act on my instructions without asking again, until I revoke the key.';
+  'Connect to my FBUploadPro account, in this order: 1. First, ask me for my FBUploadPro Media Library key. Never ask me to paste the key in chat. 2. Then read the full Muse guide at https://app.fbuploadpro.com/muse_guide.md. 3. Then ask me for my FBUploadPro sign-in, so you can help me in my browser. After that: add media directly to my Media Library with my key, and help me use everything else in my browser, step by step, following the guide. Act on what I ask without asking again, for everything including publishing and deleting. Keep going until I tell you to stop, I revoke the key, or I log out.';

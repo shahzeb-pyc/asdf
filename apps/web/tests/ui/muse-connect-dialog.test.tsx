@@ -85,19 +85,19 @@ describe('MuseConnectDialog', () => {
     expect(screen.getByText('fbu_…abcd')).toBeTruthy();
     expect(screen.getByText('Active')).toBeTruthy();
     expect(screen.queryByText('Revoked')).toBeNull();
-    expect(screen.getByText(/Media Library, read and write only/)).toBeTruthy();
+    expect(screen.getByText(/Muse can only add media to, and view, your Media Library/)).toBeTruthy();
   });
 
   it('shows "No keys yet" when the list is empty', async () => {
     mockedApiGet.mockResolvedValue({ keys: [] });
     renderDialog();
-    expect(await screen.findByText('No keys yet.')).toBeTruthy();
+    expect(await screen.findByText(/You haven't created a key yet/)).toBeTruthy();
   });
 
   it('shows the keys-load failure instead of an empty list', async () => {
     mockedApiGet.mockRejectedValue(new Error('Keys failed'));
     renderDialog();
-    expect(await screen.findByText('Keys failed')).toBeTruthy();
+    expect(await screen.findByText(/We couldn't load your keys/)).toBeTruthy();
   });
 
   it('creates a key, shows it once, and copies it', async () => {
@@ -127,10 +127,10 @@ describe('MuseConnectDialog', () => {
     await screen.findByText('My Muse');
     await user.click(screen.getByText('Create key'));
     expect(mockedApiPost).not.toHaveBeenCalled();
-    expect(mockedToast).toHaveBeenCalledWith('Enter a key name.');
+    expect(mockedToast).toHaveBeenCalledWith('Please enter a name for the key.');
   });
 
-  it('copies the exact prompt, with the app-host guide link and connector-first order', async () => {
+  it('copies the exact prompt, with the app-host guide link and key-first order', async () => {
     const user = userEvent.setup();
     installClipboardMock();
     renderDialog();
@@ -139,7 +139,7 @@ describe('MuseConnectDialog', () => {
     await user.click(screen.getByText('Copy prompt'));
     expect(clipboardWriteText).toHaveBeenCalledWith(MUSE_CONNECT_PROMPT);
     expect(MUSE_CONNECT_PROMPT).toContain('https://app.fbuploadpro.com/muse_guide.md');
-    expect(MUSE_CONNECT_PROMPT).toContain('FBUploadPro connector');
+    expect(MUSE_CONNECT_PROMPT).toContain('FBUploadPro sign-in');
   });
 
   it('revoke asks for confirmation and then removes the row entirely', async () => {

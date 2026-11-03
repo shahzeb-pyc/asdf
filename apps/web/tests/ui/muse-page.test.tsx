@@ -2,9 +2,9 @@
  * Muse page — behavioural tests (Media Library only, option B).
  *
  * Counts today by type, day-grouped rows with Folder / No folder
- * and per-row Open links, the empty state, and the loud error +
- * Retry path. The approved user-explanation paragraph is asserted
- * present; "Open Media Library" must not appear as a header action.
+ * and per-row Open in Media Library links, the empty state, and
+ * the loud error + Try again path. The approved user-explanation
+ * paragraph is asserted present.
  */
 import React from 'react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
@@ -81,9 +81,9 @@ describe('MusePage', () => {
   it('shows the user explanation, today counts, and day-grouped rows', async () => {
     render(<MusePage subdomain="creatorstack" />);
     expect(
-      await screen.findByText(/You tell Muse what you want/)
+      await screen.findByText(/Tell Muse what you want/)
     ).toBeTruthy();
-    expect(screen.getByText(/Today, Muse added 2 videos and 1 images/)).toBeTruthy();
+    expect(screen.getByText(/Today, Muse added 2 videos and 1 image/)).toBeTruthy();
     expect(screen.getByText('reel-01.mp4')).toBeTruthy();
     expect(screen.getByText('cover-01.jpg')).toBeTruthy();
     expect(screen.getByText('reel-old.mp4')).toBeTruthy();
@@ -100,12 +100,11 @@ describe('MusePage', () => {
     ).toContain('Folder');
     // Link role only: the table headers also read "Open", so a
     // plain text query would count them as well.
-    const openLinks = screen.getAllByRole('link', { name: 'Open' });
+    const openLinks = screen.getAllByRole('link', { name: 'Open in Media Library' });
     expect(openLinks[1].getAttribute('href')).toContain(
       'folder=cccccccc-cccc-4ccc-cccc-ccccccccccc1'
     );
     expect(openLinks[0].getAttribute('href')).toBe('/tenant/creatorstack/media');
-    expect(screen.queryByText('Open Media Library')).toBeNull();
   });
 
   it('shows the empty state when Muse has added nothing', async () => {
@@ -117,11 +116,11 @@ describe('MusePage', () => {
       });
     });
     render(<MusePage subdomain="creatorstack" />);
-    expect(await screen.findByText('No uploads by Muse yet')).toBeTruthy();
+    expect(await screen.findByText('No uploads from Muse yet')).toBeTruthy();
     expect(screen.getByText(/Today, Muse added 0 videos and 0 images/)).toBeTruthy();
   });
 
-  it('shows the error and recovers on Retry', async () => {
+  it('shows the error and recovers on Try again', async () => {
     mockedApiGet
       .mockRejectedValueOnce(new Error('Activity failed'))
       .mockImplementation((path: string) => {
@@ -130,16 +129,16 @@ describe('MusePage', () => {
       });
     const user = userEvent.setup();
     render(<MusePage subdomain="creatorstack" />);
-    expect(await screen.findByText(/Couldn't load today's work/)).toBeTruthy();
-    await user.click(screen.getByText('Retry'));
+    expect(await screen.findByText(/We couldn't load today's work/)).toBeTruthy();
+    await user.click(screen.getByText('Try again'));
     await waitFor(() =>
-      expect(screen.getByText(/Today, Muse added 2 videos and 1 images/)).toBeTruthy()
+      expect(screen.getByText(/Today, Muse added 2 videos and 1 image/)).toBeTruthy()
     );
   });
 
   it('uses the Facebook Pages container and header structure, not a stretched full-width root', async () => {
     const { container } = render(<MusePage subdomain="creatorstack" />);
-    await screen.findByText(/You tell Muse what you want/);
+    await screen.findByText(/Tell Muse what you want/);
     // Pages shell: mx-auto box-border w-full max-w-300 px-6 py-6, with
     // the page's own flex-col gap-6 stacking (ADU hub form).
     const root = container.querySelector('div.mx-auto.max-w-300');
@@ -162,8 +161,8 @@ describe('MusePage', () => {
   it('opens the Connect Muse dialogue from the header button', async () => {
     const user = userEvent.setup();
     render(<MusePage subdomain="creatorstack" />);
-    await screen.findByText(/You tell Muse what you want/);
+    await screen.findByText(/Tell Muse what you want/);
     await user.click(screen.getByText('Connect Muse'));
-    expect(await screen.findByText('Create a key for Muse to use your Media Library.')).toBeTruthy();
+    expect(await screen.findByText(/Create a key so Muse can add media/)).toBeTruthy();
   });
 });

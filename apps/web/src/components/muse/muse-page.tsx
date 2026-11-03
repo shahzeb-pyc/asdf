@@ -19,11 +19,13 @@ import { MuseActivityResponseSchema } from '@/lib/api/schemas/muse';
 import { MuseConnectDialog } from '@/components/muse/muse-connect-dialog';
 
 /**
- * Muse page — Today's work is Media Library only (option B):
- * plain-text counts today by type from Muse-key uploads, plus a
- * table grouped by day from real upload records. No browser
- * actions and no queue/publish claims appear here, and a file in
- * the Library is never claimed to be published.
+ * Muse page — separated, plain-language copy.
+ *
+ * The key route is Media Library only: Today's work lists only
+ * media Muse added with a key. The browser route is separate:
+ * a user can also tell Muse to sign in to FBUploadPro in the
+ * browser and do things on their behalf. This page never lists
+ * posts, scheduled items, or published content.
  */
 export function MusePage({
   subdomain,
@@ -56,18 +58,24 @@ export function MusePage({
     void load();
   }, [load]);
 
+  const isSetupMissing =
+    error === 'Muse activity is not set up yet' ||
+    error === 'Muse keys are not set up yet';
+
   return (
     <div className="mx-auto box-border flex w-full max-w-300 flex-col gap-6 px-6 py-6">
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="mb-1 text-xxl font-bold tracking-h1 text-ink">Muse</h1>
           <p className="m-0 max-w-2xl text-body text-ink-sub">
-            You tell Muse what you want. Muse puts your media in your
-            Media Library, handles Pages, Publish Now, Queue and
-            Schedule, Auto Download/Upload, and Auto Repost in your
-            browser for you, and shows you each step as it goes, so
-            you can follow along. It keeps working on what you asked
-            until you stop it — revoke its key in Connect Muse, or log
+            Tell Muse what you want. Muse adds your media to your
+            Media Library. You can also ask Muse how to use
+            FBUploadPro, or tell Muse to sign in to FBUploadPro in
+            your browser and do things for you, on your behalf —
+            whatever you ask. This page only lists media Muse added.
+            It does not list posts, scheduled items, or published
+            content. To stop Muse&apos;s Media Library access, revoke
+            its key in Connect Muse. To end its browser session, log
             out.
           </p>
         </div>
@@ -80,6 +88,19 @@ export function MusePage({
         onOpenChange={setConnectOpen}
       />
 
+      <section aria-label="Example tasks">
+        <h2 className="text-base font-semibold">Example tasks</h2>
+        <ul className="mt-2 flex flex-col gap-1 text-ink-sub">
+          <li>Add a new video to my Media Library.</li>
+          <li>Show me how to schedule a post, step by step.</li>
+          <li>
+            Sign in to FBUploadPro in my browser and publish this post
+            with Publish Now.
+          </li>
+          <li>Check my Page and tell me what needs attention.</li>
+        </ul>
+      </section>
+
       <section aria-label="Today's work">
         <h2 className="text-base font-semibold">Today&apos;s work</h2>
         {loading ? (
@@ -90,28 +111,33 @@ export function MusePage({
         ) : error ? (
           <div className="mt-3">
             <p className="text-ink-sub">
-              Couldn&apos;t load today&apos;s work: {error}
+              {isSetupMissing
+                ? "Muse isn't set up for this workspace yet. Ask the workspace owner to finish setup, then try again."
+                : "We couldn't load today's work. Try again."}
             </p>
             <Button
               variant="outline"
               className="mt-2"
               onClick={() => void load()}
             >
-              Retry
+              Try again
             </Button>
           </div>
         ) : activity ? (
           <>
             <p className="mt-2 text-ink-sub">
-              Today, Muse added {activity.today.videos} videos and{' '}
-              {activity.today.images} images to your Media Library.
+              Today, Muse added {activity.today.videos}{' '}
+              {activity.today.videos === 1 ? 'video' : 'videos'} and{' '}
+              {activity.today.images}{' '}
+              {activity.today.images === 1 ? 'image' : 'images'} to your
+              Media Library.
             </p>
             {activity.days.length === 0 ? (
               <EmptyState
                 type="no-results"
                 className="mt-3"
-                title="No uploads by Muse yet"
-                description="When Muse uploads media with your key, it will appear here."
+                title="No uploads from Muse yet"
+                description="Media Muse adds to your Media Library will appear here. To get started, connect Muse above."
               />
             ) : (
               activity.days.map((day) => (
@@ -125,7 +151,7 @@ export function MusePage({
                         <TableHead>Folder</TableHead>
                         <TableHead>Time</TableHead>
                         <TableHead>Status</TableHead>
-                        <TableHead>Open</TableHead>
+                        <TableHead>Open in Media Library</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -147,7 +173,7 @@ export function MusePage({
                           <TableCell>
                             <StatusMark
                               kind="operational"
-                              label="Added"
+                              label="Added to Media Library"
                               testId={`muse-activity-status-${row.id}`}
                             />
                           </TableCell>
@@ -160,7 +186,7 @@ export function MusePage({
                               }`}
                               className="text-link underline"
                             >
-                              Open
+                              Open in Media Library
                             </a>
                           </TableCell>
                         </TableRow>
