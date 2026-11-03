@@ -225,7 +225,7 @@ export function getUserSections(subdomain: string, useCleanPaths = false): Sideb
       key: 'primary',
       items: [
         { kind: 'leaf', label: 'Home', href: href('/'), icon: HOME_ICON, match: 'exact' },
-        { kind: 'leaf', label: 'Muse', href: href('/muse'), icon: MUSE_ICON, match: 'prefix' },
+        { kind: 'leaf', label: 'Muse Assistant', href: href('/muse'), icon: MUSE_ICON, match: 'prefix' },
         { kind: 'leaf', label: 'Media Library', href: href('/media'), icon: MEDIA_ICON, match: 'prefix' },
         { kind: 'leaf', label: 'Fdola Studio', href: href('/fdola-studio'), icon: FDOLA_ICON, match: 'prefix' },
         { kind: 'leaf', label: 'Prompt Library', href: href('/prompts'), icon: PROMPTS_ICON, match: 'prefix' },

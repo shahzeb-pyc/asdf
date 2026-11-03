@@ -85,7 +85,7 @@ describe('MuseConnectDialog', () => {
     expect(screen.getByText('fbu_…abcd')).toBeTruthy();
     expect(screen.getByText('Active')).toBeTruthy();
     expect(screen.queryByText('Revoked')).toBeNull();
-    expect(screen.getByText(/Muse can only add media to, and view, your Media Library/)).toBeTruthy();
+    expect(screen.queryByText(/Muse can only add media to, and view, your Media Library/)).toBeNull();
   });
 
   it('shows "No keys yet" when the list is empty', async () => {

@@ -66,7 +66,7 @@ export function MusePage({
     <div className="mx-auto box-border flex w-full max-w-300 flex-col gap-6 px-6 py-6">
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="mb-1 text-xxl font-bold tracking-h1 text-ink">Muse</h1>
+          <h1 className="mb-1 text-xxl font-bold tracking-h1 text-ink">Muse Assistant</h1>
           <p className="m-0 max-w-2xl text-body text-ink-sub">
             Tell Muse what you want. Muse adds your media to your
             Media Library. You can also ask Muse how to use

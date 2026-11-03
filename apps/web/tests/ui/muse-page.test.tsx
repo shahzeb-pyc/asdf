@@ -150,7 +150,7 @@ describe('MusePage', () => {
     expect(root?.className).toContain('flex-col');
     expect(root?.className).toContain('gap-6');
     // Pages header: mb-6, title text-xxl bold, subtitle text-body.
-    const title = screen.getByRole('heading', { name: 'Muse' });
+    const title = screen.getByRole('heading', { name: 'Muse Assistant' });
     expect(title.className).toContain('text-xxl');
     expect(title.className).toContain('font-bold');
     const header = title.parentElement?.parentElement;

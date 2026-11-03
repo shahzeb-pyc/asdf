@@ -128,7 +128,7 @@ describe('sidebar section configs (structural)', () => {
     const labels = allLabels(sections);
     expect(labels).toEqual([
       'Home',
-      'Muse',
+      'Muse Assistant',
       'Media Library',
       'Fdola Studio',
       'Prompt Library',
