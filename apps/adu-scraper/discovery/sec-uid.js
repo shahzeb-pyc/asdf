@@ -82,7 +82,12 @@ export async function resolveTiktokSecUid(username, options = {}) {
   // on purpose: this module must stay dependency-free so the standalone CI scraper
   // test step (which runs without npm install) keeps passing. Importing config.js
   // would pull in dotenv and break that step.
-  const workerBase = (options.workerUrl || options.workerBaseUrl || process.env.SECUID_WORKER_URL || DEFAULT_WORKER_URL).replace(/\/+$/, '');
+  // Strip trailing slashes with plain string ops (no regex): identical to
+  // the old `.replace(/\/+$/, '')` but without super-linear backtracking.
+  let workerBase = options.workerUrl || options.workerBaseUrl || process.env.SECUID_WORKER_URL || DEFAULT_WORKER_URL;
+  while (workerBase.endsWith('/')) {
+    workerBase = workerBase.slice(0, -1);
+  }
   if (workerBase) {
     const data = await fetchJsonWithTimeout(`${workerBase}/?username=${encodeURIComponent(clean)}`, {
       headers: {

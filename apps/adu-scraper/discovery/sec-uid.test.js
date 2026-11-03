@@ -149,3 +149,42 @@ test('Default Worker URL is used when no override is given', async () => {
     stub.restore();
   }
 });
+
+test('Worker timeout falls back to direct Countik', async () => {
+  const original = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = (url, init) => {
+    calls.push(String(url));
+    if (String(url).startsWith(WORKER)) {
+      // Never resolves on its own; rejects only when the resolver aborts it.
+      return new Promise((_, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+      });
+    }
+    return okJson({ status: 'success', sec_uid: DIRECT_UID });
+  };
+  try {
+    const secUid = await resolveTiktokSecUid('someuser', { workerUrl: WORKER, timeoutMs: 50 });
+    assert.equal(secUid, DIRECT_UID);
+    assert.equal(calls.length, 2);
+    assert.ok(calls[1].startsWith('https://countik.com/api/exist/someuser'));
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('Worker sec_uid with non-success status falls back to direct Countik', async () => {
+  const stub = stubFetch((url) => {
+    if (url.startsWith(WORKER)) {
+      return okJson({ sec_uid: WORKER_UID, status: 'error' });
+    }
+    return okJson({ status: 'success', sec_uid: DIRECT_UID });
+  });
+  try {
+    const secUid = await resolveTiktokSecUid('someuser', { workerUrl: WORKER });
+    assert.equal(secUid, DIRECT_UID);
+    assert.equal(stub.calls.length, 2);
+  } finally {
+    stub.restore();
+  }
+});
