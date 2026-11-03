@@ -151,7 +151,7 @@ test.describe('tiktok mirrors section (phone width)', () => {
     await assertNoHorizontalOverflow(page);
   });
 
-  test('dedicated view renders Dashboard + Insights tabs, no overflow', async ({
+  test('dedicated view renders Dashboard + History + Insights tabs, no overflow', async ({
     page,
     context,
   }) => {
@@ -160,6 +160,8 @@ test.describe('tiktok mirrors section (phone width)', () => {
     await installMirrorRoutes(page);
     await page.goto(`/tenant/${SUB}/tiktok-mirrors/${MIRROR_ID}`);
     await expect(page.getByTestId('tiktok-detail-page')).toBeVisible({ timeout: 15_000 });
+    // History lives on the History tab now, not on Dashboard.
+    await page.getByTestId('tiktok-detail-tabs').getByText('History').click();
     await expect(page.getByText('Mirror history')).toBeVisible();
     await expect(page.getByText('My exact caption')).toBeVisible();
     await assertNoHorizontalOverflow(page);
@@ -230,6 +232,8 @@ test.describe('tiktok mirrors section (phone width)', () => {
     );
     await page.goto(`/tenant/${SUB}/tiktok-mirrors/${MIRROR_ID}`);
     await expect(page.getByTestId('tiktok-detail-page')).toBeVisible({ timeout: 15_000 });
+    // Retry lives on the History tab now, not on Dashboard.
+    await page.getByTestId('tiktok-detail-tabs').getByText('History').click();
     const retryBtn = page.getByTestId(
       'tiktok-retry-btn-55555555-5555-4555-a555-555555555555'
     );

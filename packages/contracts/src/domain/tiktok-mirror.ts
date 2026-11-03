@@ -392,9 +392,38 @@ export const UpdateMirrorRequestSchema = z.object({
 });
 export type UpdateMirrorRequest = z.infer<typeof UpdateMirrorRequestSchema>;
 
+/**
+ * All-time Dashboard totals for one mirror: Posted / Failed /
+ * Skipped, counted over every mirror_posts row. Unlike the list
+ * card's MirrorPostCountsSchema (Posted/Failed only), the Dashboard
+ * shows Skipped too — a watermarked-only reel lands there, and
+ * without the count a user never sees why a reel never posted.
+ */
+export const MirrorDashboardCountsSchema = z.object({
+  posted: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  skipped: z.number().int().nonnegative(),
+});
+export type MirrorDashboardCounts = z.infer<typeof MirrorDashboardCountsSchema>;
+
 export const MirrorDetailResponseSchema = z.object({
   mirror: MirrorViewSchema,
   posts: z.array(MirrorPostRowSchema),
+  /**
+   * All-time Dashboard totals for this mirror (Posted / Failed /
+   * Skipped; `pending` is deliberately not a total — a pending row
+   * is an in-flight legacy state, not an outcome). Null exactly
+   * when the counts query failed: the Dashboard then renders
+   * dashes, never fake zeros, and the page still loads.
+   * Optional because the Threads detail route parses the same
+   * schema with only {mirror, posts} and must keep working
+   * unchanged; the Facebook/Instagram detail route always sets
+   * all three.
+   */
+  postCounts: MirrorDashboardCountsSchema.nullable().optional(),
+  postCountsError: z.boolean().optional(),
+  /** True when another page of history exists past this slice. */
+  postsHasMore: z.boolean().optional(),
 });
 export type MirrorDetailResponse = z.infer<typeof MirrorDetailResponseSchema>;
 

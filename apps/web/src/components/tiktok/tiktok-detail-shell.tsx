@@ -27,13 +27,17 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shared/ui
 import { toast } from '@/components/shared/ui/toast';
 import { PageTabInsights } from '@/components/pages/dedicated/insights-panel';
 import { TikTokDashboardTab } from './tiktok-dashboard-tab';
+import { TikTokHistoryTab, type HistoryStatusFilter } from './tiktok-history-tab';
 import { MirrorDetailHeader } from './mirror-detail-header';
 
 /**
  * Mirror dedicated view — the Pages dedicated section pattern with
- * Dashboard + Insights tabs only (no Queue, Posting Times, or
+ * Dashboard + History + Insights tabs (no Queue, Posting Times, or
  * Calendar tabs: mirrors post on the hourly tick, not on a
- * schedule). Tab state lives in ?tab=, like the Pages shell.
+ * schedule). Tab state lives in ?tab=, like the Pages shell; the
+ * History filter lives in ?status= while the History tab is active
+ * (absent = all), so a refresh keeps the filter and the Dashboard
+ * failed strip can deep-link straight to failed reels.
  * Insights reuses the linked target's insights panel via the
  * request-time resolved destination id; when the target row is
  * gone the tab reports it unavailable instead of crashing.
@@ -42,12 +46,16 @@ import { MirrorDetailHeader } from './mirror-detail-header';
  * menu, and delete asks first.
  */
 
-type DetailTab = 'dashboard' | 'insights';
+type DetailTab = 'dashboard' | 'history' | 'insights';
 
-const TAB_IDS: ReadonlySet<string> = new Set(['dashboard', 'insights']);
+const TAB_IDS: ReadonlySet<string> = new Set(['dashboard', 'history', 'insights']);
 
 function resolveTab(raw: string | null): DetailTab {
   return raw !== null && TAB_IDS.has(raw) ? (raw as DetailTab) : 'dashboard';
+}
+
+function resolveHistoryStatus(raw: string | null): HistoryStatusFilter {
+  return raw === 'posted' || raw === 'failed' || raw === 'skipped' ? raw : 'all';
 }
 
 export interface TikTokDetailShellProps {
@@ -62,6 +70,9 @@ export function TikTokDetailShell({ subdomain, mirrorId }: Readonly<TikTokDetail
   const tenant = queryKeys.tenant(subdomain);
   const [activeTab, setActiveTab] = React.useState<DetailTab>(() =>
     resolveTab(searchParams.get('tab'))
+  );
+  const [historyStatus, setHistoryStatus] = React.useState<HistoryStatusFilter>(() =>
+    resolveHistoryStatus(searchParams.get('status'))
   );
   const [isDeleteOpen, setIsDeleteOpen] = React.useState(false);
 
@@ -118,11 +129,46 @@ export function TikTokDetailShell({ subdomain, mirrorId }: Readonly<TikTokDetail
     const params = new URLSearchParams(searchParams.toString());
     if (tab === 'dashboard') params.delete('tab');
     else params.set('tab', tab);
+    // The status filter only means anything on the History tab.
+    if (tab !== 'history') params.delete('status');
+    else if (historyStatus !== 'all') params.set('status', historyStatus);
     const query = params.toString();
     router.replace(
       buildTenantHref(
         subdomain,
         query ? `/tiktok-mirrors/${mirrorId}?${query}` : `/tiktok-mirrors/${mirrorId}`,
+        isTenantSubdomainHost(window.location.hostname, subdomain)
+      ),
+      { scroll: false }
+    );
+  };
+
+  const handleHistoryStatusChange = (next: HistoryStatusFilter) => {
+    setHistoryStatus(next);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set('tab', 'history');
+    if (next === 'all') params.delete('status');
+    else params.set('status', next);
+    router.replace(
+      buildTenantHref(
+        subdomain,
+        `/tiktok-mirrors/${mirrorId}?${params.toString()}`,
+        isTenantSubdomainHost(window.location.hostname, subdomain)
+      ),
+      { scroll: false }
+    );
+  };
+
+  const handleViewFailed = () => {
+    setHistoryStatus('failed');
+    setActiveTab('history');
+    const params = new URLSearchParams(searchParams.toString());
+    params.set('tab', 'history');
+    params.set('status', 'failed');
+    router.replace(
+      buildTenantHref(
+        subdomain,
+        `/tiktok-mirrors/${mirrorId}?${params.toString()}`,
         isTenantSubdomainHost(window.location.hostname, subdomain)
       ),
       { scroll: false }
@@ -160,7 +206,7 @@ export function TikTokDetailShell({ subdomain, mirrorId }: Readonly<TikTokDetail
     );
   }
 
-  const { mirror, posts } = detailQuery.data;
+  const { mirror, posts, postCounts, postCountsError } = detailQuery.data;
   const isPaused = mirror.status === 'paused';
 
   return (
@@ -183,14 +229,24 @@ export function TikTokDetailShell({ subdomain, mirrorId }: Readonly<TikTokDetail
       <Tabs value={activeTab} onValueChange={handleTabChange}>
         <TabsList data-testid="tiktok-detail-tabs">
           <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
+          <TabsTrigger value="history">History</TabsTrigger>
           <TabsTrigger value="insights">Insights</TabsTrigger>
         </TabsList>
         <TabsContent value="dashboard">
           <TikTokDashboardTab
-            mirror={mirror}
             posts={posts}
+            postCounts={postCounts}
+            postCountsError={postCountsError ?? false}
+            onViewFailed={handleViewFailed}
+          />
+        </TabsContent>
+        <TabsContent value="history">
+          <TikTokHistoryTab
+            mirror={mirror}
             subdomain={subdomain}
             mirrorId={mirrorId}
+            status={historyStatus}
+            onStatusChange={handleHistoryStatusChange}
           />
         </TabsContent>
         <TabsContent value="insights">
