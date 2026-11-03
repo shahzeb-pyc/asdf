@@ -214,7 +214,15 @@ export async function handleProxyRequest(
   }
 
   const url = new URL(request.url);
-  const path = url.pathname.replace(/^\/proxy\//, '');
+  // Normalize a trailing slash before routing: the app calls
+  // analyze as /analyze/?... (matching Countik's own direct
+  // route), so without this the proxy path is "analyze/" and
+  // the exact 'analyze' route check below falls through to 404.
+  // Plain endsWith/slice loop, not a regex strip.
+  let path = url.pathname.replace(/^\/proxy\//, '');
+  while (path.length > 0 && path.endsWith('/')) {
+    path = path.slice(0, -1);
+  }
   let upstreamUrl: string | null = null;
   let method: 'GET' | 'POST' = 'GET';
   let body: unknown = undefined;
