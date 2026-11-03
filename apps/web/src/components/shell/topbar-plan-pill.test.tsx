@@ -54,30 +54,105 @@ describe('TopbarPlanPill', () => {
     expect(pill).toHaveAttribute('href', '/tenant/creatorstack/my-plan');
   });
 
-  // Regression: the pill itself must carry ml-auto so it sits immediately
-  // left of the ⌘K search. The header is flex with no spacer and the
-  // search button also carries ml-auto; without ml-auto on the pill,
-  // the pill would sit right of the breadcrumb instead. jsdom does no
-  // layout, so this class-presence check is the only test-level guard.
-  it('carries ml-auto on the Paid pill so it clusters with the search', () => {
+  // Regression (supersedes the old ml-auto tests): the pill itself must
+  // NOT carry ml-auto. Two auto margins in one flex row split the free
+  // space equally between them — that is what floated the merged pill
+  // into the middle of the header in the owner's screenshot. Placement
+  // is now owned by the pill+search cluster wrapper in user-shell.tsx,
+  // which carries the row's single ml-auto; the pill sits immediately
+  // left of the search with gap-2 only. jsdom does no layout, so this
+  // class-absence check is the test-level guard for the pill side.
+  it('does not carry ml-auto on the Paid pill (cluster wrapper owns placement)', () => {
     entitlementState.value = entitlement({
       active: true,
       periodEndsAt: addDays(new Date(), 12).toISOString(),
     });
     renderPill();
-    expect(screen.getByTestId('topbar-plan-pill').className).toContain('ml-auto');
+    expect(screen.getByTestId('topbar-plan-pill').className).not.toContain('ml-auto');
   });
 
-  it('carries ml-auto on the Expired pill so it clusters with the search', () => {
+  it('does not carry ml-auto on the Expired pill', () => {
     entitlementState.value = entitlement({ active: false, hasPriorPeriod: true, periodEndsAt: null });
     renderPill();
-    expect(screen.getByTestId('topbar-plan-pill').className).toContain('ml-auto');
+    expect(screen.getByTestId('topbar-plan-pill').className).not.toContain('ml-auto');
   });
 
-  it('carries ml-auto on the Free pill so it clusters with the search', () => {
+  it('does not carry ml-auto on the Free pill', () => {
     entitlementState.value = entitlement({ active: false, hasPriorPeriod: false, periodEndsAt: null });
     renderPill();
-    expect(screen.getByTestId('topbar-plan-pill').className).toContain('ml-auto');
+    expect(screen.getByTestId('topbar-plan-pill').className).not.toContain('ml-auto');
+  });
+
+  it('is green with 29 days left (whole pill text, not just the number)', () => {
+    entitlementState.value = entitlement({
+      active: true,
+      periodEndsAt: addDays(new Date(), 29).toISOString(),
+    });
+    renderPill();
+    const pill = screen.getByTestId('topbar-plan-pill');
+    expect(pill).toHaveTextContent('29 days left');
+    expect(pill.className).toContain('text-brand-emerald');
+    expect(pill.className).not.toContain('text-signal-critical');
+    expect(pill.className).not.toContain('text-brand-gold');
+  });
+
+  it('is green at exactly 7 days left (the rule is less than 7, not <= 7)', () => {
+    entitlementState.value = entitlement({
+      active: true,
+      periodEndsAt: addDays(new Date(), 7).toISOString(),
+    });
+    renderPill();
+    const pill = screen.getByTestId('topbar-plan-pill');
+    expect(pill).toHaveTextContent('7 days left');
+    expect(pill.className).toContain('text-brand-emerald');
+    expect(pill.className).not.toContain('text-signal-critical');
+  });
+
+  it('is red with 6 days left', () => {
+    entitlementState.value = entitlement({
+      active: true,
+      periodEndsAt: addDays(new Date(), 6).toISOString(),
+    });
+    renderPill();
+    const pill = screen.getByTestId('topbar-plan-pill');
+    expect(pill).toHaveTextContent('6 days left');
+    expect(pill.className).toContain('text-signal-critical');
+    expect(pill.className).not.toContain('text-brand-emerald');
+  });
+
+  it('is red on the final day (Expires today is under 7 days)', () => {
+    const today = new Date();
+    const endsToday = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59);
+    entitlementState.value = entitlement({ active: true, periodEndsAt: endsToday.toISOString() });
+    renderPill();
+    const pill = screen.getByTestId('topbar-plan-pill');
+    expect(pill).toHaveTextContent('Expires today');
+    expect(pill.className).toContain('text-signal-critical');
+    expect(pill.className).not.toContain('text-brand-emerald');
+  });
+
+  it('is red in the phone short form with 5 days left', () => {
+    entitlementState.value = entitlement({
+      active: true,
+      periodEndsAt: addDays(new Date(), 5).toISOString(),
+    });
+    renderPill();
+    const pill = screen.getByTestId('topbar-plan-pill');
+    expect(pill).toHaveTextContent('5d left');
+    expect(pill.className).toContain('text-signal-critical');
+    expect(pill.className).not.toContain('text-brand-emerald');
+  });
+
+  it('keeps Expired red', () => {
+    entitlementState.value = entitlement({ active: false, hasPriorPeriod: true, periodEndsAt: null });
+    renderPill();
+    expect(screen.getByTestId('topbar-plan-pill').className).toContain('text-signal-critical');
+  });
+
+  it('keeps Upgrade gold', () => {
+    entitlementState.value = entitlement({ active: false, hasPriorPeriod: false, periodEndsAt: null });
+    renderPill();
+    expect(screen.getByTestId('topbar-plan-pill').className).toContain('text-brand-gold');
   });
 
   it('shows Expires today on the final calendar day, not 1 day left', () => {
