@@ -238,7 +238,7 @@ export function CommandPalette({
       { id: 'go-media', group: 'Go to', label: 'Media Library', keywords: 'media library files uploads downloads', run: navigate('/media') },
       { id: 'go-fdola', group: 'Go to', label: 'Fdola Studio', keywords: 'fdola studio', run: navigate('/fdola-studio') },
       { id: 'go-accounts', group: 'Go to', label: 'Accounts', detail: 'Facebook', keywords: 'facebook accounts connect', run: navigate('/accounts') },
-      { id: 'go-pages', group: 'Go to', label: 'Pages', detail: 'Facebook', keywords: 'facebook pages', run: navigate('/pages') },
+      { id: 'go-pages', group: 'Go to', label: 'Schedule', detail: 'Facebook', keywords: 'facebook schedule pages', run: navigate('/pages') },
       { id: 'go-settings', group: 'Go to', label: 'Settings', keywords: 'settings workspace profile', run: navigate('/settings') },
       ...UPCOMING_PLATFORMS.map((platform) => ({
         id: `go-${platform.key}-accounts`,

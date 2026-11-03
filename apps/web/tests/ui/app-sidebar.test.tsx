@@ -134,7 +134,7 @@ describe('sidebar section configs (structural)', () => {
       'Prompt Library',
       'Creator Finder',
       'Accounts',
-      'Pages',
+      'Schedule',
       'Publish Now',
       'Auto Repost',
       'Auto Download/Upload',
@@ -253,12 +253,18 @@ describe('AppSidebar rendering (separation matrix)', () => {
 
   it('platform groups open only when active', () => {
     const { unmount } = renderSidebar(getUserSections('acme', false));
-    // Home: Instagram leaves are hidden (group closed).
-    expect(screen.queryByRole('link', { name: 'Schedule' })).toBeNull();
+    // Home: Instagram leaves are hidden (group closed). The Instagram
+    // Schedule link is disambiguated by href: Facebook also has a
+    // leaf now labelled Schedule, and it is open by default.
+    expect(
+      document.querySelector('a[href="/tenant/acme/instagram/schedule"]'),
+    ).toBeNull();
     unmount();
     mockPathname = '/tenant/acme/instagram/accounts';
     renderSidebar(getUserSections('acme', false));
-    expect(screen.getByRole('link', { name: 'Schedule' })).toBeTruthy();
+    expect(
+      document.querySelector('a[href="/tenant/acme/instagram/schedule"]'),
+    ).toBeTruthy();
   });
 
   it('billing leaves highlight by prefix on their own routes', () => {

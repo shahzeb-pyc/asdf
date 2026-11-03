@@ -908,7 +908,7 @@ export default function TenantDedicatedPageView({
           router.push(pagesListHref);
         }}
       >
-        Back to Pages
+        Back to Schedule
       </a>
 
       {/* Loading initial page — skeleton at the frame's final geometry */}

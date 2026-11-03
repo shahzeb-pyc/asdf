@@ -214,7 +214,7 @@ describe('Tenant workspace home — redesign (2026-11-02)', () => {
     expect(html).toContain('TikTok Repost');
 
     // Quick links in the approved order, and only those five.
-    const quickLinks = ['Media Library', 'Creator Finder', 'Facebook Accounts', 'Facebook Pages', 'Billing'];
+    const quickLinks = ['Media Library', 'Creator Finder', 'Facebook Accounts', 'Facebook Schedule', 'Billing'];
     let lastIndex = -1;
     for (const label of quickLinks) {
       const index = html.indexOf(label, lastIndex + 1);

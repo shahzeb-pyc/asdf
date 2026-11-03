@@ -630,7 +630,7 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
             data-testid="pages-page-title"
             className="mb-1 text-xxl font-bold tracking-h1 text-ink"
           >
-            Facebook Pages
+            Schedule
           </h1>
           <p data-testid="pages-page-subtitle" className="m-0 text-body text-ink-sub">
             {situationalSubtitle}

@@ -87,7 +87,7 @@ describe('quick links and the no-queue-data rule', () => {
       'Media Library',
       'Creator Finder',
       'Facebook Accounts',
-      'Facebook Pages',
+      'Facebook Schedule',
       'Billing',
     ]);
     expect(links.map((link) => link.href)).toEqual([

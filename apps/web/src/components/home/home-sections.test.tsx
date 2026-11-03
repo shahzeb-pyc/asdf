@@ -130,7 +130,7 @@ describe('QuickLinks', () => {
           { label: 'Media Library', href: '/tenant/acme/media' },
           { label: 'Creator Finder', href: '/tenant/acme/creator-finder' },
           { label: 'Facebook Accounts', href: '/tenant/acme/accounts' },
-          { label: 'Facebook Pages', href: '/tenant/acme/pages' },
+          { label: 'Facebook Schedule', href: '/tenant/acme/pages' },
           { label: 'Billing', href: '/tenant/acme/my-plan' },
         ]}
       />
@@ -142,7 +142,7 @@ describe('QuickLinks', () => {
       'Media Library',
       'Creator Finder',
       'Facebook Accounts',
-      'Facebook Pages',
+      'Facebook Schedule',
       'Billing',
     ]);
   });

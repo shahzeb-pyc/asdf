@@ -302,7 +302,7 @@ export function DedicatedPageHeader({
           className="inline-flex min-h-11 items-center gap-1 px-1 text-body font-medium text-ink-sub transition-colors hover:text-ink"
         >
           <ChevronLeftIcon className="size-4" aria-hidden />
-          <span>Facebook Pages</span>
+          <span>Schedule</span>
         </button>
       </div>
 

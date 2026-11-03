@@ -100,7 +100,7 @@ describe('quick links and the no-queue-data rule', () => {
       'Media Library',
       'Creator Finder',
       'Facebook Accounts',
-      'Facebook Pages',
+      'Facebook Schedule',
       'Billing',
     ]);
     expect(links.map((link) => link.href)).toEqual([
@@ -129,6 +129,6 @@ describe('quick links and the no-queue-data rule', () => {
     expect(links.some((link) => link.label === 'Media Library')).toBe(false);
     expect(links.some((link) => link.label === 'Creator Finder')).toBe(false);
     expect(links.some((link) => link.label === 'Facebook Accounts')).toBe(false);
-    expect(links.some((link) => link.label === 'Facebook Pages')).toBe(false);
+    expect(links.some((link) => link.label === 'Facebook Schedule')).toBe(false);
   });
 });
