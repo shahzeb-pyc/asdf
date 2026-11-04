@@ -574,13 +574,54 @@ export function CreatorFinderPage({
         value={tab}
         onValueChange={(value) => setTab(value as TabId)}
       >
-        <TabsList aria-label="Creator Finder">
-          <TabsTrigger value="trending">Trending by country</TabsTrigger>
-          <TabsTrigger value="niche">By niche / words</TabsTrigger>
-          <TabsTrigger value="similar">Similar creators</TabsTrigger>
-          <TabsTrigger value="saved">Saved</TabsTrigger>
-          <TabsTrigger value="video">Video</TabsTrigger>
-          <TabsTrigger value="hashtag">Hashtag</TabsTrigger>
+        {/*
+          Phone layout (owner-picked, 2026-11-03): the six tabs wrap
+          into two rows instead of clipping off-screen. Local override
+          only — the shared TabsList stays one scrolling row everywhere
+          else. On phones the list becomes a 3-column grid (two rows of
+          three) with wrapping labels and auto height; from sm: up the
+          overrides restore the shared one-row layout exactly.
+        */}
+        <TabsList
+          aria-label="Creator Finder"
+          className="grid h-auto w-full grid-cols-3 overflow-visible sm:inline-flex sm:h-11 sm:w-fit sm:flex-nowrap sm:overflow-x-auto"
+        >
+          <TabsTrigger
+            value="trending"
+            className="h-auto whitespace-normal py-2 text-center max-sm:min-w-0 sm:h-9 sm:whitespace-nowrap sm:py-0"
+          >
+            Trending by country
+          </TabsTrigger>
+          <TabsTrigger
+            value="niche"
+            className="h-auto whitespace-normal py-2 text-center max-sm:min-w-0 sm:h-9 sm:whitespace-nowrap sm:py-0"
+          >
+            By niche / words
+          </TabsTrigger>
+          <TabsTrigger
+            value="similar"
+            className="h-auto whitespace-normal py-2 text-center max-sm:min-w-0 sm:h-9 sm:whitespace-nowrap sm:py-0"
+          >
+            Similar creators
+          </TabsTrigger>
+          <TabsTrigger
+            value="saved"
+            className="h-auto whitespace-normal py-2 text-center max-sm:min-w-0 sm:h-9 sm:whitespace-nowrap sm:py-0"
+          >
+            Saved
+          </TabsTrigger>
+          <TabsTrigger
+            value="video"
+            className="h-auto whitespace-normal py-2 text-center max-sm:min-w-0 sm:h-9 sm:whitespace-nowrap sm:py-0"
+          >
+            Video
+          </TabsTrigger>
+          <TabsTrigger
+            value="hashtag"
+            className="h-auto whitespace-normal py-2 text-center max-sm:min-w-0 sm:h-9 sm:whitespace-nowrap sm:py-0"
+          >
+            Hashtag
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="trending">
