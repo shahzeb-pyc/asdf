@@ -848,44 +848,99 @@ describe('Countik fallback', () => {
   });
 });
 
-/** Fetch double routing the tikwm call and a scripted stream sequence
- * (one entry per stream attempt; the last entry repeats). */
-function sequencedStreamFetch(
-  tikwm: Response,
-  streamScript: Array<Response | Error>,
-): { fetchImpl: FetchImpl; streamCalls: string[] } {
+/** Fetch double for the 525 re-resolve tests: tikwm is scripted, each
+ * Countik info call answers from a per-call script (one fresh link
+ * per resolve — a re-resolve must return a NEW URL, not the same
+ * one), and each stream URL answers from its own per-call script.
+ * Every 200 stream response builds a FRESH body: bodies are
+ * single-use, and a 10-reel tick reads them many times. */
+type InfoScriptEntry = { status: number; link?: string; desc?: string | null };
+type StreamScriptEntry = { status: number; body?: Uint8Array | null };
+function reresolveFetch(options: {
+  tikwm?: unknown;
+  info?: InfoScriptEntry[];
+  streams?: Record<string, StreamScriptEntry[]>;
+}): {
+  fetchImpl: FetchImpl;
+  counts: { tikwm: number; exist: number; info: number; stream: number };
+  streamCalls: string[];
+} {
+  const infoScript = options.info ?? [{ status: 200, link: 'https://v16.tokcdn.com/v.mp4' }];
+  const streamScripts = options.streams ?? {};
+  const counts = { tikwm: 0, exist: 0, info: 0, stream: 0 };
   const streamCalls: string[] = [];
+  const streamCallIndex: Record<string, number> = {};
   const fetchImpl = (async (url: string) => {
-    if (url === TIKWM_API_URL) return tikwm;
+    if (url === TIKWM_API_URL) {
+      counts.tikwm += 1;
+      return new Response(JSON.stringify(options.tikwm ?? { code: -1, data: null }), { status: 200 });
+    }
+    if (url === `${COUNTIK_VIDEO_BASE_URL}/video/exist`) {
+      counts.exist += 1;
+      return new Response(JSON.stringify({ video_id: '740123' }), { status: 200 });
+    }
+    if (url.startsWith(`${COUNTIK_VIDEO_BASE_URL}/videoinfo/`)) {
+      counts.info += 1;
+      const entry = infoScript[Math.min(counts.info - 1, infoScript.length - 1)];
+      if (entry.status !== 200) return new Response('no', { status: entry.status });
+      return new Response(
+        JSON.stringify({ download_link: entry.link, desc: entry.desc ?? null }),
+        { status: 200 },
+      );
+    }
+    counts.stream += 1;
     streamCalls.push(url);
-    const next = streamScript[Math.min(streamCalls.length - 1, streamScript.length - 1)];
-    if (next instanceof Error) throw next;
-    return next;
+    const queue = streamScripts[url] ?? [{ status: 404 }];
+    const index = streamCallIndex[url] ?? 0;
+    streamCallIndex[url] = index + 1;
+    const entry = queue[Math.min(index, queue.length - 1)];
+    if (entry.status !== 200) return new Response('no', { status: entry.status });
+    const body = entry.body ?? downloadableBody();
+    return new Response(streamOf(body), { status: 200, headers: { 'content-length': String(body.length) } });
   }) as unknown as FetchImpl;
-  return { fetchImpl, streamCalls };
+  return { fetchImpl, counts, streamCalls };
 }
 
 describe('stream fixes (retry + known length + attribution)', () => {
-  it('retries a transient 525 inside one attempt and then downloads', async () => {
+  it('re-resolves a 525 with a fresh Countik link and then downloads', async () => {
+    // Diagnosis (2026-11-06): re-trying the same URL never saves a
+    // 525, but a fresh resolve sometimes does. The first URL 525s,
+    // the pipeline re-resolves, and the NEW URL downloads — the retry
+    // must use the new URL, never the dead one again.
     vi.useFakeTimers();
     try {
       const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
       const r2 = new FakeR2();
       const body = downloadableBody();
-      const { fetchImpl, streamCalls } = sequencedStreamFetch(
-        tikwmJson({ code: 0, data: { play: 'https://cdn.example/v.mp4' } }),
-        [
-          new Response('no', { status: 525 }),
-          new Response('no', { status: 525 }),
-          new Response(streamOf(body), { status: 200, headers: { 'content-length': '12000' } }),
+      const firstLink = 'https://v16.tokcdn.com/v-first.mp4';
+      const freshLink = 'https://v16.tokcdn.com/v-fresh.mp4';
+      const { fetchImpl, counts, streamCalls } = reresolveFetch({
+        info: [
+          { status: 200, link: firstLink, desc: 'First day' },
+          { status: 200, link: freshLink, desc: 'Fresh day' },
         ],
-      );
+        streams: {
+          [firstLink]: [{ status: 525 }],
+          [freshLink]: [{ status: 200, body }],
+        },
+      });
       const tick = runDownloadTick(deps(state, r2, fetchImpl));
       await vi.advanceTimersByTimeAsync(10_000);
       const result = await tick;
       expect(result.downloaded).toBe(1);
       expect(result.failed).toBe(0);
-      expect(streamCalls).toHaveLength(3);
+      expect(result.streamReresolves).toBe(1);
+      // The retry opened the NEW URL, not the dead one again.
+      expect(streamCalls).toEqual([firstLink, freshLink]);
+      expect(counts).toEqual({ tikwm: 1, exist: 2, info: 2, stream: 2 });
+      expect(state.recorded).toEqual([]);
+      expect(state.failed).toEqual([]);
+      // The claim spent one retry; the successful download settles it
+      // back to 0, exactly like a first-try download.
+      expect(state.retries['reel-1']).toBe(0);
+      expect(state.status['reel-1']).toBe('downloaded');
+      // The fresh resolve's description is the caption.
+      expect(state.downloaded[0].caption).toBe('Fresh day');
       expect(r2.objects.get('adu-buffer/cfg-1/reel-1.mp4')).toEqual(body);
       expect(r2.putStreams).toHaveLength(1);
     } finally {
@@ -893,34 +948,40 @@ describe('stream fixes (retry + known length + attribution)', () => {
     }
   });
 
-  it('records resolver + host when a Countik stream 525 exhausts, and settles exactly once', async () => {
+  it('records resolver + host and the re-resolve count when a Countik stream 525 exhausts, and settles exactly once', async () => {
     vi.useFakeTimers();
     try {
       const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
       const r2 = new FakeR2();
-      const { exist, info } = countikSuccess();
-      const { fetchImpl, streamCalls } = sequencedStreamFetch(
-        tikwmJson({ code: -1, data: null }),
-        [new Response('no', { status: 525 })],
-      );
-      // Route the Countik calls through the sequenced double: tikwm -1
-      // triggers the fallback, which needs exist/info answers.
-      const routed = (async (url: string, init?: RequestInit) => {
-        if (url === `${COUNTIK_VIDEO_BASE_URL}/video/exist`) return exist;
-        if (url.startsWith(`${COUNTIK_VIDEO_BASE_URL}/videoinfo/`)) return info;
-        return fetchImpl(url, init);
-      }) as unknown as FetchImpl;
-      const tick = runDownloadTick(deps(state, r2, routed));
+      const firstLink = 'https://v16.tokcdn.com/v-first.mp4';
+      const freshLink = 'https://v16.tokcdn.com/v-fresh.mp4';
+      const { fetchImpl, counts, streamCalls } = reresolveFetch({
+        info: [
+          { status: 200, link: firstLink },
+          { status: 200, link: freshLink },
+        ],
+        streams: {
+          [firstLink]: [{ status: 525 }],
+          [freshLink]: [{ status: 525 }],
+        },
+      });
+      const tick = runDownloadTick(deps(state, r2, fetchImpl));
       await vi.advanceTimersByTimeAsync(10_000);
       const result = await tick;
       expect(result.failedReasons).toEqual({ 'stream_open:stream_http_status': 1 });
+      expect(result.streamReresolves).toBe(1);
       expect(state.recorded).toEqual([
-        { reelId: 'reel-1', failure: { stage: 'stream_open', reason: 'stream_http_status', detail: 'http_status=525; resolver=countik; host=v16.tokcdn.com' } },
+        { reelId: 'reel-1', failure: { stage: 'stream_open', reason: 'stream_http_status', detail: 'http_status=525; resolver=countik; host=v16.tokcdn.com; reresolves=1' } },
       ]);
-      // In-attempt retries never consume extra download_retries: the
-      // attempt settles exactly once.
+      // In-attempt re-resolves never consume extra download_retries:
+      // the attempt settles exactly once, and the reel returns to
+      // pending with its claim's retry spent and none added.
       expect(state.failed).toEqual(['reel-1']);
-      expect(streamCalls).toHaveLength(3);
+      expect(state.failedFinal).toEqual([]);
+      expect(state.status['reel-1']).toBe('pending');
+      expect(state.retries['reel-1']).toBe(1);
+      expect(counts).toEqual({ tikwm: 1, exist: 2, info: 2, stream: 2 });
+      expect(streamCalls).toEqual([firstLink, freshLink]);
       expect(r2.puts).toEqual([]);
     } finally {
       vi.useRealTimers();
@@ -1192,5 +1253,174 @@ describe('Countik pacing', () => {
       countikFallbacks: 0,
       countikRateLimited: 0,
     });
+  });
+});
+
+describe('525 re-resolve', () => {
+  it('re-resolves a tikwm-resolved 525 through Countik and downloads', async () => {
+    // The 525 path is not Countik-only: a tikwm stream that 525s
+    // re-resolves through Countik too, and the fresh link downloads.
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
+    const r2 = new FakeR2();
+    const cdnUrl = 'https://cdn.example/v.mp4';
+    const freshLink = 'https://v16.tokcdn.com/v-fresh.mp4';
+    const { fetchImpl, counts, streamCalls } = reresolveFetch({
+      tikwm: { code: 0, data: { play: cdnUrl, title: 'Tikwm day' } },
+      info: [{ status: 200, link: freshLink, desc: 'Fresh day' }],
+      streams: {
+        [cdnUrl]: [{ status: 525 }],
+        [freshLink]: [{ status: 200 }],
+      },
+    });
+    const { pacer } = manualPacer();
+    const result = await runDownloadTick(deps(state, r2, fetchImpl, pacer));
+    expect(result).toMatchObject({
+      downloaded: 1,
+      deferred: 0,
+      failed: 0,
+      countikFallbacks: 0,
+      streamReresolves: 1,
+    });
+    expect(streamCalls).toEqual([cdnUrl, freshLink]);
+    expect(counts).toEqual({ tikwm: 1, exist: 1, info: 1, stream: 2 });
+    expect(state.recorded).toEqual([]);
+    expect(state.downloaded[0].caption).toBe('Fresh day');
+  });
+
+  it('defers cleanly when the re-resolve budget is exhausted', async () => {
+    // Six tikwm-resolved reels all 525; the first five re-resolve and
+    // download, the sixth finds the per-tick re-resolve budget spent
+    // and defers instead of failing — released to pending with no
+    // failure recorded, its claim's retry spent and none added.
+    const rows = Array.from({ length: 6 }, (_, i) => reelN(i + 1));
+    const state: FakeSupabaseState = { rows, downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
+    const r2 = new FakeR2();
+    const cdnUrl = 'https://cdn.example/v.mp4';
+    const freshLinks = Array.from({ length: 5 }, (_, i) => `https://v16.tokcdn.com/v-fresh-${i + 1}.mp4`);
+    const streams: Record<string, StreamScriptEntry[]> = {
+      [cdnUrl]: [{ status: 525 }],
+    };
+    for (const link of freshLinks) streams[link] = [{ status: 200 }];
+    const { fetchImpl, counts, streamCalls } = reresolveFetch({
+      tikwm: { code: 0, data: { play: cdnUrl } },
+      info: freshLinks.map((link) => ({ status: 200, link })),
+      streams,
+    });
+    const { pacer, sleeps } = manualPacer();
+    const result = await runDownloadTick(deps(state, r2, fetchImpl, pacer));
+    expect(result).toMatchObject({
+      claimed: 6,
+      downloaded: 5,
+      deferred: 1,
+      failed: 0,
+      countikFallbacks: 0,
+      countikRateLimited: 0,
+      streamReresolves: 5,
+    });
+    expect(counts).toEqual({ tikwm: 6, exist: 5, info: 5, stream: 11 });
+    expect(streamCalls).toEqual([
+      cdnUrl, freshLinks[0],
+      cdnUrl, freshLinks[1],
+      cdnUrl, freshLinks[2],
+      cdnUrl, freshLinks[3],
+      cdnUrl, freshLinks[4],
+      cdnUrl,
+    ]);
+    // The spacing happened between the re-resolve calls on the shared
+    // timeline; the refused sixth acquire never waited.
+    expect(sleeps).toEqual(Array.from({ length: 4 }, () => COUNTIK_FALLBACK_DELAY_MS));
+    expect(state.failed).toEqual(['reel-6']);
+    expect(state.failedFinal).toEqual([]);
+    expect(state.recorded).toEqual([]);
+    expect(state.status['reel-6']).toBe('pending');
+    expect(state.retries['reel-6']).toBe(1);
+    expect(state.downloaded).toHaveLength(5);
+  });
+
+  it('records both attempts when the re-resolve itself is rate-limited', async () => {
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
+    const r2 = new FakeR2();
+    const firstLink = 'https://v16.tokcdn.com/v-first.mp4';
+    const { fetchImpl, counts, streamCalls } = reresolveFetch({
+      info: [
+        { status: 200, link: firstLink },
+        { status: 429 },
+      ],
+      streams: {
+        [firstLink]: [{ status: 525 }],
+      },
+    });
+    const { pacer, sleeps } = manualPacer();
+    const result = await runDownloadTick(deps(state, r2, fetchImpl, pacer));
+    expect(result).toMatchObject({
+      failed: 1,
+      deferred: 0,
+      countikFallbacks: 1,
+      countikRateLimited: 1,
+      streamReresolves: 1,
+    });
+    expect(result.failedReasons).toEqual({
+      'stream_open:stream_http_status+countik_resolve:countik_api_http_status': 1,
+    });
+    expect(state.recorded).toEqual([
+      {
+        reelId: 'reel-1',
+        failure: {
+          stage: 'stream_open',
+          reason: 'stream_http_status',
+          detail: 'http_status=525; resolver=countik; host=v16.tokcdn.com; reresolves=1',
+          fallback: { stage: 'countik_resolve', reason: 'countik_api_http_status', detail: 'step=info; http_status=429' },
+        },
+      },
+    ]);
+    expect(state.failed).toEqual(['reel-1']);
+    expect(state.failedFinal).toEqual([]);
+    expect(state.status['reel-1']).toBe('pending');
+    expect(state.retries['reel-1']).toBe(1);
+    expect(counts).toEqual({ tikwm: 1, exist: 2, info: 2, stream: 1 });
+    expect(streamCalls).toEqual([firstLink]);
+    // The re-resolve waited out the spacing after the initial call.
+    expect(sleeps).toEqual([COUNTIK_FALLBACK_DELAY_MS]);
+  });
+
+  it('finalizes a 525 reel to download_failed when its claim budget is exhausted', async () => {
+    // reel-1 arrives with 2 retries already spent: its claim is the
+    // third, so when the fresh URL 525s too, the failure finalizes it
+    // instead of returning it to pending — visible and counted, never
+    // stranded in `processing`.
+    const state: FakeSupabaseState = {
+      rows: [REEL],
+      downloaded: [],
+      failed: [],
+      failedFinal: [],
+      recorded: [],
+      retries: { 'reel-1': 2 },
+      status: {},
+    };
+    const r2 = new FakeR2();
+    const firstLink = 'https://v16.tokcdn.com/v-first.mp4';
+    const freshLink = 'https://v16.tokcdn.com/v-fresh.mp4';
+    const { fetchImpl, counts, streamCalls } = reresolveFetch({
+      info: [
+        { status: 200, link: firstLink },
+        { status: 200, link: freshLink },
+      ],
+      streams: {
+        [firstLink]: [{ status: 525 }],
+        [freshLink]: [{ status: 525 }],
+      },
+    });
+    const { pacer } = manualPacer();
+    const result = await runDownloadTick(deps(state, r2, fetchImpl, pacer));
+    expect(result).toMatchObject({ failed: 1, deferred: 0, streamReresolves: 1 });
+    expect(state.recorded).toEqual([
+      { reelId: 'reel-1', failure: { stage: 'stream_open', reason: 'stream_http_status', detail: 'http_status=525; resolver=countik; host=v16.tokcdn.com; reresolves=1' } },
+    ]);
+    expect(state.failed).toEqual(['reel-1']);
+    expect(state.failedFinal).toEqual(['reel-1']);
+    expect(state.status['reel-1']).toBe('download_failed');
+    expect(state.retries['reel-1']).toBe(3);
+    expect(counts).toEqual({ tikwm: 1, exist: 2, info: 2, stream: 2 });
+    expect(streamCalls).toEqual([firstLink, freshLink]);
   });
 });
