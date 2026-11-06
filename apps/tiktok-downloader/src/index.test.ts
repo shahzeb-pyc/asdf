@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import worker, { type Env } from './index.js';
+import { installFixedLengthStreamShim } from './fixed-length-stream-shim.js';
+
+installFixedLengthStreamShim();
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -106,7 +109,11 @@ describe('tiktok-downloader worker entry', () => {
           { status: 200 },
         );
       }
-      return new Response(videoBody as unknown as BodyInit, { status: 200 });
+      // The CDN declares the length, and the production put requires it.
+      return new Response(videoBody as unknown as BodyInit, {
+        status: 200,
+        headers: { 'content-length': String(videoBody.length) },
+      });
     };
     vi.stubGlobal('fetch', vi.fn(fullMock));
     // The pipeline only counts bytes the R2 put actually drains from
