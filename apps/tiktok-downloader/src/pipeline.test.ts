@@ -25,6 +25,11 @@ import {
   COUNTIK_VIDEO_BASE_URL,
   type CountikResolveFailure,
 } from './countik.js';
+import {
+  CountikPacer,
+  COUNTIK_FALLBACK_DELAY_MS,
+  COUNTIK_MAX_FALLBACKS_PER_TICK,
+} from './countik-pacing.js';
 import { installFixedLengthStreamShim } from './fixed-length-stream-shim.js';
 
 installFixedLengthStreamShim();
@@ -108,24 +113,63 @@ class FakeR2 implements R2BucketLike {
 interface FakeSupabaseState {
   rows: ClaimedReel[];
   downloaded: MarkDownloadedArgs[];
+  /** Reel ids released through markDownloadFailed (failed path and
+   * deferred release alike). */
   failed: string[];
+  /** Reel ids whose release finalized to `download_failed` (budget
+   * exhausted). */
+  failedFinal: string[];
   recorded: Array<{ reelId: string; failure: unknown }>;
+  /** Retry count per reel id. The fake claim increments it, modelling
+   * the claim RPC's `download_retries = download_retries + 1`.
+   * Tests set the pre-claim count (default 0). */
+  retries: Record<string, number>;
+  /** Row status per reel id. The fake claim sets `processing` (only
+   * for rows that are `pending` with budget left, like the RPC);
+   * markDownloadFailed applies the RPC rule (retries < 3 ->
+   * `pending`, at 3 -> `download_failed`); markDownloaded sets
+   * `downloaded` and resets the count to 0. */
+  status: Record<string, string>;
   throwOnDownloaded?: boolean;
 }
 
 function fakeSupabase(state: FakeSupabaseState): SupabaseRpc {
   return {
     resetStaleDownloads: async () => 0,
-    claimTikTokDownloads: async () => state.rows,
+    claimTikTokDownloads: async () => {
+      const claimed: ClaimedReel[] = [];
+      for (const reel of state.rows) {
+        // The RPC claims only pending rows with budget left, and the
+        // claim itself consumes one retry.
+        if ((state.status[reel.reelId] ?? 'pending') !== 'pending') continue;
+        const retries = (state.retries[reel.reelId] ?? 0) + 1;
+        if (retries > 3) continue;
+        state.retries[reel.reelId] = retries;
+        state.status[reel.reelId] = 'processing';
+        claimed.push(reel);
+      }
+      return claimed;
+    },
     markDownloaded: async (args: MarkDownloadedArgs) => {
       if (state.throwOnDownloaded) throw new Error('db down');
       state.downloaded.push(args);
+      state.status[args.reelId] = 'downloaded';
+      state.retries[args.reelId] = 0;
     },
     recordDownloadFailure: async (reelId: string, failure: unknown) => {
       state.recorded.push({ reelId, failure });
     },
     markDownloadFailed: async (reelId: string) => {
       state.failed.push(reelId);
+      // The RPC rule, applied exactly: retries >= 3 finalizes to
+      // download_failed; anything less returns the row to pending
+      // (claim-release, no failure recorded).
+      if ((state.retries[reelId] ?? 0) >= 3) {
+        state.status[reelId] = 'download_failed';
+        state.failedFinal.push(reelId);
+      } else {
+        state.status[reelId] = 'pending';
+      }
     },
   } as unknown as SupabaseRpc;
 }
@@ -170,18 +214,20 @@ function deps(
   state: FakeSupabaseState,
   r2: FakeR2,
   fetchImpl: FetchImpl,
+  countikPacer?: CountikPacer,
 ): TickDeps {
   return {
     supabase: fakeSupabase(state),
     r2,
     r2PublicUrl: 'https://pub.example',
     fetchImpl,
+    ...(countikPacer ? { countikPacer } : {}),
   };
 }
 
 describe('runDownloadTick', () => {
   it('follows the failed path on API failure, without uploading', async () => {
-    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
     const r2 = new FakeR2();
     const result = await runDownloadTick(
       deps(state, r2, fakeFetch(null, { code: 1, data: null })),
@@ -208,7 +254,7 @@ describe('runDownloadTick', () => {
   });
 
   it('records the HTTP status when the video stream 404s', async () => {
-    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
     const r2 = new FakeR2();
     const result = await runDownloadTick(
       deps(state, r2, fakeFetch(null, { code: 0, data: { play: 'https://cdn.example/v.mp4' } })),
@@ -226,7 +272,7 @@ describe('runDownloadTick', () => {
 
   it('records an R2 put failure distinctly from a stream failure', async () => {
     const body = padTo(box('ftyp', new Uint8Array(8)), 12000);
-    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
     const r2 = new FakeR2();
     r2.throwOnPut = true;
     const result = await runDownloadTick(
@@ -244,7 +290,7 @@ describe('runDownloadTick', () => {
   });
 
   it('records a stream read failure distinctly from an R2 failure', async () => {
-    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
     const r2 = new FakeR2();
     const erroring = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -266,7 +312,7 @@ describe('runDownloadTick', () => {
 
   it('rejects a small file and deletes the partial object', async () => {
     const small = new Uint8Array(5000);
-    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
     const r2 = new FakeR2();
     const result = await runDownloadTick(
       deps(state, r2, fakeFetch(small, { code: 0, data: { play: 'https://cdn.example/v.mp4' } })),
@@ -285,7 +331,7 @@ describe('runDownloadTick', () => {
 
   it('rejects a video-only moov and deletes the object', async () => {
     const body = padTo(concat(box('ftyp', new Uint8Array(8)), box('moov', videoTrak())), 12000);
-    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
     const r2 = new FakeR2();
     const result = await runDownloadTick(
       deps(state, r2, fakeFetch(body, { code: 0, data: { play: 'https://cdn.example/v.mp4' } })),
@@ -303,7 +349,7 @@ describe('runDownloadTick', () => {
 
   it('downloads an inconclusive-audio file with identical R2 rows', async () => {
     const body = padTo(box('ftyp', new Uint8Array(8)), 12000);
-    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
     const r2 = new FakeR2();
     const result = await runDownloadTick(
       deps(
@@ -326,7 +372,7 @@ describe('runDownloadTick', () => {
 
   it('normalizes a generic API title to the default caption', async () => {
     const body = padTo(box('ftyp', new Uint8Array(8)), 12000);
-    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
     const r2 = new FakeR2();
     await runDownloadTick(
       deps(state, r2, fakeFetch(body, { code: 0, data: { play: 'https://cdn.example/v.mp4', title: 'TikTok' } })),
@@ -335,7 +381,7 @@ describe('runDownloadTick', () => {
   });
 
   it('still moves the retry accounting when recording the reason fails', async () => {
-    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
     const r2 = new FakeR2();
     const supabase = fakeSupabase(state);
     const failing = {
@@ -357,7 +403,7 @@ describe('runDownloadTick', () => {
 
   it('leaves the row processing when settling the download fails', async () => {
     const body = padTo(box('ftyp', new Uint8Array(8)), 12000);
-    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [], throwOnDownloaded: true };
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {}, throwOnDownloaded: true };
     const r2 = new FakeR2();
     const result = await runDownloadTick(
       deps(state, r2, fakeFetch(body, { code: 0, data: { play: 'https://cdn.example/v.mp4' } })),
@@ -365,10 +411,14 @@ describe('runDownloadTick', () => {
     expect(result.settleErrors).toBe(1);
     expect(result.failed).toBe(0);
     expect(state.failed).toEqual([]);
+    // The settle_downloaded path still leaves the row `processing`
+    // (pre-existing: the bytes are in R2, the download succeeded, so
+    // it is never marked failed — the stale reset is its way back).
+    expect(state.status['reel-1']).toBe('processing');
   });
 
   it('handles zero claims without settling anything', async () => {
-    const state: FakeSupabaseState = { rows: [], downloaded: [], failed: [], recorded: [] };
+    const state: FakeSupabaseState = { rows: [], downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
     const r2 = new FakeR2();
     const result = await runDownloadTick(deps(state, r2, fakeFetch(null, {})));
     expect(result).toMatchObject({ claimed: 0, downloaded: 0, failed: 0 });
@@ -433,7 +483,7 @@ describe('streamToR2 cap', () => {
   it('maps a stalled stream to stream_stalled', async () => {
     vi.useFakeTimers();
     try {
-      const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+      const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
       const r2 = new FakeR2();
       const never = new ReadableStream<Uint8Array>({});
       const tick = runDownloadTick(
@@ -486,7 +536,7 @@ describe('runDownloadTick reason mapping (remaining stages)', () => {
     ['tikwm_api_no_data', tikwmJson({ code: 0, data: null }), { stage: 'tikwm_resolve', reason: 'tikwm_api_no_data' }],
     ['tikwm_no_stream_url', tikwmJson({ code: 0, data: {} }), { stage: 'tikwm_resolve', reason: 'tikwm_no_stream_url' }],
   ])('records %s from the tikwm resolve stage', async (_name, tikwm, failure) => {
-    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
     const r2 = new FakeR2();
     const result = await runDownloadTick(deps(state, r2, scriptedFetch(tikwm)));
     expect(result.failed).toBe(1);
@@ -512,7 +562,7 @@ describe('runDownloadTick reason mapping (remaining stages)', () => {
     // (fake timers cover the backoff); the attempt still settles once.
     vi.useFakeTimers();
     try {
-      const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+      const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
       const r2 = new FakeR2();
       const tick = runDownloadTick(
         deps(state, r2, scriptedFetch(goodTikwm(), new Error('stream down'))),
@@ -531,7 +581,7 @@ describe('runDownloadTick reason mapping (remaining stages)', () => {
   });
 
   it('records stream_no_body when the video stream responds without a body', async () => {
-    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
     const r2 = new FakeR2();
     const result = await runDownloadTick(
       deps(state, r2, scriptedFetch(goodTikwm(), new Response(null, { status: 200 }))),
@@ -548,7 +598,7 @@ describe('runDownloadTick reason mapping (remaining stages)', () => {
     // resolveTikwmStream throw a TypeError reading .status — nothing in
     // processOne maps that, so the tick catch must record it loudly and
     // still run the failed path instead of stalling the tick.
-    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
     const r2 = new FakeR2();
     const result = await runDownloadTick(deps(state, r2, scriptedFetch(undefined)));
     expect(result.failed).toBe(1);
@@ -647,7 +697,7 @@ function downloadableBody(): Uint8Array {
 
 describe('Countik fallback', () => {
   it('never calls Countik when tikwm succeeds', async () => {
-    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
     const r2 = new FakeR2();
     const { fetchImpl, calls } = fallbackFetch({
       tikwm: tikwmJson({ code: 0, data: { play: 'https://cdn.example/v.mp4' } }),
@@ -668,7 +718,7 @@ describe('Countik fallback', () => {
     ['tikwm_api_no_data', tikwmJson({ code: 0, data: null })],
     ['tikwm_no_stream_url', tikwmJson({ code: 0, data: {} })],
   ])('falls back to Countik when tikwm fails with %s', async (_name, tikwm) => {
-    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
     const r2 = new FakeR2();
     const { exist, info } = countikSuccess();
     const { fetchImpl } = fallbackFetch({
@@ -686,7 +736,7 @@ describe('Countik fallback', () => {
   });
 
   it('downloads through the full pipeline on fallback success, with the Countik caption', async () => {
-    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
     const r2 = new FakeR2();
     const { exist, info } = countikSuccess();
     const { fetchImpl } = fallbackFetch({
@@ -726,7 +776,7 @@ describe('Countik fallback', () => {
   });
 
   it('falls back to the default caption when Countik carries no description', async () => {
-    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
     const r2 = new FakeR2();
     const { fetchImpl } = fallbackFetch({
       tikwm: tikwmJson({ code: -1, data: null }),
@@ -740,7 +790,7 @@ describe('Countik fallback', () => {
   });
 
   it('records both attempts when tikwm and Countik both fail', async () => {
-    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
     const r2 = new FakeR2();
     const { fetchImpl } = fallbackFetch({
       tikwm: tikwmJson({ code: -1, data: null }),
@@ -768,7 +818,7 @@ describe('Countik fallback', () => {
   });
 
   it('opens the Countik stream without a tikwm Referer', async () => {
-    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
     const r2 = new FakeR2();
     const { exist, info } = countikSuccess();
     const { fetchImpl, calls } = fallbackFetch({
@@ -819,7 +869,7 @@ describe('stream fixes (retry + known length + attribution)', () => {
   it('retries a transient 525 inside one attempt and then downloads', async () => {
     vi.useFakeTimers();
     try {
-      const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+      const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
       const r2 = new FakeR2();
       const body = downloadableBody();
       const { fetchImpl, streamCalls } = sequencedStreamFetch(
@@ -846,7 +896,7 @@ describe('stream fixes (retry + known length + attribution)', () => {
   it('records resolver + host when a Countik stream 525 exhausts, and settles exactly once', async () => {
     vi.useFakeTimers();
     try {
-      const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+      const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
       const r2 = new FakeR2();
       const { exist, info } = countikSuccess();
       const { fetchImpl, streamCalls } = sequencedStreamFetch(
@@ -878,7 +928,7 @@ describe('stream fixes (retry + known length + attribution)', () => {
   });
 
   it('fails loud without attempting a put when Content-Length is absent', async () => {
-    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], recorded: [] };
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
     const r2 = new FakeR2();
     const result = await runDownloadTick(
       deps(state, r2, scriptedFetch(goodTikwm(), new Response(streamOf(downloadableBody()), { status: 200 }))),
@@ -888,5 +938,259 @@ describe('stream fixes (retry + known length + attribution)', () => {
       { reelId: 'reel-1', failure: { stage: 'stream_open', reason: 'stream_no_content_length', detail: 'resolver=tikwm; host=cdn.example' } },
     ]);
     expect(r2.puts).toEqual([]);
+  });
+});
+
+/** Manual clock + recording sleep for the tick-level pacing tests:
+ * the pacer is injected through TickDeps, so no real delays are ever
+ * waited out and the recorded sleeps prove the spacing happened. */
+function manualPacer() {
+  let nowMs = 0;
+  const sleeps: number[] = [];
+  const pacer = new CountikPacer(
+    { blockedUntilMs: 0 },
+    () => nowMs,
+    async (ms: number) => {
+      sleeps.push(ms);
+      nowMs += ms;
+    },
+  );
+  return { pacer, sleeps };
+}
+
+function reelN(n: number): ClaimedReel {
+  return {
+    reelId: `reel-${n}`,
+    configId: 'cfg-1',
+    sourcePlatform: 'tiktok',
+    sourceUsername: 'someone',
+    sourceReelId: `74012${n}`,
+  };
+}
+
+/**
+ * Fetch double for the pacing tests. Every call builds a FRESH
+ * Response: bodies are single-use, and a 10-reel tick reads the tikwm
+ * / exist / info / stream bodies ten times. Reusing one Response (as
+ * the single-reel doubles do) would throw "body already consumed" on
+ * the second reel.
+ */
+function pacingFetch(options: {
+  existStatus?: number;
+  infoStatus?: number;
+  infoBody?: unknown;
+}): {
+  fetchImpl: FetchImpl;
+  counts: { tikwm: number; exist: number; info: number; stream: number };
+} {
+  const counts = { tikwm: 0, exist: 0, info: 0, stream: 0 };
+  const fetchImpl = (async (url: string) => {
+    if (url === TIKWM_API_URL) {
+      counts.tikwm += 1;
+      return new Response(JSON.stringify({ code: -1, data: null }), { status: 200 });
+    }
+    if (url === `${COUNTIK_VIDEO_BASE_URL}/video/exist`) {
+      counts.exist += 1;
+      return new Response(JSON.stringify({ video_id: '740123' }), { status: options.existStatus ?? 200 });
+    }
+    if (url.startsWith(`${COUNTIK_VIDEO_BASE_URL}/videoinfo/`)) {
+      counts.info += 1;
+      return new Response(
+        JSON.stringify(
+          options.infoBody ?? { download_link: 'https://v16.tokcdn.com/v.mp4', desc: 'My Countik day' },
+        ),
+        { status: options.infoStatus ?? 200 },
+      );
+    }
+    counts.stream += 1;
+    return new Response(streamOf(downloadableBody()), {
+      status: 200,
+      headers: { 'content-length': '12000' },
+    });
+  }) as unknown as FetchImpl;
+  return { fetchImpl, counts };
+}
+
+describe('Countik pacing', () => {
+  it('caps fallback calls per tick and releases the rest to pending without recording failures', async () => {
+    const rows = Array.from({ length: 10 }, (_, i) => reelN(i + 1));
+    const state: FakeSupabaseState = { rows, downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
+    const r2 = new FakeR2();
+    const { fetchImpl, counts } = pacingFetch({});
+    const { pacer, sleeps } = manualPacer();
+    const result = await runDownloadTick(deps(state, r2, fetchImpl, pacer));
+    expect(result).toMatchObject({
+      claimed: 10,
+      downloaded: COUNTIK_MAX_FALLBACKS_PER_TICK,
+      deferred: 10 - COUNTIK_MAX_FALLBACKS_PER_TICK,
+      failed: 0,
+      countikFallbacks: COUNTIK_MAX_FALLBACKS_PER_TICK,
+      countikRateLimited: 0,
+    });
+    // The cap is real: only the capped number of Countik calls ran,
+    // and the pacing delay actually happened between them.
+    expect(counts.exist).toBe(COUNTIK_MAX_FALLBACKS_PER_TICK);
+    expect(counts.info).toBe(COUNTIK_MAX_FALLBACKS_PER_TICK);
+    expect(counts.stream).toBe(COUNTIK_MAX_FALLBACKS_PER_TICK);
+    expect(sleeps).toEqual(
+      Array.from({ length: COUNTIK_MAX_FALLBACKS_PER_TICK - 1 }, () => COUNTIK_FALLBACK_DELAY_MS),
+    );
+    // Deferred reels were never attempted, so no failure was recorded
+    // for them — but they were RELEASED through markDownloadFailed,
+    // not left `processing`: each returns to `pending` with its
+    // claim's retry spent and none added.
+    expect(state.failed).toEqual(['reel-6', 'reel-7', 'reel-8', 'reel-9', 'reel-10']);
+    expect(state.failedFinal).toEqual([]);
+    expect(state.recorded).toEqual([]);
+    for (let n = 6; n <= 10; n++) {
+      expect(state.status[`reel-${n}`]).toBe('pending');
+      expect(state.retries[`reel-${n}`]).toBe(1);
+    }
+    expect(state.downloaded).toHaveLength(COUNTIK_MAX_FALLBACKS_PER_TICK);
+  });
+
+  it('finalizes a deferred reel to download_failed when its claim budget is exhausted', async () => {
+    // reel-6 arrives with 2 retries already spent: its claim is the
+    // third, so the pacing release finalizes it instead of returning
+    // it to pending. No failure is recorded for it — it was never
+    // attempted — but it must be visible as download_failed, not
+    // stranded in `processing`.
+    const rows = Array.from({ length: 6 }, (_, i) => reelN(i + 1));
+    const state: FakeSupabaseState = {
+      rows,
+      downloaded: [],
+      failed: [],
+      failedFinal: [],
+      recorded: [],
+      retries: { 'reel-6': 2 },
+      status: {},
+    };
+    const r2 = new FakeR2();
+    const { fetchImpl } = pacingFetch({});
+    const { pacer } = manualPacer();
+    const result = await runDownloadTick(deps(state, r2, fetchImpl, pacer));
+    expect(result).toMatchObject({
+      claimed: 6,
+      downloaded: COUNTIK_MAX_FALLBACKS_PER_TICK,
+      deferred: 1,
+      failed: 0,
+      countikFallbacks: COUNTIK_MAX_FALLBACKS_PER_TICK,
+    });
+    expect(state.failed).toEqual(['reel-6']);
+    expect(state.failedFinal).toEqual(['reel-6']);
+    expect(state.status['reel-6']).toBe('download_failed');
+    expect(state.recorded).toEqual([]);
+    expect(state.retries['reel-6']).toBe(3);
+  });
+
+  it('re-claims a deferred reel on the next tick: the release returns it to pending', async () => {
+    // Tick 1 caps at 5, so reel-6 defers and is released to pending
+    // (retries 1). Tick 2 claims it again — the only pending row —
+    // and it downloads. Without the release, reel-6 would sit in
+    // `processing` forever and tick 2 would claim nothing.
+    const rows = Array.from({ length: 6 }, (_, i) => reelN(i + 1));
+    const state: FakeSupabaseState = {
+      rows,
+      downloaded: [],
+      failed: [],
+      failedFinal: [],
+      recorded: [],
+      retries: {},
+      status: {},
+    };
+    const r2 = new FakeR2();
+    const { fetchImpl } = pacingFetch({});
+    const first = await runDownloadTick(deps(state, r2, fetchImpl, manualPacer().pacer));
+    expect(first).toMatchObject({ claimed: 6, downloaded: 5, deferred: 1 });
+    expect(state.status['reel-6']).toBe('pending');
+    expect(state.retries['reel-6']).toBe(1);
+    const second = await runDownloadTick(deps(state, r2, fetchImpl, manualPacer().pacer));
+    expect(second).toMatchObject({ claimed: 1, downloaded: 1, deferred: 0 });
+    expect(state.status['reel-6']).toBe('downloaded');
+    expect(state.retries['reel-6']).toBe(0);
+  });
+
+  it('stops further Countik calls for the tick on a videoinfo 429', async () => {
+    const rows = Array.from({ length: 5 }, (_, i) => reelN(i + 1));
+    const state: FakeSupabaseState = { rows, downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
+    const r2 = new FakeR2();
+    const { fetchImpl, counts } = pacingFetch({ infoStatus: 429, infoBody: {} });
+    const { pacer } = manualPacer();
+    const result = await runDownloadTick(deps(state, r2, fetchImpl, pacer));
+    expect(result).toMatchObject({
+      claimed: 5,
+      downloaded: 0,
+      deferred: 4,
+      failed: 1,
+      countikFallbacks: 1,
+      countikRateLimited: 1,
+    });
+    // Exactly one Countik attempt ran; the 429 stopped the rest.
+    expect(counts.exist).toBe(1);
+    expect(counts.info).toBe(1);
+    expect(counts.stream).toBe(0);
+    // The 429 reel is a real attempt, so it settles through the failed
+    // path with its failure recorded (its claim consumed one retry).
+    // The deferred reels were released through markDownloadFailed with
+    // no failure recorded — their claims consumed one retry each, the
+    // release added none, and each returns to `pending`.
+    expect(state.failed).toEqual(['reel-1', 'reel-2', 'reel-3', 'reel-4', 'reel-5']);
+    expect(state.failedFinal).toEqual([]);
+    expect(state.recorded).toEqual([
+      {
+        reelId: 'reel-1',
+        failure: {
+          stage: 'tikwm_resolve',
+          reason: 'tikwm_api_body_code',
+          detail: 'body_code=-1',
+          fallback: { stage: 'countik_resolve', reason: 'countik_api_http_status', detail: 'step=info; http_status=429' },
+        },
+      },
+    ]);
+    expect(result.failedReasons).toEqual({
+      'tikwm_resolve:tikwm_api_body_code+countik_resolve:countik_api_http_status': 1,
+    });
+  });
+
+  it('treats a 429 on the exist step the same way', async () => {
+    const rows = Array.from({ length: 3 }, (_, i) => reelN(i + 1));
+    const state: FakeSupabaseState = { rows, downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
+    const r2 = new FakeR2();
+    const { fetchImpl, counts } = pacingFetch({ existStatus: 429 });
+    const { pacer } = manualPacer();
+    const result = await runDownloadTick(deps(state, r2, fetchImpl, pacer));
+    expect(result).toMatchObject({
+      claimed: 3,
+      deferred: 2,
+      failed: 1,
+      countikFallbacks: 1,
+      countikRateLimited: 1,
+    });
+    expect(counts.exist).toBe(1);
+    expect(counts.info).toBe(0);
+    // The 429 reel settles through the failed path; the deferred reels
+    // were released to `pending` with no failure recorded.
+    expect(state.failed).toEqual(['reel-1', 'reel-2', 'reel-3']);
+    expect(state.failedFinal).toEqual([]);
+    for (let n = 2; n <= 3; n++) {
+      expect(state.status[`reel-${n}`]).toBe('pending');
+      expect(state.retries[`reel-${n}`]).toBe(1);
+    }
+  });
+
+  it('reports zero pacing counts on a tick that never needs the fallback', async () => {
+    const body = downloadableBody();
+    const state: FakeSupabaseState = { rows: [REEL], downloaded: [], failed: [], failedFinal: [], recorded: [], retries: {}, status: {} };
+    const r2 = new FakeR2();
+    const result = await runDownloadTick(
+      deps(state, r2, fakeFetch(body, { code: 0, data: { play: 'https://cdn.example/v.mp4' } })),
+    );
+    expect(result).toMatchObject({
+      downloaded: 1,
+      deferred: 0,
+      failed: 0,
+      countikFallbacks: 0,
+      countikRateLimited: 0,
+    });
   });
 });

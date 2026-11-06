@@ -4,7 +4,12 @@
  * Flow per claimed reel (sequential: one stream at a time, so peak memory
  * is one chunk and CPU stays predictable inside a Worker tick):
  *   resolve via tikwm, falling back to Countik on ANY tikwm resolve
- *   failure -> open the video stream -> stream straight to R2
+ *   failure (paced — delay + per-tick cap + 429 backoff, see
+ *   countik-pacing.ts; a pacing refusal defers the reel, and the
+ *   deferred reel is released through mark_adu_reel_download_failed
+ *   without recording a failure: the claim already consumed one
+ *   retry, the release adds none, the budget is 3 claims) -> open the
+ *   video stream -> stream straight to R2
  *   (hashing + 1 GiB cap + audio-probe window in the same pass) ->
  *   size/audio decision -> settle with the existing RPCs.
  *
@@ -51,6 +56,10 @@ import {
   resolveCountikStream,
   type CountikResolveFailure,
 } from './countik.js';
+import {
+  CountikPacer,
+  countikPacingState,
+} from './countik-pacing.js';
 
 /** Structural subset of the Cloudflare R2 binding used here (testable). */
 export interface R2BucketLike {
@@ -71,6 +80,17 @@ export interface TickResult {
   claimed: number;
   downloaded: number;
   failed: number;
+  /** Reels deferred by Countik pacing (cap or 429 block): never
+   * attempted through the fallback, so no failure was recorded. The
+   * claim already consumed one retry; the release adds none, so the
+   * budget is 3 claims — a deferred reel is released through
+   * mark_adu_reel_download_failed (retries < 3 -> `pending`, at 3 ->
+   * `download_failed`). */
+  deferred: number;
+  /** Countik fallback calls actually made this tick (cap is 5). */
+  countikFallbacks: number;
+  /** 429 responses observed from Countik this tick. */
+  countikRateLimited: number;
   /** Counts keyed by `stage:reason` (detail varies per reel, so it is not a key). */
   failedReasons: Record<string, number>;
   settleErrors: number;
@@ -81,6 +101,9 @@ export interface TickDeps {
   r2: R2BucketLike;
   r2PublicUrl: string;
   fetchImpl: FetchImpl;
+  /** Test seam: production runs the default pacer (module-level
+   * cross-tick state); tests pass one with a fake clock. */
+  countikPacer?: CountikPacer;
 }
 
 export function tiktokVideoUrl(sourceUsername: string, sourceReelId: string): string {
@@ -293,7 +316,15 @@ async function deleteBestEffort(r2: R2BucketLike, key: string, reelId: string): 
 type ProcessOutcome =
   | { kind: 'downloaded'; resolver: 'tikwm' | 'countik' }
   | { kind: 'settle_downloaded' }
+  | { kind: 'deferred'; reason: 'cap' | 'rate_limited' }
   | { kind: 'failed'; failure: DownloadFailure };
+
+/** A Countik failure is a rate limit exactly when the API answered
+ * 429, on either step (exist or info — the observed 429s are on
+ * info, but the signal is the same). */
+function isCountikRateLimit(failure: CountikResolveFailure): boolean {
+  return failure.reason === 'countik_api_http_status' && failure.status === 429;
+}
 
 /** Pure reason mappers, exported as a test seam (like streamToR2): the
  * tick-level tests drive most of them end to end, but file_too_large
@@ -406,7 +437,7 @@ export function uploadFailure(
   };
 }
 
-async function processOne(deps: TickDeps, reel: ClaimedReel): Promise<ProcessOutcome> {
+async function processOne(deps: TickDeps, reel: ClaimedReel, pacer: CountikPacer): Promise<ProcessOutcome> {
   const { supabase, r2, r2PublicUrl, fetchImpl } = deps;
   const videoUrl = tiktokVideoUrl(reel.sourceUsername, reel.sourceReelId);
   // Tikwm first, exactly as before. Countik runs ONLY when tikwm
@@ -423,8 +454,22 @@ async function processOne(deps: TickDeps, reel: ClaimedReel): Promise<ProcessOut
     rawTitle = tikwm.rawTitle;
     resolver = 'tikwm';
   } else {
+    // Pacing gate: the fallback is rate-limited (see
+    // countik-pacing.ts). A refused reel is DEFERRED, not failed: it
+    // was never attempted through Countik, so no failure is recorded
+    // for it. The claim already consumed one retry; the release in
+    // runDownloadTick adds none (retries < 3 -> `pending`, at 3 ->
+    // `download_failed`), so the budget is 3 claims and a deferred
+    // reel can never strand in `processing`.
+    const acquired = await pacer.acquire();
+    if (!acquired.allowed) {
+      return { kind: 'deferred', reason: acquired.reason };
+    }
     const countik = await resolveCountikStream(videoUrl, fetchImpl);
     if (!countik.ok) {
+      // A 429 is a real attempt, so this reel follows the failed
+      // path — but it stops every later Countik call this tick.
+      if (isCountikRateLimit(countik.failure)) pacer.noteRateLimited();
       // Both resolvers failed: record both attempts, primary first.
       return {
         kind: 'failed',
@@ -499,9 +544,16 @@ export async function runDownloadTick(deps: TickDeps): Promise<TickResult> {
     claimed: 0,
     downloaded: 0,
     failed: 0,
+    deferred: 0,
+    countikFallbacks: 0,
+    countikRateLimited: 0,
     failedReasons: {},
     settleErrors: 0,
   };
+  // One pacer per tick: the cap and the 429 block reset with the tick,
+  // while a 429 backoff carries across ticks through the shared
+  // module-level state (warm isolates only — see countik-pacing.ts).
+  const pacer = deps.countikPacer ?? new CountikPacer(countikPacingState);
   // Fail loud: a reset/claim error aborts the tick and surfaces in the
   // Worker's logs; the next minute's tick retries.
   result.resetCount = await deps.supabase.resetStaleDownloads(STALE_MINUTES);
@@ -510,7 +562,7 @@ export async function runDownloadTick(deps: TickDeps): Promise<TickResult> {
   for (const reel of claimed) {
     let outcome: ProcessOutcome;
     try {
-      outcome = await processOne(deps, reel);
+      outcome = await processOne(deps, reel, pacer);
     } catch (err) {
       // processOne is not expected to throw (all known failures map to a
       // reason), so an unexpected throw is logged loudly and the reel
@@ -536,6 +588,28 @@ export async function runDownloadTick(deps: TickDeps): Promise<TickResult> {
       log('download_ok', { reelId: reel.reelId, resolver: outcome.resolver });
     } else if (outcome.kind === 'settle_downloaded') {
       result.settleErrors += 1;
+    } else if (outcome.kind === 'deferred') {
+      // Pacing refused the fallback: no failure is recorded — but the
+      // row must not stay `processing`. The claim already consumed
+      // one retry, so leaving it claimed would strand it after 3
+      // deferrals (retries = 3, still `processing`: the stale reset
+      // only touches retries < 3 and no future claim ever sees it).
+      // Release it through mark_adu_reel_download_failed WITHOUT a
+      // recordDownloadFailure call: the RPC itself is the
+      // claim-release (retries < 3 -> `pending`, immediately
+      // re-claimable; at 3 -> `download_failed`, visible and
+      // rescuable by the failed reset). The release adds no retry.
+      result.deferred += 1;
+      log('download_deferred', { reelId: reel.reelId, reason: outcome.reason });
+      try {
+        await deps.supabase.markDownloadFailed(reel.reelId);
+      } catch (err) {
+        log('release_deferred_failed', {
+          reelId: reel.reelId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        result.settleErrors += 1;
+      }
     } else {
       result.failed += 1;
       const key = failureKey(outcome.failure);
@@ -564,6 +638,12 @@ export async function runDownloadTick(deps: TickDeps): Promise<TickResult> {
       }
     }
   }
+  // Pacing observability: the tick log carries how many Countik calls
+  // were made and how many 429s were seen, so a later check can tell
+  // whether pacing reduced the 429 rate. The per-reel 429 is already
+  // in the reel's failure detail (step=info; http_status=429).
+  result.countikFallbacks = pacer.callsMade;
+  result.countikRateLimited = pacer.rateLimitedCount;
   log('tick_done', { ...result });
   return result;
 }
