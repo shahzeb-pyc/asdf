@@ -15,6 +15,69 @@ import {
 
 const FAKE_PROXY_URL = 'http://user:pass@proxy.test:8080';
 
+/**
+ * Sentinel proxy credential (fake fixture, never a real value) used to
+ * prove no upstream error message escapes with the credential intact.
+ * Every form the credential can take: raw `user:pass`, host, full URL,
+ * base64(user:pass) as sent in `Proxy-Authorization`, and the
+ * URL-encoded auth. The leak tests below embed ALL of them in the
+ * stubbed upstream error — each test fails if the redaction is
+ * removed (same pattern as the scraper's redaction tests, PR #173).
+ */
+const SENTINEL_PROXY_URL = 'http://sentinel-user:sentinel-pass@sentinel-proxy.test:8080';
+const SENTINEL_AUTH = 'sentinel-user:sentinel-pass';
+const SENTINEL_BASE64 = btoa(SENTINEL_AUTH);
+const SENTINEL_ENCODED_AUTH = encodeURIComponent(SENTINEL_AUTH);
+const SENTINEL_ENCODED_BASE64 = btoa(SENTINEL_ENCODED_AUTH);
+const SENTINEL_MESSAGE =
+  `proxy dial failed for ${SENTINEL_AUTH} at sentinel-proxy.test ` +
+  `url ${SENTINEL_PROXY_URL} basic ${SENTINEL_BASE64} ` +
+  `encoded ${SENTINEL_ENCODED_AUTH} ${SENTINEL_ENCODED_BASE64}`;
+const SENTINEL_FORMS = [
+  SENTINEL_AUTH,
+  'sentinel-user',
+  'sentinel-pass',
+  'sentinel-proxy.test',
+  SENTINEL_PROXY_URL,
+  SENTINEL_BASE64,
+  SENTINEL_ENCODED_AUTH,
+  SENTINEL_ENCODED_BASE64,
+];
+
+/**
+ * Assert a proxy fetch attempt fails loudly with an InternalError
+ * whose message carries NO sentinel credential form on any path —
+ * and still carries the (redacted) diagnostic, so the failure is
+ * loud, not swallowed.
+ */
+async function expectNoSentinelLeak(promise: Promise<unknown>): Promise<void> {
+  let thrown: unknown;
+  try {
+    await promise;
+  } catch (err) {
+    thrown = err;
+  }
+  expect(thrown).toBeInstanceOf(InternalError);
+  const message = (thrown as Error).message;
+  for (const form of SENTINEL_FORMS) {
+    expect(message).not.toContain(form);
+  }
+  expect(message).toContain('[proxy]');
+}
+
+/** Plain socket answering CONNECT 200, with a caller-chosen `startTls`. */
+function connectWithTls(
+  capture: FakeSocketCapture,
+  startTls: TunnelSocket['startTls'],
+): TunnelConnectFn {
+  return async () => {
+    capture.connectTargets.push('sentinel-proxy.test');
+    const plain = makeFakeSocket(['HTTP/1.1 200 Connection Established\r\n\r\n'], capture);
+    plain.startTls = startTls;
+    return plain;
+  };
+}
+
 function concatBytes(chunks: Uint8Array[]): Uint8Array {
   const total = chunks.reduce((sum, c) => sum + c.byteLength, 0);
   const out = new Uint8Array(total);
@@ -366,8 +429,117 @@ describe('createProxyFetchFn', () => {
     );
   });
 
-  it('routes both resolve steps through the proxy (free, then Countik fallback)', async () => {
+  it('redacts the proxy credential when connect() itself throws', async () => {
+    // Verifier proof (round 1): connect() throwing an error embedding
+    // the credential propagated it verbatim — the thrown message is
+    // stored in the DB by the mirror tick and logged by the resolve
+    // caller. Fails if the redaction is removed.
+    const connect: TunnelConnectFn = async () => {
+      throw new InternalError(SENTINEL_MESSAGE);
+    };
+    const fetchFn = createProxyFetchFn({ proxyUrl: SENTINEL_PROXY_URL, connect });
+    await expectNoSentinelLeak(fetchFn('https://www.tikwm.com/api/', { method: 'POST', body: 'url=x' }));
+  });
+
+  it('redacts the proxy credential when startTls() throws', async () => {
     const capture: FakeSocketCapture = { written: [], connectTargets: [] };
+    const connect = connectWithTls(capture, () => {
+      throw new InternalError(SENTINEL_MESSAGE);
+    });
+    const fetchFn = createProxyFetchFn({ proxyUrl: SENTINEL_PROXY_URL, connect });
+    await expectNoSentinelLeak(fetchFn('https://www.tikwm.com/api/', { method: 'POST', body: 'url=x' }));
+  });
+
+  it('redacts the proxy credential when the TLS writer throws', async () => {
+    const capture: FakeSocketCapture = { written: [], connectTargets: [] };
+    const connect = connectWithTls(capture, () => {
+      const tls = makeFakeSocket([], capture);
+      tls.writable = new WritableStream<Uint8Array>({
+        write() {
+          throw new InternalError(SENTINEL_MESSAGE);
+        },
+      });
+      return tls;
+    });
+    const fetchFn = createProxyFetchFn({ proxyUrl: SENTINEL_PROXY_URL, connect });
+    await expectNoSentinelLeak(fetchFn('https://www.tikwm.com/api/', { method: 'POST', body: 'url=x' }));
+  });
+
+  it('redacts the proxy credential when the TLS reader throws', async () => {
+    const capture: FakeSocketCapture = { written: [], connectTargets: [] };
+    const connect = connectWithTls(capture, () => {
+      const tls = makeFakeSocket([], capture);
+      tls.readable = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.error(new Error(SENTINEL_MESSAGE));
+        },
+      });
+      return tls;
+    });
+    const fetchFn = createProxyFetchFn({ proxyUrl: SENTINEL_PROXY_URL, connect });
+    await expectNoSentinelLeak(fetchFn('https://www.tikwm.com/api/', { method: 'POST', body: 'url=x' }));
+  });
+
+  it('redacts the proxy credential when the reader throws mid-chunked-body', async () => {
+    // Verifier proof (round 1): a mutated malformed-chunk-size error —
+    // the reader failing while the chunked body is being read — passed
+    // all 16 tests, because only the CONNECT path had a leak assertion.
+    const capture: FakeSocketCapture = { written: [], connectTargets: [] };
+    const encoder = new TextEncoder();
+    const connect = connectWithTls(capture, () => {
+      const tls = makeFakeSocket([], capture);
+      tls.readable = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(
+            encoder.encode(
+              'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n',
+            ),
+          );
+          controller.enqueue(encoder.encode('5\r\nhello\r\n'));
+          controller.error(new Error(SENTINEL_MESSAGE));
+        },
+      });
+      return tls;
+    });
+    const fetchFn = createProxyFetchFn({ proxyUrl: SENTINEL_PROXY_URL, connect });
+    await expectNoSentinelLeak(fetchFn('https://www.tikwm.com/api/', { method: 'POST', body: 'url=x' }));
+  });
+
+  it('fails loud on a malformed Content-Length instead of returning an empty 200', async () => {
+    // Regression: `Number('abc')` is NaN, `readExact(NaN)` returns an
+    // empty body, and proxyFetch returned HTTP 200 with an empty body —
+    // fail-silent. Now a malformed length throws.
+    const capture: FakeSocketCapture = { written: [], connectTargets: [] };
+    const fetchFn = createProxyFetchFn({
+      proxyUrl: FAKE_PROXY_URL,
+      connect: makeFakeConnect(capture, [
+        'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: abc\r\n\r\n{}',
+      ]),
+    });
+    await expect(
+      fetchFn('https://www.tikwm.com/api/', { method: 'POST', body: 'url=x' }),
+    ).rejects.toThrow('proxy response has a malformed content-length');
+  });
+
+  it('fails loud on a negative Content-Length with an InternalError, not a bare RangeError', async () => {
+    const capture: FakeSocketCapture = { written: [], connectTargets: [] };
+    const fetchFn = createProxyFetchFn({
+      proxyUrl: FAKE_PROXY_URL,
+      connect: makeFakeConnect(capture, [
+        'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: -5\r\n\r\n{}',
+      ]),
+    });
+    let thrown: unknown;
+    try {
+      await fetchFn('https://www.tikwm.com/api/', { method: 'POST', body: 'url=x' });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(InternalError);
+    expect((thrown as Error).message).toBe('proxy response has a malformed content-length');
+  });
+
+  it('routes both resolve steps through the proxy (free, then Countik fallback)', async () => {    const capture: FakeSocketCapture = { written: [], connectTargets: [] };
     const fetchFn = createProxyFetchFn({
       proxyUrl: FAKE_PROXY_URL,
       connect: makeFakeConnect(capture, [

@@ -513,4 +513,30 @@ describe('buildMirrorTickDeps resolve proxy (spec 150)', () => {
       'Mirror resolve proxy is not configured',
     );
   });
+
+  it('does not pass the proxy fetch function to the publish deps', async () => {
+    // Spec 150: the proxy fetch function is created inside the
+    // resolveVideo closure and must never be passed to any publish
+    // dep — a publish must never ride the proxy. The fetch has no
+    // handle outside that closure, so the test pins the call
+    // contract at the tick → publish boundary: the tick hands the
+    // publish dep target/video/caption only, no fetch of any kind.
+    const state = newState();
+    const deps = fakeDeps(state, [reel('v1', 100)]);
+    const result = await processMirrorCheck(deps, mirror());
+    expect(result.posted).toBe(1);
+    expect(state.published).toHaveLength(1);
+    const params = state.published[0] as unknown as Record<string, unknown>;
+    expect(Object.keys(params).sort()).toEqual([
+      'caption',
+      'itemId',
+      'targetId',
+      'targetPlatform',
+      'targetToken',
+      'videoUrl',
+    ]);
+    expect('fetch' in params).toBe(false);
+    expect('fetchFn' in params).toBe(false);
+    expect(Object.values(params).every((value) => typeof value !== 'function')).toBe(true);
+  });
 });

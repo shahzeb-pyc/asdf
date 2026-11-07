@@ -16,8 +16,14 @@
  * publishing — those paths never receive it.
  *
  * Secret hygiene: the proxy URL (including credentials) is never logged.
- * Error messages name the phase and the target host only. The caller
- * passes the URL in; this module never reads env itself.
+ * Upstream socket/TLS errors can embed the proxy credential in their
+ * message, so every error rethrown from the tunnel is redacted of all
+ * proxy-value forms (full URL, host, user, pass, base64(user:pass),
+ * URL-encoded forms) before it escapes — the thrown message is stored
+ * in the DB by the mirror tick and logged by the resolve caller, so a
+ * verbatim rethrow would persist the credential. Our own InternalErrors
+ * name the phase and the target host only. The caller passes the URL
+ * in; this module never reads env itself.
  *
  * `cloudflare:sockets` is imported LAZILY (dynamic import inside the
  * factory) because the Worker's vitest pool is plain Node, where that
@@ -97,6 +103,53 @@ function toBase64(value: string): string {
 
 function toBytes(value: string): Uint8Array {
   return TEXT_ENCODER.encode(value);
+}
+
+/**
+ * Every form in which the proxy credential can appear in an upstream
+ * error message: the full URL as passed in, host, decoded `user:pass`,
+ * user and pass separately, the `auth@host` forms, the base64 of the
+ * auth as sent in `Proxy-Authorization`, and the URL-encoded forms
+ * (the raw URL's userinfo is percent-encoded). Longest first, so a
+ * full URL / base64 token is replaced whole instead of being broken
+ * up by a shorter component match. Same pattern as the scraper's
+ * `redactProxyValues` (PR #173) — fake values only, never a secret.
+ */
+function collectProxySecrets(rawProxyUrl: string, proxy: ProxyUrl): string[] {
+  const values: string[] = [];
+  const add = (value: string | null | undefined): void => {
+    const trimmed = (value ?? '').trim();
+    if (trimmed && !values.includes(trimmed)) values.push(trimmed);
+  };
+  add(rawProxyUrl);
+  add(proxy.host);
+  add(`${proxy.host}:${proxy.port}`);
+  add(proxy.auth);
+  if (proxy.auth) {
+    const colon = proxy.auth.indexOf(':');
+    const user = colon >= 0 ? proxy.auth.slice(0, colon) : proxy.auth;
+    const pass = colon >= 0 ? proxy.auth.slice(colon + 1) : '';
+    add(user);
+    add(pass);
+    add(`${proxy.auth}@${proxy.host}`);
+    add(`${proxy.auth}@${proxy.host}:${proxy.port}`);
+    add(encodeURIComponent(user));
+    add(encodeURIComponent(pass));
+    add(encodeURIComponent(proxy.auth));
+    add(toBase64(proxy.auth));
+    add(toBase64(encodeURIComponent(proxy.auth)));
+    add(toBase64(`${encodeURIComponent(user)}:${encodeURIComponent(pass)}`));
+  }
+  return values.sort((a, b) => b.length - a.length);
+}
+
+/** Replace every collected proxy value in `text` with `[proxy]`. */
+function redactProxyValues(text: string, secrets: string[]): string {
+  let out = text;
+  for (const secret of secrets) {
+    out = out.split(secret).join('[proxy]');
+  }
+  return out;
 }
 
 function concatBytes(chunks: Uint8Array[]): Uint8Array {
@@ -333,7 +386,9 @@ export interface ProxyFetchOptions {
  * Build a `fetch`-shaped function that performs HTTPS requests through
  * an HTTP CONNECT proxy. Throws at factory time when the proxy URL is
  * invalid, and throws (never falls back to direct `fetch`) on any
- * proxy failure. Error messages name the phase and target host only.
+ * proxy failure. Our own error messages name the phase and target host
+ * only; upstream error messages are redacted of every proxy-value form
+ * before they are rethrown.
  */
 export function createProxyFetchFn(
   options: ProxyFetchOptions,
@@ -346,6 +401,9 @@ export function createProxyFetchFn(
   }
   const connectFn: TunnelConnectFn =
     options.connect ?? ((opts) => defaultConnect(opts.hostname, opts.port));
+  // Collected once: every form the proxy credential can take in an
+  // upstream error message, for redaction before any rethrow.
+  const proxySecrets = collectProxySecrets(options.proxyUrl, proxy);
 
   return async function proxyFetch(
     input: string | URL | Request,
@@ -472,10 +530,20 @@ export function createProxyFetchFn(
           body = await readChunkedBody(reader);
         } else {
           const contentLength = parsed.get('content-length');
-          body =
-            contentLength !== null
-              ? await reader.readExact(Number(contentLength))
-              : await reader.readToEnd();
+          if (contentLength !== null) {
+            // `Number('abc')` is NaN and `readExact(NaN)` returns an
+            // empty body — a malformed length must fail loud, never a
+            // silent HTTP 200 with an empty body. A negative length
+            // must be the same InternalError, not a bare RangeError
+            // from `new Uint8Array(-5)`.
+            const length = Number(contentLength);
+            if (!Number.isInteger(length) || length < 0) {
+              throw new InternalError('proxy response has a malformed content-length');
+            }
+            body = await reader.readExact(length);
+          } else {
+            body = await reader.readToEnd();
+          }
         }
         const responseHeaders = new Headers();
         for (const [name, value] of parsed.headers) {
@@ -493,7 +561,18 @@ export function createProxyFetchFn(
           ? signal.reason
           : new DOMException('The operation was aborted.', 'AbortError');
       }
-      if (err instanceof Error) throw err;
+      if (err instanceof Error) {
+        // Upstream errors (connect, startTls, the TLS writer, the TLS
+        // reader) can embed the proxy credential in their message, and
+        // the thrown message is stored in the DB by the mirror tick
+        // and logged by the resolve caller — so no upstream message
+        // escapes verbatim. Our own InternalErrors name the phase and
+        // the target host only, so redacting them is a no-op; every
+        // rethrown message is redacted all the same, so no path can
+        // leak. The abort branch above (caller's own timeout reason)
+        // is untouched.
+        throw new InternalError(redactProxyValues(err.message, proxySecrets));
+      }
       throw new InternalError(`proxy fetch to ${targetHost} failed`);
     } finally {
       signal.removeEventListener('abort', onAbort);
