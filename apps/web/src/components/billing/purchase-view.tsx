@@ -1661,11 +1661,11 @@ export function PurchaseView({
             </AlertDescription>
           </Alert>
         ) : null}
-        <Card>
-          <CardHeader>
-            <CardTitle>Included with your plan</CardTitle>
+        <Card className="w-fit max-w-full gap-2 self-center px-5 py-4 sm:flex-row sm:items-center sm:gap-6">
+          <CardHeader className="shrink-0 px-0">
+            <CardTitle className="whitespace-nowrap">Included with your plan</CardTitle>
           </CardHeader>
-          <CardContent className="flex flex-col gap-2">
+          <CardContent className="flex flex-row flex-wrap items-center gap-x-5 gap-y-2 px-0">
             <p className="flex items-start gap-2 text-body text-ink">
               <CheckIcon aria-hidden className="mt-0.5 size-5 shrink-0 text-signal-operational" />
               <span>5 GB of Media Library storage per page or account</span>
