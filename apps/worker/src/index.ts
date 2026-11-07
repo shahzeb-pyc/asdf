@@ -95,6 +95,12 @@ export interface Env {
    */
   TIKWMAPI_KEYS?: string;
   TIKWMAPI_KEY?: string;
+  /**
+   * DataImpulse rotating proxy URL for mirror resolve (spec 150).
+   * Worker secret, set via GitHub Secrets. Unset = every mirror
+   * resolve fails loudly; resolve never falls back to direct fetch.
+   */
+  DATAIMPULSE_PROXY?: string;
   /** Post for Me API key (specs 125/126) — provider-managed YouTube/TikTok. Worker env only, via GitHub Secrets. */
   POST_FOR_ME_API_KEY?: string;
   /** X global-app client ID (spec 127, D7) — GitHub Secrets → worker env only, never the database. */
@@ -255,6 +261,7 @@ export async function handleScheduled(
         env,
         waitUntil,
         tikwmApiKeys: parseTikwmApiKeys(env.TIKWMAPI_KEYS, env.TIKWMAPI_KEY),
+        resolveProxyUrl: env.DATAIMPULSE_PROXY,
       });
       await runMirrorDispatch({
         listDueMirrorIds: tickDeps.listDueMirrorIds,
@@ -364,6 +371,7 @@ export async function handleScheduled(
         env,
         waitUntil,
         tikwmApiKeys: parseTikwmApiKeys(env.TIKWMAPI_KEYS, env.TIKWMAPI_KEY),
+        resolveProxyUrl: env.DATAIMPULSE_PROXY,
       });
       await runMirrorJobTick({
         check: tickDeps,

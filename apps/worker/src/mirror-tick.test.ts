@@ -8,7 +8,7 @@
  * the consumer tests — the consumer fetches the mirror fresh
  * and skips before this runs.)
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   InternalError,
   MIRROR_FACEBOOK_RESTRICTED_MESSAGE,
@@ -476,5 +476,41 @@ describe('buildMirrorTickDeps job RPCs (bound receiver)', () => {
     await expect(
       deps.claimMirrorCheckJobs(new Date('2026-10-29T12:00:00.000Z'), 200)
     ).rejects.toThrow('Mirror check job claim RPC is not configured');
+  });
+});
+
+describe('buildMirrorTickDeps resolve proxy (spec 150)', () => {
+  it('refuses to resolve direct when the proxy is unset (never silent direct)', async () => {
+    const deps = buildMirrorTickDeps(
+      {} as unknown as Parameters<typeof buildMirrorTickDeps>[0],
+      'test-master-key',
+    );
+    const fetchSpy = vi.fn(async () => {
+      throw new Error('direct fetch must not run');
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    try {
+      await expect(
+        deps.resolveVideo({ username: 'alice', videoId: 'v1' }),
+      ).rejects.toThrow('Mirror resolve proxy is not configured');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    // The bug this catches: resolve falling back to direct fetch when
+    // DATAIMPULSE_PROXY is unset — the exact throttle failure the
+    // proxy exists to fix, reintroduced invisibly.
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('refuses to resolve direct when the proxy is blank', async () => {
+    const deps = buildMirrorTickDeps(
+      {} as unknown as Parameters<typeof buildMirrorTickDeps>[0],
+      'test-master-key',
+      { resolveProxyUrl: '   ' },
+    );
+    await expect(deps.resolveVideo({ username: 'alice', videoId: 'v1' })).rejects.toThrow(
+      'Mirror resolve proxy is not configured',
+    );
   });
 });
