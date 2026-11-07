@@ -1718,7 +1718,7 @@ export function PurchaseView({
             variant={buildDisabled ? 'secondary' : 'default'}
             onClick={goToCheckout}
             disabled={buildDisabled}
-            className="w-full sm:w-auto sm:self-start"
+            className="w-full sm:w-auto sm:self-end"
           >
             Continue to checkout
           </Button>

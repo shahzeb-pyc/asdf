@@ -348,10 +348,15 @@ describe('Billing Purchase', () => {
     expect(screen.queryByText('Order summary')).toBeNull();
     expect(screen.queryByText('Monthly total')).toBeNull();
     expect(screen.queryByText('Media Library storage included')).toBeNull();
-    // Continue to checkout is still there, below the chooser.
-    expect(
-      screen.getByRole('button', { name: 'Continue to checkout' })
-    ).toBeInTheDocument();
+    // Continue to checkout is still there, below the chooser, right-aligned
+    // on desktop and full-width on phones.
+    const continueButton = screen.getByRole('button', {
+      name: 'Continue to checkout',
+    });
+    expect(continueButton).toBeInTheDocument();
+    expect(continueButton.className).toContain('sm:self-end');
+    expect(continueButton.className).not.toContain('sm:self-start');
+    expect(continueButton.className).toContain('w-full');
     // And the summary is still there at checkout.
     await goToCheckout();
     expect(await screen.findByText('Order summary')).toBeInTheDocument();
