@@ -2,6 +2,7 @@
 import * as React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { AddPageDialog } from './adu-hub-page';
 
 const ACCOUNTS = [
@@ -125,6 +126,18 @@ async function goToPagesStep() {
   fireEvent.click(screen.getByText('Shahzeb Malik'));
   fireEvent.click(screen.getByTestId('adu-accounts-next-btn'));
   await screen.findByTestId('adu-pages-list');
+}
+
+async function goToPostingStep(postBodies: unknown[] = []) {
+  const { onCreated } = await openDialog(postBodies);
+  await goToPagesStep();
+  fireEvent.click(screen.getByTestId('adu-page-checkbox-11111111-1111-4111-8111-111111111111-fb-page-102'));
+  fireEvent.click(screen.getByTestId('adu-pages-next-btn'));
+  await screen.findByText('Sources');
+  fireEvent.change(screen.getByPlaceholderText('@username'), { target: { value: 'sdf' } });
+  fireEvent.click(screen.getByTestId('adu-sources-next-btn'));
+  await screen.findByText('Posting Time');
+  return { onCreated };
 }
 
 describe('ADU Add Page dialog — live discovery', () => {
@@ -441,5 +454,103 @@ describe('ADU Add Page dialog — live discovery', () => {
     expect(timeInput).not.toBeNull();
     fireEvent.change(timeInput, { target: { value: '09:00' } });
     expect((screen.getByText('Start Automation') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('step 4 timezone is the Pages searchable picker, preselected with Asia/Karachi', async () => {
+    const postBodies: unknown[] = [];
+    const { onCreated } = await goToPostingStep(postBodies);
+    // No free-text timezone input remains anywhere in step 4.
+    expect(document.querySelector('#adu-timezone')).toBeNull();
+    expect(document.querySelector('#adu-bulk-11111111-1111-4111-8111-111111111111-fb-page-102-timezone')).toBeNull();
+    // The Pages picker loads (lazy) with the current timezone
+    // selected — the user must not re-pick a timezone they have.
+    const note = await screen.findByTestId('add-page-timezone-note');
+    expect(note.textContent).toMatch(/Karachi/);
+    expect(note.textContent).toMatch(/Asia\/Karachi/);
+    // The shortened note, with no 5-hour promise.
+    expect(screen.getByText('Balanced random times will be automatically generated upon saving.')).toBeTruthy();
+    expect(screen.queryByText(/5-hour/)).toBeNull();
+    // Search narrows the directory; picking another zone changes
+    // the submitted timezone.
+    fireEvent.change(screen.getByTestId('add-page-timezone-search-input'), { target: { value: 'Tokyo' } });
+    fireEvent.click(await screen.findByTestId('add-page-timezone-option-Asia/Tokyo'));
+    expect(note.textContent).toMatch(/Tokyo/);
+    expect(note.textContent).toMatch(/Asia\/Tokyo/);
+    fireEvent.click(screen.getByText('Start Automation'));
+    await screen.findByText('Created 1 page.');
+    expect(onCreated).toHaveBeenCalled();
+    const body = postBodies[0] as { timezone: string; postsPerDay: number; scheduleType: string };
+    expect(body.timezone).toBe('Asia/Tokyo');
+    expect(body.postsPerDay).toBe(1);
+    expect(body.scheduleType).toBe('dailyrandom');
+  });
+
+  it('step 4 Posts Per Day is a 1–12 dropdown that resizes the fixed times', async () => {
+    await goToPostingStep();
+    fireEvent.click(screen.getByText('Fixed Posting Times'));
+    // One time input for the default 1 post per day.
+    expect(screen.getAllByTestId(/^adu-fixed-time-/)).toHaveLength(1);
+    // The dropdown lists 1–12; picking 3 resizes the times to 3.
+    await user.click(screen.getByTestId('adu-posts-per-day-select'));
+    expect(screen.getByRole('option', { name: '12' })).toBeTruthy();
+    await user.click(screen.getByRole('option', { name: '3' }));
+    expect(screen.getByTestId('adu-posts-per-day-select').textContent).toContain('3');
+    expect(screen.getAllByTestId(/^adu-fixed-time-/)).toHaveLength(3);
+    // And back to 1 — a dropdown cannot be cleared or jump values.
+    await user.click(screen.getByTestId('adu-posts-per-day-select'));
+    await user.click(screen.getByRole('option', { name: '1' }));
+    expect(screen.getByTestId('adu-posts-per-day-select').textContent).toContain('1');
+    expect(screen.getAllByTestId(/^adu-fixed-time-/)).toHaveLength(1);
+  });
+
+  it('step 4 fixed times show a 12-hour preview and a duplicate warning', async () => {
+    await goToPostingStep();
+    fireEvent.click(screen.getByText('Fixed Posting Times'));
+    // The default 09:00 previews in 12-hour form.
+    expect(screen.getByText('Posts will go out at 09:00 AM.')).toBeTruthy();
+    // Two posts a day both default to 09:00 — both warn.
+    await user.click(screen.getByTestId('adu-posts-per-day-select'));
+    await user.click(screen.getByRole('option', { name: '2' }));
+    expect(screen.getAllByText('Choose a different time for each posting time.')).toHaveLength(2);
+    // Changing one clears the warning and updates its preview.
+    fireEvent.change(screen.getByTestId('adu-fixed-time-1'), { target: { value: '10:00' } });
+    expect(screen.queryByText('Choose a different time for each posting time.')).toBeNull();
+    expect(screen.getByText('Posts will go out at 10:00 AM.')).toBeTruthy();
+    expect(screen.getByText('Posts will go out at 09:00 AM.')).toBeTruthy();
+  });
+
+  it('step 4 separate scope uses the same pickers per page', async () => {
+    const postBodies: unknown[] = [];
+    const { onCreated } = await goToPostingStep(postBodies);
+    fireEvent.click(screen.getByText('Set separately'));
+    // The shortened note, with no 5-hour promise.
+    expect(screen.getByText('Balanced random times will be automatically generated upon saving.')).toBeTruthy();
+    expect(screen.queryByText(/5-hour/)).toBeNull();
+    // One timezone picker for the one selected page, preselected.
+    const notes = await screen.findAllByTestId('add-page-timezone-note');
+    expect(notes).toHaveLength(1);
+    expect(notes[0]?.textContent).toMatch(/Asia\/Karachi/);
+    // Per-page Posts Per Day is a dropdown; picking 2 gives two
+    // fixed-time fields for that page.
+    fireEvent.click(screen.getByText('Fixed Posting Times'));
+    const pageKey = '11111111-1111-4111-8111-111111111111:fb-page-102';
+    await user.click(screen.getByTestId(`adu-posts-per-day-select-${pageKey}`));
+    await user.click(screen.getByRole('option', { name: '2' }));
+    expect(screen.getAllByTestId(new RegExp(`^adu-fixed-time-${pageKey.replace(/:/g, '\\:')}-`))).toHaveLength(2);
+    // Fill both times and submit: the per-page schedule carries the
+    // picked timezone, count, and times.
+    fireEvent.change(screen.getByTestId(`adu-fixed-time-${pageKey}-0`), { target: { value: '09:00' } });
+    fireEvent.change(screen.getByTestId(`adu-fixed-time-${pageKey}-1`), { target: { value: '10:00' } });
+    fireEvent.click(screen.getByText('Start Automation'));
+    await screen.findByText('Created 1 page.');
+    expect(onCreated).toHaveBeenCalled();
+    const body = postBodies[0] as {
+      items: { schedule: { timezone: string; postsPerDay: number; postingTimes: string[] } }[];
+    };
+    expect(body.items[0]?.schedule).toEqual({
+      timezone: 'Asia/Karachi',
+      postsPerDay: 2,
+      postingTimes: ['09:00', '10:00'],
+    });
   });
 });

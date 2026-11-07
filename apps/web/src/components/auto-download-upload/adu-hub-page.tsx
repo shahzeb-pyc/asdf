@@ -3,8 +3,10 @@
 // Vercel rebuild trigger (comment only, no behaviour change) — PR #43, new Vercel account.
 import * as React from 'react';
 import Image from 'next/image';
+import dynamic from 'next/dynamic';
 import { MoveUpRightIcon, PlusIcon, SearchIcon } from 'lucide-react';
 import { parseAduBulkPaste } from '@fbuploadpro/contracts';
+import { formatSlotDisplay } from '@/components/pages/dedicated/posting-times/posting-time-utils';
 import { Banner } from '@/components/shared/ui/banner';
 import { Button } from '@/components/shared/ui/button';
 import { Card, CardContent } from '@/components/shared/ui/card';
@@ -37,6 +39,60 @@ import { reportError } from '@/lib/report-error';
 import { getUserInitials } from '@/lib/user-initials';
 import { cn } from '@/lib/utils';
 import { FeatureCapText, useFeatureCap } from '@/components/billing/feature-cap';
+
+// The Pages timezone picker loads on demand, not in the ADU hub
+// page's first-load bundle: the timezone directory is only needed
+// once a user reaches step 4 inside the dialogue (same as the
+// Pages Add Page modal).
+const SelectTimezoneStep = dynamic(() =>
+  import('@/components/pages/add-page-schedule-steps').then((m) => m.SelectTimezoneStep)
+);
+
+/**
+ * One fixed posting time, the Pages treatment: the narrowed time
+ * input, the 12-hour preview underneath, and the duplicate warning
+ * when another time in the same set is equal. Shared by the shared
+ * schedule and the per-page cards — the Pages per-slot card with
+ * Add/Remove does not apply here (the count comes from Posts Per
+ * Day), so only the time field itself is reused.
+ */
+function AduFixedTimeField({
+  value,
+  isDuplicate,
+  onChange,
+  testId,
+}: Readonly<{
+  value: string;
+  isDuplicate: boolean;
+  onChange: (value: string) => void;
+  testId: string;
+}>) {
+  // A cleared or invalid time previews nothing: showing 09:00 AM for
+  // an empty field would be a fake time. (Same rule as the Pages
+  // posting-times step.)
+  const isValidTime = /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+  const preview = isValidTime ? formatSlotDisplay(value) : null;
+  return (
+    <div>
+      <Input
+        type="time"
+        data-testid={testId}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        aria-label="Time of day"
+        className="w-44"
+      />
+      <div className="mt-1 text-metadata text-ink-sub">
+        {preview ? `Posts will go out at ${preview.time12} ${preview.ampm}.` : 'Choose a time.'}
+      </div>
+      {isDuplicate ? (
+        <div className="mt-1 text-metadata text-signal-critical">
+          Choose a different time for each posting time.
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 const STATUS_OPTIONS = [
   'All Statuses', 'Active', 'Inactive', 'Verification Req.', 'Rate Limited',
@@ -673,6 +729,10 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
   const [pasteFeedback, setPasteFeedback] = React.useState<string | null>(null);
   const [postsPerDay, setPostsPerDay] = React.useState(1);
   const [timezone, setTimezone] = React.useState('Asia/Karachi');
+  // Search text for the Pages timezone picker: one query for the
+  // shared schedule, one per page for the per-page cards.
+  const [timezoneSearchQuery, setTimezoneSearchQuery] = React.useState('');
+  const [pageTimezoneSearch, setPageTimezoneSearch] = React.useState<Record<string, string>>({});
   const [scheduleType, setScheduleType] = React.useState<'dailyrandom' | 'fixed'>('dailyrandom');
   const [fixedTimes, setFixedTimes] = React.useState<string[]>(['09:00']);
   // 'all' is the shared schedule below; 'separate' keeps one schedule
@@ -1317,25 +1377,47 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
                   <p className="mt-2 text-body text-ink-sub">These settings will be used for all selected pages.</p>
                   <div className="mt-2">
                     <label className="font-medium" htmlFor="adu-posts-per-day">Posts Per Day</label>
-                    <Input id="adu-posts-per-day" type="number" min={1} max={12} value={postsPerDay} onChange={(e) => {
-                      const n = Math.max(1, Math.min(12, Number(e.target.value) || 1));
+                    <Select value={String(postsPerDay)} onValueChange={(v) => {
+                      const n = Number(v);
                       setPostsPerDay(n);
                       setFixedTimes(Array.from({ length: n }, (_, i) => fixedTimes[i] ?? '09:00'));
-                    }} />
+                    }}>
+                      <SelectTrigger id="adu-posts-per-day" data-testid="adu-posts-per-day-select">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {Array.from({ length: 12 }, (_, i) => (
+                          <SelectItem key={i + 1} value={String(i + 1)}>{i + 1}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div className="mt-2">
-                    <label className="font-medium" htmlFor="adu-timezone">Posting Timezone</label>
-                    <Input id="adu-timezone" value={timezone} onChange={(e) => setTimezone(e.target.value)} />
+                    <p className="font-medium">Posting Timezone</p>
+                    <div className="mt-2">
+                      <SelectTimezoneStep
+                        selectedTimezone={timezone}
+                        timezoneSearchQuery={timezoneSearchQuery}
+                        onTimezoneSearchChange={setTimezoneSearchQuery}
+                        onSelectTimezone={setTimezone}
+                      />
+                    </div>
                   </div>
                   {scheduleType === 'dailyrandom' ? (
-                    <p className="mt-2 text-body text-ink-sub">Balanced random times will be automatically generated upon saving to ensure a minimum 5-hour gap between posts.</p>
+                    <p className="mt-2 text-body text-ink-sub">Balanced random times will be automatically generated upon saving.</p>
                   ) : (
                     <div className="mt-2 flex flex-col gap-2">
                       <p className="text-body">One time per post, per day:</p>
                       {Array.from({ length: postsPerDay }, (_, i) => (
-                        <Input key={i} type="time" value={fixedTimes[i] ?? '09:00'} onChange={(e) => {
-                          const next = [...fixedTimes]; next[i] = e.target.value; setFixedTimes(next);
-                        }} />
+                        <AduFixedTimeField
+                          key={i}
+                          value={fixedTimes[i] ?? '09:00'}
+                          isDuplicate={fixedTimes.filter((t) => t === (fixedTimes[i] ?? '09:00')).length > 1}
+                          onChange={(value) => {
+                            const next = [...fixedTimes]; next[i] = value; setFixedTimes(next);
+                          }}
+                          testId={`adu-fixed-time-${i}`}
+                        />
                       ))}
                     </div>
                   )}
@@ -1343,38 +1425,61 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
               ) : (
                 <>
                   {scheduleType === 'dailyrandom' ? (
-                    <p className="mt-2 text-body text-ink-sub">Balanced random times will be automatically generated upon saving to ensure a minimum 5-hour gap between posts.</p>
+                    <p className="mt-2 text-body text-ink-sub">Balanced random times will be automatically generated upon saving.</p>
                   ) : null}
                   <div className="mt-2 flex max-h-80 flex-col gap-2 overflow-y-auto pr-2">
                     {selectedRows.map((row) => {
                       const s = pageSchedule(row.key);
                       const label = `${row.pageName} · ${row.accountName}`;
+                      const times = ensureTimesLength(s.postingTimes, s.postsPerDay);
                       return (
                         <div key={`schedule-${row.key}`} className="flex flex-col gap-3 rounded-lg border p-3">
                           <p className="text-body font-semibold">{label}</p>
                           <div>
                             <label className="font-medium" htmlFor={`adu-bulk-${row.key}-posts-per-day`}>Posts Per Day</label>
-                            <Input id={`adu-bulk-${row.key}-posts-per-day`} type="number" min={1} max={12} value={s.postsPerDay} onChange={(e) => {
-                              const n = Math.max(1, Math.min(12, Number(e.target.value) || 1));
+                            <Select value={String(s.postsPerDay)} onValueChange={(v) => {
+                              const n = Number(v);
                               updatePageSchedule(row.key, {
                                 postsPerDay: n,
                                 postingTimes: scheduleType === 'fixed' ? ensureTimesLength(s.postingTimes, n) : [],
                               });
-                            }} />
+                            }}>
+                              <SelectTrigger id={`adu-bulk-${row.key}-posts-per-day`} data-testid={`adu-posts-per-day-select-${row.key}`}>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {Array.from({ length: 12 }, (_, i) => (
+                                  <SelectItem key={i + 1} value={String(i + 1)}>{i + 1}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
                           </div>
                           <div>
-                            <label className="font-medium" htmlFor={`adu-bulk-${row.key}-timezone`}>Posting Timezone</label>
-                            <Input id={`adu-bulk-${row.key}-timezone`} value={s.timezone} onChange={(e) => updatePageSchedule(row.key, { timezone: e.target.value })} />
+                            <p className="font-medium">Posting Timezone</p>
+                            <div className="mt-2">
+                              <SelectTimezoneStep
+                                selectedTimezone={s.timezone}
+                                timezoneSearchQuery={pageTimezoneSearch[row.key] ?? ''}
+                                onTimezoneSearchChange={(value) => setPageTimezoneSearch((prev) => ({ ...prev, [row.key]: value }))}
+                                onSelectTimezone={(iana) => updatePageSchedule(row.key, { timezone: iana })}
+                              />
+                            </div>
                           </div>
                           {scheduleType === 'fixed' ? (
                             <div className="flex flex-col gap-2">
                               <p className="text-body">Fixed Posting Times</p>
-                              {ensureTimesLength(s.postingTimes, s.postsPerDay).map((time, index) => (
-                                <Input key={index} type="time" value={time} onChange={(e) => {
-                                  const next = ensureTimesLength(s.postingTimes, s.postsPerDay);
-                                  next[index] = e.target.value;
-                                  updatePageSchedule(row.key, { postingTimes: next });
-                                }} />
+                              {times.map((time, index) => (
+                                <AduFixedTimeField
+                                  key={index}
+                                  value={time}
+                                  isDuplicate={times.filter((t) => t === time).length > 1}
+                                  onChange={(value) => {
+                                    const next = ensureTimesLength(s.postingTimes, s.postsPerDay);
+                                    next[index] = value;
+                                    updatePageSchedule(row.key, { postingTimes: next });
+                                  }}
+                                  testId={`adu-fixed-time-${row.key}-${index}`}
+                                />
                               ))}
                             </div>
                           ) : null}
