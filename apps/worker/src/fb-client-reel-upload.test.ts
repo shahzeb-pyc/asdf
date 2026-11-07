@@ -11,6 +11,7 @@
  * network, no real Facebook, no tokens.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { InternalError } from '@fbuploadpro/contracts';
 import { FacebookGraphError, FacebookPublishClient } from './fb-client.js';
 
 const PAGE_ID = '110103338715385';
@@ -87,7 +88,7 @@ function makeClient(scenario: UploadScenario): {
       if (headers['file_url'] !== undefined) return scenario.fileUrl();
       return scenario.stream();
     }
-    throw new Error(`unexpected fetch: ${url}`);
+    throw new InternalError(`unexpected fetch: ${url}`);
   };
 
   return {
@@ -112,7 +113,7 @@ describe('publishReel file_url primary', () => {
     const { client, calls, startCount } = makeClient({
       fileUrl: () => jsonResponse({ success: true }),
       stream: () => {
-        throw new Error('streaming must not run when file_url succeeds');
+        throw new InternalError('streaming must not run when file_url succeeds');
       },
     });
 
@@ -190,7 +191,7 @@ describe('publishReel file_url primary', () => {
     const { client } = makeClient({
       fileUrl: () => jsonResponse({ success: true }),
       stream: () => {
-        throw new Error('streaming must not run when file_url succeeds');
+        throw new InternalError('streaming must not run when file_url succeeds');
       },
       finish: () => emptyResponse(400),
     });
@@ -234,7 +235,7 @@ describe('publishReel Cloudflare console logging', () => {
     const { client } = makeClient({
       fileUrl: () => jsonResponse({ success: true }),
       stream: () => {
-        throw new Error('streaming must not run when file_url succeeds');
+        throw new InternalError('streaming must not run when file_url succeeds');
       },
     });
 
@@ -303,7 +304,7 @@ describe('publishReel Cloudflare console logging', () => {
     const { client } = makeClient({
       fileUrl: () => jsonResponse({ success: true }),
       stream: () => {
-        throw new Error('streaming must not run when file_url succeeds');
+        throw new InternalError('streaming must not run when file_url succeeds');
       },
       finish: () => emptyResponse(400),
     });
