@@ -3,7 +3,6 @@
 // Vercel rebuild trigger (comment only, no behaviour change) — PR #43, new Vercel account.
 import * as React from 'react';
 import Image from 'next/image';
-import Link from 'next/link';
 import { MoveUpRightIcon, PlusIcon, SearchIcon } from 'lucide-react';
 import { parseAduBulkPaste } from '@fbuploadpro/contracts';
 import { Banner } from '@/components/shared/ui/banner';
@@ -14,6 +13,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/shared/ui/dialog';
@@ -28,7 +28,12 @@ import {
 } from '@/components/shared/ui/select';
 import { Textarea } from '@/components/shared/ui/textarea';
 import { StatusMark } from '@/components/shared/ui/status-mark';
-import { buildTenantApiPath } from '@/lib/api/client';
+import { api, buildTenantApiPath, isApiError } from '@/lib/api';
+import {
+  DiscoverPagesResponseSchema,
+  type DiscoveredPage,
+} from '@/lib/api/schemas/pages';
+import { reportError } from '@/lib/report-error';
 import { getUserInitials } from '@/lib/user-initials';
 import { cn } from '@/lib/utils';
 import { FeatureCapText, useFeatureCap } from '@/components/billing/feature-cap';
@@ -558,20 +563,82 @@ function PickerAvatar({ url, name }: { url: string | null; name: string }) {
 }
 
 /**
- * Page picker meta line, mirroring the Pages picker row exactly:
- * "{category} • {N} followers". The category falls back to
- * 'Facebook Page' and followers always render via
- * `current_followers ?? 0` from the destinations metadata already in
- * the options payload — never a dangling separator, never a missing
- * count, and never the page id (the picker no longer renders it).
+ * One live-discovered page row in step 2. The key is
+ * `${accountId}:${fbPageId}` — a page managed by two selected
+ * accounts appears twice, once per account, and a page with no
+ * `destinations` row yet has no destination id at all. The
+ * `destinationId` (when present) is the `destinations` row for
+ * exactly this (account, page) pair — matching by page id alone
+ * would be wrong, since one workspace can hold two rows for the
+ * same Facebook page id under different accounts.
  */
-function pageMetaLine(page: PickerPage): string {
-  const metadata = page.metadata ?? {};
-  const category = typeof metadata.category === 'string' && metadata.category.trim()
-    ? metadata.category.trim()
-    : 'Facebook Page';
-  const followers = typeof metadata.current_followers === 'number' ? metadata.current_followers : 0;
-  return `${category} • ${followers.toLocaleString('en-US')} followers`;
+interface DiscoveredAduRow {
+  key: string;
+  accountId: string;
+  accountName: string;
+  fbPageId: string;
+  pageName: string;
+  profilePictureUrl: string | null;
+  category: string | null;
+  followers: number;
+  destinationId: string | null;
+  alreadyAdded: boolean;
+}
+
+interface DiscoverEntry {
+  status: 'loading' | 'ready' | 'error';
+  pages: DiscoveredPage[];
+  error: string | null;
+  truncated: boolean;
+  partial: boolean;
+  droppedCount: number;
+}
+
+const EMPTY_DISCOVER_ENTRY: DiscoverEntry = {
+  status: 'loading',
+  pages: [],
+  error: null,
+  truncated: false,
+  partial: false,
+  droppedCount: 0,
+};
+
+/**
+ * Loads one account's pages live from Facebook, through the same
+ * typed discover call the Pages picker uses. Mirrors
+ * `executeDiscoverPages` in `components/pages/add-page-modal.tsx`:
+ * a capped/partial fetch is still a success (its warnings travel
+ * with it); a failure is reported, never silent, and carries the
+ * user-facing message.
+ */
+async function executeDiscoverPages(subdomain: string, accountId: string) {
+  try {
+    const data = await api.get(
+      buildTenantApiPath(subdomain, `/accounts/${accountId}/pages/discover`),
+      { schema: DiscoverPagesResponseSchema },
+    );
+    return {
+      success: true as const,
+      pages: data.pages,
+      truncated: data.truncated,
+      partial: data.partial,
+      droppedCount: data.droppedCount,
+      error: null,
+    };
+  } catch (error) {
+    reportError(error, { source: 'adu-add-page-discover' });
+    return {
+      success: false as const,
+      pages: [] as DiscoveredPage[],
+      truncated: false,
+      partial: false,
+      droppedCount: 0,
+      error:
+        isApiError(error) && error.kind === 'http'
+          ? "Couldn't load pages from this Facebook account. Please check the account connection and try again."
+          : 'An error occurred while loading pages from Facebook. Please try again.',
+    };
+  }
 }
 
 /**
@@ -595,7 +662,11 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
   const [accountSearch, setAccountSearch] = React.useState('');
   const [pageSearch, setPageSearch] = React.useState('');
   const [selectedAccountIds, setSelectedAccountIds] = React.useState<string[]>([]);
-  const [selectedPageIds, setSelectedPageIds] = React.useState<string[]>([]);
+  // Selection is keyed by discovered row (`${accountId}:${fbPageId}`),
+  // not by destination id: a page can appear twice (two accounts)
+  // and a never-imported page has no destination id yet.
+  const [selectedPageKeys, setSelectedPageKeys] = React.useState<string[]>([]);
+  const [discoverByAccount, setDiscoverByAccount] = React.useState<Record<string, DiscoverEntry>>({});
   const [sources, setSources] = React.useState<Record<string, { platform: Platform; username: string }>>({});
   const [pasteOpen, setPasteOpen] = React.useState(false);
   const [pasteText, setPasteText] = React.useState('');
@@ -637,6 +708,7 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
   React.useEffect(() => {
     if (!open) return;
     setStep(1); setError(null); setResult(null); setOptionsMigrationMissing(false);
+    setDiscoverByAccount({});
     setOptionsLoading(true);
     void fetchAduOptions(subdomain)
       .then((body) => {
@@ -649,48 +721,66 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
       .finally(() => setOptionsLoading(false));
   }, [open, subdomain]);
 
-  // Accounts are partitioned like the Pages picker: active accounts
-  // are selectable; expired accounts render dimmed with "Session
-  // expired"; broken accounts render dimmed with "Connection issue".
-  // The partition follows the canonical account-health model
-  // (getAccountHealth: 'expired' wins, 'disconnected' is an error,
-  // everything else is connected) — ADU options carry no token
-  // expiry, so the expiry branch cannot fire here. Two raw statuses
-  // the accounts surface itself treats as critical ('error',
-  // 'revoked') are additionally routed to the error section rather
-  // than left selectable on a broken account. ADU has no in-dialog
-  // reconnect, so the dimmed sections link to Facebook Accounts
-  // instead of offering a Reconnect button.
+  // Step 1 lists ONLY active accounts. Expired / disconnected /
+  // error / revoked accounts do not appear at all — no dimmed
+  // sections, no Accounts link: a dead token cannot discover pages,
+  // so there is nothing to pick for them here.
   const activeAccounts = accounts.filter((a) =>
     a.status !== 'expired' && a.status !== 'disconnected' && a.status !== 'error' && a.status !== 'revoked');
-  const expiredAccounts = accounts.filter((a) => a.status === 'expired');
-  const errorAccounts = accounts.filter((a) =>
-    a.status === 'disconnected' || a.status === 'error' || a.status === 'revoked');
   const filteredAccounts = activeAccounts.filter((a) => a.display_name.toLowerCase().includes(accountSearch.toLowerCase()));
-  // "Pages linked" counts connected pages only, exactly as the Pages
-  // accounts list counts: a destination counts unless it is
-  // disconnected, except a disconnected destination that is paused
-  // still counts (SQL: d.status != 'disconnected' OR
-  // d.metadata->>'fb_status' = 'paused'; same filter in the Supabase
-  // path — apps/web/src/app/api/tenant/[subdomain]/accounts/route.ts).
-  // NOTE: this is a count-only parity fix. The step-2 union below is
-  // intentionally NOT filtered the same way: a disconnected page can
-  // still appear (and be picked) there, so the count may read lower
-  // than the number of rows step 2 lists for an account.
-  const isLinkedPage = (p: PickerPage) =>
-    p.status !== 'disconnected' || (p.metadata?.fb_status === 'paused');
+  // "Pages linked" counts ONLY pages linked in ADU itself: the
+  // account's destinations that have an `adu_configs` row
+  // (computable from the already-loaded `configured` list).
+  // Destination status is irrelevant — a disconnected ADU
+  // destination is still an ADU link. Pages linked in any other
+  // section are never counted here.
+  const configuredDestinationIds = React.useMemo(
+    () => new Set(configured.map((c) => c.destination_id)),
+    [configured],
+  );
   const linkedPagesCount = (accountId: string) =>
-    pages.filter((p) => p.account_id === accountId && isLinkedPage(p)).length;
-  // Step 2 shows ONLY the union of the selected accounts' pages —
-  // never pages of unselected accounts, never the whole list.
-  const unionPages = pages.filter((p) => selectedAccountIds.includes(p.account_id));
-  const visiblePages = unionPages.filter((p) => p.name.toLowerCase().includes(pageSearch.toLowerCase()));
-  const selectablePageIds = unionPages.filter((p) => !configured.some((c) => c.destination_id === p.id)).map((p) => p.id);
+    pages.filter((p) => p.account_id === accountId && configuredDestinationIds.has(p.id)).length;
+  // The `destinations` row for exactly one (account, page) pair —
+  // the match chain for "Already added". Keyed by account + page
+  // because one workspace can hold two rows for the same Facebook
+  // page id under different accounts.
+  const destinationByAccountPage = React.useMemo(() => {
+    const map = new Map<string, PickerPage>();
+    for (const p of pages) map.set(`${p.account_id}:${p.external_destination_id}`, p);
+    return map;
+  }, [pages]);
+  // Step 2 shows ONLY the union of the selected accounts' LIVE
+  // discovered pages — never pages of unselected accounts, never
+  // the whole list. A page with no `destinations` row appears here
+  // for the first time; "Already added" comes from `adu_configs`
+  // only, never from discover's workspace-wide `isImported` flag.
+  const discoveredRows: DiscoveredAduRow[] = selectedAccountIds.flatMap((accountId) => {
+    const entry = discoverByAccount[accountId];
+    if (!entry || entry.status !== 'ready') return [];
+    const accountName = accounts.find((a) => a.id === accountId)?.display_name ?? '';
+    return entry.pages.map((page) => {
+      const destination = destinationByAccountPage.get(`${accountId}:${page.fbPageId}`);
+      const destinationId = destination?.id ?? null;
+      return {
+        key: `${accountId}:${page.fbPageId}`,
+        accountId,
+        accountName,
+        fbPageId: page.fbPageId,
+        pageName: page.pageName,
+        profilePictureUrl: page.profilePictureUrl ?? null,
+        category: page.category ?? null,
+        followers: page.currentFollowers ?? page.followersCount ?? 0,
+        destinationId,
+        alreadyAdded: destinationId !== null && configuredDestinationIds.has(destinationId),
+      };
+    });
+  });
+  const visibleRows = discoveredRows.filter((row) => row.pageName.toLowerCase().includes(pageSearch.toLowerCase()));
+  const selectableRowKeys = discoveredRows.filter((row) => !row.alreadyAdded).map((row) => row.key);
   const allAccountsChecked = activeAccounts.length > 0 && activeAccounts.every((a) => selectedAccountIds.includes(a.id));
-  const allPagesChecked = selectablePageIds.length > 0 && selectablePageIds.every((id) => selectedPageIds.includes(id));
-  const selectedPages = pages.filter((p) => selectedPageIds.includes(p.id));
-  const isConfigured = (pageId: string) => configured.some((c) => c.destination_id === pageId);
-  const allSourcesFilled = selectedPages.every((p) => (sources[p.id]?.username ?? '').trim() !== '');
+  const allPagesChecked = selectableRowKeys.length > 0 && selectableRowKeys.every((key) => selectedPageKeys.includes(key));
+  const selectedRows = discoveredRows.filter((row) => selectedPageKeys.includes(row.key));
+  const allSourcesFilled = selectedRows.every((row) => (sources[row.key]?.username ?? '').trim() !== '');
 
   const toggle = (list: string[], id: string, set: (v: string[]) => void) => {
     set(list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
@@ -698,31 +788,64 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
 
   // Deselecting an account drops its pages from the page selection
   // (and from the step-2 list, which is the union of selected
-  // accounts). Re-selecting does not restore them.
+  // accounts' discovered pages). Re-selecting does not restore them.
   const toggleAccount = (id: string) => {
     const next = selectedAccountIds.includes(id)
       ? selectedAccountIds.filter((x) => x !== id)
       : [...selectedAccountIds, id];
     setSelectedAccountIds(next);
     if (!next.includes(id)) {
-      setSelectedPageIds((prev) => prev.filter((pid) => {
-        const page = pages.find((p) => p.id === pid);
-        return page ? next.includes(page.account_id) : false;
-      }));
+      setSelectedPageKeys((prev) => prev.filter((key) => !key.startsWith(`${id}:`)));
     }
   };
 
   const toggleAllAccounts = () => {
     if (allAccountsChecked) {
       setSelectedAccountIds([]);
-      setSelectedPageIds([]);
+      setSelectedPageKeys([]);
     } else {
       setSelectedAccountIds(activeAccounts.map((a) => a.id));
     }
   };
 
   const toggleAllPages = () => {
-    setSelectedPageIds(allPagesChecked ? [] : selectablePageIds);
+    setSelectedPageKeys(allPagesChecked ? [] : selectableRowKeys);
+  };
+
+  // Discovers one account's pages live from Facebook, replacing
+  // that account's previous result in place. One account's failure
+  // never touches another account's pages.
+  const startDiscover = (accountIds: string[]) => {
+    for (const accountId of accountIds) {
+      setDiscoverByAccount((prev) => ({ ...prev, [accountId]: { ...EMPTY_DISCOVER_ENTRY } }));
+      void executeDiscoverPages(subdomain, accountId).then((result) => {
+        setDiscoverByAccount((prev) => ({
+          ...prev,
+          [accountId]: result.success
+            ? {
+                status: 'ready',
+                pages: result.pages,
+                error: null,
+                truncated: result.truncated,
+                partial: result.partial,
+                droppedCount: result.droppedCount,
+              }
+            : {
+                status: 'error',
+                pages: [],
+                error: result.error,
+                truncated: false,
+                partial: false,
+                droppedCount: 0,
+              },
+        }));
+      });
+    }
+  };
+
+  const goToPagesStep = () => {
+    setStep(2);
+    startDiscover(selectedAccountIds);
   };
 
   const sourcePlaceholder = (platform: Platform) =>
@@ -731,7 +854,7 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
   const applyPaste = () => {
     const parsed = parseAduBulkPaste(pasteText, 'tiktok');
     if (parsed.errors.length > 0) { setPasteFeedback(parsed.errors.join(' ')); return; }
-    const empty = selectedPages.filter((p) => !(sources[p.id]?.username ?? '').trim());
+    const empty = selectedRows.filter((row) => !(sources[row.key]?.username ?? '').trim());
     const already = new Set(configured.map((c) => `${c.source_platform}|${c.source_username.toLowerCase()}`));
     const next = { ...sources };
     let assigned = 0;
@@ -740,9 +863,9 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
       if (assigned >= empty.length) break;
       const key = `${source.platform}|${source.username.toLowerCase()}`;
       if (already.has(key)) continue;
-      const page = empty[assigned];
-      if (!page) break;
-      next[page.id] = { platform: source.platform, username: source.username };
+      const row = empty[assigned];
+      if (!row) break;
+      next[row.key] = { platform: source.platform, username: source.username };
       assigned += 1;
     }
     setSources(next);
@@ -756,31 +879,38 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
       // 'all' uses the shared schedule below; 'separate' sends one
       // schedule per page. Per-page failures are reported individually.
       if (timingScope === 'separate' && scheduleType === 'fixed') {
-        for (const p of selectedPages) {
-          const s = pageSchedule(p.id);
+        for (const row of selectedRows) {
+          const s = pageSchedule(row.key);
           if (s.postingTimes.length !== s.postsPerDay || s.postingTimes.some((t) => !String(t ?? '').trim())) {
-            throw new Error(`Fixed posting requires ${s.postsPerDay} posting times for "${p.name}".`);
+            throw new Error(`Fixed posting requires ${s.postsPerDay} posting times for "${row.pageName}".`);
           }
         }
       }
       if (timingScope === 'separate') {
-        for (const p of selectedPages) {
-          const s = pageSchedule(p.id);
+        for (const row of selectedRows) {
+          const s = pageSchedule(row.key);
           if (!s.timezone.trim() || !Number.isInteger(s.postsPerDay) || s.postsPerDay < 1 || s.postsPerDay > 12) {
-            throw new Error(`Please complete timezone and posts per day for "${p.name}".`);
+            throw new Error(`Please complete timezone and posts per day for "${row.pageName}".`);
           }
         }
       }
-      const items = selectedPages.map((p) => {
-        const base = {
-          destinationId: p.id,
-          sourcePlatform: sources[p.id]?.platform ?? 'tiktok',
-          sourceUsername: sources[p.id]?.username ?? '',
+      // A row with a destinations row submits by destination id; a
+      // never-imported row submits its discovered reference and the
+      // server ensures the row (re-discovering the page and storing
+      // its encrypted token) before creating the config.
+      const items = selectedRows.map((row) => {
+        const base = row.destinationId
+          ? { destinationId: row.destinationId }
+          : { discovered: { fbPageId: row.fbPageId, accountId: row.accountId } };
+        const source = {
+          sourcePlatform: sources[row.key]?.platform ?? 'tiktok',
+          sourceUsername: sources[row.key]?.username ?? '',
         };
-        if (timingScope !== 'separate') return base;
-        const s = pageSchedule(p.id);
+        if (timingScope !== 'separate') return { ...base, ...source };
+        const s = pageSchedule(row.key);
         return {
           ...base,
+          ...source,
           schedule: {
             timezone: s.timezone,
             postsPerDay: s.postsPerDay,
@@ -796,8 +926,11 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
         }),
       });
       const body = await response.json().catch(() => ({}));
-      if (!response.ok && !(body.created ?? []).length) throw new Error(body.error ?? 'Could not add these pages.');
       const failedText = (body.failed ?? []).map((f: { destinationId: string; error: string }) => f.error).join(' ');
+      // An all-failed batch must name the failures, not just say
+      // "could not add" — a dead account token and a missing page
+      // need different next steps.
+      if (!response.ok && !(body.created ?? []).length) throw new Error(failedText || body.error || 'Could not add these pages.');
       const createdCount = (body.created ?? []).length;
       setResult(`Created ${createdCount} ${createdCount === 1 ? 'page' : 'pages'}.${failedText ? ` Failed: ${failedText}` : ''}`);
       if ((body.failed ?? []).length === 0) onCreated();
@@ -812,7 +945,7 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-dvh overflow-y-auto sm:max-w-2xl">
+      <DialogContent className="max-h-dvh overflow-y-auto sm:max-w-135">
         <DialogHeader>
           <DialogTitle>Add New Page</DialogTitle>
           <DialogDescription>Step {step} of 3: {stepSubtitle}</DialogDescription>
@@ -909,65 +1042,6 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
                     </p>
                   ) : null}
                 </div>
-                {expiredAccounts.length > 0 ? (
-                  <div data-testid="adu-expired-accounts-list" className="flex flex-col gap-1">
-                    {expiredAccounts.map((account) => (
-                      <div
-                        key={account.id}
-                        data-testid={`adu-expired-account-${account.id}`}
-                        className="flex items-center justify-between gap-4 rounded-sm px-3.5 py-3 opacity-55"
-                      >
-                        <div className="flex min-w-0 items-center gap-4">
-                          <PickerAvatar url={account.avatar_url} name={account.display_name} />
-                          <div className="min-w-0">
-                            <div className="truncate text-body font-semibold text-ink">
-                              {account.display_name}
-                            </div>
-                            <div className="mt-0.5 text-metadata text-ink-sub">
-                              {pagesLinkedLabel(linkedPagesCount(account.id))} · Session expired
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-                {errorAccounts.length > 0 ? (
-                  <div data-testid="adu-error-accounts-list" className="flex flex-col gap-1">
-                    {errorAccounts.map((account) => (
-                      <div
-                        key={account.id}
-                        data-testid={`adu-error-account-${account.id}`}
-                        className="flex items-center justify-between gap-4 rounded-sm px-3.5 py-3 opacity-55"
-                      >
-                        <div className="flex min-w-0 items-center gap-4">
-                          <PickerAvatar url={account.avatar_url} name={account.display_name} />
-                          <div className="min-w-0">
-                            <div className="truncate text-body font-semibold text-ink">
-                              {account.display_name}
-                            </div>
-                            <div className="mt-0.5 text-metadata text-ink-sub">
-                              {pagesLinkedLabel(linkedPagesCount(account.id))} · Connection issue
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-                {expiredAccounts.length > 0 || errorAccounts.length > 0 ? (
-                  <Button type="button" variant="outline" asChild>
-                    <Link href={`/tenant/${subdomain}/accounts`}>Go to Facebook Accounts</Link>
-                  </Button>
-                ) : null}
-                <Button
-                  type="button"
-                  data-testid="adu-accounts-next-btn"
-                  disabled={selectedAccountIds.length === 0}
-                  onClick={() => setStep(2)}
-                >
-                  Next
-                </Button>
               </>
             )}
           </div>
@@ -975,101 +1049,201 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
 
         {step === 2 ? (
           <div className="flex flex-col gap-2">
-            <div className="mb-1 flex flex-wrap items-center justify-between gap-4 px-0.5">
-              <div className="relative flex max-w-60 flex-1 items-center">
-                <SearchIcon
-                  className="pointer-events-none absolute left-2.5 size-3.5 text-ink-dim"
-                  aria-hidden
-                />
-                <Input
-                  type="text"
-                  data-testid="adu-pages-search-input"
-                  value={pageSearch}
-                  onChange={(e) => setPageSearch(e.target.value)}
-                  placeholder="Filter pages..."
-                  aria-label="Filter pages"
-                  className="border-line bg-canvas pl-8 shadow-none"
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-metadata text-ink-sub">
-                  {unionPages.length} {unionPages.length === 1 ? 'page found' : 'pages found'}
-                </span>
-                {selectablePageIds.length > 0 ? (
-                  <button
-                    type="button"
-                    data-testid="adu-select-all-pages-btn"
-                    aria-pressed={allPagesChecked}
-                    onClick={toggleAllPages}
-                    className="inline-flex min-h-11 items-center px-2 text-metadata font-semibold text-link outline-none focus-visible:outline-2 focus-visible:outline-link"
-                  >
-                    {allPagesChecked ? 'Deselect All' : 'Select All'}
-                  </button>
-                ) : null}
-              </div>
-            </div>
-            <div
-              data-testid="adu-pages-list"
-              className="flex max-h-85 flex-col overflow-y-auto border-t border-line"
-            >
-              {visiblePages.map((page) => {
-                const configuredAlready = isConfigured(page.id);
-                const checked = configuredAlready || selectedPageIds.includes(page.id);
-                const isSelected = !configuredAlready && checked;
+            {selectedAccountIds.map((accountId) => {
+              const entry = discoverByAccount[accountId];
+              const name = accounts.find((a) => a.id === accountId)?.display_name ?? '';
+              // No entry yet means the discover call is in flight.
+              if (!entry || entry.status === 'loading') {
                 return (
-                  <label
-                    key={page.id}
-                    data-testid={`adu-page-row-${page.id}`}
-                    className={cn(
-                      'flex items-center gap-4 rounded-xs border-b border-line px-3 py-2.5 transition-colors',
-                      isSelected ? 'bg-subtle' : 'bg-transparent',
-                      configuredAlready ? 'cursor-default opacity-60' : 'cursor-pointer hover:bg-hover'
-                    )}
+                  <p
+                    key={accountId}
+                    data-testid={`adu-discovering-${accountId}`}
+                    className="text-body text-ink-sub"
                   >
-                    <Checkbox
-                      data-testid={`adu-page-checkbox-${page.id}`}
-                      checked={checked}
-                      disabled={configuredAlready}
-                      onCheckedChange={() => {
-                        if (!configuredAlready) {
-                          toggle(selectedPageIds, page.id, setSelectedPageIds);
-                        }
-                      }}
-                    />
-                    <PickerAvatar url={page.avatar_url} name={page.name} />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-body font-semibold text-ink">{page.name}</span>
-                      <span className="mt-0.5 block truncate text-metadata text-ink-sub">
-                        {pageMetaLine(page)}
-                      </span>
-                    </span>
-                    {configuredAlready ? (
-                      <span className="shrink-0 text-metadata font-medium text-ink-dim">Already added</span>
-                    ) : null}
-                  </label>
+                    Finding Facebook Pages on {name}…
+                  </p>
                 );
-              })}
-            </div>
-            {visiblePages.length === 0 ? (
+              }
+              if (entry.status === 'error') {
+                // K9, per account: a failed discover renders an error
+                // + Retry — never the "no pages" empty state next to
+                // an error, and never at the expense of the other
+                // accounts' pages, which stay listed below.
+                return (
+                  <div
+                    key={accountId}
+                    data-testid={`adu-discover-error-${accountId}`}
+                    role="alert"
+                    className="flex flex-wrap items-center justify-between gap-4 rounded-sm border border-signal-critical/25 bg-signal-critical/10 px-3 py-2"
+                  >
+                    <span className="text-body text-signal-critical">
+                      {name}: {entry.error}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      data-testid={`adu-discover-retry-${accountId}`}
+                      onClick={() => startDiscover([accountId])}
+                    >
+                      Retry
+                    </Button>
+                  </div>
+                );
+              }
+              // Completeness notes for a successful-but-incomplete
+              // discover, verbatim from the Pages picker: shown above
+              // the list so a partial list is never presented as
+              // complete. The account name labels whose list the
+              // note belongs to.
+              if (!entry.truncated && !entry.partial && entry.droppedCount === 0) return null;
+              return (
+                <div key={accountId} className="flex flex-col gap-2">
+                  <p className="text-metadata font-semibold text-ink-sub">{name}</p>
+                  {entry.truncated ? (
+                    <div
+                      data-testid={`adu-discover-truncated-${accountId}`}
+                      role="status"
+                      className="rounded-sm border border-link/25 bg-link/10 px-3 py-2 text-body leading-body text-ink"
+                    >
+                      Only the first 500 pages from this account are shown —
+                      this account has more pages on Facebook, so the list
+                      below may not include every page.
+                    </div>
+                  ) : null}
+                  {entry.partial ? (
+                    <div
+                      data-testid={`adu-discover-partial-${accountId}`}
+                      role="status"
+                      className="flex flex-wrap items-center justify-between gap-4 rounded-sm border border-link/25 bg-link/10 px-3 py-2 text-body leading-body text-ink"
+                    >
+                      <span>
+                        Some pages couldn&apos;t be loaded from Facebook, so
+                        this list may be incomplete.
+                      </span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        data-testid={`adu-discover-retry-${accountId}`}
+                        onClick={() => startDiscover([accountId])}
+                      >
+                        Retry
+                      </Button>
+                    </div>
+                  ) : null}
+                  {entry.droppedCount > 0 ? (
+                    <div
+                      data-testid={`adu-discover-dropped-${accountId}`}
+                      role="status"
+                      className="rounded-sm border border-link/25 bg-link/10 px-3 py-2 text-body leading-body text-ink"
+                    >
+                      {entry.droppedCount}{' '}
+                      {entry.droppedCount === 1 ? 'item' : 'items'} from Facebook
+                      {entry.droppedCount === 1 ? ' was' : ' were'} left out —{' '}
+                      {entry.droppedCount === 1 ? 'it had' : 'they had'} no category
+                      or page tasks, so {entry.droppedCount === 1 ? 'it may' : 'they may'}{' '}
+                      not be a page.
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+            {discoveredRows.length > 0 ? (
+              <>
+                <div className="mb-1 flex flex-wrap items-center justify-between gap-4 px-0.5">
+                  <div className="relative flex max-w-60 flex-1 items-center">
+                    <SearchIcon
+                      className="pointer-events-none absolute left-2.5 size-3.5 text-ink-dim"
+                      aria-hidden
+                    />
+                    <Input
+                      type="text"
+                      data-testid="adu-pages-search-input"
+                      value={pageSearch}
+                      onChange={(e) => setPageSearch(e.target.value)}
+                      placeholder="Filter pages..."
+                      aria-label="Filter pages"
+                      className="border-line bg-canvas pl-8 shadow-none"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-metadata text-ink-sub">
+                      {discoveredRows.length} {discoveredRows.length === 1 ? 'page found' : 'pages found'}
+                    </span>
+                    {selectableRowKeys.length > 0 ? (
+                      <button
+                        type="button"
+                        data-testid="adu-select-all-pages-btn"
+                        aria-pressed={allPagesChecked}
+                        onClick={toggleAllPages}
+                        className="inline-flex min-h-11 items-center px-2 text-metadata font-semibold text-link outline-none focus-visible:outline-2 focus-visible:outline-link"
+                      >
+                        {allPagesChecked ? 'Deselect All' : 'Select All'}
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+                <div
+                  data-testid="adu-pages-list"
+                  className="flex max-h-85 flex-col overflow-y-auto border-t border-line"
+                >
+                  {visibleRows.map((row) => {
+                    const checked = row.alreadyAdded || selectedPageKeys.includes(row.key);
+                    const isSelected = !row.alreadyAdded && checked;
+                    return (
+                      <label
+                        key={row.key}
+                        data-testid={`adu-page-row-${row.accountId}-${row.fbPageId}`}
+                        className={cn(
+                          'flex items-center gap-4 rounded-xs border-b border-line px-3 py-2.5 transition-colors',
+                          isSelected ? 'bg-subtle' : 'bg-transparent',
+                          row.alreadyAdded ? 'cursor-default opacity-60' : 'cursor-pointer hover:bg-hover'
+                        )}
+                      >
+                        <Checkbox
+                          data-testid={`adu-page-checkbox-${row.accountId}-${row.fbPageId}`}
+                          checked={checked}
+                          disabled={row.alreadyAdded}
+                          onCheckedChange={() => {
+                            if (!row.alreadyAdded) {
+                              toggle(selectedPageKeys, row.key, setSelectedPageKeys);
+                            }
+                          }}
+                        />
+                        <PickerAvatar url={row.profilePictureUrl} name={row.pageName} />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-body font-semibold text-ink">{row.pageName}</span>
+                          <span className="mt-0.5 block truncate text-metadata text-ink-sub">
+                            {row.category ?? 'Facebook Page'} • {row.followers.toLocaleString('en-US')} followers
+                          </span>
+                          <span className="mt-0.5 block truncate text-metadata text-ink-sub">
+                            via {row.accountName}
+                          </span>
+                        </span>
+                        {row.alreadyAdded ? (
+                          <span className="shrink-0 text-metadata font-medium text-ink-dim">Already added</span>
+                        ) : null}
+                      </label>
+                    );
+                  })}
+                </div>
+              </>
+            ) : null}
+            {discoveredRows.length === 0 &&
+            !selectedAccountIds.some((id) => {
+              const entry = discoverByAccount[id];
+              return !entry || entry.status === 'loading' || entry.status === 'error';
+            }) ? (
               <p className="p-6 text-center text-body text-ink-sub">
-                {unionPages.length === 0
-                  ? 'No pages on the selected accounts.'
-                  : 'No pages match your search.'}
+                No pages on the selected accounts.
               </p>
             ) : null}
-            <div className="flex gap-2">
-              <Button type="button" variant="outline" data-testid="adu-pages-back-btn" onClick={() => setStep(1)}>
-                Back
-              </Button>
-              <Button
-                type="button"
-                data-testid="adu-pages-next-btn"
-                disabled={selectedPageIds.length === 0}
-                onClick={() => setStep(3)}
-              >
-                Next
-              </Button>
-            </div>
+            {discoveredRows.length > 0 && visibleRows.length === 0 ? (
+              <p className="p-6 text-center text-body text-ink-sub">
+                No pages match your search.
+              </p>
+            ) : null}
           </div>
         ) : null}
 
@@ -1093,14 +1267,14 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
                 </div>
               ) : null}
               <div className="mt-2 flex flex-col gap-2">
-                {selectedPages.map((page) => (
-                  <div key={page.id} className="flex flex-wrap items-center gap-2 rounded-md border p-2">
-                    <span className="min-w-0 flex-1 truncate">{page.name}</span>
-                    <Select value={sources[page.id]?.platform ?? 'tiktok'} onValueChange={(v) => setSources({ ...sources, [page.id]: { platform: v as Platform, username: sources[page.id]?.username ?? '' } })}>
+                {selectedRows.map((row) => (
+                  <div key={row.key} className="flex flex-wrap items-center gap-2 rounded-md border p-2">
+                    <span className="min-w-0 flex-1 truncate">{row.pageName}</span>
+                    <Select value={sources[row.key]?.platform ?? 'tiktok'} onValueChange={(v) => setSources({ ...sources, [row.key]: { platform: v as Platform, username: sources[row.key]?.username ?? '' } })}>
                       <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
                       <SelectContent>{PLATFORMS.map((p) => <SelectItem key={p} value={p} disabled={p !== 'tiktok'}>{p}</SelectItem>)}</SelectContent>
                     </Select>
-                    <Input placeholder={sourcePlaceholder(sources[page.id]?.platform ?? 'tiktok')} value={sources[page.id]?.username ?? ''} onChange={(e) => setSources({ ...sources, [page.id]: { platform: sources[page.id]?.platform ?? 'tiktok', username: e.target.value } })} className="w-48" />
+                    <Input placeholder={sourcePlaceholder(sources[row.key]?.platform ?? 'tiktok')} value={sources[row.key]?.username ?? ''} onChange={(e) => setSources({ ...sources, [row.key]: { platform: sources[row.key]?.platform ?? 'tiktok', username: e.target.value } })} className="w-48" />
                   </div>
                 ))}
               </div>
@@ -1169,26 +1343,25 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
                     <p className="mt-2 text-body text-ink-sub">Balanced random times will be automatically generated upon saving to ensure a minimum 5-hour gap between posts.</p>
                   ) : null}
                   <div className="mt-2 flex max-h-80 flex-col gap-2 overflow-y-auto pr-2">
-                    {selectedPages.map((page) => {
-                      const s = pageSchedule(page.id);
-                      const accountName = accounts.find((a) => a.id === page.account_id)?.display_name;
-                      const label = accountName ? `${page.name} · ${accountName}` : page.name;
+                    {selectedRows.map((row) => {
+                      const s = pageSchedule(row.key);
+                      const label = `${row.pageName} · ${row.accountName}`;
                       return (
-                        <div key={`schedule-${page.id}`} className="flex flex-col gap-3 rounded-lg border p-3">
+                        <div key={`schedule-${row.key}`} className="flex flex-col gap-3 rounded-lg border p-3">
                           <p className="text-body font-semibold">{label}</p>
                           <div>
-                            <label className="font-medium" htmlFor={`adu-bulk-${page.id}-posts-per-day`}>Posts Per Day</label>
-                            <Input id={`adu-bulk-${page.id}-posts-per-day`} type="number" min={1} max={12} value={s.postsPerDay} onChange={(e) => {
+                            <label className="font-medium" htmlFor={`adu-bulk-${row.key}-posts-per-day`}>Posts Per Day</label>
+                            <Input id={`adu-bulk-${row.key}-posts-per-day`} type="number" min={1} max={12} value={s.postsPerDay} onChange={(e) => {
                               const n = Math.max(1, Math.min(12, Number(e.target.value) || 1));
-                              updatePageSchedule(page.id, {
+                              updatePageSchedule(row.key, {
                                 postsPerDay: n,
                                 postingTimes: scheduleType === 'fixed' ? ensureTimesLength(s.postingTimes, n) : [],
                               });
                             }} />
                           </div>
                           <div>
-                            <label className="font-medium" htmlFor={`adu-bulk-${page.id}-timezone`}>Posting Timezone</label>
-                            <Input id={`adu-bulk-${page.id}-timezone`} value={s.timezone} onChange={(e) => updatePageSchedule(page.id, { timezone: e.target.value })} />
+                            <label className="font-medium" htmlFor={`adu-bulk-${row.key}-timezone`}>Posting Timezone</label>
+                            <Input id={`adu-bulk-${row.key}-timezone`} value={s.timezone} onChange={(e) => updatePageSchedule(row.key, { timezone: e.target.value })} />
                           </div>
                           {scheduleType === 'fixed' ? (
                             <div className="flex flex-col gap-2">
@@ -1197,7 +1370,7 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
                                 <Input key={index} type="time" value={time} onChange={(e) => {
                                   const next = ensureTimesLength(s.postingTimes, s.postsPerDay);
                                   next[index] = e.target.value;
-                                  updatePageSchedule(page.id, { postingTimes: next });
+                                  updatePageSchedule(row.key, { postingTimes: next });
                                 }} />
                               ))}
                             </div>
@@ -1210,18 +1383,48 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
               )}
             </div>
 
-            <div className="flex gap-2">
-              <Button type="button" variant="outline" onClick={() => setStep(2)}>Back</Button>
+          </div>
+        ) : null}
+
+        <DialogFooter>
+          {step === 1 ? (
+            <Button
+              type="button"
+              data-testid="adu-accounts-next-btn"
+              disabled={selectedAccountIds.length === 0}
+              onClick={goToPagesStep}
+            >
+              Next
+            </Button>
+          ) : step === 2 ? (
+            <>
+              <Button type="button" variant="outline" data-testid="adu-pages-back-btn" onClick={() => setStep(1)}>
+                Back
+              </Button>
               <Button
                 type="button"
-                disabled={submitting || !allSourcesFilled || (timingScope === 'separate' && !selectedPages.every((p) => pageScheduleComplete(p.id)))}
+                data-testid="adu-pages-next-btn"
+                disabled={selectedPageKeys.length === 0}
+                onClick={() => setStep(3)}
+              >
+                Next
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button type="button" variant="outline" onClick={() => setStep(2)}>
+                Back
+              </Button>
+              <Button
+                type="button"
+                disabled={submitting || !allSourcesFilled || (timingScope === 'separate' && !selectedRows.every((row) => pageScheduleComplete(row.key)))}
                 onClick={() => void submit()}
               >
                 Start Automation
               </Button>
-            </div>
-          </div>
-        ) : null}
+            </>
+          )}
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
