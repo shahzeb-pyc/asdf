@@ -466,10 +466,12 @@ export class FacebookPublishClient implements IFacebookPublishClient {
     if (err instanceof FacebookGraphError) {
       message = err.message;
       errorData = {
-        code: err.code,
-        error_subcode: err.errorSubcode,
-        type: err.errorType,
-        fbtrace_id: err.fbtraceId,
+        ...(err.code !== undefined ? { code: err.code } : {}),
+        ...(err.errorSubcode !== undefined
+          ? { error_subcode: err.errorSubcode }
+          : {}),
+        ...(err.errorType !== undefined ? { type: err.errorType } : {}),
+        ...(err.fbtraceId !== undefined ? { fbtrace_id: err.fbtraceId } : {}),
       };
       telemetry = err.telemetry;
       streamAttempt.httpStatus = err.diagnostic?.httpStatus;

@@ -227,7 +227,7 @@ describe('publishReel Cloudflare console logging', () => {
   });
 
   function lines(spy: ReturnType<typeof vi.spyOn>): string[] {
-    return spy.mock.calls.map((call) => String(call[0] ?? ''));
+    return spy.mock.calls.map((call: unknown[]) => String(call[0] ?? ''));
   }
 
   it('logs one info line with mode=file_url on success, and nothing else', async () => {
