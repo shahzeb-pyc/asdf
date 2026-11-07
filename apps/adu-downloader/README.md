@@ -2,14 +2,13 @@
 
 The downloader service continuously claims pending ADU reels from Supabase, downloads the video in high quality with audio, and uploads it to the Cloudflare R2 buffer.
 
-Ported from the old fbuploadpro service (`backend_v3/services/facebook/auto-download-upload/downloader`). The download method is exactly the old one; only the tables changed (`pages`/`reels` → `adu_configs`/`adu_reels`, uuid ids). The old TikTok primary engine was a third-party HD stream API; it is removed by the owner's order, and TikTok now downloads via yt-dlp only (the old fallback), with audio verification. No third-party download API is used anywhere in ADU.
+Ported from the old fbuploadpro service (`backend_v3/services/facebook/auto-download-upload/downloader`). The download method is exactly the old one; only the tables changed (`pages`/`reels` → `adu_configs`/`adu_reels`, uuid ids). TikTok downloads live here now (moved from the Cloudflare Worker `apps/tiktok-downloader` on 2026-11-07 — the Worker failed from its egress on all three steps: tikwm resolve, Countik fallback, and stream fetches; the VPS opens the same links fine). TikTok resolve goes through the owner-supplied rotating resolve proxy (`RESOLVE_PROXY_URL` — resolve + Countik only, never downloads); the video bytes are fetched direct. No third-party download API is used anywhere in ADU except the tikwm/Countik resolvers for TikTok.
 
 ## How it works (old flow, unchanged)
 
-1. Claim: `claim_non_tiktok_buffer_downloads(p_limit)` — only for configs that are `active` + `synced`, `posts_per_day > 0`, with `posts_per_day × 1` day of buffer not yet filled (downloaded + processing count toward the target), skipping configs with >10 `download_failed` reels in the last 24h. Only the lowest-buffered hungry configs are eligible, one reel per config per claim, random tie-break, `FOR UPDATE SKIP LOCKED`. A claimed reel goes `pending → processing`, `download_retries + 1`, `download_claimed_at = now()`. TikTok configs are EXCLUDED here: TikTok rows are claimed only by the Cloudflare Worker (`apps/tiktok-downloader`) via `claim_tiktok_buffer_downloads` (migration 20261103150000), so the two downloaders never race over the same reel.
-2. Download: per-platform yt-dlp (see `media_download.py`):
+1. Claim: two RPCs, one per side — `claim_tiktok_buffer_downloads(p_limit)` for TikTok configs and `claim_non_tiktok_buffer_downloads(p_limit)` for everything else — only for configs that are `active` + `synced`, `posts_per_day > 0`, with `posts_per_day × 1` day of buffer not yet filled (downloaded + processing count toward the target), skipping configs with >10 `download_failed` reels in the last 24h. Only the lowest-buffered hungry configs are eligible, one reel per config per claim, random tie-break, `FOR UPDATE SKIP LOCKED`. A claimed reel goes `pending → processing`, `download_retries + 1`, `download_claimed_at = now()`. The Cloudflare Worker used to claim TikTok rows; its cron is disabled, so this service is the only TikTok claimant now (migration 20261103150000).
+2. Download: TikTok — resolve via tikwm through the resolve proxy (Countik through the same proxy as fallback; no yt-dlp — its TikTok extractor is broken), then direct stream fetch via aria2c (no proxy anywhere on the download path; the aria2c subprocess runs with proxy variables stripped), size check (>10,000 bytes, 1 GiB cap), then `verify_video_has_audio` (ffprobe; a successful ffprobe run with no audio stream fails the reel, an ffprobe failure is inconclusive and accepts). One attempt per claim (the claim budget of 3 is the retry mechanism). Other platforms — per-platform yt-dlp (see `media_download.py`):
    - Instagram: `yt-dlp --dump-single-json` metadata (optional datacenter proxy), then direct CDN fetch via aria2; video + audio muxed with ffmpeg when separate.
-   - TikTok: yt-dlp with format `bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo+bestaudio/best[vcodec^=avc1]/best`, datacenter proxy, then `verify_video_has_audio` (ffprobe, MP4 atom fallback) — a TikTok download with no audio stream fails.
    - YouTube: yt-dlp `bv*+ba/b`, residential proxy, `--js-runtimes node` (EJS).
    - Facebook: yt-dlp `bv*+ba/b`, `b[ext=mp4]/b`, datacenter proxy, `--force-generic-extractor` fallback.
    - All: `--impersonate chrome`, `--retries 1`, `--extractor-retries 2–3`, `--fragment-retries 2–3`, `--socket-timeout 30`, aria2 downloader `-x4 -s4 -k1M`, `--merge-output-format mp4`. Per-video resolve is `yt-dlp --dump-single-json` (no-watermark URL + verbatim description/title as caption, normalized by `caption_utils.py`: empty / generic / ID-like captions become `❤️`).
@@ -44,6 +43,12 @@ R2_ACCESS_KEY_ID=your-r2-access-key-id
 R2_SECRET_ACCESS_KEY=your-r2-secret-access-key
 R2_ADU_BUFFER_BUCKET=fbuploadpro-adu-buffer
 R2_PUBLIC_URL=https://<your-r2-public-host>
+
+# TikTok resolve proxy (required for TikTok downloads): the
+# owner-supplied rotating residential proxy. Resolve + Countik only —
+# video bytes are always fetched direct, never through it. Value lives
+# ONLY in this .env (mode 600); never commit or log it.
+RESOLVE_PROXY_URL=
 ```
 
 > **Note:** The `.env` file must be located directly inside the `downloader/` directory (not the repository root). `R2_PUBLIC_URL` is required here (same value as the web app's `R2_PUBLIC_URL`).
@@ -82,6 +87,11 @@ sudo apt update
 sudo apt install -y python3 python3-venv python3-pip ffmpeg aria2 nodejs npm
 sudo npm install -g pm2
 ```
+
+(ffmpeg provides ffprobe for the TikTok audio check; aria2c fetches the
+resolved TikTok stream direct. Without them TikTok downloads fail loud
+at the audio check / download step — the service still runs for other
+platforms.)
 
 ### Step 2: Set Up Python Virtual Environment
 

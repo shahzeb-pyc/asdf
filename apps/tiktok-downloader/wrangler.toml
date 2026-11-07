@@ -10,9 +10,12 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 ENVIRONMENT = "production"
 
-[triggers]
-# "*" = every minute, matching the VPS downloader's 60 s idle cadence.
-crons = ["* * * * *"]
+# No cron trigger: TikTok downloads moved to the VPS downloader
+# (apps/adu-downloader), which claims TikTok rows via
+# claim_tiktok_buffer_downloads. The Worker code and deploy workflow stay
+# as the fallback — re-add `crons = ["* * * * *"]` under [triggers] to
+# re-enable it (and stop the VPS downloader first, so the two never race).
+# The Worker's fetch handler still answers 404; nothing else changes.
 
 # ADU buffer bucket, shared with the VPS downloader (same bucket, same key
 # layout). The bucket must already exist in the deploy account; wrangler
