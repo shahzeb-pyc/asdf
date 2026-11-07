@@ -101,7 +101,7 @@ describe('AdminRefundsView', () => {
     expect(screen.getByText(/Refund locked: 3780 PKR · 3 days used/)).toBeTruthy();
     // Decided cards: rejected, and sent with its amount.
     expect(screen.getByText(/Rejected · Binance ID: BIN123/)).toBeTruthy();
-    expect(screen.getByText(/Sent 3500 PKR · Bank account \\/ IBAN: PK00BANK0003/)).toBeTruthy();
+    expect(screen.getByText(/Sent 3500 PKR · Bank account \/ IBAN: PK00BANK0003/)).toBeTruthy();
   });
 
   it('shows empty states when nothing is waiting or decided', async () => {
