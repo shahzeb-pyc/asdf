@@ -239,6 +239,13 @@ export interface MirrorTickDeps {
     targetPlatform: string;
     videoUrl: string;
     caption: string;
+    /**
+     * The claimed mirror-post row id, when the caller knows it. Passed
+     * through to the Facebook client so the [reel-publish] console
+     * lines name the post that failed. Optional: callers that do not
+     * know it yet log `item=unknown`.
+     */
+    itemId?: string | undefined;
   }) => Promise<string>;
   /**
    * Entitlement gate (audit fix 2026-11-01), wired by the consumer
@@ -495,6 +502,9 @@ export async function processMirrorCheck(
             targetPlatform: mirror.targetPlatform,
             videoUrl: resolved.playUrl,
             caption,
+            // Claimed mirror-post row id, so the [reel-publish] console
+            // lines name the post that failed.
+            itemId: claimedId,
           });
           await deps.updatePost(claimedId, {
             status: 'posted',
@@ -1236,6 +1246,7 @@ export function buildMirrorTickDeps(
         accessToken: params.targetToken,
         videoUrl: params.videoUrl,
         caption: params.caption,
+        itemId: params.itemId,
       });
       return result.postId;
     },

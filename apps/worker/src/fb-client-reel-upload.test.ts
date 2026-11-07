@@ -10,13 +10,14 @@
  * All Facebook / media endpoints are mocked through `fetchFn`; no
  * network, no real Facebook, no tokens.
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FacebookGraphError, FacebookPublishClient } from './fb-client.js';
 
 const PAGE_ID = '110103338715385';
 const TOKEN = 'page-token';
 const MEDIA_URL = 'https://media.test/windy-laundry.mp4';
 const CAPTION = 'Windy Laundry';
+const ITEM_ID = 'eaf2d33a-d13a-4a8d-844c-555e910f1c0f';
 const RUPLOAD = 'https://rupload.facebook.com/video-upload/v27.0';
 
 interface RecordedCall {
@@ -96,12 +97,13 @@ function makeClient(scenario: UploadScenario): {
   };
 }
 
-function publish(client: FacebookPublishClient): Promise<{ postId: string }> {
+function publish(client: FacebookPublishClient, itemId?: string): Promise<{ postId: string }> {
   return client.publishReel({
     pageId: PAGE_ID,
     accessToken: TOKEN,
     videoUrl: MEDIA_URL,
     caption: CAPTION,
+    ...(itemId !== undefined ? { itemId } : {}),
   });
 }
 
@@ -206,5 +208,114 @@ describe('publishReel file_url primary', () => {
     expect(graphError.diagnostic?.phase).toBe('reel-finish');
     expect(graphError.diagnostic?.httpStatus).toBe(400);
     expect(graphError.diagnostic?.rawBody).toBe('');
+  });
+});
+
+describe('publishReel Cloudflare console logging', () => {
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+  let infoSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function lines(spy: ReturnType<typeof vi.spyOn>): string[] {
+    return spy.mock.calls.map((call) => String(call[0] ?? ''));
+  }
+
+  it('logs one info line with mode=file_url on success, and nothing else', async () => {
+    const { client } = makeClient({
+      fileUrl: () => jsonResponse({ success: true }),
+      stream: () => {
+        throw new Error('streaming must not run when file_url succeeds');
+      },
+    });
+
+    const result = await publish(client, ITEM_ID);
+
+    expect(result.postId).toBe('post-123');
+    expect(lines(infoSpy)).toEqual([
+      `[reel-publish] item=${ITEM_ID} page=${PAGE_ID} published mode=file_url post=post-123`,
+    ]);
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('warns on the file_url failure and logs mode=stream on the fallback success', async () => {
+    const { client } = makeClient({
+      fileUrl: () =>
+        jsonResponse(
+          {
+            error: {
+              message: 'The file could not be fetched (fileurlprocessingerror)',
+              code: 100,
+            },
+          },
+          400
+        ),
+      stream: () => jsonResponse({ success: true }),
+    });
+
+    const result = await publish(client, ITEM_ID);
+
+    expect(result.postId).toBe('post-123');
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const warnLine = lines(warnSpy)[0] ?? '';
+    expect(warnLine).toContain(`[reel-publish] item=${ITEM_ID} page=${PAGE_ID}`);
+    expect(warnLine).toContain('file_url upload failed');
+    expect(warnLine).toContain('status=400');
+    expect(warnLine).toContain('fileurlprocessingerror');
+    expect(warnLine).toContain('falling back to streaming');
+    expect(lines(infoSpy)).toEqual([
+      `[reel-publish] item=${ITEM_ID} page=${PAGE_ID} published mode=stream post=post-123`,
+    ]);
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+
+  it('logs exactly one error line naming both attempts when both uploads fail', async () => {
+    const { client } = makeClient({
+      fileUrl: () => emptyResponse(400),
+      stream: () => emptyResponse(400),
+    });
+
+    await expect(publish(client, ITEM_ID)).rejects.toBeInstanceOf(FacebookGraphError);
+
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const errorLine = lines(errorSpy)[0] ?? '';
+    expect(errorLine).toContain(`[reel-publish] item=${ITEM_ID} page=${PAGE_ID} failed`);
+    expect(errorLine).toContain('phase=reel-upload-stream');
+    expect(errorLine).toContain('status=400');
+    expect(errorLine).toContain('attempts=[file_url:400,stream:400]');
+    expect(errorLine).not.toContain('\n');
+    expect(errorLine).not.toContain(TOKEN);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(infoSpy).not.toHaveBeenCalled();
+  });
+
+  it('logs one error line with phase=reel-finish on a body-less finish 400', async () => {
+    const { client } = makeClient({
+      fileUrl: () => jsonResponse({ success: true }),
+      stream: () => {
+        throw new Error('streaming must not run when file_url succeeds');
+      },
+      finish: () => emptyResponse(400),
+    });
+
+    await expect(publish(client, ITEM_ID)).rejects.toBeInstanceOf(FacebookGraphError);
+
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const errorLine = lines(errorSpy)[0] ?? '';
+    expect(errorLine).toContain(`[reel-publish] item=${ITEM_ID} page=${PAGE_ID} failed`);
+    expect(errorLine).toContain('phase=reel-finish');
+    expect(errorLine).toContain('status=400');
+    expect(errorLine).not.toContain('\n');
+    expect(infoSpy).not.toHaveBeenCalled();
   });
 });

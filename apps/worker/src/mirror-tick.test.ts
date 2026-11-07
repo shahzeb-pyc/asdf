@@ -115,6 +115,9 @@ describe('processMirrorCheck', () => {
       'https://example.com/v3.mp4',
     ]);
     expect(state.published[0]?.caption).toBe('Caption for v1');
+    // The claimed mirror-post row id travels with the publish call,
+    // so the [reel-publish] console lines name the post that failed.
+    expect(state.published.map((p) => p.itemId)).toEqual(['post-v1', 'post-v2', 'post-v3']);
     // Final stamp clears the mirror to active with next check +1h.
     const stamp = state.mirrorUpdates[state.mirrorUpdates.length - 1];
     expect(stamp?.patch.status).toBe('active');

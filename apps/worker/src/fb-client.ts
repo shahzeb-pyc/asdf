@@ -137,6 +137,15 @@ export interface FacebookPublishDiagnostic {
 /** Raw response bodies are stored truncated: enough to read the reason, never a full payload. */
 export const FACEBOOK_RAW_BODY_MAX_CHARS = 500;
 
+/**
+ * Collapse a value to a single console-log line, truncated: Cloudflare
+ * Worker Logs are read by grep, so a log line must never span lines,
+ * and a raw Facebook body must never arrive untruncated.
+ */
+function oneLineLogText(value: string): string {
+  return value.replace(/[\r\n]+/g, ' ').slice(0, FACEBOOK_RAW_BODY_MAX_CHARS);
+}
+
 export class FacebookGraphError extends Error {
   public readonly code: number | undefined;
   public readonly errorSubcode: number | undefined;
@@ -477,13 +486,58 @@ export class FacebookPublishClient implements IFacebookPublishClient {
     });
   }
 
+  /**
+   * Publishes a reel, with one console line per outcome for Cloudflare
+   * Worker Logs (the dashboard live tail reads console output; the
+   * worker has no [observability] section). The DB diagnostic is
+   * untouched — this is the same failure, also visible in Logs. Only
+   * ids, phases, statuses, and truncated Facebook bodies are logged:
+   * never a token, never media bytes.
+   */
   async publishReel(params: {
     pageId: string;
     accessToken: string;
     videoUrl: string;
     caption: string;
+    itemId?: string | undefined;
   }): Promise<PublishResult> {
-    const { pageId, accessToken, videoUrl, caption } = params;
+    const { pageId, itemId } = params;
+    const itemLabel = itemId ?? 'unknown';
+    try {
+      const { uploadMode, ...result } = await this.publishReelInner(params);
+      console.info(
+        `[reel-publish] item=${itemLabel} page=${pageId} published mode=${uploadMode} post=${result.postId}`
+      );
+      return result;
+    } catch (err) {
+      const diagnostic = err instanceof FacebookGraphError ? err.diagnostic : undefined;
+      const phase = diagnostic?.phase ?? 'reel-upload';
+      const status = diagnostic?.httpStatus ?? 'unknown';
+      const body =
+        diagnostic?.rawBody !== undefined
+          ? oneLineLogText(diagnostic.rawBody)
+          : oneLineLogText(err instanceof Error ? err.message : String(err));
+      const attempts = diagnostic?.attempts
+        ? ` attempts=[${diagnostic.attempts
+            .map((attempt) => `${attempt.mode}:${attempt.httpStatus ?? 'unknown'}`)
+            .join(',')}]`
+        : '';
+      console.error(
+        `[reel-publish] item=${itemLabel} page=${pageId} failed phase=${phase} status=${status} body=${body}${attempts}`
+      );
+      throw err;
+    }
+  }
+
+  private async publishReelInner(params: {
+    pageId: string;
+    accessToken: string;
+    videoUrl: string;
+    caption: string;
+    itemId?: string | undefined;
+  }): Promise<PublishResult & { uploadMode: 'file_url' | 'stream' }> {
+    const { pageId, accessToken, videoUrl, caption, itemId } = params;
+    const itemLabel = itemId ?? 'unknown';
 
     // Phase 1: Start upload session
     let { videoId, uploadUrl } = await this.startReelUploadSession(pageId, accessToken);
@@ -491,7 +545,12 @@ export class FacebookPublishClient implements IFacebookPublishClient {
     // Phase 2, primary: file_url — Facebook fetches the file itself.
     const fileUrlAttempt = await this.uploadReelViaFileUrl(uploadUrl, accessToken, videoUrl);
 
+    let uploadMode: 'file_url' | 'stream' = 'file_url';
     if (!fileUrlAttempt.success) {
+      // One warn line so the fallback is visible in Worker Logs.
+      console.warn(
+        `[reel-publish] item=${itemLabel} page=${pageId} file_url upload failed phase=reel-upload-file-url status=${fileUrlAttempt.httpStatus ?? 'unknown'} body=${oneLineLogText(fileUrlAttempt.rawBody ?? '')}; falling back to streaming`
+      );
       // Fallback, once: a fresh upload session first — the old publisher
       // reset videoId after a hosted-upload failure, because a failed
       // upload may poison the session, so never stream into the failed
@@ -504,6 +563,7 @@ export class FacebookPublishClient implements IFacebookPublishClient {
       } catch (err) {
         throw this.combineReelUploadError(err, fileUrlAttempt);
       }
+      uploadMode = 'stream';
     }
 
     // Phase 3: Finish upload and publish
@@ -535,7 +595,7 @@ export class FacebookPublishClient implements IFacebookPublishClient {
 
     const telemetry = parseGraphRateLimitHeaders(finishRes.headers);
     const postId = finishData.post_id ?? finishData.id ?? finishData.video_id ?? videoId;
-    return { postId: String(postId), ...(telemetry ? { telemetry } : {}) };
+    return { postId: String(postId), ...(telemetry ? { telemetry } : {}), uploadMode };
   }
 
   async publishPhoto(params: {

@@ -125,12 +125,18 @@ export interface IPublishDispatcher {
 export interface IFacebookPublishClient {
   /**
    * Publishes a video/reel via 3-phase session
+   *
+   * `itemId` is the queue / mirror-post row id being published, when
+   * the caller knows it. It is only used for console logging (the
+   * `[reel-publish]` lines in Cloudflare Worker Logs), never sent to
+   * Facebook. Optional so existing callers keep working.
    */
   publishReel(params: {
     pageId: string;
     accessToken: string;
     videoUrl: string;
     caption: string;
+    itemId?: string | undefined;
   }): Promise<{ postId: string; telemetry?: GraphRateLimitTelemetry | undefined }>;
 
   /**

@@ -461,6 +461,9 @@ export class FacebookPublisher implements Publisher {
           accessToken,
           videoUrl: item.media_url,
           caption: item.caption,
+          // Queue / ADU row id, so the [reel-publish] console lines in
+          // Cloudflare Worker Logs name the post that failed.
+          itemId: item.id,
         });
       }
       case 'video': {
@@ -480,6 +483,9 @@ export class FacebookPublisher implements Publisher {
           accessToken,
           videoUrl: item.media_url,
           caption: item.caption,
+          // Same reel path as the 'reel' case: the item id belongs on
+          // the [reel-publish] console lines too.
+          itemId: item.id,
         });
       }
       case 'story': {

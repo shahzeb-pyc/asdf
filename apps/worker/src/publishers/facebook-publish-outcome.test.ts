@@ -121,4 +121,24 @@ describe('FacebookPublisher failure outcomes', () => {
     expect(outcome.detail).toBeUndefined();
     expect(outcome.targetAccountStatus).toBe('expired');
   });
+
+  it('passes the queue item id to publishReel for console logging', async () => {
+    let seenItemId: string | undefined;
+    const client = {
+      publishReel: async (params: { itemId?: string }) => {
+        seenItemId = params.itemId;
+        return { postId: 'post-123' };
+      },
+    } as unknown as IFacebookPublishClient;
+    const publisher = new FacebookPublisher(client);
+
+    const outcome = await publisher.publish(queueItem(), destination(), {
+      accessToken: 'user-token',
+      destinationToken: 'page-token',
+    });
+
+    expect(outcome.status).toBe('published');
+    expect(outcome.externalPostId).toBe('post-123');
+    expect(seenItemId).toBe('11111111-1111-4111-a111-111111111111');
+  });
 });
