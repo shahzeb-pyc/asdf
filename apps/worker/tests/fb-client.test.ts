@@ -67,7 +67,7 @@ describe('FacebookPublishClient', () => {
   });
 
   describe('publishReel (3-phase session)', () => {
-    it('executes start, stream upload, and finish phases successfully', async () => {
+    it('executes start, file_url upload, and finish phases successfully', async () => {
       const mockFetch = vi.fn();
 
       // Phase 1: start upload session
@@ -81,21 +81,7 @@ describe('FacebookPublishClient', () => {
         )
       );
 
-      // Phase 2: fetch video binary stream from videoUrl
-      const fakeVideoBody = new ReadableStream({
-        start(controller) {
-          controller.enqueue(new TextEncoder().encode('fake-binary-data'));
-          controller.close();
-        },
-      });
-      mockFetch.mockResolvedValueOnce(
-        new Response(fakeVideoBody, {
-          status: 200,
-          headers: { 'Content-Type': 'video/mp4' },
-        })
-      );
-
-      // Phase 2: upload binary stream to rupload
+      // Phase 2: file_url upload — Facebook fetches the file itself
       mockFetch.mockResolvedValueOnce(
         new Response(JSON.stringify({ success: true }), {
           status: 200,
@@ -124,7 +110,7 @@ describe('FacebookPublishClient', () => {
 
       expect(result).toEqual({ postId: `${pageId}_post_555` });
 
-      expect(mockFetch).toHaveBeenCalledTimes(4);
+      expect(mockFetch).toHaveBeenCalledTimes(3);
 
       // 1. Phase 1 call
       const [startUrl, startInit] = mockFetch.mock.calls[0];
@@ -133,20 +119,16 @@ describe('FacebookPublishClient', () => {
       expect(startInit.headers.Authorization).toBe(`Bearer ${accessToken}`);
       expect(JSON.parse(startInit.body)).toEqual({ upload_phase: 'start' });
 
-      // 2. Fetch video binary
-      const [fetchVideoUrl] = mockFetch.mock.calls[1];
-      expect(fetchVideoUrl).toBe(videoUrl);
-
-      // 3. Phase 2 call (upload stream)
-      const [uploadUrl, uploadInit] = mockFetch.mock.calls[2];
+      // 2. Phase 2 call (file_url upload) — no video bytes pass through the worker
+      const [uploadUrl, uploadInit] = mockFetch.mock.calls[1];
       expect(uploadUrl).toBe('https://rupload.facebook.com/video-reels/vid_98765');
       expect(uploadInit.method).toBe('POST');
       expect(uploadInit.headers.Authorization).toBe(`OAuth ${accessToken}`);
-      expect(uploadInit.headers.offset).toBe('0');
-      expect(uploadInit.headers['Content-Type']).toBe('application/octet-stream');
+      expect(uploadInit.headers.file_url).toBe(videoUrl);
+      expect(uploadInit.body).toBeUndefined();
 
-      // 4. Phase 3 call (finish)
-      const [finishUrl, finishInit] = mockFetch.mock.calls[3];
+      // 3. Phase 3 call (finish)
+      const [finishUrl, finishInit] = mockFetch.mock.calls[2];
       expect(finishUrl).toBe(`https://graph.facebook.com/v26.0/${pageId}/video_reels`);
       expect(finishInit.method).toBe('POST');
       expect(finishInit.headers.Authorization).toBe(`Bearer ${accessToken}`);
@@ -170,7 +152,6 @@ describe('FacebookPublishClient', () => {
             { status: 200 }
           )
         )
-        .mockResolvedValueOnce(new Response('video-data', { status: 200 }))
         .mockResolvedValueOnce(new Response(JSON.stringify({ success: true }), { status: 200 }))
         .mockResolvedValueOnce(new Response(JSON.stringify({ success: true }), { status: 200 }));
 
@@ -179,7 +160,7 @@ describe('FacebookPublishClient', () => {
       expect(result).toEqual({ postId: 'vid_98765' });
     });
 
-    it('throws error when video source fetch fails in Phase 2', async () => {
+    it('falls back to streaming when file_url fails, and surfaces the media fetch failure', async () => {
       const mockFetch = vi.fn();
       mockFetch
         .mockResolvedValueOnce(
@@ -191,6 +172,19 @@ describe('FacebookPublishClient', () => {
             { status: 200 }
           )
         )
+        // Phase 2, file_url: Facebook cannot fetch the file
+        .mockResolvedValueOnce(new Response(null, { status: 404, statusText: 'Not Found' }))
+        // Fallback: fresh upload session
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              video_id: 'vid_2',
+              upload_url: 'https://rupload.facebook.com/video-reels/vid_2',
+            }),
+            { status: 200 }
+          )
+        )
+        // Fallback streaming: the media fetch itself fails
         .mockResolvedValueOnce(new Response(null, { status: 404, statusText: 'Not Found' }));
 
       const client = new FacebookPublishClient({ fetchFn: mockFetch });
@@ -887,7 +881,6 @@ describe('FacebookPublishClient — retry policy & timeouts (spec 139)', () => {
           { status: 200, headers: { 'Content-Type': 'application/json' } }
         )
       )
-      .mockResolvedValueOnce(new Response('video-data', { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ success: true }), { status: 200 }))
       .mockImplementation(() => Promise.resolve(serverError()));
 
@@ -895,8 +888,8 @@ describe('FacebookPublishClient — retry policy & timeouts (spec 139)', () => {
     await expect(client.publishReel({ pageId, accessToken, videoUrl, caption })).rejects.toThrow(
       /internal boom/
     );
-    // start + media fetch + rupload + exactly ONE finish attempt
-    expect(mockFetch).toHaveBeenCalledTimes(4);
+    // start + file_url upload + exactly ONE finish attempt
+    expect(mockFetch).toHaveBeenCalledTimes(3);
   });
 
   it(
@@ -942,7 +935,6 @@ describe('FacebookPublishClient — retry policy & timeouts (spec 139)', () => {
             { status: 200, headers: { 'Content-Type': 'application/json' } }
           )
         )
-        .mockResolvedValueOnce(new Response('video-data', { status: 200 }))
         .mockResolvedValueOnce(new Response(JSON.stringify({ success: true }), { status: 200 }))
         .mockResolvedValueOnce(
           new Response(JSON.stringify({ success: true, post_id: 'reel_post_1' }), {
@@ -954,7 +946,7 @@ describe('FacebookPublishClient — retry policy & timeouts (spec 139)', () => {
       const res = await client.publishReel({ pageId, accessToken, videoUrl, caption });
 
       expect(res.postId).toBe('reel_post_1');
-      expect(mockFetch).toHaveBeenCalledTimes(5);
+      expect(mockFetch).toHaveBeenCalledTimes(4);
     },
     15_000
   );
@@ -1015,6 +1007,24 @@ describe('FacebookPublishClient — retry policy & timeouts (spec 139)', () => {
             )
           );
         }
+        // The rupload file_url call is not the media fetch: answer it
+        // with a coded failure so the fallback runs and the media fetch
+        // below is the only hanging call (the rupload URL contains
+        // '/video-reels', not '/video_reels', so the start branch above
+        // does not match it).
+        if (String(url).startsWith('https://rupload.facebook.com')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                error: {
+                  message: 'The file could not be fetched (fileurlprocessingerror)',
+                  code: 100,
+                },
+              }),
+              { status: 400, headers: { 'Content-Type': 'application/json' } }
+            )
+          );
+        }
         mediaAttempts += 1;
         return new Promise<Response>((_resolve, reject) => {
           const signal = init?.signal;
@@ -1034,7 +1044,29 @@ describe('FacebookPublishClient — retry policy & timeouts (spec 139)', () => {
       const err = await client
         .publishReel({ pageId, accessToken, videoUrl, caption })
         .catch((e: unknown) => e);
-      expect((err as Error).name).toBe('TimeoutError');
+      // The TimeoutError no longer escapes raw: with file_url-first, the
+      // stream failure is combined with the failed file_url attempt into
+      // one FacebookGraphError naming both attempts (the raw error only
+      // escaped before because a file_url throw skipped the fallback —
+      // the SEND BACK bug — so the old name assertion encoded the bug).
+      expect(err).toBeInstanceOf(FacebookGraphError);
+      const graphError = err as FacebookGraphError;
+      expect(graphError.message).toContain('timeout');
+      expect(graphError.diagnostic?.phase).toBe('reel-upload-stream');
+      expect(graphError.diagnostic?.attempts).toEqual([
+        {
+          mode: 'file_url',
+          success: false,
+          httpStatus: 400,
+          rawBody:
+            '{"error":{"message":"The file could not be fetched (fileurlprocessingerror)","code":100}}',
+        },
+        {
+          mode: 'stream',
+          success: false,
+          message: expect.stringContaining('timeout'),
+        },
+      ]);
       // Media fetch is retryable: all 3 attempts ran and each one timed out.
       expect(mediaAttempts).toBe(3);
     },

@@ -13,7 +13,11 @@ import {
   type PublishOutcome,
   type RefreshedTokenSet,
 } from '@fbuploadpro/contracts';
-import { FacebookGraphError, FacebookPublishClient } from '../fb-client.js';
+import {
+  FacebookGraphError,
+  FacebookPublishClient,
+  type FacebookPublishDiagnostic,
+} from '../fb-client.js';
 
 // ==========================================
 // Facebook publisher (spec 122 — port of the pre-121 dispatcher)
@@ -65,6 +69,12 @@ interface ExtractedError {
   isPermanentPolicyError: boolean;
   isPermanentClientError: boolean;
   isRateLimit: boolean;
+  /**
+   * Full failure diagnostic from the client (failing phase, HTTP status,
+   * raw body), when the client recorded one. Carried into the outcome's
+   * `detail` by `failureOutcome` so settlement persists it.
+   */
+  diagnostic: FacebookPublishDiagnostic | undefined;
 }
 
 function isRateLimitErrorCode(code?: number, subcode?: number): boolean {
@@ -106,6 +116,7 @@ function extractError(err: unknown): ExtractedError {
       isPermanentPolicyError: err.isPermanentPolicyError,
       isPermanentClientError: err.isPermanentClientError,
       isRateLimit: err.isRateLimit,
+      diagnostic: err.diagnostic,
     };
   }
 
@@ -129,6 +140,7 @@ function extractError(err: unknown): ExtractedError {
       (code !== undefined && code >= 400 && code < 500 && evaluation?.requiresReauth !== true),
     isRateLimit:
       isRateLimitErrorCode(code, subcode) || (code === 368 && subcode !== 4854002 && subcode !== 1404082),
+    diagnostic: undefined,
   };
 }
 
@@ -183,7 +195,15 @@ function classifyExtracted(extracted: ExtractedError): ClassifiedPublishError {
 
   return {
     kind,
-    code: errCodeString(extracted) ?? 'unknown',
+    // No numeric Graph code (e.g. a body-less HTTP 400): store the HTTP
+    // status as the code instead of `unknown`, so the queue item's own
+    // error fields carry a real reason. Classification above keys off
+    // the numeric code, so this changes no retry/permanent decision.
+    code:
+      errCodeString(extracted) ??
+      (extracted.diagnostic?.httpStatus !== undefined
+        ? `http_${extracted.diagnostic.httpStatus}`
+        : 'unknown'),
     ...(subcode !== undefined ? { subcode: String(subcode) } : {}),
     message,
     ...(extracted.telemetry?.estimatedTimeToRegainAccessMinutes &&
@@ -441,6 +461,9 @@ export class FacebookPublisher implements Publisher {
           accessToken,
           videoUrl: item.media_url,
           caption: item.caption,
+          // Queue / ADU row id, so the [reel-publish] console lines in
+          // Cloudflare Worker Logs name the post that failed.
+          itemId: item.id,
         });
       }
       case 'video': {
@@ -460,6 +483,9 @@ export class FacebookPublisher implements Publisher {
           accessToken,
           videoUrl: item.media_url,
           caption: item.caption,
+          // Same reel path as the 'reel' case: the item id belongs on
+          // the [reel-publish] console lines too.
+          itemId: item.id,
         });
       }
       case 'story': {
@@ -580,6 +606,11 @@ export class FacebookPublisher implements Publisher {
     const isTransient = classified.kind === 'retryable';
     const canRetry = isTransient && retryCount < effectiveMaxRetries;
 
+    const detail =
+      extracted.diagnostic !== undefined
+        ? diagnosticToDetail(extracted.diagnostic)
+        : undefined;
+
     let retryDelaySeconds: number | undefined;
 
     if (canRetry) {
@@ -599,9 +630,26 @@ export class FacebookPublisher implements Publisher {
     return {
       status: canRetry ? 'retry' : 'failed',
       error: classified,
+      // Full failure diagnostic (phase, HTTP status, raw body, both
+      // upload attempts when both failed) — the consumer settles it into
+      // `publish_logs.detail` via `p_detail`, so a body-less 400 is never
+      // again stored with nothing but code `unknown` to go on.
+      ...(detail !== undefined ? { detail } : {}),
       ...(retryDelaySeconds !== undefined ? { retryDelaySeconds } : {}),
       ...(targetDestinationStatus !== undefined ? { targetDestinationStatus } : {}),
       ...(targetAccountStatus !== undefined ? { targetAccountStatus } : {}),
     };
   }
+}
+
+/** Turns a client diagnostic into the outcome's `detail` record. */
+function diagnosticToDetail(
+  diagnostic: FacebookPublishDiagnostic
+): Record<string, unknown> {
+  return {
+    phase: diagnostic.phase,
+    ...(diagnostic.httpStatus !== undefined ? { httpStatus: diagnostic.httpStatus } : {}),
+    ...(diagnostic.rawBody !== undefined ? { rawBody: diagnostic.rawBody } : {}),
+    ...(diagnostic.attempts !== undefined ? { attempts: diagnostic.attempts } : {}),
+  };
 }

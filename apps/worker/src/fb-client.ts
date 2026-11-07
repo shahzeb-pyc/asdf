@@ -102,12 +102,57 @@ export interface FacebookGraphErrorData {
   fbtrace_id?: string;
 }
 
+/** Publish phase that produced a failure, for the stored diagnostic. */
+export type FacebookPublishPhase =
+  | 'reel-start'
+  | 'reel-upload-file-url'
+  | 'reel-upload-stream'
+  | 'reel-finish'
+  | 'video-story-upload-stream';
+
+/** One upload attempt's outcome, for the both-attempts-failed diagnostic. */
+export interface FacebookUploadAttemptDiagnostic {
+  mode: 'file_url' | 'stream';
+  success: boolean;
+  httpStatus?: number | undefined;
+  rawBody?: string | undefined;
+  message?: string | undefined;
+}
+
+/**
+ * Why a publish call failed, in full: the phase that failed, the HTTP
+ * status, and Facebook's raw response body. This is what the publisher
+ * threads into `publish_logs.detail` — a body-less HTTP 400 must never
+ * again be stored as bare code `unknown` with nothing else to go on.
+ * `rawBody` is the response body truncated to RAW_BODY_MAX_CHARS; an
+ * empty string means Facebook returned no body at all.
+ */
+export interface FacebookPublishDiagnostic {
+  phase: FacebookPublishPhase;
+  httpStatus?: number | undefined;
+  rawBody?: string | undefined;
+  attempts?: FacebookUploadAttemptDiagnostic[] | undefined;
+}
+
+/** Raw response bodies are stored truncated: enough to read the reason, never a full payload. */
+export const FACEBOOK_RAW_BODY_MAX_CHARS = 500;
+
+/**
+ * Collapse a value to a single console-log line, truncated: Cloudflare
+ * Worker Logs are read by grep, so a log line must never span lines,
+ * and a raw Facebook body must never arrive untruncated.
+ */
+function oneLineLogText(value: string): string {
+  return value.replace(/[\r\n]+/g, ' ').slice(0, FACEBOOK_RAW_BODY_MAX_CHARS);
+}
+
 export class FacebookGraphError extends Error {
   public readonly code: number | undefined;
   public readonly errorSubcode: number | undefined;
   public readonly errorType: string | undefined;
   public readonly fbtraceId: string | undefined;
   public readonly telemetry?: GraphRateLimitTelemetry | undefined;
+  public readonly diagnostic?: FacebookPublishDiagnostic | undefined;
   public readonly isRateLimit: boolean;
   public readonly isAuthError: boolean;
   public readonly isPermanentPolicyError: boolean;
@@ -116,7 +161,8 @@ export class FacebookGraphError extends Error {
   constructor(
     message: string,
     errorData?: FacebookGraphErrorData,
-    telemetry?: GraphRateLimitTelemetry
+    telemetry?: GraphRateLimitTelemetry,
+    diagnostic?: FacebookPublishDiagnostic
   ) {
     super(message);
     this.name = 'FacebookGraphError';
@@ -125,6 +171,7 @@ export class FacebookGraphError extends Error {
     this.errorType = errorData?.type;
     this.fbtraceId = errorData?.fbtrace_id;
     this.telemetry = telemetry;
+    this.diagnostic = diagnostic;
 
     const evalResult =
       this.code !== undefined
@@ -319,15 +366,17 @@ export class FacebookPublishClient implements IFacebookPublishClient {
     return { policy: 'single-attempt', timeoutMs: this.graphTimeoutMs };
   }
 
-  async publishReel(params: {
-    pageId: string;
-    accessToken: string;
-    videoUrl: string;
-    caption: string;
-  }): Promise<PublishResult> {
-    const { pageId, accessToken, videoUrl, caption } = params;
-
-    // Phase 1: Start upload session
+  /**
+   * Starts a Reel upload session: `POST /{page}/video_reels`
+   * `{"upload_phase":"start"}`. Returns the session's `video_id` and the
+   * `upload_url` Facebook assigned it — always use the returned URL,
+   * never a hardcoded versioned rupload URL (a v26.0 start has returned
+   * a v27.0 upload URL in production).
+   */
+  private async startReelUploadSession(
+    pageId: string,
+    accessToken: string
+  ): Promise<{ videoId: string; uploadUrl: string }> {
     const startUrl = `${this.baseUrl}/${encodeURIComponent(pageId)}/video_reels`;
     const startRes = await this.fetchWithRetry(startUrl, {
       method: 'POST',
@@ -340,25 +389,246 @@ export class FacebookPublishClient implements IFacebookPublishClient {
       }),
     }, this.graphRetryable());
 
-    const startData = (await this.parseJsonResponse(startRes)) as {
-      video_id?: string;
-      upload_url?: string;
-      error?: FacebookGraphErrorData;
-    };
+    const { data: startData, rawBody } = await this.parseJsonResponseWithRaw(startRes);
 
     if (!startRes.ok || startData.error) {
-      throw this.createGraphError(startRes, startData);
+      throw this.createGraphError(startRes, startData, {
+        phase: 'reel-start',
+        httpStatus: startRes.status,
+        rawBody,
+      });
     }
 
     const { video_id: videoId, upload_url: uploadUrl } = startData;
     if (!videoId || !uploadUrl) {
       throw new FacebookGraphError(
-        'Invalid start session response from Facebook: missing video_id or upload_url'
+        'Invalid start session response from Facebook: missing video_id or upload_url',
+        undefined,
+        undefined,
+        { phase: 'reel-start', httpStatus: startRes.status, rawBody }
       );
     }
 
-    // Phase 2: Stream video bytes from videoUrl to upload_url
-    await this.streamVideoUpload(uploadUrl, accessToken, videoUrl);
+    return { videoId: String(videoId), uploadUrl: String(uploadUrl) };
+  }
+
+  /**
+   * Reel upload, primary mode (`file_url`): a no-body POST to the
+   * session's `upload_url` with header `file_url: <hosted URL>`, and
+   * Facebook fetches the file itself — no video bytes pass through this
+   * worker. This is the old publisher's mode, restored: the streaming
+   * mode it replaced is the prime suspect for the prod 0/690 reels
+   * failure (it works from Node, but workerd streaming / Cloudflare
+   * egress to rupload is unproven). Success is HTTP ok AND a parsed
+   * body with `success === true`, exactly the old publisher's condition.
+   * Retryable: replaying re-triggers Facebook's fetch and cannot create
+   * a visible post.
+   */
+  private async uploadReelViaFileUrl(
+    uploadUrl: string,
+    accessToken: string,
+    videoUrl: string
+  ): Promise<FacebookUploadAttemptDiagnostic> {
+    const res = await this.fetchWithRetry(uploadUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `OAuth ${accessToken}`,
+        file_url: videoUrl,
+      },
+    }, {
+      policy: 'retryable',
+      timeoutMs: this.mediaTimeoutMs,
+    });
+
+    const { data, rawBody } = await this.parseJsonResponseWithRaw(res);
+    return {
+      mode: 'file_url',
+      success: res.ok && data.success === true,
+      httpStatus: res.status,
+      rawBody,
+    };
+  }
+
+  /**
+   * Combines a failed streaming fallback with the already-failed
+   * `file_url` attempt into one error that names both attempts, so the
+   * stored reason never shows only the last failure. The original
+   * Graph code / telemetry are preserved so classification is unchanged.
+   */
+  private combineReelUploadError(
+    err: unknown,
+    fileUrlAttempt: FacebookUploadAttemptDiagnostic
+  ): FacebookGraphError {
+    const streamAttempt: FacebookUploadAttemptDiagnostic = { mode: 'stream', success: false };
+    let message: string;
+    let errorData: FacebookGraphErrorData | undefined;
+    let telemetry: GraphRateLimitTelemetry | undefined;
+    if (err instanceof FacebookGraphError) {
+      message = err.message;
+      errorData = {
+        ...(err.code !== undefined ? { code: err.code } : {}),
+        ...(err.errorSubcode !== undefined
+          ? { error_subcode: err.errorSubcode }
+          : {}),
+        ...(err.errorType !== undefined ? { type: err.errorType } : {}),
+        ...(err.fbtraceId !== undefined ? { fbtrace_id: err.fbtraceId } : {}),
+      };
+      telemetry = err.telemetry;
+      streamAttempt.httpStatus = err.diagnostic?.httpStatus;
+      streamAttempt.rawBody = err.diagnostic?.rawBody;
+    } else {
+      message = err instanceof Error ? err.message : String(err);
+      streamAttempt.message = message;
+    }
+    return new FacebookGraphError(message, errorData, telemetry, {
+      phase: 'reel-upload-stream',
+      httpStatus: streamAttempt.httpStatus,
+      rawBody: streamAttempt.rawBody,
+      attempts: [fileUrlAttempt, streamAttempt],
+    });
+  }
+
+  /**
+   * A fresh-session start for the streaming fallback can itself throw;
+   * without this, the already-failed file_url attempt would vanish from
+   * the DB diagnostic entirely (only the console warn would retain it).
+   * Attach the file_url attempt to the start error's diagnostic so the
+   * first failure is never lost from publish_logs.detail. The start
+   * error's own phase, status, body, and Graph code are preserved
+   * untouched — only the attempts list is added.
+   */
+  private attachFileUrlAttemptToStartError(
+    err: unknown,
+    fileUrlAttempt: FacebookUploadAttemptDiagnostic
+  ): FacebookGraphError {
+    if (err instanceof FacebookGraphError) {
+      return new FacebookGraphError(
+        err.message,
+        {
+          ...(err.code !== undefined ? { code: err.code } : {}),
+          ...(err.errorSubcode !== undefined ? { error_subcode: err.errorSubcode } : {}),
+          ...(err.errorType !== undefined ? { type: err.errorType } : {}),
+          ...(err.fbtraceId !== undefined ? { fbtrace_id: err.fbtraceId } : {}),
+        },
+        err.telemetry,
+        {
+          phase: err.diagnostic?.phase ?? 'reel-start',
+          ...(err.diagnostic?.httpStatus !== undefined
+            ? { httpStatus: err.diagnostic.httpStatus }
+            : {}),
+          ...(err.diagnostic?.rawBody !== undefined
+            ? { rawBody: err.diagnostic.rawBody }
+            : {}),
+          attempts: [fileUrlAttempt],
+        }
+      );
+    }
+    return new FacebookGraphError(
+      err instanceof Error ? err.message : String(err),
+      undefined,
+      undefined,
+      { phase: 'reel-start', attempts: [fileUrlAttempt] }
+    );
+  }
+
+  /**
+   * Publishes a reel, with one console line per outcome for Cloudflare
+   * Worker Logs (the dashboard live tail reads console output; the
+   * worker has no [observability] section). The DB diagnostic is
+   * untouched — this is the same failure, also visible in Logs. Only
+   * ids, phases, statuses, and truncated Facebook bodies are logged:
+   * never a token, never media bytes.
+   */
+  async publishReel(params: {
+    pageId: string;
+    accessToken: string;
+    videoUrl: string;
+    caption: string;
+    itemId?: string | undefined;
+  }): Promise<PublishResult> {
+    const { pageId, itemId } = params;
+    const itemLabel = itemId ?? 'unknown';
+    try {
+      const { uploadMode, ...result } = await this.publishReelInner(params);
+      console.info(
+        `[reel-publish] item=${itemLabel} page=${pageId} published mode=${uploadMode} post=${result.postId}`
+      );
+      return result;
+    } catch (err) {
+      const diagnostic = err instanceof FacebookGraphError ? err.diagnostic : undefined;
+      const phase = diagnostic?.phase ?? 'reel-upload';
+      const status = diagnostic?.httpStatus ?? 'unknown';
+      const body =
+        diagnostic?.rawBody !== undefined
+          ? oneLineLogText(diagnostic.rawBody)
+          : oneLineLogText(err instanceof Error ? err.message : String(err));
+      const attempts = diagnostic?.attempts
+        ? ` attempts=[${diagnostic.attempts
+            .map((attempt) => `${attempt.mode}:${attempt.httpStatus ?? 'unknown'}`)
+            .join(',')}]`
+        : '';
+      console.error(
+        `[reel-publish] item=${itemLabel} page=${pageId} failed phase=${phase} status=${status} body=${body}${attempts}`
+      );
+      throw err;
+    }
+  }
+
+  private async publishReelInner(params: {
+    pageId: string;
+    accessToken: string;
+    videoUrl: string;
+    caption: string;
+    itemId?: string | undefined;
+  }): Promise<PublishResult & { uploadMode: 'file_url' | 'stream' }> {
+    const { pageId, accessToken, videoUrl, caption, itemId } = params;
+    const itemLabel = itemId ?? 'unknown';
+
+    // Phase 1: Start upload session
+    let { videoId, uploadUrl } = await this.startReelUploadSession(pageId, accessToken);
+
+    // Phase 2, primary: file_url — Facebook fetches the file itself.
+    // A throw (timeout via AbortSignal.timeout, network error) is a
+    // failed attempt too: record it and fall back, never let it skip
+    // the fallback — otherwise the failure lands as bare code `unknown`
+    // with no attempts diagnostic, the exact signature this change
+    // exists to eliminate (spec step 3: fallback on a fetch failure).
+    let fileUrlAttempt: FacebookUploadAttemptDiagnostic;
+    try {
+      fileUrlAttempt = await this.uploadReelViaFileUrl(uploadUrl, accessToken, videoUrl);
+    } catch (err) {
+      fileUrlAttempt = {
+        mode: 'file_url',
+        success: false,
+        message: err instanceof Error ? err.message : String(err),
+      };
+    }
+
+    let uploadMode: 'file_url' | 'stream' = 'file_url';
+    if (!fileUrlAttempt.success) {
+      // One warn line so the fallback is visible in Worker Logs.
+      console.warn(
+        `[reel-publish] item=${itemLabel} page=${pageId} file_url upload failed phase=reel-upload-file-url status=${fileUrlAttempt.httpStatus ?? 'unknown'} body=${oneLineLogText(fileUrlAttempt.message ?? fileUrlAttempt.rawBody ?? '')}; falling back to streaming`
+      );
+      // Fallback, once: a fresh upload session first — the old publisher
+      // reset videoId after a hosted-upload failure, because a failed
+      // upload may poison the session, so never stream into the failed
+      // session's URL — then stream the bytes with the existing uploader.
+      let fresh: { videoId: string; uploadUrl: string };
+      try {
+        fresh = await this.startReelUploadSession(pageId, accessToken);
+      } catch (err) {
+        throw this.attachFileUrlAttemptToStartError(err, fileUrlAttempt);
+      }
+      videoId = fresh.videoId;
+      uploadUrl = fresh.uploadUrl;
+      try {
+        await this.streamVideoUpload(uploadUrl, accessToken, videoUrl, 'reel-upload-stream');
+      } catch (err) {
+        throw this.combineReelUploadError(err, fileUrlAttempt);
+      }
+      uploadMode = 'stream';
+    }
 
     // Phase 3: Finish upload and publish
     const finishUrl = `${this.baseUrl}/${encodeURIComponent(pageId)}/video_reels`;
@@ -376,21 +646,20 @@ export class FacebookPublishClient implements IFacebookPublishClient {
       }),
     }, this.graphPublish());
 
-    const finishData = (await this.parseJsonResponse(finishRes)) as {
-      success?: boolean;
-      post_id?: string;
-      id?: string;
-      video_id?: string;
-      error?: FacebookGraphErrorData;
-    };
+    const { data: finishData, rawBody: finishRawBody } =
+      await this.parseJsonResponseWithRaw(finishRes);
 
     if (!finishRes.ok || finishData.error) {
-      throw this.createGraphError(finishRes, finishData);
+      throw this.createGraphError(finishRes, finishData, {
+        phase: 'reel-finish',
+        httpStatus: finishRes.status,
+        rawBody: finishRawBody,
+      });
     }
 
     const telemetry = parseGraphRateLimitHeaders(finishRes.headers);
     const postId = finishData.post_id ?? finishData.id ?? finishData.video_id ?? videoId;
-    return { postId: String(postId), ...(telemetry ? { telemetry } : {}) };
+    return { postId: String(postId), ...(telemetry ? { telemetry } : {}), uploadMode };
   }
 
   async publishPhoto(params: {
@@ -619,7 +888,7 @@ export class FacebookPublishClient implements IFacebookPublishClient {
       startData.upload_url ?? `${FB_RUPLOAD_BASE_URL}/${videoId}`;
 
     // Step 2: Stream video bytes from videoUrl to upload_url
-    await this.streamVideoUpload(uploadUrl, accessToken, videoUrl);
+    await this.streamVideoUpload(uploadUrl, accessToken, videoUrl, 'video-story-upload-stream');
 
     // Step 3: Finish Video Story
     const finishUrl = `${this.baseUrl}/${encodeURIComponent(pageId)}/video_stories`;
@@ -739,17 +1008,53 @@ export class FacebookPublishClient implements IFacebookPublishClient {
     }
   }
 
-  private createGraphError(res: Response, data: Record<string, unknown>): FacebookGraphError {
+  /**
+   * Reads a response as text first, then parses it: the raw body survives
+   * even when Facebook returns no JSON at all (the prod 400s arrived
+   * body-less, and `res.json()` on an empty body throws the evidence
+   * away). Returns the parsed object ({} when unparseable/empty) plus
+   * the raw body truncated to FACEBOOK_RAW_BODY_MAX_CHARS. Consumes the
+   * body — callers must not read it again afterwards.
+   */
+  private async parseJsonResponseWithRaw(
+    res: Response
+  ): Promise<{ data: Record<string, unknown>; rawBody: string }> {
+    let rawText = '';
+    try {
+      rawText = await res.text();
+    } catch {
+      rawText = '';
+    }
+    const rawBody = rawText.slice(0, FACEBOOK_RAW_BODY_MAX_CHARS);
+    if (!rawText) return { data: {}, rawBody };
+    try {
+      return { data: (JSON.parse(rawText) as Record<string, unknown>) ?? {}, rawBody };
+    } catch {
+      return { data: {}, rawBody };
+    }
+  }
+
+  private createGraphError(
+    res: Response,
+    data: Record<string, unknown>,
+    diagnostic?: FacebookPublishDiagnostic
+  ): FacebookGraphError {
     const errorData = (data?.error as FacebookGraphErrorData) ?? undefined;
-    const message = errorData?.message ?? `Facebook Graph API error: HTTP ${res.status}`;
+    // Name the failing phase in the message itself: with no Graph error
+    // body, this message is the only reason the queue item carries.
+    const message =
+      errorData?.message ??
+      `Facebook Graph API error: HTTP ${res.status}` +
+        (diagnostic ? ` (${diagnostic.phase})` : '');
     const telemetry = parseGraphRateLimitHeaders(res.headers);
-    return new FacebookGraphError(message, errorData, telemetry);
+    return new FacebookGraphError(message, errorData, telemetry, diagnostic);
   }
 
   private async streamVideoUpload(
     uploadUrl: string,
     accessToken: string,
-    videoUrl: string
+    videoUrl: string,
+    phase: FacebookPublishPhase
   ): Promise<void> {
     const videoRes = await this.fetchWithRetry(videoUrl, undefined, {
       policy: 'retryable',
@@ -777,8 +1082,12 @@ export class FacebookPublishClient implements IFacebookPublishClient {
     });
 
     if (!uploadRes.ok) {
-      const uploadData = await this.parseJsonResponse(uploadRes);
-      throw this.createGraphError(uploadRes, uploadData);
+      const { data: uploadData, rawBody } = await this.parseJsonResponseWithRaw(uploadRes);
+      throw this.createGraphError(uploadRes, uploadData, {
+        phase,
+        httpStatus: uploadRes.status,
+        rawBody,
+      });
     }
   }
 }
