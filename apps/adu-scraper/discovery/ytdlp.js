@@ -1,6 +1,5 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { YTDLP_CONFIG } from '../config.js';
 import { buildTiktokProfileUrl, supportsYtdlpDiscovery } from './profile-urls.js';
 import { buildTiktokYtdlpArgs } from './ytdlp-args.js';
 import { resolveTiktokSecUid } from './sec-uid.js';
@@ -12,9 +11,26 @@ const EXEC_OPTS_BASE = {
   maxBuffer: 50 * 1024 * 1024,
 };
 
+// yt-dlp binary/timeout are read from env at call time (not via config.js)
+// on purpose: this module must stay dependency-free (node builtins only) so
+// the standalone CI scraper test step (which runs without npm install) can
+// import it — config.js pulls in dotenv. index.js loads config.js (and the
+// .env file) at startup, so production behaviour is unchanged.
+function getYtdlpBin() {
+  return process.env.YTDLP_BIN || 'yt-dlp';
+}
+
+function getYtdlpTimeoutMs() {
+  const parsed = Number(process.env.YTDLP_TIMEOUT_MS ?? 600_000);
+  if (!Number.isFinite(parsed)) {
+    return 600_000;
+  }
+  return Math.min(600_000, Math.max(10_000, parsed));
+}
+
 function getCandidateBinaries() {
   const bins = [];
-  if (YTDLP_CONFIG.BIN) bins.push(YTDLP_CONFIG.BIN);
+  if (getYtdlpBin()) bins.push(getYtdlpBin());
   bins.push('yt-dlp');
   bins.push('yt-dlp.exe');
   if (process.env.LOCALAPPDATA) {
@@ -26,7 +42,7 @@ function getCandidateBinaries() {
 async function runYtDlp(args) {
   const execOpts = {
     ...EXEC_OPTS_BASE,
-    timeout: YTDLP_CONFIG.TIMEOUT_MS,
+    timeout: getYtdlpTimeoutMs(),
   };
 
   const candidates = getCandidateBinaries();
@@ -85,18 +101,68 @@ async function runYtDlp(args) {
 }
 
 /**
- * Discover TikTok video IDs via yt-dlp matching video_downloader/scraper.py pattern:
- * 1. Resolves sec_uid via the sec_uid Worker first, direct Countik fallback
- *    (see discovery/sec-uid.js; VPS direct fetch is blocked by Countik).
- * 2. Targets `tiktokuser:{sec_uid}` first (queries mobile feed directly, bypassing captcha).
- * 3. Falls back to `https://www.tiktok.com/@{username}` if sec_uid unavailable or empty.
+ * Run yt-dlp once for a single discovery target and parse its JSON output.
+ * Returns { ok: true, ids } when at least one ID is extracted, otherwise
+ * { ok: false, reason } with the failure detail (stderr tail,
+ * 'unparseable_json', or 'empty_result'). Never throws.
+ */
+async function runDiscoveryTarget(targetUrl, maxCount, argOptions, logUser) {
+  const args = buildTiktokYtdlpArgs(targetUrl, maxCount, argOptions);
+  console.log(`📡 TikTok yt-dlp discovery: ${targetUrl}`);
+
+  let stdout;
+  try {
+    stdout = await runYtDlp(args);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const stderr = err.stderr?.toString?.() || '';
+    const detail = stderr.trim().slice(-500) || message;
+    console.warn(`⚠️ TikTok yt-dlp target ${targetUrl} failed: ${detail}`);
+    return { ok: false, reason: detail };
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(stdout);
+  } catch (parseErr) {
+    const message = parseErr instanceof Error ? parseErr.message : String(parseErr);
+    console.warn(`⚠️ TikTok yt-dlp returned invalid JSON for ${targetUrl}: ${message}`);
+    return { ok: false, reason: 'unparseable_json' };
+  }
+
+  const ids = extractIdsFromYtdlpJson(payload, 'tiktok', maxCount);
+  if (ids.length > 0) {
+    console.log(`✅ TikTok yt-dlp discovered ${ids.length} ID(s) for @${logUser} via ${targetUrl}`);
+    return { ok: true, ids };
+  }
+
+  console.warn(`⚠️ TikTok yt-dlp returned zero valid IDs for ${targetUrl}; trying next target...`);
+  return { ok: false, reason: 'empty_result' };
+}
+
+/**
+ * Discover TikTok video IDs via yt-dlp (owner order 2026-11-08: yt-dlp first,
+ * Countik second):
+ * 1. yt-dlp first — plain profile URL through the rotating proxy
+ *    (COUNTIK_PROXY_URL from env). yt-dlp resolves the sec_uid itself from
+ *    the profile page. Listing only (--flat-playlist -J); it never downloads
+ *    video bytes. If it yields reel IDs, discovery is done.
+ * 2. Countik second, only if step 1 fails — resolve sec_uid via the secuid
+ *    Worker first, direct Countik via proxy second (see discovery/sec-uid.js),
+ *    then yt-dlp with `tiktokuser:{sec_uid}` DIRECT (the mobile feed API
+ *    works direct from the VPS; the proxy is not needed there).
+ * 3. Both fail -> { ok: false, reason } with the last failure detail; the
+ *    caller marks the config error, as before.
+ *
+ * The proxy value is read from env and is never logged.
  *
  * @param {string} platform
  * @param {string} sourceUsername
  * @param {number} maxCount
+ * @param {object} [options] - Test seam: { resolveSecUid } (defaults to resolveTiktokSecUid)
  * @returns {Promise<{ ok: true, ids: string[] } | { ok: false, reason: string }>}
  */
-export async function discoverReelIdsWithYtdlp(platform, sourceUsername, maxCount) {
+export async function discoverReelIdsWithYtdlp(platform, sourceUsername, maxCount, options = {}) {
   const p = (platform || '').toLowerCase();
 
   if (!supportsYtdlpDiscovery(p)) {
@@ -121,59 +187,37 @@ export async function discoverReelIdsWithYtdlp(platform, sourceUsername, maxCoun
   }
 
   const profileUrl = buildTiktokProfileUrl(cleanUser);
-  const targetUrls = [];
+  if (!profileUrl) {
+    return { ok: false, reason: 'invalid_source_username' };
+  }
 
-  // Try sec_uid resolution first (matches video_downloader/scraper.py)
+  const resolveSecUid = options.resolveSecUid || resolveTiktokSecUid;
+  // Rotating proxy for the profile-URL attempt only (discovery metadata).
+  // Never logged; the tiktokuser: attempt below stays direct.
+  const resolveProxy = String(process.env.COUNTIK_PROXY_URL || '').trim();
+
+  // Step 1: yt-dlp first — plain profile URL through the proxy.
+  console.log(
+    `🔍 TikTok yt-dlp first: profile URL for @${logUser}${resolveProxy ? ' via proxy' : ' (no proxy configured)'}.`,
+  );
+  const first = await runDiscoveryTarget(profileUrl, maxCount, { proxy: resolveProxy }, logUser);
+  if (first.ok) {
+    return first;
+  }
+
+  // Step 2: Countik second — resolve sec_uid, then tiktokuser: DIRECT.
   console.log(`🔍 Resolving TikTok sec_uid for @${logUser}...`);
-  const secUid = await resolveTiktokSecUid(cleanUser);
-  if (secUid) {
-    console.log(`✅ Resolved sec_uid for @${logUser}: ${logSafe(secUid)}`);
-    targetUrls.push(`tiktokuser:${secUid}`);
-  } else {
-    console.log(`ℹ️ No sec_uid resolved for @${logUser}; using standard profile URL.`);
+  const secUid = await resolveSecUid(cleanUser);
+  if (!secUid) {
+    console.log(`ℹ️ No sec_uid resolved for @${logUser}; discovery failed.`);
+    return { ok: false, reason: first.reason };
+  }
+  console.log(`✅ Resolved sec_uid for @${logUser}: ${logSafe(secUid)}`);
+  const second = await runDiscoveryTarget(`tiktokuser:${secUid}`, maxCount, {}, logUser);
+  if (second.ok) {
+    return second;
   }
 
-  if (profileUrl && !targetUrls.includes(profileUrl)) {
-    targetUrls.push(profileUrl);
-  }
-
-  let lastDetail = 'unknown_error';
-
-  for (const targetUrl of targetUrls) {
-    const args = buildTiktokYtdlpArgs(targetUrl, maxCount);
-    console.log(`📡 TikTok yt-dlp discovery: ${targetUrl}`);
-
-    let stdout;
-    try {
-      stdout = await runYtDlp(args);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      const stderr = err.stderr?.toString?.() || '';
-      lastDetail = stderr.trim().slice(-500) || message;
-      console.warn(`⚠️ TikTok yt-dlp target ${targetUrl} failed: ${lastDetail}`);
-      continue;
-    }
-
-    let payload;
-    try {
-      payload = JSON.parse(stdout);
-    } catch (parseErr) {
-      const message = parseErr instanceof Error ? parseErr.message : String(parseErr);
-      console.warn(`⚠️ TikTok yt-dlp returned invalid JSON for ${targetUrl}: ${message}`);
-      lastDetail = 'unparseable_json';
-      continue;
-    }
-
-    const ids = extractIdsFromYtdlpJson(payload, 'tiktok', maxCount);
-    if (ids.length > 0) {
-      console.log(`✅ TikTok yt-dlp discovered ${ids.length} ID(s) for @${logUser} via ${targetUrl}`);
-      return { ok: true, ids };
-    }
-
-    console.warn(`⚠️ TikTok yt-dlp returned zero valid IDs for ${targetUrl}; trying next target...`);
-    lastDetail = 'empty_result';
-  }
-
-  console.warn(`⚠️ All TikTok discovery targets failed for @${logUser} (${lastDetail})`);
-  return { ok: false, reason: lastDetail };
+  console.warn(`⚠️ All TikTok discovery targets failed for @${logUser} (${second.reason})`);
+  return { ok: false, reason: second.reason };
 }

@@ -37,7 +37,7 @@ test('buildTiktokYtdlpArgs includes proxy when provided in options', () => {
   assert.ok(args.includes('http://user:pass@1.2.3.4:8080'));
 });
 
-test('buildTiktokYtdlpArgs does not use COUNTIK_PROXY_URL (scraper resolve proxy only)', () => {
+test('buildTiktokYtdlpArgs does not read COUNTIK_PROXY_URL from env (the caller passes it explicitly for the profile attempt)', () => {
   const keys = ['DATACENTER_PROXY', 'PROXY_URL', 'HTTP_PROXY', 'HTTPS_PROXY', 'COUNTIK_PROXY_URL'];
   const saved = {};
   for (const key of keys) {
