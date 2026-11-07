@@ -1,10 +1,10 @@
 /**
- * Facebook Auto Download/Upload hub — Add Page dialog 3-step flow tests.
+ * Facebook Auto Download/Upload hub — Add Page dialog 4-step flow tests.
  *
  * The dialog has ONE flow (no Single / Bulk / Multi-Account + CSV modes):
  * step 1 multi-selects accounts, step 2 selects the union of the
- * selected accounts' pages, step 3 configures per-page sources plus
- * the schedule, and submitting sends the bulk POST shape.
+ * selected accounts' pages, step 3 configures per-page sources, step 4
+ * configures the posting time, and submitting sends the bulk POST shape.
  * In step 3, Facebook, Instagram, and YouTube must render as DISABLED
  * source-platform options (still listed, never selectable), TikTok stays
  * enabled, and the default source platform is TikTok — so the dialog
@@ -48,24 +48,69 @@ const HUB_BODY = {
 
 const OPTIONS_BODY = {
   accounts: [
-    { id: 'acct-1', external_account_id: '111', display_name: 'My FB Account', avatar_url: null, status: 'connected' },
-    { id: 'acct-2', external_account_id: '444', display_name: 'Second Account', avatar_url: null, status: 'connected' },
+    { id: '11111111-1111-4111-8111-111111111111', external_account_id: '111', display_name: 'My FB Account', avatar_url: null, status: 'connected' },
+    { id: '22222222-2222-4222-8222-222222222222', external_account_id: '444', display_name: 'Second Account', avatar_url: null, status: 'connected' },
   ],
   pages: [
-    { id: 'page-1', account_id: 'acct-1', external_destination_id: '222', name: 'My Page', avatar_url: null, status: 'connected', metadata: null },
-    { id: 'page-2', account_id: 'acct-1', external_destination_id: '333', name: 'Second Page', avatar_url: null, status: 'connected', metadata: null },
-    { id: 'page-3', account_id: 'acct-2', external_destination_id: '555', name: 'Third Page', avatar_url: null, status: 'connected', metadata: null },
+    { id: 'page-1', account_id: '11111111-1111-4111-8111-111111111111', external_destination_id: '222', name: 'My Page', avatar_url: null, status: 'connected', metadata: null },
+    { id: 'page-2', account_id: '11111111-1111-4111-8111-111111111111', external_destination_id: '333', name: 'Second Page', avatar_url: null, status: 'connected', metadata: null },
+    { id: 'page-3', account_id: '22222222-2222-4222-8222-222222222222', external_destination_id: '555', name: 'Third Page', avatar_url: null, status: 'connected', metadata: null },
   ],
   configured: [],
 };
 
-function jsonResponse(body: unknown, ok = true) {
-  return Promise.resolve({ ok, json: () => Promise.resolve(body) });
+function jsonResponse(body: unknown, ok = true, status = ok ? 200 : 400) {
+  return Promise.resolve({
+    ok,
+    status,
+    json: () => Promise.resolve(body),
+    text: () => Promise.resolve(JSON.stringify(body)),
+  });
+}
+
+type OptionsBody = typeof OPTIONS_BODY;
+
+// Builds the live-discover payload the dialog's typed `api.get`
+// (`DiscoverPagesResponseSchema`) parses: one entry per account, from
+// the options fixture's own pages, so step 2 shows the union of the
+// selected accounts' pages exactly as the real discover route would.
+// The account id must be a UUID — the schema rejects anything else,
+// which is what left step 2 stuck on "loading" before this helper.
+function discoverResponse(options: OptionsBody, url: string) {
+  const accountId = url.split('/accounts/')[1]?.split('/')[0];
+  const account = options.accounts.find((a) => a.id === accountId);
+  if (!accountId || !account) {
+    return jsonResponse({ error: 'Facebook account not found' }, false, 404);
+  }
+  const pages = options.pages.filter((p) => p.account_id === accountId);
+  return jsonResponse({
+    accountId,
+    accountDisplayName: account.display_name,
+    pages: pages.map((p) => {
+      const metadata = (p.metadata ?? {}) as { category?: string; current_followers?: number };
+      const followers = typeof metadata.current_followers === 'number' ? metadata.current_followers : 0;
+      return {
+        fbPageId: p.external_destination_id,
+        pageName: p.name,
+        profilePictureUrl: p.avatar_url,
+        category: metadata.category ?? null,
+        currentFollowers: followers,
+        followersCount: followers,
+        tasks: [],
+        isImported: true,
+      };
+    }),
+    total: pages.length,
+    truncated: false,
+    partial: false,
+    droppedCount: 0,
+  });
 }
 
 function installFetch(options: unknown = OPTIONS_BODY) {
   fetchMock.mockImplementation((url: string, init?: { method?: string }) => {
     if (url.includes('/auto-download-upload/options')) return jsonResponse(options);
+    if (url.includes('/pages/discover')) return discoverResponse(options as OptionsBody, url);
     if (init?.method === 'POST') return jsonResponse({ id: 'cfg-new', created: [{ id: 'cfg-a' }, { id: 'cfg-b' }], failed: [] });
     return jsonResponse(HUB_BODY);
   });
@@ -132,7 +177,7 @@ vi.mock('@/components/billing/entitlement-provider', async (importOriginal) => {
   };
 });
 
-describe('AduHubPage Add Page dialog 3-step flow', () => {
+describe('AduHubPage Add Page dialog 4-step flow', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubGlobal('fetch', fetchMock);
@@ -144,25 +189,31 @@ describe('AduHubPage Add Page dialog 3-step flow', () => {
   });
 
   // Step 1 selects accounts, step 2 selects pages (the union of the
-  // selected accounts), step 3 configures sources + schedule. The old
-  // single-screen step 1 (accounts and pages together, 'N pages
+  // selected accounts), step 3 configures sources, step 4 configures
+  // the posting time. The old single-screen step 1 (accounts and pages together, 'N pages
   // selected' line, bordered Select-all/Clear buttons, 'Already
   // configured' label, account ids) is gone by owner order.
 
-  it('has no mode tabs: step 1 is Select Accounts, step 2 is Select Pages, step 3 is Sources & Schedule', async () => {
+  it('has no mode tabs: step 1 is Select Accounts, step 2 is Select Pages, step 3 is Sources, step 4 is Posting Time', async () => {
     const user = userEvent.setup();
     await openDialog(user);
     expect(screen.queryByRole('button', { name: 'Single Add' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Bulk Add' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Multi-Account + CSV' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Import CSV' })).toBeNull();
-    expect(await screen.findByText('Step 1 of 3: Select Accounts')).toBeTruthy();
+    expect(await screen.findByText('Step 1 of 4: Select Accounts')).toBeTruthy();
     await pickCheckboxFor(user, 'My FB Account');
     await user.click(screen.getByRole('button', { name: 'Next' }));
-    expect(await screen.findByText('Step 2 of 3: Select Pages')).toBeTruthy();
+    expect(await screen.findByText('Step 2 of 4: Select Pages')).toBeTruthy();
     await pickCheckboxFor(user, 'My Page');
     await user.click(screen.getByRole('button', { name: 'Next' }));
-    expect(await screen.findByText('Step 3 of 3: Sources & Schedule')).toBeTruthy();
+    expect(await screen.findByText('Step 3 of 4: Sources')).toBeTruthy();
+    // Step 3 Next is gated until every selected page has a source.
+    expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
+    const dialog = screen.getByRole('dialog');
+    await user.type(within(dialog).getByPlaceholderText('@username'), 'creator_one');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    expect(await screen.findByText('Step 4 of 4: Posting Time')).toBeTruthy();
   });
 
   it('step 1: Next is gated on at least one account; step 2: Next is gated on at least one page; both lists multi-select', async () => {
@@ -173,7 +224,7 @@ describe('AduHubPage Add Page dialog 3-step flow', () => {
     await pickCheckboxFor(user, 'Second Account');
     expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
     await user.click(screen.getByRole('button', { name: 'Next' }));
-    expect(await screen.findByText('Step 2 of 3: Select Pages')).toBeTruthy();
+    expect(await screen.findByText('Step 2 of 4: Select Pages')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
     await pickCheckboxFor(user, 'My Page');
     await pickCheckboxFor(user, 'Third Page');
@@ -256,7 +307,7 @@ describe('AduHubPage Add Page dialog 3-step flow', () => {
     expect(inputs).toHaveLength(3);
   });
 
-  it('step 3: Start Automation is gated until every selected page has a source', async () => {
+  it('step 3: Next is gated until every selected page has a source; step 4: Start Automation is then enabled', async () => {
     const user = userEvent.setup();
     await openDialog(user);
     await pickCheckboxFor(user, 'My FB Account');
@@ -265,13 +316,16 @@ describe('AduHubPage Add Page dialog 3-step flow', () => {
     await pickCheckboxFor(user, 'Second Page');
     await user.click(screen.getByRole('button', { name: 'Next' }));
     const dialog = screen.getByRole('dialog');
-    const start = screen.getByRole('button', { name: 'Start Automation' });
-    expect(start).toBeDisabled();
+    const next = screen.getByRole('button', { name: 'Next' });
+    expect(next).toBeDisabled();
     const inputs = within(dialog).getAllByPlaceholderText('@username');
     await user.type(inputs[0]!, 'creator_one');
-    expect(start).toBeDisabled();
+    expect(next).toBeDisabled();
     await user.type(inputs[1]!, 'creator_two');
-    expect(start).toBeEnabled();
+    expect(next).toBeEnabled();
+    await user.click(next);
+    expect(await screen.findByText('Step 4 of 4: Posting Time')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Start Automation' })).toBeEnabled();
   });
 
   it('step 3: paste assigns sources to empty slots only and reports the count', async () => {
@@ -291,10 +345,13 @@ describe('AduHubPage Add Page dialog 3-step flow', () => {
     expect(await screen.findByText(/2 new sources assigned to 2 empty page slots/)).toBeTruthy();
     const inputs = within(dialog).getAllByPlaceholderText('@username');
     expect(inputs.map((i) => (i as HTMLInputElement).value).sort()).toEqual(['creator_one', 'creator_two']);
+    expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    expect(await screen.findByText('Step 4 of 4: Posting Time')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Start Automation' })).toBeEnabled();
   });
 
-  it('step 3: shared schedule submits the bulk shape with TikTok sources', async () => {
+  it('step 4: shared schedule submits the bulk shape with TikTok sources', async () => {
     const user = userEvent.setup();
     await openDialog(user);
     await pickCheckboxFor(user, 'My FB Account');
@@ -306,6 +363,8 @@ describe('AduHubPage Add Page dialog 3-step flow', () => {
     const inputs = within(dialog).getAllByPlaceholderText('@username');
     await user.type(inputs[0]!, 'creator_one');
     await user.type(inputs[1]!, 'creator_two');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    expect(await screen.findByText('Step 4 of 4: Posting Time')).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Start Automation' }));
     await waitFor(() => {
       const body = lastPostBody();
@@ -320,7 +379,7 @@ describe('AduHubPage Add Page dialog 3-step flow', () => {
     });
   });
 
-  it('step 3: separate scope submits one schedule per page', async () => {
+  it('step 4: separate scope submits one schedule per page', async () => {
     const user = userEvent.setup();
     await openDialog(user);
     await pickCheckboxFor(user, 'My FB Account');
@@ -329,6 +388,8 @@ describe('AduHubPage Add Page dialog 3-step flow', () => {
     await user.click(screen.getByRole('button', { name: 'Next' }));
     const dialog = screen.getByRole('dialog');
     await user.type(within(dialog).getByPlaceholderText('@username'), 'creator_one');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    expect(await screen.findByText('Step 4 of 4: Posting Time')).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Set separately' }));
     expect(await screen.findByText('My Page · My FB Account')).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Start Automation' }));
@@ -339,20 +400,27 @@ describe('AduHubPage Add Page dialog 3-step flow', () => {
     });
   });
 
-  it('step 3: Back returns to step 2 and keeps the selection; Back again returns to step 1 and keeps the accounts', async () => {
+  it('step 4: Back returns to step 3 and keeps the sources; Back again returns to step 2, then step 1, keeping selections', async () => {
     const user = userEvent.setup();
     await openDialog(user);
     await pickCheckboxFor(user, 'My FB Account');
     await user.click(screen.getByRole('button', { name: 'Next' }));
     await pickCheckboxFor(user, 'My Page');
     await user.click(screen.getByRole('button', { name: 'Next' }));
-    expect(await screen.findByText('Step 3 of 3: Sources & Schedule')).toBeTruthy();
+    expect(await screen.findByText('Step 3 of 4: Sources')).toBeTruthy();
+    const dialog = screen.getByRole('dialog');
+    await user.type(within(dialog).getByPlaceholderText('@username'), 'creator_one');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    expect(await screen.findByText('Step 4 of 4: Posting Time')).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Back' }));
-    expect(await screen.findByText('Step 2 of 3: Select Pages')).toBeTruthy();
+    expect(await screen.findByText('Step 3 of 4: Sources')).toBeTruthy();
+    expect((within(screen.getByRole('dialog')).getByPlaceholderText('@username') as HTMLInputElement).value).toBe('creator_one');
+    await user.click(screen.getByRole('button', { name: 'Back' }));
+    expect(await screen.findByText('Step 2 of 4: Select Pages')).toBeTruthy();
     const myPageLabel = screen.getByText('My Page').closest('label');
     expect(myPageLabel?.querySelector('button[role="checkbox"]')?.getAttribute('data-state')).toBe('checked');
     await user.click(screen.getByRole('button', { name: 'Back' }));
-    expect(await screen.findByText('Step 1 of 3: Select Accounts')).toBeTruthy();
+    expect(await screen.findByText('Step 1 of 4: Select Accounts')).toBeTruthy();
     const accountLabel = screen.getByText('My FB Account').closest('label');
     expect(accountLabel?.querySelector('button[role="checkbox"]')?.getAttribute('data-state')).toBe('checked');
   });
@@ -362,13 +430,13 @@ describe('AduHubPage Add Page dialog 3-step flow', () => {
     installFetch({
       ...OPTIONS_BODY,
       accounts: [
-        { id: 'acct-1', external_account_id: '111', display_name: 'My FB Account', avatar_url: 'https://images.example.com/acct.jpg', status: 'connected' },
-        { id: 'acct-2', external_account_id: '444', display_name: 'Second Account', avatar_url: null, status: 'connected' },
+        { id: '11111111-1111-4111-8111-111111111111', external_account_id: '111', display_name: 'My FB Account', avatar_url: 'https://images.example.com/acct.jpg', status: 'connected' },
+        { id: '22222222-2222-4222-8222-222222222222', external_account_id: '444', display_name: 'Second Account', avatar_url: null, status: 'connected' },
       ],
       pages: [
-        { id: 'page-1', account_id: 'acct-1', external_destination_id: '222', name: 'My Page', avatar_url: 'https://images.example.com/page.jpg', status: 'connected', metadata: null },
-        { id: 'page-2', account_id: 'acct-1', external_destination_id: '333', name: 'Second Page', avatar_url: null, status: 'connected', metadata: null },
-        { id: 'page-3', account_id: 'acct-2', external_destination_id: '555', name: 'Third Page', avatar_url: null, status: 'connected', metadata: null },
+        { id: 'page-1', account_id: '11111111-1111-4111-8111-111111111111', external_destination_id: '222', name: 'My Page', avatar_url: 'https://images.example.com/page.jpg', status: 'connected', metadata: null },
+        { id: 'page-2', account_id: '11111111-1111-4111-8111-111111111111', external_destination_id: '333', name: 'Second Page', avatar_url: null, status: 'connected', metadata: null },
+        { id: 'page-3', account_id: '22222222-2222-4222-8222-222222222222', external_destination_id: '555', name: 'Third Page', avatar_url: null, status: 'connected', metadata: null },
       ],
     });
     await openDialog(user);
@@ -391,7 +459,7 @@ describe('AduHubPage Add Page dialog 3-step flow', () => {
     installFetch({
       ...OPTIONS_BODY,
       pages: [
-        { id: 'page-1', account_id: 'acct-1', external_destination_id: '222', name: 'My Page', avatar_url: 'https://images.example.com/broken.jpg', status: 'connected', metadata: null },
+        { id: 'page-1', account_id: '11111111-1111-4111-8111-111111111111', external_destination_id: '222', name: 'My Page', avatar_url: 'https://images.example.com/broken.jpg', status: 'connected', metadata: null },
         ...OPTIONS_BODY.pages.slice(1),
       ],
     });
@@ -411,10 +479,10 @@ describe('AduHubPage Add Page dialog 3-step flow', () => {
     installFetch({
       ...OPTIONS_BODY,
       pages: [
-        { id: 'page-1', account_id: 'acct-1', external_destination_id: '222', name: 'My Page', avatar_url: null, status: 'connected', metadata: { category: 'Digital creator', current_followers: 23108 } },
-        { id: 'page-2', account_id: 'acct-1', external_destination_id: '333', name: 'Second Page', avatar_url: null, status: 'connected', metadata: { category: 'Music video' } },
-        { id: 'page-3', account_id: 'acct-2', external_destination_id: '555', name: 'Third Page', avatar_url: null, status: 'connected', metadata: { current_followers: 1 } },
-        { id: 'page-4', account_id: 'acct-2', external_destination_id: '666', name: 'Fourth Page', avatar_url: null, status: 'connected', metadata: {} },
+        { id: 'page-1', account_id: '11111111-1111-4111-8111-111111111111', external_destination_id: '222', name: 'My Page', avatar_url: null, status: 'connected', metadata: { category: 'Digital creator', current_followers: 23108 } },
+        { id: 'page-2', account_id: '11111111-1111-4111-8111-111111111111', external_destination_id: '333', name: 'Second Page', avatar_url: null, status: 'connected', metadata: { category: 'Music video' } },
+        { id: 'page-3', account_id: '22222222-2222-4222-8222-222222222222', external_destination_id: '555', name: 'Third Page', avatar_url: null, status: 'connected', metadata: { current_followers: 1 } },
+        { id: 'page-4', account_id: '22222222-2222-4222-8222-222222222222', external_destination_id: '666', name: 'Fourth Page', avatar_url: null, status: 'connected', metadata: {} },
       ],
     });
     await openDialog(user);
@@ -434,12 +502,13 @@ describe('AduHubPage Add Page dialog 3-step flow', () => {
     expect(screen.queryByText('444')).toBeNull();
   });
 
-  it('step 3: result message is singular for one created page', async () => {
+  it('step 4: result message is singular for one created page', async () => {
     const user = userEvent.setup();
     // One created + one failed: partial failure keeps the dialog open
     // so the banner stays visible (a clean success closes it).
     fetchMock.mockImplementation((url: string, init?: { method?: string }) => {
       if (url.includes('/auto-download-upload/options')) return jsonResponse(OPTIONS_BODY);
+      if (url.includes('/pages/discover')) return discoverResponse(OPTIONS_BODY, url);
       if (init?.method === 'POST') return jsonResponse({ id: 'cfg-new', created: [{ id: 'cfg-a' }], failed: [{ destinationId: 'page-2', error: 'boom' }] });
       return jsonResponse(HUB_BODY);
     });
@@ -450,14 +519,17 @@ describe('AduHubPage Add Page dialog 3-step flow', () => {
     await user.click(screen.getByRole('button', { name: 'Next' }));
     const dialog = screen.getByRole('dialog');
     await user.type(within(dialog).getByPlaceholderText('@username'), 'creator_one');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    expect(await screen.findByText('Step 4 of 4: Posting Time')).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Start Automation' }));
     expect(await screen.findByText(/Created 1 page\./)).toBeTruthy();
   });
 
-  it('step 3: result message stays plural for multiple created pages', async () => {
+  it('step 4: result message stays plural for multiple created pages', async () => {
     const user = userEvent.setup();
     fetchMock.mockImplementation((url: string, init?: { method?: string }) => {
       if (url.includes('/auto-download-upload/options')) return jsonResponse(OPTIONS_BODY);
+      if (url.includes('/pages/discover')) return discoverResponse(OPTIONS_BODY, url);
       if (init?.method === 'POST') return jsonResponse({ id: 'cfg-new', created: [{ id: 'cfg-a' }, { id: 'cfg-b' }], failed: [{ destinationId: 'page-3', error: 'boom' }] });
       return jsonResponse(HUB_BODY);
     });
@@ -471,6 +543,8 @@ describe('AduHubPage Add Page dialog 3-step flow', () => {
     const inputs = within(dialog).getAllByPlaceholderText('@username');
     await user.type(inputs[0]!, 'creator_one');
     await user.type(inputs[1]!, 'creator_two');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    expect(await screen.findByText('Step 4 of 4: Posting Time')).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Start Automation' }));
     expect(await screen.findByText(/Created 2 pages\./)).toBeTruthy();
   });
