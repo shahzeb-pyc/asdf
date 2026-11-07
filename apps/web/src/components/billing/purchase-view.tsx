@@ -1028,47 +1028,68 @@ export function PurchaseView({
               ? 'Your screenshot couldn\'t be uploaded. Retry the upload to submit.'
               : null);
 
-  // Purchase rows name the unit only. Included/in-use counts belong
-  // to My Plan and are deliberately NOT shown here — the input
-  // value itself is the count being bought (starting from the current
-  // plan's counts for a Paid user). Rate is stated once, in the
-  // Purchase header — not repeated on every row.
+  // Layout B (approved mockup): three side-by-side platform columns that
+  // stack on phone widths. Each column names the platform, asks a plain
+  // professional question, and takes a typed count — no steppers. The
+  // input value itself is the count being bought (starting from the
+  // current plan's counts for a Paid user). Included/in-use counts belong
+  // to My Plan and are deliberately NOT shown here. Rate is stated once,
+  // in the Purchase header — not repeated on every row.
   const configurator = (
-    <div className="flex flex-col">
-      {PURCHASABLE_PLATFORMS.map((platform) => {
-        const count = effectiveCounts[platform];
-        return (
-          <div
-            key={platform}
-            className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line py-4 first:border-t-0 first:pt-0"
-          >
-            <div className="w-full sm:w-48 sm:shrink-0">
-              <p className="truncate text-body font-medium text-ink">{PLATFORM_LABELS[platform]}</p>
-              <p className="truncate text-body text-ink-sub">
-                {platform === 'facebook' ? 'Pages' : 'Accounts'}
+    <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        {PURCHASABLE_PLATFORMS.map((platform) => {
+          const count = effectiveCounts[platform];
+          return (
+            <div
+              key={platform}
+              className="flex flex-col gap-3 rounded-md border border-line bg-panel px-4 py-4"
+            >
+              <div>
+                <p className="text-body font-medium text-ink">{PLATFORM_LABELS[platform]}</p>
+                <p className="text-body text-ink-sub">
+                  {platform === 'facebook' ? 'Pages' : 'Accounts'}
+                </p>
+              </div>
+              <p className="text-body text-ink">
+                {platform === 'facebook'
+                  ? 'How many Facebook Pages will you post to?'
+                  : platform === 'instagram'
+                    ? 'How many Instagram accounts will you post from?'
+                    : 'How many Threads accounts will you post from?'}
               </p>
+              {platform === 'facebook' ? (
+                <p className="text-body text-ink-sub">
+                  Accounts free — connect as many Facebook accounts as you like. You only pay
+                  for Pages.
+                </p>
+              ) : null}
+              <div className="mt-auto flex items-center gap-3">
+                {/* Direct input, not a stepper: type="text" with a numeric
+                keyboard carries no native spinners, so there is no
+                increase/decrease control anywhere in this chooser. */}
+                <Input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  aria-label={`${PLATFORM_LABELS[platform]} ${subscriptionUnitLabel(platform)}`}
+                  value={countDrafts[platform] ?? String(count)}
+                  onChange={(event) => handleCountInput(platform, event.target.value)}
+                  onBlur={() => handleCountBlur(platform)}
+                  className="w-20 text-center tabular-nums"
+                />
+                <span className="shrink-0 text-body font-medium tabular-nums text-ink">
+                  {count * SUBSCRIPTION_PRICE_PKR_PER_UNIT} PKR
+                </span>
+              </div>
             </div>
-            <div className="flex shrink-0 items-center gap-3">
-              {/* Direct input, not a stepper: type="text" with a numeric
-              keyboard carries no native spinners, so there is no
-              increase/decrease control anywhere in this chooser. */}
-              <Input
-                type="text"
-                inputMode="numeric"
-                autoComplete="off"
-                aria-label={`${PLATFORM_LABELS[platform]} ${subscriptionUnitLabel(platform)}`}
-                value={countDrafts[platform] ?? String(count)}
-                onChange={(event) => handleCountInput(platform, event.target.value)}
-                onBlur={() => handleCountBlur(platform)}
-                className="w-20 text-center tabular-nums"
-              />
-              <span className="w-20 shrink-0 text-right text-body font-medium tabular-nums text-ink">
-                {count * SUBSCRIPTION_PRICE_PKR_PER_UNIT} PKR
-              </span>
-            </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
+      <p className="text-body text-ink-sub">
+        You can increase your pages and accounts anytime. Reducing them takes effect from your
+        next month.
+      </p>
     </div>
   );
 

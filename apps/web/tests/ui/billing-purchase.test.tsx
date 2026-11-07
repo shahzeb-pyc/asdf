@@ -340,6 +340,29 @@ describe('Billing Purchase', () => {
     expect(document.querySelector('input[type="number"]')).toBeNull();
   });
 
+  it('Layout B: chooser shows three platform columns with plain questions and the increase/reduce note', async () => {
+    renderBilling('purchase');
+    await screen.findByText('Choose your pages and accounts');
+    // Each column asks a plain professional question.
+    expect(screen.getByText('How many Facebook Pages will you post to?')).toBeInTheDocument();
+    expect(screen.getByText('How many Instagram accounts will you post from?')).toBeInTheDocument();
+    expect(screen.getByText('How many Threads accounts will you post from?')).toBeInTheDocument();
+    // Facebook accounts are free — only Pages are paid for.
+    expect(
+      screen.getByText(/connect as many Facebook accounts as you like/i),
+    ).toBeInTheDocument();
+    // Verbatim foot note, and the removed lines stay removed.
+    expect(
+      screen.getByText(
+        'You can increase your pages and accounts anytime. Reducing them takes effect from your next month.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Everything is 70 PKR each/)).toBeNull();
+    expect(screen.queryByText('Facebook — pay for Pages only')).toBeNull();
+    expect(screen.queryByText('Instagram — pay per account')).toBeNull();
+    expect(screen.queryByText('Threads — pay per account')).toBeNull();
+  });
+
   it('typing a count updates the row price and total live', async () => {
     renderBilling('purchase');
     await screen.findByText('Choose your pages and accounts');
