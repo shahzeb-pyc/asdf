@@ -13,7 +13,9 @@
  * Countik via proxy: when COUNTIK_PROXY_URL is set (or options.countikProxyUrl is
  * passed), the direct Countik fallback goes through that rotating HTTP proxy
  * instead of direct — the VPS IP is 403-blocked by Countik, while residential
- * proxy IPs answer. The Worker fetch and yt-dlp never use the proxy. A proxy
+ * proxy IPs answer. The Worker fetch never uses the proxy; yt-dlp uses it
+ * only for the first profile-URL attempt (see discovery/ytdlp.js), never
+ * for the `tiktokuser:` attempt. A proxy
  * failure is fail-loud: null is returned and direct Countik is NOT retried.
  * This module stays dependency-free (node builtins only) so the standalone CI
  * scraper test step (which runs without npm install) keeps passing.
