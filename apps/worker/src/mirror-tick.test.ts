@@ -486,7 +486,7 @@ describe('buildMirrorTickDeps resolve proxy (spec 150)', () => {
       'test-master-key',
     );
     const fetchSpy = vi.fn(async () => {
-      throw new Error('direct fetch must not run');
+      throw new InternalError('direct fetch must not run');
     });
     const originalFetch = globalThis.fetch;
     globalThis.fetch = fetchSpy as unknown as typeof fetch;

@@ -24,6 +24,8 @@
  * module does not exist. Tests inject a stub `connect` instead.
  */
 
+import { InternalError } from '@fbuploadpro/contracts';
+
 export interface ProxyUrl {
   host: string;
   port: number;
@@ -191,7 +193,7 @@ class ByteReader {
   async readExact(count: number): Promise<Uint8Array> {
     while (this.bufferedLength < count) {
       if (!(await this.fill())) {
-        throw new Error('proxy response ended early');
+        throw new InternalError('proxy response ended early');
       }
     }
     return this.take(count);
@@ -230,10 +232,10 @@ async function readHeaders(reader: ByteReader): Promise<ParsedHeaders> {
   const headers: Array<[string, string]> = [];
   for (;;) {
     const line = await reader.readLine();
-    if (line === null) throw new Error('proxy response ended early');
+    if (line === null) throw new InternalError('proxy response ended early');
     if (line === '') break;
     const colon = line.indexOf(':');
-    if (colon < 0) throw new Error('proxy response has a malformed header');
+    if (colon < 0) throw new InternalError('proxy response has a malformed header');
     headers.push([
       line.slice(0, colon).trim().toLowerCase(),
       line.slice(colon + 1).trim(),
@@ -259,11 +261,11 @@ async function readChunkedBody(reader: ByteReader): Promise<Uint8Array> {
       // end-of-body, not a truncation. EOF before any chunk, or
       // mid-chunk (readExact below), is still a truncated response.
       if (chunks.length > 0) break;
-      throw new Error('proxy response ended early');
+      throw new InternalError('proxy response ended early');
     }
     const size = Number.parseInt(sizeLine.split(';')[0]?.trim() ?? '', 16);
     if (!Number.isFinite(size) || size < 0) {
-      throw new Error('proxy response has a malformed chunk size');
+      throw new InternalError('proxy response has a malformed chunk size');
     }
     if (size === 0) {
       // Consume trailers up to the empty line.
@@ -276,7 +278,7 @@ async function readChunkedBody(reader: ByteReader): Promise<Uint8Array> {
     chunks.push(await reader.readExact(size));
     const crlf = await reader.readExact(2);
     if (crlf[0] !== 13 || crlf[1] !== 10) {
-      throw new Error('proxy response has a malformed chunk');
+      throw new InternalError('proxy response has a malformed chunk');
     }
   }
   return concatBytes(chunks);
@@ -290,7 +292,7 @@ function bodyBytes(input: BodyInit | null | undefined): Uint8Array {
   if (typeof URLSearchParams !== 'undefined' && input instanceof URLSearchParams) {
     return toBytes(input.toString());
   }
-  throw new Error('proxy fetch: unsupported request body type');
+  throw new InternalError('proxy fetch: unsupported request body type');
 }
 
 /**
@@ -338,7 +340,7 @@ export function createProxyFetchFn(
 ): (input: string | URL | Request, init?: RequestInit) => Promise<Response> {
   const proxy = parseProxyUrl(options.proxyUrl);
   if (!proxy) {
-    throw new Error(
+    throw new InternalError(
       'Mirror resolve proxy is not a valid http proxy URL; refusing to resolve directly.',
     );
   }
@@ -356,7 +358,7 @@ export function createProxyFetchFn(
           ? input
           : new URL(input.url);
     if (url.protocol !== 'https:') {
-      throw new Error(`proxy fetch only supports https targets: ${url.host}`);
+      throw new InternalError(`proxy fetch only supports https targets: ${url.host}`);
     }
     // `URL.host` omits the default :443 — the CONNECT authority needs it explicit.
     const targetHost = url.hostname;
@@ -414,7 +416,7 @@ export function createProxyFetchFn(
         const connectReader = new ByteReader(plainSocket.readable);
         const connectStatus = await connectReader.readLine();
         if (connectStatus === null) {
-          throw new Error(`proxy connect to ${targetHost} failed: empty response`);
+          throw new InternalError(`proxy connect to ${targetHost} failed: empty response`);
         }
         const connectCode = Number(connectStatus.split(' ')[1]);
         // Consume the CONNECT response headers (any bytes after them do
@@ -422,7 +424,7 @@ export function createProxyFetchFn(
         // with the plain socket below).
         await readHeaders(connectReader);
         if (connectCode !== 200) {
-          throw new Error(`proxy connect to ${targetHost} failed: HTTP ${connectCode}`);
+          throw new InternalError(`proxy connect to ${targetHost} failed: HTTP ${connectCode}`);
         }
 
         // Release the CONNECT reader before upgrading: a reader still
@@ -454,12 +456,12 @@ export function createProxyFetchFn(
         const reader = new ByteReader(tlsSocket.readable);
         const statusLine = await reader.readLine();
         if (statusLine === null) {
-          throw new Error(`proxy response from ${targetHost} ended early`);
+          throw new InternalError(`proxy response from ${targetHost} ended early`);
         }
         const statusParts = statusLine.split(' ');
         const status = Number(statusParts[1]);
         if (!Number.isFinite(status)) {
-          throw new Error(`proxy response from ${targetHost} has a malformed status line`);
+          throw new InternalError(`proxy response from ${targetHost} has a malformed status line`);
         }
         const statusText = statusParts.slice(2).join(' ');
         const parsed = await readHeaders(reader);
@@ -492,7 +494,7 @@ export function createProxyFetchFn(
           : new DOMException('The operation was aborted.', 'AbortError');
       }
       if (err instanceof Error) throw err;
-      throw new Error(`proxy fetch to ${targetHost} failed`);
+      throw new InternalError(`proxy fetch to ${targetHost} failed`);
     } finally {
       signal.removeEventListener('abort', onAbort);
       if (socketRef.current) await socketRef.current.close().catch(() => undefined);

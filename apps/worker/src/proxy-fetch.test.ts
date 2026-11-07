@@ -5,7 +5,7 @@
  * `proxy.test`); nothing here is a real proxy URL.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { resolveTikwmVideo } from '@fbuploadpro/contracts';
+import { InternalError, resolveTikwmVideo } from '@fbuploadpro/contracts';
 import {
   createProxyFetchFn,
   parseProxyUrl,
@@ -55,7 +55,7 @@ function makeFakeSocket(
     }),
     close: async () => undefined,
     startTls: () => {
-      throw new Error('startTls must be stubbed by makeFakeConnect');
+      throw new InternalError('startTls must be stubbed by makeFakeConnect');
     },
   };
 }
@@ -109,7 +109,7 @@ function makeFakeConnect(
       close: async () => undefined,
       startTls: () => {
         if (!connectResponse.released()) {
-          throw new Error(
+          throw new InternalError(
             'startTls with the CONNECT reader still locked (workerd breaks here)',
           );
         }
@@ -163,7 +163,7 @@ describe('createProxyFetchFn', () => {
 
   it('refuses non-https targets without opening a tunnel', async () => {
     const connect = vi.fn(async () => {
-      throw new Error('must not connect');
+      throw new InternalError('must not connect');
     });
     const fetchFn = createProxyFetchFn({ proxyUrl: FAKE_PROXY_URL, connect });
     await expect(fetchFn('http://example.com/video.mp4')).rejects.toThrow(
@@ -174,7 +174,7 @@ describe('createProxyFetchFn', () => {
 
   it('does not call connect when the signal is already aborted', async () => {
     const connect = vi.fn(async () => {
-      throw new Error('must not connect');
+      throw new InternalError('must not connect');
     });
     const fetchFn = createProxyFetchFn({ proxyUrl: FAKE_PROXY_URL, connect });
     await expect(
@@ -352,7 +352,7 @@ describe('createProxyFetchFn', () => {
         capture,
       );
       plain.startTls = () => {
-        throw new Error('startTls must not run after a failed CONNECT');
+        throw new InternalError('startTls must not run after a failed CONNECT');
       };
       return plain;
     };
