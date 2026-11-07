@@ -172,7 +172,7 @@ describe('openVideoStream', () => {
     try {
       const body = new ReadableStream({ start(c) { c.enqueue(new Uint8Array([1, 2])); c.close(); } });
       const flaky = vi.fn()
-        .mockResolvedValueOnce(new Response('no', { status: 525 }))
+        .mockResolvedValueOnce(new Response('no', { status: 502 }))
         .mockResolvedValueOnce(new Response('no', { status: 429 }))
         .mockResolvedValueOnce(new Response(body, { status: 200, headers: { 'content-length': '2' } })) as unknown as FetchImpl;
       const pending = openVideoStream('https://cdn.example/v.mp4', flaky);
@@ -189,17 +189,29 @@ describe('openVideoStream', () => {
   it('returns the last failure when transient statuses never recover', async () => {
     vi.useFakeTimers();
     try {
-      const failing = vi.fn(async () => new Response('no', { status: 525 })) as unknown as FetchImpl;
+      const failing = vi.fn(async () => new Response('no', { status: 502 })) as unknown as FetchImpl;
       const pending = openVideoStream('https://cdn.example/v.mp4', failing);
       await vi.advanceTimersByTimeAsync(10_000);
       expect(await pending).toEqual({
         ok: false,
-        failure: { reason: 'stream_http_status', status: 525 },
+        failure: { reason: 'stream_http_status', status: 502 },
       });
       expect(failing).toHaveBeenCalledTimes(3);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('returns a 525 on the first attempt without retrying the same URL', async () => {
+    // Diagnosis (2026-11-06): same-URL retries never save a 525, so
+    // the open returns it immediately and the pipeline re-resolves
+    // with a fresh URL instead — no sleeps are spent on the dead URL.
+    const failing = vi.fn(async () => new Response('no', { status: 525 })) as unknown as FetchImpl;
+    expect(await openVideoStream('https://cdn.example/v.mp4', failing)).toEqual({
+      ok: false,
+      failure: { reason: 'stream_http_status', status: 525 },
+    });
+    expect(failing).toHaveBeenCalledTimes(1);
   });
 
   it('does not retry a deterministic 404', async () => {

@@ -13,6 +13,17 @@
  *   (hashing + 1 GiB cap + audio-probe window in the same pass) ->
  *   size/audio decision -> settle with the existing RPCs.
  *
+ * A 525 on the stream open does NOT retry the same URL (diagnosis
+ * 2026-11-06: same-URL retries never save a 525 — all attempts fail
+ * together on the same egress IP/edge — while a later attempt with a
+ * fresh resolve sometimes succeeds). Instead the pipeline re-resolves
+ * through Countik (paced, own per-tick budget) and opens the FRESH
+ * URL, at most STREAM_525_MAX_RERESOLVES times per claimed reel. A
+ * refused re-resolve defers the reel exactly like a refused initial
+ * fallback. In-attempt re-resolves consume no extra download_retries,
+ * and the claim budget stays 3 (no migration): over its life a reel
+ * gets up to 3 claims x (1 + 1 re-resolve) fresh-URL attempts.
+ *
  * Resolver order is fixed: tikwm FIRST, exactly as before; Countik is
  * tried only when tikwm resolve fails, and a tikwm success never calls
  * Countik. A Countik success flows through the identical downstream
@@ -73,6 +84,14 @@ export interface R2BucketLike {
 
 export const CLAIM_LIMIT = 10;
 export const STALE_MINUTES = 40;
+/** Fresh Countik re-resolves after a 525, per claimed reel. One is
+ * enough per the diagnosis: the only thing proven to turn a 525 into
+ * a success is a later attempt with a fresh resolve, and one fresh
+ * resolve per claim (up to 6 fresh-URL attempts over the reel's
+ * 3-claim life) is the even distribution — a second in-attempt
+ * re-resolve would starve other reels of the shared per-tick
+ * re-resolve budget for a smaller marginal gain. */
+export const STREAM_525_MAX_RERESOLVES = 1;
 export const CONTENT_TYPE_MP4 = 'video/mp4';
 
 export interface TickResult {
@@ -91,6 +110,11 @@ export interface TickResult {
   countikFallbacks: number;
   /** 429 responses observed from Countik this tick. */
   countikRateLimited: number;
+  /** Fresh Countik re-resolves after a 525 this tick (own budget of
+   * 5 — see countik-pacing.ts). Together with countikFallbacks this
+   * is every Countik call the tick made, so the tick log shows
+   * whether the re-resolve path is running. */
+  streamReresolves: number;
   /** Counts keyed by `stage:reason` (detail varies per reel, so it is not a key). */
   failedReasons: Record<string, number>;
   settleErrors: number;
@@ -397,22 +421,28 @@ function withAttribution(
   base: string | undefined,
   resolver: 'tikwm' | 'countik',
   streamUrl: string,
+  extra?: string,
 ): string {
-  return [base, streamAttribution(resolver, streamUrl)].filter(Boolean).join('; ');
+  return [base, streamAttribution(resolver, streamUrl), extra].filter(Boolean).join('; ');
 }
 
 export function streamOpenFailure(
   failure: StreamOpenFailure,
   resolver: 'tikwm' | 'countik',
   streamUrl: string,
+  /** Fresh re-resolves performed before this failure was recorded (0
+   * when the first URL failed): the record shows the retry path was
+   * exercised instead of just counting one more 525. */
+  reresolves = 0,
 ): DownloadFailure {
+  const reresolveDetail = reresolves > 0 ? `reresolves=${reresolves}` : undefined;
   switch (failure.reason) {
     case 'stream_fetch_error':
-      return { stage: 'stream_open', reason: 'stream_fetch_error', detail: withAttribution(truncateDetail(failure.detail), resolver, streamUrl) };
+      return { stage: 'stream_open', reason: 'stream_fetch_error', detail: withAttribution(truncateDetail(failure.detail), resolver, streamUrl, reresolveDetail) };
     case 'stream_http_status':
-      return { stage: 'stream_open', reason: 'stream_http_status', detail: withAttribution(`http_status=${failure.status}`, resolver, streamUrl) };
+      return { stage: 'stream_open', reason: 'stream_http_status', detail: withAttribution(`http_status=${failure.status}`, resolver, streamUrl, reresolveDetail) };
     case 'stream_no_body':
-      return { stage: 'stream_open', reason: 'stream_no_body', detail: streamAttribution(resolver, streamUrl) };
+      return { stage: 'stream_open', reason: 'stream_no_body', detail: withAttribution(undefined, resolver, streamUrl, reresolveDetail) };
   }
 }
 
@@ -481,9 +511,55 @@ async function processOne(deps: TickDeps, reel: ClaimedReel, pacer: CountikPacer
     resolver = 'countik';
   }
   // A Countik-resolved stream is a direct CDN link: no tikwm Referer.
-  const opened = await openVideoStream(streamUrl, fetchImpl, resolver === 'tikwm' ? TIKWM_ORIGIN : null);
+  // On a 525, the URL itself is the problem, not the attempt: the
+  // TLS handshake fails per request from this egress, and re-trying
+  // the same URL never recovers (diagnosis 2026-11-06 — openVideoStream
+  // returns a 525 on the first attempt for exactly this reason).
+  // Re-resolve through Countik and open the FRESH URL instead, at most
+  // STREAM_525_MAX_RERESOLVES times per claim. Each re-resolve is a
+  // paced Countik call (own per-tick budget — see countik-pacing.ts),
+  // so it cannot weaken pacing; a refused re-resolve defers the reel,
+  // released through mark_adu_reel_download_failed with no failure
+  // recorded, exactly like a refused initial fallback. The loop
+  // settles exactly once downstream, so in-attempt re-resolves consume
+  // no extra download_retries (the claim already consumed one).
+  let reresolves = 0;
+  let opened = await openVideoStream(streamUrl, fetchImpl, resolver === 'tikwm' ? TIKWM_ORIGIN : null);
+  while (
+    !opened.ok &&
+    opened.failure.reason === 'stream_http_status' &&
+    opened.failure.status === 525 &&
+    reresolves < STREAM_525_MAX_RERESOLVES
+  ) {
+    const acquired = await pacer.acquireReresolve();
+    if (!acquired.allowed) {
+      return { kind: 'deferred', reason: acquired.reason };
+    }
+    reresolves += 1;
+    const fresh = await resolveCountikStream(videoUrl, fetchImpl);
+    if (!fresh.ok) {
+      // A 429 is a real attempt, so it stops every later Countik call
+      // this tick — and the reel follows the failed path with BOTH
+      // attempts recorded: the 525 that triggered the re-resolve, plus
+      // the re-resolve failure.
+      if (isCountikRateLimit(fresh.failure)) pacer.noteRateLimited();
+      return {
+        kind: 'failed',
+        failure: {
+          ...streamOpenFailure(opened.failure, resolver, streamUrl, reresolves),
+          fallback: countikFailure(fresh.failure),
+        },
+      };
+    }
+    streamUrl = fresh.streamUrl;
+    rawTitle = fresh.rawTitle;
+    resolver = 'countik';
+    // A re-resolved stream is always a Countik direct CDN link: no
+    // tikwm Referer, exactly like the initial Countik path.
+    opened = await openVideoStream(streamUrl, fetchImpl, null);
+  }
   if (!opened.ok) {
-    return { kind: 'failed', failure: streamOpenFailure(opened.failure, resolver, streamUrl) };
+    return { kind: 'failed', failure: streamOpenFailure(opened.failure, resolver, streamUrl, reresolves) };
   }
   if (opened.contentLength === null) {
     // Fail loud: without a declared length the R2 put would be
@@ -547,6 +623,7 @@ export async function runDownloadTick(deps: TickDeps): Promise<TickResult> {
     deferred: 0,
     countikFallbacks: 0,
     countikRateLimited: 0,
+    streamReresolves: 0,
     failedReasons: {},
     settleErrors: 0,
   };
@@ -642,8 +719,12 @@ export async function runDownloadTick(deps: TickDeps): Promise<TickResult> {
   // were made and how many 429s were seen, so a later check can tell
   // whether pacing reduced the 429 rate. The per-reel 429 is already
   // in the reel's failure detail (step=info; http_status=429).
+  // streamReresolves shows whether the 525 re-resolve path is running
+  // at all — together with countikFallbacks it is every Countik call
+  // the tick made.
   result.countikFallbacks = pacer.callsMade;
   result.countikRateLimited = pacer.rateLimitedCount;
+  result.streamReresolves = pacer.reresolvesMade;
   log('tick_done', { ...result });
   return result;
 }

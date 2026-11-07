@@ -54,14 +54,18 @@ export type StreamOpenResult =
 /** Stream-open retry policy, mirroring the mirror path's fetchWithRetry
  * (apps/worker/src/fb-client.ts): 3 attempts, 1 s then 2 s backoff
  * capped at 8 s. Retries cover exactly the transient class — a fetch
- * throw (network/TLS edge failure, which is how a 525 can also surface)
- * and HTTP 429/5xx (including the 525s seen from this egress). Any
- * other status (notably 404: link gone) and a body-less 200 are
- * deterministic and fail on the first attempt. When retries exhaust,
- * the LAST failure is returned so the caller's existing error mapping
- * applies unchanged — and because the retries happen inside one open,
- * they never consume extra download_retries (the attempt still settles
- * exactly once downstream). */
+ * throw (network/TLS edge failure) and HTTP 429/other 5xx. A 525 is
+ * NOT retried on the same URL: production diagnosis (2026-11-06)
+ * proved same-URL retries never save a 525 — all 3 attempts fail
+ * together (same egress IP/edge for seconds) — so a 525 returns on
+ * the first attempt and the pipeline re-resolves through Countik and
+ * retries with the fresh URL instead. Any other status (notably 404:
+ * link gone) and a body-less 200 are deterministic and fail on the
+ * first attempt. When retries exhaust, the LAST failure is returned so
+ * the caller's existing error mapping applies unchanged — and because
+ * the retries happen inside one open, they never consume extra
+ * download_retries (the attempt still settles exactly once
+ * downstream). */
 export const STREAM_OPEN_MAX_ATTEMPTS = 3;
 export const STREAM_OPEN_BASE_DELAY_MS = 1000;
 export const STREAM_OPEN_MAX_DELAY_MS = 8000;
@@ -75,7 +79,10 @@ function streamOpenDelayMs(attempt: number): number {
 }
 
 function isRetryableStreamStatus(status: number): boolean {
-  return status === 429 || status >= 500;
+  // A 525 is deliberately excluded: the pipeline re-resolves with a
+  // fresh URL on a 525 (see pipeline.ts), and re-trying the same URL
+  // never recovers one — it only burns the attempt's time on sleeps.
+  return status === 429 || (status >= 500 && status !== 525);
 }
 
 /** The response's declared length, or null when it is absent, malformed,

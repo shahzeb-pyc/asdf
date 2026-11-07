@@ -3,6 +3,7 @@ import {
   CountikPacer,
   COUNTIK_FALLBACK_DELAY_MS,
   COUNTIK_MAX_FALLBACKS_PER_TICK,
+  COUNTIK_MAX_RERESOLVES_PER_TICK,
   COUNTIK_429_BACKOFF_MS,
   type CountikPacingState,
 } from './countik-pacing.js';
@@ -127,5 +128,61 @@ describe('CountikPacer', () => {
     second.advance(COUNTIK_429_BACKOFF_MS + 1000);
     expect(await second.pacer.acquire()).toEqual({ allowed: true });
     expect(second.pacer.rateLimitedCount).toBe(0);
+  });
+
+  it('lets re-resolves through on their own budget, not the fallback cap', async () => {
+    // The fallback cap is spent by initial resolves; a re-resolve
+    // sharing it would almost never run. The budgets are separate.
+    const { pacer, sleeps } = manualPacer();
+    for (let i = 0; i < COUNTIK_MAX_FALLBACKS_PER_TICK; i += 1) {
+      expect(await pacer.acquire()).toEqual({ allowed: true });
+    }
+    expect(await pacer.acquire()).toEqual({ allowed: false, reason: 'cap' });
+    for (let i = 0; i < COUNTIK_MAX_RERESOLVES_PER_TICK; i += 1) {
+      expect(await pacer.acquireReresolve()).toEqual({ allowed: true });
+    }
+    expect(pacer.callsMade).toBe(COUNTIK_MAX_FALLBACKS_PER_TICK);
+    expect(pacer.reresolvesMade).toBe(COUNTIK_MAX_RERESOLVES_PER_TICK);
+    // Every call after the first waited out the spacing on the shared
+    // timeline: 9 gaps between 10 calls.
+    expect(sleeps).toHaveLength(
+      COUNTIK_MAX_FALLBACKS_PER_TICK + COUNTIK_MAX_RERESOLVES_PER_TICK - 1,
+    );
+  });
+
+  it('caps re-resolves per tick and refuses further ones without sleeping', async () => {
+    const { pacer, sleeps } = manualPacer();
+    const results = [];
+    for (let i = 0; i < COUNTIK_MAX_RERESOLVES_PER_TICK + 1; i += 1) {
+      results.push(await pacer.acquireReresolve());
+    }
+    expect(results.slice(0, COUNTIK_MAX_RERESOLVES_PER_TICK)).toEqual(
+      Array.from({ length: COUNTIK_MAX_RERESOLVES_PER_TICK }, () => ({ allowed: true })),
+    );
+    expect(results.slice(COUNTIK_MAX_RERESOLVES_PER_TICK)).toEqual([
+      { allowed: false, reason: 'cap' },
+    ]);
+    expect(pacer.reresolvesMade).toBe(COUNTIK_MAX_RERESOLVES_PER_TICK);
+    // The cap refuses, it never waits: 4 gaps between 5 calls.
+    expect(sleeps).toHaveLength(COUNTIK_MAX_RERESOLVES_PER_TICK - 1);
+  });
+
+  it('shares the spacing timeline between fallback and re-resolve calls', async () => {
+    const { pacer, sleeps } = manualPacer();
+    await pacer.acquire();
+    await pacer.acquireReresolve();
+    // The re-resolve waited for the spacing after the fallback call:
+    // one timeline for every Countik call, whichever kind it was.
+    expect(sleeps).toEqual([COUNTIK_FALLBACK_DELAY_MS]);
+    expect(pacer.callsMade).toBe(1);
+    expect(pacer.reresolvesMade).toBe(1);
+  });
+
+  it('blocks re-resolves too after a 429', async () => {
+    const { pacer } = manualPacer();
+    await pacer.acquire();
+    pacer.noteRateLimited();
+    expect(await pacer.acquireReresolve()).toEqual({ allowed: false, reason: 'rate_limited' });
+    expect(pacer.reresolvesMade).toBe(0);
   });
 });

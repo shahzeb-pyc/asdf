@@ -39,10 +39,24 @@
  * `download_failed`, visible and rescuable by the failed reset. Only
  * a reel whose Countik call actually ran and failed settles through
  * the failed path, with its failure recorded.
+ *
+ * Re-resolves (pipeline's 525 path) are paced on the SAME timeline —
+ * the same 2 s spacing and the same 429 backoff — but counted against
+ * their OWN per-tick budget (COUNTIK_MAX_RERESOLVES_PER_TICK), not
+ * the fallback cap. That is deliberate: with tikwm failing nearly
+ * every resolve, the fallback cap is spent by initial resolves, so a
+ * re-resolve sharing it would almost never run. Total Countik calls
+ * per tick stay bounded (5 fallbacks + 5 re-resolves), all spaced,
+ * and a 429 still stops everything.
  */
 
 export const COUNTIK_FALLBACK_DELAY_MS = 2000;
 export const COUNTIK_MAX_FALLBACKS_PER_TICK = 5;
+/** Fresh Countik re-resolves after a 525, per tick (own budget, see
+ * above). At most 5 reels reach a stream attempt per tick (the
+ * fallback cap), and each re-resolves at most once per claim, so this
+ * budget is exactly the most the tick can ever need. */
+export const COUNTIK_MAX_RERESOLVES_PER_TICK = 5;
 export const COUNTIK_429_BACKOFF_MS = 120_000;
 
 /** Cross-tick 429 state, shared by every pacer in this isolate. */
@@ -69,6 +83,7 @@ function sleepMs(ms: number): Promise<void> {
  */
 export class CountikPacer {
   private calls = 0;
+  private reresolveCalls = 0;
   private rateLimits = 0;
   private blockedThisTick = false;
   private lastCallStartedAtMs: number | null = null;
@@ -84,9 +99,32 @@ export class CountikPacer {
     return this.calls;
   }
 
+  /** Fresh re-resolve calls actually made this tick. */
+  get reresolvesMade(): number {
+    return this.reresolveCalls;
+  }
+
   /** 429 responses observed this tick (at most one: the first blocks the rest). */
   get rateLimitedCount(): number {
     return this.rateLimits;
+  }
+
+  /** Wait out the cross-tick 429 backoff, then the inter-call spacing
+   * on the shared timeline: every Countik call — fallback or
+   * re-resolve — is spaced from the previous Countik call's start,
+   * whichever kind it was. Records this call's start before returning. */
+  private async waitForTurn(): Promise<void> {
+    const nowMs = this.now();
+    if (nowMs < this.shared.blockedUntilMs) {
+      await this.sleep(this.shared.blockedUntilMs - nowMs);
+    }
+    if (this.lastCallStartedAtMs !== null) {
+      const elapsed = this.now() - this.lastCallStartedAtMs;
+      if (elapsed < COUNTIK_FALLBACK_DELAY_MS) {
+        await this.sleep(COUNTIK_FALLBACK_DELAY_MS - elapsed);
+      }
+    }
+    this.lastCallStartedAtMs = this.now();
   }
 
   /**
@@ -103,18 +141,23 @@ export class CountikPacer {
   async acquire(): Promise<CountikAcquireResult> {
     if (this.blockedThisTick) return { allowed: false, reason: 'rate_limited' };
     if (this.calls >= COUNTIK_MAX_FALLBACKS_PER_TICK) return { allowed: false, reason: 'cap' };
-    const nowMs = this.now();
-    if (nowMs < this.shared.blockedUntilMs) {
-      await this.sleep(this.shared.blockedUntilMs - nowMs);
-    }
-    if (this.lastCallStartedAtMs !== null) {
-      const elapsed = this.now() - this.lastCallStartedAtMs;
-      if (elapsed < COUNTIK_FALLBACK_DELAY_MS) {
-        await this.sleep(COUNTIK_FALLBACK_DELAY_MS - elapsed);
-      }
-    }
-    this.lastCallStartedAtMs = this.now();
+    await this.waitForTurn();
     this.calls += 1;
+    return { allowed: true };
+  }
+
+  /**
+   * Ask to make a fresh Countik re-resolve after a 525 now. Same
+   * spacing and 429 backoff as acquire() (one shared timeline), but
+   * counted against the re-resolve budget, not the fallback cap — so
+   * a 525 re-resolve is not starved by initial resolves. A refusal
+   * defers the reel exactly like a refused fallback call.
+   */
+  async acquireReresolve(): Promise<CountikAcquireResult> {
+    if (this.blockedThisTick) return { allowed: false, reason: 'rate_limited' };
+    if (this.reresolveCalls >= COUNTIK_MAX_RERESOLVES_PER_TICK) return { allowed: false, reason: 'cap' };
+    await this.waitForTurn();
+    this.reresolveCalls += 1;
     return { allowed: true };
   }
 
