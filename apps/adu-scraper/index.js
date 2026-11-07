@@ -8,9 +8,10 @@
  *   `adu_configs` (linked to a unified `destinations` row);
  * - old `reels` (page_id, reel_id) is now `adu_reels`
  *   (config_id, source_reel_id).
- * Everything else — yt-dlp-first TikTok discovery (plain profile URL
- * through the rotating proxy, Countik sec_uid second and only if the
- * profile attempt fails, then `tiktokuser:{sec_uid}` direct), Puppeteer
+ * Everything else — yt-dlp-only TikTok discovery (plain profile URL
+ * through the rotating proxy, up to 5 attempts with a 2s delay between
+ * them — each attempt draws a different rotating proxy exit IP; no
+ * Countik / sec_uid anywhere in discovery), Puppeteer
  * logged-in fallback / only path for YouTube, Instagram and Facebook,
  * the pending -> processing -> synced | error | browser_pending state
  * machine, the 60s idle sleep, the 500-job browser restart, the manual
