@@ -54,9 +54,3 @@ export const BROWSER_CONFIG = {
 export const LOGIN_CONFIG = {
   SKIP_STARTUP_LOGINS: toBoolean(process.env.SKIP_STARTUP_LOGINS),
 };
-
-/** TikTok-only yt-dlp discovery (see main-scraper/scrapers/tiktok-ytdlp.js). */
-export const YTDLP_CONFIG = {
-  BIN: process.env.YTDLP_BIN || 'yt-dlp',
-  TIMEOUT_MS: boundedInt(process.env.YTDLP_TIMEOUT_MS, 600_000, { min: 10_000, max: 600_000 }),
-};
