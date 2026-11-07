@@ -486,6 +486,7 @@ describe('ADU Add Page dialog — live discovery', () => {
   });
 
   it('step 4 Posts Per Day is a 1–12 dropdown that resizes the fixed times', async () => {
+    const user = userEvent.setup();
     await goToPostingStep();
     fireEvent.click(screen.getByText('Fixed Posting Times'));
     // One time input for the default 1 post per day.
@@ -504,6 +505,7 @@ describe('ADU Add Page dialog — live discovery', () => {
   });
 
   it('step 4 fixed times show a 12-hour preview and a duplicate warning', async () => {
+    const user = userEvent.setup();
     await goToPostingStep();
     fireEvent.click(screen.getByText('Fixed Posting Times'));
     // The default 09:00 previews in 12-hour form.
@@ -520,6 +522,7 @@ describe('ADU Add Page dialog — live discovery', () => {
   });
 
   it('step 4 separate scope uses the same pickers per page', async () => {
+    const user = userEvent.setup();
     const postBodies: unknown[] = [];
     const { onCreated } = await goToPostingStep(postBodies);
     fireEvent.click(screen.getByText('Set separately'));
