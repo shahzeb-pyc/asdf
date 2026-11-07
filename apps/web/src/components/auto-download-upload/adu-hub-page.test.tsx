@@ -5,22 +5,22 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { AddPageDialog } from './adu-hub-page';
 
 const ACCOUNTS = [
-  { id: 'a1', external_account_id: 'fb-acc-111', display_name: 'Shahzeb Malik', avatar_url: null, status: 'active' },
-  { id: 'a2', external_account_id: 'fb-acc-222', display_name: 'Example Account', avatar_url: null, status: 'active' },
+  { id: '11111111-1111-4111-8111-111111111111', external_account_id: 'fb-acc-111', display_name: 'Shahzeb Malik', avatar_url: null, status: 'active' },
+  { id: '22222222-2222-4222-8222-222222222222', external_account_id: 'fb-acc-222', display_name: 'Example Account', avatar_url: null, status: 'active' },
   { id: 'a3', external_account_id: 'fb-acc-333', display_name: 'Old Account', avatar_url: null, status: 'expired' },
   { id: 'a4', external_account_id: 'fb-acc-444', display_name: 'Broken Account', avatar_url: null, status: 'error' },
 ];
 
 const PAGES = [
-  { id: 'p1', account_id: 'a1', external_destination_id: 'fb-page-101', name: 'Ellie Blossom', avatar_url: null, status: 'active', metadata: { category: 'Digital creator', current_followers: 1 } },
-  { id: 'p2', account_id: 'a1', external_destination_id: 'fb-page-102', name: 'UK Videos', avatar_url: null, status: 'active', metadata: { category: 'Social media agency' } },
-  { id: 'p5', account_id: 'a1', external_destination_id: 'fb-page-105', name: 'No Category Page', avatar_url: null, status: 'active', metadata: {} },
-  { id: 'p3', account_id: 'a2', external_destination_id: 'fb-page-103', name: 'Example Page', avatar_url: null, status: 'active', metadata: { category: 'Example category', current_followers: 5000 } },
+  { id: 'p1', account_id: '11111111-1111-4111-8111-111111111111', external_destination_id: 'fb-page-101', name: 'Ellie Blossom', avatar_url: null, status: 'active', metadata: { category: 'Digital creator', current_followers: 1 } },
+  { id: 'p2', account_id: '11111111-1111-4111-8111-111111111111', external_destination_id: 'fb-page-102', name: 'UK Videos', avatar_url: null, status: 'active', metadata: { category: 'Social media agency' } },
+  { id: 'p5', account_id: '11111111-1111-4111-8111-111111111111', external_destination_id: 'fb-page-105', name: 'No Category Page', avatar_url: null, status: 'active', metadata: {} },
+  { id: 'p3', account_id: '22222222-2222-4222-8222-222222222222', external_destination_id: 'fb-page-103', name: 'Example Page', avatar_url: null, status: 'active', metadata: { category: 'Example category', current_followers: 5000 } },
   { id: 'p4', account_id: 'a3', external_destination_id: 'fb-page-104', name: 'Stale Page', avatar_url: null, status: 'active', metadata: { category: 'Old', current_followers: 9 } },
   { id: 'p6', account_id: 'a4', external_destination_id: 'fb-page-106', name: 'Broken Page', avatar_url: null, status: 'active', metadata: { category: 'Broken', current_followers: 3 } },
   // Disconnected destination that DOES have an ADU config: it still
   // counts as linked in ADU (destination status is irrelevant).
-  { id: 'p7', account_id: 'a1', external_destination_id: 'fb-page-109', name: 'Disconnected ADU Page', avatar_url: null, status: 'disconnected', metadata: { category: 'Gone' } },
+  { id: 'p7', account_id: '11111111-1111-4111-8111-111111111111', external_destination_id: 'fb-page-109', name: 'Disconnected ADU Page', avatar_url: null, status: 'disconnected', metadata: { category: 'Gone' } },
 ];
 
 const CONFIGURED = [
@@ -50,8 +50,8 @@ function discoverPage(fbPageId: string, pageName: string, category: string | nul
 // dialog must render them fresh, proving "Already added" comes
 // from adu_configs only, never from isImported.
 const DISCOVER: Record<string, unknown> = {
-  a1: {
-    accountId: 'a1',
+  '11111111-1111-4111-8111-111111111111': {
+    accountId: '11111111-1111-4111-8111-111111111111',
     accountDisplayName: 'Shahzeb Malik',
     pages: [
       discoverPage('fb-page-101', 'Ellie Blossom', 'Digital creator', 1, true),
@@ -65,8 +65,8 @@ const DISCOVER: Record<string, unknown> = {
     partial: false,
     droppedCount: 0,
   },
-  a2: {
-    accountId: 'a2',
+  '22222222-2222-4222-8222-222222222222': {
+    accountId: '22222222-2222-4222-8222-222222222222',
     accountDisplayName: 'Example Account',
     pages: [
       discoverPage('fb-page-103', 'Example Page', 'Example category', 5000, true),
@@ -165,11 +165,11 @@ describe('ADU Add Page dialog — live discovery', () => {
     await openDialog();
     // Click the account NAME (not the checkbox box) — the row toggles.
     fireEvent.click(screen.getByText('Shahzeb Malik'));
-    expect(checkboxState('adu-account-checkbox-a1')).toBe('checked');
+    expect(checkboxState('adu-account-checkbox-11111111-1111-4111-8111-111111111111')).toBe('checked');
     expect((screen.getByTestId('adu-accounts-next-btn') as HTMLButtonElement).disabled).toBe(false);
     // Clicking the name again deselects.
     fireEvent.click(screen.getByText('Shahzeb Malik'));
-    expect(checkboxState('adu-account-checkbox-a1')).toBe('unchecked');
+    expect(checkboxState('adu-account-checkbox-11111111-1111-4111-8111-111111111111')).toBe('unchecked');
     expect((screen.getByTestId('adu-accounts-next-btn') as HTMLButtonElement).disabled).toBe(true);
   });
 
@@ -181,13 +181,13 @@ describe('ADU Add Page dialog — live discovery', () => {
     fireEvent.change(screen.getByTestId('adu-accounts-search-input'), { target: { value: '' } });
 
     fireEvent.click(screen.getByTestId('adu-select-all-accounts-btn'));
-    expect(checkboxState('adu-account-checkbox-a1')).toBe('checked');
-    expect(checkboxState('adu-account-checkbox-a2')).toBe('checked');
+    expect(checkboxState('adu-account-checkbox-11111111-1111-4111-8111-111111111111')).toBe('checked');
+    expect(checkboxState('adu-account-checkbox-22222222-2222-4222-8222-222222222222')).toBe('checked');
     expect(screen.getByTestId('adu-select-all-accounts-btn').textContent).toBe('Deselect All');
     expect(screen.getByTestId('adu-select-all-accounts-btn').getAttribute('aria-pressed')).toBe('true');
     fireEvent.click(screen.getByTestId('adu-select-all-accounts-btn'));
-    expect(checkboxState('adu-account-checkbox-a1')).toBe('unchecked');
-    expect(checkboxState('adu-account-checkbox-a2')).toBe('unchecked');
+    expect(checkboxState('adu-account-checkbox-11111111-1111-4111-8111-111111111111')).toBe('unchecked');
+    expect(checkboxState('adu-account-checkbox-22222222-2222-4222-8222-222222222222')).toBe('unchecked');
   });
 
   it('step 2 shows live discovered pages, including a page with no destinations row', async () => {
@@ -225,7 +225,7 @@ describe('ADU Add Page dialog — live discovery', () => {
   it('already-configured pages are disabled, checked, and labelled Already added; select-all skips them', async () => {
     await openDialog();
     await goToPagesStep();
-    const configuredBox = screen.getByTestId('adu-page-checkbox-a1-fb-page-101');
+    const configuredBox = screen.getByTestId('adu-page-checkbox-11111111-1111-4111-8111-111111111111-fb-page-101');
     expect(configuredBox.getAttribute('data-state')).toBe('checked');
     expect((configuredBox as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getAllByText('Already added')).toHaveLength(1);
@@ -233,18 +233,18 @@ describe('ADU Add Page dialog — live discovery', () => {
     // UK Videos / Example Page carry discover's isImported: true
     // (they exist in `destinations` via another section) but have
     // NO adu_config — they must render fresh and selectable.
-    const importedElsewhere = screen.getByTestId('adu-page-checkbox-a1-fb-page-102');
+    const importedElsewhere = screen.getByTestId('adu-page-checkbox-11111111-1111-4111-8111-111111111111-fb-page-102');
     expect(importedElsewhere.getAttribute('data-state')).toBe('unchecked');
     expect((importedElsewhere as HTMLButtonElement).disabled).toBe(false);
 
     fireEvent.click(screen.getByTestId('adu-select-all-pages-btn'));
-    expect(checkboxState('adu-page-checkbox-a1-fb-page-102')).toBe('checked');
+    expect(checkboxState('adu-page-checkbox-11111111-1111-4111-8111-111111111111-fb-page-102')).toBe('checked');
     expect(screen.getByTestId('adu-select-all-pages-btn').textContent).toBe('Deselect All');
     fireEvent.click(screen.getByTestId('adu-select-all-pages-btn'));
-    expect(checkboxState('adu-page-checkbox-a1-fb-page-102')).toBe('unchecked');
+    expect(checkboxState('adu-page-checkbox-11111111-1111-4111-8111-111111111111-fb-page-102')).toBe('unchecked');
     // The configured row stays checked-and-disabled through select-all toggling.
-    expect(checkboxState('adu-page-checkbox-a1-fb-page-101')).toBe('checked');
-    expect((screen.getByTestId('adu-page-checkbox-a1-fb-page-101') as HTMLButtonElement).disabled).toBe(true);
+    expect(checkboxState('adu-page-checkbox-11111111-1111-4111-8111-111111111111-fb-page-101')).toBe('checked');
+    expect((screen.getByTestId('adu-page-checkbox-11111111-1111-4111-8111-111111111111-fb-page-101') as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('page rows always show category and followers with the Pages fallback rule', async () => {
@@ -275,8 +275,8 @@ describe('ADU Add Page dialog — live discovery', () => {
     fireEvent.click(screen.getByText('Example Account'));
     fireEvent.click(screen.getByTestId('adu-accounts-next-btn'));
     await screen.findByTestId('adu-pages-list');
-    fireEvent.click(screen.getByTestId('adu-page-checkbox-a2-fb-page-103'));
-    expect(checkboxState('adu-page-checkbox-a2-fb-page-103')).toBe('checked');
+    fireEvent.click(screen.getByTestId('adu-page-checkbox-22222222-2222-4222-8222-222222222222-fb-page-103'));
+    expect(checkboxState('adu-page-checkbox-22222222-2222-4222-8222-222222222222-fb-page-103')).toBe('checked');
 
     fireEvent.click(screen.getByTestId('adu-pages-back-btn'));
     fireEvent.click(screen.getByText('Example Account'));
@@ -289,30 +289,30 @@ describe('ADU Add Page dialog — live discovery', () => {
   it('Back preserves accounts and page selection', async () => {
     await openDialog();
     await goToPagesStep();
-    fireEvent.click(screen.getByTestId('adu-page-checkbox-a1-fb-page-102'));
+    fireEvent.click(screen.getByTestId('adu-page-checkbox-11111111-1111-4111-8111-111111111111-fb-page-102'));
     fireEvent.click(screen.getByTestId('adu-pages-back-btn'));
-    expect(checkboxState('adu-account-checkbox-a1')).toBe('checked');
+    expect(checkboxState('adu-account-checkbox-11111111-1111-4111-8111-111111111111')).toBe('checked');
     fireEvent.click(screen.getByTestId('adu-accounts-next-btn'));
     await screen.findByTestId('adu-pages-list');
-    expect(checkboxState('adu-page-checkbox-a1-fb-page-102')).toBe('checked');
+    expect(checkboxState('adu-page-checkbox-11111111-1111-4111-8111-111111111111-fb-page-102')).toBe('checked');
   });
 
   it('step-2 Next is gated on at least one page', async () => {
     await openDialog();
     await goToPagesStep();
     expect((screen.getByTestId('adu-pages-next-btn') as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(screen.getByTestId('adu-page-checkbox-a1-fb-page-102'));
+    fireEvent.click(screen.getByTestId('adu-page-checkbox-11111111-1111-4111-8111-111111111111-fb-page-102'));
     expect((screen.getByTestId('adu-pages-next-btn') as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('one account’s discover failure shows error + Retry for that account only', async () => {
-    const discover: Record<string, unknown> = { a1: DISCOVER.a1 };
+    const discover: Record<string, unknown> = { '11111111-1111-4111-8111-111111111111': DISCOVER['11111111-1111-4111-8111-111111111111'] };
     const { onCreated } = await openDialog([], discover);
     expect(onCreated).toBeDefined();
     fireEvent.click(screen.getByText('Shahzeb Malik'));
     fireEvent.click(screen.getByText('Example Account'));
     fireEvent.click(screen.getByTestId('adu-accounts-next-btn'));
-    await screen.findByTestId('adu-discover-error-a2');
+    await screen.findByTestId('adu-discover-error-22222222-2222-4222-8222-222222222222');
     expect(screen.getByText(/Example Account: Couldn't load pages/)).toBeTruthy();
     // The healthy account's pages stay listed; no empty state
     // appears next to the error.
@@ -320,10 +320,10 @@ describe('ADU Add Page dialog — live discovery', () => {
     expect(screen.queryByText('No pages on the selected accounts.')).toBeNull();
 
     // Retry after the account recovers: its pages join the list.
-    discover.a2 = DISCOVER.a2;
-    fireEvent.click(screen.getByTestId('adu-discover-retry-a2'));
+    discover['22222222-2222-4222-8222-222222222222'] = DISCOVER['22222222-2222-4222-8222-222222222222'];
+    fireEvent.click(screen.getByTestId('adu-discover-retry-22222222-2222-4222-8222-222222222222'));
     await screen.findByText('Example Page');
-    expect(screen.queryByTestId('adu-discover-error-a2')).toBeNull();
+    expect(screen.queryByTestId('adu-discover-error-22222222-2222-4222-8222-222222222222')).toBeNull();
     expect(screen.getByText('7 pages found')).toBeTruthy();
   });
 
@@ -331,7 +331,7 @@ describe('ADU Add Page dialog — live discovery', () => {
     const postBodies: unknown[] = [];
     const { onCreated } = await openDialog(postBodies);
     await goToPagesStep();
-    fireEvent.click(screen.getByTestId('adu-page-checkbox-a1-fb-page-102'));
+    fireEvent.click(screen.getByTestId('adu-page-checkbox-11111111-1111-4111-8111-111111111111-fb-page-102'));
     fireEvent.click(screen.getByTestId('adu-pages-next-btn'));
     await screen.findByText('Sources');
 
@@ -356,7 +356,7 @@ describe('ADU Add Page dialog — live discovery', () => {
     const postBodies: unknown[] = [];
     const { onCreated } = await openDialog(postBodies);
     await goToPagesStep();
-    fireEvent.click(screen.getByTestId('adu-page-checkbox-a1-fb-page-107'));
+    fireEvent.click(screen.getByTestId('adu-page-checkbox-11111111-1111-4111-8111-111111111111-fb-page-107'));
     fireEvent.click(screen.getByTestId('adu-pages-next-btn'));
     await screen.findByText('Sources');
 
@@ -369,7 +369,7 @@ describe('ADU Add Page dialog — live discovery', () => {
       items: { discovered: { fbPageId: string; accountId: string }; sourcePlatform: string; sourceUsername: string }[];
     };
     expect(body.items).toEqual([
-      { discovered: { fbPageId: 'fb-page-107', accountId: 'a1' }, sourcePlatform: 'tiktok', sourceUsername: 'janhvi' },
+      { discovered: { fbPageId: 'fb-page-107', accountId: '11111111-1111-4111-8111-111111111111' }, sourcePlatform: 'tiktok', sourceUsername: 'janhvi' },
     ]);
   });
 });

@@ -168,18 +168,34 @@ const AduBulkCreateWithDiscoverySchema = AduBulkCreateSchema.extend({
   items: z.array(AduBulkItemWithDiscoverySchema).min(1).max(1000),
 });
 
-const AduCreateConfigWithDiscoverySchema = AduCreateConfigSchema.extend({
-  destinationId: AduCreateConfigSchema.shape.destinationId.optional(),
-  discovered: AduDiscoveredPageRefSchema.optional(),
-}).superRefine((item, ctx) => {
-  if (Boolean(item.destinationId) === Boolean(item.discovered)) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message:
-        'Each page needs either an existing destination or a discovered Facebook page.',
-    });
-  }
-});
+// `AduCreateConfigSchema` is a ZodEffects (its fixed-times check is a
+// `.superRefine`), so it has no `.extend`/`.shape` — unwrap the inner
+// object first. Unwrapping drops the original refinement, so the
+// fixed-times check is re-applied here verbatim (keep in sync with
+// `AduCreateConfigSchema` in `packages/contracts/src/domain/adu.ts`).
+const AduCreateConfigWithDiscoverySchema = AduCreateConfigSchema.innerType()
+  .extend({
+    destinationId: AduCreateConfigSchema.innerType().shape.destinationId.optional(),
+    discovered: AduDiscoveredPageRefSchema.optional(),
+  })
+  .superRefine((item, ctx) => {
+    if (item.scheduleType === 'fixed') {
+      if (!item.postingTimes || item.postingTimes.length !== item.postsPerDay) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Fixed posting requires ${item.postsPerDay} posting times.`,
+          path: ['postingTimes'],
+        });
+      }
+    }
+    if (Boolean(item.destinationId) === Boolean(item.discovered)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'Each page needs either an existing destination or a discovered Facebook page.',
+      });
+    }
+  });
 
 type DiscoverFetchResult =
   | { ok: true; pages: AduDiscoveredGraphPage[] }
@@ -372,12 +388,12 @@ export async function POST(
     // shared validation, cap gate, and create loop below all operate
     // on destination ids exactly as before. Items that fail to
     // resolve are reported per item, never dropped silently.
-    const { resolved, failed: resolveFailed } =
+    const { resolved: resolvedItems, failed: resolveFailed } =
       await resolveDiscoveredBulkItems(resolved.context, parsed.data.items);
     // Fixed-times validation lives in contracts (shared + per-item
     // 'separate' schedules, old wording), so the route and the tests
     // cannot drift apart.
-    const fixedError = validateAduBulkFixedTimes({ ...parsed.data, items: resolved });
+    const fixedError = validateAduBulkFixedTimes({ ...parsed.data, items: resolvedItems });
     if (fixedError) {
       return NextResponse.json({ error: fixedError }, { status: 400 });
     }
@@ -407,7 +423,7 @@ export async function POST(
             billingClient,
             resolved.context.workspaceId,
             'facebook',
-            resolved.map((item) => item.destinationId)
+            resolvedItems.map((item) => item.destinationId)
           );
           await assertFeatureAddWithinCap(
             billingClient,
@@ -427,7 +443,7 @@ export async function POST(
     }
     const created: string[] = [];
     const failed: Array<{ destinationId: string; error: string }> = [...resolveFailed];
-    for (const item of resolved) {
+    for (const item of resolvedItems) {
       const schedule = resolveAduBulkItemSchedule(item, parsed.data);
       const result = await createOne(resolved.context, {
         ...item,
