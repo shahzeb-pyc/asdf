@@ -7,7 +7,7 @@ Ported from the old fbuploadpro service (`backend_v3/services/facebook/auto-down
 ## Two-stage discovery
 
 1. **yt-dlp (TikTok only)** — flat-playlist extract with `--playlist-items`.
-   Resolves the TikTok `sec_uid` first via Countik (`GET https://countik.com/api/exist/<username>`, see `discovery/sec-uid.js`), targets `tiktokuser:{sec_uid}` (mobile feed, bypasses desktop captcha walls), falls back to `https://www.tiktok.com/@{handle}`. Mobile iPhone UA + full `Sec-Fetch-*` headers (see `discovery/ytdlp-args.js`), `--retries 5`, `--extractor-retries 10`, `--socket-timeout 30`, proxy from `DATACENTER_PROXY` / `PROXY_URL` / `HTTP_PROXY` / `HTTPS_PROXY` when set. Yields video IDs only; "new" is set difference against stored IDs (upsert `onConflict: 'config_id,source_reel_id'`, duplicates ignored).
+   Resolves the TikTok `sec_uid` first via the secuid Worker, with a direct Countik fallback (`GET https://countik.com/api/exist/<username>`, see `discovery/sec-uid.js`); when `COUNTIK_PROXY_URL` is set, the Countik fallback goes through that rotating HTTP proxy (the VPS IP is 403-blocked by Countik). Targets `tiktokuser:{sec_uid}` (mobile feed, bypasses desktop captcha walls), falls back to `https://www.tiktok.com/@{handle}`. Mobile iPhone UA + full `Sec-Fetch-*` headers (see `discovery/ytdlp-args.js`), `--retries 5`, `--extractor-retries 10`, `--socket-timeout 30`, proxy from `DATACENTER_PROXY` / `PROXY_URL` / `HTTP_PROXY` / `HTTPS_PROXY` when set (never `COUNTIK_PROXY_URL` — yt-dlp stays direct). Yields video IDs only; "new" is set difference against stored IDs (upsert `onConflict: 'config_id,source_reel_id'`, duplicates ignored).
 2. **Puppeteer (YouTube + Instagram/Facebook, and TikTok fallback)** — scrolls profile pages using logged-in sessions (persistent profile, manual login at startup).
 
 ```text
@@ -66,6 +66,7 @@ Browser scrapers, verbatim from the old service: TikTok `//a[contains(@href, "/v
 | `SKIP_STARTUP_LOGINS` | Skip interactive login prompts when `true` |
 | `YTDLP_BIN` | yt-dlp binary (default `yt-dlp`) |
 | `YTDLP_TIMEOUT_MS` | Subprocess timeout (default `600000`) |
+| `COUNTIK_PROXY_URL` | Rotating HTTP proxy for the direct Countik `sec_uid` fallback only (Worker tried first; yt-dlp never uses it) |
 
 ## Database RPCs (migration `supabase/migrations/20261030130000_adu_claim_rpc.sql`)
 

@@ -36,3 +36,25 @@ test('buildTiktokYtdlpArgs includes proxy when provided in options', () => {
   assert.ok(args.includes('--proxy'));
   assert.ok(args.includes('http://user:pass@1.2.3.4:8080'));
 });
+
+test('buildTiktokYtdlpArgs does not use COUNTIK_PROXY_URL (scraper resolve proxy only)', () => {
+  const keys = ['DATACENTER_PROXY', 'PROXY_URL', 'HTTP_PROXY', 'HTTPS_PROXY', 'COUNTIK_PROXY_URL'];
+  const saved = {};
+  for (const key of keys) {
+    saved[key] = process.env[key];
+    delete process.env[key];
+  }
+  process.env.COUNTIK_PROXY_URL = 'http://user:pass@1.2.3.4:8080';
+  try {
+    const args = buildTiktokYtdlpArgs(PROFILE_URL, 100);
+    assert.ok(!args.includes('--proxy'));
+  } finally {
+    for (const key of keys) {
+      if (saved[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = saved[key];
+      }
+    }
+  }
+});
