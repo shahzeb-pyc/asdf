@@ -539,6 +539,50 @@ describe('createProxyFetchFn', () => {
     expect((thrown as Error).message).toBe('proxy response has a malformed content-length');
   });
 
+  it('fails loud on an empty Content-Length instead of returning an empty 200', async () => {
+    // Regression (round-2 verification): readHeaders trims the value
+    // to '', and `Number('')` is 0 — a finite integer >= 0 — so the
+    // old check passed and proxyFetch returned HTTP 200 with an empty
+    // body. RFC 9110: Content-Length = 1*DIGIT, so empty is malformed.
+    const capture: FakeSocketCapture = { written: [], connectTargets: [] };
+    const fetchFn = createProxyFetchFn({
+      proxyUrl: FAKE_PROXY_URL,
+      connect: makeFakeConnect(capture, [
+        'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length:\r\n\r\n{}',
+      ]),
+    });
+    await expect(
+      fetchFn('https://www.tikwm.com/api/', { method: 'POST', body: 'url=x' }),
+    ).rejects.toThrow('proxy response has a malformed content-length');
+  });
+
+  it('fails loud on a whitespace-only Content-Length instead of returning an empty 200', async () => {
+    // Same hole: the value is trimmed to '' before validation.
+    const capture: FakeSocketCapture = { written: [], connectTargets: [] };
+    const fetchFn = createProxyFetchFn({
+      proxyUrl: FAKE_PROXY_URL,
+      connect: makeFakeConnect(capture, [
+        'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length:   \r\n\r\n{}',
+      ]),
+    });
+    await expect(
+      fetchFn('https://www.tikwm.com/api/', { method: 'POST', body: 'url=x' }),
+    ).rejects.toThrow('proxy response has a malformed content-length');
+  });
+
+  it('still returns a successful empty body for Content-Length: 0', async () => {
+    const capture: FakeSocketCapture = { written: [], connectTargets: [] };
+    const fetchFn = createProxyFetchFn({
+      proxyUrl: FAKE_PROXY_URL,
+      connect: makeFakeConnect(capture, [
+        'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 0\r\n\r\n',
+      ]),
+    });
+    const response = await fetchFn('https://www.tikwm.com/api/', { method: 'POST', body: 'url=x' });
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('');
+  });
+
   it('routes both resolve steps through the proxy (free, then Countik fallback)', async () => {    const capture: FakeSocketCapture = { written: [], connectTargets: [] };
     const fetchFn = createProxyFetchFn({
       proxyUrl: FAKE_PROXY_URL,

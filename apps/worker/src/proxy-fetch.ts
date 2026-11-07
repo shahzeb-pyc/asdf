@@ -531,16 +531,16 @@ export function createProxyFetchFn(
         } else {
           const contentLength = parsed.get('content-length');
           if (contentLength !== null) {
-            // `Number('abc')` is NaN and `readExact(NaN)` returns an
-            // empty body — a malformed length must fail loud, never a
-            // silent HTTP 200 with an empty body. A negative length
-            // must be the same InternalError, not a bare RangeError
-            // from `new Uint8Array(-5)`.
-            const length = Number(contentLength);
-            if (!Number.isInteger(length) || length < 0) {
+            // RFC 9110: Content-Length = 1*DIGIT. `Number('')` is 0, so
+            // an empty (or whitespace-only, trimmed by readHeaders)
+            // value used to pass as a length of 0 and return an empty
+            // body with HTTP 200 — fail-silent. Only strict digits
+            // pass; `abc`, `-5`, `1.5`, `5.0`, `+5`, `0x10`, `1e3`
+            // are all malformed, while `0` is a legitimate empty body.
+            if (!/^\d+$/.test(contentLength) || !Number.isSafeInteger(Number(contentLength))) {
               throw new InternalError('proxy response has a malformed content-length');
             }
-            body = await reader.readExact(length);
+            body = await reader.readExact(Number(contentLength));
           } else {
             body = await reader.readToEnd();
           }
