@@ -36,17 +36,95 @@ import {
   type DiscoveredPage,
 } from '@/lib/api/schemas/pages';
 import { reportError } from '@/lib/report-error';
+import {
+  findTimezoneEntry,
+  getTimezoneCurrentTime,
+  getTimezoneUtcOffset,
+} from '@/lib/timezones';
 import { getUserInitials } from '@/lib/user-initials';
 import { cn } from '@/lib/utils';
 import { FeatureCapText, useFeatureCap } from '@/components/billing/feature-cap';
 
 // The Pages timezone picker loads on demand, not in the ADU hub
-// page's first-load bundle: the timezone directory is only needed
-// once a user reaches step 4 inside the dialogue (same as the
-// Pages Add Page modal).
+// page's first-load bundle: the picker component is only needed
+// once a user opens it on step 4 (same as the Pages Add Page modal).
+// The collapsed summary below reads the timezone registry helpers
+// statically — a small table — so the selected zone is visible
+// without opening the picker.
 const SelectTimezoneStep = dynamic(() =>
   import('@/components/pages/add-page-schedule-steps').then((m) => m.SelectTimezoneStep)
 );
+
+/**
+ * Posting timezone, collapsed by default: a prominent summary of the
+ * selected zone (city · country, IANA, UTC offset, current local time)
+ * with a Change button that expands the Pages searchable picker inline
+ * below it. The picker itself is unchanged — only its visibility.
+ * Picking a zone closes the picker and updates the summary; closing
+ * without picking keeps the previous selection. Each instance keeps
+ * its own open state, so per-page cards open independently.
+ */
+function AduTimezoneField({
+  timezone,
+  searchQuery,
+  onSearchChange,
+  onSelectTimezone,
+  testIdPrefix,
+}: Readonly<{
+  timezone: string;
+  searchQuery: string;
+  onSearchChange: (value: string) => void;
+  onSelectTimezone: (iana: string) => void;
+  testIdPrefix: string;
+}>) {
+  const [pickerOpen, setPickerOpen] = React.useState(false);
+  const entry = findTimezoneEntry(timezone);
+  const currentTime = getTimezoneCurrentTime(timezone);
+  const closePicker = () => {
+    setPickerOpen(false);
+    onSearchChange('');
+  };
+  return (
+    <div>
+      <div
+        data-testid={`${testIdPrefix}-summary`}
+        className="flex items-center justify-between gap-3 rounded-md border p-3"
+      >
+        <div className="min-w-0">
+          <p className="font-medium">Posting Timezone</p>
+          <p className="text-body font-semibold">
+            {entry.city} · {entry.country}
+          </p>
+          <p className="text-metadata text-ink-sub">
+            {entry.iana} · {getTimezoneUtcOffset(timezone)}
+            {currentTime ? ` · ${currentTime}` : ''}
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          data-testid={`${testIdPrefix}-change-btn`}
+          onClick={() => (pickerOpen ? closePicker() : setPickerOpen(true))}
+        >
+          {pickerOpen ? 'Close' : 'Change'}
+        </Button>
+      </div>
+      {pickerOpen ? (
+        <div className="mt-2">
+          <SelectTimezoneStep
+            selectedTimezone={timezone}
+            timezoneSearchQuery={searchQuery}
+            onTimezoneSearchChange={onSearchChange}
+            onSelectTimezone={(iana) => {
+              onSelectTimezone(iana);
+              closePicker();
+            }}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 /**
  * One fixed posting time, the Pages treatment: the narrowed time
@@ -1393,15 +1471,13 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
                     </Select>
                   </div>
                   <div className="mt-2">
-                    <p className="font-medium">Posting Timezone</p>
-                    <div className="mt-2">
-                      <SelectTimezoneStep
-                        selectedTimezone={timezone}
-                        timezoneSearchQuery={timezoneSearchQuery}
-                        onTimezoneSearchChange={setTimezoneSearchQuery}
-                        onSelectTimezone={setTimezone}
-                      />
-                    </div>
+                    <AduTimezoneField
+                      timezone={timezone}
+                      searchQuery={timezoneSearchQuery}
+                      onSearchChange={setTimezoneSearchQuery}
+                      onSelectTimezone={setTimezone}
+                      testIdPrefix="adu-timezone"
+                    />
                   </div>
                   {scheduleType === 'dailyrandom' ? (
                     <p className="mt-2 text-body text-ink-sub">Balanced random times will be automatically generated upon saving.</p>
@@ -1455,15 +1531,13 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
                             </Select>
                           </div>
                           <div>
-                            <p className="font-medium">Posting Timezone</p>
-                            <div className="mt-2">
-                              <SelectTimezoneStep
-                                selectedTimezone={s.timezone}
-                                timezoneSearchQuery={pageTimezoneSearch[row.key] ?? ''}
-                                onTimezoneSearchChange={(value) => setPageTimezoneSearch((prev) => ({ ...prev, [row.key]: value }))}
-                                onSelectTimezone={(iana) => updatePageSchedule(row.key, { timezone: iana })}
-                              />
-                            </div>
+                            <AduTimezoneField
+                              timezone={s.timezone}
+                              searchQuery={pageTimezoneSearch[row.key] ?? ''}
+                              onSearchChange={(value) => setPageTimezoneSearch((prev) => ({ ...prev, [row.key]: value }))}
+                              onSelectTimezone={(iana) => updatePageSchedule(row.key, { timezone: iana })}
+                              testIdPrefix={`adu-timezone-${row.key}`}
+                            />
                           </div>
                           {scheduleType === 'fixed' ? (
                             <div className="flex flex-col gap-2">

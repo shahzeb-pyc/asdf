@@ -456,26 +456,38 @@ describe('ADU Add Page dialog — live discovery', () => {
     expect((screen.getByText('Start Automation') as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it('step 4 timezone is the Pages searchable picker, preselected with Asia/Karachi', async () => {
+  it('step 4 timezone is collapsed by default: a prominent summary, picker opens on Change', async () => {
     const postBodies: unknown[] = [];
     const { onCreated } = await goToPostingStep(postBodies);
     // No free-text timezone input remains anywhere in step 4.
     expect(document.querySelector('#adu-timezone')).toBeNull();
     expect(document.querySelector('#adu-bulk-11111111-1111-4111-8111-111111111111-fb-page-102-timezone')).toBeNull();
-    // The Pages picker loads (lazy) with the current timezone
-    // selected — the user must not re-pick a timezone they have.
-    const note = await screen.findByTestId('add-page-timezone-note');
-    expect(note.textContent).toMatch(/Karachi/);
-    expect(note.textContent).toMatch(/Asia\/Karachi/);
+    // Collapsed by default: the summary shows the selected zone
+    // prominently, and no picker list is rendered at all.
+    const summary = screen.getByTestId('adu-timezone-summary');
+    expect(summary.textContent).toMatch(/Posting Timezone/);
+    expect(summary.textContent).toMatch(/Karachi/);
+    expect(summary.textContent).toMatch(/Pakistan/);
+    expect(summary.textContent).toMatch(/Asia\/Karachi/);
+    expect(summary.textContent).toMatch(/UTC\+05:00/);
+    expect(screen.queryByTestId('add-page-timezone-search-input')).toBeNull();
+    expect(screen.queryByTestId('add-page-timezone-note')).toBeNull();
     // The shortened note, with no 5-hour promise.
     expect(screen.getByText('Balanced random times will be automatically generated upon saving.')).toBeTruthy();
     expect(screen.queryByText(/5-hour/)).toBeNull();
-    // Search narrows the directory; picking another zone changes
-    // the submitted timezone.
+    // Change opens the full Pages picker; picking another zone
+    // updates the summary and closes the list.
+    fireEvent.click(screen.getByTestId('adu-timezone-change-btn'));
+    const note = await screen.findByTestId('add-page-timezone-note');
+    expect(note.textContent).toMatch(/Karachi/);
     fireEvent.change(screen.getByTestId('add-page-timezone-search-input'), { target: { value: 'Tokyo' } });
     fireEvent.click(await screen.findByTestId('add-page-timezone-option-Asia/Tokyo'));
-    expect(note.textContent).toMatch(/Tokyo/);
-    expect(note.textContent).toMatch(/Asia\/Tokyo/);
+    expect(screen.queryByTestId('add-page-timezone-search-input')).toBeNull();
+    expect(screen.queryByTestId('add-page-timezone-note')).toBeNull();
+    const updated = screen.getByTestId('adu-timezone-summary');
+    expect(updated.textContent).toMatch(/Tokyo/);
+    expect(updated.textContent).toMatch(/Japan/);
+    expect(updated.textContent).toMatch(/Asia\/Tokyo/);
     fireEvent.click(screen.getByText('Start Automation'));
     await screen.findByText('Created 1 page.');
     expect(onCreated).toHaveBeenCalled();
@@ -483,6 +495,63 @@ describe('ADU Add Page dialog — live discovery', () => {
     expect(body.timezone).toBe('Asia/Tokyo');
     expect(body.postsPerDay).toBe(1);
     expect(body.scheduleType).toBe('dailyrandom');
+  });
+
+  it('step 4 closing the timezone picker without picking keeps the previous selection', async () => {
+    await goToPostingStep();
+    expect(screen.queryByTestId('add-page-timezone-search-input')).toBeNull();
+    // Open, narrow the search, then close without picking.
+    fireEvent.click(screen.getByTestId('adu-timezone-change-btn'));
+    await screen.findByTestId('add-page-timezone-search-input');
+    fireEvent.change(screen.getByTestId('add-page-timezone-search-input'), { target: { value: 'Tokyo' } });
+    await screen.findByTestId('add-page-timezone-option-Asia/Tokyo');
+    fireEvent.click(screen.getByTestId('adu-timezone-change-btn'));
+    expect(screen.queryByTestId('add-page-timezone-search-input')).toBeNull();
+    expect(screen.queryByTestId('add-page-timezone-note')).toBeNull();
+    // The summary still shows the previous selection, and the
+    // reopened picker is unfiltered.
+    expect(screen.getByTestId('adu-timezone-summary').textContent).toMatch(/Asia\/Karachi/);
+    fireEvent.click(screen.getByTestId('adu-timezone-change-btn'));
+    await screen.findByTestId('add-page-timezone-search-input');
+    expect(screen.getByTestId('add-page-timezone-option-Asia/Karachi')).toBeTruthy();
+  });
+
+  it('step 4 separate-scope timezone pickers open independently', async () => {
+    await openDialog();
+    // Two accounts, two pages — one per account.
+    fireEvent.click(screen.getByText('Shahzeb Malik'));
+    fireEvent.click(screen.getByText('Example Account'));
+    fireEvent.click(screen.getByTestId('adu-accounts-next-btn'));
+    await screen.findByTestId('adu-pages-list');
+    fireEvent.click(screen.getByTestId('adu-page-checkbox-11111111-1111-4111-8111-111111111111-fb-page-102'));
+    fireEvent.click(screen.getByTestId('adu-page-checkbox-22222222-2222-4222-8222-222222222222-fb-page-103'));
+    fireEvent.click(screen.getByTestId('adu-pages-next-btn'));
+    await screen.findByText('Sources');
+    for (const input of screen.getAllByPlaceholderText('@username')) {
+      fireEvent.change(input, { target: { value: 'sdf' } });
+    }
+    fireEvent.click(screen.getByTestId('adu-sources-next-btn'));
+    await screen.findByText('Posting Time');
+    fireEvent.click(screen.getByText('Set separately'));
+    const firstKey = '11111111-1111-4111-8111-111111111111:fb-page-102';
+    const secondKey = '22222222-2222-4222-8222-222222222222:fb-page-103';
+    // Both cards start collapsed: two summaries, no picker list —
+    // the dialogue stays short even with many pages.
+    expect(screen.getByTestId(`adu-timezone-${firstKey}-summary`).textContent).toMatch(/Asia\/Karachi/);
+    expect(screen.getByTestId(`adu-timezone-${secondKey}-summary`).textContent).toMatch(/Asia\/Karachi/);
+    expect(screen.queryByTestId('add-page-timezone-search-input')).toBeNull();
+    expect(screen.queryByTestId('add-page-timezone-note')).toBeNull();
+    // Opening the first card's picker leaves the second collapsed.
+    fireEvent.click(screen.getByTestId(`adu-timezone-${firstKey}-change-btn`));
+    await screen.findByTestId('add-page-timezone-search-input');
+    expect(screen.getAllByTestId('add-page-timezone-search-input')).toHaveLength(1);
+    expect(screen.getByTestId(`adu-timezone-${secondKey}-summary`).textContent).toMatch(/Asia\/Karachi/);
+    // Picking in the first card updates only its summary and closes it.
+    fireEvent.change(screen.getByTestId('add-page-timezone-search-input'), { target: { value: 'Tokyo' } });
+    fireEvent.click(await screen.findByTestId('add-page-timezone-option-Asia/Tokyo'));
+    expect(screen.queryByTestId('add-page-timezone-search-input')).toBeNull();
+    expect(screen.getByTestId(`adu-timezone-${firstKey}-summary`).textContent).toMatch(/Asia\/Tokyo/);
+    expect(screen.getByTestId(`adu-timezone-${secondKey}-summary`).textContent).toMatch(/Asia\/Karachi/);
   });
 
   it('step 4 Posts Per Day is a 1–12 dropdown that resizes the fixed times', async () => {
@@ -529,14 +598,25 @@ describe('ADU Add Page dialog — live discovery', () => {
     // The shortened note, with no 5-hour promise.
     expect(screen.getByText('Balanced random times will be automatically generated upon saving.')).toBeTruthy();
     expect(screen.queryByText(/5-hour/)).toBeNull();
-    // One timezone picker for the one selected page, preselected.
-    const notes = await screen.findAllByTestId('add-page-timezone-note');
-    expect(notes).toHaveLength(1);
-    expect(notes[0]?.textContent).toMatch(/Asia\/Karachi/);
+    const pageKey = '11111111-1111-4111-8111-111111111111:fb-page-102';
+    // One collapsed timezone summary for the one selected page,
+    // preselected — no picker list rendered by default.
+    const summary = screen.getByTestId(`adu-timezone-${pageKey}-summary`);
+    expect(summary.textContent).toMatch(/Karachi/);
+    expect(summary.textContent).toMatch(/Asia\/Karachi/);
+    expect(screen.queryByTestId('add-page-timezone-note')).toBeNull();
+    expect(screen.queryByTestId('add-page-timezone-search-input')).toBeNull();
+    // Open the per-page picker and pick Tokyo: the summary updates
+    // and the list closes.
+    fireEvent.click(screen.getByTestId(`adu-timezone-${pageKey}-change-btn`));
+    await screen.findByTestId('add-page-timezone-search-input');
+    fireEvent.change(screen.getByTestId('add-page-timezone-search-input'), { target: { value: 'Tokyo' } });
+    fireEvent.click(await screen.findByTestId('add-page-timezone-option-Asia/Tokyo'));
+    expect(screen.queryByTestId('add-page-timezone-search-input')).toBeNull();
+    expect(screen.getByTestId(`adu-timezone-${pageKey}-summary`).textContent).toMatch(/Asia\/Tokyo/);
     // Per-page Posts Per Day is a dropdown; picking 2 gives two
     // fixed-time fields for that page.
     fireEvent.click(screen.getByText('Fixed Posting Times'));
-    const pageKey = '11111111-1111-4111-8111-111111111111:fb-page-102';
     await user.click(screen.getByTestId(`adu-posts-per-day-select-${pageKey}`));
     await user.click(screen.getByRole('option', { name: '2' }));
     expect(screen.getAllByTestId(new RegExp(`^adu-fixed-time-${pageKey.replace(/:/g, '\\:')}-`))).toHaveLength(2);
@@ -551,7 +631,7 @@ describe('ADU Add Page dialog — live discovery', () => {
       items: { schedule: { timezone: string; postsPerDay: number; postingTimes: string[] } }[];
     };
     expect(body.items[0]?.schedule).toEqual({
-      timezone: 'Asia/Karachi',
+      timezone: 'Asia/Tokyo',
       postsPerDay: 2,
       postingTimes: ['09:00', '10:00'],
     });
