@@ -939,6 +939,12 @@ export function PurchaseView({
         { schema: ZeroDueCheckoutResponseSchema }
       );
       await load();
+      // A zero-due activation IS the purchase: the period starts at
+      // once, with no admin step. Refresh the shared entitlement
+      // here — it is the one explicit re-check after a purchase, so
+      // My Plan and the sections the user opens next read Paid, not
+      // the Free value seeded at login.
+      await sharedEntitlement.refetch();
       setAppliedCoupon(null);
       try {
         sessionStorage.removeItem(DRAFT_KEY);

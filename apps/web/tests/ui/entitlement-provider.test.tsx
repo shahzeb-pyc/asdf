@@ -6,11 +6,19 @@
  * refetch after a proven Free clears it to the Studio placeholder
  * instead of sticking Free; sequential refetches converge to the
  * latest completed fetch; genuine Free still renders Free.
+ *
+ * New design (owner decision 2026-11-07): the provider starts from
+ * the tenant layout's server seed and never refetches on its own —
+ * no navigation re-check, no window-focus refetch, no polling. The
+ * only later re-check is an explicit refetch (purchase success,
+ * manual retry). These tests pin exactly that: a seeded session
+ * makes zero API calls across focus and navigation, and an explicit
+ * refetch is the one path that fetches again.
  */
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import * as React from 'react';
-import { render, screen, waitFor, act } from '@testing-library/react';
+import { render, screen, waitFor, act, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   EntitlementProvider,
@@ -68,6 +76,21 @@ function freeEntitlement(): EntitlementResponse {
   };
 }
 
+function expiredEntitlement(): EntitlementResponse {
+  return {
+    plan: 'expired',
+    active: false,
+    counts: { facebook: 0, instagram: 0, threads: 0, x: 0, tiktok: 0, youtube: 0 },
+    usage: { facebook: 0, instagram: 0, threads: 0, x: 0, tiktok: 0, youtube: 0 },
+    periodEndsAt: null,
+    periodStartsAt: null,
+    canPost: false,
+    readOnly: true,
+    reason: 'expired',
+    hasPriorPeriod: true,
+  };
+}
+
 function WordProbe(): React.JSX.Element {
   const word = usePlanWord(false);
   return <span data-testid="word-probe">{word ?? 'Studio'}</span>;
@@ -81,12 +104,29 @@ function GateProbe(): React.JSX.Element {
   );
 }
 
-function renderShared(client: QueryClient): void {
-  render(
+function RefetchProbe(): React.JSX.Element {
+  const shared = useSharedEntitlement();
+  return (
+    <button type="button" data-testid="refetch-probe" onClick={() => void shared.refetch()}>
+      Refetch
+    </button>
+  );
+}
+
+function renderShared(
+  client: QueryClient,
+  initialEntitlement?: EntitlementResponse | null
+): ReturnType<typeof render> {
+  return render(
     <QueryClientProvider client={client}>
-      <EntitlementProvider subdomain="acme" adminOnly={false}>
+      <EntitlementProvider
+        subdomain="acme"
+        adminOnly={false}
+        initialEntitlement={initialEntitlement}
+      >
         <WordProbe />
         <GateProbe />
+        <RefetchProbe />
       </EntitlementProvider>
     </QueryClientProvider>
   );
@@ -157,6 +197,15 @@ describe('shared entitlement query (gate + word agreement)', () => {
     expect(apiGet).toHaveBeenCalledTimes(1);
   });
 
+  it('expired data: Expired word, no dialog, section renders', async () => {
+    apiGet.mockResolvedValue(expiredEntitlement());
+    renderShared(makeClient());
+    await waitFor(() => expect(screen.getByTestId('word-probe')).toHaveTextContent('Expired'));
+    expect(screen.getByTestId('gate-child')).toBeInTheDocument();
+    expect(screen.queryByText("You're on the Free plan")).toBeNull();
+    expect(apiGet).toHaveBeenCalledTimes(1);
+  });
+
   it('Free success followed by a failed refetch clears to Studio and opens the gate', async () => {
     apiGet.mockResolvedValueOnce(freeEntitlement());
     const client = makeClient();
@@ -207,6 +256,70 @@ describe('shared entitlement query (gate + word agreement)', () => {
     expect(screen.getByTestId('word-probe')).toHaveTextContent('Studio');
     expect(screen.getByTestId('gate-child')).toBeInTheDocument();
     expect(screen.queryByText("You're on the Free plan")).toBeNull();
+  });
+});
+
+describe('once-per-session seed (no automatic refetch)', () => {
+  it('seeded paid: zero API calls, Paid word, no dialog', async () => {
+    renderShared(makeClient(), paidEntitlement());
+    await waitFor(() => expect(screen.getByTestId('word-probe')).toHaveTextContent('Paid'));
+    expect(screen.getByTestId('gate-child')).toBeInTheDocument();
+    expect(screen.queryByText("You're on the Free plan")).toBeNull();
+    expect(apiGet).not.toHaveBeenCalled();
+  });
+
+  it('seeded paid: window focus and section navigation never refetch', async () => {
+    const client = makeClient();
+    const seed = paidEntitlement();
+    const makeTree = () => (
+      <QueryClientProvider client={client}>
+        <EntitlementProvider subdomain="acme" adminOnly={false} initialEntitlement={seed}>
+          <WordProbe />
+          <GateProbe />
+          <RefetchProbe />
+        </EntitlementProvider>
+      </QueryClientProvider>
+    );
+    const result = render(makeTree());
+    await waitFor(() => expect(screen.getByTestId('word-probe')).toHaveTextContent('Paid'));
+    // A tab-switch back (visibilitychange is what React Query v5
+    // listens to) and a plain focus event: neither may refetch.
+    window.dispatchEvent(new Event('visibilitychange'));
+    window.dispatchEvent(new Event('focus'));
+    // A section navigation: the provider used to invalidate on every
+    // pathname change, which refetched and unmounted the section
+    // while the new answer pended — the reload paid users reported.
+    // The same client and tree, only the pathname changed.
+    navState.pathname = '/tenant/acme/pages';
+    result.rerender(makeTree());
+    await waitFor(() => expect(screen.getByTestId('word-probe')).toHaveTextContent('Paid'));
+    expect(screen.getByTestId('gate-child')).toBeInTheDocument();
+    expect(apiGet).not.toHaveBeenCalled();
+  });
+
+  it('unseeded: one fetch on mount, window focus does not refetch', async () => {
+    apiGet.mockResolvedValue(paidEntitlement());
+    renderShared(makeClient());
+    await waitFor(() => expect(screen.getByTestId('word-probe')).toHaveTextContent('Paid'));
+    expect(apiGet).toHaveBeenCalledTimes(1);
+    window.dispatchEvent(new Event('visibilitychange'));
+    window.dispatchEvent(new Event('focus'));
+    await waitFor(() => expect(apiGet).toHaveBeenCalledTimes(1));
+    expect(apiGet).toHaveBeenCalledTimes(1);
+  });
+
+  it('seeded free then an explicit refetch returns paid: dialog clears (the purchase-refresh path)', async () => {
+    renderShared(makeClient(), freeEntitlement());
+    await waitFor(() => expect(screen.getByTestId('word-probe')).toHaveTextContent('Free'));
+    expect(screen.getByText("You're on the Free plan")).toBeInTheDocument();
+    expect(apiGet).not.toHaveBeenCalled();
+
+    apiGet.mockResolvedValueOnce(paidEntitlement());
+    fireEvent.click(screen.getByTestId('refetch-probe'));
+    await waitFor(() => expect(screen.getByTestId('word-probe')).toHaveTextContent('Paid'));
+    expect(screen.getByTestId('gate-child')).toBeInTheDocument();
+    expect(screen.queryByText("You're on the Free plan")).toBeNull();
+    expect(apiGet).toHaveBeenCalledTimes(1);
   });
 });
 

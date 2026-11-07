@@ -3,13 +3,23 @@
 /**
  * Shared entitlement query — the ONE plan check for the tenant shell.
  *
- * Before this rebuild, the free-plan gate ran its own apiGet effect
- * and the sidebar plan word ran its own React Query, so the dialog
- * and the word could disagree within one page state (each fetch could
- * answer differently). Now the tenant layout mounts this provider
- * once, and the gate, the plan word, and the billing view all read
- * the same query data through `useSharedEntitlement`. One fetch, one
+ * One fetch per document, cached for the whole session (owner
+ * decision 2026-11-07): the tenant layout reads entitlement once on
+ * the server and passes it in as `initialEntitlement`; the query
+ * starts from that seed and never refetches on its own — no
+ * navigation re-check, no window-focus refetch, no polling, no
+ * re-check loop. The gate, the sidebar plan word, the topbar pill,
+ * the feature-cap text, and the billing view all read the same
+ * query data through `useSharedEntitlement`. One fetch, one
  * decision — nothing else in the shell fetches entitlement.
+ *
+ * If the server seed failed, `initialEntitlement` is null and the
+ * query fetches once from the entitlement API route on mount, then
+ * likewise never refetches automatically. The only later re-checks
+ * are explicit: `refetch` is called by billing after a purchase /
+ * upgrade succeeds, and by the manual retry buttons on My Plan and
+ * Purchase. A full page reload re-runs the layout and re-seeds —
+ * that is the manual refresh path.
  *
  * Free-only-when-proven: the provider exposes ONLY proven data.
  * `entitlement` is non-null exactly when the latest completed fetch
@@ -21,23 +31,15 @@
  * unproven data. While a refetch is in flight, the previous proven
  * value is kept (no flash); only a settled failure clears it.
  *
- * Freshness (preserved from the old gate): staleTime 0 plus the
- * app's refetch-on-focus default, and an invalidation on every SPA
- * navigation (pathname change) so a plan that becomes paid while
- * the tab is open unblocks sections without a full reload. All
- * refetches go through this one query — no duplicate in-flight
- * checks from separate fetchers. Out-of-order responses cannot
- * overwrite newer data: React Query serializes fetches for one key
- * (an invalidation during a fetch queues a follow-up fetch that
- * runs after it), so the last completed fetch is always the latest
- * initiated one.
+ * States: paid / free / expired / admin / UNKNOWN (null). The plan
+ * value is explicit in the contract — expired is a real plan, not a
+ * derivation — so the gate, the word, and Home can never disagree
+ * about it.
  */
 
 import * as React from 'react';
-import { usePathname } from 'next/navigation';
 import {
   useQuery,
-  useQueryClient,
   type UseQueryResult,
 } from '@tanstack/react-query';
 import {
@@ -65,7 +67,11 @@ export interface SharedEntitlementState {
    * success. Consumers render neutral states from this, never Free.
    */
   isUnproven: boolean;
-  /** Re-run the shared query (used by billing's retry). */
+  /**
+   * Re-run the shared query. The ONLY re-check path: called by
+   * billing after a purchase/upgrade succeeds and by the manual
+   * retry buttons. Nothing automatic ever calls this.
+   */
   refetch: () => Promise<unknown>;
 }
 
@@ -91,16 +97,21 @@ const EntitlementContext = React.createContext<SharedEntitlementState | null>(nu
 export interface EntitlementProviderProps {
   subdomain: string;
   adminOnly: boolean;
+  /**
+   * The entitlement the tenant layout read on the server for this
+   * document. Null when the server read failed — the query then
+   * fetches once from the API route on mount instead.
+   */
+  initialEntitlement?: EntitlementResponse | null | undefined;
   children: React.ReactNode;
 }
 
 export function EntitlementProvider({
   subdomain,
   adminOnly,
+  initialEntitlement,
   children,
 }: Readonly<EntitlementProviderProps>) {
-  const pathname = usePathname();
-  const queryClient = useQueryClient();
   const query: UseQueryResult<EntitlementResponse, Error> = useQuery({
     queryKey: entitlementQueryKey(subdomain),
     queryFn: ({ signal }) =>
@@ -109,21 +120,16 @@ export function EntitlementProvider({
         signal,
       }),
     enabled: !adminOnly,
-    staleTime: 0,
+    // Fetched once per session, never again on its own: the seed
+    // (or the one mount fetch) is the answer until an explicit
+    // refetch after a purchase/upgrade or a manual retry. No
+    // navigation invalidation, no focus refetch, no polling.
+    staleTime: Infinity,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    initialData: initialEntitlement ?? undefined,
   });
-
-  // Re-check on SPA navigation, through the one query. The first
-  // run is skipped: mount already fetches once via useQuery, and
-  // invalidating immediately would double-fetch.
-  const firstPathnameRef = React.useRef(true);
-  React.useEffect(() => {
-    if (firstPathnameRef.current) {
-      firstPathnameRef.current = false;
-      return;
-    }
-    if (adminOnly) return;
-    void queryClient.invalidateQueries({ queryKey: entitlementQueryKey(subdomain) });
-  }, [pathname, adminOnly, queryClient, subdomain]);
 
   // Observability parity with the old gate's fetch-error report:
   // a failed entitlement check is logged loudly (console transport

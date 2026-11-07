@@ -90,9 +90,9 @@ export async function loadHomeData(subdomain: string): Promise<HomeData> {
 
     const entitlement = await getEntitlement(supabase, session.userId);
     const isPaidActive = entitlement.plan === 'paid' && entitlement.active;
-    const isExpired =
-      (entitlement.plan === 'paid' && !entitlement.active) ||
-      (entitlement.plan === 'free' && entitlement.hasPriorPeriod);
+    // Expired is an explicit plan value — never re-derived here, so
+    // Home's card cannot disagree with the sidebar word or the gate.
+    const isExpired = entitlement.plan === 'expired';
     if (!isPaidActive) {
       return { kind: isExpired ? 'expired' : 'free' };
     }

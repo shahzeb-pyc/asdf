@@ -12,6 +12,7 @@ import { CommandPaletteHost } from '@/components/shell/command-palette-host';
 import { TopbarPlanPill } from '@/components/shell/topbar-plan-pill';
 import { DownloadTray } from '@/components/shell/download-tray';
 import { WorkspaceLifecycleGuard } from '@/components/workspace/workspace-lifecycle-guard';
+import type { EntitlementResponse } from '@fbuploadpro/contracts';
 import { FreePlanGate } from '@/components/billing/free-plan-gate';
 import { EntitlementProvider } from '@/components/billing/entitlement-provider';
 import { PostHogIdentify } from '@/components/posthog-identify';
@@ -33,6 +34,12 @@ export interface UserShellProps {
   workspaceName?: string | undefined;
   sessionUserId: string;
   sessionEmail: string;
+  /**
+   * The entitlement the tenant layout read on the server for this
+   * document. Null when the server read failed — the provider then
+   * fetches once from the API route on mount instead.
+   */
+  initialEntitlement?: EntitlementResponse | null | undefined;
   children: React.ReactNode;
 }
 
@@ -63,14 +70,18 @@ export function UserShell({
   workspaceName,
   sessionUserId,
   sessionEmail,
+  initialEntitlement,
   children,
 }: Readonly<UserShellProps>) {
   return (
     <DataProvider subdomain={subdomain}>
       {/* The one entitlement query for the whole shell: the gate,
           the sidebar plan word, and the billing view all read this
-          provider's data, so they can never disagree. */}
-      <EntitlementProvider subdomain={subdomain} adminOnly={false}>
+          provider's data, so they can never disagree. It starts
+          from the layout's server seed and never refetches on its
+          own — once per session, refreshed only after a purchase
+          or a manual refresh. */}
+      <EntitlementProvider subdomain={subdomain} adminOnly={false} initialEntitlement={initialEntitlement}>
       <SidebarProvider>
         {/* Skip link: the frame's first focusable element (spec 130 §5.1). */}
         <a

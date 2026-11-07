@@ -72,13 +72,13 @@ describe('TopbarPlanPill', () => {
   });
 
   it('does not carry ml-auto on the Expired pill', () => {
-    entitlementState.value = entitlement({ active: false, hasPriorPeriod: true, periodEndsAt: null });
+    entitlementState.value = entitlement({ plan: 'expired', active: false, hasPriorPeriod: true, periodEndsAt: null });
     renderPill();
     expect(screen.getByTestId('topbar-plan-pill').className).not.toContain('ml-auto');
   });
 
   it('does not carry ml-auto on the Free pill', () => {
-    entitlementState.value = entitlement({ active: false, hasPriorPeriod: false, periodEndsAt: null });
+    entitlementState.value = entitlement({ plan: 'free', active: false, hasPriorPeriod: false, periodEndsAt: null });
     renderPill();
     expect(screen.getByTestId('topbar-plan-pill').className).not.toContain('ml-auto');
   });
@@ -144,13 +144,13 @@ describe('TopbarPlanPill', () => {
   });
 
   it('keeps Expired red', () => {
-    entitlementState.value = entitlement({ active: false, hasPriorPeriod: true, periodEndsAt: null });
+    entitlementState.value = entitlement({ plan: 'expired', active: false, hasPriorPeriod: true, periodEndsAt: null });
     renderPill();
     expect(screen.getByTestId('topbar-plan-pill').className).toContain('text-signal-critical');
   });
 
   it('keeps Upgrade gold', () => {
-    entitlementState.value = entitlement({ active: false, hasPriorPeriod: false, periodEndsAt: null });
+    entitlementState.value = entitlement({ plan: 'free', active: false, hasPriorPeriod: false, periodEndsAt: null });
     renderPill();
     expect(screen.getByTestId('topbar-plan-pill').className).toContain('text-brand-gold');
   });
@@ -165,7 +165,7 @@ describe('TopbarPlanPill', () => {
   });
 
   it('shows Expired and links to My Plan', () => {
-    entitlementState.value = entitlement({ active: false, hasPriorPeriod: true, periodEndsAt: null });
+    entitlementState.value = entitlement({ plan: 'expired', active: false, hasPriorPeriod: true, periodEndsAt: null });
     renderPill();
     const pill = screen.getByTestId('topbar-plan-pill');
     expect(pill).toHaveTextContent('Expired');
@@ -173,7 +173,7 @@ describe('TopbarPlanPill', () => {
   });
 
   it('shows Upgrade for Free and links to Purchase', () => {
-    entitlementState.value = entitlement({ active: false, hasPriorPeriod: false, periodEndsAt: null });
+    entitlementState.value = entitlement({ plan: 'free', active: false, hasPriorPeriod: false, periodEndsAt: null });
     renderPill();
     const pill = screen.getByTestId('topbar-plan-pill');
     expect(pill).toHaveTextContent('Upgrade');

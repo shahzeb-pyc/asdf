@@ -10,9 +10,10 @@
  * `remaining` is what is left. The display renders only for an
  * active paid plan: while loading, on error, for Free/expired
  * users, and for admins (who are never capped) it renders nothing,
- * so it can never flash a wrong number. Freshness comes from
- * `staleTime: 0` plus the app's window-focus refetch — returning to
- * a list re-reads the entitlement; no polling.
+ * so it can never flash a wrong number. Freshness comes from the
+ * shared query's once-per-session seed — the cap refreshes only
+ * after a purchase or a manual refresh, like every other plan
+ * surface; no polling, no focus refetch.
  */
 import * as React from 'react';
 
