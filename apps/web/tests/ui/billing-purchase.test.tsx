@@ -570,6 +570,39 @@ describe('Billing Purchase', () => {
     expect(screen.queryByText('Upload your payment screenshot')).toBeNull();
   });
 
+  it('checkout shows the compact coupon directly below the order summary', async () => {
+    renderBilling('purchase');
+    await goToCheckout();
+    // Both live in the right column now: summary first, coupon second.
+    const summary = await screen.findByText('Order summary');
+    const couponInput = screen.getByLabelText('Coupon code') as HTMLInputElement;
+    expect(couponInput.placeholder).toBe('e.g. SAVE20');
+    // DOM order is the placement contract: the coupon input follows
+    // the summary heading, inside the summary's column — not the
+    // pay card's column, where it used to sit above "Choose how to pay".
+    expect(
+      summary.compareDocumentPosition(couponInput) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    const summaryCard = summary.closest('[data-slot="card"]');
+    expect(summaryCard).not.toBeNull();
+    expect(summaryCard?.parentElement?.contains(couponInput)).toBe(true);
+    // The compact card drops the visible label row but keeps the
+    // title and hint.
+    expect(screen.getByText('Coupon')).toBeInTheDocument();
+    expect(screen.getByText('Have a coupon code? Apply it before you pay.')).toBeInTheDocument();
+  });
+
+  it('checkout coupon input uppercases typed codes and Apply stays disabled while empty', async () => {
+    renderBilling('purchase');
+    await goToCheckout();
+    const couponInput = (await screen.findByLabelText('Coupon code')) as HTMLInputElement;
+    const apply = screen.getByRole('button', { name: 'Apply' });
+    expect(apply).toBeDisabled();
+    fireEvent.change(couponInput, { target: { value: 'save20' } });
+    expect(couponInput.value).toBe('SAVE20');
+    expect(apply).not.toBeDisabled();
+  });
+
   it('submit waits for the screenshot upload: disabled while uploading, enabled once it lands', async () => {
     // Holder object, not a bare `let`: TS narrows a bare variable
     // assigned only inside a closure to `never` at the release site.
