@@ -1290,15 +1290,6 @@ export function PurchaseView({
         ) : null}
         <div className="flex flex-col items-start gap-6 lg:flex-row">
           <div className="order-2 flex min-w-0 flex-1 flex-col gap-6 lg:order-1">
-            <CouponSection
-              subdomain={subdomain}
-              counts={effectiveCounts}
-              applied={appliedCoupon}
-              onAppliedChange={setAppliedCoupon}
-              onActivateZeroDue={() => void submitZeroDue()}
-              activating={activatingZeroDue}
-              disabled={busy !== null || activatingZeroDue}
-            />
             <Card>
               <CardHeader>
                 <CardTitle>Choose how to pay</CardTitle>
@@ -1557,7 +1548,18 @@ export function PurchaseView({
               </CardContent>
             </Card>
           </div>
-          <div className="w-full shrink-0 lg:sticky lg:top-20 lg:w-90 lg:self-start">{orderSummary}</div>
+          <div className="flex w-full shrink-0 flex-col gap-6 lg:sticky lg:top-20 lg:w-90 lg:self-start">
+            {orderSummary}
+            <CouponSection
+              subdomain={subdomain}
+              counts={effectiveCounts}
+              applied={appliedCoupon}
+              onAppliedChange={setAppliedCoupon}
+              onActivateZeroDue={() => void submitZeroDue()}
+              activating={activatingZeroDue}
+              disabled={busy !== null || activatingZeroDue}
+            />
+          </div>
         </div>
       </div>
     );
