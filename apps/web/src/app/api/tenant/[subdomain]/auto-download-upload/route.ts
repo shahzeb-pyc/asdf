@@ -1,21 +1,27 @@
 import { type NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import {
   AduBulkCreateSchema,
+  AduBulkItemSchema,
   AduCreateConfigSchema,
   generateDailyRandomTimes,
   resolveAduBulkItemSchedule,
   sanitizeSourceIdentity,
   validateAduBulkFixedTimes,
+  type AduBulkItem,
   type AduSourcePlatform,
 } from '@fbuploadpro/contracts';
 import {
   aduContext,
   aduDestinationKeysForCap,
+  ensureAduDestination,
+  fetchAduAccountDiscoveredPages,
   registerAduConfigUsage,
   aduMissingTable,
   aduRpcMissing,
   buildAduConfigView,
   type AduConfigView,
+  type AduDiscoveredGraphPage,
 } from '@/lib/server/adu';
 import { assertFeatureAddWithinCap } from '@/lib/billing/entitlement';
 import { logServerError } from '@/lib/server-analytics';
@@ -125,6 +131,157 @@ interface AduRouteContext {
   supabase: SupabaseClient;
 }
 
+/**
+ * A discovered page reference: a Facebook page id under one account,
+ * as returned by the Pages picker's discover route. The server never
+ * trusts a client-supplied page token — submit re-discovers the
+ * account's pages and matches by fbPageId (see below), so a forged
+ * reference cannot attach an arbitrary page to this workspace.
+ */
+const AduDiscoveredPageRefSchema = z.object({
+  fbPageId: z.string().min(1).max(64),
+  accountId: z.string().uuid(),
+});
+
+/**
+ * Bulk/single items accept either an existing `destinationId` or a
+ * `discovered` page reference — never both, never neither. The
+ * contracts schemas cannot express the alternative (they require
+ * `destinationId`), so the extension lives here at this route's
+ * boundary; the shared schedule/timezone validation below still runs
+ * on the contracts schemas over the resolved items.
+ */
+const AduBulkItemWithDiscoverySchema = AduBulkItemSchema.extend({
+  destinationId: AduBulkItemSchema.shape.destinationId.optional(),
+  discovered: AduDiscoveredPageRefSchema.optional(),
+}).superRefine((item, ctx) => {
+  if (Boolean(item.destinationId) === Boolean(item.discovered)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        'Each page needs either an existing destination or a discovered Facebook page.',
+    });
+  }
+});
+
+const AduBulkCreateWithDiscoverySchema = AduBulkCreateSchema.extend({
+  items: z.array(AduBulkItemWithDiscoverySchema).min(1).max(1000),
+});
+
+const AduCreateConfigWithDiscoverySchema = AduCreateConfigSchema.extend({
+  destinationId: AduCreateConfigSchema.shape.destinationId.optional(),
+  discovered: AduDiscoveredPageRefSchema.optional(),
+}).superRefine((item, ctx) => {
+  if (Boolean(item.destinationId) === Boolean(item.discovered)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        'Each page needs either an existing destination or a discovered Facebook page.',
+    });
+  }
+});
+
+type DiscoverFetchResult =
+  | { ok: true; pages: AduDiscoveredGraphPage[] }
+  | { ok: false; error: string };
+
+/**
+ * Resolves one discovered reference to a real destination id: the
+ * account's pages are re-fetched server-side, the fbPageId must
+ * match one of them, and the destinations row is ensured (upserted
+ * with the encrypted per-page token) before any config is created.
+ */
+async function resolveDiscoveredPage(
+  ctx: AduRouteContext,
+  discovered: { fbPageId: string; accountId: string },
+  fetchForAccount: (accountId: string) => Promise<DiscoverFetchResult>,
+): Promise<{ ok: true; destinationId: string } | { ok: false; error: string }> {
+  const fetched = await fetchForAccount(discovered.accountId);
+  if (!fetched.ok) return { ok: false, error: fetched.error };
+  const page = fetched.pages.find((p) => p.fbPageId === discovered.fbPageId);
+  if (!page) {
+    return {
+      ok: false,
+      error: 'That Facebook page was not found on this account.',
+    };
+  }
+  const ensured = await ensureAduDestination(
+    ctx.supabase,
+    ctx.workspaceId,
+    discovered.accountId,
+    page,
+  );
+  if (!ensured.ok) return { ok: false, error: ensured.error };
+  return { ok: true, destinationId: ensured.destinationId };
+}
+
+/**
+ * Resolves discovered bulk items to real destination ids. One Graph
+ * fetch per account, cached for the request. Items that fail to
+ * resolve land in `failed` with the Facebook page id as their key.
+ * The destinations upsert runs before the shared fixed-times
+ * validation and cap gate (both operate on destination ids); a later
+ * validation failure can leave an orphan destinations row behind,
+ * which is benign: it is the same page record a Pages import would
+ * have created.
+ */
+async function resolveDiscoveredBulkItems(
+  ctx: AduRouteContext,
+  items: Array<z.infer<typeof AduBulkItemWithDiscoverySchema>>,
+): Promise<{
+  resolved: AduBulkItem[];
+  failed: Array<{ destinationId: string; error: string }>;
+}> {
+  const { workspaceId, supabase } = ctx;
+  const pagesByAccount = new Map<string, Promise<DiscoverFetchResult>>();
+  const fetchForAccount = (accountId: string) => {
+    const cached = pagesByAccount.get(accountId);
+    if (cached) return cached;
+    const pending = fetchAduAccountDiscoveredPages(
+      supabase,
+      workspaceId,
+      accountId,
+    );
+    pagesByAccount.set(accountId, pending);
+    return pending;
+  };
+  const resolved: AduBulkItem[] = [];
+  const failed: Array<{ destinationId: string; error: string }> = [];
+  for (const item of items) {
+    if (item.destinationId) {
+      resolved.push({
+        destinationId: item.destinationId,
+        sourcePlatform: item.sourcePlatform,
+        sourceUsername: item.sourceUsername,
+        schedule: item.schedule,
+      });
+      continue;
+    }
+    // superRefine guarantees `discovered` is present here; the
+    // guard below is belt and braces, never silent.
+    if (!item.discovered) {
+      failed.push({
+        destinationId: '',
+        error:
+          'Each page needs either an existing destination or a discovered Facebook page.',
+      });
+      continue;
+    }
+    const result = await resolveDiscoveredPage(ctx, item.discovered, fetchForAccount);
+    if (!result.ok) {
+      failed.push({ destinationId: item.discovered.fbPageId, error: result.error });
+      continue;
+    }
+    resolved.push({
+      destinationId: result.destinationId,
+      sourcePlatform: item.sourcePlatform,
+      sourceUsername: item.sourceUsername,
+      schedule: item.schedule,
+    });
+  }
+  return { resolved, failed };
+}
+
 async function createOne(
   ctx: AduRouteContext,
   input: {
@@ -202,18 +359,25 @@ export async function POST(
     return NextResponse.json({ error: 'Invalid request body.' }, { status: 400 });
   }
   // Bulk: { items: [...], timezone, postsPerDay, scheduleType, postingTimes? }
+  // Items carry either `destinationId` or a `discovered` page reference.
   if (Array.isArray((body as { items?: unknown }).items)) {
-    const parsed = AduBulkCreateSchema.safeParse(body);
+    const parsed = AduBulkCreateWithDiscoverySchema.safeParse(body);
     if (!parsed.success) {
       return NextResponse.json(
         { error: parsed.error.issues[0]?.message ?? 'Invalid bulk request.' },
         { status: 400 }
       );
     }
+    // Discovered items resolve to real destination ids first, so the
+    // shared validation, cap gate, and create loop below all operate
+    // on destination ids exactly as before. Items that fail to
+    // resolve are reported per item, never dropped silently.
+    const { resolved, failed: resolveFailed } =
+      await resolveDiscoveredBulkItems(resolved.context, parsed.data.items);
     // Fixed-times validation lives in contracts (shared + per-item
     // 'separate' schedules, old wording), so the route and the tests
     // cannot drift apart.
-    const fixedError = validateAduBulkFixedTimes(parsed.data);
+    const fixedError = validateAduBulkFixedTimes({ ...parsed.data, items: resolved });
     if (fixedError) {
       return NextResponse.json({ error: fixedError }, { status: 400 });
     }
@@ -243,7 +407,7 @@ export async function POST(
             billingClient,
             resolved.context.workspaceId,
             'facebook',
-            parsed.data.items.map((item) => item.destinationId)
+            resolved.map((item) => item.destinationId)
           );
           await assertFeatureAddWithinCap(
             billingClient,
@@ -262,8 +426,8 @@ export async function POST(
       }
     }
     const created: string[] = [];
-    const failed: Array<{ destinationId: string; error: string }> = [];
-    for (const item of parsed.data.items) {
+    const failed: Array<{ destinationId: string; error: string }> = [...resolveFailed];
+    for (const item of resolved) {
       const schedule = resolveAduBulkItemSchedule(item, parsed.data);
       const result = await createOne(resolved.context, {
         ...item,
@@ -284,10 +448,36 @@ export async function POST(
     }
     return NextResponse.json({ created, failed }, { status: failed.length > 0 && created.length === 0 ? 400 : 201 });
   }
-  const parsed = AduCreateConfigSchema.safeParse(body);
+  const parsed = AduCreateConfigWithDiscoverySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: parsed.error.issues[0]?.message ?? 'Invalid request.' },
+      { status: 400 }
+    );
+  }
+  // A discovered page resolves to a real destination id first (same
+  // re-discovery + upsert as the bulk path); afterwards this path is
+  // identical to the existing-destination path.
+  let destinationId = parsed.data.destinationId;
+  if (!destinationId && parsed.data.discovered) {
+    const result = await resolveDiscoveredPage(
+      resolved.context,
+      parsed.data.discovered,
+      (accountId) =>
+        fetchAduAccountDiscoveredPages(
+          resolved.context.supabase,
+          resolved.context.workspaceId,
+          accountId,
+        ),
+    );
+    if (!result.ok) {
+      return NextResponse.json({ error: result.error }, { status: 400 });
+    }
+    destinationId = result.destinationId;
+  }
+  if (!destinationId) {
+    return NextResponse.json(
+      { error: 'Each page needs either an existing destination or a discovered Facebook page.' },
       { status: 400 }
     );
   }
@@ -308,7 +498,7 @@ export async function POST(
           billingClient,
           resolved.context.workspaceId,
           'facebook',
-          [parsed.data.destinationId]
+          [destinationId]
         );
         await assertFeatureAddWithinCap(
           billingClient,
@@ -326,12 +516,12 @@ export async function POST(
       }
     }
   }
-  const result = await createOne(resolved.context, parsed.data);
+  const result = await createOne(resolved.context, { ...parsed.data, destinationId });
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 400 });
   }
   if (result.id) {
-    const reg = await registerAduConfigUsage(resolved.context, 'facebook', parsed.data.destinationId, result.id);
+    const reg = await registerAduConfigUsage(resolved.context, 'facebook', destinationId, result.id);
     if (!reg.ok) {
       const gateResponse = subscriptionGateResponse(reg.error);
       if (gateResponse) return gateResponse;
