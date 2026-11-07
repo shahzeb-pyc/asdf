@@ -227,7 +227,14 @@ export function canUseDestination(
   return usedDestinationKeys.length < allowedCount;
 }
 
-export const SubscriptionPlanSchema = z.enum(['free', 'paid']);
+/**
+ * The plan as the client sees it. 'expired' is an explicit state,
+ * not a derivation: a user with no active period but a prior paid
+ * period is expired, never free — the sidebar word, the gate, and
+ * Home all read this one value instead of re-deriving it from
+ * `active` + `hasPriorPeriod` in three different places.
+ */
+export const SubscriptionPlanSchema = z.enum(['free', 'paid', 'expired']);
 export type SubscriptionPlan = z.infer<typeof SubscriptionPlanSchema>;
 
 export const BankMethodSchema = z.enum(['easypaisa', 'nayapay', 'ubl', 'binance']);

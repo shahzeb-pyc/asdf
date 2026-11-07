@@ -2,9 +2,16 @@ import type { Metadata } from 'next';
 import React from 'react';
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
+import type { EntitlementResponse } from '@fbuploadpro/contracts';
 import { shouldUseCleanTenantPaths } from '@/lib/tenant-href';
 import { getServerSessionContext } from '@/lib/auth';
 import { UserShell } from '@/components/shell/user-shell';
+import { getEntitlement } from '@/lib/billing/entitlement';
+import {
+  getBillingAdminClient,
+  mapEntitlementToResponse,
+} from '@/lib/billing/route-helpers';
+import { logServerError } from '@/lib/server-analytics';
 import { getWorkspaceDisplayName } from './workspace-display-name';
 
 interface TenantLayoutProps {
@@ -88,6 +95,32 @@ export default async function TenantLayout({ params, children }: Readonly<Tenant
     email: session.email,
   };
 
+  // The one entitlement read for this document (owner decision
+  // 2026-11-07: once at login, cached for the session). The shell's
+  // shared query starts from this seed and never refetches on its
+  // own, so a paid user is never re-read as Free by a later fetch
+  // and section navigation never unmounts the page. A failed seed
+  // is UNKNOWN, never Free: the provider falls back to one
+  // client-side fetch on mount, and every consumer renders its
+  // neutral state until a proven answer arrives. This must never
+  // throw the layout — a billing outage must not take the shell down.
+  let initialEntitlement: EntitlementResponse | null = null;
+  try {
+    const adminClient = getBillingAdminClient();
+    if (adminClient) {
+      initialEntitlement = mapEntitlementToResponse(
+        await getEntitlement(adminClient, session.userId)
+      );
+    } else {
+      logServerError('[billing] entitlement seed unavailable: admin client null', null, {
+        source: 'billing',
+      });
+    }
+  } catch (err) {
+    logServerError('[billing] entitlement seed failed', err, { source: 'billing' });
+    initialEntitlement = null;
+  }
+
   return (
     <UserShell
       subdomain={subdomain}
@@ -96,6 +129,7 @@ export default async function TenantLayout({ params, children }: Readonly<Tenant
       workspaceName={workspaceName ?? undefined}
       sessionUserId={session.userId}
       sessionEmail={session.email}
+      initialEntitlement={initialEntitlement}
     >
       {children}
     </UserShell>

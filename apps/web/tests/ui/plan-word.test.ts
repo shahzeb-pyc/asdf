@@ -2,7 +2,9 @@
  * @file plan-word.test.ts
  * @description Pure derivation for the sidebar header plan word:
  * the word under "FBUploadPro" is the user's plan, never a flashed
- * or failed-as-Free value.
+ * or failed-as-Free value. The word reads the explicit plan value
+ * from the contract — expired is a real plan, never re-derived from
+ * `active` + `hasPriorPeriod`.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -11,27 +13,19 @@ import { planWordFromEntitlement } from '@/components/workspace/plan-word';
 describe('planWordFromEntitlement', () => {
   it('returns Admin for admins without needing an entitlement', () => {
     expect(planWordFromEntitlement(null, true)).toBe('Admin');
-    expect(
-      planWordFromEntitlement({ active: false, hasPriorPeriod: false }, true)
-    ).toBe('Admin');
+    expect(planWordFromEntitlement({ plan: 'free' }, true)).toBe('Admin');
   });
 
-  it('returns Paid for an active paid period', () => {
-    expect(
-      planWordFromEntitlement({ active: true, hasPriorPeriod: true }, false)
-    ).toBe('Paid');
+  it('returns Paid for a paid plan', () => {
+    expect(planWordFromEntitlement({ plan: 'paid' }, false)).toBe('Paid');
   });
 
-  it('returns Expired when no period is active but one was held before', () => {
-    expect(
-      planWordFromEntitlement({ active: false, hasPriorPeriod: true }, false)
-    ).toBe('Expired');
+  it('returns Expired for an expired plan, never Free', () => {
+    expect(planWordFromEntitlement({ plan: 'expired' }, false)).toBe('Expired');
   });
 
-  it('returns Free when no period was ever held', () => {
-    expect(
-      planWordFromEntitlement({ active: false, hasPriorPeriod: false }, false)
-    ).toBe('Free');
+  it('returns Free for a free plan', () => {
+    expect(planWordFromEntitlement({ plan: 'free' }, false)).toBe('Free');
   });
 
   it('returns null while the entitlement is unresolved or failed', () => {

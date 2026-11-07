@@ -942,7 +942,7 @@ describe('getEntitlement', () => {
     expect(entitlement.hasPriorPeriod).toBe(true);
   });
 
-  it('reports hasPriorPeriod true for a lapsed period (Expired, not Free)', async () => {
+  it('reports plan expired (never free) for a lapsed period', async () => {
     const state = baseState({
       periods: [
         periodRow({
@@ -953,11 +953,12 @@ describe('getEntitlement', () => {
     });
     const entitlement = await getEntitlement(fakeClient(state), 'user-1', NOW);
     expect(entitlement).toMatchObject({
-      plan: 'free',
+      plan: 'expired',
       active: false,
       period: null,
       hasPriorPeriod: true,
     });
+    expect(entitlement.reason).toContain('has ended');
   });
 
   it('reports hasPriorPeriod false when no period was ever held', async () => {

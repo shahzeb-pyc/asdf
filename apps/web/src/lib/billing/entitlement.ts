@@ -94,7 +94,12 @@ export interface SubscriptionPaymentRow {
 }
 
 export interface Entitlement {
-  plan: 'free' | 'paid';
+  /**
+   * The plan as the client sees it. 'expired' is explicit: no active
+   * period but a prior paid period. Never derived client-side from
+   * `active` + `hasPriorPeriod` — every consumer reads this value.
+   */
+  plan: 'free' | 'paid' | 'expired';
   active: boolean;
   counts: PlatformCounts;
   usage: PlatformCounts;
@@ -583,8 +588,13 @@ export async function getEntitlement(
   }
   const usage = await getUsageCounts(client, userId);
   if (!period) {
+    // Expired is an explicit plan, never free: a prior paid period
+    // means the user lapsed, and the gate, the sidebar word, and
+    // Home must all read the same value (owner decision 2026-11-07:
+    // expired users browse like paid users; only publishing stops).
+    const hasPriorPeriod = await hasAnyPeriod(client, userId);
     return {
-      plan: 'free',
+      plan: hasPriorPeriod ? 'expired' : 'free',
       active: false,
       counts: {
         facebook: 0,
@@ -598,9 +608,10 @@ export async function getEntitlement(
       period: null,
       canPost: false,
       readOnly: true,
-      reason:
-        'Your plan is Free, which covers the Prompt Library only. Choose a paid plan to post or schedule.',
-      hasPriorPeriod: await hasAnyPeriod(client, userId),
+      reason: hasPriorPeriod
+        ? 'Posting is paused. Your paid period has ended — renew it to post again.'
+        : 'Your plan is Free, which covers the Prompt Library only. Choose a paid plan to post or schedule.',
+      hasPriorPeriod,
     };
   }
   return {

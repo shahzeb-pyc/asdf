@@ -4,21 +4,28 @@
  * reads the tenant layout's shared entitlement query instead of
  * fetching on its own, so every test renders EntitlementProvider
  * around it with a fresh QueryClient. Behaviours preserved: the
- * hard-block upgrade dialog for users who cannot post; exempt routes,
+ * hard-block upgrade dialog for PROVEN FREE users; exempt routes,
  * admins, and paying users see no dialog; Upgrade goes to Billing
  * Purchase and Back to Home goes home; Esc and outside pointer-down
  * do not dismiss; loading holds content; a fetch error renders
- * content (fail-open, reported). New: expired users still see the
- * dialog (proven canPost=false, preserved); a failed refetch after a
- * proven decision fails open instead of sticking the old decision.
- * Changed by design: exempt routes no longer skip the fetch — the
- * shared query loads once for the whole shell (the sidebar word
- * reads the same data), so only admins never fetch.
+ * content (fail-open, reported).
+ *
+ * Changed by design (owner decision 2026-11-07):
+ * - Expired users are NOT blocked: they browse like paid users and
+ *   only publishing stops (server-side, at the action).
+ * - The gate never refetches on its own: no navigation re-check, no
+ *   window-focus refetch, no 30-second capped auto re-check, no
+ *   "Check again" button. The only re-check is an explicit refetch
+ *   (purchase success, manual retry), which these tests drive
+ *   through the query client.
+ * - Exempt routes no longer skip the fetch — the shared query loads
+ *   once for the whole shell (the sidebar word reads the same data),
+ *   so only admins never fetch.
  */
 
 import * as React from 'react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const mocks = vi.hoisted(() => ({
@@ -45,12 +52,18 @@ vi.mock('@/lib/api', async (importOriginal) => {
 vi.mock('@/lib/report-error', () => ({ reportError: mocks.reportError }));
 
 import { FreePlanGate } from '@/components/billing/free-plan-gate';
-import { EntitlementProvider } from '@/components/billing/entitlement-provider';
+import {
+  EntitlementProvider,
+  entitlementQueryKey,
+} from '@/components/billing/entitlement-provider';
 
-function entitlement(canPost: boolean, hasPriorPeriod = false) {
+type Plan = 'free' | 'paid' | 'expired';
+
+function entitlement(plan: Plan) {
+  const paid = plan === 'paid';
   return {
-    plan: canPost ? 'paid' : 'free',
-    active: canPost,
+    plan,
+    active: paid,
     counts: {
       facebook: 0,
       instagram: 0,
@@ -69,10 +82,10 @@ function entitlement(canPost: boolean, hasPriorPeriod = false) {
     },
     periodEndsAt: null,
     periodStartsAt: null,
-    canPost,
-    readOnly: !canPost,
-    reason: canPost ? null : 'Free plan',
-    hasPriorPeriod,
+    canPost: paid,
+    readOnly: !paid,
+    reason: paid ? null : plan === 'expired' ? 'expired' : 'Free plan',
+    hasPriorPeriod: plan !== 'free',
   };
 }
 
@@ -94,7 +107,7 @@ function renderGate(props: { isAdmin?: boolean; useCleanPaths?: boolean } = {}) 
   const client = makeClient();
   // Fresh element on every render: reusing one element object lets
   // React bail out of re-rendering the provider (identical props),
-  // so a navigation rerender would never reach its effect.
+  // so a navigation rerender would never reach the gate.
   const makeTree = () => (
     <QueryClientProvider client={client}>
       <EntitlementProvider subdomain="acme" adminOnly={isAdmin}>
@@ -111,6 +124,7 @@ function renderGate(props: { isAdmin?: boolean; useCleanPaths?: boolean } = {}) 
   const result = render(makeTree());
   return {
     ...result,
+    client,
     rerenderGate: () => result.rerender(makeTree()),
   };
 }
@@ -119,7 +133,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockApiGet.mockReset();
   mocks.pathname = '/tenant/acme/accounts';
-  mockApiGet.mockResolvedValue(entitlement(false));
+  mockApiGet.mockResolvedValue(entitlement('free'));
 });
 
 describe('FreePlanGate', () => {
@@ -137,11 +151,11 @@ describe('FreePlanGate', () => {
     expect(screen.queryByRole('button', { name: /close/i })).not.toBeInTheDocument();
   });
 
-  it('shows the dialog for an expired user (proven canPost=false, prior period)', async () => {
-    mockApiGet.mockResolvedValue(entitlement(false, true));
+  it('does NOT block an expired user: they browse the section like a paid user', async () => {
+    mockApiGet.mockResolvedValue(entitlement('expired'));
     renderGate();
-    expect(await screen.findByTestId('free-plan-upgrade-dialog')).toBeInTheDocument();
-    expect(screen.queryByText('Section content')).not.toBeInTheDocument();
+    expect(await screen.findByText('Section content')).toBeInTheDocument();
+    expect(screen.queryByTestId('free-plan-upgrade-dialog')).not.toBeInTheDocument();
   });
 
   it('shows no dialog on exempt routes', async () => {
@@ -162,7 +176,7 @@ describe('FreePlanGate', () => {
   });
 
   it('shows section content and no dialog for a paying user on a gated route', async () => {
-    mockApiGet.mockResolvedValue(entitlement(true, true));
+    mockApiGet.mockResolvedValue(entitlement('paid'));
     renderGate();
     expect(await screen.findByText('Section content')).toBeInTheDocument();
     expect(screen.queryByTestId('free-plan-upgrade-dialog')).not.toBeInTheDocument();
@@ -211,7 +225,7 @@ describe('FreePlanGate', () => {
     expect(screen.getByTestId('free-plan-gate-loading')).toBeInTheDocument();
     expect(screen.queryByText('Section content')).not.toBeInTheDocument();
     expect(screen.queryByTestId('free-plan-upgrade-dialog')).not.toBeInTheDocument();
-    resolveEntitlement(entitlement(false));
+    resolveEntitlement(entitlement('free'));
     await screen.findByTestId('free-plan-upgrade-dialog');
     expect(screen.queryByTestId('free-plan-gate-loading')).not.toBeInTheDocument();
   });
@@ -224,9 +238,9 @@ describe('FreePlanGate', () => {
     expect(mockReportError).toHaveBeenCalled();
   });
 
-  it('keeps section content during a refetch after a failed check (sticky fail-open, no skeleton flash)', async () => {
+  it('keeps section content during an explicit refetch after a failed check (sticky fail-open, no skeleton flash)', async () => {
     mockApiGet.mockRejectedValue(new Error('entitlement down'));
-    const { rerenderGate } = renderGate();
+    const { client } = renderGate();
     expect(await screen.findByText('Section content')).toBeInTheDocument();
     expect(screen.queryByTestId('free-plan-gate-loading')).not.toBeInTheDocument();
     const callsAfterError = mockApiGet.mock.calls.length;
@@ -237,14 +251,13 @@ describe('FreePlanGate', () => {
           rejectRefetch = reject;
         }),
     );
-    // A navigation re-check starts while the section is fail-open.
-    // Without stickiness the pending refetch would flash skeletons,
-    // unmounting the section — and any child that reads this query
-    // and refetches on mount would loop mount/refetch/unmount
-    // forever instead of rendering.
-    mocks.pathname = '/tenant/acme/pages';
-    rerenderGate();
-    await vi.waitFor(() => {
+    // An explicit refetch (purchase success / manual retry) starts
+    // while the section is fail-open. Without stickiness the pending
+    // refetch would flash skeletons, unmounting the section.
+    await act(async () => {
+      void client.invalidateQueries({ queryKey: entitlementQueryKey('acme') });
+    });
+    await waitFor(() => {
       expect(mockApiGet.mock.calls.length).toBeGreaterThan(callsAfterError);
     });
     expect(screen.getByText('Section content')).toBeInTheDocument();
@@ -254,12 +267,13 @@ describe('FreePlanGate', () => {
     expect(screen.queryByTestId('free-plan-gate-loading')).not.toBeInTheDocument();
   });
 
-  it('fails open when a refetch fails after a proven Free decision', async () => {
-    const { rerenderGate } = renderGate();
+  it('fails open when an explicit refetch fails after a proven Free decision', async () => {
+    const { client } = renderGate();
     await screen.findByTestId('free-plan-upgrade-dialog');
     mockApiGet.mockRejectedValue(new Error('entitlement down'));
-    mocks.pathname = '/tenant/acme/pages';
-    rerenderGate();
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: entitlementQueryKey('acme') });
+    });
     expect(await screen.findByText('Section content')).toBeInTheDocument();
     expect(screen.queryByTestId('free-plan-upgrade-dialog')).not.toBeInTheDocument();
   });
@@ -271,45 +285,63 @@ describe('FreePlanGate', () => {
     expect(panel.className).toContain('sm:max-w-lg');
   });
 
-  it('re-checks on navigation: the dialog disappears without a reload once the plan becomes paid', async () => {
+  it('does NOT re-check on navigation: the dialog stays until an explicit refresh', async () => {
     const { rerenderGate } = renderGate();
     await screen.findByTestId('free-plan-upgrade-dialog');
     expect(mockApiGet).toHaveBeenCalledTimes(1);
-    mockApiGet.mockResolvedValue(entitlement(true, true));
+    // The plan becomes paid server-side, but navigation alone must
+    // not re-read it — that re-check on every section change is the
+    // reload paid users reported.
+    mockApiGet.mockResolvedValue(entitlement('paid'));
     mocks.pathname = '/tenant/acme/pages';
     rerenderGate();
-    expect(await screen.findByText('Section content')).toBeInTheDocument();
-    expect(screen.queryByTestId('free-plan-upgrade-dialog')).not.toBeInTheDocument();
-    expect(mockApiGet).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(screen.getByTestId('free-plan-upgrade-dialog')).toBeInTheDocument());
+    expect(screen.queryByText('Section content')).not.toBeInTheDocument();
+    expect(mockApiGet).toHaveBeenCalledTimes(1);
   });
 
-  it('re-checks on window focus: the dialog disappears once the plan becomes paid', async () => {
+  it('does NOT re-check on window focus: the dialog stays until an explicit refresh', async () => {
     renderGate();
     await screen.findByTestId('free-plan-upgrade-dialog');
     expect(mockApiGet).toHaveBeenCalledTimes(1);
-    mockApiGet.mockResolvedValue(entitlement(true, true));
+    mockApiGet.mockResolvedValue(entitlement('paid'));
     // React Query v5 refetches on window focus via the
     // visibilitychange event (not the focus event): dispatching it
     // is what a tab-switch back looks like to the query client.
     window.dispatchEvent(new Event('visibilitychange'));
+    window.dispatchEvent(new Event('focus'));
+    await waitFor(() => expect(screen.getByTestId('free-plan-upgrade-dialog')).toBeInTheDocument());
+    expect(screen.queryByText('Section content')).not.toBeInTheDocument();
+    expect(mockApiGet).toHaveBeenCalledTimes(1);
+  });
+
+  it('an explicit refetch DOES clear the dialog once the plan becomes paid (the purchase-refresh path)', async () => {
+    const { client } = renderGate();
+    await screen.findByTestId('free-plan-upgrade-dialog');
+    expect(mockApiGet).toHaveBeenCalledTimes(1);
+    mockApiGet.mockResolvedValue(entitlement('paid'));
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: entitlementQueryKey('acme') });
+    });
     expect(await screen.findByText('Section content')).toBeInTheDocument();
     expect(screen.queryByTestId('free-plan-upgrade-dialog')).not.toBeInTheDocument();
     expect(mockApiGet).toHaveBeenCalledTimes(2);
   });
 
-  it('keeps showing the previous status during a navigation re-check (no skeleton flash)', async () => {
+  it('keeps showing the dialog during an explicit refetch (no skeleton flash)', async () => {
     let resolveSecond!: (value: unknown) => void;
-    mockApiGet.mockResolvedValueOnce(entitlement(false));
+    mockApiGet.mockResolvedValueOnce(entitlement('free'));
     mockApiGet.mockImplementationOnce(
       () => new Promise((resolve) => { resolveSecond = resolve; }),
     );
-    const { rerenderGate } = renderGate();
+    const { client } = renderGate();
     await screen.findByTestId('free-plan-upgrade-dialog');
-    mocks.pathname = '/tenant/acme/pages';
-    rerenderGate();
+    await act(async () => {
+      void client.invalidateQueries({ queryKey: entitlementQueryKey('acme') });
+    });
     expect(screen.getByTestId('free-plan-upgrade-dialog')).toBeInTheDocument();
     expect(screen.queryByTestId('free-plan-gate-loading')).not.toBeInTheDocument();
-    resolveSecond(entitlement(true, true));
+    resolveSecond(entitlement('paid'));
     expect(await screen.findByText('Section content')).toBeInTheDocument();
   });
 
@@ -320,159 +352,28 @@ describe('FreePlanGate', () => {
     expect(mockApiGet).not.toHaveBeenCalled();
   });
 
-  // Capped auto re-check tests: fake timers drive the 30-second
-  // interval; visibility is mocked because jsdom defaults to
-  // 'prerender', which the gate correctly treats as not visible.
-  const setVisibility = (value: string) => {
-    Object.defineProperty(document, 'visibilityState', {
-      value,
-      configurable: true,
-    });
-  };
-  const findDialogWithFakeTimers = async () => {
-    const found = screen.findByTestId('free-plan-upgrade-dialog');
-    await vi.advanceTimersByTimeAsync(100);
-    return found;
-  };
-
-  it('clears without a reload when a capped re-check returns Paid', async () => {
+  // The capped auto re-check is deleted: while the dialog shows,
+  // the gate must never fetch on its own, however much time passes.
+  // Fake timers drive the clock; visibility is mocked because jsdom
+  // defaults to 'prerender'.
+  it('never auto re-checks while the dialog shows — no loop, no Check again button', async () => {
     vi.useFakeTimers();
     try {
-      setVisibility('visible');
+      Object.defineProperty(document, 'visibilityState', {
+        value: 'visible',
+        configurable: true,
+      });
       renderGate();
-      await findDialogWithFakeTimers();
-      expect(mockApiGet).toHaveBeenCalledTimes(1);
-      mockApiGet.mockResolvedValue(entitlement(true, true));
-      await vi.advanceTimersByTimeAsync(30_000);
-      // findBy polls on timers, which are fake here: advance once
-      // more so its polling interval can observe the new render.
-      const content = screen.findByText('Section content');
+      const dialog = screen.findByTestId('free-plan-upgrade-dialog');
       await vi.advanceTimersByTimeAsync(100);
-      expect(await content).toBeInTheDocument();
-      expect(screen.queryByTestId('free-plan-upgrade-dialog')).not.toBeInTheDocument();
-      expect(mockApiGet).toHaveBeenCalledTimes(2);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('stops auto re-checking after 10 checks and shows a Check again button', async () => {
-    vi.useFakeTimers();
-    try {
-      setVisibility('visible');
-      renderGate();
-      await findDialogWithFakeTimers();
-      for (let i = 0; i < 10; i++) {
-        await vi.advanceTimersByTimeAsync(30_000);
-      }
-      expect(mockApiGet).toHaveBeenCalledTimes(11);
-      expect(screen.getByTestId('free-plan-recheck-btn')).toBeInTheDocument();
-      await vi.advanceTimersByTimeAsync(90_000);
-      expect(mockApiGet).toHaveBeenCalledTimes(11);
-      expect(screen.getByTestId('free-plan-recheck-btn')).toBeInTheDocument();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('does not burn auto checks while the tab is hidden', async () => {
-    vi.useFakeTimers();
-    try {
-      setVisibility('hidden');
-      renderGate();
-      await findDialogWithFakeTimers();
-      await vi.advanceTimersByTimeAsync(90_000);
+      await dialog;
+      expect(mockApiGet).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(300_000);
       expect(mockApiGet).toHaveBeenCalledTimes(1);
       expect(screen.queryByTestId('free-plan-recheck-btn')).not.toBeInTheDocument();
-      setVisibility('visible');
-      await vi.advanceTimersByTimeAsync(30_000);
-      expect(mockApiGet).toHaveBeenCalledTimes(2);
+      expect(screen.getByTestId('free-plan-upgrade-dialog')).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
-    }
-  });
-
-  it('manual Check again clears the dialog on Paid', async () => {
-    vi.useFakeTimers();
-    try {
-      setVisibility('visible');
-      renderGate();
-      await findDialogWithFakeTimers();
-      for (let i = 0; i < 10; i++) {
-        await vi.advanceTimersByTimeAsync(30_000);
-      }
-      expect(screen.getByTestId('free-plan-recheck-btn')).toBeInTheDocument();
-      mockApiGet.mockResolvedValue(entitlement(true, true));
-      fireEvent.click(screen.getByTestId('free-plan-recheck-btn'));
-      const content = screen.findByText('Section content');
-      await vi.advanceTimersByTimeAsync(100);
-      expect(await content).toBeInTheDocument();
-      expect(screen.queryByTestId('free-plan-upgrade-dialog')).not.toBeInTheDocument();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('manual Check again on still-Free keeps the button and does not restart auto polling', async () => {
-    vi.useFakeTimers();
-    try {
-      setVisibility('visible');
-      renderGate();
-      await findDialogWithFakeTimers();
-      for (let i = 0; i < 10; i++) {
-        await vi.advanceTimersByTimeAsync(30_000);
-      }
-      expect(mockApiGet).toHaveBeenCalledTimes(11);
-      fireEvent.click(screen.getByTestId('free-plan-recheck-btn'));
-      await vi.advanceTimersByTimeAsync(100);
-      expect(mockApiGet).toHaveBeenCalledTimes(12);
-      expect(screen.getByTestId('free-plan-recheck-btn')).toBeInTheDocument();
-      await vi.advanceTimersByTimeAsync(90_000);
-      expect(mockApiGet).toHaveBeenCalledTimes(12);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('fail-opens when a capped re-check errors, instead of looping', async () => {
-    vi.useFakeTimers();
-    try {
-      setVisibility('visible');
-      renderGate();
-      await findDialogWithFakeTimers();
-      mockApiGet.mockRejectedValue(new Error('entitlement down'));
-      await vi.advanceTimersByTimeAsync(30_000);
-      const content = screen.findByText('Section content');
-      await vi.advanceTimersByTimeAsync(100);
-      expect(await content).toBeInTheDocument();
-      expect(screen.queryByTestId('free-plan-upgrade-dialog')).not.toBeInTheDocument();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('does not auto re-check on exempt routes or for admins', async () => {
-    vi.useFakeTimers();
-    try {
-      setVisibility('visible');
-      mocks.pathname = '/tenant/acme';
-      const { unmount } = renderGate();
-      expect(screen.getByText('Section content')).toBeInTheDocument();
-      await vi.advanceTimersByTimeAsync(100);
-      const callsAfterExemptMount = mockApiGet.mock.calls.length;
-      await vi.advanceTimersByTimeAsync(90_000);
-      expect(mockApiGet.mock.calls.length).toBe(callsAfterExemptMount);
-      unmount();
-      mocks.pathname = '/tenant/acme/accounts';
-      mockApiGet.mockClear();
-      renderGate({ isAdmin: true });
-      expect(screen.getByText('Section content')).toBeInTheDocument();
-      expect(mockApiGet).not.toHaveBeenCalled();
-      await vi.advanceTimersByTimeAsync(90_000);
-      expect(mockApiGet).not.toHaveBeenCalled();
-    } finally {
-      vi.useRealTimers();
-      mocks.pathname = '/tenant/acme/accounts';
     }
   });
 });

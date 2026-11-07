@@ -8,11 +8,13 @@ import { useSharedEntitlement } from '@/components/billing/entitlement-provider'
  * so the word and the dialog can never disagree):
  *
  * - Admin — the session role is admin (admins bypass plans entirely).
- * - Paid — an active paid period exists.
- * - Expired — no active period, but the user has held a paid period
- *   before (hasPriorPeriod). The active-period fields alone cannot
- *   tell this from never-paid: both report null period bounds.
- * - Free — no active period and no prior period.
+ * - Paid — the proven plan is `paid`.
+ * - Expired — the proven plan is `expired` (no active period, but
+ *   the user held a paid period before). The plan value is explicit
+ *   in the contract; it is never re-derived here from `active` +
+ *   `hasPriorPeriod`, so the word cannot drift from the gate or
+ *   Home, which read the same value.
+ * - Free — the proven plan is `free`.
  *
  * The hook returns null while the entitlement is unresolved OR the
  * check failed — including a failed refetch newer than the last
@@ -24,13 +26,13 @@ import { useSharedEntitlement } from '@/components/billing/entitlement-provider'
 export type PlanWord = 'Admin' | 'Paid' | 'Expired' | 'Free';
 
 export function planWordFromEntitlement(
-  entitlement: { active: boolean; hasPriorPeriod: boolean } | null,
+  entitlement: { plan: 'free' | 'paid' | 'expired' } | null,
   isAdmin: boolean
 ): PlanWord | null {
   if (isAdmin) return 'Admin';
   if (entitlement === null) return null;
-  if (entitlement.active) return 'Paid';
-  if (entitlement.hasPriorPeriod) return 'Expired';
+  if (entitlement.plan === 'paid') return 'Paid';
+  if (entitlement.plan === 'expired') return 'Expired';
   return 'Free';
 }
 
@@ -38,16 +40,11 @@ export function planWordFromEntitlement(
  * Sidebar plan word. Admins resolve immediately with no fetch (the
  * admin-only shell never needs an entitlement). Everyone else reads
  * the shared entitlement query owned by the tenant layout: the
- * provider fetches on mount and on window focus (the app default)
- * and re-checks on navigation, so the word refreshes whenever the
- * plan changes — no polling, no second client, no custom cache.
+ * provider seeds it once per session from the server and never
+ * refetches on its own, so the word refreshes only after a purchase
+ * or a manual refresh — no polling, no second client, no custom cache.
  */
 export function usePlanWord(adminOnly: boolean): PlanWord | null {
   const { entitlement } = useSharedEntitlement();
-  return planWordFromEntitlement(
-    entitlement
-      ? { active: entitlement.active, hasPriorPeriod: entitlement.hasPriorPeriod }
-      : null,
-    adminOnly
-  );
+  return planWordFromEntitlement(entitlement, adminOnly);
 }
