@@ -1701,34 +1701,30 @@ export function PurchaseView({
             </p>
           </CardContent>
         </Card>
-        <div className="flex flex-col items-start gap-6 lg:flex-row">
-          <Card className="min-w-0 flex-1">
-            <CardHeader>
-              <div className="flex flex-col gap-1">
-                <CardTitle>Choose your pages and accounts</CardTitle>
-                <CardDescription>
-                  70 PKR per page or account, paid monthly. Connect as many accounts as you
-                  like — only the pages and accounts you actually use count towards your plan.
-                </CardDescription>
-              </div>
-            </CardHeader>
-            <CardContent>{configurator}</CardContent>
-          </Card>
-          <div className="flex w-full shrink-0 flex-col gap-6 lg:sticky lg:top-20 lg:w-90 lg:self-start">
-            {orderSummary}
-            <div className="flex flex-col gap-2">
-              <Button
-                variant={buildDisabled ? 'secondary' : 'default'}
-                onClick={goToCheckout}
-                disabled={buildDisabled}
-              >
-                Continue to checkout
-              </Button>
-              {buildDisabledReason ? (
-                <p className="text-body text-ink-sub">{buildDisabledReason}</p>
-              ) : null}
+        <Card>
+          <CardHeader>
+            <div className="flex flex-col gap-1">
+              <CardTitle>Choose your pages and accounts</CardTitle>
+              <CardDescription>
+                70 PKR per page or account, paid monthly. Connect as many accounts as you
+                like — only the pages and accounts you actually use count towards your plan.
+              </CardDescription>
             </div>
-          </div>
+          </CardHeader>
+          <CardContent>{configurator}</CardContent>
+        </Card>
+        <div className="flex flex-col gap-2">
+          <Button
+            variant={buildDisabled ? 'secondary' : 'default'}
+            onClick={goToCheckout}
+            disabled={buildDisabled}
+            className="w-full sm:w-auto sm:self-start"
+          >
+            Continue to checkout
+          </Button>
+          {buildDisabledReason ? (
+            <p className="text-body text-ink-sub">{buildDisabledReason}</p>
+          ) : null}
         </div>
       </div>
     );

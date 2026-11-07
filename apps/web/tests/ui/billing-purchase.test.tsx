@@ -340,6 +340,24 @@ describe('Billing Purchase', () => {
     expect(document.querySelector('input[type="number"]')).toBeNull();
   });
 
+  it('builder has no order summary — it lives only at checkout', async () => {
+    renderBilling('purchase');
+    await screen.findByText('Choose your pages and accounts');
+    // The summary card belongs to checkout: no heading, no monthly
+    // total, no storage total in the builder.
+    expect(screen.queryByText('Order summary')).toBeNull();
+    expect(screen.queryByText('Monthly total')).toBeNull();
+    expect(screen.queryByText('Media Library storage included')).toBeNull();
+    // Continue to checkout is still there, below the chooser.
+    expect(
+      screen.getByRole('button', { name: 'Continue to checkout' })
+    ).toBeInTheDocument();
+    // And the summary is still there at checkout.
+    await goToCheckout();
+    expect(await screen.findByText('Order summary')).toBeInTheDocument();
+    expect(screen.getByText('Monthly total')).toBeInTheDocument();
+  });
+
   it('Layout B: chooser shows three platform columns with plain questions and the increase/reduce note', async () => {
     renderBilling('purchase');
     await screen.findByText('Choose your pages and accounts');
@@ -369,7 +387,8 @@ describe('Billing Purchase', () => {
     const facebook = screen.getByLabelText('Facebook pages') as HTMLInputElement;
     fireEvent.change(facebook, { target: { value: '100' } });
     expect(facebook.value).toBe('100');
-    // Row price and order summary both price the typed count live.
+    // The chooser's row prices price the typed count live (the total
+    // itself lives only at checkout now).
     expect(screen.getAllByText('7000 PKR').length).toBeGreaterThan(0);
     const instagram = screen.getByLabelText('Instagram accounts') as HTMLInputElement;
     fireEvent.change(instagram, { target: { value: '4' } });
@@ -418,10 +437,16 @@ describe('Billing Purchase', () => {
     expect(
       screen.getByText('Unlimited posts — no cap on the number of posts')
     ).toBeInTheDocument();
-    expect(screen.getByText('Media Library storage included')).toBeInTheDocument();
-    expect(screen.getByText('0 GB')).toBeInTheDocument();
+    // The storage total is an order-summary row, and the summary lives
+    // only at checkout now — not in the builder.
+    expect(screen.queryByText('Media Library storage included')).toBeNull();
+    expect(screen.queryByText('0 GB')).toBeNull();
     fireEvent.change(screen.getByLabelText('Facebook pages'), { target: { value: '2' } });
     fireEvent.change(screen.getByLabelText('Instagram accounts'), { target: { value: '1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue to checkout' }));
+    cleanup();
+    renderCheckout();
+    expect(await screen.findByText('Media Library storage included')).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText('15 GB')).toBeInTheDocument());
   });
 
@@ -1426,13 +1451,11 @@ describe('Purchase downgrade builder', () => {
     expect(facebook.value).toBe('2');
     fireEvent.change(facebook, { target: { value: '1' } });
     fireEvent.blur(facebook);
-    expect(await screen.findByText('Current monthly plan')).toBeInTheDocument();
-    expect(screen.getByText('New monthly plan')).toBeInTheDocument();
-    expect(screen.getByText('You pay now')).toBeInTheDocument();
-    expect(
-      screen.getByText(/Lower monthly plan for next month\. Your current plan runs unchanged until/)
-    ).toBeInTheDocument();
-    expect(screen.getByText(/No credit was given for the days left/)).toBeInTheDocument();
+    // The quote lives in the order summary, and the summary lives only
+    // at checkout now — the builder shows no quote lines.
+    expect(screen.queryByText('Current monthly plan')).toBeNull();
+    expect(screen.queryByText('New monthly plan')).toBeNull();
+    expect(screen.queryByText('You pay now')).toBeNull();
     // Checkout is a sub-route: the click pushes /purchase/checkout
     // (mocked here), so follow it the way the real routes do —
     // re-render at the checkout step with the builder's saved draft.
@@ -1440,6 +1463,13 @@ describe('Purchase downgrade builder', () => {
     cleanup();
     renderCheckout();
     expect(await screen.findByRole('heading', { name: 'Checkout' })).toBeInTheDocument();
+    expect(screen.getByText('Current monthly plan')).toBeInTheDocument();
+    expect(screen.getByText('New monthly plan')).toBeInTheDocument();
+    expect(screen.getByText('You pay now')).toBeInTheDocument();
+    expect(
+      screen.getByText(/Lower monthly plan for next month\. Your current plan runs unchanged until/)
+    ).toBeInTheDocument();
+    expect(screen.getByText(/No credit was given for the days left/)).toBeInTheDocument();
     // Header line only (the summary card uses a period, not the middot).
     expect(screen.getByText(/Lower monthly plan for next month · 1 Facebook pages/)).toBeInTheDocument();
   });
