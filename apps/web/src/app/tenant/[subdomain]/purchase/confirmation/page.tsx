@@ -15,8 +15,7 @@ interface ConfirmationPageProps {
 /**
  * Purchase confirmation sub-route, keyed by payment id. The view
  * re-reads the payment from the server, so refreshing — or closing
- * the tab and reopening this link — recovers the crypto pay
- * address, exact USDT amount and network. A zero-due activation
+ * the tab and reopening this link — recovers the payment. A zero-due activation
  * has no payment row and goes straight to My Plan instead.
  */
 export default async function TenantPurchaseConfirmationPage({

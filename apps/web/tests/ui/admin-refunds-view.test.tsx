@@ -39,7 +39,6 @@ function item(overrides: Item = {}): Item {
     daysUsed: null,
     destinationType: 'mobile',
     destinationValue: '03001234567',
-    destinationNetwork: null,
     reason: null,
     requestedAt: new Date().toISOString(),
     decidedAt: null,
@@ -70,10 +69,9 @@ const fullQueue = {
       id: 'refund-sent',
       status: 'sent',
       refundAmount: 3500,
-      currency: 'USDT',
-      destinationType: 'usdt',
-      destinationValue: 'TWalletAddress',
-      destinationNetwork: 'trc20',
+      currency: 'PKR',
+      destinationType: 'bank',
+      destinationValue: 'PK00BANK0003',
     }),
   ],
   page: 1,
@@ -103,7 +101,7 @@ describe('AdminRefundsView', () => {
     expect(screen.getByText(/Refund locked: 3780 PKR · 3 days used/)).toBeTruthy();
     // Decided cards: rejected, and sent with its amount.
     expect(screen.getByText(/Rejected · Binance ID: BIN123/)).toBeTruthy();
-    expect(screen.getByText(/Sent 3500 USDT · USDT wallet \(TRC20\): TWalletAddress/)).toBeTruthy();
+    expect(screen.getByText(/Sent 3500 PKR · Bank account \\/ IBAN: PK00BANK0003/)).toBeTruthy();
   });
 
   it('shows empty states when nothing is waiting or decided', async () => {
@@ -120,7 +118,6 @@ describe('AdminRefundsView', () => {
         item({ id: 'r-mobile', destinationType: 'mobile', destinationValue: '03001112222' }),
         item({ id: 'r-bank', destinationType: 'bank', destinationValue: 'PK00BANK0002' }),
         item({ id: 'r-binance', destinationType: 'binance', destinationValue: 'BIN999' }),
-        item({ id: 'r-usdt', destinationType: 'usdt', destinationValue: 'TAddr', destinationNetwork: 'bep20' }),
         item({ id: 'r-unknown', userEmail: null, destinationValue: '03009998888' }),
       ],
       page: 1,
@@ -129,7 +126,6 @@ describe('AdminRefundsView', () => {
     expect(await screen.findByText(/Mobile number: 03001112222/)).toBeTruthy();
     expect(screen.getByText(/Bank account \/ IBAN: PK00BANK0002/)).toBeTruthy();
     expect(screen.getByText(/Binance ID: BIN999/)).toBeTruthy();
-    expect(screen.getByText(/USDT wallet \(BEP20\): TAddr/)).toBeTruthy();
     expect(screen.getByText('Unknown user')).toBeTruthy();
   });
 

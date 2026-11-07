@@ -75,10 +75,6 @@ function paymentItem(overrides: Record<string, unknown> = {}) {
     amountPkr: 70,
     isUpgrade: false,
     screenshotStorageKey: 'billing-screenshots/user-1/shot.png',
-    nowpaymentsPaymentId: null,
-    nowpaymentsPayAddress: null,
-    nowpaymentsPayAmount: null,
-    nowpaymentsNetwork: null,
     createdAt: '2026-10-31T12:00:00.000Z',
     approvedAt: null,
     ...overrides,
@@ -304,15 +300,11 @@ test.describe('billing at phone widths', () => {
 
     await page.getByLabel('Facebook pages').fill('1');
     await page.getByRole('button', { name: 'Continue to checkout' }).click();
-    // Radio, not bare text: the checkout description ("Manual payments
-    // or crypto.") shares the same words.
-    await expect(
-      page.getByRole('radio', { name: 'Pay with a manual payment' })
-    ).toBeVisible();
-    await page.getByLabel('Pay with Binance').click();
-    // The ID appears twice (method radio label + details panel):
-    // assert the details-panel value and its copy button.
-    await expect(page.getByText('983001576').nth(1)).toBeVisible();
+    // Step 1 is the "Pay via" chooser: one radio row per method.
+    await expect(page.getByRole('radio', { name: 'Binance' })).toBeVisible();
+    await page.getByRole('radio', { name: 'Binance' }).click();
+    // Step 2 shows the Binance ID with its copy button.
+    await expect(page.getByText('983001576')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Copy Binance ID' })).toBeVisible();
     await page.setInputFiles('#billing-screenshot', {
       name: 'proof.png',
@@ -390,11 +382,9 @@ test.describe('billing at phone widths', () => {
         paymentItem({ status: 'approved', approvedAt: '2026-10-31T13:00:00.000Z' }),
         paymentItem({
           id: '22222222-2222-4222-a222-222222222222',
-          method: 'nowpayments',
-          bankMethod: null,
-          status: 'paid',
-          nowpaymentsPayAddress: 'TXYZ1234567890abcdefghijklmnopqrstuv',
-          nowpaymentsNetwork: 'trc20',
+          method: 'bank',
+          bankMethod: 'nayapay',
+          status: 'approved',
         }),
       ],
     });
@@ -406,11 +396,9 @@ test.describe('billing at phone widths', () => {
         paymentItem({ status: 'approved', approvedAt: '2026-10-31T13:00:00.000Z' }),
         paymentItem({
           id: '22222222-2222-4222-a222-222222222222',
-          method: 'nowpayments',
-          bankMethod: null,
-          status: 'paid',
-          nowpaymentsPayAddress: 'TXYZ1234567890abcdefghijklmnopqrstuv',
-          nowpaymentsNetwork: 'trc20',
+          method: 'bank',
+          bankMethod: 'nayapay',
+          status: 'approved',
         }),
       ],
     });
@@ -423,7 +411,7 @@ test.describe('billing at phone widths', () => {
     await gotoBilling(page, 'payments');
     // Both fixture rows cost 70 PKR: assert each distinct row line.
     await expect(page.getByText('70 PKR · Easypaisa')).toBeVisible();
-    await expect(page.getByText('70 PKR · Crypto · USDT (TRC20)')).toBeVisible();
+    await expect(page.getByText('70 PKR · Nayapay')).toBeVisible();
     await expectNoDocumentOverflow(page);
   });
 

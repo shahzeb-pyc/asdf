@@ -25,7 +25,6 @@ import {
   BillingPaymentItemSchema,
   UserRefundsResponseSchema,
   BillingStatusResponseSchema,
-  CryptoCheckoutResponseSchema,
   ZeroDueCheckoutResponseSchema,
   type BillingStatusResponse,
   type CouponValidateResponse,
@@ -89,7 +88,14 @@ function purchasableCounts(counts: PlatformCounts): PlatformCounts {
 
 type BankMethod = 'easypaisa' | 'nayapay' | 'ubl' | 'binance';
 type PurchaseStep = 'builder' | 'checkout' | 'confirmation';
-type PaymentType = 'bank' | 'crypto';
+
+/** Step 1 "Pay via" labels. "Bank transfer" is the label for the UBL bank method. */
+const PAY_VIA_LABELS: Record<BankMethod, string> = {
+  easypaisa: 'Easypaisa',
+  nayapay: 'Nayapay',
+  ubl: 'Bank transfer',
+  binance: 'Binance',
+};
 
 function formatDate(value: string | null): string {
   if (!value) return '—';
@@ -122,10 +128,7 @@ function plainQuoteError(message: string | null): string | null {
 }
 
 function paymentMethodLabel(payment: BillingPaymentItem): string {
-  if (payment.method === 'bank') {
-    return payment.bankMethod ? BANK_PAYMENT_DETAILS[payment.bankMethod].label : 'Bank';
-  }
-  return `Crypto · USDT (${payment.nowpaymentsNetwork === 'trc20' ? 'TRC20' : 'BEP20'})`;
+  return payment.bankMethod ? BANK_PAYMENT_DETAILS[payment.bankMethod].label : 'Bank';
 }
 
 function paymentStatusLabel(status: string): string {
@@ -220,37 +223,6 @@ function PurchaseStepIndicator({ current }: Readonly<{ current: PurchaseStep }>)
   );
 }
 
-function MethodCard({
-  selected,
-  title,
-  description,
-  onClick,
-  label,
-}: Readonly<{
-  selected: boolean;
-  title: string;
-  description: string;
-  onClick: () => void;
-  label: string;
-}>) {
-  return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={selected}
-      aria-label={label}
-      onClick={onClick}
-      className={cn(
-        'rounded-md border p-3 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link',
-        selected ? 'border-ink bg-subtle' : 'border-line bg-panel hover:bg-hover'
-      )}
-    >
-      <span className="block text-body font-medium text-ink">{title}</span>
-      <span className="block text-metadata text-ink-sub">{description}</span>
-    </button>
-  );
-}
-
 export function PurchaseView({
   subdomain,
   step,
@@ -284,7 +256,6 @@ export function PurchaseView({
   const [countDrafts, setCountDrafts] = React.useState<Partial<Record<keyof PlatformCounts, string>>>({});
   const router = useRouter();
 
-  const [paymentType, setPaymentType] = React.useState<PaymentType>('bank');
   const [bankMethod, setBankMethod] = React.useState<BankMethod>('easypaisa');
   const [screenshot, setScreenshot] = React.useState<File | null>(null);
   /**
@@ -316,7 +287,6 @@ export function PurchaseView({
    */
   const submissionKeyRef = React.useRef<string | null>(null);
   const [bankSubmitFailed, setBankSubmitFailed] = React.useState(false);
-  const [cryptoNetwork, setCryptoNetwork] = React.useState<'trc20' | 'bep20'>('trc20');
   const [appliedCoupon, setAppliedCoupon] = React.useState<CouponValidateResponse | null>(null);
   const [refundPending, setRefundPending] = React.useState(false);
   const [prefillNote, setPrefillNote] = React.useState<string | null>(null);
@@ -334,14 +304,10 @@ export function PurchaseView({
       if (!raw) return;
       const draft = JSON.parse(raw) as {
         counts?: PlatformCounts;
-        paymentType?: PaymentType;
         bankMethod?: BankMethod;
-        cryptoNetwork?: 'trc20' | 'bep20';
       };
       if (draft.counts) setCounts(draft.counts);
-      if (draft.paymentType) setPaymentType(draft.paymentType);
       if (draft.bankMethod) setBankMethod(draft.bankMethod);
-      if (draft.cryptoNetwork) setCryptoNetwork(draft.cryptoNetwork);
     } catch (err) {
       // A corrupt draft is ignored; the builder starts fresh.
       // Logged, not swallowed: a persistently corrupt draft means
@@ -359,21 +325,17 @@ export function PurchaseView({
       }
       const draft = JSON.parse(raw) as {
         counts?: PlatformCounts;
-        paymentType?: PaymentType;
         bankMethod?: BankMethod;
-        cryptoNetwork?: 'trc20' | 'bep20';
       };
       if (draft.counts) setCounts(draft.counts);
-      if (draft.paymentType) setPaymentType(draft.paymentType);
       if (draft.bankMethod) setBankMethod(draft.bankMethod);
-      if (draft.cryptoNetwork) setCryptoNetwork(draft.cryptoNetwork);
     } catch {
       router.push(`/tenant/${subdomain}/purchase`);
     }
   }, [step]);
   const [activatingZeroDue, setActivatingZeroDue] = React.useState(false);
   const [copied, setCopied] = React.useState<string | null>(null);
-  const [busy, setBusy] = React.useState<'bank' | 'crypto' | null>(null);
+  const [busy, setBusy] = React.useState<'bank' | null>(null);
   const [formError, setFormError] = React.useState<string | null>(null);
   const screenshotInputRef = React.useRef<HTMLInputElement | null>(null);
   const [screenshotPreviewUrl, setScreenshotPreviewUrl] = React.useState<string | null>(null);
@@ -617,9 +579,7 @@ export function PurchaseView({
         DRAFT_KEY,
         JSON.stringify({
           counts: effectiveCounts,
-          paymentType,
           bankMethod,
-          cryptoNetwork,
         })
       );
     } catch (err) {
@@ -875,48 +835,6 @@ export function PurchaseView({
     }
   }
 
-  async function submitCrypto() {
-    if (pendingPayment) {
-      setFormError(PENDING_CHECKOUT_MESSAGE);
-      return;
-    }
-    if (units === 0) {
-      setFormError('Choose at least one page or account.');
-      return;
-    }
-    if (quoteError) {
-      setFormError(plainQuoteError(quoteError));
-      return;
-    }
-    setBusy('crypto');
-    setFormError(null);
-    try {
-      const result = await apiPost(
-        buildTenantApiPath(subdomain, '/billing/payments/crypto'),
-        {
-          counts: effectiveCounts,
-          network: cryptoNetwork,
-          isUpgrade,
-          ...(appliedCoupon ? { couponCode: appliedCoupon.code } : {}),
-        },
-        { schema: CryptoCheckoutResponseSchema }
-      );
-      await load();
-      try {
-        sessionStorage.removeItem(DRAFT_KEY);
-      } catch (err) {
-        // Draft cleanup is best-effort; a stale draft only
-        // pre-fills the next builder.
-        reportError(err, { source: 'purchase-draft-cleanup' });
-      }
-      router.push(`/tenant/${subdomain}/purchase/confirmation?payment=${result.paymentId}`);
-    } catch (err) {
-      setFormError(getErrorMessage(err));
-    } finally {
-      setBusy(null);
-    }
-  }
-
   async function submitZeroDue() {
     if (units === 0) {
       setFormError('Choose at least one page or account.');
@@ -1140,12 +1058,6 @@ export function PurchaseView({
                 <dt className="font-medium text-ink">You pay now</dt>
                 <dd className="font-semibold tabular-nums text-ink">{downgradeQuote.amountToPayPkr} PKR</dd>
               </div>
-              <p className="text-body text-ink-sub">
-                Lower monthly plan for next month. Your current plan runs unchanged until{' '}
-                {entitlement?.periodEndsAt ? formatDate(entitlement.periodEndsAt) : 'it ends'}, then
-                the new lower plan starts. No credit was given for the days left on your current
-                plan — you pay the new lower monthly price now, in advance.
-              </p>
             </>
           ) : isUpgrade && quote ? (
             <>
@@ -1202,11 +1114,9 @@ export function PurchaseView({
           )}
         </dl>
         <p className="text-body text-ink-sub">
-          {isDowngrade
-            ? 'Your lower monthly plan starts after your current plan ends, or at approval if approval arrives after expiry — never backdated.'
-            : isUpgrade
-              ? 'Your new month starts when your upgrade is approved.'
-              : 'Your month runs for 30 days from approval. If you do not renew, posting pauses and you can only view your account until you renew.'}
+          {isUpgrade
+            ? 'Your new month starts when your upgrade is approved.'
+            : 'Your month runs for 30 days from approval. If you do not renew, posting pauses and you can only view your account until you renew.'}
         </p>
       </CardContent>
     </Card>
@@ -1216,9 +1126,7 @@ export function PurchaseView({
   /**
    * Pending payment card for Purchase only: while one payment is in
    * flight, Purchase shows it and hides the builder instead of
-   * offering a fresh one. The label follows the payment method —
-   * bank payments wait for approval, crypto payments wait for the
-   * user to send the funds. "Check again" re-reads payments so a
+   * offering a fresh one. "Check again" re-reads payments so a
    * decision made while this view is open unblocks the form.
    */
   const pendingPaymentCard = pendingPayment ? (
@@ -1230,26 +1138,12 @@ export function PurchaseView({
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
-        <BillingStatusMark
-          kind="pending"
-          label={pendingPayment.method === 'bank' ? 'Waiting for approval' : 'Waiting for payment'}
-        />
+        <BillingStatusMark kind="pending" label="Waiting for approval" />
         <p className="text-body text-ink">
           {pendingPayment.amountPkr} PKR · {paymentMethodLabel(pendingPayment)}
           {pendingPayment.isUpgrade ? ' · Upgrade' : ''} · Submitted{' '}
           {formatDateTime(pendingPayment.createdAt)}
         </p>
-        {pendingPayment.method === 'nowpayments' && pendingPayment.nowpaymentsPayAddress ? (
-          <p className="break-all text-body text-ink-sub">
-            Send exactly{' '}
-            {pendingPayment.nowpaymentsPayAmount !== null &&
-            pendingPayment.nowpaymentsPayAmount !== undefined
-              ? `${pendingPayment.nowpaymentsPayAmount} USDT`
-              : 'the amount shown in your wallet'}{' '}
-            to {pendingPayment.nowpaymentsPayAddress} on{' '}
-            {pendingPayment.nowpaymentsNetwork === 'trc20' ? 'TRC20' : 'BEP20'}.
-          </p>
-        ) : null}
         <div>
           <Button variant="outline" onClick={() => void load()}>
             Check again
@@ -1313,85 +1207,107 @@ export function PurchaseView({
           <div className="order-2 flex min-w-0 flex-1 flex-col gap-6 lg:order-1">
             <Card>
               <CardHeader>
-                <CardTitle>Choose how to pay</CardTitle>
-                <CardDescription>Manual payments or crypto.</CardDescription>
+                <div className="flex items-baseline justify-between gap-3">
+                  <CardTitle>Choose how to pay</CardTitle>
+                  <span className="shrink-0 text-metadata text-ink-sub">Manual payments only.</span>
+                </div>
               </CardHeader>
               <CardContent className="flex flex-col gap-6">
-                <div role="radiogroup" aria-label="Payment type" className="grid gap-2 sm:grid-cols-2">
-                  <MethodCard
-                    selected={paymentType === 'bank'}
-                    title="Manual payments"
-                    description="Easypaisa, Nayapay, UBL bank, Binance"
-                    label="Pay with a manual payment"
-                    onClick={() => setPaymentType('bank')}
-                  />
-                  <MethodCard
-                    selected={paymentType === 'crypto'}
-                    title="Crypto (USDT)"
-                    description="Pay in USDT"
-                    label="Pay with crypto"
-                    onClick={() => setPaymentType('crypto')}
-                  />
-                </div>
-
-                {paymentType === 'bank' ? (
-                  <section aria-label="Manual payments" className="flex flex-col gap-4">
-                    <div role="radiogroup" aria-label="Payment method" className="grid gap-2 sm:grid-cols-2">
-                      {(['easypaisa', 'nayapay', 'ubl', 'binance'] as const).map((method) => (
-                        <MethodCard
-                          key={method}
-                          selected={bankMethod === method}
-                          title={BANK_PAYMENT_DETAILS[method].label}
-                          description={BANK_PAYMENT_DETAILS[method].accountNumber}
-                          label={`Pay with ${BANK_PAYMENT_DETAILS[method].label}`}
-                          onClick={() => setBankMethod(method)}
-                        />
-                      ))}
+                <section aria-label="Pay via" className="flex flex-col gap-2">
+                  <p className="text-body font-medium text-ink">Step 1 — Pay via</p>
+                  <div role="radiogroup" aria-label="Payment method" className="flex flex-col gap-2">
+                    {(['easypaisa', 'nayapay', 'ubl', 'binance'] as const).map((method) => (
+                      <button
+                        key={method}
+                        type="button"
+                        role="radio"
+                        aria-checked={bankMethod === method}
+                        aria-label={`Pay via ${PAY_VIA_LABELS[method]}`}
+                        onClick={() => setBankMethod(method)}
+                        className={cn(
+                          'flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link',
+                          bankMethod === method
+                            ? 'border-ink bg-subtle'
+                            : 'border-line bg-panel hover:bg-hover'
+                        )}
+                      >
+                        <span className="text-body font-medium text-ink">{PAY_VIA_LABELS[method]}</span>
+                        {bankMethod === method ? (
+                          <span
+                            aria-hidden
+                            className="flex size-5 shrink-0 items-center justify-center rounded-full bg-signal-operational text-primary"
+                          >
+                            <CheckIcon className="size-3.5" />
+                          </span>
+                        ) : null}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+                <section aria-label="Pay to this account" className="flex flex-col gap-2">
+                  <p className="text-body font-medium text-ink">Step 2 — Pay to this account</p>
+                  <div className="flex flex-col gap-2 rounded-md border border-line bg-panel px-3 py-2">
+                    <div className="flex items-baseline justify-between gap-3">
+                      <span className="text-metadata text-ink-sub">Account details</span>
+                      <span className="text-body font-medium text-ink">{PAY_VIA_LABELS[bankMethod]}</span>
                     </div>
-                    <dl className="grid gap-3 sm:grid-cols-2">
-                      <div className="flex flex-col gap-1">
-                        <dt className="text-metadata text-ink-sub">
-                          {details.accountNumberLabel ?? 'Account number'}
-                        </dt>
-                        <dd className="flex flex-wrap items-center gap-2">
-                          <span className="font-mono text-body text-ink">{details.accountNumber}</span>
+                    <div className="flex items-baseline justify-between gap-3">
+                      <span className="text-metadata text-ink-sub">
+                        {bankMethod === 'binance' ? 'Binance username' : 'Account name'}
+                      </span>
+                      <span className="text-body font-medium text-ink">
+                        {bankMethod === 'binance' ? 'shahzebpyc' : 'Shahzeb Malik'}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-metadata text-ink-sub">
+                        {details.accountNumberLabel ?? 'Account number'}
+                      </span>
+                      <span className="flex flex-wrap items-center gap-2">
+                        <span className="font-mono text-body text-ink">{details.accountNumber}</span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void copyText(details.accountNumber, `account-${bankMethod}`)}
+                        >
+                          {copied === `account-${bankMethod}`
+                            ? 'Copied'
+                            : details.accountNumberLabel
+                              ? `Copy ${details.accountNumberLabel}`
+                              : 'Copy number'}
+                        </Button>
+                      </span>
+                    </div>
+                    {details.iban ? (
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-metadata text-ink-sub">IBAN</span>
+                        <span className="flex flex-wrap items-center justify-end gap-2">
+                          <span className="break-all font-mono text-body text-ink">{details.iban}</span>
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => void copyText(details.accountNumber, `account-${bankMethod}`)}
+                            onClick={() => void copyText(details.iban ?? '', `iban-${bankMethod}`)}
                           >
-                            {copied === `account-${bankMethod}`
-                              ? 'Copied'
-                              : details.accountNumberLabel
-                                ? `Copy ${details.accountNumberLabel}`
-                                : 'Copy number'}
+                            {copied === `iban-${bankMethod}` ? 'Copied' : 'Copy IBAN'}
                           </Button>
-                        </dd>
+                        </span>
                       </div>
-                      {details.iban ? (
-                        <div className="flex flex-col gap-1">
-                          <dt className="text-metadata text-ink-sub">IBAN</dt>
-                          <dd className="flex flex-wrap items-center gap-2">
-                            <span className="break-all font-mono text-body text-ink">{details.iban}</span>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => void copyText(details.iban ?? '', `iban-${bankMethod}`)}
-                            >
-                              {copied === `iban-${bankMethod}` ? 'Copied' : 'Copy IBAN'}
-                            </Button>
-                          </dd>
-                        </div>
-                      ) : null}
-                      {details.holder ? (
-                        <div className="flex flex-col gap-1">
-                          <dt className="text-metadata text-ink-sub">Account holder</dt>
-                          <dd className="text-body text-ink">{details.holder}</dd>
-                        </div>
-                      ) : null}
-                    </dl>
+                    ) : null}
+                    {details.bank ? (
+                      <div className="flex items-baseline justify-between gap-3">
+                        <span className="text-metadata text-ink-sub">Bank</span>
+                        <span className="text-body font-medium text-ink">{details.bank} bank</span>
+                      </div>
+                    ) : null}
+                    <p className="text-metadata text-ink-sub">
+                      Please pay to this {PAY_VIA_LABELS[bankMethod]} account, then add your payment
+                      screenshot in step 3.
+                    </p>
+                  </div>
+                </section>
+                <section aria-label="Upload your payment screenshot" className="flex flex-col gap-2">
+                  <p className="text-body font-medium text-ink">Step 3 — Upload your payment screenshot</p>
                     <div className="flex flex-col gap-2">
-                      <span className="text-body font-medium text-ink">Payment screenshot</span>
                       <input
                         ref={screenshotInputRef}
                         id="billing-screenshot"
@@ -1459,14 +1375,16 @@ export function PurchaseView({
                           type="button"
                           disabled={busy !== null}
                           onClick={() => screenshotInputRef.current?.click()}
-                          className="flex flex-col items-center gap-2 rounded-md border border-dashed border-line bg-panel px-4 py-6 text-center transition-colors hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link disabled:cursor-not-allowed disabled:opacity-60"
+                          className="flex items-center gap-3 rounded-md border border-dashed border-line bg-panel px-3 py-2 text-left transition-colors hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link disabled:cursor-not-allowed disabled:opacity-60"
                         >
-                          <UploadIcon aria-hidden className="size-5 text-ink-sub" />
-                          <span className="text-body font-medium text-ink">
-                            Upload your payment screenshot
-                          </span>
-                          <span className="text-metadata text-ink-sub">
-                            PNG, JPG, WebP or GIF, up to 10 MB
+                          <UploadIcon aria-hidden className="size-5 shrink-0 text-ink-sub" />
+                          <span className="flex min-w-0 flex-col">
+                            <span className="text-body font-medium text-ink">
+                              Upload your payment screenshot
+                            </span>
+                            <span className="text-metadata text-ink-sub">
+                              PNG, JPG, WebP or GIF, up to 10 MB
+                            </span>
                           </span>
                         </button>
                       )}
@@ -1485,48 +1403,7 @@ export function PurchaseView({
                       ) : null}
                       <p className="text-body text-ink-sub">Your plan runs for 30 days after approval.</p>
                     </div>
-                  </section>
-                ) : (
-                  <section aria-label="Pay with crypto" className="flex flex-col gap-4">
-                    <p className="text-body text-ink-sub">
-                      Pay in USDT. You will pay the USDT equal to{' '}
-                      {appliedCoupon ? appliedCoupon.amountAfterDiscountPkr : amountToPay} PKR.
-                    </p>
-                    <div role="radiogroup" aria-label="Crypto network" className="grid gap-2 sm:grid-cols-2">
-                      {(['trc20', 'bep20'] as const).map((network) => (
-                        <MethodCard
-                          key={network}
-                          selected={cryptoNetwork === network}
-                          title={network === 'trc20' ? 'TRC20' : 'BEP20'}
-                          description="USDT"
-                          label={`Pay with USDT on ${network === 'trc20' ? 'TRC20' : 'BEP20'}`}
-                          onClick={() => setCryptoNetwork(network)}
-                        />
-                      ))}
-                    </div>
-                    <div>
-                      <Button
-                        variant="outline"
-                        onClick={() => void submitCrypto()}
-                        loading={busy === 'crypto'}
-                        disabled={checkoutDisabled}
-                      >
-                        Continue to crypto payment
-                      </Button>
-                      {units === 0 ? (
-                        <p className="mt-2 text-body text-ink-sub">
-                          Choose at least one page or account first.
-                        </p>
-                      ) : null}
-                      {fullyCovered ? (
-                        <p className="mt-2 text-body text-ink-sub">
-                          Your coupon covers the full amount — activate your plan above, no
-                          payment needed.
-                        </p>
-                      ) : null}
-                    </div>
-                  </section>
-                )}
+                </section>
 
                 {formError ? (
                   <Alert variant="destructive">
@@ -1570,7 +1447,6 @@ export function PurchaseView({
             </Card>
           </div>
           <div className="flex w-full shrink-0 flex-col gap-6 lg:sticky lg:top-20 lg:w-90 lg:self-start">
-            {orderSummary}
             <CouponSection
               subdomain={subdomain}
               counts={effectiveCounts}
@@ -1580,6 +1456,7 @@ export function PurchaseView({
               activating={activatingZeroDue}
               disabled={busy !== null || activatingZeroDue}
             />
+            {orderSummary}
           </div>
         </div>
       </div>
@@ -1748,7 +1625,7 @@ export function PurchaseView({
  * PurchaseConfirmationView — server-backed confirmation, keyed by
  * payment id (separate-sections build). Refreshing this page
  * re-reads the payment from the server, so a closed tab never
- * loses the crypto pay address, exact USDT amount, or network.
+ * loses the payment.
  */
 function PurchaseConfirmationView({
   subdomain,
@@ -1758,7 +1635,6 @@ function PurchaseConfirmationView({
   const [payment, setPayment] = React.useState<BillingPaymentItem | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
-  const [copied, setCopied] = React.useState(false);
 
   React.useEffect(() => {
     if (!paymentId) {
@@ -1820,20 +1696,15 @@ function PurchaseConfirmationView({
     );
   }
 
-  const isCrypto = payment.method === 'nowpayments';
   const isPaid = payment.status === 'approved' || payment.status === 'paid';
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
       <div className="flex flex-col gap-1">
         <h1 className="text-xl leading-heading font-semibold text-ink">Purchase</h1>
         <p className="text-body text-ink-sub">
-          {isCrypto
-            ? isPaid
-              ? 'Your crypto payment arrived. Your monthly plan is active.'
-              : 'Send your crypto payment to the address below.'
-            : isPaid
-              ? 'Your payment was approved. Your monthly plan is active.'
-              : 'We have received your payment.'}
+          {isPaid
+            ? 'Your payment was approved. Your monthly plan is active.'
+            : 'We have received your payment.'}
         </p>
       </div>
       <Card>
@@ -1855,33 +1726,7 @@ function PurchaseConfirmationView({
             kind={isPaid ? 'ok' : payment.status === 'rejected' ? 'failed' : 'pending'}
             label={paymentStatusLabel(payment.status)}
           />
-          {isCrypto && payment.nowpaymentsPayAddress ? (
-            <div className="flex flex-col gap-2">
-              <p className="text-body text-ink">
-                Send exactly{' '}
-                {payment.nowpaymentsPayAmount !== null && payment.nowpaymentsPayAmount !== undefined
-                  ? `${payment.nowpaymentsPayAmount} USDT`
-                  : 'the amount shown in your wallet'}{' '}
-                to this address on{' '}
-                {payment.nowpaymentsNetwork === 'trc20' ? 'TRC20' : 'BEP20'}:
-              </p>
-              <p className="break-all rounded-md border border-line bg-panel px-3 py-2 text-body text-ink">
-                {payment.nowpaymentsPayAddress}
-              </p>
-              <div>
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    void navigator.clipboard.writeText(payment.nowpaymentsPayAddress ?? '');
-                    setCopied(true);
-                  }}
-                >
-                  {copied ? 'Copied' : 'Copy address'}
-                </Button>
-              </div>
-            </div>
-          ) : null}
-          {!isCrypto && !isPaid ? (
+          {!isPaid ? (
             <p className="text-body text-ink-sub">
               Your monthly plan starts when we approve your payment, not when you paid. If
               approval takes a few days, those days are not added to your plan. Your plan runs

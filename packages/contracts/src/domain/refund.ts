@@ -60,55 +60,28 @@ export function isWithinRefundWindow(startsAt: Date, at: Date): boolean {
 
 /**
  * Partial refund: paid amount minus days used at the daily rate.
- * PKR rounds to the nearest rupee; USDT rounds to 2 decimals.
+ * PKR rounds to the nearest rupee.
  */
-export function computeRefundAmount(
-  amountPaid: number,
-  daysUsed: number,
-  currency: 'PKR' | 'USDT'
-): number {
+export function computeRefundAmount(amountPaid: number, daysUsed: number): number {
   const refund = amountPaid - (amountPaid / REFUND_PERIOD_DAYS) * daysUsed;
-  if (currency === 'USDT') return Math.round(refund * 100) / 100;
   return Math.round(refund);
 }
 
 export const RefundStatusSchema = z.enum(['requested', 'approved', 'rejected', 'sent']);
 export type RefundStatus = z.infer<typeof RefundStatusSchema>;
 
-export const RefundDestinationTypeSchema = z.enum(['mobile', 'bank', 'binance', 'usdt']);
+export const RefundDestinationTypeSchema = z.enum(['mobile', 'bank', 'binance']);
 export type RefundDestinationType = z.infer<typeof RefundDestinationTypeSchema>;
-
-export const RefundNetworkSchema = z.enum(['trc20', 'bep20']);
-export type RefundNetwork = z.infer<typeof RefundNetworkSchema>;
 
 /**
  * The destination the money goes back to. The type is DERIVED from the
  * original payment method (same account the user paid from) — the user
- * only fills in the value. A network is required for USDT and forbidden
- * for every other type.
+ * only fills in the value.
  */
-export const RefundDestinationSchema = z
-  .object({
-    type: RefundDestinationTypeSchema,
-    value: z.string().trim().min(1).max(200),
-    network: RefundNetworkSchema.nullable(),
-  })
-  .superRefine((destination, ctx) => {
-    if (destination.type === 'usdt' && !destination.network) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Choose the USDT network for the refund.',
-        path: ['network'],
-      });
-    }
-    if (destination.type !== 'usdt' && destination.network) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'A network only applies to USDT refunds.',
-        path: ['network'],
-      });
-    }
-  });
+export const RefundDestinationSchema = z.object({
+  type: RefundDestinationTypeSchema,
+  value: z.string().trim().min(1).max(200),
+});
 export type RefundDestination = z.infer<typeof RefundDestinationSchema>;
 
 export const RefundRequestCreateSchema = z.object({
@@ -118,7 +91,7 @@ export const RefundRequestCreateSchema = z.object({
 });
 export type RefundRequestCreate = z.infer<typeof RefundRequestCreateSchema>;
 
-export const RefundCurrencySchema = z.enum(['PKR', 'USDT']);
+export const RefundCurrencySchema = z.enum(['PKR']);
 export type RefundCurrency = z.infer<typeof RefundCurrencySchema>;
 
 export const RefundRequestItemSchema = z.object({
@@ -134,7 +107,6 @@ export const RefundRequestItemSchema = z.object({
   daysUsed: z.number().int().nullable(),
   destinationType: RefundDestinationTypeSchema,
   destinationValue: z.string(),
-  destinationNetwork: RefundNetworkSchema.nullable(),
   reason: z.string().nullable(),
   requestedAt: z.string(),
   decidedAt: z.string().nullable(),

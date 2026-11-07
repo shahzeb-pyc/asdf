@@ -25,15 +25,15 @@ function formatDate(value: string | null): string {
   return Number.isNaN(date.getTime()) ? '—' : date.toLocaleDateString();
 }
 
-function formatAmount(amount: number, currency: 'PKR' | 'USDT'): string {
-  return currency === 'USDT' ? `${amount} USDT` : `${amount} PKR`;
+function formatAmount(amount: number, currency: 'PKR'): string {
+  return `${amount} PKR`;
 }
 
 function destinationLabel(item: AdminRefundItem): string {
   if (item.destinationType === 'mobile') return 'Mobile number';
   if (item.destinationType === 'bank') return 'Bank account / IBAN';
   if (item.destinationType === 'binance') return 'Binance ID';
-  return `USDT wallet (${item.destinationNetwork === 'trc20' ? 'TRC20' : 'BEP20'})`;
+  return '—';
 }
 
 /** Estimate at today — the final amount locks at approval time, from the days used then. */
@@ -41,7 +41,7 @@ function estimateToday(item: AdminRefundItem): number | null {
   if (!item.periodStartsAt) return null;
   const starts = new Date(item.periodStartsAt);
   if (Number.isNaN(starts.getTime())) return null;
-  return computeRefundAmount(item.amountPaid, daysUsedBetween(starts, new Date()), item.currency);
+  return computeRefundAmount(item.amountPaid, daysUsedBetween(starts, new Date()));
 }
 
 /**

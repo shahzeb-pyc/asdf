@@ -55,7 +55,6 @@ const pendingData = {
       daysUsed: null,
       destinationType: 'mobile',
       destinationValue: '03001234567',
-      destinationNetwork: null,
       reason: null,
       requestedAt: '2026-10-04T00:00:00.000Z',
       decidedAt: null,
@@ -142,7 +141,7 @@ describe('RefundSection', () => {
         '/api/tenant/acme/billing/refunds',
         expect.objectContaining({
           paymentId: 'payment-1',
-          destination: { type: 'mobile', value: '03001234567', network: null },
+          destination: { type: 'mobile', value: '03001234567' },
         })
       )
     );
@@ -174,7 +173,6 @@ describe('RefundSection extended paths', () => {
       daysUsed: null,
       destinationType: 'mobile',
       destinationValue: '03001234567',
-      destinationNetwork: null,
       reason: null,
       requestedAt: '2026-10-04T00:00:00.000Z',
       decidedAt: null,
@@ -234,22 +232,14 @@ describe('RefundSection extended paths', () => {
     expect(screen.queryByText('Request refund')).toBeNull();
   });
 
-  it('labels bank, binance, and USDT destinations in the request list', async () => {
+  it('labels bank and binance destinations in the request list', async () => {
     mockedApiGet.mockResolvedValue({
       requests: [
         requestItem({ id: 'r-bank', destinationType: 'bank', destinationValue: 'PK00BANK0001' }),
-        requestItem({ id: 'r-binance', destinationType: 'binance', destinationValue: 'BIN123' }),
         requestItem({
-          id: 'r-usdt',
-          destinationType: 'usdt',
-          destinationValue: 'TWallet',
-          destinationNetwork: 'bep20',
-        }),
-        requestItem({
-          id: 'r-usdt-trc',
-          destinationType: 'usdt',
-          destinationValue: 'TWallet2',
-          destinationNetwork: 'trc20',
+          id: 'r-binance',
+          destinationType: 'binance',
+          destinationValue: 'BIN123',
           reason: 'Changed my mind',
         }),
         requestItem({ id: 'r-bad-date', requestedAt: null }),
@@ -259,51 +249,8 @@ describe('RefundSection extended paths', () => {
     render(<RefundSection subdomain="acme" />);
     expect(await screen.findByText(/Bank account \/ IBAN: PK00BANK0001/)).toBeTruthy();
     expect(screen.getByText(/Binance ID: BIN123/)).toBeTruthy();
-    expect(screen.getByText(/USDT wallet \(BEP20\): TWallet/)).toBeTruthy();
-    expect(screen.getByText(/USDT wallet \(TRC20\): TWallet2/)).toBeTruthy();
     expect(screen.getByText(/Changed my mind/)).toBeTruthy();
     expect(screen.getByText(/Requested —/)).toBeTruthy();
-  });
-
-  it('submits a USDT request with the chosen network and the payment-record copy', async () => {
-    const usdtEligible = {
-      ...eligibleData,
-      eligibility: {
-        ...eligibleData.eligibility,
-        currency: 'USDT',
-        estimatedRefund: 90,
-        destinationType: 'usdt',
-      },
-    };
-    mockedApiGet.mockResolvedValue(usdtEligible);
-    mockedApiPost.mockResolvedValue({ request: { id: 'refund-new' } });
-    render(<RefundSection subdomain="acme" />);
-    fireEvent.click(await screen.findByText('Request refund'));
-    expect(await screen.findByLabelText('USDT wallet address')).toBeTruthy();
-    expect(
-      screen.getByText(
-        'Refunds go to the same account you paid from. We check the wallet address manually against your payment record before sending.'
-      )
-    ).toBeTruthy();
-    fireEvent.change(screen.getByLabelText('USDT wallet address'), {
-      target: { value: 'TWalletAddress' },
-    });
-    fireEvent.change(screen.getByLabelText('Network'), { target: { value: 'bep20' } });
-    fireEvent.change(screen.getByLabelText('Reason (optional)'), {
-      target: { value: '  Changed my mind  ' },
-    });
-    fireEvent.click(screen.getByText('Submit refund request'));
-    await waitFor(() =>
-      expect(mockedApiPost).toHaveBeenCalledWith(
-        '/api/tenant/acme/billing/refunds',
-        expect.objectContaining({
-          paymentId: 'payment-1',
-          destination: { type: 'usdt', value: 'TWalletAddress', network: 'bep20' },
-          reason: 'Changed my mind',
-        })
-      )
-    );
-    expect(await screen.findByText('Refund requested. We will decide it and let you know here.')).toBeTruthy();
   });
 
   it('shows the bank and binance form labels for those destinations', async () => {
@@ -405,29 +352,6 @@ describe('RefundSection extended paths', () => {
     });
     render(<RefundSection subdomain="acme" />);
     expect(await screen.findByText('Paid 4200 PKR')).toBeTruthy();
-  });
-
-  it('submits a USDT request on TRC20 when the network is left on TRC20', async () => {
-    mockedApiGet.mockResolvedValue({
-      ...eligibleData,
-      eligibility: { ...eligibleData.eligibility, destinationType: 'usdt' },
-    });
-    mockedApiPost.mockResolvedValue({ request: { id: 'refund-new' } });
-    render(<RefundSection subdomain="acme" />);
-    fireEvent.click(await screen.findByText('Request refund'));
-    fireEvent.change(await screen.findByLabelText('USDT wallet address'), {
-      target: { value: 'TWalletAddress' },
-    });
-    fireEvent.change(screen.getByLabelText('Network'), { target: { value: 'trc20' } });
-    fireEvent.click(screen.getByText('Submit refund request'));
-    await waitFor(() =>
-      expect(mockedApiPost).toHaveBeenCalledWith(
-        '/api/tenant/acme/billing/refunds',
-        expect.objectContaining({
-          destination: { type: 'usdt', value: 'TWalletAddress', network: 'trc20' },
-        })
-      )
-    );
   });
 
   it('shows a zero estimate and no days-used note when the estimate is absent', async () => {

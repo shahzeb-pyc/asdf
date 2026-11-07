@@ -74,10 +74,6 @@ function paymentItem(overrides: Record<string, unknown> = {}) {
     amountPkr: 70,
     isUpgrade: false,
     screenshotStorageKey: 'billing-screenshots/user-1/shot.png',
-    nowpaymentsPaymentId: null,
-    nowpaymentsPayAddress: null,
-    nowpaymentsPayAmount: null,
-    nowpaymentsNetwork: null,
     createdAt: '2026-10-31T12:00:00.000Z',
     approvedAt: null,
     ...overrides,
@@ -604,13 +600,13 @@ describe('Billing Purchase', () => {
     const put = stubPutOk();
     renderBilling('purchase');
     await goToCheckout();
-    expect(await screen.findByText('Manual payments')).toBeInTheDocument();
+    expect(await screen.findByText('Manual payments only.')).toBeInTheDocument();
     expect(screen.getByText('Your plan runs for 30 days after approval.')).toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText('Pay with Binance'));
+    fireEvent.click(screen.getByRole('radio', { name: 'Pay via Binance' }));
     expect(screen.getByText('Binance ID')).toBeInTheDocument();
     expect(screen.getAllByText('983001576').length).toBeGreaterThan(0);
     expect(screen.getByText('Copy Binance ID')).toBeInTheDocument();
-    expect(screen.getByText('Shahzebpyc')).toBeInTheDocument();
+    expect(screen.getByText('shahzebpyc')).toBeInTheDocument();
     await pickScreenshot();
     fireEvent.click(screen.getByRole('button', { name: 'Submit payment for approval' }));
     await goToConfirmation();
@@ -669,18 +665,17 @@ describe('Billing Purchase', () => {
     expect(screen.queryByText('Upload your payment screenshot')).toBeNull();
   });
 
-  it('checkout shows the compact coupon directly below the order summary', async () => {
+  it('checkout shows the compact coupon directly above the order summary', async () => {
     renderBilling('purchase');
     await goToCheckout();
-    // Both live in the right column now: summary first, coupon second.
+    // Both live in the right column now: coupon first, summary second.
     const summary = await screen.findByText('Order summary');
     const couponInput = screen.getByLabelText('Coupon code') as HTMLInputElement;
     expect(couponInput.placeholder).toBe('e.g. SAVE20');
-    // DOM order is the placement contract: the coupon input follows
-    // the summary heading, inside the summary's column — not the
-    // pay card's column, where it used to sit above "Choose how to pay".
+    // DOM order is the placement contract: the summary heading
+    // follows the coupon input, inside the same column.
     expect(
-      summary.compareDocumentPosition(couponInput) & Node.DOCUMENT_POSITION_FOLLOWING
+      couponInput.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy();
     const summaryCard = summary.closest('[data-slot="card"]');
     expect(summaryCard).not.toBeNull();
@@ -689,6 +684,19 @@ describe('Billing Purchase', () => {
     // title and hint.
     expect(screen.getByText('Coupon')).toBeInTheDocument();
     expect(screen.getByText('Have a coupon code? Apply it before you pay.')).toBeInTheDocument();
+  });
+
+  it('checkout offers manual payments only — no crypto option renders', async () => {
+    renderBilling('purchase');
+    await goToCheckout();
+    expect(screen.getByText('Manual payments only.')).toBeInTheDocument();
+    expect(screen.queryByText(/crypto/i)).toBeNull();
+    expect(screen.queryByText(/USDT/)).toBeNull();
+    expect(screen.queryByText(/TRC20|BEP20/)).toBeNull();
+    // Step 1 holds the four manual methods, and only those.
+    for (const label of ['Pay via Easypaisa', 'Pay via Nayapay', 'Pay via Bank transfer', 'Pay via Binance']) {
+      expect(screen.getByRole('radio', { name: label })).toBeInTheDocument();
+    }
   });
 
   it('checkout coupon input uppercases typed codes and Apply stays disabled while empty', async () => {
@@ -1361,8 +1369,8 @@ describe('My Plan view', () => {
 
 /**
  * Payments view (split build): rows from the paginated status
- * endpoint, crypto pay details on pending crypto rows, rejection
- * reasons, load-more paging, and the empty and error states.
+ * endpoint, rejection reasons, load-more paging, and the empty
+ * and error states.
  */
 describe('Payments view', () => {
   beforeEach(() => {
@@ -1384,25 +1392,23 @@ describe('Payments view', () => {
     });
   }
 
-  it('Rows show amount, method, status, and crypto pay details', async () => {
+  it('Rows show amount, method, and status', async () => {
     mockPaymentsApi({
       1: [
         paymentItem(),
         paymentItem({
           id: '22222222-2222-4222-a222-222222222222',
-          method: 'nowpayments',
-          bankMethod: null,
-          nowpaymentsPayAddress: 'TXYZ1234567890abcdefghijklmnopqrstuv',
-          nowpaymentsPayAmount: 10,
-          nowpaymentsNetwork: 'trc20',
+          method: 'bank',
+          bankMethod: 'nayapay',
+          status: 'approved',
         }),
       ],
     });
     renderPayments();
     expect(await screen.findByText('70 PKR · Easypaisa')).toBeInTheDocument();
-    expect(screen.getByText('70 PKR · Crypto · USDT (TRC20)')).toBeInTheDocument();
-    expect(screen.getByText(/Send exactly 10 USDT to/)).toBeInTheDocument();
-    expect(screen.getByText(/TXYZ1234567890abcdefghijklmnopqrstuv/)).toBeInTheDocument();
+    expect(screen.getByText('70 PKR · Nayapay')).toBeInTheDocument();
+    expect(screen.getByText('Waiting for approval')).toBeInTheDocument();
+    expect(screen.getByText('Paid')).toBeInTheDocument();
   });
 
   it('Rejected rows show the reason; empty shows the first-use state', async () => {
@@ -1496,10 +1502,11 @@ describe('Purchase downgrade builder', () => {
     expect(screen.getByText('Current monthly plan')).toBeInTheDocument();
     expect(screen.getByText('New monthly plan')).toBeInTheDocument();
     expect(screen.getByText('You pay now')).toBeInTheDocument();
-    expect(
-      screen.getByText(/Lower monthly plan for next month\. Your current plan runs unchanged until/)
-    ).toBeInTheDocument();
-    expect(screen.getByText(/No credit was given for the days left/)).toBeInTheDocument();
+    // The two downgrade paragraphs were removed from the summary:
+    // only the header line above the step indicator names the lower plan.
+    expect(screen.queryByText(/Your current plan runs unchanged until/)).toBeNull();
+    expect(screen.queryByText(/No credit was given for the days left/)).toBeNull();
+    expect(screen.queryByText(/never backdated/)).toBeNull();
     // Header line only (the summary card uses a period, not the middot).
     expect(screen.getByText(/Lower monthly plan for next month · 1 Facebook pages/)).toBeInTheDocument();
   });

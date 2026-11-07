@@ -23,8 +23,8 @@ import { logServerError } from '@/lib/server-analytics';
  *   applications can therefore never overdraw a shared pool.
  * - Hold → apply → release lifecycle: a redemption is HELD at
  *   submission, APPLIED when the money finalises (admin approval,
- *   crypto finished, zero-due activation), and RELEASED when it
- *   does not (admin rejection, crypto failed/expired). A release
+ *   zero-due activation), and RELEASED when it
+ *   does not (admin rejection). A release
  *   is exactly-once: the held→released flip gates it, and the
  *   claim undo is guarded (percent consumption is only nulled
  *   when no other live redemption holds the coupon; a balance

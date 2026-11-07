@@ -61,7 +61,7 @@ export interface SubscriptionPeriodRow {
 export interface SubscriptionPaymentRow {
   id: string;
   userId: string;
-  method: 'bank' | 'nowpayments';
+  method: 'bank';
   bankMethod: 'easypaisa' | 'nayapay' | 'ubl' | 'binance' | null;
   status: string;
   counts: PlatformCounts;
@@ -74,18 +74,6 @@ export interface SubscriptionPaymentRow {
   overrideReason: string | null;
   decidedAt: string | null;
   screenshotStorageKey: string | null;
-  nowpaymentsPaymentId: string | null;
-  nowpaymentsPayAddress: string | null;
-  nowpaymentsPayAmount: number | null;
-  nowpaymentsNetwork: 'trc20' | 'bep20' | null;
-  /** IPN actuals (audit fix 2026-11-01): what the gateway really
-   *  received, persisted from the finished notification. Null until
-   *  a finished IPN with actuals arrives (or the columns predate
-   *  the migration that adds them). Refund math prefers this over
-   *  the checkout estimate. Stored alongside amount_pkr, never
-   *  converted into it. */
-  nowpaymentsActualPaid?: number | null;
-  nowpaymentsActualCurrency?: string | null;
   couponCode: string | null;
   discountPkr: number;
   periodId: string | null;
@@ -184,16 +172,11 @@ export function paymentFromRow(row: UnknownRow): SubscriptionPaymentRow | null {
   const id = stringField(row, 'id');
   const userId = stringField(row, 'user_id');
   if (!id || !userId) return null;
-  const method = stringField(row, 'method');
   const bankMethod = stringField(row, 'bank_method');
-  const network = stringField(row, 'nowpayments_network');
-  const payAmount = row['nowpayments_pay_amount'];
-  const actualPaid = row['nowpayments_actual_paid'];
-  const actualCurrency = row['nowpayments_actual_currency'];
   return {
     id,
     userId,
-    method: method === 'nowpayments' ? 'nowpayments' : 'bank',
+    method: 'bank',
     bankMethod:
       bankMethod === 'easypaisa' ||
       bankMethod === 'nayapay' ||
@@ -212,17 +195,6 @@ export function paymentFromRow(row: UnknownRow): SubscriptionPaymentRow | null {
     overrideReason: stringField(row, 'override_reason'),
     decidedAt: stringField(row, 'decided_at'),
     screenshotStorageKey: stringField(row, 'screenshot_storage_key'),
-    nowpaymentsPaymentId: stringField(row, 'nowpayments_payment_id'),
-    nowpaymentsPayAddress: stringField(row, 'nowpayments_pay_address'),
-    nowpaymentsPayAmount: typeof payAmount === 'number' ? payAmount : null,
-    nowpaymentsNetwork:
-      typeof network === 'string' && network.toLowerCase() === 'trc20'
-        ? 'trc20'
-        : typeof network === 'string' && network.toLowerCase() === 'bep20'
-          ? 'bep20'
-          : null,
-    nowpaymentsActualPaid: typeof actualPaid === 'number' ? actualPaid : null,
-    nowpaymentsActualCurrency: typeof actualCurrency === 'string' ? actualCurrency : null,
     couponCode: stringField(row, 'coupon_code'),
     discountPkr: numberField(row, 'discount_pkr'),
     periodId: stringField(row, 'period_id'),
@@ -318,11 +290,10 @@ export async function getActivePeriod(
 
 /**
  * One pending payment per user at a time. While any payment with
- * status 'pending' exists for the user, new submissions (bank and
- * crypto alike) are blocked. Approved, rejected, paid, failed, and
- * expired payments never block. A query failure fails closed: the
- * caller must not proceed to create a payment it cannot prove is
- * the user's only pending one.
+ * status 'pending' exists for the user, new submissions are blocked.
+ * Approved, rejected, paid, failed, and expired payments never block.
+ * A query failure fails closed: the caller must not proceed to create
+ * a payment it cannot prove is the user's only pending one.
  */
 export const PENDING_PAYMENT_EXISTS_MESSAGE =
   'You already have a payment waiting for approval. Wait for it to be decided before submitting another.';
@@ -1159,7 +1130,7 @@ export async function activateDueScheduledDowngrades(
   const { data, error } = await client
     .from('subscription_payments')
     .select(
-      `id,user_id,method,bank_method,status,${COUNT_COLUMNS},amount_pkr,is_upgrade,screenshot_storage_key,nowpayments_payment_id,nowpayments_pay_address,nowpayments_pay_amount,nowpayments_network,coupon_code,discount_pkr,period_id,approved_at,created_at`
+      `id,user_id,method,bank_method,status,${COUNT_COLUMNS},amount_pkr,is_upgrade,screenshot_storage_key,coupon_code,discount_pkr,period_id,approved_at,created_at`
     )
     .eq('user_id', userId)
     .eq('status', 'approved')
@@ -1308,7 +1279,7 @@ export async function approvePayment(
     const { data, error } = await client
       .from('subscription_payments')
       .select(
-        `id,user_id,method,bank_method,status,${COUNT_COLUMNS},amount_pkr,is_upgrade,screenshot_storage_key,nowpayments_payment_id,nowpayments_pay_address,nowpayments_pay_amount,nowpayments_network,coupon_code,discount_pkr,period_id,approved_at,created_at`
+        `id,user_id,method,bank_method,status,${COUNT_COLUMNS},amount_pkr,is_upgrade,screenshot_storage_key,coupon_code,discount_pkr,period_id,approved_at,created_at`
       )
       .eq('id', paymentId)
       .maybeSingle();
@@ -1646,244 +1617,6 @@ async function linkPeriodForApprovedPayment(
   );
 }
 
-/**
- * Activate a crypto payment from a finished webhook or an admin
- * rescue approval (audit fix 2026-11-01). Same claim-first shape
- * as approvePayment: the FIRST write claims the payment
- * (pending/failed/expired -> paid), so a finished event racing a
- * failed event cannot double-activate, and a failed event that
- * already ran cannot overwrite a paid payment. failed/expired is
- * NOT terminal: a later finished event still activates.
- * A rejected payment never activates, and a payment that already
- * has a period is returned as already-activated, never re-created.
- * couponReleasedBeforeFinish is true when a failed/expired event
- * already released this payment's coupon before the finish arrived:
- * the period is still owed (the user paid), but the coupon went
- * back to the pool — the caller records an admin-visible issue.
- */
-export async function activateCryptoPayment(
-  client: SupabaseClient,
-  payment: SubscriptionPaymentRow,
-  now: Date = new Date()
-): Promise<{
-  payment: SubscriptionPaymentRow;
-  period: SubscriptionPeriodRow | null;
-  alreadyActivated: boolean;
-  couponReleasedBeforeFinish: boolean;
-  /** True when a downgrade was scheduled instead of activated: no period exists yet. */
-  scheduled: boolean;
-}> {
-  const loadPeriodById = async (periodId: string): Promise<SubscriptionPeriodRow | null> => {
-    const { data } = await client
-      .from('subscription_periods')
-      .select(`id,user_id,${COUNT_COLUMNS},starts_at,ends_at,superseded_at`)
-      .eq('id', periodId)
-      .maybeSingle();
-    return data ? periodFromRow(asRow(data) ?? {}) : null;
-  };
-  // The caller may not have merged the new payment columns; the
-  // downgrade decision below must not depend on that.
-  payment = { ...payment, ...(await loadNewPaymentFieldsForRow(client, payment.id)) };
-  if (payment.periodId) {
-    const period = await loadPeriodById(payment.periodId);
-    if (period)
-      return { payment, period, alreadyActivated: true, couponReleasedBeforeFinish: false, scheduled: false };
-  }
-  if (payment.status === 'rejected') {
-    throw new SubscriptionGateError(
-      'PAYMENT_ALREADY_DECIDED',
-      'That payment was rejected and cannot be activated.'
-    );
-  }
-  if (payment.status !== 'pending' && payment.status !== 'failed' && payment.status !== 'expired') {
-    throw new SubscriptionGateError(
-      'PAYMENT_ALREADY_DECIDED',
-      'That payment has already been decided.'
-    );
-  }
-  if (payment.isDowngrade) {
-    // Same second-schedule guard as bank approval, before the
-    // claim: a due older schedule activates first, then an
-    // outstanding one blocks this activation with a plain error
-    // instead of creating a second competing schedule.
-    await activateDueScheduledDowngrades(client, payment.userId, now);
-    if (await hasOutstandingScheduledDowngrade(client, payment.userId, payment.id)) {
-      throw new SubscriptionGateError(
-        'PAYMENT_ALREADY_DECIDED',
-        SCHEDULED_DOWNGRADE_EXISTS_MESSAGE
-      );
-    }
-  }
-  const { data: claimed, error: claimError } = await client
-    .from('subscription_payments')
-    .update({ status: 'paid', updated_at: now.toISOString() })
-    .eq('id', payment.id)
-    .is('period_id', null)
-    .in('status', ['pending', 'failed', 'expired'])
-    .select('id');
-  if (claimError) {
-    logServerError('[billing] crypto activation claim failed', claimError, {
-      source: 'billing',
-    });
-    throw new SubscriptionGateError(
-      'ENTITLEMENT_UNAVAILABLE',
-      'That payment could not be activated right now. Please try again.'
-    );
-  }
-  if (!Array.isArray(claimed) || claimed.length === 0) {
-    // Another event won: a period means already-activated; a paid
-    // row without a period is a crashed winner — repair it below.
-    const { data: current } = await client
-      .from('subscription_payments')
-      .select('status,period_id')
-      .eq('id', payment.id)
-      .maybeSingle();
-    const currentRow = current ? asRow(current) : null;
-    const currentPeriodId = currentRow ? stringField(currentRow, 'period_id') : null;
-    if (currentPeriodId) {
-      const period = await loadPeriodById(currentPeriodId);
-      if (period) {
-        return { payment, period, alreadyActivated: true, couponReleasedBeforeFinish: false, scheduled: false };
-      }
-    }
-    const currentStatus = currentRow ? stringField(currentRow, 'status') : null;
-    if (currentStatus !== 'paid') {
-      throw new SubscriptionGateError(
-        'PAYMENT_ALREADY_DECIDED',
-        'That payment has already been decided.'
-      );
-    }
-    // Repair: paid but period-less. The link inside is conditional,
-    // so only one repair can win it.
-    const repaired = await linkPeriodForApprovedPayment(
-      client,
-      { ...payment, status: 'paid' },
-      '',
-      now,
-      loadPeriodById
-    );
-    return { ...repaired, alreadyActivated: false, couponReleasedBeforeFinish: await hadReleasedRedemption(client, payment.id), scheduled: repaired.period === null };
-  }
-  const linked = await linkPeriodForApprovedPayment(
-    client,
-    { ...payment, status: 'paid' },
-    '',
-    now,
-    loadPeriodById
-  );
-  return { ...linked, alreadyActivated: false, couponReleasedBeforeFinish: await hadReleasedRedemption(client, payment.id), scheduled: linked.period === null };
-}
-
-async function hadReleasedRedemption(
-  client: SupabaseClient,
-  paymentId: string
-): Promise<boolean> {
-  const { data } = await client
-    .from('coupon_redemptions')
-    .select('id')
-    .eq('payment_id', paymentId)
-    .eq('status', 'released')
-    .limit(1);
-  return Array.isArray(data) && data.length > 0;
-}
-
-/**
- * Mark a crypto payment failed/expired from the webhook, but ONLY
- * when it is still pending: a payment that already has a period, or
- * is already paid, must never be overwritten by a late failure
- * event. Returns false when another event already decided it.
- * The caller releases the coupon only when this returns true.
- */
-export async function markCryptoFailed(
-  client: SupabaseClient,
-  paymentId: string,
-  status: 'failed' | 'expired',
-  now: Date = new Date()
-): Promise<boolean> {
-  const { data, error } = await client
-    .from('subscription_payments')
-    .update({ status, updated_at: now.toISOString() })
-    .eq('id', paymentId)
-    .eq('status', 'pending')
-    .is('period_id', null)
-    .select('id');
-  if (error) {
-    logServerError('[billing] crypto mark failed update failed', error, {
-      source: 'billing',
-    });
-    throw new SubscriptionGateError(
-      'ENTITLEMENT_UNAVAILABLE',
-      'That payment could not be updated right now. Please try again.'
-    );
-  }
-  return Array.isArray(data) && data.length > 0;
-}
-
-/**
- * IPN actuals for a payment, read tolerantly (audit fix 2026-11-01).
- * The nowpayments_actual_* columns arrive with a migration that
- * ships unapplied: until it is applied, this select errors and the
- * caller falls back to the checkout estimate. A missing-column
- * error is therefore NOT fatal here — it is logged loudly so the
- * pending migration stays visible, and nulls are returned.
- */
-export async function loadPaymentActuals(
-  client: SupabaseClient,
-  paymentId: string
-): Promise<{ actualPaid: number | null; actualCurrency: string | null }> {
-  const { data, error } = await client
-    .from('subscription_payments')
-    .select('nowpayments_actual_paid,nowpayments_actual_currency')
-    .eq('id', paymentId)
-    .maybeSingle();
-  if (error || !data) {
-    if (error) {
-      logServerError('[billing] payment actuals lookup unavailable', error, {
-        source: 'billing',
-      });
-    }
-    return { actualPaid: null, actualCurrency: null };
-  }
-  const row = asRow(data) ?? {};
-  const paid = row['nowpayments_actual_paid'];
-  const currency = row['nowpayments_actual_currency'];
-  return {
-    actualPaid: typeof paid === 'number' ? paid : null,
-    actualCurrency: typeof currency === 'string' ? currency : null,
-  };
-}
-
-/**
- * Persist IPN actuals on a payment, best-effort (audit fix
- * 2026-11-01). This update is deliberately SEPARATE from the
- * activation update: until the migration adding the columns is
- * applied, this fails with a missing-column error, and that must
- * never break activation. Returns false when the columns are not
- * there yet (or any other failure), true when persisted.
- */
-export async function savePaymentActuals(
-  client: SupabaseClient,
-  paymentId: string,
-  actualPaid: number | null,
-  actualCurrency: string | null
-): Promise<boolean> {
-  const { error } = await client
-    .from('subscription_payments')
-    .update({
-      nowpayments_actual_paid: actualPaid,
-      nowpayments_actual_currency: actualCurrency,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', paymentId);
-  if (error) {
-    logServerError('[billing] payment actuals save unavailable', error, {
-      source: 'billing',
-    });
-    return false;
-  }
-  return true;
-}
-
 export async function rejectPayment(
   client: SupabaseClient,
   paymentId: string,
@@ -1893,7 +1626,7 @@ export async function rejectPayment(
   const { data, error } = await client
     .from('subscription_payments')
     .select(
-      `id,user_id,method,bank_method,status,${COUNT_COLUMNS},amount_pkr,is_upgrade,screenshot_storage_key,nowpayments_payment_id,nowpayments_pay_address,nowpayments_pay_amount,nowpayments_network,coupon_code,discount_pkr,period_id,approved_at,created_at`
+      `id,user_id,method,bank_method,status,${COUNT_COLUMNS},amount_pkr,is_upgrade,screenshot_storage_key,coupon_code,discount_pkr,period_id,approved_at,created_at`
     )
     .eq('id', paymentId)
     .maybeSingle();

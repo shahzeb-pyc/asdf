@@ -240,7 +240,7 @@ export type SubscriptionPlan = z.infer<typeof SubscriptionPlanSchema>;
 export const BankMethodSchema = z.enum(['easypaisa', 'nayapay', 'ubl', 'binance']);
 export type BankMethod = z.infer<typeof BankMethodSchema>;
 
-export const PaymentMethodSchema = z.enum(['bank', 'nowpayments']);
+export const PaymentMethodSchema = z.enum(['bank']);
 export type PaymentMethod = z.infer<typeof PaymentMethodSchema>;
 
 export const PaymentStatusSchema = z.enum([
@@ -253,19 +253,6 @@ export const PaymentStatusSchema = z.enum([
 ]);
 export type PaymentStatus = z.infer<typeof PaymentStatusSchema>;
 
-export const CryptoNetworkSchema = z.enum(['trc20', 'bep20']);
-export type CryptoNetwork = z.infer<typeof CryptoNetworkSchema>;
-
-/**
- * NOWPayments pay_currency tickers, as used in NOWPayments' own
- * API examples: USDT on Tron is `usdttrc20`; USDT on BNB Chain is
- * `usdtbsc`. If NOWPayments rejects a ticker, the checkout surfaces
- * its error plainly instead of falling back to another network.
- */
-export function nowPaymentsPayCurrency(network: CryptoNetwork): string {
-  return network === 'trc20' ? 'usdttrc20' : 'usdtbsc';
-}
-
 export const CreateBankPaymentRequestSchema = z.object({
   counts: PlatformCountsSchema,
   bankMethod: BankMethodSchema,
@@ -273,22 +260,9 @@ export const CreateBankPaymentRequestSchema = z.object({
 });
 export type CreateBankPaymentRequest = z.infer<typeof CreateBankPaymentRequestSchema>;
 
-export const CreateCryptoCheckoutRequestSchema = z.object({
-  counts: PlatformCountsSchema,
-  network: CryptoNetworkSchema,
-  isUpgrade: z.boolean(),
-  couponCode: z.string().min(1).max(32).optional(),
-});
-export type CreateCryptoCheckoutRequest = z.infer<typeof CreateCryptoCheckoutRequestSchema>;
-
 export const AdminDecisionRequestSchema = z.object({
-  // approve / reject: bank payments. approve-crypto / expire-crypto:
-  // rescue decisions for a stuck crypto payment whose IPN never
-  // arrived (audit fix 2026-11-01) — approve starts its period,
-  // expire closes it and releases its coupon. Never valid for bank
-  // payments, and never for a crypto payment that already has a
-  // period; the route enforces both.
-  decision: z.enum(['approve', 'reject', 'approve-crypto', 'expire-crypto']),
+  // approve / reject: bank payments only.
+  decision: z.enum(['approve', 'reject']),
   // Required for reject (owner decision 2026-11-02); optional free
   // text alongside any preset. Required for approve without a
   // screenshot (override reason), otherwise optional.
@@ -341,10 +315,6 @@ export const BillingPaymentItemSchema = z.object({
   overrideReason: z.string().nullable().default(null),
   decidedAt: z.string().nullable().default(null),
   screenshotStorageKey: z.string().nullable(),
-  nowpaymentsPaymentId: z.string().nullable(),
-  nowpaymentsPayAddress: z.string().nullable(),
-  nowpaymentsPayAmount: z.number().nullable(),
-  nowpaymentsNetwork: CryptoNetworkSchema.nullable(),
   couponCode: z.string().nullable().default(null),
   discountPkr: z.number().int().min(0).default(0),
   createdAt: z.string(),
@@ -440,162 +410,3 @@ export const AdminPaymentsResponseSchema = z.object({
 });
 export type AdminPaymentsResponse = z.infer<typeof AdminPaymentsResponseSchema>;
 
-/**
- * A NOWPayments webhook event that needed a human, not an automatic
- * outcome (audit fix 2026-11-01): an IPN for a payment we cannot
- * find, an amount/currency/method mismatch against the payment, a
- * payment that arrived underpaid, or a coupon released before a late
- * finished event activated the payment. The webhook never fails on
- * these — it records the issue and answers 200 — and the admin
- * clears them from the payments view by acting on the payment
- * (approve/expire) or dismissing the row. `reason` is one of the
- * machine-readable codes below, never free text from the provider.
- */
-export const WebhookIssueReasonSchema = z.enum([
-  'unknown_payment',
-  'amount_mismatch',
-  'currency_mismatch',
-  'underpaid',
-  'coupon_released_before_finish',
-  'refunded',
-]);
-export type WebhookIssueReason = z.infer<typeof WebhookIssueReasonSchema>;
-
-export const WebhookIssueSchema = z.object({
-  id: z.string().uuid(),
-  provider: z.string(),
-  providerPaymentId: z.string(),
-  paymentId: z.string().uuid().nullable(),
-  reason: WebhookIssueReasonSchema,
-  detail: z.string().nullable(),
-  dismissedAt: z.string().nullable(),
-  createdAt: z.string(),
-});
-export type WebhookIssue = z.infer<typeof WebhookIssueSchema>;
-
-export const WebhookIssuesResponseSchema = z.object({
-  issues: z.array(WebhookIssueSchema),
-});
-export type WebhookIssuesResponse = z.infer<typeof WebhookIssuesResponseSchema>;
-
-export const CryptoCheckoutResponseSchema = z.object({
-  paymentId: z.string().uuid(),
-  nowpaymentsPaymentId: z.string(),
-  payAddress: z.string(),
-  payAmount: z.number().nullable(),
-  payCurrency: z.string(),
-  network: CryptoNetworkSchema,
-  amountPkr: z.number().int().min(0),
-  estimatedUsdt: z.number().nullable(),
-  minimumUsdt: z.number().nullable(),
-  belowMinimum: z.boolean(),
-});
-export type CryptoCheckoutResponse = z.infer<typeof CryptoCheckoutResponseSchema>;
-
-/** NOWPayments POST /v1/payment response (fields we rely on). */
-export const NowPaymentsCreatePaymentResponseSchema = z
-  .object({
-    payment_id: z.union([z.string(), z.number()]),
-    pay_address: z.string().min(1),
-    pay_amount: z.number().optional(),
-    pay_currency: z.string().optional(),
-  })
-  .passthrough();
-export type NowPaymentsCreatePaymentResponse = z.infer<
-  typeof NowPaymentsCreatePaymentResponseSchema
->;
-
-/** NOWPayments GET /v1/estimate response. */
-export const NowPaymentsEstimateResponseSchema = z
-  .object({
-    estimated_amount: z.number(),
-    currency_from: z.string().optional(),
-    currency_to: z.string().optional(),
-  })
-  .passthrough();
-export type NowPaymentsEstimateResponse = z.infer<typeof NowPaymentsEstimateResponseSchema>;
-
-/** NOWPayments GET /v1/min-amount response. */
-export const NowPaymentsMinAmountResponseSchema = z
-  .object({
-    min_amount: z.number(),
-    fiat_equivalent: z.number().optional(),
-  })
-  .passthrough();
-export type NowPaymentsMinAmountResponse = z.infer<typeof NowPaymentsMinAmountResponseSchema>;
-
-/**
- * NOWPayments IPN (Instant Payment Notification) payload. Extra
- * provider fields pass through; the fields we act on are validated.
- * Statuses come from NOWPayments' own list: waiting, confirming,
- * confirmed, finished, failed, expired, partially_paid, refunded.
- */
-export const NowPaymentsIpnPayloadSchema = z
-  .object({
-    payment_id: z.union([z.string(), z.number()]),
-    payment_status: z.string().min(1),
-    pay_amount: z.number().optional(),
-    price_amount: z.number().optional(),
-    price_currency: z.string().optional(),
-    pay_currency: z.string().optional(),
-    order_id: z.string().optional(),
-    actually_paid: z.number().optional(),
-  })
-  .passthrough();
-export type NowPaymentsIpnPayload = z.infer<typeof NowPaymentsIpnPayloadSchema>;
-
-/** Recursively sort an object's keys alphabetically, as NOWPayments' IPN signing requires. */
-export function sortObjectForNowPaymentsSignature(
-  value: unknown
-): unknown {
-  if (Array.isArray(value)) {
-    return value.map((item) => sortObjectForNowPaymentsSignature(item));
-  }
-  if (value !== null && typeof value === 'object') {
-    const record = value as Record<string, unknown>;
-    const sorted: Record<string, unknown> = {};
-    // Byte order, NOT locale order: NOWPayments computes its IPN
-    // signature over keys sorted by code unit (its ksort / default
-    // sort), so localeCompare would canonicalise differently and
-    // break verification. NOSONAR (typescript:S2871) — this sort is
-    // signing input, not display text.
-    for (const key of Object.keys(record).sort()) { // NOSONAR
-      sorted[key] = sortObjectForNowPaymentsSignature(record[key]);
-    }
-    return sorted;
-  }
-  return value;
-}
-
-/**
- * Verify a NOWPayments IPN signature: HMAC-SHA512 over the
- * alphabetically-sorted JSON body, with the IPN secret as key,
- * compared against the `x-nowpayments-sig` header. Uses WebCrypto
- * so it runs in Node and edge runtimes alike. A missing secret or
- * signature is a verification failure, never a pass.
- */
-export async function verifyNowPaymentsIpnSignature(
-  payload: Record<string, unknown>,
-  signature: string | null,
-  ipnSecret: string | null
-): Promise<boolean> {
-  if (!signature || !ipnSecret) return false;
-  const sortedJson = JSON.stringify(sortObjectForNowPaymentsSignature(payload));
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(ipnSecret),
-    { name: 'HMAC', hash: 'SHA-512' },
-    false,
-    ['sign']
-  );
-  const mac = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(sortedJson));
-  const hex = Array.from(new Uint8Array(mac))
-    .map((byte) => byte.toString(16).padStart(2, '0'))
-    .join('');
-  if (hex.length !== signature.length) return false;
-  let diff = 0;
-  for (let i = 0; i < hex.length; i += 1) {
-    diff |= hex.charCodeAt(i) ^ signature.charCodeAt(i);
-  }
-  return diff === 0;
-}

@@ -33,44 +33,41 @@ describe('refund day math', () => {
 
 describe('refund amount math', () => {
   it('refunds in full on day 0', () => {
-    expect(computeRefundAmount(4200, 0, 'PKR')).toBe(4200);
-    expect(computeRefundAmount(100, 0, 'USDT')).toBe(100);
+    expect(computeRefundAmount(4200, 0)).toBe(4200);
   });
 
   it('deducts days used at paid/30 per day', () => {
     // 4200 / 30 = 140 per day; 3 days used -> 4200 - 420 = 3780.
-    expect(computeRefundAmount(4200, 3, 'PKR')).toBe(3780);
+    expect(computeRefundAmount(4200, 3)).toBe(3780);
   });
 
-  it('rounds PKR to the nearest rupee and USDT to 2 decimals', () => {
+  it('rounds PKR to the nearest rupee', () => {
     // 1000 / 30 = 33.33...; 1 day used -> 966.67 -> 967 PKR.
-    expect(computeRefundAmount(1000, 1, 'PKR')).toBe(967);
-    // 100 / 30 = 3.33...; 1 day used -> 96.67 USDT.
-    expect(computeRefundAmount(100, 1, 'USDT')).toBe(96.67);
+    expect(computeRefundAmount(1000, 1)).toBe(967);
   });
 
   it('never refunds below zero at the 30-day cap', () => {
-    expect(computeRefundAmount(4200, 30, 'PKR')).toBe(0);
-    expect(computeRefundAmount(100, 30, 'USDT')).toBe(0);
+    expect(computeRefundAmount(4200, 30)).toBe(0);
   });
 });
 
 describe('refund destination validation', () => {
-  it('requires a network for USDT and forbids it elsewhere', () => {
+  it('accepts the bank and mobile destinations', () => {
     expect(
-      RefundDestinationSchema.safeParse({ type: 'usdt', value: 'TXabc', network: null }).success
-    ).toBe(false);
-    expect(
-      RefundDestinationSchema.safeParse({ type: 'usdt', value: 'TXabc', network: 'trc20' }).success
+      RefundDestinationSchema.safeParse({ type: 'mobile', value: '03001234567' }).success
     ).toBe(true);
     expect(
-      RefundDestinationSchema.safeParse({ type: 'mobile', value: '03001234567', network: 'trc20' })
-        .success
-    ).toBe(false);
-    expect(
-      RefundDestinationSchema.safeParse({ type: 'bank', value: 'PK00BANK0001', network: null })
-        .success
+      RefundDestinationSchema.safeParse({ type: 'bank', value: 'PK00BANK0001' }).success
     ).toBe(true);
+    expect(
+      RefundDestinationSchema.safeParse({ type: 'binance', value: '983001576' }).success
+    ).toBe(true);
+  });
+
+  it('rejects an unknown destination type', () => {
+    expect(
+      RefundDestinationSchema.safeParse({ type: 'wire', value: 'TXabc' }).success
+    ).toBe(false);
   });
 
   it('rejects an empty destination value and an over-long reason', () => {

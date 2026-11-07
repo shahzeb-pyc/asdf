@@ -11,8 +11,6 @@
  * newer can be created while it waits), so page 1 always carries
  * it — and the pending card is also shown on My Plan.
  *
- * Crypto pending rows recover the pay address, exact USDT amount
- * and network, so a closed confirmation tab loses nothing.
  * Rejected rows show the stored reason.
  */
 
@@ -58,13 +56,10 @@ function countsSummary(counts: PlatformCounts): string {
 }
 
 function paymentMethodLabel(payment: BillingPaymentItem): string {
-  if (payment.method === 'bank') {
-    if (payment.bankMethod === 'easypaisa') return 'Easypaisa';
-    if (payment.bankMethod === 'nayapay') return 'Nayapay';
-    if (payment.bankMethod === 'binance') return 'Binance';
-    return 'UBL bank';
-  }
-  return `Crypto · USDT (${payment.nowpaymentsNetwork === 'trc20' ? 'TRC20' : 'BEP20'})`;
+  if (payment.bankMethod === 'easypaisa') return 'Easypaisa';
+  if (payment.bankMethod === 'nayapay') return 'Nayapay';
+  if (payment.bankMethod === 'binance') return 'Binance';
+  return 'UBL bank';
 }
 
 function paymentStatusLabel(status: string): string {
@@ -83,7 +78,6 @@ export function PaymentsView({ subdomain }: Readonly<{ subdomain: string }>) {
   const [loadingMore, setLoadingMore] = React.useState(false);
   const [hasMore, setHasMore] = React.useState(false);
   const [page, setPage] = React.useState(1);
-  const [copied, setCopied] = React.useState<string | null>(null);
 
   const load = React.useCallback(
     async (pageToLoad: number, append: boolean) => {
@@ -147,7 +141,7 @@ export function PaymentsView({ subdomain }: Readonly<{ subdomain: string }>) {
         <h1 className="text-xl leading-heading font-semibold text-ink">Payments</h1>
         <p className="text-body text-ink-sub">
           Every payment you have made, and its status. Manual payments start after we approve
-          them. Crypto payments start as soon as we receive them.
+          them.
         </p>
       </div>
       {error ? (
@@ -207,10 +201,7 @@ export function PaymentsView({ subdomain }: Readonly<{ subdomain: string }>) {
                   payment.status === 'expired' ? (
                   <BillingStatusMark kind="failed" label={paymentStatusLabel(payment.status)} />
                 ) : (
-                  <BillingStatusMark
-                    kind="pending"
-                    label={payment.method === 'bank' ? 'Waiting for approval' : 'Waiting for payment'}
-                  />
+                  <BillingStatusMark kind="pending" label="Waiting for approval" />
                 )}
               </div>
               {payment.method === 'bank' && payment.status === 'pending' ? (
@@ -219,41 +210,13 @@ export function PaymentsView({ subdomain }: Readonly<{ subdomain: string }>) {
                   approval takes a few days, those days are not added to your plan.
                 </p>
               ) : null}
-              {payment.method === 'nowpayments' &&
-              payment.status === 'pending' &&
-              payment.nowpaymentsPayAddress ? (
-                <div className="flex flex-col gap-2">
-                  <p className="break-all text-body text-ink-sub">
-                    Send exactly{' '}
-                    {payment.nowpaymentsPayAmount !== null &&
-                    payment.nowpaymentsPayAmount !== undefined
-                      ? `${payment.nowpaymentsPayAmount} USDT`
-                      : 'the amount shown in your wallet'}{' '}
-                    to {payment.nowpaymentsPayAddress} on{' '}
-                    {payment.nowpaymentsNetwork === 'trc20' ? 'TRC20' : 'BEP20'}.
-                  </p>
-                  <div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        void navigator.clipboard.writeText(payment.nowpaymentsPayAddress ?? '');
-                        setCopied(payment.id);
-                      }}
-                    >
-                      {copied === payment.id ? 'Copied' : 'Copy address'}
-                    </Button>
-                  </div>
-                </div>
-              ) : null}
               {payment.status === 'rejected' && payment.rejectionReason ? (
                 <p className="text-body text-ink-sub">
                   Rejected: {payment.rejectionReason}
                   {payment.rejectionDetail ? ` — ${payment.rejectionDetail}` : ''}
                 </p>
               ) : null}
-              {(payment.status === 'failed' || payment.status === 'expired') &&
-              payment.method === 'nowpayments' ? (
+              {(payment.status === 'failed' || payment.status === 'expired') ? (
                 <p className="text-body text-ink-sub">
                   This payment expired. You can submit a new payment in Purchase.
                 </p>

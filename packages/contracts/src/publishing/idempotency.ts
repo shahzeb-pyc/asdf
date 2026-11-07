@@ -62,9 +62,8 @@ export const IdempotencyActionSchema = z.enum([
   // Billing submissions (audit fix 2026-11-01): a retried checkout
   // after a dropped response replays the stored response instead of
   // creating a second pending payment. One action per submission
-  // route, so a bank key can never replay a crypto response.
+  // route, so keys never replay across routes.
   'billing-bank',
-  'billing-crypto',
   'billing-zero-due',
 ]);
 

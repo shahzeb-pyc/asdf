@@ -29,7 +29,7 @@ function kindLabel(kind: CouponValidateResponse['kind']): string {
  *
  * When the coupon covers the full amount, no payment method is
  * needed: the section offers activation directly, and the parent
- * disables the bank/crypto submits while it is applied.
+ * disables the bank submit while it is applied.
  */
 export function CouponSection({
   subdomain,

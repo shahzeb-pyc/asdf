@@ -71,10 +71,6 @@ function paymentRow(overrides: Row = {}): Row {
     amount_pkr: 4200,
     is_upgrade: false,
     screenshot_storage_key: 'billing-screenshots/user-1/shot.jpg',
-    nowpayments_payment_id: null,
-    nowpayments_pay_address: null,
-    nowpayments_pay_amount: null,
-    nowpayments_network: null,
     period_id: 'period-1',
     approved_at: START.toISOString(),
     created_at: START.toISOString(),
@@ -95,7 +91,6 @@ function refundRow(overrides: Row = {}): Row {
     days_used: null,
     destination_type: 'mobile',
     destination_value: '03001234567',
-    destination_network: null,
     reason: null,
     requested_at: NOW.toISOString(),
     decided_at: null,
@@ -333,31 +328,6 @@ describe('refund eligibility', () => {
     expect(eligibility.currency).toBe('PKR');
   });
 
-  it('uses the persisted IPN actuals, not the checkout estimate, for a crypto payment', async () => {
-    const state = baseState({
-      payments: [
-        paymentRow({
-          method: 'nowpayments',
-          bank_method: null,
-          nowpayments_payment_id: 'np-1',
-          nowpayments_pay_address: 'TTest',
-          nowpayments_pay_amount: 10,
-          nowpayments_network: 'trc20',
-          // The IPN actually delivered 9 USDT, not the 10 estimated
-          // at checkout: refund math must use 9.
-          nowpayments_actual_paid: 9,
-          nowpayments_actual_currency: 'usdttrc20',
-        }),
-      ],
-    });
-    const eligibility = await getRefundEligibility(fakeClient(state), 'user-1', NOW);
-    expect(eligibility.eligible).toBe(true);
-    expect(eligibility.currency).toBe('USDT');
-    expect(eligibility.amountPaid).toBe(9);
-    // 9 - 3 * (9 / 30) = 8.1, at 2-decimal USDT precision.
-    expect(eligibility.estimatedRefund).toBe(8.1);
-  });
-
   it('keeps the window open at exactly day 7 and closes it after', async () => {
     const client = fakeClient(baseState());
     const atDay7 = await getRefundEligibility(
@@ -429,36 +399,6 @@ describe('refund eligibility', () => {
     const eligibility = await getRefundEligibility(fakeClient(state), 'user-1', NOW);
     expect(eligibility.eligible).toBe(true);
   });
-
-  it('refunds crypto in USDT from the recorded pay amount', async () => {
-    const cryptoPayment = paymentRow({
-      method: 'nowpayments',
-      bank_method: null,
-      status: 'paid',
-      nowpayments_pay_amount: 100,
-      nowpayments_network: 'trc20',
-    });
-    const state = baseState({ payments: [cryptoPayment] });
-    const eligibility = await getRefundEligibility(fakeClient(state), 'user-1', NOW);
-    expect(eligibility.eligible).toBe(true);
-    expect(eligibility.currency).toBe('USDT');
-    expect(eligibility.destinationType).toBe('usdt');
-    // 100 - 3 * (100/30) = 90 -> 90.00.
-    expect(eligibility.estimatedRefund).toBe(90);
-  });
-
-  it('fails loud for a crypto payment with no recorded USDT amount', async () => {
-    const cryptoPayment = paymentRow({
-      method: 'nowpayments',
-      bank_method: null,
-      status: 'paid',
-      nowpayments_pay_amount: null,
-    });
-    const state = baseState({ payments: [cryptoPayment] });
-    await expect(getRefundEligibility(fakeClient(state), 'user-1', NOW)).rejects.toBeInstanceOf(
-      SubscriptionGateError
-    );
-  });
 });
 
 describe('refund request lifecycle', () => {
@@ -469,7 +409,7 @@ describe('refund request lifecycle', () => {
       'user-1',
       {
         paymentId: 'payment-1',
-        destination: { type: 'mobile', value: '03009998888', network: null },
+        destination: { type: 'mobile', value: '03009998888' },
         reason: 'Changed my mind',
       },
       NOW
@@ -488,7 +428,7 @@ describe('refund request lifecycle', () => {
         'user-1',
         {
           paymentId: 'payment-1',
-          destination: { type: 'bank', value: 'PK00BANK0001', network: null },
+          destination: { type: 'bank', value: 'PK00BANK0001' },
         },
         NOW
       )
@@ -503,7 +443,7 @@ describe('refund request lifecycle', () => {
         'user-1',
         {
           paymentId: 'payment-1',
-          destination: { type: 'mobile', value: '03001234567', network: null },
+          destination: { type: 'mobile', value: '03001234567' },
         },
         NOW
       )
@@ -518,7 +458,7 @@ describe('refund request lifecycle', () => {
       'user-1',
       {
         paymentId: 'payment-1',
-        destination: { type: 'mobile', value: '03001234567', network: null },
+        destination: { type: 'mobile', value: '03001234567' },
       },
       NOW
     );
@@ -535,7 +475,7 @@ describe('refund request lifecycle', () => {
       'user-1',
       {
         paymentId: 'payment-1',
-        destination: { type: 'mobile', value: '03001234567', network: null },
+        destination: { type: 'mobile', value: '03001234567' },
       },
       NOW
     );
@@ -560,7 +500,7 @@ describe('refund request lifecycle', () => {
       'user-1',
       {
         paymentId: 'payment-1',
-        destination: { type: 'mobile', value: '03001234567', network: null },
+        destination: { type: 'mobile', value: '03001234567' },
       },
       START
     );
@@ -574,7 +514,7 @@ describe('refund request lifecycle', () => {
       'user-1',
       {
         paymentId: 'payment-1',
-        destination: { type: 'mobile', value: '03001234567', network: null },
+        destination: { type: 'mobile', value: '03001234567' },
       },
       NOW
     );
@@ -596,7 +536,7 @@ describe('refund request lifecycle', () => {
       'user-1',
       {
         paymentId: 'payment-1',
-        destination: { type: 'mobile', value: '03001234567', network: null },
+        destination: { type: 'mobile', value: '03001234567' },
       },
       NOW
     );
@@ -607,7 +547,7 @@ describe('refund request lifecycle', () => {
       'user-1',
       {
         paymentId: 'payment-1',
-        destination: { type: 'mobile', value: '03001234567', network: null },
+        destination: { type: 'mobile', value: '03001234567' },
       },
       NOW
     );
@@ -623,7 +563,7 @@ describe('refund request lifecycle', () => {
       'user-1',
       {
         paymentId: 'payment-1',
-        destination: { type: 'mobile', value: '03001234567', network: null },
+        destination: { type: 'mobile', value: '03001234567' },
       },
       NOW
     );
@@ -650,7 +590,7 @@ describe('refund request lifecycle', () => {
       'user-1',
       {
         paymentId: 'payment-1',
-        destination: { type: 'mobile', value: '03001234567', network: null },
+        destination: { type: 'mobile', value: '03001234567' },
       },
       NOW
     );
@@ -687,7 +627,7 @@ describe('refund approval adjusts seller commissions', () => {
       'user-1',
       {
         paymentId: 'payment-1',
-        destination: { type: 'mobile', value: '03001234567', network: null },
+        destination: { type: 'mobile', value: '03001234567' },
       },
       START
     );
@@ -705,7 +645,7 @@ describe('refund approval adjusts seller commissions', () => {
       'user-1',
       {
         paymentId: 'payment-1',
-        destination: { type: 'mobile', value: '03001234567', network: null },
+        destination: { type: 'mobile', value: '03001234567' },
       },
       NOW
     );
@@ -713,37 +653,6 @@ describe('refund approval adjusts seller commissions', () => {
     expect(approved.refundAmount).toBe(3780);
     // Kept 4200 − 3780 = 420; 20% of 420 = 84. Status stays pending.
     expect(state.commissions[0]).toMatchObject({ status: 'pending', amount_pkr: 84 });
-  });
-
-  it('reduces a crypto commission by the kept fraction of the PKR total', async () => {
-    const state = baseState({
-      payments: [
-        paymentRow({
-          method: 'nowpayments',
-          bank_method: null,
-          amount_pkr: 28000,
-          nowpayments_pay_amount: 100,
-          nowpayments_network: 'trc20',
-        }),
-      ],
-      commissions: [commissionRow({ rate_snapshot: 10, amount_pkr: 2800 })],
-    });
-    const client = fakeClient(state);
-    const created = await requestRefund(
-      client,
-      'user-1',
-      {
-        paymentId: 'payment-1',
-        destination: { type: 'usdt', value: 'TXyzAddress', network: 'trc20' },
-      },
-      NOW
-    );
-    const approved = await approveRefund(client, created.id, 'admin-1', NOW);
-    expect(approved.currency).toBe('USDT');
-    expect(approved.refundAmount).toBe(90);
-    // Kept fraction (100 − 90) / 100 = 10% of the 28000 PKR total =
-    // 2800 kept; 10% of 2800 = 280.
-    expect(state.commissions[0]).toMatchObject({ status: 'pending', amount_pkr: 280 });
   });
 
   it('leaves the commission untouched on rejection, payable on schedule', async () => {
@@ -754,7 +663,7 @@ describe('refund approval adjusts seller commissions', () => {
       'user-1',
       {
         paymentId: 'payment-1',
-        destination: { type: 'mobile', value: '03001234567', network: null },
+        destination: { type: 'mobile', value: '03001234567' },
       },
       NOW
     );
@@ -770,66 +679,13 @@ describe('refund approval adjusts seller commissions', () => {
       'user-1',
       {
         paymentId: 'payment-1',
-        destination: { type: 'mobile', value: '03001234567', network: null },
+        destination: { type: 'mobile', value: '03001234567' },
       },
       NOW
     );
     const approved = await approveRefund(client, created.id, 'admin-1', NOW);
     expect(approved.status).toBe('approved');
     expect(approved.refundAmount).toBe(3780);
-  });
-
-  it('blocks a crypto approval — writing nothing — when the payment lookup fails', async () => {
-    const state = baseState({
-      requests: [
-        refundRow({
-          currency: 'USDT',
-          amount_paid: 100,
-          destination_type: 'usdt',
-          destination_value: 'TXyzAddress',
-          destination_network: 'trc20',
-        }),
-      ],
-      payments: [
-        paymentRow({
-          method: 'nowpayments',
-          bank_method: null,
-          amount_pkr: 28000,
-          nowpayments_pay_amount: 100,
-          nowpayments_network: 'trc20',
-        }),
-      ],
-      commissions: [commissionRow({ rate_snapshot: 10, amount_pkr: 2800 })],
-      selectErrors: { subscription_payments: { code: 'XX' } },
-    });
-    await expect(approveRefund(fakeClient(state), 'refund-1', 'admin-1', NOW)).rejects.toMatchObject({
-      code: 'ENTITLEMENT_UNAVAILABLE',
-    });
-    expect(state.requests[0]).toMatchObject({ status: 'requested' });
-    expect(state.periods[0]).toMatchObject({ superseded_at: null });
-    expect(state.commissions[0]).toMatchObject({ status: 'pending', amount_pkr: 2800 });
-  });
-
-  it('blocks a crypto approval — writing nothing — when the payment row is missing', async () => {
-    const state = baseState({
-      requests: [
-        refundRow({
-          currency: 'USDT',
-          amount_paid: 100,
-          destination_type: 'usdt',
-          destination_value: 'TXyzAddress',
-          destination_network: 'trc20',
-        }),
-      ],
-      payments: [],
-      commissions: [commissionRow({ rate_snapshot: 10, amount_pkr: 2800 })],
-    });
-    await expect(approveRefund(fakeClient(state), 'refund-1', 'admin-1', NOW)).rejects.toMatchObject({
-      code: 'ENTITLEMENT_UNAVAILABLE',
-    });
-    expect(state.requests[0]).toMatchObject({ status: 'requested' });
-    expect(state.periods[0]).toMatchObject({ superseded_at: null });
-    expect(state.commissions[0]).toMatchObject({ status: 'pending', amount_pkr: 2800 });
   });
 
   it('blocks the approval — writing nothing — when the commission cannot be adjusted', async () => {
@@ -843,7 +699,7 @@ describe('refund approval adjusts seller commissions', () => {
       'user-1',
       {
         paymentId: 'payment-1',
-        destination: { type: 'mobile', value: '03001234567', network: null },
+        destination: { type: 'mobile', value: '03001234567' },
       },
       NOW
     );
@@ -937,25 +793,19 @@ describe('refund row mapping and destination derivation', () => {
     expect(refundFromRow({ ...valid, user_id: 42 }, null)).toBeNull();
   });
 
-  it('maps network and numeric fields, defaulting missing ones to null', () => {
+  it('maps numeric fields, defaulting missing ones to null', () => {
     const row = refundFromRow(
-      refundRow({ destination_type: 'usdt', destination_network: 'bep20', refund_amount: 'x', days_used: 'x', requested_at: null }),
+      refundRow({ refund_amount: 'x', days_used: 'x', requested_at: null }),
       '2026-10-01T00:00:00.000Z'
     );
-    expect(row?.destinationNetwork).toBe('bep20');
     expect(row?.refundAmount).toBeNull();
     expect(row?.daysUsed).toBeNull();
     expect(row?.requestedAt).toBe('');
     expect(row?.periodStartsAt).toBe('2026-10-01T00:00:00.000Z');
-    const unknownNetwork = refundFromRow(
-      refundRow({ destination_type: 'usdt', destination_network: 'sol' }),
-      null
-    );
-    expect(unknownNetwork?.destinationNetwork).toBeNull();
   });
 
   it('derives the destination type directly, including the unmappable cases', () => {
-    expect(destinationTypeForPayment('nowpayments', null)).toBe('usdt');
+    expect(destinationTypeForPayment('paypal', null)).toBeNull();
     expect(destinationTypeForPayment('bank', 'easypaisa')).toBe('mobile');
     expect(destinationTypeForPayment('bank', 'ubl')).toBe('bank');
     expect(destinationTypeForPayment('bank', 'binance')).toBe('binance');
@@ -963,7 +813,7 @@ describe('refund row mapping and destination derivation', () => {
     expect(destinationTypeForPayment('card', null)).toBeNull();
   });
 
-  it('prices bank payments in PKR and crypto in USDT', () => {
+  it('prices bank payments in PKR', () => {
     const bank = paymentRow();
     expect(paidAmountForPayment({
       id: bank['id'] as string,
@@ -983,10 +833,6 @@ describe('refund row mapping and destination derivation', () => {
       overrideReason: null,
       decidedAt: null,
       screenshotStorageKey: null,
-      nowpaymentsPaymentId: null,
-      nowpaymentsPayAddress: null,
-      nowpaymentsPayAmount: null,
-      nowpaymentsNetwork: null,
       periodId: 'period-1',
       approvedAt: null,
       createdAt: '',
@@ -1000,7 +846,7 @@ describe('refund request creation edges', () => {
     await expect(
       requestRefund(fakeClient(state), 'user-1', {
         paymentId: 'payment-1',
-        destination: { type: 'mobile', value: '03001234567', network: null },
+        destination: { type: 'mobile', value: '03001234567' },
       }, NOW)
     ).rejects.toMatchObject({ code: 'REFUND_NOT_ELIGIBLE' });
   });
@@ -1009,7 +855,7 @@ describe('refund request creation edges', () => {
     await expect(
       requestRefund(fakeClient(baseState()), 'user-1', {
         paymentId: 'payment-other',
-        destination: { type: 'mobile', value: '03001234567', network: null },
+        destination: { type: 'mobile', value: '03001234567' },
       }, NOW)
     ).rejects.toMatchObject({ code: 'REFUND_NOT_ELIGIBLE', message: 'That payment cannot be refunded.' });
   });
@@ -1019,7 +865,7 @@ describe('refund request creation edges', () => {
     await expect(
       requestRefund(fakeClient(state), 'user-1', {
         paymentId: 'payment-1',
-        destination: { type: 'mobile', value: '03001234567', network: null },
+        destination: { type: 'mobile', value: '03001234567' },
       }, NOW)
     ).rejects.toMatchObject({ code: 'ENTITLEMENT_UNAVAILABLE' });
   });
@@ -1029,7 +875,7 @@ describe('refund request creation edges', () => {
     await expect(
       requestRefund(fakeClient(state), 'user-1', {
         paymentId: 'payment-1',
-        destination: { type: 'mobile', value: '03001234567', network: null },
+        destination: { type: 'mobile', value: '03001234567' },
       }, NOW)
     ).rejects.toMatchObject({ code: 'ENTITLEMENT_UNAVAILABLE' });
   });
@@ -1038,7 +884,7 @@ describe('refund request creation edges', () => {
     const client = fakeClient(baseState());
     const refund = await requestRefund(client, 'user-1', {
       paymentId: 'payment-1',
-      destination: { type: 'mobile', value: '03001234567', network: null },
+      destination: { type: 'mobile', value: '03001234567' },
       reason: '   ',
     }, NOW);
     expect(refund.reason).toBeNull();

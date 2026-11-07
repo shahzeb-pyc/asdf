@@ -45,10 +45,6 @@ function payment(overrides: Partial<SubscriptionPaymentRow> = {}): SubscriptionP
     overrideReason: null,
     decidedAt: null,
     screenshotStorageKey: 'billing-screenshots/user-1/shot.jpg',
-    nowpaymentsPaymentId: null,
-    nowpaymentsPayAddress: null,
-    nowpaymentsPayAmount: null,
-    nowpaymentsNetwork: null,
     couponCode: null,
     discountPkr: 0,
     periodId: null,
@@ -97,10 +93,6 @@ describe('mapPaymentToItem', () => {
       overrideReason: null,
       decidedAt: null,
       screenshotStorageKey: 'billing-screenshots/user-1/shot.jpg',
-      nowpaymentsPaymentId: null,
-      nowpaymentsPayAddress: null,
-      nowpaymentsPayAmount: null,
-      nowpaymentsNetwork: null,
       couponCode: null,
       discountPkr: 0,
       createdAt: '2026-10-30T00:00:00.000Z',
@@ -356,13 +348,13 @@ describe('billing idempotency helpers', () => {
     );
     const rows: Row[] = [];
     const client = idemClient(rows) as never;
-    const first = await lookupBillingIdempotency(client, 'ws-1', 'user-1', 'billing-crypto', headersWith(KEY));
+    const first = await lookupBillingIdempotency(client, 'ws-1', 'user-1', 'billing-bank', headersWith(KEY));
     expect(first).toEqual({ key: KEY, replay: null });
-    await storeBillingIdempotency(client, 'ws-1', 'user-1', 'billing-crypto', KEY, {
+    await storeBillingIdempotency(client, 'ws-1', 'user-1', 'billing-bank', KEY, {
       status: 201,
       body: { id: 'payment-9' },
     });
-    const replay = await lookupBillingIdempotency(client, 'ws-1', 'user-1', 'billing-crypto', headersWith(KEY));
+    const replay = await lookupBillingIdempotency(client, 'ws-1', 'user-1', 'billing-bank', headersWith(KEY));
     expect(replay).toEqual({ key: KEY, replay: { status: 201, body: { id: 'payment-9' } } });
   });
 
