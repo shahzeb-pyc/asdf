@@ -941,14 +941,15 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
     }
   };
 
-  const stepSubtitle = step === 1 ? 'Select Accounts' : step === 2 ? 'Select Pages' : 'Sources & Schedule';
+  const stepSubtitle =
+    step === 1 ? 'Select Accounts' : step === 2 ? 'Select Pages' : step === 3 ? 'Sources' : 'Posting Time';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-dvh overflow-y-auto sm:max-w-135">
         <DialogHeader>
           <DialogTitle>Add New Page</DialogTitle>
-          <DialogDescription>Step {step} of 3: {stepSubtitle}</DialogDescription>
+          <DialogDescription>Step {step} of 4: {stepSubtitle}</DialogDescription>
         </DialogHeader>
 
         {optionsMigrationMissing ? (
@@ -1279,11 +1280,13 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
                 ))}
               </div>
             </div>
+          </div>
+        ) : null}
 
-            <div aria-hidden className="border-t border-line" />
-
+        {step === 4 ? (
+          <div className="flex flex-col gap-4">
             <div>
-              <h3 className="font-medium">Schedule</h3>
+              <h3 className="font-medium">Posting Time</h3>
               <div className="mt-2 flex gap-2">
                 <Button type="button" variant={scheduleType === 'dailyrandom' ? 'default' : 'outline'} onClick={() => {
                   setScheduleType('dailyrandom');
@@ -1410,9 +1413,23 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
                 Next
               </Button>
             </>
+          ) : step === 3 ? (
+            <>
+              <Button type="button" variant="outline" data-testid="adu-sources-back-btn" onClick={() => setStep(2)}>
+                Back
+              </Button>
+              <Button
+                type="button"
+                data-testid="adu-sources-next-btn"
+                disabled={!allSourcesFilled}
+                onClick={() => setStep(4)}
+              >
+                Next
+              </Button>
+            </>
           ) : (
             <>
-              <Button type="button" variant="outline" onClick={() => setStep(2)}>
+              <Button type="button" variant="outline" data-testid="adu-posting-back-btn" onClick={() => setStep(3)}>
                 Back
               </Button>
               <Button

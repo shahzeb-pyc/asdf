@@ -136,7 +136,7 @@ describe('ADU Add Page dialog — live discovery', () => {
 
   it('step 1 shows only active accounts, with ADU-only pages-linked counts', async () => {
     await openDialog();
-    expect(screen.getByText('Step 1 of 3: Select Accounts')).toBeTruthy();
+    expect(screen.getByText('Step 1 of 4: Select Accounts')).toBeTruthy();
     expect(screen.getByText('Shahzeb Malik')).toBeTruthy();
     // ADU-only: Shahzeb has 2 ADU configs (p1 + the disconnected p7),
     // Example Account has 0 — the old counts (3 and 1) counted every
@@ -193,7 +193,7 @@ describe('ADU Add Page dialog — live discovery', () => {
   it('step 2 shows live discovered pages, including a page with no destinations row', async () => {
     await openDialog();
     await goToPagesStep();
-    expect(screen.getByText('Step 2 of 3: Select Pages')).toBeTruthy();
+    expect(screen.getByText('Step 2 of 4: Select Pages')).toBeTruthy();
     expect(screen.getByText('5 pages found')).toBeTruthy();
     expect(screen.getByText('Ellie Blossom')).toBeTruthy();
     expect(screen.getByText('UK Videos')).toBeTruthy();
@@ -327,7 +327,7 @@ describe('ADU Add Page dialog — live discovery', () => {
     expect(screen.getByText('7 pages found')).toBeTruthy();
   });
 
-  it('step 3 keeps the existing submit shape for pages from the selected account', async () => {
+  it('step 4 submits the existing shape for pages from the selected account', async () => {
     const postBodies: unknown[] = [];
     const { onCreated } = await openDialog(postBodies);
     await goToPagesStep();
@@ -336,6 +336,8 @@ describe('ADU Add Page dialog — live discovery', () => {
     await screen.findByText('Sources');
 
     fireEvent.change(screen.getByPlaceholderText('@username'), { target: { value: 'sdf' } });
+    fireEvent.click(screen.getByTestId('adu-sources-next-btn'));
+    await screen.findByText('Posting Time');
     fireEvent.click(screen.getByText('Start Automation'));
     await screen.findByText('Created 1 page.');
     expect(onCreated).toHaveBeenCalled();
@@ -352,7 +354,7 @@ describe('ADU Add Page dialog — live discovery', () => {
     expect(body.scheduleType).toBe('dailyrandom');
   });
 
-  it('step 3 submits a never-imported page by discovered reference, not destination id', async () => {
+  it('step 4 submits a never-imported page by discovered reference, not destination id', async () => {
     const postBodies: unknown[] = [];
     const { onCreated } = await openDialog(postBodies);
     await goToPagesStep();
@@ -361,6 +363,8 @@ describe('ADU Add Page dialog — live discovery', () => {
     await screen.findByText('Sources');
 
     fireEvent.change(screen.getByPlaceholderText('@username'), { target: { value: 'janhvi' } });
+    fireEvent.click(screen.getByTestId('adu-sources-next-btn'));
+    await screen.findByText('Posting Time');
     fireEvent.click(screen.getByText('Start Automation'));
     await screen.findByText('Created 1 page.');
     expect(onCreated).toHaveBeenCalled();
@@ -371,5 +375,71 @@ describe('ADU Add Page dialog — live discovery', () => {
     expect(body.items).toEqual([
       { discovered: { fbPageId: 'fb-page-107', accountId: '11111111-1111-4111-8111-111111111111' }, sourcePlatform: 'tiktok', sourceUsername: 'janhvi' },
     ]);
+  });
+
+  it('step 3 shows sources only and its Next is gated on filled sources', async () => {
+    const { onCreated } = await openDialog([]);
+    await goToPagesStep();
+    fireEvent.click(screen.getByTestId('adu-page-checkbox-11111111-1111-4111-8111-111111111111-fb-page-102'));
+    fireEvent.click(screen.getByTestId('adu-pages-next-btn'));
+    await screen.findByText('Sources');
+    expect(screen.getByText('Step 3 of 4: Sources')).toBeTruthy();
+    // No schedule controls on the sources step, and no submit yet.
+    expect(screen.queryByText('Posting Time')).toBeNull();
+    expect(screen.queryByText('Random Posting Times')).toBeNull();
+    expect(screen.queryByText('Posts Per Day')).toBeNull();
+    expect(screen.queryByText('Start Automation')).toBeNull();
+    // Next is blocked until every selected page has a source.
+    expect((screen.getByTestId('adu-sources-next-btn') as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByPlaceholderText('@username'), { target: { value: 'sdf' } });
+    expect((screen.getByTestId('adu-sources-next-btn') as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByTestId('adu-sources-next-btn'));
+    await screen.findByText('Posting Time');
+    expect(screen.getByText('Step 4 of 4: Posting Time')).toBeTruthy();
+    expect(onCreated).not.toHaveBeenCalled();
+  });
+
+  it('step 4 shows posting time only and Back keeps the sources and selection', async () => {
+    await openDialog([]);
+    await goToPagesStep();
+    fireEvent.click(screen.getByTestId('adu-page-checkbox-11111111-1111-4111-8111-111111111111-fb-page-102'));
+    fireEvent.click(screen.getByTestId('adu-pages-next-btn'));
+    await screen.findByText('Sources');
+    fireEvent.change(screen.getByPlaceholderText('@username'), { target: { value: 'sdf' } });
+    fireEvent.click(screen.getByTestId('adu-sources-next-btn'));
+    await screen.findByText('Posting Time');
+    // No source rows on the posting-time step.
+    expect(screen.queryByPlaceholderText('@username')).toBeNull();
+    expect(screen.queryByText('Sources')).toBeNull();
+    // Back keeps the entered source.
+    fireEvent.click(screen.getByTestId('adu-posting-back-btn'));
+    await screen.findByText('Sources');
+    expect((screen.getByPlaceholderText('@username') as HTMLInputElement).value).toBe('sdf');
+    // Back again keeps the page selection.
+    fireEvent.click(screen.getByTestId('adu-sources-back-btn'));
+    await screen.findByTestId('adu-pages-list');
+    expect(checkboxState('adu-page-checkbox-11111111-1111-4111-8111-111111111111-fb-page-102')).toBe('checked');
+  });
+
+  it('step 4 Start Automation is blocked until separate schedules are complete', async () => {
+    await openDialog([]);
+    await goToPagesStep();
+    fireEvent.click(screen.getByTestId('adu-page-checkbox-11111111-1111-4111-8111-111111111111-fb-page-102'));
+    fireEvent.click(screen.getByTestId('adu-pages-next-btn'));
+    await screen.findByText('Sources');
+    fireEvent.change(screen.getByPlaceholderText('@username'), { target: { value: 'sdf' } });
+    fireEvent.click(screen.getByTestId('adu-sources-next-btn'));
+    await screen.findByText('Posting Time');
+    // The shared schedule is complete by default, so Start Automation
+    // starts enabled — switching to per-page fixed times with empty
+    // times blocks it until every page's times are filled.
+    expect((screen.getByText('Start Automation') as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByText('Set separately'));
+    fireEvent.click(screen.getByText('Fixed Posting Times'));
+    expect((screen.getByText('Start Automation') as HTMLButtonElement).disabled).toBe(true);
+    const timeInput = document.querySelector('input[type="time"]') as HTMLInputElement;
+    expect(timeInput).not.toBeNull();
+    fireEvent.change(timeInput, { target: { value: '09:00' } });
+    expect((screen.getByText('Start Automation') as HTMLButtonElement).disabled).toBe(false);
   });
 });
