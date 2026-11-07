@@ -1037,7 +1037,7 @@ export function PurchaseView({
   // in the Purchase header — not repeated on every row.
   const configurator = (
     <div className="flex flex-col gap-4">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-3">
         {PURCHASABLE_PLATFORMS.map((platform) => {
           const count = effectiveCounts[platform];
           return (
@@ -1064,7 +1064,7 @@ export function PurchaseView({
                   for Pages.
                 </p>
               ) : null}
-              <div className="mt-auto flex items-center gap-3">
+              <div className="mt-auto flex flex-wrap items-center gap-3">
                 {/* Direct input, not a stepper: type="text" with a numeric
                 keyboard carries no native spinners, so there is no
                 increase/decrease control anywhere in this chooser. */}
@@ -1597,7 +1597,7 @@ export function PurchaseView({
      */
     if (pendingPayment !== null) {
       return (
-        <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
           <div className="flex flex-col gap-2">
             <Button variant="outline" size="sm" className="self-start" onClick={goToMyPlan}>
               <ArrowLeftIcon aria-hidden className="size-4" /> Back to My Plan
@@ -1632,7 +1632,7 @@ export function PurchaseView({
           ? 'This is the same as your current plan. Increase a count to upgrade, or choose fewer to schedule a downgrade for next month.'
           : null;
     return (
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
         <div className="flex flex-col gap-2">
           <Button variant="outline" size="sm" className="self-start" onClick={goToMyPlan}>
             <ArrowLeftIcon aria-hidden className="size-4" /> Back to My Plan

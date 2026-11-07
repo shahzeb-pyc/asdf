@@ -381,6 +381,31 @@ describe('Billing Purchase', () => {
     expect(screen.queryByText('Threads — pay per account')).toBeNull();
   });
 
+  it('builder is a narrow centred column and the chooser tiles hug their content', async () => {
+    renderBilling('purchase');
+    await screen.findByText('Choose your pages and accounts');
+    // Narrow, not stretched: the builder sits in a centred max-w-3xl
+    // column (same width as the loading/error states), and no wide
+    // max-w-6xl container is rendered in the builder at all.
+    expect(document.querySelector('.max-w-3xl')).not.toBeNull();
+    expect(document.querySelector('.max-w-6xl')).toBeNull();
+    // Snug tiles: the chooser grid aligns items to the start, so the
+    // shorter Instagram/Threads tiles do not stretch to the Facebook
+    // tile's height and carry no empty space at the bottom.
+    const grid = screen.getByLabelText('Facebook pages').closest('.grid');
+    expect(grid).not.toBeNull();
+    expect(grid).toHaveClass('grid-cols-1', 'items-start', 'sm:grid-cols-3');
+    // The input row wraps, so input + price fit inside every tile
+    // instead of clipping at the tighter container width.
+    const inputRow = screen.getByLabelText('Facebook pages').closest('div.mt-auto');
+    expect(inputRow).not.toBeNull();
+    expect(inputRow).toHaveClass('flex-wrap');
+    // Checkout keeps its wide container and its order summary.
+    await goToCheckout();
+    expect(await screen.findByText('Order summary')).toBeInTheDocument();
+    expect(document.querySelector('.max-w-6xl')).not.toBeNull();
+  });
+
   it('typing a count updates the row price and total live', async () => {
     renderBilling('purchase');
     await screen.findByText('Choose your pages and accounts');
