@@ -79,6 +79,23 @@ R2_UPLOAD_CHUNK_BYTES = _bounded_int(
 RESIDENTIAL_PROXY = os.environ.get("RESIDENTIAL_PROXY", "").strip() or None
 DATACENTER_PROXY = os.environ.get("DATACENTER_PROXY", "").strip() or None
 
+# Owner-supplied rotating residential proxy for TikTok resolve + Countik
+# calls ONLY (never downloads). The value lives in the server .env
+# (mode 600) and is never recorded anywhere else. Empty means TikTok
+# claiming is disabled (the worker logs loudly and claims zero TikTok
+# rows) — the non-TikTok service keeps running.
+RESOLVE_PROXY_URL = os.environ.get("RESOLVE_PROXY_URL", "").strip() or None
+
+# Resolve pacing (shared across all TikTok worker threads): minimum
+# interval between resolve API calls, and the backoff armed after a 429.
+# Defaults match the Cloudflare Worker's proven pacing values.
+RESOLVE_MIN_INTERVAL_SECONDS = _bounded_int(
+    "ADU_RESOLVE_MIN_INTERVAL_SECONDS", "2", minimum=0, maximum=60
+)
+RESOLVE_BACKOFF_SECONDS = _bounded_int(
+    "ADU_RESOLVE_BACKOFF_SECONDS", "120", minimum=0, maximum=3600
+)
+
 # yt-dlp EJS: YouTube (and some other extractors) need a JS runtime on PATH.
 # Format: RUNTIME or RUNTIME:/path/to/binary (see yt-dlp --help).
 YT_DLP_JS_RUNTIME = os.environ.get("ADU_DOWNLOADER_JS_RUNTIME", "node").strip()

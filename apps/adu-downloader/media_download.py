@@ -26,19 +26,6 @@ PLATFORM_PROFILES = {
         "fragment_retries": 2,
         "socket_timeout": 30,
     },
-    "tiktok": {
-        "format_candidates": [
-            "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo+bestaudio/best[vcodec^=avc1]/best",
-            "best",
-        ],
-        "headers": {
-            "Referer": "https://www.tiktok.com/",
-        },
-        "retries": 1,
-        "extractor_retries": 2,
-        "fragment_retries": 3,
-        "socket_timeout": 30,
-    },
     "youtube": {
         "format_candidates": ["bv*+ba/b", "bestvideo*+bestaudio/best"],
         "headers": {
@@ -292,12 +279,26 @@ def download_with_ytdlp_formats(
     raise RuntimeError(last_error or "yt-dlp download failed")
 
 
+def audio_verdict(ffprobe_succeeded: bool, ffprobe_found_audio: bool) -> bool:
+    """Pure audio decision (Worker-equivalent, pinned by tests).
+
+    A successful ffprobe run is decisive: it parsed the file, so no
+    audio stream means the file genuinely has none -> reject. Any
+    ffprobe failure is inconclusive -> accept: the old code explicitly
+    avoided hard-blocking then, and the Worker accepts inconclusive
+    probes too. (The old MP4 marker fallback is gone: both of its
+    outcomes were "accept", so it decided nothing.)
+    """
+    if ffprobe_succeeded:
+        return ffprobe_found_audio
+    return True
+
+
 def verify_video_has_audio(filepath: str) -> bool:
-    """Verify that video file contains an active audio stream using ffprobe, with MP4 atom fallback."""
+    """Verify that video file contains an active audio stream using ffprobe."""
     if not filepath or not os.path.exists(filepath):
         return False
 
-    # Check 1: ffprobe stream inspection
     try:
         cmd = [
             "ffprobe", "-v", "error",
@@ -308,20 +309,11 @@ def verify_video_has_audio(filepath: str) -> bool:
         ]
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=8)
         if res.returncode == 0:
-            return "audio" in res.stdout.lower()
+            return audio_verdict(True, "audio" in res.stdout.lower())
     except Exception:
         pass
 
-    # Check 2: Binary inspection for audio atom tags (soun / mp4a / esds) in MP4 header
-    try:
-        with open(filepath, "rb") as f:
-            header = f.read(4 * 1024 * 1024)  # first 4 MB contains moov/trak/mdia/hdlr atoms
-            if b"soun" in header or b"mp4a" in header or b"esds" in header:
-                return True
-    except Exception:
-        pass
-
-    return True  # Avoid hard-blocking if both probes are inconclusive
+    return audio_verdict(False, False)
 
 
 def download_reel_media(platform: str, url: str, *, reel_external_id: str | None = None) -> tuple[str, str]:
@@ -354,23 +346,6 @@ def download_reel_media(platform: str, url: str, *, reel_external_id: str | None
                 unique_id,
                 reel_external_id=reel_external_id,
             )
-        elif platform == "tiktok":
-            # yt-dlp only. The old downloader's primary TikTok engine was
-            # a third-party HD stream API; that engine is REMOVED by the
-            # owner's order. The old yt-dlp fallback below is now the only
-            # TikTok engine: strict format selector (requiring audio),
-            # datacenter proxy, audio verification.
-            profile_copy = dict(profile)
-            filename, description = download_with_ytdlp_formats(
-                url,
-                profile_copy,
-                DATACENTER_PROXY,
-                tmp_dir,
-                unique_id,
-                reel_external_id=reel_external_id,
-            )
-            if not verify_video_has_audio(filename):
-                raise RuntimeError("Downloaded TikTok video has no audio stream")
         else:
             # Facebook: full yt-dlp download (optional datacenter proxy on yt-dlp).
             filename, description = download_with_ytdlp_formats(

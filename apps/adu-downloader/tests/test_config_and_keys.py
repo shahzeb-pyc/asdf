@@ -36,3 +36,15 @@ def test_env_bounds_clamp(monkeypatch):
     monkeypatch.setenv("ADU_DOWNLOADER_CONCURRENCY", "0")
     assert config._bounded_int("ADU_DOWNLOADER_CONCURRENCY", "30", minimum=1, maximum=200) == 1
     os.environ.pop("ADU_DOWNLOADER_CONCURRENCY", None)
+
+
+def test_resolve_proxy_defaults_to_none_and_tunables_are_bounded(monkeypatch):
+    # No RESOLVE_PROXY_URL in CI/dev: TikTok claiming must be disabled,
+    # not crash at import. The value itself is never asserted (it is a
+    # server-side secret, never present here).
+    assert config.RESOLVE_PROXY_URL is None
+    assert config.RESOLVE_MIN_INTERVAL_SECONDS == 2
+    assert config.RESOLVE_BACKOFF_SECONDS == 120
+    monkeypatch.setenv("ADU_RESOLVE_MIN_INTERVAL_SECONDS", "9999")
+    assert config._bounded_int("ADU_RESOLVE_MIN_INTERVAL_SECONDS", "2", minimum=0, maximum=60) == 60
+    os.environ.pop("ADU_RESOLVE_MIN_INTERVAL_SECONDS", None)
