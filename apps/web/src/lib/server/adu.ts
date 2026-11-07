@@ -3,12 +3,20 @@ import {
   aduDisplayStatus,
   aduSourceLink,
   aduStatusAlert,
+  decryptToken,
+  encryptToken,
+  fetchAllFacebookPages,
+  getTokenEncryptionKey,
   sanitizeSourceIdentity,
   type AduConfigRow,
   type AduSourcePlatform,
 } from '@fbuploadpro/contracts';
 import { authenticateTenantRoute, getRouteSupabase } from '@/lib/route-auth';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
+import {
+  isTokenDeadGraphStatus,
+  markAccountConnectionError,
+} from '@/lib/connect/account-probe';
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
 import { logServerError } from '@/lib/server-analytics';
 import {
@@ -334,6 +342,196 @@ export async function loadAduOptionsLists(
     configured: configured.rows,
     migrationMissing: false,
   };
+}
+
+export interface AduDiscoveredGraphPage {
+  fbPageId: string;
+  pageName: string;
+  category: string | null;
+  tasks: string[];
+  followers: number;
+  profilePictureUrl: string | null;
+  accessToken: string | null;
+}
+
+/**
+ * Re-discovers one account's Facebook pages server-side, exactly like
+ * the Pages picker's discover route: the account token is decrypted
+ * here and Graph `/me/accounts` is queried with it. The client must
+ * never be trusted with a page token — submit re-proves the page
+ * belongs to the account and holds its token, so a forged fbPageId
+ * cannot attach an arbitrary page to this workspace.
+ */
+export async function fetchAduAccountDiscoveredPages(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  accountId: string,
+): Promise<
+  | { ok: true; pages: AduDiscoveredGraphPage[] }
+  | { ok: false; error: string }
+> {
+  const { data: account, error: accountError } = await supabase
+    .from('social_accounts')
+    .select('encrypted_access_token')
+    .eq('id', accountId)
+    .eq('workspace_id', workspaceId)
+    .eq('platform', 'facebook')
+    .maybeSingle();
+  if (accountError || !account) {
+    return { ok: false, error: 'Facebook account not found.' };
+  }
+  const encryptedToken = (account as { encrypted_access_token?: string | null })
+    .encrypted_access_token;
+  if (!encryptedToken) {
+    return { ok: false, error: 'Failed to decrypt account credentials.' };
+  }
+  let rawToken: string;
+  try {
+    rawToken = await decryptToken(encryptedToken, getTokenEncryptionKey());
+  } catch (err) {
+    logServerError('[adu] Failed to decrypt account credentials', err, {
+      source: 'adu-discover',
+    });
+    return { ok: false, error: 'Failed to decrypt account credentials.' };
+  }
+  let fetched: Awaited<ReturnType<typeof fetchAllFacebookPages>>;
+  try {
+    fetched = await fetchAllFacebookPages(
+      rawToken,
+      'id,name,category,tasks,access_token,followers_count,picture{url}',
+    );
+  } catch (err: unknown) {
+    logServerError('[adu] Facebook Graph query failed', err, {
+      source: 'adu-discover',
+    });
+    const status =
+      err !== null &&
+      typeof err === 'object' &&
+      'status' in err &&
+      typeof (err as { status: unknown }).status === 'number'
+        ? (err as { status: number }).status
+        : undefined;
+    // Discover is the probe (same rule as the Pages routes): an
+    // auth-class failure means the user token is dead, so the
+    // account is marked 'error' now instead of reading
+    // "Connected" until a publish fails.
+    if (isTokenDeadGraphStatus(status)) {
+      await markAccountConnectionError(supabase, workspaceId, accountId);
+    }
+    return { ok: false, error: 'Failed to query Facebook Graph API.' };
+  }
+  return {
+    ok: true,
+    pages: fetched.pages.map((item) => ({
+      fbPageId: String(item.id),
+      pageName: String(item.name ?? ''),
+      category: item.category ?? null,
+      tasks: Array.isArray(item.tasks) ? item.tasks : [],
+      followers:
+        typeof item.followers_count === 'number'
+          ? Math.max(0, item.followers_count)
+          : 0,
+      profilePictureUrl: item.picture?.data?.url ?? null,
+      accessToken: item.access_token ?? null,
+    })),
+  };
+}
+
+/**
+ * Ensures the `destinations` row for a discovered page, exactly like
+ * Pages import does: upsert on (`account_id`,
+ * `external_destination_id`), reusing the existing row when present.
+ * The per-page `access_token` from Graph is stored encrypted — ADU
+ * publishing reads `destinations.encrypted_destination_token` and
+ * fails permanently without it, so a page without a token is refused
+ * here, never imported tokenless. A paused row (disconnected +
+ * `fb_status='paused'`) keeps its status, marker, and follower
+ * baseline; any other pre-existing row keeps its starting-followers
+ * baseline. Nothing about any other page's or account's row is
+ * touched: a second row for the same page under another account is
+ * legitimate and separate.
+ */
+export async function ensureAduDestination(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  accountId: string,
+  page: AduDiscoveredGraphPage,
+): Promise<{ ok: true; destinationId: string } | { ok: false; error: string }> {
+  if (!page.accessToken) {
+    return {
+      ok: false,
+      error: `This page did not return a page token from Facebook and was not added: ${page.fbPageId}.`,
+    };
+  }
+  let encryptedPageToken: string;
+  try {
+    encryptedPageToken = await encryptToken(page.accessToken, getTokenEncryptionKey());
+  } catch (err) {
+    logServerError('[adu] Failed to encrypt page token', err, {
+      source: 'adu-ensure-destination',
+    });
+    return { ok: false, error: 'Failed to save the page credentials.' };
+  }
+  const { data: existing, error: existingError } = await supabase
+    .from('destinations')
+    .select('id, status, metadata')
+    .eq('workspace_id', workspaceId)
+    .eq('account_id', accountId)
+    .eq('platform', 'facebook')
+    .eq('external_destination_id', page.fbPageId)
+    .maybeSingle();
+  if (existingError) {
+    logServerError('[adu] Failed to load existing destination', existingError, {
+      source: 'adu-ensure-destination',
+    });
+    return { ok: false, error: 'Could not add this page. Please try again.' };
+  }
+  const existingMetadata = ((existing?.metadata ?? {}) as Record<string, unknown>);
+  const paused =
+    existing?.status === 'disconnected' && existingMetadata.fb_status === 'paused';
+  const preserveBaseline =
+    existing != null &&
+    (existing.status !== 'disconnected' || paused) &&
+    typeof existingMetadata.starting_followers === 'number';
+  const startingFollowers = preserveBaseline
+    ? (existingMetadata.starting_followers as number)
+    : page.followers;
+  const nextMetadata: Record<string, unknown> = {
+    ...existingMetadata,
+    category: page.category,
+    tasks: page.tasks,
+    starting_followers: startingFollowers,
+    current_followers: page.followers,
+  };
+  if (!paused) {
+    delete nextMetadata.fb_status;
+  }
+  const { data: upserted, error: upsertError } = await supabase
+    .from('destinations')
+    .upsert(
+      {
+        workspace_id: workspaceId,
+        account_id: accountId,
+        platform: 'facebook',
+        external_destination_id: page.fbPageId,
+        name: page.pageName,
+        avatar_url: page.profilePictureUrl,
+        encrypted_destination_token: encryptedPageToken,
+        status: paused ? 'disconnected' : 'active',
+        metadata: nextMetadata,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'account_id,external_destination_id' },
+    )
+    .select('id')
+    .single();
+  if (upsertError || !upserted) {
+    logServerError('[adu] Failed to upsert destination', upsertError, {
+      source: 'adu-ensure-destination',
+    });
+    return { ok: false, error: 'Could not add this page. Please try again.' };
+  }
+  return { ok: true, destinationId: upserted.id as string };
 }
 
 export interface AduConfigView {
