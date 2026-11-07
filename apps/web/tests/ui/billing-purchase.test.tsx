@@ -402,6 +402,27 @@ describe('Billing Purchase', () => {
     await waitFor(() => expect(screen.getByText('15 GB')).toBeInTheDocument());
   });
 
+  it('Included card is compact and not stretched', async () => {
+    renderBilling('purchase');
+    await screen.findByText('Included with your plan');
+    const card = screen
+      .getByText('Included with your plan')
+      .closest('[data-slot="card"]');
+    expect(card).not.toBeNull();
+    // Compact, not stretched: the card hugs its content and is centred
+    // in the builder column instead of spanning the full width.
+    expect(card).toHaveClass('w-fit', 'max-w-full', 'self-center');
+    expect(card).not.toHaveClass('w-full');
+    // All three lines still render, with the same wording.
+    expect(
+      screen.getByText('5 GB of Media Library storage per page or account')
+    ).toBeInTheDocument();
+    expect(screen.getByText('Creator Finder included free')).toBeInTheDocument();
+    expect(
+      screen.getByText('Unlimited posts — no cap on the number of posts')
+    ).toBeInTheDocument();
+  });
+
   it('My Plan shows all six platforms in the paid counts line', async () => {
     // Free users get a deliberately shorter My Plan (no per-platform
     // list — all zeros, useless for Free), so this needs a paid
