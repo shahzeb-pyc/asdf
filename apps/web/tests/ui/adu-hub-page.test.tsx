@@ -48,24 +48,69 @@ const HUB_BODY = {
 
 const OPTIONS_BODY = {
   accounts: [
-    { id: 'acct-1', external_account_id: '111', display_name: 'My FB Account', avatar_url: null, status: 'connected' },
-    { id: 'acct-2', external_account_id: '444', display_name: 'Second Account', avatar_url: null, status: 'connected' },
+    { id: '11111111-1111-4111-8111-111111111111', external_account_id: '111', display_name: 'My FB Account', avatar_url: null, status: 'connected' },
+    { id: '22222222-2222-4222-8222-222222222222', external_account_id: '444', display_name: 'Second Account', avatar_url: null, status: 'connected' },
   ],
   pages: [
-    { id: 'page-1', account_id: 'acct-1', external_destination_id: '222', name: 'My Page', avatar_url: null, status: 'connected', metadata: null },
-    { id: 'page-2', account_id: 'acct-1', external_destination_id: '333', name: 'Second Page', avatar_url: null, status: 'connected', metadata: null },
-    { id: 'page-3', account_id: 'acct-2', external_destination_id: '555', name: 'Third Page', avatar_url: null, status: 'connected', metadata: null },
+    { id: 'page-1', account_id: '11111111-1111-4111-8111-111111111111', external_destination_id: '222', name: 'My Page', avatar_url: null, status: 'connected', metadata: null },
+    { id: 'page-2', account_id: '11111111-1111-4111-8111-111111111111', external_destination_id: '333', name: 'Second Page', avatar_url: null, status: 'connected', metadata: null },
+    { id: 'page-3', account_id: '22222222-2222-4222-8222-222222222222', external_destination_id: '555', name: 'Third Page', avatar_url: null, status: 'connected', metadata: null },
   ],
   configured: [],
 };
 
-function jsonResponse(body: unknown, ok = true) {
-  return Promise.resolve({ ok, json: () => Promise.resolve(body) });
+function jsonResponse(body: unknown, ok = true, status = ok ? 200 : 400) {
+  return Promise.resolve({
+    ok,
+    status,
+    json: () => Promise.resolve(body),
+    text: () => Promise.resolve(JSON.stringify(body)),
+  });
+}
+
+type OptionsBody = typeof OPTIONS_BODY;
+
+// Builds the live-discover payload the dialog's typed `api.get`
+// (`DiscoverPagesResponseSchema`) parses: one entry per account, from
+// the options fixture's own pages, so step 2 shows the union of the
+// selected accounts' pages exactly as the real discover route would.
+// The account id must be a UUID — the schema rejects anything else,
+// which is what left step 2 stuck on "loading" before this helper.
+function discoverResponse(options: OptionsBody, url: string) {
+  const accountId = url.split('/accounts/')[1]?.split('/')[0];
+  const account = options.accounts.find((a) => a.id === accountId);
+  if (!accountId || !account) {
+    return jsonResponse({ error: 'Facebook account not found' }, false, 404);
+  }
+  const pages = options.pages.filter((p) => p.account_id === accountId);
+  return jsonResponse({
+    accountId,
+    accountDisplayName: account.display_name,
+    pages: pages.map((p) => {
+      const metadata = (p.metadata ?? {}) as { category?: string; current_followers?: number };
+      const followers = typeof metadata.current_followers === 'number' ? metadata.current_followers : 0;
+      return {
+        fbPageId: p.external_destination_id,
+        pageName: p.name,
+        profilePictureUrl: p.avatar_url,
+        category: metadata.category ?? null,
+        currentFollowers: followers,
+        followersCount: followers,
+        tasks: [],
+        isImported: true,
+      };
+    }),
+    total: pages.length,
+    truncated: false,
+    partial: false,
+    droppedCount: 0,
+  });
 }
 
 function installFetch(options: unknown = OPTIONS_BODY) {
   fetchMock.mockImplementation((url: string, init?: { method?: string }) => {
     if (url.includes('/auto-download-upload/options')) return jsonResponse(options);
+    if (url.includes('/pages/discover')) return discoverResponse(options as OptionsBody, url);
     if (init?.method === 'POST') return jsonResponse({ id: 'cfg-new', created: [{ id: 'cfg-a' }, { id: 'cfg-b' }], failed: [] });
     return jsonResponse(HUB_BODY);
   });
@@ -362,13 +407,13 @@ describe('AduHubPage Add Page dialog 3-step flow', () => {
     installFetch({
       ...OPTIONS_BODY,
       accounts: [
-        { id: 'acct-1', external_account_id: '111', display_name: 'My FB Account', avatar_url: 'https://images.example.com/acct.jpg', status: 'connected' },
-        { id: 'acct-2', external_account_id: '444', display_name: 'Second Account', avatar_url: null, status: 'connected' },
+        { id: '11111111-1111-4111-8111-111111111111', external_account_id: '111', display_name: 'My FB Account', avatar_url: 'https://images.example.com/acct.jpg', status: 'connected' },
+        { id: '22222222-2222-4222-8222-222222222222', external_account_id: '444', display_name: 'Second Account', avatar_url: null, status: 'connected' },
       ],
       pages: [
-        { id: 'page-1', account_id: 'acct-1', external_destination_id: '222', name: 'My Page', avatar_url: 'https://images.example.com/page.jpg', status: 'connected', metadata: null },
-        { id: 'page-2', account_id: 'acct-1', external_destination_id: '333', name: 'Second Page', avatar_url: null, status: 'connected', metadata: null },
-        { id: 'page-3', account_id: 'acct-2', external_destination_id: '555', name: 'Third Page', avatar_url: null, status: 'connected', metadata: null },
+        { id: 'page-1', account_id: '11111111-1111-4111-8111-111111111111', external_destination_id: '222', name: 'My Page', avatar_url: 'https://images.example.com/page.jpg', status: 'connected', metadata: null },
+        { id: 'page-2', account_id: '11111111-1111-4111-8111-111111111111', external_destination_id: '333', name: 'Second Page', avatar_url: null, status: 'connected', metadata: null },
+        { id: 'page-3', account_id: '22222222-2222-4222-8222-222222222222', external_destination_id: '555', name: 'Third Page', avatar_url: null, status: 'connected', metadata: null },
       ],
     });
     await openDialog(user);
@@ -391,7 +436,7 @@ describe('AduHubPage Add Page dialog 3-step flow', () => {
     installFetch({
       ...OPTIONS_BODY,
       pages: [
-        { id: 'page-1', account_id: 'acct-1', external_destination_id: '222', name: 'My Page', avatar_url: 'https://images.example.com/broken.jpg', status: 'connected', metadata: null },
+        { id: 'page-1', account_id: '11111111-1111-4111-8111-111111111111', external_destination_id: '222', name: 'My Page', avatar_url: 'https://images.example.com/broken.jpg', status: 'connected', metadata: null },
         ...OPTIONS_BODY.pages.slice(1),
       ],
     });
@@ -411,10 +456,10 @@ describe('AduHubPage Add Page dialog 3-step flow', () => {
     installFetch({
       ...OPTIONS_BODY,
       pages: [
-        { id: 'page-1', account_id: 'acct-1', external_destination_id: '222', name: 'My Page', avatar_url: null, status: 'connected', metadata: { category: 'Digital creator', current_followers: 23108 } },
-        { id: 'page-2', account_id: 'acct-1', external_destination_id: '333', name: 'Second Page', avatar_url: null, status: 'connected', metadata: { category: 'Music video' } },
-        { id: 'page-3', account_id: 'acct-2', external_destination_id: '555', name: 'Third Page', avatar_url: null, status: 'connected', metadata: { current_followers: 1 } },
-        { id: 'page-4', account_id: 'acct-2', external_destination_id: '666', name: 'Fourth Page', avatar_url: null, status: 'connected', metadata: {} },
+        { id: 'page-1', account_id: '11111111-1111-4111-8111-111111111111', external_destination_id: '222', name: 'My Page', avatar_url: null, status: 'connected', metadata: { category: 'Digital creator', current_followers: 23108 } },
+        { id: 'page-2', account_id: '11111111-1111-4111-8111-111111111111', external_destination_id: '333', name: 'Second Page', avatar_url: null, status: 'connected', metadata: { category: 'Music video' } },
+        { id: 'page-3', account_id: '22222222-2222-4222-8222-222222222222', external_destination_id: '555', name: 'Third Page', avatar_url: null, status: 'connected', metadata: { current_followers: 1 } },
+        { id: 'page-4', account_id: '22222222-2222-4222-8222-222222222222', external_destination_id: '666', name: 'Fourth Page', avatar_url: null, status: 'connected', metadata: {} },
       ],
     });
     await openDialog(user);
@@ -440,6 +485,7 @@ describe('AduHubPage Add Page dialog 3-step flow', () => {
     // so the banner stays visible (a clean success closes it).
     fetchMock.mockImplementation((url: string, init?: { method?: string }) => {
       if (url.includes('/auto-download-upload/options')) return jsonResponse(OPTIONS_BODY);
+      if (url.includes('/pages/discover')) return discoverResponse(OPTIONS_BODY, url);
       if (init?.method === 'POST') return jsonResponse({ id: 'cfg-new', created: [{ id: 'cfg-a' }], failed: [{ destinationId: 'page-2', error: 'boom' }] });
       return jsonResponse(HUB_BODY);
     });
@@ -458,6 +504,7 @@ describe('AduHubPage Add Page dialog 3-step flow', () => {
     const user = userEvent.setup();
     fetchMock.mockImplementation((url: string, init?: { method?: string }) => {
       if (url.includes('/auto-download-upload/options')) return jsonResponse(OPTIONS_BODY);
+      if (url.includes('/pages/discover')) return discoverResponse(OPTIONS_BODY, url);
       if (init?.method === 'POST') return jsonResponse({ id: 'cfg-new', created: [{ id: 'cfg-a' }, { id: 'cfg-b' }], failed: [{ destinationId: 'page-3', error: 'boom' }] });
       return jsonResponse(HUB_BODY);
     });
