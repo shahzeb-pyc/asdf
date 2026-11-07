@@ -152,7 +152,13 @@ describe('FacebookPublisher — per-format dispatch (parity with the old dispatc
     );
     expect(outcome.status).toBe('published');
     expect(mock.reelsPublished).toEqual([
-      { pageId: PAGE_ID, accessToken: PAGE_TOKEN, videoUrl: VIDEO_URL, caption: 'Hello from the boss' },
+      {
+        pageId: PAGE_ID,
+        accessToken: PAGE_TOKEN,
+        videoUrl: VIDEO_URL,
+        caption: 'Hello from the boss',
+        itemId: 'item-1',
+      },
     ]);
     expect(mock.videosPublished).toHaveLength(0);
   });
