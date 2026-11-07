@@ -43,6 +43,15 @@ interface UploadScenario {
   fileUrl: () => Response;
   stream: () => Response;
   finish?: () => Response;
+  /** Overrides the start response for a given start count (1-based). */
+  start?: (count: number) => Response;
+}
+
+/** A timeout throw, as AbortSignal.timeout produces it in production. */
+function abortError(): Error {
+  const err = new Error('The operation timed out');
+  err.name = 'AbortError';
+  return err;
 }
 
 function makeClient(scenario: UploadScenario): {
@@ -75,6 +84,7 @@ function makeClient(scenario: UploadScenario): {
       const parsed = body ? (JSON.parse(body) as { upload_phase?: string }) : {};
       if (parsed.upload_phase === 'start') {
         startCount += 1;
+        if (scenario.start) return scenario.start(startCount);
         return jsonResponse({
           video_id: `vid-${startCount}`,
           upload_url: `${RUPLOAD}/vid-${startCount}`,
@@ -160,6 +170,94 @@ describe('publishReel file_url primary', () => {
     expect(calls.filter((call) => call.url === MEDIA_URL)).toHaveLength(1);
     const finishCall = calls.find((call) => call.body?.includes('"upload_phase":"finish"'));
     expect(finishCall?.body).toContain('"video_id":"vid-2"');
+  });
+
+  it('falls back to streaming on a fresh session when the file_url attempt throws', async () => {
+    const { client, calls, startCount } = makeClient({
+      fileUrl: () => {
+        throw abortError();
+      },
+      stream: () => jsonResponse({ success: true }),
+    });
+
+    const result = await publish(client);
+
+    expect(result.postId).toBe('post-123');
+    // The throw is a failed attempt, not a skipped fallback: a fresh
+    // start runs and the stream succeeds on the fresh session.
+    expect(startCount()).toBe(2);
+    const streamCalls = calls.filter(
+      (call) => call.url.startsWith(RUPLOAD) && call.headers['offset'] === '0'
+    );
+    expect(streamCalls).toHaveLength(1);
+    expect(streamCalls[0]?.url).toContain('/vid-2');
+    // The streamed bytes came from the media URL, fetched once.
+    expect(calls.filter((call) => call.url === MEDIA_URL)).toHaveLength(1);
+    const finishCall = calls.find((call) => call.body?.includes('"upload_phase":"finish"'));
+    expect(finishCall?.body).toContain('"video_id":"vid-2"');
+    // 10s timeout: fetchWithRetry replays the throwing file_url call 3x
+    // with 1s + 2s backoff before the throw surfaces.
+  }, 10_000);
+
+  it('names both attempts when the file_url attempt throws and streaming fails body-less', async () => {
+    const { client } = makeClient({
+      fileUrl: () => {
+        throw abortError();
+      },
+      stream: () => emptyResponse(400),
+    });
+
+    let caught: unknown;
+    try {
+      await publish(client);
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(FacebookGraphError);
+    const graphError = caught as FacebookGraphError;
+    expect(graphError.message).toContain('(reel-upload-stream)');
+    expect(graphError.diagnostic?.phase).toBe('reel-upload-stream');
+    expect(graphError.diagnostic?.httpStatus).toBe(400);
+    expect(graphError.diagnostic?.rawBody).toBe('');
+    expect(graphError.diagnostic?.attempts).toEqual([
+      { mode: 'file_url', success: false, message: 'The operation timed out' },
+      { mode: 'stream', success: false, httpStatus: 400, rawBody: '' },
+    ]);
+    // 10s timeout: fetchWithRetry replays the throwing file_url call 3x
+    // with 1s + 2s backoff before the throw surfaces.
+  }, 10_000);
+
+  it('keeps the file_url attempt when the fresh-session start for the fallback fails', async () => {
+    const { client } = makeClient({
+      fileUrl: () => emptyResponse(400),
+      stream: () => {
+        throw new InternalError('streaming must not run when the fresh start fails');
+      },
+      start: (count) =>
+        count === 2
+          ? emptyResponse(400)
+          : jsonResponse({
+              video_id: `vid-${count}`,
+              upload_url: `${RUPLOAD}/vid-${count}`,
+            }),
+    });
+
+    let caught: unknown;
+    try {
+      await publish(client);
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(FacebookGraphError);
+    const graphError = caught as FacebookGraphError;
+    expect(graphError.diagnostic?.phase).toBe('reel-start');
+    expect(graphError.diagnostic?.httpStatus).toBe(400);
+    expect(graphError.diagnostic?.rawBody).toBe('');
+    expect(graphError.diagnostic?.attempts).toEqual([
+      { mode: 'file_url', success: false, httpStatus: 400, rawBody: '' },
+    ]);
   });
 
   it('names both attempts when file_url and streaming both fail body-less', async () => {

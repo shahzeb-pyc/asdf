@@ -489,6 +489,49 @@ export class FacebookPublishClient implements IFacebookPublishClient {
   }
 
   /**
+   * A fresh-session start for the streaming fallback can itself throw;
+   * without this, the already-failed file_url attempt would vanish from
+   * the DB diagnostic entirely (only the console warn would retain it).
+   * Attach the file_url attempt to the start error's diagnostic so the
+   * first failure is never lost from publish_logs.detail. The start
+   * error's own phase, status, body, and Graph code are preserved
+   * untouched — only the attempts list is added.
+   */
+  private attachFileUrlAttemptToStartError(
+    err: unknown,
+    fileUrlAttempt: FacebookUploadAttemptDiagnostic
+  ): FacebookGraphError {
+    if (err instanceof FacebookGraphError) {
+      return new FacebookGraphError(
+        err.message,
+        {
+          ...(err.code !== undefined ? { code: err.code } : {}),
+          ...(err.errorSubcode !== undefined ? { error_subcode: err.errorSubcode } : {}),
+          ...(err.errorType !== undefined ? { type: err.errorType } : {}),
+          ...(err.fbtraceId !== undefined ? { fbtrace_id: err.fbtraceId } : {}),
+        },
+        err.telemetry,
+        {
+          phase: err.diagnostic?.phase ?? 'reel-start',
+          ...(err.diagnostic?.httpStatus !== undefined
+            ? { httpStatus: err.diagnostic.httpStatus }
+            : {}),
+          ...(err.diagnostic?.rawBody !== undefined
+            ? { rawBody: err.diagnostic.rawBody }
+            : {}),
+          attempts: [fileUrlAttempt],
+        }
+      );
+    }
+    return new FacebookGraphError(
+      err instanceof Error ? err.message : String(err),
+      undefined,
+      undefined,
+      { phase: 'reel-start', attempts: [fileUrlAttempt] }
+    );
+  }
+
+  /**
    * Publishes a reel, with one console line per outcome for Cloudflare
    * Worker Logs (the dashboard live tail reads console output; the
    * worker has no [observability] section). The DB diagnostic is
@@ -545,19 +588,38 @@ export class FacebookPublishClient implements IFacebookPublishClient {
     let { videoId, uploadUrl } = await this.startReelUploadSession(pageId, accessToken);
 
     // Phase 2, primary: file_url — Facebook fetches the file itself.
-    const fileUrlAttempt = await this.uploadReelViaFileUrl(uploadUrl, accessToken, videoUrl);
+    // A throw (timeout via AbortSignal.timeout, network error) is a
+    // failed attempt too: record it and fall back, never let it skip
+    // the fallback — otherwise the failure lands as bare code `unknown`
+    // with no attempts diagnostic, the exact signature this change
+    // exists to eliminate (spec step 3: fallback on a fetch failure).
+    let fileUrlAttempt: FacebookUploadAttemptDiagnostic;
+    try {
+      fileUrlAttempt = await this.uploadReelViaFileUrl(uploadUrl, accessToken, videoUrl);
+    } catch (err) {
+      fileUrlAttempt = {
+        mode: 'file_url',
+        success: false,
+        message: err instanceof Error ? err.message : String(err),
+      };
+    }
 
     let uploadMode: 'file_url' | 'stream' = 'file_url';
     if (!fileUrlAttempt.success) {
       // One warn line so the fallback is visible in Worker Logs.
       console.warn(
-        `[reel-publish] item=${itemLabel} page=${pageId} file_url upload failed phase=reel-upload-file-url status=${fileUrlAttempt.httpStatus ?? 'unknown'} body=${oneLineLogText(fileUrlAttempt.rawBody ?? '')}; falling back to streaming`
+        `[reel-publish] item=${itemLabel} page=${pageId} file_url upload failed phase=reel-upload-file-url status=${fileUrlAttempt.httpStatus ?? 'unknown'} body=${oneLineLogText(fileUrlAttempt.message ?? fileUrlAttempt.rawBody ?? '')}; falling back to streaming`
       );
       // Fallback, once: a fresh upload session first — the old publisher
       // reset videoId after a hosted-upload failure, because a failed
       // upload may poison the session, so never stream into the failed
       // session's URL — then stream the bytes with the existing uploader.
-      const fresh = await this.startReelUploadSession(pageId, accessToken);
+      let fresh: { videoId: string; uploadUrl: string };
+      try {
+        fresh = await this.startReelUploadSession(pageId, accessToken);
+      } catch (err) {
+        throw this.attachFileUrlAttemptToStartError(err, fileUrlAttempt);
+      }
       videoId = fresh.videoId;
       uploadUrl = fresh.uploadUrl;
       try {

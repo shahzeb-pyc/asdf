@@ -1007,6 +1007,24 @@ describe('FacebookPublishClient — retry policy & timeouts (spec 139)', () => {
             )
           );
         }
+        // The rupload file_url call is not the media fetch: answer it
+        // with a coded failure so the fallback runs and the media fetch
+        // below is the only hanging call (the rupload URL contains
+        // '/video-reels', not '/video_reels', so the start branch above
+        // does not match it).
+        if (String(url).startsWith('https://rupload.facebook.com')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                error: {
+                  message: 'The file could not be fetched (fileurlprocessingerror)',
+                  code: 100,
+                },
+              }),
+              { status: 400, headers: { 'Content-Type': 'application/json' } }
+            )
+          );
+        }
         mediaAttempts += 1;
         return new Promise<Response>((_resolve, reject) => {
           const signal = init?.signal;
@@ -1026,7 +1044,29 @@ describe('FacebookPublishClient — retry policy & timeouts (spec 139)', () => {
       const err = await client
         .publishReel({ pageId, accessToken, videoUrl, caption })
         .catch((e: unknown) => e);
-      expect((err as Error).name).toBe('TimeoutError');
+      // The TimeoutError no longer escapes raw: with file_url-first, the
+      // stream failure is combined with the failed file_url attempt into
+      // one FacebookGraphError naming both attempts (the raw error only
+      // escaped before because a file_url throw skipped the fallback —
+      // the SEND BACK bug — so the old name assertion encoded the bug).
+      expect(err).toBeInstanceOf(FacebookGraphError);
+      const graphError = err as FacebookGraphError;
+      expect(graphError.message).toContain('timeout');
+      expect(graphError.diagnostic?.phase).toBe('reel-upload-stream');
+      expect(graphError.diagnostic?.attempts).toEqual([
+        {
+          mode: 'file_url',
+          success: false,
+          httpStatus: 400,
+          rawBody:
+            '{"error":{"message":"The file could not be fetched (fileurlprocessingerror)","code":100}}',
+        },
+        {
+          mode: 'stream',
+          success: false,
+          message: expect.stringContaining('timeout'),
+        },
+      ]);
       // Media fetch is retryable: all 3 attempts ran and each one timed out.
       expect(mediaAttempts).toBe(3);
     },

@@ -103,6 +103,37 @@ describe('FacebookPublisher failure outcomes', () => {
     });
   });
 
+  it('stores http_400 when the file_url attempt threw and streaming then failed body-less', async () => {
+    const thrownThenFailed = new FacebookGraphError(
+      'Facebook Graph API error: HTTP 400 (reel-upload-stream)',
+      undefined,
+      undefined,
+      {
+        phase: 'reel-upload-stream',
+        httpStatus: 400,
+        rawBody: '',
+        attempts: [
+          { mode: 'file_url', success: false, message: 'The operation timed out' },
+          { mode: 'stream', success: false, httpStatus: 400, rawBody: '' },
+        ],
+      }
+    );
+    const publisher = new FacebookPublisher(failingClient(thrownThenFailed));
+
+    const outcome = await publisher.publish(queueItem(), destination(), {
+      accessToken: 'user-token',
+      destinationToken: 'page-token',
+    });
+
+    expect(outcome.status).toBe('failed');
+    expect(outcome.error?.code).toBe('http_400');
+    expect(outcome.error?.kind).toBe('retryable');
+    expect(outcome.detail?.attempts).toEqual([
+      { mode: 'file_url', success: false, message: 'The operation timed out' },
+      { mode: 'stream', success: false, httpStatus: 400, rawBody: '' },
+    ]);
+  });
+
   it('keeps the numeric Graph code when Facebook returns one', async () => {
     const authError = new FacebookGraphError('Access token is invalid or revoked.', {
       code: 190,
