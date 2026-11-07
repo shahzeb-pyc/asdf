@@ -8,11 +8,13 @@
  *   `adu_configs` (linked to a unified `destinations` row);
  * - old `reels` (page_id, reel_id) is now `adu_reels`
  *   (config_id, source_reel_id).
- * Everything else — yt-dlp-first TikTok discovery via Countik sec_uid,
- * Puppeteer logged-in fallback / only path for YouTube, Instagram and
- * Facebook, the pending -> processing -> synced | error |
- * browser_pending state machine, the 60s idle sleep, the 500-job
- * browser restart, the manual startup logins — is the old code.
+ * Everything else — yt-dlp-first TikTok discovery (plain profile URL
+ * through the rotating proxy, Countik sec_uid second and only if the
+ * profile attempt fails, then `tiktokuser:{sec_uid}` direct), Puppeteer
+ * logged-in fallback / only path for YouTube, Instagram and Facebook,
+ * the pending -> processing -> synced | error | browser_pending state
+ * machine, the 60s idle sleep, the 500-job browser restart, the manual
+ * startup logins — is the old code.
  * No third-party download API anywhere in discovery (discovery
  * never used one; the old downloader's third-party TikTok stream
  * is removed in the downloader, not here).

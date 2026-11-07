@@ -11,6 +11,40 @@ const EXEC_OPTS_BASE = {
   maxBuffer: 50 * 1024 * 1024,
 };
 
+// Proxy values that can appear in yt-dlp argv and therefore in execFile's
+// err.message (`Command failed: <binary> <full argv>`). The profile attempt
+// passes COUNTIK_PROXY_URL explicitly; buildTiktokYtdlpArgs also falls back
+// to DATACENTER_PROXY/PROXY_URL/HTTP_PROXY/HTTPS_PROXY for both attempts.
+// When a child exits non-zero with EMPTY stderr — or is timeout-killed —
+// the stderr tail is empty, so the err.message fallback would otherwise
+// carry the proxy credential verbatim into the log (and, via the returned
+// reason, into index.js processJob's log too). Strip every known proxy
+// value from any failure detail before it is logged or returned.
+function collectProxyValues(argOptions) {
+  const values = [];
+  const candidates = [
+    argOptions?.proxy,
+    process.env.COUNTIK_PROXY_URL,
+    process.env.DATACENTER_PROXY,
+    process.env.PROXY_URL,
+    process.env.HTTP_PROXY,
+    process.env.HTTPS_PROXY,
+  ];
+  for (const value of candidates) {
+    const trimmed = String(value ?? '').trim();
+    if (trimmed && !values.includes(trimmed)) values.push(trimmed);
+  }
+  return values;
+}
+
+function redactProxyValues(text, argOptions) {
+  let out = String(text ?? '');
+  for (const value of collectProxyValues(argOptions)) {
+    out = out.split(value).join('[proxy]');
+  }
+  return out;
+}
+
 // yt-dlp binary/timeout are read from env at call time (not via config.js)
 // on purpose: this module must stay dependency-free (node builtins only) so
 // the standalone CI scraper test step (which runs without npm install) can
@@ -116,7 +150,11 @@ async function runDiscoveryTarget(targetUrl, maxCount, argOptions, logUser) {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const stderr = err.stderr?.toString?.() || '';
-    const detail = stderr.trim().slice(-500) || message;
+    // Never fall back to err.message verbatim: with empty stderr it is
+    // `Command failed: <binary> <full argv>` and would leak --proxy.
+    // Redact first so the logged line AND the returned reason (which
+    // index.js processJob also logs) can never contain the proxy value.
+    const detail = redactProxyValues(stderr.trim().slice(-500) || message, argOptions);
     console.warn(`⚠️ TikTok yt-dlp target ${targetUrl} failed: ${detail}`);
     return { ok: false, reason: detail };
   }
