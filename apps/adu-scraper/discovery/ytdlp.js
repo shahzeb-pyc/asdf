@@ -3,6 +3,7 @@ import { promisify } from 'node:util';
 import { buildTiktokProfileUrl, supportsYtdlpDiscovery } from './profile-urls.js';
 import { buildTiktokYtdlpArgs } from './ytdlp-args.js';
 import { extractIdsFromYtdlpJson } from './extract-ids.js';
+import { getTikwmScraperKeys, resolveSecUidWithTikwm } from './tikwm.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -44,13 +45,20 @@ function redactProxyValues(text, argOptions) {
   return out;
 }
 
-// TikTok discovery is yt-dlp ONLY (owner order 2026-11-08): the plain
+// TikTok discovery is yt-dlp FIRST (owner order 2026-11-08): the plain
 // profile-URL attempt, retried up to MAX_PROFILE_ATTEMPTS times per claim
 // with RETRY_DELAY_MS between attempts. Each attempt draws a different
 // rotating proxy exit IP — the exit-IP lottery is what decides success,
-// and a single attempt wastes a claim on one blocked IP. Countik is gone
-// from discovery (dead from every egress): no sec_uid resolution, no
-// secuid Worker call, no direct Countik fallback.
+// and a single attempt wastes a claim on one blocked IP.
+//
+// ONLY when all profile attempts fail, the paid TikWM /user/info
+// fallback runs (spec scraper-tikwm-fallback): resolve the camelCase
+// secUid from TIKWMAPI_KEYS_SCRAPER, then one `tiktokuser:{secUid}`
+// DIRECT attempt, exactly as the old Countik path did. Countik itself
+// is gone from discovery (dead from every egress): no secuid Worker
+// call, no direct Countik fallback. When no TikWM keys are configured
+// the fallback is skipped silently (the startup warning in index.js
+// already said so) and the claim fails exactly as before.
 const MAX_PROFILE_ATTEMPTS = 5;
 const RETRY_DELAY_MS = 2000;
 
@@ -190,28 +198,41 @@ async function runDiscoveryTarget(targetUrl, maxCount, argOptions, logUser) {
 }
 
 /**
- * Discover TikTok video IDs via yt-dlp ONLY (owner order 2026-11-08:
- * Countik removed, 5 retries):
- * - yt-dlp, plain profile URL through the rotating proxy
- *   (COUNTIK_PROXY_URL from env — the name is historical, the value is
- *   the DataImpulse proxy). yt-dlp resolves the sec_uid itself from the
- *   profile page. Listing only (--flat-playlist -J); it never downloads
- *   video bytes. If it yields reel IDs, discovery is done.
- * - The profile attempt is retried up to 5 times total per claim, 2s
- *   between attempts — each attempt draws a different rotating proxy
- *   exit IP. Success on any attempt returns the IDs.
- * - All 5 fail -> { ok: false, reason } with the last failure detail
- *   (redacted — never the proxy value); the caller marks the config
- *   error, as before.
+ * Discover TikTok video IDs (owner order 2026-11-08, spec
+ * scraper-tikwm-fallback):
+ * 1. yt-dlp, plain profile URL through the rotating proxy
+ *    (COUNTIK_PROXY_URL from env — the name is historical, the value is
+ *    the DataImpulse proxy). yt-dlp resolves the sec_uid itself from the
+ *    profile page. Listing only (--flat-playlist -J); it never downloads
+ *    video bytes. If it yields reel IDs, discovery is done — the TikWM
+ *    fallback is never called.
+ * 2. The profile attempt is retried up to 5 times total per claim, 2s
+ *    between attempts — each attempt draws a different rotating proxy
+ *    exit IP. Success on any attempt returns the IDs.
+ * 3. ONLY if all 5 fail: paid TikWM /user/info resolves the camelCase
+ *    secUid (keys from TIKWMAPI_KEYS_SCRAPER, in order, one request per
+ *    key, no proxy), then ONE `tiktokuser:{secUid}` direct attempt —
+ *    exactly as the old Countik path did. A failed direct attempt after
+ *    a good secUid is a discovery failure like any other.
+ * 4. All fail -> { ok: false, reason } recording BOTH failures
+ *    (yt-dlp detail + TikWM fallback detail, redacted — never the proxy
+ *    value, never key material); the caller marks the config error, as
+ *    before. With no TikWM keys configured the fallback is skipped
+ *    silently and the reason is the yt-dlp detail alone, as before.
  *
- * The proxy value is read from env and is never logged.
+ * The proxy value is read from env and is never logged. TikWM key
+ * values are read from TIKWMAPI_KEYS_SCRAPER only and are never logged.
  *
  * @param {string} platform
  * @param {string} sourceUsername
  * @param {number} maxCount
+ * @param {{ fetchFn?: typeof fetch, tikwmKeys?: string[] }} [options]
+ *   Injectable for tests: fetchFn replaces the global fetch for the
+ *   TikWM call, tikwmKeys replaces the env-var key list. Production
+ *   callers pass nothing.
  * @returns {Promise<{ ok: true, ids: string[] } | { ok: false, reason: string }>}
  */
-export async function discoverReelIdsWithYtdlp(platform, sourceUsername, maxCount) {
+export async function discoverReelIdsWithYtdlp(platform, sourceUsername, maxCount, options = {}) {
   const p = (platform || '').toLowerCase();
 
   if (!supportsYtdlpDiscovery(p)) {
@@ -263,5 +284,43 @@ export async function discoverReelIdsWithYtdlp(platform, sourceUsername, maxCoun
   }
 
   console.warn(`⚠️ All TikTok yt-dlp profile attempts failed for @${logUser} (${lastReason})`);
-  return { ok: false, reason: lastReason };
+
+  // TikWM fallback, ONLY after all 5 profile attempts failed.
+  // No keys configured: skip silently (the startup warning already
+  // said so) and fail exactly as before.
+  const tikwmKeys = options.tikwmKeys ?? getTikwmScraperKeys();
+  if (tikwmKeys.length === 0) {
+    return { ok: false, reason: lastReason };
+  }
+
+  console.log(`🔍 TikTok yt-dlp failed for @${logUser}; trying TikWM secUid fallback...`);
+  const lookup = await resolveSecUidWithTikwm(cleanUser, {
+    keys: tikwmKeys,
+    fetchFn: options.fetchFn,
+  });
+  if (!lookup.ok) {
+    console.warn(
+      `⚠️ TikWM secUid fallback failed for @${logUser} (${lookup.reason}); discovery failed.`,
+    );
+    return { ok: false, reason: `${lastReason}; tikwm fallback failed (${lookup.reason})` };
+  }
+
+  // Direct attempt, exactly as the old Countik path did: no proxy
+  // option (the VPS scraper env sets no DATACENTER_PROXY/PROXY_URL/
+  // HTTP(S)_PROXY, so the argv builder adds no --proxy — the mobile
+  // feed API behind `tiktokuser:` is not blocked the way the profile
+  // HTML page is). A failed direct attempt after a good secUid is a
+  // discovery failure like any other.
+  const direct = await runDiscoveryTarget(`tiktokuser:${lookup.secUid}`, maxCount, {}, logUser);
+  if (direct.ok) {
+    console.log(`✅ TikTok discovery recovered via TikWM fallback for @${logUser}.`);
+    return direct;
+  }
+  console.warn(
+    `⚠️ TikWM fallback resolved secUid for @${logUser} but the tiktokuser: direct attempt failed (${direct.reason}); discovery failed.`,
+  );
+  return {
+    ok: false,
+    reason: `${lastReason}; tikwm fallback direct attempt failed (${direct.reason})`,
+  };
 }

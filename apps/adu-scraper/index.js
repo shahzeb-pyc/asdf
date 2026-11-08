@@ -8,17 +8,16 @@
  *   `adu_configs` (linked to a unified `destinations` row);
  * - old `reels` (page_id, reel_id) is now `adu_reels`
  *   (config_id, source_reel_id).
- * Everything else — yt-dlp-only TikTok discovery (plain profile URL
+ * Everything else — yt-dlp-first TikTok discovery (plain profile URL
  * through the rotating proxy, up to 5 attempts with a 2s delay between
- * them — each attempt draws a different rotating proxy exit IP; no
- * Countik / sec_uid anywhere in discovery), Puppeteer
- * logged-in fallback / only path for YouTube, Instagram and Facebook,
- * the pending -> processing -> synced | error | browser_pending state
- * machine, the 60s idle sleep, the 500-job browser restart, the manual
- * startup logins — is the old code.
- * No third-party download API anywhere in discovery (discovery
- * never used one; the old downloader's third-party TikTok stream
- * is removed in the downloader, not here).
+ * them — each attempt draws a different rotating proxy exit IP; only
+ * when all 5 fail does the paid TikWM /user/info fallback resolve the
+ * camelCase secUid for one `tiktokuser:` direct attempt — see
+ * discovery/tikwm.js; no Countik / secuid Worker anywhere in
+ * discovery), Puppeteer logged-in fallback / only path for YouTube,
+ * Instagram and Facebook, the pending -> processing -> synced | error |
+ * browser_pending state machine, the 60s idle sleep, the 500-job
+ * browser restart, the manual startup logins — is the old code.
  *
  * This CANNOT run in Vercel or the Cloudflare Worker: it needs a
  * persistent host with yt-dlp on PATH and a logged-in Chromium
@@ -34,6 +33,7 @@ import { loginToFacebook, scrapeFacebookProfile } from './scrapers/facebook.js';
 import { BROWSER_CONFIG, LOGIN_CONFIG, SCRAPER_CONFIG } from './config.js';
 import { supportsYtdlpDiscovery } from './discovery/profile-urls.js';
 import { discoverReelIdsWithYtdlp } from './discovery/ytdlp.js';
+import { logTikwmFallbackStatus } from './discovery/tikwm.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -287,7 +287,7 @@ async function processJob(page, job, platform, claimSource) {
 
     if (platform === 'tiktok') {
       console.warn(
-        `⚠️ yt-dlp discovery failed for TikTok user ${job.source_username} (${ytdlpResult.reason}); marking as error.`,
+        `⚠️ TikTok discovery failed for ${job.source_username} (${ytdlpResult.reason}); marking as error.`,
       );
       await markSyncStatus(job.id, 'error');
     } else {
@@ -331,6 +331,11 @@ async function getActivePage(b, existingPage) {
 
 async function main() {
   console.log('🚀 Starting Multi-Platform Scraper Orchestrator (yt-dlp + browser)...');
+
+  // ONE loud warning when TIKWMAPI_KEYS_SCRAPER is unset (TikWM
+  // fallback disabled, yt-dlp-only discovery); the scraper keeps
+  // running either way.
+  logTikwmFallbackStatus();
 
   let browser = null;
   let page = null;
