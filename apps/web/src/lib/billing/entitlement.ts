@@ -552,7 +552,17 @@ export async function getEntitlement(
   userId: string,
   now: Date = new Date()
 ): Promise<Entitlement> {
-  let period = await getActivePeriod(client, userId, now);
+  // Perf round 1: the usage read does not depend on the period (or
+  // on the scheduled-downgrade activation below), so it runs
+  // concurrently with the period read instead of waiting for it.
+  // Any read failure still throws ENTITLEMENT_UNAVAILABLE with the
+  // same user message; each failing query still logs its own
+  // site-specific message first.
+  const [periodResult, usage] = await Promise.all([
+    getActivePeriod(client, userId, now),
+    getUsageCounts(client, userId),
+  ]);
+  let period = periodResult;
   if (!period) {
     // A scheduled downgrade whose start has arrived activates
     // here, on any entitlement check — not only when the user
@@ -567,7 +577,6 @@ export async function getEntitlement(
       });
     }
   }
-  const usage = await getUsageCounts(client, userId);
   if (!period) {
     // Expired is an explicit plan, never free: a prior paid period
     // means the user lapsed, and the gate, the sidebar word, and
