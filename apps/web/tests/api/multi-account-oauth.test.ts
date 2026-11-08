@@ -231,7 +231,7 @@ describe('Multi-Account Facebook OAuth Connection (User Story 1 - T059 & Spec 03
           // the whole page-token refresh.
           return {
             update: vi.fn().mockImplementation((updates: Record<string, any>) => {
-              const filters: Record<string, string> = {};
+              const filters: Record<string, string | undefined> = {};
               const chain: any = {
                 eq: vi.fn().mockImplementation((col: string, val: string) => {
                   filters[col] = val;
