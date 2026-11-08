@@ -50,40 +50,46 @@ export async function POST(
   // re-checks the verified size before anything lands). No active
   // period → quota 0 → refused. A missing admin client only happens
   // in test harnesses without a database; production always has one.
-  try {
-    const quotaClient = getSupabaseAdminClient();
-    if (quotaClient) {
-      // Multipart sessions carry no role (session-secret auth, not
-      // the tenant route session), so the admin skip resolves the
-      // role from the users table. A failed lookup fails toward
-      // gating (non-admin), never toward skipping the gate.
-      let isAdmin = false;
-      try {
-        const { data: userRow } = await quotaClient
-          .from('users')
-          .select('role')
-          .eq('id', session.userId)
-          .maybeSingle();
-        isAdmin = (userRow as { role?: string } | null)?.role === 'admin';
-      } catch {
-        isAdmin = false;
-      }
-      if (!isAdmin) {
-        const quotaState = await getStorageQuotaState(quotaClient, session.userId);
-        const check = checkStorageQuota(quotaState, body.fileSize);
-        if (!check.allowed) {
-          return NextResponse.json(
-            { error: 'STORAGE_QUOTA_EXCEEDED', message: check.message },
-            { status: check.noQuota ? 403 : 413 }
-          );
+  // Composer staged uploads skip this gate entirely (same reason as
+  // the upload-url route): post-staging bytes never enter the Media
+  // Library, so a plan with no library storage must not refuse them.
+  // Library uploads keep the gate exactly as before.
+  if (body.purpose !== 'post-staging') {
+    try {
+      const quotaClient = getSupabaseAdminClient();
+      if (quotaClient) {
+        // Multipart sessions carry no role (session-secret auth, not
+        // the tenant route session), so the admin skip resolves the
+        // role from the users table. A failed lookup fails toward
+        // gating (non-admin), never toward skipping the gate.
+        let isAdmin = false;
+        try {
+          const { data: userRow } = await quotaClient
+            .from('users')
+            .select('role')
+            .eq('id', session.userId)
+            .maybeSingle();
+          isAdmin = (userRow as { role?: string } | null)?.role === 'admin';
+        } catch {
+          isAdmin = false;
+        }
+        if (!isAdmin) {
+          const quotaState = await getStorageQuotaState(quotaClient, session.userId);
+          const check = checkStorageQuota(quotaState, body.fileSize);
+          if (!check.allowed) {
+            return NextResponse.json(
+              { error: 'STORAGE_QUOTA_EXCEEDED', message: check.message },
+              { status: check.noQuota ? 403 : 413 }
+            );
+          }
         }
       }
+    } catch {
+      return NextResponse.json(
+        { error: 'Your storage could not be checked. Please try again.' },
+        { status: 500 }
+      );
     }
-  } catch {
-    return NextResponse.json(
-      { error: 'Your storage could not be checked. Please try again.' },
-      { status: 500 }
-    );
   }
 
   const clientOrError = getMultipartClient();
