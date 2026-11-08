@@ -69,7 +69,7 @@ export type AduStatusMarkKind = 'operational' | 'queued' | 'critical';
  * waiting, critical = needs attention. Unknown labels map to critical
  * — an unexpected value must never read as healthy.
  */
-function getAduStatusMarkKind(displayStatus: string): AduStatusMarkKind {
+export function getAduStatusMarkKind(displayStatus: string): AduStatusMarkKind {
   if (displayStatus === 'Active posting' || displayStatus === 'All reels posted') {
     return 'operational';
   }

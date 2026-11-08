@@ -284,3 +284,106 @@ describe('loading state', () => {
     expect(screen.getByTestId('adu-detail-loading')).toBeInTheDocument();
   });
 });
+
+describe('automation toggle (ADU statuses)', () => {
+  async function patchBody(): Promise<Record<string, unknown> | null> {
+    let found: Record<string, unknown> | null = null;
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        (c) => (c[1] as { method?: string } | undefined)?.method === 'PATCH'
+      );
+      expect(call).toBeTruthy();
+      found = JSON.parse((call![1] as { body: string }).body);
+    });
+    return found;
+  }
+
+  it('turning automation off writes paused, never inactive', async () => {
+    installFetch();
+    renderDetail();
+    await screen.findByRole('heading', { name: 'Total Statistics' });
+    fireEvent.click(screen.getByRole('switch'));
+    expect(await patchBody()).toEqual({ status: 'paused' });
+  });
+
+  it('turning automation on from paused writes active', async () => {
+    installFetch({ status: 'paused', displayStatus: 'Paused' });
+    renderDetail();
+    await screen.findByText('Posting Paused');
+    fireEvent.click(screen.getByRole('switch'));
+    expect(await patchBody()).toEqual({ status: 'active' });
+  });
+
+  it.each(['invalid_token', 'completed', 'fb_rate_limited'])(
+    'locks the toggle for %s',
+    async (status) => {
+      installFetch({ status, displayStatus: status });
+      renderDetail();
+      await screen.findByRole('heading', { name: 'Total Statistics' });
+      expect(screen.getByRole('switch')).toBeDisabled();
+    }
+  );
+
+  it('shows the paused banner', async () => {
+    installFetch({ status: 'paused', displayStatus: 'Paused' });
+    renderDetail();
+    expect(await screen.findByText('Posting Paused')).toBeInTheDocument();
+    expect(screen.getByText(/Turn automation on to resume/)).toBeInTheDocument();
+  });
+
+  it('shows the missing page access banner with the admin-role recovery', async () => {
+    installFetch({ status: 'missing_page_access', displayStatus: 'Missing page access' });
+    renderDetail();
+    expect(await screen.findByText('Page Access Missing')).toBeInTheDocument();
+    expect(screen.getByText(/restore your role in Business Manager/)).toBeInTheDocument();
+  });
+
+  it('shows the missing permission banner with the admin-grant recovery', async () => {
+    installFetch({ status: 'missing_permission', displayStatus: 'Missing permission' });
+    renderDetail();
+    expect(await screen.findByText('Page Permission Missing')).toBeInTheDocument();
+    expect(screen.getByText(/grant the permission/)).toBeInTheDocument();
+  });
+
+  it('shows the creator-suspended banner with the all-time 50 rule and no source change', async () => {
+    installFetch({ status: 'creator_suspended', displayStatus: 'Creator suspended' });
+    renderDetail();
+    expect(await screen.findByText('Source Creator Unavailable')).toBeInTheDocument();
+    expect(screen.getByText(/More than 50 downloads/)).toBeInTheDocument();
+    expect(screen.queryByText(/last 24 hours/)).toBeNull();
+    expect(screen.queryByText(/Update Settings > Source/)).toBeNull();
+    expect(screen.getByText(/Turn automation on to check/)).toBeInTheDocument();
+  });
+
+  it('shows the account-suspended banner with toggle recovery, never reconnect', async () => {
+    installFetch({ status: 'account_suspended', displayStatus: 'Account suspended' });
+    renderDetail();
+    expect(await screen.findByText('Facebook Account Suspended')).toBeInTheDocument();
+    expect(screen.getByText(/turn automation back on/)).toBeInTheDocument();
+    expect(screen.queryByText(/reconnect/i)).toBeNull();
+  });
+
+  it('shows the check-developer-app banner with toggle recovery, never reconnect', async () => {
+    installFetch({ status: 'check_developer_app', displayStatus: 'Check developer app' });
+    renderDetail();
+    expect(await screen.findByText('Developer App Access Blocked')).toBeInTheDocument();
+    expect(screen.getByText(/Fix the problem in your developer app/)).toBeInTheDocument();
+    expect(screen.queryByText(/reconnect/i)).toBeNull();
+  });
+
+  it('marks a new status with colour + icon + text, never a bare dot', async () => {
+    installFetch({ status: 'missing_page_access', displayStatus: 'Missing page access' });
+    renderDetail();
+    const mark = await screen.findByTestId('adu-detail-status-mark');
+    expect(mark).toHaveAttribute('data-status', 'critical');
+    expect(mark).toHaveTextContent('Missing page access');
+  });
+
+  it('marks paused as queued', async () => {
+    installFetch({ status: 'paused', displayStatus: 'Paused' });
+    renderDetail();
+    const mark = await screen.findByTestId('adu-detail-status-mark');
+    expect(mark).toHaveAttribute('data-status', 'queued');
+    expect(mark).toHaveTextContent('Paused');
+  });
+});
