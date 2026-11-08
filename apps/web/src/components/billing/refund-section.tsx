@@ -21,7 +21,7 @@ function formatDate(value: string | null): string {
 }
 
 function formatAmount(amount: number, currency: 'PKR'): string {
-  return `${amount} PKR`;
+  return `${amount} ${currency}`;
 }
 
 function destinationLabel(item: RefundRequestItem): string {

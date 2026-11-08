@@ -1344,102 +1344,102 @@ export function PurchaseView({
                 </section>
                 <section aria-label="Upload your payment screenshot" className="flex flex-col gap-2">
                   <p className="text-body font-medium text-ink">Step 3 — Upload your payment screenshot</p>
-                    <div className="flex flex-col gap-2">
-                      <input
-                        ref={screenshotInputRef}
-                        id="billing-screenshot"
-                        type="file"
-                        accept="image/png,image/jpeg,image/webp,image/gif"
-                        className="sr-only"
-                        onChange={(event) => handleScreenshotSelect(event.target.files?.[0] ?? null)}
-                      />
-                      {screenshot ? (
-                        <div className="flex flex-col gap-2">
-                          <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-line bg-panel px-4 py-3">
-                            <span className="flex min-w-0 items-center gap-2 text-body text-ink">
-                              {screenshotUpload.status === 'uploading' ? (
-                                <Loader2Icon
-                                  aria-hidden
-                                  className="size-4 shrink-0 animate-spin text-ink-sub"
-                                />
-                              ) : screenshotUpload.status === 'uploaded' ? (
-                                <BillingStatusMark kind="ok" label="Uploaded" />
-                              ) : (
-                                <UploadIcon aria-hidden className="size-4 shrink-0 text-ink-sub" />
-                              )}
-                              <span className="truncate">{screenshot.name}</span>
-                              {screenshotUpload.status === 'uploading' ? (
-                                <span className="shrink-0 text-body text-ink-sub">
-                                  Uploading screenshot…
-                                </span>
-                              ) : null}
-                            </span>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              disabled={busy !== null}
-                              onClick={clearScreenshot}
-                            >
-                              <XIcon aria-hidden className="size-4" /> Remove
+                  <div className="flex flex-col gap-2">
+                    <input
+                      ref={screenshotInputRef}
+                      id="billing-screenshot"
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/gif"
+                      className="sr-only"
+                      onChange={(event) => handleScreenshotSelect(event.target.files?.[0] ?? null)}
+                    />
+                    {screenshot ? (
+                      <div className="flex flex-col gap-2">
+                        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-line bg-panel px-4 py-3">
+                          <span className="flex min-w-0 items-center gap-2 text-body text-ink">
+                            {screenshotUpload.status === 'uploading' ? (
+                              <Loader2Icon
+                                aria-hidden
+                                className="size-4 shrink-0 animate-spin text-ink-sub"
+                              />
+                            ) : screenshotUpload.status === 'uploaded' ? (
+                              <BillingStatusMark kind="ok" label="Uploaded" />
+                            ) : (
+                              <UploadIcon aria-hidden className="size-4 shrink-0 text-ink-sub" />
+                            )}
+                            <span className="truncate">{screenshot.name}</span>
+                            {screenshotUpload.status === 'uploading' ? (
+                              <span className="shrink-0 text-body text-ink-sub">
+                                Uploading screenshot…
+                              </span>
+                            ) : null}
+                          </span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={busy !== null}
+                            onClick={clearScreenshot}
+                          >
+                            <XIcon aria-hidden className="size-4" /> Remove
+                          </Button>
+                        </div>
+                        {screenshotPreviewUrl ? (
+                          <Image
+                            src={screenshotPreviewUrl}
+                            alt="Screenshot preview"
+                            width={640}
+                            height={853}
+                            unoptimized
+                            className="h-auto w-full max-w-xs rounded-md border border-line"
+                          />
+                        ) : null}
+                        <p className="text-metadata text-ink-sub">
+                          {screenshot.size
+                            ? `${screenshot.name} · ${(screenshot.size / 1024).toFixed(0)} KB`
+                            : screenshot.name}
+                        </p>
+                        {screenshotUpload.status === 'failed' ? (
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <p className="text-body text-ink-sub">{screenshotUpload.error}</p>
+                            <Button variant="outline" size="sm" onClick={retryScreenshotUpload}>
+                              Retry upload
                             </Button>
                           </div>
-                          {screenshotPreviewUrl ? (
-                            <Image
-                              src={screenshotPreviewUrl}
-                              alt="Screenshot preview"
-                              width={640}
-                              height={853}
-                              unoptimized
-                              className="h-auto w-full max-w-xs rounded-md border border-line"
-                            />
-                          ) : null}
-                          <p className="text-metadata text-ink-sub">
-                            {screenshot.size
-                              ? `${screenshot.name} · ${(screenshot.size / 1024).toFixed(0)} KB`
-                              : screenshot.name}
-                          </p>
-                          {screenshotUpload.status === 'failed' ? (
-                            <div className="flex flex-wrap items-center justify-between gap-3">
-                              <p className="text-body text-ink-sub">{screenshotUpload.error}</p>
-                              <Button variant="outline" size="sm" onClick={retryScreenshotUpload}>
-                                Retry upload
-                              </Button>
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          disabled={busy !== null}
-                          onClick={() => screenshotInputRef.current?.click()}
-                          className="flex items-center gap-3 rounded-md border border-dashed border-line bg-panel px-3 py-2 text-left transition-colors hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          <UploadIcon aria-hidden className="size-5 shrink-0 text-ink-sub" />
-                          <span className="flex min-w-0 flex-col">
-                            <span className="text-body font-medium text-ink">
-                              Upload your payment screenshot
-                            </span>
-                            <span className="text-metadata text-ink-sub">
-                              PNG, JPG, WebP or GIF, up to 10 MB
-                            </span>
-                          </span>
-                        </button>
-                      )}
-                    </div>
-                    <div className="flex flex-col gap-2">
-                      <Button
-                        variant={bankDisabled ? 'secondary' : 'default'}
-                        onClick={() => void submitBank()}
-                        loading={busy === 'bank'}
-                        disabled={bankDisabled}
+                        ) : null}
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={busy !== null}
+                        onClick={() => screenshotInputRef.current?.click()}
+                        className="flex items-center gap-3 rounded-md border border-dashed border-line bg-panel px-3 py-2 text-left transition-colors hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        Submit payment for approval
-                      </Button>
-                      {bankDisabledReason ? (
-                        <p className="text-body text-ink-sub">{bankDisabledReason}</p>
-                      ) : null}
-                      <p className="text-body text-ink-sub">Your plan runs for 30 days after approval.</p>
-                    </div>
+                        <UploadIcon aria-hidden className="size-5 shrink-0 text-ink-sub" />
+                        <span className="flex min-w-0 flex-col">
+                          <span className="text-body font-medium text-ink">
+                            Upload your payment screenshot
+                          </span>
+                          <span className="text-metadata text-ink-sub">
+                            PNG, JPG, WebP or GIF, up to 10 MB
+                          </span>
+                        </span>
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <Button
+                      variant={bankDisabled ? 'secondary' : 'default'}
+                      onClick={() => void submitBank()}
+                      loading={busy === 'bank'}
+                      disabled={bankDisabled}
+                    >
+                      Submit payment for approval
+                    </Button>
+                    {bankDisabledReason ? (
+                      <p className="text-body text-ink-sub">{bankDisabledReason}</p>
+                    ) : null}
+                    <p className="text-body text-ink-sub">Your plan runs for 30 days after approval.</p>
+                  </div>
                 </section>
 
                 {formError ? (
