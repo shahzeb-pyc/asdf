@@ -176,10 +176,16 @@ function AppSidebarContent({
 
   const renderLeaf = (leaf: Omit<SidebarLeaf, 'kind'>, group?: SidebarCollapsibleGroup) => {
     if (group) {
+      // Perf round 1: collapsible-section leaves do NOT viewport-
+      // prefetch. The sidebar used to fire one RSC prefetch per
+      // leaf on every cold load (~22 prefetches, each re-running
+      // the tenant layout server-side). These links navigate on
+      // click like any other; the group parent's hover prefetch
+      // (below) is untouched.
       return (
         <SidebarMenuSubItem key={leaf.label}>
           <SidebarMenuSubButton asChild isActive={leafActive(leaf, group)}>
-            <Link href={leaf.href} onClick={() => handleLeafClick(leaf.href)}>
+            <Link href={leaf.href} prefetch={false} onClick={() => handleLeafClick(leaf.href)}>
               {leaf.label}
             </Link>
           </SidebarMenuSubButton>

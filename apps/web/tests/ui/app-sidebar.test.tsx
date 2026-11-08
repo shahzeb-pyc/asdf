@@ -31,6 +31,12 @@ let mockSearch = new URLSearchParams();
 const mockPush = vi.fn();
 const mockPrefetch = vi.fn();
 
+// Perf round 1: record every next/link's prefetch prop so tests can
+// prove which links viewport-prefetch and which do not.
+const recordedLinkProps = vi.hoisted(
+  () => [] as Array<{ href: string; prefetch?: boolean | null | undefined }>
+);
+
 vi.mock('next/navigation', () => ({
   usePathname: () => mockPathname,
   useRouter: () => ({
@@ -43,16 +49,25 @@ vi.mock('next/navigation', () => ({
 
 // Render next/link as a plain anchor tagged with data-next-link, so
 // tests can prove leaves render through Next.js Link (client-side
-// routing) rather than hand-rolled raw <a> elements.
+// routing) rather than hand-rolled raw <a> elements. The prefetch
+// prop is recorded (not spread onto the anchor) so tests can prove
+// which links prefetch.
 vi.mock('next/link', async () => {
   const ReactModule = await import('react');
   type MockLinkProps = {
     href: string;
     children?: React.ReactNode;
+    prefetch?: boolean | null;
   } & React.AnchorHTMLAttributes<HTMLAnchorElement>;
   return {
-    default: ({ href, children, ...props }: MockLinkProps) =>
-      ReactModule.createElement('a', { href, 'data-next-link': 'true', ...props }, children),
+    default: ({ href, children, prefetch, ...props }: MockLinkProps) => {
+      recordedLinkProps.push({ href, prefetch });
+      return ReactModule.createElement(
+        'a',
+        { href, 'data-next-link': 'true', ...props },
+        children
+      );
+    },
   };
 });
 
@@ -216,6 +231,7 @@ describe('AppSidebar rendering (separation matrix)', () => {
     mockSearch = new URLSearchParams();
     mockPush.mockClear();
     mockPrefetch.mockClear();
+    recordedLinkProps.length = 0;
   });
 
   it('user sidebar renders user leaves and ZERO admin/seller leaves', () => {
@@ -288,6 +304,7 @@ describe('AppSidebar single-click behaviour', () => {
     mockSearch = new URLSearchParams();
     mockPush.mockClear();
     mockPrefetch.mockClear();
+    recordedLinkProps.length = 0;
   });
 
   it('a leaf click paints active state WITHOUT router.push (Link navigates)', () => {
@@ -304,5 +321,67 @@ describe('AppSidebar single-click behaviour', () => {
     const facebook = screen.getByRole('button', { name: /Facebook/ });
     fireEvent.click(facebook);
     expect(mockPush).toHaveBeenCalledWith('/tenant/acme/accounts');
+  });
+});
+
+describe('AppSidebar prefetch (perf round 1)', () => {
+  beforeEach(() => {
+    mockPathname = '/tenant/acme';
+    mockSearch = new URLSearchParams();
+    mockPush.mockClear();
+    mockPrefetch.mockClear();
+    recordedLinkProps.length = 0;
+  });
+
+  // Facebook is the only collapsible group open on the home route,
+  // so its five leaves are the rendered collapsible-section links.
+  const FACEBOOK_LEAF_HREFS = [
+    '/tenant/acme/accounts',
+    '/tenant/acme/pages',
+    '/tenant/acme/publish-now',
+    '/tenant/acme/tiktok-mirrors',
+    '/tenant/acme/auto-download-upload',
+  ];
+
+  const TOP_LEVEL_LEAF_HREFS = [
+    '/tenant/acme/',
+    '/tenant/acme/muse',
+    '/tenant/acme/media',
+    '/tenant/acme/fdola-studio',
+    '/tenant/acme/prompts',
+    '/tenant/acme/creator-finder',
+    '/tenant/acme/my-plan',
+    '/tenant/acme/purchase',
+    '/tenant/acme/payments',
+    '/tenant/acme/refund',
+  ];
+
+  it('collapsible-section leaves render with prefetch off', () => {
+    renderSidebar(getUserSections('acme', false));
+    for (const href of FACEBOOK_LEAF_HREFS) {
+      const recorded = recordedLinkProps.filter((link) => link.href === href);
+      expect(recorded.length).toBeGreaterThan(0);
+      for (const link of recorded) {
+        expect(link.prefetch).toBe(false);
+      }
+    }
+  });
+
+  it('above-fold top-level leaves keep default prefetch', () => {
+    renderSidebar(getUserSections('acme', false));
+    for (const href of TOP_LEVEL_LEAF_HREFS) {
+      const recorded = recordedLinkProps.filter((link) => link.href === href);
+      expect(recorded.length).toBeGreaterThan(0);
+      for (const link of recorded) {
+        expect(link.prefetch).toBeUndefined();
+      }
+    }
+  });
+
+  it('hovering a collapsible parent still prefetches its parent route', () => {
+    renderSidebar(getUserSections('acme', false));
+    const facebook = screen.getByRole('button', { name: /Facebook/ });
+    fireEvent.mouseEnter(facebook);
+    expect(mockPrefetch).toHaveBeenCalledWith('/tenant/acme/accounts');
   });
 });

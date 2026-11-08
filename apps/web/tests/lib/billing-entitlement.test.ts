@@ -2020,3 +2020,167 @@ describe('entitlement failure branches (audit fix 2026-11-01)', () => {
   });
 
 });
+
+describe('Perf round 1: entitlement reads run concurrently', () => {
+  // A fake client that records every query's start / resolve order.
+  // The fake resolves synchronously, so with sequential awaits each
+  // resolve precedes the next start, while with Promise.all all
+  // starts precede the first resolve. That ordering difference is
+  // what these tests observe — no production data, no network.
+  class RecordingBuilder extends FakeBuilder {
+    private readonly tableName: string;
+
+    constructor(
+      state: FakeState,
+      table: string,
+      private readonly events: string[]
+    ) {
+      super(state, table);
+      this.tableName = table;
+    }
+
+    override then<TResult1 = unknown, TResult2 = never>(
+      onfulfilled?:
+        | ((value: Record<string, unknown>) => TResult1 | PromiseLike<TResult1>)
+        | null,
+      onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
+    ): PromiseLike<TResult1 | TResult2> {
+      this.events.push(`start:${this.tableName}`);
+      const wrappedFulfilled = onfulfilled
+        ? (value: Record<string, unknown>) => {
+            this.events.push(`resolve:${this.tableName}`);
+            return onfulfilled(value);
+          }
+        : null;
+      const wrappedRejected = onrejected
+        ? (reason: unknown) => {
+            this.events.push(`resolve:${this.tableName}`);
+            return onrejected(reason);
+          }
+        : null;
+      return super.then(wrappedFulfilled, wrappedRejected);
+    }
+  }
+
+  function recordingClient(state: FakeState): {
+    client: SupabaseClient;
+    events: string[];
+  } {
+    const events: string[] = [];
+    const client = {
+      from: (table: string) => new RecordingBuilder(state, table, events),
+    } as unknown as SupabaseClient;
+    return { client, events };
+  }
+
+  // The six platform counts must all start before the first one
+  // resolves, and the usage chain must start before the period
+  // read resolves — i.e. the reads overlap instead of queueing.
+  function expectUsageCountsConcurrent(events: string[]): void {
+    const usageEvents = events.filter(
+      (event) => event === 'start:subscription_usage' || event === 'resolve:subscription_usage'
+    );
+    expect(usageEvents.filter((event) => event.startsWith('start:'))).toHaveLength(6);
+    expect(usageEvents.indexOf('resolve:subscription_usage')).toBe(
+      usageEvents.lastIndexOf('start:subscription_usage') + 1
+    );
+    expect(events.indexOf('start:workspaces')).toBeLessThan(
+      events.indexOf('resolve:subscription_periods')
+    );
+  }
+
+  it('paid user: same entitlement data, counts + period read concurrently', async () => {
+    const state = baseState({
+      periods: [periodRow()],
+      usageCounts: { facebook: 2, instagram: 1, threads: 4, x: 0, tiktok: 3, youtube: 5 },
+    });
+    const { client, events } = recordingClient(state);
+    const entitlement = await getEntitlement(client, 'user-1', NOW);
+    expect(entitlement.plan).toBe('paid');
+    expect(entitlement.active).toBe(true);
+    expect(entitlement.counts).toEqual(TEN_COUNTS);
+    expect(entitlement.usage).toEqual({
+      facebook: 2,
+      instagram: 1,
+      threads: 4,
+      x: 0,
+      tiktok: 3,
+      youtube: 5,
+    });
+    expect(entitlement.period?.id).toBe('period-1');
+    expect(entitlement.canPost).toBe(true);
+    expect(entitlement.readOnly).toBe(false);
+    expect(entitlement.reason).toBeNull();
+    expect(entitlement.hasPriorPeriod).toBe(true);
+    expectUsageCountsConcurrent(events);
+  });
+
+  it('free user: same entitlement data, counts + period read concurrently', async () => {
+    const state = baseState({ usageCounts: { facebook: 1, threads: 2 } });
+    const { client, events } = recordingClient(state);
+    const entitlement = await getEntitlement(client, 'user-1', NOW);
+    expect(entitlement.plan).toBe('free');
+    expect(entitlement.active).toBe(false);
+    expect(entitlement.counts).toEqual(ZERO_COUNTS);
+    expect(entitlement.usage).toEqual({
+      facebook: 1,
+      instagram: 0,
+      threads: 2,
+      x: 0,
+      tiktok: 0,
+      youtube: 0,
+    });
+    expect(entitlement.period).toBeNull();
+    expect(entitlement.canPost).toBe(false);
+    expect(entitlement.readOnly).toBe(true);
+    expect(entitlement.reason).toContain('Prompt Library only');
+    expect(entitlement.hasPriorPeriod).toBe(false);
+    expectUsageCountsConcurrent(events);
+  });
+
+  it('paid user with a disconnected destination: exclusion survives the parallel counts', async () => {
+    const state = baseState({
+      periods: [periodRow()],
+      workspaces: [{ id: 'ws-1', owner_id: 'user-1' }],
+      destinations: [
+        { id: 'dest-active', workspace_id: 'ws-1', platform: 'facebook', status: 'active' },
+        { id: 'dest-disc', workspace_id: 'ws-1', platform: 'facebook', status: 'disconnected' },
+      ],
+      usageRows: [
+        {
+          user_id: 'user-1',
+          platform: 'facebook',
+          destination_key: 'page-a',
+          destination_id: 'dest-active',
+          feature: 'destination-queue',
+        },
+        {
+          user_id: 'user-1',
+          platform: 'facebook',
+          destination_key: 'page-b',
+          destination_id: 'dest-disc',
+          feature: 'destination-queue',
+        },
+        {
+          user_id: 'user-1',
+          platform: 'facebook',
+          destination_key: 'page-c',
+          destination_id: 'dest-disc',
+          feature: 'destination-queue',
+        },
+        {
+          user_id: 'user-1',
+          platform: 'instagram',
+          destination_key: 'acct-a',
+          destination_id: null,
+          feature: 'destination-queue',
+        },
+      ],
+    });
+    const entitlement = await getEntitlement(fakeClient(state), 'user-1', NOW);
+    expect(entitlement.plan).toBe('paid');
+    // facebook: 3 rows, 2 linked to the disconnected destination.
+    expect(entitlement.usage).toMatchObject({ facebook: 1, instagram: 1 });
+    expect(entitlement.counts).toEqual(TEN_COUNTS);
+  });
+});
