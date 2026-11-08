@@ -604,7 +604,17 @@ export class FacebookPublisher implements Publisher {
     }
 
     const isTransient = classified.kind === 'retryable';
-    const canRetry = isTransient && retryCount < effectiveMaxRetries;
+    // Content codes 100 / 1609005 (media Facebook couldn't fetch, link
+    // scraper failure) are permanent by classification, but the owner
+    // overruled that: they retry ×2, then fail — media-fetch failures
+    // are sometimes transient. The ×2 cap is independent of the tick's
+    // outer 5 budget: retry while retryCount < 2, failed at 2. `kind`
+    // stays the terminal classification; `status` carries the retry
+    // disposition.
+    const isContentRetryCode = code === 100 || code === 1609005;
+    const canRetry =
+      (isTransient && retryCount < effectiveMaxRetries) ||
+      (isContentRetryCode && retryCount < 2);
 
     const detail =
       extracted.diagnostic !== undefined

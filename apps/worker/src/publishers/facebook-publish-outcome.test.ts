@@ -173,3 +173,73 @@ describe('FacebookPublisher failure outcomes', () => {
     expect(seenItemId).toBe('11111111-1111-4111-a111-111111111111');
   });
 });
+
+describe('FacebookPublisher content-code retry cap (100 / 1609005)', () => {
+  function contentError(code: number): FacebookGraphError {
+    return new FacebookGraphError(`Facebook Graph API error ${code}`, {
+      code,
+      type: 'OAuthException',
+    });
+  }
+
+  it.each([100, 1609005])(
+    'code %s retries at retry_count 0 and 1, then fails at 2',
+    async (code) => {
+      for (const [retryCount, expected] of [
+        [0, 'retry'],
+        [1, 'retry'],
+        [2, 'failed'],
+      ] as const) {
+        const publisher = new FacebookPublisher(failingClient(contentError(code)));
+        const outcome = await publisher.publish(
+          queueItem({ retry_count: retryCount }),
+          destination(),
+          { accessToken: 'user-token', destinationToken: 'page-token' },
+        );
+        expect(outcome.status).toBe(expected);
+        expect(outcome.error?.code).toBe(String(code));
+        // `kind` stays the terminal classification; only the retry
+        // disposition changes with the attempt count.
+        expect(outcome.error?.kind).toBe('permanent');
+      }
+    },
+  );
+
+  it('app-bug code 190/2069032 fails immediately, never retries', async () => {
+    const publisher = new FacebookPublisher(
+      failingClient(
+        new FacebookGraphError('Wrong token type.', {
+          code: 190,
+          error_subcode: 2069032,
+          type: 'OAuthException',
+        }),
+      ),
+    );
+    const outcome = await publisher.publish(
+      queueItem({ retry_count: 0 }),
+      destination(),
+      { accessToken: 'user-token', destinationToken: 'page-token' },
+    );
+    expect(outcome.status).toBe('failed');
+    expect(outcome.error?.code).toBe('190');
+    expect(outcome.error?.subcode).toBe('2069032');
+  });
+
+  it('app-bug code 3 fails immediately, never retries', async () => {
+    const publisher = new FacebookPublisher(
+      failingClient(
+        new FacebookGraphError('API Method not supported.', {
+          code: 3,
+          type: 'OAuthException',
+        }),
+      ),
+    );
+    const outcome = await publisher.publish(
+      queueItem({ retry_count: 0 }),
+      destination(),
+      { accessToken: 'user-token', destinationToken: 'page-token' },
+    );
+    expect(outcome.status).toBe('failed');
+    expect(outcome.error?.code).toBe('3');
+  });
+});
