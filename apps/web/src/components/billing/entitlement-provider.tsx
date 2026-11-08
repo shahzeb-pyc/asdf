@@ -43,8 +43,10 @@
  */
 
 import * as React from 'react';
+import { usePathname } from 'next/navigation';
 import {
   useQuery,
+  useQueryClient,
   type UseQueryOptions,
   type UseQueryResult,
 } from '@tanstack/react-query';
@@ -127,8 +129,10 @@ export function billingStatusQueryOptions(
         }
       ),
     // Fetched once per session, never again on its own — the same
-    // shape as the entitlement query. Explicit refetch (after a
-    // purchase, a 409, or Try again) is the only re-check.
+    // shape as the entitlement query. Explicit refetch is the only
+    // re-check: after a purchase, a 409, or Try again — plus the
+    // background refetch when entering Purchase from another section
+    // (see the route effect in EntitlementProvider below).
     staleTime: Infinity,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
@@ -224,6 +228,53 @@ export function EntitlementProvider({
     refetchOnReconnect: false,
     initialData: initialEntitlement ?? undefined,
   });
+
+  const queryClient = useQueryClient();
+  const pathname = usePathname();
+  /**
+   * Refetch-on-return (follow-up 2026-11-08): the billing query is
+   * fetched once per session and never refetches on its own, so
+   * returning to Purchase from another section would show cached
+   * payments until a full reload. This effect watches the route:
+   * when the user enters a /purchase/* route from outside it, the
+   * shared billing cache is refetched in the BACKGROUND — the cached
+   * data stays visible throughout (React Query keeps `data` during
+   * a refetch, and the skeleton gate only fires when there is no
+   * data at all), so there is no skeleton flash on return.
+   *
+   * Why the provider, not the Purchase view: the three step routes
+   * each remount PurchaseView, so a mount effect in the view cannot
+   * tell "entered from outside" from "moved between steps". This
+   * provider lives in the tenant shell for the whole document, so
+   * it sees the previous route and only refetches on an
+   * outside → /purchase transition — step-to-step moves never
+   * refetch. Two guards keep it to exactly that case: the first
+   * render of this document (previous route unknown — a full reload
+   * or direct load, where the mount fetch owns it) never refetches,
+   * and a cold entry with no cached data never double-fetches
+   * behind the mount fetch. `type: 'all'` (not just active
+   * queries) because the route can change before the new page
+   * mounts behind its loading boundary — the query may still be
+   * inactive when this effect runs, and the mount would not fetch
+   * it either (refetchOnMount is false), so an active-only refetch
+   * could silently skip the return refresh.
+   */
+  const prevPathnameRef = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    const prev = prevPathnameRef.current;
+    prevPathnameRef.current = pathname;
+    if (adminOnly) return;
+    if (prev === null) return;
+    const purchaseBase = `/tenant/${subdomain}/purchase`;
+    const isPurchasePath = (p: string): boolean =>
+      p === purchaseBase || p.startsWith(`${purchaseBase}/`);
+    if (!isPurchasePath(pathname) || isPurchasePath(prev)) return;
+    if (queryClient.getQueryData(billingStatusQueryKey(subdomain)) === undefined) return;
+    void queryClient.refetchQueries({
+      queryKey: ['tenant', subdomain, 'billing', 'status'],
+      type: 'all',
+    });
+  }, [pathname, adminOnly, subdomain, queryClient]);
 
   // Observability parity with the old gate's fetch-error report:
   // a failed entitlement check is logged loudly (console transport

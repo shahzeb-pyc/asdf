@@ -25,15 +25,19 @@ import {
  * returns to the screenshot-upload state while it waits.
  */
 
-const { mockApiGet, mockApiPost, mockPush } = vi.hoisted(() => ({
+const { mockApiGet, mockApiPost, mockPush, mockPathname } = vi.hoisted(() => ({
   mockApiGet: vi.fn(),
   mockApiPost: vi.fn(),
   mockPush: vi.fn(),
+  // Mutable route for the refetch-on-return test: the provider
+  // watches usePathname, so a fixed value could never simulate
+  // leaving Purchase and coming back. Default is outside Purchase.
+  mockPathname: { current: '/tenant/acme/billing' },
 }));
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: mockPush }),
-  usePathname: () => '/tenant/acme/billing',
+  usePathname: () => mockPathname.current,
 }));
 
 vi.mock('@/lib/api', async (importOriginal) => {
@@ -278,6 +282,7 @@ async function pickScreenshot(): Promise<void> {
 describe('Billing Purchase', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPathname.current = '/tenant/acme/billing';
     try {
       sessionStorage.clear();
     } catch {
@@ -527,6 +532,68 @@ describe('Billing Purchase', () => {
     // step change — no skeleton in between.
     expect(screen.getByText('Upload your payment screenshot')).toBeInTheDocument();
     expect(billingCalls()).toBe(1);
+  });
+
+  it('returning to Purchase from another section refetches in the background, no skeleton', async () => {
+    // Follow-up 2026-11-08: the shared billing cache is fetched
+    // once per session, so a return from outside must refetch — in
+    // the background, with the cached data visible throughout.
+    // The provider stays mounted across the whole flow (same tenant
+    // layout, same QueryClient — what client-side navigation does);
+    // only the Purchase view comes and goes as the route changes.
+    const client = createQueryClient('acme');
+    const billingCalls = () =>
+      mockApiGet.mock.calls.filter(([url]) => url === '/api/tenant/acme/billing').length;
+    const view = render(
+      <QueryClientProvider client={client}>
+        <EntitlementProvider subdomain="acme" adminOnly={false}>
+          <PurchaseView subdomain="acme" step="builder" />
+        </EntitlementProvider>
+      </QueryClientProvider>
+    );
+    await screen.findByText('Choose your pages and accounts');
+    expect(billingCalls()).toBe(1);
+
+    // Leave Purchase for another section: no refetch on the way out.
+    mockPathname.current = '/tenant/acme/home';
+    view.rerender(
+      <QueryClientProvider client={client}>
+        <EntitlementProvider subdomain="acme" adminOnly={false}>
+          <div>Somewhere else</div>
+        </EntitlementProvider>
+      </QueryClientProvider>
+    );
+    expect(billingCalls()).toBe(1);
+
+    // Return to Purchase: the cached builder renders at once (no
+    // skeleton) and the background refetch fires exactly once.
+    mockPathname.current = '/tenant/acme/purchase';
+    view.rerender(
+      <QueryClientProvider client={client}>
+        <EntitlementProvider subdomain="acme" adminOnly={false}>
+          <PurchaseView subdomain="acme" step="builder" />
+        </EntitlementProvider>
+      </QueryClientProvider>
+    );
+    expect(screen.getByText('Choose your pages and accounts')).toBeInTheDocument();
+    await waitFor(() => expect(billingCalls()).toBe(2));
+    // Still the cached builder, not a skeleton, after the refetch.
+    expect(screen.getByText('Choose your pages and accounts')).toBeInTheDocument();
+
+    // And moving between steps still does not refetch, even though
+    // the route changes: builder -> checkout stays on the cache.
+    fireEvent.change(screen.getByLabelText('Facebook pages'), { target: { value: '1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue to checkout' }));
+    mockPathname.current = '/tenant/acme/purchase/checkout';
+    view.rerender(
+      <QueryClientProvider client={client}>
+        <EntitlementProvider subdomain="acme" adminOnly={false}>
+          <PurchaseView subdomain="acme" step="checkout" />
+        </EntitlementProvider>
+      </QueryClientProvider>
+    );
+    expect(screen.getByText('Upload your payment screenshot')).toBeInTheDocument();
+    expect(billingCalls()).toBe(2);
   });
 
   it('a hung billing load fails into the retry UI within the timeout', async () => {
