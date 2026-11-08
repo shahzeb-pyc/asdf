@@ -244,7 +244,7 @@ test.describe('billing at phone widths', () => {
     await expectNoDocumentOverflow(page);
   });
 
-  test('Purchase chooser uses a typed input at 360px, no steppers', async ({
+  test('Purchase chooser uses a typed input with steppers at 360px', async ({
     page,
     context,
   }) => {
@@ -258,16 +258,30 @@ test.describe('billing at phone widths', () => {
     });
     await gotoBilling(page, 'purchase');
 
-    await page.getByLabel('Facebook pages').fill('100');
+    const facebookPages = page.getByRole('textbox', { name: 'Facebook pages' });
+    const increaseFacebook = page.getByRole('button', {
+      name: 'Increase Facebook pages',
+    });
+    const decreaseFacebook = page.getByRole('button', {
+      name: 'Decrease Facebook pages',
+    });
+
+    // The count stays a typed input: fill 100 and the total follows.
+    await facebookPages.fill('100');
     await expect(page.getByText('7000 PKR').first()).toBeVisible();
-    // No increase/decrease control anywhere in the chooser, and no
-    // native number spinner (the inputs are text inputs).
-    await expect(
-      page.getByRole('button', { name: 'Increase Facebook' })
-    ).toHaveCount(0);
-    await expect(
-      page.getByRole('button', { name: 'Decrease Facebook' })
-    ).toHaveCount(0);
+    // The steppers step by 1 from the last valid count.
+    await increaseFacebook.click();
+    await expect(facebookPages).toHaveValue('101');
+    await expect(page.getByText('7070 PKR').first()).toBeVisible();
+    await decreaseFacebook.click();
+    await expect(facebookPages).toHaveValue('100');
+    // Minus steps down to 0 and is disabled there — it never goes below 0.
+    await facebookPages.fill('1');
+    await expect(decreaseFacebook).toBeEnabled();
+    await decreaseFacebook.click();
+    await expect(facebookPages).toHaveValue('0');
+    await expect(decreaseFacebook).toBeDisabled();
+    // No native number spinner (the inputs are text inputs).
     await expect(page.locator('input[type="number"]')).toHaveCount(0);
 
     await expectNoDocumentOverflow(page);
@@ -298,7 +312,7 @@ test.describe('billing at phone widths', () => {
     await installScreenshotUploadFixtures(page);
     await gotoBilling(page, 'purchase');
 
-    await page.getByLabel('Facebook pages').fill('1');
+    await page.getByRole('textbox', { name: 'Facebook pages' }).fill('1');
     await page.getByRole('button', { name: 'Continue to checkout' }).click();
     // Step 1 is the "Pay via" chooser: one radio row per method.
     await expect(page.getByRole('radio', { name: 'Binance' })).toBeVisible();
@@ -345,7 +359,7 @@ test.describe('billing at phone widths', () => {
     await installScreenshotUploadFixtures(page, 900);
     await gotoBilling(page, 'purchase');
 
-    await page.getByLabel('Facebook pages').fill('1');
+    await page.getByRole('textbox', { name: 'Facebook pages' }).fill('1');
     await page.getByRole('button', { name: 'Continue to checkout' }).click();
     await page.setInputFiles('#billing-screenshot', {
       name: 'proof.png',
