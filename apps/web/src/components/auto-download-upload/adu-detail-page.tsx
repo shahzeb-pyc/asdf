@@ -117,7 +117,7 @@ function getAduDetailStatusMarkKind(displayStatus: string): AduStatusMarkKind {
   if (
     displayStatus === 'Scrape pending' ||
     displayStatus === 'Scraping reels' ||
-    displayStatus === 'Posting inactive'
+    displayStatus === 'Paused'
   ) {
     return 'queued';
   }
@@ -171,10 +171,10 @@ function getAduDetailStatusAlert(status: string, syncStatus: string): AduDetailS
   switch (status) {
     case 'active':
       return null;
-    case 'inactive':
+    case 'paused':
       return {
-        title: 'Posting Inactive',
-        description: 'Posting is inactive. Activate automation using the toggle in the header.',
+        title: 'Posting Paused',
+        description: 'Posting is paused. Turn automation on to resume posting.',
         variant: 'warning',
       };
     case 'fb_verification_required':
@@ -195,7 +195,21 @@ function getAduDetailStatusAlert(status: string, syncStatus: string): AduDetailS
       return {
         title: 'Facebook Page Not Accessible',
         description:
-          'This page may have been removed or your account may no longer have admin access. Confirm the page exists and you have admin rights, then reconnect your Facebook account and enable automation.',
+          'This page may have been removed or your account may no longer have access to it. Confirm the page still exists and reconnect your Facebook account if needed, then turn automation back on.',
+        variant: 'critical',
+      };
+    case 'missing_page_access':
+      return {
+        title: 'Page Access Missing',
+        description:
+          'Your account no longer has a role on this page, so posting is paused. Ask an admin to restore your role in Business Manager, then turn automation back on.',
+        variant: 'critical',
+      };
+    case 'missing_permission':
+      return {
+        title: 'Page Permission Missing',
+        description:
+          'A permission this page needs is missing, so posting is paused. Ask an admin to grant the permission, then turn automation back on.',
         variant: 'critical',
       };
     case 'invalid_token':
@@ -209,28 +223,28 @@ function getAduDetailStatusAlert(status: string, syncStatus: string): AduDetailS
       return {
         title: 'Business 2FA Required',
         description:
-          'The connected Facebook user must be an admin/editor/moderator on this page and complete required Business Manager two-factor authentication. Update role/2FA, then reconnect the account.',
+          'The connected Facebook user must be an admin/editor/moderator on this page and complete the required Business Manager two-factor authentication. Once that is done, turn automation back on.',
         variant: 'critical',
       };
     case 'check_developer_app':
       return {
         title: 'Developer App Access Blocked',
         description:
-          'Facebook API access is blocked for this page/app combination. Review your Meta Developer app status, app mode, permissions, and policy compliance, then reconnect.',
+          'Facebook API access is blocked for this page. Fix the problem in your developer app, then turn automation back on with the toggle. Posting stays paused until then.',
         variant: 'critical',
       };
     case 'account_suspended':
       return {
         title: 'Facebook Account Suspended',
         description:
-          'The connected Facebook user is not allowed to create valid sessions right now. Confirm the account is active/verified in Facebook and reconnect from the Facebook Accounts section.',
+          'The connected Facebook account is suspended. Once Facebook clears the restriction, turn automation back on with the toggle.',
         variant: 'critical',
       };
     case 'creator_suspended':
       return {
         title: 'Source Creator Unavailable',
         description:
-          'Too many reels failed to download from this source in the last 24 hours. The source creator may be suspended or unavailable. Update Settings > Source to a different account, then reactivate posting.',
+          'More than 50 downloads from this source have failed, so the source looks unavailable. Turn automation on to check whether the creator is available again.',
         variant: 'critical',
       };
     case 'invalid_username':
@@ -446,7 +460,10 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
   if (loading) return <AduDetailSkeleton />;
   if (!config) return <div className="mx-auto w-full max-w-7xl px-6 py-6">{error ? <Banner variant="critical" title="Page not found" description={error} /> : null}</div>;
 
-  const automationLocked = config.status === 'fb_rate_limited';
+  const automationLocked =
+    config.status === 'fb_rate_limited' ||
+    config.status === 'invalid_token' ||
+    config.status === 'completed';
   const selected = selectedReel ?? reels[0] ?? null;
   const statusKind = getAduDetailStatusMarkKind(config.displayStatus);
   const ringClass = ADU_DETAIL_RING_CLASSES[statusKind];
@@ -574,7 +591,7 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
             <Switch
               checked={config.status === 'active'}
               disabled={automationLocked}
-              onCheckedChange={(checked) => void patch({ status: checked ? 'active' : 'inactive' }, 'Automation')}
+              onCheckedChange={(checked) => void patch({ status: checked ? 'active' : 'paused' }, 'Automation')}
             />
           </label>
           <Link href={hubHref}><Button type="button" variant="outline">Back to Hub</Button></Link>

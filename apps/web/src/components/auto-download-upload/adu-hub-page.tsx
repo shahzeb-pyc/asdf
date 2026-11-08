@@ -5,7 +5,7 @@ import * as React from 'react';
 import Image from 'next/image';
 import dynamic from 'next/dynamic';
 import { MoveUpRightIcon, PlusIcon, SearchIcon } from 'lucide-react';
-import { parseAduBulkPaste } from '@fbuploadpro/contracts';
+import { parseAduBulkPaste, ADU_STATUS_FILTER_OPTIONS } from '@fbuploadpro/contracts';
 import { formatSlotDisplay } from '@/components/pages/dedicated/posting-times/posting-time-utils';
 import { Banner } from '@/components/shared/ui/banner';
 import { Button } from '@/components/shared/ui/button';
@@ -172,11 +172,7 @@ function AduFixedTimeField({
   );
 }
 
-const STATUS_OPTIONS = [
-  'All Statuses', 'Active', 'Inactive', 'Verification Req.', 'Rate Limited',
-  'Page Not Accessible', 'Invalid Token', 'Invalid Username', 'Creator Suspended',
-  'Completed', '2FA Req. on BM', 'Check Dev App', 'Account Suspended',
-] as const;
+const STATUS_OPTIONS = ADU_STATUS_FILTER_OPTIONS;
 const SORT_OPTIONS = ['Newest First', 'Most Followers', 'Least Followers'] as const;
 const PLATFORMS = ['instagram', 'youtube', 'tiktok', 'facebook'] as const;
 type Platform = (typeof PLATFORMS)[number];
@@ -265,12 +261,13 @@ export type AduStatusMarkKind = 'operational' | 'queued' | 'critical';
  * - operational: 'Active posting' (active), 'All reels posted'
  *   (completed — a healthy terminal state, nothing wrong).
  * - queued: 'Scrape pending' (pending/browser_pending),
- *   'Scraping reels' (processing), 'Posting inactive' (inactive —
- *   paused, like page-card's paused → queued).
+ *   'Scraping reels' (processing), 'Paused' (paused — paused, like
+ *   page-card's paused → queued).
  * - critical: everything else — 'Source not found' (sync error),
  *   'Verification required', 'Invalid token', 'Rate limited',
  *   'Page not accessible', 'Source disabled', 'Creator suspended',
- *   'BM 2FA required', 'Check developer app', 'Account suspended'.
+ *   'BM 2FA required', 'Check developer app', 'Account suspended',
+ *   'Missing page access', 'Missing permission'.
  */
 export function getAduStatusMarkKind(displayStatus: string): AduStatusMarkKind {
   if (displayStatus === 'Active posting' || displayStatus === 'All reels posted') {
@@ -279,7 +276,7 @@ export function getAduStatusMarkKind(displayStatus: string): AduStatusMarkKind {
   if (
     displayStatus === 'Scrape pending' ||
     displayStatus === 'Scraping reels' ||
-    displayStatus === 'Posting inactive'
+    displayStatus === 'Paused'
   ) {
     return 'queued';
   }

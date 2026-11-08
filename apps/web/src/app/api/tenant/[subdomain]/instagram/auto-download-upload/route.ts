@@ -49,7 +49,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 function statusFilterToValue(filter: string): string | null {
   const map: Record<string, string> = {
     Active: 'active',
-    Inactive: 'inactive',
+    Paused: 'paused',
     'Verification Req.': 'fb_verification_required',
     'Rate Limited': 'fb_rate_limited',
     'Page Not Accessible': 'page_not_accessible',
@@ -60,6 +60,8 @@ function statusFilterToValue(filter: string): string | null {
     '2FA Req. on BM': '2fa_required_on_BM',
     'Check Dev App': 'check_developer_app',
     'Account Suspended': 'account_suspended',
+    'Missing Page Access': 'missing_page_access',
+    'Missing Permission': 'missing_permission',
   };
   return map[filter] ?? null;
 }

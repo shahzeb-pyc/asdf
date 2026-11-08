@@ -3,7 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { PlusIcon } from 'lucide-react';
-import { parseAduBulkPaste, parseAduCsv } from '@fbuploadpro/contracts';
+import { parseAduBulkPaste, parseAduCsv, ADU_STATUS_FILTER_OPTIONS } from '@fbuploadpro/contracts';
 import { Banner } from '@/components/shared/ui/banner';
 import { Button } from '@/components/shared/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/shared/ui/card';
@@ -27,12 +27,9 @@ import {
 import { Textarea } from '@/components/shared/ui/textarea';
 import { buildTenantApiPath } from '@/lib/api/client';
 import { FeatureCapText, useFeatureCap } from '@/components/billing/feature-cap';
+import { StatusMark } from '@/components/shared/ui/status-mark';
 
-const STATUS_OPTIONS = [
-  'All Statuses', 'Active', 'Inactive', 'Verification Req.', 'Rate Limited',
-  'Page Not Accessible', 'Invalid Token', 'Invalid Username', 'Creator Suspended',
-  'Completed', '2FA Req. on BM', 'Check Dev App', 'Account Suspended',
-] as const;
+const STATUS_OPTIONS = ADU_STATUS_FILTER_OPTIONS;
 const SORT_OPTIONS = ['Newest First', 'Most Followers', 'Least Followers'] as const;
 const PLATFORMS = ['instagram', 'youtube', 'tiktok', 'facebook'] as const;
 type Platform = (typeof PLATFORMS)[number];
@@ -63,6 +60,28 @@ interface AduConfigView {
 interface PickerAccount { id: string; external_account_id: string; display_name: string; avatar_url: string | null; status: string; }
 interface PickerPage { id: string; account_id: string; external_destination_id: string; name: string; avatar_url: string | null; status: string; metadata: Record<string, unknown> | null; }
 interface Configured { destination_id: string; source_platform: string; source_username: string; }
+
+export type AduStatusMarkKind = 'operational' | 'queued' | 'critical';
+
+/**
+ * Maps an ADU display status to a shared `StatusMark` kind — the same
+ * mapping the Facebook hub cards use: operational = healthy, queued =
+ * waiting, critical = needs attention. Unknown labels map to critical
+ * — an unexpected value must never read as healthy.
+ */
+function getAduStatusMarkKind(displayStatus: string): AduStatusMarkKind {
+  if (displayStatus === 'Active posting' || displayStatus === 'All reels posted') {
+    return 'operational';
+  }
+  if (
+    displayStatus === 'Scrape pending' ||
+    displayStatus === 'Scraping reels' ||
+    displayStatus === 'Paused'
+  ) {
+    return 'queued';
+  }
+  return 'critical';
+}
 
 function pageAge(createdAt: string): string {
   const days = Math.max(0, Math.floor((Date.now() - new Date(createdAt).getTime()) / 86_400_000));
@@ -175,7 +194,7 @@ export function ThreadsAduHubPage({ subdomain }: { subdomain: string }) {
                     <CardTitle className="truncate">{config.destinationName}</CardTitle>
                     <p className="font-mono text-metadata text-ink-dim">{config.destinationExternalId}</p>
                   </div>
-                  <span className="shrink-0 rounded-full bg-surface px-2 py-1 text-metadata text-ink">{config.displayStatus}</span>
+                  <StatusMark kind={getAduStatusMarkKind(config.displayStatus)} label={config.displayStatus} testId="adu-page-status" />
                 </CardHeader>
                 <CardContent className="flex flex-col gap-2">
                   <p className="text-body text-ink-sub">{config.sourceIdentity} · {config.sourcePlatform}</p>
