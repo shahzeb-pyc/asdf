@@ -127,7 +127,7 @@ export async function aduDestinationKeysForCap(
  */
 export async function registerAduConfigUsage(
   ctx: AduContext,
-  platform: 'facebook' | 'instagram',
+  platform: 'facebook' | 'instagram' | 'threads',
   destinationId: string,
   configId: string
 ): Promise<{ ok: true } | { ok: false; error: unknown }> {
@@ -198,7 +198,7 @@ export async function registerAduConfigUsage(
  */
 export async function releaseAduConfigUsage(
   ctx: AduContext,
-  platform: 'facebook' | 'instagram',
+  platform: 'facebook' | 'instagram' | 'threads',
   destinationId: string
 ): Promise<void> {
   if (ctx.role === 'admin') return;
