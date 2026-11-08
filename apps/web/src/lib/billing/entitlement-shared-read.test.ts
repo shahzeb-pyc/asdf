@@ -13,7 +13,12 @@ import {
  * check-then-register): the add-gate and the register share one
  * entitlement read, the register stops checking the same
  * destination twice, and the clean-insert path derives usedCount
- * from the gate read instead of re-counting.
+ * from the gate read instead of re-counting. A shared-read
+ * register still re-counts usage fresh immediately before the
+ * INSERT (pre-insert re-check): the shared read is stale by then
+ * on the mirror routes, and the re-check is what keeps a
+ * concurrent different-destination registration from publishing
+ * over the cap.
  *
  * In-memory Supabase stand-in, same pattern as the other billing
  * tests: filters AND together, a conditional update/delete only
@@ -601,7 +606,7 @@ describe('R5 — the register stops checking the same destination twice', () => 
 });
 
 describe('R5b — the register stops re-counting after a clean insert', () => {
-  it('clean-insert usedCount matches a fresh re-read, with no count re-query', async () => {
+  it('clean-insert usedCount matches a fresh re-read, with exactly one pre-insert count re-check', async () => {
     const { client, tables, queryLog } = makeClient();
     seedPaidPeriod(tables);
     seedDestination(tables, 'dest-1', 'active');
@@ -619,9 +624,16 @@ describe('R5b — the register stops re-counting after a clean insert', () => {
       shared
     );
     expect(result.alreadyUsed).toBe(false);
-    // The clean-insert path derives the count: no count query runs
-    // during the register itself.
-    expect(countUsageHeadCounts(queryLog)).toBe(headCountsBeforeRegister);
+    // The clean-insert path still derives the count from the gate
+    // read — no count query runs AFTER the insert. The one count
+    // query that runs during the register is the pre-insert
+    // re-check (SEND BACK fix on PR #188): with a shared read the
+    // gate is stale by the time the register runs, so usage is
+    // re-counted fresh immediately before the INSERT and a
+    // genuinely new destination at/over cap is refused. The full
+    // entitlement read is still shared — no second period select —
+    // only this one count query is re-paid.
+    expect(countUsageHeadCounts(queryLog)).toBe(headCountsBeforeRegister + 1);
     const fresh = await getUsageCount(client, 'user-1', 'facebook');
     expect(result.usedCount).toBe(fresh);
     expect(result.usedCount).toBe(1);
@@ -677,5 +689,125 @@ describe('R5b — the register stops re-counting after a clean insert', () => {
       registerUsage(client, 'user-1', 'facebook', 'page-2', 'destination-queue', 'dest-2', NOW)
     ).rejects.toMatchObject({ code: 'SUBSCRIPTION_CAP_REACHED' });
     expect(tables['subscription_usage']).toHaveLength(1);
+  });
+});
+
+describe('Pre-insert re-check — a stale shared read cannot publish over the cap', () => {
+  it('a competing usage row for a different destination landing after the gate read makes the register throw, with no row written', async () => {
+    const { client, tables } = makeClient();
+    seedPaidPeriod(tables, 'user-1', 1);
+    seedDestination(tables, 'dest-1', 'active');
+
+    // The route's single read, taken while usage is 0 of 1.
+    const shared = await getEntitlement(client, 'user-1', NOW);
+    expect(shared.usage['facebook']).toBe(0);
+
+    // The competitor: another request registers a different
+    // destination after the gate read and before this register —
+    // the mirror-route span (duplicate check + paid external
+    // profile fetch + mirror insert) in miniature.
+    seedUsage(tables, 'user-1', 'facebook', 'page-0', 'destination-queue', 'dest-0');
+
+    await expect(
+      registerUsage(
+        client,
+        'user-1',
+        'facebook',
+        'page-1',
+        'destination-queue',
+        'dest-1',
+        NOW,
+        shared
+      )
+    ).rejects.toMatchObject({ code: 'SUBSCRIPTION_CAP_REACHED' });
+    // The competing row is the only row: nothing was written for
+    // page-1, so no over-cap destination will publish.
+    expect(tables['subscription_usage']).toHaveLength(1);
+    expect(tables['subscription_usage'][0]?.['destination_key']).toBe('page-0');
+  });
+
+  it('an already-used destination at cap is still already-used, never refused', async () => {
+    const { client, tables } = makeClient();
+    seedPaidPeriod(tables, 'user-1', 1);
+    seedDestination(tables, 'dest-1', 'active');
+    seedUsage(tables, 'user-1', 'facebook', 'page-1', 'destination-queue', 'dest-1');
+
+    const shared = await getEntitlement(client, 'user-1', NOW);
+    expect(shared.usage['facebook']).toBe(1);
+
+    // At cap, but this destination already holds the unit: the
+    // re-check must not turn a re-register into a cap error.
+    const result = await registerUsage(
+      client,
+      'user-1',
+      'facebook',
+      'page-1',
+      'destination-queue',
+      'dest-1',
+      NOW,
+      shared
+    );
+    expect(result).toEqual({ alreadyUsed: true, usedCount: 1 });
+    expect(tables['subscription_usage']).toHaveLength(1);
+  });
+
+  it('a competing row linked to a disconnected destination does not trip the re-check', async () => {
+    const { client, tables } = makeClient();
+    seedPaidPeriod(tables, 'user-1', 1);
+    seedWorkspace(tables, 'user-1');
+    seedDestination(tables, 'dest-0', 'disconnected');
+    seedDestination(tables, 'dest-1', 'active');
+
+    const shared = await getEntitlement(client, 'user-1', NOW);
+    expect(shared.usage['facebook']).toBe(0);
+
+    // The competitor's row links to a disconnected destination,
+    // so it does not count — at the gate read or at the re-check,
+    // which uses the same exclusion.
+    seedUsage(tables, 'user-1', 'facebook', 'page-0', 'destination-queue', 'dest-0');
+
+    const result = await registerUsage(
+      client,
+      'user-1',
+      'facebook',
+      'page-1',
+      'destination-queue',
+      'dest-1',
+      NOW,
+      shared
+    );
+    expect(result.alreadyUsed).toBe(false);
+    expect(result.usedCount).toBe(1);
+    expect(tables['subscription_usage']).toHaveLength(2);
+  });
+
+  it('without a shared read the register pays only its own fresh entitlement read — no extra re-check', async () => {
+    // What one fresh entitlement read costs in head counts, so
+    // the assertion below stays exact if platforms are added.
+    const freshRead = makeClient();
+    seedPaidPeriod(freshRead.tables);
+    seedDestination(freshRead.tables, 'dest-1', 'active');
+    await getEntitlement(freshRead.client, 'user-1', NOW);
+    const freshReadHeadCounts = countUsageHeadCounts(freshRead.queryLog);
+
+    const { client, tables, queryLog } = makeClient();
+    seedPaidPeriod(tables);
+    seedDestination(tables, 'dest-1', 'active');
+
+    const result = await registerUsage(
+      client,
+      'user-1',
+      'facebook',
+      'page-1',
+      'destination-queue',
+      'dest-1',
+      NOW
+    );
+    expect(result.alreadyUsed).toBe(false);
+    expect(result.usedCount).toBe(1);
+    // The register's own fresh read is the last usage read before
+    // the insert here, so the re-check — shared-read only — pays
+    // nothing on top of it.
+    expect(countUsageHeadCounts(queryLog)).toBe(freshReadHeadCounts);
   });
 });

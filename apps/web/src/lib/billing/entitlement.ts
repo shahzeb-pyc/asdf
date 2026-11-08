@@ -817,6 +817,40 @@ export async function registerUsage(
   // the race happens after the check. The INSERT's 23505 handler
   // below is the real guard: a concurrent registration of this
   // destination resolves to already-used, never to a second unit.
+  // Pre-insert re-check, shared-read only: the gate above ran on
+  // the shared read, which on the mirror routes is stale by the
+  // time this register runs — the duplicate check, the paid
+  // external profile fetch, and the mirror insert all run between
+  // the gate and here — so a concurrent registration of a
+  // DIFFERENT destination in the meantime would otherwise publish
+  // over the cap (the worker claim RPCs enforce an active period
+  // only, not usage counts, so there is no backstop downstream).
+  // Re-count fresh, immediately before the INSERT, with the same
+  // disconnected exclusion as the gate (getUsageCount), and refuse
+  // a genuinely new destination at/over the gate's allowed count.
+  // What this does: it narrows the race window back to the old
+  // size — the last usage read is ~1 query before the insert, as
+  // it was before the shared read. What it does NOT do: eliminate
+  // the race — no check-then-insert can, short of a DB
+  // constraint/trigger or a serializable transaction; two requests
+  // can still both re-check under the cap and both insert. An
+  // already-used destination is never refused here: it consumes
+  // no new unit, so a concurrent registration of THIS destination
+  // still resolves to already-used via the 23505 handler below.
+  // Without a shared read there is nothing to re-check:
+  // registerUsage just read the entitlement fresh above.
+  if (sharedEntitlement) {
+    const allowed = gateEntitlement.counts[platform];
+    const freshUsage = await getUsageCount(client, userId, platform);
+    if (freshUsage >= allowed) {
+      if (!(await isDestinationUsed(client, userId, platform, destinationKey))) {
+        throw new SubscriptionGateError(
+          'SUBSCRIPTION_CAP_REACHED',
+          `You have reached your limit of ${allowed} ${platform === 'facebook' ? 'pages' : 'accounts'} on ${platform}. Upgrade your plan to use more.`
+        );
+      }
+    }
+  }
   const { error } = await client.from('subscription_usage').insert({
     user_id: userId,
     platform,
