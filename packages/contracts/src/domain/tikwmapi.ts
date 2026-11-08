@@ -50,6 +50,14 @@ export const TIKWMAPI_BASE_URL = 'https://api.tikwmapi.com';
 export const TIKWM_RESOLVE_BASE_URL = 'https://www.tikwm.com/api/';
 const TIKWMAPI_FETCH_TIMEOUT_MS = 30_000;
 const TIKWM_RESOLVE_TIMEOUT_MS = 25_000;
+/** Free-resolve attempts: first try + retries on HTTP 403 only. */
+const TIKWM_FREE_RESOLVE_MAX_ATTEMPTS = 5;
+/**
+ * Pause between free-resolve retries. Each retry opens a fresh proxy
+ * connection (new exit IP), and the pause also clears the free
+ * endpoint's 1 req/sec per-IP throttle.
+ */
+const TIKWM_FREE_RESOLVE_RETRY_PAUSE_MS = 2000;
 /** Paid feed page size bound (the paid API caps count at 30). */
 export const TIKWMAPI_FEED_COUNT_MAX = 30;
 /** Key pause length: 30 days (owner rule: "1 month"). */
@@ -403,7 +411,7 @@ function isFreeResolveLimitMessage(detail: string | undefined): boolean {
 
 type FreeResolveOutcome =
   | { failed: false; playUrl: string; title: string }
-  | { failed: true; wasLimit: boolean; raw: string };
+  | { failed: true; wasLimit: boolean; wasForbidden: boolean; raw: string };
 
 /**
  * One attempt at the FREE tikwm POST endpoint (form {url, hd: 1})
@@ -430,16 +438,21 @@ async function tryFreeResolve(
       body: new URLSearchParams({ url: videoUrl, hd: '1' }).toString(),
     });
   } catch {
-    return { failed: true, wasLimit: false, raw: 'free fetch threw' };
+    return { failed: true, wasLimit: false, wasForbidden: false, raw: 'free fetch threw' };
   }
   if (!res.ok) {
-    return { failed: true, wasLimit: false, raw: `HTTP ${res.status}` };
+    return {
+      failed: true,
+      wasLimit: false,
+      wasForbidden: res.status === 403,
+      raw: `HTTP ${res.status}`,
+    };
   }
   let raw: unknown;
   try {
     raw = await res.json();
   } catch {
-    return { failed: true, wasLimit: false, raw: 'unreadable response' };
+    return { failed: true, wasLimit: false, wasForbidden: false, raw: 'unreadable response' };
   }
   const parsed = TikwmResolveResponseSchema.safeParse(raw);
   if (!parsed.success || parsed.data.code !== 0 || !parsed.data.data) {
@@ -447,12 +460,13 @@ async function tryFreeResolve(
     return {
       failed: true,
       wasLimit: isFreeResolveLimitMessage(detail),
+      wasForbidden: false,
       raw: detail ?? 'unparseable response',
     };
   }
   const playUrl = parsed.data.data.hdplay ?? parsed.data.data.play;
   if (!playUrl) {
-    return { failed: true, wasLimit: false, raw: 'no playable version returned' };
+    return { failed: true, wasLimit: false, wasForbidden: false, raw: 'no playable version returned' };
   }
   return { failed: false, playUrl, title: parsed.data.data.title ?? '' };
 }
@@ -468,6 +482,15 @@ async function tryFreeResolve(
  * An empty resolved title is acceptable — mirror callers fall
  * back to the feed title.
  *
+ * Free-leg 403 retry (spec 151, owner decision 2026-11-08): the
+ * free endpoint returns HTTP 403 intermittently behind the
+ * rotating proxy (a blocked exit IP for that attempt), so a 403
+ * is retried up to 5 attempts total, ~2s apart, each attempt a
+ * fresh fetch invocation — in the Worker path each invocation
+ * opens a new proxy tunnel and draws a new exit IP. Only 403 is
+ * retried: the limit message and every other failure go straight
+ * to the Countik fallback.
+ *
  * Throws TikwmApiError (code RESOLVE_FAILED) on failure, with
  * the opaque friendly message only — callers treat a resolve
  * failure like a publish failure (post stays failed, mirror
@@ -478,14 +501,25 @@ async function tryFreeResolve(
  */
 export async function resolveTikwmVideo(
   videoUrl: string,
-  options: { fetchFn?: FetchFn | undefined } = {}
+  options: { fetchFn?: FetchFn | undefined; sleep?: SleepFn | undefined } = {}
 ): Promise<{ playUrl: string; title: string }> {
   const fetchFn = options.fetchFn ?? fetch;
-  const free = await tryFreeResolve(videoUrl, fetchFn);
-  if (!free.failed) return { playUrl: free.playUrl, title: free.title };
-  console.error(
-    `[resolveTikwmVideo] free resolve failed (limit=${free.wasLimit}): ${free.raw}`
-  );
+  const sleep = options.sleep ?? defaultSleep;
+  let free: FreeResolveOutcome | null = null;
+  for (let attempt = 1; attempt <= TIKWM_FREE_RESOLVE_MAX_ATTEMPTS; attempt += 1) {
+    const outcome = await tryFreeResolve(videoUrl, fetchFn);
+    if (!outcome.failed) return { playUrl: outcome.playUrl, title: outcome.title };
+    free = outcome;
+    console.error(
+      `[resolveTikwmVideo] free resolve attempt ${attempt}/${TIKWM_FREE_RESOLVE_MAX_ATTEMPTS} failed (limit=${outcome.wasLimit}): ${outcome.raw}`
+    );
+    const retriable =
+      outcome.wasForbidden && !outcome.wasLimit && attempt < TIKWM_FREE_RESOLVE_MAX_ATTEMPTS;
+    if (!retriable) break;
+    await sleep(TIKWM_FREE_RESOLVE_RETRY_PAUSE_MS);
+  }
+  // `free` is always set: the loop runs at least once.
+  const failed = free as Extract<FreeResolveOutcome, { failed: true }>;
   try {
     return await resolveCountikVideo(videoUrl, { fetchFn });
   } catch (err) {
@@ -494,7 +528,7 @@ export async function resolveTikwmVideo(
     );
     throw new TikwmApiError(
       'RESOLVE_FAILED',
-      free.wasLimit ? MIRROR_RESOLVE_ERROR_E01 : MIRROR_RESOLVE_ERROR_E02
+      failed.wasLimit ? MIRROR_RESOLVE_ERROR_E01 : MIRROR_RESOLVE_ERROR_E02
     );
   }
 }

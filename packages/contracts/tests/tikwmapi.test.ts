@@ -498,3 +498,145 @@ describe('resolveTikwmVideo Countik fallback + opaque error codes', () => {
     expect((err as Error).message).toBe(MIRROR_RESOLVE_ERROR_E01);
   });
 });
+
+describe('resolveTikwmVideo free-leg 403 retry', () => {
+  const FREE_URL = 'https://www.tikwm.com/api/';
+  const COUNTIK_EXIST = 'https://countik.com/api/video/exist';
+  const COUNTIK_INFO = 'https://countik.com/api/videoinfo/vid-1';
+  const VIDEO = 'https://www.tiktok.com/@alice/video/123';
+
+  const freeOk = {
+    code: 0,
+    data: { play: 'https://x/play.mp4', hdplay: 'https://x/hd.mp4', title: 'Cap' },
+  };
+  const countikOk = {
+    exist: { video_id: 'vid-1' },
+    info: { download_link: 'https://cdn.example.com/countik.mp4', desc: 'Countik cap' },
+  };
+  const forbidden = () => jsonResponse(null, false, 403);
+
+  /**
+   * Scripted fetch: the free endpoint answers from `freeScript` in
+   * order; Countik answers from fixed bodies. Records the call
+   * order (fetch vs sleep) so the pause-between-attempts ordering
+   * is provable, and the sleep durations. A 6th free call would
+   * run the script dry and throw loudly, so the attempt cap is
+   * enforced by the harness too.
+   */
+  function scriptedFetch(freeScript: unknown[], exist?: unknown, info?: unknown) {
+    const order: string[] = [];
+    const sleeps: number[] = [];
+    const fetchFn = vi.fn(async (url: string) => {
+      if (url === FREE_URL) {
+        order.push('fetch');
+        const next = freeScript.shift();
+        if (next instanceof Error) throw next;
+        return next as never;
+      }
+      if (url === COUNTIK_EXIST) {
+        order.push('countik-exist');
+        if (exist instanceof Error) throw exist;
+        return jsonResponse(exist);
+      }
+      if (url === COUNTIK_INFO) {
+        order.push('countik-info');
+        if (info instanceof Error) throw info;
+        return jsonResponse(info);
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+    const sleep = async (ms: number) => {
+      order.push('sleep');
+      sleeps.push(ms);
+    };
+    return { fetchFn, sleep, order, sleeps };
+  }
+
+  const freeCalls = (fetchFn: ReturnType<typeof vi.fn>) =>
+    fetchFn.mock.calls.filter(([url]: [string]) => url === FREE_URL).length;
+
+  it('retries 403 up to 5 attempts and resolves on the 5th, pausing between attempts', async () => {
+    const { fetchFn, sleep, order, sleeps } = scriptedFetch([
+      forbidden(),
+      forbidden(),
+      forbidden(),
+      forbidden(),
+      jsonResponse(freeOk),
+    ]);
+    await expect(
+      resolveTikwmVideo(VIDEO, { fetchFn: fetchFn as never, sleep })
+    ).resolves.toEqual({ playUrl: 'https://x/hd.mp4', title: 'Cap' });
+    // Each retry is a separate fetch invocation — in the Worker path
+    // each invocation opens a fresh proxy tunnel (new exit IP).
+    expect(freeCalls(fetchFn)).toBe(5);
+    expect(order).toEqual([
+      'fetch',
+      'sleep',
+      'fetch',
+      'sleep',
+      'fetch',
+      'sleep',
+      'fetch',
+      'sleep',
+      'fetch',
+    ]);
+    expect(sleeps).toEqual([2000, 2000, 2000, 2000]);
+    expect(order).not.toContain('countik-exist');
+  });
+
+  it('403 x 5 + Countik failure throws exactly E02', async () => {
+    const { fetchFn, sleep, sleeps } = scriptedFetch(
+      [forbidden(), forbidden(), forbidden(), forbidden(), forbidden()],
+      { status: 'not found' },
+      undefined
+    );
+    const err = await resolveTikwmVideo(VIDEO, {
+      fetchFn: fetchFn as never,
+      sleep,
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TikwmApiError);
+    expect((err as Error).message).toBe(MIRROR_RESOLVE_ERROR_E02);
+    expect(freeCalls(fetchFn)).toBe(5);
+    expect(sleeps).toEqual([2000, 2000, 2000, 2000]);
+  });
+
+  it('403 x 5 + Countik success still falls back to the Countik link', async () => {
+    const { fetchFn, sleep } = scriptedFetch(
+      [forbidden(), forbidden(), forbidden(), forbidden(), forbidden()],
+      countikOk.exist,
+      countikOk.info
+    );
+    await expect(
+      resolveTikwmVideo(VIDEO, { fetchFn: fetchFn as never, sleep })
+    ).resolves.toEqual({ playUrl: 'https://cdn.example.com/countik.mp4', title: 'Countik cap' });
+    expect(freeCalls(fetchFn)).toBe(5);
+  });
+
+  it('limit message is never retried: 1 attempt, E01, no sleep', async () => {
+    const { fetchFn, sleep, sleeps } = scriptedFetch(
+      [jsonResponse({ code: -1, msg: 'Free Api Limit: 10000 request/ 1 day' })],
+      { status: 'not found' },
+      undefined
+    );
+    const err = await resolveTikwmVideo(VIDEO, {
+      fetchFn: fetchFn as never,
+      sleep,
+    }).catch((e: unknown) => e);
+    expect((err as Error).message).toBe(MIRROR_RESOLVE_ERROR_E01);
+    expect(freeCalls(fetchFn)).toBe(1);
+    expect(sleeps).toEqual([]);
+  });
+
+  it('non-403 free failure is never retried: straight to Countik, no sleep', async () => {
+    const { fetchFn, sleep, sleeps } = scriptedFetch(
+      [jsonResponse({ code: -1, msg: 'Url parsing is failed!' })],
+      countikOk.exist,
+      countikOk.info
+    );
+    await expect(
+      resolveTikwmVideo(VIDEO, { fetchFn: fetchFn as never, sleep })
+    ).resolves.toEqual({ playUrl: 'https://cdn.example.com/countik.mp4', title: 'Countik cap' });
+    expect(freeCalls(fetchFn)).toBe(1);
+    expect(sleeps).toEqual([]);
+  });
+});
