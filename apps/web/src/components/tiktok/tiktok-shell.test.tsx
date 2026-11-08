@@ -118,7 +118,7 @@ function renderShell() {
 }
 
 function capTexts() {
-  return screen.getAllByTestId('feature-cap-text').map((el) => el.textContent ?? '');
+  return screen.getAllByTestId('feature-cap-text').map((el) => el.textContent);
 }
 
 describe('TikTokShell plan cap (B2)', () => {
