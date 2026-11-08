@@ -424,7 +424,14 @@ export async function runAduTick(options: {
     if (job.graph_post_id) {
       await supabase
         .from('adu_posting_jobs')
-        .update({ status: 'published', published_at: now.toISOString() })
+        .update({
+          status: 'published',
+          published_at: now.toISOString(),
+          // A job that failed before must not keep showing its old
+          // error once it has published.
+          last_error_code: null,
+          last_error_message: null,
+        })
         .eq('id', job.id);
       result.published += 1;
       continue;
@@ -602,6 +609,10 @@ export async function runAduTick(options: {
           status: 'published',
           graph_post_id: outcome.externalPostId ?? job.graph_post_id ?? null,
           published_at: now.toISOString(),
+          // A job that failed before (and was retried) must not keep
+          // showing its old error once it has published.
+          last_error_code: null,
+          last_error_message: null,
         })
         .eq('id', job.id);
       await supabase
