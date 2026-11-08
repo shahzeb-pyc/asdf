@@ -1,3 +1,4 @@
+import { cache } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   DomainError,
@@ -617,6 +618,31 @@ export async function getEntitlement(
     hasPriorPeriod: true,
   };
 }
+
+/**
+ * Plan-check R1 — request-scoped shared entitlement read.
+ *
+ * The tenant layout seed and the Home loader ask the same question
+ * for the same user in the same document request, milliseconds
+ * apart, with no subscription write between them — so they share
+ * one read through React `cache()`, the same pattern the workspace
+ * lookup already uses (`workspace-display-name.ts`). Both callers
+ * see the exact same answer, including the same `now`: the cached
+ * function creates the timestamp once, so the shared read is exact,
+ * not approximate.
+ *
+ * Only these two read paths share. Every other caller keeps using
+ * the raw `getEntitlement` below: a cached read has no
+ * invalidation, so a read after a subscription-table write in the
+ * same request must use the raw function. Do not widen this to
+ * route handlers without auditing every write-then-read path first
+ * (plan-check C1).
+ */
+export const getCachedEntitlement = cache(
+  async (client: SupabaseClient, userId: string): Promise<Entitlement> => {
+    return getEntitlement(client, userId);
+  },
+);
 
 /**
  * Existence check for any paid period row for the user, active or

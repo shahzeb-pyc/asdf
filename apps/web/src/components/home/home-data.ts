@@ -28,7 +28,7 @@ import { totalUnits, type PlatformCounts } from '@fbuploadpro/contracts';
 
 import { getServerSessionContext } from '@/lib/auth';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
-import { getEntitlement } from '@/lib/billing/entitlement';
+import { getCachedEntitlement, getEntitlement, type Entitlement } from '@/lib/billing/entitlement';
 import { getStorageQuotaState as getStorageState } from '@/lib/billing/storage-quota';
 import { logServerError } from '@/lib/server-analytics';
 import { getWorkspaceIdentity } from '../../app/tenant/[subdomain]/workspace-display-name';
@@ -88,7 +88,31 @@ export async function loadHomeData(subdomain: string): Promise<HomeData> {
       };
     }
 
-    const entitlement = await getEntitlement(supabase, session.userId);
+    // Plan-check R1: the tenant layout already read the
+    // entitlement for this request (the seed), so read the cached
+    // answer instead of paying for a second full read. The two reads
+    // are milliseconds apart with no subscription write between
+    // them, so the shared answer is exact, not approximate.
+    //
+    // Fallback (the gate fails CLOSED): if the cached read fails —
+    // the seed failed, or the seed never ran for this request —
+    // read on our own, exactly as before. A failed seed must never
+    // leave Home with no answer, and a failed read must never
+    // render invented numbers: a failure of both reads falls
+    // through to the `error` variant via the outer catch.
+    let entitlement: Entitlement;
+    try {
+      entitlement = await getCachedEntitlement(supabase, session.userId);
+    } catch (err) {
+      // Loud, then recover: the layout already logs a failed seed,
+      // but a cached read can also fail on a request where the
+      // layout never ran (RSC navigation), so the fallback is
+      // logged at its own site instead of silently recovering.
+      logServerError('[home] cached entitlement read failed, falling back to a fresh read', err, {
+        source: 'home',
+      });
+      entitlement = await getEntitlement(supabase, session.userId);
+    }
     const isPaidActive = entitlement.plan === 'paid' && entitlement.active;
     // Expired is an explicit plan value — never re-derived here, so
     // Home's card cannot disagree with the sidebar word or the gate.
