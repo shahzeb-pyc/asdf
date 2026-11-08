@@ -1299,6 +1299,20 @@ describe('runAduTick', () => {
     return update?.args[0] as Row | undefined;
   }
 
+  /** The adu_posting_jobs update that settled a job as published. */
+  function storedPublish(db: FakeDb): Row | undefined {
+    const call = db.calls.find(
+      (c) =>
+        c.table === 'adu_posting_jobs' &&
+        c.ops.some(
+          (o) =>
+            o.kind === 'update' && (o.args[0] as Row).status === 'published',
+        ),
+    );
+    const update = call?.ops.find((o) => o.kind === 'update');
+    return update?.args[0] as Row | undefined;
+  }
+
   it('stores the Facebook error detail on the job row when a reel publish fails', async () => {
     const r2Url = 'https://pub-abc123.r2.dev/adu-buffer/c1/reel-1.mp4';
     const rawBody =
@@ -1369,5 +1383,49 @@ describe('runAduTick', () => {
     expect(message).toContain('phase=reel-upload-stream');
     expect(message).toContain('http=400');
     expect(message).not.toContain('unknown');
+  });
+
+  // --- A published job must not keep showing its old error --------
+  // The 10 reset 413 posts all published but their rows kept the
+  // old `unknown` / `HTTP 413` error, which the detail pages display
+  // verbatim. Settling published must clear both error fields.
+
+  it('clears a stale error on the job row when a retried publish succeeds', async () => {
+    const job: Row = {
+      ...facebookJob('https://pub-abc123.r2.dev/adu-buffer/c1/reel-1.mp4'),
+      // The row failed before (a bare 413, as the 10 reset posts had)
+      // and is being retried; the publish must not leave that error
+      // on the row once it succeeds.
+      last_error_code: 'unknown',
+      last_error_message: 'Facebook Graph API error: HTTP 413',
+    };
+    const publisher = fakePublisher(async () => ({ status: 'published', externalPostId: 'g1' }));
+    const { result, db } = await facebookJobTick(job, publisher);
+
+    expect(result.published).toBe(1);
+    const published = storedPublish(db);
+    expect(published).toBeDefined();
+    expect(published!.status).toBe('published');
+    expect(published!.last_error_code).toBeNull();
+    expect(published!.last_error_message).toBeNull();
+  });
+
+  it('clears a stale error when a job with a stored Graph id settles published', async () => {
+    const job: Row = {
+      ...facebookJob('https://pub-abc123.r2.dev/adu-buffer/c1/reel-1.mp4'),
+      graph_post_id: 'graph-123',
+      last_error_code: 'unknown',
+      last_error_message: 'Facebook Graph API error: HTTP 413',
+    };
+    const publisher = fakePublisher(async () => ({ status: 'published', externalPostId: 'x' }));
+    const { result, db } = await facebookJobTick(job, publisher);
+
+    expect(publisher.publish).not.toHaveBeenCalled();
+    expect(result.published).toBe(1);
+    const published = storedPublish(db);
+    expect(published).toBeDefined();
+    expect(published!.status).toBe('published');
+    expect(published!.last_error_code).toBeNull();
+    expect(published!.last_error_message).toBeNull();
   });
 });
