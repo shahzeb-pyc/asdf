@@ -6,7 +6,7 @@ import type { EntitlementResponse } from '@fbuploadpro/contracts';
 import { shouldUseCleanTenantPaths } from '@/lib/tenant-href';
 import { getServerSessionContext } from '@/lib/auth';
 import { UserShell } from '@/components/shell/user-shell';
-import { getEntitlement } from '@/lib/billing/entitlement';
+import { getCachedEntitlement } from '@/lib/billing/entitlement';
 import {
   getBillingAdminClient,
   mapEntitlementToResponse,
@@ -104,12 +104,17 @@ export default async function TenantLayout({ params, children }: Readonly<Tenant
   // client-side fetch on mount, and every consumer renders its
   // neutral state until a proven answer arrives. This must never
   // throw the layout — a billing outage must not take the shell down.
+  //
+  // Plan-check R1: this read is request-scoped cached
+  // (`getCachedEntitlement`), so the Home loader below it in the
+  // same request reuses this exact answer instead of paying for a
+  // second full entitlement read.
   let initialEntitlement: EntitlementResponse | null = null;
   try {
     const adminClient = getBillingAdminClient();
     if (adminClient) {
       initialEntitlement = mapEntitlementToResponse(
-        await getEntitlement(adminClient, session.userId)
+        await getCachedEntitlement(adminClient, session.userId)
       );
     } else {
       logServerError('[billing] entitlement seed unavailable: admin client null', null, {
