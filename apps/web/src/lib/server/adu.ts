@@ -3,6 +3,8 @@ import {
   aduDisplayStatus,
   aduSourceLink,
   aduStatusAlert,
+  instagramAduStatusAlert,
+  threadsAduStatusAlert,
   decryptToken,
   encryptToken,
   fetchAllFacebookPages,
@@ -733,7 +735,17 @@ export async function buildAduConfigView(
     status: config.status,
     syncStatus: config.sync_status,
     displayStatus: aduDisplayStatus(config.status, config.sync_status),
-    alert: aduStatusAlert(config.status, config.sync_status),
+    // Alert wording follows the destination platform: the Facebook
+    // alert names Facebook Accounts / Business Manager, which would
+    // leak the wrong platform into the Instagram and Threads sections.
+    // (Threads re-overrides this below in loadThreadsAduConfigView;
+    // the same wording is selected here so every caller agrees.)
+    alert:
+      dest?.platform === 'instagram'
+        ? instagramAduStatusAlert(config.status, config.sync_status)
+        : dest?.platform === 'threads'
+          ? threadsAduStatusAlert(config.status, config.sync_status)
+          : aduStatusAlert(config.status, config.sync_status),
     followersCount: config.followers_count,
     followersGained: config.followers_gained,
     displayName: config.display_name,

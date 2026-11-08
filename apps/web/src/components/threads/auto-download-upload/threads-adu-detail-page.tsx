@@ -101,16 +101,6 @@ function getAduDetailStatusMarkKind(displayStatus: string): AduStatusMarkKind {
   return 'critical';
 }
 
-/**
- * Creator-suspended copy, per the display file: the rule is more than
- * 50 failed downloads all-time, and no source change is needed —
- * toggle ON checks the creator. The contracts alert still says to
- * change the source, so this page shows the decided copy until that
- * alert is corrected at the source.
- */
-const CREATOR_SUSPENDED_ALERT =
-  'This source is unavailable after more than 50 failed downloads. Turn automation on to check whether the creator is available again.';
-
 export function ThreadsAduDetailPage({ subdomain, configId }: { subdomain: string; configId: string }) {
   const [config, setConfig] = React.useState<ConfigView | null>(null);
   const [reels, setReels] = React.useState<Reel[]>([]);
@@ -195,10 +185,10 @@ export function ThreadsAduDetailPage({ subdomain, configId }: { subdomain: strin
     config.status === 'invalid_token' ||
     config.status === 'completed';
   const selected = selectedReel ?? reels[0] ?? null;
-  const alertText =
-    config.status === 'creator_suspended' && config.syncStatus !== 'error'
-      ? CREATOR_SUSPENDED_ALERT
-      : config.alert;
+  // The alert comes from the server view (contracts): the
+  // creator-suspended copy there is the decided all-time-50 wording,
+  // with no source change — this page renders it as-is.
+  const alertText = config.alert;
 
   return (
     <div className="flex flex-col gap-6 p-4 sm:p-6">

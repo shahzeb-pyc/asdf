@@ -69,7 +69,7 @@ class FakeQuery {
   }
 }
 
-function makeFakeSupabase(counts: CountSetup) {
+function makeFakeSupabase(counts: CountSetup, destinationPlatform = 'facebook') {
   const calls: Array<{ table: string; ops: Op[] }> = [];
   const destination: Row = {
     id: 'dest-1',
@@ -79,7 +79,7 @@ function makeFakeSupabase(counts: CountSetup) {
     status: 'active',
     account_id: 'acc-1',
     handle: null,
-    platform: 'facebook',
+    platform: destinationPlatform,
     social_accounts: { display_name: 'Test Account', avatar_url: null },
   };
   const db = {
@@ -216,5 +216,48 @@ describe('buildAduConfigView pendingCount (spec §3.5)', () => {
         c.ops.some((o) => o.kind === 'in' && o.args[0] === 'adu_reels.status'),
     );
     expect(embedded).toBeDefined();
+  });
+});
+
+describe('buildAduConfigView alert wording follows the destination platform (B5)', () => {
+  const zeroCounts: CountSetup = {
+    pipeline: 0,
+    published: 0,
+    failed: 0,
+    failedInPipeline: 0,
+    publishedToday: 0,
+    failedToday: 0,
+  };
+
+  it('uses the Instagram alert for an Instagram destination, never Facebook copy', async () => {
+    const db = makeFakeSupabase(zeroCounts, 'instagram');
+    const view = await buildAduConfigView(db, { ...configRow(), status: 'invalid_token' });
+    expect(view.alert).toContain('Instagram Accounts');
+    expect(view.alert).not.toMatch(/Facebook/i);
+  });
+
+  it('uses the Threads alert for a Threads destination', async () => {
+    const db = makeFakeSupabase(zeroCounts, 'threads');
+    const view = await buildAduConfigView(db, { ...configRow(), status: 'invalid_token' });
+    expect(view.alert).toContain('Threads Accounts');
+    expect(view.alert).not.toMatch(/Facebook/i);
+  });
+
+  it('keeps the Facebook alert for a Facebook destination', async () => {
+    const db = makeFakeSupabase(zeroCounts, 'facebook');
+    const view = await buildAduConfigView(db, { ...configRow(), status: 'invalid_token' });
+    expect(view.alert).toContain('Facebook Accounts');
+  });
+
+  it('uses the decided creator-suspended copy on every platform', async () => {
+    for (const platform of ['facebook', 'instagram', 'threads']) {
+      const db = makeFakeSupabase(zeroCounts, platform);
+      const view = await buildAduConfigView(db, {
+        ...configRow(),
+        status: 'creator_suspended',
+      });
+      expect(view.alert).toMatch(/more than 50 failed downloads/i);
+      expect(view.alert).not.toContain('Change the source in Settings');
+    }
   });
 });

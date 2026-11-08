@@ -171,7 +171,7 @@ export function aduStatusAlert(
     case 'invalid_username':
       return 'The source is disabled. Change the source in Settings to continue.';
     case 'creator_suspended':
-      return 'This source is unavailable after too many download failures. Change the source in Settings, then reactivate.';
+      return 'This source is unavailable after more than 50 failed downloads. Turn automation on to check whether the creator is available again.';
     case 'completed':
       return 'All reels have been posted. Update the source in Settings to continue.';
     case '2fa_required_on_BM':
@@ -184,6 +184,52 @@ export function aduStatusAlert(
       return 'This page can no longer be reached because the account lost its role on it. Ask an admin to restore the role in Business Manager, then reactivate.';
     case 'missing_permission':
       return 'A permission this page needs is missing. Ask an admin to grant the permission, then reactivate.';
+    default:
+      return null;
+  }
+}
+
+/**
+ * Instagram Auto Download/Upload alert, same status enum, Instagram wording.
+ * The Facebook alerts above are NOT reused: they name Facebook, Business
+ * Manager and Facebook Accounts, none of which apply to an Instagram
+ * destination. Facebook-only statuses map to the closest Instagram action
+ * instead of leaking Facebook copy into the Instagram section.
+ */
+export function instagramAduStatusAlert(
+  status: AduConfigStatus,
+  syncStatus: AduSyncStatus
+): string | null {
+  if (syncStatus === 'error')
+    return 'The source could not be found. Check the source username in Settings, then try again.';
+  if (status === 'active') return null;
+  switch (status) {
+    case 'paused':
+      return 'Posting is paused. Turn automation on to resume.';
+    case 'fb_verification_required':
+      return 'Instagram verification is required. Complete verification in the Instagram app — do not reconnect the account.';
+    case 'fb_rate_limited':
+      return 'Automation is paused because of an Instagram rate limit. It resumes automatically.';
+    case 'invalid_token':
+      return 'The Instagram connection is invalid. Reconnect the account in Instagram Accounts.';
+    case 'page_not_accessible':
+      return 'This Instagram account is not accessible. Check the account permissions and reconnect if needed.';
+    case 'invalid_username':
+      return 'The source is disabled. Change the source in Settings to continue.';
+    case 'creator_suspended':
+      return 'This source is unavailable after more than 50 failed downloads. Turn automation on to check whether the creator is available again.';
+    case 'completed':
+      return 'All reels have been posted. Update the source in Settings to continue.';
+    case '2fa_required_on_BM':
+      return 'Two-factor authentication is required on the account. Complete it, then turn automation back on.';
+    case 'check_developer_app':
+      return 'Check the developer app settings for this account, then turn automation back on.';
+    case 'account_suspended':
+      return 'The Instagram account is suspended. Resolve it in Instagram, then turn automation back on.';
+    case 'missing_page_access':
+      return 'This Instagram account can no longer be reached because access to it was lost. Ask an admin to restore access, then turn automation back on.';
+    case 'missing_permission':
+      return 'A permission this Instagram account needs is missing. Ask an admin to grant the permission, then turn automation back on.';
     default:
       return null;
   }
@@ -217,7 +263,7 @@ export function threadsAduStatusAlert(
     case 'invalid_username':
       return 'The source is disabled. Change the source in Settings to continue.';
     case 'creator_suspended':
-      return 'This source is unavailable after too many download failures. Change the source in Settings, then reactivate.';
+      return 'This source is unavailable after more than 50 failed downloads. Turn automation on to check whether the creator is available again.';
     case 'completed':
       return 'All videos have been posted. Update the source in Settings to continue.';
     case '2fa_required_on_BM':

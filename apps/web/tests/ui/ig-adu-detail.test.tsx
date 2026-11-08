@@ -155,7 +155,7 @@ describe('IgAduDetailPage', () => {
     });
   });
 
-  it.each(['invalid_token', 'completed'])(
+  it.each(['invalid_token', 'completed', 'fb_rate_limited'])(
     'locks the toggle for %s',
     async (status) => {
       configOverrides = { status, displayStatus: status };
@@ -165,12 +165,12 @@ describe('IgAduDetailPage', () => {
     }
   );
 
-  it('shows the decided creator-suspended copy, not the stale source-change copy', async () => {
+  it('shows the decided creator-suspended copy from the server alert', async () => {
     configOverrides = {
       status: 'creator_suspended',
       displayStatus: 'Creator suspended',
       alert:
-        'This source is unavailable after too many download failures. Change the source in Settings, then reactivate.',
+        'This source is unavailable after more than 50 failed downloads. Turn automation on to check whether the creator is available again.',
     };
     render(<IgAduDetailPage subdomain="acme" configId="cfg-1" />);
     await screen.findByText('My IG Account');
