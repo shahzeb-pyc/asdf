@@ -4,9 +4,7 @@ import { authenticateTenantRoute } from '@/lib/route-auth';
 import { logServerError } from '@/lib/server-analytics';
 import { readJsonBody } from '@/lib/request-body';
 import {
-  getActivePeriod,
   getEntitlement,
-  getUsageCounts,
   isLegacyUncappedUsageFeature,
   registerUsage,
   SubscriptionGateError,
@@ -66,10 +64,16 @@ export async function POST(
   try {
     // R3: the entitlement is read once here and shared with the
     // register — the register no longer pays for its own full
-    // read. The response re-read below (getActivePeriod +
-    // getUsageCounts) is deliberately UNCHANGED: returning the
-    // pre-insert read instead is R4, a separate item, and the
-    // re-read's counts include the row just added.
+    // read. R4: the response is built from the entitlement the
+    // register returns instead of re-reading getActivePeriod +
+    // getUsageCounts after the insert. The returned entitlement
+    // is the PRE-insert read, so the registered platform's count
+    // is adjusted by +1 when — and only when — a row was actually
+    // inserted: `usedCount` already is that post-insert count
+    // (derived +1 on the clean-insert path, re-read on the
+    // already-used path), so it is the adjustment. A bare +1
+    // here would overstate by one when the inserted row links to
+    // a disconnected destination, whose row does not count.
     const entitlement = await getEntitlement(client, session.userId);
     const result = await registerUsage(
       client,
@@ -81,14 +85,16 @@ export async function POST(
       undefined,
       entitlement
     );
-    const period = await getActivePeriod(client, session.userId, new Date());
-    const usage = await getUsageCounts(client, session.userId);
+    const usage = {
+      ...result.entitlement.usage,
+      [parsed.data.platform]: result.usedCount,
+    };
     return NextResponse.json({
       platform: parsed.data.platform,
       destinationKey: parsed.data.destinationKey,
       alreadyUsed: result.alreadyUsed,
       usedCount: result.usedCount,
-      allowedCount: period ? period.counts[parsed.data.platform] : 0,
+      allowedCount: result.entitlement.counts[parsed.data.platform],
       usage,
     });
   } catch (err) {
