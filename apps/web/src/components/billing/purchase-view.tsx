@@ -1480,13 +1480,6 @@ export function PurchaseView({
               <ArrowLeftIcon aria-hidden className="size-4" /> Back to My Plan
             </Button>
             <h1 className="text-xl leading-heading font-semibold text-ink">Purchase</h1>
-            <p className="text-body text-ink-sub">
-              70 PKR per page or account, paid monthly. Facebook counts pages; other platforms
-              count accounts.
-            </p>
-            <p className="text-body text-ink-sub">
-              Example: 5 Facebook pages + 3 Instagram accounts = 560 PKR / month.
-            </p>
           </div>
           <PurchaseStepIndicator current="builder" />
           {pendingPaymentCard}
@@ -1515,13 +1508,6 @@ export function PurchaseView({
             <ArrowLeftIcon aria-hidden className="size-4" /> Back to My Plan
           </Button>
           <h1 className="text-xl leading-heading font-semibold text-ink">Purchase</h1>
-          <p className="text-body text-ink-sub">
-            70 PKR per page or account, paid monthly. Facebook counts pages; other platforms
-            count accounts.
-          </p>
-          <p className="text-body text-ink-sub">
-            Example: 5 Facebook pages + 3 Instagram accounts = 560 PKR / month.
-          </p>
         </div>
         <PurchaseStepIndicator current="builder" />
         {pendingPaymentCard}
