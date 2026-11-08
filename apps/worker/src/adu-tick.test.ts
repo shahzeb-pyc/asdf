@@ -86,8 +86,8 @@ class FakeBuilder {
     return this;
   }
 
-  not() {
-    this.ops.push({ kind: 'not', args: [] });
+  not(col: string, op: string, val: unknown) {
+    this.ops.push({ kind: 'not', args: [col, op, val] });
     return this;
   }
 
@@ -246,7 +246,14 @@ describe('runAduTick', () => {
       now: NOW,
     });
     expect(result.skipped).toBeUndefined();
-    const configCalls = db.calls.filter((c) => c.table === 'adu_configs');
+    // The rate-limit recovery step also reads adu_configs (eq status
+    // 'fb_rate_limited'); only the intake pages (eq status 'active')
+    // count here.
+    const configCalls = db.calls.filter(
+      (c) =>
+        c.table === 'adu_configs' &&
+        c.ops.some((o) => o.kind === 'eq' && o.args[0] === 'status' && o.args[1] === 'active'),
+    );
     expect(configCalls.length).toBe(2);
     expect(configCalls[1]!.ops.find((o) => o.kind === 'gt')?.args[1]).toBe(
       `c${String(ADU_TICK_PAGE_SIZE - 1).padStart(4, '0')}`,
@@ -381,10 +388,12 @@ describe('runAduTick', () => {
         return { data: [], error: null };
       }
       if (table === 'adu_configs' && ops.some((o) => o.kind === 'maybeSingle')) {
-        return { data: { destination_id: 'dest-1', workspace_id: 'ws-1' }, error: null };
+        return { data: { destination_id: 'dest-1', workspace_id: 'ws-1', status: 'active' }, error: null };
       }
       if (table === 'adu_configs') return { data: [], error: null };
-      if (table === 'destinations') {
+      // The single-row load uses maybeSingle; the invalid-token
+      // cascade's list select gets an empty page (no sibling pages).
+      if (table === 'destinations' && ops.some((o) => o.kind === 'maybeSingle')) {
         return {
           data: {
             id: 'dest-1',
@@ -397,6 +406,7 @@ describe('runAduTick', () => {
           error: null,
         };
       }
+      if (table === 'destinations') return { data: [], error: null };
       if (table === 'social_accounts') {
         return {
           data: {
@@ -470,7 +480,7 @@ describe('runAduTick', () => {
         return { data: [], error: null };
       }
       if (table === 'adu_configs' && ops.some((o) => o.kind === 'maybeSingle')) {
-        return { data: { destination_id: 'dest-1', workspace_id: 'ws-1' }, error: null };
+        return { data: { destination_id: 'dest-1', workspace_id: 'ws-1', status: 'active' }, error: null };
       }
       if (table === 'adu_configs') return { data: [], error: null };
       if (table === 'destinations') {
@@ -582,7 +592,7 @@ describe('runAduTick', () => {
         return { data: [], error: null };
       }
       if (table === 'adu_configs' && ops.some((o) => o.kind === 'maybeSingle')) {
-        return { data: { destination_id: 'dest-1', workspace_id: 'ws-1' }, error: null };
+        return { data: { destination_id: 'dest-1', workspace_id: 'ws-1', status: 'active' }, error: null };
       }
       if (table === 'adu_configs') return { data: [configRow('c1', ['09:00'])], error: null };
       if (table === 'adu_reels' && ops.some((o) => o.kind === 'eq' && o.args[1] === 'download_failed')) {
@@ -708,7 +718,7 @@ describe('runAduTick', () => {
         return { data: [], error: null };
       }
       if (table === 'adu_configs' && ops.some((o) => o.kind === 'maybeSingle')) {
-        return { data: { destination_id: 'dest-ig-1', workspace_id: 'ws-1' }, error: null };
+        return { data: { destination_id: 'dest-ig-1', workspace_id: 'ws-1', status: 'active' }, error: null };
       }
       if (table === 'adu_configs') return { data: [], error: null };
       if (table === 'destinations') {
@@ -797,7 +807,7 @@ describe('runAduTick', () => {
         return { data: [], error: null };
       }
       if (table === 'adu_configs' && ops.some((o) => o.kind === 'maybeSingle')) {
-        return { data: { destination_id: 'dest-x-1', workspace_id: 'ws-1' }, error: null };
+        return { data: { destination_id: 'dest-x-1', workspace_id: 'ws-1', status: 'active' }, error: null };
       }
       if (table === 'adu_configs') return { data: [], error: null };
       if (table === 'destinations') {
@@ -943,7 +953,7 @@ describe('runAduTick', () => {
         return { data: [], error: null };
       }
       if (table === 'adu_configs' && ops.some((o) => o.kind === 'maybeSingle')) {
-        return { data: { destination_id: 'dest-1', workspace_id: 'ws-1' }, error: null };
+        return { data: { destination_id: 'dest-1', workspace_id: 'ws-1', status: 'active' }, error: null };
       }
       if (table === 'adu_configs') return { data: [], error: null };
       return { data: [], error: null };
@@ -1057,8 +1067,18 @@ describe('runAduTick', () => {
         return { data: [], error: null };
       }
       // The busy-job query is the adu_posting_jobs select filtered by
-      // an 'in' on status; the stale query uses eq/lt, not 'in'.
-      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'in')) {
+      // an 'in' on status with pending_publish/publishing; the stale
+      // query uses eq/lt, not 'in', and the terminal-failed exclusion
+      // query uses 'in' with the terminal statuses instead.
+      if (
+        table === 'adu_posting_jobs' &&
+        ops.some(
+          (o) =>
+            o.kind === 'in' &&
+            Array.isArray(o.args[1]) &&
+            (o.args[1] as unknown[]).includes('pending_publish'),
+        )
+      ) {
         return { data: null, error: { code: '500', message: 'busy jobs boom' } };
       }
       if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
@@ -1143,7 +1163,7 @@ describe('runAduTick', () => {
         return { data: [], error: null };
       }
       if (table === 'adu_configs' && ops.some((o) => o.kind === 'maybeSingle')) {
-        return { data: { destination_id: 'dest-1', workspace_id: 'ws-1' }, error: null };
+        return { data: { destination_id: 'dest-1', workspace_id: 'ws-1', status: 'active' }, error: null };
       }
       if (table === 'adu_configs') return { data: [], error: null };
       // No active period: expired workspace, so the job pauses.
@@ -1232,10 +1252,12 @@ describe('runAduTick', () => {
         return { data: [], error: null };
       }
       if (table === 'adu_configs' && ops.some((o) => o.kind === 'maybeSingle')) {
-        return { data: { destination_id: 'dest-1', workspace_id: 'ws-1' }, error: null };
+        return { data: { destination_id: 'dest-1', workspace_id: 'ws-1', status: 'active' }, error: null };
       }
       if (table === 'adu_configs') return { data: [], error: null };
-      if (table === 'destinations') {
+      // The single-row load uses maybeSingle; the invalid-token
+      // cascade's list select gets an empty page (no sibling pages).
+      if (table === 'destinations' && ops.some((o) => o.kind === 'maybeSingle')) {
         return {
           data: {
             id: 'dest-1',
@@ -1248,6 +1270,7 @@ describe('runAduTick', () => {
           error: null,
         };
       }
+      if (table === 'destinations') return { data: [], error: null };
       if (table === 'social_accounts') {
         return {
           data: {
@@ -1427,5 +1450,359 @@ describe('runAduTick', () => {
     expect(published!.status).toBe('published');
     expect(published!.last_error_code).toBeNull();
     expect(published!.last_error_message).toBeNull();
+  });
+
+  // --- ADU statuses build (spec §3.1/§3.2) --------------------------
+  // One tick per failure, with a stubbed publisher returning the exact
+  // outcome the real publisher would return for the code: the mapper
+  // is the single ADU decision point, so these tests pin the config /
+  // destination / account flips, the cascade scope, the publish-loop
+  // gate, the rate-limit recovery, the terminal reel, and the generic
+  // backend message.
+
+  /** Runs one tick for a single pending Facebook ADU job with a stubbed outcome. */
+  async function aduPublishTick(
+    outcome: { status: 'failed' | 'retry' | 'published'; error?: Record<string, unknown> },
+    opts: {
+      gateStatus?: string;
+      cascadeDestinations?: Row[];
+      cascadeConfigs?: Row[];
+      publishRetries?: number;
+    } = {},
+  ) {
+    const job: Row = {
+      id: 'job-1',
+      config_id: 'c1',
+      reel_id: 'reel-1',
+      publish_retries: opts.publishRetries ?? 0,
+      graph_post_id: null,
+      adu_reels: { caption: 'hi', media_url: 'https://example.invalid/r.mp4' },
+    };
+    const publisher = fakePublisher(async () => outcome);
+    const encryptedAccess = await encryptToken('access', MASTER_KEY);
+    const db = makeDb((table, ops) => {
+      if (table === 'workspaces') return { data: { owner_id: 'user-1' }, error: null };
+      if (table === 'users') return { data: { role: 'user' }, error: null };
+      if (table === 'subscription_periods') {
+        return {
+          data: [
+            {
+              starts_at: new Date(NOW.getTime() - 86400000).toISOString(),
+              ends_at: new Date(NOW.getTime() + 86400000 * 20).toISOString(),
+              superseded_at: null,
+            },
+          ],
+          error: null,
+        };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
+        return { error: null };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'eq' && o.args[1] === 'pending_publish')) {
+        return { data: [job], error: null };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'eq' && o.args[1] === 'publishing')) {
+        return { data: [], error: null };
+      }
+      if (table === 'adu_configs' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return {
+          data: { destination_id: 'dest-1', workspace_id: 'ws-1', status: opts.gateStatus ?? 'active' },
+          error: null,
+        };
+      }
+      if (
+        table === 'adu_configs' &&
+        ops.some((o) => o.kind === 'in' && o.args[0] === 'destination_id')
+      ) {
+        return { data: opts.cascadeConfigs ?? [], error: null };
+      }
+      if (table === 'adu_configs') return { data: [], error: null };
+      if (table === 'destinations' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return {
+          data: {
+            id: 'dest-1',
+            account_id: 'acc-1',
+            workspace_id: 'ws-1',
+            platform: 'facebook',
+            status: 'active',
+            encrypted_destination_token: null,
+          },
+          error: null,
+        };
+      }
+      if (table === 'destinations') return { data: opts.cascadeDestinations ?? [], error: null };
+      if (table === 'social_accounts') {
+        return {
+          data: {
+            id: 'acc-1',
+            status: 'active',
+            encrypted_access_token: encryptedAccess,
+            encrypted_refresh_token: null,
+          },
+          error: null,
+        };
+      }
+      return { data: [], error: null };
+    });
+    const result = await runAduTick({
+      db: db as never,
+      registry: registryWith(publisher),
+      masterKey: MASTER_KEY,
+      now: NOW,
+    });
+    return { result, db, publisher };
+  }
+
+  /** The update call that flipped a row to a status, if any. */
+  function flippedTo(db: FakeDb, table: string, status: string, id?: string): Row | undefined {
+    const call = db.calls.find(
+      (c) =>
+        c.table === table &&
+        c.ops.some((o) => o.kind === 'update' && (o.args[0] as Row).status === status) &&
+        (id === undefined ||
+          c.ops.some((o) => o.kind === 'eq' && o.args[0] === 'id' && o.args[1] === id)),
+    );
+    const update = call?.ops.find((o) => o.kind === 'update');
+    return update?.args[0] as Row | undefined;
+  }
+
+  /** True when any update touched the table at all. */
+  function touchedTable(db: FakeDb, table: string): boolean {
+    return db.calls.some((c) => c.table === table && c.ops.some((o) => o.kind === 'update'));
+  }
+
+  it('flips config, account and destination on invalid token and cascades to active siblings only', async () => {
+    const { result, db } = await aduPublishTick(
+      {
+        status: 'failed',
+        error: { kind: 'auth', code: '190', message: 'Access token is invalid or revoked.' },
+      },
+      {
+        cascadeDestinations: [{ id: 'dest-2' }],
+        cascadeConfigs: [{ id: 'c2' }],
+      },
+    );
+    expect(result.failed).toBe(1);
+    // The failing config itself.
+    expect(flippedTo(db, 'adu_configs', 'invalid_token', 'c1')).toBeDefined();
+    expect(flippedTo(db, 'social_accounts', 'expired', 'acc-1')).toBeDefined();
+    expect(flippedTo(db, 'destinations', 'error', 'dest-1')).toBeDefined();
+    // The cascade: only currently-active siblings flip.
+    expect(flippedTo(db, 'destinations', 'error', 'dest-2')).toBeDefined();
+    expect(flippedTo(db, 'adu_configs', 'invalid_token', 'c2')).toBeDefined();
+    // The cascade queries only currently-active rows — that filter is
+    // the scope pin (error/paused/rate-limited rows keep their own
+    // status because the database never returns them here).
+    const cascadeDestCall = db.calls.find(
+      (c) =>
+        c.table === 'destinations' &&
+        !c.ops.some((o) => o.kind === 'maybeSingle') &&
+        c.ops.some((o) => o.kind === 'select'),
+    );
+    expect(
+      cascadeDestCall?.ops.some(
+        (o) => o.kind === 'eq' && o.args[0] === 'status' && o.args[1] === 'active',
+      ),
+    ).toBe(true);
+    // Terminal settlement marks the reel failed too.
+    expect(flippedTo(db, 'adu_reels', 'failed', 'reel-1')).toBeDefined();
+  });
+
+  it('flips verification-required without expiring the account (190/459)', async () => {
+    const { result, db } = await aduPublishTick({
+      status: 'failed',
+      error: { kind: 'auth', code: '190', subcode: '459', message: 'User checkpointed.' },
+    });
+    expect(result.failed).toBe(1);
+    expect(flippedTo(db, 'adu_configs', 'fb_verification_required', 'c1')).toBeDefined();
+    expect(flippedTo(db, 'destinations', 'error', 'dest-1')).toBeDefined();
+    expect(touchedTable(db, 'social_accounts')).toBe(false);
+    // The real reason stays visible for checkpoint codes.
+    expect(storedFailure(db)?.last_error_message).toContain('User checkpointed.');
+  });
+
+  it('flips rate-limited with the anchor stamped on a retryable 368', async () => {
+    const { result, db } = await aduPublishTick({
+      status: 'retry',
+      error: { kind: 'retryable', code: '368', message: 'We limit how often you can post.' },
+    });
+    expect(result.retried).toBe(1);
+    const flipped = flippedTo(db, 'adu_configs', 'fb_rate_limited', 'c1');
+    expect(flipped).toBeDefined();
+    expect(flipped?.rate_limited_at).toBe(NOW.toISOString());
+    expect(flippedTo(db, 'destinations', 'rate_limited', 'dest-1')).toBeDefined();
+    expect(touchedTable(db, 'social_accounts')).toBe(false);
+    // The job stays pending_publish for the recovery to resume later.
+    const pending = db.calls.find(
+      (c) =>
+        c.table === 'adu_posting_jobs' &&
+        c.ops.some((o) => o.kind === 'update' && (o.args[0] as Row).status === 'pending_publish'),
+    );
+    expect(pending).toBeDefined();
+  });
+
+  it('flips missing_permission and nothing else (200)', async () => {
+    const { result, db } = await aduPublishTick({
+      status: 'failed',
+      error: { kind: 'auth', code: '200', message: 'Permissions error.' },
+    });
+    expect(result.failed).toBe(1);
+    expect(flippedTo(db, 'adu_configs', 'missing_permission', 'c1')).toBeDefined();
+    expect(touchedTable(db, 'social_accounts')).toBe(false);
+    expect(touchedTable(db, 'destinations')).toBe(false);
+  });
+
+  it('stores the generic backend message for app-bug 190/2069032 and flips nothing', async () => {
+    const { result, db } = await aduPublishTick({
+      status: 'failed',
+      error: { kind: 'auth', code: '190', subcode: '2069032', message: 'Wrong token type.' },
+    });
+    expect(result.failed).toBe(1);
+    expect(storedFailure(db)?.last_error_message).toBe(
+      'This post could not be published because of a backend issue.',
+    );
+    expect(touchedTable(db, 'adu_configs')).toBe(false);
+    expect(touchedTable(db, 'destinations')).toBe(false);
+    expect(touchedTable(db, 'social_accounts')).toBe(false);
+  });
+
+  it('stores the generic backend message for app-bug code 3 and flips nothing', async () => {
+    const { result, db } = await aduPublishTick({
+      status: 'failed',
+      error: { kind: 'permanent', code: '3', message: 'API Method not supported.' },
+    });
+    expect(result.failed).toBe(1);
+    expect(storedFailure(db)?.last_error_message).toBe(
+      'This post could not be published because of a backend issue.',
+    );
+    expect(touchedTable(db, 'adu_configs')).toBe(false);
+    expect(touchedTable(db, 'destinations')).toBe(false);
+    expect(touchedTable(db, 'social_accounts')).toBe(false);
+  });
+
+  it('skips publishing when the config is paused', async () => {
+    const { result, db, publisher } = await aduPublishTick(
+      { status: 'failed', error: { kind: 'permanent', code: '500', message: 'Meta-side failure.' } },
+      { gateStatus: 'paused' },
+    );
+    expect(publisher.publish).not.toHaveBeenCalled();
+    expect(result.published).toBe(0);
+    expect(result.failed).toBe(0);
+    expect(result.retried).toBe(0);
+    // Never claimed: no update to 'publishing' for this job.
+    const claim = db.calls.find(
+      (c) =>
+        c.table === 'adu_posting_jobs' &&
+        c.ops.some((o) => o.kind === 'update' && (o.args[0] as Row).status === 'publishing'),
+    );
+    expect(claim).toBeUndefined();
+  });
+
+  it('recovers rate-limited configs after 3 days via rate_limited_at', async () => {
+    const threeDaysAgo = new Date(NOW.getTime() - 3 * 24 * 60 * 60 * 1000).toISOString();
+    const db = makeDb((table, ops) => {
+      if (table === 'adu_configs' && ops.some((o) => o.kind === 'eq' && o.args[0] === 'status' && o.args[1] === 'fb_rate_limited')) {
+        return { data: [{ id: 'c-old' }], error: null };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
+        return { error: null };
+      }
+      return { data: [], error: null };
+    });
+    const result = await runAduTick({
+      db: db as never,
+      registry: registryWith(null),
+      masterKey: MASTER_KEY,
+      now: NOW,
+    });
+    expect(result.skipped).toBeUndefined();
+    // The recovery query's cutoff is exactly 3 days before now.
+    const recoveryCall = db.calls.find(
+      (c) =>
+        c.table === 'adu_configs' &&
+        c.ops.some((o) => o.kind === 'eq' && o.args[0] === 'status' && o.args[1] === 'fb_rate_limited'),
+    );
+    expect(
+      recoveryCall?.ops.find((o) => o.kind === 'lt' && o.args[0] === 'rate_limited_at')?.args[1],
+    ).toBe(threeDaysAgo);
+    const recovered = flippedTo(db, 'adu_configs', 'active', 'c-old');
+    expect(recovered).toBeDefined();
+    expect(recovered?.rate_limited_at).toBeNull();
+  });
+
+  it('marks the reel failed on terminal failure', async () => {
+    const { result, db } = await aduPublishTick({
+      status: 'failed',
+      error: { kind: 'permanent', code: '500', message: 'Meta-side failure.' },
+    });
+    expect(result.failed).toBe(1);
+    expect(flippedTo(db, 'adu_reels', 'failed', 'reel-1')).toBeDefined();
+  });
+
+  it('marks the reel failed when retries exhaust', async () => {
+    const { result, db } = await aduPublishTick(
+      {
+        status: 'retry',
+        error: { kind: 'retryable', code: '500', message: 'Meta-side failure.' },
+      },
+      { publishRetries: 5 },
+    );
+    expect(result.failed).toBe(1);
+    const settled = db.calls.find(
+      (c) =>
+        c.table === 'adu_posting_jobs' &&
+        c.ops.some((o) => o.kind === 'update' && (o.args[0] as Row).status === 'failed_to_publish'),
+    );
+    expect(settled).toBeDefined();
+    expect(flippedTo(db, 'adu_reels', 'failed', 'reel-1')).toBeDefined();
+  });
+
+  it('completes a config whose only busy reel has a terminally-failed job', async () => {
+    const config = configRow('c1', ['09:00']);
+    const db = makeDb((table, ops) => {
+      if (table === 'adu_configs' && ops.some((o) => o.kind === 'eq' && o.args[0] === 'status' && o.args[1] === 'active')) {
+        return { data: [config], error: null };
+      }
+      if (table === 'adu_reels' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return { data: null, error: null };
+      }
+      if (table === 'adu_reels') return { data: [], error: null };
+      // The crash window: the reel is still 'processing' but its job
+      // already settled terminally.
+      if (
+        table === 'adu_posting_jobs' &&
+        ops.some(
+          (o) =>
+            o.kind === 'in' &&
+            Array.isArray(o.args[1]) &&
+            (o.args[1] as unknown[]).includes('failed_to_publish'),
+        )
+      ) {
+        return { data: [{ reel_id: 'reel-1' }], error: null };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
+        return { error: null };
+      }
+      return { data: [], error: null };
+    });
+    const result = await runAduTick({
+      db: db as never,
+      registry: registryWith(null),
+      masterKey: MASTER_KEY,
+      now: NOW,
+    });
+    expect(result.intakeCompleted).toBe(1);
+    // The busy check excluded the terminally-failed reel.
+    const busyCall = db.calls.find(
+      (c) =>
+        c.table === 'adu_reels' &&
+        c.ops.some((o) => o.kind === 'in' && o.args[0] === 'status'),
+    );
+    expect(
+      busyCall?.ops.some(
+        (o) => o.kind === 'not' && o.args[0] === 'id' && String(o.args[2]).includes('reel-1'),
+      ),
+    ).toBe(true);
+    expect(flippedTo(db, 'adu_configs', 'completed', 'c1')).toBeDefined();
   });
 });

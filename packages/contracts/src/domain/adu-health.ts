@@ -90,14 +90,24 @@ function statusOnly(aduStatus: AduConfigStatus): AduPublishErrorDecision {
 }
 
 function invalidToken(): AduPublishErrorDecision {
-  return {
-    aduStatus: 'invalid_token',
-    cascadeInvalidToken: true,
-    destinationStatus: 'error',
-    accountStatus: 'expired',
-    userMessage: 'real',
-  };
+  return ADU_INVALID_TOKEN_DECISION;
 }
+
+/**
+ * The invalid-token decision, shared with the worker tick: an
+ * auth-kind failure with NO numeric Graph code carries no facts the
+ * mapper can branch on (Threads/Instagram auth errors arrive as code
+ * 'auth'), so the tick fails closed to this decision instead of
+ * leaving a dead token active. Whenever numeric facts exist the
+ * mapper's own decision stands.
+ */
+export const ADU_INVALID_TOKEN_DECISION: AduPublishErrorDecision = {
+  aduStatus: 'invalid_token',
+  cascadeInvalidToken: true,
+  destinationStatus: 'error',
+  accountStatus: 'expired',
+  userMessage: 'real',
+};
 
 function verificationRequired(): AduPublishErrorDecision {
   return {

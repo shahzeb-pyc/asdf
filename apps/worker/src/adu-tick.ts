@@ -1,9 +1,14 @@
 import {
+  ADU_GENERIC_BACKEND_MESSAGE,
+  ADU_INVALID_TOKEN_DECISION,
   ADU_MAX_PUBLISH_RETRIES,
   ADU_SKIP_FAILED_24H,
   ADU_STALE_PUBLISHING_SECONDS,
+  evaluateAduPublishError,
+  FB_RATE_LIMITED_COOLDOWN_MS,
   InternalError,
   localTimeInTimezone,
+  type AduPublishErrorDecision,
   type DatabaseDestinationRow,
   type DatabaseSocialAccountRow,
   type DatabaseUnifiedQueueItemRow,
@@ -140,6 +145,223 @@ const ADU_SETTLED_JOB_STATUSES = [
   'integrity_error',
 ];
 
+/** The terminally-failed job statuses: a reel with one of these jobs is terminal. */
+const ADU_TERMINAL_FAILED_JOB_STATUSES = [
+  'failed_to_publish',
+  'publish_error',
+  'integrity_error',
+];
+
+/**
+ * Marks a reel terminally failed after its job settles terminally, so
+ * it stops blocking the config completing. A reel-update failure is
+ * logged loudly (code + reel + job) and does NOT fail the tick — the
+ * job row already settled, and the §3.5 Pending formula plus the
+ * completed-check exclusion below cover the reel until it is fixed.
+ * Guarded to 'processing' so a race can never flip a posted reel.
+ */
+async function markAduReelFailed(
+  supabase: SupabaseClient,
+  reelId: string,
+  jobId: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from('adu_reels')
+    .update({ status: 'failed' })
+    .eq('id', reelId)
+    .eq('status', 'processing');
+  if (error) {
+    console.error(
+      `ADU terminal reel update failed: reel=${reelId} job=${jobId} code=${error.code ?? 'unknown'} ${error.message}`,
+    );
+  }
+}
+
+/**
+ * Invalid-token cascade: flip every currently-'active' destination
+ * under the account to 'error', and every currently-'active' ADU
+ * config under those destinations to 'invalid_token'. Rows already in
+ * an error / paused / rate-limited / checkpoint status keep their own
+ * status — their own recovery path applies. Keyset pages of 500; a
+ * load failure is logged loudly and stops the cascade, never the tick.
+ * (At most one config per destination — unique index on
+ * destination_id — so one config page covers one destination page.)
+ */
+async function cascadeInvalidToken(
+  supabase: SupabaseClient,
+  accountId: string,
+): Promise<void> {
+  let lastDestinationId: string | null = null;
+  for (;;) {
+    let destQuery = supabase
+      .from('destinations')
+      .select('id')
+      .eq('account_id', accountId)
+      .eq('status', 'active')
+      .order('id', { ascending: true })
+      .limit(ADU_TICK_PAGE_SIZE);
+    if (lastDestinationId) destQuery = destQuery.gt('id', lastDestinationId);
+    const { data: destBatch, error: destError } = await destQuery;
+    if (destError) {
+      console.error(
+        `ADU invalid-token cascade destination load failed: account=${accountId} code=${destError.code ?? 'unknown'}`,
+      );
+      return;
+    }
+    const dests = (destBatch ?? []) as Array<{ id: string }>;
+    if (dests.length === 0) break;
+    for (const dest of dests) {
+      const { error } = await supabase
+        .from('destinations')
+        .update({ status: 'error' })
+        .eq('id', dest.id)
+        .eq('status', 'active');
+      if (error) {
+        console.error(
+          `ADU invalid-token cascade destination flip failed: destination=${dest.id} code=${error.code ?? 'unknown'}`,
+        );
+      }
+    }
+    let lastConfigId: string | null = null;
+    for (;;) {
+      let configQuery = supabase
+        .from('adu_configs')
+        .select('id')
+        .in(
+          'destination_id',
+          dests.map((d) => d.id),
+        )
+        .eq('status', 'active')
+        .order('id', { ascending: true })
+        .limit(ADU_TICK_PAGE_SIZE);
+      if (lastConfigId) configQuery = configQuery.gt('id', lastConfigId);
+      const { data: configBatch, error: configError } = await configQuery;
+      if (configError) {
+        console.error(
+          `ADU invalid-token cascade config load failed: account=${accountId} code=${configError.code ?? 'unknown'}`,
+        );
+        break;
+      }
+      const configs = (configBatch ?? []) as Array<{ id: string }>;
+      for (const config of configs) {
+        const { error } = await supabase
+          .from('adu_configs')
+          .update({ status: 'invalid_token' })
+          .eq('id', config.id)
+          .eq('status', 'active');
+        if (error) {
+          console.error(
+            `ADU invalid-token cascade config flip failed: config=${config.id} code=${error.code ?? 'unknown'}`,
+          );
+        }
+      }
+      if (configs.length < ADU_TICK_PAGE_SIZE) break;
+      lastConfigId = configs[configs.length - 1]!.id;
+    }
+    if (dests.length < ADU_TICK_PAGE_SIZE) break;
+    lastDestinationId = dests[dests.length - 1]!.id;
+  }
+}
+
+/**
+ * Applies one mapper decision (spec §3.1): the config status (stamping
+ * `rate_limited_at` when the status is `fb_rate_limited` — the dedicated
+ * 3-day recovery anchor), the destination / account flips, the
+ * invalid-token cascade, and the team log for app-bug codes. Every flip
+ * failure is logged loudly and the tick continues: a failed flip must
+ * never lose the job settlement that follows. This REPLACES the old
+ * `kind === 'auth'` account flip — the mapper subsumes it.
+ */
+async function applyAduPublishErrorDecision(
+  supabase: SupabaseClient,
+  opts: {
+    decision: AduPublishErrorDecision;
+    configId: string;
+    destinationId: string;
+    accountId: string;
+    jobId: string;
+    now: Date;
+    errorCode: string | null;
+    errorSubcode: string | null;
+    errorMessage: string | null;
+    detail: Record<string, unknown> | undefined;
+  },
+): Promise<void> {
+  const { decision } = opts;
+  if (decision.aduStatus) {
+    const configUpdate: Record<string, unknown> = {
+      status: decision.aduStatus,
+      updated_at: opts.now.toISOString(),
+    };
+    if (decision.aduStatus === 'fb_rate_limited') {
+      configUpdate.rate_limited_at = opts.now.toISOString();
+    }
+    const { error } = await supabase
+      .from('adu_configs')
+      .update(configUpdate)
+      .eq('id', opts.configId);
+    if (error) {
+      console.error(
+        `ADU config status flip failed: config=${opts.configId} job=${opts.jobId} status=${decision.aduStatus} code=${error.code ?? 'unknown'}`,
+      );
+    }
+  }
+  if (decision.destinationStatus) {
+    const { error } = await supabase
+      .from('destinations')
+      .update({ status: decision.destinationStatus })
+      .eq('id', opts.destinationId);
+    if (error) {
+      console.error(
+        `ADU destination status flip failed: destination=${opts.destinationId} job=${opts.jobId} status=${decision.destinationStatus} code=${error.code ?? 'unknown'}`,
+      );
+    }
+  }
+  if (decision.accountStatus) {
+    const { error } = await supabase
+      .from('social_accounts')
+      .update({ status: decision.accountStatus })
+      .eq('id', opts.accountId);
+    if (error) {
+      console.error(
+        `ADU account status flip failed: account=${opts.accountId} job=${opts.jobId} status=${decision.accountStatus} code=${error.code ?? 'unknown'}`,
+      );
+    }
+  }
+  if (decision.cascadeInvalidToken) {
+    await cascadeInvalidToken(supabase, opts.accountId);
+  }
+  if (decision.userMessage === 'generic-backend') {
+    // App bug (190/2069032, 3): the user sees only the generic message;
+    // the full diagnostic goes here, to the team log.
+    const detail = opts.detail;
+    const phase = typeof detail?.phase === 'string' ? detail.phase : 'unknown';
+    const http =
+      typeof detail?.httpStatus === 'number' ? String(detail.httpStatus) : 'unknown';
+    const body = typeof detail?.rawBody === 'string' ? detail.rawBody : '';
+    console.error(
+      `[adu-tick] app-bug publish failure: job=${opts.jobId} config=${opts.configId} code=${opts.errorCode ?? 'unknown'} subcode=${opts.errorSubcode ?? 'unknown'} phase=${phase} http=${http} message=${opts.errorMessage ?? ''}${body ? ` body=${body}` : ''}`,
+    );
+  }
+}
+
+/**
+ * Settles the stored job reason for a failure: when the mapper says
+ * 'generic-backend', the stored message is ONLY the generic message —
+ * the real reason (with its diagnostic detail) must never be
+ * user-visible for app-bug codes. Every other failure stores the real
+ * reason with its detail, as before.
+ */
+function aduSettlementFailure(
+  failure: { code: string | null; message: string | null },
+  decision: AduPublishErrorDecision | null,
+): { code: string | null; message: string | null } {
+  if (decision?.userMessage === 'generic-backend') {
+    return { code: failure.code, message: ADU_GENERIC_BACKEND_MESSAGE };
+  }
+  return failure;
+}
+
 export async function runAduTick(options: {
   db: AduTickDb;
   registry: PublisherRegistry;
@@ -155,6 +377,56 @@ export async function runAduTick(options: {
     retried: 0,
   };
   const supabase = db as unknown as SupabaseClient;
+
+  // --- Rate-limit auto-recovery ---------------------------------------
+  // Configs in fb_rate_limited whose rate_limited_at anchor is 3+
+  // days old flip back to active; the user does nothing. Keyset pages
+  // of ADU_TICK_PAGE_SIZE; a load failure that is not a missing table
+  // throws, a missing table is a clean skip (same rule as the stale
+  // reset below). A failed flip is logged loudly and the tick goes on.
+  // The anchor is cleared so a later rate limit starts a fresh clock.
+  {
+    const recoverBefore = new Date(
+      now.getTime() - FB_RATE_LIMITED_COOLDOWN_MS,
+    ).toISOString();
+    let lastRecoveredId: string | null = null;
+    for (;;) {
+      let recoveryQuery = supabase
+        .from('adu_configs')
+        .select('id')
+        .eq('status', 'fb_rate_limited')
+        .lt('rate_limited_at', recoverBefore)
+        .order('id', { ascending: true })
+        .limit(ADU_TICK_PAGE_SIZE);
+      if (lastRecoveredId) recoveryQuery = recoveryQuery.gt('id', lastRecoveredId);
+      const { data: recoveryBatch, error: recoveryError } = await recoveryQuery;
+      if (recoveryError) {
+        if (isMissingTable(recoveryError)) return { ...result, skipped: true };
+        throw new InternalError(
+          `ADU rate-limit recovery load failed: ${recoveryError.code ?? 'unknown'} ${recoveryError.message}`,
+        );
+      }
+      const batch = (recoveryBatch ?? []) as Array<{ id: string }>;
+      for (const row of batch) {
+        const { error: recoverError } = await supabase
+          .from('adu_configs')
+          .update({
+            status: 'active',
+            rate_limited_at: null,
+            updated_at: now.toISOString(),
+          })
+          .eq('id', row.id)
+          .eq('status', 'fb_rate_limited');
+        if (recoverError) {
+          console.error(
+            `ADU rate-limit recovery failed: config=${row.id} code=${recoverError.code ?? 'unknown'}`,
+          );
+        }
+      }
+      if (batch.length < ADU_TICK_PAGE_SIZE) break;
+      lastRecoveredId = batch[batch.length - 1]!.id;
+    }
+  }
 
   // Stale publishing jobs (>300s) go back to pending_publish.
   // Fail loud: a stale-load failure that is NOT a missing table is
@@ -283,12 +555,38 @@ export async function runAduTick(options: {
       throw new InternalError(`ADU intake oldest load failed: ${oldestError.code ?? 'unknown'} ${oldestError.message}`);
     }
     if (!oldest) {
-      const { data: busy, error: busyError } = await supabase
+      // A reel whose job terminally failed is terminal like a posted
+      // reel — it must not block the config completing. Settlement
+      // writes the reel 'failed' (see markAduReelFailed), but a crash
+      // between the job update and the reel update leaves the reel
+      // 'processing' with a terminally-failed job; exclude those reels
+      // from the busy check by their job rows (one bounded page — the
+      // exclusion only matters for crash-window rows). PostgREST has
+      // no "rows WITHOUT a matching embedded row" filter, so the
+      // exclusion is a second query, not an embedded filter.
+      const { data: terminalFailed, error: terminalFailedError } = await supabase
+        .from('adu_posting_jobs')
+        .select('reel_id')
+        .eq('config_id', config.id)
+        .in('status', ADU_TERMINAL_FAILED_JOB_STATUSES)
+        .limit(ADU_TICK_PAGE_SIZE);
+      if (terminalFailedError) {
+        throw new InternalError(
+          `ADU intake terminal-failed load failed: ${terminalFailedError.code ?? 'unknown'} ${terminalFailedError.message}`,
+        );
+      }
+      const terminalReelIds = ((terminalFailed ?? []) as Array<{ reel_id: string }>).map(
+        (row) => row.reel_id,
+      );
+      let busyQuery = supabase
         .from('adu_reels')
         .select('id')
         .eq('config_id', config.id)
-        .in('status', ['pending', 'processing'])
-        .limit(1);
+        .in('status', ['pending', 'processing']);
+      if (terminalReelIds.length > 0) {
+        busyQuery = busyQuery.not('id', 'in', `(${terminalReelIds.join(',')})`);
+      }
+      const { data: busy, error: busyError } = await busyQuery.limit(1);
       if (busyError) {
         throw new InternalError(`ADU intake busy load failed: ${busyError.code ?? 'unknown'} ${busyError.message}`);
       }
@@ -416,6 +714,7 @@ export async function runAduTick(options: {
           last_error_message: 'Publish retries exhausted.',
         })
         .eq('id', job.id);
+      await markAduReelFailed(supabase, job.reel_id, job.id);
       result.failed += 1;
       continue;
     }
@@ -448,10 +747,23 @@ export async function runAduTick(options: {
     {
       const { data: gateConfigRow } = await supabase
         .from('adu_configs')
-        .select('workspace_id')
+        .select('workspace_id, status')
         .eq('id', job.config_id)
         .maybeSingle();
-      const gateWorkspaceId = (gateConfigRow as { workspace_id?: string } | null)?.workspace_id;
+      const gateConfig = gateConfigRow as
+        | { workspace_id?: string; status?: string }
+        | null;
+      const gateWorkspaceId = gateConfig?.workspace_id;
+      // Publish-loop gate: only 'active' configs publish. A config in
+      // any error / paused / completed status leaves its jobs
+      // pending_publish — no publish, no retry increment — until it
+      // recovers. Same shape as the entitlement gate below.
+      if (gateConfig?.status !== 'active') {
+        console.error(
+          `[adu-tick] job=${job.id} skipped: config status is ${gateConfig?.status ?? 'unknown'}; leaving pending_publish`,
+        );
+        continue;
+      }
       const entitled = gateWorkspaceId
         ? await workspaceOwnerHasActivePeriod(supabase, gateWorkspaceId, now)
         : false;
@@ -491,6 +803,7 @@ export async function runAduTick(options: {
         .from('adu_posting_jobs')
         .update({ status: 'publish_error', last_error_code: 'destination_missing', last_error_message: 'Destination not found.' })
         .eq('id', job.id);
+      await markAduReelFailed(supabase, job.reel_id, job.id);
       result.failed += 1;
       continue;
     }
@@ -504,6 +817,7 @@ export async function runAduTick(options: {
         .from('adu_posting_jobs')
         .update({ status: 'publish_error', last_error_code: 'destination_missing', last_error_message: 'Destination not found.' })
         .eq('id', job.id);
+      await markAduReelFailed(supabase, job.reel_id, job.id);
       result.failed += 1;
       continue;
     }
@@ -518,6 +832,7 @@ export async function runAduTick(options: {
         .from('adu_posting_jobs')
         .update({ status: 'publish_error', last_error_code: 'account_missing', last_error_message: dest.platform === 'threads' ? 'Threads account not found.' : dest.platform === 'instagram' ? 'Instagram account not found.' : 'Facebook account not found.' })
         .eq('id', job.id);
+      await markAduReelFailed(supabase, job.reel_id, job.id);
       result.failed += 1;
       continue;
     }
@@ -602,6 +917,56 @@ export async function runAduTick(options: {
         .update({ graph_post_id: outcome.externalPostId })
         .eq('id', job.id);
     }
+    // ADU error mapping (spec §3.1): on every publish failure the
+    // mapper is the single decision point for config / destination /
+    // account flips and for the user-visible message. The publisher
+    // outcome's targetDestinationStatus / targetAccountStatus belong
+    // to the Pages queue settle path and are NOT read here. The error
+    // facts come from outcome.error (string code/subcode) plus the
+    // diagnostic HTTP status in outcome.detail.
+    const mappedDecision =
+      outcome.status === 'published'
+        ? null
+        : evaluateAduPublishError({
+            code: outcome.error?.code ?? null,
+            subcode: outcome.error?.subcode ?? null,
+            message: outcome.error?.message ?? null,
+            httpStatus:
+              outcome.detail !== undefined &&
+              typeof outcome.detail.httpStatus === 'number'
+                ? outcome.detail.httpStatus
+                : undefined,
+          });
+    // An auth-kind failure with no numeric Graph code carries no facts
+    // the mapper can branch on (Threads/Instagram auth errors arrive
+    // as code 'auth'; the old test fake uses 'invalid_token'). Fail
+    // closed to the invalid-token decision — the old kind==='auth'
+    // flip — instead of leaving a dead token active. Whenever numeric
+    // facts exist the mapper's decision stands (e.g. 190/459 stays a
+    // checkpoint even though the publisher classifies it 'auth').
+    const hasNumericCode =
+      outcome.error?.code !== undefined && /^\d+$/.test(outcome.error.code.trim());
+    const aduDecision =
+      mappedDecision !== null &&
+      mappedDecision.aduStatus === null &&
+      outcome.error?.kind === 'auth' &&
+      !hasNumericCode
+        ? ADU_INVALID_TOKEN_DECISION
+        : mappedDecision;
+    if (aduDecision) {
+      await applyAduPublishErrorDecision(supabase, {
+        decision: aduDecision,
+        configId: job.config_id,
+        destinationId,
+        accountId: dest.account_id,
+        jobId: job.id,
+        now,
+        errorCode: outcome.error?.code ?? null,
+        errorSubcode: outcome.error?.subcode ?? null,
+        errorMessage: outcome.error?.message ?? null,
+        detail: outcome.detail,
+      });
+    }
     if (outcome.status === 'published') {
       await supabase
         .from('adu_posting_jobs')
@@ -623,10 +988,13 @@ export async function runAduTick(options: {
     } else if (outcome.status === 'retry' || outcome.status === 'deferred') {
       const retries = outcome.status === 'retry' ? job.publish_retries + 1 : job.publish_retries;
       if (retries > ADU_MAX_PUBLISH_RETRIES) {
-        const failure = aduFailureFields(outcome, {
-          code: 'publish_retries_exhausted',
-          message: 'Publish retries exhausted.',
-        });
+        const failure = aduSettlementFailure(
+          aduFailureFields(outcome, {
+            code: 'publish_retries_exhausted',
+            message: 'Publish retries exhausted.',
+          }),
+          aduDecision,
+        );
         await supabase
           .from('adu_posting_jobs')
           .update({
@@ -636,9 +1004,13 @@ export async function runAduTick(options: {
             last_error_message: failure.message,
           })
           .eq('id', job.id);
+        await markAduReelFailed(supabase, job.reel_id, job.id);
         result.failed += 1;
       } else {
-        const failure = aduFailureFields(outcome, { code: null, message: null });
+        const failure = aduSettlementFailure(
+          aduFailureFields(outcome, { code: null, message: null }),
+          aduDecision,
+        );
         await supabase
           .from('adu_posting_jobs')
           .update({
@@ -651,10 +1023,13 @@ export async function runAduTick(options: {
         result.retried += 1;
       }
     } else {
-      const failure = aduFailureFields(outcome, {
-        code: 'publish_failed',
-        message: 'Publish failed.',
-      });
+      const failure = aduSettlementFailure(
+        aduFailureFields(outcome, {
+          code: 'publish_failed',
+          message: 'Publish failed.',
+        }),
+        aduDecision,
+      );
       await supabase
         .from('adu_posting_jobs')
         .update({
@@ -664,12 +1039,7 @@ export async function runAduTick(options: {
           last_error_message: failure.message,
         })
         .eq('id', job.id);
-      if (outcome.error?.kind === 'auth') {
-        await supabase
-          .from('social_accounts')
-          .update({ status: 'expired' })
-          .eq('id', dest.account_id);
-      }
+      await markAduReelFailed(supabase, job.reel_id, job.id);
       result.failed += 1;
     }
   }
