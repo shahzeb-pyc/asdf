@@ -10,45 +10,47 @@ import { discoverReelIdsWithYtdlp } from './ytdlp.js';
 // log file, which is test instrumentation in a temp dir.
 const FAKE_PROXY = 'http://proxyuser:proxypass@203.0.113.7:8080';
 const PROFILE_IDS = ['7675699705355177218', '7633716305220078871'];
-const SECUID_IDS = ['7700323970007960854', '7699944216415243542'];
-const SEC_UID = 'MS4wLjABAAAAtestsecuidvalue';
 const PROFILE_URL = 'https://www.tiktok.com/@courtroom62';
 
 // Fake yt-dlp binary (CommonJS: the file has no extension, so Node loads it
 // as CJS). It records every invocation's argv, then either fails or prints
 // flat-playlist JSON, depending on FAKE_YTDLP_MODE:
-//   profile-ok   - every attempt succeeds
-//   profile-fail - the profile-URL attempt fails, the tiktokuser: attempt succeeds
-//   all-fail     - every attempt fails
+//   profile-ok       - every attempt succeeds
+//   all-fail         - every attempt fails with a stderr message
 //   empty-stderr-fail - every attempt exits 1 with no stderr output
-//   hang-profile - the profile-URL attempt hangs (execFile timeout kill),
-//                  the tiktokuser: attempt exits 1 with no stderr output
+//   hang-profile     - the FIRST attempt hangs (execFile timeout kill),
+//                      later attempts exit 1 with no stderr output
+//   fail-first-n     - the first FAKE_YTDLP_FAIL_FIRST invocations fail
+//                      with a stderr message, then attempts succeed
 const FAKE_YTDLP_SCRIPT = `#!/usr/bin/env node
 const fs = require('node:fs');
 const logFile = process.env.FAKE_YTDLP_LOG;
 const mode = process.env.FAKE_YTDLP_MODE || 'profile-ok';
 const args = process.argv.slice(2);
 fs.appendFileSync(logFile, JSON.stringify(args) + String.fromCharCode(10));
-const target = args[args.length - 1];
+// 1-based number of this invocation (the log line above is already counted).
+const invocationNumber = fs.readFileSync(logFile, 'utf8').trim().split(String.fromCharCode(10)).filter(Boolean).length;
 const fail = (msg) => {
   process.stderr.write(msg + String.fromCharCode(10));
   process.exit(1);
 };
-if (mode === 'all-fail') fail('fake yt-dlp: simulated failure');
-if (mode === 'profile-fail' && target.startsWith('https://www.tiktok.com/')) {
-  fail('fake yt-dlp: simulated profile failure');
-}
-// Empty stderr, non-zero exit: execFile's err.message is
-// "Command failed: <binary> <full argv>", so the failure detail falls back
-// to a string containing --proxy <value> verbatim unless redacted.
-if (mode === 'empty-stderr-fail') process.exit(1);
-if (mode === 'hang-profile' && target.startsWith('https://www.tiktok.com/')) {
-  // Hang until execFile's timeout kills the process: same empty-stderr
-  // shape as a timeout kill in production.
+// Hang only the FIRST attempt: execFile's timeout kills the process, the
+// same empty-stderr shape as a timeout kill in production. Later attempts
+// fail fast with empty stderr, so the retry loop still runs 5 attempts.
+let hanging = false;
+if (mode === 'hang-profile' && invocationNumber === 1) {
   setTimeout(() => {}, 60000);
-} else {
+  hanging = true;
+}
+if (!hanging) {
+  if (mode === 'all-fail') fail('fake yt-dlp: simulated failure');
+  if (mode === 'empty-stderr-fail') process.exit(1);
   if (mode === 'hang-profile') process.exit(1);
-  const ids = target.startsWith('tiktokuser:') ? ${JSON.stringify(SECUID_IDS)} : ${JSON.stringify(PROFILE_IDS)};
+  if (mode === 'fail-first-n') {
+    const failFirst = Number(process.env.FAKE_YTDLP_FAIL_FIRST || '2');
+    if (invocationNumber <= failFirst) fail('fake yt-dlp: simulated profile failure');
+  }
+  const ids = ${JSON.stringify(PROFILE_IDS)};
   process.stdout.write(JSON.stringify({ entries: ids.map((id) => ({ id })) }));
 }
 `;
@@ -63,10 +65,11 @@ const ENV_KEYS = [
   'YTDLP_BIN',
   'YTDLP_TIMEOUT_MS',
   'FAKE_YTDLP_MODE',
+  'FAKE_YTDLP_FAIL_FIRST',
   'FAKE_YTDLP_LOG',
 ];
 
-async function setupFakeYtdlp({ mode, proxy }) {
+async function setupFakeYtdlp({ mode, proxy, failFirst }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-ytdlp-'));
   const binPath = path.join(dir, 'yt-dlp');
   fs.writeFileSync(binPath, FAKE_YTDLP_SCRIPT, { mode: 0o755 });
@@ -86,6 +89,11 @@ async function setupFakeYtdlp({ mode, proxy }) {
   process.env.YTDLP_TIMEOUT_MS = '10000';
   process.env.FAKE_YTDLP_LOG = logFile;
   process.env.FAKE_YTDLP_MODE = mode;
+  if (failFirst === undefined) {
+    delete process.env.FAKE_YTDLP_FAIL_FIRST;
+  } else {
+    process.env.FAKE_YTDLP_FAIL_FIRST = String(failFirst);
+  }
   if (proxy === undefined) {
     delete process.env.COUNTIK_PROXY_URL;
   } else {
@@ -111,16 +119,6 @@ function readInvocations(logFile) {
     return [];
   }
   return content.split('\n').map((line) => JSON.parse(line));
-}
-
-function makeResolverStub(secUid) {
-  let calls = 0;
-  const stub = async () => {
-    calls += 1;
-    return secUid;
-  };
-  stub.calls = () => calls;
-  return stub;
 }
 
 async function withCapturedConsole(fn) {
@@ -149,191 +147,55 @@ function assertProxyValueNeverLogged(lines) {
   );
 }
 
-test('profile URL attempt runs first through the proxy and Countik is never called', async () => {
-  const { logFile, restore } = await setupFakeYtdlp({ mode: 'profile-ok', proxy: FAKE_PROXY });
+test('profile attempt succeeds on the 3rd attempt after 2 failures — exactly 3 invocations', async () => {
+  const { logFile, restore } = await setupFakeYtdlp({ mode: 'fail-first-n', failFirst: 2, proxy: FAKE_PROXY });
   try {
-    const resolver = makeResolverStub(SEC_UID);
     const { result, lines } = await withCapturedConsole(() =>
-      discoverReelIdsWithYtdlp('tiktok', 'courtroom62', 10, { resolveSecUid: resolver }),
+      discoverReelIdsWithYtdlp('tiktok', 'courtroom62', 10),
     );
     assert.deepEqual(result, { ok: true, ids: PROFILE_IDS });
-    assert.equal(resolver.calls(), 0);
 
     const invocations = readInvocations(logFile);
-    assert.equal(invocations.length, 1);
-    const [argv] = invocations;
-    assert.equal(argv.at(-1), PROFILE_URL);
-    const proxyIndex = argv.indexOf('--proxy');
-    assert.ok(proxyIndex >= 0, 'profile attempt must pass --proxy');
-    assert.equal(argv[proxyIndex + 1], FAKE_PROXY);
-    assert.ok(argv.includes('--flat-playlist'));
-    assert.ok(argv.includes('-J'));
+    assert.equal(invocations.length, 3);
+    for (const argv of invocations) {
+      assert.equal(argv.at(-1), PROFILE_URL);
+      const proxyIndex = argv.indexOf('--proxy');
+      assert.ok(proxyIndex >= 0, 'every profile attempt must pass --proxy');
+      assert.equal(argv[proxyIndex + 1], FAKE_PROXY);
+      assert.ok(argv.includes('--flat-playlist'));
+      assert.ok(argv.includes('-J'));
+    }
     assertProxyValueNeverLogged(lines);
   } finally {
     restore();
   }
 });
 
-test('profile failure falls back to Countik sec_uid and tiktokuser: stays direct', async () => {
-  const { logFile, restore } = await setupFakeYtdlp({ mode: 'profile-fail', proxy: FAKE_PROXY });
-  try {
-    const resolver = makeResolverStub(SEC_UID);
-    const { result, lines } = await withCapturedConsole(() =>
-      discoverReelIdsWithYtdlp('tiktok', 'courtroom62', 10, { resolveSecUid: resolver }),
-    );
-    assert.deepEqual(result, { ok: true, ids: SECUID_IDS });
-    assert.equal(resolver.calls(), 1);
-
-    const invocations = readInvocations(logFile);
-    assert.equal(invocations.length, 2);
-    const [first, second] = invocations;
-    assert.equal(first.at(-1), PROFILE_URL);
-    const proxyIndex = first.indexOf('--proxy');
-    assert.ok(proxyIndex >= 0, 'profile attempt must pass --proxy');
-    assert.equal(first[proxyIndex + 1], FAKE_PROXY);
-    assert.equal(second.at(-1), `tiktokuser:${SEC_UID}`);
-    assert.ok(!second.includes('--proxy'), 'tiktokuser: attempt must not pass --proxy');
-    assertProxyValueNeverLogged(lines);
-  } finally {
-    restore();
-  }
-});
-
-test('both paths failing returns error with the last failure detail', async () => {
+test('all 5 profile attempts failing returns error — exactly 5 invocations', async () => {
   const { logFile, restore } = await setupFakeYtdlp({ mode: 'all-fail', proxy: FAKE_PROXY });
   try {
-    const resolver = makeResolverStub(SEC_UID);
     const { result, lines } = await withCapturedConsole(() =>
-      discoverReelIdsWithYtdlp('tiktok', 'courtroom62', 10, { resolveSecUid: resolver }),
+      discoverReelIdsWithYtdlp('tiktok', 'courtroom62', 10),
     );
     assert.equal(result.ok, false);
     assert.ok(typeof result.reason === 'string' && result.reason.length > 0);
-    assert.equal(resolver.calls(), 1);
 
     const invocations = readInvocations(logFile);
-    assert.equal(invocations.length, 2);
-    assert.equal(invocations[0].at(-1), PROFILE_URL);
-    assert.equal(invocations[1].at(-1), `tiktokuser:${SEC_UID}`);
-    assert.ok(!invocations[1].includes('--proxy'));
+    assert.equal(invocations.length, 5);
+    for (const argv of invocations) {
+      assert.equal(argv.at(-1), PROFILE_URL);
+    }
     assertProxyValueNeverLogged(lines);
   } finally {
     restore();
   }
 });
 
-test('empty-stderr failure never leaks the proxy value into logs or the returned reason', async () => {
-  const { logFile, restore } = await setupFakeYtdlp({ mode: 'empty-stderr-fail', proxy: FAKE_PROXY });
-  try {
-    const resolver = makeResolverStub(SEC_UID);
-    const { result, lines } = await withCapturedConsole(() =>
-      discoverReelIdsWithYtdlp('tiktok', 'courtroom62', 10, { resolveSecUid: resolver }),
-    );
-    assert.equal(result.ok, false);
-    assert.ok(typeof result.reason === 'string' && result.reason.length > 0);
-    assert.ok(!result.reason.includes(FAKE_PROXY) && !result.reason.includes('proxypass'));
-    assertProxyValueNeverLogged(lines);
-    // The profile attempt's detail came from err.message
-    // (`Command failed: <binary> <full argv>`) because stderr was empty:
-    // it must appear redacted, never verbatim.
-    assert.ok(
-      lines.some((line) => line.includes('[proxy]')),
-      `expected a redacted proxy in the logs: ${lines.join(' | ')}`,
-    );
-    assert.equal(resolver.calls(), 1);
-
-    const invocations = readInvocations(logFile);
-    assert.equal(invocations.length, 2);
-    assert.equal(invocations[0].at(-1), PROFILE_URL);
-    assert.equal(invocations[1].at(-1), `tiktokuser:${SEC_UID}`);
-    assert.ok(!invocations[1].includes('--proxy'));
-  } finally {
-    restore();
-  }
-});
-
-test('empty-stderr profile failure with no sec_uid returns the redacted profile detail', async () => {
-  const { logFile, restore } = await setupFakeYtdlp({ mode: 'empty-stderr-fail', proxy: FAKE_PROXY });
-  try {
-    const resolver = makeResolverStub(null);
-    const { result, lines } = await withCapturedConsole(() =>
-      discoverReelIdsWithYtdlp('tiktok', 'courtroom62', 10, { resolveSecUid: resolver }),
-    );
-    assert.equal(result.ok, false);
-    // No sec_uid, so the returned reason IS the profile attempt's detail:
-    // it came from err.message and must be redacted, not verbatim.
-    assert.ok(typeof result.reason === 'string' && result.reason.length > 0);
-    assert.ok(result.reason.includes('Command failed'), `reason should keep the failure detail: ${result.reason}`);
-    assert.ok(result.reason.includes('[proxy]'), `reason should show the redacted proxy: ${result.reason}`);
-    assert.ok(!result.reason.includes(FAKE_PROXY) && !result.reason.includes('proxypass'));
-    assertProxyValueNeverLogged(lines);
-    assert.equal(resolver.calls(), 1);
-
-    // Only the profile attempt ran (no tiktokuser: attempt without a sec_uid).
-    const invocations = readInvocations(logFile);
-    assert.equal(invocations.length, 1);
-    assert.equal(invocations[0].at(-1), PROFILE_URL);
-  } finally {
-    restore();
-  }
-});
-
-test('timeout-killed yt-dlp never leaks the proxy value into logs or the returned reason', async () => {
-  const { logFile, restore } = await setupFakeYtdlp({ mode: 'hang-profile', proxy: FAKE_PROXY });
-  try {
-    const resolver = makeResolverStub(SEC_UID);
-    const { result, lines } = await withCapturedConsole(() =>
-      discoverReelIdsWithYtdlp('tiktok', 'courtroom62', 10, { resolveSecUid: resolver }),
-    );
-    assert.equal(result.ok, false);
-    assert.ok(typeof result.reason === 'string' && result.reason.length > 0);
-    assert.ok(!result.reason.includes(FAKE_PROXY) && !result.reason.includes('proxypass'));
-    assertProxyValueNeverLogged(lines);
-    // The killed profile attempt's detail came from err.message and must
-    // appear redacted in its log line.
-    assert.ok(
-      lines.some((line) => line.includes('[proxy]')),
-      `expected a redacted proxy in the logs: ${lines.join(' | ')}`,
-    );
-    assert.equal(resolver.calls(), 1);
-
-    const invocations = readInvocations(logFile);
-    assert.equal(invocations.length, 2);
-    assert.equal(invocations[0].at(-1), PROFILE_URL);
-    assert.equal(invocations[1].at(-1), `tiktokuser:${SEC_UID}`);
-  } finally {
-    restore();
-  }
-});
-
-test('sec_uid resolution failing after profile failure returns the profile failure', async () => {
-  const { logFile, restore } = await setupFakeYtdlp({ mode: 'all-fail', proxy: FAKE_PROXY });
-  try {
-    const resolver = makeResolverStub(null);
-    const { result } = await withCapturedConsole(() =>
-      discoverReelIdsWithYtdlp('tiktok', 'courtroom62', 10, { resolveSecUid: resolver }),
-    );
-    assert.equal(result.ok, false);
-    assert.ok(typeof result.reason === 'string' && result.reason.length > 0);
-    assert.equal(resolver.calls(), 1);
-
-    // No tiktokuser: attempt without a sec_uid: only the profile attempt ran.
-    const invocations = readInvocations(logFile);
-    assert.equal(invocations.length, 1);
-    assert.equal(invocations[0].at(-1), PROFILE_URL);
-  } finally {
-    restore();
-  }
-});
-
-test('without COUNTIK_PROXY_URL the profile attempt still runs first, without --proxy', async () => {
+test('without COUNTIK_PROXY_URL the profile attempt still runs, without --proxy', async () => {
   const { logFile, restore } = await setupFakeYtdlp({ mode: 'profile-ok', proxy: undefined });
   try {
-    const resolver = makeResolverStub(SEC_UID);
-    const result = await discoverReelIdsWithYtdlp('tiktok', 'courtroom62', 10, {
-      resolveSecUid: resolver,
-    });
+    const result = await discoverReelIdsWithYtdlp('tiktok', 'courtroom62', 10);
     assert.deepEqual(result, { ok: true, ids: PROFILE_IDS });
-    assert.equal(resolver.calls(), 0);
 
     const invocations = readInvocations(logFile);
     assert.equal(invocations.length, 1);
@@ -347,13 +209,67 @@ test('without COUNTIK_PROXY_URL the profile attempt still runs first, without --
 test('non-TikTok platform is rejected without invoking yt-dlp', async () => {
   const { logFile, restore } = await setupFakeYtdlp({ mode: 'profile-ok', proxy: FAKE_PROXY });
   try {
-    const resolver = makeResolverStub(SEC_UID);
-    const result = await discoverReelIdsWithYtdlp('instagram', 'someuser', 10, {
-      resolveSecUid: resolver,
-    });
+    const result = await discoverReelIdsWithYtdlp('instagram', 'someuser', 10);
     assert.deepEqual(result, { ok: false, reason: 'platform_not_supported' });
-    assert.equal(resolver.calls(), 0);
     assert.deepEqual(readInvocations(logFile), []);
+  } finally {
+    restore();
+  }
+});
+
+test('empty-stderr failure on retry attempts still redacts the proxy value', async () => {
+  const { logFile, restore } = await setupFakeYtdlp({ mode: 'empty-stderr-fail', proxy: FAKE_PROXY });
+  try {
+    const { result, lines } = await withCapturedConsole(() =>
+      discoverReelIdsWithYtdlp('tiktok', 'courtroom62', 10),
+    );
+    assert.equal(result.ok, false);
+    // Every attempt's detail came from err.message
+    // (`Command failed: <binary> <full argv>`) because stderr was empty:
+    // the returned reason is the last attempt's detail — redacted, never verbatim.
+    assert.ok(typeof result.reason === 'string' && result.reason.length > 0);
+    assert.ok(result.reason.includes('Command failed'), `reason should keep the failure detail: ${result.reason}`);
+    assert.ok(result.reason.includes('[proxy]'), `reason should show the redacted proxy: ${result.reason}`);
+    assert.ok(!result.reason.includes(FAKE_PROXY) && !result.reason.includes('proxypass'));
+    assertProxyValueNeverLogged(lines);
+    assert.ok(
+      lines.some((line) => line.includes('[proxy]')),
+      `expected a redacted proxy in the logs: ${lines.join(' | ')}`,
+    );
+
+    const invocations = readInvocations(logFile);
+    assert.equal(invocations.length, 5);
+    for (const argv of invocations) {
+      assert.equal(argv.at(-1), PROFILE_URL);
+    }
+  } finally {
+    restore();
+  }
+});
+
+test('timeout-killed first attempt never leaks the proxy value into logs or the returned reason', async () => {
+  const { logFile, restore } = await setupFakeYtdlp({ mode: 'hang-profile', proxy: FAKE_PROXY });
+  try {
+    const { result, lines } = await withCapturedConsole(() =>
+      discoverReelIdsWithYtdlp('tiktok', 'courtroom62', 10),
+    );
+    assert.equal(result.ok, false);
+    assert.ok(typeof result.reason === 'string' && result.reason.length > 0);
+    assert.ok(result.reason.includes('[proxy]'), `reason should show the redacted proxy: ${result.reason}`);
+    assert.ok(!result.reason.includes(FAKE_PROXY) && !result.reason.includes('proxypass'));
+    assertProxyValueNeverLogged(lines);
+    // The killed first attempt's detail came from err.message and must
+    // appear redacted in its log line.
+    assert.ok(
+      lines.some((line) => line.includes('[proxy]')),
+      `expected a redacted proxy in the logs: ${lines.join(' | ')}`,
+    );
+
+    const invocations = readInvocations(logFile);
+    assert.equal(invocations.length, 5);
+    for (const argv of invocations) {
+      assert.equal(argv.at(-1), PROFILE_URL);
+    }
   } finally {
     restore();
   }

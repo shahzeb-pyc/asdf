@@ -7,7 +7,7 @@ Ported from the old fbuploadpro service (`backend_v3/services/facebook/auto-down
 ## Two-stage discovery
 
 1. **yt-dlp (TikTok only)** — flat-playlist extract with `--playlist-items`.
-   yt-dlp first: the plain profile URL `https://www.tiktok.com/@{handle}` goes through the rotating proxy (`COUNTIK_PROXY_URL` from env), so yt-dlp resolves the `sec_uid` itself from the profile page. Only if that fails, resolve the TikTok `sec_uid` via the secuid Worker, with a direct Countik fallback (`GET https://countik.com/api/exist/<username>`, see `discovery/sec-uid.js`); when `COUNTIK_PROXY_URL` is set, the Countik fallback goes through the same rotating proxy (the VPS IP is 403-blocked by Countik). The `tiktokuser:{sec_uid}` attempt then runs **direct** (mobile feed, bypasses desktop captcha walls — the feed API works direct from the VPS). Mobile iPhone UA + full `Sec-Fetch-*` headers (see `discovery/ytdlp-args.js`), `--retries 5`, `--extractor-retries 10`, `--socket-timeout 30`, proxy from `DATACENTER_PROXY` / `PROXY_URL` / `HTTP_PROXY` / `HTTPS_PROXY` when set (the `COUNTIK_PROXY_URL` proxy is passed explicitly by the discovery code, never read from env by the argv builder). Yields video IDs only; "new" is set difference against stored IDs (upsert `onConflict: 'config_id,source_reel_id'`, duplicates ignored).
+   yt-dlp only: the plain profile URL `https://www.tiktok.com/@{handle}` goes through the rotating proxy (`COUNTIK_PROXY_URL` from env), so yt-dlp resolves the `sec_uid` itself from the profile page. The profile attempt is retried up to **5 times per claim** (2s delay between attempts) — each attempt draws a different rotating proxy exit IP, which is what decides success when an exit IP is blocked (empty response / TLS EOF). No Countik anywhere in discovery: no `sec_uid` resolution, no secuid Worker call, no direct Countik fallback. Mobile iPhone UA + full `Sec-Fetch-*` headers (see `discovery/ytdlp-args.js`), `--retries 5`, `--extractor-retries 10`, `--socket-timeout 30`, proxy from `DATACENTER_PROXY` / `PROXY_URL` / `HTTP_PROXY` / `HTTPS_PROXY` when set (the `COUNTIK_PROXY_URL` proxy is passed explicitly by the discovery code, never read from env by the argv builder). Yields video IDs only; "new" is set difference against stored IDs (upsert `onConflict: 'config_id,source_reel_id'`, duplicates ignored).
 2. **Puppeteer (YouTube + Instagram/Facebook, and TikTok fallback)** — scrolls profile pages using logged-in sessions (persistent profile, manual login at startup).
 
 ```text
@@ -66,7 +66,7 @@ Browser scrapers, verbatim from the old service: TikTok `//a[contains(@href, "/v
 | `SKIP_STARTUP_LOGINS` | Skip interactive login prompts when `true` |
 | `YTDLP_BIN` | yt-dlp binary (default `yt-dlp`) |
 | `YTDLP_TIMEOUT_MS` | Subprocess timeout (default `600000`) |
-| `COUNTIK_PROXY_URL` | Rotating HTTP proxy for TikTok discovery: the yt-dlp profile-URL attempt goes through it first; also used by the direct Countik `sec_uid` fallback (Worker tried first). The `tiktokuser:{sec_uid}` attempt stays direct; downloads never use it |
+| `COUNTIK_PROXY_URL` | Rotating HTTP proxy for TikTok discovery: the yt-dlp profile-URL attempts (up to 5 per claim) go through it; downloads never use it |
 
 ## Database RPCs (migration `supabase/migrations/20261030130000_adu_claim_rpc.sql`)
 
@@ -79,7 +79,6 @@ Browser scrapers, verbatim from the old service: TikTok `//a[contains(@href, "/v
 - `discovery/ytdlp.js` — TikTok yt-dlp discovery (`execFile`, JSON parse)
 - `discovery/ytdlp-args.js` — argv builder (aligned with old `video_downloader/scraper.py`)
 - `discovery/profile-urls.js` — TikTok profile URL + platform gate
-- `discovery/sec-uid.js` — Countik `sec_uid` resolver
 - `discovery/extract-ids.js` — shared JSON ID helpers (tests)
 - `scrapers/*.js` — Puppeteer per platform
 
