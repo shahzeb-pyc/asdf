@@ -64,23 +64,30 @@ export async function handleCreateUploadUrl(
   // 3b. Storage quota gate (declared size — advisory: a presigned PUT
   // carries no size bound, so the confirm step re-checks the verified
   // size before anything lands). No active period → quota 0 → refused.
-  try {
-    const quotaState = await (quotaStateProvider ?? defaultQuotaState)(session.userId);
-    // Admins are never storage-gated (audit fix 2026-11-01).
-    if (quotaState && session.role !== 'admin') {
-      const check = checkStorageQuota(quotaState, body.fileSize);
-      if (!check.allowed) {
-        return NextResponse.json(
-          { error: 'STORAGE_QUOTA_EXCEEDED', message: check.message },
-          { status: check.noQuota ? 403 : 413 }
-        );
+  // Composer staged uploads skip this gate entirely: post-staging
+  // bytes never enter the Media Library (no media_items row, not
+  // counted in usage), so a plan with no library storage must not
+  // refuse them. The plan is still enforced at queue/publish.
+  // Library uploads keep the gate exactly as before.
+  if (body.purpose !== 'post-staging') {
+    try {
+      const quotaState = await (quotaStateProvider ?? defaultQuotaState)(session.userId);
+      // Admins are never storage-gated (audit fix 2026-11-01).
+      if (quotaState && session.role !== 'admin') {
+        const check = checkStorageQuota(quotaState, body.fileSize);
+        if (!check.allowed) {
+          return NextResponse.json(
+            { error: 'STORAGE_QUOTA_EXCEEDED', message: check.message },
+            { status: check.noQuota ? 403 : 413 }
+          );
+        }
       }
+    } catch {
+      return NextResponse.json(
+        { error: 'Your storage could not be checked. Please try again.' },
+        { status: 500 }
+      );
     }
-  } catch {
-    return NextResponse.json(
-      { error: 'Your storage could not be checked. Please try again.' },
-      { status: 500 }
-    );
   }
 
   // 4. Build isolated object keys
