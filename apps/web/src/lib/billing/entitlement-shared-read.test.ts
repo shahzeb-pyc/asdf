@@ -627,7 +627,7 @@ describe('R5b — the register stops re-counting after a clean insert', () => {
     // The clean-insert path still derives the count from the gate
     // read — no count query runs AFTER the insert. The one count
     // query that runs during the register is the pre-insert
-    // re-check (SEND BACK fix on PR #188): with a shared read the
+    // re-check (SEND BACK fix on PR 188): with a shared read the
     // gate is stale by the time the register runs, so usage is
     // re-counted fresh immediately before the INSERT and a
     // genuinely new destination at/over cap is refused. The full
