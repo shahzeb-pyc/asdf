@@ -760,6 +760,214 @@ describe('Publish Now uncapped (owner decision 2026-10-31)', () => {
   });
 });
 
+describe('Plan-check R6: assertPaidPlan light plan-only read', () => {
+  // The gate must never read the usage counts it never used:
+  // every table the client touches is recorded, and the usage
+  // path (workspaces / destinations / subscription_usage) must
+  // never appear — on any matrix row. A usage-table outage must
+  // not block Publish Now either: the old full-getEntitlement
+  // read threw ENTITLEMENT_UNAVAILABLE when the counts failed.
+  function tableCountingClient(state: FakeState): {
+    client: SupabaseClient;
+    tables: string[];
+  } {
+    const tables: string[] = [];
+    const inner = fakeClient(state);
+    const client = {
+      from: (table: string) => {
+        tables.push(table);
+        return inner.from(table);
+      },
+    } as unknown as SupabaseClient;
+    return { client, tables };
+  }
+
+  const USAGE_TABLES = ['subscription_usage', 'workspaces', 'destinations'];
+
+  function expectNoUsageRead(tables: string[]): void {
+    expect(tables.filter((table) => USAGE_TABLES.includes(table))).toEqual([]);
+  }
+
+  const EXPIRED_MESSAGE =
+    'Posting is paused. Your paid period has ended — renew it to post again.';
+  const FREE_MESSAGE =
+    'Your plan is Free, which covers the Prompt Library only. Choose a paid plan to post or schedule.';
+  const UNAVAILABLE_MESSAGE = 'Your plan could not be checked right now. Please try again.';
+
+  it('paid active: one period query, no usage read — even at cap', async () => {
+    const state = baseState({
+      periods: [periodRow()],
+      usageCounts: { facebook: 10, instagram: 10, threads: 10, x: 10, tiktok: 10, youtube: 10 },
+      usageRows: [
+        {
+          user_id: 'user-1',
+          platform: 'facebook',
+          destination_key: 'page-a',
+          feature: 'destination-queue',
+        },
+      ],
+    });
+    const { client, tables } = tableCountingClient(state);
+    const period = await assertPaidPlan(client, 'user-1', NOW);
+    expect(period.id).toBe('period-1');
+    expect(tables).toEqual(['subscription_periods']);
+    expectNoUsageRead(tables);
+  });
+
+  it('paid lapsed: expired wording, no usage read', async () => {
+    const state = baseState({
+      periods: [periodRow({ ends_at: '2026-05-01T00:00:00.000Z' })],
+    });
+    const { client, tables } = tableCountingClient(state);
+    await expect(assertPaidPlan(client, 'user-1', NOW)).rejects.toMatchObject({
+      code: 'SUBSCRIPTION_REQUIRED',
+      message: EXPIRED_MESSAGE,
+    });
+    expectNoUsageRead(tables);
+  });
+
+  it('free (never paid): free wording, no usage read', async () => {
+    const state = baseState();
+    const { client, tables } = tableCountingClient(state);
+    await expect(assertPaidPlan(client, 'user-1', NOW)).rejects.toMatchObject({
+      code: 'SUBSCRIPTION_REQUIRED',
+      message: FREE_MESSAGE,
+    });
+    expectNoUsageRead(tables);
+    // 4 queries, not 9–15: period read + activation's period
+    // re-read + activation's payments lookup + hasAnyPeriod.
+    expect(tables).toEqual([
+      'subscription_periods',
+      'subscription_periods',
+      'subscription_payments',
+      'subscription_periods',
+    ]);
+  });
+
+  it('due scheduled downgrade: activates and allows, no usage read', async () => {
+    const scheduled = paymentRow({
+      status: 'approved',
+      period_id: null,
+      is_downgrade: true,
+      scheduled_starts_at: '2026-05-20T00:00:00.000Z',
+    });
+    const state = baseState({
+      paymentRow: scheduled,
+      paymentRows: [scheduled],
+      periods: [],
+      createdPeriodRow: periodRow({
+        id: 'period-new',
+        starts_at: '2026-06-01T00:00:00.000Z',
+        ends_at: '2026-07-01T00:00:00.000Z',
+      }),
+    });
+    const { client, tables } = tableCountingClient(state);
+    const period = await assertPaidPlan(client, 'user-1', NOW);
+    expect(period.id).toBe('period-new');
+    expectNoUsageRead(tables);
+  });
+
+  it('not-yet-due schedule: still free wording, no activation', async () => {
+    const scheduled = paymentRow({
+      status: 'approved',
+      period_id: null,
+      is_downgrade: true,
+      scheduled_starts_at: '2026-06-20T00:00:00.000Z',
+    });
+    const state = baseState({
+      paymentRow: scheduled,
+      paymentRows: [scheduled],
+      periods: [],
+    });
+    const { client, tables } = tableCountingClient(state);
+    await expect(assertPaidPlan(client, 'user-1', NOW)).rejects.toMatchObject({
+      code: 'SUBSCRIPTION_REQUIRED',
+      message: FREE_MESSAGE,
+    });
+    expectNoUsageRead(tables);
+    expect(state.inserted.filter((i) => i.table === 'subscription_periods')).toHaveLength(0);
+  });
+
+  it('lapsed with a not-yet-due schedule: expired wording', async () => {
+    const scheduled = paymentRow({
+      status: 'approved',
+      period_id: null,
+      is_downgrade: true,
+      scheduled_starts_at: '2026-06-20T00:00:00.000Z',
+    });
+    const state = baseState({
+      paymentRow: scheduled,
+      paymentRows: [scheduled],
+      periods: [periodRow({ ends_at: '2026-05-01T00:00:00.000Z' })],
+    });
+    const { client, tables } = tableCountingClient(state);
+    await expect(assertPaidPlan(client, 'user-1', NOW)).rejects.toMatchObject({
+      code: 'SUBSCRIPTION_REQUIRED',
+      message: EXPIRED_MESSAGE,
+    });
+    expectNoUsageRead(tables);
+  });
+
+  it('a usage-table outage no longer blocks Publish Now', async () => {
+    // The counting fake fails every usage-count query: the old
+    // full-entitlement read threw ENTITLEMENT_UNAVAILABLE on
+    // this state; the light read never asks, so the paid user
+    // still publishes and the free user still gets the plan
+    // refusal — not a 500.
+    const usageDown = new Error('usage table down');
+    const paidState = baseState({
+      periods: [periodRow()],
+      selectErrors: {
+        subscription_usage: usageDown,
+        workspaces: usageDown,
+        destinations: usageDown,
+      },
+    });
+    await expect(assertPaidPlan(fakeClient(paidState), 'user-1', NOW)).resolves.toMatchObject({
+      id: 'period-1',
+    });
+    const freeState = baseState({
+      selectErrors: {
+        subscription_usage: usageDown,
+        workspaces: usageDown,
+        destinations: usageDown,
+      },
+    });
+    await expect(assertPaidPlan(fakeClient(freeState), 'user-1', NOW)).rejects.toMatchObject({
+      code: 'SUBSCRIPTION_REQUIRED',
+      message: FREE_MESSAGE,
+    });
+  });
+
+  it('a plan-read failure still fails closed', async () => {
+    const state = baseState({
+      selectErrors: { subscription_periods: new Error('periods table down') },
+    });
+    await expect(assertPaidPlan(fakeClient(state), 'user-1', NOW)).rejects.toMatchObject({
+      code: 'ENTITLEMENT_UNAVAILABLE',
+      message: UNAVAILABLE_MESSAGE,
+    });
+  });
+
+  it('a failed downgrade activation never breaks the gate', async () => {
+    // Exactly as getEntitlement behaved: the activation error is
+    // logged and swallowed, and the gate falls through to the
+    // free/expired refusal instead of a 500.
+    const state = baseState({
+      selectErrors: { subscription_payments: new Error('payments table down') },
+    });
+    await expect(assertPaidPlan(fakeClient(state), 'user-1', NOW)).rejects.toMatchObject({
+      code: 'SUBSCRIPTION_REQUIRED',
+      message: FREE_MESSAGE,
+    });
+    expect(mockedLogServerError).toHaveBeenCalledWith(
+      '[billing] scheduled downgrade activation failed on entitlement check',
+      expect.anything(),
+      { source: 'billing' }
+    );
+  });
+});
+
 describe('Cap scope: per user across workspaces (owner decision 2026-10-31)', () => {
   // destination_id is the workspace-scoped destination row. The cap
   // functions never filter on it (verified 2026-10-31: no cap query
