@@ -81,6 +81,21 @@ const PLATFORM_LABELS: Record<keyof PlatformCounts, string> = {
  */
 const PURCHASABLE_PLATFORMS: (keyof PlatformCounts)[] = ['facebook', 'instagram', 'threads'];
 
+/**
+ * Rows in the builder sidebar's "Included for free with paid plan"
+ * section, in the owner's order (mockup E). These are plan features,
+ * not priced lines — they never change the total.
+ */
+const BUILDER_INCLUDED_FREE: readonly string[] = [
+  '5 GB of Media Library storage per page or account',
+  'Creator Finder included free',
+  'Unlimited posts — no cap on the number of posts',
+  'In-app scheduling',
+  'Auto download & upload',
+  'Auto repost',
+  'Bulk publishing',
+];
+
 /** Purchase display view of counts: unpurchasable platforms zeroed. */
 function purchasableCounts(counts: PlatformCounts): PlatformCounts {
   return { ...counts, x: 0, tiktok: 0, youtube: 0 };
@@ -1502,7 +1517,7 @@ export function PurchaseView({
           ? 'This is the same as your current plan. Increase a count to upgrade, or choose fewer to schedule a downgrade for next month.'
           : null;
     return (
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
         <div className="flex flex-col gap-2">
           <Button variant="outline" size="sm" className="self-start" onClick={goToMyPlan}>
             <ArrowLeftIcon aria-hidden className="size-4" /> Back to My Plan
@@ -1545,49 +1560,98 @@ export function PurchaseView({
             </AlertDescription>
           </Alert>
         ) : null}
-        <Card className="w-fit max-w-full gap-2 self-center px-5 py-4 sm:flex-row sm:items-center sm:gap-6">
-          <CardHeader className="shrink-0 px-0">
-            <CardTitle className="whitespace-nowrap">Included with your plan</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-row flex-wrap items-center gap-x-5 gap-y-2 px-0">
-            <p className="flex items-start gap-2 text-body text-ink">
-              <CheckIcon aria-hidden className="mt-0.5 size-5 shrink-0 text-signal-operational" />
-              <span>5 GB of Media Library storage per page or account</span>
-            </p>
-            <p className="flex items-start gap-2 text-body text-ink">
-              <CheckIcon aria-hidden className="mt-0.5 size-5 shrink-0 text-signal-operational" />
-              <span>Creator Finder included free</span>
-            </p>
-            <p className="flex items-start gap-2 text-body text-ink">
-              <CheckIcon aria-hidden className="mt-0.5 size-5 shrink-0 text-signal-operational" />
-              <span>Unlimited posts — no cap on the number of posts</span>
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <div className="flex flex-col gap-1">
-              <CardTitle>Choose your pages and accounts</CardTitle>
-              <CardDescription>
-                70 PKR per page or account, paid monthly. Connect as many accounts as you
-                like — only the pages and accounts you actually use count towards your plan.
-              </CardDescription>
-            </div>
-          </CardHeader>
-          <CardContent>{configurator}</CardContent>
-        </Card>
-        <div className="flex flex-col gap-2">
-          <Button
-            variant={buildDisabled ? 'secondary' : 'default'}
-            onClick={goToCheckout}
-            disabled={buildDisabled}
-            className="w-full sm:w-auto sm:self-end"
-          >
-            Continue to checkout
-          </Button>
-          {buildDisabledReason ? (
-            <p className="text-body text-ink-sub">{buildDisabledReason}</p>
-          ) : null}
+        <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[1fr_360px]">
+          <div className="flex min-w-0 flex-col gap-8">
+            <Card>
+              <CardHeader>
+                <div className="flex flex-col gap-1">
+                  <CardTitle>Choose your pages and accounts</CardTitle>
+                  <CardDescription>
+                    70 PKR per page or account, paid monthly. Facebook accounts are free —
+                    you can connect as many accounts as you like, you only pay for connected
+                    pages.
+                  </CardDescription>
+                </div>
+              </CardHeader>
+              <CardContent>{configurator}</CardContent>
+            </Card>
+          </div>
+          <div className="flex w-full shrink-0 flex-col gap-6 lg:sticky lg:top-20 lg:w-90 lg:self-start">
+            <Card>
+              <CardHeader>
+                <CardTitle>Your plan</CardTitle>
+                <CardDescription>What your plan costs each month.</CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-3">
+                <dl className="flex flex-col gap-2 text-body">
+                  {PURCHASABLE_PLATFORMS.filter((p) => effectiveCounts[p] > 0).map(
+                    (platform) => (
+                      <div
+                        key={platform}
+                        className="flex items-baseline justify-between gap-3"
+                      >
+                        <dt className="min-w-0 truncate text-ink-sub">
+                          {PLATFORM_LABELS[platform]} · {effectiveCounts[platform]}{' '}
+                          {subscriptionUnitLabel(platform)}
+                        </dt>
+                        <dd className="shrink-0 font-medium tabular-nums text-ink">
+                          {effectiveCounts[platform] * SUBSCRIPTION_PRICE_PKR_PER_UNIT} PKR
+                        </dd>
+                      </div>
+                    ),
+                  )}
+                  {units === 0 ? (
+                    <div className="flex items-baseline justify-between gap-3">
+                      <dt className="text-ink-sub">Selected</dt>
+                      <dd className="font-medium text-ink">Nothing selected yet</dd>
+                    </div>
+                  ) : null}
+                  <div className="flex items-baseline justify-between gap-3">
+                    <dt className="text-ink-sub">Media Library storage included</dt>
+                    <dd className="shrink-0 font-medium tabular-nums text-ink">
+                      {5 * units} GB
+                    </dd>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-3 border-t border-line pt-2">
+                    <dt className="font-medium text-ink">Monthly total</dt>
+                    <dd className="font-semibold tabular-nums text-ink">{total} PKR</dd>
+                  </div>
+                </dl>
+                <div className="flex flex-col gap-2 border-t border-line pt-3">
+                  <p className="text-body font-medium text-ink">
+                    Included for free with paid plan
+                  </p>
+                  <ul className="flex flex-col gap-2">
+                    {BUILDER_INCLUDED_FREE.map((item) => (
+                      <li
+                        key={item}
+                        className="flex items-start gap-2 text-body text-ink"
+                      >
+                        <CheckIcon
+                          aria-hidden
+                          className="mt-0.5 size-5 shrink-0 text-signal-operational"
+                        />
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Button
+                    variant={buildDisabled ? 'secondary' : 'default'}
+                    onClick={goToCheckout}
+                    disabled={buildDisabled}
+                    className="w-full"
+                  >
+                    Continue to checkout
+                  </Button>
+                  {buildDisabledReason ? (
+                    <p className="text-body text-ink-sub">{buildDisabledReason}</p>
+                  ) : null}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         </div>
       </div>
     );

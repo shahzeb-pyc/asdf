@@ -336,24 +336,24 @@ describe('Billing Purchase', () => {
     expect(document.querySelector('input[type="number"]')).toBeNull();
   });
 
-  it('builder has no order summary — it lives only at checkout', async () => {
+  it('builder has a live summary sidebar — the order summary itself lives only at checkout', async () => {
     renderBilling('purchase');
     await screen.findByText('Choose your pages and accounts');
-    // The summary card belongs to checkout: no heading, no monthly
-    // total, no storage total in the builder.
+    // The checkout summary card is not in the builder, but the builder
+    // has its own live sidebar: per-platform lines, storage total and
+    // monthly total update as counts change.
     expect(screen.queryByText('Order summary')).toBeNull();
-    expect(screen.queryByText('Monthly total')).toBeNull();
-    expect(screen.queryByText('Media Library storage included')).toBeNull();
-    // Continue to checkout is still there, below the chooser, right-aligned
-    // on desktop and full-width on phones.
+    expect(screen.getByText('Monthly total')).toBeInTheDocument();
+    expect(screen.getByText('Media Library storage included')).toBeInTheDocument();
+    // Continue to checkout lives in the sidebar now, full-width, not
+    // below the chooser.
     const continueButton = screen.getByRole('button', {
       name: 'Continue to checkout',
     });
     expect(continueButton).toBeInTheDocument();
-    expect(continueButton.className).toContain('sm:self-end');
-    expect(continueButton.className).not.toContain('sm:self-start');
     expect(continueButton.className).toContain('w-full');
-    // And the summary is still there at checkout.
+    expect(continueButton.className).not.toContain('sm:self-end');
+    // And the order summary is still there at checkout.
     await goToCheckout();
     expect(await screen.findByText('Order summary')).toBeInTheDocument();
     expect(screen.getByText('Monthly total')).toBeInTheDocument();
@@ -376,20 +376,33 @@ describe('Billing Purchase', () => {
         'You can increase your pages and accounts anytime. Reducing them takes effect from your next month.',
       ),
     ).toBeInTheDocument();
+    // New card description: Facebook accounts are free, only connected
+    // pages are paid for — and the old wording is gone.
+    expect(
+      screen.getByText(
+        /Facebook accounts are free — you can connect as many accounts as you like, you only pay for connected pages\./,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/only the pages and accounts you actually use/),
+    ).toBeNull();
     expect(screen.queryByText(/Everything is 70 PKR each/)).toBeNull();
     expect(screen.queryByText('Facebook — pay for Pages only')).toBeNull();
     expect(screen.queryByText('Instagram — pay per account')).toBeNull();
     expect(screen.queryByText('Threads — pay per account')).toBeNull();
   });
 
-  it('builder is a narrow centred column and the chooser tiles hug their content', async () => {
+  it('builder is a wide two-column layout and the chooser tiles hug their content', async () => {
     renderBilling('purchase');
     await screen.findByText('Choose your pages and accounts');
-    // Narrow, not stretched: the builder sits in a centred max-w-3xl
-    // column (same width as the loading/error states), and no wide
-    // max-w-6xl container is rendered in the builder at all.
-    expect(document.querySelector('.max-w-3xl')).not.toBeNull();
-    expect(document.querySelector('.max-w-6xl')).toBeNull();
+    // Two columns on desktop: chooser on the left, live summary sidebar
+    // on the right — so the builder sits in a wide max-w-6xl container,
+    // not the old narrow max-w-3xl column.
+    expect(document.querySelector('.max-w-6xl')).not.toBeNull();
+    expect(document.querySelector('.max-w-3xl')).toBeNull();
+    const layout = screen.getByText('Your plan').closest('.grid');
+    expect(layout).not.toBeNull();
+    expect(layout).toHaveClass('grid-cols-1', 'items-start', 'lg:grid-cols-[1fr_360px]');
     // Snug tiles: the chooser grid aligns items to the start, so the
     // shorter Instagram/Threads tiles do not stretch to the Facebook
     // tile's height and carry no empty space at the bottom.
@@ -413,9 +426,9 @@ describe('Billing Purchase', () => {
     const facebook = screen.getByLabelText('Facebook pages') as HTMLInputElement;
     fireEvent.change(facebook, { target: { value: '100' } });
     expect(facebook.value).toBe('100');
-    // The chooser's row prices price the typed count live (the total
-    // itself lives only at checkout now).
-    expect(screen.getAllByText('7000 PKR').length).toBeGreaterThan(0);
+    // The chooser's row prices price the typed count live, and the
+    // sidebar total follows it too (row price + sidebar total).
+    expect(screen.getAllByText('7000 PKR')).toHaveLength(2);
     const instagram = screen.getByLabelText('Instagram accounts') as HTMLInputElement;
     fireEvent.change(instagram, { target: { value: '4' } });
     expect(screen.getAllByText('280 PKR').length).toBeGreaterThan(0);
@@ -453,9 +466,12 @@ describe('Billing Purchase', () => {
     expect(facebook.value).toBe('0');
   });
 
-  it('Purchase shows all three inclusions and a dynamic storage total', async () => {
+  it('Purchase shows the seven free inclusions in the sidebar and a live storage total', async () => {
     renderBilling('purchase');
-    await screen.findByText('Included with your plan');
+    await screen.findByText('Included for free with paid plan');
+    // No separate Included card anymore — the list lives in the
+    // sidebar, below the monthly total.
+    expect(screen.queryByText('Included with your plan')).toBeNull();
     expect(
       screen.getByText('5 GB of Media Library storage per page or account')
     ).toBeInTheDocument();
@@ -463,12 +479,19 @@ describe('Billing Purchase', () => {
     expect(
       screen.getByText('Unlimited posts — no cap on the number of posts')
     ).toBeInTheDocument();
-    // The storage total is an order-summary row, and the summary lives
-    // only at checkout now — not in the builder.
-    expect(screen.queryByText('Media Library storage included')).toBeNull();
-    expect(screen.queryByText('0 GB')).toBeNull();
+    expect(screen.getByText('In-app scheduling')).toBeInTheDocument();
+    expect(screen.getByText('Auto download & upload')).toBeInTheDocument();
+    expect(screen.getByText('Auto repost')).toBeInTheDocument();
+    expect(screen.getByText('Bulk publishing')).toBeInTheDocument();
+    // The storage total is live in the sidebar: 0 GB with nothing
+    // selected, 15 GB once 2 Facebook pages + 1 Instagram account
+    // are typed — no trip to checkout needed.
+    expect(screen.getByText('Media Library storage included')).toBeInTheDocument();
+    expect(screen.getByText('0 GB')).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Facebook pages'), { target: { value: '2' } });
     fireEvent.change(screen.getByLabelText('Instagram accounts'), { target: { value: '1' } });
+    await waitFor(() => expect(screen.getByText('15 GB')).toBeInTheDocument());
+    // And checkout still shows the same storage total.
     fireEvent.click(screen.getByRole('button', { name: 'Continue to checkout' }));
     cleanup();
     renderCheckout();
@@ -476,18 +499,26 @@ describe('Billing Purchase', () => {
     await waitFor(() => expect(screen.getByText('15 GB')).toBeInTheDocument());
   });
 
-  it('Included card is compact and not stretched', async () => {
+  it('Included list lives in the sidebar, below the monthly total', async () => {
     renderBilling('purchase');
-    await screen.findByText('Included with your plan');
-    const card = screen
-      .getByText('Included with your plan')
-      .closest('[data-slot="card"]');
-    expect(card).not.toBeNull();
-    // Compact, not stretched: the card hugs its content and is centred
-    // in the builder column instead of spanning the full width.
-    expect(card).toHaveClass('w-fit', 'max-w-full', 'self-center');
-    expect(card).not.toHaveClass('w-full');
-    // All three lines still render, with the same wording.
+    await screen.findByText('Included for free with paid plan');
+    // No separate Included card anywhere in the builder.
+    expect(screen.queryByText('Included with your plan')).toBeNull();
+    // The list sits inside the sidebar card, below the monthly total
+    // and above the Continue button.
+    const sidebar = screen.getByText('Your plan').closest('[data-slot="card"]');
+    expect(sidebar).not.toBeNull();
+    expect(sidebar).toHaveTextContent('Monthly total');
+    expect(sidebar).toHaveTextContent('Included for free with paid plan');
+    expect(sidebar).toHaveTextContent('Continue to checkout');
+    const html = sidebar?.innerHTML ?? '';
+    expect(html.indexOf('Monthly total')).toBeLessThan(
+      html.indexOf('Included for free with paid plan'),
+    );
+    expect(html.indexOf('Included for free with paid plan')).toBeLessThan(
+      html.indexOf('Continue to checkout'),
+    );
+    // All seven rows render, with the same wording.
     expect(
       screen.getByText('5 GB of Media Library storage per page or account')
     ).toBeInTheDocument();
@@ -495,6 +526,10 @@ describe('Billing Purchase', () => {
     expect(
       screen.getByText('Unlimited posts — no cap on the number of posts')
     ).toBeInTheDocument();
+    expect(screen.getByText('In-app scheduling')).toBeInTheDocument();
+    expect(screen.getByText('Auto download & upload')).toBeInTheDocument();
+    expect(screen.getByText('Auto repost')).toBeInTheDocument();
+    expect(screen.getByText('Bulk publishing')).toBeInTheDocument();
   });
 
   it('My Plan shows all six platforms in the paid counts line', async () => {
