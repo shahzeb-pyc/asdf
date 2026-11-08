@@ -316,7 +316,7 @@ describe('Billing Purchase', () => {
     expect(screen.queryByLabelText('Facebook pages')).toBeNull();
   });
 
-  it('Purchase shows only Facebook, Instagram, Threads inputs — no steppers', async () => {
+  it('Purchase shows only Facebook, Instagram, Threads steppers — typed number kept', async () => {
     renderBilling('purchase');
     await screen.findByText('Choose your pages and accounts');
     expect(screen.getByLabelText('Facebook pages')).toBeInTheDocument();
@@ -325,14 +325,17 @@ describe('Billing Purchase', () => {
     expect(screen.queryByLabelText('X accounts')).toBeNull();
     expect(screen.queryByLabelText('TikTok accounts')).toBeNull();
     expect(screen.queryByLabelText('YouTube accounts')).toBeNull();
-    // No increase/decrease control anywhere in the chooser, and no
-    // native number spinner either (the inputs are text inputs).
-    expect(screen.queryByRole('button', { name: 'Increase Facebook' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Decrease Facebook' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Increase Instagram' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Decrease Instagram' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Increase Threads' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Decrease Threads' })).toBeNull();
+    // Each row is a stepper like the mockup ("− 10 +"): minus button,
+    // typed number, plus button — and no native number spinner either
+    // (the inputs are text inputs).
+    for (const platform of ['Facebook pages', 'Instagram accounts', 'Threads accounts']) {
+      expect(
+        screen.getByRole('button', { name: `Increase ${platform}` }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: `Decrease ${platform}` }),
+      ).toBeInTheDocument();
+    }
     expect(document.querySelector('input[type="number"]')).toBeNull();
   });
 
@@ -431,8 +434,10 @@ describe('Billing Purchase', () => {
     expect(chooserCard).not.toBeNull();
     expect(chooserCard?.querySelector('.sm\\:grid-cols-3')).toBeNull();
     // The input sits at the right end of its row, so it never clips
-    // at the tighter container width.
-    const row = screen.getByLabelText('Facebook pages').closest('div.flex');
+    // at the tighter container width. (The input is nested in the
+    // stepper group now, so the row is reached from the row heading
+    // rather than from the input.)
+    const row = screen.getByText('Facebook — Pages').closest('div.flex');
     expect(row).not.toBeNull();
     expect(row).toHaveClass('flex-wrap', 'items-center', 'justify-between');
     // Checkout keeps its wide container and its order summary.
@@ -461,6 +466,35 @@ describe('Billing Purchase', () => {
     fireEvent.change(instagram, { target: { value: '4' } });
     expect(screen.getByText('Instagram · Accounts × 4')).toBeInTheDocument();
     expect(screen.getAllByText('280 PKR').length).toBeGreaterThan(0);
+  });
+
+  it('stepper buttons step by 1, never below 0, and update the sidebar live', async () => {
+    renderBilling('purchase');
+    await screen.findByText('Choose your pages and accounts');
+    const facebook = screen.getByLabelText('Facebook pages') as HTMLInputElement;
+    const decrease = screen.getByRole('button', { name: 'Decrease Facebook pages' });
+    const increase = screen.getByRole('button', { name: 'Increase Facebook pages' });
+    // Minus is disabled at 0 — the count can never go below 0.
+    expect(decrease).toBeDisabled();
+    fireEvent.click(increase);
+    expect(facebook.value).toBe('1');
+    expect(screen.getByText('Facebook · Pages × 1')).toBeInTheDocument();
+    expect(screen.getAllByText('70 PKR').length).toBeGreaterThan(0);
+    fireEvent.click(increase);
+    expect(facebook.value).toBe('2');
+    expect(screen.getByText('Facebook · Pages × 2')).toBeInTheDocument();
+    fireEvent.click(decrease);
+    expect(facebook.value).toBe('1');
+    fireEvent.click(decrease);
+    expect(facebook.value).toBe('0');
+    expect(decrease).toBeDisabled();
+    // Stepping from an in-progress draft steps from the last valid
+    // count and drops the draft, so the field shows the stepped value.
+    fireEvent.change(facebook, { target: { value: 'xyz' } });
+    expect(facebook.value).toBe('xyz');
+    fireEvent.click(increase);
+    expect(facebook.value).toBe('1');
+    expect(screen.getByText('Facebook · Pages × 1')).toBeInTheDocument();
   });
 
   it('invalid input never touches the totals and reverts on blur', async () => {

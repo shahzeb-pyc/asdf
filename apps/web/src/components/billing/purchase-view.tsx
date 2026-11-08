@@ -19,7 +19,7 @@
 import * as React from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
-import { ArrowLeftIcon, CheckIcon, Loader2Icon, UploadIcon, XIcon } from 'lucide-react';
+import { ArrowLeftIcon, CheckIcon, Loader2Icon, MinusIcon, PlusIcon, UploadIcon, XIcon } from 'lucide-react';
 import { apiGet, apiPost, buildTenantApiPath, getErrorMessage, isApiError } from '@/lib/api';
 import {
   BillingPaymentItemSchema,
@@ -567,6 +567,22 @@ export function PurchaseView({
     });
   }
 
+  /**
+   * Stepper buttons: step by 1 from the last valid (committed) count and
+   * drop any in-progress draft, so the field always shows the stepped
+   * value. setCount clamps at 0, so minus can never go below 0 — and the
+   * minus button is disabled at 0. Coupon clearing rides along with
+   * setCount, exactly as typing does.
+   */
+  function handleCountStep(platform: keyof PlatformCounts, delta: 1 | -1) {
+    setCountDrafts((prev) => {
+      const next = { ...prev };
+      delete next[platform];
+      return next;
+    });
+    setCount(platform, effectiveCounts[platform] + delta);
+  }
+
   // In-page navigation between the separate sections is by route,
   // never by ?view= (deleted 2026-11-02). Purchase steps are
   // sub-routes: builder /purchase, checkout /purchase/checkout,
@@ -963,10 +979,12 @@ export function PurchaseView({
 
   // Stacked rows (mockup E as shown): one divided row per platform, full
   // width of the left column. Each row names the platform, asks a plain
-  // professional question, and takes a typed count at the right end — no
-  // steppers, and no per-row price (prices live only in the sidebar).
-  // Included/in-use counts belong to My Plan and are deliberately NOT
-  // shown here.
+  // professional question, and takes a stepper at the right end — minus
+  // button, typed number, plus button — like the mockup shows. The number
+  // stays typeable (type="text" with a numeric keyboard carries no native
+  // spinners), and there is no per-row price (prices live only in the
+  // sidebar). Included/in-use counts belong to My Plan and are
+  // deliberately NOT shown here.
   const configurator = (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col divide-y divide-line">
@@ -999,19 +1017,43 @@ export function PurchaseView({
                   ) : null}
                 </p>
               </div>
-              {/* Direct input, not a stepper: type="text" with a numeric
-              keyboard carries no native spinners, so there is no
-              increase/decrease control anywhere in this chooser. */}
-              <Input
-                type="text"
-                inputMode="numeric"
-                autoComplete="off"
-                aria-label={`${PLATFORM_LABELS[platform]} ${subscriptionUnitLabel(platform)}`}
-                value={countDrafts[platform] ?? String(count)}
-                onChange={(event) => handleCountInput(platform, event.target.value)}
-                onBlur={() => handleCountBlur(platform)}
-                className="w-20 shrink-0 text-center tabular-nums"
-              />
+              {/* Stepper, like the mockup ("− 10 +"): minus button, typed
+              number, plus button. The number stays typeable — the input
+              carries the existing validation rules (blank commits 0,
+              letters/decimals/negatives rejected, last valid count
+              re-shown on blur) — and the buttons step by 1 from the last
+              valid count, never below 0. */}
+              <div className="flex shrink-0 items-center gap-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  aria-label={`Decrease ${PLATFORM_LABELS[platform]} ${subscriptionUnitLabel(platform)}`}
+                  disabled={count === 0}
+                  onClick={() => handleCountStep(platform, -1)}
+                >
+                  <MinusIcon />
+                </Button>
+                <Input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  aria-label={`${PLATFORM_LABELS[platform]} ${subscriptionUnitLabel(platform)}`}
+                  value={countDrafts[platform] ?? String(count)}
+                  onChange={(event) => handleCountInput(platform, event.target.value)}
+                  onBlur={() => handleCountBlur(platform)}
+                  className="w-20 text-center tabular-nums"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  aria-label={`Increase ${PLATFORM_LABELS[platform]} ${subscriptionUnitLabel(platform)}`}
+                  onClick={() => handleCountStep(platform, 1)}
+                >
+                  <PlusIcon />
+                </Button>
+              </div>
             </div>
           );
         })}
