@@ -5,6 +5,7 @@ import { logServerError } from '@/lib/server-analytics';
 import { readJsonBody } from '@/lib/request-body';
 import {
   getActivePeriod,
+  getEntitlement,
   getUsageCounts,
   isLegacyUncappedUsageFeature,
   registerUsage,
@@ -63,13 +64,22 @@ export async function POST(
   }
 
   try {
+    // R3: the entitlement is read once here and shared with the
+    // register — the register no longer pays for its own full
+    // read. The response re-read below (getActivePeriod +
+    // getUsageCounts) is deliberately UNCHANGED: returning the
+    // pre-insert read instead is R4, a separate item, and the
+    // re-read's counts include the row just added.
+    const entitlement = await getEntitlement(client, session.userId);
     const result = await registerUsage(
       client,
       session.userId,
       parsed.data.platform,
       parsed.data.destinationKey,
       parsed.data.feature,
-      parsed.data.destinationId ?? null
+      parsed.data.destinationId ?? null,
+      undefined,
+      entitlement
     );
     const period = await getActivePeriod(client, session.userId, new Date());
     const usage = await getUsageCounts(client, session.userId);

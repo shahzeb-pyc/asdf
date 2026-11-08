@@ -20,8 +20,10 @@ import {
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
 import {
   assertFeatureAddWithinCap,
+  getEntitlement,
   registerUsage,
   SubscriptionGateError,
+  type Entitlement,
 } from '@/lib/billing/entitlement';
 import {
   getBillingAdminClient,
@@ -1504,6 +1506,12 @@ export async function handleCreateMirror(
     // missing billing client skips the gate (same rule as the
     // destination-queue gate) — but the skip is logged loudly
     // (audit fix 2026-11-01): a silent skip is a fail-open.
+    // R3: the entitlement is read once here and shared with the
+    // register at step 5b — the only write between the two reads
+    // is the mirror row itself, so the shared answer is exact.
+    // Undefined when the gate is skipped (admin / no client);
+    // registerUsage re-reads on its own then, as before.
+    let sharedEntitlement: Entitlement | undefined;
     if (session.role !== 'admin') {
       const billingClient = getBillingAdminClient();
       if (!billingClient) {
@@ -1513,11 +1521,14 @@ export async function handleCreateMirror(
       }
       if (billingClient) {
         try {
+          sharedEntitlement = await getEntitlement(billingClient, session.userId);
           await assertFeatureAddWithinCap(
             billingClient,
             session.userId,
             targetPlatform,
-            [destination.external_destination_id ?? destination.id]
+            [destination.external_destination_id ?? destination.id],
+            undefined,
+            sharedEntitlement
           );
         } catch (err) {
           const gateResponse = subscriptionGateResponse(err);
@@ -1650,7 +1661,9 @@ export async function handleCreateMirror(
             targetPlatform,
             destination.external_destination_id ?? destination.id,
             'tiktok-mirror',
-            destination.id
+            destination.id,
+            undefined,
+            sharedEntitlement
           );
         } catch (regError) {
           if (isLegacyClient(db)) {
