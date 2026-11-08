@@ -562,10 +562,13 @@ export class FacebookPublisher implements Publisher {
    *     min(3600, 300 * 2^retry_count);
    *   - destination status: the evaluation's non-active page status,
    *     mapped to the unified vocabulary;
-   *   - account status: `expired` when the evaluation says expired or
-   *     an auth error carries code 190/102 (the old dispatcher's exact
-   *     condition — it cascaded even the 190/492 case whose evaluation
-   *     keeps the account `active`).
+   *   - account status: `expired` only when the classifier evaluation
+   *     says `expired`. The old dispatcher also expired the account
+   *     for any auth error carrying code 190/102, which bypassed the
+   *     classifier and expired the account for codes the classifier
+   *     deliberately keeps active (190/459, 190/464, 190/492,
+   *     190/2069032) — that second disjunct is removed; the
+   *     evaluation is the single decision point.
    *   Volume-limit errors (4/17/32/341/613/80000-80014) never park the
    *   page: they retry with the existing backoff and no status flip.
    *   Only the 368 spam throttle (and the temporarily-blocked signal)
@@ -596,9 +599,12 @@ export class FacebookPublisher implements Publisher {
     }
 
     let targetAccountStatus: DatabaseSocialAccountRow['status'] | undefined;
-    const isAccountExpired =
-      evaluation?.accountStatus === 'expired' ||
-      (extracted.isAuthError && (code === 190 || code === 102));
+    // Classifier-only: expire the account only when the evaluation
+    // says expired. (The legacy `isAuthError && (190 || 102)`
+    // disjunct bypassed the classifier and expired the account for
+    // 190/459, 190/464, 190/492 and 190/2069032, whose evaluations
+    // keep the account active.)
+    const isAccountExpired = evaluation?.accountStatus === 'expired';
     if (isAccountExpired) {
       targetAccountStatus = 'expired';
     }

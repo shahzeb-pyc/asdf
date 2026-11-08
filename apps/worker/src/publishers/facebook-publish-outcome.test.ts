@@ -174,6 +174,43 @@ describe('FacebookPublisher failure outcomes', () => {
   });
 });
 
+describe('FacebookPublisher account-expiry follows the classifier only', () => {
+  function authError(code: number, subcode?: number): FacebookGraphError {
+    return new FacebookGraphError(`Facebook Graph API error ${code}`, {
+      code,
+      ...(subcode !== undefined ? { error_subcode: subcode } : {}),
+      type: 'OAuthException',
+    });
+  }
+
+  it.each([
+    // [code, subcode, expected targetAccountStatus]
+    [190, undefined, 'expired'],
+    [190, 463, 'expired'],
+    [190, 459, undefined],
+    [190, 464, undefined],
+    [190, 492, undefined],
+    [190, 2069032, undefined],
+    [102, undefined, 'expired'],
+  ] as Array<[number, number | undefined, 'expired' | undefined]>)(
+    'code %s subcode %s → targetAccountStatus %s',
+    async (code, subcode, expected) => {
+      const publisher = new FacebookPublisher(failingClient(authError(code, subcode)));
+      const outcome = await publisher.publish(
+        queueItem({ retry_count: 0 }),
+        destination(),
+        { accessToken: 'user-token', destinationToken: 'page-token' },
+      );
+      expect(outcome.status).toBe('failed');
+      expect(outcome.error?.code).toBe(String(code));
+      // The classifier is the single decision point: checkpoint
+      // (459/464), missing-role (492) and app-bug (2069032) codes
+      // keep the account active even though kind is 'auth'.
+      expect(outcome.targetAccountStatus).toBe(expected);
+    },
+  );
+});
+
 describe('FacebookPublisher content-code retry cap (100 / 1609005)', () => {
   function contentError(code: number): FacebookGraphError {
     return new FacebookGraphError(`Facebook Graph API error ${code}`, {

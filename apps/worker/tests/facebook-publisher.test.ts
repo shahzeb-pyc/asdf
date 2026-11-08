@@ -453,10 +453,11 @@ const ERROR_CASES: ErrorCase[] = [
   // destination invalid_token -> error (new vocabulary).
   { name: '190 invalid token', code: 190, kind: 'auth', status: 'failed', targetDestinationStatus: 'error', targetAccountStatus: 'expired' },
   { name: '190/463 token expired', code: 190, subcode: 463, kind: 'auth', status: 'failed', targetDestinationStatus: 'error', targetAccountStatus: 'expired' },
-  // Old dispatcher quirk, preserved: 190/492's evaluation keeps the
-  // account active, but the dispatcher's `isAuth && code 190` rule
-  // still cascaded it to expired.
-  { name: '190/492 page role', code: 190, subcode: 492, kind: 'auth', status: 'failed', targetDestinationStatus: 'error', targetAccountStatus: 'expired' },
+  // 190/492's evaluation keeps the account active (the token is
+  // fine — the user lost their role on the Page), so the queue no
+  // longer expires the account for it: account expiry follows the
+  // classifier only (ADU statuses build, B0).
+  { name: '190/492 page role', code: 190, subcode: 492, kind: 'auth', status: 'failed', targetDestinationStatus: 'error' },
   { name: '102 session invalid', code: 102, kind: 'auth', status: 'failed', targetDestinationStatus: 'error', targetAccountStatus: 'expired' },
   { name: '10 permission denied', code: 10, kind: 'auth', status: 'failed', targetDestinationStatus: 'error', targetAccountStatus: 'expired' },
   { name: '250 (2xx) authorization denied', code: 250, kind: 'auth', status: 'failed', targetDestinationStatus: 'error', targetAccountStatus: 'expired' },
