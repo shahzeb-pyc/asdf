@@ -647,16 +647,16 @@ export async function buildAduConfigView(
   // and counted as 0 for this render — a read fallback, never a
   // fabricated persist.
   // Pending = reels still in the pipeline (pending, processing,
-  // downloaded) minus reels whose post failed terminally. The
-  // subtraction is exact because a reel has at most one posting
-  // job: both intake paths (the worker tick and the manual intake
-  // route) claim only 'downloaded' reels, and retries reuse the
-  // same job — so the failed-job count equals the count of
-  // distinct reels with a failed job, and every failed job's reel
-  // is stranded in 'processing', inside the counted statuses.
-  // The max(0, ...) floor guards only against that invariant ever
-  // breaking (a duplicate job for one reel), never against a
-  // miscount: both terms are exact count queries, never rows.
+  // downloaded) minus failed jobs whose reel is STILL in the
+  // pipeline. A terminally-failed reel leaves the pipeline (status
+  // 'failed', written by the tick on settlement), so its job must not
+  // be subtracted again — the reel leaving the pipeline already
+  // removed it from the count. Only the crash window (job settled,
+  // reel update not yet applied) still subtracts, via the
+  // embedded-reel filtered count below. The max(0, ...) floor guards
+  // only against that invariant ever breaking (a duplicate job for
+  // one reel), never against a miscount: both terms are exact count
+  // queries, never rows.
   const failedStatuses = ['failed_to_publish', 'publish_error', 'integrity_error'];
   const midnight = startOfDayInTimezone(config.timezone).toISOString();
   async function countRows(
@@ -680,7 +680,30 @@ export async function buildAduConfigView(
   const inPipelineCount = await countRows('adu_reels', ['pending', 'processing', 'downloaded']);
   const postedCount = await countRows('adu_posting_jobs', 'published');
   const failedCount = await countRows('adu_posting_jobs', failedStatuses);
-  const pendingCount = Math.max(0, inPipelineCount - failedCount);
+  // Failed jobs whose reel is still in the pipeline (the crash window
+  // between the job settling and the reel going 'failed'). The !inner
+  // join keeps only jobs whose reel is in a pipeline status, so a
+  // failed job whose reel already left the pipeline is not subtracted
+  // a second time. Verified against the supabase-js query builder:
+  // select=id,adu_reels!inner(status) with adu_reels.status=in.(...).
+  // A failure here falls back to 0 (logged, same read-fallback rule
+  // as countRows) — pending then counts the stranded reel, the safe
+  // pre-fix direction.
+  const { count: failedInPipelineCount, error: failedInPipelineError } = await supabase
+    .from('adu_posting_jobs')
+    .select('id, adu_reels!inner(status)', { count: 'exact', head: true })
+    .eq('config_id', config.id)
+    .in('status', failedStatuses)
+    .in('adu_reels.status', ['pending', 'processing', 'downloaded']);
+  let failedInPipeline = 0;
+  if (failedInPipelineError) {
+    console.error(
+      `ADU count failed: table=adu_posting_jobs code=${failedInPipelineError.code ?? 'unknown'}`,
+    );
+  } else {
+    failedInPipeline = failedInPipelineCount ?? 0;
+  }
+  const pendingCount = Math.max(0, inPipelineCount - failedInPipeline);
   const postedToday = await countRows('adu_posting_jobs', 'published', midnight);
   const failedToday = await countRows('adu_posting_jobs', failedStatuses, midnight);
   return {
