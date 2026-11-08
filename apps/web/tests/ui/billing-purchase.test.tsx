@@ -925,7 +925,9 @@ describe('Billing Purchase', () => {
   it('checkout offers manual payments only — no crypto option renders', async () => {
     renderBilling('purchase');
     await goToCheckout();
-    expect(screen.getByText('Manual payments only.')).toBeInTheDocument();
+    // Checkout re-mounts and re-loads billing (skeleton first), so wait
+    // for the step to render like the other checkout tests do.
+    expect(await screen.findByText('Manual payments only.')).toBeInTheDocument();
     expect(screen.queryByText(/crypto/i)).toBeNull();
     expect(screen.queryByText(/USDT/)).toBeNull();
     expect(screen.queryByText(/TRC20|BEP20/)).toBeNull();
