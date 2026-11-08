@@ -27,6 +27,9 @@ export interface ComposerMediaInput {
   width?: number | null | undefined;
   height?: number | null | undefined;
   captionText?: string | null | undefined;
+  /** Stored/probed video duration. Carried so the composer can
+   * derive an overlong vertical video as a feed video, not a reel. */
+  durationSeconds?: number | null | undefined;
 }
 
 /** Maps a library list item onto the composer's attached-media shape. */
@@ -41,6 +44,7 @@ export function toComposerMedia(item: ComposerMediaInput): ComposerMedia {
     width: item.width ?? null,
     height: item.height ?? null,
     captionText: item.captionText ?? null,
+    durationSeconds: item.durationSeconds ?? null,
   };
 }
 
@@ -78,6 +82,7 @@ export function blockTypeLabel(
     aspectRatio: media?.aspectRatio ?? null,
     width: media?.width ?? null,
     height: media?.height ?? null,
+    durationSeconds: media?.durationSeconds ?? null,
   });
   return composerPostTypeLabel(derived, text.trim().length > 0);
 }

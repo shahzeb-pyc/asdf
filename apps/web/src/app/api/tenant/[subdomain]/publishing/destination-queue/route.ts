@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from 'next/server';
 import {
   DestinationEnqueueRequestSchema,
   DestinationEnqueueResponseSchema,
+  coerceOverlongReelFormat,
   resolveDestinationPlatformOptions,
   validatePostFormatEligibility,
   type DestinationEnqueueKind,
@@ -335,22 +336,39 @@ export async function handleDestinationEnqueue(
   // post's media, and its caption/format rules (reel 2,200, story
   // comment) are already enforced there.
   //
+  // Overlong reels are CONVERTED, not refused: a Facebook reel
+  // whose video is known to exceed 90 seconds is queued as a feed
+  // video instead (platformFormat null), via
+  // coerceOverlongReelFormat. The conversion is the route's
+  // authoritative backstop for any caller — the composer converts
+  // first (it knows the duration for staged uploads and library
+  // items), so the request normally already arrives as a video.
+  // The effective format is what eligibility validates AND what
+  // the row stores, so the queued item, the slot format, and the
+  // publisher all agree it is a feed video.
+  //
   // Returns an eligibility error message, or null when the facts
-  // pass (or there is no media / the platform is not Facebook).
+  // pass (or there is no media / the platform is not Facebook),
+  // plus the effective platform format for the row.
   const facebookEligibilityError = (facts: {
     mediaType: 'image' | 'video';
     fileSize: number | null;
     durationSeconds: number | null;
     aspectRatio: string | null;
-  } | null): string | null => {
-    if (destination.platform !== 'facebook' || facts === null) return null;
+  } | null): { error: string | null; effectivePlatformFormat: string | null } => {
+    const noResult = { error: null, effectivePlatformFormat: data.platformFormat ?? null };
+    if (destination.platform !== 'facebook' || facts === null) return noResult;
+    const effectivePlatformFormat = coerceOverlongReelFormat(
+      data.platformFormat,
+      facts.durationSeconds
+    );
     const postFormat =
-      data.platformFormat === 'reel'
+      effectivePlatformFormat === 'reel'
         ? 'reel'
         : data.kind === 'text' || data.kind === 'image' || data.kind === 'video' || data.kind === 'story'
           ? data.kind
           : null;
-    if (postFormat === null) return 'Unsupported post format: carousel';
+    if (postFormat === null) return { error: 'Unsupported post format: carousel', effectivePlatformFormat };
     const eligibility = validatePostFormatEligibility({
       postFormat,
       caption: data.caption,
@@ -363,10 +381,17 @@ export async function handleDestinationEnqueue(
         aspectRatio: facts.aspectRatio,
       },
     });
-    return eligibility.valid
-      ? null
-      : (eligibility.error ?? 'This media does not fit the post format.');
+    return {
+      error: eligibility.valid
+        ? null
+        : (eligibility.error ?? 'This media does not fit the post format.'),
+      effectivePlatformFormat,
+    };
   };
+  // The platform format the row stores: the request's, unless the
+  // media facts converted an overlong reel to a feed video (set by
+  // the eligibility check below, in whichever media branch runs).
+  let resolvedPlatformFormat: string | null = data.platformFormat ?? null;
   let primaryMedia: OwnedMediaRow | null = null;
   if (data.mediaItemIds.length > 0) {
     const mediaRows = await fetchOwnedMedia(client, session.userId, data.mediaItemIds);
@@ -389,17 +414,19 @@ export async function handleDestinationEnqueue(
     }
 
     if (primaryMedia) {
-      const eligibilityError = facebookEligibilityError({
-        mediaType: primaryMedia.media_type === 'video' ? 'video' : 'image',
-        fileSize:
-          typeof primaryMedia.file_size === 'number' ? primaryMedia.file_size : null,
-        durationSeconds:
-          primaryMedia.duration_seconds === null ||
-          primaryMedia.duration_seconds === undefined
-            ? null
-            : Number(primaryMedia.duration_seconds),
-        aspectRatio: primaryMedia.aspect_ratio ?? null,
-      });
+      const { error: eligibilityError, effectivePlatformFormat } =
+        facebookEligibilityError({
+          mediaType: primaryMedia.media_type === 'video' ? 'video' : 'image',
+          fileSize:
+            typeof primaryMedia.file_size === 'number' ? primaryMedia.file_size : null,
+          durationSeconds:
+            primaryMedia.duration_seconds === null ||
+            primaryMedia.duration_seconds === undefined
+              ? null
+              : Number(primaryMedia.duration_seconds),
+          aspectRatio: primaryMedia.aspect_ratio ?? null,
+        });
+      resolvedPlatformFormat = effectivePlatformFormat;
       if (eligibilityError) {
         return NextResponse.json(
           { error: 'INVALID_FORMAT', message: eligibilityError },
@@ -460,16 +487,18 @@ export async function handleDestinationEnqueue(
       }
     }
     stagedMedia = staged;
-    const eligibilityError = facebookEligibilityError({
-      mediaType: stagedMedia.mediaType,
-      fileSize:
-        typeof stagedMedia.fileSize === 'number' ? stagedMedia.fileSize : null,
-      durationSeconds:
-        typeof stagedMedia.durationSeconds === 'number'
-          ? stagedMedia.durationSeconds
-          : null,
-      aspectRatio: stagedMedia.aspectRatio ?? null,
-    });
+    const { error: eligibilityError, effectivePlatformFormat } =
+      facebookEligibilityError({
+        mediaType: stagedMedia.mediaType,
+        fileSize:
+          typeof stagedMedia.fileSize === 'number' ? stagedMedia.fileSize : null,
+        durationSeconds:
+          typeof stagedMedia.durationSeconds === 'number'
+            ? stagedMedia.durationSeconds
+            : null,
+        aspectRatio: stagedMedia.aspectRatio ?? null,
+      });
+    resolvedPlatformFormat = effectivePlatformFormat;
     if (eligibilityError) {
       return NextResponse.json(
         { error: 'INVALID_FORMAT', message: eligibilityError },
@@ -662,7 +691,7 @@ export async function handleDestinationEnqueue(
     destinationId: destination.id,
     platform: destination.platform,
     kind: data.kind as DestinationEnqueueKind,
-    platformFormat: data.platformFormat ?? null,
+    platformFormat: resolvedPlatformFormat,
     caption: data.caption,
     title: data.title ?? null,
     firstComment: data.firstComment ?? null,

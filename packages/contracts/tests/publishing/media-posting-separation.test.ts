@@ -5,6 +5,9 @@ import {
 } from '../../src/publishing/destination-enqueue.js';
 import {
   ComposerMediaSchema,
+  FACEBOOK_POST_TEXT_LIMIT,
+  composerTextLimitForBlock,
+  deriveComposerPostType,
   toComposerEnqueueItem,
 } from '../../src/publishing/create-posts-composer.js';
 import {
@@ -182,6 +185,109 @@ describe('ComposerMediaSchema + toComposerEnqueueItem — staged mapping', () =>
     expect(item).not.toBeNull();
     expect(item?.mediaItemIds).toEqual(['44444444-4444-4444-a444-444444444444']);
     expect(item?.stagedMedia).toBeNull();
+  });
+});
+
+describe('Overlong vertical video derives as a feed video, not a reel', () => {
+  const vertical = {
+    text: '',
+    mediaType: 'video' as const,
+    aspectRatio: '9:16',
+    width: 1080,
+    height: 1920,
+  };
+
+  it('derives a 91s vertical video as video, a 90s one as reel', () => {
+    expect(deriveComposerPostType({ ...vertical, durationSeconds: 91 })).toBe('video');
+    expect(deriveComposerPostType({ ...vertical, durationSeconds: 90 })).toBe('reel');
+  });
+
+  it('derives an unknown-duration vertical video as a reel', () => {
+    expect(deriveComposerPostType({ ...vertical, durationSeconds: null })).toBe('reel');
+    expect(deriveComposerPostType(vertical)).toBe('reel');
+  });
+
+  it('gives an overlong video the feed-post text limit, not the reel limit', () => {
+    const block = {
+      id: 'block-1',
+      text: 'x'.repeat(3000),
+      media: {
+        id: '44444444-4444-4444-a444-444444444444',
+        name: 'clip.mp4',
+        mediaType: 'video' as const,
+        aspectRatio: '9:16',
+        thumbnailUrl: null,
+        url: 'https://cdn.example.com/clip.mp4',
+        captionText: null,
+        durationSeconds: 91,
+      },
+    };
+    expect(composerTextLimitForBlock(block)).toBe(FACEBOOK_POST_TEXT_LIMIT);
+  });
+
+  it('maps a staged 91s vertical video to a video enqueue item, keeping stagedMedia', () => {
+    const item = toComposerEnqueueItem({
+      id: 'block-1',
+      text: 'Long clip',
+      media: {
+        id: '55555555-5555-4555-a555-555555555555',
+        name: 'clip.mp4',
+        mediaType: 'video',
+        aspectRatio: '9:16',
+        thumbnailUrl: null,
+        url: 'https://media.example.com/clip.mp4',
+        captionText: null,
+        source: 'staged',
+        storageKey: stagedKey,
+        durationSeconds: 91,
+      },
+    });
+    expect(item).not.toBeNull();
+    expect(item?.kind).toBe('video');
+    expect(item?.platformFormat).toBeNull();
+    expect(item?.mediaItemIds).toEqual([]);
+    expect(item?.stagedMedia?.durationSeconds).toBe(91);
+  });
+
+  it('maps a library 91s vertical video to a video enqueue item with its media id', () => {
+    const item = toComposerEnqueueItem({
+      id: 'block-1',
+      text: 'Long clip',
+      media: {
+        id: '44444444-4444-4444-a444-444444444444',
+        name: 'clip.mp4',
+        mediaType: 'video',
+        aspectRatio: '9:16',
+        thumbnailUrl: null,
+        url: 'https://cdn.example.com/clip.mp4',
+        captionText: null,
+        durationSeconds: 91,
+      },
+    });
+    expect(item).not.toBeNull();
+    expect(item?.kind).toBe('video');
+    expect(item?.platformFormat).toBeNull();
+    expect(item?.mediaItemIds).toEqual(['44444444-4444-4444-a444-444444444444']);
+  });
+
+  it('maps a 90s vertical video to a reel enqueue item, exactly as before', () => {
+    const item = toComposerEnqueueItem({
+      id: 'block-1',
+      text: 'Short clip',
+      media: {
+        id: '44444444-4444-4444-a444-444444444444',
+        name: 'clip.mp4',
+        mediaType: 'video',
+        aspectRatio: '9:16',
+        thumbnailUrl: null,
+        url: 'https://cdn.example.com/clip.mp4',
+        captionText: null,
+        durationSeconds: 90,
+      },
+    });
+    expect(item).not.toBeNull();
+    expect(item?.kind).toBe('video');
+    expect(item?.platformFormat).toBe('reel');
   });
 });
 

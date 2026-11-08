@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { FACEBOOK_REEL_MAX_DURATION_SECONDS } from '../domain/publishing.js';
 
 // ==========================================
 // Create Posts composer (dedicated Page)
@@ -12,7 +13,11 @@ import { z } from 'zod';
 //   - image               → image post (caption presence is a label
 //                           distinction only, not a second type)
 //   - vertical video      → reel (a SEPARATE publishing API from a
-//                           plain video post — never collapse them)
+//                           plain video post — never collapse them),
+//                           unless its duration exceeds the Reels cap
+//                           (90s), in which case it is a feed video:
+//                           overlong reels queue as videos, never
+//                           blocked (duration unknown → still a reel)
 //   - any other video     → video post
 //
 // "Vertical" is the media's own aspect ratio first (the library's
@@ -95,9 +100,19 @@ export function deriveComposerPostType(input: {
   aspectRatio: string | null | undefined;
   width: number | null | undefined;
   height: number | null | undefined;
+  /** Probed/stored video duration. A vertical video longer than the
+   * Reels cap is a feed video, not a reel — it queues as one instead
+   * of being blocked. Unknown duration stays a reel, as before. */
+  durationSeconds?: number | null | undefined;
 }): ComposerDerivedType {
   if (!input.mediaType) return 'text';
   if (input.mediaType === 'image') return 'image';
+  if (
+    typeof input.durationSeconds === 'number' &&
+    input.durationSeconds > FACEBOOK_REEL_MAX_DURATION_SECONDS
+  ) {
+    return 'video';
+  }
   return isVerticalVideo(input) ? 'reel' : 'video';
 }
 
@@ -144,6 +159,7 @@ export function composerTextLimitForBlock(block: {
     aspectRatio: string | null | undefined;
     width?: number | null | undefined;
     height?: number | null | undefined;
+    durationSeconds?: number | null | undefined;
   } | null;
 }): number {
   const derived = deriveComposerPostType({
@@ -152,6 +168,7 @@ export function composerTextLimitForBlock(block: {
     aspectRatio: block.media?.aspectRatio ?? null,
     width: block.media?.width ?? null,
     height: block.media?.height ?? null,
+    durationSeconds: block.media?.durationSeconds ?? null,
   });
   return composerTextLimitForType(derived);
 }
@@ -257,6 +274,7 @@ export function toComposerEnqueueItem(
     aspectRatio: media?.aspectRatio ?? null,
     width: media?.width ?? null,
     height: media?.height ?? null,
+    durationSeconds: media?.durationSeconds ?? null,
   });
   // Captions are trimmed at the boundary: a block that is only
   // whitespace is empty (handled above), and a real caption never
