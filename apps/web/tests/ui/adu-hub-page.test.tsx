@@ -655,7 +655,7 @@ describe('AduHubPage list cards (Pages-section structure)', () => {
     expect(status.textContent).toContain('Scrape pending');
     expect(status.getAttribute('data-status')).toBe('queued');
     expect(screen.getByTestId('adu-page-parent-account').textContent).toBe('Account: Shahzeb Malik');
-    expect(screen.getByTestId('adu-page-queued-count').textContent).toBe('0');
+    expect(screen.getByTestId('adu-page-pending-count').textContent).toBe('0');
     expect(screen.getByTestId('adu-page-posted-count').textContent).toBe('0');
     expect(screen.getByTestId('adu-page-failed-count').textContent).toBe('0');
     expect(screen.getByTestId('adu-page-today-line').textContent).toContain('Today: Pending 1 · Posted 0 · Failed 0');
@@ -671,27 +671,29 @@ describe('AduHubPage list cards (Pages-section structure)', () => {
     expect(screen.queryByTestId('adu-page-avatar-initials')).toBeNull();
   });
 
-  it('shows ADU totals with signal colours in Queued / Posted / Failed order', async () => {
+  it('shows ADU totals with signal colours in Pending / Posted / Failed order', async () => {
     installFetchCards([
       { ...CARD_CONFIG, pendingCount: 5, postedCount: 12, failedCount: 2 },
     ]);
     await renderCards();
-    const row = screen.getByTestId('adu-page-queue-counts');
+    const row = screen.getByTestId('adu-page-pending-counts');
     expect(Array.from(row.children).map((el) => el.getAttribute('data-testid'))).toEqual([
-      'adu-page-queued-stat',
+      'adu-page-pending-stat',
       'adu-page-posted-stat',
       'adu-page-failed-stat',
     ]);
-    const queued = screen.getByTestId('adu-page-queued-count');
+    const pending = screen.getByTestId('adu-page-pending-count');
     const posted = screen.getByTestId('adu-page-posted-count');
     const failed = screen.getByTestId('adu-page-failed-count');
-    expect(queued.textContent).toBe('5');
+    expect(pending.textContent).toBe('5');
     expect(posted.textContent).toBe('12');
     expect(failed.textContent).toBe('2');
-    expect(queued.className).toContain('text-signal-queued');
+    expect(pending.className).toContain('text-signal-queued');
     expect(posted.className).toContain('text-signal-operational');
     expect(failed.className).toContain('text-signal-critical');
-    expect(queued.className).toContain('text-xxl');
+    expect(pending.className).toContain('text-xxl');
+    expect(screen.getByTestId('adu-page-pending-stat').textContent).toContain('Pending');
+    expect(screen.getByTestId('adu-page-card-cfg-1').textContent).not.toContain('Queued');
   });
 
   it('followers line shows the CURRENT count and the gained indicator when net gained > 0', async () => {
