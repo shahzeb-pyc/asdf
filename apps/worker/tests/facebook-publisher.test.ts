@@ -437,6 +437,7 @@ interface ErrorCase {
   name: string;
   code: number;
   subcode?: number;
+  retryCount?: number;
   kind: 'auth' | 'retryable' | 'permanent';
   status: 'retry' | 'failed';
   retryDelaySeconds?: number;
@@ -480,8 +481,13 @@ const ERROR_CASES: ErrorCase[] = [
       "You've already posted this. Posting the same content repeatedly is not allowed by Facebook.",
   },
   { name: '506 duplicate post', code: 506, kind: 'permanent', status: 'failed' },
-  { name: '1609005 bad link', code: 1609005, kind: 'permanent', status: 'failed' },
-  { name: '100 invalid parameter', code: 100, kind: 'permanent', status: 'failed' },
+  // Content codes 100 / 1609005 retry ×2, then fail (owner decision,
+  // ADU statuses build): kind stays 'permanent', only the retry
+  // disposition changes with the attempt count.
+  { name: '1609005 bad link', code: 1609005, kind: 'permanent', status: 'retry', retryDelaySeconds: 300 },
+  { name: '1609005 bad link at retry 2', code: 1609005, retryCount: 2, kind: 'permanent', status: 'failed' },
+  { name: '100 invalid parameter', code: 100, kind: 'permanent', status: 'retry', retryDelaySeconds: 300 },
+  { name: '100 invalid parameter at retry 2', code: 100, retryCount: 2, kind: 'permanent', status: 'failed' },
   { name: '400 bad request (4xx client)', code: 400, kind: 'permanent', status: 'failed' },
   // Transient rate limits — page stays active, no status flip, no
   // cooldown; retry delay 300s at retry_count 0.
@@ -507,7 +513,11 @@ describe('FacebookPublisher — error-classification parity (publish outcomes)',
         ...(c.subcode !== undefined ? { error_subcode: c.subcode } : {}),
       });
       const publisher = new FacebookPublisher(mock);
-      const outcome = await publisher.publish(makeItem(), makeDestination(), TOKENS);
+      const outcome = await publisher.publish(
+        makeItem(c.retryCount !== undefined ? { retry_count: c.retryCount } : {}),
+        makeDestination(),
+        TOKENS,
+      );
 
       expect(outcome.status).toBe(c.status);
       expect(outcome.error?.kind).toBe(c.kind);

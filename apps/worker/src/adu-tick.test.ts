@@ -20,6 +20,7 @@ import {
   encryptToken,
   InternalError,
   type IFacebookPublishClient,
+  type PublishOutcome,
   type Publisher,
 } from '@fbuploadpro/contracts';
 import { ADU_JOB_RETENTION_DAYS, ADU_TICK_PAGE_SIZE, runAduTick } from './adu-tick.js';
@@ -1462,7 +1463,7 @@ describe('runAduTick', () => {
 
   /** Runs one tick for a single pending Facebook ADU job with a stubbed outcome. */
   async function aduPublishTick(
-    outcome: { status: 'failed' | 'retry' | 'published'; error?: Record<string, unknown> },
+    outcome: PublishOutcome,
     opts: {
       gateStatus?: string;
       cascadeDestinations?: Row[];
