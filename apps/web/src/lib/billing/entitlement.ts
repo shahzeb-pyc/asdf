@@ -469,15 +469,25 @@ export async function getUsageCounts(
     client,
     userId
   );
-  for (const platform of SUBSCRIPTION_PLATFORMS) {
-    usage[platform] = await countUsageForPlatform(
-      client,
-      userId,
-      platform,
-      disconnectedByPlatform.get(platform) ?? [],
-      '[billing] usage counts query failed'
-    );
-  }
+  // The six per-platform counts are independent given the
+  // disconnected map above: each writes only its own key of the
+  // result and runs its own count query, with no shared mutable
+  // state between platforms. Run them together instead of one
+  // after another, so one slow platform cannot stall the rest.
+  const counts = await Promise.all(
+    SUBSCRIPTION_PLATFORMS.map((platform) =>
+      countUsageForPlatform(
+        client,
+        userId,
+        platform,
+        disconnectedByPlatform.get(platform) ?? [],
+        '[billing] usage counts query failed'
+      )
+    )
+  );
+  SUBSCRIPTION_PLATFORMS.forEach((platform, index) => {
+    usage[platform] = counts[index];
+  });
   return usage;
 }
 

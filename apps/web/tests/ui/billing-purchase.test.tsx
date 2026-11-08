@@ -497,6 +497,78 @@ describe('Billing Purchase', () => {
     expect(screen.getByText('Facebook · Pages × 1')).toBeInTheDocument();
   });
 
+  it('moving builder -> checkout reuses the billing fetch: no second /billing call, no skeleton', async () => {
+    // Smooth-steps spec: one React Query cache for all three steps.
+    // The builder fetches /billing once; the checkout remount (same
+    // tenant layout, same QueryClient — what client-side navigation
+    // does) must not fetch it again and must render at once.
+    const client = createQueryClient('acme');
+    const view = render(
+      <QueryClientProvider client={client}>
+        <EntitlementProvider subdomain="acme" adminOnly={false}>
+          <PurchaseView subdomain="acme" step="builder" />
+        </EntitlementProvider>
+      </QueryClientProvider>
+    );
+    await screen.findByText('Choose your pages and accounts');
+    const billingCalls = () =>
+      mockApiGet.mock.calls.filter(([url]) => url === '/api/tenant/acme/billing').length;
+    expect(billingCalls()).toBe(1);
+    fireEvent.change(screen.getByLabelText('Facebook pages'), { target: { value: '1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue to checkout' }));
+    view.rerender(
+      <QueryClientProvider client={client}>
+        <EntitlementProvider subdomain="acme" adminOnly={false}>
+          <PurchaseView subdomain="acme" step="checkout" />
+        </EntitlementProvider>
+      </QueryClientProvider>
+    );
+    // The checkout content is there on the first render after the
+    // step change — no skeleton in between.
+    expect(screen.getByText('Upload your payment screenshot')).toBeInTheDocument();
+    expect(billingCalls()).toBe(1);
+  });
+
+  it('a hung billing load fails into the retry UI within the timeout', async () => {
+    // Smooth-steps spec: the billing fetch aborts after 15s, so a
+    // hung request shows the retry error instead of an endless
+    // skeleton. AbortSignal.timeout is spied to an already-aborted
+    // signal so the test does not wait out the real 15s.
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => {
+      const controller = new AbortController();
+      controller.abort(new DOMException('The operation timed out.', 'TimeoutError'));
+      return controller.signal;
+    });
+    try {
+      mockApiGet.mockImplementation(async (url: string, options?: { signal?: AbortSignal }) => {
+        if (url.includes('/billing/entitlement')) {
+          return { ...freeEntitlement(), hasPriorPeriod: false };
+        }
+        if (url.includes('/billing/storage')) {
+          return {
+            quotaBytes: 5 * 1024 * 1024 * 1024,
+            usedBytes: 0,
+            remainingBytes: 5 * 1024 * 1024 * 1024,
+            overBytes: 0,
+            state: 'normal',
+            hasActivePeriod: true,
+          };
+        }
+        if (url.includes('/billing/refunds')) {
+          return { requests: [], eligibility: { eligible: false, reason: null } };
+        }
+        if (options?.signal?.aborted) throw abortedError();
+        return new Promise(() => undefined);
+      });
+      renderBilling('purchase');
+      await screen.findByText("Couldn't load billing");
+      expect(screen.getByText('The request timed out. Please try again.')).toBeInTheDocument();
+      expect(timeoutSpy).toHaveBeenCalledWith(15000);
+    } finally {
+      timeoutSpy.mockRestore();
+    }
+  });
+
   it('invalid input never touches the totals and reverts on blur', async () => {
     renderBilling('purchase');
     await screen.findByText('Choose your pages and accounts');

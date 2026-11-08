@@ -575,6 +575,52 @@ describe('getUsageCounts / getUsageCount / isDestinationUsed', () => {
     });
   });
 
+  it('runs the six per-platform counts in parallel', async () => {
+    // Smooth-steps spec: the six countUsageForPlatform calls are
+    // independent given the disconnected map, so they run together
+    // instead of one after another. Track how many head-count
+    // queries are in flight at once: sequential awaits never
+    // exceed one; Promise.all has all six in flight together.
+    const tracker = { inFlight: 0, maxInFlight: 0 };
+    class TrackingBuilder extends FakeBuilder {
+      override then<TResult1 = unknown, TResult2 = never>(
+        onfulfilled?:
+          | ((value: Record<string, unknown>) => TResult1 | PromiseLike<TResult1>)
+          | null,
+        onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
+      ): PromiseLike<TResult1 | TResult2> {
+        tracker.inFlight += 1;
+        tracker.maxInFlight = Math.max(tracker.maxInFlight, tracker.inFlight);
+        return super.then(
+          (value) => {
+            tracker.inFlight -= 1;
+            return onfulfilled ? onfulfilled(value) : (value as unknown as TResult1);
+          },
+          (reason) => {
+            tracker.inFlight -= 1;
+            return onRejected ? onRejected(reason) : Promise.reject(reason);
+          }
+        );
+      }
+    }
+    const state = baseState({
+      usageCounts: { facebook: 1, instagram: 2, threads: 3, x: 4, tiktok: 5, youtube: 6 },
+    });
+    const trackingClient = {
+      from: (table: string) => new TrackingBuilder(state, table),
+    } as unknown as SupabaseClient;
+    await expect(getUsageCounts(trackingClient, 'user-1')).resolves.toEqual({
+      ...ZERO_COUNTS,
+      facebook: 1,
+      instagram: 2,
+      threads: 3,
+      x: 4,
+      tiktok: 5,
+      youtube: 6,
+    });
+    expect(tracker.maxInFlight).toBe(6);
+  });
+
   it('counts one platform exactly, without fetching its keys', async () => {
     const state = baseState({
       usageRows: [

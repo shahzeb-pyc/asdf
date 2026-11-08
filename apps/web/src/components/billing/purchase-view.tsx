@@ -19,14 +19,13 @@
 import * as React from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeftIcon, CheckIcon, Loader2Icon, MinusIcon, PlusIcon, UploadIcon, XIcon } from 'lucide-react';
 import { apiGet, apiPost, buildTenantApiPath, getErrorMessage, isApiError } from '@/lib/api';
 import {
   BillingPaymentItemSchema,
   UserRefundsResponseSchema,
-  BillingStatusResponseSchema,
   ZeroDueCheckoutResponseSchema,
-  type BillingStatusResponse,
   type CouponValidateResponse,
   type PlatformCounts,
 } from '@/lib/api/schemas/billing';
@@ -59,7 +58,11 @@ import { Input } from '@/components/shared/ui/input';
 import { Skeleton } from '@/components/shared/ui/skeleton';
 import { BillingStatusMark } from './billing-status-mark';
 import { CouponSection } from './coupon-section';
-import { useSharedEntitlement } from './entitlement-provider';
+import {
+  billingStatusQueryOptions,
+  useBillingStatus,
+  useSharedEntitlement,
+} from './entitlement-provider';
 
 const PLATFORM_LABELS: Record<keyof PlatformCounts, string> = {
   facebook: 'Facebook',
@@ -247,20 +250,39 @@ export function PurchaseView({
   step: PurchaseStep;
   confirmationPaymentId?: string | null;
 }>) {
-  const [status, setStatus] = React.useState<BillingStatusResponse | null>(null);
-  const [loadError, setLoadError] = React.useState<string | null>(null);
+  /**
+   * Shared billing status (smooth-steps spec): one React Query cache
+   * for builder, checkout and confirmation — the data is fetched
+   * once, on first entry into Purchase, and step transitions reuse
+   * it instead of re-fetching behind a skeleton. The old mount-only
+   * load() (and its duplicated effect) is gone; the explicit
+   * refetch points below (after a purchase, a 409, Try again) are
+   * the only re-checks.
+   */
+  const billingQuery = useBillingStatus(subdomain);
+  const status = billingQuery.data ?? null;
+  /**
+   * A hung request fails as an aborted error: say so plainly
+   * ("timed out") instead of the client's generic "cancelled"
+   * wording.
+   */
+  const loadError = billingQuery.isError
+    ? isApiError(billingQuery.error) && billingQuery.error.kind === 'aborted'
+      ? 'The request timed out. Please try again.'
+      : getErrorMessage(billingQuery.error)
+    : null;
   const [reloading, setReloading] = React.useState(false);
   const [counts, setCounts] = React.useState<PlatformCounts | null>(null);
   /**
    * Plan decisions (Paid / Expired / Free, My Plan card, pending
    * verification) come from the tenant layout's shared entitlement
    * query — the same data the gate and the sidebar word read — not
-   * from this view's own /billing fetch. The /billing fetch below
+   * from this view's shared /billing query. The /billing query above
    * still supplies payments (and the pending-payment row); its
    * nested entitlement is ignored for plan decisions so the three
    * surfaces can never disagree, and so the plan display refreshes
    * on window focus through the shared query instead of going stale
-   * after the mount-only load.
+   * after the first load.
    */
   const sharedEntitlement = useSharedEntitlement();
   // Raw text of each chooser input while it is being edited. The
@@ -382,49 +404,10 @@ export function PurchaseView({
     };
   }, [screenshot]);
 
-  const load = React.useCallback(async () => {
-    try {
-      const result = await apiGet(buildTenantApiPath(subdomain, '/billing'), {
-        schema: BillingStatusResponseSchema,
-      });
-      setStatus(result);
-      setLoadError(null);
-    } catch (err) {
-      setLoadError(getErrorMessage(err));
-    }
-  }, [subdomain]);
-
-  React.useEffect(() => {
-    void load();
-  }, [load]);
-  React.useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const result = await apiGet(buildTenantApiPath(subdomain, '/billing/refunds'), {
-          schema: UserRefundsResponseSchema,
-        });
-        if (!cancelled) {
-          setRefundPending(result.requests.some((item) => item.status === 'requested'));
-        }
-      } catch (err) {
-        // Refund state is advisory here; never block Purchase on it.
-        reportError(err, { source: 'purchase-refund-flag' });
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [subdomain]);
-
-  /**
-   * Returning to Purchase must re-read payments: a pending payment
-   * decided (approved or rejected) while the user is elsewhere must
-   * not leave a stale disabled checkout behind.
-   */
-  React.useEffect(() => {
-    void load();
-  }, [load]);
+  // Refund state is advisory here; never block Purchase on it.
+  // (Was duplicated identically twice — same defect as the old
+  // duplicated load() effect — deduped to one while the loading
+  // path was rewritten.)
   React.useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -449,7 +432,7 @@ export function PurchaseView({
     setReloading(true);
     try {
       await sharedEntitlement.refetch();
-      await load();
+      await billingQuery.refetch();
     } finally {
       setReloading(false);
     }
@@ -829,14 +812,14 @@ export function PurchaseView({
       // Order matters (checkout flicker fix): the checkout step renders
       // the screenshot-upload CTA whenever `screenshot` is null, so
       // clearing it BEFORE the refetch + navigation made the UI flash
-      // back to "add screenshot" for the whole slow load() before
+      // back to "add screenshot" for the whole slow refetch before
       // confirmation appeared. The reset now runs AFTER navigation, in
       // the same synchronous block as the confirmation state, so React
       // batches them into a single render: processing persists until
       // confirmation renders, with no intermediate upload state. The
       // same ordering also keeps the screenshot attached if the POST
       // or the refetch fails, so a retry needs no re-upload.
-      await load();
+      await billingQuery.refetch();
       try {
         sessionStorage.removeItem(DRAFT_KEY);
       } catch (err) {
@@ -858,7 +841,7 @@ export function PurchaseView({
       // itself, or another tab): refresh so the pending card, not a
       // dead retry button, is what the user sees next.
       if (isApiError(err) && err.kind === 'http' && err.status === 409) {
-        void load();
+        void billingQuery.refetch();
       }
     } finally {
       submitBusyRef.current = false;
@@ -887,7 +870,7 @@ export function PurchaseView({
         { counts: effectiveCounts, couponCode: appliedCoupon.code },
         { schema: ZeroDueCheckoutResponseSchema }
       );
-      await load();
+      await billingQuery.refetch();
       // A zero-due activation IS the purchase: the period starts at
       // once, with no admin step. Refresh the shared entitlement
       // here — it is the one explicit re-check after a purchase, so
@@ -1199,7 +1182,7 @@ export function PurchaseView({
           {formatDateTime(pendingPayment.createdAt)}
         </p>
         <div>
-          <Button variant="outline" onClick={() => void load()}>
+          <Button variant="outline" onClick={() => void billingQuery.refetch()}>
             Check again
           </Button>
         </div>
@@ -1719,25 +1702,46 @@ function PurchaseConfirmationView({
   paymentId,
 }: Readonly<{ subdomain: string; paymentId: string | null }>) {
   const router = useRouter();
-  const [payment, setPayment] = React.useState<BillingPaymentItem | null>(null);
-  const [error, setError] = React.useState<string | null>(null);
-  const [loading, setLoading] = React.useState(true);
+  const queryClient = useQueryClient();
+  /**
+   * Page 1 comes from the shared billing cache — arriving from
+   * checkout it is already there (the submit refetched it before
+   * navigating), so the payment is found on the first render with
+   * no skeleton and no fetch. A direct load of this URL fetches
+   * page 1 once, like any first entry into Purchase.
+   */
+  const billing = useBillingStatus(subdomain);
+  const cachedPayment = paymentId
+    ? (billing.data?.payments.find((item) => item.id === paymentId) ?? null)
+    : null;
+  const [payment, setPayment] = React.useState<BillingPaymentItem | null>(cachedPayment);
+  const [error, setError] = React.useState<string | null>(
+    paymentId ? null : 'No payment was selected. Open Payments to find it, or build a new plan in Purchase.'
+  );
+  const [loading, setLoading] = React.useState(Boolean(paymentId) && !cachedPayment);
 
   React.useEffect(() => {
-    if (!paymentId) {
+    if (!paymentId) return;
+    if (payment) return;
+    if (billing.isPending) return;
+    if (billing.isError) {
+      setError(getErrorMessage(billing.error));
       setLoading(false);
-      setError('No payment was selected. Open Payments to find it, or build a new plan in Purchase.');
       return;
     }
+    const fromPage1 = billing.data?.payments.find((item) => item.id === paymentId) ?? null;
+    if (fromPage1) {
+      setPayment(fromPage1);
+      setLoading(false);
+      return;
+    }
+    // Not on page 1 (newest-first): fall back to pages 2-3 before
+    // calling it missing, through the same shared query cache.
     let cancelled = false;
     void (async () => {
       try {
-        // Page 1 is newest-first; a just-created payment is there.
-        // Fall back to pages 2-3 before calling it missing.
-        for (const page of [1, 2, 3]) {
-          const result = await apiGet(buildTenantApiPath(subdomain, `/billing?page=${page}`), {
-            schema: BillingStatusResponseSchema,
-          });
+        for (const page of [2, 3]) {
+          const result = await queryClient.fetchQuery(billingStatusQueryOptions(subdomain, page));
           const found = result.payments.find((item) => item.id === paymentId);
           if (found) {
             if (!cancelled) {
@@ -1762,7 +1766,7 @@ function PurchaseConfirmationView({
     return () => {
       cancelled = true;
     };
-  }, [subdomain, paymentId]);
+  }, [subdomain, paymentId, payment, billing, queryClient]);
 
   if (loading) return <BillingSkeleton />;
   if (error || !payment) {
