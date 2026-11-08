@@ -1,8 +1,8 @@
 {
   "version": 1,
   "decision": "D137-3 superseded by Shahzeb on 2026-10-24: bundle budgets are enforced in CI.",
-  "measuredAt": "2026-11-02",
-  "measuredFromCommit": "52172c733ae047fa4a72bbe5b7e35627b91c545e",
+  "measuredAt": "2026-11-08",
+  "measuredFromCommit": "74d7ca9186c72217e5bbbc75f1faf4505b51bb5b",
   "measurement": "Analyzer production build (ANALYZE=true next build --webpack) of a clean .next, measured by apps/web/scripts/measure-bundle.mjs from emitted files; sizes are bytes, gzip level 9.",
   "headroomPercent": 5,
   "baseline": {
@@ -423,7 +423,7 @@
       "/tenant/[subdomain]/media": {
         "firstLoadGzipBytes": 186243,
         "firstLoadRawBytes": 628000,
-        "routeSpecificGzipBytes": 51344,
+        "routeSpecificGzipBytes": 53930,
         "routeSpecificRawBytes": 174152
       },
       "/tenant/[subdomain]/pages": {
@@ -586,7 +586,7 @@
         "firstLoadGzipBytes": 169948,
         "firstLoadRawBytes": 563822,
         "routeSpecificGzipBytes": 29412,
-        "routeSpecificRawBytes": 90350
+        "routeSpecificRawBytes": 94997
       },
       "/tenant/[subdomain]/refund": {
         "firstLoadGzipBytes": 168543,
@@ -604,19 +604,19 @@
         "firstLoadGzipBytes": 164682,
         "firstLoadRawBytes": 546269,
         "routeSpecificGzipBytes": 24146,
-        "routeSpecificRawBytes": 72797
+        "routeSpecificRawBytes": 76940
       },
       "/tenant/[subdomain]/purchase/confirmation": {
         "firstLoadGzipBytes": 164681,
         "firstLoadRawBytes": 546269,
         "routeSpecificGzipBytes": 24145,
-        "routeSpecificRawBytes": 72797
+        "routeSpecificRawBytes": 76940
       },
       "/tenant/[subdomain]/purchase": {
         "firstLoadGzipBytes": 164681,
         "firstLoadRawBytes": 546269,
         "routeSpecificGzipBytes": 24145,
-        "routeSpecificRawBytes": 72797
+        "routeSpecificRawBytes": 76940
       },
       "/tenant/[subdomain]/muse": {
         "firstLoadGzipBytes": 170657,
