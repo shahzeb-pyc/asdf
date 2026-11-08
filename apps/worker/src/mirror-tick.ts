@@ -14,6 +14,7 @@ import {
   validateThreadsText,
 } from '@fbuploadpro/contracts';
 import { FacebookPublishClient } from './fb-client.js';
+import { createProxyFetchFn } from './proxy-fetch.js';
 import { InstagramPublishClient } from './instagram-client.js';
 import { publishInstagramMirrorReel } from './instagram-mirror-reel.js';
 import { ThreadsPublishClient } from './threads-client.js';
@@ -743,6 +744,13 @@ export function buildMirrorTickDeps(
     tikwmApiKeys?: string[];
     /** Instagram container poll interval (tests pass 0; production default 60 s). */
     instagramPollIntervalMs?: number;
+    /**
+     * DataImpulse rotating proxy URL (Worker secret DATAIMPULSE_PROXY,
+     * spec 150). Mirror resolve (free tikwm + Countik fallback) goes
+     * through it, link only. Unset = resolveVideo throws loudly and
+     * refuses to resolve direct — never a silent direct fallback.
+     */
+    resolveProxyUrl?: string | undefined;
   }
 ): MirrorWorkerDeps {
   const fbClient = new FacebookPublishClient();
@@ -1179,8 +1187,20 @@ export function buildMirrorTickDeps(
         apiKeys: options?.tikwmApiKeys ?? [],
         pauseStore: tikwmPauseStore,
       }),
-    resolveVideo: async ({ username, videoId }) =>
-      resolveTikwmVideo(`https://www.tiktok.com/@${username}/video/${videoId}`),
+    resolveVideo: async ({ username, videoId }) => {
+      // Spec 150: resolve goes through the rotating proxy, link only.
+      // Unset proxy = loud failure, never silent direct resolve (the
+      // direct path is the exact throttle failure this proxy fixes).
+      const proxyUrl = options?.resolveProxyUrl?.trim();
+      if (!proxyUrl) {
+        throw new InternalError(
+          'Mirror resolve proxy is not configured (DATAIMPULSE_PROXY is unset); refusing to resolve directly.',
+        );
+      }
+      return resolveTikwmVideo(`https://www.tiktok.com/@${username}/video/${videoId}`, {
+        fetchFn: createProxyFetchFn({ proxyUrl }),
+      });
+    },
     publishReel: async (params) => {
       if (params.targetPlatform === 'instagram') {
         return publishInstagramMirrorReel({
