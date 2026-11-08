@@ -2,12 +2,9 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  activateCryptoPayment,
   activateDueScheduledDowngrades,
   approvePayment,
   hasOutstandingScheduledDowngrade,
-  loadPaymentActuals,
-  savePaymentActuals,
   assertCanPost,
   assertFeatureAddWithinCap,
   assertPaidPlan,
@@ -100,10 +97,6 @@ function paymentRow(overrides: Row = {}): Row {
     amount_pkr: 420,
     is_upgrade: false,
     screenshot_storage_key: 'billing-screenshots/user-1/shot.jpg',
-    nowpayments_payment_id: null,
-    nowpayments_pay_address: null,
-    nowpayments_pay_amount: null,
-    nowpayments_network: null,
     period_id: null,
     approved_at: null,
     created_at: '2026-10-30T00:00:00.000Z',
@@ -128,10 +121,6 @@ function paymentObject(overrides: Partial<SubscriptionPaymentRow> = {}): Subscri
     overrideReason: null,
     decidedAt: null,
     screenshotStorageKey: null,
-    nowpaymentsPaymentId: null,
-    nowpaymentsPayAddress: null,
-    nowpaymentsPayAmount: null,
-    nowpaymentsNetwork: null,
     couponCode: null,
     discountPkr: 0,
     periodId: null,
@@ -528,7 +517,7 @@ describe('row mappers', () => {
     ).toBe('2026-01-01T00:00:00.000Z');
   });
 
-  it('paymentFromRow maps methods, banks, networks, and statuses', () => {
+  it('paymentFromRow maps methods, banks, and statuses', () => {
     const payment = paymentFromRow(paymentRow());
     expect(payment).toMatchObject({
       method: 'bank',
@@ -537,27 +526,9 @@ describe('row mappers', () => {
       amountPkr: 420,
       isUpgrade: false,
     });
-    const crypto = paymentFromRow(
-      paymentRow({
-        method: 'nowpayments',
-        bank_method: null,
-        nowpayments_network: 'trc20',
-        nowpayments_pay_amount: 2.5,
-        status: 'paid',
-      })
-    );
-    expect(crypto).toMatchObject({
-      method: 'nowpayments',
-      bankMethod: null,
-      nowpaymentsNetwork: 'trc20',
-      nowpaymentsPayAmount: 2.5,
-      status: 'paid',
-    });
     expect(paymentFromRow(paymentRow({ user_id: null }))).toBeNull();
     expect(paymentFromRow(paymentRow({ method: 'card' }))?.method).toBe('bank');
     expect(paymentFromRow(paymentRow({ bank_method: 'jazzcash' }))?.bankMethod).toBeNull();
-    expect(paymentFromRow(paymentRow({ nowpayments_network: 'eth' }))?.nowpaymentsNetwork).toBeNull();
-    expect(paymentFromRow(paymentRow({ nowpayments_pay_amount: '2.5' }))?.nowpaymentsPayAmount).toBeNull();
     expect(paymentFromRow(paymentRow({ status: null }))?.status).toBe('pending');
   });
 });
@@ -602,6 +573,52 @@ describe('getUsageCounts / getUsageCount / isDestinationUsed', () => {
       facebook: 2,
       instagram: 1,
     });
+  });
+
+  it('runs the six per-platform counts in parallel', async () => {
+    // Smooth-steps spec: the six countUsageForPlatform calls are
+    // independent given the disconnected map, so they run together
+    // instead of one after another. Track how many head-count
+    // queries are in flight at once: sequential awaits never
+    // exceed one; Promise.all has all six in flight together.
+    const tracker = { inFlight: 0, maxInFlight: 0 };
+    class TrackingBuilder extends FakeBuilder {
+      override then<TResult1 = unknown, TResult2 = never>(
+        onfulfilled?:
+          | ((value: Record<string, unknown>) => TResult1 | PromiseLike<TResult1>)
+          | null,
+        onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
+      ): PromiseLike<TResult1 | TResult2> {
+        tracker.inFlight += 1;
+        tracker.maxInFlight = Math.max(tracker.maxInFlight, tracker.inFlight);
+        return super.then<TResult1, TResult2>(
+          (value) => {
+            tracker.inFlight -= 1;
+            return onfulfilled ? onfulfilled(value) : (value as unknown as TResult1);
+          },
+          (reason) => {
+            tracker.inFlight -= 1;
+            return onrejected ? onrejected(reason) : Promise.reject(reason);
+          }
+        );
+      }
+    }
+    const state = baseState({
+      usageCounts: { facebook: 1, instagram: 2, threads: 3, x: 4, tiktok: 5, youtube: 6 },
+    });
+    const trackingClient = {
+      from: (table: string) => new TrackingBuilder(state, table),
+    } as unknown as SupabaseClient;
+    await expect(getUsageCounts(trackingClient, 'user-1')).resolves.toEqual({
+      ...ZERO_COUNTS,
+      facebook: 1,
+      instagram: 2,
+      threads: 3,
+      x: 4,
+      tiktok: 5,
+      youtube: 6,
+    });
+    expect(tracker.maxInFlight).toBe(6);
   });
 
   it('counts one platform exactly, without fetching its keys', async () => {
@@ -1946,114 +1963,6 @@ describe('approvePayment stale link (audit fix 2026-11-01, fix 14)', () => {
   });
 });
 
-describe('activateCryptoPayment branches (audit fix 2026-11-01, fix 7)', () => {
-  const now = new Date('2026-06-01T00:00:00.000Z');
-  const payment = (overrides: Row = {}): SubscriptionPaymentRow => {
-    const row = paymentFromRow(paymentRow(overrides));
-    if (!row) throw new Error('test payment did not map');
-    return row;
-  };
-
-  it('returns the existing period without claiming when already activated', async () => {
-    const state = baseState({ periodById: periodRow() });
-    const result = await activateCryptoPayment(
-      fakeClient(state),
-      payment({ period_id: 'period-1', status: 'paid' }),
-      now
-    );
-    expect(result.alreadyActivated).toBe(true);
-    expect(result.period?.id).toBe('period-1');
-    expect(result.couponReleasedBeforeFinish).toBe(false);
-  });
-
-  it('refuses a rejected payment', async () => {
-    const state = baseState();
-    await expect(
-      activateCryptoPayment(fakeClient(state), payment({ status: 'rejected' }), now)
-    ).rejects.toMatchObject({ code: 'PAYMENT_ALREADY_DECIDED' });
-  });
-
-  it('refuses a paid payment with no period', async () => {
-    const state = baseState();
-    await expect(
-      activateCryptoPayment(fakeClient(state), payment({ status: 'paid' }), now)
-    ).rejects.toMatchObject({ code: 'PAYMENT_ALREADY_DECIDED' });
-  });
-
-  it('fails closed when the claim update errors', async () => {
-    const state = baseState({
-      paymentRow: paymentRow({ status: 'failed' }),
-      updateErrors: { subscription_payments: { code: '500' } },
-    });
-    await expect(
-      activateCryptoPayment(fakeClient(state), payment({ status: 'failed' }), now)
-    ).rejects.toMatchObject({ code: 'ENTITLEMENT_UNAVAILABLE' });
-  });
-
-  it('returns the winner period when the claim loses to a linked winner', async () => {
-    const state = baseState({
-      paymentRow: paymentRow({ status: 'failed' }),
-      periodById: periodRow({ id: 'period-winner' }),
-      loseClaimOnce: true,
-    });
-    const result = await activateCryptoPayment(
-      fakeClient(state),
-      payment({ status: 'failed' }),
-      now
-    );
-    expect(result.alreadyActivated).toBe(true);
-    expect(result.period?.id).toBe('period-winner');
-  });
-
-  it('refuses when the claim loser finds a decided-but-unlinked winner', async () => {
-    const state = baseState({
-      paymentRow: paymentRow({ status: 'failed' }),
-      periodById: null,
-      loseClaimOnce: true,
-    });
-    await expect(
-      activateCryptoPayment(fakeClient(state), payment({ status: 'failed' }), now)
-    ).rejects.toMatchObject({ code: 'PAYMENT_ALREADY_DECIDED' });
-  });
-
-  it('repairs a crashed winner (paid, no period) by creating and linking a period', async () => {
-    const state = baseState({
-      paymentRow: paymentRow({ status: 'failed' }),
-      periodById: null,
-      createdPeriodRow: periodRow({ id: 'period-new' }),
-      loseCryptoClaimOnce: true,
-    });
-    const result = await activateCryptoPayment(
-      fakeClient(state),
-      payment({ status: 'failed' }),
-      now
-    );
-    expect(result.alreadyActivated).toBe(false);
-    expect(result.period?.id).toBe('period-new');
-  });
-
-  it('schedules a crypto downgrade (option A): no period, scheduled flag set', async () => {
-    const state = baseState({
-      paymentRow: paymentRow({ status: 'failed', is_downgrade: true }),
-      periods: [periodRow({ id: 'period-live', ends_at: '2026-06-20T00:00:00.000Z' })],
-    });
-    const result = await activateCryptoPayment(
-      fakeClient(state),
-      payment({ status: 'failed', is_downgrade: true }),
-      now
-    );
-    expect(result.period).toBeNull();
-    expect(result.scheduled).toBe(true);
-    expect(state.inserted.filter((i) => i.table === 'subscription_periods')).toHaveLength(0);
-    expect(
-      state.updated.find(
-        (u) =>
-          u.table === 'subscription_payments' &&
-          u.patch['scheduled_starts_at'] === '2026-06-20T00:00:00.000Z'
-      )
-    ).toBeTruthy();
-  });
-});
 
 describe('entitlement failure branches (audit fix 2026-11-01)', () => {
   const now = new Date('2026-06-01T00:00:00.000Z');
@@ -2110,21 +2019,4 @@ describe('entitlement failure branches (audit fix 2026-11-01)', () => {
     });
   });
 
-  it('loadPaymentActuals falls back to nulls when the columns are missing', async () => {
-    const state = baseState({
-      paymentRow: paymentRow(),
-      selectErrors: { subscription_payments: { code: '42703' } },
-    });
-    const actuals = await loadPaymentActuals(fakeClient(state), 'payment-1');
-    expect(actuals).toEqual({ actualPaid: null, actualCurrency: null });
-  });
-
-  it('savePaymentActuals returns false when the columns are missing', async () => {
-    const state = baseState({
-      paymentRow: paymentRow(),
-      updateErrors: { subscription_payments: { code: '42703' } },
-    });
-    const saved = await savePaymentActuals(fakeClient(state), 'payment-1', 10, 'usdttrc20');
-    expect(saved).toBe(false);
-  });
 });

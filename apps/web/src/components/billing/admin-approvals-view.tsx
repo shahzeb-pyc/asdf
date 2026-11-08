@@ -24,7 +24,6 @@ import {
   AlertDialogTitle,
 } from '@/components/shared/ui/alert-dialog';
 import { AdminCouponsView } from './admin-coupons-view';
-import { AdminWebhookIssuesView } from './admin-webhook-issues-view';
 import { AdminRefundsView } from './admin-refunds-view';
 
 function countsSummary(counts: AdminPaymentsResponse['payments'][number]['counts']): string {
@@ -40,9 +39,6 @@ function countsSummary(counts: AdminPaymentsResponse['payments'][number]['counts
 }
 
 function methodLabel(payment: AdminPaymentsResponse['payments'][number]): string {
-  if (payment.method === 'nowpayments') {
-    return payment.nowpaymentsNetwork === 'trc20' ? 'Crypto (TRC20)' : 'Crypto (BEP20)';
-  }
   if (payment.bankMethod === 'easypaisa') return 'Easypaisa';
   if (payment.bankMethod === 'nayapay') return 'Nayapay';
   if (payment.bankMethod === 'binance') return 'Binance';
@@ -186,7 +182,7 @@ export function AdminApprovalsView() {
   const [reloading, setReloading] = React.useState(false);
   const [busy, setBusy] = React.useState<{
     id: string;
-    decision: 'approve' | 'reject' | 'approve-crypto' | 'expire-crypto';
+    decision: 'approve' | 'reject';
   } | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
   const [loadingMore, setLoadingMore] = React.useState(false);
@@ -194,7 +190,7 @@ export function AdminApprovalsView() {
   const [cardError, setCardError] = React.useState<Record<string, string>>({});
   const [dialog, setDialog] = React.useState<{
     payment: AdminPaymentsResponse['payments'][number];
-    decision: 'approve' | 'reject' | 'approve-crypto' | 'expire-crypto';
+    decision: 'approve' | 'reject';
   } | null>(null);
   const [rejectReason, setRejectReason] = React.useState<string>('');
   const [rejectDetail, setRejectDetail] = React.useState('');
@@ -249,7 +245,7 @@ export function AdminApprovalsView() {
 
   async function decide(
     paymentId: string,
-    decision: 'approve' | 'reject' | 'approve-crypto' | 'expire-crypto',
+    decision: 'approve' | 'reject',
     extra?: { rejectionReason?: string | undefined; rejectionDetail?: string | undefined; overrideReason?: string | undefined }
   ) {
     setBusy({ id: paymentId, decision });
@@ -269,11 +265,7 @@ export function AdminApprovalsView() {
       const message =
         decision === 'approve'
           ? 'Approved. The plan starts now and runs for 30 days.'
-          : decision === 'approve-crypto'
-            ? 'Crypto payment approved. The plan starts now and runs for 30 days.'
-            : decision === 'expire-crypto'
-              ? 'Crypto payment expired. No plan started; any held coupon was released.'
-              : 'Rejected. No plan started.';
+          : 'Rejected. No plan started.';
       setNotice(message);
       setCardNotice((prev) => ({ ...prev, [paymentId]: message }));
       await load(1, false);
@@ -473,57 +465,24 @@ export function AdminApprovalsView() {
                     <AlertDescription>{cardError[payment.id]}</AlertDescription>
                   </Alert>
                 ) : null}
-                {payment.method === 'nowpayments' ? (
-                  <p className="break-all text-body text-ink-sub">
-                    Crypto payment {payment.nowpaymentsPaymentId ?? '—'}
-                    {payment.nowpaymentsPayAddress ? ` · ${payment.nowpaymentsPayAddress}` : ''}
-                  </p>
-                ) : (
-                  <AdminScreenshot
-                    paymentId={payment.id}
-                    hasScreenshot={Boolean(payment.screenshotStorageKey)}
-                  />
-                )}
-                {payment.method === 'nowpayments' ? (
-                  <p className="text-body text-ink-sub">
-                    Stuck crypto payment: the automatic confirmation never arrived. Approve
-                    it only when the payment actually arrived; expire it to cancel it.
-                  </p>
-                ) : null}
+                <AdminScreenshot
+                  paymentId={payment.id}
+                  hasScreenshot={Boolean(payment.screenshotStorageKey)}
+                />
                 <div className="flex flex-wrap gap-2">
-                  {payment.method === 'nowpayments' ? (
-                    <>
-                      <Button
-                        onClick={() => setDialog({ payment, decision: 'approve-crypto' })}
-                        disabled={isBusy}
-                      >
-                        Approve crypto
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => setDialog({ payment, decision: 'expire-crypto' })}
-                        disabled={isBusy}
-                      >
-                        Expire crypto
-                      </Button>
-                    </>
-                  ) : (
-                    <>
-                      <Button
-                        onClick={() => setDialog({ payment, decision: 'approve' })}
-                        disabled={isBusy}
-                      >
-                        Approve payment
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => setDialog({ payment, decision: 'reject' })}
-                        disabled={isBusy}
-                      >
-                        Reject payment
-                      </Button>
-                    </>
-                  )}
+                  <Button
+                    onClick={() => setDialog({ payment, decision: 'approve' })}
+                    disabled={isBusy}
+                  >
+                    Approve payment
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => setDialog({ payment, decision: 'reject' })}
+                    disabled={isBusy}
+                  >
+                    Reject payment
+                  </Button>
                 </div>
               </CardContent>
             </Card>
@@ -531,83 +490,16 @@ export function AdminApprovalsView() {
         })}
       </section>
 
-      <section aria-label="Stuck crypto payments" className="flex flex-col gap-4">
-        <h2 className="text-lg leading-heading font-semibold text-ink">
-          Stuck crypto payments
-        </h2>
-        <p className="text-body text-ink-sub">
-          Crypto payments whose automatic confirmation never arrived or failed. Approve one
-          only when the payment actually arrived; expire it to cancel it and release any
-          held coupon.
-        </p>
-        {decided
-          .filter(
-            (payment) =>
-              payment.method === 'nowpayments' &&
-              (payment.status === 'failed' || payment.status === 'expired')
-          )
-          .map((payment) => {
-            const isBusy = busy?.id === payment.id;
-            return (
-              <Card key={payment.id}>
-                <CardContent className="flex flex-col gap-4 py-4">
-                  <div className="flex min-w-0 flex-col gap-1">
-                    <span className="truncate text-body font-medium text-ink">
-                      {payment.userEmail ?? 'Unknown user'}
-                    </span>
-                    <span className="text-metadata text-ink-sub">
-                      {countsSummary(payment.counts)} · {payment.amountPkr} PKR ·{' '}
-                      {methodLabel(payment)} · {payment.status} · {formatDate(payment.createdAt)}
-                      {payment.nowpaymentsPaymentId
-                        ? ` · Crypto payment ${payment.nowpaymentsPaymentId}`
-                        : ''}
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      onClick={() => setDialog({ payment, decision: 'approve-crypto' })}
-                      disabled={isBusy}
-                    >
-                      Approve crypto
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={() => setDialog({ payment, decision: 'expire-crypto' })}
-                      disabled={isBusy}
-                    >
-                      Expire crypto
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-      </section>
-
       <section aria-label="Recently decided payments" className="flex flex-col gap-4">
         <h2 className="text-lg leading-heading font-semibold text-ink">Recently decided</h2>
-        {decided.filter(
-          (payment) =>
-            !(
-              payment.method === 'nowpayments' &&
-              (payment.status === 'failed' || payment.status === 'expired')
-            )
-        ).length === 0 ? (
+        {decided.length === 0 ? (
           <EmptyState
             type="first-use"
             title="No decided payments yet"
             description="Payments you approve or reject will appear here."
           />
         ) : null}
-        {decided
-          .filter(
-            (payment) =>
-              !(
-                payment.method === 'nowpayments' &&
-                (payment.status === 'failed' || payment.status === 'expired')
-              )
-          )
-          .map((payment) => (
+        {decided.map((payment) => (
           <Card key={payment.id}>
             <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
               <div className="flex min-w-0 flex-col gap-1">
@@ -637,10 +529,8 @@ export function AdminApprovalsView() {
               {payment.status === 'approved' || payment.status === 'paid' ? (
                 <BillingStatusMark kind="ok" label="Approved" />
               ) : (
-                // A failed/expired crypto payment was never rejected
-                // by an admin — it is stuck, and the section above
-                // offers the rescue. Labelling it "Rejected" would
-                // hide that.
+                // A failed/expired payment was never rejected by an
+                // admin. Labelling it "Rejected" would hide that.
                 <BillingStatusMark
                   kind="failed"
                   label={
@@ -679,18 +569,12 @@ export function AdminApprovalsView() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {dialog?.decision === 'reject'
-                ? 'Reject this payment?'
-                : dialog?.decision === 'expire-crypto'
-                  ? 'Expire this crypto payment?'
-                  : 'Approve this payment?'}
+              {dialog?.decision === 'reject' ? 'Reject this payment?' : 'Approve this payment?'}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {dialog?.decision === 'reject'
                 ? 'The user will see the reason you choose. No plan starts.'
-                : dialog?.decision === 'expire-crypto'
-                  ? 'No plan starts, and any held coupon is released.'
-                  : 'Approving starts a 30-day plan from approval.'}
+                : 'Approving starts a 30-day plan from approval.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {dialog?.decision === 'reject' ? (
@@ -753,17 +637,11 @@ export function AdminApprovalsView() {
                   !overrideReason.trim())
               }
             >
-              {dialog?.decision === 'reject'
-                ? 'Reject payment'
-                : dialog?.decision === 'expire-crypto'
-                  ? 'Expire crypto payment'
-                  : 'Approve payment'}
+              {dialog?.decision === 'reject' ? 'Reject payment' : 'Approve payment'}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-      <AdminWebhookIssuesView />
 
       <AdminRefundsView />
     </div>

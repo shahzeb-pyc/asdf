@@ -19,15 +19,13 @@
 import * as React from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
-import { ArrowLeftIcon, CheckIcon, Loader2Icon, UploadIcon, XIcon } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
+import { ArrowLeftIcon, CheckIcon, Loader2Icon, MinusIcon, PlusIcon, UploadIcon, XIcon } from 'lucide-react';
 import { apiGet, apiPost, buildTenantApiPath, getErrorMessage, isApiError } from '@/lib/api';
 import {
   BillingPaymentItemSchema,
   UserRefundsResponseSchema,
-  BillingStatusResponseSchema,
-  CryptoCheckoutResponseSchema,
   ZeroDueCheckoutResponseSchema,
-  type BillingStatusResponse,
   type CouponValidateResponse,
   type PlatformCounts,
 } from '@/lib/api/schemas/billing';
@@ -60,7 +58,11 @@ import { Input } from '@/components/shared/ui/input';
 import { Skeleton } from '@/components/shared/ui/skeleton';
 import { BillingStatusMark } from './billing-status-mark';
 import { CouponSection } from './coupon-section';
-import { useSharedEntitlement } from './entitlement-provider';
+import {
+  billingStatusQueryOptions,
+  useBillingStatus,
+  useSharedEntitlement,
+} from './entitlement-provider';
 
 const PLATFORM_LABELS: Record<keyof PlatformCounts, string> = {
   facebook: 'Facebook',
@@ -82,6 +84,21 @@ const PLATFORM_LABELS: Record<keyof PlatformCounts, string> = {
  */
 const PURCHASABLE_PLATFORMS: (keyof PlatformCounts)[] = ['facebook', 'instagram', 'threads'];
 
+/**
+ * Rows in the builder sidebar's "Included for free with paid plan"
+ * section, in the owner's order (mockup E). These are plan features,
+ * not priced lines — they never change the total.
+ */
+const BUILDER_INCLUDED_FREE: readonly string[] = [
+  '5 GB of Media Library storage per page or account',
+  'Creator Finder included free',
+  'Unlimited posts — no cap on the number of posts',
+  'In-app scheduling',
+  'Auto download & upload',
+  'Auto repost',
+  'Bulk publishing',
+];
+
 /** Purchase display view of counts: unpurchasable platforms zeroed. */
 function purchasableCounts(counts: PlatformCounts): PlatformCounts {
   return { ...counts, x: 0, tiktok: 0, youtube: 0 };
@@ -89,7 +106,14 @@ function purchasableCounts(counts: PlatformCounts): PlatformCounts {
 
 type BankMethod = 'easypaisa' | 'nayapay' | 'ubl' | 'binance';
 type PurchaseStep = 'builder' | 'checkout' | 'confirmation';
-type PaymentType = 'bank' | 'crypto';
+
+/** Step 1 "Pay via" labels. "Bank transfer" is the label for the UBL bank method. */
+const PAY_VIA_LABELS: Record<BankMethod, string> = {
+  easypaisa: 'Easypaisa',
+  nayapay: 'Nayapay',
+  ubl: 'Bank transfer',
+  binance: 'Binance',
+};
 
 function formatDate(value: string | null): string {
   if (!value) return '—';
@@ -122,10 +146,7 @@ function plainQuoteError(message: string | null): string | null {
 }
 
 function paymentMethodLabel(payment: BillingPaymentItem): string {
-  if (payment.method === 'bank') {
-    return payment.bankMethod ? BANK_PAYMENT_DETAILS[payment.bankMethod].label : 'Bank';
-  }
-  return `Crypto · USDT (${payment.nowpaymentsNetwork === 'trc20' ? 'TRC20' : 'BEP20'})`;
+  return payment.bankMethod ? BANK_PAYMENT_DETAILS[payment.bankMethod].label : 'Bank';
 }
 
 function paymentStatusLabel(status: string): string {
@@ -220,37 +241,6 @@ function PurchaseStepIndicator({ current }: Readonly<{ current: PurchaseStep }>)
   );
 }
 
-function MethodCard({
-  selected,
-  title,
-  description,
-  onClick,
-  label,
-}: Readonly<{
-  selected: boolean;
-  title: string;
-  description: string;
-  onClick: () => void;
-  label: string;
-}>) {
-  return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={selected}
-      aria-label={label}
-      onClick={onClick}
-      className={cn(
-        'rounded-md border p-3 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link',
-        selected ? 'border-ink bg-subtle' : 'border-line bg-panel hover:bg-hover'
-      )}
-    >
-      <span className="block text-body font-medium text-ink">{title}</span>
-      <span className="block text-metadata text-ink-sub">{description}</span>
-    </button>
-  );
-}
-
 export function PurchaseView({
   subdomain,
   step,
@@ -260,20 +250,39 @@ export function PurchaseView({
   step: PurchaseStep;
   confirmationPaymentId?: string | null;
 }>) {
-  const [status, setStatus] = React.useState<BillingStatusResponse | null>(null);
-  const [loadError, setLoadError] = React.useState<string | null>(null);
+  /**
+   * Shared billing status (smooth-steps spec): one React Query cache
+   * for builder, checkout and confirmation — the data is fetched
+   * once, on first entry into Purchase, and step transitions reuse
+   * it instead of re-fetching behind a skeleton. The old mount-only
+   * load() (and its duplicated effect) is gone; the explicit
+   * refetch points below (after a purchase, a 409, Try again) are
+   * the only re-checks.
+   */
+  const billingQuery = useBillingStatus(subdomain);
+  const status = billingQuery.data ?? null;
+  /**
+   * A hung request fails as an aborted error: say so plainly
+   * ("timed out") instead of the client's generic "cancelled"
+   * wording.
+   */
+  const loadError = billingQuery.isError
+    ? isApiError(billingQuery.error) && billingQuery.error.kind === 'aborted'
+      ? 'The request timed out. Please try again.'
+      : getErrorMessage(billingQuery.error)
+    : null;
   const [reloading, setReloading] = React.useState(false);
   const [counts, setCounts] = React.useState<PlatformCounts | null>(null);
   /**
    * Plan decisions (Paid / Expired / Free, My Plan card, pending
    * verification) come from the tenant layout's shared entitlement
    * query — the same data the gate and the sidebar word read — not
-   * from this view's own /billing fetch. The /billing fetch below
+   * from this view's shared /billing query. The /billing query above
    * still supplies payments (and the pending-payment row); its
    * nested entitlement is ignored for plan decisions so the three
    * surfaces can never disagree, and so the plan display refreshes
    * on window focus through the shared query instead of going stale
-   * after the mount-only load.
+   * after the first load.
    */
   const sharedEntitlement = useSharedEntitlement();
   // Raw text of each chooser input while it is being edited. The
@@ -284,7 +293,6 @@ export function PurchaseView({
   const [countDrafts, setCountDrafts] = React.useState<Partial<Record<keyof PlatformCounts, string>>>({});
   const router = useRouter();
 
-  const [paymentType, setPaymentType] = React.useState<PaymentType>('bank');
   const [bankMethod, setBankMethod] = React.useState<BankMethod>('easypaisa');
   const [screenshot, setScreenshot] = React.useState<File | null>(null);
   /**
@@ -316,7 +324,6 @@ export function PurchaseView({
    */
   const submissionKeyRef = React.useRef<string | null>(null);
   const [bankSubmitFailed, setBankSubmitFailed] = React.useState(false);
-  const [cryptoNetwork, setCryptoNetwork] = React.useState<'trc20' | 'bep20'>('trc20');
   const [appliedCoupon, setAppliedCoupon] = React.useState<CouponValidateResponse | null>(null);
   const [refundPending, setRefundPending] = React.useState(false);
   const [prefillNote, setPrefillNote] = React.useState<string | null>(null);
@@ -334,14 +341,10 @@ export function PurchaseView({
       if (!raw) return;
       const draft = JSON.parse(raw) as {
         counts?: PlatformCounts;
-        paymentType?: PaymentType;
         bankMethod?: BankMethod;
-        cryptoNetwork?: 'trc20' | 'bep20';
       };
       if (draft.counts) setCounts(draft.counts);
-      if (draft.paymentType) setPaymentType(draft.paymentType);
       if (draft.bankMethod) setBankMethod(draft.bankMethod);
-      if (draft.cryptoNetwork) setCryptoNetwork(draft.cryptoNetwork);
     } catch (err) {
       // A corrupt draft is ignored; the builder starts fresh.
       // Logged, not swallowed: a persistently corrupt draft means
@@ -359,21 +362,17 @@ export function PurchaseView({
       }
       const draft = JSON.parse(raw) as {
         counts?: PlatformCounts;
-        paymentType?: PaymentType;
         bankMethod?: BankMethod;
-        cryptoNetwork?: 'trc20' | 'bep20';
       };
       if (draft.counts) setCounts(draft.counts);
-      if (draft.paymentType) setPaymentType(draft.paymentType);
       if (draft.bankMethod) setBankMethod(draft.bankMethod);
-      if (draft.cryptoNetwork) setCryptoNetwork(draft.cryptoNetwork);
     } catch {
       router.push(`/tenant/${subdomain}/purchase`);
     }
   }, [step]);
   const [activatingZeroDue, setActivatingZeroDue] = React.useState(false);
   const [copied, setCopied] = React.useState<string | null>(null);
-  const [busy, setBusy] = React.useState<'bank' | 'crypto' | null>(null);
+  const [busy, setBusy] = React.useState<'bank' | null>(null);
   const [formError, setFormError] = React.useState<string | null>(null);
   const screenshotInputRef = React.useRef<HTMLInputElement | null>(null);
   const [screenshotPreviewUrl, setScreenshotPreviewUrl] = React.useState<string | null>(null);
@@ -405,49 +404,10 @@ export function PurchaseView({
     };
   }, [screenshot]);
 
-  const load = React.useCallback(async () => {
-    try {
-      const result = await apiGet(buildTenantApiPath(subdomain, '/billing'), {
-        schema: BillingStatusResponseSchema,
-      });
-      setStatus(result);
-      setLoadError(null);
-    } catch (err) {
-      setLoadError(getErrorMessage(err));
-    }
-  }, [subdomain]);
-
-  React.useEffect(() => {
-    void load();
-  }, [load]);
-  React.useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const result = await apiGet(buildTenantApiPath(subdomain, '/billing/refunds'), {
-          schema: UserRefundsResponseSchema,
-        });
-        if (!cancelled) {
-          setRefundPending(result.requests.some((item) => item.status === 'requested'));
-        }
-      } catch (err) {
-        // Refund state is advisory here; never block Purchase on it.
-        reportError(err, { source: 'purchase-refund-flag' });
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [subdomain]);
-
-  /**
-   * Returning to Purchase must re-read payments: a pending payment
-   * decided (approved or rejected) while the user is elsewhere must
-   * not leave a stale disabled checkout behind.
-   */
-  React.useEffect(() => {
-    void load();
-  }, [load]);
+  // Refund state is advisory here; never block Purchase on it.
+  // (Was duplicated identically twice — same defect as the old
+  // duplicated load() effect — deduped to one while the loading
+  // path was rewritten.)
   React.useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -472,7 +432,7 @@ export function PurchaseView({
     setReloading(true);
     try {
       await sharedEntitlement.refetch();
-      await load();
+      await billingQuery.refetch();
     } finally {
       setReloading(false);
     }
@@ -590,6 +550,22 @@ export function PurchaseView({
     });
   }
 
+  /**
+   * Stepper buttons: step by 1 from the last valid (committed) count and
+   * drop any in-progress draft, so the field always shows the stepped
+   * value. setCount clamps at 0, so minus can never go below 0 — and the
+   * minus button is disabled at 0. Coupon clearing rides along with
+   * setCount, exactly as typing does.
+   */
+  function handleCountStep(platform: keyof PlatformCounts, delta: 1 | -1) {
+    setCountDrafts((prev) => {
+      const next = { ...prev };
+      delete next[platform];
+      return next;
+    });
+    setCount(platform, effectiveCounts[platform] + delta);
+  }
+
   // In-page navigation between the separate sections is by route,
   // never by ?view= (deleted 2026-11-02). Purchase steps are
   // sub-routes: builder /purchase, checkout /purchase/checkout,
@@ -617,9 +593,7 @@ export function PurchaseView({
         DRAFT_KEY,
         JSON.stringify({
           counts: effectiveCounts,
-          paymentType,
           bankMethod,
-          cryptoNetwork,
         })
       );
     } catch (err) {
@@ -838,14 +812,14 @@ export function PurchaseView({
       // Order matters (checkout flicker fix): the checkout step renders
       // the screenshot-upload CTA whenever `screenshot` is null, so
       // clearing it BEFORE the refetch + navigation made the UI flash
-      // back to "add screenshot" for the whole slow load() before
+      // back to "add screenshot" for the whole slow refetch before
       // confirmation appeared. The reset now runs AFTER navigation, in
       // the same synchronous block as the confirmation state, so React
       // batches them into a single render: processing persists until
       // confirmation renders, with no intermediate upload state. The
       // same ordering also keeps the screenshot attached if the POST
       // or the refetch fails, so a retry needs no re-upload.
-      await load();
+      await billingQuery.refetch();
       try {
         sessionStorage.removeItem(DRAFT_KEY);
       } catch (err) {
@@ -867,52 +841,10 @@ export function PurchaseView({
       // itself, or another tab): refresh so the pending card, not a
       // dead retry button, is what the user sees next.
       if (isApiError(err) && err.kind === 'http' && err.status === 409) {
-        void load();
+        void billingQuery.refetch();
       }
     } finally {
       submitBusyRef.current = false;
-      setBusy(null);
-    }
-  }
-
-  async function submitCrypto() {
-    if (pendingPayment) {
-      setFormError(PENDING_CHECKOUT_MESSAGE);
-      return;
-    }
-    if (units === 0) {
-      setFormError('Choose at least one page or account.');
-      return;
-    }
-    if (quoteError) {
-      setFormError(plainQuoteError(quoteError));
-      return;
-    }
-    setBusy('crypto');
-    setFormError(null);
-    try {
-      const result = await apiPost(
-        buildTenantApiPath(subdomain, '/billing/payments/crypto'),
-        {
-          counts: effectiveCounts,
-          network: cryptoNetwork,
-          isUpgrade,
-          ...(appliedCoupon ? { couponCode: appliedCoupon.code } : {}),
-        },
-        { schema: CryptoCheckoutResponseSchema }
-      );
-      await load();
-      try {
-        sessionStorage.removeItem(DRAFT_KEY);
-      } catch (err) {
-        // Draft cleanup is best-effort; a stale draft only
-        // pre-fills the next builder.
-        reportError(err, { source: 'purchase-draft-cleanup' });
-      }
-      router.push(`/tenant/${subdomain}/purchase/confirmation?payment=${result.paymentId}`);
-    } catch (err) {
-      setFormError(getErrorMessage(err));
-    } finally {
       setBusy(null);
     }
   }
@@ -938,7 +870,7 @@ export function PurchaseView({
         { counts: effectiveCounts, couponCode: appliedCoupon.code },
         { schema: ZeroDueCheckoutResponseSchema }
       );
-      await load();
+      await billingQuery.refetch();
       // A zero-due activation IS the purchase: the period starts at
       // once, with no admin step. Refresh the shared entitlement
       // here — it is the one explicit re-check after a purchase, so
@@ -1028,47 +960,91 @@ export function PurchaseView({
               ? 'Your screenshot couldn\'t be uploaded. Retry the upload to submit.'
               : null);
 
-  // Purchase rows name the unit only. Included/in-use counts belong
-  // to My Plan and are deliberately NOT shown here — the input
-  // value itself is the count being bought (starting from the current
-  // plan's counts for a Paid user). Rate is stated once, in the
-  // Purchase header — not repeated on every row.
+  // Stacked rows (mockup E as shown): one divided row per platform, full
+  // width of the left column. Each row names the platform, asks a plain
+  // professional question, and takes a stepper at the right end — minus
+  // button, typed number, plus button — like the mockup shows. The number
+  // stays typeable (type="text" with a numeric keyboard carries no native
+  // spinners), and there is no per-row price (prices live only in the
+  // sidebar). Included/in-use counts belong to My Plan and are
+  // deliberately NOT shown here.
   const configurator = (
-    <div className="flex flex-col">
-      {PURCHASABLE_PLATFORMS.map((platform) => {
-        const count = effectiveCounts[platform];
-        return (
-          <div
-            key={platform}
-            className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line py-4 first:border-t-0 first:pt-0"
-          >
-            <div className="w-full sm:w-48 sm:shrink-0">
-              <p className="truncate text-body font-medium text-ink">{PLATFORM_LABELS[platform]}</p>
-              <p className="truncate text-body text-ink-sub">
-                {platform === 'facebook' ? 'Pages' : 'Accounts'}
-              </p>
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col divide-y divide-line">
+        {PURCHASABLE_PLATFORMS.map((platform) => {
+          const count = effectiveCounts[platform];
+          return (
+            <div
+              key={platform}
+              className="flex flex-wrap items-center justify-between gap-3 py-4 first:pt-0 last:pb-0"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="text-body font-medium text-ink">
+                  {PLATFORM_LABELS[platform]} —{' '}
+                  {platform === 'facebook' ? 'Pages' : 'Accounts'}
+                </p>
+                <p className="text-body text-ink">
+                  {platform === 'facebook'
+                    ? 'How many Facebook Pages will you post to?'
+                    : platform === 'instagram'
+                      ? 'How many Instagram accounts will you post from?'
+                      : 'How many Threads accounts will you post from?'}
+                  {platform === 'facebook' ? (
+                    <>
+                      {' '}
+                      <span className="text-ink-sub">
+                        Accounts free — connect as many Facebook accounts as you like. You only
+                        pay for Pages.
+                      </span>
+                    </>
+                  ) : null}
+                </p>
+              </div>
+              {/* Stepper, like the mockup ("− 10 +"): minus button, typed
+              number, plus button. The number stays typeable — the input
+              carries the existing validation rules (blank commits 0,
+              letters/decimals/negatives rejected, last valid count
+              re-shown on blur) — and the buttons step by 1 from the last
+              valid count, never below 0. */}
+              <div className="flex shrink-0 items-center gap-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  aria-label={`Decrease ${PLATFORM_LABELS[platform]} ${subscriptionUnitLabel(platform)}`}
+                  disabled={count === 0}
+                  onClick={() => handleCountStep(platform, -1)}
+                >
+                  <MinusIcon />
+                </Button>
+                <Input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  aria-label={`${PLATFORM_LABELS[platform]} ${subscriptionUnitLabel(platform)}`}
+                  value={countDrafts[platform] ?? String(count)}
+                  onChange={(event) => handleCountInput(platform, event.target.value)}
+                  onBlur={() => handleCountBlur(platform)}
+                  className="w-20 text-center tabular-nums"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  aria-label={`Increase ${PLATFORM_LABELS[platform]} ${subscriptionUnitLabel(platform)}`}
+                  onClick={() => handleCountStep(platform, 1)}
+                >
+                  <PlusIcon />
+                </Button>
+              </div>
             </div>
-            <div className="flex shrink-0 items-center gap-3">
-              {/* Direct input, not a stepper: type="text" with a numeric
-              keyboard carries no native spinners, so there is no
-              increase/decrease control anywhere in this chooser. */}
-              <Input
-                type="text"
-                inputMode="numeric"
-                autoComplete="off"
-                aria-label={`${PLATFORM_LABELS[platform]} ${subscriptionUnitLabel(platform)}`}
-                value={countDrafts[platform] ?? String(count)}
-                onChange={(event) => handleCountInput(platform, event.target.value)}
-                onBlur={() => handleCountBlur(platform)}
-                className="w-20 text-center tabular-nums"
-              />
-              <span className="w-20 shrink-0 text-right text-body font-medium tabular-nums text-ink">
-                {count * SUBSCRIPTION_PRICE_PKR_PER_UNIT} PKR
-              </span>
-            </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
+      <p className="text-body text-ink-sub">
+        You can increase your pages and accounts anytime. Reducing them takes effect from your
+        next month.
+      </p>
     </div>
   );
 
@@ -1119,12 +1095,6 @@ export function PurchaseView({
                 <dt className="font-medium text-ink">You pay now</dt>
                 <dd className="font-semibold tabular-nums text-ink">{downgradeQuote.amountToPayPkr} PKR</dd>
               </div>
-              <p className="text-body text-ink-sub">
-                Lower monthly plan for next month. Your current plan runs unchanged until{' '}
-                {entitlement?.periodEndsAt ? formatDate(entitlement.periodEndsAt) : 'it ends'}, then
-                the new lower plan starts. No credit was given for the days left on your current
-                plan — you pay the new lower monthly price now, in advance.
-              </p>
             </>
           ) : isUpgrade && quote ? (
             <>
@@ -1181,11 +1151,9 @@ export function PurchaseView({
           )}
         </dl>
         <p className="text-body text-ink-sub">
-          {isDowngrade
-            ? 'Your lower monthly plan starts after your current plan ends, or at approval if approval arrives after expiry — never backdated.'
-            : isUpgrade
-              ? 'Your new month starts when your upgrade is approved.'
-              : 'Your month runs for 30 days from approval. If you do not renew, posting pauses and you can only view your account until you renew.'}
+          {isUpgrade
+            ? 'Your new month starts when your upgrade is approved.'
+            : 'Your month runs for 30 days from approval. If you do not renew, posting pauses and you can only view your account until you renew.'}
         </p>
       </CardContent>
     </Card>
@@ -1195,9 +1163,7 @@ export function PurchaseView({
   /**
    * Pending payment card for Purchase only: while one payment is in
    * flight, Purchase shows it and hides the builder instead of
-   * offering a fresh one. The label follows the payment method —
-   * bank payments wait for approval, crypto payments wait for the
-   * user to send the funds. "Check again" re-reads payments so a
+   * offering a fresh one. "Check again" re-reads payments so a
    * decision made while this view is open unblocks the form.
    */
   const pendingPaymentCard = pendingPayment ? (
@@ -1209,28 +1175,14 @@ export function PurchaseView({
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
-        <BillingStatusMark
-          kind="pending"
-          label={pendingPayment.method === 'bank' ? 'Waiting for approval' : 'Waiting for payment'}
-        />
+        <BillingStatusMark kind="pending" label="Waiting for approval" />
         <p className="text-body text-ink">
           {pendingPayment.amountPkr} PKR · {paymentMethodLabel(pendingPayment)}
           {pendingPayment.isUpgrade ? ' · Upgrade' : ''} · Submitted{' '}
           {formatDateTime(pendingPayment.createdAt)}
         </p>
-        {pendingPayment.method === 'nowpayments' && pendingPayment.nowpaymentsPayAddress ? (
-          <p className="break-all text-body text-ink-sub">
-            Send exactly{' '}
-            {pendingPayment.nowpaymentsPayAmount !== null &&
-            pendingPayment.nowpaymentsPayAmount !== undefined
-              ? `${pendingPayment.nowpaymentsPayAmount} USDT`
-              : 'the amount shown in your wallet'}{' '}
-            to {pendingPayment.nowpaymentsPayAddress} on{' '}
-            {pendingPayment.nowpaymentsNetwork === 'trc20' ? 'TRC20' : 'BEP20'}.
-          </p>
-        ) : null}
         <div>
-          <Button variant="outline" onClick={() => void load()}>
+          <Button variant="outline" onClick={() => void billingQuery.refetch()}>
             Check again
           </Button>
         </div>
@@ -1290,231 +1242,205 @@ export function PurchaseView({
         ) : null}
         <div className="flex flex-col items-start gap-6 lg:flex-row">
           <div className="order-2 flex min-w-0 flex-1 flex-col gap-6 lg:order-1">
-            <CouponSection
-              subdomain={subdomain}
-              counts={effectiveCounts}
-              applied={appliedCoupon}
-              onAppliedChange={setAppliedCoupon}
-              onActivateZeroDue={() => void submitZeroDue()}
-              activating={activatingZeroDue}
-              disabled={busy !== null || activatingZeroDue}
-            />
             <Card>
               <CardHeader>
-                <CardTitle>Choose how to pay</CardTitle>
-                <CardDescription>Manual payments or crypto.</CardDescription>
+                <div className="flex items-baseline justify-between gap-3">
+                  <CardTitle>Choose how to pay</CardTitle>
+                  <span className="shrink-0 text-metadata text-ink-sub">Manual payments only.</span>
+                </div>
               </CardHeader>
               <CardContent className="flex flex-col gap-6">
-                <div role="radiogroup" aria-label="Payment type" className="grid gap-2 sm:grid-cols-2">
-                  <MethodCard
-                    selected={paymentType === 'bank'}
-                    title="Manual payments"
-                    description="Easypaisa, Nayapay, UBL bank, Binance"
-                    label="Pay with a manual payment"
-                    onClick={() => setPaymentType('bank')}
-                  />
-                  <MethodCard
-                    selected={paymentType === 'crypto'}
-                    title="Crypto (USDT)"
-                    description="Pay in USDT"
-                    label="Pay with crypto"
-                    onClick={() => setPaymentType('crypto')}
-                  />
-                </div>
-
-                {paymentType === 'bank' ? (
-                  <section aria-label="Manual payments" className="flex flex-col gap-4">
-                    <div role="radiogroup" aria-label="Payment method" className="grid gap-2 sm:grid-cols-2">
-                      {(['easypaisa', 'nayapay', 'ubl', 'binance'] as const).map((method) => (
-                        <MethodCard
-                          key={method}
-                          selected={bankMethod === method}
-                          title={BANK_PAYMENT_DETAILS[method].label}
-                          description={BANK_PAYMENT_DETAILS[method].accountNumber}
-                          label={`Pay with ${BANK_PAYMENT_DETAILS[method].label}`}
-                          onClick={() => setBankMethod(method)}
-                        />
-                      ))}
+                <section aria-label="Pay via" className="flex flex-col gap-2">
+                  <p className="text-body font-medium text-ink">Step 1 — Pay via</p>
+                  <div role="radiogroup" aria-label="Payment method" className="flex flex-col gap-2">
+                    {(['easypaisa', 'nayapay', 'ubl', 'binance'] as const).map((method) => (
+                      <button
+                        key={method}
+                        type="button"
+                        role="radio"
+                        aria-checked={bankMethod === method}
+                        aria-label={`Pay via ${PAY_VIA_LABELS[method]}`}
+                        onClick={() => setBankMethod(method)}
+                        className={cn(
+                          'flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link',
+                          bankMethod === method
+                            ? 'border-ink bg-subtle'
+                            : 'border-line bg-panel hover:bg-hover'
+                        )}
+                      >
+                        <span className="text-body font-medium text-ink">{PAY_VIA_LABELS[method]}</span>
+                        {bankMethod === method ? (
+                          <span
+                            aria-hidden
+                            className="flex size-5 shrink-0 items-center justify-center rounded-full bg-signal-operational text-primary"
+                          >
+                            <CheckIcon className="size-3.5" />
+                          </span>
+                        ) : null}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+                <section aria-label="Pay to this account" className="flex flex-col gap-2">
+                  <p className="text-body font-medium text-ink">Step 2 — Pay to this account</p>
+                  <div className="flex flex-col gap-2 rounded-md border border-line bg-panel px-3 py-2">
+                    <div className="flex items-baseline justify-between gap-3">
+                      <span className="text-metadata text-ink-sub">Account details</span>
+                      <span className="text-body font-medium text-ink">{PAY_VIA_LABELS[bankMethod]}</span>
                     </div>
-                    <dl className="grid gap-3 sm:grid-cols-2">
-                      <div className="flex flex-col gap-1">
-                        <dt className="text-metadata text-ink-sub">
-                          {details.accountNumberLabel ?? 'Account number'}
-                        </dt>
-                        <dd className="flex flex-wrap items-center gap-2">
-                          <span className="font-mono text-body text-ink">{details.accountNumber}</span>
+                    <div className="flex items-baseline justify-between gap-3">
+                      <span className="text-metadata text-ink-sub">
+                        {bankMethod === 'binance' ? 'Binance username' : 'Account name'}
+                      </span>
+                      <span className="text-body font-medium text-ink">
+                        {bankMethod === 'binance' ? 'shahzebpyc' : 'Shahzeb Malik'}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-metadata text-ink-sub">
+                        {details.accountNumberLabel ?? 'Account number'}
+                      </span>
+                      <span className="flex flex-wrap items-center gap-2">
+                        <span className="font-mono text-body text-ink">{details.accountNumber}</span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void copyText(details.accountNumber, `account-${bankMethod}`)}
+                        >
+                          {copied === `account-${bankMethod}`
+                            ? 'Copied'
+                            : details.accountNumberLabel
+                              ? `Copy ${details.accountNumberLabel}`
+                              : 'Copy number'}
+                        </Button>
+                      </span>
+                    </div>
+                    {details.iban ? (
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-metadata text-ink-sub">IBAN</span>
+                        <span className="flex flex-wrap items-center justify-end gap-2">
+                          <span className="break-all font-mono text-body text-ink">{details.iban}</span>
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => void copyText(details.accountNumber, `account-${bankMethod}`)}
+                            onClick={() => void copyText(details.iban ?? '', `iban-${bankMethod}`)}
                           >
-                            {copied === `account-${bankMethod}`
-                              ? 'Copied'
-                              : details.accountNumberLabel
-                                ? `Copy ${details.accountNumberLabel}`
-                                : 'Copy number'}
+                            {copied === `iban-${bankMethod}` ? 'Copied' : 'Copy IBAN'}
                           </Button>
-                        </dd>
+                        </span>
                       </div>
-                      {details.iban ? (
-                        <div className="flex flex-col gap-1">
-                          <dt className="text-metadata text-ink-sub">IBAN</dt>
-                          <dd className="flex flex-wrap items-center gap-2">
-                            <span className="break-all font-mono text-body text-ink">{details.iban}</span>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => void copyText(details.iban ?? '', `iban-${bankMethod}`)}
-                            >
-                              {copied === `iban-${bankMethod}` ? 'Copied' : 'Copy IBAN'}
-                            </Button>
-                          </dd>
+                    ) : null}
+                    {details.bank ? (
+                      <div className="flex items-baseline justify-between gap-3">
+                        <span className="text-metadata text-ink-sub">Bank</span>
+                        <span className="text-body font-medium text-ink">{details.bank} bank</span>
+                      </div>
+                    ) : null}
+                    <p className="text-metadata text-ink-sub">
+                      Please pay to this {PAY_VIA_LABELS[bankMethod]} account, then add your payment
+                      screenshot in step 3.
+                    </p>
+                  </div>
+                </section>
+                <section aria-label="Upload your payment screenshot" className="flex flex-col gap-2">
+                  <p className="text-body font-medium text-ink">Step 3 — Upload your payment screenshot</p>
+                  <div className="flex flex-col gap-2">
+                    <input
+                      ref={screenshotInputRef}
+                      id="billing-screenshot"
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/gif"
+                      className="sr-only"
+                      onChange={(event) => handleScreenshotSelect(event.target.files?.[0] ?? null)}
+                    />
+                    {screenshot ? (
+                      <div className="flex flex-col gap-2">
+                        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-line bg-panel px-4 py-3">
+                          <span className="flex min-w-0 items-center gap-2 text-body text-ink">
+                            {screenshotUpload.status === 'uploading' ? (
+                              <Loader2Icon
+                                aria-hidden
+                                className="size-4 shrink-0 animate-spin text-ink-sub"
+                              />
+                            ) : screenshotUpload.status === 'uploaded' ? (
+                              <BillingStatusMark kind="ok" label="Uploaded" />
+                            ) : (
+                              <UploadIcon aria-hidden className="size-4 shrink-0 text-ink-sub" />
+                            )}
+                            <span className="truncate">{screenshot.name}</span>
+                            {screenshotUpload.status === 'uploading' ? (
+                              <span className="shrink-0 text-body text-ink-sub">
+                                Uploading screenshot…
+                              </span>
+                            ) : null}
+                          </span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={busy !== null}
+                            onClick={clearScreenshot}
+                          >
+                            <XIcon aria-hidden className="size-4" /> Remove
+                          </Button>
                         </div>
-                      ) : null}
-                      {details.holder ? (
-                        <div className="flex flex-col gap-1">
-                          <dt className="text-metadata text-ink-sub">Account holder</dt>
-                          <dd className="text-body text-ink">{details.holder}</dd>
-                        </div>
-                      ) : null}
-                    </dl>
-                    <div className="flex flex-col gap-2">
-                      <span className="text-body font-medium text-ink">Payment screenshot</span>
-                      <input
-                        ref={screenshotInputRef}
-                        id="billing-screenshot"
-                        type="file"
-                        accept="image/png,image/jpeg,image/webp,image/gif"
-                        className="sr-only"
-                        onChange={(event) => handleScreenshotSelect(event.target.files?.[0] ?? null)}
-                      />
-                      {screenshot ? (
-                        <div className="flex flex-col gap-2">
-                          <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-line bg-panel px-4 py-3">
-                            <span className="flex min-w-0 items-center gap-2 text-body text-ink">
-                              {screenshotUpload.status === 'uploading' ? (
-                                <Loader2Icon
-                                  aria-hidden
-                                  className="size-4 shrink-0 animate-spin text-ink-sub"
-                                />
-                              ) : screenshotUpload.status === 'uploaded' ? (
-                                <BillingStatusMark kind="ok" label="Uploaded" />
-                              ) : (
-                                <UploadIcon aria-hidden className="size-4 shrink-0 text-ink-sub" />
-                              )}
-                              <span className="truncate">{screenshot.name}</span>
-                              {screenshotUpload.status === 'uploading' ? (
-                                <span className="shrink-0 text-body text-ink-sub">
-                                  Uploading screenshot…
-                                </span>
-                              ) : null}
-                            </span>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              disabled={busy !== null}
-                              onClick={clearScreenshot}
-                            >
-                              <XIcon aria-hidden className="size-4" /> Remove
+                        {screenshotPreviewUrl ? (
+                          <Image
+                            src={screenshotPreviewUrl}
+                            alt="Screenshot preview"
+                            width={640}
+                            height={853}
+                            unoptimized
+                            className="h-auto w-full max-w-xs rounded-md border border-line"
+                          />
+                        ) : null}
+                        <p className="text-metadata text-ink-sub">
+                          {screenshot.size
+                            ? `${screenshot.name} · ${(screenshot.size / 1024).toFixed(0)} KB`
+                            : screenshot.name}
+                        </p>
+                        {screenshotUpload.status === 'failed' ? (
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <p className="text-body text-ink-sub">{screenshotUpload.error}</p>
+                            <Button variant="outline" size="sm" onClick={retryScreenshotUpload}>
+                              Retry upload
                             </Button>
                           </div>
-                          {screenshotPreviewUrl ? (
-                            <Image
-                              src={screenshotPreviewUrl}
-                              alt="Screenshot preview"
-                              width={640}
-                              height={853}
-                              unoptimized
-                              className="h-auto w-full max-w-xs rounded-md border border-line"
-                            />
-                          ) : null}
-                          <p className="text-metadata text-ink-sub">
-                            {screenshot.size
-                              ? `${screenshot.name} · ${(screenshot.size / 1024).toFixed(0)} KB`
-                              : screenshot.name}
-                          </p>
-                          {screenshotUpload.status === 'failed' ? (
-                            <div className="flex flex-wrap items-center justify-between gap-3">
-                              <p className="text-body text-ink-sub">{screenshotUpload.error}</p>
-                              <Button variant="outline" size="sm" onClick={retryScreenshotUpload}>
-                                Retry upload
-                              </Button>
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          disabled={busy !== null}
-                          onClick={() => screenshotInputRef.current?.click()}
-                          className="flex flex-col items-center gap-2 rounded-md border border-dashed border-line bg-panel px-4 py-6 text-center transition-colors hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          <UploadIcon aria-hidden className="size-5 text-ink-sub" />
+                        ) : null}
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={busy !== null}
+                        onClick={() => screenshotInputRef.current?.click()}
+                        className="flex items-center gap-3 rounded-md border border-dashed border-line bg-panel px-3 py-2 text-left transition-colors hover:bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <UploadIcon aria-hidden className="size-5 shrink-0 text-ink-sub" />
+                        <span className="flex min-w-0 flex-col">
                           <span className="text-body font-medium text-ink">
                             Upload your payment screenshot
                           </span>
                           <span className="text-metadata text-ink-sub">
                             PNG, JPG, WebP or GIF, up to 10 MB
                           </span>
-                        </button>
-                      )}
-                    </div>
-                    <div className="flex flex-col gap-2">
-                      <Button
-                        variant={bankDisabled ? 'secondary' : 'default'}
-                        onClick={() => void submitBank()}
-                        loading={busy === 'bank'}
-                        disabled={bankDisabled}
-                      >
-                        Submit payment for approval
-                      </Button>
-                      {bankDisabledReason ? (
-                        <p className="text-body text-ink-sub">{bankDisabledReason}</p>
-                      ) : null}
-                      <p className="text-body text-ink-sub">Your plan runs for 30 days after approval.</p>
-                    </div>
-                  </section>
-                ) : (
-                  <section aria-label="Pay with crypto" className="flex flex-col gap-4">
-                    <p className="text-body text-ink-sub">
-                      Pay in USDT. You will pay the USDT equal to{' '}
-                      {appliedCoupon ? appliedCoupon.amountAfterDiscountPkr : amountToPay} PKR.
-                    </p>
-                    <div role="radiogroup" aria-label="Crypto network" className="grid gap-2 sm:grid-cols-2">
-                      {(['trc20', 'bep20'] as const).map((network) => (
-                        <MethodCard
-                          key={network}
-                          selected={cryptoNetwork === network}
-                          title={network === 'trc20' ? 'TRC20' : 'BEP20'}
-                          description="USDT"
-                          label={`Pay with USDT on ${network === 'trc20' ? 'TRC20' : 'BEP20'}`}
-                          onClick={() => setCryptoNetwork(network)}
-                        />
-                      ))}
-                    </div>
-                    <div>
-                      <Button
-                        variant="outline"
-                        onClick={() => void submitCrypto()}
-                        loading={busy === 'crypto'}
-                        disabled={checkoutDisabled}
-                      >
-                        Continue to crypto payment
-                      </Button>
-                      {units === 0 ? (
-                        <p className="mt-2 text-body text-ink-sub">
-                          Choose at least one page or account first.
-                        </p>
-                      ) : null}
-                      {fullyCovered ? (
-                        <p className="mt-2 text-body text-ink-sub">
-                          Your coupon covers the full amount — activate your plan above, no
-                          payment needed.
-                        </p>
-                      ) : null}
-                    </div>
-                  </section>
-                )}
+                        </span>
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <Button
+                      variant={bankDisabled ? 'secondary' : 'default'}
+                      onClick={() => void submitBank()}
+                      loading={busy === 'bank'}
+                      disabled={bankDisabled}
+                    >
+                      Submit payment for approval
+                    </Button>
+                    {bankDisabledReason ? (
+                      <p className="text-body text-ink-sub">{bankDisabledReason}</p>
+                    ) : null}
+                    <p className="text-body text-ink-sub">Your plan runs for 30 days after approval.</p>
+                  </div>
+                </section>
 
                 {formError ? (
                   <Alert variant="destructive">
@@ -1557,7 +1483,18 @@ export function PurchaseView({
               </CardContent>
             </Card>
           </div>
-          <div className="w-full shrink-0 lg:sticky lg:top-20 lg:w-90 lg:self-start">{orderSummary}</div>
+          <div className="flex w-full shrink-0 flex-col gap-6 lg:sticky lg:top-20 lg:w-90 lg:self-start">
+            <CouponSection
+              subdomain={subdomain}
+              counts={effectiveCounts}
+              applied={appliedCoupon}
+              onAppliedChange={setAppliedCoupon}
+              onActivateZeroDue={() => void submitZeroDue()}
+              activating={activatingZeroDue}
+              disabled={busy !== null || activatingZeroDue}
+            />
+            {orderSummary}
+          </div>
         </div>
       </div>
     );
@@ -1574,19 +1511,12 @@ export function PurchaseView({
      */
     if (pendingPayment !== null) {
       return (
-        <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
           <div className="flex flex-col gap-2">
             <Button variant="outline" size="sm" className="self-start" onClick={goToMyPlan}>
               <ArrowLeftIcon aria-hidden className="size-4" /> Back to My Plan
             </Button>
             <h1 className="text-xl leading-heading font-semibold text-ink">Purchase</h1>
-            <p className="text-body text-ink-sub">
-              70 PKR per page or account, paid monthly. Facebook counts pages; other platforms
-              count accounts.
-            </p>
-            <p className="text-body text-ink-sub">
-              Example: 5 Facebook pages + 3 Instagram accounts = 560 PKR / month.
-            </p>
           </div>
           <PurchaseStepIndicator current="builder" />
           {pendingPaymentCard}
@@ -1615,13 +1545,6 @@ export function PurchaseView({
             <ArrowLeftIcon aria-hidden className="size-4" /> Back to My Plan
           </Button>
           <h1 className="text-xl leading-heading font-semibold text-ink">Purchase</h1>
-          <p className="text-body text-ink-sub">
-            70 PKR per page or account, paid monthly. Facebook counts pages; other platforms
-            count accounts.
-          </p>
-          <p className="text-body text-ink-sub">
-            Example: 5 Facebook pages + 3 Instagram accounts = 560 PKR / month.
-          </p>
         </div>
         <PurchaseStepIndicator current="builder" />
         {pendingPaymentCard}
@@ -1659,52 +1582,95 @@ export function PurchaseView({
             </AlertDescription>
           </Alert>
         ) : null}
-        <Card>
-          <CardHeader>
-            <CardTitle>Included with your plan</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-2">
-            <p className="flex items-start gap-2 text-body text-ink">
-              <CheckIcon aria-hidden className="mt-0.5 size-5 shrink-0 text-signal-operational" />
-              <span>5 GB of Media Library storage per page or account</span>
-            </p>
-            <p className="flex items-start gap-2 text-body text-ink">
-              <CheckIcon aria-hidden className="mt-0.5 size-5 shrink-0 text-signal-operational" />
-              <span>Creator Finder included free</span>
-            </p>
-            <p className="flex items-start gap-2 text-body text-ink">
-              <CheckIcon aria-hidden className="mt-0.5 size-5 shrink-0 text-signal-operational" />
-              <span>Unlimited posts — no cap on the number of posts</span>
-            </p>
-          </CardContent>
-        </Card>
-        <div className="flex flex-col items-start gap-6 lg:flex-row">
-          <Card className="min-w-0 flex-1">
-            <CardHeader>
-              <div className="flex flex-col gap-1">
-                <CardTitle>Choose your pages and accounts</CardTitle>
-                <CardDescription>
-                  70 PKR per page or account, paid monthly. Connect as many accounts as you
-                  like — only the pages and accounts you actually use count towards your plan.
-                </CardDescription>
-              </div>
-            </CardHeader>
-            <CardContent>{configurator}</CardContent>
-          </Card>
+        <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[1fr_360px]">
+          <div className="flex min-w-0 flex-col gap-8">
+            <Card>
+              <CardHeader>
+                <div className="flex flex-col gap-1">
+                  <CardTitle>Choose your pages and accounts</CardTitle>
+                  <CardDescription>
+                    70 PKR per page or account, paid monthly. Facebook accounts are free —
+                    you can connect as many accounts as you like, you only pay for connected
+                    pages.
+                  </CardDescription>
+                </div>
+              </CardHeader>
+              <CardContent>{configurator}</CardContent>
+            </Card>
+          </div>
           <div className="flex w-full shrink-0 flex-col gap-6 lg:sticky lg:top-20 lg:w-90 lg:self-start">
-            {orderSummary}
-            <div className="flex flex-col gap-2">
-              <Button
-                variant={buildDisabled ? 'secondary' : 'default'}
-                onClick={goToCheckout}
-                disabled={buildDisabled}
-              >
-                Continue to checkout
-              </Button>
-              {buildDisabledReason ? (
-                <p className="text-body text-ink-sub">{buildDisabledReason}</p>
-              ) : null}
-            </div>
+            <Card>
+              <CardHeader>
+                <CardTitle>YOUR PLAN</CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-3">
+                <dl className="flex flex-col gap-2 text-body">
+                  {PURCHASABLE_PLATFORMS.filter((p) => effectiveCounts[p] > 0).map(
+                    (platform) => {
+                      const unitTitle =
+                        subscriptionUnitLabel(platform) === 'pages' ? 'Pages' : 'Accounts';
+                      return (
+                        <div
+                          key={platform}
+                          className="flex items-baseline justify-between gap-3"
+                        >
+                          <dt className="min-w-0 truncate text-ink-sub">
+                            {PLATFORM_LABELS[platform]} · {unitTitle} ×{' '}
+                            {effectiveCounts[platform]}
+                          </dt>
+                          <dd className="shrink-0 font-medium tabular-nums text-ink">
+                            {effectiveCounts[platform] * SUBSCRIPTION_PRICE_PKR_PER_UNIT} PKR
+                          </dd>
+                        </div>
+                      );
+                    },
+                  )}
+                  {units === 0 ? (
+                    <div className="flex items-baseline justify-between gap-3">
+                      <dt className="text-ink-sub">Selected</dt>
+                      <dd className="font-medium text-ink">Nothing selected yet</dd>
+                    </div>
+                  ) : null}
+                  <div className="flex items-baseline justify-between gap-3 border-t border-line pt-2">
+                    <dt className="font-semibold text-ink">Monthly total</dt>
+                    <dd className="font-semibold tabular-nums text-ink">{total} PKR</dd>
+                  </div>
+                </dl>
+                <div className="flex flex-col gap-2 border-t border-line pt-3">
+                  <p className="text-body font-medium text-ink">
+                    Included for free with paid plan
+                  </p>
+                  <ul className="flex flex-col gap-2">
+                    {BUILDER_INCLUDED_FREE.map((item) => (
+                      <li
+                        key={item}
+                        className="flex items-start gap-2 text-body text-ink"
+                      >
+                        <CheckIcon
+                          aria-hidden
+                          className="mt-0.5 size-5 shrink-0 text-signal-operational"
+                        />
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Button
+                    variant={buildDisabled ? 'secondary' : 'default'}
+                    shape="pill"
+                    onClick={goToCheckout}
+                    disabled={buildDisabled}
+                    className="w-full"
+                  >
+                    Continue to checkout
+                  </Button>
+                  {buildDisabledReason ? (
+                    <p className="text-body text-ink-sub">{buildDisabledReason}</p>
+                  ) : null}
+                </div>
+              </CardContent>
+            </Card>
           </div>
         </div>
       </div>
@@ -1729,33 +1695,53 @@ export function PurchaseView({
  * PurchaseConfirmationView — server-backed confirmation, keyed by
  * payment id (separate-sections build). Refreshing this page
  * re-reads the payment from the server, so a closed tab never
- * loses the crypto pay address, exact USDT amount, or network.
+ * loses the payment.
  */
 function PurchaseConfirmationView({
   subdomain,
   paymentId,
 }: Readonly<{ subdomain: string; paymentId: string | null }>) {
   const router = useRouter();
-  const [payment, setPayment] = React.useState<BillingPaymentItem | null>(null);
-  const [error, setError] = React.useState<string | null>(null);
-  const [loading, setLoading] = React.useState(true);
-  const [copied, setCopied] = React.useState(false);
+  const queryClient = useQueryClient();
+  /**
+   * Page 1 comes from the shared billing cache — arriving from
+   * checkout it is already there (the submit refetched it before
+   * navigating), so the payment is found on the first render with
+   * no skeleton and no fetch. A direct load of this URL fetches
+   * page 1 once, like any first entry into Purchase.
+   */
+  const billing = useBillingStatus(subdomain);
+  const cachedPayment = paymentId
+    ? (billing.data?.payments.find((item) => item.id === paymentId) ?? null)
+    : null;
+  const [payment, setPayment] = React.useState<BillingPaymentItem | null>(cachedPayment);
+  const [error, setError] = React.useState<string | null>(
+    paymentId ? null : 'No payment was selected. Open Payments to find it, or build a new plan in Purchase.'
+  );
+  const [loading, setLoading] = React.useState(Boolean(paymentId) && !cachedPayment);
 
   React.useEffect(() => {
-    if (!paymentId) {
+    if (!paymentId) return;
+    if (payment) return;
+    if (billing.isPending) return;
+    if (billing.isError) {
+      setError(getErrorMessage(billing.error));
       setLoading(false);
-      setError('No payment was selected. Open Payments to find it, or build a new plan in Purchase.');
       return;
     }
+    const fromPage1 = billing.data?.payments.find((item) => item.id === paymentId) ?? null;
+    if (fromPage1) {
+      setPayment(fromPage1);
+      setLoading(false);
+      return;
+    }
+    // Not on page 1 (newest-first): fall back to pages 2-3 before
+    // calling it missing, through the same shared query cache.
     let cancelled = false;
     void (async () => {
       try {
-        // Page 1 is newest-first; a just-created payment is there.
-        // Fall back to pages 2-3 before calling it missing.
-        for (const page of [1, 2, 3]) {
-          const result = await apiGet(buildTenantApiPath(subdomain, `/billing?page=${page}`), {
-            schema: BillingStatusResponseSchema,
-          });
+        for (const page of [2, 3]) {
+          const result = await queryClient.fetchQuery(billingStatusQueryOptions(subdomain, page));
           const found = result.payments.find((item) => item.id === paymentId);
           if (found) {
             if (!cancelled) {
@@ -1780,7 +1766,7 @@ function PurchaseConfirmationView({
     return () => {
       cancelled = true;
     };
-  }, [subdomain, paymentId]);
+  }, [subdomain, paymentId, payment, billing, queryClient]);
 
   if (loading) return <BillingSkeleton />;
   if (error || !payment) {
@@ -1801,20 +1787,15 @@ function PurchaseConfirmationView({
     );
   }
 
-  const isCrypto = payment.method === 'nowpayments';
   const isPaid = payment.status === 'approved' || payment.status === 'paid';
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
       <div className="flex flex-col gap-1">
         <h1 className="text-xl leading-heading font-semibold text-ink">Purchase</h1>
         <p className="text-body text-ink-sub">
-          {isCrypto
-            ? isPaid
-              ? 'Your crypto payment arrived. Your monthly plan is active.'
-              : 'Send your crypto payment to the address below.'
-            : isPaid
-              ? 'Your payment was approved. Your monthly plan is active.'
-              : 'We have received your payment.'}
+          {isPaid
+            ? 'Your payment was approved. Your monthly plan is active.'
+            : 'We have received your payment.'}
         </p>
       </div>
       <Card>
@@ -1836,33 +1817,7 @@ function PurchaseConfirmationView({
             kind={isPaid ? 'ok' : payment.status === 'rejected' ? 'failed' : 'pending'}
             label={paymentStatusLabel(payment.status)}
           />
-          {isCrypto && payment.nowpaymentsPayAddress ? (
-            <div className="flex flex-col gap-2">
-              <p className="text-body text-ink">
-                Send exactly{' '}
-                {payment.nowpaymentsPayAmount !== null && payment.nowpaymentsPayAmount !== undefined
-                  ? `${payment.nowpaymentsPayAmount} USDT`
-                  : 'the amount shown in your wallet'}{' '}
-                to this address on{' '}
-                {payment.nowpaymentsNetwork === 'trc20' ? 'TRC20' : 'BEP20'}:
-              </p>
-              <p className="break-all rounded-md border border-line bg-panel px-3 py-2 text-body text-ink">
-                {payment.nowpaymentsPayAddress}
-              </p>
-              <div>
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    void navigator.clipboard.writeText(payment.nowpaymentsPayAddress ?? '');
-                    setCopied(true);
-                  }}
-                >
-                  {copied ? 'Copied' : 'Copy address'}
-                </Button>
-              </div>
-            </div>
-          ) : null}
-          {!isCrypto && !isPaid ? (
+          {!isPaid ? (
             <p className="text-body text-ink-sub">
               Your monthly plan starts when we approve your payment, not when you paid. If
               approval takes a few days, those days are not added to your plan. Your plan runs

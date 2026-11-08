@@ -37,7 +37,7 @@ import {
  * starts right away. No payment row is created (there is no
  * payment); the applied redemption, linked to the period, is the
  * audit trail. A coupon that does not cover the full amount is
- * refused here — the remainder goes through bank or crypto.
+ * refused here — the remainder goes through bank.
  */
 export async function POST(
   request: NextRequest,
@@ -132,7 +132,7 @@ export async function POST(
   try {
     // One pending payment per user — the zero-due route bypassed
     // this entirely (audit fix 2026-11-01): a coupon activation
-    // while a bank/crypto payment waited would be silently
+    // while a bank payment waited would be silently
     // overwritten by the later approval's fresh 30 days.
     if (await hasPendingPayment(client, session.userId)) {
       return NextResponse.json(
@@ -189,7 +189,7 @@ export async function POST(
       return NextResponse.json(
         {
           error: 'INVALID_REQUEST',
-          message: 'This coupon does not cover the full amount. Pay the remainder by bank or crypto.',
+          message: 'This coupon does not cover the full amount. Pay the remainder by bank.',
         },
         { status: 400 }
       );

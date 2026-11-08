@@ -454,20 +454,18 @@ Purchase is where a plan is bought. The flow, in order, is: "Choose your pages a
 How to pay:
 
 - Manual bank payment: Easypaisa, Nayapay, UBL bank, or Binance. A screenshot upload is required before submit — the submit stays disabled until the screenshot status is uploaded. After submit, the payment sits pending admin approval, with the message "You already have a payment waiting for approval. Wait for it to be decided before submitting another." Only one pending payment at a time is allowed.
-- Crypto: USDT through NOWPayments, on TRC20 or BEP20. Checkout shows the pay address and the exact USDT amount.
 
 There is no instant card checkout in the app. Do not promise one, and do not quote any bank account number — the app never shows one in the guide's sources, and Purchase never asks the user for one in chat.
 
-Coupons exist, and their amounts are computed when applied. The maximum coupon discount is 70 percent. Do not promise a coupon value. If a coupon fully covers the order, both payment submits are disabled, and activation happens from the coupon section.
+Coupons exist, and their amounts are computed when applied. The maximum coupon discount is 70 percent. Do not promise a coupon value. If a coupon fully covers the order, the payment submit is disabled, and activation happens from the coupon section.
 
-After payment, the Payments page shows the payment's status. A bank payment that is waiting shows "Waiting for approval". A crypto payment that is waiting shows "Waiting for payment", with its pay address and USDT amount for recovery. Do not state an approval time — none is verified.
+After payment, the Payments page shows the payment's status. A bank payment that is waiting shows "Waiting for approval". Do not state an approval time — none is verified.
 
 ## Payments
 
-Payments lists every payment the user has made, with its status. Each row shows the amount in PKR, the method (Easypaisa, Nayapay, Binance, UBL, or "Crypto · USDT (TRC20/BEP20)"), the created date, a counts summary, and a status label:
+Payments lists every payment the user has made, with its status. Each row shows the amount in PKR, the method (Easypaisa, Nayapay, Binance, or UBL), the created date, a counts summary, and a status label:
 
 - Pending bank: "Waiting for approval".
-- Pending crypto: "Waiting for payment", with pay address and USDT amount for recovery.
 - Approved or paid: "Paid".
 - Rejected: "Rejected", with the rejection reason.
 - Failed or expired: "Failed" or "Expired".

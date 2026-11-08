@@ -4,10 +4,9 @@ import { GET as listPayments } from '@/app/api/admin/payments/route';
 import { POST as decidePayment } from '@/app/api/admin/payments/[paymentId]/route';
 
 /**
- * Admin payments list + rescue decisions (audit fix 2026-11-01):
+ * Admin payments list + decisions (audit fix 2026-11-01):
  * pending-first across the FULL list (fix 19), 404 for a missing
- * payment before the bank gate (fix 20), and the crypto rescue
- * decisions approve-crypto / expire-crypto (fix 15).
+ * payment before the bank gate (fix 20).
  */
 
 const authState = vi.hoisted(() => ({ role: 'admin' }));
@@ -36,14 +35,11 @@ interface FakeState {
   payments: Row[];
   periods: Row[];
   redemptions: Row[];
-  // Seller tables (rescue approve records the referral commission):
+  // Seller tables (approve records the referral commission):
   // no test buyer is referred, so both stay empty.
   commissions: Row[];
   users: Row[];
   failQuery: 'count' | 'pending' | 'decided' | null;
-  updateErrorOnce: boolean;
-  expireLosesOnce: boolean;
-  selectErrorOnce: boolean;
 }
 
 let state: FakeState;
@@ -159,23 +155,6 @@ class FakeBuilder {
 
   private compute(): { data: unknown; error: unknown; count?: number | null } {
     const rows = this.rows();
-    if (this.op === 'update' && this.st.updateErrorOnce) {
-      this.st.updateErrorOnce = false;
-      return { data: null, error: { code: '500', message: 'boom' } };
-    }
-    if (
-      this.op === 'update' &&
-      this.st.expireLosesOnce &&
-      this.table === 'subscription_payments' &&
-      this.patch?.['status'] === 'expired'
-    ) {
-      this.st.expireLosesOnce = false;
-      return { data: [], error: null };
-    }
-    if (this.op === 'select' && this.st.selectErrorOnce && this.table === 'coupon_redemptions') {
-      this.st.selectErrorOnce = false;
-      return { data: null, error: { code: '500', message: 'boom' } };
-    }
     if (this.op === 'insert') {
       const row = { ...this.insertRow } as Row;
       if (this.table === 'subscription_periods' && row['id'] == null) {
@@ -261,10 +240,6 @@ function paymentRow(overrides: Row = {}): Row {
     amount_pkr: 70,
     is_upgrade: false,
     screenshot_storage_key: null,
-    nowpayments_payment_id: null,
-    nowpayments_pay_address: null,
-    nowpayments_pay_amount: null,
-    nowpayments_network: null,
     coupon_code: null,
     discount_pkr: 0,
     period_id: null,
@@ -272,18 +247,6 @@ function paymentRow(overrides: Row = {}): Row {
     created_at: '2026-06-01T00:00:00.000Z',
     ...overrides,
   };
-}
-
-function cryptoRow(overrides: Row = {}): Row {
-  return paymentRow({
-    method: 'nowpayments',
-    bank_method: null,
-    nowpayments_payment_id: 'np-1',
-    nowpayments_pay_address: 'TTestAddress',
-    nowpayments_pay_amount: 10,
-    nowpayments_network: 'trc20',
-    ...overrides,
-  });
 }
 
 const ctx = (paymentId?: string) =>
@@ -307,9 +270,6 @@ describe('admin payments list', () => {
       commissions: [],
       users: [],
       failQuery: null,
-      updateErrorOnce: false,
-      expireLosesOnce: false,
-      selectErrorOnce: false,
     };
   });
 
@@ -354,77 +314,16 @@ describe('admin payments list', () => {
   });
 });
 
-describe('admin payments rescue decisions', () => {
+describe('admin payments list failure branches', () => {
   beforeEach(() => {
     authState.role = 'admin';
     state = {
-      payments: [cryptoRow()],
+      payments: [paymentRow()],
       periods: [],
       redemptions: [],
       commissions: [],
       users: [],
       failQuery: null,
-      updateErrorOnce: false,
-      expireLosesOnce: false,
-      selectErrorOnce: false,
-    };
-  });
-
-  async function decide(paymentId: string, decision: string): Promise<{ status: number; json: Record<string, unknown> }> {
-    const req = new NextRequest(
-      `http://localhost:3000/api/admin/payments/${paymentId}`,
-      { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ decision }) }
-    );
-    const res = await decidePayment(req, ctx(paymentId));
-    return { status: res.status, json: (await res.json()) as Record<string, unknown> };
-  }
-
-  it('returns 404 for a missing payment before any gate', async () => {
-    const { status, json } = await decide('no-such-payment', 'approve');
-    expect(status).toBe(404);
-    expect(json['error']).toBe('PAYMENT_NOT_FOUND');
-  });
-
-  it('approve-crypto starts a period for a stuck crypto payment', async () => {
-    const { status, json } = await decide('payment-1', 'approve-crypto');
-    expect(status).toBe(200);
-    expect((json['period'] as Record<string, unknown>)['id']).toBeDefined();
-    expect(state.payments[0]).toMatchObject({ status: 'paid' });
-    expect(state.periods).toHaveLength(1);
-  });
-
-  it('expire-crypto closes a stuck crypto payment', async () => {
-    const { status } = await decide('payment-1', 'expire-crypto');
-    expect(status).toBe(200);
-    expect(state.payments[0]).toMatchObject({ status: 'expired' });
-  });
-
-  it('refuses rescue decisions for bank payments', async () => {
-    state.payments = [paymentRow()];
-    const { status } = await decide('payment-1', 'approve-crypto');
-    expect(status).toBe(400);
-  });
-
-  it('refuses rescue for a crypto payment that already has a period', async () => {
-    state.payments = [cryptoRow({ period_id: 'period-1' })];
-    const { status } = await decide('payment-1', 'approve-crypto');
-    expect(status).toBe(400);
-  });
-});
-
-describe('admin payments list and rescue failure branches', () => {
-  beforeEach(() => {
-    authState.role = 'admin';
-    state = {
-      payments: [cryptoRow()],
-      periods: [],
-      redemptions: [],
-      commissions: [],
-      users: [],
-      failQuery: null,
-      updateErrorOnce: false,
-      expireLosesOnce: false,
-      selectErrorOnce: false,
     };
   });
 
@@ -458,42 +357,10 @@ describe('admin payments list and rescue failure branches', () => {
     return { status: res.status, json: (await res.json()) as Record<string, unknown> };
   }
 
-  it('rescue on a missing payment returns 404', async () => {
+  it('decide on a missing payment returns 404', async () => {
     state.payments = [];
-    const { status, json } = await decide('payment-1', 'approve-crypto');
+    const { status, json } = await decide('payment-1', 'approve');
     expect(status).toBe(404);
     expect(json['error']).toBe('PAYMENT_NOT_FOUND');
-  });
-
-  it('rescue on an unmappable row returns 404', async () => {
-    state.payments = [cryptoRow({ user_id: null })];
-    const { status } = await decide('payment-1', 'approve-crypto');
-    expect(status).toBe(404);
-  });
-
-  it('rescue on a decided crypto payment returns 400', async () => {
-    state.payments = [cryptoRow({ status: 'approved' })];
-    const { status } = await decide('payment-1', 'approve-crypto');
-    expect(status).toBe(400);
-  });
-
-  it('expire losing the conditional update to a concurrent finish returns 409', async () => {
-    state.expireLosesOnce = true;
-    const { status, json } = await decide('payment-1', 'expire-crypto');
-    expect(status).toBe(409);
-    expect(json['error']).toBe('PAYMENT_ALREADY_DECIDED');
-  });
-
-  it('an expire update error fails with 500', async () => {
-    state.updateErrorOnce = true;
-    const { status } = await decide('payment-1', 'expire-crypto');
-    expect(status).toBe(500);
-  });
-
-  it('a coupon-release failure after expire is logged and the expire still succeeds', async () => {
-    state.selectErrorOnce = true;
-    const { status } = await decide('payment-1', 'expire-crypto');
-    expect(status).toBe(200);
-    expect(state.payments[0]).toMatchObject({ status: 'expired' });
   });
 });

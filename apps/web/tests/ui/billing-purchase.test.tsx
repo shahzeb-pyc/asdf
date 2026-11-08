@@ -25,15 +25,19 @@ import {
  * returns to the screenshot-upload state while it waits.
  */
 
-const { mockApiGet, mockApiPost, mockPush } = vi.hoisted(() => ({
+const { mockApiGet, mockApiPost, mockPush, mockPathname } = vi.hoisted(() => ({
   mockApiGet: vi.fn(),
   mockApiPost: vi.fn(),
   mockPush: vi.fn(),
+  // Mutable route for the refetch-on-return test: the provider
+  // watches usePathname, so a fixed value could never simulate
+  // leaving Purchase and coming back. Default is outside Purchase.
+  mockPathname: { current: '/tenant/acme/billing' },
 }));
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: mockPush }),
-  usePathname: () => '/tenant/acme/billing',
+  usePathname: () => mockPathname.current,
 }));
 
 vi.mock('@/lib/api', async (importOriginal) => {
@@ -74,10 +78,6 @@ function paymentItem(overrides: Record<string, unknown> = {}) {
     amountPkr: 70,
     isUpgrade: false,
     screenshotStorageKey: 'billing-screenshots/user-1/shot.png',
-    nowpaymentsPaymentId: null,
-    nowpaymentsPayAddress: null,
-    nowpaymentsPayAmount: null,
-    nowpaymentsNetwork: null,
     createdAt: '2026-10-31T12:00:00.000Z',
     approvedAt: null,
     ...overrides,
@@ -282,6 +282,7 @@ async function pickScreenshot(): Promise<void> {
 describe('Billing Purchase', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPathname.current = '/tenant/acme/billing';
     try {
       sessionStorage.clear();
     } catch {
@@ -320,7 +321,7 @@ describe('Billing Purchase', () => {
     expect(screen.queryByLabelText('Facebook pages')).toBeNull();
   });
 
-  it('Purchase shows only Facebook, Instagram, Threads inputs — no steppers', async () => {
+  it('Purchase shows only Facebook, Instagram, Threads steppers — typed number kept', async () => {
     renderBilling('purchase');
     await screen.findByText('Choose your pages and accounts');
     expect(screen.getByLabelText('Facebook pages')).toBeInTheDocument();
@@ -329,28 +330,310 @@ describe('Billing Purchase', () => {
     expect(screen.queryByLabelText('X accounts')).toBeNull();
     expect(screen.queryByLabelText('TikTok accounts')).toBeNull();
     expect(screen.queryByLabelText('YouTube accounts')).toBeNull();
-    // No increase/decrease control anywhere in the chooser, and no
-    // native number spinner either (the inputs are text inputs).
-    expect(screen.queryByRole('button', { name: 'Increase Facebook' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Decrease Facebook' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Increase Instagram' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Decrease Instagram' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Increase Threads' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Decrease Threads' })).toBeNull();
+    // Each row is a stepper like the mockup ("− 10 +"): minus button,
+    // typed number, plus button — and no native number spinner either
+    // (the inputs are text inputs).
+    for (const platform of ['Facebook pages', 'Instagram accounts', 'Threads accounts']) {
+      expect(
+        screen.getByRole('button', { name: `Increase ${platform}` }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: `Decrease ${platform}` }),
+      ).toBeInTheDocument();
+    }
     expect(document.querySelector('input[type="number"]')).toBeNull();
   });
 
-  it('typing a count updates the row price and total live', async () => {
+  it('builder has a live summary sidebar — the order summary itself lives only at checkout', async () => {
+    renderBilling('purchase');
+    await screen.findByText('Choose your pages and accounts');
+    // The checkout summary card is not in the builder, but the builder
+    // has its own live sidebar: per-platform lines and monthly total
+    // update as counts change. The sidebar is headed YOUR PLAN, has no
+    // subtitle, and carries no storage line (storage lives at checkout).
+    expect(screen.queryByText('Order summary')).toBeNull();
+    expect(screen.getByText('YOUR PLAN')).toBeInTheDocument();
+    expect(screen.queryByText('What your plan costs each month.')).toBeNull();
+    expect(screen.getByText('Monthly total')).toBeInTheDocument();
+    expect(screen.queryByText('Media Library storage included')).toBeNull();
+    // Continue to checkout lives in the sidebar now, full-width and
+    // pill-shaped, not below the chooser.
+    const continueButton = screen.getByRole('button', {
+      name: 'Continue to checkout',
+    });
+    expect(continueButton).toBeInTheDocument();
+    expect(continueButton.className).toContain('w-full');
+    expect(continueButton.className).toContain('rounded-full');
+    expect(continueButton.className).not.toContain('sm:self-end');
+    // And the order summary is still there at checkout.
+    await goToCheckout();
+    expect(await screen.findByText('Order summary')).toBeInTheDocument();
+    expect(screen.getByText('Monthly total')).toBeInTheDocument();
+  });
+
+  it('chooser shows stacked rows with plain questions and the increase/reduce note', async () => {
+    renderBilling('purchase');
+    await screen.findByText('Choose your pages and accounts');
+    // One divided row per platform, full width of the left column —
+    // not three columns. Each row is headed "Platform — Pages/Accounts".
+    expect(screen.getByText('Facebook — Pages')).toBeInTheDocument();
+    expect(screen.getByText('Instagram — Accounts')).toBeInTheDocument();
+    expect(screen.getByText('Threads — Accounts')).toBeInTheDocument();
+    const rows = screen.getByLabelText('Facebook pages').closest('.divide-y');
+    expect(rows).not.toBeNull();
+    // Each row asks a plain professional question. (The Facebook
+    // question shares its paragraph with the Accounts-free note, so it
+    // is matched by pattern rather than exact text.)
+    expect(
+      screen.getByText(/How many Facebook Pages will you post to\?/),
+    ).toBeInTheDocument();
+    expect(screen.getByText('How many Instagram accounts will you post from?')).toBeInTheDocument();
+    expect(screen.getByText('How many Threads accounts will you post from?')).toBeInTheDocument();
+    // Facebook accounts are free — only Pages are paid for.
+    expect(
+      screen.getByText(/connect as many Facebook accounts as you like/i),
+    ).toBeInTheDocument();
+    // Verbatim foot note, and the removed lines stay removed.
+    expect(
+      screen.getByText(
+        'You can increase your pages and accounts anytime. Reducing them takes effect from your next month.',
+      ),
+    ).toBeInTheDocument();
+    // New card description: Facebook accounts are free, only connected
+    // pages are paid for — and the old wording is gone.
+    expect(
+      screen.getByText(
+        /Facebook accounts are free — you can connect as many accounts as you like, you only pay for connected pages\./,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/only the pages and accounts you actually use/),
+    ).toBeNull();
+    expect(screen.queryByText(/Everything is 70 PKR each/)).toBeNull();
+    expect(screen.queryByText('Facebook — pay for Pages only')).toBeNull();
+    expect(screen.queryByText('Instagram — pay per account')).toBeNull();
+    expect(screen.queryByText('Threads — pay per account')).toBeNull();
+  });
+
+  it('builder is a wide two-column layout and the chooser is a divided stack of rows', async () => {
+    renderBilling('purchase');
+    await screen.findByText('Choose your pages and accounts');
+    // Two columns on desktop: chooser on the left, live summary sidebar
+    // on the right — so the builder sits in a wide max-w-6xl container,
+    // not the old narrow max-w-3xl column.
+    expect(document.querySelector('.max-w-6xl')).not.toBeNull();
+    expect(document.querySelector('.max-w-3xl')).toBeNull();
+    const layout = screen.getByText('YOUR PLAN').closest('.grid');
+    expect(layout).not.toBeNull();
+    expect(layout).toHaveClass('grid-cols-1', 'items-start', 'lg:grid-cols-[1fr_360px]');
+    // The chooser is one divided stack: three rows, one per platform,
+    // each with its typed input at the right end — no columns, no tiles.
+    const stack = screen.getByLabelText('Facebook pages').closest('.divide-y');
+    expect(stack).not.toBeNull();
+    expect(stack).toHaveClass('flex-col');
+    expect(stack).not.toHaveClass('grid');
+    // No three-column chooser grid anywhere in the chooser card.
+    const chooserCard = screen
+      .getByText('Choose your pages and accounts')
+      .closest('[data-slot="card"]');
+    expect(chooserCard).not.toBeNull();
+    expect(chooserCard?.querySelector('.sm\\:grid-cols-3')).toBeNull();
+    // The input sits at the right end of its row, so it never clips
+    // at the tighter container width. (The input is nested in the
+    // stepper group now, so the row is reached from the row heading
+    // rather than from the input.)
+    const row = screen.getByText('Facebook — Pages').closest('div.flex');
+    expect(row).not.toBeNull();
+    expect(row).toHaveClass('flex-wrap', 'items-center', 'justify-between');
+    // Checkout keeps its wide container and its order summary.
+    await goToCheckout();
+    expect(await screen.findByText('Order summary')).toBeInTheDocument();
+    expect(document.querySelector('.max-w-6xl')).not.toBeNull();
+  });
+
+  it('typing a count updates the sidebar line and total live', async () => {
     renderBilling('purchase');
     await screen.findByText('Choose your pages and accounts');
     const facebook = screen.getByLabelText('Facebook pages') as HTMLInputElement;
     fireEvent.change(facebook, { target: { value: '100' } });
     expect(facebook.value).toBe('100');
-    // Row price and order summary both price the typed count live.
-    expect(screen.getAllByText('7000 PKR').length).toBeGreaterThan(0);
+    // No per-row price in the chooser anymore — the price lives only in
+    // the sidebar, in the mockup's "Facebook · Pages × 100" format. The
+    // "7000 PKR" appears twice, both in the sidebar: the platform line
+    // and the monthly total — never in the chooser card.
+    expect(screen.getByText('Facebook · Pages × 100')).toBeInTheDocument();
+    expect(screen.getAllByText('7000 PKR')).toHaveLength(2);
+    const chooserCard = screen
+      .getByText('Choose your pages and accounts')
+      .closest('[data-slot="card"]');
+    expect(chooserCard?.textContent ?? '').not.toContain('7000 PKR');
     const instagram = screen.getByLabelText('Instagram accounts') as HTMLInputElement;
     fireEvent.change(instagram, { target: { value: '4' } });
+    expect(screen.getByText('Instagram · Accounts × 4')).toBeInTheDocument();
     expect(screen.getAllByText('280 PKR').length).toBeGreaterThan(0);
+  });
+
+  it('stepper buttons step by 1, never below 0, and update the sidebar live', async () => {
+    renderBilling('purchase');
+    await screen.findByText('Choose your pages and accounts');
+    const facebook = screen.getByLabelText('Facebook pages') as HTMLInputElement;
+    const decrease = screen.getByRole('button', { name: 'Decrease Facebook pages' });
+    const increase = screen.getByRole('button', { name: 'Increase Facebook pages' });
+    // Minus is disabled at 0 — the count can never go below 0.
+    expect(decrease).toBeDisabled();
+    fireEvent.click(increase);
+    expect(facebook.value).toBe('1');
+    expect(screen.getByText('Facebook · Pages × 1')).toBeInTheDocument();
+    expect(screen.getAllByText('70 PKR').length).toBeGreaterThan(0);
+    fireEvent.click(increase);
+    expect(facebook.value).toBe('2');
+    expect(screen.getByText('Facebook · Pages × 2')).toBeInTheDocument();
+    fireEvent.click(decrease);
+    expect(facebook.value).toBe('1');
+    fireEvent.click(decrease);
+    expect(facebook.value).toBe('0');
+    expect(decrease).toBeDisabled();
+    // Stepping from an in-progress draft steps from the last valid
+    // count and drops the draft, so the field shows the stepped value.
+    fireEvent.change(facebook, { target: { value: 'xyz' } });
+    expect(facebook.value).toBe('xyz');
+    fireEvent.click(increase);
+    expect(facebook.value).toBe('1');
+    expect(screen.getByText('Facebook · Pages × 1')).toBeInTheDocument();
+  });
+
+  it('moving builder -> checkout reuses the billing fetch: no second /billing call, no skeleton', async () => {
+    // Smooth-steps spec: one React Query cache for all three steps.
+    // The builder fetches /billing once; the checkout remount (same
+    // tenant layout, same QueryClient — what client-side navigation
+    // does) must not fetch it again and must render at once.
+    const client = createQueryClient('acme');
+    const view = render(
+      <QueryClientProvider client={client}>
+        <EntitlementProvider subdomain="acme" adminOnly={false}>
+          <PurchaseView subdomain="acme" step="builder" />
+        </EntitlementProvider>
+      </QueryClientProvider>
+    );
+    await screen.findByText('Choose your pages and accounts');
+    const billingCalls = () =>
+      mockApiGet.mock.calls.filter(([url]) => url === '/api/tenant/acme/billing').length;
+    expect(billingCalls()).toBe(1);
+    fireEvent.change(screen.getByLabelText('Facebook pages'), { target: { value: '1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue to checkout' }));
+    view.rerender(
+      <QueryClientProvider client={client}>
+        <EntitlementProvider subdomain="acme" adminOnly={false}>
+          <PurchaseView subdomain="acme" step="checkout" />
+        </EntitlementProvider>
+      </QueryClientProvider>
+    );
+    // The checkout content is there on the first render after the
+    // step change — no skeleton in between.
+    expect(screen.getByText('Upload your payment screenshot')).toBeInTheDocument();
+    expect(billingCalls()).toBe(1);
+  });
+
+  it('returning to Purchase from another section refetches in the background, no skeleton', async () => {
+    // Follow-up 2026-11-08: the shared billing cache is fetched
+    // once per session, so a return from outside must refetch — in
+    // the background, with the cached data visible throughout.
+    // The provider stays mounted across the whole flow (same tenant
+    // layout, same QueryClient — what client-side navigation does);
+    // only the Purchase view comes and goes as the route changes.
+    const client = createQueryClient('acme');
+    const billingCalls = () =>
+      mockApiGet.mock.calls.filter(([url]) => url === '/api/tenant/acme/billing').length;
+    const view = render(
+      <QueryClientProvider client={client}>
+        <EntitlementProvider subdomain="acme" adminOnly={false}>
+          <PurchaseView subdomain="acme" step="builder" />
+        </EntitlementProvider>
+      </QueryClientProvider>
+    );
+    await screen.findByText('Choose your pages and accounts');
+    expect(billingCalls()).toBe(1);
+
+    // Leave Purchase for another section: no refetch on the way out.
+    mockPathname.current = '/tenant/acme/home';
+    view.rerender(
+      <QueryClientProvider client={client}>
+        <EntitlementProvider subdomain="acme" adminOnly={false}>
+          <div>Somewhere else</div>
+        </EntitlementProvider>
+      </QueryClientProvider>
+    );
+    expect(billingCalls()).toBe(1);
+
+    // Return to Purchase: the cached builder renders at once (no
+    // skeleton) and the background refetch fires exactly once.
+    mockPathname.current = '/tenant/acme/purchase';
+    view.rerender(
+      <QueryClientProvider client={client}>
+        <EntitlementProvider subdomain="acme" adminOnly={false}>
+          <PurchaseView subdomain="acme" step="builder" />
+        </EntitlementProvider>
+      </QueryClientProvider>
+    );
+    expect(screen.getByText('Choose your pages and accounts')).toBeInTheDocument();
+    await waitFor(() => expect(billingCalls()).toBe(2));
+    // Still the cached builder, not a skeleton, after the refetch.
+    expect(screen.getByText('Choose your pages and accounts')).toBeInTheDocument();
+
+    // And moving between steps still does not refetch, even though
+    // the route changes: builder -> checkout stays on the cache.
+    fireEvent.change(screen.getByLabelText('Facebook pages'), { target: { value: '1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue to checkout' }));
+    mockPathname.current = '/tenant/acme/purchase/checkout';
+    view.rerender(
+      <QueryClientProvider client={client}>
+        <EntitlementProvider subdomain="acme" adminOnly={false}>
+          <PurchaseView subdomain="acme" step="checkout" />
+        </EntitlementProvider>
+      </QueryClientProvider>
+    );
+    expect(screen.getByText('Upload your payment screenshot')).toBeInTheDocument();
+    expect(billingCalls()).toBe(2);
+  });
+
+  it('a hung billing load fails into the retry UI within the timeout', async () => {
+    // Smooth-steps spec: the billing fetch aborts after 15s, so a
+    // hung request shows the retry error instead of an endless
+    // skeleton. AbortSignal.timeout is spied to an already-aborted
+    // signal so the test does not wait out the real 15s.
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => {
+      const controller = new AbortController();
+      controller.abort(new DOMException('The operation timed out.', 'TimeoutError'));
+      return controller.signal;
+    });
+    try {
+      mockApiGet.mockImplementation(async (url: string, options?: { signal?: AbortSignal }) => {
+        if (url.includes('/billing/entitlement')) {
+          return { ...freeEntitlement(), hasPriorPeriod: false };
+        }
+        if (url.includes('/billing/storage')) {
+          return {
+            quotaBytes: 5 * 1024 * 1024 * 1024,
+            usedBytes: 0,
+            remainingBytes: 5 * 1024 * 1024 * 1024,
+            overBytes: 0,
+            state: 'normal',
+            hasActivePeriod: true,
+          };
+        }
+        if (url.includes('/billing/refunds')) {
+          return { requests: [], eligibility: { eligible: false, reason: null } };
+        }
+        if (options?.signal?.aborted) throw abortedError();
+        return new Promise(() => undefined);
+      });
+      renderBilling('purchase');
+      await screen.findByText("Couldn't load billing");
+      expect(screen.getByText('The request timed out. Please try again.')).toBeInTheDocument();
+      expect(timeoutSpy).toHaveBeenCalledWith(15000);
+    } finally {
+      timeoutSpy.mockRestore();
+    }
   });
 
   it('invalid input never touches the totals and reverts on blur', async () => {
@@ -385,9 +668,12 @@ describe('Billing Purchase', () => {
     expect(facebook.value).toBe('0');
   });
 
-  it('Purchase shows all three inclusions and a dynamic storage total', async () => {
+  it('Purchase shows the seven free inclusions in the sidebar; the storage total lives at checkout', async () => {
     renderBilling('purchase');
-    await screen.findByText('Included with your plan');
+    await screen.findByText('Included for free with paid plan');
+    // No separate Included card anymore — the list lives in the
+    // sidebar, below the monthly total.
+    expect(screen.queryByText('Included with your plan')).toBeNull();
     expect(
       screen.getByText('5 GB of Media Library storage per page or account')
     ).toBeInTheDocument();
@@ -395,11 +681,56 @@ describe('Billing Purchase', () => {
     expect(
       screen.getByText('Unlimited posts — no cap on the number of posts')
     ).toBeInTheDocument();
-    expect(screen.getByText('Media Library storage included')).toBeInTheDocument();
-    expect(screen.getByText('0 GB')).toBeInTheDocument();
+    expect(screen.getByText('In-app scheduling')).toBeInTheDocument();
+    expect(screen.getByText('Auto download & upload')).toBeInTheDocument();
+    expect(screen.getByText('Auto repost')).toBeInTheDocument();
+    expect(screen.getByText('Bulk publishing')).toBeInTheDocument();
+    // The sidebar carries no storage line (mockup E has none) — the
+    // storage total lives at checkout: 15 GB once 2 Facebook pages +
+    // 1 Instagram account are typed.
+    expect(screen.queryByText('Media Library storage included')).toBeNull();
     fireEvent.change(screen.getByLabelText('Facebook pages'), { target: { value: '2' } });
     fireEvent.change(screen.getByLabelText('Instagram accounts'), { target: { value: '1' } });
+    expect(screen.queryByText('Media Library storage included')).toBeNull();
+    // And checkout still shows the same storage total.
+    fireEvent.click(screen.getByRole('button', { name: 'Continue to checkout' }));
+    cleanup();
+    renderCheckout();
+    expect(await screen.findByText('Media Library storage included')).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText('15 GB')).toBeInTheDocument());
+  });
+
+  it('Included list lives in the sidebar, below the monthly total', async () => {
+    renderBilling('purchase');
+    await screen.findByText('Included for free with paid plan');
+    // No separate Included card anywhere in the builder.
+    expect(screen.queryByText('Included with your plan')).toBeNull();
+    // The list sits inside the sidebar card, below the monthly total
+    // and above the Continue button.
+    const sidebar = screen.getByText('YOUR PLAN').closest('[data-slot="card"]');
+    expect(sidebar).not.toBeNull();
+    expect(sidebar).toHaveTextContent('Monthly total');
+    expect(sidebar).toHaveTextContent('Included for free with paid plan');
+    expect(sidebar).toHaveTextContent('Continue to checkout');
+    const html = sidebar?.innerHTML ?? '';
+    expect(html.indexOf('Monthly total')).toBeLessThan(
+      html.indexOf('Included for free with paid plan'),
+    );
+    expect(html.indexOf('Included for free with paid plan')).toBeLessThan(
+      html.indexOf('Continue to checkout'),
+    );
+    // All seven rows render, with the same wording.
+    expect(
+      screen.getByText('5 GB of Media Library storage per page or account')
+    ).toBeInTheDocument();
+    expect(screen.getByText('Creator Finder included free')).toBeInTheDocument();
+    expect(
+      screen.getByText('Unlimited posts — no cap on the number of posts')
+    ).toBeInTheDocument();
+    expect(screen.getByText('In-app scheduling')).toBeInTheDocument();
+    expect(screen.getByText('Auto download & upload')).toBeInTheDocument();
+    expect(screen.getByText('Auto repost')).toBeInTheDocument();
+    expect(screen.getByText('Bulk publishing')).toBeInTheDocument();
   });
 
   it('My Plan shows all six platforms in the paid counts line', async () => {
@@ -505,13 +836,13 @@ describe('Billing Purchase', () => {
     const put = stubPutOk();
     renderBilling('purchase');
     await goToCheckout();
-    expect(await screen.findByText('Manual payments')).toBeInTheDocument();
+    expect(await screen.findByText('Manual payments only.')).toBeInTheDocument();
     expect(screen.getByText('Your plan runs for 30 days after approval.')).toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText('Pay with Binance'));
+    fireEvent.click(screen.getByRole('radio', { name: 'Pay via Binance' }));
     expect(screen.getByText('Binance ID')).toBeInTheDocument();
     expect(screen.getAllByText('983001576').length).toBeGreaterThan(0);
     expect(screen.getByText('Copy Binance ID')).toBeInTheDocument();
-    expect(screen.getByText('Shahzebpyc')).toBeInTheDocument();
+    expect(screen.getByText('shahzebpyc')).toBeInTheDocument();
     await pickScreenshot();
     fireEvent.click(screen.getByRole('button', { name: 'Submit payment for approval' }));
     await goToConfirmation();
@@ -568,6 +899,53 @@ describe('Billing Purchase', () => {
     loadGate.release?.();
     await goToConfirmation();
     expect(screen.queryByText('Upload your payment screenshot')).toBeNull();
+  });
+
+  it('checkout shows the compact coupon directly above the order summary', async () => {
+    renderBilling('purchase');
+    await goToCheckout();
+    // Both live in the right column now: coupon first, summary second.
+    const summary = await screen.findByText('Order summary');
+    const couponInput = screen.getByLabelText('Coupon code') as HTMLInputElement;
+    expect(couponInput.placeholder).toBe('e.g. SAVE20');
+    // DOM order is the placement contract: the summary heading
+    // follows the coupon input, inside the same column.
+    expect(
+      couponInput.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    const summaryCard = summary.closest('[data-slot="card"]');
+    expect(summaryCard).not.toBeNull();
+    expect(summaryCard?.parentElement?.contains(couponInput)).toBe(true);
+    // The compact card drops the visible label row but keeps the
+    // title and hint.
+    expect(screen.getByText('Coupon')).toBeInTheDocument();
+    expect(screen.getByText('Have a coupon code? Apply it before you pay.')).toBeInTheDocument();
+  });
+
+  it('checkout offers manual payments only — no crypto option renders', async () => {
+    renderBilling('purchase');
+    await goToCheckout();
+    // Checkout re-mounts and re-loads billing (skeleton first), so wait
+    // for the step to render like the other checkout tests do.
+    expect(await screen.findByText('Manual payments only.')).toBeInTheDocument();
+    expect(screen.queryByText(/crypto/i)).toBeNull();
+    expect(screen.queryByText(/USDT/)).toBeNull();
+    expect(screen.queryByText(/TRC20|BEP20/)).toBeNull();
+    // Step 1 holds the four manual methods, and only those.
+    for (const label of ['Pay via Easypaisa', 'Pay via Nayapay', 'Pay via Bank transfer', 'Pay via Binance']) {
+      expect(screen.getByRole('radio', { name: label })).toBeInTheDocument();
+    }
+  });
+
+  it('checkout coupon input uppercases typed codes and Apply stays disabled while empty', async () => {
+    renderBilling('purchase');
+    await goToCheckout();
+    const couponInput = (await screen.findByLabelText('Coupon code')) as HTMLInputElement;
+    const apply = screen.getByRole('button', { name: 'Apply' });
+    expect(apply).toBeDisabled();
+    fireEvent.change(couponInput, { target: { value: 'save20' } });
+    expect(couponInput.value).toBe('SAVE20');
+    expect(apply).not.toBeDisabled();
   });
 
   it('submit waits for the screenshot upload: disabled while uploading, enabled once it lands', async () => {
@@ -1229,8 +1607,8 @@ describe('My Plan view', () => {
 
 /**
  * Payments view (split build): rows from the paginated status
- * endpoint, crypto pay details on pending crypto rows, rejection
- * reasons, load-more paging, and the empty and error states.
+ * endpoint, rejection reasons, load-more paging, and the empty
+ * and error states.
  */
 describe('Payments view', () => {
   beforeEach(() => {
@@ -1252,25 +1630,23 @@ describe('Payments view', () => {
     });
   }
 
-  it('Rows show amount, method, status, and crypto pay details', async () => {
+  it('Rows show amount, method, and status', async () => {
     mockPaymentsApi({
       1: [
         paymentItem(),
         paymentItem({
           id: '22222222-2222-4222-a222-222222222222',
-          method: 'nowpayments',
-          bankMethod: null,
-          nowpaymentsPayAddress: 'TXYZ1234567890abcdefghijklmnopqrstuv',
-          nowpaymentsPayAmount: 10,
-          nowpaymentsNetwork: 'trc20',
+          method: 'bank',
+          bankMethod: 'nayapay',
+          status: 'approved',
         }),
       ],
     });
     renderPayments();
     expect(await screen.findByText('70 PKR · Easypaisa')).toBeInTheDocument();
-    expect(screen.getByText('70 PKR · Crypto · USDT (TRC20)')).toBeInTheDocument();
-    expect(screen.getByText(/Send exactly 10 USDT to/)).toBeInTheDocument();
-    expect(screen.getByText(/TXYZ1234567890abcdefghijklmnopqrstuv/)).toBeInTheDocument();
+    expect(screen.getByText('70 PKR · Nayapay')).toBeInTheDocument();
+    expect(screen.getByText('Waiting for approval')).toBeInTheDocument();
+    expect(screen.getByText('Paid')).toBeInTheDocument();
   });
 
   it('Rejected rows show the reason; empty shows the first-use state', async () => {
@@ -1349,13 +1725,11 @@ describe('Purchase downgrade builder', () => {
     expect(facebook.value).toBe('2');
     fireEvent.change(facebook, { target: { value: '1' } });
     fireEvent.blur(facebook);
-    expect(await screen.findByText('Current monthly plan')).toBeInTheDocument();
-    expect(screen.getByText('New monthly plan')).toBeInTheDocument();
-    expect(screen.getByText('You pay now')).toBeInTheDocument();
-    expect(
-      screen.getByText(/Lower monthly plan for next month\. Your current plan runs unchanged until/)
-    ).toBeInTheDocument();
-    expect(screen.getByText(/No credit was given for the days left/)).toBeInTheDocument();
+    // The quote lives in the order summary, and the summary lives only
+    // at checkout now — the builder shows no quote lines.
+    expect(screen.queryByText('Current monthly plan')).toBeNull();
+    expect(screen.queryByText('New monthly plan')).toBeNull();
+    expect(screen.queryByText('You pay now')).toBeNull();
     // Checkout is a sub-route: the click pushes /purchase/checkout
     // (mocked here), so follow it the way the real routes do —
     // re-render at the checkout step with the builder's saved draft.
@@ -1363,6 +1737,14 @@ describe('Purchase downgrade builder', () => {
     cleanup();
     renderCheckout();
     expect(await screen.findByRole('heading', { name: 'Checkout' })).toBeInTheDocument();
+    expect(screen.getByText('Current monthly plan')).toBeInTheDocument();
+    expect(screen.getByText('New monthly plan')).toBeInTheDocument();
+    expect(screen.getByText('You pay now')).toBeInTheDocument();
+    // The two downgrade paragraphs were removed from the summary:
+    // only the header line above the step indicator names the lower plan.
+    expect(screen.queryByText(/Your current plan runs unchanged until/)).toBeNull();
+    expect(screen.queryByText(/No credit was given for the days left/)).toBeNull();
+    expect(screen.queryByText(/never backdated/)).toBeNull();
     // Header line only (the summary card uses a period, not the middot).
     expect(screen.getByText(/Lower monthly plan for next month · 1 Facebook pages/)).toBeInTheDocument();
   });

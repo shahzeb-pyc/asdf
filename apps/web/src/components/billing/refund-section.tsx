@@ -20,15 +20,15 @@ function formatDate(value: string | null): string {
   return Number.isNaN(date.getTime()) ? '—' : date.toLocaleDateString();
 }
 
-function formatAmount(amount: number, currency: 'PKR' | 'USDT'): string {
-  return currency === 'USDT' ? `${amount} USDT` : `${amount} PKR`;
+function formatAmount(amount: number, currency: 'PKR'): string {
+  return `${amount} ${currency}`;
 }
 
 function destinationLabel(item: RefundRequestItem): string {
   if (item.destinationType === 'mobile') return 'Mobile number';
   if (item.destinationType === 'bank') return 'Bank account / IBAN';
   if (item.destinationType === 'binance') return 'Binance ID';
-  return `USDT wallet (${item.destinationNetwork === 'trc20' ? 'TRC20' : 'BEP20'})`;
+  return '—';
 }
 
 function statusLabel(item: RefundRequestItem): string {
@@ -60,7 +60,6 @@ export function RefundSection({
   const [error, setError] = React.useState<string | null>(null);
   const [showForm, setShowForm] = React.useState(false);
   const [destinationValue, setDestinationValue] = React.useState('');
-  const [destinationNetwork, setDestinationNetwork] = React.useState<'trc20' | 'bep20'>('trc20');
   const [reason, setReason] = React.useState('');
   const [formError, setFormError] = React.useState<string | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
@@ -93,7 +92,6 @@ export function RefundSection({
         destination: {
           type: data.eligibility.destinationType,
           value: destinationValue.trim(),
-          network: data.eligibility.destinationType === 'usdt' ? destinationNetwork : null,
         },
         reason: reason.trim() ? reason.trim() : undefined,
       });
@@ -240,9 +238,7 @@ export function RefundSection({
                   ? 'Mobile number you paid from'
                   : destinationType === 'bank'
                     ? 'Bank account / IBAN you paid from'
-                    : destinationType === 'binance'
-                      ? 'Binance ID you paid from'
-                      : 'USDT wallet address'}
+                    : 'Binance ID you paid from'}
               </label>
               <input
                 id="refund-destination"
@@ -253,24 +249,6 @@ export function RefundSection({
                 className="rounded-md border border-line bg-panel px-3 py-2 text-body text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link"
               />
             </div>
-            {destinationType === 'usdt' ? (
-              <div className="flex flex-col gap-1">
-                <label htmlFor="refund-network" className="text-body font-medium text-ink">
-                  Network
-                </label>
-                <select
-                  id="refund-network"
-                  value={destinationNetwork}
-                  onChange={(event) =>
-                    setDestinationNetwork(event.target.value === 'bep20' ? 'bep20' : 'trc20')
-                  }
-                  className="rounded-md border border-line bg-panel px-3 py-2 text-body text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link"
-                >
-                  <option value="trc20">TRC20</option>
-                  <option value="bep20">BEP20</option>
-                </select>
-              </div>
-            ) : null}
             <div className="flex flex-col gap-1">
               <label htmlFor="refund-reason" className="text-body font-medium text-ink">
                 Reason (optional)
@@ -283,17 +261,10 @@ export function RefundSection({
                 className="rounded-md border border-line bg-panel px-3 py-2 text-body text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link"
               />
             </div>
-            {destinationType === 'usdt' ? (
-              <p className="text-body text-ink-sub">
-                Refunds go to the same account you paid from. We check the wallet address
-                manually against your payment record before sending.
-              </p>
-            ) : (
-              <p className="text-body text-ink-sub">
-                Refunds go to the same account you paid from. We check it manually against your
-                payment screenshot before sending.
-              </p>
-            )}
+            <p className="text-body text-ink-sub">
+              Refunds go to the same account you paid from. We check it manually against your
+              payment screenshot before sending.
+            </p>
             <p className="text-body text-ink-sub">
               Estimated refund: {formatAmount(eligibility.estimatedRefund ?? 0, eligibility.currency ?? 'PKR')}
               {eligibility.daysUsed !== null ? ` · ${eligibility.daysUsed} days used` : ''}. The

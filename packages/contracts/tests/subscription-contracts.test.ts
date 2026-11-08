@@ -1,15 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { createHmac } from 'node:crypto';
 import {
   canUseDestination,
   daysRemainingBetween,
   isPeriodActive,
-  nowPaymentsPayCurrency,
   quoteUpgrade,
-  sortObjectForNowPaymentsSignature,
   totalPricePkr,
   upgradeCreditPkr,
-  verifyNowPaymentsIpnSignature,
   ZERO_PLATFORM_COUNTS,
   type PlatformCounts,
 } from '../src/domain/subscription.js';
@@ -23,11 +19,6 @@ describe('subscription pricing', () => {
     expect(totalPricePkr(counts({ facebook: 5, instagram: 3 }))).toBe(560);
     expect(totalPricePkr(counts({ facebook: 1 }))).toBe(70);
     expect(totalPricePkr(ZERO_PLATFORM_COUNTS)).toBe(0);
-  });
-
-  it('maps Facebook to pages and other platforms to accounts via the network tickers', () => {
-    expect(nowPaymentsPayCurrency('trc20')).toBe('usdttrc20');
-    expect(nowPaymentsPayCurrency('bep20')).toBe('usdtbsc');
   });
 });
 
@@ -107,42 +98,3 @@ describe('cap counting across features', () => {
   });
 });
 
-describe('NOWPayments IPN signature', () => {
-  it('verifies a signature computed independently with node crypto', async () => {
-    const payload = {
-      payment_id: '123',
-      payment_status: 'finished',
-      price_amount: 560,
-      nested: { b: 2, a: 1 },
-    };
-    const secret = 'test-ipn-secret';
-    const sorted = JSON.stringify(sortObjectForNowPaymentsSignature(payload));
-    const expected = createHmac('sha512', secret).update(sorted).digest('hex');
-    expect(await verifyNowPaymentsIpnSignature(payload, expected, secret)).toBe(true);
-    expect(await verifyNowPaymentsIpnSignature(payload, expected, 'wrong-secret')).toBe(false);
-    expect(
-      await verifyNowPaymentsIpnSignature({ ...payload, payment_status: 'waiting' }, expected, secret)
-    ).toBe(false);
-    expect(await verifyNowPaymentsIpnSignature(payload, null, secret)).toBe(false);
-    expect(await verifyNowPaymentsIpnSignature(payload, expected, null)).toBe(false);
-  });
-
-  it('sorts keys recursively before signing', () => {
-    expect(sortObjectForNowPaymentsSignature({ b: 1, a: { d: 4, c: 3 } })).toEqual({
-      a: { c: 3, d: 4 },
-      b: 1,
-    });
-  });
-
-  it('sorts by code unit, not locale order — the provider signs that form', () => {
-    // Code-unit order: 'A' (65) < '_x' (95) < 'a' (97) < 'b' (98).
-    // Locale order would differ (punctuation/case are locale-aware),
-    // so this order is load-bearing for IPN verification, not display.
-    expect(Object.keys(sortObjectForNowPaymentsSignature({ b: 1, a: 2, _x: 3, A: 4 }) as object)).toEqual([
-      'A',
-      '_x',
-      'a',
-      'b',
-    ]);
-  });
-});

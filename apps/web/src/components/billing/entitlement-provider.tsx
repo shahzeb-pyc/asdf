@@ -35,23 +35,121 @@
  * value is explicit in the contract — expired is a real plan, not a
  * derivation — so the gate, the word, and Home can never disagree
  * about it.
+ *
+ * Billing status (smooth-steps spec, 2026-11-08): this file also
+ * owns the shared /billing query (`useBillingStatus`) — builder,
+ * checkout and confirmation read one cache instead of each fetching
+ * on mount, with a 15s timeout scoped to that query only.
  */
 
 import * as React from 'react';
+import { usePathname } from 'next/navigation';
 import {
   useQuery,
+  useQueryClient,
+  type UseQueryOptions,
   type UseQueryResult,
 } from '@tanstack/react-query';
 import {
   EntitlementResponseSchema,
   type EntitlementResponse,
 } from '@fbuploadpro/contracts';
+import {
+  BillingStatusResponseSchema,
+  type BillingStatusResponse,
+} from '@/lib/api/schemas/billing';
 import { apiGet, buildTenantApiPath } from '@/lib/api';
 import { reportError } from '@/lib/report-error';
 
 /** The one entitlement query key, shared by gate, word, and billing. */
 export function entitlementQueryKey(subdomain: string): readonly string[] {
   return ['tenant', subdomain, 'billing', 'entitlement'];
+}
+
+/** The one billing-status query key, shared by builder, checkout and confirmation. */
+export function billingStatusQueryKey(subdomain: string, page = 1): readonly (string | number)[] {
+  return ['tenant', subdomain, 'billing', 'status', page];
+}
+
+/**
+ * Billing-status load timeout (owner order 2026-11-08): a hung
+ * /billing request must fail into the retry error UI within ~15s,
+ * never an endless skeleton. Scoped to this query only — no other
+ * caller gets a timeout from it, and apiGet itself is untouched.
+ */
+export const BILLING_STATUS_TIMEOUT_MS = 15_000;
+
+/**
+ * Abort when either the query is cancelled or the timeout elapses.
+ * AbortSignal.any is not used (no call site in the codebase relies
+ * on it); the two signals are combined by hand instead.
+ */
+function combineSignals(querySignal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+  const timeoutSignal =
+    typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(timeoutMs) : undefined;
+  if (!querySignal) return timeoutSignal ?? new AbortController().signal;
+  if (!timeoutSignal) return querySignal;
+  if (querySignal.aborted) return querySignal;
+  if (timeoutSignal.aborted) return timeoutSignal;
+  const controller = new AbortController();
+  const onQueryAbort = () => {
+    timeoutSignal.removeEventListener('abort', onTimeout);
+    controller.abort(querySignal.reason);
+  };
+  const onTimeout = () => {
+    querySignal.removeEventListener('abort', onQueryAbort);
+    controller.abort(timeoutSignal.reason);
+  };
+  querySignal.addEventListener('abort', onQueryAbort, { once: true });
+  timeoutSignal.addEventListener('abort', onTimeout, { once: true });
+  return controller.signal;
+}
+
+/**
+ * Shared billing-status query options (smooth-steps spec). Builder,
+ * checkout and confirmation all read this one cache, so moving
+ * between steps never re-fetches and never shows the skeleton —
+ * the data is fetched once, on first entry into Purchase. Page 1 is
+ * the bare `/billing` path (the route defaults `?page=` to 1), so
+ * the confirmation's page-1 read hits the exact cache entry the
+ * builder filled.
+ */
+export function billingStatusQueryOptions(
+  subdomain: string,
+  page = 1
+): UseQueryOptions<BillingStatusResponse, Error> {
+  return {
+    queryKey: billingStatusQueryKey(subdomain, page),
+    queryFn: ({ signal }) =>
+      apiGet(
+        buildTenantApiPath(subdomain, page === 1 ? '/billing' : `/billing?page=${page}`),
+        {
+          schema: BillingStatusResponseSchema,
+          signal: combineSignals(signal, BILLING_STATUS_TIMEOUT_MS),
+        }
+      ),
+    // Fetched once per session, never again on its own — the same
+    // shape as the entitlement query. Explicit refetch is the only
+    // re-check: after a purchase, a 409, or Try again — plus the
+    // background refetch when entering Purchase from another section
+    // (see the route effect in EntitlementProvider below).
+    staleTime: Infinity,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    // The old mount-only load() never retried: a failed load showed
+    // the retry UI at once. Keep that — a hung request must surface
+    // within ~15s, not after a retry doubles it to ~30s.
+    retry: 0,
+  };
+}
+
+/** Read the shared billing status for a Purchase step. */
+export function useBillingStatus(
+  subdomain: string,
+  page = 1
+): UseQueryResult<BillingStatusResponse, Error> {
+  return useQuery(billingStatusQueryOptions(subdomain, page));
 }
 
 export interface SharedEntitlementState {
@@ -130,6 +228,53 @@ export function EntitlementProvider({
     refetchOnReconnect: false,
     initialData: initialEntitlement ?? undefined,
   });
+
+  const queryClient = useQueryClient();
+  const pathname = usePathname();
+  /**
+   * Refetch-on-return (follow-up 2026-11-08): the billing query is
+   * fetched once per session and never refetches on its own, so
+   * returning to Purchase from another section would show cached
+   * payments until a full reload. This effect watches the route:
+   * when the user enters a /purchase/* route from outside it, the
+   * shared billing cache is refetched in the BACKGROUND — the cached
+   * data stays visible throughout (React Query keeps `data` during
+   * a refetch, and the skeleton gate only fires when there is no
+   * data at all), so there is no skeleton flash on return.
+   *
+   * Why the provider, not the Purchase view: the three step routes
+   * each remount PurchaseView, so a mount effect in the view cannot
+   * tell "entered from outside" from "moved between steps". This
+   * provider lives in the tenant shell for the whole document, so
+   * it sees the previous route and only refetches on an
+   * outside → /purchase transition — step-to-step moves never
+   * refetch. Two guards keep it to exactly that case: the first
+   * render of this document (previous route unknown — a full reload
+   * or direct load, where the mount fetch owns it) never refetches,
+   * and a cold entry with no cached data never double-fetches
+   * behind the mount fetch. `type: 'all'` (not just active
+   * queries) because the route can change before the new page
+   * mounts behind its loading boundary — the query may still be
+   * inactive when this effect runs, and the mount would not fetch
+   * it either (refetchOnMount is false), so an active-only refetch
+   * could silently skip the return refresh.
+   */
+  const prevPathnameRef = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    const prev = prevPathnameRef.current;
+    prevPathnameRef.current = pathname;
+    if (adminOnly) return;
+    if (prev === null) return;
+    const purchaseBase = `/tenant/${subdomain}/purchase`;
+    const isPurchasePath = (p: string): boolean =>
+      p === purchaseBase || p.startsWith(`${purchaseBase}/`);
+    if (!isPurchasePath(pathname) || isPurchasePath(prev)) return;
+    if (queryClient.getQueryData(billingStatusQueryKey(subdomain)) === undefined) return;
+    void queryClient.refetchQueries({
+      queryKey: ['tenant', subdomain, 'billing', 'status'],
+      type: 'all',
+    });
+  }, [pathname, adminOnly, subdomain, queryClient]);
 
   // Observability parity with the old gate's fetch-error report:
   // a failed entitlement check is logged loudly (console transport

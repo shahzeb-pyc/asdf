@@ -13,7 +13,6 @@ import {
 import { logServerError } from '@/lib/server-analytics';
 import {
   getActivePeriod,
-  loadPaymentActuals,
   paymentFromRow,
   periodFromRow,
   SubscriptionGateError,
@@ -40,7 +39,7 @@ import { applyRefundOutcomeToCommission, SellerError } from './sellers';
  * - The refund destination is NEVER auto-verified: the type is derived
  *   from the original payment method (same account the user paid
  *   from) and the admin checks the value manually against the payment
- *   screenshot (bank) or payment record (crypto) before sending.
+ *   screenshot (bank) before sending.
  *   No code path here claims a destination matches anything.
  */
 
@@ -57,7 +56,6 @@ export interface RefundRequest {
   daysUsed: number | null;
   destinationType: RefundDestinationType;
   destinationValue: string;
-  destinationNetwork: 'trc20' | 'bep20' | null;
   reason: string | null;
   requestedAt: string;
   decidedAt: string | null;
@@ -88,7 +86,7 @@ function intField(row: UnknownRow, key: string): number | null {
 }
 
 const REFUND_COLUMNS =
-  'id,user_id,payment_id,period_id,status,amount_paid,currency,refund_amount,days_used,destination_type,destination_value,destination_network,reason,requested_at,decided_at,sent_at';
+  'id,user_id,payment_id,period_id,status,amount_paid,currency,refund_amount,days_used,destination_type,destination_value,reason,requested_at,decided_at,sent_at';
 
 export function refundFromRow(row: UnknownRow, periodStartsAt: string | null): RefundRequest | null {
   const id = stringField(row, 'id');
@@ -99,7 +97,6 @@ export function refundFromRow(row: UnknownRow, periodStartsAt: string | null): R
   const currency = stringField(row, 'currency');
   const destinationType = stringField(row, 'destination_type');
   const destinationValue = stringField(row, 'destination_value');
-  const network = stringField(row, 'destination_network');
   if (
     !id ||
     !userId ||
@@ -109,11 +106,10 @@ export function refundFromRow(row: UnknownRow, periodStartsAt: string | null): R
       status !== 'approved' &&
       status !== 'rejected' &&
       status !== 'sent') ||
-    (currency !== 'PKR' && currency !== 'USDT') ||
+    currency !== 'PKR' ||
     (destinationType !== 'mobile' &&
       destinationType !== 'bank' &&
-      destinationType !== 'binance' &&
-      destinationType !== 'usdt') ||
+      destinationType !== 'binance') ||
     !destinationValue
   ) {
     return null;
@@ -132,7 +128,6 @@ export function refundFromRow(row: UnknownRow, periodStartsAt: string | null): R
     daysUsed: intField(row, 'days_used'),
     destinationType,
     destinationValue,
-    destinationNetwork: network === 'trc20' || network === 'bep20' ? network : null,
     reason: stringField(row, 'reason'),
     requestedAt: stringField(row, 'requested_at') ?? '',
     decidedAt: stringField(row, 'decided_at'),
@@ -150,7 +145,6 @@ export function destinationTypeForPayment(
   method: string,
   bankMethodRaw: string | null
 ): RefundDestinationType | null {
-  if (method === 'nowpayments') return 'usdt';
   if (method !== 'bank') return null;
   if (bankMethodRaw === 'easypaisa' || bankMethodRaw === 'nayapay') return 'mobile';
   if (bankMethodRaw === 'ubl') return 'bank';
@@ -159,35 +153,12 @@ export function destinationTypeForPayment(
 }
 
 /**
- * What the user actually paid, in the currency they paid it in. Bank
- * pays PKR (amount_pkr); crypto pays USDT. For crypto, the amount
- * the gateway actually received (persisted from the IPN, audit fix
- * 2026-11-01) wins over the checkout-time estimate whenever it is
- * present — the estimate can differ from what arrived. A crypto row
- * with neither amount cannot be refunded by math — failing loud
- * beats inventing a converted figure.
+ * What the user actually paid, in PKR. Bank pays PKR (amount_pkr).
  */
 export function paidAmountForPayment(payment: SubscriptionPaymentRow): {
   amount: number;
   currency: RefundCurrency;
 } {
-  if (payment.method === 'nowpayments') {
-    const actual = payment.nowpaymentsActualPaid;
-    // typeof, not !== null: the actuals columns are migration-gated
-    // and older callers may leave the field undefined — undefined
-    // must fall through to the checkout estimate, never be
-    // returned as an amount.
-    if (typeof actual === 'number') {
-      return { amount: actual, currency: 'USDT' };
-    }
-    if (payment.nowpaymentsPayAmount === null) {
-      throw new SubscriptionGateError(
-        'REFUND_UNAVAILABLE',
-        'That payment has no recorded crypto amount, so a refund cannot be calculated. Please try again.'
-      );
-    }
-    return { amount: payment.nowpaymentsPayAmount, currency: 'USDT' };
-  }
   return { amount: payment.amountPkr, currency: 'PKR' };
 }
 
@@ -234,7 +205,7 @@ export async function getRefundEligibility(
   const { data: paymentData, error: paymentError } = await client
     .from('subscription_payments')
     .select(
-      'id,user_id,method,bank_method,status,facebook_count,instagram_count,threads_count,x_count,tiktok_count,youtube_count,amount_pkr,is_upgrade,screenshot_storage_key,nowpayments_payment_id,nowpayments_pay_address,nowpayments_pay_amount,nowpayments_network,period_id,approved_at,created_at'
+      'id,user_id,method,bank_method,status,facebook_count,instagram_count,threads_count,x_count,tiktok_count,youtube_count,amount_pkr,is_upgrade,screenshot_storage_key,period_id,approved_at,created_at'
     )
     .eq('period_id', period.id)
     .maybeSingle();
@@ -243,14 +214,6 @@ export async function getRefundEligibility(
   const payment = paymentRow ? paymentFromRow(paymentRow) : null;
   if (!payment) {
     return ineligible('No payment was found for your current plan.');
-  }
-  // IPN actuals (audit fix 2026-11-01): when the migration columns
-  // exist, the refund base is what the gateway actually received,
-  // not the checkout estimate. Absent columns -> nulls -> estimate.
-  {
-    const actuals = await loadPaymentActuals(client, payment.id);
-    if (actuals.actualPaid !== null) payment.nowpaymentsActualPaid = actuals.actualPaid;
-    if (actuals.actualCurrency !== null) payment.nowpaymentsActualCurrency = actuals.actualCurrency;
   }
   if (payment.status !== 'approved' && payment.status !== 'paid') {
     return ineligible('Only a completed purchase can be refunded.');
@@ -316,7 +279,7 @@ export async function getRefundEligibility(
     periodId: period.id,
     amountPaid: amount,
     currency,
-    estimatedRefund: computeRefundAmount(amount, daysUsed, currency),
+    estimatedRefund: computeRefundAmount(amount, daysUsed),
     daysUsed,
     destinationType,
     windowEndsAt: new Date(
@@ -369,7 +332,6 @@ export async function requestRefund(
       currency,
       destination_type: input.destination.type,
       destination_value: input.destination.value,
-      destination_network: input.destination.network,
       reason: input.reason?.trim() ? input.reason.trim() : null,
       requested_at: now.toISOString(),
     })
@@ -435,37 +397,13 @@ async function loadPeriod(
 
 /**
  * What the seller keeps commission on, in PKR (commissions are PKR
- * always). Bank refunds are PKR already, so kept is exact. Crypto
- * refunds are USDT, so kept is the kept fraction of the payment
- * applied to the payment's PKR total — the same PKR base the
- * purchase-time commission was computed from, so a full crypto
- * refund keeps exactly 0 and a partial refund keeps the same
- * fraction in PKR as in USDT.
+ * always). Refunds are PKR already, so kept is exact.
  */
 async function keptPkrForRefund(
-  client: SupabaseClient,
   request: RefundRequest,
   refundAmount: number
 ): Promise<number> {
-  if (request.currency === 'PKR') return request.amountPaid - refundAmount;
-  const { data, error } = await client
-    .from('subscription_payments')
-    .select('amount_pkr')
-    .eq('id', request.paymentId)
-    .maybeSingle();
-  if (error) failClosed(error, 'refund commission payment lookup failed');
-  const row = asRow(data);
-  // A refund request naming a payment that no longer exists is
-  // corrupt data: fail loud instead of inventing a kept figure.
-  if (!row) {
-    failClosed(
-      new Error('Refund payment row missing for commission base'),
-      'refund commission payment missing'
-    );
-  }
-  const amountPkr = numberField(row, 'amount_pkr');
-  if (request.amountPaid <= 0) return 0;
-  return Math.round((amountPkr * (request.amountPaid - refundAmount)) / request.amountPaid);
+  return request.amountPaid - refundAmount;
 }
 
 /**
@@ -498,7 +436,7 @@ export async function approveRefund(
   }
   const period = await loadPeriod(client, request.periodId);
   const daysUsed = daysUsedBetween(period.startsAt, now);
-  const refundAmount = computeRefundAmount(request.amountPaid, daysUsed, request.currency);
+  const refundAmount = computeRefundAmount(request.amountPaid, daysUsed);
   if (refundAmount <= 0) {
     throw new SubscriptionGateError(
       'REFUND_ZERO_AMOUNT',
@@ -526,7 +464,7 @@ export async function approveRefund(
   // idempotently (cancel is sticky; reduce recomputes the same
   // value). Rejection needs no call: the hold lifts on its own and
   // the commission becomes payable on schedule, exactly per rule.
-  const keptPkr = await keptPkrForRefund(client, request, refundAmount);
+  const keptPkr = await keptPkrForRefund(request, refundAmount);
   try {
     await applyRefundOutcomeToCommission(client, request.paymentId, keptPkr);
   } catch (err) {

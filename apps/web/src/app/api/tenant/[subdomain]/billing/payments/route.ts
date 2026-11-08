@@ -349,7 +349,7 @@ export async function POST(
         discount_pkr: discountPkr,
       })
       .select(
-        'id,user_id,method,bank_method,status,facebook_count,instagram_count,threads_count,x_count,tiktok_count,youtube_count,amount_pkr,is_upgrade,screenshot_storage_key,nowpayments_payment_id,nowpayments_pay_address,nowpayments_pay_amount,nowpayments_network,coupon_code,discount_pkr,period_id,approved_at,created_at'
+        'id,user_id,method,bank_method,status,facebook_count,instagram_count,threads_count,x_count,tiktok_count,youtube_count,amount_pkr,is_upgrade,screenshot_storage_key,coupon_code,discount_pkr,period_id,approved_at,created_at'
       )
       .single();
     if (!error && data && isDowngrade) {

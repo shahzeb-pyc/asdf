@@ -75,13 +75,10 @@ function formatGb(bytes: number): string {
 }
 
 function paymentMethodLabel(payment: BillingPaymentItem): string {
-  if (payment.method === 'bank') {
-    if (payment.bankMethod === 'easypaisa') return 'Easypaisa';
-    if (payment.bankMethod === 'nayapay') return 'Nayapay';
-    if (payment.bankMethod === 'binance') return 'Binance';
-    return 'UBL bank';
-  }
-  return `Crypto · USDT (${payment.nowpaymentsNetwork === 'trc20' ? 'TRC20' : 'BEP20'})`;
+  if (payment.bankMethod === 'easypaisa') return 'Easypaisa';
+  if (payment.bankMethod === 'nayapay') return 'Nayapay';
+  if (payment.bankMethod === 'binance') return 'Binance';
+  return 'UBL bank';
 }
 
 export function MyPlanView({ subdomain }: Readonly<{ subdomain: string }>) {
@@ -321,9 +318,8 @@ export function MyPlanView({ subdomain }: Readonly<{ subdomain: string }>) {
                     : 'Submitted for approval'}
             </CardTitle>
             <CardDescription>
-              {pendingPayment.method === 'bank'
-                ? 'Your monthly plan starts when we approve your payment, not when you paid. If approval takes a few days, those days are not added to your plan.'
-                : 'Waiting for your crypto payment to arrive.'}
+              Your monthly plan starts when we approve your payment, not when you paid. If
+              approval takes a few days, those days are not added to your plan.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
@@ -334,17 +330,6 @@ export function MyPlanView({ subdomain }: Readonly<{ subdomain: string }>) {
               {pendingPayment.isDowngrade ? ' · Downgrade' : ''} · Submitted{' '}
               {formatDateTime(pendingPayment.createdAt)}
             </p>
-            {pendingPayment.method === 'nowpayments' && pendingPayment.nowpaymentsPayAddress ? (
-              <p className="break-all text-body text-ink-sub">
-                Send exactly{' '}
-                {pendingPayment.nowpaymentsPayAmount !== null &&
-                pendingPayment.nowpaymentsPayAmount !== undefined
-                  ? `${pendingPayment.nowpaymentsPayAmount} USDT`
-                  : 'the amount shown in your wallet'}{' '}
-                to {pendingPayment.nowpaymentsPayAddress} on{' '}
-                {pendingPayment.nowpaymentsNetwork === 'trc20' ? 'TRC20' : 'BEP20'}.
-              </p>
-            ) : null}
             <p className="text-body text-ink-sub">
               {pendingUpgrade
                 ? 'Your current plan keeps running unchanged until this upgrade is approved.'

@@ -29,7 +29,7 @@ function kindLabel(kind: CouponValidateResponse['kind']): string {
  *
  * When the coupon covers the full amount, no payment method is
  * needed: the section offers activation directly, and the parent
- * disables the bank/crypto submits while it is applied.
+ * disables the bank submit while it is applied.
  */
 export function CouponSection({
   subdomain,
@@ -76,8 +76,8 @@ export function CouponSection({
   }
 
   return (
-    <Card>
-      <CardHeader>
+    <Card className="gap-3 py-3">
+      <CardHeader className="flex-wrap items-baseline gap-x-2 gap-y-0 px-3">
         <CardTitle>Coupon</CardTitle>
         <CardDescription>
           {applied
@@ -85,9 +85,9 @@ export function CouponSection({
             : 'Have a coupon code? Apply it before you pay.'}
         </CardDescription>
       </CardHeader>
-      <CardContent className="flex flex-col gap-4">
+      <CardContent className="flex flex-col gap-2 px-3">
         {applied ? (
-          <div className="flex flex-col gap-3 rounded-md border border-line bg-panel px-4 py-3">
+          <div className="flex flex-col gap-2 rounded-md border border-line bg-panel px-3 py-2">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <span className="text-body font-medium text-ink">
                 {applied.code} · {kindLabel(applied.kind)}
@@ -128,36 +128,34 @@ export function CouponSection({
             </div>
           </div>
         ) : null}
-        <div className="flex flex-col gap-2">
-          <label htmlFor="billing-coupon-code" className="text-body font-medium text-ink">
-            {applied ? 'Use a different code' : 'Coupon code'}
-          </label>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <Input
-              id="billing-coupon-code"
-              value={code}
-              onChange={(event) => setCode(event.target.value.toUpperCase())}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.preventDefault();
-                  void apply(code);
-                }
-              }}
-              placeholder="e.g. SAVE20"
-              autoCapitalize="characters"
-              autoComplete="off"
-              disabled={disabled || applying}
-              className="sm:flex-1"
-            />
-            <Button
-              variant="outline"
-              onClick={() => void apply(code)}
-              loading={applying}
-              disabled={disabled || applying || code.trim().length === 0}
-            >
-              Apply
-            </Button>
-          </div>
+        <label htmlFor="billing-coupon-code" className="sr-only">
+          {applied ? 'Use a different code' : 'Coupon code'}
+        </label>
+        <div className="flex flex-row gap-2">
+          <Input
+            id="billing-coupon-code"
+            value={code}
+            onChange={(event) => setCode(event.target.value.toUpperCase())}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                void apply(code);
+              }
+            }}
+            placeholder="e.g. SAVE20"
+            autoCapitalize="characters"
+            autoComplete="off"
+            disabled={disabled || applying}
+            className="flex-1"
+          />
+          <Button
+            variant="outline"
+            onClick={() => void apply(code)}
+            loading={applying}
+            disabled={disabled || applying || code.trim().length === 0}
+          >
+            Apply
+          </Button>
         </div>
         {error ? (
           <Alert variant="destructive">

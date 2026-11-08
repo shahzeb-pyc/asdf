@@ -83,10 +83,6 @@ function paymentRow(overrides: Row = {}): Row {
     amount_pkr: 4200,
     is_upgrade: false,
     screenshot_storage_key: 'billing-screenshots/user-1/shot.jpg',
-    nowpayments_payment_id: null,
-    nowpayments_pay_address: null,
-    nowpayments_pay_amount: null,
-    nowpayments_network: null,
     period_id: 'period-1',
     approved_at: new Date(Date.now() - 3 * DAY).toISOString(),
     created_at: new Date(Date.now() - 3 * DAY).toISOString(),
@@ -405,7 +401,7 @@ describe('user refunds route', () => {
     const badSchema = await postUserRefund(
       jsonRequest(
         'http://localhost:3000/api/tenant/acme/billing/refunds',
-        validCreateBody({ destination: { type: 'mobile', value: '03001234567', network: 'trc20' } })
+        validCreateBody({ destination: { type: 'wire', value: '03001234567' } })
       ),
       userCtx
     );

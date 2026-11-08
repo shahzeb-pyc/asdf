@@ -45,7 +45,7 @@ export async function GET(
   const offset = (page - 1) * PAGE_SIZE;
 
   const PAYMENT_COLUMNS =
-    'id,user_id,method,bank_method,status,facebook_count,instagram_count,threads_count,x_count,tiktok_count,youtube_count,amount_pkr,is_upgrade,screenshot_storage_key,nowpayments_payment_id,nowpayments_pay_address,nowpayments_pay_amount,nowpayments_network,coupon_code,discount_pkr,period_id,approved_at,created_at';
+    'id,user_id,method,bank_method,status,facebook_count,instagram_count,threads_count,x_count,tiktok_count,youtube_count,amount_pkr,is_upgrade,screenshot_storage_key,coupon_code,discount_pkr,period_id,approved_at,created_at';
 
   try {
     const { count: pendingTotal, error: countError } = await client

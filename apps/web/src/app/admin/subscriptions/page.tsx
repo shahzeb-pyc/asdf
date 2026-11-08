@@ -6,9 +6,8 @@ export const metadata: Metadata = { title: 'Subscriptions' };
 
 /**
  * Subscriptions approvals (admin section): payments approve/reject,
- * counts, screenshot view, with the coupons tab and webhook-issues
- * section inside the same view. No subdomain: the admin section is
- * global.
+ * counts, screenshot view, with the coupons tab inside the same view.
+ * No subdomain: the admin section is global.
  */
 export default function AdminSubscriptionsPage() {
   return <AdminApprovalsView />;
