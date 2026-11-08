@@ -19,9 +19,12 @@ import {
   createPublisherRegistry,
   encryptToken,
   InternalError,
+  type IFacebookPublishClient,
   type Publisher,
 } from '@fbuploadpro/contracts';
 import { ADU_JOB_RETENTION_DAYS, ADU_TICK_PAGE_SIZE, runAduTick } from './adu-tick.js';
+import { FacebookGraphError } from './fb-client.js';
+import { FacebookPublisher } from './publishers/facebook.js';
 
 const MASTER_KEY =
   'fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210';
@@ -1164,5 +1167,207 @@ describe('runAduTick', () => {
         c.ops.some((o) => o.kind === 'update' && (o.args[0] as Row).status === 'publishing'),
     );
     expect(claim).toBeUndefined();
+  });
+
+  // --- ADU reel publish stores the Facebook error detail (PR #171
+  // treatment) ------------------------------------------------------
+  // The queue settles a failed publish's diagnostic (phase, HTTP
+  // status, Facebook's raw body, both upload attempts) into
+  // publish_logs.detail; ADU has no publish_logs row, so adu-tick
+  // must fold the detail into the job row's last_error fields.
+  // These tests drive the REAL FacebookPublisher with a stubbed
+  // Facebook client, so the ADU path is proven end to end: the R2
+  // public URL reaches publishReel, and a failure stores the real
+  // reason instead of bare "HTTP 400" / code `unknown`.
+
+  /** Stub Facebook client: only publishReel is wired; the rest throw. */
+  function stubFacebookClient(
+    publishReelImpl: IFacebookPublishClient['publishReel'],
+  ): IFacebookPublishClient {
+    return {
+      publishReel: vi.fn(publishReelImpl),
+      publishPhoto: vi.fn(async () => {
+        throw new InternalError('publishPhoto not used in these tests');
+      }),
+      postComment: vi.fn(async () => {
+        throw new InternalError('postComment not used in these tests');
+      }),
+    } as unknown as IFacebookPublishClient;
+  }
+
+  /** Runs one tick for a single pending Facebook ADU job. */
+  async function facebookJobTick(job: Row, publisher: Publisher) {
+    const encryptedAccess = await encryptToken('access', MASTER_KEY);
+    // The real Facebook publisher reads the destination (page) token:
+    // without it publish() fails before publishReel is ever called.
+    const encryptedDestination = await encryptToken('dest-token', MASTER_KEY);
+    const db = makeDb((table, ops) => {
+      if (table === 'workspaces') return { data: { owner_id: 'user-1' }, error: null };
+      if (table === 'users') return { data: { role: 'user' }, error: null };
+      if (table === 'subscription_periods') {
+        return {
+          data: [
+            {
+              starts_at: new Date(NOW.getTime() - 86400000).toISOString(),
+              ends_at: new Date(NOW.getTime() + 86400000 * 20).toISOString(),
+              superseded_at: null,
+            },
+          ],
+          error: null,
+        };
+      }
+      if (table === 'adu_posting_jobs' && ops.some((o) => o.kind === 'delete')) {
+        return { error: null };
+      }
+      if (
+        table === 'adu_posting_jobs' &&
+        ops.some((o) => o.kind === 'eq' && o.args[1] === 'pending_publish')
+      ) {
+        return { data: [job], error: null };
+      }
+      if (
+        table === 'adu_posting_jobs' &&
+        ops.some((o) => o.kind === 'eq' && o.args[1] === 'publishing')
+      ) {
+        return { data: [], error: null };
+      }
+      if (table === 'adu_configs' && ops.some((o) => o.kind === 'maybeSingle')) {
+        return { data: { destination_id: 'dest-1', workspace_id: 'ws-1' }, error: null };
+      }
+      if (table === 'adu_configs') return { data: [], error: null };
+      if (table === 'destinations') {
+        return {
+          data: {
+            id: 'dest-1',
+            account_id: 'acc-1',
+            workspace_id: 'ws-1',
+            platform: 'facebook',
+            status: 'active',
+            encrypted_destination_token: encryptedDestination,
+          },
+          error: null,
+        };
+      }
+      if (table === 'social_accounts') {
+        return {
+          data: {
+            id: 'acc-1',
+            status: 'active',
+            encrypted_access_token: encryptedAccess,
+            encrypted_refresh_token: null,
+          },
+          error: null,
+        };
+      }
+      return { data: [], error: null };
+    });
+    const result = await runAduTick({
+      db: db as never,
+      registry: registryWith(publisher),
+      masterKey: MASTER_KEY,
+      now: NOW,
+    });
+    return { result, db };
+  }
+
+  function facebookJob(r2Url: string): Row {
+    return {
+      id: 'job-1',
+      config_id: 'c1',
+      reel_id: 'reel-1',
+      publish_retries: 0,
+      graph_post_id: null,
+      adu_reels: {
+        caption: 'hi',
+        media_url: r2Url,
+        media_object_key: 'adu-buffer/c1/reel-1.mp4',
+      },
+    };
+  }
+
+  /** The adu_posting_jobs update that stored a failure reason. */
+  function storedFailure(db: FakeDb): Row | undefined {
+    const call = db.calls.find(
+      (c) =>
+        c.table === 'adu_posting_jobs' &&
+        c.ops.some(
+          (o) =>
+            o.kind === 'update' && (o.args[0] as Row).last_error_code !== undefined,
+        ),
+    );
+    const update = call?.ops.find((o) => o.kind === 'update');
+    return update?.args[0] as Row | undefined;
+  }
+
+  it('stores the Facebook error detail on the job row when a reel publish fails', async () => {
+    const r2Url = 'https://pub-abc123.r2.dev/adu-buffer/c1/reel-1.mp4';
+    const rawBody =
+      '{"error":{"message":"The video file could not be processed.","code":2207026}}';
+    const seenVideoUrls: string[] = [];
+    const client = stubFacebookClient(async (params) => {
+      seenVideoUrls.push(params.videoUrl);
+      throw new FacebookGraphError(
+        'Facebook Graph API error: HTTP 400 (reel-upload-stream)',
+        {
+          code: 2207026,
+          error_subcode: 123,
+          message: 'The video file could not be processed.',
+        },
+        undefined,
+        {
+          phase: 'reel-upload-stream',
+          httpStatus: 400,
+          rawBody,
+          attempts: [
+            { mode: 'file_url', success: false, httpStatus: 400, rawBody: '' },
+            { mode: 'stream', success: false, httpStatus: 400, rawBody },
+          ],
+        },
+      );
+    });
+    const { result, db } = await facebookJobTick(
+      facebookJob(r2Url),
+      new FacebookPublisher(client),
+    );
+
+    // The ADU media (public R2 URL) reaches publishReel as the video.
+    expect(seenVideoUrls).toEqual([r2Url]);
+    expect(result.retried).toBe(1);
+    const failure = storedFailure(db);
+    expect(failure).toBeDefined();
+    // The real Graph code, not `unknown`.
+    expect(failure!.last_error_code).toBe('2207026');
+    const message = String(failure!.last_error_message);
+    expect(message).toContain('The video file could not be processed.');
+    expect(message).toContain('phase=reel-upload-stream');
+    expect(message).toContain('http=400');
+    expect(message).toContain('subcode=123');
+    expect(message).toContain('body={"error":{"message":"The video file could not be processed.","code":2207026}}');
+    expect(message).toContain('attempts=[file_url:400,stream:400]');
+  });
+
+  it('stores http_400, never unknown, for a body-less reel upload failure', async () => {
+    const r2Url = 'https://pub-abc123.r2.dev/adu-buffer/c1/reel-1.mp4';
+    const client = stubFacebookClient(async () => {
+      throw new FacebookGraphError(
+        'Facebook Graph API error: HTTP 400 (reel-upload-stream)',
+        undefined,
+        undefined,
+        { phase: 'reel-upload-stream', httpStatus: 400, rawBody: '' },
+      );
+    });
+    const { result, db } = await facebookJobTick(
+      facebookJob(r2Url),
+      new FacebookPublisher(client),
+    );
+
+    expect(result.retried).toBe(1);
+    const failure = storedFailure(db);
+    expect(failure).toBeDefined();
+    expect(failure!.last_error_code).toBe('http_400');
+    const message = String(failure!.last_error_message);
+    expect(message).toContain('phase=reel-upload-stream');
+    expect(message).toContain('http=400');
+    expect(message).not.toContain('unknown');
   });
 });

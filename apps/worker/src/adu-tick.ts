@@ -8,6 +8,7 @@ import {
   type DatabaseSocialAccountRow,
   type DatabaseUnifiedQueueItemRow,
   type PublisherRegistry,
+  type PublishOutcome,
 } from '@fbuploadpro/contracts';
 import { decryptToken } from '@fbuploadpro/contracts';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -58,6 +59,63 @@ interface AduConfigRow {
 
 function isMissingTable(error: { code?: string } | null | undefined): boolean {
   return error?.code === '42P01';
+}
+
+/**
+ * Formats a publish outcome's failure for the adu_posting_jobs row.
+ *
+ * The queue settles the outcome's `detail` — the failing phase, HTTP
+ * status, Facebook's raw body, and both upload attempts — into
+ * publish_logs.detail, but ADU has no publish_logs row, and this tick
+ * used to store only `outcome.error` here. The real reason was dropped
+ * and the row kept only the bare HTTP status (code `unknown`, message
+ * "Facebook Graph API error: HTTP 400") — the exact signature of the
+ * 115 failed ADU posts diagnosed 2026-11-08. The detail is folded
+ * into last_error_message instead: no migration, the row already has
+ * the two text columns, and the Failed Posts Reasons UI reads them
+ * unchanged. Classification is untouched — code, kind, and the auth
+ * cascade all still read outcome.error; this only appends the
+ * diagnostic the publisher already computed.
+ */
+function aduFailureFields(
+  outcome: PublishOutcome,
+  fallback: { code: string | null; message: string | null },
+): { code: string | null; message: string | null } {
+  const error = outcome.error;
+  const code = error?.code ?? fallback.code;
+  let message = error?.message ?? fallback.message;
+  const parts: string[] = [];
+  const detail = outcome.detail;
+  if (detail !== undefined) {
+    if (typeof detail.phase === 'string' && detail.phase.length > 0) {
+      parts.push(`phase=${detail.phase}`);
+    }
+    if (typeof detail.httpStatus === 'number') {
+      parts.push(`http=${detail.httpStatus}`);
+    }
+    if (error?.subcode !== undefined) parts.push(`subcode=${error.subcode}`);
+    if (typeof detail.rawBody === 'string' && detail.rawBody.length > 0) {
+      // Single line: a raw Facebook body must never span lines in the
+      // stored reason (same 500-char truncation the client applies).
+      parts.push(`body=${detail.rawBody.replace(/[\r\n]+/g, ' ')}`);
+    }
+    if (Array.isArray(detail.attempts)) {
+      const summary = detail.attempts
+        .map((attempt: unknown) => {
+          const record = attempt as Record<string, unknown>;
+          const mode = typeof record.mode === 'string' ? record.mode : '?';
+          const status =
+            typeof record.httpStatus === 'number' ? String(record.httpStatus) : 'unknown';
+          return `${mode}:${status}`;
+        })
+        .join(',');
+      parts.push(`attempts=[${summary}]`);
+    }
+  } else if (error?.subcode !== undefined) {
+    parts.push(`subcode=${error.subcode}`);
+  }
+  if (parts.length > 0 && message !== null) message += ` [${parts.join(' ')}]`;
+  return { code, message };
 }
 
 // Bounded page size for every tick scan: no tick query ever loads a
@@ -554,36 +612,45 @@ export async function runAduTick(options: {
     } else if (outcome.status === 'retry' || outcome.status === 'deferred') {
       const retries = outcome.status === 'retry' ? job.publish_retries + 1 : job.publish_retries;
       if (retries > ADU_MAX_PUBLISH_RETRIES) {
+        const failure = aduFailureFields(outcome, {
+          code: 'publish_retries_exhausted',
+          message: 'Publish retries exhausted.',
+        });
         await supabase
           .from('adu_posting_jobs')
           .update({
             status: 'failed_to_publish',
             publish_retries: retries,
-            last_error_code: outcome.error?.code ?? 'publish_retries_exhausted',
-            last_error_message: outcome.error?.message ?? 'Publish retries exhausted.',
+            last_error_code: failure.code,
+            last_error_message: failure.message,
           })
           .eq('id', job.id);
         result.failed += 1;
       } else {
+        const failure = aduFailureFields(outcome, { code: null, message: null });
         await supabase
           .from('adu_posting_jobs')
           .update({
             status: 'pending_publish',
             publish_retries: retries,
-            last_error_code: outcome.error?.code ?? null,
-            last_error_message: outcome.error?.message ?? null,
+            last_error_code: failure.code,
+            last_error_message: failure.message,
           })
           .eq('id', job.id);
         result.retried += 1;
       }
     } else {
+      const failure = aduFailureFields(outcome, {
+        code: 'publish_failed',
+        message: 'Publish failed.',
+      });
       await supabase
         .from('adu_posting_jobs')
         .update({
           status: 'failed_to_publish',
           publish_retries: job.publish_retries + 1,
-          last_error_code: outcome.error?.code ?? 'publish_failed',
-          last_error_message: outcome.error?.message ?? 'Publish failed.',
+          last_error_code: failure.code,
+          last_error_message: failure.message,
         })
         .eq('id', job.id);
       if (outcome.error?.kind === 'auth') {

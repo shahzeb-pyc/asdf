@@ -40,6 +40,8 @@ function emptyResponse(status: number): Response {
 }
 
 interface UploadScenario {
+  /** Media URL under test; defaults to MEDIA_URL (a hosted source URL). */
+  mediaUrl?: string;
   fileUrl: () => Response;
   stream: () => Response;
   finish?: () => Response;
@@ -61,6 +63,7 @@ function makeClient(scenario: UploadScenario): {
 } {
   const calls: RecordedCall[] = [];
   let startCount = 0;
+  const mediaUrl = scenario.mediaUrl ?? MEDIA_URL;
 
   const fetchFn = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = String(input);
@@ -74,7 +77,7 @@ function makeClient(scenario: UploadScenario): {
     const body = typeof init?.body === 'string' ? init.body : undefined;
     calls.push({ url, method: init?.method ?? 'GET', headers, body });
 
-    if (url === MEDIA_URL) {
+    if (url === mediaUrl) {
       return new Response('fake-video-bytes', {
         status: 200,
         headers: { 'Content-Type': 'video/mp4' },
@@ -108,11 +111,15 @@ function makeClient(scenario: UploadScenario): {
   };
 }
 
-function publish(client: FacebookPublishClient, itemId?: string): Promise<{ postId: string }> {
+function publish(
+  client: FacebookPublishClient,
+  itemId?: string,
+  mediaUrl: string = MEDIA_URL,
+): Promise<{ postId: string }> {
   return client.publishReel({
     pageId: PAGE_ID,
     accessToken: TOKEN,
-    videoUrl: MEDIA_URL,
+    videoUrl: mediaUrl,
     caption: CAPTION,
     ...(itemId !== undefined ? { itemId } : {}),
   });
@@ -168,6 +175,41 @@ describe('publishReel file_url primary', () => {
     expect(uploadCalls[1]?.url).toContain('/vid-2');
     // The streamed bytes came from the media URL, fetched once.
     expect(calls.filter((call) => call.url === MEDIA_URL)).toHaveLength(1);
+    const finishCall = calls.find((call) => call.body?.includes('"upload_phase":"finish"'));
+    expect(finishCall?.body).toContain('"video_id":"vid-2"');
+  });
+
+  it('exercises file_url-first + streaming fallback for an ADU R2 public URL', async () => {
+    // ADU reels are downloaded to R2 first; the publisher hands the
+    // public R2 URL to publishReel — the same hosted-URL form as the
+    // queue's source URL, so the same file_url-first flow must run
+    // for it, with the R2 bytes fetched only for the fallback.
+    const r2Url = 'https://pub-abc123.r2.dev/adu-buffer/c1/reel-1.mp4';
+    const { client, calls, startCount } = makeClient({
+      mediaUrl: r2Url,
+      fileUrl: () =>
+        jsonResponse(
+          {
+            error: {
+              message: 'The file could not be fetched (fileurlprocessingerror)',
+              code: 100,
+            },
+          },
+          400
+        ),
+      stream: () => jsonResponse({ success: true }),
+    });
+
+    const result = await publish(client, undefined, r2Url);
+
+    expect(result.postId).toBe('post-123');
+    expect(startCount()).toBe(2);
+    const uploadCalls = calls.filter((call) => call.url.startsWith(RUPLOAD));
+    expect(uploadCalls).toHaveLength(2);
+    expect(uploadCalls[0]?.headers['file_url']).toBe(r2Url);
+    expect(uploadCalls[1]?.headers['offset']).toBe('0');
+    expect(uploadCalls[1]?.url).toContain('/vid-2');
+    expect(calls.filter((call) => call.url === r2Url)).toHaveLength(1);
     const finishCall = calls.find((call) => call.body?.includes('"upload_phase":"finish"'));
     expect(finishCall?.body).toContain('"video_id":"vid-2"');
   });
