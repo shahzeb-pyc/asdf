@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { DatabaseClient } from '@fbuploadpro/contracts';
 import { totalUnits } from '@fbuploadpro/contracts';
 import { logServerError } from '@/lib/server-analytics';
-import { getActivePeriod } from './entitlement';
+import { getActivePeriod, type SubscriptionPeriodRow } from './entitlement';
 import {
   STORAGE_BYTES_PER_UNIT,
   formatStorageGb,
@@ -88,11 +88,30 @@ function numberField(value: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/**
+ * Optional already-fetched active period for the quota read (plan-check
+ * R2). The Home loader already holds `entitlement.period` — the same
+ * row this module would re-read with `getActivePeriod` — so it passes
+ * it in and the quota is derived from it instead of re-querying.
+ * `period: null` means "proven to have no active period" (free or
+ * expired): quota is 0 without a query. When `period` is omitted
+ * entirely, the period is read fresh, as before — the billing/storage
+ * route and the media upload gates have no entitlement read to reuse,
+ * so they keep their own period read.
+ */
+export interface StorageQuotaOptions {
+  period?: SubscriptionPeriodRow | null;
+}
+
 async function supabaseQuotaState(
   client: SupabaseClient,
-  userId: string
+  userId: string,
+  options: StorageQuotaOptions = {}
 ): Promise<StorageQuotaState> {
-  const period = await getActivePeriod(client, userId, new Date());
+  const period =
+    options.period !== undefined
+      ? options.period
+      : await getActivePeriod(client, userId, new Date());
   const quotaBytes = period ? totalUnits(period.counts) * STORAGE_BYTES_PER_UNIT : 0;
   // Paged, never unbounded: PostgREST silently truncates at 1,000
   // rows, which would under-report usage and fail the quota open.
@@ -119,10 +138,7 @@ async function supabaseQuotaState(
   return { quotaBytes, usedBytes };
 }
 
-async function sqlQuotaState(
-  client: DatabaseClient,
-  userId: string
-): Promise<StorageQuotaState> {
+async function sqlPeriodUnits(client: DatabaseClient, userId: string): Promise<number> {
   const periodRows = await client.query<{
     facebook_count: unknown;
     instagram_count: unknown;
@@ -142,7 +158,7 @@ async function sqlQuotaState(
     [userId]
   );
   const row = periodRows[0];
-  const units = row
+  return row
     ? totalUnits({
         facebook: numberField(row.facebook_count),
         instagram: numberField(row.instagram_count),
@@ -152,6 +168,19 @@ async function sqlQuotaState(
         youtube: numberField(row.youtube_count),
       })
     : 0;
+}
+
+async function sqlQuotaState(
+  client: DatabaseClient,
+  userId: string,
+  options: StorageQuotaOptions = {}
+): Promise<StorageQuotaState> {
+  const units =
+    options.period !== undefined
+      ? options.period
+        ? totalUnits(options.period.counts)
+        : 0
+      : await sqlPeriodUnits(client, userId);
   const usageRows = await client.query<{ total: unknown }>(
     `SELECT COALESCE(SUM(file_size), 0) AS total FROM media_items WHERE user_id = $1`,
     [userId]
@@ -164,11 +193,12 @@ async function sqlQuotaState(
 
 export async function getStorageQuotaState(
   client: SupabaseClient | DatabaseClient,
-  userId: string
+  userId: string,
+  options: StorageQuotaOptions = {}
 ): Promise<StorageQuotaState> {
   return isSupabaseClient(client)
-    ? supabaseQuotaState(client, userId)
-    : sqlQuotaState(client, userId);
+    ? supabaseQuotaState(client, userId, options)
+    : sqlQuotaState(client, userId, options);
 }
 
 /**

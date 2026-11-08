@@ -104,7 +104,11 @@ export async function loadHomeData(subdomain: string): Promise<HomeData> {
       );
     }
 
-    const storage = await getStorageState(supabase, session.userId);
+    // Plan-check R2: the loader already holds the active period from
+    // getEntitlement above — pass it in so the quota is derived from
+    // that same row instead of re-reading it. Only the usage side
+    // (the paged SUM over media_items) is still queried.
+    const storage = await getStorageState(supabase, session.userId, { period });
 
     return {
       kind: 'paid',
