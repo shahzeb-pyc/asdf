@@ -340,6 +340,27 @@ export async function refreshConnectedPageTokens(
               '[FacebookOAuth] Failed to update destination token:',
               updateError.message
             );
+          } else {
+            // ADU statuses (§3.3): reconnect flips back ONLY the
+            // invalid_token configs under a refreshed destination.
+            // Verification-required, rate-limited, missing_*,
+            // page_not_accessible, suspended and developer-app configs
+            // keep their status — reconnect cannot fix them.
+            const { error: aduFlipError } = await supabase
+              .from('adu_configs')
+              .update({
+                status: 'active',
+                updated_at: new Date().toISOString(),
+              })
+              .eq('destination_id', linkedPage.id)
+              .eq('workspace_id', workspaceId)
+              .eq('status', 'invalid_token');
+            if (aduFlipError) {
+              console.warn(
+                '[FacebookOAuth] Failed to reactivate invalid-token ADU configs:',
+                aduFlipError.message
+              );
+            }
           }
         } else if (legacyDb) {
           await legacyDb.query(
@@ -349,6 +370,12 @@ export async function refreshConnectedPageTokens(
                  updated_at = now()
              WHERE id = $2 AND workspace_id = $3`,
             [encryptedPageToken, linkedPage.id, workspaceId]
+          );
+          await legacyDb.query(
+            `UPDATE adu_configs
+             SET status = 'active', updated_at = now()
+             WHERE destination_id = $1 AND workspace_id = $2 AND status = 'invalid_token'`,
+            [linkedPage.id, workspaceId]
           );
         }
       })
