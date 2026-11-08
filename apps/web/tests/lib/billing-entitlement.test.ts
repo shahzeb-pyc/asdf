@@ -204,6 +204,7 @@ class FakeBuilder {
   private headCount = false;
   private op: 'select' | 'insert' | 'update' | 'delete' = 'select';
   private deletePatch: Row | null = null;
+  private insertRow: Row | null = null;
 
   constructor(
     private state: FakeState,
@@ -258,26 +259,14 @@ class FakeBuilder {
 
   insert(row: Row): this {
     this.op = 'insert';
+    this.insertRow = row;
     this.state.inserted.push({ table: this.table, row });
-    // Mirror the database: a SUCCESSFUL usage insert is visible to
-    // the registry read that follows it in the same call. A failed
-    // insert (usageInsertError / periodInsertError configured)
-    // inserts nothing — the race-winner row in the 23505 test is
-    // seeded explicitly instead.
-    const insertError =
-      this.table === 'subscription_usage'
-        ? this.state.usageInsertError
-        : this.table === 'subscription_periods'
-          ? this.state.periodInsertError
-          : null;
-    if (this.table === 'subscription_usage' && !insertError) {
-      this.state.usageRows.push({
-        user_id: row.user_id,
-        platform: row.platform,
-        destination_key: row.destination_key,
-        feature: row.feature,
-      });
-    }
+    // The row lands in compute(), when the insert is awaited and
+    // known to have succeeded — mirroring the database, where a
+    // failed insert (a configured error, or a duplicate key under
+    // the unique index) inserts nothing. A successful insert is
+    // still visible to the registry read that follows it in the
+    // same call, because every caller awaits the insert first.
     return this;
   }
 
@@ -341,7 +330,28 @@ class FakeBuilder {
           : this.state.periodInsertError;
       if (this.table === 'subscription_usage') this.state.usageInsertError = null;
       if (this.table === 'subscription_periods') this.state.periodInsertError = null;
-      return { data: null, error: err };
+      if (err) return { data: null, error: err };
+      if (this.table === 'subscription_usage' && this.insertRow) {
+        // Mirror the unique index on (user_id, platform,
+        // destination_key): a duplicate insert fails with 23505
+        // and inserts nothing — this is the real race guard now
+        // that registerUsage no longer pre-checks the destination
+        // before inserting (plan-check R5).
+        const clash = this.state.usageRows.some(
+          (existing) =>
+            existing['user_id'] === this.insertRow?.['user_id'] &&
+            existing['platform'] === this.insertRow?.['platform'] &&
+            existing['destination_key'] === this.insertRow?.['destination_key']
+        );
+        if (clash) return { data: null, error: { code: '23505' } };
+        this.state.usageRows.push({
+          user_id: this.insertRow['user_id'],
+          platform: this.insertRow['platform'],
+          destination_key: this.insertRow['destination_key'],
+          feature: this.insertRow['feature'],
+        });
+      }
+      return { data: null, error: null };
     }
     if (this.op === 'delete') {
       const deleteError = this.state.deleteErrors[this.table] ?? null;
@@ -1209,7 +1219,11 @@ describe('assertFeatureAddWithinCap', () => {
 });
 
 describe('registerUsage', () => {
-  it('reports an already-used destination without inserting', async () => {
+  it('reports an already-used destination via the unique constraint, without a second unit', async () => {
+    // R5: the register no longer pre-checks the destination before
+    // inserting — the insert IS attempted, and the unique index
+    // rejects it with 23505, which resolves to already-used. One
+    // attempt is recorded, but no second row ever lands.
     const state = baseState({
       periods: [periodRow()],
       usageRows: [{ user_id: 'user-1', platform: 'facebook', destination_key: 'page-a' }],
@@ -1217,7 +1231,8 @@ describe('registerUsage', () => {
     await expect(
       registerUsage(fakeClient(state), 'user-1', 'facebook', 'page-a', 'schedule', null, NOW)
     ).resolves.toEqual({ alreadyUsed: true, usedCount: 1 });
-    expect(state.inserted).toHaveLength(0);
+    expect(state.inserted).toHaveLength(1);
+    expect(state.usageRows).toHaveLength(1);
   });
 
   it('inserts a new destination and reports the new count', async () => {
