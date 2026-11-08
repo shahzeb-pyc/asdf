@@ -673,7 +673,7 @@ function assertSharedEntitlementOwner(userId: string, entitlement: Entitlement):
  * Admins are not gated here — callers skip this check for role
  * 'admin' (admins approve subscriptions; they do not subscribe).
  *
- * The optional `entitlement` is a read the caller already made for
+ * The optional `sharedEntitlement` is a read the caller already made for
  * this same user in this same request (plan-check R3): the gate
  * reuses it instead of reading the entitlement a second time. It
  * is ownership-checked (see assertSharedEntitlementOwner) and is
