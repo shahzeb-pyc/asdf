@@ -23,7 +23,7 @@ import { Slot } from "radix-ui";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex shrink-0 items-center justify-center gap-2 rounded-sm text-body font-medium whitespace-nowrap transition-colors duration-base ease-standard outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-signal-critical [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg]:size-4",
+  "inline-flex shrink-0 items-center justify-center gap-2 text-body font-medium whitespace-nowrap transition-colors duration-base ease-standard outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-signal-critical [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg]:size-4",
   {
     variants: {
       variant: {
@@ -42,10 +42,15 @@ const buttonVariants = cva(
         "icon-sm": "size-control-sm",
         "icon-lg": "size-control-lg",
       },
+      shape: {
+        default: "rounded-sm",
+        pill: "rounded-full",
+      },
     },
     defaultVariants: {
       variant: "default",
       size: "default",
+      shape: "default",
     },
   }
 );
@@ -66,6 +71,7 @@ function Button({
   className,
   variant = "default",
   size = "default",
+  shape = "default",
   asChild = false,
   loading = false,
   disabledReason,
@@ -82,7 +88,8 @@ function Button({
         data-slot="button"
         data-variant={variant}
         data-size={size}
-        className={cn(buttonVariants({ variant, size }), className)}
+        data-shape={shape}
+        className={cn(buttonVariants({ variant, size, shape }), className)}
         {...props}
       >
         {children}
@@ -96,12 +103,13 @@ function Button({
         data-slot="button"
         data-variant={variant}
         data-size={size}
+        data-shape={shape}
         data-loading={loading || undefined}
         data-disabled-reason={disabledReason}
         aria-busy={loading || undefined}
         aria-describedby={disabledReason ? reasonId : props["aria-describedby"]}
         disabled={isDisabled}
-        className={cn(buttonVariants({ variant, size }), className)}
+        className={cn(buttonVariants({ variant, size, shape }), className)}
         {...props}
       >
         {loading ? <Loader2Icon className="animate-spin" aria-hidden /> : null}

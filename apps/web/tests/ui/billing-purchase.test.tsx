@@ -340,18 +340,22 @@ describe('Billing Purchase', () => {
     renderBilling('purchase');
     await screen.findByText('Choose your pages and accounts');
     // The checkout summary card is not in the builder, but the builder
-    // has its own live sidebar: per-platform lines, storage total and
-    // monthly total update as counts change.
+    // has its own live sidebar: per-platform lines and monthly total
+    // update as counts change. The sidebar is headed YOUR PLAN, has no
+    // subtitle, and carries no storage line (storage lives at checkout).
     expect(screen.queryByText('Order summary')).toBeNull();
+    expect(screen.getByText('YOUR PLAN')).toBeInTheDocument();
+    expect(screen.queryByText('What your plan costs each month.')).toBeNull();
     expect(screen.getByText('Monthly total')).toBeInTheDocument();
-    expect(screen.getByText('Media Library storage included')).toBeInTheDocument();
-    // Continue to checkout lives in the sidebar now, full-width, not
-    // below the chooser.
+    expect(screen.queryByText('Media Library storage included')).toBeNull();
+    // Continue to checkout lives in the sidebar now, full-width and
+    // pill-shaped, not below the chooser.
     const continueButton = screen.getByRole('button', {
       name: 'Continue to checkout',
     });
     expect(continueButton).toBeInTheDocument();
     expect(continueButton.className).toContain('w-full');
+    expect(continueButton.className).toContain('rounded-full');
     expect(continueButton.className).not.toContain('sm:self-end');
     // And the order summary is still there at checkout.
     await goToCheckout();
@@ -359,11 +363,22 @@ describe('Billing Purchase', () => {
     expect(screen.getByText('Monthly total')).toBeInTheDocument();
   });
 
-  it('Layout B: chooser shows three platform columns with plain questions and the increase/reduce note', async () => {
+  it('chooser shows stacked rows with plain questions and the increase/reduce note', async () => {
     renderBilling('purchase');
     await screen.findByText('Choose your pages and accounts');
-    // Each column asks a plain professional question.
-    expect(screen.getByText('How many Facebook Pages will you post to?')).toBeInTheDocument();
+    // One divided row per platform, full width of the left column —
+    // not three columns. Each row is headed "Platform — Pages/Accounts".
+    expect(screen.getByText('Facebook — Pages')).toBeInTheDocument();
+    expect(screen.getByText('Instagram — Accounts')).toBeInTheDocument();
+    expect(screen.getByText('Threads — Accounts')).toBeInTheDocument();
+    const rows = screen.getByLabelText('Facebook pages').closest('.divide-y');
+    expect(rows).not.toBeNull();
+    // Each row asks a plain professional question. (The Facebook
+    // question shares its paragraph with the Accounts-free note, so it
+    // is matched by pattern rather than exact text.)
+    expect(
+      screen.getByText(/How many Facebook Pages will you post to\?/),
+    ).toBeInTheDocument();
     expect(screen.getByText('How many Instagram accounts will you post from?')).toBeInTheDocument();
     expect(screen.getByText('How many Threads accounts will you post from?')).toBeInTheDocument();
     // Facebook accounts are free — only Pages are paid for.
@@ -392,7 +407,7 @@ describe('Billing Purchase', () => {
     expect(screen.queryByText('Threads — pay per account')).toBeNull();
   });
 
-  it('builder is a wide two-column layout and the chooser tiles hug their content', async () => {
+  it('builder is a wide two-column layout and the chooser is a divided stack of rows', async () => {
     renderBilling('purchase');
     await screen.findByText('Choose your pages and accounts');
     // Two columns on desktop: chooser on the left, live summary sidebar
@@ -400,37 +415,51 @@ describe('Billing Purchase', () => {
     // not the old narrow max-w-3xl column.
     expect(document.querySelector('.max-w-6xl')).not.toBeNull();
     expect(document.querySelector('.max-w-3xl')).toBeNull();
-    const layout = screen.getByText('Your plan').closest('.grid');
+    const layout = screen.getByText('YOUR PLAN').closest('.grid');
     expect(layout).not.toBeNull();
     expect(layout).toHaveClass('grid-cols-1', 'items-start', 'lg:grid-cols-[1fr_360px]');
-    // Snug tiles: the chooser grid aligns items to the start, so the
-    // shorter Instagram/Threads tiles do not stretch to the Facebook
-    // tile's height and carry no empty space at the bottom.
-    const grid = screen.getByLabelText('Facebook pages').closest('.grid');
-    expect(grid).not.toBeNull();
-    expect(grid).toHaveClass('grid-cols-1', 'items-start', 'sm:grid-cols-3');
-    // The input row wraps, so input + price fit inside every tile
-    // instead of clipping at the tighter container width.
-    const inputRow = screen.getByLabelText('Facebook pages').closest('div.mt-auto');
-    expect(inputRow).not.toBeNull();
-    expect(inputRow).toHaveClass('flex-wrap');
+    // The chooser is one divided stack: three rows, one per platform,
+    // each with its typed input at the right end — no columns, no tiles.
+    const stack = screen.getByLabelText('Facebook pages').closest('.divide-y');
+    expect(stack).not.toBeNull();
+    expect(stack).toHaveClass('flex-col');
+    expect(stack).not.toHaveClass('grid');
+    // No three-column chooser grid anywhere in the chooser card.
+    const chooserCard = screen
+      .getByText('Choose your pages and accounts')
+      .closest('[data-slot="card"]');
+    expect(chooserCard).not.toBeNull();
+    expect(chooserCard?.querySelector('.sm\\:grid-cols-3')).toBeNull();
+    // The input sits at the right end of its row, so it never clips
+    // at the tighter container width.
+    const row = screen.getByLabelText('Facebook pages').closest('div.flex');
+    expect(row).not.toBeNull();
+    expect(row).toHaveClass('flex-wrap', 'items-center', 'justify-between');
     // Checkout keeps its wide container and its order summary.
     await goToCheckout();
     expect(await screen.findByText('Order summary')).toBeInTheDocument();
     expect(document.querySelector('.max-w-6xl')).not.toBeNull();
   });
 
-  it('typing a count updates the row price and total live', async () => {
+  it('typing a count updates the sidebar line and total live', async () => {
     renderBilling('purchase');
     await screen.findByText('Choose your pages and accounts');
     const facebook = screen.getByLabelText('Facebook pages') as HTMLInputElement;
     fireEvent.change(facebook, { target: { value: '100' } });
     expect(facebook.value).toBe('100');
-    // The chooser's row prices price the typed count live, and the
-    // sidebar total follows it too (row price + sidebar total).
+    // No per-row price in the chooser anymore — the price lives only in
+    // the sidebar, in the mockup's "Facebook · Pages × 100" format. The
+    // "7000 PKR" appears twice, both in the sidebar: the platform line
+    // and the monthly total — never in the chooser card.
+    expect(screen.getByText('Facebook · Pages × 100')).toBeInTheDocument();
     expect(screen.getAllByText('7000 PKR')).toHaveLength(2);
+    const chooserCard = screen
+      .getByText('Choose your pages and accounts')
+      .closest('[data-slot="card"]');
+    expect(chooserCard?.textContent ?? '').not.toContain('7000 PKR');
     const instagram = screen.getByLabelText('Instagram accounts') as HTMLInputElement;
     fireEvent.change(instagram, { target: { value: '4' } });
+    expect(screen.getByText('Instagram · Accounts × 4')).toBeInTheDocument();
     expect(screen.getAllByText('280 PKR').length).toBeGreaterThan(0);
   });
 
@@ -466,7 +495,7 @@ describe('Billing Purchase', () => {
     expect(facebook.value).toBe('0');
   });
 
-  it('Purchase shows the seven free inclusions in the sidebar and a live storage total', async () => {
+  it('Purchase shows the seven free inclusions in the sidebar; the storage total lives at checkout', async () => {
     renderBilling('purchase');
     await screen.findByText('Included for free with paid plan');
     // No separate Included card anymore — the list lives in the
@@ -483,14 +512,13 @@ describe('Billing Purchase', () => {
     expect(screen.getByText('Auto download & upload')).toBeInTheDocument();
     expect(screen.getByText('Auto repost')).toBeInTheDocument();
     expect(screen.getByText('Bulk publishing')).toBeInTheDocument();
-    // The storage total is live in the sidebar: 0 GB with nothing
-    // selected, 15 GB once 2 Facebook pages + 1 Instagram account
-    // are typed — no trip to checkout needed.
-    expect(screen.getByText('Media Library storage included')).toBeInTheDocument();
-    expect(screen.getByText('0 GB')).toBeInTheDocument();
+    // The sidebar carries no storage line (mockup E has none) — the
+    // storage total lives at checkout: 15 GB once 2 Facebook pages +
+    // 1 Instagram account are typed.
+    expect(screen.queryByText('Media Library storage included')).toBeNull();
     fireEvent.change(screen.getByLabelText('Facebook pages'), { target: { value: '2' } });
     fireEvent.change(screen.getByLabelText('Instagram accounts'), { target: { value: '1' } });
-    await waitFor(() => expect(screen.getByText('15 GB')).toBeInTheDocument());
+    expect(screen.queryByText('Media Library storage included')).toBeNull();
     // And checkout still shows the same storage total.
     fireEvent.click(screen.getByRole('button', { name: 'Continue to checkout' }));
     cleanup();
@@ -506,7 +534,7 @@ describe('Billing Purchase', () => {
     expect(screen.queryByText('Included with your plan')).toBeNull();
     // The list sits inside the sidebar card, below the monthly total
     // and above the Continue button.
-    const sidebar = screen.getByText('Your plan').closest('[data-slot="card"]');
+    const sidebar = screen.getByText('YOUR PLAN').closest('[data-slot="card"]');
     expect(sidebar).not.toBeNull();
     expect(sidebar).toHaveTextContent('Monthly total');
     expect(sidebar).toHaveTextContent('Included for free with paid plan');

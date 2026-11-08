@@ -961,60 +961,57 @@ export function PurchaseView({
               ? 'Your screenshot couldn\'t be uploaded. Retry the upload to submit.'
               : null);
 
-  // Layout B (approved mockup): three side-by-side platform columns that
-  // stack on phone widths. Each column names the platform, asks a plain
-  // professional question, and takes a typed count — no steppers. The
-  // input value itself is the count being bought (starting from the
-  // current plan's counts for a Paid user). Included/in-use counts belong
-  // to My Plan and are deliberately NOT shown here. Rate is stated once,
-  // in the Purchase header — not repeated on every row.
+  // Stacked rows (mockup E as shown): one divided row per platform, full
+  // width of the left column. Each row names the platform, asks a plain
+  // professional question, and takes a typed count at the right end — no
+  // steppers, and no per-row price (prices live only in the sidebar).
+  // Included/in-use counts belong to My Plan and are deliberately NOT
+  // shown here.
   const configurator = (
     <div className="flex flex-col gap-4">
-      <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-3">
+      <div className="flex flex-col divide-y divide-line">
         {PURCHASABLE_PLATFORMS.map((platform) => {
           const count = effectiveCounts[platform];
           return (
             <div
               key={platform}
-              className="flex flex-col gap-3 rounded-md border border-line bg-panel px-4 py-4"
+              className="flex flex-wrap items-center justify-between gap-3 py-4 first:pt-0 last:pb-0"
             >
-              <div>
-                <p className="text-body font-medium text-ink">{PLATFORM_LABELS[platform]}</p>
-                <p className="text-body text-ink-sub">
+              <div className="min-w-0 flex-1">
+                <p className="text-body font-medium text-ink">
+                  {PLATFORM_LABELS[platform]} —{' '}
                   {platform === 'facebook' ? 'Pages' : 'Accounts'}
                 </p>
-              </div>
-              <p className="text-body text-ink">
-                {platform === 'facebook'
-                  ? 'How many Facebook Pages will you post to?'
-                  : platform === 'instagram'
-                    ? 'How many Instagram accounts will you post from?'
-                    : 'How many Threads accounts will you post from?'}
-              </p>
-              {platform === 'facebook' ? (
-                <p className="text-body text-ink-sub">
-                  Accounts free — connect as many Facebook accounts as you like. You only pay
-                  for Pages.
+                <p className="text-body text-ink">
+                  {platform === 'facebook'
+                    ? 'How many Facebook Pages will you post to?'
+                    : platform === 'instagram'
+                      ? 'How many Instagram accounts will you post from?'
+                      : 'How many Threads accounts will you post from?'}
+                  {platform === 'facebook' ? (
+                    <>
+                      {' '}
+                      <span className="text-ink-sub">
+                        Accounts free — connect as many Facebook accounts as you like. You only
+                        pay for Pages.
+                      </span>
+                    </>
+                  ) : null}
                 </p>
-              ) : null}
-              <div className="mt-auto flex flex-wrap items-center gap-3">
-                {/* Direct input, not a stepper: type="text" with a numeric
-                keyboard carries no native spinners, so there is no
-                increase/decrease control anywhere in this chooser. */}
-                <Input
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="off"
-                  aria-label={`${PLATFORM_LABELS[platform]} ${subscriptionUnitLabel(platform)}`}
-                  value={countDrafts[platform] ?? String(count)}
-                  onChange={(event) => handleCountInput(platform, event.target.value)}
-                  onBlur={() => handleCountBlur(platform)}
-                  className="w-20 text-center tabular-nums"
-                />
-                <span className="shrink-0 text-body font-medium tabular-nums text-ink">
-                  {count * SUBSCRIPTION_PRICE_PKR_PER_UNIT} PKR
-                </span>
               </div>
+              {/* Direct input, not a stepper: type="text" with a numeric
+              keyboard carries no native spinners, so there is no
+              increase/decrease control anywhere in this chooser. */}
+              <Input
+                type="text"
+                inputMode="numeric"
+                autoComplete="off"
+                aria-label={`${PLATFORM_LABELS[platform]} ${subscriptionUnitLabel(platform)}`}
+                value={countDrafts[platform] ?? String(count)}
+                onChange={(event) => handleCountInput(platform, event.target.value)}
+                onBlur={() => handleCountBlur(platform)}
+                className="w-20 shrink-0 text-center tabular-nums"
+              />
             </div>
           );
         })}
@@ -1579,26 +1576,29 @@ export function PurchaseView({
           <div className="flex w-full shrink-0 flex-col gap-6 lg:sticky lg:top-20 lg:w-90 lg:self-start">
             <Card>
               <CardHeader>
-                <CardTitle>Your plan</CardTitle>
-                <CardDescription>What your plan costs each month.</CardDescription>
+                <CardTitle>YOUR PLAN</CardTitle>
               </CardHeader>
               <CardContent className="flex flex-col gap-3">
                 <dl className="flex flex-col gap-2 text-body">
                   {PURCHASABLE_PLATFORMS.filter((p) => effectiveCounts[p] > 0).map(
-                    (platform) => (
-                      <div
-                        key={platform}
-                        className="flex items-baseline justify-between gap-3"
-                      >
-                        <dt className="min-w-0 truncate text-ink-sub">
-                          {PLATFORM_LABELS[platform]} · {effectiveCounts[platform]}{' '}
-                          {subscriptionUnitLabel(platform)}
-                        </dt>
-                        <dd className="shrink-0 font-medium tabular-nums text-ink">
-                          {effectiveCounts[platform] * SUBSCRIPTION_PRICE_PKR_PER_UNIT} PKR
-                        </dd>
-                      </div>
-                    ),
+                    (platform) => {
+                      const unitTitle =
+                        subscriptionUnitLabel(platform) === 'pages' ? 'Pages' : 'Accounts';
+                      return (
+                        <div
+                          key={platform}
+                          className="flex items-baseline justify-between gap-3"
+                        >
+                          <dt className="min-w-0 truncate text-ink-sub">
+                            {PLATFORM_LABELS[platform]} · {unitTitle} ×{' '}
+                            {effectiveCounts[platform]}
+                          </dt>
+                          <dd className="shrink-0 font-medium tabular-nums text-ink">
+                            {effectiveCounts[platform] * SUBSCRIPTION_PRICE_PKR_PER_UNIT} PKR
+                          </dd>
+                        </div>
+                      );
+                    },
                   )}
                   {units === 0 ? (
                     <div className="flex items-baseline justify-between gap-3">
@@ -1606,14 +1606,8 @@ export function PurchaseView({
                       <dd className="font-medium text-ink">Nothing selected yet</dd>
                     </div>
                   ) : null}
-                  <div className="flex items-baseline justify-between gap-3">
-                    <dt className="text-ink-sub">Media Library storage included</dt>
-                    <dd className="shrink-0 font-medium tabular-nums text-ink">
-                      {5 * units} GB
-                    </dd>
-                  </div>
                   <div className="flex items-baseline justify-between gap-3 border-t border-line pt-2">
-                    <dt className="font-medium text-ink">Monthly total</dt>
+                    <dt className="font-semibold text-ink">Monthly total</dt>
                     <dd className="font-semibold tabular-nums text-ink">{total} PKR</dd>
                   </div>
                 </dl>
@@ -1639,6 +1633,7 @@ export function PurchaseView({
                 <div className="flex flex-col gap-2">
                   <Button
                     variant={buildDisabled ? 'secondary' : 'default'}
+                    shape="pill"
                     onClick={goToCheckout}
                     disabled={buildDisabled}
                     className="w-full"
