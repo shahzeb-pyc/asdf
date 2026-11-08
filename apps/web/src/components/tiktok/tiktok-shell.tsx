@@ -14,7 +14,7 @@ import { Button } from '@/components/shared/ui/button';
 import { EmptyState } from '@/components/shared/ui/empty-state';
 import { ListPagination } from '@/components/shared/ui/list-pagination';
 import { Skeleton } from '@/components/shared/ui/skeleton';
-import { FeatureCapText, useFeatureCap } from '@/components/billing/feature-cap';
+import { FeatureCapText, useFeatureCap, type FeatureCap } from '@/components/billing/feature-cap';
 import { AddMirrorDialog } from './add-mirror-dialog';
 import { TikTokCard } from './tiktok-card';
 
@@ -36,7 +36,16 @@ export function TikTokShell({ subdomain }: Readonly<TikTokShellProps>) {
   const [highlightedId, setHighlightedId] = React.useState<string | null>(null);
   // Plan cap: the Add Auto Repost button disables at the cap, and
   // the mirror create route enforces the same cap server-side.
+  // The dialog only creates Facebook-target mirrors, so Facebook is
+  // the cap the add action is gated on. But the list below is
+  // unfiltered, so it can also show Instagram-target mirrors
+  // (created from the Instagram Auto Repost section), each gated
+  // server-side on Instagram's cap — so the header shows one cap
+  // line per target actually listed, never a single Facebook line
+  // describing Instagram mirrors with the wrong numbers. Both caps
+  // read the one shared entitlement query; there is no extra fetch.
   const { cap: facebookCap } = useFeatureCap(subdomain, 'facebook');
+  const { cap: instagramCap } = useFeatureCap(subdomain, 'instagram');
 
   // Pagination state lives in the URL (?page=) so refresh and a shared
   // link land on the same page; an unparseable value falls back to 1.
@@ -68,6 +77,35 @@ export function TikTokShell({ subdomain }: Readonly<TikTokShellProps>) {
   // the API's total, not the page length.
   const total = mirrorsQuery.data?.total ?? 0;
   const totalPages = mirrorsQuery.data?.totalPages ?? 0;
+
+  // Targets present in the listed mirrors (this page slice — the
+  // only rows on screen). With no mirrors loaded (loading, empty,
+  // error) there is no listed target, so the header falls back to
+  // Facebook, the target the Add dialog creates.
+  const listedTargets = React.useMemo(() => {
+    const targets = new Set<'facebook' | 'instagram'>();
+    for (const mirror of mirrors) {
+      if (mirror.targetPlatform === 'facebook' || mirror.targetPlatform === 'instagram') {
+        targets.add(mirror.targetPlatform);
+      }
+    }
+    return targets;
+  }, [mirrors]);
+
+  const headerCaps = React.useMemo(() => {
+    const shown: Array<{ platform: 'facebook' | 'instagram'; cap: FeatureCap }> = [];
+    if (listedTargets.size === 0) {
+      if (facebookCap) shown.push({ platform: 'facebook', cap: facebookCap });
+      return shown;
+    }
+    if (listedTargets.has('facebook') && facebookCap) {
+      shown.push({ platform: 'facebook', cap: facebookCap });
+    }
+    if (listedTargets.has('instagram') && instagramCap) {
+      shown.push({ platform: 'instagram', cap: instagramCap });
+    }
+    return shown;
+  }, [listedTargets, facebookCap, instagramCap]);
 
   // An out-of-range ?page= is clamped by the API; sync the state (and
   // the URL, via the effect below) to the page that actually came back.
@@ -179,9 +217,9 @@ export function TikTokShell({ subdomain }: Readonly<TikTokShellProps>) {
               ? 'Auto-repost TikTok reels to your Facebook pages.'
               : `${total} ${total === 1 ? 'mirror' : 'mirrors'}`}
           </p>
-          {facebookCap ? (
-            <FeatureCapText cap={facebookCap} platform="facebook" />
-          ) : null}
+          {headerCaps.map(({ platform, cap }) => (
+            <FeatureCapText key={platform} cap={cap} platform={platform} />
+          ))}
         </div>
         <Button
           type="button"
