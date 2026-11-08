@@ -154,8 +154,22 @@ async function buildStore(seed: StoreSeed): Promise<Record<string, Row[]>> {
       },
     ],
     adu_reels: [
-      { id: 'reel-1', config_id: 'cfg-1', status: 'download_failed', download_retries: 3 },
-      { id: 'reel-2', config_id: 'cfg-1', status: 'download_failed', download_retries: 1 },
+      {
+        id: 'reel-1',
+        config_id: 'cfg-1',
+        status: 'download_failed',
+        download_retries: 3,
+        download_claimed_at: '2026-11-07T10:00:00.000Z',
+        download_failed_at: '2026-11-07T10:00:00.000Z',
+      },
+      {
+        id: 'reel-2',
+        config_id: 'cfg-1',
+        status: 'download_failed',
+        download_retries: 1,
+        download_claimed_at: '2026-11-07T10:00:00.000Z',
+        download_failed_at: '2026-11-07T10:00:00.000Z',
+      },
       { id: 'reel-3', config_id: 'cfg-1', status: 'pending', download_retries: 0 },
     ],
     destinations: [
@@ -395,7 +409,7 @@ describe('ADU PATCH guards — Facebook route', () => {
     errorSpy.mockRestore();
   });
 
-  it('activates from creator_suspended (TikTok, available) and resets failed reels to pending', async () => {
+  it('activates from creator_suspended (TikTok, available) and fully resets failed reels to pending', async () => {
     const store = await buildStore({ status: 'creator_suspended' });
     mockContext(store);
     mockViewFromStore(store);
@@ -413,15 +427,26 @@ describe('ADU PATCH guards — Facebook route', () => {
       (r) => r.status === 'download_failed'
     );
     expect(failed).toHaveLength(0);
-    // Status-only reset: download_retries is NOT touched (open item b).
+    // Full reset: status pending AND download_retries 0 AND the claim /
+    // failure stamps cleared. A status-only reset would strand these
+    // reels in Pending forever — the claim RPCs only claim pending
+    // reels with download_retries < 3, and every download_failed reel
+    // sits at 3 retries.
     const reset = store.adu_reels.filter((r) => r.status === 'pending');
     expect(reset).toHaveLength(3);
-    expect(
-      reset.find((r) => r.id === 'reel-1')?.download_retries
-    ).toBe(3);
-    expect(
-      reset.find((r) => r.id === 'reel-2')?.download_retries
-    ).toBe(1);
+    for (const id of ['reel-1', 'reel-2']) {
+      const row = reset.find((r) => r.id === id);
+      expect(row?.download_retries).toBe(0);
+      expect(row?.download_claimed_at).toBeNull();
+      expect(row?.download_failed_at).toBeNull();
+      // Claimable again.
+      expect(Number(row?.download_retries)).toBeLessThan(3);
+    }
+    // A reel that was already pending is untouched by the reset.
+    const untouched = reset.find((r) => r.id === 'reel-3');
+    expect(untouched?.download_retries).toBe(0);
+    expect(untouched?.download_claimed_at).toBeUndefined();
+    expect(untouched?.download_failed_at).toBeUndefined();
   });
 
   it('stays creator_suspended when TikWM says the feed is unavailable', async () => {
@@ -496,6 +521,14 @@ describe('ADU PATCH guards — Facebook route', () => {
     expect(
       store.adu_reels.filter((r) => r.status === 'download_failed')
     ).toHaveLength(0);
+    // The reset applies here too: retries 0, stamps cleared, claimable.
+    for (const id of ['reel-1', 'reel-2']) {
+      const row = store.adu_reels.find((r) => r.id === id);
+      expect(row?.status).toBe('pending');
+      expect(row?.download_retries).toBe(0);
+      expect(row?.download_claimed_at).toBeNull();
+      expect(row?.download_failed_at).toBeNull();
+    }
   });
 
   it('reactivates a completed config on source change', async () => {
@@ -602,6 +635,40 @@ describe('ADU PATCH guards — Instagram route', () => {
     expect(configStatus(store)).toBe('creator_suspended');
   });
 
+  it('activates from creator_suspended for a non-TikTok source and fully resets failed reels', async () => {
+    const store = await buildStore({
+      status: 'creator_suspended',
+      sourcePlatform: 'youtube',
+      sourceUsername: 'creator_yt',
+      destinationPlatform: 'instagram',
+    });
+    mockContext(store);
+    mockViewFromStore(store);
+    const fetchCreatorPosts = vi.fn();
+    const res = await handlePatchIgAduConfig(
+      patchRequest({ status: 'active' }),
+      'acme',
+      'cfg-1',
+      { fetchCreatorPosts }
+    );
+    expect(res.status).toBe(200);
+    expect(configStatus(store)).toBe('active');
+    expect(fetchCreatorPosts).not.toHaveBeenCalled();
+    expect(
+      store.adu_reels.filter((r) => r.status === 'download_failed')
+    ).toHaveLength(0);
+    // Full reset, same as the Facebook route: retries 0, stamps cleared,
+    // claimable again (claim RPCs only claim download_retries < 3).
+    for (const id of ['reel-1', 'reel-2']) {
+      const row = store.adu_reels.find((r) => r.id === id);
+      expect(row?.status).toBe('pending');
+      expect(row?.download_retries).toBe(0);
+      expect(row?.download_claimed_at).toBeNull();
+      expect(row?.download_failed_at).toBeNull();
+      expect(Number(row?.download_retries)).toBeLessThan(3);
+    }
+  });
+
   it('reactivates a completed config on source change', async () => {
     const store = await buildStore({
       status: 'completed',
@@ -696,6 +763,16 @@ describe('ADU PATCH guards — Threads route', () => {
     expect(
       store.adu_reels.filter((r) => r.status === 'download_failed')
     ).toHaveLength(0);
+    // Full reset, same as the Facebook route: retries 0, stamps cleared,
+    // claimable again (claim RPCs only claim download_retries < 3).
+    for (const id of ['reel-1', 'reel-2']) {
+      const row = store.adu_reels.find((r) => r.id === id);
+      expect(row?.status).toBe('pending');
+      expect(row?.download_retries).toBe(0);
+      expect(row?.download_claimed_at).toBeNull();
+      expect(row?.download_failed_at).toBeNull();
+      expect(Number(row?.download_retries)).toBeLessThan(3);
+    }
   });
 
   it('reactivates a completed config on source change', async () => {

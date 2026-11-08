@@ -82,8 +82,11 @@ async function checkCreatorAvailability(
 
 /**
  * Creator-suspended reactivation resets the config's download_failed
- * reels to pending (status only — download_retries is NOT reset, open
- * item (b)). A reset failure is loud and blocks the activation: the
+ * reels to pending with download_retries reset to 0 and
+ * download_claimed_at / download_failed_at cleared, so the reels are
+ * claimable again — the claim RPCs only claim pending reels with
+ * download_retries < 3, and every download_failed reel sits at 3
+ * retries. A reset failure is loud and blocks the activation: the
  * config must not read active while its reels never re-download.
  */
 async function resetFailedReelsForReactivation(
@@ -92,7 +95,12 @@ async function resetFailedReelsForReactivation(
 ): Promise<NextResponse | null> {
   const { error } = await supabase
     .from('adu_reels')
-    .update({ status: 'pending' })
+    .update({
+      status: 'pending',
+      download_retries: 0,
+      download_claimed_at: null,
+      download_failed_at: null,
+    })
     .eq('config_id', configId)
     .eq('status', 'download_failed');
   if (error) {
