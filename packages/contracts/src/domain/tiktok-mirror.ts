@@ -159,6 +159,18 @@ export const TikwmUserInfoResponseSchema = z.object({
           unique_id: z.string().optional(),
           nickname: z.string().optional(),
           avatar: z.string().optional(),
+          /**
+           * Profile ID as camelCase `secUid` (76 chars) — the field
+           * the ADU scraper's TikWM fallback resolves for its
+           * `tiktokuser:` direct-feed attempt (spec
+           * scraper-tikwm-fallback). The live /user/info response
+           * carries NO snake_case `sec_uid` field; zod strips
+           * unknown keys, so a snake_case-only payload parses with
+           * secUid undefined and the lookup treats it as a failure.
+           */
+          secUid: z.string().optional(),
+          uniqueId: z.string().optional(),
+          id: z.union([z.number(), z.string()]).optional(),
         })
         .optional(),
     })
