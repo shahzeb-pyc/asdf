@@ -689,21 +689,56 @@ export async function assertCanPost(
  * SUBSCRIPTION_REQUIRED error the capped gate used for its plan
  * branch. Admins are not gated here — callers skip this check
  * for role 'admin', exactly as they did for assertCanPost.
+ *
+ * Plan-check R6: this gate reads ONLY the plan — getActivePeriod
+ * (+ the scheduled-downgrade activation when none, exactly as
+ * getEntitlement does it) and, when there is no active period, one
+ * hasAnyPeriod query for the free-vs-expired wording. It never
+ * reads the usage counts: the gate only ever decided from `period`
+ * and `canPost`, so the counts were pure waste on this path
+ * (2–4 queries instead of 9–15). The decision, error code and
+ * messages are identical to the old full-getEntitlement read —
+ * the two reason strings below must match getEntitlement's.
+ * A plan-read failure still fails closed (ENTITLEMENT_UNAVAILABLE);
+ * a usage-table failure no longer blocks Publish Now, because the
+ * gate never decided from usage.
  */
 export async function assertPaidPlan(
   client: SupabaseClient,
   userId: string,
   now: Date = new Date()
 ): Promise<SubscriptionPeriodRow> {
-  const entitlement = await getEntitlement(client, userId, now);
-  if (!entitlement.period || !entitlement.canPost) {
-    throw new SubscriptionGateError(
-      'SUBSCRIPTION_REQUIRED',
-      entitlement.reason ??
-        'Posting is paused. Your paid period has ended — renew it to post again.'
-    );
+  let period = await getActivePeriod(client, userId, now);
+  if (!period) {
+    // A scheduled downgrade whose start has arrived activates
+    // here, exactly as in getEntitlement — and exactly as there,
+    // a failed activation never breaks the gate: it is logged
+    // loudly and the gate falls through to the free/expired
+    // refusal below, retried on the next check.
+    try {
+      period = (await activateDueScheduledDowngrades(client, userId, now)) ?? period;
+    } catch (err) {
+      logServerError('[billing] scheduled downgrade activation failed on entitlement check', err, {
+        source: 'billing',
+      });
+    }
   }
-  return entitlement.period;
+  if (period && isPeriodActive(period, now)) {
+    return period;
+  }
+  // No usable period: the free-vs-expired wording comes from one
+  // hasAnyPeriod query, exactly as getEntitlement derives it.
+  // (When a period row exists but is somehow not active,
+  // hasAnyPeriod is true, so this yields the same
+  // 'Posting is paused…' fallback the old path produced from
+  // entitlement.reason ?? fallback.)
+  const hasPriorPeriod = await hasAnyPeriod(client, userId);
+  throw new SubscriptionGateError(
+    'SUBSCRIPTION_REQUIRED',
+    hasPriorPeriod
+      ? 'Posting is paused. Your paid period has ended — renew it to post again.'
+      : 'Your plan is Free, which covers the Prompt Library only. Choose a paid plan to post or schedule.'
+  );
 }
 
 /**
