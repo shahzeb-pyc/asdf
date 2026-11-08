@@ -547,8 +547,15 @@ describe('Publish consumers (spec 121)', () => {
   it('cascades an auth failure to account expired via the settle args', async () => {
     const item = await makeItem();
     const { db, settleCalls } = await makeConsumerDb({ item });
+    // Faithful to the real FacebookPublisher: a generic 190 evaluates
+    // to accountStatus 'expired', so the publisher sets
+    // targetAccountStatus: 'expired' explicitly — the settle mapper
+    // does NOT re-derive it from kind === 'auth' (that fallback
+    // re-expired the checkpoint / missing-role / app-bug codes the
+    // classifier keeps active; see the settle-args tests above).
     const publisher = fakePublisher('facebook', async () => ({
       status: 'failed',
+      targetAccountStatus: 'expired',
       error: { kind: 'auth', code: '190', message: 'token expired' },
     }));
     const message = fakeMessage({ itemId: item.id, platform: 'facebook', lane: 'publish-fast' });
@@ -848,6 +855,59 @@ describe('Publish consumers — spec 139 publish safety', () => {
       externalPostId: 'post-1',
     });
     expect('p_detail' in withoutDetail).toBe(false);
+  });
+
+  it.each([
+    // [code, subcode] — Facebook codes the classifier deliberately
+    // keeps active. The outcome shape is faithful to the real
+    // FacebookPublisher: `kind` is 'auth' (FacebookGraphError.isAuthError
+    // is true for ANY code 190) but `targetAccountStatus` is OMITTED —
+    // failureOutcome only sets it when the evaluation says 'expired'.
+    [190, 459],
+    [190, 464],
+    [190, 492],
+    [190, 2069032],
+  ] as Array<[number, number]>)(
+    'does NOT expire the account for a classifier-keeps-active Facebook %s/%s auth failure',
+    async (code, subcode) => {
+      const item = await makeItem();
+      const args = mapPublishOutcomeToSettleArgs(item, {
+        status: 'failed',
+        error: {
+          kind: 'auth',
+          code: String(code),
+          subcode: String(subcode),
+          message: `Facebook Graph API error ${code}/${subcode}`,
+        },
+      });
+      expect(args.p_outcome_status).toBe('failed');
+      expect(args.p_error_code).toBe(String(code));
+      expect(args.p_error_subcode).toBe(String(subcode));
+      // The settle RPC flips the account when this is 'expired': a
+      // checkpoint / missing-role / app-bug failure must NOT tell the
+      // user to reconnect. No kind-based fallback may re-expire it.
+      expect(args.p_target_account_status).toBeNull();
+    }
+  );
+
+  it('still expires the account for a genuine Facebook token-death 190/463', async () => {
+    const item = await makeItem();
+    // Faithful to the real FacebookPublisher: a 190 whose evaluation
+    // says 'expired' carries targetAccountStatus: 'expired' explicitly.
+    const args = mapPublishOutcomeToSettleArgs(item, {
+      status: 'failed',
+      targetAccountStatus: 'expired',
+      error: {
+        kind: 'auth',
+        code: '190',
+        subcode: '463',
+        message: 'Access token has expired.',
+      },
+    });
+    expect(args.p_outcome_status).toBe('failed');
+    expect(args.p_error_code).toBe('190');
+    expect(args.p_error_subcode).toBe('463');
+    expect(args.p_target_account_status).toBe('expired');
   });
 
   it('defers without publishing while the destination is freshly rate_limited', async () => {

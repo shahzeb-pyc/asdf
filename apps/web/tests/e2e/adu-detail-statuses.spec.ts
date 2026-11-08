@@ -9,10 +9,15 @@
  * no real backend. The production build itself (routing, middleware
  * session verification, tenant layout, components) runs for real.
  *
- * Statuses covered: the six the acceptance criterion names (paused,
- * missing_page_access, missing_permission, creator_suspended,
- * invalid_token, fb_rate_limited) plus active and completed, at a
- * desktop width (1280) and a phone width (390).
+ * Statuses covered: all 11 statuses (the eight error/lifecycle
+ * statuses the display file defines plus paused, active and
+ * completed — active/paused are the toggle states, completed is the
+ * lifecycle status), at a desktop width (1280) and a phone width (390).
+ * Banner copy comes from the Facebook detail page's own local alert
+ * switch (`getAduDetailStatusAlert` in adu-detail-page.tsx), not the
+ * contracts alert functions the IG/Threads pages use. Toggle lock
+ * follows the PATCH guards (spec §3.3): only fb_rate_limited,
+ * invalid_token and completed lock the toggle.
  */
 import { test, expect } from '@playwright/test';
 import { createFixtureState, installApiFixtures } from './fixtures/api';
@@ -29,6 +34,11 @@ const DISPLAY_STATUS: Record<string, string> = {
   invalid_token: 'Invalid token',
   fb_rate_limited: 'Rate limited',
   completed: 'All reels posted',
+  fb_verification_required: 'Verification required',
+  account_suspended: 'Account suspended',
+  check_developer_app: 'Check developer app',
+  page_not_accessible: 'Page not accessible',
+  invalid_username: 'Source disabled',
 };
 
 const MARK_KIND: Record<string, string> = {
@@ -40,6 +50,11 @@ const MARK_KIND: Record<string, string> = {
   invalid_token: 'critical',
   fb_rate_limited: 'critical',
   completed: 'operational',
+  fb_verification_required: 'critical',
+  account_suspended: 'critical',
+  check_developer_app: 'critical',
+  page_not_accessible: 'critical',
+  invalid_username: 'critical',
 };
 
 interface StatusCase {
@@ -97,6 +112,51 @@ const CASES: StatusCase[] = [
     bannerTitle: 'All Reels Posted',
     bannerText: /update Settings > Source/,
     toggleDisabled: true,
+  },
+  {
+    // PATCH guards (§3.3) allow activation from here (direct activate),
+    // so the toggle stays enabled: verify in the Meta app, then toggle ON.
+    status: 'fb_verification_required',
+    bannerTitle: 'Facebook Verification Required',
+    bannerText: /Complete identity or phone verification in the Meta app/,
+    toggleDisabled: false,
+  },
+  {
+    // PATCH guards (§3.3) allow activation from here (direct activate),
+    // so the toggle stays enabled: Meta clears the restriction, then toggle ON.
+    status: 'account_suspended',
+    bannerTitle: 'Facebook Account Suspended',
+    bannerText: /Once Facebook clears the restriction/,
+    toggleDisabled: false,
+  },
+  {
+    // PATCH guards (§3.3) allow activation from here (direct activate),
+    // so the toggle stays enabled: fix the developer app, then toggle ON.
+    status: 'check_developer_app',
+    bannerTitle: 'Developer App Access Blocked',
+    bannerText: /Fix the problem in your developer app/,
+    toggleDisabled: false,
+  },
+  {
+    // PATCH guards (§3.3) allow activation from here (fresh page-token
+    // check), so the toggle stays enabled: confirm the page, then toggle ON.
+    status: 'page_not_accessible',
+    bannerTitle: 'Facebook Page Not Accessible',
+    bannerText: /Confirm the page still exists/,
+    toggleDisabled: false,
+  },
+  {
+    // NOTE — toggle renders ENABLED here even though the PATCH guard
+    // rejects activation from invalid_username (400, "Update the source
+    // to continue posting."): the component's automationLocked covers
+    // only fb_rate_limited / invalid_token / completed, exactly spec
+    // §3.3's toggle-disabled list. The guard is the backstop — flipping
+    // the switch surfaces the server message — so the rendered state
+    // pinned here is enabled, not disabled.
+    status: 'invalid_username',
+    bannerTitle: 'Source Account Disabled',
+    bannerText: /Verify the source account is active/,
+    toggleDisabled: false,
   },
 ];
 
