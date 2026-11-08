@@ -34,10 +34,22 @@ interface Filter {
   val: unknown;
 }
 
-function applyFilters(rows: Row[], filters: Filter[]): Row[] {
+function applyFilters(
+  rows: Row[],
+  filters: Filter[],
+  db: Record<string, Row[]>,
+): Row[] {
   return rows.filter((row) =>
     filters.every((f) => {
-      const value = row[f.col];
+      // Embedded-join filter (buildAduConfigView's failed-in-pipeline
+      // count selects `adu_reels!inner(status)` and filters on
+      // `adu_reels.status`): resolve the reel through the job's
+      // reel_id, exactly as the join does. A plain row lookup would
+      // read `undefined` for every job and count zero.
+      const value =
+        f.col === 'adu_reels.status'
+          ? (db['adu_reels'] ?? []).find((r) => r.id === row['reel_id'])?.status
+          : row[f.col];
       if (f.op === 'eq') return value === f.val;
       if (f.op === 'in') return (f.val as unknown[]).includes(value);
       if (f.op === 'gte') return String(value) >= String(f.val);
@@ -89,7 +101,7 @@ class FakeBuilder {
       resolve(this.head ? { count: null, error: { code } } : { data: null, error: { code } });
       return;
     }
-    const rows = applyFilters(this.db[this.table] ?? [], this.filters);
+    const rows = applyFilters(this.db[this.table] ?? [], this.filters, this.db);
     if (this.head) resolve({ count: rows.length, error: null });
     else if (this.single) resolve({ data: rows[0] ?? null, error: null });
     else resolve({ data: rows, error: null });
@@ -154,16 +166,18 @@ describe('buildAduConfigView counts', () => {
         },
       ],
       adu_reels: [
-        { config_id: 'cfg-1', status: 'downloaded' },
-        { config_id: 'cfg-1', status: 'downloaded' },
-        { config_id: 'cfg-1', status: 'downloaded' },
-        { config_id: 'cfg-1', status: 'pending' },
-        { config_id: 'cfg-1', status: 'posted' },
+        { id: 'r-1', config_id: 'cfg-1', status: 'downloaded' },
+        { id: 'r-2', config_id: 'cfg-1', status: 'downloaded' },
+        { id: 'r-3', config_id: 'cfg-1', status: 'downloaded' },
+        // Crash window: the failed job settled but its reel is still
+        // 'pending', so it subtracts from Pending (spec §3.5).
+        { id: 'r-4', config_id: 'cfg-1', status: 'pending' },
+        { id: 'r-5', config_id: 'cfg-1', status: 'posted' },
       ],
       adu_posting_jobs: [
         { config_id: 'cfg-1', status: 'published', created_at: todayNoonUtc() },
         { config_id: 'cfg-1', status: 'published', created_at: daysAgoNoonUtc(3) },
-        { config_id: 'cfg-1', status: 'failed_to_publish', created_at: todayNoonUtc() },
+        { config_id: 'cfg-1', reel_id: 'r-4', status: 'failed_to_publish', created_at: todayNoonUtc() },
         { config_id: 'cfg-1', status: 'pending_publish', created_at: todayNoonUtc() },
       ],
     };
@@ -182,6 +196,8 @@ describe('buildAduConfigView counts', () => {
       'adu_posting_jobs:count',
       'adu_posting_jobs:count',
       'adu_posting_jobs:count',
+      'adu_posting_jobs:count',
+      // The embedded-reel failed-in-pipeline count (spec §3.5).
       'adu_posting_jobs:count',
     ]);
   });
