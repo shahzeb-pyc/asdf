@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { signSessionToken } from '@fbuploadpro/contracts';
 import { handleCreateUploadUrl } from '../../src/app/api/tenant/[subdomain]/media/upload-url/route';
@@ -168,5 +168,72 @@ describe('Presigned Upload URL Endpoint (POST /api/tenant/[subdomain]/media/uplo
     expect(data.publicMediaUrl).toBe(
       `https://media.fbuploadpro.com/users/${userId}/post-staging/${data.mediaId}/clip.mp4`
     );
+  });
+
+  describe('storage quota gate (plan check)', () => {
+    const NO_QUOTA_MESSAGE =
+      'Your plan includes no Media Library storage. Upgrade to a paid plan to upload files.';
+    const noQuota = () => ({ quotaBytes: 0, usedBytes: 0 });
+    const overQuota = () => ({ quotaBytes: 5368709120, usedBytes: 5368709120 });
+
+    function uploadRequest(purpose: 'library' | 'post-staging'): NextRequest {
+      return new NextRequest('http://localhost:3000/api/tenant/acme/media/upload-url', {
+        method: 'POST',
+        headers: { cookie: validSessionCookie },
+        body: JSON.stringify({
+          fileName: 'clip.mp4',
+          fileSize: 20971520,
+          mimeType: 'video/mp4',
+          thumbnailMimeType: 'image/webp',
+          purpose,
+        }),
+      });
+    }
+
+    it('post-staging upload with quota 0 succeeds — the gate is skipped (the reported bug)', async () => {
+      const provider = vi.fn(async () => noQuota());
+      const res = await handleCreateUploadUrl(uploadRequest('post-staging'), 'acme', mockStorage, provider);
+
+      expect(res.status).toBe(200);
+      expect(provider).not.toHaveBeenCalled();
+      const data = await res.json();
+      expect(data.mediaKey).toContain('/post-staging/');
+    });
+
+    it('post-staging upload over quota succeeds', async () => {
+      const provider = vi.fn(async () => overQuota());
+      const res = await handleCreateUploadUrl(uploadRequest('post-staging'), 'acme', mockStorage, provider);
+
+      expect(res.status).toBe(200);
+      expect(provider).not.toHaveBeenCalled();
+    });
+
+    it('library upload with quota 0 is still refused with 403 and the same message', async () => {
+      const provider = vi.fn(async () => noQuota());
+      const res = await handleCreateUploadUrl(uploadRequest('library'), 'acme', mockStorage, provider);
+
+      expect(res.status).toBe(403);
+      expect(provider).toHaveBeenCalledWith(userId);
+      const body = await res.json();
+      expect(body.error).toBe('STORAGE_QUOTA_EXCEEDED');
+      expect(body.message).toBe(NO_QUOTA_MESSAGE);
+    });
+
+    it('library upload over quota is still refused with 413', async () => {
+      const provider = vi.fn(async () => overQuota());
+      const res = await handleCreateUploadUrl(uploadRequest('library'), 'acme', mockStorage, provider);
+
+      expect(res.status).toBe(413);
+      const body = await res.json();
+      expect(body.error).toBe('STORAGE_QUOTA_EXCEEDED');
+    });
+
+    it('library upload with ample quota still succeeds', async () => {
+      const provider = vi.fn(async () => ({ quotaBytes: 5368709120, usedBytes: 0 }));
+      const res = await handleCreateUploadUrl(uploadRequest('library'), 'acme', mockStorage, provider);
+
+      expect(res.status).toBe(200);
+      expect(provider).toHaveBeenCalledWith(userId);
+    });
   });
 });
