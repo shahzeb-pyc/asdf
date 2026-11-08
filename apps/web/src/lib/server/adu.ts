@@ -23,6 +23,7 @@ import {
   registerUsage,
   releaseUsageForFeature,
   SubscriptionGateError,
+  type Entitlement,
 } from '@/lib/billing/entitlement';
 import { getBillingAdminClient } from '@/lib/billing/route-helpers';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -124,12 +125,19 @@ export async function aduDestinationKeysForCap(
  * failure the just-created config is deleted again, so a config
  * can never exist without its cap unit: the caller reports the
  * returned error for that item instead of a success.
+ *
+ * The optional `sharedEntitlement` is a read the caller already
+ * made for this user in this request (plan-check R3): it is passed
+ * straight through to registerUsage so the register does not pay
+ * for a second full entitlement read. Absent, registerUsage reads
+ * on its own, as before.
  */
 export async function registerAduConfigUsage(
   ctx: AduContext,
   platform: 'facebook' | 'instagram' | 'threads',
   destinationId: string,
-  configId: string
+  configId: string,
+  sharedEntitlement?: Entitlement
 ): Promise<{ ok: true } | { ok: false; error: unknown }> {
   if (ctx.role === 'admin') return { ok: true };
   const billingClient = getBillingAdminClient();
@@ -160,7 +168,9 @@ export async function registerAduConfigUsage(
       platform,
       key,
       'auto-download-upload',
-      destinationId
+      destinationId,
+      undefined,
+      sharedEntitlement
     );
     return { ok: true };
   } catch (err) {

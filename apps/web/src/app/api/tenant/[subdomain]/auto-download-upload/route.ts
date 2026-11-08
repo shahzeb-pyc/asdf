@@ -23,7 +23,11 @@ import {
   type AduConfigView,
   type AduDiscoveredGraphPage,
 } from '@/lib/server/adu';
-import { assertFeatureAddWithinCap } from '@/lib/billing/entitlement';
+import {
+  assertFeatureAddWithinCap,
+  getEntitlement,
+  type Entitlement,
+} from '@/lib/billing/entitlement';
 import { logServerError } from '@/lib/server-analytics';
 import {
   getBillingAdminClient,
@@ -407,6 +411,12 @@ export async function POST(
     // that must not answer billing queries. Unknown destination ids
     // are skipped by the key loader — createOne rejects them per
     // item downstream.
+    // R3: the entitlement is read once here and shared with every
+    // item's register below — the only writes between the two reads
+    // are the config rows themselves, so the shared answer is
+    // exact. Undefined when the gate is skipped (admin / no
+    // client); each register re-reads on its own then, as before.
+    let sharedEntitlement: Entitlement | undefined;
     if (resolved.context.role !== 'admin') {
       const billingClient = getBillingAdminClient();
       if (!billingClient) {
@@ -425,11 +435,14 @@ export async function POST(
             'facebook',
             resolvedItems.map((item) => item.destinationId)
           );
+          sharedEntitlement = await getEntitlement(billingClient, resolved.context.userId);
           await assertFeatureAddWithinCap(
             billingClient,
             resolved.context.userId,
             'facebook',
-            keys
+            keys,
+            undefined,
+            sharedEntitlement
           );
         } catch (err) {
           const gateResponse = subscriptionGateResponse(err);
@@ -457,7 +470,7 @@ export async function POST(
         // the destination's unit; a registration failure rolls
         // the config back and fails this item, never a success
         // without a unit.
-        const reg = await registerAduConfigUsage(resolved.context, 'facebook', item.destinationId, result.id);
+        const reg = await registerAduConfigUsage(resolved.context, 'facebook', item.destinationId, result.id, sharedEntitlement);
         if (reg.ok) created.push(result.id);
         else failed.push({ destinationId: item.destinationId, error: reg.error instanceof Error ? reg.error.message : 'Failed to register the plan limit.' });
       } else failed.push({ destinationId: item.destinationId, error: result.error ?? 'Failed to create.' });
@@ -498,6 +511,10 @@ export async function POST(
     );
   }
   // Plan cap gate (single-add path; same rule as the bulk path above).
+  // R3: the entitlement is read once here and shared with the
+  // register below — the only write between the two reads is the
+  // config row itself, so the shared answer is exact.
+  let sharedEntitlement: Entitlement | undefined;
   if (resolved.context.role !== 'admin') {
     const billingClient = getBillingAdminClient();
     if (!billingClient) {
@@ -516,11 +533,14 @@ export async function POST(
           'facebook',
           [destinationId]
         );
+        sharedEntitlement = await getEntitlement(billingClient, resolved.context.userId);
         await assertFeatureAddWithinCap(
           billingClient,
           resolved.context.userId,
           'facebook',
-          keys
+          keys,
+          undefined,
+          sharedEntitlement
         );
       } catch (err) {
         const gateResponse = subscriptionGateResponse(err);
@@ -537,7 +557,7 @@ export async function POST(
     return NextResponse.json({ error: result.error }, { status: 400 });
   }
   if (result.id) {
-    const reg = await registerAduConfigUsage(resolved.context, 'facebook', destinationId, result.id);
+    const reg = await registerAduConfigUsage(resolved.context, 'facebook', destinationId, result.id, sharedEntitlement);
     if (!reg.ok) {
       const gateResponse = subscriptionGateResponse(reg.error);
       if (gateResponse) return gateResponse;
