@@ -43,7 +43,7 @@ export const ADU_SOURCE_PLATFORMS: AduSourcePlatform[] = [
 
 export const AduConfigStatusSchema = z.enum([
   'active',
-  'inactive',
+  'paused',
   'completed',
   'fb_verification_required',
   'invalid_token',
@@ -54,6 +54,8 @@ export const AduConfigStatusSchema = z.enum([
   '2fa_required_on_BM',
   'check_developer_app',
   'account_suspended',
+  'missing_page_access',
+  'missing_permission',
 ]);
 export type AduConfigStatus = z.infer<typeof AduConfigStatusSchema>;
 
@@ -73,6 +75,7 @@ export const AduReelStatusSchema = z.enum([
   'download_failed',
   'posted',
   'skipped',
+  'failed',
 ]);
 export type AduReelStatus = z.infer<typeof AduReelStatusSchema>;
 
@@ -90,7 +93,7 @@ export type AduJobStatus = z.infer<typeof AduJobStatusSchema>;
 export const ADU_STATUS_FILTER_OPTIONS = [
   'All Statuses',
   'Active',
-  'Inactive',
+  'Paused',
   'Verification Req.',
   'Rate Limited',
   'Page Not Accessible',
@@ -101,12 +104,14 @@ export const ADU_STATUS_FILTER_OPTIONS = [
   '2FA Req. on BM',
   'Check Dev App',
   'Account Suspended',
+  'Missing Page Access',
+  'Missing Permission',
 ] as const;
 
 /** Display badge for a page status, once sync is done. */
 export const ADU_PAGE_STATUS_LABELS: Record<AduConfigStatus, string> = {
   active: 'Active posting',
-  inactive: 'Posting inactive',
+  paused: 'Paused',
   completed: 'All reels posted',
   fb_verification_required: 'Verification required',
   invalid_token: 'Invalid token',
@@ -117,6 +122,8 @@ export const ADU_PAGE_STATUS_LABELS: Record<AduConfigStatus, string> = {
   '2fa_required_on_BM': 'BM 2FA required',
   check_developer_app: 'Check developer app',
   account_suspended: 'Account suspended',
+  missing_page_access: 'Missing page access',
+  missing_permission: 'Missing permission',
 };
 
 export const ADU_SYNC_STATUS_LABELS: Record<AduSyncStatus, string> = {
@@ -151,8 +158,8 @@ export function aduStatusAlert(
     return 'The source could not be found. Check the source username in Settings, then try again.';
   if (status === 'active') return null;
   switch (status) {
-    case 'inactive':
-      return 'Posting is inactive. Activate automation from the header to resume.';
+    case 'paused':
+      return 'Posting is paused. Activate automation from the header to resume.';
     case 'fb_verification_required':
       return 'Facebook verification is required. Complete verification in the Meta app — do not reconnect the account.';
     case 'fb_rate_limited':
@@ -173,6 +180,10 @@ export function aduStatusAlert(
       return 'Check the developer app settings for this page, then reactivate.';
     case 'account_suspended':
       return 'The Facebook account is suspended. Resolve it in Facebook, then reactivate.';
+    case 'missing_page_access':
+      return 'This page can no longer be reached because the account lost its role on it. Ask an admin to restore the role in Business Manager, then reactivate.';
+    case 'missing_permission':
+      return 'A permission this page needs is missing. Ask an admin to grant the permission, then reactivate.';
     default:
       return null;
   }
@@ -193,8 +204,8 @@ export function threadsAduStatusAlert(
     return 'The source could not be found. Check the source username in Settings, then try again.';
   if (status === 'active') return null;
   switch (status) {
-    case 'inactive':
-      return 'Posting is inactive. Activate automation from the header to resume.';
+    case 'paused':
+      return 'Posting is paused. Activate automation from the header to resume.';
     case 'fb_verification_required':
       return 'Threads verification is required. Complete verification in the Threads app — do not reconnect the account.';
     case 'fb_rate_limited':
@@ -215,6 +226,10 @@ export function threadsAduStatusAlert(
       return 'Check the developer app settings for this account, then reactivate.';
     case 'account_suspended':
       return 'The Threads account is suspended. Resolve it in Threads, then reactivate.';
+    case 'missing_page_access':
+      return 'This Threads account can no longer be reached because access to it was lost. Ask an admin to restore access, then reactivate.';
+    case 'missing_permission':
+      return 'A permission this Threads account needs is missing. Ask an admin to grant the permission, then reactivate.';
     default:
       return null;
   }
