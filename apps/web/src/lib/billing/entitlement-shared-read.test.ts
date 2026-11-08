@@ -747,7 +747,9 @@ describe('Pre-insert re-check — a stale shared read cannot publish over the ca
       NOW,
       shared
     );
-    expect(result).toEqual({ alreadyUsed: true, usedCount: 1 });
+    // R4: the register returns the entitlement it gated on — here
+    // the shared read passed in, unchanged.
+    expect(result).toEqual({ alreadyUsed: true, usedCount: 1, entitlement: shared });
     expect(tables['subscription_usage']).toHaveLength(1);
   });
 

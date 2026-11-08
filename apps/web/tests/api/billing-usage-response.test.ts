@@ -310,6 +310,9 @@ describe('usage route R4 response (no post-insert re-read)', () => {
     expect(res.status).toBe(200);
     expect(body['alreadyUsed']).toBe(false);
     expect(body['usedCount']).toBe(2);
+    // Snapshot the log now: the fresh re-read below logs into the
+    // same log, so the "re-read is gone" assertions use this copy.
+    const logAfterPost = [...queryLog];
 
     // Fresh re-read after the call: the response must agree with it.
     const freshUsage = await getUsageCounts(client, USER_ID);
@@ -331,17 +334,17 @@ describe('usage route R4 response (no post-insert re-read)', () => {
     // the usage insert — the response is built from the returned
     // read, not from a second read.
     expect(
-      queryLog.filter((entry) => entry.table === 'subscription_periods' && entry.op === 'select')
+      logAfterPost.filter((entry) => entry.table === 'subscription_periods' && entry.op === 'select')
         .length
     ).toBe(1);
-    const insertIndex = queryLog.findIndex(
+    const insertIndex = logAfterPost.findIndex(
       (entry) => entry.table === 'subscription_usage' && entry.op === 'insert'
     );
     expect(insertIndex).toBeGreaterThanOrEqual(0);
-    expect(queryLog.slice(insertIndex + 1)).toEqual([]);
+    expect(logAfterPost.slice(insertIndex + 1)).toEqual([]);
   });
 
-  it('already-used destination: no +1 adjustment, response matches a fresh re-read, no query after the insert', async () => {
+  it('already-used destination: no +1 adjustment, response matches a fresh re-read, no period re-read after the insert', async () => {
     const { client, tables, queryLog } = makeClient();
     holder.client = client;
     seedPaidPeriod(tables);
@@ -355,6 +358,9 @@ describe('usage route R4 response (no post-insert re-read)', () => {
     expect(res.status).toBe(200);
     expect(body['alreadyUsed']).toBe(true);
     expect(body['usedCount']).toBe(1);
+    // Snapshot the log now: the fresh re-read below logs into the
+    // same log, so the "re-read is gone" assertions use this copy.
+    const logAfterPost = [...queryLog];
 
     const freshUsage = await getUsageCounts(client, USER_ID);
     const freshPeriod = await getActivePeriod(client, USER_ID, NOW);
@@ -370,15 +376,25 @@ describe('usage route R4 response (no post-insert re-read)', () => {
     expect(body['allowedCount']).toBe(freshPeriod?.counts['facebook']);
     expect(body['allowedCount']).toBe(5);
 
+    // The re-read is gone: the period was read exactly once (the
+    // shared getEntitlement read). The insert collides (23505) on
+    // the existing row, so the register's own already-used handler
+    // runs its lookup + exact re-count — that is pre-existing
+    // register behaviour, not the response re-read: no period
+    // select follows the insert.
     expect(
-      queryLog.filter((entry) => entry.table === 'subscription_periods' && entry.op === 'select')
+      logAfterPost.filter((entry) => entry.table === 'subscription_periods' && entry.op === 'select')
         .length
     ).toBe(1);
-    const insertIndex = queryLog.findIndex(
+    const insertIndex = logAfterPost.findIndex(
       (entry) => entry.table === 'subscription_usage' && entry.op === 'insert'
     );
     expect(insertIndex).toBeGreaterThanOrEqual(0);
-    expect(queryLog.slice(insertIndex + 1)).toEqual([]);
+    expect(logAfterPost.slice(insertIndex + 1)).toEqual([
+      { table: 'subscription_usage', op: 'select', head: false },
+      { table: 'workspaces', op: 'select', head: false },
+      { table: 'subscription_usage', op: 'select', head: true },
+    ]);
   });
 
   it('new registration on a disconnected destination: the inserted row does not count, so no +1', async () => {
@@ -405,6 +421,9 @@ describe('usage route R4 response (no post-insert re-read)', () => {
     // destination, so it counts for nothing: usedCount and the
     // response usage stay 0, exactly as a fresh re-read reports.
     expect(body['usedCount']).toBe(0);
+    // Snapshot the log now: the fresh re-read below logs into the
+    // same log, so the "re-read is gone" assertions use this copy.
+    const logAfterPost = [...queryLog];
 
     const freshUsage = await getUsageCounts(client, USER_ID);
     const freshPeriod = await getActivePeriod(client, USER_ID, NOW);
@@ -422,21 +441,22 @@ describe('usage route R4 response (no post-insert re-read)', () => {
 
     // The only post-insert queries are the disconnected-status
     // lookup and the exact re-count it forces (workspace +
-    // destination map, then the single-platform head count) — no
-    // period re-read.
+    // destination map, then the raw head count and the
+    // disconnected-subtraction head count) — no period re-read.
     expect(
-      queryLog.filter((entry) => entry.table === 'subscription_periods' && entry.op === 'select')
+      logAfterPost.filter((entry) => entry.table === 'subscription_periods' && entry.op === 'select')
         .length
     ).toBe(1);
-    const insertIndex = queryLog.findIndex(
+    const insertIndex = logAfterPost.findIndex(
       (entry) => entry.table === 'subscription_usage' && entry.op === 'insert'
     );
     expect(insertIndex).toBeGreaterThanOrEqual(0);
-    const afterInsert = queryLog.slice(insertIndex + 1);
+    const afterInsert = logAfterPost.slice(insertIndex + 1);
     expect(afterInsert).toEqual([
       { table: 'destinations', op: 'select', head: false },
       { table: 'workspaces', op: 'select', head: false },
       { table: 'destinations', op: 'select', head: false },
+      { table: 'subscription_usage', op: 'select', head: true },
       { table: 'subscription_usage', op: 'select', head: true },
     ]);
   });
