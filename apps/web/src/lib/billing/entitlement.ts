@@ -643,19 +643,53 @@ export async function hasAnyPeriod(
 }
 
 /**
+ * Shared-entitlement ownership guard (plan-check R3): a route that
+ * already read the entitlement for the session user may pass it in
+ * instead of paying for a second full read. The object is
+ * internal-only — never from the client — but a typed object alone
+ * cannot prove whose it is, so a paid entitlement whose period
+ * belongs to another user is rejected fail-closed: without this
+ * check a caller could pass user A's paid entitlement for user B
+ * and the gate would let B publish. A period-less (free/expired)
+ * entitlement can only ever block — the gate throws
+ * SUBSCRIPTION_REQUIRED either way — so there is nothing to forge
+ * there. Callers always fetch for the session user; this guard is
+ * the backstop that makes a wrong-user pass loud instead of
+ * silently effective.
+ */
+function assertSharedEntitlementOwner(userId: string, entitlement: Entitlement): Entitlement {
+  if (entitlement.period && entitlement.period.userId !== userId) {
+    throw new SubscriptionGateError(
+      'ENTITLEMENT_UNAVAILABLE',
+      'Your plan could not be checked right now. Please try again.'
+    );
+  }
+  return entitlement;
+}
+
+/**
  * Fail-closed posting gate: throws SubscriptionGateError unless the
  * user has an active paid period AND the destination fits the cap.
  * Admins are not gated here — callers skip this check for role
  * 'admin' (admins approve subscriptions; they do not subscribe).
+ *
+ * The optional `entitlement` is a read the caller already made for
+ * this same user in this same request (plan-check R3): the gate
+ * reuses it instead of reading the entitlement a second time. It
+ * is ownership-checked (see assertSharedEntitlementOwner) and is
+ * never taken from the client.
  */
 export async function assertCanPost(
   client: SupabaseClient,
   userId: string,
   platform: SubscriptionPlatform,
   destinationKey: string,
-  now: Date = new Date()
+  now: Date = new Date(),
+  sharedEntitlement?: Entitlement
 ): Promise<SubscriptionPeriodRow> {
-  const entitlement = await getEntitlement(client, userId, now);
+  const entitlement = sharedEntitlement
+    ? assertSharedEntitlementOwner(userId, sharedEntitlement)
+    : await getEntitlement(client, userId, now);
   if (!entitlement.period || !entitlement.canPost) {
     throw new SubscriptionGateError(
       'SUBSCRIPTION_REQUIRED',
@@ -723,6 +757,37 @@ export async function assertPaidPlan(
  * destination starts counting toward the cap and no publish-now
  * row survives. A collision on a capped row is plain already-used.
  */
+/**
+ * R5b guard: the derived usedCount (gate usage + 1) is exact only
+ * when the row just inserted counts toward the cap. A row linked
+ * to a disconnected destination does NOT count (its count is
+ * subtracted at read time), so deriving +1 would overstate by one
+ * for exactly that destination. One single-row status lookup
+ * decides: disconnected → re-read the count; anything else
+ * (connected, missing row, null id) → the row counts, derive. A
+ * lookup failure also falls back to the re-read — the guard must
+ * never invent a count.
+ */
+async function shouldDeriveUsedCount(
+  client: SupabaseClient,
+  destinationId: string | null
+): Promise<boolean> {
+  if (!destinationId) return true;
+  try {
+    const { data, error } = await client
+      .from('destinations')
+      .select('status')
+      .eq('id', destinationId)
+      .maybeSingle();
+    if (error) return false;
+    const row = data ? asRow(data) : null;
+    if (!row) return true;
+    return row['status'] !== 'disconnected';
+  } catch {
+    return false;
+  }
+}
+
 export async function registerUsage(
   client: SupabaseClient,
   userId: string,
@@ -730,7 +795,8 @@ export async function registerUsage(
   destinationKey: string,
   feature: string,
   destinationId: string | null = null,
-  now: Date = new Date()
+  now: Date = new Date(),
+  sharedEntitlement?: Entitlement
 ): Promise<{ alreadyUsed: boolean; usedCount: number }> {
   if (isLegacyUncappedUsageFeature(feature)) {
     throw new SubscriptionGateError(
@@ -738,10 +804,19 @@ export async function registerUsage(
       'Publish Now does not register usage.'
     );
   }
-  await assertCanPost(client, userId, platform, destinationKey, now);
-  if (await isDestinationUsed(client, userId, platform, destinationKey)) {
-    return { alreadyUsed: true, usedCount: await getUsageCount(client, userId, platform) };
-  }
+  // R3: resolve the gate read once here and hand it to the gate —
+  // a caller that already read the entitlement for this user
+  // passes it in and no second full read happens. The same
+  // resolved read also supplies the R5b derived count below.
+  const gateEntitlement = sharedEntitlement
+    ? assertSharedEntitlementOwner(userId, sharedEntitlement)
+    : await getEntitlement(client, userId, now);
+  await assertCanPost(client, userId, platform, destinationKey, now, gateEntitlement);
+  // R5: no second isDestinationUsed lookup here. assertCanPost
+  // already did one, and a pre-check can never be a race guard —
+  // the race happens after the check. The INSERT's 23505 handler
+  // below is the real guard: a concurrent registration of this
+  // destination resolves to already-used, never to a second unit.
   const { error } = await client.from('subscription_usage').insert({
     user_id: userId,
     platform,
@@ -820,6 +895,20 @@ export async function registerUsage(
       'Your plan could not be checked right now. Please try again.'
     );
   }
+  // R5b, clean-insert path only: the count after this insert is
+  // the gate read's usage plus the row just added — no re-count
+  // needed. The cap decision never uses usedCount (it uses the
+  // pre-insert entitlement + the 23505 guard above), so the only
+  // cost of the derivation is a display number: a concurrent
+  // insert of a *different* destination on the same platform in
+  // the same milliseconds can leave it lagging by one. The
+  // already-used and race (23505) paths above keep their exact
+  // re-read, where the true count is not derivable from the gate
+  // read — as does a disconnected destination (see
+  // shouldDeriveUsedCount), whose row does not count at all.
+  if (await shouldDeriveUsedCount(client, destinationId)) {
+    return { alreadyUsed: false, usedCount: gateEntitlement.usage[platform] + 1 };
+  }
   return { alreadyUsed: false, usedCount: await getUsageCount(client, userId, platform) };
 }
 
@@ -875,9 +964,16 @@ export async function assertFeatureAddWithinCap(
   userId: string,
   platform: SubscriptionPlatform,
   destinationKeys: string[],
-  now: Date = new Date()
+  now: Date = new Date(),
+  sharedEntitlement?: Entitlement
 ): Promise<{ allowed: number; used: number; newCount: number }> {
-  const entitlement = await getEntitlement(client, userId, now);
+  // R3: reuse a read the caller already made for this user in
+  // this request instead of reading the entitlement a second
+  // time. Ownership-checked (see assertSharedEntitlementOwner);
+  // never taken from the client.
+  const entitlement = sharedEntitlement
+    ? assertSharedEntitlementOwner(userId, sharedEntitlement)
+    : await getEntitlement(client, userId, now);
   if (!entitlement.period || !entitlement.canPost) {
     throw new SubscriptionGateError(
       'SUBSCRIPTION_REQUIRED',
