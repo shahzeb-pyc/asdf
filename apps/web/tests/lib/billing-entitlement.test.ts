@@ -591,14 +591,14 @@ describe('getUsageCounts / getUsageCount / isDestinationUsed', () => {
       ): PromiseLike<TResult1 | TResult2> {
         tracker.inFlight += 1;
         tracker.maxInFlight = Math.max(tracker.maxInFlight, tracker.inFlight);
-        return super.then(
+        return super.then<TResult1, TResult2>(
           (value) => {
             tracker.inFlight -= 1;
             return onfulfilled ? onfulfilled(value) : (value as unknown as TResult1);
           },
           (reason) => {
             tracker.inFlight -= 1;
-            return onRejected ? onRejected(reason) : Promise.reject(reason);
+            return onrejected ? onrejected(reason) : Promise.reject(reason);
           }
         );
       }
