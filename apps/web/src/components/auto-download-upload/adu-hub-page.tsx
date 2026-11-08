@@ -472,25 +472,25 @@ function AduPageCard({ config, subdomain }: { config: AduConfigView; subdomain: 
       </div>
 
       {/* Divider + counts row: big signal-coloured numbers on top,
-          labels below, in Queued / Posted / Failed order. */}
+          labels below, in Pending / Posted / Failed order. */}
       <div aria-hidden className="pt-3">
         <div className="border-t border-line" />
       </div>
       <div
-        data-testid="adu-page-queue-counts"
+        data-testid="adu-page-pending-counts"
         className="mt-3 grid grid-cols-3 gap-4"
       >
         <span
-          data-testid="adu-page-queued-stat"
+          data-testid="adu-page-pending-stat"
           className="flex flex-col items-center text-center"
         >
           <span
-            data-testid="adu-page-queued-count"
+            data-testid="adu-page-pending-count"
             className="text-xxl font-bold tabular-nums text-signal-queued"
           >
             {config.pendingCount.toLocaleString('en-US')}
           </span>
-          <span className="mt-1 text-metadata text-ink-sub">Queued</span>
+          <span className="mt-1 text-metadata text-ink-sub">Pending</span>
         </span>
         <span
           data-testid="adu-page-posted-stat"
