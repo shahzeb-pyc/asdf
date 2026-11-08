@@ -889,22 +889,28 @@ describe('destination enqueue — facebook format gates (K6, K7)', () => {
     expect(db.queueItems).toHaveLength(0);
   });
 
-  it('K6: refuses a reel over 90 seconds at enqueue', async () => {
+  it('K6: converts a reel over 90 seconds to a feed video at enqueue', async () => {
     seedFacebookMedia();
     const res = await enqueue({
       platform: 'facebook',
       destinationId: fbDestinationId,
       kind: 'video',
       platformFormat: 'reel',
-      caption: 'Too long reel',
+      caption: 'Too long for a reel',
       mediaItemIds: [longVideoId],
       intent: 'queue',
     });
-    expect(res.status).toBe(400);
-    const payload = (await res.json()) as { error: string; message: string };
-    expect(payload.error).toBe('INVALID_FORMAT');
-    expect(payload.message).toContain('90 seconds');
-    expect(db.queueItems).toHaveLength(0);
+    expect(res.status).toBe(201);
+    const payload = (await res.json()) as {
+      kind: string;
+      platformFormat: string | null;
+    };
+    expect(payload.kind).toBe('video');
+    expect(payload.platformFormat).toBeNull();
+    expect(db.queueItems).toHaveLength(1);
+    const row = db.queueItems[0]!;
+    expect(row.kind).toBe('video');
+    expect(row.platform_format).toBeNull();
   });
 
   it('K6: accepts a reel within 90 seconds', async () => {
@@ -1093,6 +1099,36 @@ describe('destination enqueue — media/posting separation', () => {
       k.includes('/post-media/')
     );
     expect(postMediaKeys).toHaveLength(0);
+  });
+
+  it('a composer staged upload over 90 seconds queues as a feed video, not a reel', async () => {
+    seedFacebook();
+    await storage.putObject({
+      key: stagedKey,
+      body: new Uint8Array([1]),
+      contentType: 'video/mp4',
+    });
+    const res = await enqueue({
+      platform: 'facebook',
+      destinationId: fbDestinationId,
+      kind: 'video',
+      platformFormat: 'reel',
+      caption: 'Long clip from my device',
+      mediaItemIds: [],
+      stagedMedia: {
+        storageKey: stagedKey,
+        mediaType: 'video',
+        durationSeconds: 120,
+        aspectRatio: '9:16',
+      },
+      intent: 'queue',
+    });
+    expect(res.status).toBe(201);
+    expect(db.queueItems).toHaveLength(1);
+    const row = db.queueItems[0];
+    expect(row.kind).toBe('video');
+    expect(row.platform_format).toBeNull();
+    expect(row.media_storage_key).toBe(stagedKey);
   });
 
   it('staged media with a library key is rejected', async () => {

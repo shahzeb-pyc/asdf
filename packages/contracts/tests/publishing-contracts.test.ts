@@ -21,6 +21,7 @@ import {
   PostFormatSchema,
   validatePostFormatEligibility,
   getEligiblePostFormatsForMedia,
+  coerceOverlongReelFormat,
 } from '../src/index.js';
 
 describe('Publishing Engine Domain Contracts', () => {
@@ -655,6 +656,47 @@ describe('Publishing Engine Domain Contracts', () => {
           durationSeconds: 80,
         });
         expect(formats).toEqual(['video', 'reel']);
+      });
+    });
+
+    describe('coerceOverlongReelFormat', () => {
+      it('converts a reel over 90 seconds to a feed video (null platform format)', () => {
+        expect(coerceOverlongReelFormat('reel', 91)).toBeNull();
+        expect(coerceOverlongReelFormat('reel', 3600)).toBeNull();
+      });
+
+      it('keeps a reel at exactly 90 seconds a reel', () => {
+        expect(coerceOverlongReelFormat('reel', 90)).toBe('reel');
+      });
+
+      it('never converts on unknown duration', () => {
+        expect(coerceOverlongReelFormat('reel', null)).toBe('reel');
+        expect(coerceOverlongReelFormat('reel', undefined)).toBe('reel');
+      });
+
+      it('leaves non-reel formats and bare videos alone', () => {
+        expect(coerceOverlongReelFormat(null, 91)).toBeNull();
+        expect(coerceOverlongReelFormat('story', 120)).toBe('story');
+        expect(coerceOverlongReelFormat(undefined, 91)).toBeNull();
+      });
+
+      it('pairs with the validator: the converted format passes, the raw reel does not', () => {
+        const converted = coerceOverlongReelFormat('reel', 91);
+        expect(
+          validatePostFormatEligibility({
+            postFormat: 'video',
+            caption: 'Long clip',
+            media: { mediaType: 'video', durationSeconds: 91 },
+          }).valid
+        ).toBe(true);
+        expect(converted).toBeNull();
+        expect(
+          validatePostFormatEligibility({
+            postFormat: 'reel',
+            caption: 'Long clip',
+            media: { mediaType: 'video', durationSeconds: 91 },
+          }).valid
+        ).toBe(false);
       });
     });
 

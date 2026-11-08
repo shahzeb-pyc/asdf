@@ -607,6 +607,7 @@ export function CreatePostsDialog({
             aspectRatio: entry.block.media?.aspectRatio ?? null,
             width: entry.block.media?.width ?? null,
             height: entry.block.media?.height ?? null,
+            durationSeconds: entry.block.media?.durationSeconds ?? null,
           });
           return `${entry.label} is over the ${entry.limit.toLocaleString('en-US')}-character ${typeNouns[derived]} limit by ${entry.over.toLocaleString('en-US')} characters`;
         })

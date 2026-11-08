@@ -92,6 +92,7 @@ export function PostBlock({
     aspectRatio: block.media?.aspectRatio ?? null,
     width: block.media?.width ?? null,
     height: block.media?.height ?? null,
+    durationSeconds: block.media?.durationSeconds ?? null,
   });
   const limit = composerTextLimitForType(derived);
   const count = block.text.length;

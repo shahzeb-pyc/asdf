@@ -4,6 +4,35 @@ export const PostFormatValues = ['text', 'image', 'reel', 'video', 'story'] as c
 export const PostFormatSchema = z.enum(PostFormatValues);
 export type PostFormat = z.infer<typeof PostFormatSchema>;
 
+/**
+ * Facebook Reels cap: a reel's video may not exceed 90 seconds.
+ * Overlong vertical videos are not reels at all — they queue as feed
+ * videos instead (see coerceOverlongReelFormat), never blocked.
+ */
+export const FACEBOOK_REEL_MAX_DURATION_SECONDS = 90;
+
+/**
+ * Converts an overlong reel request into a feed video, before any
+ * format validation runs. A reel whose video duration is known and
+ * exceeds the Reels cap becomes a plain video post (platformFormat
+ * null); anything else passes through unchanged. Unknown duration
+ * never converts — the validator's own fail-open semantics for
+ * missing media facts are preserved here.
+ */
+export function coerceOverlongReelFormat(
+  platformFormat: string | null | undefined,
+  durationSeconds: number | null | undefined
+): string | null {
+  if (
+    platformFormat === 'reel' &&
+    typeof durationSeconds === 'number' &&
+    durationSeconds > FACEBOOK_REEL_MAX_DURATION_SECONDS
+  ) {
+    return null;
+  }
+  return platformFormat ?? null;
+}
+
 export interface GraphRateLimitTelemetry {
   appUsageMaxPct?: number | undefined;
   bucUsageMaxPct?: number | undefined;
@@ -65,7 +94,7 @@ function validateReelPost(media?: MediaEligibilityInput | null): FormatValidatio
   if (media.mediaType !== 'video') {
     return { valid: false, error: 'Reels require a video asset, not an image.' };
   }
-  if (media.durationSeconds !== null && media.durationSeconds !== undefined && media.durationSeconds > 90) {
+  if (media.durationSeconds !== null && media.durationSeconds !== undefined && media.durationSeconds > FACEBOOK_REEL_MAX_DURATION_SECONDS) {
     return { valid: false, error: 'Reels cannot exceed 90 seconds. Choose Feed Video instead.' };
   }
   const warnings: string[] = [];
@@ -150,7 +179,7 @@ export function getEligiblePostFormatsForMedia(media: MediaEligibilityInput): Po
   formats.push('video');
 
   // Reels: 3-90 seconds (or unspecified duration)
-  if (duration === null || duration === undefined || (duration >= 3 && duration <= 90)) {
+  if (duration === null || duration === undefined || (duration >= 3 && duration <= FACEBOOK_REEL_MAX_DURATION_SECONDS)) {
     formats.push('reel');
   }
 
