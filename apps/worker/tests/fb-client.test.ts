@@ -409,6 +409,29 @@ describe('FacebookPublishClient', () => {
       expect(authErr.isAuthError).toBe(true);
     });
 
+    it('identifies content codes 382 and 1363040 as permanent client errors', () => {
+      for (const code of [382, 1363040]) {
+        const err = new FacebookGraphError('Content rejected', {
+          message: 'Content rejected',
+          code,
+        });
+        expect(err.isPermanentClientError).toBe(true);
+        expect(err.isAuthError).toBe(false);
+        expect(err.isRateLimit).toBe(false);
+      }
+    });
+
+    it('identifies 368/1404102 as a permanent policy error, not a rate limit', () => {
+      const err = new FacebookGraphError('Link against Community Standards', {
+        message: 'Link against Community Standards',
+        code: 368,
+        error_subcode: 1404102,
+      });
+      expect(err.isPermanentPolicyError).toBe(true);
+      expect(err.isRateLimit).toBe(false);
+      expect(err.isAuthError).toBe(false);
+    });
+
     it('throws error when start session response is missing video_id or upload_url', async () => {
       const mockFetch = vi.fn();
       mockFetch.mockResolvedValueOnce(

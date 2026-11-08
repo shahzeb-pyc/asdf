@@ -29,6 +29,7 @@ export interface GraphApiErrorEvaluation {
  *   - Subcode 4854002: "Confirm your identity before you can publish as this Page." -> maps pageStatus to 'page_checkpoint' (requires user mobile login & verification, then manual reactivation).
  *   - Subcode 1404078: Page Publishing Authorization incomplete -> page_checkpoint + manual verification (was misrouted to fb_rate_limited with a wrong 3-day auto-recovery).
  *   - Subcode 1404082: "You've already posted this. Posting the same content repeatedly..." -> keeps pageStatus 'active', marks post as failed (isTransient: false) with reason.
+ *   - Subcode 1404102: link against Community Standards -> keeps pageStatus 'active', marks post as failed (isTransient: false) with reason. It used to fall to the default-368 branch (fb_rate_limited with a wrong 3-day auto-recovery).
  * - Error 400 with subcode 4854002: the same identity checkpoint arriving with
  *   top-level code 400, not 368 — page_checkpoint + manual verification (branch on
  *   the subcode, not only on code 368; it used to fall into the generic 4xx bucket).
@@ -219,6 +220,20 @@ export function evaluateGraphApiError(
         requiresReauth: false,
         message:
           "You've already posted this. Posting the same content repeatedly is not allowed by Facebook.",
+      };
+    }
+
+    // Subcode 1404102: the link goes against Community Standards — a
+    // per-post permanent failure, not a page rate limit. Mirrors the
+    // 1404082 branch: page stays active, no reauth, no transient retry.
+    if (errorSubcode === 1404102) {
+      return {
+        accountStatus: 'active',
+        pageStatus: 'active',
+        isTransient: false,
+        requiresReauth: false,
+        message:
+          'This link goes against Facebook Community Standards. Remove the link or use a different one.',
       };
     }
 

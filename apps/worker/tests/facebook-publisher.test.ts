@@ -481,6 +481,25 @@ const ERROR_CASES: ErrorCase[] = [
     expectedMessage:
       "You've already posted this. Posting the same content repeatedly is not allowed by Facebook.",
   },
+  // SEND BACK fix (PR #190): 368/1404102 used to fall to the default-368
+  // branch (transient + rate_limited destination flip). A link against
+  // Community Standards is permanent for that post: it fails at once,
+  // the page stays active, and the user sees the real reason.
+  {
+    name: '368/1404102 link against Community Standards',
+    code: 368,
+    subcode: 1404102,
+    kind: 'permanent',
+    status: 'failed',
+    expectedMessage:
+      'This link goes against Facebook Community Standards. Remove the link or use a different one.',
+  },
+  // Content codes 382 (video too small) and 1363040 (aspect ratio over
+  // 9:16) have no classifier branch and fell to the retryable fallback,
+  // so they retried to exhaustion. They are permanent client errors:
+  // post fails at once, page stays active, no retry.
+  { name: '382 video too small', code: 382, kind: 'permanent', status: 'failed' },
+  { name: '1363040 aspect ratio over 9:16', code: 1363040, kind: 'permanent', status: 'failed' },
   { name: '506 duplicate post', code: 506, kind: 'permanent', status: 'failed' },
   // Content codes 100 / 1609005 retry ×2, then fail (owner decision,
   // ADU statuses build): kind stays 'permanent', only the retry
@@ -619,6 +638,9 @@ describe('FacebookPublisher — mapError (pure, total)', () => {
       [new FacebookGraphError('m', { message: 'm', code: 299 }), 'auth', '299', undefined],
       [new FacebookGraphError('m', { message: 'm', code: 368, error_subcode: 4854002 }), 'permanent', '368', '4854002'],
       [new FacebookGraphError('m', { message: 'm', code: 368, error_subcode: 1404082 }), 'permanent', '368', '1404082'],
+      [new FacebookGraphError('m', { message: 'm', code: 368, error_subcode: 1404102 }), 'permanent', '368', '1404102'],
+      [new FacebookGraphError('m', { message: 'm', code: 382 }), 'permanent', '382', undefined],
+      [new FacebookGraphError('m', { message: 'm', code: 1363040 }), 'permanent', '1363040', undefined],
       [new FacebookGraphError('m', { message: 'm', code: 368 }), 'retryable', '368', undefined],
       [new FacebookGraphError('m', { message: 'm', code: 506 }), 'permanent', '506', undefined],
       [new FacebookGraphError('m', { message: 'm', code: 1609005 }), 'permanent', '1609005', undefined],

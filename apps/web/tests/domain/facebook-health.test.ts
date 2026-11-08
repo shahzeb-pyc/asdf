@@ -95,6 +95,16 @@ describe('Facebook Multi-Account Health Monitoring & Expiration (User Story 3 - 
       expect(duplicate?.message).toContain("You've already posted this");
     });
 
+    it('maps error 368 + subcode 1404102 (link against Community Standards) as non-transient post failure while keeping pageStatus active', () => {
+      const link = evaluateGraphApiError(368, 1404102);
+      expect(link).not.toBeNull();
+      expect(link?.accountStatus).toBe('active');
+      expect(link?.pageStatus).toBe('active');
+      expect(link?.isTransient).toBe(false);
+      expect(link?.requiresReauth).toBe(false);
+      expect(link?.message).toContain('Community Standards');
+    });
+
     it('auto-turns fb_rate_limited pages to active after 3 days while keeping page_checkpoint and paused until manual reactivation', () => {
       const blockedAt = new Date('2026-10-01T12:00:00Z');
       const after2Days = new Date('2026-10-03T12:00:00Z');

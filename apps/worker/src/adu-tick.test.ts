@@ -1758,6 +1758,79 @@ describe('runAduTick', () => {
     expect(flippedTo(db, 'adu_reels', 'failed', 'reel-1')).toBeDefined();
   });
 
+  // SEND BACK fix (PR #190): content codes 368/1404102, 382 and 1363040
+  // used to retry through the real FacebookPublisher (1404102 also
+  // flipped the Pages-queue destination to rate_limited). They are
+  // permanent for the post: the ADU job settles failed_to_publish at
+  // retry 0, the reel goes failed, nothing is re-queued, and no
+  // config / destination / account flips.
+  it('content codes settle failed_to_publish with the reel failed, never re-queued', async () => {
+    const r2Url = 'https://pub-abc123.r2.dev/adu-buffer/c1/reel-1.mp4';
+    const cases: Array<{
+      code: number;
+      subcode?: number;
+      message: string;
+      expectMessage: string;
+    }> = [
+      {
+        code: 368,
+        subcode: 1404102,
+        message: 'The link you tried to post goes against our Community Standards.',
+        expectMessage: 'Community Standards',
+      },
+      {
+        code: 382,
+        message: 'The video file is too small.',
+        expectMessage: 'too small',
+      },
+      {
+        code: 1363040,
+        message: 'Video aspect ratio exceeds the maximum allowed (9:16).',
+        expectMessage: 'aspect ratio',
+      },
+    ];
+    for (const c of cases) {
+      const client = stubFacebookClient(async () => {
+        throw new FacebookGraphError(c.message, {
+          message: c.message,
+          code: c.code,
+          ...(c.subcode !== undefined ? { error_subcode: c.subcode } : {}),
+        });
+      });
+      const { result, db } = await facebookJobTick(
+        facebookJob(r2Url),
+        new FacebookPublisher(client),
+      );
+
+      expect(result.failed).toBe(1);
+      expect(result.retried).toBe(0);
+      const settled = db.calls.find(
+        (call) =>
+          call.table === 'adu_posting_jobs' &&
+          call.ops.some(
+            (o) => o.kind === 'update' && (o.args[0] as Row).status === 'failed_to_publish',
+          ),
+      );
+      expect(settled).toBeDefined();
+      expect(flippedTo(db, 'adu_reels', 'failed', 'reel-1')).toBeDefined();
+      // NOT re-queued: no pending_publish update for this job.
+      const requeued = db.calls.find(
+        (call) =>
+          call.table === 'adu_posting_jobs' &&
+          call.ops.some(
+            (o) => o.kind === 'update' && (o.args[0] as Row).status === 'pending_publish',
+          ),
+      );
+      expect(requeued).toBeUndefined();
+      // No status flips anywhere: page stays active.
+      expect(touchedTable(db, 'adu_configs')).toBe(false);
+      expect(touchedTable(db, 'destinations')).toBe(false);
+      expect(touchedTable(db, 'social_accounts')).toBe(false);
+      // The user sees the real reason.
+      expect(String(storedFailure(db)?.last_error_message)).toContain(c.expectMessage);
+    }
+  });
+
   it('completes a config whose only busy reel has a terminally-failed job', async () => {
     const config = configRow('c1', ['09:00']);
     const db = makeDb((table, ops) => {

@@ -51,6 +51,22 @@ describe('evaluateGraphApiError — ADU statuses fixes', () => {
     expect(result?.isTransient).toBe(false);
   });
 
+  it('368/1404102 (link against Community Standards) is a permanent post failure, not rate limited', () => {
+    const result = evaluateGraphApiError(368, 1404102);
+    expect(result).not.toBeNull();
+    expect(result?.pageStatus).toBe('active');
+    expect(result?.accountStatus).toBe('active');
+    expect(result?.requiresManualVerification).toBeUndefined();
+    expect(result?.requiresReauth).toBe(false);
+    expect(result?.isTransient).toBe(false);
+    expect(result?.message).toContain('Community Standards');
+  });
+
+  it('382 and 1363040 have no classifier branch (no status flip; the publisher owns them as permanent)', () => {
+    expect(evaluateGraphApiError(382)).toBeNull();
+    expect(evaluateGraphApiError(1363040)).toBeNull();
+  });
+
   it('190/2069032 (wrong token type) is active/active, non-transient, no reauth', () => {
     const result = evaluateGraphApiError(190, 2069032);
     expect(result).not.toBeNull();

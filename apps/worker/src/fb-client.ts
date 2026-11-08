@@ -82,7 +82,8 @@ async function isRetryableGraphResponse(res: Response): Promise<boolean> {
       if (typeof code === 'number') {
         // Canonical transient classification from contracts: covers rate-limit
         // codes (4/17/32/341/613/80000-80014) and 368, but not permanent
-        // policy errors (368/4854002 checkpoint, 368/1404082 duplicate).
+        // policy errors (368/4854002 checkpoint, 368/1404082 duplicate,
+        // 368/1404102 link against Community Standards).
         return evaluateGraphApiError(code, data.error?.error_subcode)?.isTransient === true;
       }
     } catch {
@@ -187,12 +188,16 @@ export class FacebookGraphError extends Error {
 
     this.isPermanentPolicyError =
       this.code === 368 &&
-      (this.errorSubcode === 4854002 || this.errorSubcode === 1404082);
+      (this.errorSubcode === 4854002 ||
+        this.errorSubcode === 1404082 ||
+        this.errorSubcode === 1404102);
 
     this.isPermanentClientError =
       this.code === 100 ||
       this.code === 506 ||
       this.code === 1609005 ||
+      this.code === 382 ||
+      this.code === 1363040 ||
       (typeof this.code === 'number' &&
         this.code >= 400 &&
         this.code < 500 &&

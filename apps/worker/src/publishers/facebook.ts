@@ -132,14 +132,16 @@ function extractError(err: unknown): ExtractedError {
     message: rawMessage,
     telemetry: undefined,
     isAuthError: evaluation?.requiresReauth === true,
-    isPermanentPolicyError: code === 368 && (subcode === 4854002 || subcode === 1404082),
+    isPermanentPolicyError: code === 368 && (subcode === 4854002 || subcode === 1404082 || subcode === 1404102),
     isPermanentClientError:
       code === 100 ||
       code === 506 ||
       code === 1609005 ||
+      code === 382 ||
+      code === 1363040 ||
       (code !== undefined && code >= 400 && code < 500 && evaluation?.requiresReauth !== true),
     isRateLimit:
-      isRateLimitErrorCode(code, subcode) || (code === 368 && subcode !== 4854002 && subcode !== 1404082),
+      isRateLimitErrorCode(code, subcode) || (code === 368 && subcode !== 4854002 && subcode !== 1404082 && subcode !== 1404102),
     diagnostic: undefined,
   };
 }
@@ -149,8 +151,8 @@ function extractError(err: unknown): ExtractedError {
  * outcome computation, expressed in the shared taxonomy:
  *   auth      — evaluation requires reauth (190/102, 10, 200-299) or
  *               the Graph error's auth flag;
- *   permanent — permanent policy (368/4854002, 368/1404082), permanent
- *               client (100, 506, 1609005, other 4xx), or any
+ *   permanent — permanent policy (368/4854002, 368/1404082, 368/1404102), permanent
+ *               client (100, 506, 1609005, 382, 1363040, other 4xx), or any
  *               non-transient evaluation that is not auth;
  *   retryable — transient evaluations, rate-limit codes
  *               (4/17/32/341/613/80000-80014, 368 non-policy), and the
@@ -159,7 +161,7 @@ function extractError(err: unknown): ExtractedError {
  *               treated as transient.
  *
  * The message follows the old dispatcher's rule: for 368 with subcode
- * 4854002 or 1404082 the canonical evaluation message replaces the raw
+ * 4854002, 1404082 or 1404102 the canonical evaluation message replaces the raw
  * Graph message; every other error keeps its raw message.
  */
 function classifyExtracted(extracted: ExtractedError): ClassifiedPublishError {
@@ -167,7 +169,7 @@ function classifyExtracted(extracted: ExtractedError): ClassifiedPublishError {
   const evaluation = code !== undefined ? evaluateGraphApiError(code, subcode) : null;
 
   const message =
-    code === 368 && (subcode === 4854002 || subcode === 1404082) && evaluation
+    code === 368 && (subcode === 4854002 || subcode === 1404082 || subcode === 1404102) && evaluation
       ? evaluation.message
       : extracted.message;
 
