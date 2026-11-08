@@ -187,14 +187,16 @@ async function seed(pool: Pool): Promise<void> {
     );
   }
   // Three configs: A active/150 gained on 100 starting (net 50),
-  // B active/300 gained on 300 starting (net 0), C inactive/50 on 0 (net 50).
+  // B active/300 gained on 300 starting (net 0), C paused/50 on 0 (net 50).
+  // 'inactive' no longer exists (ADU statuses PR: turning automation
+  // off is Pause now), so the third config is seeded 'paused'.
   await pool.query(
     `INSERT INTO public.adu_configs (id, workspace_id, destination_id, source_platform, source_username,
        timezone, posts_per_day, schedule_type, posting_times, status, sync_status, followers_count, followers_gained)
      VALUES
        ('a0000000-0000-4000-8000-000000000001', $1, $2, 'instagram', 'alpha_source', 'UTC', 1, 'dailyrandom', '{}', 'active', 'synced', 100, 150),
        ('a0000000-0000-4000-8000-000000000002', $1, $3, 'tiktok', 'beta_source', 'UTC', 2, 'dailyrandom', '{}', 'active', 'synced', 300, 300),
-       ('a0000000-0000-4000-8000-000000000003', $1, $4, 'youtube', 'gamma_source', 'UTC', 1, 'dailyrandom', '{}', 'inactive', 'synced', 0, 50)`,
+       ('a0000000-0000-4000-8000-000000000003', $1, $4, 'youtube', 'gamma_source', 'UTC', 1, 'dailyrandom', '{}', 'paused', 'synced', 0, 50)`,
     [WS_ID, DEST_A, DEST_B, DEST_C],
   );
 }
@@ -289,9 +291,9 @@ async function main(): Promise<void> {
     const listSearchSource = await attempt(pool, 'service_role',
       'SELECT * FROM public.adu_hub_list($1, $2, NULL, NULL, 9, 0)', [WS_ID, 'beta_source']);
     check(listSearchSource.rows.length === 1, 'hub list search by source username finds 1 row');
-    const listInactive = await attempt(pool, 'service_role',
-      'SELECT * FROM public.adu_hub_list($1, NULL, $2, NULL, 9, 0)', [WS_ID, 'inactive']);
-    check(listInactive.rows.length === 1, 'hub list status filter finds 1 inactive row');
+    const listPaused = await attempt(pool, 'service_role',
+      'SELECT * FROM public.adu_hub_list($1, NULL, $2, NULL, 9, 0)', [WS_ID, 'paused']);
+    check(listPaused.rows.length === 1, 'hub list status filter finds 1 paused row');
     const listMost = await attempt(pool, 'service_role',
       'SELECT * FROM public.adu_hub_list($1, NULL, NULL, $2, 9, 0)', [WS_ID, 'Most Followers']);
     check(
