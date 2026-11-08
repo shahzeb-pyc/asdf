@@ -9,6 +9,7 @@ import {
   loadThreadsAduDestination,
   threadsAduContext,
 } from '@/lib/server/threads-adu';
+import { releaseAduConfigUsage } from '@/lib/server/adu';
 
 export async function GET(
   request: NextRequest,
@@ -128,5 +129,9 @@ export async function DELETE(
     .eq('workspace_id', workspaceId)
     .eq('id', id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  // Cap-at-add release (plan-check B1): deleting the config frees
+  // its Threads unit when the registry row still carries the ADU
+  // feature. Best-effort — the delete already succeeded.
+  await releaseAduConfigUsage(resolved.context, 'threads', scoped.destination.id);
   return NextResponse.json({ deleted: true });
 }

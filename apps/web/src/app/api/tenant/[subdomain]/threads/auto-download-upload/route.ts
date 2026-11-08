@@ -13,7 +13,7 @@ import {
   threadsAduContext,
   threadsAduMissingTable,
 } from '@/lib/server/threads-adu';
-import { aduDestinationKeysForCap, type AduConfigView } from '@/lib/server/adu';
+import { aduDestinationKeysForCap, registerAduConfigUsage, type AduConfigView } from '@/lib/server/adu';
 import { assertFeatureAddWithinCap } from '@/lib/billing/entitlement';
 import {
   getBillingAdminClient,
@@ -257,7 +257,15 @@ export async function POST(
         scheduleType: parsed.data.scheduleType,
         postingTimes: schedule.postingTimes,
       });
-      if (result.ok && result.id) created.push(result.id);
+      if (result.ok && result.id) {
+        // Cap at add (plan-check B1): creation registers the
+        // destination's Threads unit; a registration failure rolls
+        // the config back and fails this item, never a success
+        // without a unit.
+        const reg = await registerAduConfigUsage(resolved.context, 'threads', item.destinationId, result.id);
+        if (reg.ok) created.push(result.id);
+        else failed.push({ destinationId: item.destinationId, error: reg.error instanceof Error ? reg.error.message : 'Failed to register the plan limit.' });
+      }
       else failed.push({ destinationId: item.destinationId, error: result.error ?? 'Failed to create.' });
     }
     return NextResponse.json({ created, failed }, { status: failed.length > 0 && created.length === 0 ? 400 : 201 });
@@ -299,6 +307,21 @@ export async function POST(
   const result = await createOne(resolved.context, parsed.data);
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 400 });
+  }
+  if (result.id) {
+    // Cap at add (plan-check B1): creation registers the
+    // destination's Threads unit; a registration failure rolls the
+    // config back and reports the gate error, never a success
+    // without a unit.
+    const reg = await registerAduConfigUsage(resolved.context, 'threads', parsed.data.destinationId, result.id);
+    if (!reg.ok) {
+      const gateResponse = subscriptionGateResponse(reg.error);
+      if (gateResponse) return gateResponse;
+      return NextResponse.json(
+        { error: 'The plan limit could not be registered. Please try again.' },
+        { status: 500 }
+      );
+    }
   }
   return NextResponse.json({ id: result.id }, { status: 201 });
 }
