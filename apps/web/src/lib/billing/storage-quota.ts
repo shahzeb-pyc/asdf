@@ -103,6 +103,10 @@ export interface StorageQuotaOptions {
   period?: SubscriptionPeriodRow | null;
 }
 
+function quotaUnitsFromPeriod(period: SubscriptionPeriodRow | null): number {
+  return period ? totalUnits(period.counts) : 0;
+}
+
 async function supabaseQuotaState(
   client: SupabaseClient,
   userId: string,
@@ -112,7 +116,7 @@ async function supabaseQuotaState(
     options.period !== undefined
       ? options.period
       : await getActivePeriod(client, userId, new Date());
-  const quotaBytes = period ? totalUnits(period.counts) * STORAGE_BYTES_PER_UNIT : 0;
+  const quotaBytes = quotaUnitsFromPeriod(period) * STORAGE_BYTES_PER_UNIT;
   // Paged, never unbounded: PostgREST silently truncates at 1,000
   // rows, which would under-report usage and fail the quota open.
   let usedBytes = 0;
@@ -177,9 +181,7 @@ async function sqlQuotaState(
 ): Promise<StorageQuotaState> {
   const units =
     options.period !== undefined
-      ? options.period
-        ? totalUnits(options.period.counts)
-        : 0
+      ? quotaUnitsFromPeriod(options.period)
       : await sqlPeriodUnits(client, userId);
   const usageRows = await client.query<{ total: unknown }>(
     `SELECT COALESCE(SUM(file_size), 0) AS total FROM media_items WHERE user_id = $1`,
