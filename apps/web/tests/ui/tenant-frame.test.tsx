@@ -85,15 +85,14 @@ async function resolveAsyncServerComponents(
   const { type, props } = element;
   if (
     typeof type === 'function' &&
-    (type as { constructor?: { name?: string } }).constructor?.name ===
-      'AsyncFunction'
+    Object.prototype.toString.call(type) === '[object AsyncFunction]'
   ) {
     const awaited = await (
       type as (props: Record<string, unknown>) => Promise<React.ReactNode>
     )(props as Record<string, unknown>);
     return resolveAsyncServerComponents(awaited);
   }
-  if (props?.children !== undefined) {
+  if (props.children !== undefined) {
     const resolvedChildren = await resolveAsyncServerComponents(
       props.children
     );
