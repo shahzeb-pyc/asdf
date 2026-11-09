@@ -944,12 +944,12 @@ describe('C2 — race: the register guards still hold on the RPC gate read', () 
  * closed. The RPC exists only where migration 20261109150000 has
  * been applied; where it has not (the preview database, or any
  * deploy landing before its migration), PostgREST answers
- * PGRST202 / 404 "Could not find the function
+ * PGRST202 "Could not find the function
  * public.get_entitlement". Only that signal takes the fallback.
  */
 async function fallbackParity(
   setup: (tables: Record<string, Row[]>) => void,
-  rpcError: { message: string; code?: string; status?: number }
+  rpcError: { message: string; code?: string }
 ): Promise<{ fallenBack: Entitlement; legacy: Entitlement; queryLog: QueryLogEntry[] }> {
   const first = makeClient(() => ({ data: null, error: rpcError }));
   setup(first.tables);
@@ -995,15 +995,6 @@ describe('Spec 152 — missing RPC falls back to the query read, other RPC error
       message:
         'Could not find the function public.get_entitlement(p_user_id, p_now) in the schema cache',
     });
-    expect(fallenBack).toEqual(legacy);
-    expect(fallenBack.plan).toBe('paid');
-  });
-
-  it('HTTP 404 on the RPC falls back', async () => {
-    const { fallenBack, legacy } = await fallbackParity((tables) => {
-      seedPeriod(tables);
-      seedUsage(tables, 'facebook', 'page-1');
-    }, { message: 'Not Found', status: 404 });
     expect(fallenBack).toEqual(legacy);
     expect(fallenBack.plan).toBe('paid');
   });

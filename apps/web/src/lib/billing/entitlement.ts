@@ -670,17 +670,23 @@ function parseEntitlementRpcResult(data: unknown, userId: string): EntitlementRp
  * True only when the `get_entitlement` RPC itself is missing from
  * the database. PostgREST answers a missing function with code
  * PGRST202 ("Could not find the function public.get_entitlement
- * … in the schema cache") and HTTP 404. The message check requires
- * both the PostgREST wording and the function name, so a
- * differently-worded failure — a real outage, a permissions error,
- * a timeout — never qualifies. Anything this returns false for
- * stays on the fail-closed path in `getEntitlementViaRpc`.
+ * … in the schema cache"). The message check requires both the
+ * PostgREST wording and the function name, so a differently-worded
+ * failure — a real outage, a permissions error, a timeout — never
+ * qualifies. Anything this returns false for stays on the
+ * fail-closed path in `getEntitlementViaRpc`.
+ *
+ * Note: the HTTP status is deliberately NOT checked here.
+ * `PostgrestError` (postgrest-js 2.118.0) carries only
+ * message/details/hint/code — no `status` field — so a
+ * `status === 404` branch could never fire from a real Supabase
+ * error. The PGRST202 code and the message check cover the real
+ * missing-function signal.
  */
 function isEntitlementRpcMissing(error: unknown): boolean {
   if (error === null || typeof error !== 'object') return false;
   const record = error as Record<string, unknown>;
   if (record['code'] === 'PGRST202') return true;
-  if (record['status'] === 404) return true;
   const text = [record['message'], record['details'], record['hint']]
     .filter((value): value is string => typeof value === 'string')
     .join(' ');
@@ -706,7 +712,7 @@ export async function getEntitlementViaRpc(
       // exists only where migration 20261109150000 has been
       // applied. Where it has not — the preview database, or any
       // deploy that lands before its migration — PostgREST answers
-      // PGRST202 / 404 "Could not find the function
+      // PGRST202 "Could not find the function
       // public.get_entitlement". That, and only that, falls back
       // to the per-table read, which returns the identical
       // entitlement. Every other failure still throws
