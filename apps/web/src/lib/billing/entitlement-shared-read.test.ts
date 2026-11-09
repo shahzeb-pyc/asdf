@@ -216,6 +216,12 @@ class FakeQuery {
         this.table.push(fresh);
         return { ...fresh };
       });
+      // PostgREST honours .single() on an insert+select too: the
+      // caller gets the one row, not an array. createPeriodFor-
+      // Purchase relies on it (periodFromRow on the returned row).
+      if (this.mode === 'single' || this.mode === 'maybeSingle') {
+        return { data: inserted[0] ?? null, error: null };
+      }
       return { data: inserted, error: null };
     }
     if (this.op === 'update') {
