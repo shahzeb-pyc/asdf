@@ -374,6 +374,13 @@ export async function handlePatchAduConfig(
     if (!username) return NextResponse.json({ error: 'Enter a source username.' }, { status: 400 });
     update.source_platform = platform;
     update.source_username = username;
+    // A cached YouTube channel ID belongs to the old source; clear it so
+    // the next discovery resolves the new handle (spec 154). Only for
+    // YouTube sources, so a lagging migration can never break a source
+    // switch on another platform.
+    if (platform === 'youtube' || (current.source_platform as string) === 'youtube') {
+      update.youtube_channel_id = null;
+    }
     // Changing the source re-syncs the queue: pending/downloaded reels
     // from the old source are removed, and discovery runs again.
     update.sync_status = 'pending';
