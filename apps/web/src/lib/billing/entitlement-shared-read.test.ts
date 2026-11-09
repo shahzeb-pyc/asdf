@@ -34,7 +34,7 @@ type CacheNode = {
 vi.mock('react', () => {
   const root: CacheNode = {};
   function cache<T extends (...args: never[]) => unknown>(fn: T): T {
-    const wrapped = (...args: never[]): unknown => {
+    const wrapped = (...args: unknown[]): unknown => {
       let node = root;
       for (const arg of args) {
         const isObject =
@@ -60,7 +60,7 @@ vi.mock('react', () => {
       if (node.status === 'ok') return node.value;
       if (node.status === 'err') throw node.value;
       try {
-        const value = fn(...args);
+        const value = fn(...(args as never[]));
         node.status = 'ok';
         node.value = value;
         return value;
