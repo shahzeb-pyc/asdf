@@ -1040,9 +1040,15 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
 
   describe('DedicatedPageHeader Checkpoint Verification Banner', () => {
     it.each([
-      ['invalid_token', 'Token Expired'],
+      ['invalid_token', 'Invalid token'],
       ['page_checkpoint', 'Identity Checkpoint'],
-      ['fb_rate_limited', 'Rate Limited'],
+      ['fb_rate_limited', 'Rate limited'],
+      ['page_not_accessible', 'Page not accessible'],
+      ['missing_page_access', 'Missing page access'],
+      ['missing_permission', 'Missing permission'],
+      ['check_developer_app', 'Check developer app'],
+      ['account_suspended', 'Account suspended'],
+      ['2fa_required_on_BM', 'BM 2FA required'],
     ] as const)(
       'shows the specific %s label in the status line, not the generic Needs Attention',
       (status, label) => {
@@ -1082,10 +1088,38 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
 
       expect(hasAttribute('data-testid', 'checkpoint-reactivation-banner')).toBe(true);
       expect(hasAttribute('data-testid', 'reactivate-page-btn')).toBe(true);
-      expect(hasText('Facebook Checkpoint Verification Required')).toBe(true);
+      expect(hasText('Facebook Verification Required')).toBe(true);
       expect(hasText('Mark Verified')).toBe(true);
       expect(hasText('Reactivate Page')).toBe(true);
     });
+
+    it.each([
+      ['page_not_accessible', 'Facebook Page Not Accessible'],
+      ['missing_page_access', 'Missing Page Access'],
+      ['missing_permission', 'Missing Permission'],
+      ['check_developer_app', 'Developer App Access Blocked'],
+      ['account_suspended', 'Facebook Account Suspended'],
+      ['2fa_required_on_BM', 'Business 2FA Required'],
+    ] as const)(
+      'renders the shared ADU banner for %s with no action',
+      (status, title) => {
+        const { hasAttribute, hasText } = render(
+          <DedicatedPageHeader
+            page={{ ...samplePage, status }}
+            subdomain="cyberdyne"
+            onStatusToggle={vi.fn()}
+            onDisconnectRequest={vi.fn()}
+          />
+        );
+
+        expect(hasAttribute('data-testid', `page-status-banner-${status}`)).toBe(true);
+        expect(hasText(title)).toBe(true);
+        // No recovery action on these statuses — the fix lives
+        // outside the app (admin role, permission, developer app).
+        expect(hasAttribute('data-testid', 'reconnect-account-btn')).toBe(false);
+        expect(hasAttribute('data-testid', 'reactivate-page-btn')).toBe(false);
+      }
+    );
   });
 
   describe('DedicatedPageHeader Attention Banners', () => {
@@ -1100,9 +1134,9 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
       );
 
       expect(hasAttribute('data-testid', 'rate-limited-banner')).toBe(true);
-      expect(hasText('Rate Limited')).toBe(true);
+      expect(hasText('Facebook Rate Limited')).toBe(true);
       expect(
-        hasText('Facebook temporarily restricted posting (auto-resumes after 3 days).')
+        hasText('Meta is limiting how often this page can post. Automation pauses for about 3 days and will resume automatically when the cooldown ends.')
       ).toBe(true);
       // It auto-resumes: no action button, and no other attention banner.
       expect(hasAttribute('data-testid', 'reconnect-account-btn')).toBe(false);
@@ -1122,8 +1156,8 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
       );
 
       expect(hasAttribute('data-testid', 'token-expired-banner')).toBe(true);
-      expect(hasText('Token Expired')).toBe(true);
-      expect(hasText('Reconnect the parent Facebook account to resume publishing.')).toBe(true);
+      expect(hasText('Access Token Expired')).toBe(true);
+      expect(hasText('Reconnect your Facebook account in Facebook Accounts. Your page access token has expired or been revoked.')).toBe(true);
       expect(hasAttribute('data-testid', 'reconnect-account-btn')).toBe(true);
       expect(hasText('Open Facebook Accounts')).toBe(true);
       expect(hasAttribute('data-testid', 'rate-limited-banner')).toBe(false);

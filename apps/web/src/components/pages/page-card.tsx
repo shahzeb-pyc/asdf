@@ -125,7 +125,7 @@ export function getPageStatusLabel(status: FacebookPageStatus): string {
     case 'page_checkpoint':
       return 'Identity Checkpoint';
     case 'fb_rate_limited':
-      return 'Rate Limited';
+      return 'Rate limited';
     case 'page_not_accessible':
       return 'Page not accessible';
     case 'missing_page_access':

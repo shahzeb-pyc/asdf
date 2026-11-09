@@ -458,9 +458,17 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
         status: FacebookPageItem['status'];
         expectedLabel: string;
       }> = [
-        { status: 'invalid_token', expectedLabel: 'Token Expired' },
+        // Spec 155: 'Token Expired' became ADU's 'Invalid token';
+        // the six new error statuses use the ADU wording too.
+        { status: 'invalid_token', expectedLabel: 'Invalid token' },
         { status: 'page_checkpoint', expectedLabel: 'Identity Checkpoint' },
-        { status: 'fb_rate_limited', expectedLabel: 'Rate Limited' },
+        { status: 'fb_rate_limited', expectedLabel: 'Rate limited' },
+        { status: 'page_not_accessible', expectedLabel: 'Page not accessible' },
+        { status: 'missing_page_access', expectedLabel: 'Missing page access' },
+        { status: 'missing_permission', expectedLabel: 'Missing permission' },
+        { status: 'check_developer_app', expectedLabel: 'Check developer app' },
+        { status: 'account_suspended', expectedLabel: 'Account suspended' },
+        { status: '2fa_required_on_BM', expectedLabel: 'BM 2FA required' },
       ];
 
       for (const item of attentionStatuses) {
@@ -495,6 +503,14 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
         { status: 'invalid_token', expectedKind: 'critical', expectedIcon: 'cross', expectedRingClass: 'border-signal-critical' },
         { status: 'page_checkpoint', expectedKind: 'critical', expectedIcon: 'cross', expectedRingClass: 'border-signal-critical' },
         { status: 'fb_rate_limited', expectedKind: 'critical', expectedIcon: 'cross', expectedRingClass: 'border-signal-critical' },
+        // Spec 155: the six new error statuses all render the
+        // critical mark (cross in a red circle), never a dot.
+        { status: 'page_not_accessible', expectedKind: 'critical', expectedIcon: 'cross', expectedRingClass: 'border-signal-critical' },
+        { status: 'missing_page_access', expectedKind: 'critical', expectedIcon: 'cross', expectedRingClass: 'border-signal-critical' },
+        { status: 'missing_permission', expectedKind: 'critical', expectedIcon: 'cross', expectedRingClass: 'border-signal-critical' },
+        { status: 'check_developer_app', expectedKind: 'critical', expectedIcon: 'cross', expectedRingClass: 'border-signal-critical' },
+        { status: 'account_suspended', expectedKind: 'critical', expectedIcon: 'cross', expectedRingClass: 'border-signal-critical' },
+        { status: '2fa_required_on_BM', expectedKind: 'critical', expectedIcon: 'cross', expectedRingClass: 'border-signal-critical' },
         { status: 'disconnected', expectedKind: 'critical', expectedIcon: 'cross', expectedRingClass: 'border-signal-critical' },
       ];
 
@@ -907,6 +923,21 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
       status: 'fb_rate_limited',
       createdAt: '2026-10-05T10:00:00.000Z',
     };
+    // Spec 155: one fixture per new error status.
+    const pageNotAccessible: FacebookPageItem = {
+      ...baseActivePage,
+      id: 'p-not-accessible',
+      pageName: 'Zeta Gone Page',
+      status: 'page_not_accessible',
+      createdAt: '2026-10-06T10:00:00.000Z',
+    };
+    const pageMissingPermission: FacebookPageItem = {
+      ...baseActivePage,
+      id: 'p-missing-permission',
+      pageName: 'Eta Permission Page',
+      status: 'missing_permission',
+      createdAt: '2026-10-07T10:00:00.000Z',
+    };
 
     it('renders PagesEmptyState when 0 pages exist, with non-reels-only copy and the toolbar still visible', () => {
       const { hasAttribute, hasText, html } = renderPagesShell({ pages: [], accounts: [sampleActiveAccount] });
@@ -992,6 +1023,61 @@ describe('Facebook Pages UI Suite (Spec 032)', () => {
       expect(
         filterPagesList(fivePages, '', 'all', 'Marcus Wright').map((p) => p.id)
       ).toEqual(['p-rate-limited']);
+    });
+
+    it('narrows filterPagesList by exact wire status (spec 155 statusDetail), ANDed with the tab filter', () => {
+      const pages = [
+        pageActive1,
+        pagePaused,
+        pageInvalidToken,
+        pageCheckpoint,
+        pageRateLimited,
+        pageNotAccessible,
+        pageMissingPermission,
+      ];
+      // Exact status, tab 'all'.
+      expect(
+        filterPagesList(pages, '', 'all', 'all', 'missing_permission').map((p) => p.id)
+      ).toEqual(['p-missing-permission']);
+      expect(
+        filterPagesList(pages, '', 'all', 'all', 'page_not_accessible').map((p) => p.id)
+      ).toEqual(['p-not-accessible']);
+      expect(
+        filterPagesList(pages, '', 'all', 'all', 'fb_rate_limited').map((p) => p.id)
+      ).toEqual(['p-rate-limited']);
+      expect(
+        filterPagesList(pages, '', 'all', 'all', 'active').map((p) => p.id)
+      ).toEqual(['p-active-1']);
+      // ANDed with the tab: needs_attention + an active detail = nothing.
+      expect(
+        filterPagesList(pages, '', 'needs_attention', 'all', 'active').map((p) => p.id)
+      ).toEqual([]);
+      expect(
+        filterPagesList(pages, '', 'needs_attention', 'all', 'invalid_token').map((p) => p.id)
+      ).toEqual(['p-invalid-token']);
+      // Null/empty detail = no narrowing.
+      expect(
+        filterPagesList(pages, '', 'all', 'all', null).map((p) => p.id)
+      ).toEqual(pages.map((p) => p.id));
+      expect(
+        filterPagesList(pages, '', 'all', 'all', '').map((p) => p.id)
+      ).toEqual(pages.map((p) => p.id));
+      // The new statuses are needs-attention.
+      expect(
+        filterPagesList(pages, '', 'needs_attention', 'all').map((p) => p.id)
+      ).toEqual([
+        'p-invalid-token',
+        'p-checkpoint',
+        'p-rate-limited',
+        'p-not-accessible',
+        'p-missing-permission',
+      ]);
+      expect(isPageNeedsAttention('page_not_accessible')).toBe(true);
+      expect(isPageNeedsAttention('missing_permission')).toBe(true);
+      expect(isPageNeedsAttention('check_developer_app')).toBe(true);
+      expect(isPageNeedsAttention('account_suspended')).toBe(true);
+      expect(isPageNeedsAttention('missing_page_access')).toBe(true);
+      expect(isPageNeedsAttention('2fa_required_on_BM')).toBe(true);
     });
 
     it('renders live situational subtitle based on page operational health and active filter states (Spec 050)', () => {
