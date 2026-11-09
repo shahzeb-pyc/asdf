@@ -146,17 +146,14 @@ const CASES: StatusCase[] = [
     toggleDisabled: false,
   },
   {
-    // NOTE — toggle renders ENABLED here even though the PATCH guard
-    // rejects activation from invalid_username (400, "Update the source
-    // to continue posting."): the component's automationLocked covers
-    // only fb_rate_limited / invalid_token / completed, exactly spec
-    // §3.3's toggle-disabled list. The guard is the backstop — flipping
-    // the switch surfaces the server message — so the rendered state
-    // pinned here is enabled, not disabled.
+    // Owner decision 2026-11-09: the toggle renders DISABLED here for
+    // symmetry with completed — the PATCH guard already rejects
+    // activation from invalid_username (400, "Update the source to
+    // continue posting."), and the display now agrees with the server.
     status: 'invalid_username',
     bannerTitle: 'Source Account Disabled',
     bannerText: /Verify the source account is active/,
-    toggleDisabled: false,
+    toggleDisabled: true,
   },
 ];
 

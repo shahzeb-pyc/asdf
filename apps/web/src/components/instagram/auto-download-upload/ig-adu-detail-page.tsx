@@ -182,7 +182,8 @@ export function IgAduDetailPage({ subdomain, configId }: { subdomain: string; co
   const automationLocked =
     config.status === 'fb_rate_limited' ||
     config.status === 'invalid_token' ||
-    config.status === 'completed';
+    config.status === 'completed' ||
+    config.status === 'invalid_username';
   const selected = selectedReel ?? reels[0] ?? null;
   // The alert comes from the server view (contracts): the
   // creator-suspended copy there is the decided all-time-50 wording,

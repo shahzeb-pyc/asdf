@@ -463,7 +463,8 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
   const automationLocked =
     config.status === 'fb_rate_limited' ||
     config.status === 'invalid_token' ||
-    config.status === 'completed';
+    config.status === 'completed' ||
+    config.status === 'invalid_username';
   const selected = selectedReel ?? reels[0] ?? null;
   const statusKind = getAduDetailStatusMarkKind(config.displayStatus);
   const ringClass = ADU_DETAIL_RING_CLASSES[statusKind];
