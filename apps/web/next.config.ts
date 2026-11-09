@@ -48,12 +48,14 @@ const nextConfig: NextConfig = {
   // the freshness trade-off Shahzeb accepted for spec 152 (the old
   // 30s window re-ran the whole layout seed, now O1's single RPC
   // plus the workspace lookup, on every stale switch). Static
-  // segments reuse for 180s (Next's own default is 30s; static
-  // content here changes only on deploy).
+  // segments reuse for 300s too (Next's own default is 30s; static
+  // content here changes only on deploy) — kept at or above the
+  // dynamic window so a static segment is never evicted before a
+  // dynamic one (router-cache.test.ts pins the invariant).
   experimental: {
     staleTimes: {
       dynamic: 300,
-      static: 180,
+      static: 300,
     },
   },
   // Analyzer builds only: webpack builds run Next's route-export type

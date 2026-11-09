@@ -152,7 +152,6 @@ describe('middleware CSP headers', () => {
       'acme.localhost:3000',
       307,
     ],
-    ['/api request', 'http://localhost:3000/api/health', 'localhost:3000', 200],
   ])(
     'sets Report-Only CSP with a nonce on a %s',
     async (_label, url, host, expectedStatus) => {
@@ -165,6 +164,25 @@ describe('middleware CSP headers', () => {
     }
   );
 
+  // Spec 152 O5 — /api/* responses are JSON, never HTML: no inline
+  // script can execute from them, so the CSP response header and the
+  // forwarded CSP request header are skipped on the API hot path.
+  // The origin check and no-store behaviour are unchanged.
+  it('sets no CSP headers on an /api request but keeps no-store', async () => {
+    const res = await middleware(
+      new NextRequest('http://localhost:3000/api/health', {
+        headers: { host: 'localhost:3000' },
+      })
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get(CSP_HEADER_NAME)).toBeNull();
+    expect(res.headers.get('Content-Security-Policy')).toBeNull();
+    expect(
+      res.headers.get(`x-middleware-request-${CSP_HEADER_NAME.toLowerCase()}`)
+    ).toBeNull();
+    expect(res.headers.get('Cache-Control')).toContain('no-store');
+  });
+
   // Regression (verification gate on PR #639): Next 16's renderer derives
   // the script nonce from the CSP header forwarded on the REQUEST
   // (content-security-policy[-report-only]) — it has no reader of x-nonce.
@@ -174,10 +192,7 @@ describe('middleware CSP headers', () => {
     const forwardedRequestHeader = (res: Awaited<ReturnType<typeof middleware>>) =>
       res.headers.get(`x-middleware-request-${CSP_HEADER_NAME.toLowerCase()}`);
 
-    it.each([
-      ['apex request', 'http://localhost:3000/', 'localhost:3000'],
-      ['/api request', 'http://localhost:3000/api/health', 'localhost:3000'],
-    ])(
+    it.each([['apex request', 'http://localhost:3000/', 'localhost:3000']])(
       'forwards the same CSP (same nonce) on the request for a %s',
       async (_label, url, host) => {
         const res = await middleware(new NextRequest(url, { headers: { host } }));
@@ -186,6 +201,17 @@ describe('middleware CSP headers', () => {
         expect(forwardedRequestHeader(res)).toBe(responseCsp);
       }
     );
+
+    // Spec 152 O5 — the API hot path skips the CSP request header too.
+    it('forwards no CSP request header for an /api request', async () => {
+      const res = await middleware(
+        new NextRequest('http://localhost:3000/api/health', {
+          headers: { host: 'localhost:3000' },
+        })
+      );
+      expect(res.headers.get(CSP_HEADER_NAME)).toBeNull();
+      expect(forwardedRequestHeader(res)).toBeNull();
+    });
 
     it('forwards the CSP request header on the tenant rewrite path', async () => {
       const testSecret = 'csp-regression-session-secret-minimum-32-chars';

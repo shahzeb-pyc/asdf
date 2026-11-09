@@ -67,8 +67,8 @@ const EXPIRED_HOME = { kind: 'expired' };
 import TenantLayout, { generateMetadata } from '../../src/app/tenant/[subdomain]/layout';
 import TenantIndexPage, { metadata as homeMetadata } from '../../src/app/tenant/[subdomain]/page';
 import TenantLoading from '../../src/app/tenant/[subdomain]/loading';
+import { TenantShellContent } from '../../src/app/tenant/[subdomain]/tenant-shell-content';
 import { HomeHeader } from '@/components/home/home-sections';
-import { UserShell } from '@/components/shell/user-shell';
 import { Toaster } from '@/components/shared/ui/toast';
 import { Card } from '@/components/shared/ui/card';
 import { Skeleton } from '@/components/shared/ui/skeleton';
@@ -136,14 +136,24 @@ describe('Tenant Workspace Shell', () => {
     const elements = collectElements(layoutJsx);
 
     // The shell receives the REAL session identity — no invented address.
-    // (The sidebar itself is rendered by UserShell, so the frame
-    // assertion checks the UserShell element's props.)
-    const shell = elements.find((el) => el.type === UserShell);
+    // (Spec 152 O2 streams the layout: UserShell now renders inside
+    // TenantShellContent behind a Suspense boundary, so the frame
+    // assertion checks the TenantShellContent element's props — it
+    // carries the same real session and user through to UserShell.)
+    const shell = elements.find((el) => el.type === TenantShellContent);
     expect(shell).toBeDefined();
     const user = shell?.props.user as { name: string; email: string };
     expect(user.email).toBe('owner@example.com');
     expect(user.email).not.toContain('@fbuploadpro.com');
-    expect(shell?.props.workspaceName).toBe('Acme Corp');
+    const session = shell?.props.session as { userId: string; email: string };
+    expect(session.userId).toBe('user-1');
+    expect(session.email).toBe('owner@example.com');
+    // The display name is resolved inside TenantShellContent from
+    // this same subdomain (mocked getWorkspaceDisplayName returns
+    // 'Acme Corp' — proven by the metadata test below), so the
+    // layout's job is passing the real subdomain through, not a
+    // fabricated name.
+    expect(shell?.props.subdomain).toBe('acme');
 
     // The layout tree now ends at <UserShell>: the skip link,
     // content region, topbar, banner slot, and Toaster live inside

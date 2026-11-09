@@ -48,7 +48,13 @@ async function renderFrame(children: React.ReactNode) {
     params: Promise.resolve({ subdomain: 'acme' }),
     children,
   });
-  return render(jsx);
+  const result = render(jsx);
+  // Spec 152 O2 — the layout streams: first paint is the plan-blind
+  // skeleton, and the shell chrome arrives when TenantShellContent
+  // resolves. Wait for the topbar so every assertion below runs
+  // against the resolved frame, not the skeleton.
+  await screen.findByTestId('workspace-topbar');
+  return result;
 }
 
 describe('Tenant frame (spec 130 PR-130-1)', () => {
