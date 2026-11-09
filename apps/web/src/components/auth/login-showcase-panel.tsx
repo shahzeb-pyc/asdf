@@ -1,5 +1,3 @@
-'use client';
-
 /**
  * AuthShowcasePanel — the login showcase panel, rebuilt for spec 136
  * (PR-136A) on design tokens + token-backed utilities only, and

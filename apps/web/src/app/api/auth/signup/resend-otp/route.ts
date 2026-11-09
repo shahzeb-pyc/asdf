@@ -5,7 +5,7 @@ import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import { resendSignupOtpViaSupabase } from '@/lib/auth/signup';
 import { findUserByEmail } from '@/lib/auth/users';
 import { getPendingSignup } from '@/lib/otp-service';
-import { formatAuthErrorResponse } from '@/lib/auth-errors';
+import { formatAuthErrorResponse } from '@/lib/auth-errors-server';
 import { checkRateLimit, extractClientIp, RATE_LIMIT_WINDOW_MS } from '@/lib/rate-limiter';
 import { bodyTooLargeResponse, readJsonBody } from '@/lib/request-body';
 

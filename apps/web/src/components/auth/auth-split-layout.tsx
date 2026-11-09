@@ -1,5 +1,3 @@
-'use client';
-
 /**
  * AuthSplitLayout — the split chrome shared by every entry route
  * (login, signup, forgot/reset password). Rebuilt for spec 136

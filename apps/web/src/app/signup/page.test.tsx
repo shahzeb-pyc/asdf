@@ -261,8 +261,13 @@ describe("signup details form (form standard)", () => {
     await submitDetails(user);
 
     expect(await screen.findByRole("heading", { name: "Verify Your Email" })).toBeTruthy();
+    // Spec 159 O3: the OTP step loads on demand via next/dynamic, so
+    // its form — including the email it names — appears asynchronously
+    // after the step transition.
+    const otp = (await screen.findByLabelText(
+      "6-Digit Verification Code"
+    )) as HTMLInputElement;
     expect(screen.getByText(VALID.email)).toBeTruthy();
-    const otp = screen.getByLabelText("6-Digit Verification Code") as HTMLInputElement;
     expect(otp.getAttribute("autocomplete")).toBe("one-time-code");
     const resend = screen.getByRole("button", { name: "Resend code in 60s" });
     expect(resend.hasAttribute("disabled")).toBe(true);
