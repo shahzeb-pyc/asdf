@@ -1,4 +1,6 @@
+import { z } from 'zod';
 import type { FacebookPageStatus } from './facebook.js';
+import { FB_RATE_LIMITED_COOLDOWN_MS } from './facebook-health.js';
 
 /**
  * Facebook page statuses on the Pages + mirrors surfaces (spec 155).
@@ -259,6 +261,7 @@ export const MIRROR_FB_STATUSES = [
   '2fa_required_on_BM',
 ] as const;
 export type MirrorFbStatus = (typeof MIRROR_FB_STATUSES)[number];
+export const MirrorFbStatusSchema = z.enum(MIRROR_FB_STATUSES);
 
 export const MIRROR_FB_STATUS_LABELS: Record<MirrorFbStatus, string> = {
   checkpoint: 'Verification required',
@@ -316,5 +319,69 @@ export function pageStatusFromMirrorFbStatus(
       return fbStatus;
     default:
       return null;
+  }
+}
+
+/**
+ * What a mirror displays as, from its stored state plus its target
+ * destination's Facebook detail (spec 155). Facebook-target mirrors
+ * only — Instagram-target mirrors keep today's rendering exactly and
+ * never reach this function.
+ *
+ *   active / paused            -> themselves
+ *   error + own fb_status      -> that status
+ *   error + no fb_status, but the Facebook target destination
+ *     carries an FB error detail -> the target's status
+ *   error + neither            -> generic `error` (today's behaviour)
+ *
+ * A rate-limited mirror whose 3-day anchor is stale reads as
+ * `active` — the Pages read-time rule (`evaluatePageHealth` flips
+ * a stale rate-limited page to active) applied to mirrors, so the
+ * card never shows a cooldown that has already ended while the
+ * tick has not run yet. The tick itself clears the stored value on
+ * the next check; this is display-only.
+ */
+export type MirrorDisplayStatus = 'active' | 'paused' | 'error' | MirrorFbStatus;
+
+export function resolveMirrorDisplayStatus(input: {
+  status: string;
+  fbStatus?: MirrorFbStatus | string | null;
+  fbRateLimitedAt?: string | null;
+  targetFbStatus?: MirrorFbStatus | string | null;
+  now?: Date;
+}): MirrorDisplayStatus {
+  if (input.status === 'active') return 'active';
+  if (input.status === 'paused') return 'paused';
+  if (input.status !== 'error') return 'error';
+  const own = pageStatusFromMirrorFbStatus(
+    typeof input.fbStatus === 'string' ? input.fbStatus : null
+  );
+  if (own === 'fb_rate_limited') {
+    const anchor = input.fbRateLimitedAt ? Date.parse(input.fbRateLimitedAt) : Number.NaN;
+    const nowMs = input.now ? input.now.getTime() : Date.now();
+    if (!Number.isNaN(anchor) && nowMs - anchor >= FB_RATE_LIMITED_COOLDOWN_MS) {
+      return 'active';
+    }
+    return 'fb_rate_limited';
+  }
+  if (own !== null) return mirrorFbStatusFromPageStatus(own) ?? 'error';
+  const target = pageStatusFromMirrorFbStatus(
+    typeof input.targetFbStatus === 'string' ? input.targetFbStatus : null
+  );
+  if (target !== null) return mirrorFbStatusFromPageStatus(target) ?? 'error';
+  return 'error';
+}
+
+/** Display label for a resolved mirror status (`error` -> "Error"). */
+export function getMirrorDisplayStatusLabel(status: MirrorDisplayStatus): string {
+  switch (status) {
+    case 'active':
+      return 'Active';
+    case 'paused':
+      return 'Paused';
+    case 'error':
+      return 'Error';
+    default:
+      return MIRROR_FB_STATUS_LABELS[status];
   }
 }
