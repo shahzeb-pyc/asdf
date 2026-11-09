@@ -2,6 +2,7 @@ import { cache } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   DomainError,
+  EntitlementRpcResultSchema,
   isPeriodActive,
   quoteDowngrade,
   quoteUpgrade,
@@ -634,35 +635,24 @@ function unreadableEntitlementRpcResult(detail: string): SubscriptionGateError {
 }
 
 function parseEntitlementRpcResult(data: unknown, userId: string): EntitlementRpcRead {
-  const row = asRow(data);
-  if (!row) throw unreadableEntitlementRpcResult('result is not an object');
-  const usageRow = asRow(row['usage']);
-  const hasPriorPeriod = row['has_prior_period'];
-  if (!usageRow) throw unreadableEntitlementRpcResult('result has no usage object');
-  if (typeof hasPriorPeriod !== 'boolean') {
-    throw unreadableEntitlementRpcResult('result has no has_prior_period flag');
+  // Spec 152 O1, contracts first: the RPC answer is validated
+  // against EntitlementRpcResultSchema (packages/contracts) — one
+  // schema, not hand-checked fields. A malformed answer fails
+  // closed with ENTITLEMENT_UNAVAILABLE, never a silent pass and
+  // never an invented Free answer. The period row still goes
+  // through periodFromRow afterwards: the schema checks the wire
+  // shape, periodFromRow checks the date values are parseable.
+  const parsed = EntitlementRpcResultSchema.safeParse(data);
+  if (!parsed.success) {
+    throw unreadableEntitlementRpcResult(
+      `result failed schema validation: ${parsed.error.issues.map((issue) => issue.path.join('.')).join(', ')}`
+    );
   }
-  // Every usage count must be a real number: a missing or
-  // mistyped count is a malformed answer, never a zero.
-  const usage: PlatformCounts = {
-    facebook: 0,
-    instagram: 0,
-    threads: 0,
-    x: 0,
-    tiktok: 0,
-    youtube: 0,
-  };
-  for (const platform of SUBSCRIPTION_PLATFORMS) {
-    const value = usageRow[platform];
-    if (typeof value !== 'number' || !Number.isFinite(value)) {
-      throw unreadableEntitlementRpcResult(`usage count for ${platform} is not a number`);
-    }
-    usage[platform] = value;
-  }
-  const periodRaw = row['period'];
+  const { usage, has_prior_period: hasPriorPeriod } = parsed.data;
+  const periodRaw = parsed.data.period;
   let period: SubscriptionPeriodRow | null = null;
-  if (periodRaw !== null && periodRaw !== undefined) {
-    period = periodFromRow(asRow(periodRaw) ?? {});
+  if (periodRaw !== null) {
+    period = periodFromRow(periodRaw as unknown as UnknownRow);
     if (!period) throw unreadableEntitlementRpcResult('period row is unreadable');
     // The RPC filters by the requested user; a row for anyone
     // else is a wrong-user answer and must never be served.
