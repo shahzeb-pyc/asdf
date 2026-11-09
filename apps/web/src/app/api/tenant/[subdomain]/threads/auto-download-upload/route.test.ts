@@ -207,6 +207,76 @@ class FakeQuery {
   }
 }
 
+/**
+ * Plan-check C2 fix-up — the `get_entitlement` RPC answer,
+ * computed straight from the fixture tables the way the SQL
+ * function does (active period window, per-platform counts with
+ * the disconnected exclusion and the legacy publish-now
+ * exclusion, ever-paid flag). A real implementation against the
+ * tables, not a canned success — a broken RPC still fails the
+ * parity tests.
+ */
+const RPC_PLATFORMS = ['facebook', 'instagram', 'threads', 'x', 'tiktok', 'youtube'] as const;
+const RPC_LEGACY_FEATURES = ['publish-now', 'instagram-publish-now', 'threads-publish-now'];
+
+function computeEntitlementRpc(
+  tables: Record<string, Row[]>,
+  userId: string,
+  nowIso: string
+): Row {
+  const periods = (tables['subscription_periods'] ?? []).filter(
+    (row) => row['user_id'] === userId
+  );
+  const sortedActive = periods
+    .filter(
+      (row) =>
+        row['superseded_at'] === null &&
+        typeof row['starts_at'] === 'string' &&
+        (row['starts_at'] as string) <= nowIso &&
+        typeof row['ends_at'] === 'string' &&
+        (row['ends_at'] as string) > nowIso
+    )
+    .sort((a, b) => String(b['ends_at']).localeCompare(String(a['ends_at'])));
+  const active: Row | null = sortedActive.length > 0 ? sortedActive[0] : null;
+  const workspaceIds = new Set(
+    (tables['workspaces'] ?? [])
+      .filter((row) => row['owner_id'] === userId)
+      .map((row) => row['id'] as string)
+  );
+  const disconnectedByPlatform = new Map<string, Set<string>>();
+  for (const dest of tables['destinations'] ?? []) {
+    if (
+      dest['status'] === 'disconnected' &&
+      workspaceIds.has(dest['workspace_id'] as string) &&
+      (RPC_PLATFORMS as readonly string[]).includes(dest['platform'] as string)
+    ) {
+      const set = disconnectedByPlatform.get(dest['platform'] as string) ?? new Set<string>();
+      set.add(dest['id'] as string);
+      disconnectedByPlatform.set(dest['platform'] as string, set);
+    }
+  }
+  const usage: Row = {};
+  for (const platform of RPC_PLATFORMS) {
+    usage[platform] = (tables['subscription_usage'] ?? []).filter(
+      (row) =>
+        row['user_id'] === userId &&
+        row['platform'] === platform &&
+        !RPC_LEGACY_FEATURES.includes(row['feature'] as string) &&
+        !(
+          typeof row['destination_id'] === 'string' &&
+          (disconnectedByPlatform.get(platform) ?? new Set<string>()).has(
+            row['destination_id'] as string
+          )
+        )
+    ).length;
+  }
+  return {
+    period: active ? { ...active } : null,
+    usage,
+    has_prior_period: periods.length > 0,
+  };
+}
+
 function makeClient() {
   const tables: Record<string, Row[]> = {
     subscription_periods: [],
@@ -230,6 +300,15 @@ function makeClient() {
         update: (payload: Row) => new FakeQuery(rows, 'update', payload, idSeq, table),
         delete: () => new FakeQuery(rows, 'delete', null, idSeq, table),
       };
+    },
+    rpc(fn: string, args: { p_user_id: string; p_now: string }) {
+      if (fn !== 'get_entitlement') {
+        return Promise.resolve({ data: null, error: { message: `unknown function ${fn}` } });
+      }
+      return Promise.resolve({
+        data: computeEntitlementRpc(tables, args.p_user_id, args.p_now),
+        error: null,
+      });
     },
   };
   return { client: client as unknown as SupabaseClient, tables };

@@ -110,8 +110,78 @@ type Row = Record<string, unknown>;
 
 interface QueryLogEntry {
   table: string;
-  op: 'select' | 'insert' | 'update' | 'delete';
+  op: 'select' | 'insert' | 'update' | 'delete' | 'rpc';
   head: boolean;
+}
+
+/**
+ * Plan-check C2 fix-up — the `get_entitlement` RPC answer,
+ * computed straight from the fixture tables the way the SQL
+ * function does (active period window, per-platform counts with
+ * the disconnected exclusion and the legacy publish-now
+ * exclusion, ever-paid flag). A real implementation against the
+ * tables, not a canned success — a broken RPC still fails the
+ * parity tests.
+ */
+const RPC_PLATFORMS = ['facebook', 'instagram', 'threads', 'x', 'tiktok', 'youtube'] as const;
+const RPC_LEGACY_FEATURES = ['publish-now', 'instagram-publish-now', 'threads-publish-now'];
+
+function computeEntitlementRpc(
+  tables: Record<string, Row[]>,
+  userId: string,
+  nowIso: string
+): Row {
+  const periods = (tables['subscription_periods'] ?? []).filter(
+    (row) => row['user_id'] === userId
+  );
+  const sortedActive = periods
+    .filter(
+      (row) =>
+        row['superseded_at'] === null &&
+        typeof row['starts_at'] === 'string' &&
+        (row['starts_at'] as string) <= nowIso &&
+        typeof row['ends_at'] === 'string' &&
+        (row['ends_at'] as string) > nowIso
+    )
+    .sort((a, b) => String(b['ends_at']).localeCompare(String(a['ends_at'])));
+  const active: Row | null = sortedActive.length > 0 ? sortedActive[0] : null;
+  const workspaceIds = new Set(
+    (tables['workspaces'] ?? [])
+      .filter((row) => row['owner_id'] === userId)
+      .map((row) => row['id'] as string)
+  );
+  const disconnectedByPlatform = new Map<string, Set<string>>();
+  for (const dest of tables['destinations'] ?? []) {
+    if (
+      dest['status'] === 'disconnected' &&
+      workspaceIds.has(dest['workspace_id'] as string) &&
+      (RPC_PLATFORMS as readonly string[]).includes(dest['platform'] as string)
+    ) {
+      const set = disconnectedByPlatform.get(dest['platform'] as string) ?? new Set<string>();
+      set.add(dest['id'] as string);
+      disconnectedByPlatform.set(dest['platform'] as string, set);
+    }
+  }
+  const usage: Row = {};
+  for (const platform of RPC_PLATFORMS) {
+    usage[platform] = (tables['subscription_usage'] ?? []).filter(
+      (row) =>
+        row['user_id'] === userId &&
+        row['platform'] === platform &&
+        !RPC_LEGACY_FEATURES.includes(row['feature'] as string) &&
+        !(
+          typeof row['destination_id'] === 'string' &&
+          (disconnectedByPlatform.get(platform) ?? new Set<string>()).has(
+            row['destination_id'] as string
+          )
+        )
+    ).length;
+  }
+  return {
+    period: active ? { ...active } : null,
+    usage,
+    has_prior_period: periods.length > 0,
+  };
 }
 
 class FakeQuery {
@@ -299,6 +369,16 @@ function makeClient() {
         delete: () => new FakeQuery(rows, 'delete', null, idSeq, table, queryLog, failures, isUsage),
       };
     },
+    rpc(fn: string, args: { p_user_id: string; p_now: string }) {
+      queryLog.push({ table: fn, op: 'rpc', head: false });
+      if (fn !== 'get_entitlement') {
+        return Promise.resolve({ data: null, error: { message: `unknown function ${fn}` } });
+      }
+      return Promise.resolve({
+        data: computeEntitlementRpc(tables, args.p_user_id, args.p_now),
+        error: null,
+      });
+    },
   };
   return { client: client as unknown as SupabaseClient, tables, queryLog, failures };
 }
@@ -384,9 +464,11 @@ function seedDestination(
   tables['destinations'].push({ id, platform, status, workspace_id: workspaceId });
 }
 
-function countPeriodSelects(queryLog: QueryLogEntry[]): number {
-  return queryLog.filter((entry) => entry.table === 'subscription_periods' && entry.op === 'select')
-    .length;
+// Plan-check C2: the entitlement read is one RPC call, not a
+// period select — the "one shared read" assertions below count
+// RPC calls now, with the same numbers as before.
+function countRpcCalls(queryLog: QueryLogEntry[]): number {
+  return queryLog.filter((entry) => entry.op === 'rpc').length;
 }
 
 function countUsageHeadCounts(queryLog: QueryLogEntry[]): number {
@@ -444,15 +526,15 @@ async function registerOutcome(
 }
 
 describe('R3 — one shared entitlement read for check-then-register', () => {
-  it('gate + register with one shared read issue exactly one period select', async () => {
+  it('gate + register with one shared read issue exactly one RPC call', async () => {
     const { client, tables, queryLog } = makeClient();
     seedPaidPeriod(tables);
     seedDestination(tables, 'dest-1', 'active');
 
     // The route's single read, shared with both steps.
     const shared = await getEntitlement(client, 'user-1', NOW);
-    const periodSelectsAfterRouteRead = countPeriodSelects(queryLog);
-    expect(periodSelectsAfterRouteRead).toBe(1);
+    const rpcCallsAfterRouteRead = countRpcCalls(queryLog);
+    expect(rpcCallsAfterRouteRead).toBe(1);
 
     await assertFeatureAddWithinCap(client, 'user-1', 'facebook', ['page-1'], NOW, shared);
     const result = await registerUsage(
@@ -468,10 +550,10 @@ describe('R3 — one shared entitlement read for check-then-register', () => {
     expect(result.alreadyUsed).toBe(false);
     expect(result.usedCount).toBe(1);
     // Neither step paid for a second full read.
-    expect(countPeriodSelects(queryLog)).toBe(1);
+    expect(countRpcCalls(queryLog)).toBe(1);
   });
 
-  it('gate + register without an explicit shared read issue two period selects (C1 rework: no cached default in route handlers)', async () => {
+  it('gate + register without an explicit shared read issue two RPC calls (C1 rework: no cached default in route handlers)', async () => {
     const { client, tables, queryLog } = makeClient();
     seedPaidPeriod(tables);
     seedDestination(tables, 'dest-1', 'active');
@@ -485,7 +567,7 @@ describe('R3 — one shared entitlement read for check-then-register', () => {
     // passed-in shared read (the test above). This pins the
     // honest behaviour so no future change can re-claim a cached
     // dedup that production does not perform.
-    expect(countPeriodSelects(queryLog)).toBe(2);
+    expect(countRpcCalls(queryLog)).toBe(2);
   });
 
   it('cap decisions are identical with and without the shared read, on the matrix', async () => {
@@ -917,7 +999,7 @@ describe('Pre-insert re-check — a stale shared read cannot publish over the ca
 });
 
 describe('C1 rework — one entitlement read per bulk request, through explicit plumbing', () => {
-  it('bulk: one gate + three registers share one period select via the passed-in read, usedCounts 1/2/3, a fourth at cap is refused', async () => {
+  it('bulk: one gate + three registers share one RPC call via the passed-in read, usedCounts 1/2/3, a fourth at cap is refused', async () => {
     const { client, tables, queryLog } = makeClient();
     seedPaidPeriod(tables, 'user-1', 3);
 
@@ -932,7 +1014,7 @@ describe('C1 rework — one entitlement read per bulk request, through explicit 
     // production. (The original C1 bulk test did exactly that and
     // was sent back for it.)
     const shared = await getEntitlement(client, 'user-1', NOW);
-    expect(countPeriodSelects(queryLog)).toBe(1);
+    expect(countRpcCalls(queryLog)).toBe(1);
     await assertFeatureAddWithinCap(
       client,
       'user-1',
@@ -961,7 +1043,7 @@ describe('C1 rework — one entitlement read per bulk request, through explicit 
     // Gate plus three registers paid for ONE entitlement read.
     // (The registers' pre-insert re-checks are count queries,
     // not entitlement reads.)
-    expect(countPeriodSelects(queryLog)).toBe(1);
+    expect(countRpcCalls(queryLog)).toBe(1);
     // At cap now: a fourth, different destination is refused by
     // the register's fresh-count re-check, not by the shared gate
     // read (which still says usage 0).
@@ -1004,7 +1086,7 @@ describe('C1 rework — one entitlement read per bulk request, through explicit 
     expect(again).toBe(first);
     expect(other.period?.userId).toBe('user-2');
     expect(first.period?.userId).toBe('user-1');
-    expect(countPeriodSelects(queryLog)).toBe(2);
+    expect(countRpcCalls(queryLog)).toBe(2);
   });
 
   it('a due scheduled downgrade activates inside the cached read and the answer reflects it', async () => {

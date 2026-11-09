@@ -89,11 +89,52 @@ class FakeBuilder {
   }
 }
 
+/**
+ * Plan-check C2 fix-up — the `get_entitlement` RPC answer,
+ * computed straight from the fixture period rows the way the SQL
+ * function does (active period window, ever-paid flag; usage is
+ * zero here because this fake carries no usage rows). A real
+ * implementation against the tables, not a canned success — a
+ * broken RPC still fails the parity tests.
+ */
+const RPC_PLATFORMS = ['facebook', 'instagram', 'threads', 'x', 'tiktok', 'youtube'] as const;
+
+function computeEntitlementRpc(periods: Row[], userId: string, nowIso: string): Row {
+  const mine = periods.filter((row) => row['user_id'] === userId);
+  const sortedActive = mine
+    .filter(
+      (row) =>
+        row['superseded_at'] === null &&
+        typeof row['starts_at'] === 'string' &&
+        (row['starts_at'] as string) <= nowIso &&
+        typeof row['ends_at'] === 'string' &&
+        (row['ends_at'] as string) > nowIso
+    )
+    .sort((a, b) => String(b['ends_at']).localeCompare(String(a['ends_at'])));
+  const active: Row | null = sortedActive.length > 0 ? sortedActive[0] : null;
+  const usage: Row = {};
+  for (const platform of RPC_PLATFORMS) usage[platform] = 0;
+  return {
+    period: active ? { ...active } : null,
+    usage,
+    has_prior_period: mine.length > 0,
+  };
+}
+
 function fakeClient(periods: Row[]): unknown {
   return {
     from: (table: string) => {
       if (table === 'subscription_periods') return new FakeBuilder(table, periods);
       return new FakeBuilder(table, []);
+    },
+    rpc: (fn: string, args: { p_user_id: string; p_now: string }) => {
+      if (fn !== 'get_entitlement') {
+        return Promise.resolve({ data: null, error: { message: `unknown function ${fn}` } });
+      }
+      return Promise.resolve({
+        data: computeEntitlementRpc(periods, args.p_user_id, args.p_now),
+        error: null,
+      });
     },
   };
 }

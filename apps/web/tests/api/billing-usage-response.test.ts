@@ -35,8 +35,78 @@ type Row = Record<string, unknown>;
 
 interface QueryLogEntry {
   table: string;
-  op: 'select' | 'insert' | 'update' | 'delete';
+  op: 'select' | 'insert' | 'update' | 'delete' | 'rpc';
   head: boolean;
+}
+
+/**
+ * Plan-check C2 fix-up — the `get_entitlement` RPC answer,
+ * computed straight from the fixture tables the way the SQL
+ * function does (active period window, per-platform counts with
+ * the disconnected exclusion and the legacy publish-now
+ * exclusion, ever-paid flag). A real implementation against the
+ * tables, not a canned success — a broken RPC still fails the
+ * parity tests.
+ */
+const RPC_PLATFORMS = ['facebook', 'instagram', 'threads', 'x', 'tiktok', 'youtube'] as const;
+const RPC_LEGACY_FEATURES = ['publish-now', 'instagram-publish-now', 'threads-publish-now'];
+
+function computeEntitlementRpc(
+  tables: Record<string, Row[]>,
+  userId: string,
+  nowIso: string
+): Row {
+  const periods = (tables['subscription_periods'] ?? []).filter(
+    (row) => row['user_id'] === userId
+  );
+  const sortedActive = periods
+    .filter(
+      (row) =>
+        row['superseded_at'] === null &&
+        typeof row['starts_at'] === 'string' &&
+        (row['starts_at'] as string) <= nowIso &&
+        typeof row['ends_at'] === 'string' &&
+        (row['ends_at'] as string) > nowIso
+    )
+    .sort((a, b) => String(b['ends_at']).localeCompare(String(a['ends_at'])));
+  const active: Row | null = sortedActive.length > 0 ? sortedActive[0] : null;
+  const workspaceIds = new Set(
+    (tables['workspaces'] ?? [])
+      .filter((row) => row['owner_id'] === userId)
+      .map((row) => row['id'] as string)
+  );
+  const disconnectedByPlatform = new Map<string, Set<string>>();
+  for (const dest of tables['destinations'] ?? []) {
+    if (
+      dest['status'] === 'disconnected' &&
+      workspaceIds.has(dest['workspace_id'] as string) &&
+      (RPC_PLATFORMS as readonly string[]).includes(dest['platform'] as string)
+    ) {
+      const set = disconnectedByPlatform.get(dest['platform'] as string) ?? new Set<string>();
+      set.add(dest['id'] as string);
+      disconnectedByPlatform.set(dest['platform'] as string, set);
+    }
+  }
+  const usage: Row = {};
+  for (const platform of RPC_PLATFORMS) {
+    usage[platform] = (tables['subscription_usage'] ?? []).filter(
+      (row) =>
+        row['user_id'] === userId &&
+        row['platform'] === platform &&
+        !RPC_LEGACY_FEATURES.includes(row['feature'] as string) &&
+        !(
+          typeof row['destination_id'] === 'string' &&
+          (disconnectedByPlatform.get(platform) ?? new Set<string>()).has(
+            row['destination_id'] as string
+          )
+        )
+    ).length;
+  }
+  return {
+    period: active ? { ...active } : null,
+    usage,
+    has_prior_period: periods.length > 0,
+  };
 }
 
 class FakeQuery {
@@ -206,6 +276,16 @@ function makeClient() {
         delete: () => new FakeQuery(rows, 'delete', null, idSeq, table, queryLog, isUsage),
       };
     },
+    rpc(fn: string, args: { p_user_id: string; p_now: string }) {
+      queryLog.push({ table: fn, op: 'rpc', head: false });
+      if (fn !== 'get_entitlement') {
+        return Promise.resolve({ data: null, error: { message: `unknown function ${fn}` } });
+      }
+      return Promise.resolve({
+        data: computeEntitlementRpc(tables, args.p_user_id, args.p_now),
+        error: null,
+      });
+    },
   };
   return { client: client as unknown as SupabaseClient, tables, queryLog };
 }
@@ -329,14 +409,11 @@ describe('usage route R4 response (no post-insert re-read)', () => {
     expect(body['allowedCount']).toBe(freshPeriod?.counts['facebook']);
     expect(body['allowedCount']).toBe(5);
 
-    // The re-read is gone: the period was read exactly once (the
-    // shared getEntitlement read), and nothing at all runs after
-    // the usage insert — the response is built from the returned
-    // read, not from a second read.
-    expect(
-      logAfterPost.filter((entry) => entry.table === 'subscription_periods' && entry.op === 'select')
-        .length
-    ).toBe(1);
+    // The re-read is gone: the entitlement was read exactly once
+    // via the RPC (the shared getEntitlement read), and nothing
+    // at all runs after the usage insert — the response is built
+    // from the returned read, not from a second read.
+    expect(logAfterPost.filter((entry) => entry.op === 'rpc').length).toBe(1);
     const insertIndex = logAfterPost.findIndex(
       (entry) => entry.table === 'subscription_usage' && entry.op === 'insert'
     );
@@ -376,16 +453,13 @@ describe('usage route R4 response (no post-insert re-read)', () => {
     expect(body['allowedCount']).toBe(freshPeriod?.counts['facebook']);
     expect(body['allowedCount']).toBe(5);
 
-    // The re-read is gone: the period was read exactly once (the
-    // shared getEntitlement read). The insert collides (23505) on
-    // the existing row, so the register's own already-used handler
-    // runs its lookup + exact re-count — that is pre-existing
-    // register behaviour, not the response re-read: no period
-    // select follows the insert.
-    expect(
-      logAfterPost.filter((entry) => entry.table === 'subscription_periods' && entry.op === 'select')
-        .length
-    ).toBe(1);
+    // The re-read is gone: the entitlement was read exactly once
+    // via the RPC (the shared getEntitlement read). The insert
+    // collides (23505) on the existing row, so the register's own
+    // already-used handler runs its lookup + exact re-count —
+    // that is pre-existing register behaviour, not the response
+    // re-read: no period select follows the insert.
+    expect(logAfterPost.filter((entry) => entry.op === 'rpc').length).toBe(1);
     const insertIndex = logAfterPost.findIndex(
       (entry) => entry.table === 'subscription_usage' && entry.op === 'insert'
     );
@@ -443,10 +517,8 @@ describe('usage route R4 response (no post-insert re-read)', () => {
     // lookup and the exact re-count it forces (workspace +
     // destination map, then the raw head count and the
     // disconnected-subtraction head count) — no period re-read.
-    expect(
-      logAfterPost.filter((entry) => entry.table === 'subscription_periods' && entry.op === 'select')
-        .length
-    ).toBe(1);
+    // The entitlement itself was read exactly once via the RPC.
+    expect(logAfterPost.filter((entry) => entry.op === 'rpc').length).toBe(1);
     const insertIndex = logAfterPost.findIndex(
       (entry) => entry.table === 'subscription_usage' && entry.op === 'insert'
     );
