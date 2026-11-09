@@ -284,10 +284,14 @@ export type DestinationFbStatusMarker =
  * it, or null when the status carries no marker (the marker must be
  * cleared). `active` and `fb_rate_limited` clear: rate-limited rows
  * carry their anchor in `rate_limited_at`, not in the marker.
+ * `paused` is never returned — the paused marker is written by the
+ * pausedMarker rule in `wirePageStatusToUnified`, not by this
+ * function — so the return type excludes it (the publish outcome's
+ * `targetDestinationFbStatus` does not accept it either).
  */
 export function destinationFbStatusMarker(
   pageStatus: FacebookPageStatus | null | undefined
-): DestinationFbStatusMarker | null {
+): Exclude<DestinationFbStatusMarker, 'paused'> | null {
   switch (pageStatus) {
     case 'page_checkpoint':
       return 'checkpoint';

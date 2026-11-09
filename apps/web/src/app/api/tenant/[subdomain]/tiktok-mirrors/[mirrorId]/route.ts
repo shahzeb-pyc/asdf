@@ -336,12 +336,15 @@ export async function handleUpdateMirror(
     }
     // Pausing stops new mirrors; resuming re-arms the next hourly
     // check. The last_error is kept until a post succeeds, so a
-    // resumed mirror still shows what went wrong before. A resume
-    // (paused -> active only) also arms the tick's catch-up rule:
-    // the first tick after resume posts only the newest reel.
-    // Other transitions leave catch_up_pending untouched — in
-    // particular, re-arming an error mirror must not clear a
-    // catch-up the tick has not run yet.
+    // resumed mirror still shows what went wrong before. The
+    // Facebook detail (fb_status) is kept under the same rule —
+    // the next tick clears it on a clean check or re-stamps it on
+    // a new failure. A resume (paused -> active only) also arms
+    // the tick's catch-up rule: the first tick after resume posts
+    // only the newest reel. Other transitions leave
+    // catch_up_pending untouched — in particular, re-arming an
+    // error mirror must not clear a catch-up the tick has not run
+    // yet.
     const nextCheckAt =
       parsed.data.status === 'active'
         ? new Date(Date.now() + 60 * 60 * 1000).toISOString()
