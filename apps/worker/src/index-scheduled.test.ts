@@ -12,6 +12,12 @@
  * slot_claim_tick_failed skip reason, so last_success_at stays at
  * the last fully healthy tick and the health tier degrades instead
  * of reporting a broken pipeline healthy (P1-13).
+ *
+ * Plan-check C3: the downgrade-activation tick runs FIRST on the
+ * every-minute tick and reads through `db.from`, so every test db
+ * below provides a healthy `from` stub (empty scan) — without it
+ * the tick would fail and steal the first-failure heartbeat slot
+ * from the failure under test.
  */
 import { describe, expect, it, vi } from 'vitest';
 import { handleScheduled } from './index.js';
@@ -25,6 +31,76 @@ function fakeQueue() {
   };
 }
 
+/**
+ * Minimal `from()` stub for handleScheduled tests: every query
+ * resolves to an empty store, heartbeat upserts are recorded, and
+ * every table touched is logged (so a test can prove the
+ * downgrade-activation scan ran — or did not). `failPaymentsScan`
+ * makes ONLY the subscription_payments scan error, the way a
+ * broken tick scan would.
+ */
+function stubFrom(
+  upsertRows: Record<string, unknown>[],
+  fromTables: string[],
+  opts?: { failPaymentsScan?: boolean }
+) {
+  const emptyChain: any = {
+    select: () => emptyChain,
+    eq: () => emptyChain,
+    neq: () => emptyChain,
+    is: () => emptyChain,
+    lte: () => emptyChain,
+    lt: () => emptyChain,
+    gt: () => emptyChain,
+    gte: () => emptyChain,
+    order: () => emptyChain,
+    limit: () => emptyChain,
+    range: () => emptyChain,
+    update: () => emptyChain,
+    insert: () => emptyChain,
+    delete: () => emptyChain,
+    in: () => emptyChain,
+    single: () => Promise.resolve({ data: null, error: null }),
+    maybeSingle: () => Promise.resolve({ data: null, error: null }),
+    upsert: (row: Record<string, unknown>) => {
+      upsertRows.push(row);
+      return Promise.resolve({ error: null });
+    },
+    then: (resolve: (v: unknown) => void) => {
+      resolve({ data: [], error: null });
+    },
+  };
+  const failingChain: any = {
+    select: () => failingChain,
+    eq: () => failingChain,
+    neq: () => failingChain,
+    is: () => failingChain,
+    lte: () => failingChain,
+    lt: () => failingChain,
+    gt: () => failingChain,
+    gte: () => failingChain,
+    order: () => failingChain,
+    limit: () => failingChain,
+    range: () => failingChain,
+    update: () => failingChain,
+    insert: () => failingChain,
+    delete: () => failingChain,
+    in: () => failingChain,
+    single: () => Promise.resolve({ data: null, error: new Error('scan boom') }),
+    maybeSingle: () => Promise.resolve({ data: null, error: new Error('scan boom') }),
+    upsert: () => Promise.resolve({ error: new Error('scan boom') }),
+    then: (resolve: (v: unknown) => void) => {
+      resolve({ data: null, error: new Error('scan boom') });
+    },
+  };
+  return (table: string) => {
+    fromTables.push(table);
+    return opts?.failPaymentsScan && table === 'subscription_payments'
+      ? failingChain
+      : emptyChain;
+  };
+}
+
 describe('handleScheduled slot-claim isolation', () => {
   it('survives a failing slot-claim tick, still writes the heartbeat, but reports the tick failed', async () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -35,7 +111,9 @@ describe('handleScheduled slot-claim isolation', () => {
       }
       // The publish-now tick runs before the slot tick and must stay
       // healthy here, or its failure would claim the first-failure
-      // heartbeat slot the slot failure is meant to occupy.
+      // heartbeat slot the slot failure is meant to occupy. The
+      // downgrade tick (C3, first of all) is healthy too: its scan
+      // reads through the `from` stub below and finds nothing due.
       if (fn === 'claim_publish_now_items') {
         return { data: [], error: null };
       }
@@ -44,6 +122,8 @@ describe('handleScheduled slot-claim isolation', () => {
       }
       return { data: null, error: null };
     });
+    const upsertRows: Record<string, unknown>[] = [];
+    const fromTables: string[] = [];
 
     await expect(
       handleScheduled(
@@ -51,7 +131,7 @@ describe('handleScheduled slot-claim isolation', () => {
         { TOKEN_ENCRYPTION_KEY: 'test-key' } as never,
         undefined,
         {
-          db: { rpc, query } as never,
+          db: { rpc, query, from: stubFrom(upsertRows, fromTables) } as never,
           queues: { fast: fakeQueue() as never, heavy: fakeQueue() as never },
           now: new Date('2026-10-27T08:03:00.000Z'),
           waitUntil: () => {},
@@ -63,16 +143,17 @@ describe('handleScheduled slot-claim isolation', () => {
       expect.stringContaining('slot claim tick failed'),
       expect.anything()
     );
+    // The downgrade tick ran (its scan touched subscription_payments)
+    // and stayed healthy, so the slot failure owns the first-failure
+    // heartbeat slot.
+    expect(fromTables).toContain('subscription_payments');
     // The heartbeat is still written with the due-based claim counts
-    // (0 here) — but as a FAILURE: last_success_at stays null so the
-    // health tier stops reporting this pipeline healthy.
-    const heartbeatCall = query.mock.calls.find(
-      ([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO worker_heartbeats')
-    );
-    expect(heartbeatCall).toBeDefined();
-    // Params: [worker_name, now, last_success_at, last_claimed_count, last_skip_reason]
-    expect(heartbeatCall![1][2]).toBeNull();
-    expect(heartbeatCall![1][4]).toBe('slot_claim_tick_failed');
+    // (0 here) — but as a FAILURE: last_success_at stays unset so
+    // the health tier stops reporting this pipeline healthy.
+    const heartbeatRow = upsertRows[upsertRows.length - 1];
+    expect(heartbeatRow).toBeDefined();
+    expect(heartbeatRow!.last_success_at).toBeUndefined();
+    expect(heartbeatRow!.last_skip_reason).toBe('slot_claim_tick_failed');
     errSpy.mockRestore();
   });
 
@@ -92,27 +173,7 @@ describe('handleScheduled slot-claim isolation', () => {
     // records heartbeat upserts: with `from` present, the heartbeat
     // takes the upsert branch, not the raw-SQL query branch.
     const upsertRows: Record<string, unknown>[] = [];
-    const aduChain: any = {
-      select: () => aduChain,
-      eq: () => aduChain,
-      lt: () => aduChain,
-      gt: () => aduChain,
-      order: () => aduChain,
-      limit: () => aduChain,
-      update: () => aduChain,
-      insert: () => aduChain,
-      delete: () => aduChain,
-      in: () => aduChain,
-      single: () => Promise.resolve({ data: null, error: null }),
-      maybeSingle: () => Promise.resolve({ data: null, error: null }),
-      upsert: (row: Record<string, unknown>) => {
-        upsertRows.push(row);
-        return Promise.resolve({ error: null });
-      },
-      then: (resolve: (v: unknown) => void) => {
-        resolve({ data: [], error: null });
-      },
-    };
+    const fromTables: string[] = [];
 
     await expect(
       handleScheduled(
@@ -120,7 +181,7 @@ describe('handleScheduled slot-claim isolation', () => {
         { TOKEN_ENCRYPTION_KEY: 'test-key' } as never,
         undefined,
         {
-          db: { rpc, query, from: () => aduChain } as never,
+          db: { rpc, query, from: stubFrom(upsertRows, fromTables) } as never,
           queues: { fast: fakeQueue() as never, heavy: fakeQueue() as never },
           now: new Date('2026-10-27T08:03:00.000Z'),
           waitUntil: () => {},
@@ -132,6 +193,83 @@ describe('handleScheduled slot-claim isolation', () => {
     expect(heartbeatRow).toBeDefined();
     expect(heartbeatRow!.last_success_at).not.toBeNull();
     expect(heartbeatRow!.last_skip_reason).toBeNull();
+    errSpy.mockRestore();
+  });
+});
+
+describe('handleScheduled downgrade-activation tick wiring (C3)', () => {
+  const NOW = new Date('2026-10-27T08:03:00.000Z');
+
+  function minuteDb(opts?: { failPaymentsScan?: boolean }) {
+    const upsertRows: Record<string, unknown>[] = [];
+    const fromTables: string[] = [];
+    const query = vi.fn().mockResolvedValue([]);
+    const rpc = vi.fn(async (fn: string) => {
+      if (fn === 'claim_due_queue_items') {
+        return { data: [], error: null };
+      }
+      return { data: [], error: null };
+    });
+    return {
+      db: {
+        rpc,
+        query,
+        from: stubFrom(upsertRows, fromTables, opts),
+      } as never,
+      upsertRows,
+      fromTables,
+    };
+  }
+
+  async function runCron(cron: string, db: unknown) {
+    await handleScheduled(
+      { cron, scheduledTime: Date.now() } as never,
+      { TOKEN_ENCRYPTION_KEY: 'test-key' } as never,
+      undefined,
+      {
+        db: db as never,
+        queues: { fast: fakeQueue() as never, heavy: fakeQueue() as never },
+        now: NOW,
+        waitUntil: () => {},
+      }
+    );
+  }
+
+  it('minute cron runs the downgrade tick', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { db, upsertRows, fromTables } = minuteDb();
+    await expect(runCron('* * * * *', db)).resolves.toBeUndefined();
+    expect(fromTables).toContain('subscription_payments');
+    const heartbeatRow = upsertRows[upsertRows.length - 1];
+    expect(heartbeatRow).toBeDefined();
+    expect(heartbeatRow!.last_success_at).not.toBeNull();
+    expect(heartbeatRow!.last_skip_reason).toBeNull();
+    errSpy.mockRestore();
+  });
+
+  it.each(['*/15 * * * *', '0 2 * * *', '*/10 * * * *'])(
+    'cron %s does not run the downgrade tick',
+    async (cron) => {
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const { db, fromTables } = minuteDb();
+      await expect(runCron(cron, db)).resolves.toBeUndefined();
+      expect(fromTables).not.toContain('subscription_payments');
+      errSpy.mockRestore();
+    }
+  );
+
+  it('scan failure is captured, does not throw, and fails the heartbeat', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { db, upsertRows } = minuteDb({ failPaymentsScan: true });
+    await expect(runCron('* * * * *', db)).resolves.toBeUndefined();
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining('downgrade activation tick failed'),
+      expect.anything()
+    );
+    const heartbeatRow = upsertRows[upsertRows.length - 1];
+    expect(heartbeatRow).toBeDefined();
+    expect(heartbeatRow!.last_success_at).toBeUndefined();
+    expect(heartbeatRow!.last_skip_reason).toBe('downgrade_tick_failed');
     errSpy.mockRestore();
   });
 });

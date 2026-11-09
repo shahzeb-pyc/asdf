@@ -45,6 +45,36 @@ export async function activateDueScheduledDowngrade(
       return !Number.isNaN(starts) && !Number.isNaN(ends) && starts <= nowMs && ends > nowMs;
     });
     if (hasActive) return false;
+    // Plan-check C3: one cheap EXISTS probe before the full
+    // payments select. Nothing due costs a LIMIT 1 existence
+    // check instead of a full row select; a due schedule runs the
+    // full path exactly as before. A probe failure never breaks
+    // the caller: it is logged loudly and the full path runs.
+    // (The inner try/catch is load-bearing — the outer one
+    // returns false on any throw, which would silently skip an
+    // activation the full path could have performed.)
+    let hasDue: boolean;
+    try {
+      const { data: probe, error: probeError } = await supabase
+        .from('subscription_payments')
+        .select('id')
+        .eq('user_id', ownerId)
+        .eq('status', 'approved')
+        .is('period_id', null)
+        .eq('is_downgrade', true)
+        .lte('scheduled_starts_at', now.toISOString())
+        .limit(1);
+      if (probeError) {
+        console.error('[worker] due scheduled downgrade probe failed:', probeError);
+        hasDue = true;
+      } else {
+        hasDue = Array.isArray(probe) && probe.length > 0;
+      }
+    } catch (probeErr) {
+      console.error('[worker] due scheduled downgrade probe failed:', probeErr);
+      hasDue = true;
+    }
+    if (!hasDue) return false;
     const { data: payments, error: paymentError } = await supabase
       .from('subscription_payments')
       .select(

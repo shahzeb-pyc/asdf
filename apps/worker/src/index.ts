@@ -15,6 +15,7 @@ import {
   runMirrorJobTick,
 } from './mirror-tick.js';
 import { runAduTick } from './adu-tick.js';
+import { runDowngradeActivationTick } from './downgrade-tick.js';
 import { handleQueueBatch, type ConsumerDbClient } from './consumers.js';
 import {
   isTokenEncryptionKeyWellFormed,
@@ -283,11 +284,12 @@ export async function handleScheduled(
     return;
   }
 
-  // First sub-tick failure across the publish-now, slot,
-  // mirror-job, and ADU ticks below. It never fails the tick itself,
-  // but it DOES fail the tick's heartbeat (see the heartbeat write
-  // at the end).
+  // First sub-tick failure across the downgrade-activation,
+  // publish-now, slot, mirror-job, and ADU ticks below. It never
+  // fails the tick itself, but it DOES fail the tick's heartbeat
+  // (see the heartbeat write at the end).
   let firstSubTickFailure:
+    | 'downgrade_tick_failed'
     | 'publish_now_claim_tick_failed'
     | 'slot_claim_tick_failed'
     | 'mirror_job_tick_failed'
@@ -303,6 +305,31 @@ export async function handleScheduled(
       now: options?.now ?? new Date(controller.scheduledTime),
       waitUntil,
     });
+
+    // Scheduled-downgrade activation (plan-check C3): due
+    // schedules activate here, on the every-minute tick, so a
+    // publishing plan no longer waits for a read or an ADU job
+    // for its owner. First among the sub-ticks, immediately after
+    // the claim tick, so the ADU and mirror-job gates in this
+    // same invocation see a just-activated period at once.
+    // Isolated like the rest: a scan failure never fails the tick
+    // itself — due schedules simply retry next minute — but it
+    // DOES fail the tick's heartbeat (below).
+    try {
+      await runDowngradeActivationTick({
+        db: db as unknown as Parameters<typeof runDowngradeActivationTick>[0]['db'],
+        now: options?.now ?? new Date(controller.scheduledTime),
+      });
+    } catch (downgradeErr) {
+      captureWorkerError(
+        env,
+        downgradeErr,
+        { site: 'handleScheduled', kind: 'downgrade_tick_failed' },
+        waitUntil
+      );
+      console.error('[handleScheduled] downgrade activation tick failed; continuing:', downgradeErr);
+      firstSubTickFailure ??= 'downgrade_tick_failed';
+    }
 
     // Publish-now immediate claims (Facebook): marked rows go out
     // extra, on top of scheduled posts — claimed here, BEFORE the
@@ -420,8 +447,8 @@ export async function handleScheduled(
     // reporting success:true here would keep last_success_at fresh
     // while a pipeline is broken — exactly the health theatre this
     // heartbeat exists to prevent. skipReason carries the first
-    // failure in slot → mirror → ADU order; every failure is also
-    // in the structured error log above.
+    // failure in downgrade → publish-now → slot → mirror → ADU
+    // order; every failure is also in the structured error log above.
     await recordHeartbeat(db, {
       success: firstSubTickFailure === null,
       skipReason: firstSubTickFailure,

@@ -36,9 +36,9 @@ export type HeartbeatSkipReason =
   | 'db_unconfigured'
   | 'claim_error'
   /**
-   * A sub-tick of the every-minute tick failed (publish-now claim,
-   * slot claim, mirror-job consumer, or ADU tick). The tick itself
-   * still completes — the failed subsystem retries next minute —
+   * A sub-tick of the every-minute tick failed (downgrade
+   * activation, publish-now claim, slot claim, mirror-job
+   * consumer, or ADU tick). The tick itself still completes — the
    * but the heartbeat must NOT report success: last_success_at stays
    * at the last fully healthy tick, so the health tier degrades
    * honestly instead of reporting a broken pipeline healthy. The
@@ -48,7 +48,9 @@ export type HeartbeatSkipReason =
   | 'publish_now_claim_tick_failed'
   | 'slot_claim_tick_failed'
   | 'mirror_job_tick_failed'
-  | 'adu_tick_failed';
+  | 'adu_tick_failed'
+  /** Plan-check C3: the downgrade-activation sub-tick's scan failed. */
+  | 'downgrade_tick_failed';
 
 export interface HeartbeatRecord {
   success: boolean;
