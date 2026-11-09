@@ -12,6 +12,19 @@ import path from 'path';
  *   `tests/setup/jsdom.setup.ts`.
  */
 export default defineConfig({
+  // Spec 160: apps/web/tsconfig.json sets jsx: "preserve" (Next.js
+  // requires it). Under Vite 8 (Astro 7's vite ^8 dedup) the oxc
+  // transform honours preserve, so .tsx files reach
+  // vite:import-analysis with JSX intact and fail to parse ("make sure
+  // to not set jsx to preserve"). Vite 7 did not do this, which is why
+  // the suite passed in CI on main. Force the JSX transform for the
+  // test pipeline only; production (Next/SWC) and tsconfig are
+  // untouched.
+  oxc: {
+    jsx: {
+      runtime: 'automatic',
+    },
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
