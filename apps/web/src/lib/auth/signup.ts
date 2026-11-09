@@ -7,6 +7,7 @@
  */
 
 import {
+  asWorkspaceIdClaim,
   canonicalizeGmailAddress,
   deriveSubdomainFromEmail,
   getSessionSecret,
@@ -417,7 +418,7 @@ export async function verifySignupOtpViaSupabase(params: {
           subdomain: userRecord.subdomain,
         });
       } else if (ws?.id) {
-        workspaceId = ws.id;
+        workspaceId = asWorkspaceIdClaim(ws.id);
       } else {
         logServerError('[signup] workspace id for session claim not resolved', null, {
           source: 'signup',

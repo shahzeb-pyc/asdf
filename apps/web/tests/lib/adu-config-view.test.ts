@@ -23,7 +23,7 @@ vi.mock('@/lib/auth/clients', () => ({
   getSupabaseAdminClient: vi.fn(),
 }));
 vi.mock('@/lib/server/workspace-resolver', () => ({
-  resolveTenantWorkspaceId: vi.fn(),
+  resolveWorkspaceIdFromSession: vi.fn(),
 }));
 
 type Row = Record<string, unknown>;
@@ -289,7 +289,7 @@ describe('aduContext', () => {
     const auth = vi.mocked(routeAuth.authenticateTenantRoute);
     const getSupabase = vi.mocked(routeAuth.getRouteSupabase);
     const getAdmin = vi.mocked(clients.getSupabaseAdminClient);
-    const resolveWorkspace = vi.mocked(resolver.resolveTenantWorkspaceId);
+    const resolveWorkspace = vi.mocked(resolver.resolveWorkspaceIdFromSession);
 
     getAdmin.mockReturnValue({ admin: true } as never);
     getSupabase.mockReturnValue({ fake: 'supabase' } as never);

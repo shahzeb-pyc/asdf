@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  asWorkspaceIdClaim,
   SessionPayloadSchema,
   signSessionToken,
   verifySessionToken,
@@ -221,6 +222,18 @@ describe('Session Authentication Contracts (SessionPayload & Web Crypto Tokens)'
       if (parsed.success) {
         expect('workspaceId' in parsed.data).toBe(false);
       }
+    });
+
+    it('A5b: asWorkspaceIdClaim passes a valid UUID through and drops anything else, so a non-UUID id can never make signSessionToken throw', () => {
+      // Regression: the full web suite 500'd the workspaces
+      // create/switch routes because fake ids like 'ws-1' hit the
+      // schema's UUID validation. Mint sites guard through this
+      // helper, so those ids mint claimless instead of failing auth.
+      expect(asWorkspaceIdClaim(WORKSPACE_ID)).toBe(WORKSPACE_ID);
+      expect(asWorkspaceIdClaim('ws-1')).toBeUndefined();
+      expect(asWorkspaceIdClaim('not-a-uuid')).toBeUndefined();
+      expect(asWorkspaceIdClaim(null)).toBeUndefined();
+      expect(asWorkspaceIdClaim(undefined)).toBeUndefined();
     });
   });
 

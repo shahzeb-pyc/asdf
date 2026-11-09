@@ -41,7 +41,7 @@ vi.mock('@/lib/auth/clients', () => ({
   getSupabaseAdminClient: mockAdmin,
 }));
 vi.mock('@/lib/server/workspace-resolver', () => ({
-  resolveTenantWorkspaceId: mockWorkspace,
+  resolveWorkspaceIdFromSession: mockWorkspace,
 }));
 
 const TEST_SECRET = 'super-secret-session-signing-key-minimum-32-chars-long';

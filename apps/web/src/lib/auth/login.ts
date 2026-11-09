@@ -7,6 +7,7 @@
  */
 
 import {
+  asWorkspaceIdClaim,
   canonicalizeGmailAddress,
   deriveSubdomainFromEmail,
   getSessionSecret,
@@ -142,7 +143,7 @@ export async function loginTenantUser(params: {
         const match = rows.find(
           (w) => w.subdomain?.toLowerCase() === user.subdomain.toLowerCase() && w.id
         );
-        workspaceId = match?.id;
+        workspaceId = asWorkspaceIdClaim(match?.id);
         if (!workspaceId) {
           logServerError('[login] workspace id for session claim not resolved', null, {
             source: 'login',

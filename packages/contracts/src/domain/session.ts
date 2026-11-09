@@ -28,6 +28,22 @@ export const SessionPayloadSchema = z.object({
 
 export type SessionPayload = z.infer<typeof SessionPayloadSchema>;
 
+/**
+ * S3: a workspace id is claimable only when it is a valid UUID. The
+ * schema validates workspaceId as a UUID, so handing a non-UUID id
+ * to signSessionToken would throw and fail auth — which the
+ * optimisation must never do (rule 5: minting without the claim is
+ * always allowed). Mint sites pass the id through this guard; a
+ * non-UUID id mints claimless instead. In production workspaces.id
+ * is a uuid column, so this only bites on corrupt data or test
+ * fakes — which is exactly the case that 500'd the workspaces
+ * create/switch routes in the full-suite run (fake ids like 'ws-1').
+ */
+export function asWorkspaceIdClaim(id: string | null | undefined): string | undefined {
+  if (!id) return undefined;
+  return z.string().uuid().safeParse(id).success ? id : undefined;
+}
+
 function base64UrlEncode(bytes: Uint8Array): string {
   let binary = '';
   for (const byte of bytes) {

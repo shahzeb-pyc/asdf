@@ -24,6 +24,7 @@ vi.mock('@/lib/auth/clients', () => ({
 }));
 vi.mock('@/lib/server/workspace-resolver', () => ({
   resolveTenantWorkspaceId: vi.fn(),
+  resolveWorkspaceIdFromSession: vi.fn(),
 }));
 
 type Row = Record<string, unknown>;
