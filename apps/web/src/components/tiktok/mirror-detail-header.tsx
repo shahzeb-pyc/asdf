@@ -13,7 +13,6 @@ import {
   getFacebookPageStatusAlert,
   mapStoredMirrorErrorToDisplay,
   pageStatusFromMirrorFbStatus,
-  resolveMirrorDisplayStatus,
 } from '@fbuploadpro/contracts';
 import { Banner } from '@/components/shared/ui/banner';
 import { Button } from '@/components/shared/ui/button';
