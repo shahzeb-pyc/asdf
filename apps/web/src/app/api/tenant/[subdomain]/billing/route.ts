@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { authenticateTenantRoute } from '@/lib/route-auth';
 import { logServerError } from '@/lib/server-analytics';
-import { getCachedEntitlement, paymentFromRow } from '@/lib/billing/entitlement';
+import { getEntitlement, paymentFromRow } from '@/lib/billing/entitlement';
 import {
   getBillingAdminClient,
   loadNewPaymentFields,
@@ -39,7 +39,7 @@ export async function GET(
   const PAGE_SIZE = 50;
 
   try {
-    const entitlement = await getCachedEntitlement(client, session.userId);
+    const entitlement = await getEntitlement(client, session.userId);
     const { data, error } = await client
       .from('subscription_payments')
       .select(

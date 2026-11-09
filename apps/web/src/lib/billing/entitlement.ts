@@ -620,42 +620,57 @@ export async function getEntitlement(
 }
 
 /**
- * Plan-check C1 — request-scoped shared entitlement read: ONE read
- * per request per user, for every read path.
+ * Plan-check R1 — request-scoped shared entitlement read, for the
+ * React Server Component tree ONLY.
  *
- * R1 introduced this for the tenant layout seed and the Home loader
- * (same question, same user, same document request, no subscription
- * write between them). C1 widens it to every read path: route
- * handlers read through it, and the gate functions below
- * (`assertCanPost`, `registerUsage`, `assertFeatureAddWithinCap`)
- * use it as their default read when the caller did not pass an
- * already-fetched entitlement in. The mechanism is React `cache()`,
- * keyed by `(client, userId)` — the same pattern the workspace
- * lookup already uses (`workspace-display-name.ts`). All sharing
- * callers see the exact same answer, including the same `now`: the
- * cached function creates the timestamp once, so the shared read is
- * exact, not approximate. A different client instance is a cache
- * miss (safe, just no dedup) — never a wrong-user share: the admin
+ * The tenant layout seed and the Home loader ask the same question
+ * for the same user in the same document request, milliseconds
+ * apart, with no subscription write between them — so they share
+ * one read through React `cache()`, the same pattern the workspace
+ * lookup already uses (`workspace-display-name.ts`). Both callers
+ * see the exact same answer, including the same `now`: the cached
+ * function creates the timestamp once, so the shared read is exact,
+ * not approximate. A different client instance is a cache miss
+ * (safe, just no dedup) — never a wrong-user share: the admin
  * client is a module-level singleton, so the routes that share a
  * request share the instance too.
+ *
+ * SCOPE — read this before widening it: React `cache()` does NOT
+ * memoize inside Next.js route handlers. Probe-verified on this
+ * repo's exact versions (Next 16.4.2, React 19.3.1, dev and
+ * production builds): a cache()-wrapped counting function called
+ * twice with the same key returned 4 calls, not 2 — the
+ * react-server build's cache() memoizes only when the cache
+ * dispatcher is set, and that dispatcher is installed by the React
+ * Server renderer during a render pass, which route handlers never
+ * run. In a route handler this function is a passthrough to the
+ * raw read: same cost, no dedup. So route handlers MUST NOT rely
+ * on it — they share a read only through explicit plumbing (the
+ * route reads once and passes the result in as
+ * `sharedEntitlement`, R3). C1 first tried widening this to every
+ * route handler and was sent back on exactly this point; the
+ * rework reverted every route-handler switch to the raw read and
+ * delivered the remaining win (Threads ADU bulk/single) through
+ * plumbing instead. Only the layout seed and the Home loader —
+ * both in the RSC tree, where the dispatcher exists — use this.
  *
  * THE HARD RULE — a cached read has no invalidation, so a read AFTER
  * a subscription-table write (`subscription_periods`,
  * `subscription_payments`, `subscription_usage`) in the same request
  * MUST use the raw `getEntitlement` below, never this function. The
  * write-then-read audit for this change lives in the C1 PR body.
- * Audited at C1: no production read follows a subscription write in
- * the same request (zero-due / payment approval / refund approval
- * create or supersede a period and return without re-reading; the
- * usage endpoint builds its response from the register's returned
- * read; bulk creates gate first, then register — the register's
- * pre-insert fresh-count re-check is what keeps the shared read
- * honest there). The one sequence that DOES read after a write — a
- * gate run after a register in the same request — must read raw and
- * pass the result in; the default cached read would return the
- * pre-write answer. A test pins the rule: a period created
- * in-request is visible to a post-write raw read and NOT visible to
- * a cached read taken before the write
+ * Audited at C1 (re-verified on the rework): no production read
+ * follows a subscription write in the same request (zero-due /
+ * payment approval / refund approval create or supersede a period
+ * and return without re-reading; the usage endpoint builds its
+ * response from the register's returned read; bulk creates gate
+ * first, then register — the register's pre-insert fresh-count
+ * re-check is what keeps the shared read honest there). The one
+ * sequence that DOES read after a write — a gate run after a
+ * register in the same request — must read raw and pass the result
+ * in; a cached read would return the pre-write answer. A test pins
+ * the rule: a period created in-request is visible to a post-write
+ * raw read and NOT visible to a cached read taken before the write
  * (`entitlement-shared-read.test.ts`).
  *
  * The downgrade activation inside `getEntitlement` writes a period
@@ -729,29 +744,27 @@ function assertSharedEntitlementOwner(userId: string, entitlement: Entitlement):
  * is ownership-checked (see assertSharedEntitlementOwner) and is
  * never taken from the client.
  *
- * Plan-check C1: without a shared read, the default read is the
- * request-cached `getCachedEntitlement` — so two gates in the same
- * request share one read instead of each paying for a full one.
- * The `now` parameter no longer influences that default read (the
- * cached read creates its own timestamp once per request, exactly
- * as R1 established); it is kept, as `_now`, only so existing
- * positional callers keep compiling. A caller that needs a fixed
- * time reads raw (`getEntitlement` with that time) and passes the
- * result in as `sharedEntitlement`. A caller that gates AFTER a
- * subscription-table write in the same request must do the same —
- * the cached default would return the pre-write answer.
+ * Plan-check C1 (rework): without a shared read, the default read
+ * is the raw `getEntitlement` — React `cache()` does not memoize
+ * in route handlers (probe-verified, Next 16.4.2 / React 19.3.1),
+ * so a cached default would be a passthrough that only pretends
+ * to dedupe. Two gates in the same request share one read ONLY
+ * when the caller reads once and passes it in as
+ * `sharedEntitlement` (R3 plumbing). A caller that gates AFTER a
+ * subscription-table write in the same request must read raw and
+ * pass the result in — the read must see the write.
  */
 export async function assertCanPost(
   client: SupabaseClient,
   userId: string,
   platform: SubscriptionPlatform,
   destinationKey: string,
-  _now: Date = new Date(),
+  now: Date = new Date(),
   sharedEntitlement?: Entitlement
 ): Promise<SubscriptionPeriodRow> {
   const entitlement = sharedEntitlement
     ? assertSharedEntitlementOwner(userId, sharedEntitlement)
-    : await getCachedEntitlement(client, userId);
+    : await getEntitlement(client, userId, now);
   if (!entitlement.period || !entitlement.canPost) {
     throw new SubscriptionGateError(
       'SUBSCRIPTION_REQUIRED',
@@ -902,7 +915,7 @@ export async function registerUsage(
   destinationKey: string,
   feature: string,
   destinationId: string | null = null,
-  _now: Date = new Date(),
+  now: Date = new Date(),
   sharedEntitlement?: Entitlement
 ): Promise<{ alreadyUsed: boolean; usedCount: number; entitlement: Entitlement }> {
   if (isLegacyUncappedUsageFeature(feature)) {
@@ -911,32 +924,31 @@ export async function registerUsage(
       'Publish Now does not register usage.'
     );
   }
-  // R3 + C1: resolve the gate read once here and hand it to the
-  // gate — a caller that already read the entitlement for this
-  // user passes it in and no second full read happens; otherwise
-  // the default read is the request-cached one, so registers in
-  // the same request share it. The same resolved read also
-  // supplies the R5b derived count below. (`_now` no longer
-  // influences the default read — see assertCanPost.)
+  // R3 + C1 (rework): resolve the gate read once here and hand it
+  // to the gate — a caller that already read the entitlement for
+  // this user passes it in and no second full read happens;
+  // otherwise the default read is the raw one (React `cache()`
+  // does not memoize in route handlers, so there is no cached
+  // default to share — see getCachedEntitlement). The same resolved
+  // read also supplies the R5b derived count below.
   const gateEntitlement = sharedEntitlement
     ? assertSharedEntitlementOwner(userId, sharedEntitlement)
-    : await getCachedEntitlement(client, userId);
-  await assertCanPost(client, userId, platform, destinationKey, _now, gateEntitlement);
+    : await getEntitlement(client, userId, now);
+  await assertCanPost(client, userId, platform, destinationKey, now, gateEntitlement);
   // R5: no second isDestinationUsed lookup here. assertCanPost
   // already did one, and a pre-check can never be a race guard —
   // the race happens after the check. The INSERT's 23505 handler
   // below is the real guard: a concurrent registration of this
   // destination resolves to already-used, never to a second unit.
   // Pre-insert re-check, ALWAYS (plan-check C1 — was shared-read
-  // only): the gate above ran on a read that may be shared — the
-  // request-cached default, or a read passed in by the caller —
-  // which on the mirror routes is stale by the time this register
-  // runs: the duplicate check, the paid external profile fetch,
-  // and the mirror insert all run between the gate and here. A
-  // concurrent registration of a DIFFERENT destination in the
-  // meantime would otherwise publish over the cap (the worker
-  // claim RPCs enforce an active period only, not usage counts, so
-  // there is no backstop downstream). Re-count fresh, immediately
+  // only): the gate above ran on a read that may be shared — a
+  // read passed in by the caller — which on the mirror routes is
+  // stale by the time this register runs: the duplicate check, the
+  // paid external profile fetch, and the mirror insert all run
+  // between the gate and here. A concurrent registration of a
+  // DIFFERENT destination in the meantime would otherwise publish
+  // over the cap (the worker claim RPCs enforce an active period
+  // only, not usage counts, so there is no backstop downstream). Re-count fresh, immediately
   // before the INSERT, with the same disconnected exclusion as the
   // gate (getUsageCount), and refuse a genuinely new destination
   // at/over the gate's allowed count. The fresh count is also kept
@@ -1133,22 +1145,23 @@ export async function assertFeatureAddWithinCap(
   userId: string,
   platform: SubscriptionPlatform,
   destinationKeys: string[],
-  _now: Date = new Date(),
+  now: Date = new Date(),
   sharedEntitlement?: Entitlement
 ): Promise<{ allowed: number; used: number; newCount: number }> {
-  // R3 + C1: reuse a read the caller already made for this user in
-  // this request instead of reading the entitlement a second time.
-  // Ownership-checked (see assertSharedEntitlementOwner); never
-  // taken from the client. Without a shared read, the default read
-  // is the request-cached one, so an add-gate and a later register
-  // in the same request share one read. (`_now` no longer
-  // influences the default read — see assertCanPost.) A caller
-  // that gates AFTER a subscription-table write in the same
-  // request must read raw and pass it in instead — the cached
-  // default would return the pre-write answer.
+  // R3 + C1 (rework): reuse a read the caller already made for
+  // this user in this request instead of reading the entitlement
+  // a second time. Ownership-checked (see
+  // assertSharedEntitlementOwner); never taken from the client.
+  // Without a shared read, the default read is the raw one — an
+  // add-gate and a later register in the same request share one
+  // read ONLY when the caller reads once and passes it to both
+  // (React `cache()` does not memoize in route handlers — see
+  // getCachedEntitlement). A caller that gates AFTER a
+  // subscription-table write in the same request must read raw and
+  // pass it in instead, so the gate sees the write.
   const entitlement = sharedEntitlement
     ? assertSharedEntitlementOwner(userId, sharedEntitlement)
-    : await getCachedEntitlement(client, userId);
+    : await getEntitlement(client, userId, now);
   if (!entitlement.period || !entitlement.canPost) {
     throw new SubscriptionGateError(
       'SUBSCRIPTION_REQUIRED',
