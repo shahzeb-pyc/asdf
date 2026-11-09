@@ -412,6 +412,28 @@ describe('ADU Add Page dialog — live discovery', () => {
     expect(onCreated).not.toHaveBeenCalled();
   });
 
+  it('step 3 platform picker offers facebook, youtube and tiktok; instagram stays disabled', async () => {
+    const user = userEvent.setup();
+    await openDialog([]);
+    await goToPagesStep();
+    fireEvent.click(screen.getByTestId('adu-page-checkbox-11111111-1111-4111-8111-111111111111-fb-page-102'));
+    fireEvent.click(screen.getByTestId('adu-pages-next-btn'));
+    await screen.findByText('Sources');
+
+    // Default platform for a new source row is still TikTok.
+    expect(screen.getByRole('combobox')).toHaveTextContent('tiktok');
+
+    await user.click(screen.getByRole('combobox'));
+    const facebook = await screen.findByRole('option', { name: 'facebook' });
+    const youtube = screen.getByRole('option', { name: 'youtube' });
+    const tiktok = screen.getByRole('option', { name: 'tiktok' });
+    const instagram = screen.getByRole('option', { name: 'instagram' });
+    expect(facebook.getAttribute('data-disabled')).toBeNull();
+    expect(youtube.getAttribute('data-disabled')).toBeNull();
+    expect(tiktok.getAttribute('data-disabled')).toBeNull();
+    expect(instagram.getAttribute('data-disabled')).toBe('');
+  });
+
   it('step 4 shows posting time only and Back keeps the sources and selection', async () => {
     await openDialog([]);
     await goToPagesStep();

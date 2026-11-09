@@ -1408,7 +1408,7 @@ export function AddPageDialog({ subdomain, open, onOpenChange, onCreated }: {
                     <span className="min-w-0 flex-1 truncate">{row.pageName}</span>
                     <Select value={sources[row.key]?.platform ?? 'tiktok'} onValueChange={(v) => setSources({ ...sources, [row.key]: { platform: v as Platform, username: sources[row.key]?.username ?? '' } })}>
                       <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
-                      <SelectContent>{PLATFORMS.map((p) => <SelectItem key={p} value={p} disabled={p !== 'tiktok'}>{p}</SelectItem>)}</SelectContent>
+                      <SelectContent>{PLATFORMS.map((p) => <SelectItem key={p} value={p} disabled={p === 'instagram'}>{p}</SelectItem>)}</SelectContent>
                     </Select>
                     <Input placeholder={sourcePlaceholder(sources[row.key]?.platform ?? 'tiktok')} value={sources[row.key]?.username ?? ''} onChange={(e) => setSources({ ...sources, [row.key]: { platform: sources[row.key]?.platform ?? 'tiktok', username: e.target.value } })} className="w-48" />
                   </div>
