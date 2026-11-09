@@ -491,9 +491,89 @@ class FakeBuilder {
   }
 }
 
+/**
+ * Plan-check C2 fix-up — the `get_entitlement` RPC answer,
+ * computed from this fake's own state the way the SQL function
+ * does (active period window, per-platform counts with the
+ * disconnected exclusion and the legacy publish-now exclusion,
+ * ever-paid flag). Per-platform `usageCounts` overrides win
+ * exactly as they do on the legacy head-count path: a test that
+ * sets an override is stating the count, not the rows. This is
+ * a real implementation against the fixture tables, not a canned
+ * success — a broken RPC still fails the parity tests.
+ */
+const RPC_PLATFORMS = ['facebook', 'instagram', 'threads', 'x', 'tiktok', 'youtube'] as const;
+const RPC_LEGACY_FEATURES = ['publish-now', 'instagram-publish-now', 'threads-publish-now'];
+
+function computeEntitlementRpc(state: FakeState, userId: string, nowIso: string): Row {
+  const periods = state.periods.filter((row) => row['user_id'] === userId);
+  const sortedActive = periods
+    .filter(
+      (row) =>
+        row['superseded_at'] === null &&
+        typeof row['starts_at'] === 'string' &&
+        (row['starts_at'] as string) <= nowIso &&
+        typeof row['ends_at'] === 'string' &&
+        (row['ends_at'] as string) > nowIso
+    )
+    .sort((a, b) => String(b['ends_at']).localeCompare(String(a['ends_at'])));
+  const active: Row | null = sortedActive.length > 0 ? sortedActive[0] : null;
+  const workspaceIds = new Set(
+    state.workspaces
+      .filter((row) => row['owner_id'] === userId)
+      .map((row) => row['id'] as string)
+  );
+  const disconnectedByPlatform = new Map<string, Set<string>>();
+  for (const dest of state.destinations) {
+    if (
+      dest['status'] === 'disconnected' &&
+      workspaceIds.has(dest['workspace_id'] as string) &&
+      (RPC_PLATFORMS as readonly string[]).includes(dest['platform'] as string)
+    ) {
+      const set = disconnectedByPlatform.get(dest['platform'] as string) ?? new Set<string>();
+      set.add(dest['id'] as string);
+      disconnectedByPlatform.set(dest['platform'] as string, set);
+    }
+  }
+  const usage: Row = {};
+  for (const platform of RPC_PLATFORMS) {
+    const override = state.usageCounts[platform];
+    if (override !== undefined) {
+      usage[platform] = override;
+      continue;
+    }
+    usage[platform] = state.usageRows.filter(
+      (row) =>
+        row['user_id'] === userId &&
+        row['platform'] === platform &&
+        !RPC_LEGACY_FEATURES.includes(row['feature'] as string) &&
+        !(
+          typeof row['destination_id'] === 'string' &&
+          (disconnectedByPlatform.get(platform) ?? new Set<string>()).has(
+            row['destination_id'] as string
+          )
+        )
+    ).length;
+  }
+  return {
+    period: active ? { ...active } : null,
+    usage,
+    has_prior_period: periods.length > 0,
+  };
+}
+
 function fakeClient(state: FakeState): SupabaseClient {
   return {
     from: (table: string) => new FakeBuilder(state, table),
+    rpc: (fn: string, args: { p_user_id: string; p_now: string }) => {
+      if (fn !== 'get_entitlement') {
+        return Promise.resolve({ data: null, error: { message: `unknown function ${fn}` } });
+      }
+      return Promise.resolve({
+        data: computeEntitlementRpc(state, args.p_user_id, args.p_now),
+        error: null,
+      });
+    },
   } as unknown as SupabaseClient;
 }
 
@@ -2268,12 +2348,12 @@ describe('entitlement failure branches (audit fix 2026-11-01)', () => {
 
 });
 
-describe('Perf round 1: entitlement reads run concurrently', () => {
+describe('Plan-check C2: the entitlement read is one RPC round trip', () => {
   // A fake client that records every query's start / resolve order.
   // The fake resolves synchronously, so with sequential awaits each
-  // resolve precedes the next start, while with Promise.all all
-  // starts precede the first resolve. That ordering difference is
-  // what these tests observe — no production data, no network.
+  // resolve precedes the next start. The RPC call is recorded the
+  // same way, so the tests below can pin that getEntitlement costs
+  // exactly one round trip — no production data, no network.
   class RecordingBuilder extends FakeBuilder {
     private readonly tableName: string;
 
@@ -2316,27 +2396,37 @@ describe('Perf round 1: entitlement reads run concurrently', () => {
     const events: string[] = [];
     const client = {
       from: (table: string) => new RecordingBuilder(state, table, events),
+      rpc: (fn: string, args: { p_user_id: string; p_now: string }) => {
+        events.push('start:rpc');
+        const answer =
+          fn !== 'get_entitlement'
+            ? { data: null, error: { message: `unknown function ${fn}` } }
+            : { data: computeEntitlementRpc(state, args.p_user_id, args.p_now), error: null };
+        return Promise.resolve(answer).then((value) => {
+          events.push('resolve:rpc');
+          return value;
+        });
+      },
     } as unknown as SupabaseClient;
     return { client, events };
   }
 
-  // The six platform counts must all start before the first one
-  // resolves, and the usage chain must start before the period
-  // read resolves — i.e. the reads overlap instead of queueing.
-  function expectUsageCountsConcurrent(events: string[]): void {
-    const usageEvents = events.filter(
-      (event) => event === 'start:subscription_usage' || event === 'resolve:subscription_usage'
-    );
-    expect(usageEvents.filter((event) => event.startsWith('start:'))).toHaveLength(6);
-    expect(usageEvents.indexOf('resolve:subscription_usage')).toBe(
-      usageEvents.lastIndexOf('start:subscription_usage') + 1
-    );
-    expect(events.indexOf('start:workspaces')).toBeLessThan(
-      events.indexOf('resolve:subscription_periods')
-    );
+  // Plan-check C2: the entitlement read is one RPC round trip, not
+  // the six per-platform counts plus a period read Perf round 1
+  // parallelised. The property that survives the change is the
+  // one this block always pinned — the read is cheap and single —
+  // now asserted as exactly one RPC call and zero per-table usage
+  // reads. (The data assertions in the tests are unchanged: the
+  // RPC must return the same entitlement the old read did.)
+  function expectSingleRpcRead(events: string[]): void {
+    expect(events.filter((event) => event === 'start:rpc')).toHaveLength(1);
+    expect(events.filter((event) => event === 'resolve:rpc')).toHaveLength(1);
+    expect(events.filter((event) => event === 'start:subscription_usage')).toHaveLength(0);
+    expect(events.filter((event) => event === 'start:workspaces')).toHaveLength(0);
+    expect(events.filter((event) => event === 'start:destinations')).toHaveLength(0);
   }
 
-  it('paid user: same entitlement data, counts + period read concurrently', async () => {
+  it('paid user: same entitlement data, one RPC round trip', async () => {
     const state = baseState({
       periods: [periodRow()],
       usageCounts: { facebook: 2, instagram: 1, threads: 4, x: 0, tiktok: 3, youtube: 5 },
@@ -2359,10 +2449,10 @@ describe('Perf round 1: entitlement reads run concurrently', () => {
     expect(entitlement.readOnly).toBe(false);
     expect(entitlement.reason).toBeNull();
     expect(entitlement.hasPriorPeriod).toBe(true);
-    expectUsageCountsConcurrent(events);
+    expectSingleRpcRead(events);
   });
 
-  it('free user: same entitlement data, counts + period read concurrently', async () => {
+  it('free user: same entitlement data, one RPC round trip', async () => {
     const state = baseState({ usageCounts: { facebook: 1, threads: 2 } });
     const { client, events } = recordingClient(state);
     const entitlement = await getEntitlement(client, 'user-1', NOW);
@@ -2382,7 +2472,7 @@ describe('Perf round 1: entitlement reads run concurrently', () => {
     expect(entitlement.readOnly).toBe(true);
     expect(entitlement.reason).toContain('Prompt Library only');
     expect(entitlement.hasPriorPeriod).toBe(false);
-    expectUsageCountsConcurrent(events);
+    expectSingleRpcRead(events);
   });
 
   it('paid user with a disconnected destination: exclusion survives the parallel counts', async () => {

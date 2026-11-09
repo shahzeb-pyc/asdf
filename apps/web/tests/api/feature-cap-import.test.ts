@@ -146,6 +146,57 @@ class BillingBuilder {
 function billingClient(usageCounts: Record<string, number>): SupabaseClient {
   return {
     from: (table: string) => new BillingBuilder(table, usageCounts),
+    // Plan-check C2 fix-up — the `get_entitlement` RPC answer,
+    // computed from the same canned data the query builder above
+    // answers from: the fixed active-period row (window-checked
+    // against p_now, exactly as the SQL does) and the canned
+    // per-platform usage counts. A real implementation against
+    // the fixture data, not a canned success — a broken RPC still
+    // fails the parity tests.
+    rpc: (fn: string, args: { p_user_id: string; p_now: string }) => {
+      if (fn !== 'get_entitlement') {
+        return Promise.resolve({ data: null, error: { message: `unknown function ${fn}` } });
+      }
+      const periodRow = {
+        id: 'period-1',
+        user_id: userId,
+        facebook_count: 1,
+        instagram_count: 0,
+        threads_count: 0,
+        x_count: 0,
+        tiktok_count: 0,
+        youtube_count: 0,
+        starts_at: '2026-10-01T00:00:00.000Z',
+        ends_at: '2027-01-01T00:00:00.000Z',
+        superseded_at: null,
+      };
+      // The RPC only ever answers for the user it is asked about.
+      const mine = args.p_user_id === userId;
+      const nowIso = args.p_now;
+      // The fixture row is never superseded; only the window is
+      // checked, exactly as the SQL does for a live row.
+      const active =
+        mine && periodRow.starts_at <= nowIso && periodRow.ends_at > nowIso
+          ? { ...periodRow }
+          : null;
+      const usage: Record<string, number> = {
+        facebook: 0,
+        instagram: 0,
+        threads: 0,
+        x: 0,
+        tiktok: 0,
+        youtube: 0,
+      };
+      if (mine) {
+        for (const platform of Object.keys(usage)) {
+          usage[platform] = usageCounts[platform] ?? 0;
+        }
+      }
+      return Promise.resolve({
+        data: { period: active, usage, has_prior_period: mine },
+        error: null,
+      });
+    },
   } as unknown as SupabaseClient;
 }
 

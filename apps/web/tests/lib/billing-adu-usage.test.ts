@@ -170,10 +170,61 @@ class FakeBuilder {
   }
 }
 
+/**
+ * Plan-check C2 fix-up — the `get_entitlement` RPC answer,
+ * computed straight from the module-level fixture tables the way
+ * the SQL function does (active period window, per-platform
+ * counts with the legacy publish-now exclusion, ever-paid flag).
+ * This fake has no workspaces table, so the disconnected
+ * exclusion has nothing to subtract. A real implementation
+ * against the tables, not a canned success — a broken RPC still
+ * fails the parity tests.
+ */
+const RPC_PLATFORMS = ['facebook', 'instagram', 'threads', 'x', 'tiktok', 'youtube'] as const;
+const RPC_LEGACY_FEATURES = ['publish-now', 'instagram-publish-now', 'threads-publish-now'];
+
+function computeEntitlementRpc(userId: string, nowIso: string): Row {
+  const mine = periods.filter((row) => row['user_id'] === userId);
+  const sortedActive = mine
+    .filter(
+      (row) =>
+        row['superseded_at'] === null &&
+        typeof row['starts_at'] === 'string' &&
+        (row['starts_at'] as string) <= nowIso &&
+        typeof row['ends_at'] === 'string' &&
+        (row['ends_at'] as string) > nowIso
+    )
+    .sort((a, b) => String(b['ends_at']).localeCompare(String(a['ends_at'])));
+  const active: Row | null = sortedActive.length > 0 ? sortedActive[0] : null;
+  const usage: Row = {};
+  for (const platform of RPC_PLATFORMS) {
+    usage[platform] = usageRows.filter(
+      (row) =>
+        row['user_id'] === userId &&
+        row['platform'] === platform &&
+        !RPC_LEGACY_FEATURES.includes(row['feature'] as string)
+    ).length;
+  }
+  return {
+    period: active ? { ...active } : null,
+    usage,
+    has_prior_period: mine.length > 0,
+  };
+}
+
 function makeBillingClient(): unknown {
   return {
     from(table: string): FakeBuilder {
       return new FakeBuilder(table);
+    },
+    rpc(fn: string, args: { p_user_id: string; p_now: string }) {
+      if (fn !== 'get_entitlement') {
+        return Promise.resolve({ data: null, error: { message: `unknown function ${fn}` } });
+      }
+      return Promise.resolve({
+        data: computeEntitlementRpc(args.p_user_id, args.p_now),
+        error: null,
+      });
     },
   };
 }
