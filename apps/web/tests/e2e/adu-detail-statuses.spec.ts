@@ -16,8 +16,10 @@
  * Banner copy comes from the Facebook detail page's own local alert
  * switch (`getAduDetailStatusAlert` in adu-detail-page.tsx), not the
  * contracts alert functions the IG/Threads pages use. Toggle lock
- * follows the PATCH guards (spec §3.3): only fb_rate_limited,
- * invalid_token and completed lock the toggle.
+ * follows the PATCH guards (spec §3.3): fb_rate_limited,
+ * invalid_token, completed and invalid_username lock the toggle
+ * (invalid_username added by owner decision 2026-11-09, for symmetry
+ * with completed).
  */
 import { test, expect } from '@playwright/test';
 import { createFixtureState, installApiFixtures } from './fixtures/api';
