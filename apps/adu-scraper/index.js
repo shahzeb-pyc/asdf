@@ -14,12 +14,14 @@
  * when all 5 fail does the paid TikWM /user/info fallback resolve the
  * camelCase secUid for one `tiktokuser:` direct attempt — see
  * discovery/tikwm.js; no Countik / secuid Worker anywhere in
- * discovery), Puppeteer logged-in fallback / only path for Instagram
- * and Facebook (YouTube discovery moved to the official Data API,
- * spec 154 — no browser, no login), the pending -> processing ->
+ * discovery), Puppeteer logged-in path for Instagram and TikTok
+ * (YouTube discovery moved to the official Data API, spec 154 — no
+ * browser, no login; Facebook discovery runs its own no-login
+ * Patchright headless-shell session per job, spec 158 — no login at
+ * all), the pending -> processing ->
  * synced | error | browser_pending state machine, the 60s idle sleep,
- * the 500-job browser restart, the manual startup logins — is the
- * old code.
+ * the 500-job browser restart, the manual startup logins (Instagram
+ * and TikTok only) — is the old code.
  *
  * This CANNOT run in Vercel or the Cloudflare Worker: it needs a
  * persistent host with yt-dlp on PATH and a logged-in Chromium
@@ -30,7 +32,7 @@ import puppeteer from 'puppeteer';
 import { supabase } from './db.js';
 import { loginToInstagram, scrapeInstagramProfile } from './scrapers/instagram.js';
 import { loginToTikTok, scrapeTikTokProfile } from './scrapers/tiktok.js';
-import { loginToFacebook, scrapeFacebookProfile } from './scrapers/facebook.js';
+import { scrapeFacebookProfile } from './scrapers/facebook.js';
 import { BROWSER_CONFIG, LOGIN_CONFIG, SCRAPER_CONFIG } from './config.js';
 import { supportsYtdlpDiscovery } from './discovery/profile-urls.js';
 import { discoverReelIdsWithYtdlp } from './discovery/ytdlp.js';
@@ -140,7 +142,8 @@ const PLATFORM_HANDLERS = {
     scrape: scrapeTikTokProfile,
   },
   facebook: {
-    login: loginToFacebook,
+    // No login handler: Facebook discovery runs its own no-login
+    // Patchright session (spec 158) — see scrapeWithBrowser.
     scrape: scrapeFacebookProfile,
   },
 };
@@ -236,6 +239,17 @@ async function claimNextJob(claimSource, platformRotationStart) {
 }
 
 async function scrapeWithBrowser(page, platform, sourceUsername) {
+  // Facebook is special-cased: it does NOT receive the shared headed
+  // Puppeteer page. scrapeFacebookProfile (spec 158) launches and
+  // closes its own no-login Patchright headless-shell session per job.
+  if (platform === 'facebook') {
+    const scrapedData = await scrapeFacebookProfile(sourceUsername);
+    if (!scrapedData?.uniqueLinks?.length) {
+      return null;
+    }
+    return scrapedData.uniqueLinks;
+  }
+
   const handlers = PLATFORM_HANDLERS[platform];
   if (!handlers) {
     throw new Error(`Unsupported platform: ${platform}`);
@@ -465,6 +479,12 @@ async function main() {
         console.log('⏭️  SKIP_STARTUP_LOGINS=true, skipping manual login prompts for all platforms.');
       } else {
         for (const [platform, handlers] of Object.entries(PLATFORM_HANDLERS)) {
+          // Platforms with no login handler (Facebook, spec 158:
+          // no-login discovery) are skipped — no prompt, no page.
+          if (typeof handlers.login !== 'function') {
+            console.log(`⏭️ Skipping manual login for ${platform} (no-login discovery).`);
+            continue;
+          }
           page = await getActivePage(browser, page);
           await handlers.login(page);
 
