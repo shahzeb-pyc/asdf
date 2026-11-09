@@ -623,22 +623,25 @@ export interface EntitlementRpcRead {
   hasPriorPeriod: boolean;
 }
 
+function unreadableEntitlementRpcResult(detail: string): SubscriptionGateError {
+  logServerError('[billing] entitlement RPC returned unreadable result', new Error(detail), {
+    source: 'billing',
+  });
+  return new SubscriptionGateError(
+    'ENTITLEMENT_UNAVAILABLE',
+    'Your plan could not be checked right now. Please try again.'
+  );
+}
+
 function parseEntitlementRpcResult(data: unknown, userId: string): EntitlementRpcRead {
-  const fail = (detail: string): never => {
-    logServerError('[billing] entitlement RPC returned unreadable result', new Error(detail), {
-      source: 'billing',
-    });
-    throw new SubscriptionGateError(
-      'ENTITLEMENT_UNAVAILABLE',
-      'Your plan could not be checked right now. Please try again.'
-    );
-  };
   const row = asRow(data);
-  if (!row) fail('result is not an object');
+  if (!row) throw unreadableEntitlementRpcResult('result is not an object');
   const usageRow = asRow(row['usage']);
   const hasPriorPeriod = row['has_prior_period'];
-  if (!usageRow) fail('result has no usage object');
-  if (typeof hasPriorPeriod !== 'boolean') fail('result has no has_prior_period flag');
+  if (!usageRow) throw unreadableEntitlementRpcResult('result has no usage object');
+  if (typeof hasPriorPeriod !== 'boolean') {
+    throw unreadableEntitlementRpcResult('result has no has_prior_period flag');
+  }
   // Every usage count must be a real number: a missing or
   // mistyped count is a malformed answer, never a zero.
   const usage: PlatformCounts = {
@@ -652,7 +655,7 @@ function parseEntitlementRpcResult(data: unknown, userId: string): EntitlementRp
   for (const platform of SUBSCRIPTION_PLATFORMS) {
     const value = usageRow[platform];
     if (typeof value !== 'number' || !Number.isFinite(value)) {
-      fail(`usage count for ${platform} is not a number`);
+      throw unreadableEntitlementRpcResult(`usage count for ${platform} is not a number`);
     }
     usage[platform] = value;
   }
@@ -660,10 +663,12 @@ function parseEntitlementRpcResult(data: unknown, userId: string): EntitlementRp
   let period: SubscriptionPeriodRow | null = null;
   if (periodRaw !== null && periodRaw !== undefined) {
     period = periodFromRow(asRow(periodRaw) ?? {});
-    if (!period) fail('period row is unreadable');
+    if (!period) throw unreadableEntitlementRpcResult('period row is unreadable');
     // The RPC filters by the requested user; a row for anyone
     // else is a wrong-user answer and must never be served.
-    if (period.userId !== userId) fail('period belongs to a different user');
+    if (period.userId !== userId) {
+      throw unreadableEntitlementRpcResult('period belongs to a different user');
+    }
   }
   return { period, usage, hasPriorPeriod };
 }
