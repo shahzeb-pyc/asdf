@@ -21,14 +21,20 @@ import { fileURLToPath } from 'node:url';
  * Safety basis for the flag: every module in `src/` is declarations
  * only (zod schema construction, pure functions, types) — no
  * top-level executable statements, no IIFEs, no global mutation.
- * The full contracts test suite (1067 tests) is the runtime guard
+ * The full contracts test suite is the runtime guard
  * that nothing relies on import-time side effects.
  */
 describe('contracts packaging (spec 159 O1)', () => {
+  // Resolve from the package root, not from the test file's own
+  // directory: `tsc` emits this test into dist/, and vitest runs
+  // both copies — a path relative to the test file would read
+  // dist/index.ts (which does not exist) instead of src/index.ts.
+  const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+
   it('declares "sideEffects": false', () => {
-    const pkg = JSON.parse(
-      readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf8')
-    ) as { sideEffects?: unknown };
+    const pkg = JSON.parse(readFileSync(join(pkgRoot, 'package.json'), 'utf8')) as {
+      sideEffects?: unknown;
+    };
     expect(pkg.sideEffects).toBe(false);
   });
 
@@ -37,10 +43,7 @@ describe('contracts packaging (spec 159 O1)', () => {
     // assumptions. This is a coarse grep-guard, not a proof: the
     // authoritative check is the contract test suite passing with the
     // flag set, plus the measured first-load numbers.
-    const index = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), 'index.ts'),
-      'utf8'
-    );
+    const index = readFileSync(join(pkgRoot, 'src', 'index.ts'), 'utf8');
     expect(index).not.toMatch(/^\s*(console\.|globalThis\.|process\.env)/m);
   });
 });
