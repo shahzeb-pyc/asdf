@@ -2,6 +2,8 @@
 import * as React from "react";
 import { describe, it, expect, beforeAll } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
+import { createRoot } from "react-dom/client";
+import { flushSync } from "react-dom";
 import { ensureDomShims } from "./test-utils";
 import {
   SidebarProvider,
@@ -106,5 +108,56 @@ describe("Sidebar (upstream shadcn rebuild)", () => {
     );
     const btn = screen.getByRole("button", { name: "Plain" });
     expect(btn.getAttribute("data-active")).toBe("true");
+  });
+});
+
+describe("Sidebar mobile first paint (spec 152 O8)", () => {
+  /**
+   * The phone branch must be the FIRST render, not a post-hydration
+   * effect flip: on a 390px viewport the desktop sidebar tree must
+   * never mount. Testing Library's render flushes effects, which
+   * would hide the difference — so this renders synchronously with
+   * createRoot + flushSync and asserts before any effect could run.
+   * The old effect-based hook rendered the desktop branch here.
+   */
+  it("renders the mobile branch on first render at 390px, no desktop tree", () => {
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = (query: string) =>
+      ({
+        matches: query === "(max-width: 767px)",
+        media: query,
+        onchange: null,
+        addListener: () => undefined,
+        removeListener: () => undefined,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+        dispatchEvent: () => false,
+      }) as MediaQueryList;
+    try {
+      const container = document.createElement("div");
+      document.body.appendChild(container);
+      const root = createRoot(container);
+      flushSync(() => {
+        root.render(
+          <SidebarProvider>
+            <Sidebar collapsible="icon">
+              <SidebarHeader>Workspace</SidebarHeader>
+              <SidebarContent>
+                <p>Nav</p>
+              </SidebarContent>
+            </Sidebar>
+          </SidebarProvider>
+        );
+      });
+      // Mobile branch (closed sheet) mounts no sidebar element at
+      // all; the desktop branch would mount the rail div.
+      expect(container.querySelector('[data-slot="sidebar"]')).toBeNull();
+      flushSync(() => {
+        root.unmount();
+      });
+      container.remove();
+    } finally {
+      window.matchMedia = originalMatchMedia;
+    }
   });
 });
