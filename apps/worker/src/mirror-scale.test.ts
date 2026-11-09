@@ -111,6 +111,7 @@ function checkMirror(overrides: Partial<MirrorTickMirror> = {}): MirrorTickMirro
     fbRateLimitedAt: null,
     targetStatus: 'active',
     targetRateLimitedAt: null,
+    targetUpdatedAt: null,
     lastCheckedAt: '2026-10-29T11:30:00.000Z',
     catchUpPending: false,
     lastPostedSourceId: null,

@@ -211,9 +211,12 @@ export function asMirrorRow(row: unknown): MirrorRow | null {
     last_checked_at: typeof row.last_checked_at === 'string' ? row.last_checked_at : null,
     next_check_at: typeof row.next_check_at === 'string' ? row.next_check_at : null,
     last_error: typeof row.last_error === 'string' ? row.last_error : null,
-    // Spec 155: absent on rows read before the migration lands
-    // (PostgREST/legacy selects list columns explicitly, so old
-    // rows simply lack the keys) — null, never invented.
+    // Spec 155: the live selects list fb_status /
+    // fb_rate_limited_at explicitly and fail loudly if the
+    // migration has not landed — a missing column is an error,
+    // never a silent null. A missing key on a returned row (a
+    // row read through a path that does not select the columns)
+    // still defaults to null here; no value is ever invented.
     fb_status: typeof row.fb_status === 'string' ? row.fb_status : null,
     fb_rate_limited_at:
       typeof row.fb_rate_limited_at === 'string' ? row.fb_rate_limited_at : null,
@@ -1662,7 +1665,7 @@ export async function handleCreateMirror(
          RETURNING id, workspace_id, source_platform, source_username, source_display_name,
            source_avatar_url, target_platform, target_external_id, target_display_name,
            target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time,
-           last_checked_at, next_check_at, last_error, created_at, updated_at`,
+           last_checked_at, next_check_at, last_error, fb_status, fb_rate_limited_at, created_at, updated_at`,
         [
           workspaceId,
           username,
@@ -1700,7 +1703,7 @@ export async function handleCreateMirror(
           next_check_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
         })
         .select(
-          'id, workspace_id, source_platform, source_username, source_display_name, source_avatar_url, target_platform, target_external_id, target_display_name, target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time, last_checked_at, next_check_at, last_error, created_at, updated_at'
+          'id, workspace_id, source_platform, source_username, source_display_name, source_avatar_url, target_platform, target_external_id, target_display_name, target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time, last_checked_at, next_check_at, last_error, fb_status, fb_rate_limited_at, created_at, updated_at'
         )
         .single();
       if (error) {

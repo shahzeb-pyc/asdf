@@ -41,7 +41,7 @@ export async function loadMirror(
       `SELECT id, workspace_id, source_platform, source_username, source_display_name,
               source_avatar_url, target_platform, target_external_id, target_display_name,
               target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time,
-              last_checked_at, next_check_at, last_error, created_at, updated_at
+              last_checked_at, next_check_at, last_error, fb_status, fb_rate_limited_at, created_at, updated_at
        FROM mirrors WHERE id = $1 AND workspace_id = $2 LIMIT 1`,
       [mirrorId, workspaceId]
     )) as unknown[];
@@ -51,7 +51,7 @@ export async function loadMirror(
   const { data, error } = await supabase
     .from('mirrors')
     .select(
-      'id, workspace_id, source_platform, source_username, source_display_name, source_avatar_url, target_platform, target_external_id, target_display_name, target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time, last_checked_at, next_check_at, last_error, created_at, updated_at'
+      'id, workspace_id, source_platform, source_username, source_display_name, source_avatar_url, target_platform, target_external_id, target_display_name, target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time, last_checked_at, next_check_at, last_error, fb_status, fb_rate_limited_at, created_at, updated_at'
     )
     .eq('id', mirrorId)
     .eq('workspace_id', workspaceId)

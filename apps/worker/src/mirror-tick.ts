@@ -198,6 +198,18 @@ export interface MirrorTickMirror {
    */
   targetStatus: string | null;
   targetRateLimitedAt: string | null;
+  /**
+   * Spec 155 SEND BACK (PR #199, B4): the target destination row's
+   * `updated_at`, the fallback anchor when `targetRateLimitedAt` is
+   * missing or unparseable — the same COALESCE(rate_limited_at,
+   * updated_at) rule `isRateLimitWindowElapsed` (consumers.ts) and
+   * the Pages display rule use. The ADU tick flips destinations to
+   * rate_limited with a bare `{ status }` update and no
+   * metadata.rate_limited_at, so rate-limited targets without an
+   * anchor are real; without this fallback they would never become
+   * checkable again. Null when the target row is gone.
+   */
+  targetUpdatedAt: string | null;
   /** Last successful feed check (setup counts: setup verifies the
    *  feed). Null before any check; the gap rule then does not
    *  apply — only the resume flag can mark such a tick catch-up. */
@@ -307,18 +319,40 @@ function errorMessage(err: unknown): string {
  * with a stale 3-day anchor (the cooldown has ended — the mirror
  * resumes and clears its own detail on a clean check). Every other
  * state (error, disconnected, gone) is not checkable.
+ *
+ * SEND BACK B4: the anchor falls back to the destination row's
+ * `updated_at` when `targetRateLimitedAt` is missing or
+ * unparseable — COALESCE(rate_limited_at, updated_at), the same
+ * rule `isRateLimitWindowElapsed` (consumers.ts) uses. A
+ * rate-limited target with neither a usable anchor nor an
+ * updated_at stays uncheckable (fail closed).
  */
 function isFacebookTargetCheckable(mirror: MirrorTickMirror, now: Date): boolean {
   if (mirror.targetStatus === 'active') return true;
   if (mirror.targetStatus === 'rate_limited') {
-    const anchor = mirror.targetRateLimitedAt
-      ? Date.parse(mirror.targetRateLimitedAt)
-      : Number.NaN;
+    const anchorRaw = mirror.targetRateLimitedAt || mirror.targetUpdatedAt;
+    const anchor = anchorRaw ? Date.parse(anchorRaw) : Number.NaN;
     return (
       !Number.isNaN(anchor) && now.getTime() - anchor >= FB_RATE_LIMITED_COOLDOWN_MS
     );
   }
   return false;
+}
+
+/**
+ * Spec 155 SEND BACK (PR #199, B3): is the mirror's OWN rate-limit
+ * cooldown still running? The mirror's own `fb_status` +
+ * `fbRateLimitedAt` are the stamp of its last rate-limited publish
+ * failure. While that anchor is fresh the mirror must not publish,
+ * even when the target reads active — the target can recover (or
+ * have no anchor of its own) while the mirror's cooldown is still
+ * running. A missing/unparseable own anchor never blocks: it means
+ * no cooldown is in force.
+ */
+function isOwnRateLimitCooldownActive(mirror: MirrorTickMirror, now: Date): boolean {
+  if (mirror.fbStatus !== 'fb_rate_limited') return false;
+  const anchor = mirror.fbRateLimitedAt ? Date.parse(mirror.fbRateLimitedAt) : Number.NaN;
+  return !Number.isNaN(anchor) && now.getTime() - anchor < FB_RATE_LIMITED_COOLDOWN_MS;
 }
 
 /**
@@ -443,11 +477,18 @@ export async function processMirrorCheck(
   // mirror is re-evaluated next hour; when the target is active
   // again (or its rate-limit anchor goes stale) the next check
   // proceeds and clears the error. Instagram/Threads mirrors are
-  // untouched by this rule.
+  // untouched by this rule. SEND BACK B3: the skip also fires
+  // while the mirror's OWN rate-limit anchor is fresh, whatever
+  // the mirror's status — the target can read active while the
+  // mirror's own cooldown is still running, and resuming a
+  // rate-limited mirror (B2) must not publish through it. Once
+  // the own anchor goes stale the check proceeds and a clean
+  // check clears the detail.
+  const ownRateLimitCooldown = isOwnRateLimitCooldownActive(mirror, now);
   if (
     mirror.targetPlatform === 'facebook' &&
-    mirror.status === 'error' &&
-    !isFacebookTargetCheckable(mirror, now)
+    (ownRateLimitCooldown ||
+      (mirror.status === 'error' && !isFacebookTargetCheckable(mirror, now)))
   ) {
     try {
       await deps.updateMirror(mirror.id, { nextCheckAt });
@@ -455,7 +496,7 @@ export async function processMirrorCheck(
       console.error(`[mirror-tick] mirror=${mirror.id} error-skip stamp failed:`, err);
     }
     console.info(
-      `[mirror-tick] mirror=${mirror.id} skipped: Facebook target not checkable (targetStatus=${mirror.targetStatus ?? 'gone'}); posted=0 skipped=0 failed=0`
+      `[mirror-tick] mirror=${mirror.id} skipped: ${ownRateLimitCooldown ? 'own rate-limit cooldown still fresh' : `Facebook target not checkable (targetStatus=${mirror.targetStatus ?? 'gone'})`}; posted=0 skipped=0 failed=0`
     );
     return result;
   }
@@ -1067,7 +1108,7 @@ export function buildMirrorTickDeps(
       // target external id). First active row wins.
       const { data: destData, error: destError } = await db
         .from('destinations')
-        .select('encrypted_destination_token, status, metadata')
+        .select('encrypted_destination_token, status, metadata, updated_at')
         .eq('workspace_id', row.workspace_id)
         .eq('platform', row.target_platform)
         .eq('external_destination_id', row.target_external_id)
@@ -1120,8 +1161,13 @@ export function buildMirrorTickDeps(
         status: typeof row.status === 'string' ? row.status : 'active',
         // Spec 155: the mirror's own Facebook detail + anchor, and
         // the target's status + rate-limit anchor (from its
-        // metadata) for the error-skip rule. Absent before the
-        // migration lands — null, never invented.
+        // metadata) for the error-skip rule. The mirrors columns
+        // are required post-migration: the selects above list them
+        // explicitly and fail loudly if the migration has not
+        // landed — a missing column is an error, never a silent
+        // null. A missing key on a returned row (a row read
+        // through a path that does not select the columns) still
+        // defaults to null below; no value is ever invented.
         fbStatus: typeof row.fb_status === 'string' ? row.fb_status : null,
         fbRateLimitedAt:
           typeof row.fb_rate_limited_at === 'string' ? row.fb_rate_limited_at : null,
@@ -1133,6 +1179,11 @@ export function buildMirrorTickDeps(
           typeof (dest.metadata as Record<string, unknown>).rate_limited_at === 'string'
             ? ((dest.metadata as Record<string, unknown>).rate_limited_at as string)
             : null,
+        // SEND BACK B4: the target row's updated_at, the fallback
+        // anchor for the error-skip rule when rate_limited_at is
+        // missing or unparseable (see isFacebookTargetCheckable).
+        targetUpdatedAt:
+          dest !== undefined && typeof dest.updated_at === 'string' ? dest.updated_at : null,
         lastCheckedAt:
           typeof row.last_checked_at === 'string' ? row.last_checked_at : null,
         catchUpPending: row.catch_up_pending === true,

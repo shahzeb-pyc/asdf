@@ -131,16 +131,22 @@ export function MirrorDetailHeader({
   const fbAlert = wireStatus
     ? getFacebookPageStatusAlert(wireStatus, 'mirrors')
     : null;
-  // Spec 155 (owner default 4): Resume is DISABLED, not hidden,
-  // while the mirror is paused and a Facebook error is present —
-  // the target is down (live target detail) or the mirror carries
-  // its own stamped detail. Pause stays available, and Delete
-  // always stays available. An errored-but-active mirror shows
-  // Pause (available); the lock only ever disables Resume.
-  const resumeLocked =
-    isFacebook &&
-    isPaused &&
-    (mirror.fbStatus != null || mirror.targetFbStatus != null);
+  // Spec 155 (owner default 4, SEND BACK B2): Resume is DISABLED,
+  // not hidden, while the mirror is paused and the LIVE target
+  // still carries a Facebook error. The mirror's own stored
+  // fbStatus is deliberately NOT consulted here: paused mirrors
+  // are never ticked (the tick only selects status IN
+  // ('active', 'error')), so a stale own detail would lock
+  // Resume forever — error -> pause -> target recovers would
+  // deadlock. The live target detail is the authority while
+  // paused; after resume the tick clears the stale own detail
+  // on the first clean check. A fresh own rate-limit anchor is
+  // still respected after resume: the tick skips while it is
+  // fresh, so resuming cannot publish through a cooldown.
+  // Pause stays available, and Delete always stays available.
+  // An errored-but-active mirror shows Pause (available); the
+  // lock only ever disables Resume.
+  const resumeLocked = isFacebook && isPaused && mirror.targetFbStatus != null;
   const facebookUrl = isFacebook
     ? `https://facebook.com/${mirror.targetExternalId}`
     : null;
