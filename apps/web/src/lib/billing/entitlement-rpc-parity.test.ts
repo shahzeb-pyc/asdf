@@ -217,17 +217,17 @@ function computeRpcResult(
   const periods = (tables['subscription_periods'] ?? []).filter(
     (row) => row['user_id'] === userId
   );
-  const active: Row | null =
-    periods
-      .filter(
-        (row) =>
-          row['superseded_at'] === null &&
-          typeof row['starts_at'] === 'string' &&
-          (row['starts_at'] as string) <= nowIso &&
-          typeof row['ends_at'] === 'string' &&
-          (row['ends_at'] as string) > nowIso
-      )
-      .sort((a, b) => String(b['ends_at']).localeCompare(String(a['ends_at'])))[0] ?? null;
+  const sortedActive = periods
+    .filter(
+      (row) =>
+        row['superseded_at'] === null &&
+        typeof row['starts_at'] === 'string' &&
+        (row['starts_at'] as string) <= nowIso &&
+        typeof row['ends_at'] === 'string' &&
+        (row['ends_at'] as string) > nowIso
+    )
+    .sort((a, b) => String(b['ends_at']).localeCompare(String(a['ends_at'])));
+  const active: Row | null = sortedActive.length > 0 ? sortedActive[0] : null;
   const workspaceIds = new Set(
     (tables['workspaces'] ?? [])
       .filter((row) => row['owner_id'] === userId)
