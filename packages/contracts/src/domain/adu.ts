@@ -65,6 +65,7 @@ export const AduSyncStatusSchema = z.enum([
   'processing',
   'synced',
   'error',
+  'quota_parked',
 ]);
 export type AduSyncStatus = z.infer<typeof AduSyncStatusSchema>;
 
@@ -132,6 +133,7 @@ export const ADU_SYNC_STATUS_LABELS: Record<AduSyncStatus, string> = {
   processing: 'Scraping reels',
   synced: 'Synced',
   error: 'Source not found',
+  quota_parked: 'Waiting for YouTube limit reset',
 };
 
 /**
@@ -143,6 +145,7 @@ export function aduDisplayStatus(
   syncStatus: AduSyncStatus
 ): string {
   if (syncStatus === 'error') return 'Source not found';
+  if (syncStatus === 'quota_parked') return 'Waiting for YouTube limit reset';
   if (syncStatus === 'processing') return 'Scraping reels';
   if (syncStatus === 'pending' || syncStatus === 'browser_pending')
     return 'Scrape pending';
@@ -156,6 +159,8 @@ export function aduStatusAlert(
 ): string | null {
   if (syncStatus === 'error')
     return 'The source could not be found. Check the source username in Settings, then try again.';
+  if (syncStatus === 'quota_parked')
+    return "YouTube's daily limit is reached. Discovery will resume automatically.";
   if (status === 'active') return null;
   switch (status) {
     case 'paused':

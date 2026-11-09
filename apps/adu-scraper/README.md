@@ -9,14 +9,14 @@ Ported from the old fbuploadpro service (`backend_v3/services/facebook/auto-down
 1. **yt-dlp (TikTok only)** — flat-playlist extract with `--playlist-items`.
    yt-dlp only: the plain profile URL `https://www.tiktok.com/@{handle}` goes through the rotating proxy (`COUNTIK_PROXY_URL` from env), so yt-dlp resolves the `sec_uid` itself from the profile page. The profile attempt is retried up to **5 times per claim** (2s delay between attempts) — each attempt draws a different rotating proxy exit IP, which is what decides success when an exit IP is blocked (empty response / TLS EOF). Only when all 5 fail, the paid TikWM `/user/info` fallback runs (`discovery/tikwm.js`, keys from `TIKWMAPI_KEYS_SCRAPER`, comma-separated, tried in order, no proxy): it resolves the camelCase `secUid` and attempts the `tiktokuser:{secUid}` direct feed once, exactly as the old Countik path did. No Countik anywhere in discovery: no secuid Worker call, no direct Countik fallback. When `TIKWMAPI_KEYS_SCRAPER` is unset the fallback is disabled (one loud warning at startup) and discovery stays yt-dlp-only. Mobile iPhone UA + full `Sec-Fetch-*` headers (see `discovery/ytdlp-args.js`), `--retries 5`, `--extractor-retries 10`, `--socket-timeout 30`, proxy from `DATACENTER_PROXY` / `PROXY_URL` / `HTTP_PROXY` / `HTTPS_PROXY` when set (the `COUNTIK_PROXY_URL` proxy is passed explicitly by the discovery code, never read from env by the argv builder). Yields video IDs only; "new" is set difference against stored IDs (upsert `onConflict: 'config_id,source_reel_id'`, duplicates ignored).
 2. **Puppeteer (Instagram/Facebook, and TikTok fallback)** — scrolls profile pages using logged-in sessions (persistent profile, manual login at startup).
-3. **YouTube Data API v3 (YouTube only, spec 154)** — `channels.list` resolves the handle to a channel ID (cached on the config, so repeat checks skip it), `playlistItems.list` walks the uploads playlist newest first, `videos.list` durations keep Shorts only (at most 60 seconds at any date, or at most 180 seconds when published on or after 15 Oct 2024). Never `search.list`. Quota exhaustion fails loudly to `error`, never to a browser fallback. Key from `YOUTUBE_DATA_API_KEY`.
+3. **YouTube Data API v3 (YouTube only, spec 154)** — `channels.list` resolves the handle to a channel ID (cached on the config, so repeat checks skip it), `playlistItems.list` walks the uploads playlist newest first, `videos.list` durations keep Shorts only (at most 60 seconds at any date, or at most 180 seconds when published on or after 15 Oct 2024). Never `search.list`. Quota exhaustion parks the source until the next midnight Pacific reset and retries it automatically (spec 156), never to a browser fallback. Key from `YOUTUBE_DATA_API_KEY`.
 
 ```text
 pending ──claim──► processing
   ├─ tiktok: yt-dlp ──► synced (IDs found)
   │          └─ all 5 fail ──► TikWM secUid fallback ──► synced (direct attempt found IDs)
   │                                  └─ fail ──► error (TikTok goes to error, not browser_pending — old code)
-  ├─ youtube: Data API ──► synced | error (never browser_pending)
+  ├─ youtube: Data API ──► synced | error | quota_parked (never browser_pending)
   ├─ instagram/facebook: browser ──► synced | error
 browser_pending ──claim──► processing ──► browser ──► synced | error
 
@@ -37,9 +37,10 @@ Terminal page states: **`synced`** and **`error`**. Scheduling still requires `s
 
 Infinite loop:
 
-1. Rotate platforms; call `get_next_pending_adu_config(p_platform)` until a row is claimed (`sync_status → processing`).
-2. If none, call `get_next_browser_pending_adu_config(p_platform)` for browser fallbacks.
-3. If none, sleep **60 seconds**.
+1. Re-queue quota-parked YouTube sources whose retry time passed (spec 156).
+2. Rotate platforms; call `get_next_pending_adu_config(p_platform)` until a row is claimed (`sync_status → processing`).
+3. If none, call `get_next_browser_pending_adu_config(p_platform)` for browser fallbacks.
+4. If none, sleep **60 seconds**.
 
 Browser restarts after **500** jobs per session (`MAX_JOBS_PER_SESSION`).
 
@@ -50,7 +51,7 @@ At startup (unless `SKIP_STARTUP_LOGINS=true`) the browser opens each platform's
 | Platform | `pending` claim | `browser_pending` claim |
 |----------|-----------------|-------------------------|
 | TikTok | yt-dlp → `synced` or `error` | Puppeteer only |
-| YouTube | Data API → `synced` or `error` (never browser) | Data API |
+| YouTube | Data API → `synced`, `error`, or `quota_parked` until the next midnight Pacific reset (never browser) | Data API |
 | Instagram | Puppeteer only | Puppeteer only |
 | Facebook | Puppeteer only | Puppeteer only |
 

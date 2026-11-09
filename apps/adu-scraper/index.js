@@ -34,7 +34,7 @@ import { loginToFacebook, scrapeFacebookProfile } from './scrapers/facebook.js';
 import { BROWSER_CONFIG, LOGIN_CONFIG, SCRAPER_CONFIG } from './config.js';
 import { supportsYtdlpDiscovery } from './discovery/profile-urls.js';
 import { discoverReelIdsWithYtdlp } from './discovery/ytdlp.js';
-import { discoverYoutubeShorts } from './discovery/youtube-api.js';
+import { discoverYoutubeShorts, quotaParkRetryAt, requeueDueQuotaParkedConfigs } from './discovery/youtube-api.js';
 import { logTikwmFallbackStatus } from './discovery/tikwm.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -199,6 +199,19 @@ async function markSyncStatus(configId, syncStatus) {
   }
 }
 
+// Park a YouTube source after a quota error (spec 156): it retries
+// automatically after the next midnight Pacific reset, instead of
+// sitting in 'error' until someone re-enables it.
+async function markQuotaParked(configId, retryAtIso) {
+  const { error } = await supabase
+    .from('adu_configs')
+    .update({ sync_status: 'quota_parked', quota_retry_at: retryAtIso })
+    .eq('id', configId);
+  if (error) {
+    throw error;
+  }
+}
+
 async function claimNextJob(claimSource, platformRotationStart) {
   const orderedPlatforms = PLATFORM_ORDER.map((_, idx) => (
     PLATFORM_ORDER[(platformRotationStart + idx) % PLATFORM_ORDER.length]
@@ -275,8 +288,16 @@ async function processYoutubeJob(job) {
     },
   });
   if (!result.ok) {
+    if (result.quotaExceeded) {
+      const retryAt = quotaParkRetryAt(true);
+      console.error(
+        `⏸️ YouTube Data API quota exhausted for ${safeUser} — parking until ${retryAt}, no browser fallback`,
+      );
+      await markQuotaParked(job.id, retryAt);
+      return;
+    }
     console.error(
-      `❌ YouTube Data API discovery failed for ${safeUser} (${result.reason})${result.quotaExceeded ? ' — QUOTA EXHAUSTED, no browser fallback' : ''}`,
+      `❌ YouTube Data API discovery failed for ${safeUser} (${result.reason})`,
     );
     await markSyncStatus(job.id, 'error');
     return;
@@ -487,6 +508,19 @@ async function main() {
     if (jobsProcessed >= maxJobsPerSession) {
       console.log('🚀 Reached session limit. Restarting browser...');
       await launchOrRestartBrowser();
+    }
+
+    // Quota-parked YouTube sources (spec 156): re-queue the ones whose
+    // retry time passed. A failure here is logged loudly and retried
+    // next iteration — it must not kill the daemon and strand every
+    // other platform's work.
+    try {
+      const requeued = await requeueDueQuotaParkedConfigs(supabase);
+      if (requeued > 0) {
+        console.log(`🔄 Re-queued ${requeued} YouTube source(s) after the daily limit reset.`);
+      }
+    } catch (requeueError) {
+      console.error('❌ Failed to re-queue parked YouTube sources:', requeueError);
     }
 
     console.log('\n--------------------------------------------------');

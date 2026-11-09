@@ -3,7 +3,10 @@ import test from 'node:test';
 import {
   discoverYoutubeShorts,
   isYoutubeShort,
+  nextYoutubeQuotaResetAt,
   parseIso8601DurationToSeconds,
+  quotaParkRetryAt,
+  requeueDueQuotaParkedConfigs,
   resolveYoutubeChannel,
   uploadsPlaylistIdForChannel,
 } from './youtube-api.js';
@@ -281,4 +284,134 @@ test('discoverYoutubeShorts rejects an empty handle without fetching', async () 
   });
   assert.deepEqual(result, { ok: false, reason: 'invalid_source_username' });
   assert.equal(fetchCalls, 0);
+});
+
+// --- YouTube quota auto-retry (spec 156) ---
+
+test('nextYoutubeQuotaResetAt returns the next midnight Pacific on a normal day', () => {
+  assert.equal(
+    nextYoutubeQuotaResetAt(new Date('2026-11-09T15:00:00.000Z')).toISOString(),
+    '2026-11-10T08:00:00.000Z',
+  );
+});
+
+test('nextYoutubeQuotaResetAt at midnight exactly returns the following midnight, never now', () => {
+  const from = new Date('2026-11-10T08:00:00.000Z');
+  const reset = nextYoutubeQuotaResetAt(from);
+  assert.equal(reset.toISOString(), '2026-11-11T08:00:00.000Z');
+  assert.ok(reset.getTime() > from.getTime());
+});
+
+test('nextYoutubeQuotaResetAt is DST-correct across the 2026 spring-forward boundary', () => {
+  // 2026-03-07 12:00Z is 04:00 PST; the next midnight is still PST (08:00Z).
+  assert.equal(
+    nextYoutubeQuotaResetAt(new Date('2026-03-07T12:00:00.000Z')).toISOString(),
+    '2026-03-08T08:00:00.000Z',
+  );
+  // 2026-03-08 12:00Z is 05:00 PDT (clocks moved at 10:00Z); the next
+  // midnight is PDT (07:00Z).
+  assert.equal(
+    nextYoutubeQuotaResetAt(new Date('2026-03-08T12:00:00.000Z')).toISOString(),
+    '2026-03-09T07:00:00.000Z',
+  );
+});
+
+test('nextYoutubeQuotaResetAt is DST-correct across the 2026 fall-back boundary', () => {
+  // 2026-10-31 12:00Z is 05:00 PDT; the next midnight is still PDT (07:00Z).
+  assert.equal(
+    nextYoutubeQuotaResetAt(new Date('2026-10-31T12:00:00.000Z')).toISOString(),
+    '2026-11-01T07:00:00.000Z',
+  );
+  // 2026-11-01 12:00Z is 04:00 PST (clocks moved back at 09:00Z); the
+  // next midnight is PST (08:00Z).
+  assert.equal(
+    nextYoutubeQuotaResetAt(new Date('2026-11-01T12:00:00.000Z')).toISOString(),
+    '2026-11-02T08:00:00.000Z',
+  );
+});
+
+test('nextYoutubeQuotaResetAt rolls over the year end', () => {
+  assert.equal(
+    nextYoutubeQuotaResetAt(new Date('2026-12-31T20:00:00.000Z')).toISOString(),
+    '2027-01-01T08:00:00.000Z',
+  );
+});
+
+// A stub Supabase client that records the query chain instead of
+// hitting the database, so the requeue predicate is testable.
+function stubSupabaseClient({ rows = [], error = null } = {}) {
+  const calls = [];
+  const chain = {
+    update: (values) => {
+      calls.push(['update', values]);
+      return chain;
+    },
+    eq: (column, value) => {
+      calls.push(['eq', column, value]);
+      return chain;
+    },
+    lte: (column, value) => {
+      calls.push(['lte', column, value]);
+      return chain;
+    },
+    select: async (...args) => {
+      calls.push(['select', ...args]);
+      if (error) return { data: null, error };
+      return { data: rows, error: null };
+    },
+  };
+  const client = {
+    from: (table) => {
+      calls.push(['from', table]);
+      return chain;
+    },
+  };
+  return { client, calls };
+}
+
+test('quotaParkRetryAt returns the next midnight Pacific for a quota error and null otherwise', () => {
+  assert.equal(
+    quotaParkRetryAt(true, new Date('2026-11-09T15:00:00.000Z')),
+    '2026-11-10T08:00:00.000Z',
+  );
+  assert.equal(quotaParkRetryAt(false, new Date('2026-11-09T15:00:00.000Z')), null);
+  assert.equal(quotaParkRetryAt(undefined, new Date('2026-11-09T15:00:00.000Z')), null);
+});
+
+test('requeueDueQuotaParkedConfigs re-queues only due parked rows and returns the count', async () => {
+  const { client, calls } = stubSupabaseClient({ rows: [{ id: 'a' }, { id: 'b' }] });
+  const count = await requeueDueQuotaParkedConfigs(client, new Date('2026-11-10T08:00:00.000Z'));
+  assert.equal(count, 2);
+  assert.deepEqual(calls, [
+    ['from', 'adu_configs'],
+    ['update', { sync_status: 'pending', quota_retry_at: null }],
+    ['eq', 'sync_status', 'quota_parked'],
+    ['lte', 'quota_retry_at', '2026-11-10T08:00:00.000Z'],
+    ['select', 'id'],
+  ]);
+});
+
+test('requeueDueQuotaParkedConfigs does not re-queue before the retry time', async () => {
+  // A parked row retries at 2026-11-10T08:00Z. At 15:00Z the day before,
+  // the requeue bound must still be "now" — the database comparison
+  // excludes the row. The bound is the mechanism; assert it exactly.
+  const { client, calls } = stubSupabaseClient({ rows: [] });
+  const count = await requeueDueQuotaParkedConfigs(client, new Date('2026-11-09T15:00:00.000Z'));
+  assert.equal(count, 0);
+  assert.deepEqual(
+    calls.filter(([name]) => name === 'lte'),
+    [['lte', 'quota_retry_at', '2026-11-09T15:00:00.000Z']],
+  );
+  assert.deepEqual(
+    calls.filter(([name]) => name === 'eq'),
+    [['eq', 'sync_status', 'quota_parked']],
+  );
+});
+
+test('requeueDueQuotaParkedConfigs throws loudly when the database errors', async () => {
+  const { client } = stubSupabaseClient({ error: new Error('boom') });
+  await assert.rejects(
+    requeueDueQuotaParkedConfigs(client, new Date('2026-11-10T08:00:00.000Z')),
+    /boom/,
+  );
 });
