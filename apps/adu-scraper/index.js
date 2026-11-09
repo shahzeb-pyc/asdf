@@ -14,10 +14,12 @@
  * when all 5 fail does the paid TikWM /user/info fallback resolve the
  * camelCase secUid for one `tiktokuser:` direct attempt — see
  * discovery/tikwm.js; no Countik / secuid Worker anywhere in
- * discovery), Puppeteer logged-in fallback / only path for YouTube,
- * Instagram and Facebook, the pending -> processing -> synced | error |
- * browser_pending state machine, the 60s idle sleep, the 500-job
- * browser restart, the manual startup logins — is the old code.
+ * discovery), Puppeteer logged-in fallback / only path for Instagram
+ * and Facebook (YouTube discovery moved to the official Data API,
+ * spec 154 — no browser, no login), the pending -> processing ->
+ * synced | error | browser_pending state machine, the 60s idle sleep,
+ * the 500-job browser restart, the manual startup logins — is the
+ * old code.
  *
  * This CANNOT run in Vercel or the Cloudflare Worker: it needs a
  * persistent host with yt-dlp on PATH and a logged-in Chromium
@@ -28,11 +30,11 @@ import puppeteer from 'puppeteer';
 import { supabase } from './db.js';
 import { loginToInstagram, scrapeInstagramProfile } from './scrapers/instagram.js';
 import { loginToTikTok, scrapeTikTokProfile } from './scrapers/tiktok.js';
-import { loginToYouTube, scrapeYoutubeChannel } from './scrapers/youtube.js';
 import { loginToFacebook, scrapeFacebookProfile } from './scrapers/facebook.js';
 import { BROWSER_CONFIG, LOGIN_CONFIG, SCRAPER_CONFIG } from './config.js';
 import { supportsYtdlpDiscovery } from './discovery/profile-urls.js';
 import { discoverReelIdsWithYtdlp } from './discovery/ytdlp.js';
+import { discoverYoutubeShorts } from './discovery/youtube-api.js';
 import { logTikwmFallbackStatus } from './discovery/tikwm.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -125,6 +127,9 @@ function cleanSourceUsername(sourcePlatform, sourceUsername) {
 }
 
 
+// Browser platforms only. YouTube discovery runs through the official
+// Data API (spec 154) and never touches the browser, so it has no login
+// or scrape handler here — but it stays in the claim rotation below.
 const PLATFORM_HANDLERS = {
   instagram: {
     login: loginToInstagram,
@@ -134,17 +139,13 @@ const PLATFORM_HANDLERS = {
     login: loginToTikTok,
     scrape: scrapeTikTokProfile,
   },
-  youtube: {
-    login: loginToYouTube,
-    scrape: scrapeYoutubeChannel,
-  },
   facebook: {
     login: loginToFacebook,
     scrape: scrapeFacebookProfile,
   },
 };
 
-const PLATFORM_ORDER = Object.keys(PLATFORM_HANDLERS);
+const PLATFORM_ORDER = ['instagram', 'tiktok', 'youtube', 'facebook'];
 
 const CLAIM_RPC = {
   pending: 'get_next_pending_adu_config',
@@ -243,6 +244,50 @@ async function runYtdlpDiscovery(platform, sourceUsername) {
   );
 }
 
+// YouTube discovery through the official Data API (spec 154): no
+// browser, no login. The claim RPC returns only id/source_username/
+// source_platform, so the cached channel ID is read here (one row by
+// id). Any failure marks the config 'error' — YouTube never queues a
+// browser fallback, for any failure.
+async function processYoutubeJob(job) {
+  const safeUser = String(job.source_username || '').replace(/[^A-Za-z0-9._-]/g, '').slice(0, 128);
+  const { data: configRow, error: configError } = await supabase
+    .from('adu_configs')
+    .select('youtube_channel_id')
+    .eq('id', job.id)
+    .single();
+  if (configError) {
+    throw new Error(`Failed to read cached YouTube channel for ${safeUser}: ${configError.message}`);
+  }
+  const cachedChannelId = configRow?.youtube_channel_id || null;
+  const result = await discoverYoutubeShorts({
+    sourceUsername: job.source_username,
+    cachedChannelId,
+    maxCount: SCRAPER_CONFIG.MAX_REELS_PER_PLATFORM,
+    onChannelResolved: async (channelId) => {
+      const { error: cacheError } = await supabase
+        .from('adu_configs')
+        .update({ youtube_channel_id: channelId })
+        .eq('id', job.id);
+      if (cacheError) {
+        throw new Error(`Failed to cache YouTube channel for ${safeUser}: ${cacheError.message}`);
+      }
+    },
+  });
+  if (!result.ok) {
+    console.error(
+      `❌ YouTube Data API discovery failed for ${safeUser} (${result.reason})${result.quotaExceeded ? ' — QUOTA EXHAUSTED, no browser fallback' : ''}`,
+    );
+    await markSyncStatus(job.id, 'error');
+    return;
+  }
+  console.log(
+    `✅ YouTube Data API discovered ${result.ids.length} Short(s) for ${safeUser} (${result.quotaUnits} quota units${result.resolvedFromCache ? ', cached channel' : ''}).`,
+  );
+  await upsertReelsAndMarkSynced(job, 'youtube', result.ids);
+  console.log(`💾 Synced ${safeUser} (YouTube Data API).`);
+}
+
 async function processJob(page, job, platform, claimSource) {
   const cleanUsername = cleanSourceUsername(platform, job.source_username);
   if (cleanUsername !== job.source_username) {
@@ -260,6 +305,12 @@ async function processJob(page, job, platform, claimSource) {
   const label = `[${claimSource} → ${platform}] ${job.source_username}`;
   console.log(`🎬 Processing ${label}`);
 
+  // YouTube discovery runs through the official Data API (spec 154),
+  // for pending and browser_pending claims alike.
+  if (platform === 'youtube') {
+    await processYoutubeJob(job);
+    return;
+  }
 
   if (claimSource === 'browser_pending') {
     const browserIds = await scrapeWithBrowser(page, platform, job.source_username);
