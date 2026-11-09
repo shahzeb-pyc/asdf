@@ -29,7 +29,14 @@ export type FacebookPageStatus =
   | 'fb_rate_limited'
   | 'page_checkpoint'
   | 'invalid_token'
-  | 'disconnected';
+  | 'disconnected'
+  // Spec 155: Facebook publish error statuses from the ADU mapping.
+  | 'page_not_accessible'
+  | 'missing_page_access'
+  | 'missing_permission'
+  | 'check_developer_app'
+  | 'account_suspended'
+  | '2fa_required_on_BM';
 
 export interface FacebookPageItem {
   id: string;
@@ -90,10 +97,23 @@ export function isPageNeedsAttention(status: FacebookPageStatus): boolean {
   return (
     status === 'invalid_token' ||
     status === 'page_checkpoint' ||
-    status === 'fb_rate_limited'
+    status === 'fb_rate_limited' ||
+    status === 'page_not_accessible' ||
+    status === 'missing_page_access' ||
+    status === 'missing_permission' ||
+    status === 'check_developer_app' ||
+    status === 'account_suspended' ||
+    status === '2fa_required_on_BM'
   );
 }
 
+/**
+ * Badge labels (spec 155): the shared contracts labels, re-expressed
+ * here so the card keeps its local switch — the two must agree (the
+ * page-card tests pin both). `active` stays "Active" (owner default
+ * 3), `page_checkpoint` stays "Identity Checkpoint" (default 1),
+ * and the new error statuses use the ADU wording.
+ */
 export function getPageStatusLabel(status: FacebookPageStatus): string {
   switch (status) {
     case 'active':
@@ -101,11 +121,23 @@ export function getPageStatusLabel(status: FacebookPageStatus): string {
     case 'paused':
       return 'Paused';
     case 'invalid_token':
-      return 'Token Expired';
+      return 'Invalid token';
     case 'page_checkpoint':
       return 'Identity Checkpoint';
     case 'fb_rate_limited':
       return 'Rate Limited';
+    case 'page_not_accessible':
+      return 'Page not accessible';
+    case 'missing_page_access':
+      return 'Missing page access';
+    case 'missing_permission':
+      return 'Missing permission';
+    case 'check_developer_app':
+      return 'Check developer app';
+    case 'account_suspended':
+      return 'Account suspended';
+    case '2fa_required_on_BM':
+      return 'BM 2FA required';
     case 'disconnected':
       return 'Disconnected';
     default:

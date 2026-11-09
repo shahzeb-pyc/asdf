@@ -4,6 +4,7 @@ import {
   ListFacebookPagesResponseSchema,
   FB_RATE_LIMITED_COOLDOWN_MS,
   evaluatePageHealth,
+  isFacebookPageErrorStatus,
   verifySessionToken,
   canAccessTenant,
   type DatabaseClient,
@@ -112,6 +113,36 @@ export interface PageListFilters {
   search: string;
   status: string;
   account: string;
+  /**
+   * Spec 155: exact wire-status narrowing from the status-detail
+   * Select (e.g. 'missing_permission'). Unknown values are ignored
+   * (no narrowing), the ADU hub pattern — the value only ever comes
+   * from our own Select.
+   */
+  statusDetail?: string | undefined;
+}
+
+/**
+ * Spec 155: the exact wire statuses a detail filter may name. Kept
+ * as a local set (not the contracts enum) so an unknown query value
+ * can never reach the SQL below as a bare string.
+ */
+const PAGE_STATUS_DETAIL_VALUES: ReadonlySet<string> = new Set([
+  'active',
+  'paused',
+  'invalid_token',
+  'page_checkpoint',
+  'fb_rate_limited',
+  'page_not_accessible',
+  'missing_page_access',
+  'missing_permission',
+  'check_developer_app',
+  'account_suspended',
+  '2fa_required_on_BM',
+]);
+
+function normalizeStatusDetail(value: string | null | undefined): string | null {
+  return value && PAGE_STATUS_DETAIL_VALUES.has(value) ? value : null;
 }
 
 const UUID_RE =
@@ -143,7 +174,7 @@ function escapeLikePattern(input: string): string {
  * rank below mirrors that with the same timestamp rule.
  */
 const PAGE_RANK_SQL = `CASE
-  WHEN (${DESTINATION_STATUS_TO_WIRE_SQL}) IN ('invalid_token', 'page_checkpoint') THEN 0
+  WHEN (${DESTINATION_STATUS_TO_WIRE_SQL}) IN ('invalid_token', 'page_checkpoint', 'page_not_accessible', 'missing_page_access', 'missing_permission', 'check_developer_app', 'account_suspended', '2fa_required_on_BM') THEN 0
   WHEN (${DESTINATION_STATUS_TO_WIRE_SQL}) = 'fb_rate_limited'
     AND COALESCE((d.metadata->>'rate_limited_at')::timestamptz, d.updated_at) > now() - interval '3 days' THEN 0
   WHEN (${DESTINATION_STATUS_TO_WIRE_SQL}) = 'paused' THEN 1
@@ -155,13 +186,35 @@ const PAGE_FRESH_RATE_LIMITED_SQL = `(${DESTINATION_STATUS_TO_WIRE_SQL}) = 'fb_r
   AND COALESCE((d.metadata->>'rate_limited_at')::timestamptz, d.updated_at) > now() - interval '3 days'`;
 
 /**
- * The needs-attention predicate on the wire status: invalid token,
- * identity checkpoint, or a still-fresh rate limit (a stale rate
- * limit has already flipped back to active via evaluatePageHealth).
- * Shared by the status filter and the full-set attention count so
- * the two can never disagree about what counts as attention.
+ * The needs-attention predicate on the wire status: any Facebook
+ * error status, or a still-fresh rate limit (a stale rate limit has
+ * already flipped back to active via evaluatePageHealth). Shared by
+ * the status filter and the full-set attention count so the two can
+ * never disagree about what counts as attention.
  */
-const PAGE_NEEDS_ATTENTION_SQL = `((${DESTINATION_STATUS_TO_WIRE_SQL}) IN ('invalid_token', 'page_checkpoint') OR ${PAGE_FRESH_RATE_LIMITED_SQL})`;
+const PAGE_NEEDS_ATTENTION_SQL = `((${DESTINATION_STATUS_TO_WIRE_SQL}) IN ('invalid_token', 'page_checkpoint', 'page_not_accessible', 'missing_page_access', 'missing_permission', 'check_developer_app', 'account_suspended', '2fa_required_on_BM') OR ${PAGE_FRESH_RATE_LIMITED_SQL})`;
+
+/**
+ * Spec 155: the SQL condition for an exact wire-status detail
+ * filter. 'active' and 'fb_rate_limited' reuse the freshness-aware
+ * expressions the tab filters use (a stale rate limit reads as
+ * active); every other status is an exact match on the wire CASE.
+ */
+function buildStatusDetailCondition(
+  detail: string,
+  nextParam: () => string,
+  params: unknown[]
+): string {
+  if (detail === 'active') {
+    return `((${DESTINATION_STATUS_TO_WIRE_SQL}) = 'active' OR ((${DESTINATION_STATUS_TO_WIRE_SQL}) = 'fb_rate_limited' AND NOT (${PAGE_FRESH_RATE_LIMITED_SQL})))`;
+  }
+  if (detail === 'fb_rate_limited') {
+    return `(${PAGE_FRESH_RATE_LIMITED_SQL})`;
+  }
+  const p = nextParam();
+  params.push(detail);
+  return `((${DESTINATION_STATUS_TO_WIRE_SQL}) = ${p})`;
+}
 
 function buildPageWhere(
   workspaceId: string,
@@ -194,6 +247,12 @@ function buildPageWhere(
     );
   } else if (filters.status === 'paused') {
     conditions.push(`(${DESTINATION_STATUS_TO_WIRE_SQL}) = 'paused'`);
+  }
+  // Spec 155: the detail Select narrows to one exact wire status,
+  // combined with (never instead of) the tab filter above.
+  const statusDetail = normalizeStatusDetail(filters.statusDetail);
+  if (statusDetail) {
+    conditions.push(buildStatusDetailCondition(statusDetail, nextParam, params));
   }
   if (filters.account && filters.account !== 'all') {
     const p = nextParam();
@@ -395,6 +454,43 @@ function applySupabasePageGroup(
   }
 }
 
+/**
+ * Spec 155: the PostgREST form of the detail filter, mirroring the
+ * SQL conditions above (including the fresh/stale rate-limit split).
+ * Applied inside buildSupabasePageQuery after the rank-group
+ * predicate, so group counts and row slices narrow together.
+ */
+function applySupabaseStatusDetail(
+  query: SupabaseDestinationsQuery,
+  detail: string,
+  freshThresholdIso: string
+): SupabaseDestinationsQuery {
+  switch (detail) {
+    case 'active':
+      return query.or(
+        `status.eq.active,and(status.eq.rate_limited,or(metadata->>rate_limited_at.lte.${freshThresholdIso},and(metadata->>rate_limited_at.is.null,updated_at.lte.${freshThresholdIso})))`
+      );
+    case 'fb_rate_limited':
+      return query
+        .eq('status', 'rate_limited')
+        .or(
+          `metadata->>rate_limited_at.gt.${freshThresholdIso},and(metadata->>rate_limited_at.is.null,updated_at.gt.${freshThresholdIso}),and(metadata->>rate_limited_at.is.null,updated_at.is.null)`
+        );
+    case 'paused':
+      return query
+        .eq('status', 'disconnected')
+        .eq('metadata->>fb_status', 'paused');
+    case 'page_checkpoint':
+      return query.eq('status', 'error').eq('metadata->>fb_status', 'checkpoint');
+    case 'invalid_token':
+      // An error row with no marker reads as invalid token (legacy
+      // default); an explicit 'invalid_token' marker reads the same.
+      return query.eq('status', 'error').or('metadata->>fb_status.is.null,metadata->>fb_status.eq.invalid_token');
+    default:
+      return query.eq('status', 'error').eq('metadata->>fb_status', detail);
+  }
+}
+
 function buildSupabasePageQuery(
   supabase: SupabaseClient<Database>,
   workspaceId: string,
@@ -422,6 +518,12 @@ function buildSupabasePageQuery(
     .eq('workspace_id', workspaceId)
     .eq('platform', 'facebook');
   query = applySupabasePageGroup(query, group, freshThresholdIso);
+  // Spec 155: the detail Select narrows within every rank group, so
+  // the per-group counts and the row slices narrow together.
+  const statusDetail = normalizeStatusDetail(filters.statusDetail);
+  if (statusDetail) {
+    query = applySupabaseStatusDetail(query, statusDetail, freshThresholdIso);
+  }
   if (filters.search) {
     // Terms containing PostgREST or() metacharacters (, ( ) ")
     // never reach here — they take the chunked fallback in
@@ -859,6 +961,7 @@ export async function handleListPages(
     search: (url.searchParams.get('search') ?? '').trim(),
     status: url.searchParams.get('status') ?? 'all',
     account: url.searchParams.get('account') ?? 'all',
+    statusDetail: url.searchParams.get('statusDetail') ?? undefined,
   };
 
   let pages: ReturnType<typeof mapPageRows>;
@@ -883,12 +986,7 @@ export async function handleListPages(
     // ignores ORDER BY must not change it).
     pages = [...pages].sort((a, b) => {
       const rank = (status: string): number => {
-        if (
-          status === 'invalid_token' ||
-          status === 'page_checkpoint' ||
-          status === 'fb_rate_limited'
-        )
-          return 0;
+        if (isAttentionPageStatus(status)) return 0;
         if (status === 'paused') return 1;
         if (status === 'active') return 2;
         return 3;
@@ -971,11 +1069,7 @@ type MappedPage = ReturnType<typeof mapPageRows>[number];
  * full-set attention count, so they can never disagree.
  */
 function isAttentionPageStatus(status: string): boolean {
-  return (
-    status === 'invalid_token' ||
-    status === 'page_checkpoint' ||
-    status === 'fb_rate_limited'
-  );
+  return isFacebookPageErrorStatus(status);
 }
 
 function filterAndSortPages(
@@ -998,6 +1092,13 @@ function filterAndSortPages(
         matchesStatus = isAttention(page.status);
       else if (filters.status === 'paused')
         matchesStatus = page.status === 'paused';
+      // Spec 155: the detail Select narrows to one exact effective
+      // status (mapPageRows already flipped stale rate-limited to
+      // active, so 'active' and 'fb_rate_limited' match directly).
+      const statusDetail = normalizeStatusDetail(filters.statusDetail);
+      if (statusDetail) {
+        matchesStatus = matchesStatus && page.status === statusDetail;
+      }
       const matchesAccount =
         !filters.account ||
         filters.account === 'all' ||

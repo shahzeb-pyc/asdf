@@ -98,6 +98,10 @@ export const queryKeys = {
           search: string;
           status: string;
           account: string;
+          // Spec 155: exact wire-status narrowing; optional so old
+          // callers keep working, and part of the key so a detail
+          // change refetches instead of serving the unfiltered page.
+          statusDetail?: string | undefined;
         }) => [...tenantRoot, 'pages', 'list', params] as const,
         detail: (pageId: string) =>
           [...tenantRoot, 'pages', pageId] as const,

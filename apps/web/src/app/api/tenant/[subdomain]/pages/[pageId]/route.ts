@@ -157,6 +157,21 @@ const STATUS_TOGGLE_BLOCKED_MESSAGES: Partial<
     'Cannot resume a rate-limited Page yet. It auto-resumes after 3 days.',
   disconnected:
     'Cannot change automation on a disconnected Page. Add it again first.',
+  // Spec 155: each new error status gets its own refusal instead of
+  // the generic fallback — the gate already blocks them all (only
+  // active/paused and checkpoint→active are allowed above).
+  page_not_accessible:
+    'Cannot change automation while this Page is not accessible. Confirm the page still exists and reconnect the parent Facebook account first.',
+  missing_page_access:
+    'Cannot change automation while this Page is missing access. Ask an admin to restore your role in Business Manager first.',
+  missing_permission:
+    'Cannot change automation while this Page is missing a permission. Ask an admin to grant the permission first.',
+  check_developer_app:
+    'Cannot change automation while this Page is blocked in the developer app. Fix the problem in your developer app first.',
+  account_suspended:
+    'Cannot change automation while the connected Facebook account is suspended. Once Facebook clears the restriction, try again.',
+  '2fa_required_on_BM':
+    'Cannot change automation until Business Manager two-factor authentication is complete.',
 };
 
 async function authenticateTenantRequest(

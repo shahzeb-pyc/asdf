@@ -12,11 +12,11 @@
  * and Copy Page ID were removed with this redesign. Disconnect Page in
  * the menu opens a confirmation dialogue (the Settings tab's
  * AlertDialog pattern) — it never disconnects at once. Attention
- * states explain themselves with a banner above the header: the
- * checkpoint banner (explanation + reactivate action), a Rate Limited
- * banner (no action — it auto-resumes), and a Token Expired banner
- * (action links to the workspace's Facebook Accounts section).
- * Active, paused, and disconnected pages show no banner.
+ * states explain themselves with one banner above the header, from
+ * the shared contracts alert (spec 155): checkpoint keeps Mark
+ * Verified & Reactivate Page, invalid token links to Facebook
+ * Accounts, rate-limited and the other Facebook error statuses
+ * have no action. Active, paused, and disconnected pages show no banner.
  *
  * Data notes:
  * - Added date and followers gained reuse the list card's helpers
@@ -75,8 +75,11 @@ import {
   computeFollowersGained,
   formatAddedDate,
   formatFollowersGained,
+  getPageStatusLabel,
+  getPageStatusMarkKind,
   PageStatusMark,
 } from '../page-card';
+import { getFacebookPageStatusAlert } from '@fbuploadpro/contracts';
 
 export interface DedicatedPageHeaderProps {
   page: FacebookPageItem;
@@ -98,60 +101,19 @@ interface PageStatusDetails {
 }
 
 function resolvePageStatus(status: FacebookPageItem['status']): PageStatusDetails {
-  if (status === 'invalid_token') {
-    return {
-      isPaused: false,
-      statusLabel: 'Token Expired',
-      ringClass: 'ring-signal-critical',
-    };
-  }
-
-  if (status === 'page_checkpoint') {
-    return {
-      isPaused: false,
-      statusLabel: 'Identity Checkpoint',
-      ringClass: 'ring-signal-critical',
-    };
-  }
-
-  if (status === 'fb_rate_limited') {
-    return {
-      isPaused: false,
-      statusLabel: 'Rate Limited',
-      ringClass: 'ring-signal-critical',
-    };
-  }
-
-  if (status === 'paused') {
-    return {
-      isPaused: true,
-      statusLabel: 'Paused',
-      ringClass: 'ring-signal-queued',
-    };
-  }
-
-  if (status === 'active') {
-    return {
-      isPaused: false,
-      statusLabel: 'Active',
-      ringClass: 'ring-signal-operational',
-    };
-  }
-
-  if (status === 'disconnected') {
-    return {
-      isPaused: false,
-      statusLabel: 'Disconnected',
-      ringClass: 'ring-signal-critical',
-    };
-  }
-
-  // Unknown statuses must never read as healthy: an unexpected wire
-  // value is a needs-attention state, not 'Active'.
+  // Labels come from the card's single label switch (spec 155) so
+  // the header can never disagree with the card about the same page;
+  // the ring follows the same mark-kind rule.
+  const kind = getPageStatusMarkKind(status);
   return {
-    isPaused: false,
-    statusLabel: 'Needs Attention',
-    ringClass: 'ring-signal-critical',
+    isPaused: status === 'paused',
+    statusLabel: getPageStatusLabel(status),
+    ringClass:
+      kind === 'operational'
+        ? 'ring-signal-operational'
+        : kind === 'queued'
+          ? 'ring-signal-queued'
+          : 'ring-signal-critical',
   };
 }
 
@@ -209,9 +171,14 @@ export function DedicatedPageHeader({
   const monogram = (page.pageName || 'P').slice(0, 2).toUpperCase();
   const fbPageUrl = `https://facebook.com/${encodeURIComponent(page.fbPageId)}`;
 
-  const isCheckpoint =
-    page.status === 'page_checkpoint' ||
-    (page.status as string) === 'checkpoint_required';
+  // Spec 155: one banner per Facebook error status, from the shared
+  // contracts alert (ADU wording, "turn posting back on" in place of
+  // ADU's toggle phrase). Active, paused and disconnected show no
+  // banner. The checkpoint banner keeps its Mark Verified action and
+  // the token banner its Open Facebook Accounts action; the other
+  // statuses have no action. Testids keep the historic names for the
+  // three banners that existed before, so existing tests keep
+  // addressing them; new statuses use `page-status-banner-<status>`.
 
   const addedDate = formatAddedDate(page.createdAt);
   const gained = computeFollowersGained(page);
@@ -306,41 +273,53 @@ export function DedicatedPageHeader({
         </button>
       </div>
 
-      {/* Checkpoint reactivation banner — checkpoint state only */}
-      {isCheckpoint && (
-        <div className="mb-4 overflow-hidden rounded-md border border-line">
-          <Banner
-            variant="warning"
-            data-testid="checkpoint-reactivation-banner"
-            title="Facebook Checkpoint Verification Required"
-            description="Facebook requires verification in the mobile app or browser before automated publishing can resume."
-            action={
-              <Button
-                type="button"
-                data-testid="reactivate-page-btn"
-                disabled={isUpdatingStatus || isDisconnecting}
-                onClick={() => void handleReactivate()}
-              >
-                {isUpdatingStatus ? 'Reactivating...' : 'Mark Verified & Reactivate Page'}
-              </Button>
-            }
-          />
-        </div>
-      )}
-
-      {/* Rate-limited attention banner — rate-limited state only. No
-          action: Facebook lifts the restriction on its own (the
-          description says so), so there is nothing to click. */}
-      {page.status === 'fb_rate_limited' && (
-        <div className="mb-4 overflow-hidden rounded-md border border-line">
-          <Banner
-            variant="warning"
-            data-testid="rate-limited-banner"
-            title="Rate Limited"
-            description="Facebook temporarily restricted posting (auto-resumes after 3 days)."
-          />
-        </div>
-      )}
+      {/* Status attention banner — one per Facebook error status
+          (spec 155, shared contracts alert). The checkpoint action
+          is Mark Verified & Reactivate Page; the token action links
+          to Facebook Accounts; rate-limited and the other error
+          statuses have no action. */}
+      {(() => {
+        const alert = getFacebookPageStatusAlert(page.status);
+        if (!alert) return null;
+        const bannerTestId =
+          page.status === 'page_checkpoint'
+            ? 'checkpoint-reactivation-banner'
+            : page.status === 'fb_rate_limited'
+              ? 'rate-limited-banner'
+              : page.status === 'invalid_token'
+                ? 'token-expired-banner'
+                : `page-status-banner-${page.status}`;
+        return (
+          <div className="mb-4 overflow-hidden rounded-md border border-line">
+            <Banner
+              variant={alert.variant}
+              data-testid={bannerTestId}
+              title={alert.title}
+              description={alert.description}
+              action={
+                alert.action === 'mark_verified' ? (
+                  <Button
+                    type="button"
+                    data-testid="reactivate-page-btn"
+                    disabled={isUpdatingStatus || isDisconnecting}
+                    onClick={() => void handleReactivate()}
+                  >
+                    {isUpdatingStatus ? 'Reactivating...' : 'Mark Verified & Reactivate Page'}
+                  </Button>
+                ) : alert.action === 'reconnect' ? (
+                  <Button
+                    type="button"
+                    data-testid="reconnect-account-btn"
+                    onClick={() => router.push(buildTenantHref(subdomain, `/accounts`, isTenantSubdomainHost(window.location.hostname, subdomain)))}
+                  >
+                    Open Facebook Accounts
+                  </Button>
+                ) : undefined
+              }
+            />
+          </div>
+        );
+      })()}
 
       {/* Unmatched-posts banner — active pages only. The stored flag
           survives pausing and every other state change, but the
@@ -361,29 +340,6 @@ export function DedicatedPageHeader({
             />
           </div>
         )}
-
-      {/* Token-expired attention banner — invalid-token state only. Its
-          action links to the Facebook Accounts section for this
-          workspace, where the parent account is reconnected. */}
-      {page.status === 'invalid_token' && (
-        <div className="mb-4 overflow-hidden rounded-md border border-line">
-          <Banner
-            variant="critical"
-            data-testid="token-expired-banner"
-            title="Token Expired"
-            description="Reconnect the parent Facebook account to resume publishing."
-            action={
-              <Button
-                type="button"
-                data-testid="reconnect-account-btn"
-                onClick={() => router.push(buildTenantHref(subdomain, `/accounts`, isTenantSubdomainHost(window.location.hostname, subdomain)))}
-              >
-                Open Facebook Accounts
-              </Button>
-            }
-          />
-        </div>
-      )}
 
       {/* Main header: identity on top, actions below on narrow
           screens (the old flex-wrap row let identity + actions squash

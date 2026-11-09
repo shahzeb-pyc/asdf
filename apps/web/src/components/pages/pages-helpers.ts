@@ -43,7 +43,10 @@ export function filterPagesList(
   items: FacebookPageItem[],
   searchQuery: string,
   statusFilter: PageStatusFilter = 'all',
-  accountFilter = 'all'
+  accountFilter = 'all',
+  // Spec 155: exact wire-status narrowing from the status-detail
+  // Select. Combined with (never instead of) the tab filter.
+  statusDetail: string | null = null
 ): FacebookPageItem[] {
   const normalizedQuery = searchQuery.trim().toLowerCase();
   return items.filter((page) => {
@@ -59,6 +62,9 @@ export function filterPagesList(
       matchesStatus = isPageNeedsAttention(page.status);
     } else if (statusFilter === 'paused') {
       matchesStatus = page.status === 'paused';
+    }
+    if (statusDetail) {
+      matchesStatus = matchesStatus && page.status === statusDetail;
     }
 
     const matchesAccount =
