@@ -1436,18 +1436,42 @@ describe('registerUsage', () => {
       periods: [periodRow()],
       usageRows: [{ user_id: 'user-1', platform: 'facebook', destination_key: 'page-a' }],
     });
-    await expect(
-      registerUsage(fakeClient(state), 'user-1', 'facebook', 'page-a', 'schedule', null, NOW)
-    ).resolves.toEqual({ alreadyUsed: true, usedCount: 1 });
+    const result = await registerUsage(
+      fakeClient(state),
+      'user-1',
+      'facebook',
+      'page-a',
+      'schedule',
+      null,
+      NOW
+    );
+    // R4: the register returns the entitlement it gated on, so a
+    // caller can build its response from it without re-reading.
+    expect(result).toMatchObject({ alreadyUsed: true, usedCount: 1 });
+    expect(result.entitlement.plan).toBe('paid');
+    expect(result.entitlement.counts['facebook']).toBe(10);
+    expect(result.entitlement.usage['facebook']).toBe(1);
     expect(state.inserted).toHaveLength(1);
     expect(state.usageRows).toHaveLength(1);
   });
 
   it('inserts a new destination and reports the new count', async () => {
     const state = baseState({ periods: [periodRow()] });
-    await expect(
-      registerUsage(fakeClient(state), 'user-1', 'facebook', 'page-a', 'schedule', null, NOW)
-    ).resolves.toEqual({ alreadyUsed: false, usedCount: 1 });
+    const result = await registerUsage(
+      fakeClient(state),
+      'user-1',
+      'facebook',
+      'page-a',
+      'schedule',
+      null,
+      NOW
+    );
+    expect(result).toMatchObject({ alreadyUsed: false, usedCount: 1 });
+    // The returned entitlement is the PRE-insert gate read: usage
+    // is still 0 here — the +1 lives in usedCount, not in it.
+    expect(result.entitlement.plan).toBe('paid');
+    expect(result.entitlement.counts['facebook']).toBe(10);
+    expect(result.entitlement.usage['facebook']).toBe(0);
     expect(state.inserted).toHaveLength(1);
     expect(state.inserted[0]).toMatchObject({
       table: 'subscription_usage',
@@ -1473,7 +1497,7 @@ describe('registerUsage', () => {
     });
     await expect(
       registerUsage(fakeClient(state), 'user-1', 'facebook', 'page-a', 'schedule', null, NOW)
-    ).resolves.toEqual({ alreadyUsed: true, usedCount: 1 });
+    ).resolves.toMatchObject({ alreadyUsed: true, usedCount: 1 });
   });
 
   it('fails closed — and logs — on any other insert error', async () => {

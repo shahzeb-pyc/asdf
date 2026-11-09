@@ -817,6 +817,16 @@ export async function assertPaidPlan(
  * legacy row is then DELETED and the capped row inserted, so the
  * destination starts counting toward the cap and no publish-now
  * row survives. A collision on a capped row is plain already-used.
+ *
+ * R4: the returned `entitlement` is the pre-insert gate read, so a
+ * caller that needs the post-registration counts for a response
+ * builds them from it instead of re-reading the plan. `usedCount`
+ * is already the post-insert count for the platform (derived +1
+ * on the clean-insert path, re-read on the already-used and
+ * disconnected paths) — so the response's usage for the platform
+ * is `usedCount`, never the pre-insert count + 1: a bare +1 would
+ * overstate by one when the inserted row links to a disconnected
+ * destination, whose row does not count.
  */
 /**
  * R5b guard: the derived usedCount (gate usage + 1) is exact only
@@ -858,7 +868,7 @@ export async function registerUsage(
   destinationId: string | null = null,
   now: Date = new Date(),
   sharedEntitlement?: Entitlement
-): Promise<{ alreadyUsed: boolean; usedCount: number }> {
+): Promise<{ alreadyUsed: boolean; usedCount: number; entitlement: Entitlement }> {
   if (isLegacyUncappedUsageFeature(feature)) {
     throw new SubscriptionGateError(
       'INVALID_REQUEST',
@@ -970,7 +980,11 @@ export async function registerUsage(
           // A concurrent capped registration won the retry: that is
           // already-used, not a failure.
           if (retryError.code === '23505') {
-            return { alreadyUsed: true, usedCount: await getUsageCount(client, userId, platform) };
+            return {
+              alreadyUsed: true,
+              usedCount: await getUsageCount(client, userId, platform),
+              entitlement: gateEntitlement,
+            };
           }
           logServerError('[billing] usage insert retry failed', retryError, {
             source: 'billing',
@@ -980,9 +994,17 @@ export async function registerUsage(
             'Your plan could not be checked right now. Please try again.'
           );
         }
-        return { alreadyUsed: false, usedCount: await getUsageCount(client, userId, platform) };
+        return {
+          alreadyUsed: false,
+          usedCount: await getUsageCount(client, userId, platform),
+          entitlement: gateEntitlement,
+        };
       }
-      return { alreadyUsed: true, usedCount: await getUsageCount(client, userId, platform) };
+      return {
+        alreadyUsed: true,
+        usedCount: await getUsageCount(client, userId, platform),
+        entitlement: gateEntitlement,
+      };
     }
     logServerError('[billing] usage insert failed', error, { source: 'billing' });
     throw new SubscriptionGateError(
@@ -1002,9 +1024,17 @@ export async function registerUsage(
   // read — as does a disconnected destination (see
   // shouldDeriveUsedCount), whose row does not count at all.
   if (await shouldDeriveUsedCount(client, destinationId)) {
-    return { alreadyUsed: false, usedCount: gateEntitlement.usage[platform] + 1 };
+    return {
+      alreadyUsed: false,
+      usedCount: gateEntitlement.usage[platform] + 1,
+      entitlement: gateEntitlement,
+    };
   }
-  return { alreadyUsed: false, usedCount: await getUsageCount(client, userId, platform) };
+  return {
+    alreadyUsed: false,
+    usedCount: await getUsageCount(client, userId, platform),
+    entitlement: gateEntitlement,
+  };
 }
 
 /**
