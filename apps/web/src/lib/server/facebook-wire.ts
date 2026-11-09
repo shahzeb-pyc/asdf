@@ -23,6 +23,12 @@ import type {
  *   case it reads back as 'page_checkpoint'. Rows backfilled from
  *   pre-unification checkpoint pages carry no marker and still read
  *   as 'invalid_token' — spec 120 §7c's accepted lossy direction.
+ *   Spec 155 extends the same marker mechanism: an `error` row
+ *   carrying a detail marker (`invalid_token`,
+ *   `page_not_accessible`, `missing_page_access`,
+ *   `missing_permission`, `check_developer_app`,
+ *   `account_suspended`, `2fa_required_on_BM`) reads back as that
+ *   status; an unknown marker value still reads as `invalid_token`.
  * - destinations.status 'rate_limited' reads back as 'fb_rate_limited'.
  * - social_accounts.status 'revoked' and 'error' read back as
  *   'disconnected' (the wire account vocabulary has no other bucket).
@@ -56,6 +62,36 @@ export const PAUSED_MARKER_VALUE = 'paused';
  * the marker, 'error' still reads as 'invalid_token'.
  */
 export const CHECKPOINT_MARKER_VALUE = 'checkpoint';
+
+/**
+ * Spec 155: the detail values `metadata.fb_status` may carry on an
+ * `error` destination row, one per Facebook publish error status.
+ * The marker is the single source of the detail: the coarse status
+ * column stays 'error' for all of them, and the read mapping below
+ * turns the marker back into the wire status. `invalid_token` is in
+ * the set too (written explicitly by the publish path; an `error`
+ * row with no marker still reads as `invalid_token`, the legacy
+ * default). `paused` and `checkpoint` are NOT in this set — they
+ * live on different coarse statuses (`disconnected` / `error`) and
+ * have their own constants above.
+ */
+export const FB_DETAIL_MARKER_VALUES = [
+  'invalid_token',
+  'page_not_accessible',
+  'missing_page_access',
+  'missing_permission',
+  'check_developer_app',
+  'account_suspended',
+  '2fa_required_on_BM',
+] as const;
+export type FbDetailMarkerValue = (typeof FB_DETAIL_MARKER_VALUES)[number];
+
+function isFbDetailMarker(value: unknown): value is FbDetailMarkerValue {
+  return (
+    typeof value === 'string' &&
+    (FB_DETAIL_MARKER_VALUES as readonly string[]).includes(value)
+  );
+}
 
 export function unifiedAccountStatusToWire(
   status: string | null | undefined
@@ -100,6 +136,13 @@ export function unifiedDestinationStatusToWire(
   ) {
     return 'page_checkpoint';
   }
+  // Spec 155: an `error` row carrying a detail marker reads back as
+  // that status. An unknown marker value reads as `invalid_token` —
+  // an unexpected stored value is a needs-attention state, never
+  // healthy and never silently dropped.
+  if (status === 'error' && isFbDetailMarker(metadata?.[PAUSED_MARKER_KEY])) {
+    return metadata[PAUSED_MARKER_KEY] as FacebookPageStatus;
+  }
   switch (status) {
     case 'active':
       return 'active';
@@ -115,25 +158,38 @@ export function unifiedDestinationStatusToWire(
 
 /**
  * The destinations write for a wire page status: the status column
- * value plus whether the paused marker must be set (true), cleared
- * (false), or left as-is (null — e.g. token-only refreshes).
+ * value plus how the `fb_status` marker must change. `pausedMarker`
+ * keeps its old meaning (true = set 'paused', false = clear the
+ * marker, null = leave as-is); `detailMarker` is the spec-155
+ * addition — a string sets `fb_status` to that value, null clears
+ * it, undefined leaves the pausedMarker rule in charge. Detail
+ * statuses write their own marker (pausedMarker null, so the old
+ * boolean rule cannot clear it out from under them).
  */
 export function wirePageStatusToUnified(status: FacebookPageStatus): {
   status: UnifiedDestinationStatus;
   pausedMarker: boolean | null;
+  detailMarker?: string | null | undefined;
 } {
   switch (status) {
     case 'active':
-      return { status: 'active', pausedMarker: false };
+      return { status: 'active', pausedMarker: false, detailMarker: null };
     case 'paused':
-      return { status: 'disconnected', pausedMarker: true };
+      return { status: 'disconnected', pausedMarker: true, detailMarker: 'paused' };
     case 'fb_rate_limited':
-      return { status: 'rate_limited', pausedMarker: false };
+      return { status: 'rate_limited', pausedMarker: false, detailMarker: null };
     case 'page_checkpoint':
+      return { status: 'error', pausedMarker: null, detailMarker: 'checkpoint' };
     case 'invalid_token':
-      return { status: 'error', pausedMarker: false };
+    case 'page_not_accessible':
+    case 'missing_page_access':
+    case 'missing_permission':
+    case 'check_developer_app':
+    case 'account_suspended':
+    case '2fa_required_on_BM':
+      return { status: 'error', pausedMarker: null, detailMarker: status };
     case 'disconnected':
-      return { status: 'disconnected', pausedMarker: false };
+      return { status: 'disconnected', pausedMarker: false, detailMarker: null };
   }
 }
 
@@ -141,6 +197,7 @@ export function wirePageStatusToUnified(status: FacebookPageStatus): {
 export const DESTINATION_STATUS_TO_WIRE_SQL = `CASE
   WHEN d.status = 'disconnected' AND d.metadata->>'fb_status' = 'paused' THEN 'paused'
   WHEN d.status = 'error' AND d.metadata->>'fb_status' = 'checkpoint' THEN 'page_checkpoint'
+  WHEN d.status = 'error' AND d.metadata->>'fb_status' IN ('invalid_token', 'page_not_accessible', 'missing_page_access', 'missing_permission', 'check_developer_app', 'account_suspended', '2fa_required_on_BM') THEN d.metadata->>'fb_status'
   WHEN d.status = 'active' THEN 'active'
   WHEN d.status = 'rate_limited' THEN 'fb_rate_limited'
   WHEN d.status = 'error' THEN 'invalid_token'

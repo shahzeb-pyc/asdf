@@ -91,7 +91,91 @@ describe('facebook-wire checkpoint marker', () => {
       expect(wirePageStatusToUnified('active')).toEqual({
         status: 'active',
         pausedMarker: false,
+        detailMarker: null,
       });
+    });
+  });
+
+  describe('spec 155 detail markers', () => {
+    it('reads every detail marker back as its wire status', () => {
+      const cases: Array<[string, string]> = [
+        ['missing_page_access', 'missing_page_access'],
+        ['missing_permission', 'missing_permission'],
+        ['check_developer_app', 'check_developer_app'],
+        ['account_suspended', 'account_suspended'],
+        ['2fa_required_on_BM', '2fa_required_on_BM'],
+        ['page_not_accessible', 'page_not_accessible'],
+        ['invalid_token', 'invalid_token'],
+      ];
+      for (const [marker, expected] of cases) {
+        expect(
+          unifiedDestinationStatusToWire('error', { fb_status: marker })
+        ).toBe(expected);
+      }
+    });
+
+    it('reads an unknown marker as invalid_token — never healthy, never dropped silently', () => {
+      expect(
+        unifiedDestinationStatusToWire('error', { fb_status: 'bogus' })
+      ).toBe('invalid_token');
+    });
+
+    it('does not let a detail marker leak onto non-error statuses', () => {
+      expect(
+        unifiedDestinationStatusToWire('active', {
+          fb_status: 'missing_permission',
+        })
+      ).toBe('active');
+      expect(
+        unifiedDestinationStatusToWire('disconnected', {
+          fb_status: 'missing_permission',
+        })
+      ).toBe('disconnected');
+    });
+
+    it('writes each detail status as error + its own marker', () => {
+      for (const status of [
+        'missing_page_access',
+        'missing_permission',
+        'check_developer_app',
+        'account_suspended',
+        '2fa_required_on_BM',
+        'page_not_accessible',
+        'invalid_token',
+      ] as const) {
+        expect(wirePageStatusToUnified(status)).toEqual({
+          status: 'error',
+          pausedMarker: null,
+          detailMarker: status,
+        });
+      }
+      expect(wirePageStatusToUnified('page_checkpoint')).toEqual({
+        status: 'error',
+        pausedMarker: null,
+        detailMarker: 'checkpoint',
+      });
+    });
+
+    it('SQL fragment carries the detail-marker branch before the error fallback', () => {
+      const detailAt = DESTINATION_STATUS_TO_WIRE_SQL.indexOf(
+        "d.metadata->>'fb_status' IN ('invalid_token'"
+      );
+      const errorAt = DESTINATION_STATUS_TO_WIRE_SQL.indexOf(
+        "WHEN d.status = 'error' THEN 'invalid_token'"
+      );
+      expect(detailAt).toBeGreaterThan(-1);
+      expect(errorAt).toBeGreaterThan(-1);
+      expect(detailAt).toBeLessThan(errorAt);
+      for (const value of [
+        'missing_page_access',
+        'missing_permission',
+        'check_developer_app',
+        'account_suspended',
+        '2fa_required_on_BM',
+        'page_not_accessible',
+      ]) {
+        expect(DESTINATION_STATUS_TO_WIRE_SQL).toContain(`'${value}'`);
+      }
     });
   });
 });
