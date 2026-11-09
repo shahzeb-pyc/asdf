@@ -247,7 +247,7 @@ function computeRpcResult(
   }
   const usage: Row = {};
   for (const platform of PLATFORMS) {
-    usage[platform] = (tables['subscription_usage'] ?? []).filter(
+    usage[platform] = tables['subscription_usage'].filter(
       (row) =>
         row['user_id'] === userId &&
         row['platform'] === platform &&
