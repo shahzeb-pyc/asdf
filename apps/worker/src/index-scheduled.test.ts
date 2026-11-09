@@ -208,6 +208,15 @@ describe('handleScheduled downgrade-activation tick wiring (C3)', () => {
       if (fn === 'claim_due_queue_items') {
         return { data: [], error: null };
       }
+      // The retention cron calls its cleanup RPC, which validates
+      // the returned counts at the boundary — an empty array is a
+      // plumbing failure, not a zero count.
+      if (fn === 'cleanup_expired_publish_history') {
+        return {
+          data: [{ publish_logs_deleted: 0, queue_items_deleted: 0 }],
+          error: null,
+        };
+      }
       return { data: [], error: null };
     });
     return {

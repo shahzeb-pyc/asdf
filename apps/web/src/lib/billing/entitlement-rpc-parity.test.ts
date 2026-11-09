@@ -178,6 +178,15 @@ class FakeQuery {
       }
       const inserted = rows.map((row) => {
         const fresh: Row = { id: this.idSeq(), ...row };
+        // The database defaults superseded_at to NULL: a period
+        // inserted by the code under test must read back as
+        // non-superseded, or getActivePeriod's
+        // `.is('superseded_at', null)` would miss it (a fake-only
+        // gap the C2 tests never hit — they never re-read an
+        // inserted period through getActivePeriod).
+        if (this.tableName === 'subscription_periods' && fresh['superseded_at'] === undefined) {
+          fresh['superseded_at'] = null;
+        }
         this.table.push(fresh);
         return { ...fresh };
       });

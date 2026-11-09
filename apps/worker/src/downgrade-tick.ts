@@ -50,17 +50,22 @@ export async function runDowngradeActivationTick(options: {
     .lte('scheduled_starts_at', now.toISOString())
     .order('scheduled_starts_at', { ascending: true })
     .limit(DOWNGRADE_TICK_SCAN_LIMIT);
+  // Tick-level failure, not a per-owner one: it throws to the
+  // caller, whose isolation wrapper fails the heartbeat (a tick
+  // whose activation scan is broken is not a successful tick),
+  // and the next minute retries. This is also what makes an
+  // unapplied 20261102160001 loud instead of silent.
   if (scanError) {
-    // Tick-level failure, not a per-owner one: it throws to the
-    // caller, whose isolation wrapper fails the heartbeat (a tick
-    // whose activation scan is broken is not a successful tick),
-    // and the next minute retries. This is also what makes an
-    // unapplied 20261102160001 loud instead of silent.
-    throw new InternalError(
-      `Downgrade activation scan failed: ${scanError.code ?? 'unknown'} ${scanError.message ?? ''}`
-    );
+    // PostgrestError carries code/message as strings; a test
+    // double may carry a plain Error instead, so read them
+    // defensively rather than with `??` (the lint rule flags
+    // that as unnecessary on the typed error).
+    const detail = scanError as { code?: unknown; message?: unknown };
+    const code = typeof detail.code === 'string' ? detail.code : 'unknown';
+    const message = typeof detail.message === 'string' ? detail.message : '';
+    throw new InternalError(`Downgrade activation scan failed: ${code} ${message}`);
   }
-  const scannedRows = (rows ?? []) as Array<Record<string, unknown>>;
+  const scannedRows = rows as Array<Record<string, unknown>>;
   // Dedupe owner ids in code, preserving earliest-first order:
   // one activation call per owner per tick. A second due schedule
   // for the same owner stays for an admin decision, exactly as
