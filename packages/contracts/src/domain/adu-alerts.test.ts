@@ -56,7 +56,7 @@ describe('instagramAduStatusAlert', () => {
 
   it('covers the two new statuses', () => {
     expect(instagramAduStatusAlert('missing_page_access', 'synced')).toMatch(
-      /restore access/
+      /restore your access/
     );
     expect(instagramAduStatusAlert('missing_permission', 'synced')).toMatch(
       /grant the permission/
