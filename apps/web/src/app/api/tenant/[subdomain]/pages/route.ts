@@ -186,7 +186,7 @@ const PAGE_FRESH_RATE_LIMITED_SQL = `(${DESTINATION_STATUS_TO_WIRE_SQL}) = 'fb_r
   AND COALESCE((d.metadata->>'rate_limited_at')::timestamptz, d.updated_at) > now() - interval '3 days'`;
 
 /**
- * The needs-attention predicate on the wire status: any Facebook
+ * The needs-attention predicate on the wire status — every Facebook
  * error status, or a still-fresh rate limit (a stale rate limit has
  * already flipped back to active via evaluatePageHealth). Shared by
  * the status filter and the full-set attention count so the two can
