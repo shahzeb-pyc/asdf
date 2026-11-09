@@ -1,17 +1,26 @@
+import json
+import logging
 import os
+import subprocess
 import tempfile
 import uuid
-import json
-import subprocess
 
 from caption_utils import DEFAULT_REEL_CAPTION, caption_from_yt_dlp_info, normalize_reel_caption
 from config import (
     DATACENTER_PROXY,
-    RESIDENTIAL_PROXY,
+    YT_VIDEO_DOWNLOAD_API_KEY,
     aria2_cli_args,
+    direct_env,
     yt_dlp_aria2_downloader_args,
     yt_dlp_js_runtime_args,
 )
+from video_download_api import (
+    VideoDownloadApiConfigError,
+    VideoDownloadApiError,
+    download_video as download_video_via_api,
+)
+
+log = logging.getLogger("adu-downloader")
 
 # Flexible target: yt-dlp/curl_cffi pick a compatible Chrome version automatically.
 YT_DLP_IMPERSONATE = "chrome"
@@ -49,13 +58,14 @@ PLATFORM_PROFILES = {
     },
 }
 
-def run_command(args):
+def run_command(args, *, env=None):
     try:
         return subprocess.run(
             args,
             check=True,
             capture_output=True,
             text=True,
+            env=env,
         )
     except subprocess.CalledProcessError as exc:
         raise RuntimeError(_extract_process_error_message(exc)) from exc
@@ -129,19 +139,21 @@ def build_common_yt_dlp_args(profile, proxy):
     return args
 
 
-def fetch_metadata(url, proxy, profile):
+def fetch_metadata(url, proxy, profile, *, env=None, extra_args=None):
     args = [
         "yt-dlp",
         url,
         "--dump-single-json",
         "--skip-download",
     ]
+    if extra_args:
+        args.extend(extra_args)
     args.extend(build_common_yt_dlp_args(profile, proxy))
-    result = run_command(args)
+    result = run_command(args, env=env)
     return parse_json_from_stdout(result.stdout)
 
 
-def download_with_yt_dlp(url, proxy, output_template, profile, format_selector, use_generic_extractor=False):
+def download_with_yt_dlp(url, proxy, output_template, profile, format_selector, use_generic_extractor=False, *, env=None, extra_args=None):
     args = [
         "yt-dlp",
         url,
@@ -158,10 +170,12 @@ def download_with_yt_dlp(url, proxy, output_template, profile, format_selector, 
         "mp4",
         "--print-json",
     ]
+    if extra_args:
+        args.extend(extra_args)
     args.extend(build_common_yt_dlp_args(profile, proxy))
     if use_generic_extractor:
         args.append("--force-generic-extractor")
-    result = run_command(args)
+    result = run_command(args, env=env)
     return parse_json_from_stdout(result.stdout)
 
 
@@ -249,6 +263,8 @@ def download_with_ytdlp_formats(
     *,
     include_generic_fallback: bool = False,
     reel_external_id: str | None = None,
+    env: dict | None = None,
+    extra_args: list[str] | None = None,
 ) -> tuple[str, str]:
     output_template = os.path.join(tmp_dir, f"{unique_id}.%(ext)s")
     attempts = [(fmt, False) for fmt in profile.get("format_candidates", ["bv*+ba/b"])]
@@ -267,6 +283,8 @@ def download_with_ytdlp_formats(
                 profile,
                 format_selector,
                 use_generic_extractor=use_generic_extractor,
+                env=env,
+                extra_args=extra_args,
             )
             description = caption_from_yt_dlp_info(info, reel_external_id=reel_external_id)
             filename = resolve_downloaded_filename(tmp_dir, unique_id, info)
@@ -316,6 +334,94 @@ def verify_video_has_audio(filepath: str) -> bool:
     return audio_verdict(False, False)
 
 
+def _title_from_ytdlp_metadata(url: str, profile: dict) -> str:
+    """Title via yt-dlp metadata when the API gave none (direct, no
+    proxy, config ignored — same no-proxy guarantee as the fallback).
+    A metadata failure does not fail the download: the file is already
+    saved, so the caption falls back to the default."""
+    try:
+        info = fetch_metadata(url, None, profile, env=direct_env(), extra_args=["--ignore-config"])
+        return caption_from_yt_dlp_info(info)
+    except Exception as exc:
+        log.warning("yt-dlp metadata title fetch failed (%s); using default caption", exc)
+        return DEFAULT_REEL_CAPTION
+
+
+def _download_youtube_via_ytdlp_direct(
+    url: str,
+    profile: dict,
+    tmp_dir: str,
+    unique_id: str,
+    *,
+    reel_external_id: str | None = None,
+    api_error: Exception,
+) -> tuple[str, str]:
+    """The yt-dlp fallback for YouTube: the existing profile, run
+    direct. No --proxy argument, a proxy-stripped environment, and
+    --ignore-config so no yt-dlp config file on the host can re-add
+    a proxy. Both causes are carried when it fails too."""
+    try:
+        return download_with_ytdlp_formats(
+            url,
+            profile,
+            None,
+            tmp_dir,
+            unique_id,
+            env=direct_env(),
+            extra_args=["--ignore-config"],
+            reel_external_id=reel_external_id,
+        )
+    except RuntimeError as fallback_exc:
+        raise RuntimeError(
+            f"video-download-api failed ({api_error}); yt-dlp fallback failed ({fallback_exc})"
+        ) from fallback_exc
+
+
+def download_youtube_reel(
+    url: str,
+    profile: dict,
+    tmp_dir: str,
+    unique_id: str,
+    *,
+    reel_external_id: str | None = None,
+) -> tuple[str, str]:
+    """YouTube download: Video Download Api first (1080, merged),
+    direct yt-dlp fallback on any API failure. A missing API key is
+    a config error raised before any download — yt-dlp is never used
+    as a silent substitute for an unwired API."""
+    if not YT_VIDEO_DOWNLOAD_API_KEY:
+        raise VideoDownloadApiConfigError(
+            "YT_VIDEO_DOWNLOAD_API_KEY is not set: add it to Doppler prd "
+            "and the downloader environment"
+        )
+    out_path = os.path.join(tmp_dir, f"{unique_id}.mp4")
+    try:
+        result = download_video_via_api(url, YT_VIDEO_DOWNLOAD_API_KEY, out_path)
+    except VideoDownloadApiError as exc:
+        if exc.error_code == "invalid_api_key":
+            log.error(
+                "video-download-api rejected the key (invalid_api_key) for %s; "
+                "falling back to direct yt-dlp — check YT_VIDEO_DOWNLOAD_API_KEY",
+                url,
+            )
+        else:
+            log.warning(
+                "video-download-api failed for %s (%s); falling back to direct yt-dlp",
+                url,
+                exc,
+            )
+        return _download_youtube_via_ytdlp_direct(
+            url,
+            profile,
+            tmp_dir,
+            unique_id,
+            reel_external_id=reel_external_id,
+            api_error=exc,
+        )
+    title = result.title or _title_from_ytdlp_metadata(url, profile)
+    return result.filepath, title or DEFAULT_REEL_CAPTION
+
+
 def download_reel_media(platform: str, url: str, *, reel_external_id: str | None = None) -> tuple[str, str]:
     """Download reel to a temp file; returns (absolute_path, caption). Caller must delete the file."""
     platform = (platform or "instagram").lower()
@@ -338,10 +444,11 @@ def download_reel_media(platform: str, url: str, *, reel_external_id: str | None
                 reel_external_id=reel_external_id,
             )
         elif platform == "youtube":
-            filename, description = download_with_ytdlp_formats(
+            # Video Download Api first (1080, merged), direct yt-dlp
+            # fallback with no proxy (spec 157).
+            filename, description = download_youtube_reel(
                 url,
                 profile,
-                RESIDENTIAL_PROXY,
                 tmp_dir,
                 unique_id,
                 reel_external_id=reel_external_id,

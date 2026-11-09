@@ -76,8 +76,37 @@ R2_UPLOAD_CHUNK_BYTES = _bounded_int(
     maximum=64 * 1024 * 1024,
 )
 
-RESIDENTIAL_PROXY = os.environ.get("RESIDENTIAL_PROXY", "").strip() or None
 DATACENTER_PROXY = os.environ.get("DATACENTER_PROXY", "").strip() or None
+
+# YouTube downloads: Video Download Api key (p.savenow.to). The owner
+# adds it to Doppler prd as YT_VIDEO_DOWNLOAD_API_KEY; it reaches the
+# VPS downloader .env at redeploy time. Empty means YouTube downloads
+# fail loudly with a config error — there is no silent yt-dlp
+# substitute (spec 157).
+YT_VIDEO_DOWNLOAD_API_KEY = os.environ.get("YT_VIDEO_DOWNLOAD_API_KEY", "").strip() or None
+
+_PROXY_ENV_VARS = (
+    "http_proxy",
+    "https_proxy",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "all_proxy",
+    "ALL_PROXY",
+)
+
+
+def direct_env() -> dict:
+    """Environment for download subprocesses: proxy variables are
+    stripped out, so no download tool can pick a proxy up from the
+    ambient environment. (The VPS sets no proxy vars today; this is
+    the explicit guarantee, not a reliance on that.) The identical
+    helper in tiktok_download.py is deliberately left alone — the
+    TikTok path is untouched by spec 157; a later cleanup may unify
+    the two."""
+    env = dict(os.environ)
+    for var in _PROXY_ENV_VARS:
+        env.pop(var, None)
+    return env
 
 # Owner-supplied rotating residential proxy for TikTok resolve + Countik
 # calls ONLY (never downloads). The value lives in the server .env
