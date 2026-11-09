@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { SessionPayload } from '@fbuploadpro/contracts';
+import type { AuthenticatedUserContext } from '@/lib/auth';
 import { UserShell } from '@/components/shell/user-shell';
 import { getCachedEntitlement } from '@/lib/billing/entitlement';
 import {
@@ -12,7 +12,7 @@ import { getWorkspaceDisplayName } from './workspace-display-name';
 interface TenantShellContentProps {
   subdomain: string;
   useCleanPaths: boolean;
-  session: SessionPayload;
+  session: AuthenticatedUserContext;
   user: {
     name: string;
     email: string;
