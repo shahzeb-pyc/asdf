@@ -15,6 +15,10 @@ export const SessionPayloadSchema = z.object({
   email: GmailSchema,
   name: z.string().max(100).nullable().optional(),
   subdomain: SubdomainSchema,
+  // S3: id of the workspace named by `subdomain`, for role === 'user'
+  // only. Optional so pre-S3 tokens (no claim) keep verifying through
+  // the 30-day rollout tail via the DB fallback.
+  workspaceId: z.string().uuid().optional(),
   allowedSubdomains: z.array(SubdomainSchema).optional(),
   role: UserRoleSchema,
   status: UserStatusSchema,
@@ -76,6 +80,7 @@ export async function signSessionToken(
     email: payload.email,
     name: payload.name ?? null,
     subdomain: payload.subdomain,
+    ...(payload.workspaceId ? { workspaceId: payload.workspaceId } : {}),
     ...(payload.allowedSubdomains ? { allowedSubdomains: payload.allowedSubdomains } : {}),
     role: payload.role,
     status: payload.status,

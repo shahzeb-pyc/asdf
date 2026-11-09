@@ -10,7 +10,7 @@ import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { bodyTooLargeResponse, enforceIpRateLimit, readJsonBody } from '@/lib/request-body';
-import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
 import { resolvePlatformClientCredentials } from '@/lib/connect/persist';
 
 /**
@@ -94,10 +94,10 @@ export async function handleGenerateInstagramMagicLink(
 
   // 3. Pre-check that Instagram BYOC is configured for this workspace
   const client = dbClient || getSupabaseAdminClient();
-  const workspaceId = await resolveTenantWorkspaceId(
-    client,
+  const workspaceId = await resolveWorkspaceIdFromSession(
+    session,
     subdomain,
-    session.userId,
+    client,
     session.role
   );
   const credentials =

@@ -5,7 +5,7 @@ import {
   verifySessionToken,
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
-import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 /**
@@ -42,7 +42,7 @@ export async function authenticateThreadsSchedule(
       ),
     };
   }
-  const workspaceId = await resolveTenantWorkspaceId(supabase, subdomain, session.userId);
+  const workspaceId = await resolveWorkspaceIdFromSession(session, subdomain, supabase);
   if (!workspaceId) {
     return { errorResponse: NextResponse.json({ error: 'Workspace not found' }, { status: 404 }) };
   }

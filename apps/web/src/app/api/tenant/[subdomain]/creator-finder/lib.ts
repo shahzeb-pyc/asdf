@@ -15,7 +15,7 @@ import {
 } from '@fbuploadpro/contracts';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getRouteSupabase } from '@/lib/route-auth';
-import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
 
 /** Session check matching the other tenant API routes. */
 export async function requireTenantSession(
@@ -107,7 +107,7 @@ export async function getCreatorFinderWorkspaceId(
   session: SessionPayload,
 ): Promise<string | null> {
   if (!supabase) return null;
-  return resolveTenantWorkspaceId(supabase, subdomain, session.userId, session.role);
+  return resolveWorkspaceIdFromSession(session, subdomain, supabase, session.role);
 }
 
 const SAVED_CREATORS_TABLE = 'creator_finder_saved_creators';

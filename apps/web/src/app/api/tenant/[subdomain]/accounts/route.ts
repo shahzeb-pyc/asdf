@@ -17,7 +17,7 @@ import {
   type PaginationMeta,
 } from '@/lib/server/pagination';
 import { enforceIpRateLimit } from '@/lib/request-body';
-import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
 import { propagateExpiredAccountDestinations } from '@/lib/publishing/account-expiry-propagation';
 import {
   ACCOUNT_STATUS_TO_WIRE_SQL,
@@ -471,7 +471,7 @@ export async function handleListAccounts(
   }
 
   // 3. Resolve workspace ID scoped to user
-  const workspaceId = await resolveTenantWorkspaceId(dbClient, subdomain, session.userId);
+  const workspaceId = await resolveWorkspaceIdFromSession(session, subdomain, dbClient);
   if (!workspaceId) {
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
   }

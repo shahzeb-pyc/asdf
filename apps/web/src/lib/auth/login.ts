@@ -115,15 +115,22 @@ export async function loginTenantUser(params: {
   }
 
   let allowedSubdomains: string[] = [user.subdomain];
+  // S3: the id of the user's primary workspace, for the session
+  // token's workspaceId claim (role === 'user' only — admin and
+  // seller tokens carry no claim). Resolved from the same
+  // owner-checked select below, so minting adds zero extra queries.
+  // A miss mints claimless and never fails login (rule 5).
+  let workspaceId: string | undefined;
   if (supabase) {
     try {
       const { data: allWorkspaces } = await supabase
         .from('workspaces')
-        .select('subdomain')
+        .select('id, subdomain')
         .eq('owner_id', user.id);
+      const rows = (allWorkspaces || []) as Array<{ id?: string; subdomain?: string }>;
       const subs = Array.from(
         new Set(
-          (allWorkspaces || [])
+          rows
             .map((w: { subdomain?: string }) => w.subdomain?.toLowerCase())
             .filter((sub): sub is string => Boolean(sub))
         )
@@ -131,8 +138,28 @@ export async function loginTenantUser(params: {
       if (subs.length > 0) {
         allowedSubdomains = subs;
       }
-    } catch {
-      // Fallback to primary workspace subdomain
+      if (user.role === 'user') {
+        const match = rows.find(
+          (w) => w.subdomain?.toLowerCase() === user.subdomain.toLowerCase() && w.id
+        );
+        workspaceId = match?.id;
+        if (!workspaceId) {
+          logServerError('[login] workspace id for session claim not resolved', null, {
+            source: 'login',
+            subdomain: user.subdomain,
+          });
+        }
+      }
+    } catch (err) {
+      // Fallback to primary workspace subdomain. A failed select also
+      // means no claim for this login — loud-log the miss for a user
+      // session, never fail login for the optimisation (S3 rule 5).
+      if (user.role === 'user') {
+        logServerError('[login] workspace id for session claim not resolved', err, {
+          source: 'login',
+          subdomain: user.subdomain,
+        });
+      }
     }
   }
 
@@ -148,6 +175,7 @@ export async function loginTenantUser(params: {
       role: user.role,
       status: user.status,
       iat: minIat,
+      ...(workspaceId ? { workspaceId } : {}),
       allowedSubdomains,
     },
     sessionSecret,

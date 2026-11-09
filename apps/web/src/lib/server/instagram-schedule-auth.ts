@@ -5,7 +5,7 @@ import {
   verifySessionToken,
   type DatabaseClient,
 } from '@fbuploadpro/contracts';
-import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 /**
@@ -46,10 +46,10 @@ export async function authenticateInstagramSchedule(
       error: NextResponse.json({ error: 'Forbidden' }, { status: 403 }),
     };
   }
-  const workspaceId = await resolveTenantWorkspaceId(
-    dbClient,
+  const workspaceId = await resolveWorkspaceIdFromSession(
+    session,
     subdomain,
-    session.userId,
+    dbClient,
     session.role
   );
   if (!workspaceId) {

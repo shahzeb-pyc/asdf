@@ -8,7 +8,7 @@ import {
   type Database,
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
-import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 /**
@@ -53,10 +53,10 @@ export async function handleDisconnectInstagramAccount(
   }
 
   // 3. Resolve workspace ID scoped to user
-  const workspaceId = await resolveTenantWorkspaceId(
-    dbClient,
+  const workspaceId = await resolveWorkspaceIdFromSession(
+    session,
     subdomain,
-    session.userId,
+    dbClient,
     session.role
   );
   if (!workspaceId) {

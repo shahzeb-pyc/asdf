@@ -9,7 +9,7 @@ import {
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import { bodyTooLargeResponse, enforceIpRateLimit, readJsonBody } from '@/lib/request-body';
-import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
 import {
   SavePlatformCredentialsRequestSchema,
   deleteCredentials,
@@ -89,7 +89,7 @@ export async function GET(
   }
 
   try {
-    const workspaceId = await resolveTenantWorkspaceId(supabase, subdomain, session.userId);
+    const workspaceId = await resolveWorkspaceIdFromSession(session, subdomain, supabase);
     if (!workspaceId) {
       return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
     }
@@ -166,7 +166,7 @@ export async function PUT(
   }
 
   try {
-    const workspaceId = await resolveTenantWorkspaceId(supabase, subdomain, session.userId);
+    const workspaceId = await resolveWorkspaceIdFromSession(session, subdomain, supabase);
     if (!workspaceId) {
       return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
     }
@@ -306,7 +306,7 @@ export async function DELETE(
   }
 
   try {
-    const workspaceId = await resolveTenantWorkspaceId(supabase, subdomain, session.userId);
+    const workspaceId = await resolveWorkspaceIdFromSession(session, subdomain, supabase);
     if (!workspaceId) {
       return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
     }

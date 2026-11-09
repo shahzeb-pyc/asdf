@@ -5,7 +5,7 @@ import {
 } from '@fbuploadpro/contracts';
 import { authenticateTenantRoute } from '@/lib/route-auth';
 import { logServerError } from '@/lib/server-analytics';
-import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
 import { readJsonBody } from '@/lib/request-body';
 import {
   assertNoOutstandingScheduledDowngrade,
@@ -105,7 +105,7 @@ export async function POST(
   // itself carries no workspace (its workspace_id column is dead).
   let workspaceId: string | null = null;
   try {
-    workspaceId = await resolveTenantWorkspaceId(client, subdomain, session.userId, session.role);
+    workspaceId = await resolveWorkspaceIdFromSession(session, subdomain, client, session.role);
   } catch (error) {
     logServerError('[billing] idempotency workspace unresolvable, skipping', error, {
       source: 'billing',

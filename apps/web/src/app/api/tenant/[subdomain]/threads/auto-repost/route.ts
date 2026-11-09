@@ -15,7 +15,7 @@ import {
   getRouteSupabase,
   isLegacyClient,
 } from '@/lib/route-auth';
-import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
 import {
   assertFeatureAddWithinCap,
   getEntitlement,
@@ -239,7 +239,7 @@ async function authenticate(
       ),
     };
   }
-  const workspaceId = await resolveTenantWorkspaceId(db, subdomain, session.userId, session.role);
+  const workspaceId = await resolveWorkspaceIdFromSession(session, subdomain, db, session.role);
   if (!workspaceId) {
     return { errorResponse: NextResponse.json({ error: 'Workspace not found' }, { status: 404 }) };
   }

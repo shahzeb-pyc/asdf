@@ -7,7 +7,7 @@ import {
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import { logServerError } from '@/lib/server-analytics';
-import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
 
 /**
  * GET /threads/schedule/candidates — connected Threads accounts with
@@ -36,7 +36,7 @@ export async function GET(request: NextRequest, props: { params: Promise<{ subdo
   if (!supabase) {
     return NextResponse.json({ error: 'Database service unavailable' }, { status: 500 });
   }
-  const workspaceId = await resolveTenantWorkspaceId(supabase, subdomain, session.userId);
+  const workspaceId = await resolveWorkspaceIdFromSession(session, subdomain, supabase);
   if (!workspaceId) {
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
   }

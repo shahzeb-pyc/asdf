@@ -1,7 +1,7 @@
-import { decryptToken, getTokenEncryptionKey, type DatabaseClient } from '@fbuploadpro/contracts';
+import { decryptToken, getTokenEncryptionKey, type DatabaseClient, type SessionPayload } from '@fbuploadpro/contracts';
 import { isLegacyClient, getRouteSupabase } from '@/lib/route-auth';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { resolveTenantWorkspaceId } from './workspace-resolver';
+import { resolveTenantWorkspaceId, resolveWorkspaceIdFromSession } from './workspace-resolver';
 import { getCredentials } from './platform-credentials';
 
 export interface ResolvedBYOCCredentials {
@@ -32,9 +32,18 @@ export async function resolveWorkspaceFacebookCredentials(
   client: DatabaseClient | SupabaseClient | null | undefined,
   subdomain: string,
   userId: string,
-  role?: string
+  role?: string,
+  // S3: the caller's verified session, when it holds one. The direct
+  // connect flows thread it so the workspace id can come from the
+  // token claim; the magic flows have no session by design and leave
+  // it unset, keeping the DB lookup.
+  session?: SessionPayload | null
 ): Promise<ResolveBYOCResult> {
-  const workspaceId = await resolveTenantWorkspaceId(client, subdomain, userId, role);
+  // S3: claim path when a verified session is threaded through,
+  // DB fallback (same call as before) when there is none.
+  const workspaceId = session
+    ? await resolveWorkspaceIdFromSession(session, subdomain, client, role)
+    : await resolveTenantWorkspaceId(client, subdomain, userId, role);
   if (!workspaceId) {
     return {
       ok: false,

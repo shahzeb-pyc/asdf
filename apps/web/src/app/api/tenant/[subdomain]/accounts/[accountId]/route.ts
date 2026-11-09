@@ -13,7 +13,7 @@ import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import { revokeFacebookAuthorization } from '@/lib/connect/facebook-revoke';
 import { logServerError } from '@/lib/server-analytics';
 import { enforceIpRateLimit } from '@/lib/request-body';
-import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 export async function handleDisconnectAccount(
@@ -52,7 +52,7 @@ export async function handleDisconnectAccount(
   }
 
   // 3. Resolve workspace ID scoped to user
-  const workspaceId = await resolveTenantWorkspaceId(dbClient, subdomain, session.userId);
+  const workspaceId = await resolveWorkspaceIdFromSession(session, subdomain, dbClient);
   if (!workspaceId) {
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
   }

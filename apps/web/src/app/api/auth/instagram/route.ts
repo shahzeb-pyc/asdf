@@ -9,7 +9,7 @@ import { sanitizeAuthErrorMessage } from '@/lib/auth-errors';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import type { DatabaseClient } from '@fbuploadpro/contracts';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
 import { resolvePlatformClientCredentials } from '@/lib/connect/persist';
 import { buildInstagramUnifiedDialogUrl } from '@/lib/connect/platforms/instagram-unified';
 
@@ -52,10 +52,10 @@ export async function handleInitiateInstagramOAuth(
 
     // 2. Resolve workspace BYOC Instagram credentials
     const client = dbClient || getSupabaseAdminClient();
-    const workspaceId = await resolveTenantWorkspaceId(
-      client,
+    const workspaceId = await resolveWorkspaceIdFromSession(
+      session,
       session.subdomain,
-      session.userId,
+      client,
       session.role
     );
     const credentials =

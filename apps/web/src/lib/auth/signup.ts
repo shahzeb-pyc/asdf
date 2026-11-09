@@ -396,6 +396,42 @@ export async function verifySignupOtpViaSupabase(params: {
     throw new Error('Unable to find user account after verification.');
   }
 
+  // S3: the id of the workspace the signup RPC just created, for the
+  // session token's workspaceId claim (role === 'user' only). One
+  // follow-up select, owner-checked (owner_id + subdomain). If it
+  // fails or finds nothing, the token is minted claimless and signup
+  // still succeeds — never fail auth for the optimisation (rule 5,
+  // coordinator Q4).
+  let workspaceId: string | undefined;
+  if (supabase && userRecord.role === 'user') {
+    try {
+      const { data: ws, error: wsError } = await supabase
+        .from('workspaces')
+        .select('id')
+        .eq('owner_id', userRecord.id)
+        .eq('subdomain', userRecord.subdomain)
+        .maybeSingle();
+      if (wsError) {
+        logServerError('[signup] workspace id for session claim not resolved', wsError, {
+          source: 'signup',
+          subdomain: userRecord.subdomain,
+        });
+      } else if (ws?.id) {
+        workspaceId = ws.id;
+      } else {
+        logServerError('[signup] workspace id for session claim not resolved', null, {
+          source: 'signup',
+          subdomain: userRecord.subdomain,
+        });
+      }
+    } catch (err) {
+      logServerError('[signup] workspace id for session claim not resolved', err, {
+        source: 'signup',
+        subdomain: userRecord.subdomain,
+      });
+    }
+  }
+
   const sessionSecret = getSessionSecret();
   const token = await signSessionToken(
     {
@@ -405,6 +441,7 @@ export async function verifySignupOtpViaSupabase(params: {
       subdomain: userRecord.subdomain,
       role: userRecord.role,
       status: 'active',
+      ...(workspaceId ? { workspaceId } : {}),
     },
     sessionSecret,
     86400 * 30

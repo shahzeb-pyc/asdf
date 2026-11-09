@@ -86,6 +86,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     );
 
     // Issue updated session token pointing to the switched workspace subdomain
+    // S3: the claim is the NEW active workspace's id (rows[0].id, just
+    // owner-checked above) — never the old token's claim — and only
+    // for role === 'user'; admin/seller tokens carry no claim.
     const secret = getSessionSecret();
     const newToken = await signSessionToken(
       {
@@ -96,6 +99,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         allowedSubdomains,
         role: session.role,
         status: session.status,
+        ...(session.role === 'user' && rows?.[0]?.id ? { workspaceId: rows[0].id } : {}),
       },
       secret
     );

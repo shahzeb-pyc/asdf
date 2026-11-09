@@ -11,7 +11,7 @@ import {
 } from '@fbuploadpro/contracts';
 import { getSupabaseAdminClient } from '@/lib/auth/clients';
 import { logServerError } from '@/lib/server-analytics';
-import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
+import { resolveWorkspaceIdFromSession } from '@/lib/server/workspace-resolver';
 import {
   DESTINATION_STATUS_TO_WIRE_SQL,
   PAUSED_MARKER_KEY,
@@ -425,7 +425,7 @@ export async function handleGetPage(
   if (auth.errorResponse) return auth.errorResponse;
   const session = auth.session!;
 
-  const workspaceId = await resolveTenantWorkspaceId(dbClient, subdomain, session.userId);
+  const workspaceId = await resolveWorkspaceIdFromSession(session, subdomain, dbClient);
   if (!workspaceId) {
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
   }
@@ -451,7 +451,7 @@ export async function handleUpdatePage(
   if (auth.errorResponse) return auth.errorResponse;
   const session = auth.session!;
 
-  const workspaceId = await resolveTenantWorkspaceId(dbClient, subdomain, session.userId);
+  const workspaceId = await resolveWorkspaceIdFromSession(session, subdomain, dbClient);
   if (!workspaceId) {
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
   }
@@ -756,7 +756,7 @@ export async function handleDisconnectPage(
   if (auth.errorResponse) return auth.errorResponse;
   const session = auth.session!;
 
-  const workspaceId = await resolveTenantWorkspaceId(dbClient, subdomain, session.userId);
+  const workspaceId = await resolveWorkspaceIdFromSession(session, subdomain, dbClient);
   if (!workspaceId) {
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
   }
