@@ -248,7 +248,7 @@ async function guardAduStatusChange(
   if (target === 'paused') return null;
   if (target !== 'active') {
     return NextResponse.json(
-      { error: 'This status can't be changed here.' },
+      { error: 'This status can\'t be changed here.' },
       { status: 400 }
     );
   }
@@ -297,7 +297,7 @@ async function guardAduStatusChange(
   }
   if (from === 'fb_rate_limited') {
     return NextResponse.json(
-      { error: 'Posting resumes automatically in about 3 days. You don't need to do anything.' },
+      { error: 'Posting resumes automatically in about 3 days. You don\'t need to do anything.' },
       { status: 400 }
     );
   }
