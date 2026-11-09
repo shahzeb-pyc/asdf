@@ -305,7 +305,7 @@ describe('ADU PATCH guards — Facebook route', () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toBe(
-      'Posting resumes automatically after the rate-limit cooldown.'
+      'Posting resumes automatically in about 3 days. You don't need to do anything.'
     );
     expect(configStatus(store)).toBe('fb_rate_limited');
   });
@@ -337,7 +337,7 @@ describe('ADU PATCH guards — Facebook route', () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toBe(
-      'This status is set automatically and cannot be changed here.'
+      'This status can't be changed here.'
     );
     expect(configStatus(store)).toBe('paused');
   });

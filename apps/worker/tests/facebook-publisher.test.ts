@@ -470,7 +470,7 @@ const ERROR_CASES: ErrorCase[] = [
     status: 'failed',
     targetDestinationStatus: 'error',
     expectedMessage:
-      'Confirm your identity before you can publish as this Page. Please log in to Facebook on a mobile device, switch to this Page, confirm verification, and then manually turn the Page to active.',
+      'Confirm your identity before you can publish as this Page. Log in to Facebook on a mobile device, switch to this Page, confirm verification, and then turn automation back on.',
   },
   {
     name: '368/1404082 already posted',

@@ -79,20 +79,20 @@ const CASES: StatusCase[] = [
   },
   {
     status: 'missing_page_access',
-    bannerTitle: 'Page Access Missing',
+    bannerTitle: 'Missing Page Access',
     bannerText: /restore your role in Business Manager/,
     toggleDisabled: false,
   },
   {
     status: 'missing_permission',
-    bannerTitle: 'Page Permission Missing',
+    bannerTitle: 'Missing Permission',
     bannerText: /grant the permission/,
     toggleDisabled: false,
   },
   {
     status: 'creator_suspended',
     bannerTitle: 'Source Creator Unavailable',
-    bannerText: /More than 50 downloads/,
+    bannerText: /more than 50 failed downloads/,
     toggleDisabled: false,
   },
   {

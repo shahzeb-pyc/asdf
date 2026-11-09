@@ -159,7 +159,7 @@ export function aduStatusAlert(
   if (status === 'active') return null;
   switch (status) {
     case 'paused':
-      return 'Posting is paused. Activate automation from the header to resume.';
+      return 'Posting is paused. Turn automation on to resume.';
     case 'fb_verification_required':
       return 'Facebook verification is required. Complete verification in the Meta app — do not reconnect the account.';
     case 'fb_rate_limited':
@@ -181,9 +181,9 @@ export function aduStatusAlert(
     case 'account_suspended':
       return 'The Facebook account is suspended. Resolve it in Facebook, then reactivate.';
     case 'missing_page_access':
-      return 'This page can no longer be reached because the account lost its role on it. Ask an admin to restore the role in Business Manager, then reactivate.';
+      return 'Your account no longer has a role on this page, so posting is paused. Ask an admin to restore your role in Business Manager, then turn automation back on.';
     case 'missing_permission':
-      return 'A permission this page needs is missing. Ask an admin to grant the permission, then reactivate.';
+      return 'A permission this page needs is missing, so posting is paused. Ask an admin to grant the permission, then turn automation back on.';
     default:
       return null;
   }
@@ -209,7 +209,7 @@ export function instagramAduStatusAlert(
     case 'fb_verification_required':
       return 'Instagram verification is required. Complete verification in the Instagram app — do not reconnect the account.';
     case 'fb_rate_limited':
-      return 'Automation is paused because of an Instagram rate limit. It resumes automatically.';
+      return 'Automation is paused for about 3 days because of an Instagram rate limit. It resumes automatically.';
     case 'invalid_token':
       return 'The Instagram connection is invalid. Reconnect the account in Instagram Accounts.';
     case 'page_not_accessible':
@@ -223,13 +223,13 @@ export function instagramAduStatusAlert(
     case '2fa_required_on_BM':
       return 'Two-factor authentication is required on the account. Complete it, then turn automation back on.';
     case 'check_developer_app':
-      return 'Check the developer app settings for this account, then turn automation back on.';
+      return 'Access is blocked for this account. Fix the problem in your developer app, then turn automation back on.';
     case 'account_suspended':
-      return 'The Instagram account is suspended. Resolve it in Instagram, then turn automation back on.';
+      return 'The Instagram account is suspended. Once Instagram clears the restriction, turn automation back on.';
     case 'missing_page_access':
-      return 'This Instagram account can no longer be reached because access to it was lost. Ask an admin to restore access, then turn automation back on.';
+      return 'Your account no longer has access to this Instagram account, so posting is paused. Ask an admin to restore your access, then turn automation back on.';
     case 'missing_permission':
-      return 'A permission this Instagram account needs is missing. Ask an admin to grant the permission, then turn automation back on.';
+      return 'A permission this Instagram account needs is missing, so posting is paused. Ask an admin to grant the permission, then turn automation back on.';
     default:
       return null;
   }
@@ -251,7 +251,7 @@ export function threadsAduStatusAlert(
   if (status === 'active') return null;
   switch (status) {
     case 'paused':
-      return 'Posting is paused. Activate automation from the header to resume.';
+      return 'Posting is paused. Turn automation on to resume.';
     case 'fb_verification_required':
       return 'Threads verification is required. Complete verification in the Threads app — do not reconnect the account.';
     case 'fb_rate_limited':
@@ -273,9 +273,9 @@ export function threadsAduStatusAlert(
     case 'account_suspended':
       return 'The Threads account is suspended. Resolve it in Threads, then reactivate.';
     case 'missing_page_access':
-      return 'This Threads account can no longer be reached because access to it was lost. Ask an admin to restore access, then reactivate.';
+      return 'Your account no longer has access to this Threads account, so posting is paused. Ask an admin to restore your access, then turn automation back on.';
     case 'missing_permission':
-      return 'A permission this Threads account needs is missing. Ask an admin to grant the permission, then reactivate.';
+      return 'A permission this Threads account needs is missing, so posting is paused. Ask an admin to grant the permission, then turn automation back on.';
     default:
       return null;
   }

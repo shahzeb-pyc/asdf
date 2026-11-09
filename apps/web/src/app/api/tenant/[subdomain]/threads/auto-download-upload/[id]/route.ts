@@ -111,7 +111,7 @@ async function resetFailedReelsForReactivation(
       `[ADU PATCH] Failed to reset download_failed reels for config ${configId}: ${error.message}`
     );
     return NextResponse.json(
-      { error: 'Could not reset the failed downloads. Try again.' },
+      { error: 'Could not turn automation back on. Try again.' },
       { status: 500 }
     );
   }
@@ -133,7 +133,7 @@ async function guardAduStatusChange(
   if (target === 'paused') return null;
   if (target !== 'active') {
     return NextResponse.json(
-      { error: 'This status is set automatically and cannot be changed here.' },
+      { error: 'This status can't be changed here.' },
       { status: 400 }
     );
   }
@@ -169,7 +169,7 @@ async function guardAduStatusChange(
   }
   if (from === 'fb_rate_limited') {
     return NextResponse.json(
-      { error: 'Posting resumes automatically after the rate-limit cooldown.' },
+      { error: 'Posting resumes automatically in about 3 days. You don't need to do anything.' },
       { status: 400 }
     );
   }

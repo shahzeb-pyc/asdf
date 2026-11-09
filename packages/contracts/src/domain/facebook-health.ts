@@ -62,7 +62,7 @@ export function evaluateGraphApiError(
         requiresReauth: false,
         requiresManualVerification: true,
         message:
-          'Confirm your identity before you can publish as this Page. Please log in to Facebook on a mobile device, switch to this Page, confirm verification, and then manually turn the Page to active.',
+          'Confirm your identity before you can publish as this Page. Log in to Facebook on a mobile device, switch to this Page, confirm verification, and then turn automation back on.',
       };
     }
     if (errorSubcode === 460) {
@@ -176,7 +176,7 @@ export function evaluateGraphApiError(
       requiresReauth: false,
       requiresManualVerification: true,
       message:
-        'Confirm your identity before you can publish as this Page. Please log in to Facebook on a mobile device, switch to this Page, confirm verification, and then manually turn the Page to active.',
+        'Confirm your identity before you can publish as this Page. Log in to Facebook on a mobile device, switch to this Page, confirm verification, and then turn automation back on.',
     };
   }
 
@@ -191,7 +191,7 @@ export function evaluateGraphApiError(
         requiresReauth: false,
         requiresManualVerification: true,
         message:
-          'Confirm your identity before you can publish as this Page. Please log in to Facebook on a mobile device, switch to this Page, confirm verification, and then manually turn the Page to active.',
+          'Confirm your identity before you can publish as this Page. Log in to Facebook on a mobile device, switch to this Page, confirm verification, and then turn automation back on.',
       };
     }
 
@@ -207,7 +207,7 @@ export function evaluateGraphApiError(
         requiresReauth: false,
         requiresManualVerification: true,
         message:
-          'Page Publishing Authorization is incomplete. Complete verification in the Meta app, then manually turn the Page to active.',
+          'Page Publishing Authorization is incomplete. Complete verification in the Meta app, then turn automation back on.',
       };
     }
 

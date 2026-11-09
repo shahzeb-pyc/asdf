@@ -174,7 +174,7 @@ function getAduDetailStatusAlert(status: string, syncStatus: string): AduDetailS
     case 'paused':
       return {
         title: 'Posting Paused',
-        description: 'Posting is paused. Turn automation on to resume posting.',
+        description: 'Posting is paused. Turn automation on to resume.',
         variant: 'warning',
       };
     case 'fb_verification_required':
@@ -195,19 +195,19 @@ function getAduDetailStatusAlert(status: string, syncStatus: string): AduDetailS
       return {
         title: 'Facebook Page Not Accessible',
         description:
-          'This page may have been removed or your account may no longer have access to it. Confirm the page still exists and reconnect your Facebook account if needed, then turn automation back on.',
+          'This page may have been removed, or your account may no longer have access to it. Confirm the page still exists and reconnect your Facebook account if needed, then turn automation back on.',
         variant: 'critical',
       };
     case 'missing_page_access':
       return {
-        title: 'Page Access Missing',
+        title: 'Missing Page Access',
         description:
           'Your account no longer has a role on this page, so posting is paused. Ask an admin to restore your role in Business Manager, then turn automation back on.',
         variant: 'critical',
       };
     case 'missing_permission':
       return {
-        title: 'Page Permission Missing',
+        title: 'Missing Permission',
         description:
           'A permission this page needs is missing, so posting is paused. Ask an admin to grant the permission, then turn automation back on.',
         variant: 'critical',
@@ -223,28 +223,28 @@ function getAduDetailStatusAlert(status: string, syncStatus: string): AduDetailS
       return {
         title: 'Business 2FA Required',
         description:
-          'The connected Facebook user must be an admin/editor/moderator on this page and complete the required Business Manager two-factor authentication. Once that is done, turn automation back on.',
+          'The connected Facebook account must have an admin, editor, or moderator role on this page, and Business Manager two-factor authentication must be complete. Once that is done, turn automation back on.',
         variant: 'critical',
       };
     case 'check_developer_app':
       return {
         title: 'Developer App Access Blocked',
         description:
-          'Facebook API access is blocked for this page. Fix the problem in your developer app, then turn automation back on with the toggle. Posting stays paused until then.',
+          'Access is blocked for this page. Fix the problem in your developer app, then turn automation back on. Posting stays paused until then.',
         variant: 'critical',
       };
     case 'account_suspended':
       return {
         title: 'Facebook Account Suspended',
         description:
-          'The connected Facebook account is suspended. Once Facebook clears the restriction, turn automation back on with the toggle.',
+          'The connected Facebook account is suspended. Once Facebook clears the restriction, turn automation back on.',
         variant: 'critical',
       };
     case 'creator_suspended':
       return {
         title: 'Source Creator Unavailable',
         description:
-          'More than 50 downloads from this source have failed, so the source looks unavailable. Turn automation on to check whether the creator is available again.',
+          'This source is unavailable after more than 50 failed downloads. Turn automation on to check whether the creator is available again.',
         variant: 'critical',
       };
     case 'invalid_username':

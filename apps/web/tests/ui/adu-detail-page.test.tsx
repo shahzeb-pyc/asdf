@@ -334,14 +334,14 @@ describe('automation toggle (ADU statuses)', () => {
   it('shows the missing page access banner with the admin-role recovery', async () => {
     installFetch({ status: 'missing_page_access', displayStatus: 'Missing page access' });
     renderDetail();
-    expect(await screen.findByText('Page Access Missing')).toBeInTheDocument();
+    expect(await screen.findByText('Missing Page Access')).toBeInTheDocument();
     expect(screen.getByText(/restore your role in Business Manager/)).toBeInTheDocument();
   });
 
   it('shows the missing permission banner with the admin-grant recovery', async () => {
     installFetch({ status: 'missing_permission', displayStatus: 'Missing permission' });
     renderDetail();
-    expect(await screen.findByText('Page Permission Missing')).toBeInTheDocument();
+    expect(await screen.findByText('Missing Permission')).toBeInTheDocument();
     expect(screen.getByText(/grant the permission/)).toBeInTheDocument();
   });
 
@@ -349,7 +349,7 @@ describe('automation toggle (ADU statuses)', () => {
     installFetch({ status: 'creator_suspended', displayStatus: 'Creator suspended' });
     renderDetail();
     expect(await screen.findByText('Source Creator Unavailable')).toBeInTheDocument();
-    expect(screen.getByText(/More than 50 downloads/)).toBeInTheDocument();
+    expect(screen.getByText(/more than 50 failed downloads/)).toBeInTheDocument();
     expect(screen.queryByText(/last 24 hours/)).toBeNull();
     expect(screen.queryByText(/Update Settings > Source/)).toBeNull();
     expect(screen.getByText(/Turn automation on to check/)).toBeInTheDocument();
