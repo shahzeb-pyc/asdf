@@ -1094,7 +1094,6 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
     });
 
     it.each([
-      ['page_not_accessible', 'Facebook Page Not Accessible'],
       ['missing_page_access', 'Missing Page Access'],
       ['missing_permission', 'Missing Permission'],
       ['check_developer_app', 'Developer App Access Blocked'],
@@ -1120,6 +1119,25 @@ describe('Dedicated Facebook Page Workspace (Spec 036)', () => {
         expect(hasAttribute('data-testid', 'reactivate-page-btn')).toBe(false);
       }
     );
+
+    it('renders the shared ADU banner for page_not_accessible with the reconnect action', () => {
+      const { hasAttribute, hasText } = render(
+        <DedicatedPageHeader
+          page={{ ...samplePage, status: 'page_not_accessible' }}
+          subdomain="cyberdyne"
+          onStatusToggle={vi.fn()}
+          onDisconnectRequest={vi.fn()}
+        />
+      );
+
+      expect(hasAttribute('data-testid', 'page-status-banner-page_not_accessible')).toBe(true);
+      expect(hasText('Facebook Page Not Accessible')).toBe(true);
+      // The banner text says to reconnect if needed — the button is
+      // the recovery path for the access-lost case (a removed page
+      // has no fix, but a lost role does).
+      expect(hasAttribute('data-testid', 'reconnect-account-btn')).toBe(true);
+      expect(hasAttribute('data-testid', 'reactivate-page-btn')).toBe(false);
+    });
   });
 
   describe('DedicatedPageHeader Attention Banners', () => {

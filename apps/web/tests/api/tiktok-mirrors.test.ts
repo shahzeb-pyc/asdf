@@ -1047,7 +1047,12 @@ describe('spec 155: mirror Facebook detail (fb_status)', () => {
     const res = await handleListMirrors(req, 'acme', db);
     expect(res.status).toBe(200);
     const listCall = calls.find((c) => c.sql.includes('FROM mirrors WHERE workspace_id') && c.sql.includes('ORDER BY'));
-    expect(listCall!.sql).not.toContain('fb_status');
+    expect(listCall).toBeDefined();
+    // The SELECT list always carries fb_status / fb_rate_limited_at
+    // (the view needs them); the assertion is about the filter: an
+    // unknown value must add no fb_status condition to the WHERE.
+    const whereClause = listCall!.sql.split('WHERE')[1] ?? '';
+    expect(whereClause).not.toContain('fb_status');
   });
 
   it('detail returns fbStatus/targetFbStatus for an errored mirror', async () => {

@@ -1304,7 +1304,7 @@ describe('Facebook Pages Discovery, Import, Follower Tracking & Soft-Delete (Spe
           call[0].includes('UPDATE destinations')
       );
       expect(updateCall).toBeDefined();
-      expect(updateCall?.[1]).toEqual(['active', null, pageId, false, 'ws_123']);
+      expect(updateCall?.[1]).toEqual(['active', null, pageId, false, 'ws_123', null]);
     });
 
     it('fails loud (not success) when the Supabase Pause update fails (B1)', async () => {

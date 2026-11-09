@@ -255,11 +255,13 @@ export function TikTokCard({ mirror, onSelect, highlighted }: Readonly<TikTokCar
         </span>
       </div>
 
-      {/* Spec 155: Facebook mirrors show the mapped status badge
-          instead of the raw stored error — the detail page carries
-          the banner. Instagram mirrors keep the raw-error line
-          exactly as today. */}
-      {!isFacebook && mirror.lastError ? (
+      {/* Spec 155: a mapped Facebook detail carries the reason in the
+          badge, so the raw stored error is hidden — but a Facebook
+          mirror in generic error (displayStatus 'error', no detail
+          anywhere) keeps the mapped raw-error line, exactly like the
+          detail page keeps the raw-error box there. Instagram mirrors
+          keep the raw-error line exactly as today. */}
+      {(!isFacebook || mark.displayStatus === 'error') && mirror.lastError ? (
         <p
           data-testid="tiktok-mirror-error"
           className="mt-3 truncate text-metadata text-signal-critical"
