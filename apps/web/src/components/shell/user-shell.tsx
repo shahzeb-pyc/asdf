@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import dynamic from 'next/dynamic';
 import {
   SidebarProvider,
   SidebarInset,
@@ -10,7 +11,6 @@ import { Toaster } from '@/components/shared/ui/toast';
 import { WorkspaceBreadcrumb } from '@/components/workspace/workspace-breadcrumb';
 import { CommandPaletteHost } from '@/components/shell/command-palette-host';
 import { TopbarPlanPill } from '@/components/shell/topbar-plan-pill';
-import { DownloadTray } from '@/components/shell/download-tray';
 import { WorkspaceLifecycleGuard } from '@/components/workspace/workspace-lifecycle-guard';
 import type { EntitlementResponse } from '@fbuploadpro/contracts';
 import { FreePlanGate } from '@/components/billing/free-plan-gate';
@@ -22,6 +22,18 @@ import { WorkspaceStudioFooter } from '@/components/workspace/workspace-switcher
 import { usePlanWord } from '@/components/workspace/plan-word';
 import { AppSidebar } from './app-sidebar';
 import { getUserSections } from './sidebar-sections';
+
+/**
+ * Spec 152 O3 — the download tray loads after first paint. It is a
+ * fixed-position overlay that renders nothing when no downloads
+ * exist, so deferring its chunk costs no layout shift: it appears
+ * exactly when a download does, via the jobs query it mounts with.
+ * `ssr: false` keeps it out of the server HTML entirely.
+ */
+const DownloadTray = dynamic(
+  () => import('@/components/shell/download-tray').then((module) => module.DownloadTray),
+  { ssr: false }
+);
 
 export interface UserShellProps {
   subdomain: string;
