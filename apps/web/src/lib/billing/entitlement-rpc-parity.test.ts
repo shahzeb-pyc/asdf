@@ -269,7 +269,7 @@ function computeRpcResult(
 
 type RpcOverride = (args: { p_user_id: string; p_now: string }) => {
   data: unknown;
-  error: { message: string } | null;
+  error: { message: string; code?: string; status?: number } | null;
 };
 
 function makeClient(rpcOverride?: RpcOverride) {
@@ -935,5 +935,143 @@ describe('C2 — race: the register guards still hold on the RPC gate read', () 
     expect(tables['subscription_usage'][0]?.['feature']).toBe('destination-queue');
     const entitlement = await getEntitlement(client, USER_ID, NOW);
     expect(entitlement.usage.facebook).toBe(1);
+  });
+});
+
+/**
+ * Spec 152 preview fix — a missing `get_entitlement` RPC falls
+ * back to the per-table read; every other RPC failure still fails
+ * closed. The RPC exists only where migration 20261109150000 has
+ * been applied; where it has not (the preview database, or any
+ * deploy landing before its migration), PostgREST answers
+ * PGRST202 / 404 "Could not find the function
+ * public.get_entitlement". Only that signal takes the fallback.
+ */
+async function fallbackParity(
+  setup: (tables: Record<string, Row[]>) => void,
+  rpcError: { message: string; code?: string; status?: number }
+): Promise<{ fallenBack: Entitlement; legacy: Entitlement; queryLog: QueryLogEntry[] }> {
+  const first = makeClient(() => ({ data: null, error: rpcError }));
+  setup(first.tables);
+  const fallenBack = await getEntitlement(first.client, USER_ID, NOW);
+  const second = makeClient();
+  setup(second.tables);
+  const legacy = await getEntitlementViaQueries(second.client, USER_ID, NOW);
+  return { fallenBack, legacy, queryLog: first.queryLog };
+}
+
+describe('Spec 152 — missing RPC falls back to the query read, other RPC errors fail closed', () => {
+  it('PGRST202: paid-active reads identical to the legacy path, via table queries', async () => {
+    const { fallenBack, legacy, queryLog } = await fallbackParity(
+      (tables) => {
+        seedPeriod(tables);
+        seedUsage(tables, 'facebook', 'page-1');
+        seedUsage(tables, 'facebook', 'page-2');
+        seedUsage(tables, 'instagram', 'ig-1');
+      },
+      { message: 'Could not find the function', code: 'PGRST202' }
+    );
+    expect(fallenBack).toEqual(legacy);
+    expect(fallenBack.plan).toBe('paid');
+    expect(fallenBack.active).toBe(true);
+    expect(fallenBack.usage).toEqual({
+      facebook: 2,
+      instagram: 1,
+      threads: 0,
+      x: 0,
+      tiktok: 0,
+      youtube: 0,
+    });
+    // One failed RPC attempt, then the fallback paid table queries.
+    expect(queryLog.filter((entry) => entry.op === 'rpc')).toHaveLength(1);
+    expect(queryLog.filter((entry) => entry.op !== 'rpc').length).toBeGreaterThan(0);
+  });
+
+  it('message-only "Could not find the function public.get_entitlement" falls back', async () => {
+    const { fallenBack, legacy } = await fallbackParity((tables) => {
+      seedPeriod(tables);
+      seedUsage(tables, 'facebook', 'page-1');
+    }, {
+      message:
+        'Could not find the function public.get_entitlement(p_user_id, p_now) in the schema cache',
+    });
+    expect(fallenBack).toEqual(legacy);
+    expect(fallenBack.plan).toBe('paid');
+  });
+
+  it('HTTP 404 on the RPC falls back', async () => {
+    const { fallenBack, legacy } = await fallbackParity((tables) => {
+      seedPeriod(tables);
+      seedUsage(tables, 'facebook', 'page-1');
+    }, { message: 'Not Found', status: 404 });
+    expect(fallenBack).toEqual(legacy);
+    expect(fallenBack.plan).toBe('paid');
+  });
+
+  it('PGRST202: never-paid reads free, identical to the legacy path', async () => {
+    const { fallenBack, legacy } = await fallbackParity((tables) => {
+      seedUsage(tables, 'facebook', 'page-1');
+    }, { message: 'Could not find the function', code: 'PGRST202' });
+    expect(fallenBack).toEqual(legacy);
+    expect(fallenBack.plan).toBe('free');
+    expect(fallenBack.hasPriorPeriod).toBe(false);
+  });
+
+  it('PGRST202: lapsed period reads expired, identical to the legacy path', async () => {
+    const { fallenBack, legacy } = await fallbackParity((tables) => {
+      seedPeriod(tables, { starts_at: iso(-40 * DAY), ends_at: iso(-5 * DAY) });
+    }, { message: 'Could not find the function', code: 'PGRST202' });
+    expect(fallenBack).toEqual(legacy);
+    expect(fallenBack.plan).toBe('expired');
+  });
+
+  it('PGRST202: a disconnected destination stays excluded, identical to the legacy path', async () => {
+    const { fallenBack, legacy } = await fallbackParity((tables) => {
+      seedPeriod(tables);
+      seedWorkspace(tables);
+      seedDestination(tables, 'dest-1', 'disconnected');
+      seedUsage(tables, 'facebook', 'page-1', 'destination-queue', 'dest-1');
+      seedUsage(tables, 'facebook', 'page-2');
+    }, { message: 'Could not find the function', code: 'PGRST202' });
+    expect(fallenBack).toEqual(legacy);
+    expect(fallenBack.usage.facebook).toBe(1);
+  });
+
+  it('a generic RPC error still fails closed and never touches the tables', async () => {
+    const { client, tables, queryLog } = makeClient(() => ({
+      data: null,
+      error: { message: 'database down' },
+    }));
+    seedPeriod(tables);
+    await expect(getEntitlement(client, USER_ID, NOW)).rejects.toMatchObject({
+      code: 'ENTITLEMENT_UNAVAILABLE',
+    });
+    expect(queryLog.filter((entry) => entry.op !== 'rpc')).toHaveLength(0);
+  });
+
+  it('an RPC error with a different code still fails closed and never touches the tables', async () => {
+    const { client, tables, queryLog } = makeClient(() => ({
+      data: null,
+      error: { message: 'JSON object requested, multiple (or no) rows returned', code: 'PGRST116' },
+    }));
+    seedPeriod(tables);
+    await expect(getEntitlement(client, USER_ID, NOW)).rejects.toMatchObject({
+      code: 'ENTITLEMENT_UNAVAILABLE',
+    });
+    expect(queryLog.filter((entry) => entry.op !== 'rpc')).toHaveLength(0);
+  });
+
+  it('a missing-function message for a different function does not fall back', async () => {
+    const { client, tables, queryLog } = makeClient(() => ({
+      data: null,
+      error: {
+        message: 'Could not find the function public.other_function in the schema cache',
+      },
+    }));
+    seedPeriod(tables);
+    await expect(getEntitlement(client, USER_ID, NOW)).rejects.toMatchObject({
+      code: 'ENTITLEMENT_UNAVAILABLE',
+    });
+    expect(queryLog.filter((entry) => entry.op !== 'rpc')).toHaveLength(0);
   });
 });

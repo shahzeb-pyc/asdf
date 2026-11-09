@@ -616,7 +616,10 @@ function buildEntitlement(
  * still runs here, best-effort, when the RPC returns no period.
  * A failed RPC, or a malformed RPC answer, fails closed with
  * ENTITLEMENT_UNAVAILABLE, never a silent pass and never an
- * invented Free answer.
+ * invented Free answer — except for one narrow case: the RPC
+ * itself missing from the database (Spec 152 preview fix, owner
+ * decision 2026-11-09), which falls back to the per-table read
+ * in `getEntitlementViaRpc` below.
  */
 export interface EntitlementRpcRead {
   period: SubscriptionPeriodRow | null;
@@ -663,6 +666,27 @@ function parseEntitlementRpcResult(data: unknown, userId: string): EntitlementRp
   return { period, usage, hasPriorPeriod };
 }
 
+/**
+ * True only when the `get_entitlement` RPC itself is missing from
+ * the database. PostgREST answers a missing function with code
+ * PGRST202 ("Could not find the function public.get_entitlement
+ * … in the schema cache") and HTTP 404. The message check requires
+ * both the PostgREST wording and the function name, so a
+ * differently-worded failure — a real outage, a permissions error,
+ * a timeout — never qualifies. Anything this returns false for
+ * stays on the fail-closed path in `getEntitlementViaRpc`.
+ */
+function isEntitlementRpcMissing(error: unknown): boolean {
+  if (error === null || typeof error !== 'object') return false;
+  const record = error as Record<string, unknown>;
+  if (record['code'] === 'PGRST202') return true;
+  if (record['status'] === 404) return true;
+  const text = [record['message'], record['details'], record['hint']]
+    .filter((value): value is string => typeof value === 'string')
+    .join(' ');
+  return /could not find the function/i.test(text) && text.includes('get_entitlement');
+}
+
 export async function getEntitlementViaRpc(
   client: SupabaseClient,
   userId: string,
@@ -677,6 +701,26 @@ export async function getEntitlementViaRpc(
     // this into a plain user message without logging, so without
     // this line a database outage would leave no reason in the logs.
     logServerError('[billing] entitlement RPC failed', error, { source: 'billing' });
+    if (isEntitlementRpcMissing(error)) {
+      // Spec 152 preview fix (owner decision 2026-11-09): the RPC
+      // exists only where migration 20261109150000 has been
+      // applied. Where it has not — the preview database, or any
+      // deploy that lands before its migration — PostgREST answers
+      // PGRST202 / 404 "Could not find the function
+      // public.get_entitlement". That, and only that, falls back
+      // to the per-table read, which returns the identical
+      // entitlement. Every other failure still throws
+      // ENTITLEMENT_UNAVAILABLE below, so a real billing outage
+      // still fails closed, never Free. The fallback cannot mask
+      // an outage into a wrong answer either: if the database is
+      // truly down, the query path fails the same way and throws.
+      logServerError(
+        '[billing] entitlement RPC missing, falling back to per-table query read',
+        error,
+        { source: 'billing' }
+      );
+      return getEntitlementViaQueries(client, userId, now);
+    }
     throw new SubscriptionGateError(
       'ENTITLEMENT_UNAVAILABLE',
       'Your plan could not be checked right now. Please try again.'
@@ -711,6 +755,12 @@ export async function getEntitlementViaRpc(
  * has passed, and do not add new behaviour to it: every fix
  * belongs in the RPC path, with this function kept byte-equal
  * to the pre-C2 read so the parity comparison stays honest.
+ *
+ * It is also the live runtime fallback (Spec 152 preview fix,
+ * owner decision 2026-11-09): `getEntitlementViaRpc` calls it
+ * when — and only when — the RPC itself is missing from the
+ * database (PGRST202 / 404). That call path changes nothing
+ * inside this function.
  */
 export async function getEntitlementViaQueries(
   client: SupabaseClient,
