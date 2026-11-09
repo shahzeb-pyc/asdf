@@ -21,6 +21,10 @@ interface FakeDb {
   periods: Row[];
   payments: Row[];
   commissions: Row[];
+  /** Every query the fake answers, in order (C3: pins the probe shape). */
+  queries: Array<{ table: string; op: 'select' | 'insert' | 'update'; limit: number | null }>;
+  /** C3: when true, the EXISTS probe (payments select, limit 1) errors. */
+  failExistsProbe?: boolean;
 }
 
 class FakeBuilder {
@@ -48,9 +52,18 @@ class FakeBuilder {
     return this;
   }
 
+  lte(col: string, val: string): this {
+    this.filters.push((r) => typeof r[col] === 'string' && (r[col] as string) <= val);
+    return this;
+  }
+
   limit(n: number): this {
     this.limitN = n;
     return this;
+  }
+
+  private log(op: 'select' | 'insert' | 'update'): void {
+    this.db.queries.push({ table: this.table, op, limit: this.limitN });
   }
 
   insert(row: Row): this {
@@ -69,16 +82,33 @@ class FakeBuilder {
   }
 
   async maybeSingle(): Promise<{ data: Row | null; error: null }> {
+    this.log(this.insertRow ? 'insert' : this.updatePatch ? 'update' : 'select');
     if (this.insertRow) return { data: this.insertRow, error: null };
     return { data: this.matched()[0] ?? null, error: null };
   }
 
   async single(): Promise<{ data: Row | null; error: null }> {
+    this.log(this.insertRow ? 'insert' : this.updatePatch ? 'update' : 'select');
     if (this.insertRow) return { data: this.insertRow, error: null };
     return { data: this.matched()[0] ?? null, error: null };
   }
 
-  then(resolve: (value: { data: Row[]; error: null }) => void): void {
+  then(resolve: (value: { data: Row[] | null; error: unknown }) => void): void {
+    // C3 probe failure: only the EXISTS query (payments select with
+    // limit 1) errors — the full-path select has no limit, so it
+    // still runs and the activation can proceed.
+    if (
+      this.db.failExistsProbe &&
+      this.table === 'subscription_payments' &&
+      this.limitN === 1 &&
+      !this.insertRow &&
+      !this.updatePatch
+    ) {
+      this.log('select');
+      resolve({ data: null, error: new Error('exists probe boom') });
+      return;
+    }
+    this.log(this.updatePatch ? 'update' : this.insertRow ? 'insert' : 'select');
     if (this.updatePatch) {
       const matched = this.matched();
       for (const row of matched) Object.assign(row, this.updatePatch);
@@ -125,6 +155,7 @@ function baseDb(overrides: Partial<FakeDb> = {}): FakeDb {
     periods: [],
     payments: [],
     commissions: [],
+    queries: [],
     ...overrides,
   };
 }
@@ -236,5 +267,118 @@ describe('workspaceOwnerHasActivePeriod activates a due schedule on the tick', (
     });
     await expect(workspaceOwnerHasActivePeriod(fakeClient(db), 'ws-1', NOW)).resolves.toBe(true);
     expect(db.periods).toHaveLength(0);
+  });
+});
+
+describe('activateDueScheduledDowngrade — C3 EXISTS gate', () => {
+  const paymentSelects = (db: FakeDb) =>
+    db.queries.filter((q) => q.table === 'subscription_payments' && q.op === 'select');
+
+  it('active period: the gate never runs — zero payments queries', async () => {
+    const db = baseDb({
+      periods: [
+        {
+          id: 'period-live',
+          user_id: 'user-1',
+          starts_at: '2026-05-01T00:00:00.000Z',
+          ends_at: '2099-01-01T00:00:00.000Z',
+          superseded_at: null,
+        },
+      ],
+      payments: [scheduledPayment()],
+    });
+    await expect(activateDueScheduledDowngrade(fakeClient(db), 'user-1', NOW)).resolves.toBe(
+      false
+    );
+    expect(paymentSelects(db)).toHaveLength(0);
+    expect(db.periods).toHaveLength(1);
+  });
+
+  it('nothing due: exactly one EXISTS query (limit 1), no full payments select', async () => {
+    const db = baseDb();
+    await expect(activateDueScheduledDowngrade(fakeClient(db), 'user-1', NOW)).resolves.toBe(
+      false
+    );
+    expect(paymentSelects(db)).toEqual([
+      { table: 'subscription_payments', op: 'select', limit: 1 },
+    ]);
+    expect(db.periods).toHaveLength(0);
+  });
+
+  it('future schedule: the EXISTS returns no row, no period is created', async () => {
+    const db = baseDb({
+      payments: [scheduledPayment({ scheduled_starts_at: '2026-06-20T00:00:00.000Z' })],
+    });
+    await expect(activateDueScheduledDowngrade(fakeClient(db), 'user-1', NOW)).resolves.toBe(
+      false
+    );
+    expect(paymentSelects(db)).toEqual([
+      { table: 'subscription_payments', op: 'select', limit: 1 },
+    ]);
+    expect(db.periods).toHaveLength(0);
+  });
+
+  it('due schedule: EXISTS first, then the full path — period created and linked', async () => {
+    const db = baseDb({
+      payments: [scheduledPayment()],
+      commissions: [{ id: 'commission-1', payment_id: 'payment-1', period_id: null }],
+    });
+    await expect(activateDueScheduledDowngrade(fakeClient(db), 'user-1', NOW)).resolves.toBe(
+      true
+    );
+    expect(paymentSelects(db)).toEqual([
+      { table: 'subscription_payments', op: 'select', limit: 1 },
+      { table: 'subscription_payments', op: 'select', limit: null },
+    ]);
+    expect(db.periods).toHaveLength(1);
+    expect(db.payments[0]?.['period_id']).toBe('period-1');
+    expect(db.commissions[0]?.['period_id']).toBe('period-1');
+  });
+
+  it('EXISTS error: logged loudly and the full path still activates', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const db = baseDb({ payments: [scheduledPayment()], failExistsProbe: true });
+    await expect(activateDueScheduledDowngrade(fakeClient(db), 'user-1', NOW)).resolves.toBe(
+      true
+    );
+    expect(db.periods).toHaveLength(1);
+    expect(db.payments[0]?.['period_id']).toBe('period-1');
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining('due scheduled downgrade probe failed'),
+      expect.anything()
+    );
+    errSpy.mockRestore();
+  });
+});
+
+describe('workspaceOwnerHasActivePeriod — C3 ADU gate probe', () => {
+  const paymentSelects = (db: FakeDb) =>
+    db.queries.filter((q) => q.table === 'subscription_payments' && q.op === 'select');
+  const periodSelects = (db: FakeDb) =>
+    db.queries.filter((q) => q.table === 'subscription_periods' && q.op === 'select');
+
+  it('no period, nothing due: periods select + one EXISTS, no full payments select', async () => {
+    const db = baseDb();
+    await expect(workspaceOwnerHasActivePeriod(fakeClient(db), 'ws-1', NOW)).resolves.toBe(
+      false
+    );
+    // The gate's own periods select + the activation probe's periods
+    // select, then exactly one payments query — the LIMIT 1 EXISTS.
+    expect(periodSelects(db)).toHaveLength(2);
+    expect(paymentSelects(db)).toEqual([
+      { table: 'subscription_payments', op: 'select', limit: 1 },
+    ]);
+    expect(db.periods).toHaveLength(0);
+  });
+
+  it('due schedule: EXISTS, then the full path, and the re-check sees the period', async () => {
+    const db = baseDb({ payments: [scheduledPayment()] });
+    await expect(workspaceOwnerHasActivePeriod(fakeClient(db), 'ws-1', NOW)).resolves.toBe(true);
+    expect(paymentSelects(db)).toEqual([
+      { table: 'subscription_payments', op: 'select', limit: 1 },
+      { table: 'subscription_payments', op: 'select', limit: null },
+    ]);
+    expect(db.periods).toHaveLength(1);
+    expect(db.payments[0]?.['period_id']).toBe('period-1');
   });
 });

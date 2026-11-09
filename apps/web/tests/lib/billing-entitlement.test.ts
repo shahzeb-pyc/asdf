@@ -924,10 +924,10 @@ describe('Plan-check R6: assertPaidPlan light plan-only read', () => {
       message: FREE_MESSAGE,
     });
     expectNoUsageRead(tables);
-    // 4 queries, not 9–15: period read + activation's period
-    // re-read + activation's payments lookup + hasAnyPeriod.
+    // Plan-check C3: 3 queries, not 9–15: period read + the
+    // one-query EXISTS probe (nothing due, so the activation's
+    // period re-read and payments lookup never run) + hasAnyPeriod.
     expect(tables).toEqual([
-      'subscription_periods',
       'subscription_periods',
       'subscription_payments',
       'subscription_periods',

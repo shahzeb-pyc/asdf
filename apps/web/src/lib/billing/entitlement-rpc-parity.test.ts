@@ -1,9 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
+  approvePayment,
   assertCanPost,
+  assertNoOutstandingScheduledDowngrade,
+  assertPaidPlan,
   getEntitlement,
   getEntitlementViaQueries,
+  hasDueScheduledDowngrade,
   registerUsage,
   SubscriptionGateError,
   type Entitlement,
@@ -52,6 +56,7 @@ class FakeQuery {
   private head = false;
   private sortKey: string | null = null;
   private sortAsc = true;
+  private usedLte = false;
 
   constructor(
     private readonly table: Row[],
@@ -60,7 +65,8 @@ class FakeQuery {
     private readonly idSeq: () => string,
     private readonly tableName: string,
     private readonly queryLog: QueryLogEntry[],
-    private readonly isUsage = false
+    private readonly isUsage = false,
+    private readonly failExistsProbe = false
   ) {}
 
   select(_cols?: string, opts?: { count?: string; head?: boolean }): this {
@@ -101,6 +107,7 @@ class FakeQuery {
   }
 
   lte(key: string, value: string): this {
+    this.usedLte = true;
     this.filters.push((row) => typeof row[key] === 'string' && (row[key] as string) <= value);
     return this;
   }
@@ -137,6 +144,21 @@ class FakeQuery {
 
   private run(): { data: unknown; error: { code: string } | null; count?: number } {
     this.queryLog.push({ table: this.tableName, op: this.op });
+    // C3: only the EXISTS probe errors — it is the one payments
+    // select with limit 1, mode 'many', and an lte() on
+    // scheduled_starts_at. The full-path select has no limit and
+    // loadNewPaymentFieldsForRow uses maybeSingle, so both still
+    // run and the read falls back to the pre-C3 answer.
+    if (
+      this.failExistsProbe &&
+      this.tableName === 'subscription_payments' &&
+      this.op === 'select' &&
+      this.limitCount === 1 &&
+      this.mode === 'many' &&
+      this.usedLte
+    ) {
+      return { data: null, error: { code: 'PGRST116' } };
+    }
     if (this.op === 'insert') {
       const rows = Array.isArray(this.payload) ? this.payload : [this.payload as Row];
       // The 23505 guard mirrors the ONE unique index the code
@@ -156,6 +178,15 @@ class FakeQuery {
       }
       const inserted = rows.map((row) => {
         const fresh: Row = { id: this.idSeq(), ...row };
+        // The database defaults superseded_at to NULL: a period
+        // inserted by the code under test must read back as
+        // non-superseded, or getActivePeriod's
+        // `.is('superseded_at', null)` would miss it (a fake-only
+        // gap the C2 tests never hit — they never re-read an
+        // inserted period through getActivePeriod).
+        if (this.tableName === 'subscription_periods' && fresh['superseded_at'] === undefined) {
+          fresh['superseded_at'] = null;
+        }
         this.table.push(fresh);
         return { ...fresh };
       });
@@ -272,7 +303,7 @@ type RpcOverride = (args: { p_user_id: string; p_now: string }) => {
   error: { message: string; code?: string; status?: number } | null;
 };
 
-function makeClient(rpcOverride?: RpcOverride) {
+function makeClient(rpcOverride?: RpcOverride, opts?: { failExistsProbe?: boolean }) {
   const tables: Record<string, Row[]> = {
     subscription_periods: [],
     subscription_usage: [],
@@ -288,14 +319,18 @@ function makeClient(rpcOverride?: RpcOverride) {
     from(table: string) {
       const rows = tables[table] ?? [];
       const isUsage = table === 'subscription_usage';
+      const failExistsProbe = opts?.failExistsProbe ?? false;
       return {
         select: (cols?: string, opts?: { count?: string; head?: boolean }) =>
-          new FakeQuery(rows, 'select', null, idSeq, table, queryLog, isUsage).select(cols, opts),
+          new FakeQuery(rows, 'select', null, idSeq, table, queryLog, isUsage, failExistsProbe).select(
+            cols,
+            opts
+          ),
         insert: (payload: Row | Row[]) =>
-          new FakeQuery(rows, 'insert', payload, idSeq, table, queryLog, isUsage),
+          new FakeQuery(rows, 'insert', payload, idSeq, table, queryLog, isUsage, failExistsProbe),
         update: (payload: Row) =>
-          new FakeQuery(rows, 'update', payload, idSeq, table, queryLog, isUsage),
-        delete: () => new FakeQuery(rows, 'delete', null, idSeq, table, queryLog, isUsage),
+          new FakeQuery(rows, 'update', payload, idSeq, table, queryLog, isUsage, failExistsProbe),
+        delete: () => new FakeQuery(rows, 'delete', null, idSeq, table, queryLog, isUsage, failExistsProbe),
       };
     },
     rpc(fn: string, args: { p_user_id: string; p_now: string }) {
@@ -1064,5 +1099,272 @@ describe('Spec 152 — missing RPC falls back to the query read, other RPC error
       code: 'ENTITLEMENT_UNAVAILABLE',
     });
     expect(queryLog.filter((entry) => entry.op !== 'rpc')).toHaveLength(0);
+  });
+});
+
+describe('C3 — downgrade activation gated behind one EXISTS probe', () => {
+  const paymentSelects = (queryLog: QueryLogEntry[]) =>
+    queryLog.filter((entry) => entry.table === 'subscription_payments' && entry.op === 'select');
+
+  it('probe costs 1 query when nothing is due: never-paid Free user via getEntitlement', async () => {
+    const { client, tables, queryLog } = makeClient();
+    seedUsage(tables, 'facebook', 'page-1');
+    const result = await getEntitlement(client, USER_ID, NOW);
+    expect(result.plan).toBe('free');
+    expect(queryLog.filter((entry) => entry.op === 'rpc')).toHaveLength(1);
+    expect(paymentSelects(queryLog)).toHaveLength(1);
+    expect(tables['subscription_periods']).toHaveLength(0);
+  });
+
+  it('probe costs 1 query when nothing is due: expired user via getEntitlement', async () => {
+    const { client, tables, queryLog } = makeClient();
+    seedPeriod(tables, { starts_at: iso(-40 * DAY), ends_at: iso(-5 * DAY) });
+    seedDueDowngradePayment(tables, { is_downgrade: false });
+    seedDueDowngradePayment(tables, {
+      id: 'payment-downgrade-future',
+      scheduled_starts_at: iso(1 * DAY),
+    });
+    const result = await getEntitlement(client, USER_ID, NOW);
+    expect(result.plan).toBe('expired');
+    expect(queryLog.filter((entry) => entry.op === 'rpc')).toHaveLength(1);
+    expect(paymentSelects(queryLog)).toHaveLength(1);
+    // No period created: the only period row is the lapsed one.
+    expect(tables['subscription_periods']).toHaveLength(1);
+    expect(tables['subscription_payments'][0]?.['period_id']).toBeNull();
+    expect(tables['subscription_payments'][1]?.['period_id']).toBeNull();
+  });
+
+  it('assertPaidPlan probe is 1 query when nothing is due', async () => {
+    const { client, tables, queryLog } = makeClient();
+    seedUsage(tables, 'facebook', 'page-1');
+    await expect(assertPaidPlan(client, USER_ID, NOW)).rejects.toMatchObject({
+      code: 'SUBSCRIPTION_REQUIRED',
+      message: 'Your plan is Free, which covers the Prompt Library only. Choose a paid plan to post or schedule.',
+    });
+    expect(paymentSelects(queryLog)).toHaveLength(1);
+    expect(tables['subscription_periods']).toHaveLength(0);
+  });
+
+  it('not-due schedules do not trigger the full path', async () => {
+    const { rpc, legacy } = await parity((tables) => {
+      seedPeriod(tables, { starts_at: iso(-40 * DAY), ends_at: iso(-5 * DAY) });
+      seedDueDowngradePayment(tables, { scheduled_starts_at: iso(1 * DAY) });
+      seedDueDowngradePayment(tables, { id: 'payment-nondg', is_downgrade: false });
+    });
+    expect(rpc).toEqual(legacy);
+    expect(rpc.plan).toBe('expired');
+  });
+
+  it('due schedule activates end-to-end via getEntitlement', async () => {
+    const { client, tables } = makeClient();
+    seedPeriod(tables, { starts_at: iso(-40 * DAY), ends_at: iso(-5 * DAY) });
+    seedDueDowngradePayment(tables);
+    const result = await getEntitlement(client, USER_ID, NOW);
+    expect(result.plan).toBe('paid');
+    expect(result.active).toBe(true);
+    expect(result.counts.facebook).toBe(3);
+    expect(result.counts.instagram).toBe(1);
+    // Period starts at activation time and runs a full 30 days.
+    expect(result.period?.startsAt.toISOString()).toBe(NOW.toISOString());
+    expect(result.period?.endsAt.toISOString()).toBe(
+      new Date(NOW.getTime() + 30 * DAY).toISOString()
+    );
+    expect(result.period?.id).not.toBe('period-1');
+    expect(tables['subscription_payments'][0]?.['period_id']).toBe(result.period?.id);
+  });
+
+  it('due schedule activates end-to-end via assertPaidPlan', async () => {
+    const { client, tables } = makeClient();
+    seedPeriod(tables, { starts_at: iso(-40 * DAY), ends_at: iso(-5 * DAY) });
+    seedDueDowngradePayment(tables);
+    const period = await assertPaidPlan(client, USER_ID, NOW);
+    expect(period.id).not.toBe('period-1');
+    expect(period.startsAt.toISOString()).toBe(NOW.toISOString());
+    expect(tables['subscription_payments'][0]?.['period_id']).toBe(period.id);
+  });
+
+  it('earliest-only preserved, with the loud log', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { client, tables } = makeClient();
+    seedPeriod(tables, { starts_at: iso(-40 * DAY), ends_at: iso(-5 * DAY) });
+    seedDueDowngradePayment(tables, {
+      id: 'payment-early',
+      scheduled_starts_at: iso(-2 * DAY),
+    });
+    seedDueDowngradePayment(tables, {
+      id: 'payment-late',
+      scheduled_starts_at: iso(-60 * 60 * 1000),
+      facebook_count: 5,
+      instagram_count: 2,
+    });
+    const result = await getEntitlement(client, USER_ID, NOW);
+    expect(result.plan).toBe('paid');
+    // The earliest schedule's counts win.
+    expect(result.counts.facebook).toBe(3);
+    expect(result.counts.instagram).toBe(1);
+    const byId = new Map(tables['subscription_payments'].map((p) => [p['id'], p]));
+    expect(byId.get('payment-early')?.['period_id']).toBe(result.period?.id);
+    expect(byId.get('payment-late')?.['period_id']).toBeNull();
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining('multiple due scheduled downgrades'),
+      expect.anything()
+    );
+    errSpy.mockRestore();
+  });
+
+  it('EXISTS error never breaks the read: a due schedule still activates', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { client, tables } = makeClient(undefined, { failExistsProbe: true });
+    seedPeriod(tables, { starts_at: iso(-40 * DAY), ends_at: iso(-5 * DAY) });
+    seedDueDowngradePayment(tables);
+    const result = await getEntitlement(client, USER_ID, NOW);
+    expect(result.plan).toBe('paid');
+    expect(result.active).toBe(true);
+    expect(tables['subscription_payments'][0]?.['period_id']).toBe(result.period?.id);
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining('due scheduled downgrade probe failed'),
+      expect.anything()
+    );
+    errSpy.mockRestore();
+  });
+
+  it('EXISTS error never breaks the read: nothing due still reads free', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { client, tables } = makeClient(undefined, { failExistsProbe: true });
+    seedUsage(tables, 'facebook', 'page-1');
+    const result = await getEntitlement(client, USER_ID, NOW);
+    expect(result.plan).toBe('free');
+    expect(tables['subscription_periods']).toHaveLength(0);
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining('due scheduled downgrade probe failed'),
+      expect.anything()
+    );
+    errSpy.mockRestore();
+  });
+
+  it('hasDueScheduledDowngrade answers both sides directly', async () => {
+    const due = makeClient();
+    seedDueDowngradePayment(due.tables);
+    await expect(hasDueScheduledDowngrade(due.client, USER_ID, NOW)).resolves.toBe(true);
+
+    const future = makeClient();
+    seedDueDowngradePayment(future.tables, { scheduled_starts_at: iso(1 * DAY) });
+    await expect(hasDueScheduledDowngrade(future.client, USER_ID, NOW)).resolves.toBe(false);
+
+    const nonDowngrade = makeClient();
+    seedDueDowngradePayment(nonDowngrade.tables, { is_downgrade: false });
+    await expect(hasDueScheduledDowngrade(nonDowngrade.client, USER_ID, NOW)).resolves.toBe(
+      false
+    );
+
+    const none = makeClient();
+    await expect(hasDueScheduledDowngrade(none.client, USER_ID, NOW)).resolves.toBe(false);
+  });
+});
+
+describe('C3 — parity on the extended matrix', () => {
+  it('never-paid with a due schedule activates identically on both paths', async () => {
+    const { rpc, legacy } = await parity((tables) => {
+      seedDueDowngradePayment(tables);
+    });
+    expect(rpc).toEqual(legacy);
+    expect(rpc.plan).toBe('paid');
+    expect(rpc.active).toBe(true);
+  });
+
+  it('expired with two due schedules activates the earliest identically', async () => {
+    const { rpc, legacy } = await parity((tables) => {
+      seedPeriod(tables, { starts_at: iso(-40 * DAY), ends_at: iso(-5 * DAY) });
+      seedDueDowngradePayment(tables, {
+        id: 'payment-early',
+        scheduled_starts_at: iso(-2 * DAY),
+      });
+      seedDueDowngradePayment(tables, {
+        id: 'payment-late',
+        scheduled_starts_at: iso(-60 * 60 * 1000),
+        facebook_count: 5,
+      });
+    });
+    expect(rpc).toEqual(legacy);
+    expect(rpc.plan).toBe('paid');
+    expect(rpc.counts.facebook).toBe(3);
+  });
+
+  it('expired with a future schedule and a non-downgrade payment stays expired identically', async () => {
+    const { rpc, legacy } = await parity((tables) => {
+      seedPeriod(tables, { starts_at: iso(-40 * DAY), ends_at: iso(-5 * DAY) });
+      seedDueDowngradePayment(tables, { scheduled_starts_at: iso(1 * DAY) });
+      seedDueDowngradePayment(tables, { id: 'payment-nondg', is_downgrade: false });
+    });
+    expect(rpc).toEqual(legacy);
+    expect(rpc.plan).toBe('expired');
+  });
+
+  it('paid-active with a due schedule present does not activate (period stays)', async () => {
+    const { rpc, legacy } = await parity((tables) => {
+      seedPeriod(tables);
+      seedDueDowngradePayment(tables);
+    });
+    expect(rpc).toEqual(legacy);
+    expect(rpc.plan).toBe('paid');
+    expect(rpc.period?.id).toBe('period-1');
+  });
+});
+
+describe('C3 — write paths keep their semantics', () => {
+  it('assertNoOutstandingScheduledDowngrade activates a due schedule instead of blocking', async () => {
+    const { client, tables } = makeClient();
+    seedDueDowngradePayment(tables);
+    await assertNoOutstandingScheduledDowngrade(client, USER_ID, NOW);
+    expect(tables['subscription_periods']).toHaveLength(1);
+    expect(tables['subscription_payments'][0]?.['period_id']).not.toBeNull();
+  });
+
+  it('assertNoOutstandingScheduledDowngrade still blocks a not-yet-due schedule', async () => {
+    const { client, tables } = makeClient();
+    seedDueDowngradePayment(tables, { scheduled_starts_at: iso(1 * DAY) });
+    await expect(assertNoOutstandingScheduledDowngrade(client, USER_ID, NOW)).rejects.toMatchObject({
+      code: 'PAYMENT_ALREADY_DECIDED',
+    });
+    expect(tables['subscription_periods']).toHaveLength(0);
+  });
+
+  it('approvePayment activates a due older schedule first, then approves the new one', async () => {
+    const { client, tables } = makeClient();
+    seedDueDowngradePayment(tables, { id: 'payment-old' });
+    seedDueDowngradePayment(tables, {
+      id: 'payment-new',
+      status: 'pending',
+      scheduled_starts_at: iso(30 * DAY),
+      screenshot_storage_key: 'shot-1',
+    });
+    const result = await approvePayment(client, 'payment-new', 'admin-1', NOW);
+    // The new payment is a schedule only: no period of its own.
+    expect(result.period).toBeNull();
+    expect(result.payment.status).toBe('approved');
+    // Exactly one period exists — the older schedule's activation.
+    expect(tables['subscription_periods']).toHaveLength(1);
+    const byId = new Map(tables['subscription_payments'].map((p) => [p['id'], p]));
+    expect(byId.get('payment-old')?.['period_id']).toBe(
+      tables['subscription_periods'][0]?.['id']
+    );
+    expect(byId.get('payment-new')?.['period_id']).toBeNull();
+  });
+
+  it('approvePayment still blocks on a second outstanding schedule', async () => {
+    const { client, tables } = makeClient();
+    seedDueDowngradePayment(tables, { id: 'payment-old', scheduled_starts_at: iso(30 * DAY) });
+    seedDueDowngradePayment(tables, {
+      id: 'payment-new',
+      status: 'pending',
+      scheduled_starts_at: iso(60 * DAY),
+      screenshot_storage_key: 'shot-1',
+    });
+    await expect(approvePayment(client, 'payment-new', 'admin-1', NOW)).rejects.toMatchObject({
+      code: 'PAYMENT_ALREADY_DECIDED',
+    });
+    expect(tables['subscription_periods']).toHaveLength(0);
+    const byId = new Map(tables['subscription_payments'].map((p) => [p['id'], p]));
+    expect(byId.get('payment-new')?.['status']).toBe('pending');
   });
 });

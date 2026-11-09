@@ -1603,6 +1603,35 @@ export async function assertNoOutstandingScheduledDowngrade(
 }
 
 /**
+ * Plan-check C3: true when the user has at least one approved,
+ * unlinked downgrade payment whose scheduled start has arrived.
+ * One LIMIT 1 query, no rows returned — the cheap probe that
+ * gates activateDueScheduledDowngrades, so a read stops being a
+ * write probe when nothing is due. Same condition as the in-code
+ * filter the full path applies (isDowngrade && scheduledStartsAt
+ * <= now on approved, unlinked payments). Throws on a query
+ * failure: the caller logs loudly and runs the full path instead
+ * of inventing "none due".
+ */
+export async function hasDueScheduledDowngrade(
+  client: SupabaseClient,
+  userId: string,
+  now: Date
+): Promise<boolean> {
+  const { data, error } = await client
+    .from('subscription_payments')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('status', 'approved')
+    .is('period_id', null)
+    .eq('is_downgrade', true)
+    .lte('scheduled_starts_at', now.toISOString())
+    .limit(1);
+  if (error) throw error;
+  return Array.isArray(data) && data.length > 0;
+}
+
+/**
  * The ONE defined activation path for scheduled downgrades.
  * Claim-first and idempotent: the period is created through
  * createPeriodForPurchase (which supersedes every non-superseded
@@ -1626,6 +1655,19 @@ export async function activateDueScheduledDowngrades(
   userId: string,
   now: Date = new Date()
 ): Promise<SubscriptionPeriodRow | null> {
+  // Plan-check C3: one cheap EXISTS probe first. The overwhelmingly
+  // common case — nothing due — costs exactly one LIMIT 1 query and
+  // stops here, instead of the old 2+N probe (payments select + one
+  // loadNewPaymentFieldsForRow per approved-unlinked payment). A
+  // probe failure never breaks the read: it is logged loudly and
+  // the full path below runs exactly as before.
+  try {
+    if (!(await hasDueScheduledDowngrade(client, userId, now))) return null;
+  } catch (err) {
+    logServerError('[billing] due scheduled downgrade probe failed', err, {
+      source: 'billing',
+    });
+  }
   if (await getActivePeriod(client, userId, now)) return null;
   const { data, error } = await client
     .from('subscription_payments')
