@@ -1,5 +1,5 @@
 /**
- * Page toggle 409s — spec 155 SEND BACK (PR #199, item 6).
+ * Page toggle 409s — spec 155 SEND BACK (PR 199, item 6).
  *
  * The status-family gate rejects a Pause/Resume on a page in any
  * Facebook error state with 409 and a per-status message

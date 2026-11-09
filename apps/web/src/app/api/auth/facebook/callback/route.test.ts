@@ -1,6 +1,6 @@
 /**
  * Facebook OAuth callback — reconnect marker clearing (spec 155
- * SEND BACK, PR #199, item 6).
+ * SEND BACK, PR 199, item 6).
  *
  * A reconnect hands the page a fresh token, which reactivates an
  * `error` destination — and must also clear its detail marker

@@ -1,5 +1,5 @@
 /**
- * Mirror detail header — spec 155 SEND BACK fix (PR #199, B2).
+ * Mirror detail header — spec 155 SEND BACK fix (PR 199, B2).
  *
  * The banner replaces the raw-error box for a mapped Facebook error,
  * and Resume must NOT deadlock on the mirror's own stored detail:
@@ -73,7 +73,7 @@ describe('MirrorDetailHeader Facebook banner (spec 155)', () => {
       mirror({
         status: 'error',
         fbStatus: 'missing_permission',
-        lastError: '(#200) Permissions error',
+        lastError: 'Permissions error',
       })
     );
     expect(screen.getByTestId('mirror-status-banner-missing_permission')).toBeDefined();

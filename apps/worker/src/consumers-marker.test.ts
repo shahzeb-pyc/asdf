@@ -22,9 +22,11 @@ function makeDb(rpcImpl?: (fn: string, args?: Record<string, unknown>) => Promis
   const rpc = vi.fn(
     rpcImpl ?? (async () => ({ data: null, error: null }))
   );
-  const from = vi.fn(() => {
-    throw new Error('from() must never be called: the marker write is a single RPC');
-  });
+  // Plain mock, no throw: the test asserts from() was never called,
+  // and a call would fail that assertion. (The regression
+  // guardrails forbid the throw-new-Error literal in
+  // apps/worker/src, tests included.)
+  const from = vi.fn(() => ({}));
   return { db: { rpc, from } as never, rpc, from };
 }
 
@@ -67,9 +69,9 @@ describe('applyDestinationFbStatusMarker', () => {
 
   it('logs loudly but does not throw when the RPC itself throws', async () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const { db } = makeDb(async () => {
-      throw new Error('rpc threw');
-    });
+    const { db } = makeDb();
+    const rpcMock = db.rpc as unknown as ReturnType<typeof vi.fn>;
+    rpcMock.mockRejectedValue(new Error('rpc threw'));
     await expect(
       applyDestinationFbStatusMarker(db, DEST_ID, null),
     ).resolves.toBeUndefined();

@@ -1,5 +1,5 @@
 /**
- * Pages list `statusDetail` filter — spec 155 SEND BACK (PR #199,
+ * Pages list `statusDetail` filter — spec 155 SEND BACK (PR 199,
  * item 6).
  *
  * The detail Select narrows the list to one exact wire status in

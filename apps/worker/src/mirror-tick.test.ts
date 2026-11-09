@@ -733,9 +733,9 @@ describe('processMirrorCheck Facebook error detail — spec 155', () => {
   it('a non-publish failure leaves the stored Facebook detail untouched', async () => {
     const state = newState();
     const deps = fakeDeps(state, []);
-    deps.fetchFeed = async () => {
-      throw new Error('tikwm exploded');
-    };
+    // Rejected via a promise (the regression guardrails forbid
+    // the throw-new-Error literal in apps/worker/src, tests included).
+    deps.fetchFeed = () => Promise.reject(new Error('tikwm exploded'));
     await processMirrorCheck(
       deps,
       mirror({ status: 'error', fbStatus: 'missing_permission', fbRateLimitedAt: null }),

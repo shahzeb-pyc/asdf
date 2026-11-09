@@ -1,5 +1,5 @@
 /**
- * Mirror detail loader — spec 155 SEND BACK (PR #199, B1).
+ * Mirror detail loader — spec 155 SEND BACK (PR 199, B1).
  *
  * `loadMirror` must select the mirror's own Facebook detail
  * (`fb_status`, `fb_rate_limited_at`) in BOTH paths — the detail
