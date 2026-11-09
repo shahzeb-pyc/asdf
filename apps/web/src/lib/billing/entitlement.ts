@@ -548,42 +548,26 @@ export async function isDestinationUsed(
   return Array.isArray(data) && data.length > 0;
 }
 
-export async function getEntitlement(
-  client: SupabaseClient,
-  userId: string,
-  now: Date = new Date()
-): Promise<Entitlement> {
-  // Perf round 1: the usage read does not depend on the period (or
-  // on the scheduled-downgrade activation below), so it runs
-  // concurrently with the period read instead of waiting for it.
-  // Any read failure still throws ENTITLEMENT_UNAVAILABLE with the
-  // same user message; each failing query still logs its own
-  // site-specific message first.
-  const [periodResult, usage] = await Promise.all([
-    getActivePeriod(client, userId, now),
-    getUsageCounts(client, userId),
-  ]);
-  let period = periodResult;
-  if (!period) {
-    // A scheduled downgrade whose start has arrived activates
-    // here, on any entitlement check — not only when the user
-    // opens a page. A failed activation never breaks the read:
-    // it is logged loudly and retried on the next check, and the
-    // worker tick path activates independently of this one.
-    try {
-      period = (await activateDueScheduledDowngrades(client, userId, now)) ?? period;
-    } catch (err) {
-      logServerError('[billing] scheduled downgrade activation failed on entitlement check', err, {
-        source: 'billing',
-      });
-    }
-  }
+/**
+ * Shared final step of both entitlement reads (RPC and the
+ * legacy query path below): the same period + usage +
+ * ever-paid inputs always build the same Entitlement, so the
+ * two paths cannot drift on the return shape. The paid branch
+ * never consults `hasPriorPeriod` — an active period is itself
+ * a prior period. The free/expired branch keeps the exact
+ * reason strings the gates and the sidebar word rely on.
+ */
+function buildEntitlement(
+  period: SubscriptionPeriodRow | null,
+  usage: PlatformCounts,
+  hasPriorPeriod: boolean,
+  now: Date
+): Entitlement {
   if (!period) {
     // Expired is an explicit plan, never free: a prior paid period
     // means the user lapsed, and the gate, the sidebar word, and
     // Home must all read the same value (owner decision 2026-11-07:
     // expired users browse like paid users; only publishing stops).
-    const hasPriorPeriod = await hasAnyPeriod(client, userId);
     return {
       plan: hasPriorPeriod ? 'expired' : 'free',
       active: false,
@@ -617,6 +601,168 @@ export async function getEntitlement(
     // An active period is itself a prior period; no extra query.
     hasPriorPeriod: true,
   };
+}
+
+/**
+ * Plan-check C2 — the single-query entitlement read.
+ *
+ * One `get_entitlement` RPC round trip returns the active period
+ * row (or null), the six usage counts (disconnected-destination
+ * subtraction and the legacy publish-now exclusion already
+ * applied in SQL), and the ever-paid flag. Downgrade activation
+ * stays in TypeScript with the same semantics as before — it is
+ * a write, and C3 owns moving it out of the read path — so it
+ * still runs here, best-effort, when the RPC returns no period.
+ * A failed RPC, or a malformed RPC answer, fails closed with
+ * ENTITLEMENT_UNAVAILABLE, never a silent pass and never an
+ * invented Free answer.
+ */
+export interface EntitlementRpcRead {
+  period: SubscriptionPeriodRow | null;
+  usage: PlatformCounts;
+  hasPriorPeriod: boolean;
+}
+
+function parseEntitlementRpcResult(data: unknown, userId: string): EntitlementRpcRead {
+  const fail = (detail: string): never => {
+    logServerError('[billing] entitlement RPC returned unreadable result', new Error(detail), {
+      source: 'billing',
+    });
+    throw new SubscriptionGateError(
+      'ENTITLEMENT_UNAVAILABLE',
+      'Your plan could not be checked right now. Please try again.'
+    );
+  };
+  const row = asRow(data);
+  if (!row) fail('result is not an object');
+  const usageRow = asRow(row['usage']);
+  const hasPriorPeriod = row['has_prior_period'];
+  if (!usageRow) fail('result has no usage object');
+  if (typeof hasPriorPeriod !== 'boolean') fail('result has no has_prior_period flag');
+  // Every usage count must be a real number: a missing or
+  // mistyped count is a malformed answer, never a zero.
+  const usage: PlatformCounts = {
+    facebook: 0,
+    instagram: 0,
+    threads: 0,
+    x: 0,
+    tiktok: 0,
+    youtube: 0,
+  };
+  for (const platform of SUBSCRIPTION_PLATFORMS) {
+    const value = usageRow[platform];
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      fail(`usage count for ${platform} is not a number`);
+    }
+    usage[platform] = value;
+  }
+  const periodRaw = row['period'];
+  let period: SubscriptionPeriodRow | null = null;
+  if (periodRaw !== null && periodRaw !== undefined) {
+    period = periodFromRow(asRow(periodRaw) ?? {});
+    if (!period) fail('period row is unreadable');
+    // The RPC filters by the requested user; a row for anyone
+    // else is a wrong-user answer and must never be served.
+    if (period.userId !== userId) fail('period belongs to a different user');
+  }
+  return { period, usage, hasPriorPeriod };
+}
+
+export async function getEntitlementViaRpc(
+  client: SupabaseClient,
+  userId: string,
+  now: Date = new Date()
+): Promise<Entitlement> {
+  const { data, error } = await client.rpc('get_entitlement', {
+    p_user_id: userId,
+    p_now: now.toISOString(),
+  });
+  if (error) {
+    // Log at the site that sees the database error: callers turn
+    // this into a plain user message without logging, so without
+    // this line a database outage would leave no reason in the logs.
+    logServerError('[billing] entitlement RPC failed', error, { source: 'billing' });
+    throw new SubscriptionGateError(
+      'ENTITLEMENT_UNAVAILABLE',
+      'Your plan could not be checked right now. Please try again.'
+    );
+  }
+  const read = parseEntitlementRpcResult(data, userId);
+  let period = read.period;
+  if (!period) {
+    // A scheduled downgrade whose start has arrived activates
+    // here, on any entitlement check — not only when the user
+    // opens a page. A failed activation never breaks the read:
+    // it is logged loudly and retried on the next check, and the
+    // worker tick path activates independently of this one.
+    try {
+      period = (await activateDueScheduledDowngrades(client, userId, now)) ?? period;
+    } catch (err) {
+      logServerError('[billing] scheduled downgrade activation failed on entitlement check', err, {
+        source: 'billing',
+      });
+    }
+  }
+  return buildEntitlement(period, read.usage, read.hasPriorPeriod, now);
+}
+
+/**
+ * The pre-C2 implementation: the same answer read with the
+ * original per-table queries (active period + usage counts +
+ * ever-paid flag). DOCUMENTED FALLBACK, not dead code: it stays
+ * until the RPC parity tests pass in CI. Rollback is one line in
+ * `getEntitlement` below — switch its return to this function.
+ * Do not delete it in a cleanup pass before that parity gate
+ * has passed, and do not add new behaviour to it: any fix
+ * belongs in the RPC path, with this function kept byte-equal
+ * to the pre-C2 read so the parity comparison stays honest.
+ */
+export async function getEntitlementViaQueries(
+  client: SupabaseClient,
+  userId: string,
+  now: Date = new Date()
+): Promise<Entitlement> {
+  // Perf round 1: the usage read does not depend on the period (or
+  // on the scheduled-downgrade activation below), so it runs
+  // concurrently with the period read instead of waiting for it.
+  // Any read failure still throws ENTITLEMENT_UNAVAILABLE with the
+  // same user message; each failing query still logs its own
+  // site-specific message first.
+  const [periodResult, usage] = await Promise.all([
+    getActivePeriod(client, userId, now),
+    getUsageCounts(client, userId),
+  ]);
+  let period = periodResult;
+  if (!period) {
+    // A scheduled downgrade whose start has arrived activates
+    // here, on any entitlement check — not only when the user
+    // opens a page. A failed activation never breaks the read:
+    // it is logged loudly and retried on the next check, and the
+    // worker tick path activates independently of this one.
+    try {
+      period = (await activateDueScheduledDowngrades(client, userId, now)) ?? period;
+    } catch (err) {
+      logServerError('[billing] scheduled downgrade activation failed on entitlement check', err, {
+        source: 'billing',
+      });
+    }
+  }
+  if (!period) {
+    const hasPriorPeriod = await hasAnyPeriod(client, userId);
+    return buildEntitlement(null, usage, hasPriorPeriod, now);
+  }
+  return buildEntitlement(period, usage, true, now);
+}
+
+export async function getEntitlement(
+  client: SupabaseClient,
+  userId: string,
+  now: Date = new Date()
+): Promise<Entitlement> {
+  // Plan-check C2: the live path is the single-query RPC.
+  // ROLLBACK (one line): change the line below to
+  // `return getEntitlementViaQueries(client, userId, now);`
+  return getEntitlementViaRpc(client, userId, now);
 }
 
 /**
