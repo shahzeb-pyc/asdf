@@ -8,9 +8,10 @@
 //
 // This module is dependency-free (node builtins + global fetch only)
 // so the standalone CI scraper test step can import it without npm
-// install. It never touches the database: the caller owns the
-// channel-ID cache write through onChannelResolved, and the caller
-// owns the adu_reels upsert. The API key value is never logged.
+// install. It never touches the database directly: the caller owns the
+// channel-ID cache write through onChannelResolved and the adu_reels
+// upsert, and the quota-park requeue takes the caller-supplied client
+// so it stays testable with a stub. The API key value is never logged.
 
 export const YOUTUBE_API_BASE = 'https://www.googleapis.com/youtube/v3';
 export const YOUTUBE_API_TIMEOUT_MS = 30_000;
@@ -86,6 +87,113 @@ export function uploadsPlaylistIdForChannel(channelId) {
     return null;
   }
   return `UU${id.slice(2)}`;
+}
+
+// --- YouTube quota auto-retry (spec 156) ---
+//
+// The Data API quota resets at midnight Pacific Time. A quota error
+// parks the source until that reset instead of leaving it in 'error'
+// forever; the daemon re-queues parked rows whose retry time passed.
+// Pacific observes daylight saving, so the reset is computed with a
+// real timezone conversion, never a fixed UTC offset.
+
+export const YOUTUBE_QUOTA_RESET_TIME_ZONE = 'America/Los_Angeles';
+
+/** Offset of a timezone ahead of UTC, in ms, at one instant. */
+function timeZoneOffsetMs(timeZone, date) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).formatToParts(date);
+  const byType = Object.fromEntries(parts.map((p) => [p.type, p.value]));
+  const asUtc = Date.UTC(
+    Number(byType.year),
+    Number(byType.month) - 1,
+    Number(byType.day),
+    Number(byType.hour),
+    Number(byType.minute),
+    Number(byType.second),
+  );
+  return asUtc - date.getTime();
+}
+
+/**
+ * The UTC instant of a wall-clock midnight in Pacific. Midnight never
+ * falls inside a DST transition (they happen at 02:00 local), so two
+ * offset corrections converge exactly.
+ */
+function pacificMidnightUtc(year, month, day) {
+  let guess = Date.UTC(year, month - 1, day, 0, 0, 0);
+  for (let i = 0; i < 2; i += 1) {
+    guess =
+      Date.UTC(year, month - 1, day, 0, 0, 0) -
+      timeZoneOffsetMs(YOUTUBE_QUOTA_RESET_TIME_ZONE, new Date(guess));
+  }
+  return new Date(guess);
+}
+
+/**
+ * The next YouTube quota reset after `from`: the next midnight Pacific
+ * Time. At midnight exactly the next reset is 24h later, never "now".
+ */
+export function nextYoutubeQuotaResetAt(from = new Date()) {
+  const fromDate = from instanceof Date ? from : new Date(from);
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: YOUTUBE_QUOTA_RESET_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(fromDate);
+  const byType = Object.fromEntries(parts.map((p) => [p.type, p.value]));
+  // Date.UTC rolls day/month/year over, so day + 1 is the next
+  // calendar day in Pacific even across month and year ends.
+  const nextDay = new Date(
+    Date.UTC(Number(byType.year), Number(byType.month) - 1, Number(byType.day) + 1, 0, 0, 0),
+  );
+  return pacificMidnightUtc(
+    nextDay.getUTCFullYear(),
+    nextDay.getUTCMonth() + 1,
+    nextDay.getUTCDate(),
+  );
+}
+
+/**
+ * The retry instant for a discovery failure: the next midnight Pacific
+ * when the failure is a quota error, null otherwise (non-quota errors
+ * stay a plain 'error' and are never parked).
+ */
+export function quotaParkRetryAt(isQuotaError, now = new Date()) {
+  if (!isQuotaError) {
+    return null;
+  }
+  return nextYoutubeQuotaResetAt(now).toISOString();
+}
+
+/**
+ * Re-queue quota-parked YouTube sources whose retry time has passed:
+ * one conditional update, back to 'pending' with the retry time
+ * cleared (it is meaningful only while parked). Returns how many rows
+ * were re-queued. Throws on a database error — the caller logs it
+ * loudly and retries next iteration; it never silently skips.
+ */
+export async function requeueDueQuotaParkedConfigs(client, now = new Date()) {
+  const nowIso = (now instanceof Date ? now : new Date(now)).toISOString();
+  const { data, error } = await client
+    .from('adu_configs')
+    .update({ sync_status: 'pending', quota_retry_at: null })
+    .eq('sync_status', 'quota_parked')
+    .lte('quota_retry_at', nowIso)
+    .select('id');
+  if (error) {
+    throw error;
+  }
+  return data?.length ?? 0;
 }
 
 function getYoutubeApiKey(options) {
