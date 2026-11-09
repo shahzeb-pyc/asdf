@@ -1,17 +1,11 @@
 import type { Metadata } from 'next';
-import React from 'react';
+import React, { Suspense } from 'react';
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
-import type { EntitlementResponse } from '@fbuploadpro/contracts';
 import { shouldUseCleanTenantPaths } from '@/lib/tenant-href';
 import { getServerSessionContext } from '@/lib/auth';
-import { UserShell } from '@/components/shell/user-shell';
-import { getCachedEntitlement } from '@/lib/billing/entitlement';
-import {
-  getBillingAdminClient,
-  mapEntitlementToResponse,
-} from '@/lib/billing/route-helpers';
-import { logServerError } from '@/lib/server-analytics';
+import { TenantShellContent } from './tenant-shell-content';
+import { TenantShellSkeleton } from './tenant-shell-skeleton';
 import { getWorkspaceDisplayName } from './workspace-display-name';
 
 interface TenantLayoutProps {
@@ -86,57 +80,32 @@ export default async function TenantLayout({ params, children }: Readonly<Tenant
   const rootDomain = process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'fbuploadpro.com';
   const useCleanPaths = shouldUseCleanTenantPaths(hostHeader, subdomain, rootDomain);
 
-  // H5/M9: resolve the display name server-side so the sidebar and switcher
-  // never flash (or stick on) the internal slug before the client fetch lands.
-  const workspaceName = await getWorkspaceDisplayName(subdomain);
-
   const user = {
     name: session.subdomain || session.email.split('@')[0],
     email: session.email,
   };
 
-  // The one entitlement read for this document (owner decision
-  // 2026-11-07: once at login, cached for the session). The shell's
-  // shared query starts from this seed and never refetches on its
-  // own, so a paid user is never re-read as Free by a later fetch
-  // and section navigation never unmounts the page. A failed seed
-  // is UNKNOWN, never Free: the provider falls back to one
-  // client-side fetch on mount, and every consumer renders its
-  // neutral state until a proven answer arrives. This must never
-  // throw the layout — a billing outage must not take the shell down.
-  //
-  // Plan-check R1: this read is request-scoped cached
-  // (`getCachedEntitlement`), so the Home loader below it in the
-  // same request reuses this exact answer instead of paying for a
-  // second full entitlement read.
-  let initialEntitlement: EntitlementResponse | null = null;
-  try {
-    const adminClient = getBillingAdminClient();
-    if (adminClient) {
-      initialEntitlement = mapEntitlementToResponse(
-        await getCachedEntitlement(adminClient, session.userId)
-      );
-    } else {
-      logServerError('[billing] entitlement seed unavailable: admin client null', null, {
-        source: 'billing',
-      });
-    }
-  } catch (err) {
-    logServerError('[billing] entitlement seed failed', err, { source: 'billing' });
-    initialEntitlement = null;
-  }
-
+  // Spec 152 O2 — stream the shell: this layout awaits ONLY the
+  // session (JWT verify, local crypto — cheap) for the role
+  // redirects above, then renders at once. The static shell
+  // skeleton paints immediately; TenantShellContent resolves the
+  // workspace name + entitlement seed (in parallel, O1's single
+  // RPC) behind the Suspense boundary and swaps in the real shell.
+  // The skeleton is plan-blind — no plan word, no pill, no gate —
+  // so no plan state can flash. On client navigation the router
+  // transition keeps the mounted shell visible while the new
+  // segment resolves, so a stale switch does not flash the
+  // skeleton either.
   return (
-    <UserShell
-      subdomain={subdomain}
-      useCleanPaths={useCleanPaths}
-      user={user}
-      workspaceName={workspaceName ?? undefined}
-      sessionUserId={session.userId}
-      sessionEmail={session.email}
-      initialEntitlement={initialEntitlement}
-    >
-      {children}
-    </UserShell>
+    <Suspense fallback={<TenantShellSkeleton />}>
+      <TenantShellContent
+        subdomain={subdomain}
+        useCleanPaths={useCleanPaths}
+        session={session}
+        user={user}
+      >
+        {children}
+      </TenantShellContent>
+    </Suspense>
   );
 }
