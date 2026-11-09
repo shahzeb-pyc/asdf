@@ -18,7 +18,9 @@ import {
   truncateThreadsCaption,
   validateThreadsText,
 } from '@fbuploadpro/contracts';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { FacebookGraphError, FacebookPublishClient } from './fb-client.js';
+import { workspaceOwnerHasActivePeriod } from './entitlement.js';
 import { createProxyFetchFn } from './proxy-fetch.js';
 import { InstagramPublishClient } from './instagram-client.js';
 import { publishInstagramMirrorReel } from './instagram-mirror-reel.js';
@@ -294,10 +296,13 @@ export interface MirrorTickDeps {
    * from the worker's Supabase client. When it returns false, the
    * check claims and publishes NOTHING — the tick only advances
    * nextCheckAt (never lastCheckedAt), so the gap catch-up rule
-   * still fires on renewal and paused reels do not flood. When the
-   * dep is absent (unit tests), the check runs ungated, as before.
+   * still fires on renewal and paused reels do not flood. C4: this
+   * is the shared workspaceOwnerHasActivePeriod helper (one RPC
+   * call); the dep is REQUIRED — there is no ungated path, and a
+   * due scheduled downgrade activates through the helper and
+   * un-pauses the mirror, exactly like the ADU gate.
    */
-  checkEntitlement?: ((workspaceId: string) => Promise<boolean>) | undefined;
+  checkEntitlement: (workspaceId: string) => Promise<boolean>;
   env?: PostHogEnv | undefined;
   now?: Date | undefined;
   waitUntil?: ((promise: Promise<unknown>) => void) | undefined;
@@ -444,7 +449,8 @@ export async function processMirrorCheck(
   // stays frozen, so on renewal the >2h gap catch-up rule fires
   // and paused reels post latest-only instead of flooding. A
   // failed entitlement lookup fails closed (paused this tick).
-  if (deps.checkEntitlement) {
+  // C4: the gate is unconditional — there is no ungated path.
+  {
     let entitled = false;
     try {
       entitled = await deps.checkEntitlement(mirror.workspaceId);
@@ -1007,44 +1013,20 @@ export function buildMirrorTickDeps(
     env: options?.env,
     now: options?.now,
     waitUntil: options?.waitUntil,
-    // Entitlement gate (audit fix 2026-11-01): the owning
-    // workspace's owner must have an active, non-superseded
-    // period, or the check claims and publishes nothing (see
-    // processMirrorCheck). Admin owners are exempt. Any lookup
-    // failure fails closed (false). SupabaseLike has no is/lte/
-    // gt, so the window filter runs in code over the owner's
-    // unsuperseded-period rows, bounded by a limit.
-    checkEntitlement: async (workspaceId: string) => {
-      const now = options?.now ?? new Date();
-      const { data: workspaceData, error: workspaceError } = await db
-        .from('workspaces')
-        .select('owner_id')
-        .eq('id', workspaceId)
-        .maybeSingle();
-      const ownerId = (workspaceData as { owner_id?: unknown } | null)?.owner_id;
-      if (workspaceError || typeof ownerId !== 'string') return false;
-      const { data: userData, error: userError } = await db
-        .from('users')
-        .select('role')
-        .eq('id', ownerId)
-        .maybeSingle();
-      if (userError) return false;
-      if ((userData as { role?: unknown } | null)?.role === 'admin') return true;
-      const { data: periodData, error: periodError } = await db
-        .from('subscription_periods')
-        .select('starts_at, ends_at, superseded_at')
-        .eq('user_id', ownerId)
-        .limit(100);
-      if (periodError || !Array.isArray(periodData)) return false;
-      const nowMs = now.getTime();
-      return periodData.some((row) => {
-        const period = row as Record<string, unknown>;
-        if (period['superseded_at'] !== null) return false;
-        const starts = typeof period['starts_at'] === 'string' ? Date.parse(period['starts_at']) : Number.NaN;
-        const ends = typeof period['ends_at'] === 'string' ? Date.parse(period['ends_at']) : Number.NaN;
-        return !Number.isNaN(starts) && !Number.isNaN(ends) && starts <= nowMs && ends > nowMs;
-      });
-    },
+    // Entitlement gate (audit fix 2026-11-01; C4): the shared
+    // workspaceOwnerHasActivePeriod helper — one RPC call to the
+    // workspace_has_active_period function, the same check the
+    // ADU gate and the claim RPCs use. A due scheduled downgrade
+    // activates through the helper and un-pauses the mirror.
+    // Any lookup failure fails closed (false). Called as a
+    // method on the client object, never detached (supabase-js
+    // rpc reads `this.rest` — see the enqueue RPC below).
+    checkEntitlement: async (workspaceId: string) =>
+      workspaceOwnerHasActivePeriod(
+        db as unknown as SupabaseClient,
+        workspaceId,
+        options?.now ?? new Date()
+      ),
     listDueMirrorIds: async (now: Date, cap: number) => {
       const nowMs = now.getTime();
       const ids: string[] = [];

@@ -205,6 +205,14 @@ export async function activateDueScheduledDowngrade(
  * Admin owners are exempt (admins never buy plans). Any lookup
  * failure returns false (fail closed): the job stays queued for a
  * later tick instead of publishing on an unverified entitlement.
+ *
+ * C4: the check itself is ONE call to the shared Postgres function
+ * workspace_has_active_period (migration
+ * 20261110000000_workspace_has_active_period) — the same function
+ * the three claim RPCs call, so the SQL and TS gates can never
+ * diverge again. The workspace's owner is resolved only on the
+ * false path, to run the C3 activation backstop below, so the
+ * active/admin path costs exactly one RPC call.
  */
 export async function workspaceOwnerHasActivePeriod(
   supabase: SupabaseClient,
@@ -212,6 +220,22 @@ export async function workspaceOwnerHasActivePeriod(
   now: Date = new Date()
 ): Promise<boolean> {
   try {
+    const { data, error } = await supabase.rpc('workspace_has_active_period', {
+      p_workspace_id: workspaceId,
+      p_at: now.toISOString(),
+    });
+    if (error) {
+      console.error('[worker] active-period check failed:', error);
+      return false;
+    }
+    if (data === true) return true;
+    // No active period: a scheduled downgrade whose start has
+    // arrived activates here, on the worker tick — a publishing
+    // plan must not wait for the user to open the app. This is
+    // C3's backstop, kept by C4; it is also what un-pauses mirrors
+    // now that the mirror gate calls this helper. If activation
+    // created a period, re-check with the same RPC — never with a
+    // periods select.
     const { data: workspace, error: workspaceError } = await supabase
       .from('workspaces')
       .select('owner_id')
@@ -219,51 +243,16 @@ export async function workspaceOwnerHasActivePeriod(
       .maybeSingle();
     const ownerId = (workspace as { owner_id?: string } | null)?.owner_id;
     if (workspaceError || !ownerId) return false;
-    const { data: user, error: userError } = await supabase
-      .from('users')
-      .select('role')
-      .eq('id', ownerId)
-      .maybeSingle();
-    if (userError) return false;
-    if ((user as { role?: string } | null)?.role === 'admin') return true;
-    // No is/lte/gt here on purpose: the window filter runs in code
-    // over the owner's period rows (bounded by a limit), the same
-    // shape the mirror consumer's check uses.
-    const { data: periods, error: periodError } = await supabase
-      .from('subscription_periods')
-      .select('starts_at, ends_at, superseded_at')
-      .eq('user_id', ownerId)
-      .limit(100);
-    if (periodError || !Array.isArray(periods)) return false;
-    const nowMs = now.getTime();
-    const hasActive = periods.some((row) => {
-      const period = row as Record<string, unknown>;
-      if (period['superseded_at'] !== null) return false;
-      const starts =
-        typeof period['starts_at'] === 'string' ? Date.parse(period['starts_at']) : Number.NaN;
-      const ends = typeof period['ends_at'] === 'string' ? Date.parse(period['ends_at']) : Number.NaN;
-      return !Number.isNaN(starts) && !Number.isNaN(ends) && starts <= nowMs && ends > nowMs;
-    });
-    if (hasActive) return true;
-    // No active period: a scheduled downgrade whose start has
-    // arrived activates here, on the worker tick — a publishing
-    // plan must not wait for the user to open the app. If
-    // activation created a period, re-check it the same way.
     if (await activateDueScheduledDowngrade(supabase, ownerId, now)) {
-      const { data: rechecked, error: recheckError } = await supabase
-        .from('subscription_periods')
-        .select('starts_at, ends_at, superseded_at')
-        .eq('user_id', ownerId)
-        .limit(100);
-      if (recheckError || !Array.isArray(rechecked)) return false;
-      return rechecked.some((row) => {
-        const period = row as Record<string, unknown>;
-        if (period['superseded_at'] !== null) return false;
-        const starts =
-          typeof period['starts_at'] === 'string' ? Date.parse(period['starts_at']) : Number.NaN;
-        const ends = typeof period['ends_at'] === 'string' ? Date.parse(period['ends_at']) : Number.NaN;
-        return !Number.isNaN(starts) && !Number.isNaN(ends) && starts <= nowMs && ends > nowMs;
-      });
+      const { data: rechecked, error: recheckError } = await supabase.rpc(
+        'workspace_has_active_period',
+        { p_workspace_id: workspaceId, p_at: now.toISOString() }
+      );
+      if (recheckError) {
+        console.error('[worker] active-period re-check failed:', recheckError);
+        return false;
+      }
+      return rechecked === true;
     }
     return false;
   } catch {

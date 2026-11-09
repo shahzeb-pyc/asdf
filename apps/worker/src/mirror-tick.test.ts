@@ -9,11 +9,13 @@
  * and skips before this runs.)
  */
 import { describe, expect, it, vi } from 'vitest';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   InternalError,
   MIRROR_FACEBOOK_RESTRICTED_MESSAGE,
 } from '@fbuploadpro/contracts';
 import { FacebookGraphError } from './fb-client.js';
+import { workspaceOwnerHasActivePeriod } from './entitlement.js';
 import {
   buildMirrorTickDeps,
   MIRROR_JOB_STALE_AFTER_SECONDS,
@@ -101,6 +103,10 @@ function fakeDeps(state: FakeState, feed: unknown[]): MirrorTickDeps {
       state.published.push(params);
       return `fb_${params.videoUrl}`;
     },
+    // C4: the gate is required and always runs — the default fake
+    // is entitled, so the pre-existing tests keep proving the
+    // check body; the paused/failure tests below override it.
+    checkEntitlement: async () => true,
     now: new Date('2026-10-29T12:00:00.000Z'),
   };
 }
@@ -167,6 +173,20 @@ describe('processMirrorCheck', () => {
     expect(state.claimed).toHaveLength(0);
     expect(state.published).toHaveLength(0);
   });
+
+  it('mirror with live period proceeds through the shared helper gate', async () => {
+    const state = newState();
+    const deps = fakeDeps(state, [reel('v1', 100)]);
+    const calls: string[] = [];
+    deps.checkEntitlement = async (workspaceId) => {
+      calls.push(workspaceId);
+      return true;
+    };
+    const result = await processMirrorCheck(deps, mirror());
+    expect(result.posted).toBe(1);
+    expect(calls).toEqual(['ws_1']);
+  });
+
 
   it('posts only items newer than the last posted reel', async () => {
     const state = newState();
@@ -391,6 +411,181 @@ describe('processMirrorCheck', () => {
     const stamp = state.mirrorUpdates[state.mirrorUpdates.length - 1];
     expect(stamp?.patch.lastError).not.toBe(MIRROR_FACEBOOK_RESTRICTED_MESSAGE);
     expect(stamp?.patch.lastError).toContain('limited access');
+  });
+});
+
+describe('processMirrorCheck — C4 due downgrade un-pauses the mirror', () => {
+  /**
+   * Minimal in-memory Supabase fake, just enough for the REAL
+   * workspaceOwnerHasActivePeriod helper plus the activation it
+   * runs: rpc('workspace_has_active_period') computed from the
+   * rows, and from() chains for workspaces / users /
+   * subscription_periods / subscription_payments /
+   * seller_commissions. This test fails on the old code: the old
+   * inline mirror copy never called activateDueScheduledDowngrade,
+   * so the check would pause (posted 0, no period created).
+   */
+  type EntRow = Record<string, unknown>;
+  interface EntDb {
+    workspaces: EntRow[];
+    users: EntRow[];
+    periods: EntRow[];
+    payments: EntRow[];
+    commissions: EntRow[];
+  }
+
+  class EntBuilder {
+    private filters: Array<(r: EntRow) => boolean> = [];
+    private limitN: number | null = null;
+    private insertRow: EntRow | null = null;
+    private updatePatch: EntRow | null = null;
+
+    constructor(
+      private db: EntDb,
+      private table: string
+    ) {}
+
+    select(): this {
+      return this;
+    }
+
+    eq(col: string, val: unknown): this {
+      this.filters.push((r) => r[col] === val);
+      return this;
+    }
+
+    is(col: string, val: unknown): this {
+      this.filters.push((r) => (val === null ? r[col] == null : r[col] === val));
+      return this;
+    }
+
+    lte(col: string, val: string): this {
+      this.filters.push((r) => typeof r[col] === 'string' && (r[col] as string) <= val);
+      return this;
+    }
+
+    limit(n: number): this {
+      this.limitN = n;
+      return this;
+    }
+
+    insert(row: EntRow): this {
+      this.insertRow = {
+        ...row,
+        id: `period-${this.db.periods.length + 1}`,
+        superseded_at: null,
+      };
+      if (this.table === 'subscription_periods') this.db.periods.push(this.insertRow);
+      return this;
+    }
+
+    update(patch: EntRow): this {
+      this.updatePatch = patch;
+      return this;
+    }
+
+    async maybeSingle(): Promise<{ data: EntRow | null; error: null }> {
+      if (this.insertRow) return { data: this.insertRow, error: null };
+      return { data: this.matched()[0] ?? null, error: null };
+    }
+
+    async single(): Promise<{ data: EntRow | null; error: null }> {
+      if (this.insertRow) return { data: this.insertRow, error: null };
+      return { data: this.matched()[0] ?? null, error: null };
+    }
+
+    then(resolve: (value: { data: unknown; error: null }) => void): void {
+      if (this.updatePatch) {
+        const matched = this.matched();
+        for (const row of matched) Object.assign(row, this.updatePatch);
+        resolve({ data: matched.map((r) => ({ id: r['id'] })), error: null });
+        return;
+      }
+      resolve({ data: this.matched(), error: null });
+    }
+
+    private rows(): EntRow[] {
+      switch (this.table) {
+        case 'workspaces':
+          return this.db.workspaces;
+        case 'users':
+          return this.db.users;
+        case 'subscription_periods':
+          return this.db.periods;
+        case 'subscription_payments':
+          return this.db.payments;
+        case 'seller_commissions':
+          return this.db.commissions;
+        default:
+          return [];
+      }
+    }
+
+    private matched(): EntRow[] {
+      let rows = this.rows().filter((r) => this.filters.every((f) => f(r)));
+      if (this.limitN !== null) rows = rows.slice(0, this.limitN);
+      return rows;
+    }
+  }
+
+  function entitlementClient(db: EntDb): SupabaseClient {
+    return {
+      from: (table: string) => new EntBuilder(db, table),
+      rpc: async (fn: string, args: Record<string, unknown>) => {
+        if (fn !== 'workspace_has_active_period') {
+          throw new Error(`unexpected rpc ${fn}`);
+        }
+        const workspace = db.workspaces.find((w) => w['id'] === args['p_workspace_id']);
+        const ownerId = workspace?.['owner_id'];
+        const user = db.users.find((u) => u['id'] === ownerId);
+        if (user?.['role'] === 'admin') return { data: true, error: null };
+        const at = Date.parse(args['p_at'] as string);
+        const active = db.periods.some((p) => {
+          if (p['user_id'] !== ownerId || p['superseded_at'] !== null) return false;
+          const starts = Date.parse(p['starts_at'] as string);
+          const ends = Date.parse(p['ends_at'] as string);
+          return starts <= at && ends > at;
+        });
+        return { data: active, error: null };
+      },
+    } as unknown as SupabaseClient;
+  }
+
+  it('a due scheduled downgrade activates on the mirror tick and the check proceeds', async () => {
+    const db: EntDb = {
+      workspaces: [{ id: 'ws_1', owner_id: 'user-1' }],
+      users: [{ id: 'user-1', role: 'user' }],
+      periods: [],
+      payments: [
+        {
+          id: 'payment-1',
+          user_id: 'user-1',
+          status: 'approved',
+          period_id: null,
+          is_downgrade: true,
+          scheduled_starts_at: '2026-10-20T00:00:00.000Z',
+          facebook_count: 2,
+          instagram_count: 0,
+          threads_count: 0,
+          x_count: 0,
+          tiktok_count: 0,
+          youtube_count: 0,
+        },
+      ],
+      commissions: [],
+    };
+    const state = newState();
+    const deps = fakeDeps(state, [reel('v1', 100)]);
+    const now = new Date('2026-10-29T12:00:00.000Z');
+    deps.checkEntitlement = async (workspaceId) =>
+      workspaceOwnerHasActivePeriod(entitlementClient(db), workspaceId, now);
+    const result = await processMirrorCheck(deps, mirror());
+    expect(result.posted).toBe(1);
+    expect(state.published).toHaveLength(1);
+    // The downgrade activated on the mirror tick itself: a period
+    // was created and linked, exactly like the ADU gate does today.
+    expect(db.periods).toHaveLength(1);
+    expect(db.payments[0]?.['period_id']).toBe('period-1');
   });
 });
 

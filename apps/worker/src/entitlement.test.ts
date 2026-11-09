@@ -23,8 +23,12 @@ interface FakeDb {
   commissions: Row[];
   /** Every query the fake answers, in order (C3: pins the probe shape). */
   queries: Array<{ table: string; op: 'select' | 'insert' | 'update'; limit: number | null }>;
+  /** C4: every RPC call the fake answers, in order. */
+  rpcCalls: Array<{ fn: string; args: Record<string, unknown> }>;
   /** C3: when true, the EXISTS probe (payments select, limit 1) errors. */
   failExistsProbe?: boolean;
+  /** C4: when true, the workspace_has_active_period RPC errors. */
+  failRpc?: boolean;
 }
 
 class FakeBuilder {
@@ -145,6 +149,28 @@ class FakeBuilder {
 function fakeClient(db: FakeDb): SupabaseClient {
   return {
     from: (table: string) => new FakeBuilder(db, table),
+    // C4: the shared workspace_has_active_period function, computed
+    // from the same fake rows the old three-query gate read — admin
+    // owner, or a non-superseded period whose window contains p_at.
+    rpc: async (fn: string, args: Record<string, unknown>) => {
+      db.rpcCalls.push({ fn, args });
+      if (db.failRpc) return { data: null, error: new Error('rpc boom') };
+      if (fn !== 'workspace_has_active_period') {
+        throw new Error(`unexpected rpc ${fn}`);
+      }
+      const workspace = db.workspaces.find((w) => w['id'] === args['p_workspace_id']);
+      const ownerId = workspace?.['owner_id'];
+      const user = db.users.find((u) => u['id'] === ownerId);
+      if (user?.['role'] === 'admin') return { data: true, error: null };
+      const at = Date.parse(args['p_at'] as string);
+      const active = db.periods.some((p) => {
+        if (p['user_id'] !== ownerId || p['superseded_at'] !== null) return false;
+        const starts = Date.parse(p['starts_at'] as string);
+        const ends = Date.parse(p['ends_at'] as string);
+        return starts <= at && ends > at;
+      });
+      return { data: active, error: null };
+    },
   } as unknown as SupabaseClient;
 }
 
@@ -156,6 +182,7 @@ function baseDb(overrides: Partial<FakeDb> = {}): FakeDb {
     payments: [],
     commissions: [],
     queries: [],
+    rpcCalls: [],
     ...overrides,
   };
 }
@@ -251,6 +278,13 @@ describe('workspaceOwnerHasActivePeriod activates a due schedule on the tick', (
     const db = baseDb({ payments: [scheduledPayment()] });
     await expect(workspaceOwnerHasActivePeriod(fakeClient(db), 'ws-1', NOW)).resolves.toBe(true);
     expect(db.periods).toHaveLength(1);
+    // C4: the first RPC says no, activation runs, the re-check is a
+    // second call to the same RPC — never a periods select.
+    expect(db.rpcCalls).toHaveLength(2);
+    expect(db.rpcCalls.map((c) => c.fn)).toEqual([
+      'workspace_has_active_period',
+      'workspace_has_active_period',
+    ]);
   });
 
   it('returns false when nothing is due and no period is live', async () => {
@@ -258,6 +292,7 @@ describe('workspaceOwnerHasActivePeriod activates a due schedule on the tick', (
     await expect(workspaceOwnerHasActivePeriod(fakeClient(db), 'ws-1', NOW)).resolves.toBe(
       false
     );
+    expect(db.rpcCalls).toHaveLength(1);
   });
 
   it('admin owners stay exempt without touching periods', async () => {
@@ -267,6 +302,122 @@ describe('workspaceOwnerHasActivePeriod activates a due schedule on the tick', (
     });
     await expect(workspaceOwnerHasActivePeriod(fakeClient(db), 'ws-1', NOW)).resolves.toBe(true);
     expect(db.periods).toHaveLength(0);
+    // C4: exactly one RPC call, zero table queries on the admin path.
+    expect(db.rpcCalls).toHaveLength(1);
+    expect(db.queries).toHaveLength(0);
+  });
+});
+
+describe('workspaceOwnerHasActivePeriod — one RPC gate (C4)', () => {
+  const periodSelects = (db: FakeDb) =>
+    db.queries.filter((q) => q.table === 'subscription_periods' && q.op === 'select');
+  const paymentSelects = (db: FakeDb) =>
+    db.queries.filter((q) => q.table === 'subscription_payments' && q.op === 'select');
+
+  it('live period: true with exactly one RPC call and zero period selects', async () => {
+    const db = baseDb({
+      periods: [
+        {
+          id: 'period-live',
+          user_id: 'user-1',
+          starts_at: '2026-05-01T00:00:00.000Z',
+          ends_at: '2026-07-01T00:00:00.000Z',
+          superseded_at: null,
+        },
+      ],
+    });
+    await expect(workspaceOwnerHasActivePeriod(fakeClient(db), 'ws-1', NOW)).resolves.toBe(true);
+    expect(db.rpcCalls).toHaveLength(1);
+    expect(db.rpcCalls[0]).toEqual({
+      fn: 'workspace_has_active_period',
+      args: { p_workspace_id: 'ws-1', p_at: '2026-06-01T00:00:00.000Z' },
+    });
+    expect(periodSelects(db)).toHaveLength(0);
+    expect(db.queries).toHaveLength(0);
+  });
+
+  it('expired period only: false; the false path pays the activation probe, no full select', async () => {
+    const db = baseDb({
+      periods: [
+        {
+          id: 'period-expired',
+          user_id: 'user-1',
+          starts_at: '2026-04-01T00:00:00.000Z',
+          ends_at: '2026-05-01T00:00:00.000Z',
+          superseded_at: null,
+        },
+      ],
+    });
+    await expect(workspaceOwnerHasActivePeriod(fakeClient(db), 'ws-1', NOW)).resolves.toBe(
+      false
+    );
+    expect(db.rpcCalls).toHaveLength(1);
+    // The activation function's own periods select + exactly one
+    // payments query — the LIMIT 1 EXISTS probe. No full select,
+    // and the gate itself never selected periods.
+    expect(periodSelects(db)).toHaveLength(1);
+    expect(paymentSelects(db)).toEqual([
+      { table: 'subscription_payments', op: 'select', limit: 1 },
+    ]);
+  });
+
+  it('superseded-only period: false, same false-path shape as expired', async () => {
+    const db = baseDb({
+      periods: [
+        {
+          id: 'period-superseded',
+          user_id: 'user-1',
+          starts_at: '2026-05-01T00:00:00.000Z',
+          ends_at: '2026-07-01T00:00:00.000Z',
+          superseded_at: '2026-05-15T00:00:00.000Z',
+        },
+      ],
+    });
+    await expect(workspaceOwnerHasActivePeriod(fakeClient(db), 'ws-1', NOW)).resolves.toBe(
+      false
+    );
+    expect(db.rpcCalls).toHaveLength(1);
+    expect(periodSelects(db)).toHaveLength(1);
+    expect(paymentSelects(db)).toEqual([
+      { table: 'subscription_payments', op: 'select', limit: 1 },
+    ]);
+  });
+
+  it('future-only period: false, same false-path shape as expired', async () => {
+    const db = baseDb({
+      periods: [
+        {
+          id: 'period-future',
+          user_id: 'user-1',
+          starts_at: '2026-07-01T00:00:00.000Z',
+          ends_at: '2026-08-01T00:00:00.000Z',
+          superseded_at: null,
+        },
+      ],
+    });
+    await expect(workspaceOwnerHasActivePeriod(fakeClient(db), 'ws-1', NOW)).resolves.toBe(
+      false
+    );
+    expect(db.rpcCalls).toHaveLength(1);
+    expect(periodSelects(db)).toHaveLength(1);
+    expect(paymentSelects(db)).toEqual([
+      { table: 'subscription_payments', op: 'select', limit: 1 },
+    ]);
+  });
+
+  it('RPC error: false (fail closed), loud log, no throw, no table query', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const db = baseDb({ failRpc: true });
+    await expect(workspaceOwnerHasActivePeriod(fakeClient(db), 'ws-1', NOW)).resolves.toBe(
+      false
+    );
+    expect(db.rpcCalls).toHaveLength(1);
+    expect(db.queries).toHaveLength(0);
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining('active-period check failed'),
+      expect.anything()
+    );
+    errSpy.mockRestore();
   });
 });
 
@@ -357,14 +508,16 @@ describe('workspaceOwnerHasActivePeriod — C3 ADU gate probe', () => {
   const periodSelects = (db: FakeDb) =>
     db.queries.filter((q) => q.table === 'subscription_periods' && q.op === 'select');
 
-  it('no period, nothing due: periods select + one EXISTS, no full payments select', async () => {
+  it('no period, nothing due: one RPC + the activation probe, no full payments select', async () => {
     const db = baseDb();
     await expect(workspaceOwnerHasActivePeriod(fakeClient(db), 'ws-1', NOW)).resolves.toBe(
       false
     );
-    // The gate's own periods select + the activation probe's periods
-    // select, then exactly one payments query — the LIMIT 1 EXISTS.
-    expect(periodSelects(db)).toHaveLength(2);
+    // C4: the gate is one RPC call; the only periods select left is
+    // the activation function's own, then exactly one payments
+    // query — the LIMIT 1 EXISTS.
+    expect(db.rpcCalls).toHaveLength(1);
+    expect(periodSelects(db)).toHaveLength(1);
     expect(paymentSelects(db)).toEqual([
       { table: 'subscription_payments', op: 'select', limit: 1 },
     ]);
@@ -378,6 +531,8 @@ describe('workspaceOwnerHasActivePeriod — C3 ADU gate probe', () => {
       { table: 'subscription_payments', op: 'select', limit: 1 },
       { table: 'subscription_payments', op: 'select', limit: null },
     ]);
+    // C4: first RPC false, second RPC (post-activation re-check) true.
+    expect(db.rpcCalls).toHaveLength(2);
     expect(db.periods).toHaveLength(1);
     expect(db.payments[0]?.['period_id']).toBe('period-1');
   });
