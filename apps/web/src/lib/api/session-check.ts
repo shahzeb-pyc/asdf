@@ -30,9 +30,10 @@ export const SESSION_STATUS_PATH = '/api/auth/session';
  * bounces. `'full'` is the database-backed verdict (user lookup,
  * password-change and deactivation detection), run on the 5-minute
  * interval only. Worst case a password change or deactivation is
- * therefore detected within 5 minutes instead of on the next mount;
- * the layout's own server check on every document load still
- * bounds it to the next full load.
+ * therefore detected within 5 minutes, at the next scheduled full
+ * check while the tab stays mounted. A full document load does not
+ * shorten that bound: the layout's server check re-proves the
+ * token only (JWT, no database lookup).
  */
 export type SessionCheckMode = 'token' | 'full';
 
