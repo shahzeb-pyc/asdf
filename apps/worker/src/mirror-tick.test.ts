@@ -533,7 +533,7 @@ describe('processMirrorCheck — C4 due downgrade un-pauses the mirror', () => {
       from: (table: string) => new EntBuilder(db, table),
       rpc: async (fn: string, args: Record<string, unknown>) => {
         if (fn !== 'workspace_has_active_period') {
-          throw new Error(`unexpected rpc ${fn}`);
+          throw new InternalError(`unexpected rpc ${fn}`);
         }
         const workspace = db.workspaces.find((w) => w['id'] === args['p_workspace_id']);
         const ownerId = workspace?.['owner_id'];

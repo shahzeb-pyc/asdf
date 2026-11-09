@@ -7,6 +7,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { InternalError } from '@fbuploadpro/contracts';
 
 import {
   activateDueScheduledDowngrade,
@@ -156,7 +157,7 @@ function fakeClient(db: FakeDb): SupabaseClient {
       db.rpcCalls.push({ fn, args });
       if (db.failRpc) return { data: null, error: new Error('rpc boom') };
       if (fn !== 'workspace_has_active_period') {
-        throw new Error(`unexpected rpc ${fn}`);
+        throw new InternalError(`unexpected rpc ${fn}`);
       }
       const workspace = db.workspaces.find((w) => w['id'] === args['p_workspace_id']);
       const ownerId = workspace?.['owner_id'];
