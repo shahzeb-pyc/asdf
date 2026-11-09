@@ -254,7 +254,7 @@ export async function refreshConnectedPageTokens(
   const legacyDb = db && 'query' in db && typeof db.query === 'function' ? db : null;
 
   try {
-    let validPages: Array<{ id: string; fb_page_id?: string; fbPageId?: string; status?: string }> = [];
+    let validPages: Array<{ id: string; fb_page_id?: string; fbPageId?: string; status?: string; metadata?: Record<string, unknown> | null }> = [];
 
     if (supabase) {
       const { data: linkedPages, error: fetchPagesError } = await supabase
@@ -292,14 +292,14 @@ export async function refreshConnectedPageTokens(
         : [];
     } else if (legacyDb) {
       const linkedPages = (await legacyDb.query(
-        `SELECT id, external_destination_id AS fb_page_id, status
+        `SELECT id, external_destination_id AS fb_page_id, status, metadata
          FROM destinations
          WHERE account_id = $1
            AND workspace_id = $2
            AND platform = 'facebook'
            AND (status != 'disconnected' OR metadata->>'fb_status' = 'paused')`,
         [accountRowId, workspaceId]
-      )) as Array<{ id: string; fb_page_id?: string; fbPageId?: string; status?: string }>;
+      )) as Array<{ id: string; fb_page_id?: string; fbPageId?: string; status?: string; metadata?: Record<string, unknown> | null }>;
 
       validPages = Array.isArray(linkedPages)
         ? linkedPages.filter((p) => Boolean(p?.fb_page_id || p?.fbPageId))

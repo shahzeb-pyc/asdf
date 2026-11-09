@@ -56,9 +56,9 @@ export function mirrorStatusMark(status: MirrorListView['status']): {
 export function mirrorDisplayMark(mirror: {
   status: MirrorListView['status'];
   targetPlatform: string;
-  fbStatus?: string | null;
-  fbRateLimitedAt?: string | null;
-  targetFbStatus?: string | null;
+  fbStatus?: string | null | undefined;
+  fbRateLimitedAt?: string | null | undefined;
+  targetFbStatus?: string | null | undefined;
 }): {
   kind: 'operational' | 'queued' | 'critical';
   label: string;
