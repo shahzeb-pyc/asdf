@@ -771,8 +771,9 @@ export async function handleListMirrors(
       );
     }
     const targetPlatformFilter = rawTargetPlatform as 'facebook' | 'instagram' | null;
-    // Spec 155: ?fbStatus= filters by display status (active /
-    // paused / error / one of the nine Facebook detail statuses).
+    // Spec 155: ?fbStatus= filters by stored state (the mirror's own
+    // fb_status, or the target destination's stored detail) — not by
+    // the resolved display status; see buildMirrorFbStatusSqlCondition.
     // Unknown values mean "no filter" (see normalizeMirrorFbStatus).
     const fbStatusFilter = normalizeMirrorFbStatus(
       new URL(request.url).searchParams.get('fbStatus')

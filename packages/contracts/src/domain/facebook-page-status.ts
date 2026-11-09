@@ -156,8 +156,9 @@ export interface FacebookPageStatusAlert {
  *
  * `surface` (owner default 2): the "turn automation on using the
  * toggle" phrase from ADU has no toggle on either surface, so it
- * reads "turn posting back on" on Pages and "Resume posting" on
- * mirrors (the mirror ••• menu's action name). All other text is
+ * reads "turn posting back on" on Pages and "resume posting" on
+ * mirrors (the mirror ••• menu's action name, lower-case because
+ * every occurrence is mid-sentence). All other text is
  * ADU's verbatim. Pages callers omit the argument.
  */
 export function getFacebookPageStatusAlert(
@@ -168,7 +169,7 @@ export function getFacebookPageStatusAlert(
   if (alert === null || surface === 'pages') return alert;
   return {
     ...alert,
-    description: alert.description.replaceAll('turn posting back on', 'Resume posting'),
+    description: alert.description.replaceAll('turn posting back on', 'resume posting'),
   };
 }
 

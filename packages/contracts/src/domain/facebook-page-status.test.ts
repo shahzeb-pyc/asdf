@@ -166,7 +166,7 @@ describe('mirror fb_status mapping — spec 155', () => {
 });
 
 describe('getFacebookPageStatusAlert mirrors wording — spec 155', () => {
-  it('mirrors say "Resume posting" where Pages say "turn posting back on"', () => {
+  it('mirrors say "resume posting" where Pages say "turn posting back on"', () => {
     for (const status of [
       'page_checkpoint',
       'page_not_accessible',
@@ -178,7 +178,8 @@ describe('getFacebookPageStatusAlert mirrors wording — spec 155', () => {
     ] as const) {
       const alert = getFacebookPageStatusAlert(status, 'mirrors');
       expect(alert).not.toBeNull();
-      expect(alert?.description).toContain('Resume posting');
+      expect(alert?.description).toContain('resume posting');
+      expect(alert?.description).not.toContain('Resume posting');
       expect(alert?.description).not.toContain('turn posting back on');
       expect(alert?.description).not.toContain('toggle');
     }
