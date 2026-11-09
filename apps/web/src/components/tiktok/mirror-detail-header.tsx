@@ -9,11 +9,18 @@ import { cn } from '@/lib/utils';
 import { getUserInitials } from '@/lib/user-initials';
 import { formatAddedDate } from '@/components/pages/page-card';
 import type { MirrorView } from '@/lib/api/schemas/tiktok-mirrors';
-import { mapStoredMirrorErrorToDisplay } from '@fbuploadpro/contracts';
+import {
+  getFacebookPageStatusAlert,
+  mapStoredMirrorErrorToDisplay,
+  pageStatusFromMirrorFbStatus,
+  resolveMirrorDisplayStatus,
+} from '@fbuploadpro/contracts';
+import { Banner } from '@/components/shared/ui/banner';
+import { Button } from '@/components/shared/ui/button';
 import {
   MIRROR_STATUS_RING_CLASSES,
   MirrorStatusCircle,
-  mirrorStatusMark,
+  mirrorDisplayMark,
 } from './tiktok-card';
 
 /**
@@ -88,6 +95,13 @@ export interface MirrorDetailHeaderProps {
   pausePending: boolean;
   /** Opens the shell's delete confirmation dialog (never instant). */
   onDeleteRequest: () => void;
+  /**
+   * Spec 155: link to Facebook Accounts for the banner's reconnect
+   * action. Supplied by the Facebook detail shell only — Instagram
+   * mirrors never show the Facebook banner, so the Instagram shell
+   * omits it.
+   */
+  accountsHref?: string;
 }
 
 export function MirrorDetailHeader({
@@ -96,12 +110,38 @@ export function MirrorDetailHeader({
   onPauseResume,
   pausePending,
   onDeleteRequest,
+  accountsHref,
 }: Readonly<MirrorDetailHeaderProps>) {
   const [menuOpen, setMenuOpen] = React.useState(false);
-  const mark = mirrorStatusMark(mirror.status);
+  // Spec 155: Facebook mirrors show the resolved Facebook detail
+  // (own fb_status, else the target's detail); Instagram mirrors
+  // keep the coarse status exactly as before.
+  const mark = mirrorDisplayMark(mirror);
   const ringClass = MIRROR_STATUS_RING_CLASSES[mark.kind];
   const isPaused = mirror.status === 'paused';
   const isFacebook = mirror.targetPlatform === 'facebook';
+  // The banner only exists for a mapped Facebook error status.
+  // `mark_verified` has no mirror-side action — reactivation lives
+  // on the target Page itself — so the checkpoint banner renders
+  // without a button; `reconnect` links to Facebook Accounts.
+  // A generic `error` (no detail anywhere) maps to no wire status
+  // and falls back to the raw-error box below.
+  const wireStatus = isFacebook
+    ? pageStatusFromMirrorFbStatus(mark.displayStatus)
+    : null;
+  const fbAlert = wireStatus
+    ? getFacebookPageStatusAlert(wireStatus, 'mirrors')
+    : null;
+  // Spec 155 (owner default 4): Resume is DISABLED, not hidden,
+  // while the mirror is paused and a Facebook error is present —
+  // the target is down (live target detail) or the mirror carries
+  // its own stamped detail. Pause stays available, and Delete
+  // always stays available. An errored-but-active mirror shows
+  // Pause (available); the lock only ever disables Resume.
+  const resumeLocked =
+    isFacebook &&
+    isPaused &&
+    (mirror.fbStatus != null || mirror.targetFbStatus != null);
   const facebookUrl = isFacebook
     ? `https://facebook.com/${mirror.targetExternalId}`
     : null;
@@ -119,7 +159,28 @@ export function MirrorDetailHeader({
 
   return (
     <div data-testid="mirror-detail-header">
-      {mirror.lastError ? (
+      {/* Spec 155: a Facebook mirror with a mapped error status
+          shows the shared ADU banner (mirrors wording) instead of
+          the raw stored error. The raw-error box stays for
+          Instagram mirrors (unchanged) and for a Facebook mirror
+          in generic error with no detail anywhere. */}
+      {fbAlert ? (
+        <div className="mb-6 overflow-hidden rounded-md border border-line">
+          <Banner
+            variant={fbAlert.variant}
+            data-testid={`mirror-status-banner-${mark.displayStatus}`}
+            title={fbAlert.title}
+            description={fbAlert.description}
+            action={
+              fbAlert.action === 'reconnect' && accountsHref ? (
+                <Button type="button" asChild data-testid="mirror-reconnect-account-btn">
+                  <Link href={accountsHref}>Open Facebook Accounts</Link>
+                </Button>
+              ) : undefined
+            }
+          />
+        </div>
+      ) : mirror.lastError ? (
         <div
           role="alert"
           data-testid="tiktok-detail-error"
@@ -193,7 +254,7 @@ export function MirrorDetailHeader({
               data-testid="mirror-detail-meta"
               className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-metadata text-ink-dim"
             >
-              <MirrorStatusCircle status={mirror.status} label={mark.label} />
+              <MirrorStatusCircle status={mark.displayStatus} label={mark.label} />
               {mirror.targetAccountDisplayName ? (
                 <>
                   <span aria-hidden className="text-line">|</span>
@@ -338,12 +399,12 @@ export function MirrorDetailHeader({
                 type="button"
                 role="menuitem"
                 data-testid="mirror-detail-menu-pause"
-                disabled={pausePending}
+                disabled={pausePending || resumeLocked}
                 onClick={() => {
                   setMenuOpen(false);
                   onPauseResume();
                 }}
-                className="block w-full rounded-sm px-3 py-2.5 text-left text-body text-ink hover:bg-subtle"
+                className="block w-full rounded-sm px-3 py-2.5 text-left text-body text-ink hover:bg-subtle disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
               >
                 {isPaused ? 'Resume' : 'Pause'}
               </button>

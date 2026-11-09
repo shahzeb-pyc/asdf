@@ -95,6 +95,51 @@ export const FB_PAGE_STATUS_FILTER_TO_WIRE: Record<
   'Missing Permission': 'missing_permission',
 };
 
+/**
+ * Status-filter options for the mirrors list Select (spec 155).
+ * Same labels as the Pages filter, plus generic `Error` — a mirror
+ * in error with no detail anywhere (own or target) displays as
+ * Error, and that is the only way to list those.
+ */
+export const MIRROR_FB_STATUS_FILTER_OPTIONS = [
+  'All Statuses',
+  'Active',
+  'Paused',
+  'Error',
+  'Verification Req.',
+  'Rate Limited',
+  'Page Not Accessible',
+  'Invalid Token',
+  '2FA Req. on BM',
+  'Check Dev App',
+  'Account Suspended',
+  'Missing Page Access',
+  'Missing Permission',
+] as const;
+
+export type MirrorFbStatusFilterOption =
+  (typeof MIRROR_FB_STATUS_FILTER_OPTIONS)[number];
+
+/** Filter label -> `?fbStatus=` value (null = no narrowing). */
+export const MIRROR_FB_STATUS_FILTER_TO_VALUE: Record<
+  MirrorFbStatusFilterOption,
+  'active' | 'paused' | 'error' | MirrorFbStatus | null
+> = {
+  'All Statuses': null,
+  Active: 'active',
+  Paused: 'paused',
+  Error: 'error',
+  'Verification Req.': 'checkpoint',
+  'Rate Limited': 'fb_rate_limited',
+  'Page Not Accessible': 'page_not_accessible',
+  'Invalid Token': 'invalid_token',
+  '2FA Req. on BM': '2fa_required_on_BM',
+  'Check Dev App': 'check_developer_app',
+  'Account Suspended': 'account_suspended',
+  'Missing Page Access': 'missing_page_access',
+  'Missing Permission': 'missing_permission',
+};
+
 export interface FacebookPageStatusAlert {
   title: string;
   description: string;
@@ -108,8 +153,26 @@ export interface FacebookPageStatusAlert {
  * banner (unchanged). Unknown statuses show no banner either — an
  * unexpected value must never invent guidance; the badge already
  * reads as needs-attention.
+ *
+ * `surface` (owner default 2): the "turn automation on using the
+ * toggle" phrase from ADU has no toggle on either surface, so it
+ * reads "turn posting back on" on Pages and "Resume posting" on
+ * mirrors (the mirror ••• menu's action name). All other text is
+ * ADU's verbatim. Pages callers omit the argument.
  */
 export function getFacebookPageStatusAlert(
+  status: FacebookPageStatus,
+  surface: 'pages' | 'mirrors' = 'pages'
+): FacebookPageStatusAlert | null {
+  const alert = getFacebookPageStatusAlertForPages(status);
+  if (alert === null || surface === 'pages') return alert;
+  return {
+    ...alert,
+    description: alert.description.replaceAll('turn posting back on', 'Resume posting'),
+  };
+}
+
+function getFacebookPageStatusAlertForPages(
   status: FacebookPageStatus
 ): FacebookPageStatusAlert | null {
   switch (status) {
