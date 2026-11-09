@@ -89,6 +89,16 @@ export const FacebookPageStatusSchema = z.enum([
   'page_checkpoint',
   'invalid_token',
   'disconnected',
+  // Spec 155: Facebook publish error statuses from the ADU mapping
+  // (PR #190). `page_checkpoint` stays the verification-required
+  // state (owner default 1) — there is no separate
+  // `fb_verification_required` wire value for Pages/mirrors.
+  'page_not_accessible',
+  'missing_page_access',
+  'missing_permission',
+  'check_developer_app',
+  'account_suspended',
+  '2fa_required_on_BM',
 ]);
 export const FacebookPageStatusEnum = FacebookPageStatusSchema.enum;
 export type FacebookPageStatus = z.infer<typeof FacebookPageStatusSchema>;
