@@ -217,7 +217,7 @@ function computeRpcResult(
   const periods = (tables['subscription_periods'] ?? []).filter(
     (row) => row['user_id'] === userId
   );
-  const active =
+  const active: Row | null =
     periods
       .filter(
         (row) =>
