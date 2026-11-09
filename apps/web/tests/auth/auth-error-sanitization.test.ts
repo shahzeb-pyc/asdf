@@ -1,10 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   sanitizeAuthErrorMessage,
-  formatAuthErrorResponse,
   EMAIL_RATE_LIMIT_MESSAGE,
   isEmailRateLimitError,
 } from '../../src/lib/auth-errors';
+import { formatAuthErrorResponse } from '../../src/lib/auth-errors-server';
 
 describe('Auth Error Sanitization & Zero Leakage (T001, T002)', () => {
   describe('sanitizeAuthErrorMessage', () => {
