@@ -65,8 +65,10 @@ import { ListPagination } from '@/components/shared/ui/list-pagination';
 import { Skeleton } from '@/components/shared/ui/skeleton';
 import {
   PageCard,
+  getPageStatusLabel,
   isPageNeedsAttention,
   type FacebookPageItem,
+  type FacebookPageStatus,
 } from '@/components/pages/page-card';
 import { PagesEmptyState } from '@/components/pages/pages-empty-state';
 import {
@@ -133,6 +135,12 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
   const debouncedSearchQuery = useDebouncedValue(searchQuery);
   const [statusFilter, setStatusFilter] =
     React.useState<PageStatusFilter>('all');
+  // Spec 155: exact wire-status narrowing from the status-detail
+  // Select ('' = All Statuses). It ANDs with the tab filter on the
+  // server, so choosing a detail resets the tab to 'all' (and vice
+  // versa) — a detail that contradicts the tab would otherwise
+  // silently empty the list.
+  const [statusDetail, setStatusDetail] = React.useState('');
   const [accountFilter, setAccountFilter] = React.useState('all');
 
   const pagesQuery = useQuery({
@@ -142,6 +150,7 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
       search: debouncedSearchQuery.trim(),
       status: statusFilter,
       account: accountFilter,
+      ...(statusDetail ? { statusDetail } : {}),
     }),
     queryFn: ({ signal }) =>
       api.get(
@@ -152,6 +161,7 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
             ? { search: debouncedSearchQuery.trim() }
             : {}),
           ...(statusFilter !== 'all' ? { status: statusFilter } : {}),
+          ...(statusDetail ? { statusDetail } : {}),
           ...(accountFilter !== 'all' ? { account: accountFilter } : {}),
         }),
         {
@@ -303,6 +313,15 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
   }, []);
   const handleStatusFilterChange = React.useCallback((value: PageStatusFilter) => {
     setStatusFilter(value);
+    setStatusDetail('');
+    setPage(1);
+  }, []);
+  // Spec 155: choosing a detail status resets the tab to 'all' (and
+  // choosing a tab clears the detail above) — the two AND on the
+  // server, so a contradicting pair would silently empty the list.
+  const handleStatusDetailChange = React.useCallback((value: string) => {
+    setStatusDetail(value);
+    setStatusFilter('all');
     setPage(1);
   }, []);
   // Toolbar account changes sync back to the URL so the filtered view
@@ -331,6 +350,7 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
   const handleClearFilters = React.useCallback(() => {
     setSearchQuery('');
     setStatusFilter('all');
+    setStatusDetail('');
     handleAccountFilterChange('all');
   }, [handleAccountFilterChange]);
 
@@ -450,6 +470,7 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
   const isFiltered =
     debouncedSearchQuery.trim().length > 0 ||
     statusFilter !== 'all' ||
+    statusDetail !== '' ||
     accountFilter !== 'all';
 
   // The subtitle counts from the API total and the full-set
@@ -495,6 +516,7 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
     // a server-side position lookup, which this does not add.
     setSearchQuery('');
     setStatusFilter('all');
+    setStatusDetail('');
     handleAccountFilterChange(result.accountId ?? 'all');
     void queryClient.invalidateQueries({ queryKey: tenant.pages.list });
     void queryClient.invalidateQueries({ queryKey: tenant.accounts.list });
@@ -512,12 +534,15 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
           : `Status: ${statusFilter.charAt(0).toUpperCase()}${statusFilter.slice(1)}`
       );
     }
+    if (statusDetail) {
+      labels.push(`Status: ${getPageStatusLabel(statusDetail as FacebookPageStatus)}`);
+    }
     if (accountFilter !== 'all') {
       const option = accountOptions.find((o) => o.value === accountFilter);
       labels.push(`Account: ${option?.label ?? accountFilter}`);
     }
     return labels;
-  }, [debouncedSearchQuery, statusFilter, accountFilter, accountOptions]);
+  }, [debouncedSearchQuery, statusFilter, statusDetail, accountFilter, accountOptions]);
 
   // K9: a failed accounts/BYOC read must not leave a stale grid
   // (or an empty filter list) unexplained. isRefetchError covers
@@ -728,6 +753,8 @@ export function PagesShell({ subdomain }: Readonly<PagesShellProps>) {
           onAccountFilterChange={handleAccountFilterChange}
           accountOptions={accountOptions}
           attentionCount={attentionTotal}
+          statusDetail={statusDetail}
+          onStatusDetailChange={handleStatusDetailChange}
         />
       )}
 

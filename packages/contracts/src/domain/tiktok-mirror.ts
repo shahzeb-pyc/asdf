@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MirrorFbStatusSchema } from './facebook-page-status.js';
 
 // ==========================================
 // Mirrors (platform-agnostic; TikTok → Facebook is the first pair)
@@ -198,6 +199,14 @@ export const MirrorRowSchema = z.object({
   last_checked_at: z.string().nullable(),
   next_check_at: z.string().nullable(),
   last_error: z.string().nullable(),
+  /**
+   * Spec 155: the Facebook publish-error detail (`mirrors.fb_status`
+   * / `fb_rate_limited_at`). NULL when there is no Facebook error.
+   * Instagram-target mirrors never carry these (the tick only stamps
+   * them for Facebook targets).
+   */
+  fb_status: MirrorFbStatusSchema.nullable(),
+  fb_rate_limited_at: z.string().nullable(),
   created_at: z.string(),
   updated_at: z.string(),
 });
@@ -277,6 +286,25 @@ export const MirrorViewSchema = z.object({
   lastCheckedAt: z.string().nullable(),
   nextCheckAt: z.string().nullable(),
   lastError: z.string().nullable(),
+  /**
+   * Spec 155: the Facebook publish-error detail, camelCase.
+   * `fbRateLimitedAt` is the 3-day auto-resume anchor. Optional so
+   * existing MirrorView producers (notably the Threads routes, which
+   * share this schema) keep parsing unchanged — a non-Facebook view
+   * simply omits them. The tiktok-mirrors routes always supply them
+   * (possibly null) when they resolve the row.
+   */
+  fbStatus: MirrorFbStatusSchema.nullable().optional(),
+  fbRateLimitedAt: z.string().nullable().optional(),
+  /**
+   * Spec 155: the Facebook target destination's error detail, in
+   * mirror spelling, resolved at request time (never stored on the
+   * mirror). Used only as the fallback in
+   * `resolveMirrorDisplayStatus` when the mirror itself carries no
+   * detail. Null/omitted when the target has no Facebook error or
+   * the target is not Facebook.
+   */
+  targetFbStatus: MirrorFbStatusSchema.nullable().optional(),
   lastMirroredPost: z
     .object({
       id: z.string().uuid(),

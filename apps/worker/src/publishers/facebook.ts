@@ -1,5 +1,7 @@
 import {
+  destinationFbStatusMarker,
   evaluateGraphApiError,
+  isPageGoneSignal,
   ValidationError,
   type ClassifiedPublishError,
   type DatabaseDestinationRow,
@@ -124,7 +126,10 @@ function extractError(err: unknown): ExtractedError {
   const code = numericField(record.code);
   const subcode =
     numericField(record.error_subcode) ?? numericField(record.errorSubcode) ?? numericField(record.subcode);
-  const evaluation = code !== undefined ? evaluateGraphApiError(code, subcode) : null;
+  // Spec 155: the raw message is part of the classification — the
+  // classifier reads it for the 368 suspension / developer-app rules
+  // and the 200 "api access blocked" rule.
+  const evaluation = code !== undefined ? evaluateGraphApiError(code, subcode, rawMessage) : null;
 
   return {
     code,
@@ -149,8 +154,10 @@ function extractError(err: unknown): ExtractedError {
 /**
  * Classifies an extracted error. Priority mirrors the old dispatcher's
  * outcome computation, expressed in the shared taxonomy:
- *   auth      — evaluation requires reauth (190/102, 10, 200-299) or
- *               the Graph error's auth flag;
+ *   auth      — evaluation requires reauth (190/102) or the Graph
+ *               error's auth flag. Spec 155: 10 / 200-299 no longer
+ *               require reauth (they are missing-permission / developer-
+ *               app states now), so they classify `permanent`, not `auth`;
  *   permanent — permanent policy (368/4854002, 368/1404082, 368/1404102), permanent
  *               client (100, 506, 1609005, 382, 1363040, other 4xx), or any
  *               non-transient evaluation that is not auth;
@@ -166,7 +173,11 @@ function extractError(err: unknown): ExtractedError {
  */
 function classifyExtracted(extracted: ExtractedError): ClassifiedPublishError {
   const { code, subcode } = extracted;
-  const evaluation = code !== undefined ? evaluateGraphApiError(code, subcode) : null;
+  // Spec 155: pass the message so the classifier's message-dependent
+  // rules apply here too — without it a 368 + "suspended" message
+  // would still classify retryable (rate-limited) and keep retrying
+  // a suspended account.
+  const evaluation = code !== undefined ? evaluateGraphApiError(code, subcode, extracted.message) : null;
 
   const message =
     code === 368 && (subcode === 4854002 || subcode === 1404082 || subcode === 1404102) && evaluation
@@ -232,6 +243,19 @@ function mapDestinationStatus(
     case 'invalid_token':
       return 'error';
     case 'page_checkpoint':
+      return 'error';
+    // Spec 155: the new detail statuses all ride on coarse `error` —
+    // the detail lives in the `fb_status` marker (see
+    // `targetDestinationFbStatus` on the outcome), not in the coarse
+    // status. Queued work pauses on `error` (the readiness check
+    // treats it as unclaimable) and is never failed for the error
+    // itself.
+    case 'page_not_accessible':
+    case 'missing_page_access':
+    case 'missing_permission':
+    case 'check_developer_app':
+    case 'account_suspended':
+    case '2fa_required_on_BM':
       return 'error';
     case 'paused':
       return 'disconnected';
@@ -586,13 +610,39 @@ export class FacebookPublisher implements Publisher {
     const extracted = extractError(err);
     const classified = classifyExtracted(extracted);
     const { code, subcode } = extracted;
-    const evaluation = code !== undefined ? evaluateGraphApiError(code, subcode) : null;
+    // Spec 155: pass the message — the classifier's message-dependent
+    // rules (368 suspension / developer-app, 200 "api access blocked")
+    // only fire with it.
+    const evaluation = code !== undefined ? evaluateGraphApiError(code, subcode, extracted.message) : null;
+
+    // Spec 155: the page is gone — no numeric code (e.g. a body-less
+    // HTTP 404) or an unmapped one, but the message / HTTP status says
+    // the page no longer exists. Only when the classifier had no
+    // opinion: a mapped evaluation (even `active`, e.g. a content
+    // error) is never overridden by the message.
+    const pageGone =
+      evaluation === null &&
+      isPageGoneSignal(extracted.message, extracted.diagnostic?.httpStatus);
 
     let targetDestinationStatus: DatabaseDestinationRow['status'] | undefined;
-    if (evaluation?.pageStatus && evaluation.pageStatus !== 'active') {
+    let targetDestinationFbStatus: PublishOutcome['targetDestinationFbStatus'];
+    if (pageGone) {
+      targetDestinationStatus = 'error';
+      targetDestinationFbStatus = 'page_not_accessible';
+    } else if (evaluation?.pageStatus && evaluation.pageStatus !== 'active') {
       targetDestinationStatus = mapDestinationStatus(evaluation.pageStatus);
+      // The detail marker rides with the coarse status: a detail
+      // status sets it, `fb_rate_limited` clears it (its anchor is
+      // `rate_limited_at`). An `active` evaluation leaves both the
+      // status and the marker untouched — a failure that says nothing
+      // about the page must not disturb either.
+      targetDestinationFbStatus = destinationFbStatusMarker(evaluation.pageStatus);
     } else if (code === 368 && subcode === 1390008) {
       targetDestinationStatus = 'rate_limited';
+      // Rate-limited clears any stale detail marker — the anchor is
+      // `rate_limited_at`, and a leftover marker would resurface as
+      // the wrong status if the page later flips to `error`.
+      targetDestinationFbStatus = null;
     }
     // `active` is not a side effect: the old outcome left the page
     // status untouched for active evaluations.
@@ -655,6 +705,7 @@ export class FacebookPublisher implements Publisher {
       ...(detail !== undefined ? { detail } : {}),
       ...(retryDelaySeconds !== undefined ? { retryDelaySeconds } : {}),
       ...(targetDestinationStatus !== undefined ? { targetDestinationStatus } : {}),
+      ...(targetDestinationFbStatus !== undefined ? { targetDestinationFbStatus } : {}),
       ...(targetAccountStatus !== undefined ? { targetAccountStatus } : {}),
     };
   }

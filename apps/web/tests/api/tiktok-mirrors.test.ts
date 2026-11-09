@@ -10,8 +10,15 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { encryptToken, signSessionToken } from '@fbuploadpro/contracts';
 import {
+  asDestinationRow,
+  asMirrorRow,
+  buildMirrorFbStatusSqlCondition,
   handleCreateMirror,
   handleListMirrors,
+  normalizeMirrorFbStatus,
+  targetFbStatusFor,
+  toMirrorListView,
+  toMirrorView,
 } from '../../src/app/api/tenant/[subdomain]/tiktok-mirrors/route';
 import {
   handleGetMirror,
@@ -873,5 +880,197 @@ describe('POST /tiktok-mirrors/[mirrorId]/posts/[postId]/retry', () => {
     expect((await res.json()).post.status).toBe('posted');
     const mirrorUpdate = calls.find((c) => c.sql.includes('UPDATE mirrors'));
     expect(mirrorUpdate?.params).toEqual([mirrorId, 'paused', null]);
+  });
+});
+
+describe('spec 155: mirror Facebook detail (fb_status)', () => {
+  beforeEach(async () => {
+    process.env.SESSION_SECRET = TEST_SECRET;
+    process.env.TOKEN_ENCRYPTION_KEY = TEST_KEY;
+    const token = await signSessionToken(
+      {
+        userId,
+        email: 'alexander@gmail.com',
+        name: 'Alex Acme',
+        subdomain: 'acme',
+        role: 'user',
+        status: 'active',
+      },
+      TEST_SECRET
+    );
+    validSessionCookie = `fbup_session=${token}`;
+    encPageToken = await encryptToken('page-token-plain', TEST_KEY);
+    encAccountToken = await encryptToken('account-token-plain', TEST_KEY);
+  });
+
+  it('normalizeMirrorFbStatus accepts coarse + detail values, rejects the rest', () => {
+    expect(normalizeMirrorFbStatus('active')).toBe('active');
+    expect(normalizeMirrorFbStatus('paused')).toBe('paused');
+    expect(normalizeMirrorFbStatus('error')).toBe('error');
+    expect(normalizeMirrorFbStatus('missing_permission')).toBe('missing_permission');
+    expect(normalizeMirrorFbStatus('checkpoint')).toBe('checkpoint');
+    expect(normalizeMirrorFbStatus('fb_rate_limited')).toBe('fb_rate_limited');
+    expect(normalizeMirrorFbStatus('bogus')).toBeNull();
+    expect(normalizeMirrorFbStatus('')).toBeNull();
+    expect(normalizeMirrorFbStatus(null)).toBeNull();
+    // The Pages wire name is NOT a mirror filter value.
+    expect(normalizeMirrorFbStatus('page_checkpoint')).toBeNull();
+  });
+
+  it('buildMirrorFbStatusSqlCondition: coarse matches status, detail matches error + fb_status', () => {
+    const params: unknown[] = [];
+    const pushParam = (value: unknown): string => {
+      params.push(value);
+      return `$${params.length + 1}`;
+    };
+    expect(buildMirrorFbStatusSqlCondition(null, pushParam)).toBeNull();
+    expect(buildMirrorFbStatusSqlCondition('active', pushParam)).toBe('status = $2');
+    expect(buildMirrorFbStatusSqlCondition('error', pushParam)).toBe('status = $3');
+    expect(buildMirrorFbStatusSqlCondition('missing_permission', pushParam)).toBe(
+      "status = 'error' AND fb_status = $4",
+    );
+    expect(params).toEqual(['active', 'error', 'missing_permission']);
+  });
+
+  it('targetFbStatusFor: Facebook target detail in mirror spelling, stale rate-limit reads as active', () => {
+    const fbMirror = asMirrorRow(mirrorRow())!;
+    expect(
+      targetFbStatusFor(
+        fbMirror,
+        asDestinationRow(destRow({ status: 'error', metadata: { fb_status: 'missing_permission' } }))!,
+      ),
+    ).toBe('missing_permission');
+    expect(
+      targetFbStatusFor(
+        fbMirror,
+        asDestinationRow(destRow({ status: 'error', metadata: { fb_status: 'checkpoint' } }))!,
+      ),
+    ).toBe('checkpoint');
+    // Active target: no detail.
+    expect(
+      targetFbStatusFor(
+        fbMirror,
+        asDestinationRow(destRow({ status: 'active', metadata: {} }))!,
+      ),
+    ).toBeNull();
+    // Missing destination: no detail.
+    expect(targetFbStatusFor(fbMirror, null)).toBeNull();
+    // Instagram targets never carry a Facebook detail.
+    const igMirror = asMirrorRow(mirrorRow({ target_platform: 'instagram' }))!;
+    expect(
+      targetFbStatusFor(
+        igMirror,
+        asDestinationRow(destRow({ status: 'error', metadata: { fb_status: 'missing_permission' } }))!,
+      ),
+    ).toBeNull();
+    // Rate-limited target with a stale anchor reads as active.
+    expect(
+      targetFbStatusFor(
+        fbMirror,
+        asDestinationRow(
+          destRow({
+            status: 'rate_limited',
+            metadata: { rate_limited_at: '2026-10-25T12:00:00.000Z' },
+          }),
+        )!,
+      ),
+    ).toBeNull();
+    // Fresh anchor: still rate-limited.
+    expect(
+      targetFbStatusFor(
+        fbMirror,
+        asDestinationRow(
+          destRow({
+            status: 'rate_limited',
+            metadata: { rate_limited_at: new Date(Date.now() - 60_000).toISOString() },
+          }),
+        )!,
+      ),
+    ).toBe('fb_rate_limited');
+  });
+
+  it('toMirrorListView carries the mirror detail + anchor + target fallback', () => {
+    const mirror = asMirrorRow(
+      mirrorRow({
+        status: 'error',
+        fb_status: 'missing_permission',
+        fb_rate_limited_at: null,
+        last_error: 'Permissions error.',
+      }),
+    )!;
+    const dest = asDestinationRow(
+      destRow({ status: 'error', metadata: { fb_status: 'account_suspended' } }),
+    )!;
+    const view = toMirrorListView(mirror, dest, null, { posted: 0, failed: 1 }, false);
+    // Own detail wins over the target's.
+    expect(view.fbStatus).toBe('missing_permission');
+    expect(view.fbRateLimitedAt).toBeNull();
+    expect(view.targetFbStatus).toBe('account_suspended');
+    expect(view.lastError).toBe('Permissions error.');
+    expect(view.status).toBe('error');
+  });
+
+  it('toMirrorView falls back to the target detail when the mirror has none', () => {
+    const mirror = asMirrorRow(
+      mirrorRow({ status: 'error', fb_status: null, last_error: 'Something failed.' }),
+    )!;
+    const dest = asDestinationRow(
+      destRow({ status: 'error', metadata: { fb_status: 'invalid_token' } }),
+    )!;
+    const view = toMirrorView(mirror, dest, null, null);
+    expect(view.fbStatus).toBeNull();
+    expect(view.targetFbStatus).toBe('invalid_token');
+  });
+
+  it('list ?fbStatus= sends the detail condition to SQL (legacy path)', async () => {
+    const { db, calls } = fakeDb();
+    const req = new NextRequest(
+      'http://localhost:3000/api/tenant/acme/tiktok-mirrors?fbStatus=missing_permission',
+      { headers: { cookie: validSessionCookie } },
+    );
+    const res = await handleListMirrors(req, 'acme', db);
+    expect(res.status).toBe(200);
+    const listCall = calls.find((c) => c.sql.includes('FROM mirrors WHERE workspace_id') && c.sql.includes('ORDER BY'));
+    expect(listCall).toBeDefined();
+    expect(listCall!.sql).toContain("status = 'error' AND fb_status = $");
+    expect(listCall!.params).toContain('missing_permission');
+    const countCall = calls.find((c) => c.sql.includes('COUNT(*)'));
+    expect(countCall!.sql).toContain('fb_status');
+  });
+
+  it('list ?fbStatus=bogus sends no status condition (unknown = no filter)', async () => {
+    const { db, calls } = fakeDb();
+    const req = new NextRequest(
+      'http://localhost:3000/api/tenant/acme/tiktok-mirrors?fbStatus=bogus',
+      { headers: { cookie: validSessionCookie } },
+    );
+    const res = await handleListMirrors(req, 'acme', db);
+    expect(res.status).toBe(200);
+    const listCall = calls.find((c) => c.sql.includes('FROM mirrors WHERE workspace_id') && c.sql.includes('ORDER BY'));
+    expect(listCall).toBeDefined();
+    // The SELECT list always carries fb_status / fb_rate_limited_at
+    // (the view needs them); the assertion is about the filter: an
+    // unknown value must add no fb_status condition to the WHERE.
+    const whereClause = listCall!.sql.split('WHERE')[1] ?? '';
+    expect(whereClause).not.toContain('fb_status');
+  });
+
+  it('detail returns fbStatus/targetFbStatus for an errored mirror', async () => {
+    const { db } = fakeDb({
+      mirrorRowOverride: {
+        status: 'error',
+        fb_status: 'missing_permission',
+        last_error: 'Permissions error.',
+      },
+    });
+    const req = new NextRequest(
+      `http://localhost:3000/api/tenant/acme/tiktok-mirrors/${mirrorId}`,
+      { headers: { cookie: validSessionCookie } },
+    );
+    const res = await handleGetMirror(req, 'acme', mirrorId, db);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { mirror: Record<string, unknown> };
+    expect(body.mirror.fbStatus).toBe('missing_permission');
+    expect(body.mirror.status).toBe('error');
   });
 });

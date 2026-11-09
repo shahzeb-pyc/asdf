@@ -179,12 +179,19 @@ export class FacebookGraphError extends Error {
         ? evaluateGraphApiError(this.code, this.errorSubcode)
         : null;
 
-    this.isAuthError =
-      evalResult?.requiresReauth === true ||
-      this.code === 190 ||
-      this.code === 102 ||
-      this.code === 10 ||
-      (typeof this.code === 'number' && this.code >= 200 && this.code <= 299);
+    // `isAuthError` means exactly "the token is dead — the account
+    // must reconnect": it is the classifier's `requiresReauth`
+    // decision, nothing more (spec 155 SEND BACK item 5). The old
+    // blanket `code === 190 || 102 || 10 || 200-299` also caught
+    // errors that are NOT token-dead — 190/492 (missing page role),
+    // 190/459 + 190/464 (checkpoint), 190/2069031 (developer app),
+    // 10/200-299 (missing permission / developer app) — and
+    // `classifyExtracted` then keyed them kind 'auth', which marks
+    // the account expired and treats them as a token problem. Those
+    // now classify 'permanent': they fail fast and the account stays
+    // active. `isPermanentClientError` below is unaffected: the
+    // narrowed codes are not 400s, and code 400 was already non-auth.
+    this.isAuthError = evalResult?.requiresReauth === true;
 
     this.isPermanentPolicyError =
       this.code === 368 &&

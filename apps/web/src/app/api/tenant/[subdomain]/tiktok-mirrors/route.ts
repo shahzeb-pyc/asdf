@@ -4,11 +4,15 @@ import {
   CreateMirrorResponseSchema,
   decryptToken,
   encryptToken,
+  FB_RATE_LIMITED_COOLDOWN_MS,
   fetchAllFacebookPages,
   getTokenEncryptionKey,
   isFacebookAccountRestricted,
   MIRROR_FACEBOOK_RESTRICTED_MESSAGE,
+  mirrorFbStatusFromPageStatus,
   MirrorListResponseSchema,
+  MIRROR_FB_STATUSES,
+  type MirrorFbStatus,
   type MirrorListView,
   type MirrorView,
 } from '@fbuploadpro/contracts';
@@ -35,6 +39,7 @@ import {
   type PaginationMeta,
 } from '@/lib/server/pagination';
 import { logServerError, trackServerEvent } from '@/lib/server-analytics';
+import { unifiedDestinationStatusToWire } from '@/lib/server/facebook-wire';
 import {
   buildTikwmPauseStore,
   fetchTikwmUserInfo,
@@ -80,6 +85,8 @@ export interface DestinationRow {
   avatar_url: string | null;
   encrypted_destination_token: string | null;
   status: string;
+  /** Spec 155: needed to derive the target's Facebook error detail. */
+  metadata: Record<string, unknown> | null;
 }
 
 export interface MirrorRow {
@@ -99,6 +106,10 @@ export interface MirrorRow {
   last_checked_at: string | null;
   next_check_at: string | null;
   last_error: string | null;
+  /** Spec 155: the Facebook error detail (mirrors.fb_status) and its
+   *  3-day auto-resume anchor (mirrors.fb_rate_limited_at). */
+  fb_status: string | null;
+  fb_rate_limited_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -151,6 +162,10 @@ export function asDestinationRow(row: unknown): DestinationRow | null {
         ? row.encrypted_destination_token
         : null,
     status: typeof row.status === 'string' ? row.status : 'active',
+    metadata:
+      typeof row.metadata === 'object' && row.metadata !== null
+        ? (row.metadata as Record<string, unknown>)
+        : null,
   };
 }
 
@@ -196,9 +211,48 @@ export function asMirrorRow(row: unknown): MirrorRow | null {
     last_checked_at: typeof row.last_checked_at === 'string' ? row.last_checked_at : null,
     next_check_at: typeof row.next_check_at === 'string' ? row.next_check_at : null,
     last_error: typeof row.last_error === 'string' ? row.last_error : null,
+    // Spec 155: the live selects list fb_status /
+    // fb_rate_limited_at explicitly and fail loudly if the
+    // migration has not landed — a missing column is an error,
+    // never a silent null. A missing key on a returned row (a
+    // row read through a path that does not select the columns)
+    // still defaults to null here; no value is ever invented.
+    fb_status: typeof row.fb_status === 'string' ? row.fb_status : null,
+    fb_rate_limited_at:
+      typeof row.fb_rate_limited_at === 'string' ? row.fb_rate_limited_at : null,
     created_at: typeof row.created_at === 'string' ? row.created_at : '',
     updated_at: typeof row.updated_at === 'string' ? row.updated_at : '',
   };
+}
+
+/**
+ * Spec 155: the Facebook target destination's error detail, in
+ * mirror spelling — the fallback in `resolveMirrorDisplayStatus`
+ * when the mirror itself carries no detail. Facebook targets only:
+ * Instagram targets never carry a Facebook detail, and a missing
+ * destination resolves to null (the mirror then shows its own
+ * detail, or generic Error).
+ */
+export function targetFbStatusFor(
+  mirror: MirrorRow,
+  destination: DestinationRow | null
+): MirrorFbStatus | null {
+  if (mirror.target_platform !== 'facebook' || !destination) return null;
+  const wire = unifiedDestinationStatusToWire(destination.status, destination.metadata);
+  // A rate-limited target whose 3-day anchor is stale reads as
+  // active — the Pages read-time rule — so the mirror never shows
+  // a cooldown that has already ended while nothing has flipped
+  // the destination row yet.
+  if (wire === 'fb_rate_limited') {
+    const anchor =
+      typeof destination.metadata?.rate_limited_at === 'string'
+        ? Date.parse(destination.metadata.rate_limited_at)
+        : Number.NaN;
+    if (!Number.isNaN(anchor) && Date.now() - anchor >= FB_RATE_LIMITED_COOLDOWN_MS) {
+      return null;
+    }
+  }
+  return mirrorFbStatusFromPageStatus(wire);
 }
 
 /**
@@ -245,6 +299,11 @@ export function toMirrorView(
     lastCheckedAt: mirror.last_checked_at,
     nextCheckAt: mirror.next_check_at,
     lastError: mirror.last_error,
+    // Spec 155: the mirror's own Facebook detail + anchor, and the
+    // target's detail as the display fallback.
+    fbStatus: mirror.fb_status as MirrorFbStatus | null,
+    fbRateLimitedAt: mirror.fb_rate_limited_at,
+    targetFbStatus: targetFbStatusFor(mirror, destination),
     lastMirroredPost: lastPost
       ? {
           id: lastPost.id,
@@ -540,6 +599,11 @@ export function toMirrorListView(
     lastPostedSourceId: mirror.last_posted_source_id,
     lastCheckedAt: mirror.last_checked_at,
     lastError: mirror.last_error,
+    // Spec 155: the mirror's own Facebook detail + anchor, and the
+    // target's detail as the display fallback.
+    fbStatus: mirror.fb_status as MirrorFbStatus | null,
+    fbRateLimitedAt: mirror.fb_rate_limited_at,
+    targetFbStatus: targetFbStatusFor(mirror, destination),
     createdAt: mirror.created_at,
     targetAddedAt: details?.addedAt ?? null,
     targetFollowers: details?.followers ?? null,
@@ -569,7 +633,7 @@ export async function loadDestinationsByExternalIds(
   const key = (externalId: string) => `${platform}:${externalId}`;
   if (isLegacyClient(db)) {
     const rows = (await db.query(
-      `SELECT id, account_id, external_destination_id, name, avatar_url, encrypted_destination_token, status
+      `SELECT id, account_id, external_destination_id, name, avatar_url, encrypted_destination_token, status, metadata
        FROM destinations WHERE workspace_id = $1 AND platform = $2 AND external_destination_id = ANY($3::text[])
        ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END, created_at ASC`,
       [workspaceId, platform, externalIds]
@@ -585,7 +649,7 @@ export async function loadDestinationsByExternalIds(
   const supabase = db as SupabaseClient;
   const { data, error } = await supabase
     .from('destinations')
-    .select('id, account_id, external_destination_id, name, avatar_url, encrypted_destination_token, status')
+    .select('id, account_id, external_destination_id, name, avatar_url, encrypted_destination_token, status, metadata')
     .eq('workspace_id', workspaceId)
     .eq('platform', platform)
     .in('external_destination_id', externalIds);
@@ -707,34 +771,46 @@ export async function handleListMirrors(
       );
     }
     const targetPlatformFilter = rawTargetPlatform as 'facebook' | 'instagram' | null;
+    // Spec 155: ?fbStatus= filters by stored state (the mirror's own
+    // fb_status, or the target destination's stored detail) — not by
+    // the resolved display status; see buildMirrorFbStatusSqlCondition.
+    // Unknown values mean "no filter" (see normalizeMirrorFbStatus).
+    const fbStatusFilter = normalizeMirrorFbStatus(
+      new URL(request.url).searchParams.get('fbStatus')
+    );
     let meta: PaginationMeta;
     const mirrors: MirrorRow[] = [];
     if (isLegacyClient(db)) {
+      // Build the WHERE clause once: the count and the page slice
+      // must filter identically, and the positional params are
+      // numbered from the shared array.
+      const whereParams: unknown[] = [workspaceId];
+      const pushParam = (value: unknown): string => {
+        whereParams.push(value);
+        return `$${whereParams.length}`;
+      };
+      const whereParts = ['workspace_id = $1'];
+      if (targetPlatformFilter) {
+        whereParts.push(`target_platform = ${pushParam(targetPlatformFilter)}`);
+      }
+      const fbStatusCondition = buildMirrorFbStatusSqlCondition(fbStatusFilter, pushParam);
+      if (fbStatusCondition) whereParts.push(fbStatusCondition);
+      const whereSql = whereParts.join(' AND ');
       const countRows = (await db.query(
-        targetPlatformFilter
-          ? `SELECT COUNT(*)::int AS total FROM mirrors WHERE workspace_id = $1 AND target_platform = $2`
-          : `SELECT COUNT(*)::int AS total FROM mirrors WHERE workspace_id = $1`,
-        targetPlatformFilter ? [workspaceId, targetPlatformFilter] : [workspaceId]
+        `SELECT COUNT(*)::int AS total FROM mirrors WHERE ${whereSql}`,
+        whereParams
       )) as Record<string, unknown>[];
       const total =
         typeof countRows[0]?.total === 'number' ? countRows[0].total : 0;
       meta = paginateMeta(total, requestedPage, limit);
       const offset = (meta.page - 1) * limit;
       const rows = (await db.query(
-        targetPlatformFilter
-          ? `SELECT id, workspace_id, source_platform, source_username, source_display_name,
+        `SELECT id, workspace_id, source_platform, source_username, source_display_name,
                 source_avatar_url, target_platform, target_external_id, target_display_name,
                 target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time,
-                last_checked_at, next_check_at, last_error, created_at, updated_at
-         FROM mirrors WHERE workspace_id = $1 AND target_platform = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4`
-          : `SELECT id, workspace_id, source_platform, source_username, source_display_name,
-                source_avatar_url, target_platform, target_external_id, target_display_name,
-                target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time,
-                last_checked_at, next_check_at, last_error, created_at, updated_at
-         FROM mirrors WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
-        targetPlatformFilter
-          ? [workspaceId, targetPlatformFilter, limit, offset]
-          : [workspaceId, limit, offset]
+                last_checked_at, next_check_at, last_error, fb_status, fb_rate_limited_at, created_at, updated_at
+         FROM mirrors WHERE ${whereSql} ORDER BY created_at DESC LIMIT $${whereParams.length + 1} OFFSET $${whereParams.length + 2}`,
+        [...whereParams, limit, offset]
       )) as unknown[];
       for (const row of rows) {
         const mirror = asMirrorRow(row);
@@ -747,6 +823,11 @@ export async function handleListMirrors(
         .select('*', { count: 'exact', head: true })
         .eq('workspace_id', workspaceId);
       if (targetPlatformFilter) countQuery.eq('target_platform', targetPlatformFilter);
+      if (fbStatusFilter === 'active' || fbStatusFilter === 'paused' || fbStatusFilter === 'error') {
+        countQuery.eq('status', fbStatusFilter);
+      } else if (fbStatusFilter !== null) {
+        countQuery.eq('status', 'error').eq('fb_status', fbStatusFilter);
+      }
       const { count, error: countError } = await countQuery;
       if (countError) {
         throw new Error(`Failed to count mirrors: ${countError.message}`);
@@ -757,10 +838,15 @@ export async function handleListMirrors(
       const listQuery = supabase
         .from('mirrors')
         .select(
-          'id, workspace_id, source_platform, source_username, source_display_name, source_avatar_url, target_platform, target_external_id, target_display_name, target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time, last_checked_at, next_check_at, last_error, created_at, updated_at'
+          'id, workspace_id, source_platform, source_username, source_display_name, source_avatar_url, target_platform, target_external_id, target_display_name, target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time, last_checked_at, next_check_at, last_error, fb_status, fb_rate_limited_at, created_at, updated_at'
         )
         .eq('workspace_id', workspaceId);
       if (targetPlatformFilter) listQuery.eq('target_platform', targetPlatformFilter);
+      if (fbStatusFilter === 'active' || fbStatusFilter === 'paused' || fbStatusFilter === 'error') {
+        listQuery.eq('status', fbStatusFilter);
+      } else if (fbStatusFilter !== null) {
+        listQuery.eq('status', 'error').eq('fb_status', fbStatusFilter);
+      }
       const { data, error } = await listQuery
         .order('created_at', { ascending: false })
         .range(offset, offset + limit - 1);
@@ -1580,7 +1666,7 @@ export async function handleCreateMirror(
          RETURNING id, workspace_id, source_platform, source_username, source_display_name,
            source_avatar_url, target_platform, target_external_id, target_display_name,
            target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time,
-           last_checked_at, next_check_at, last_error, created_at, updated_at`,
+           last_checked_at, next_check_at, last_error, fb_status, fb_rate_limited_at, created_at, updated_at`,
         [
           workspaceId,
           username,
@@ -1618,7 +1704,7 @@ export async function handleCreateMirror(
           next_check_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
         })
         .select(
-          'id, workspace_id, source_platform, source_username, source_display_name, source_avatar_url, target_platform, target_external_id, target_display_name, target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time, last_checked_at, next_check_at, last_error, created_at, updated_at'
+          'id, workspace_id, source_platform, source_username, source_display_name, source_avatar_url, target_platform, target_external_id, target_display_name, target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time, last_checked_at, next_check_at, last_error, fb_status, fb_rate_limited_at, created_at, updated_at'
         )
         .single();
       if (error) {
@@ -2041,7 +2127,7 @@ export async function reloadMirror(db: Db, mirrorId: string): Promise<MirrorRow 
       `SELECT id, workspace_id, source_platform, source_username, source_display_name,
               source_avatar_url, target_platform, target_external_id, target_display_name,
               target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time,
-              last_checked_at, next_check_at, last_error, created_at, updated_at
+              last_checked_at, next_check_at, last_error, fb_status, fb_rate_limited_at, created_at, updated_at
        FROM mirrors WHERE id = $1 LIMIT 1`,
       [mirrorId]
     )) as unknown[];
@@ -2051,12 +2137,52 @@ export async function reloadMirror(db: Db, mirrorId: string): Promise<MirrorRow 
   const { data, error } = await supabase
     .from('mirrors')
     .select(
-      'id, workspace_id, source_platform, source_username, source_display_name, source_avatar_url, target_platform, target_external_id, target_display_name, target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time, last_checked_at, next_check_at, last_error, created_at, updated_at'
+      'id, workspace_id, source_platform, source_username, source_display_name, source_avatar_url, target_platform, target_external_id, target_display_name, target_avatar_url, status, catch_up_pending, last_posted_source_id, last_posted_create_time, last_checked_at, next_check_at, last_error, fb_status, fb_rate_limited_at, created_at, updated_at'
     )
     .eq('id', mirrorId)
     .maybeSingle();
   if (error) throw new Error(`Failed to reload mirror: ${error.message}`);
   return asMirrorRow(data);
+}
+
+export type MirrorFbStatusFilter = 'active' | 'paused' | 'error' | MirrorFbStatus;
+
+/**
+ * Spec 155: normalizes the ?fbStatus= list filter. Valid values are
+ * the three coarse mirror statuses plus the nine Facebook detail
+ * statuses; anything else (including the empty string) means "no
+ * filter" — the Pages detail-filter pattern (unknown -> null).
+ * Instagram-target mirrors are NOT filtered out by a detail value:
+ * they simply never match it (their fb_status is always null).
+ */
+export function normalizeMirrorFbStatus(value: string | null): MirrorFbStatusFilter | null {
+  if (value === 'active' || value === 'paused' || value === 'error') return value;
+  if (value !== null && (MIRROR_FB_STATUSES as readonly string[]).includes(value)) {
+    return value as MirrorFbStatus;
+  }
+  return null;
+}
+
+/**
+ * Spec 155: the legacy-SQL fragment for the fbStatus filter.
+ * Coarse values match `mirrors.status`; a detail value matches an
+ * error mirror carrying exactly that `fb_status`. The filter matches
+ * the STORED state: a rate-limited mirror whose anchor just went
+ * stale still filters as rate-limited until the tick clears it
+ * (hourly) — the display applies the stale-anchor rule, the filter
+ * does not. Mirrors showing a target-inherited detail (error, no
+ * own fb_status) match `error`, not the inherited detail value —
+ * the inheritance is a display rule, not a stored one.
+ */
+export function buildMirrorFbStatusSqlCondition(
+  filter: MirrorFbStatusFilter | null,
+  pushParam: (value: unknown) => string
+): string | null {
+  if (filter === null) return null;
+  if (filter === 'active' || filter === 'paused' || filter === 'error') {
+    return `status = ${pushParam(filter)}`;
+  }
+  return `status = 'error' AND fb_status = ${pushParam(filter)}`;
 }
 
 export async function GET(

@@ -590,6 +590,52 @@ describe('Publish consumers (spec 121)', () => {
     });
   });
 
+  it('still settles and acks when the fb_status marker RPC fails (spec 155 item 4)', async () => {
+    const item = await makeItem();
+    const { db, settleCalls } = await makeConsumerDb({ item });
+    const publisher = fakePublisher('facebook', async () => ({
+      status: 'failed',
+      targetDestinationStatus: 'error',
+      targetDestinationFbStatus: 'account_suspended',
+      error: { kind: 'permanent', code: '368', subcode: '1404112', message: 'account suspended' },
+    }));
+    const message = fakeMessage({ itemId: item.id, platform: 'facebook', lane: 'publish-fast' });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    // The marker RPC fails; the settle RPC still succeeds.
+    (db.rpc as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      async (fn: string, args?: Record<string, unknown>) => {
+        if (fn === 'settle_queue_item_outcome') {
+          settleCalls.push(args ?? {});
+          return { data: null, error: null };
+        }
+        if (fn === 'apply_destination_fb_status_marker') {
+          return { data: null, error: new Error('marker boom') };
+        }
+        return { data: null, error: null };
+      }
+    );
+
+    await handlePublishBatch(fakeBatch('publish-fast', [message]) as never, {
+      db: db as never,
+      registry: registryWith(publisher),
+      masterKey: MASTER_KEY,
+      env: {},
+    });
+
+    expect(settleCalls).toHaveLength(1);
+    expect(settleCalls[0]).toMatchObject({
+      p_outcome_status: 'failed',
+      p_error_code: '368',
+      p_target_destination_status: 'error',
+    });
+    expect(message.ack).toHaveBeenCalledTimes(1);
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining('failed to apply fb_status marker account_suspended'),
+      expect.anything()
+    );
+  });
+
   it('skips an item that is no longer publishing (cancelled) without publishing or settling', async () => {
     const item = await makeItem({ status: 'cancelled' });
     const { db, settleCalls } = await makeConsumerDb({ item });

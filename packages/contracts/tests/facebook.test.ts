@@ -575,21 +575,29 @@ describe('Facebook Account & Page Domain Schemas', () => {
   });
 
   describe('evaluateGraphApiError classification', () => {
-    it('maps code 10 and codes 200-299 to expired and invalid_token requiring reauth', () => {
+    it('maps code 10 and codes 200-299 to active and missing_permission without reauth (spec 155)', () => {
       const code10 = evaluateGraphApiError(10);
       expect(code10).not.toBeNull();
-      expect(code10?.accountStatus).toBe('expired');
-      expect(code10?.pageStatus).toBe('invalid_token');
+      expect(code10?.accountStatus).toBe('active');
+      expect(code10?.pageStatus).toBe('missing_permission');
       expect(code10?.isTransient).toBe(false);
-      expect(code10?.requiresReauth).toBe(true);
+      expect(code10?.requiresReauth).toBe(false);
 
       for (const code of [200, 250, 299]) {
         const evalRes = evaluateGraphApiError(code);
-        expect(evalRes?.accountStatus).toBe('expired');
-        expect(evalRes?.pageStatus).toBe('invalid_token');
+        expect(evalRes?.accountStatus).toBe('active');
+        expect(evalRes?.pageStatus).toBe('missing_permission');
         expect(evalRes?.isTransient).toBe(false);
-        expect(evalRes?.requiresReauth).toBe(true);
+        expect(evalRes?.requiresReauth).toBe(false);
       }
+    });
+
+    it('maps code 10 with subcode 2069031 to check_developer_app (spec 155)', () => {
+      const evalRes = evaluateGraphApiError(10, 2069031);
+      expect(evalRes).not.toBeNull();
+      expect(evalRes?.accountStatus).toBe('active');
+      expect(evalRes?.pageStatus).toBe('check_developer_app');
+      expect(evalRes?.requiresReauth).toBe(false);
     });
 
     it('maps duplicate code 506 to active/active without reauth', () => {

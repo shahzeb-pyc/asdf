@@ -221,6 +221,11 @@ export function TikTokDetailShell({ subdomain, mirrorId }: Readonly<TikTokDetail
           '/tiktok-mirrors',
           isTenantSubdomainHost(window.location.hostname, subdomain)
         )}
+        accountsHref={buildTenantHref(
+          subdomain,
+          '/accounts',
+          isTenantSubdomainHost(window.location.hostname, subdomain)
+        )}
         onPauseResume={() => updateMutation.mutate(isPaused ? 'active' : 'paused')}
         pausePending={updateMutation.isPending}
         onDeleteRequest={() => setIsDeleteOpen(true)}

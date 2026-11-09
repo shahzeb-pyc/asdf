@@ -14,14 +14,41 @@ export interface GraphApiErrorEvaluation {
 }
 
 /**
+ * Page-gone signal, shared with the worker publisher and the mirror
+ * tick (spec 155): a body-less HTTP 404, or a message saying the
+ * page is gone, means `page_not_accessible` — the page was removed
+ * or the account lost access to it. No numeric Graph code carries
+ * this fact, so it is checked from the HTTP/message facts only,
+ * exactly like the ADU mapper's no-numeric-code branch.
+ */
+export function isPageGoneSignal(
+  message?: string | null | undefined,
+  httpStatus?: number | null | undefined
+): boolean {
+  if (httpStatus === 404) return true;
+  const text = (message ?? '').toLowerCase();
+  return text.includes('page not found') || text.includes('does not exist');
+}
+
+const CHECK_DEVELOPER_APP_SUBCODES = new Set([2069030, 2069031, 2069033]);
+
+/**
  * Maps Facebook Graph API error codes and subcodes to internal domain health states.
- * - Error 190 / 102 (with subcodes 458, 460, 463, 467, 483, 492 or general): maps to expired / invalid_token, requiring re-auth.
+ * - Error 190 / 102 (with subcodes 458, 460, 463, 467, 483 or general): maps to expired / invalid_token, requiring re-auth.
  *   EXCEPTIONS inside 190: subcodes 459 and 464 are identity checkpoints, not dead
  *   tokens — they map to page_checkpoint + manual verification with the account kept
- *   active; subcode 2069032 is an app bug (wrong token type) — active/active,
+ *   active; subcode 492 is a missing page role, not a dead token — it maps to
+ *   missing_page_access with the account kept active (spec 155, ADU table);
+ *   subcode 2069031 is a developer-app problem — check_developer_app (spec 155);
+ *   subcode 2069032 is an app bug (wrong token type) — active/active,
  *   non-transient, no re-auth, and the ADU mapper turns it into a generic
  *   backend message.
- * - Error 10 / 200-299: maps to expired / invalid_token, requiring re-auth.
+ * - Error 10 / 200-299: permission family, not a dead token (spec 155,
+ *   ADU table): subcodes 2069030/2069031/2069033, or 200 + "api access
+ *   blocked", map to check_developer_app; everything else maps to
+ *   missing_permission. The account stays active and no re-auth is
+ *   required — previously this whole family mapped to invalid_token +
+ *   expired + reauth, which expired accounts for permission errors.
  * - Error 3: app bug (API Method the app lacks the capability for) — active/active,
  *   non-transient, no re-auth; the ADU mapper turns it into a generic backend message.
  * - Error 368:
@@ -30,17 +57,24 @@ export interface GraphApiErrorEvaluation {
  *   - Subcode 1404078: Page Publishing Authorization incomplete -> page_checkpoint + manual verification (was misrouted to fb_rate_limited with a wrong 3-day auto-recovery).
  *   - Subcode 1404082: "You've already posted this. Posting the same content repeatedly..." -> keeps pageStatus 'active', marks post as failed (isTransient: false) with reason.
  *   - Subcode 1404102: link against Community Standards -> keeps pageStatus 'active', marks post as failed (isTransient: false) with reason. It used to fall to the default-368 branch (fb_rate_limited with a wrong 3-day auto-recovery).
+ *   - Subcode 1404112, or a message naming suspension / disablement -> account_suspended (spec 155, ADU table).
+ *   - A message naming the developer app / a restricted app -> check_developer_app (spec 155, ADU table).
  * - Error 400 with subcode 4854002: the same identity checkpoint arriving with
  *   top-level code 400, not 368 — page_checkpoint + manual verification (branch on
  *   the subcode, not only on code 368; it used to fall into the generic 4xx bucket).
  * - Error 506: Duplicate post -> keeps pageStatus 'active', marks post as failed (isTransient: false) with duplicate reason.
  * - Error 1609005: Bad/unreachable link -> keeps pageStatus 'active', marks post as failed (isTransient: false) with bad link reason.
  * - Error 4, 17, 32, 341, 613, 80000-80014 (API call volume rate limits): keeps accountStatus and pageStatus 'active' with isTransient: true.
+ *
+ * The optional `message` argument refines only the 368 and 10/200-299
+ * rows above. Existing `(code, subcode)` callers are unaffected.
  */
 export function evaluateGraphApiError(
   code: number,
-  errorSubcode?: number
+  errorSubcode?: number,
+  message?: string | null | undefined
 ): GraphApiErrorEvaluation | null {
+  const lowerMessage = (message ?? '').toLowerCase();
   if (code === 190 || code === 102) {
     if (errorSubcode === 458) {
       return {
@@ -86,11 +120,24 @@ export function evaluateGraphApiError(
     if (errorSubcode === 492) {
       return {
         accountStatus: 'active',
-        pageStatus: 'invalid_token',
+        pageStatus: 'missing_page_access',
         isTransient: false,
-        requiresReauth: true,
+        requiresReauth: false,
         message:
           'User associated with the Page access token does not have an appropriate role on the Page.',
+      };
+    }
+    // Subcode 2069031 is a developer-app problem, not a dead token:
+    // the app's access is blocked, so the page waits on a developer
+    // app fix instead of a reconnect (spec 155, ADU table).
+    if (errorSubcode === 2069031) {
+      return {
+        accountStatus: 'active',
+        pageStatus: 'check_developer_app',
+        isTransient: false,
+        requiresReauth: false,
+        message:
+          'Access is blocked for this page. Fix the problem in your developer app, then turn posting back on.',
       };
     }
     // Subcode 2069032 is an app bug (wrong token type — the call needs
@@ -116,14 +163,33 @@ export function evaluateGraphApiError(
     };
   }
 
-  // Error 10 or 200-299: Facebook Permission / Authorization Denied
+  // Error 10 or 200-299: Facebook Permission / Authorization Denied.
+  // A permission error, not a dead token (spec 155, ADU table): the
+  // 206903x subcodes and the "API access blocked" text are the
+  // developer-app signal; everything else is a missing permission.
+  // The account stays active and no re-auth is required.
   if (code === 10 || (code >= 200 && code <= 299)) {
+    if (
+      (errorSubcode !== undefined &&
+        CHECK_DEVELOPER_APP_SUBCODES.has(errorSubcode)) ||
+      (code === 200 && lowerMessage.includes('api access blocked'))
+    ) {
+      return {
+        accountStatus: 'active',
+        pageStatus: 'check_developer_app',
+        isTransient: false,
+        requiresReauth: false,
+        message:
+          'Access is blocked for this page. Fix the problem in your developer app, then turn posting back on.',
+      };
+    }
     return {
-      accountStatus: 'expired',
-      pageStatus: 'invalid_token',
+      accountStatus: 'active',
+      pageStatus: 'missing_permission',
       isTransient: false,
-      requiresReauth: true,
-      message: 'Facebook permission or authorization denied. Please re-authenticate your account.',
+      requiresReauth: false,
+      message:
+        'A permission this page needs is missing, so posting is paused. Ask an admin to grant the permission, then turn posting back on.',
     };
   }
 
@@ -234,6 +300,40 @@ export function evaluateGraphApiError(
         requiresReauth: false,
         message:
           'This link goes against Facebook Community Standards. Remove the link or use a different one.',
+      };
+    }
+
+    // Subcode 1404112, or a message naming suspension / disablement:
+    // the account itself is suspended, not the page's token (spec
+    // 155, ADU table). Terminal — no retry, no reauth.
+    if (
+      errorSubcode === 1404112 ||
+      lowerMessage.includes('suspended') ||
+      lowerMessage.includes('disabled')
+    ) {
+      return {
+        accountStatus: 'active',
+        pageStatus: 'account_suspended',
+        isTransient: false,
+        requiresReauth: false,
+        message:
+          'The connected Facebook account is suspended. Once Facebook clears the restriction, turn posting back on.',
+      };
+    }
+
+    // A message naming the developer app / a restricted app: the
+    // app's access is blocked (spec 155, ADU table).
+    if (
+      lowerMessage.includes('developer app') ||
+      lowerMessage.includes('app is restricted')
+    ) {
+      return {
+        accountStatus: 'active',
+        pageStatus: 'check_developer_app',
+        isTransient: false,
+        requiresReauth: false,
+        message:
+          'Access is blocked for this page. Fix the problem in your developer app, then turn posting back on.',
       };
     }
 

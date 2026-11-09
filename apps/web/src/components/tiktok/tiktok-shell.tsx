@@ -7,6 +7,18 @@ import { PlusIcon } from 'lucide-react';
 
 import { api, buildTenantApiPath, buildUrl } from '@/lib/api';
 import { MirrorListResponseSchema } from '@/lib/api/schemas/tiktok-mirrors';
+import {
+  MIRROR_FB_STATUS_FILTER_OPTIONS,
+  MIRROR_FB_STATUS_FILTER_TO_VALUE,
+  type MirrorFbStatusFilterOption,
+} from '@fbuploadpro/contracts';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/shared/ui/select';
 import { queryKeys } from '@/lib/data/query-keys';
 import { DEFAULT_PAGE_SIZE } from '@/lib/server/pagination';
 import { buildTenantHref, isTenantSubdomainHost } from '@/lib/tenant-href';
@@ -56,14 +68,22 @@ export function TikTokShell({ subdomain }: Readonly<TikTokShellProps>) {
     // through the sync effect, not through this initializer.
   }, []);
   const [page, setPage] = React.useState(initialPage);
+  // Spec 155: status filter ('' = All Statuses). The value sent to
+  // the API is the ?fbStatus= value; the Select speaks labels.
+  const [fbStatusLabel, setFbStatusLabel] =
+    React.useState<MirrorFbStatusFilterOption>('All Statuses');
+  const fbStatusValue = MIRROR_FB_STATUS_FILTER_TO_VALUE[fbStatusLabel];
 
   const mirrorsQuery = useQuery({
-    queryKey: tenant.tiktokMirrors.listPage({ page }),
+    queryKey: tenant.tiktokMirrors.listPage(
+      fbStatusValue ? { page, fbStatus: fbStatusValue } : { page }
+    ),
     queryFn: ({ signal }) =>
       api.get(
         buildUrl(buildTenantApiPath(subdomain, '/tiktok-mirrors'), {
           page,
           limit: DEFAULT_PAGE_SIZE,
+          ...(fbStatusValue ? { fbStatus: fbStatusValue } : {}),
         }),
         {
           schema: MirrorListResponseSchema,
@@ -152,7 +172,28 @@ export function TikTokShell({ subdomain }: Readonly<TikTokShellProps>) {
       />
     );
   } else if (mirrors.length === 0) {
-    contentNode = (
+    // Spec 155: a filtered-empty list is not "no mirrors yet" — it
+    // is no match for the status filter, with a way back.
+    contentNode = fbStatusValue ? (
+      <EmptyState
+        type="no-results"
+        data-testid="tiktok-empty-state"
+        title="No mirrors match this status"
+        description="Try a different status, or clear the filter to see all your mirrors."
+        action={
+          <Button
+            type="button"
+            data-testid="tiktok-clear-status-filter-btn"
+            onClick={() => {
+              setFbStatusLabel('All Statuses');
+              setPage(1);
+            }}
+          >
+            Clear status filter
+          </Button>
+        }
+      />
+    ) : (
       <EmptyState
         type="no-results"
         data-testid="tiktok-empty-state"
@@ -231,6 +272,41 @@ export function TikTokShell({ subdomain }: Readonly<TikTokShellProps>) {
           <span>Add Auto Repost</span>
         </Button>
       </div>
+
+      {/* Spec 155: status filter (shared Select primitive, ADU hub
+          style). Shown once the list has loaded, so the filter is
+          still reachable when the current filter matches nothing. */}
+      {!mirrorsQuery.isPending && !mirrorsQuery.isError ? (
+        <div className="mb-6 flex flex-wrap items-center gap-3">
+          <Select
+            value={fbStatusLabel}
+            onValueChange={(value) => {
+              setFbStatusLabel(value as MirrorFbStatusFilterOption);
+              setPage(1);
+            }}
+          >
+            <SelectTrigger
+              data-testid="tiktok-status-filter"
+              aria-label="Filter mirrors by status"
+              className="w-56"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {MIRROR_FB_STATUS_FILTER_OPTIONS.map((option) => (
+                <SelectItem key={option} value={option}>
+                  {option}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {fbStatusValue ? (
+            <span data-testid="tiktok-status-filter-active" className="text-metadata text-ink-sub">
+              Showing {total} {total === 1 ? 'mirror' : 'mirrors'} with status “{fbStatusLabel}”
+            </span>
+          ) : null}
+        </div>
+      ) : null}
 
       {contentNode}
 

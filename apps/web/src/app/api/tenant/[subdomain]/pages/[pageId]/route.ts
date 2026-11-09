@@ -157,6 +157,21 @@ const STATUS_TOGGLE_BLOCKED_MESSAGES: Partial<
     'Cannot resume a rate-limited Page yet. It auto-resumes after 3 days.',
   disconnected:
     'Cannot change automation on a disconnected Page. Add it again first.',
+  // Spec 155: each new error status gets its own refusal instead of
+  // the generic fallback — the gate already blocks them all (only
+  // active/paused and checkpoint→active are allowed above).
+  page_not_accessible:
+    'Cannot change automation while this Page is not accessible. Confirm the page still exists and reconnect the parent Facebook account first.',
+  missing_page_access:
+    'Cannot change automation while this Page is missing access. Ask an admin to restore your role in Business Manager first.',
+  missing_permission:
+    'Cannot change automation while this Page is missing a permission. Ask an admin to grant the permission first.',
+  check_developer_app:
+    'Cannot change automation while this Page is blocked in the developer app. Fix the problem in your developer app first.',
+  account_suspended:
+    'Cannot change automation while the connected Facebook account is suspended. Once Facebook clears the restriction, try again.',
+  '2fa_required_on_BM':
+    'Cannot change automation until Business Manager two-factor authentication is complete.',
 };
 
 async function authenticateTenantRequest(
@@ -554,6 +569,7 @@ export async function handleUpdatePage(
         `UPDATE destinations d
          SET status = COALESCE($1, d.status),
              metadata = CASE
+               WHEN $6::text IS NOT NULL THEN jsonb_set(d.metadata, '{fb_status}', to_jsonb($6::text))
                WHEN $4::boolean IS NULL THEN d.metadata
                WHEN $4::boolean THEN jsonb_set(d.metadata, '{fb_status}', '"paused"')
                ELSE (d.metadata - 'fb_status' - 'rate_limited_at')
@@ -568,6 +584,10 @@ export async function handleUpdatePage(
           pageId,
           statusWrite ? statusWrite.pausedMarker === true : null,
           workspaceId,
+          // Spec 155: the detail marker wins when the write carries
+          // one (active/paused carry null/'paused', which reproduces
+          // the old behaviour exactly — see wirePageStatusToUnified).
+          statusWrite?.detailMarker ?? null,
         ]
       );
     }
@@ -672,7 +692,17 @@ export async function handleUpdatePage(
         if (statusWrite) {
           updates.status = statusWrite.status;
           const nextMetadata = { ...currentMetadata };
-          if (statusWrite.pausedMarker === true) {
+          // Spec 155: a detail marker wins when the write carries
+          // one; null clears it (and the rate-limit anchor, like the
+          // old pausedMarker-false branch); undefined falls through
+          // to the pausedMarker rule. For active/paused this
+          // reproduces the old behaviour exactly.
+          if (typeof statusWrite.detailMarker === 'string') {
+            nextMetadata[PAUSED_MARKER_KEY] = statusWrite.detailMarker;
+          } else if (statusWrite.detailMarker === null) {
+            delete nextMetadata[PAUSED_MARKER_KEY];
+            delete nextMetadata.rate_limited_at;
+          } else if (statusWrite.pausedMarker === true) {
             nextMetadata[PAUSED_MARKER_KEY] = PAUSED_MARKER_VALUE;
           } else if (statusWrite.pausedMarker === false) {
             delete nextMetadata[PAUSED_MARKER_KEY];

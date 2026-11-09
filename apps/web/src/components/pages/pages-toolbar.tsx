@@ -22,6 +22,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/shared/ui/select';
+import {
+  FB_PAGE_STATUS_FILTER_OPTIONS,
+  FB_PAGE_STATUS_FILTER_TO_WIRE,
+  type FbPageStatusFilterOption,
+} from '@fbuploadpro/contracts';
 import { cn } from '@/lib/utils';
 
 import type { PageStatusFilter } from './pages-helpers';
@@ -47,6 +52,14 @@ export interface PagesScaleToolbarProps {
   onAccountFilterChange: (value: string) => void;
   accountOptions: PageAccountFilterOption[];
   attentionCount?: number | undefined;
+  /**
+   * Spec 155: the exact wire status from the status-detail Select
+   * ('' = All Statuses). Twelve tabs would not fit, so the
+   * per-status choice is a dropdown like ADU's, keeping the four
+   * existing tabs untouched.
+   */
+  statusDetail?: string | undefined;
+  onStatusDetailChange?: ((value: string) => void) | undefined;
 }
 
 const PAGE_FILTER_TABS: Array<{
@@ -73,7 +86,18 @@ export function PagesScaleToolbar({
   onAccountFilterChange,
   accountOptions,
   attentionCount = 0,
+  statusDetail = '',
+  onStatusDetailChange,
 }: Readonly<PagesScaleToolbarProps>) {
+  // The Select speaks filter labels; the shell speaks wire statuses.
+  // The label for the current wire status is the reverse lookup.
+  const statusDetailLabel: FbPageStatusFilterOption =
+    ((
+      Object.entries(FB_PAGE_STATUS_FILTER_TO_WIRE) as Array<
+        [FbPageStatusFilterOption, string | null]
+      >
+    ).find(([, wire]) => wire === (statusDetail || null))?.[0] ??
+      'All Statuses') as FbPageStatusFilterOption;
   return (
     <div
       data-testid="pages-scale-toolbar"
@@ -146,6 +170,36 @@ export function PagesScaleToolbar({
             );
           })}
         </div>
+
+        {/* Status-detail Select (spec 155): the per-status choice
+            the four tabs cannot express. */}
+        {onStatusDetailChange ? (
+          <Select
+            value={statusDetailLabel}
+            onValueChange={(label) =>
+              onStatusDetailChange(
+                FB_PAGE_STATUS_FILTER_TO_WIRE[
+                  label as FbPageStatusFilterOption
+                ] ?? ''
+              )
+            }
+          >
+            <SelectTrigger
+              data-testid="pages-status-detail-filter"
+              aria-label="Filter pages by exact status"
+              className="min-h-11"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {FB_PAGE_STATUS_FILTER_OPTIONS.map((option) => (
+                <SelectItem key={option} value={option}>
+                  {option}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : null}
 
         {/* Account Selector */}
         <Select value={accountFilter} onValueChange={onAccountFilterChange}>

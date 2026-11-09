@@ -326,6 +326,48 @@ export async function persistPublishedPostId(
   }
 }
 
+/**
+ * Spec 155: applies the publisher outcome's Facebook detail marker
+ * (`metadata.fb_status`) to the destination row AFTER a successful
+ * settle, through the `apply_destination_fb_status_marker` RPC
+ * (migration 20261109170000) — a single statement
+ * (`metadata = metadata || '{"fb_status": ...}'`, or
+ * `metadata - 'fb_status'` for a clear), so concurrent marker
+ * writes serialize on the row lock and no concurrent metadata
+ * write can be clobbered. The old read-modify-write (read the
+ * row, edit metadata in memory, write it back) could invert
+ * markers, clobber a concurrent metadata write, or re-stamp a
+ * stale error after a reconnect-clear (SEND BACK item 4).
+ * Best-effort by design: a failure is logged loudly but never
+ * blocks or reopens the settle — the coarse status the settle
+ * wrote is always right, and the next failure re-stamps the
+ * marker. The marker is detail-only, so a lost write degrades
+ * the label, never the state.
+ */
+export async function applyDestinationFbStatusMarker(
+  db: ConsumerDbClient,
+  destinationId: string,
+  marker: string | null,
+): Promise<void> {
+  try {
+    const { error } = await db.rpc('apply_destination_fb_status_marker', {
+      p_destination_id: destinationId,
+      p_marker: marker,
+    });
+    if (error) {
+      console.error(
+        `[consumer] failed to apply fb_status marker ${marker ?? '(clear)'} for destination ${destinationId}:`,
+        error,
+      );
+    }
+  } catch (err) {
+    console.error(
+      `[consumer] failed to apply fb_status marker ${marker ?? '(clear)'} for destination ${destinationId}:`,
+      err,
+    );
+  }
+}
+
 async function callSettleRpc(
   db: ConsumerDbClient,
   args: SettleArgsWithDetail
@@ -381,12 +423,16 @@ async function callSettleRpc(
  *     classification says the account is dead (Instagram, Threads,
  *     TikTok, YouTube on `kind === 'auth'`; X on both auth outcomes;
  *     Facebook only when `evaluateGraphApiError` says `expired`). A
- *     kind-based fallback re-expired the account for Facebook
+ *     kind-based fallback used to re-expire the account for Facebook
  *     190/459, 190/464, 190/492 and 190/2069032 — codes the classifier
- *     deliberately keeps active — because those outcomes arrive with
- *     `kind === 'auth'` (`FacebookGraphError.isAuthError` is true for
- *     ANY code 190) and no explicit account status. Settled by the
- *     RPC, never by a consumer-side refresh attempt.
+ *     deliberately keeps active — because those outcomes used to
+ *     arrive with `kind === 'auth'` (`FacebookGraphError.isAuthError`
+ *     was true for ANY code 190). Since spec 155 item 5,
+ *     `isAuthError` is exactly the classifier's `requiresReauth`, so
+ *     those codes now arrive with `kind === 'permanent'` and no
+ *     explicit account status, and the no-fallback rule is what keeps
+ *     those accounts active. Settled by the RPC, never by a
+ *     consumer-side refresh attempt.
  *
  * `p_retry_count` convention (matching the RPC, which derives the log's
  * attempt number as `p_retry_count + 1` and stores `p_retry_count` as
@@ -810,6 +856,16 @@ async function processPublishMessage(
     );
   }
   await callSettleRpc(deps.db, mapPublishOutcomeToSettleArgs(item, outcome));
+  // Spec 155: the detail marker rides the settle, not inside it —
+  // apply it now that the settle has landed. A marker write failure
+  // is loud inside the helper and never reopens the settle.
+  if (outcome.targetDestinationFbStatus !== undefined) {
+    await applyDestinationFbStatusMarker(
+      deps.db,
+      item.destination_id,
+      outcome.targetDestinationFbStatus,
+    );
+  }
   return 'settled';
 }
 

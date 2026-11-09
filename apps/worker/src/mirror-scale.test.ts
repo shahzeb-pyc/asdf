@@ -106,6 +106,12 @@ function checkMirror(overrides: Partial<MirrorTickMirror> = {}): MirrorTickMirro
     targetFound: true,
     targetToken: 'page-token',
     status: 'active',
+    // Spec 155: no Facebook detail, target active.
+    fbStatus: null,
+    fbRateLimitedAt: null,
+    targetStatus: 'active',
+    targetRateLimitedAt: null,
+    targetUpdatedAt: null,
     lastCheckedAt: '2026-10-29T11:30:00.000Z',
     catchUpPending: false,
     lastPostedSourceId: null,

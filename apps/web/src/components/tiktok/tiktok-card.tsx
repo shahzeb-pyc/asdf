@@ -8,7 +8,12 @@ import { cn } from '@/lib/utils';
 import { getUserInitials } from '@/lib/user-initials';
 import type { MirrorListView } from '@/lib/api/schemas/tiktok-mirrors';
 import { formatAddedDate } from '@/components/pages/page-card';
-import { mapStoredMirrorErrorToDisplay } from '@fbuploadpro/contracts';
+import {
+  getMirrorDisplayStatusLabel,
+  mapStoredMirrorErrorToDisplay,
+  resolveMirrorDisplayStatus,
+  type MirrorDisplayStatus,
+} from '@fbuploadpro/contracts';
 
 /**
  * TikTok mirror card — the Pages card pattern for mirrors: the
@@ -41,6 +46,43 @@ export function mirrorStatusMark(status: MirrorListView['status']): {
   }
 }
 
+/**
+ * Spec 155: the mark a mirror actually displays. Facebook-target
+ * mirrors resolve through `resolveMirrorDisplayStatus` (own
+ * fb_status, else the target destination's Facebook detail, else
+ * generic Error); Instagram-target mirrors keep today's coarse
+ * rendering exactly — they never carry a Facebook detail.
+ */
+export function mirrorDisplayMark(mirror: {
+  status: MirrorListView['status'];
+  targetPlatform: string;
+  fbStatus?: string | null | undefined;
+  fbRateLimitedAt?: string | null | undefined;
+  targetFbStatus?: string | null | undefined;
+}): {
+  kind: 'operational' | 'queued' | 'critical';
+  label: string;
+  displayStatus: MirrorDisplayStatus;
+} {
+  if (mirror.targetPlatform !== 'facebook') {
+    const coarse = mirrorStatusMark(mirror.status);
+    return { ...coarse, displayStatus: mirror.status };
+  }
+  const displayStatus = resolveMirrorDisplayStatus({
+    status: mirror.status,
+    fbStatus: mirror.fbStatus ?? null,
+    fbRateLimitedAt: mirror.fbRateLimitedAt ?? null,
+    targetFbStatus: mirror.targetFbStatus ?? null,
+  });
+  const kind =
+    displayStatus === 'active'
+      ? 'operational'
+      : displayStatus === 'paused'
+        ? 'queued'
+        : 'critical';
+  return { kind, label: getMirrorDisplayStatusLabel(displayStatus), displayStatus };
+}
+
 export const MIRROR_STATUS_RING_CLASSES = {
   operational: 'border-2 border-signal-operational',
   queued: 'border-2 border-signal-queued',
@@ -71,9 +113,10 @@ const STATUS_TEXT_CLASSES = {
  * The shared `StatusMark` renders a bare icon, not a circle, so the
  * card uses this circled form to match the approved mockup.
  */
-export function MirrorStatusCircle({ status, label }: Readonly<{ status: MirrorListView['status']; label: string }>) {
-  const mark = mirrorStatusMark(status);
-  const Icon = CIRCLE_ICONS[mark.kind];
+export function MirrorStatusCircle({ status, label }: Readonly<{ status: MirrorDisplayStatus; label: string }>) {
+  const kind =
+    status === 'active' ? 'operational' : status === 'paused' ? 'queued' : 'critical';
+  const Icon = CIRCLE_ICONS[kind];
   return (
     <span
       data-testid="tiktok-mirror-status"
@@ -81,14 +124,14 @@ export function MirrorStatusCircle({ status, label }: Readonly<{ status: MirrorL
       aria-label={label}
       className={cn(
         'inline-flex min-w-0 items-center gap-1.5 text-metadata font-semibold tracking-wide',
-        STATUS_TEXT_CLASSES[mark.kind]
+        STATUS_TEXT_CLASSES[kind]
       )}
     >
       <span
         aria-hidden
         className={cn(
           'flex size-5.5 shrink-0 items-center justify-center rounded-full text-neutral-white',
-          CIRCLE_CLASSES[mark.kind]
+          CIRCLE_CLASSES[kind]
         )}
       >
         <Icon aria-hidden className="size-3.5" />
@@ -105,8 +148,12 @@ export interface TikTokCardProps {
 }
 
 export function TikTokCard({ mirror, onSelect, highlighted }: Readonly<TikTokCardProps>) {
-  const mark = mirrorStatusMark(mirror.status);
+  // Spec 155: the badge shows the resolved Facebook detail for
+  // Facebook mirrors (own fb_status, else the target's detail);
+  // Instagram mirrors keep the coarse status.
+  const mark = mirrorDisplayMark(mirror);
   const ringClass = MIRROR_STATUS_RING_CLASSES[mark.kind];
+  const isFacebook = mirror.targetPlatform === 'facebook';
   const addedDate = mirror.targetAddedAt ? formatAddedDate(mirror.targetAddedAt) : '';
   const facebookUrl =
     mirror.targetPlatform === 'facebook'
@@ -208,7 +255,13 @@ export function TikTokCard({ mirror, onSelect, highlighted }: Readonly<TikTokCar
         </span>
       </div>
 
-      {mirror.lastError ? (
+      {/* Spec 155: a mapped Facebook detail carries the reason in the
+          badge, so the raw stored error is hidden — but a Facebook
+          mirror in generic error (displayStatus 'error', no detail
+          anywhere) keeps the mapped raw-error line, exactly like the
+          detail page keeps the raw-error box there. Instagram mirrors
+          keep the raw-error line exactly as today. */}
+      {(!isFacebook || mark.displayStatus === 'error') && mirror.lastError ? (
         <p
           data-testid="tiktok-mirror-error"
           className="mt-3 truncate text-metadata text-signal-critical"
@@ -221,7 +274,7 @@ export function TikTokCard({ mirror, onSelect, highlighted }: Readonly<TikTokCar
         <div className="border-t border-line" />
       </div>
       <div className="mt-3 flex items-center justify-between gap-4">
-        <MirrorStatusCircle status={mirror.status} label={mark.label} />
+        <MirrorStatusCircle status={mark.displayStatus} label={mark.label} />
         {mirror.targetAccountDisplayName ? (
           <p
             data-testid="tiktok-mirror-account"

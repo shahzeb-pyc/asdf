@@ -280,3 +280,79 @@ describe('FacebookPublisher content-code retry cap (100 / 1609005)', () => {
     expect(outcome.error?.code).toBe('3');
   });
 });
+
+describe('FacebookPublisher spec-155 outcome fb_status marker', () => {
+  function graphError(
+    message: string,
+    code: number,
+    subcode?: number,
+  ): FacebookGraphError {
+    return new FacebookGraphError(message, {
+      code,
+      ...(subcode !== undefined ? { error_subcode: subcode } : {}),
+      type: 'OAuthException',
+    });
+  }
+
+  async function publishOutcome(error: unknown) {
+    const publisher = new FacebookPublisher(failingClient(error));
+    return publisher.publish(
+      queueItem({ retry_count: 0 }),
+      destination(),
+      { accessToken: 'user-token', destinationToken: 'page-token' },
+    );
+  }
+
+  it.each([
+    // [message, code, subcode, expected coarse status, expected marker]
+    ['Missing role on the page.', 190, 492, 'error', 'missing_page_access'],
+    ['The app is restricted.', 190, 2069031, 'error', 'check_developer_app'],
+    ['Permissions error.', 10, 200, 'error', 'missing_permission'],
+    ['API access blocked for this app.', 200, undefined, 'error', 'check_developer_app'],
+    ['Permissions error.', 200, 299, 'error', 'missing_permission'],
+    ['Account suspended.', 368, 1404112, 'error', 'account_suspended'],
+    ['This account has been suspended.', 368, undefined, 'error', 'account_suspended'],
+    ['Identity verification required.', 190, 459, 'error', 'checkpoint'],
+    ['Invalid token.', 190, undefined, 'error', 'invalid_token'],
+  ] as Array<[string, number, number | undefined, 'error', string]>)(
+    '%s (%s/%s) → %s + fb_status %s',
+    async (message, code, subcode, expectedStatus, expectedMarker) => {
+      const outcome = await publishOutcome(graphError(message, code, subcode));
+      expect(outcome.status).toBe('failed');
+      expect(outcome.targetDestinationStatus).toBe(expectedStatus);
+      expect(outcome.targetDestinationFbStatus).toBe(expectedMarker);
+    },
+  );
+
+  it('368/1404112 fails fast as account_suspended instead of retrying as rate-limited', async () => {
+    const outcome = await publishOutcome(
+      graphError('Account suspended.', 368, 1404112),
+    );
+    expect(outcome.status).toBe('failed');
+    expect(outcome.error?.kind).toBe('permanent');
+  });
+
+  it('rate-limited clears any stale detail marker (explicit null)', async () => {
+    const outcome = await publishOutcome(graphError('Slow down.', 368, 1390008));
+    expect(outcome.targetDestinationStatus).toBe('rate_limited');
+    expect('targetDestinationFbStatus' in outcome).toBe(true);
+    expect(outcome.targetDestinationFbStatus).toBeNull();
+  });
+
+  it('a body-less page-gone failure maps to page_not_accessible', async () => {
+    const outcome = await publishOutcome(new Error('Page not found.'));
+    expect(outcome.targetDestinationStatus).toBe('error');
+    expect(outcome.targetDestinationFbStatus).toBe('page_not_accessible');
+    // Uncoded errors stay retryable by the old fallback; the
+    // destination flip to `error` makes the retry defer instead of
+    // re-publishing into a gone page.
+    expect(outcome.status).toBe('retry');
+  });
+
+  it('a transient failure leaves both the status and the marker untouched', async () => {
+    const outcome = await publishOutcome(graphError('Temporary failure.', 2));
+    expect(outcome.status).toBe('retry');
+    expect(outcome.targetDestinationStatus).toBeUndefined();
+    expect(outcome.targetDestinationFbStatus).toBeUndefined();
+  });
+});

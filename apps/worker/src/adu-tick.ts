@@ -943,7 +943,8 @@ export async function runAduTick(options: {
     // closed to the invalid-token decision — the old kind==='auth'
     // flip — instead of leaving a dead token active. Whenever numeric
     // facts exist the mapper's decision stands (e.g. 190/459 stays a
-    // checkpoint even though the publisher classifies it 'auth').
+    // checkpoint — the publisher now classifies it 'permanent' per
+    // spec 155 item 5, so the auth flip never fires for it).
     const hasNumericCode =
       outcome.error?.code !== undefined && /^\d+$/.test(outcome.error.code.trim());
     const aduDecision =

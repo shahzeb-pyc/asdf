@@ -254,7 +254,7 @@ export async function refreshConnectedPageTokens(
   const legacyDb = db && 'query' in db && typeof db.query === 'function' ? db : null;
 
   try {
-    let validPages: Array<{ id: string; fb_page_id?: string; fbPageId?: string; status?: string }> = [];
+    let validPages: Array<{ id: string; fb_page_id?: string; fbPageId?: string; status?: string; metadata?: Record<string, unknown> | null }> = [];
 
     if (supabase) {
       const { data: linkedPages, error: fetchPagesError } = await supabase
@@ -287,18 +287,19 @@ export async function refreshConnectedPageTokens(
               id: p.id,
               fb_page_id: p.external_destination_id,
               status: p.status,
-            })) as Array<{ id: string; fb_page_id?: string; fbPageId?: string; status?: string }>)
+              metadata: (p.metadata as Record<string, unknown> | null) ?? null,
+            })) as Array<{ id: string; fb_page_id?: string; fbPageId?: string; status?: string; metadata?: Record<string, unknown> | null }>)
         : [];
     } else if (legacyDb) {
       const linkedPages = (await legacyDb.query(
-        `SELECT id, external_destination_id AS fb_page_id, status
+        `SELECT id, external_destination_id AS fb_page_id, status, metadata
          FROM destinations
          WHERE account_id = $1
            AND workspace_id = $2
            AND platform = 'facebook'
            AND (status != 'disconnected' OR metadata->>'fb_status' = 'paused')`,
         [accountRowId, workspaceId]
-      )) as Array<{ id: string; fb_page_id?: string; fbPageId?: string; status?: string }>;
+      )) as Array<{ id: string; fb_page_id?: string; fbPageId?: string; status?: string; metadata?: Record<string, unknown> | null }>;
 
       validPages = Array.isArray(linkedPages)
         ? linkedPages.filter((p) => Boolean(p?.fb_page_id || p?.fbPageId))
@@ -323,6 +324,20 @@ export async function refreshConnectedPageTokens(
         }
         const encryptedPageToken = await encryptToken(rawPageToken, encryptionKey);
         if (supabase) {
+          // Spec 155: a fresh token reactivates an `error` destination
+          // AND clears its detail marker (fb_status) + rate-limit
+          // anchor — otherwise the stale marker would resurface as
+          // the wrong status the next time the page flips to error.
+          // Paused pages keep their marker (their status is not
+          // 'error', so this branch never runs for them).
+          const nextMetadata =
+            linkedPage.status === 'error' && linkedPage.metadata
+              ? ((): Record<string, unknown> => {
+                  const { fb_status: _removed, rate_limited_at: _anchor, ...rest } =
+                    linkedPage.metadata;
+                  return rest;
+                })()
+              : undefined;
           const { error: updateError } = await supabase
             .from('destinations')
             .update({
@@ -330,6 +345,7 @@ export async function refreshConnectedPageTokens(
               // 'error' is the unified invalid-token state; a fresh
               // token reactivates the destination.
               status: linkedPage.status === 'error' ? 'active' : linkedPage.status,
+              ...(nextMetadata !== undefined ? { metadata: nextMetadata } : {}),
               updated_at: new Date().toISOString(),
             })
             .eq('id', linkedPage.id)
@@ -367,6 +383,7 @@ export async function refreshConnectedPageTokens(
             `UPDATE destinations
              SET encrypted_destination_token = $1,
                  status = CASE WHEN status = 'error' THEN 'active' ELSE status END,
+                 metadata = CASE WHEN status = 'error' THEN (metadata - 'fb_status' - 'rate_limited_at') ELSE metadata END,
                  updated_at = now()
              WHERE id = $2 AND workspace_id = $3`,
             [encryptedPageToken, linkedPage.id, workspaceId]

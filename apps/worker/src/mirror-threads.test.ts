@@ -24,6 +24,12 @@ function mirror(overrides: Partial<MirrorTickMirror> = {}): MirrorTickMirror {
     targetFound: true,
     targetToken: 'threads-token',
     status: 'active',
+    // Spec 155: no Facebook detail (Threads mirrors never carry one).
+    fbStatus: null,
+    fbRateLimitedAt: null,
+    targetStatus: 'active',
+    targetRateLimitedAt: null,
+    targetUpdatedAt: null,
     lastCheckedAt: '2026-10-29T11:30:00.000Z',
     catchUpPending: false,
     lastPostedSourceId: null,
