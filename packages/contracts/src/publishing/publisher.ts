@@ -128,6 +128,30 @@ export const PublishOutcomeSchema = z.object({
   targetDestinationStatus: z
     .enum(['active', 'rate_limited', 'disconnected', 'error'])
     .optional(),
+  /**
+   * Spec 155: the Facebook detail marker for settlement (`metadata.fb_status`
+   * on the destination) — the wire status's detail, e.g. `missing_permission`.
+   * Undefined means "leave the marker alone" (publisher has no opinion);
+   * null means "clear it" (e.g. the destination flipped back to active or
+   * to rate-limited, whose anchor lives in `rate_limited_at`). Consumers
+   * apply it AFTER a successful settle, directly on the destinations row
+   * (the settle RPC does not know the marker) — a marker write failure is
+   * logged loudly and never blocks the settle; the coarse status from the
+   * settle is always right even when the marker write fails.
+   */
+  targetDestinationFbStatus: z
+    .enum([
+      'checkpoint',
+      'invalid_token',
+      'page_not_accessible',
+      'missing_page_access',
+      'missing_permission',
+      'check_developer_app',
+      'account_suspended',
+      '2fa_required_on_BM',
+    ])
+    .nullable()
+    .optional(),
   /** Account status side effect for settlement (`expired` on auth errors). */
   targetAccountStatus: z.enum(['active', 'expired', 'revoked', 'error']).optional(),
   /** Latest per-destination rate usage (0–100), when the platform reports it. */

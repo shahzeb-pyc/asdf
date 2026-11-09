@@ -193,6 +193,53 @@ export function getFacebookPageStatusAlert(
 }
 
 /**
+ * The values `metadata.fb_status` may carry on a destinations row
+ * (spec 155): the detail marker for a Facebook error status, plus
+ * `checkpoint` (the stored spelling of `page_checkpoint`) and
+ * `paused` (the stored spelling of `paused`). The read mapping
+ * (`unifiedDestinationStatusToWire`) turns the marker back into the
+ * wire status; the write side is `destinationFbStatusMarker` below.
+ */
+export const DESTINATION_FB_STATUS_MARKERS = [
+  'checkpoint',
+  'paused',
+  'invalid_token',
+  'page_not_accessible',
+  'missing_page_access',
+  'missing_permission',
+  'check_developer_app',
+  'account_suspended',
+  '2fa_required_on_BM',
+] as const;
+export type DestinationFbStatusMarker =
+  (typeof DESTINATION_FB_STATUS_MARKERS)[number];
+
+/**
+ * A Pages wire status -> the `metadata.fb_status` marker that stores
+ * it, or null when the status carries no marker (the marker must be
+ * cleared). `active` and `fb_rate_limited` clear: rate-limited rows
+ * carry their anchor in `rate_limited_at`, not in the marker.
+ */
+export function destinationFbStatusMarker(
+  pageStatus: FacebookPageStatus | null | undefined
+): DestinationFbStatusMarker | null {
+  switch (pageStatus) {
+    case 'page_checkpoint':
+      return 'checkpoint';
+    case 'invalid_token':
+    case 'page_not_accessible':
+    case 'missing_page_access':
+    case 'missing_permission':
+    case 'check_developer_app':
+    case 'account_suspended':
+    case '2fa_required_on_BM':
+      return pageStatus;
+    default:
+      return null;
+  }
+}
+
+/**
  * Mirrors store the Facebook detail separately from their own
  * `active` / `paused` / `error` status (`mirrors.fb_status`):
  * the detail is one of these values, or null when there is none.
