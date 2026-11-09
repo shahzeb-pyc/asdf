@@ -27,6 +27,15 @@ export const SUPABASE_CONFIG = {
   SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
 };
 
+export const FACEBOOK_CONFIG = {
+    // Stall limit from the no-login spike (spec 158): stop scrolling
+    // after this many consecutive scrolls with no new reels.
+    STALL_LIMIT: 5,
+    // Optional override for the headless-shell executable (spec 158).
+    // Unset = Patchright's bundled chrome-headless-shell.
+    EXECUTABLE_PATH: process.env.FACEBOOK_HEADLESS_SHELL_PATH || null,
+};
+
 export const SCRAPER_CONFIG = {
   SCROLL_PAUSE: 2000,
   MAX_SAME_HEIGHT: 44,

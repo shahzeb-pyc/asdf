@@ -2,14 +2,15 @@
 
 Discovers short-form content IDs for ADU source configs and upserts them into `public.adu_reels` (`status = pending`). Runs on a VPS as a long-lived Node process (PM2 recommended).
 
-Ported from the old fbuploadpro service (`backend_v3/services/facebook/auto-download-upload/scraping/reels-scraper`). The discovery method is exactly the old one; only the table names changed (`pages` → `adu_configs`, `reels` → `adu_reels`). The one addition over the old service: when all yt-dlp profile attempts fail, the paid TikWM `/user/info` API resolves the profile ID (`secUid`) for one `tiktokuser:` direct attempt (see step 1); no third-party *download* API is used anywhere in discovery. The one departure: YouTube discovery moved from the logged-in browser to the official YouTube Data API v3 (spec 154) — no browser, no login; see `discovery/youtube-api.js`.
+Ported from the old fbuploadpro service (`backend_v3/services/facebook/auto-download-upload/scraping/reels-scraper`). The discovery method is exactly the old one; only the table names changed (`pages` → `adu_configs`, `reels` → `adu_reels`). The one addition over the old service: when all yt-dlp profile attempts fail, the paid TikWM `/user/info` API resolves the profile ID (`secUid`) for one `tiktokuser:` direct attempt (see step 1); no third-party *download* API is used anywhere in discovery. The one departure: YouTube discovery moved from the logged-in browser to the official YouTube Data API v3 (spec 154) — no browser, no login; see `discovery/youtube-api.js`. The second departure: Facebook discovery moved from the logged-in Puppeteer browser to its own no-login Patchright headless-shell session per job (spec 158) — no manual Facebook login anymore; see `scrapers/facebook.js`.
 
 ## Two-stage discovery
 
 1. **yt-dlp (TikTok only)** — flat-playlist extract with `--playlist-items`.
    yt-dlp only: the plain profile URL `https://www.tiktok.com/@{handle}` goes through the rotating proxy (`COUNTIK_PROXY_URL` from env), so yt-dlp resolves the `sec_uid` itself from the profile page. The profile attempt is retried up to **5 times per claim** (2s delay between attempts) — each attempt draws a different rotating proxy exit IP, which is what decides success when an exit IP is blocked (empty response / TLS EOF). Only when all 5 fail, the paid TikWM `/user/info` fallback runs (`discovery/tikwm.js`, keys from `TIKWMAPI_KEYS_SCRAPER`, comma-separated, tried in order, no proxy): it resolves the camelCase `secUid` and attempts the `tiktokuser:{secUid}` direct feed once, exactly as the old Countik path did. No Countik anywhere in discovery: no secuid Worker call, no direct Countik fallback. When `TIKWMAPI_KEYS_SCRAPER` is unset the fallback is disabled (one loud warning at startup) and discovery stays yt-dlp-only. Mobile iPhone UA + full `Sec-Fetch-*` headers (see `discovery/ytdlp-args.js`), `--retries 5`, `--extractor-retries 10`, `--socket-timeout 30`, proxy from `DATACENTER_PROXY` / `PROXY_URL` / `HTTP_PROXY` / `HTTPS_PROXY` when set (the `COUNTIK_PROXY_URL` proxy is passed explicitly by the discovery code, never read from env by the argv builder). Yields video IDs only; "new" is set difference against stored IDs (upsert `onConflict: 'config_id,source_reel_id'`, duplicates ignored).
-2. **Puppeteer (Instagram/Facebook, and TikTok fallback)** — scrolls profile pages using logged-in sessions (persistent profile, manual login at startup).
-3. **YouTube Data API v3 (YouTube only, spec 154)** — `channels.list` resolves the handle to a channel ID (cached on the config, so repeat checks skip it), `playlistItems.list` walks the uploads playlist newest first, `videos.list` durations keep Shorts only (at most 60 seconds at any date, or at most 180 seconds when published on or after 15 Oct 2024). Never `search.list`. Quota exhaustion parks the source until the next midnight Pacific reset and retries it automatically (spec 156), never to a browser fallback. Key from `YOUTUBE_DATA_API_KEY`.
+2. **Puppeteer (Instagram, and TikTok fallback)** — scrolls profile pages using logged-in sessions (persistent profile, manual login at startup).
+3. **Patchright headless shell (Facebook only, spec 158)** — no login, no cookies, no session: each Facebook job launches its own `chrome-headless-shell` session, opens `facebook.com/{user}/reels`, dismisses the "See more on Facebook" login dialog whenever it appears (real click when it has a Close control, otherwise the overlay is hidden at its topmost div — never removed), scrolls until 5 consecutive scrolls yield no new reels, and returns numeric reel IDs only. A login form sitting in the DOM is not a failure — failure is navigation timeout, grid never rendered, or 0 reels.
+4. **YouTube Data API v3 (YouTube only, spec 154)** — `channels.list` resolves the handle to a channel ID (cached on the config, so repeat checks skip it), `playlistItems.list` walks the uploads playlist newest first, `videos.list` durations keep Shorts only (at most 60 seconds at any date, or at most 180 seconds when published on or after 15 Oct 2024). Never `search.list`. Quota exhaustion parks the source until the next midnight Pacific reset and retries it automatically (spec 156), never to a browser fallback. Key from `YOUTUBE_DATA_API_KEY`.
 
 ```text
 pending ──claim──► processing
@@ -27,10 +28,11 @@ Terminal page states: **`synced`** and **`error`**. Scheduling still requires `s
 
 ## Requirements — this cannot run in Vercel or the Cloudflare Worker
 
-- A persistent host (Ubuntu VPS, as the old setup) with a display-capable session for the first manual login. Puppeteer launches with `headless: false`, `--no-sandbox`, `--start-maximized`.
+- A persistent host (Ubuntu VPS, as the old setup) with a display-capable session for the first manual login. Puppeteer launches with `headless: false`, `--no-sandbox`, `--start-maximized`. Facebook needs no display and no manual login (Patchright headless shell, spec 158).
 - Node.js 18+
 - **yt-dlp** on `PATH` (or `python3 -m yt_dlp` fallback)
 - Chromium via Puppeteer
+- Headless shell for Facebook discovery (spec 158): `npx patchright install chromium --only-shell` (once, on the host). To use an existing headless-shell binary instead of Patchright's bundled one, set `FACEBOOK_HEADLESS_SHELL_PATH`.
 - Supabase service role credentials
 
 ## Job polling (`index.js`)
@@ -44,7 +46,7 @@ Infinite loop:
 
 Browser restarts after **500** jobs per session (`MAX_JOBS_PER_SESSION`).
 
-At startup (unless `SKIP_STARTUP_LOGINS=true`) the browser opens each platform's login page in turn and waits for a human to press Enter after logging in manually: TikTok `https://www.tiktok.com/login`, Instagram `https://www.instagram.com/accounts/login/`, Facebook `https://www.facebook.com/login`. YouTube needs no login (Data API). The logged-in session persists in `BROWSER_USER_DATA_DIR` (default `.browser-profile`).
+At startup (unless `SKIP_STARTUP_LOGINS=true`) the browser opens each platform's login page in turn and waits for a human to press Enter after logging in manually: TikTok `https://www.tiktok.com/login`, Instagram `https://www.instagram.com/accounts/login/`. Facebook has no login step (spec 158 — no-login Patchright discovery) and YouTube needs no login (Data API). The logged-in session persists in `BROWSER_USER_DATA_DIR` (default `.browser-profile`).
 
 ## Platform behavior
 
@@ -53,10 +55,10 @@ At startup (unless `SKIP_STARTUP_LOGINS=true`) the browser opens each platform's
 | TikTok | yt-dlp → `synced` or `error` | Puppeteer only |
 | YouTube | Data API → `synced`, `error`, or `quota_parked` until the next midnight Pacific reset (never browser) | Data API |
 | Instagram | Puppeteer only | Puppeteer only |
-| Facebook | Puppeteer only | Puppeteer only |
+| Facebook | Patchright, no login (spec 158) | Patchright, no login (spec 158) |
 
 TikTok yt-dlp profile URL: `https://www.tiktok.com/@{handle}` (leading `@` stripped).
-Browser scrapers, verbatim from the old service: TikTok `//a[contains(@href, "/video/")]`, Instagram `https://www.instagram.com/{user}/reels/` with `//a[contains(@href, "/reel/")]`, Facebook `https://facebook.com/{user}/reels` with `//a[@aria-label="Reel tile preview"]`. All scroll with a 2s pause, stop after 44 unchanged heights, cap `MAX_REELS_PER_PLATFORM` (default `1000`). YouTube no longer has a browser scraper (Data API, spec 154).
+Browser scrapers, verbatim from the old service: TikTok `//a[contains(@href, "/video/")]`, Instagram `https://www.instagram.com/{user}/reels/` with `//a[contains(@href, "/reel/")]`. Both scroll with a 2s pause, stop after 44 unchanged heights, cap `MAX_REELS_PER_PLATFORM` (default `1000`). Facebook (spec 158, rewritten, no login): `https://facebook.com/{user}/reels` with `a[href*="/reel/"]`, numeric IDs only, scrolls until 5 consecutive scrolls yield no new reels, cap `MAX_REELS_PER_PLATFORM` (default `1000`). YouTube no longer has a browser scraper (Data API, spec 154).
 
 ## Configuration (`config.js` / `.env`)
 
@@ -67,6 +69,7 @@ Browser scrapers, verbatim from the old service: TikTok `//a[contains(@href, "/v
 | `BROWSER_USER_DATA_DIR` | Persistent Puppeteer profile |
 | `BROWSER_USER_AGENT` | Puppeteer User-Agent |
 | `MAX_REELS_PER_PLATFORM` | Cap per discovery run (default `1000`) |
+| `FACEBOOK_HEADLESS_SHELL_PATH` | Optional path to a headless-shell executable for Facebook discovery (spec 158); unset = Patchright's bundled shell |
 | `SKIP_STARTUP_LOGINS` | Skip interactive login prompts when `true` |
 | `YTDLP_BIN` | yt-dlp binary (default `yt-dlp`) |
 | `YTDLP_TIMEOUT_MS` | Subprocess timeout (default `600000`) |
@@ -88,7 +91,7 @@ Browser scrapers, verbatim from the old service: TikTok `//a[contains(@href, "/v
 - `discovery/ytdlp-args.js` — argv builder (aligned with old `video_downloader/scraper.py`)
 - `discovery/profile-urls.js` — TikTok profile URL + platform gate
 - `discovery/extract-ids.js` — shared JSON ID helpers (tests)
-- `scrapers/*.js` — Puppeteer per platform
+- `scrapers/*.js` — Puppeteer per platform (Instagram, TikTok); Facebook is Patchright, no login (spec 158)
 
 ## Running
 
