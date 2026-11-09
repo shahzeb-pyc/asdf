@@ -35,6 +35,7 @@ import {
   checkSessionStatus,
   SESSION_CHECK_FOCUS_THROTTLE_MS,
   SESSION_CHECK_INTERVAL_MS,
+  type SessionCheckMode,
 } from '../api/session-check';
 import { createQueryClient } from './query-client';
 
@@ -45,12 +46,18 @@ export interface DataProviderProps {
 
 /**
  * Global session check (session-global-check spec §2.2): the ONE
- * database-backed session check, run by every shell (this provider
- * mounts in the user, seller, and admin shells alike) on mount,
- * every 5 minutes, and on window focus (throttled to once a
- * minute). It is the only thing allowed to bounce the user for a
- * dead session, besides a foreground mutation's 401 (see
- * `lib/api/client.ts`).
+ * session check, run by every shell (this provider mounts in the
+ * user, seller, and admin shells alike) on mount, every 5 minutes,
+ * and on window focus (throttled to once a minute). It is the only
+ * thing allowed to bounce the user for a dead session, besides a
+ * foreground mutation's 401 (see `lib/api/client.ts`).
+ *
+ * Spec 152 O4 — mount and focus re-prove the token only
+ * (`mode=token`: no database lookup — the shell mounts right after
+ * the layout already verified the session server-side, so a second
+ * user-table read per load was pure duplication). The 5-minute
+ * interval keeps the database-backed proof (`mode=full`), so a
+ * password change or deactivation is still caught within 5 minutes.
  *
  * Outcomes: `active` → nothing. `dead` → the existing login
  * bounce (latched exactly-once, cache cleared, `next` = current
@@ -65,12 +72,12 @@ function useGlobalSessionCheck(): void {
   useEffect(() => {
     let cancelled = false;
 
-    const run = async (): Promise<void> => {
+    const run = async (mode: SessionCheckMode): Promise<void> => {
       if (inFlightRef.current) return;
       inFlightRef.current = true;
       lastCheckRef.current = Date.now();
       try {
-        const result = await checkSessionStatus();
+        const result = await checkSessionStatus(undefined, mode);
         if (cancelled) return;
         if (result === 'dead') {
           await handleSessionExpired();
@@ -80,13 +87,13 @@ function useGlobalSessionCheck(): void {
       }
     };
 
-    void run();
+    void run('token');
     const interval = setInterval(() => {
-      void run();
+      void run('full');
     }, SESSION_CHECK_INTERVAL_MS);
     const onFocus = (): void => {
       if (Date.now() - lastCheckRef.current >= SESSION_CHECK_FOCUS_THROTTLE_MS) {
-        void run();
+        void run('token');
       }
     };
     window.addEventListener('focus', onFocus);
