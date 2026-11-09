@@ -695,7 +695,7 @@ describe('C2 — RPC parity with the legacy query read', () => {
 
   it('admin is not an input to getEntitlement — the exemption lives at the call sites', async () => {
     // getEntitlement takes no role: an admin's own read answers the
-    // same way as any user's. Callers skip the gates for admins
+    // same way as for every user. Callers skip the gates for admins
     // before calling (see assertCanPost docs); C2 does not touch
     // that, and this pins that the read itself has no role branch.
     const { rpc, legacy } = await parity((tables) => {

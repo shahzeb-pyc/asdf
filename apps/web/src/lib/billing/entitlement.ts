@@ -718,7 +718,7 @@ export async function getEntitlementViaRpc(
  * until the RPC parity tests pass in CI. Rollback is one line in
  * `getEntitlement` below — switch its return to this function.
  * Do not delete it in a cleanup pass before that parity gate
- * has passed, and do not add new behaviour to it: any fix
+ * has passed, and do not add new behaviour to it: every fix
  * belongs in the RPC path, with this function kept byte-equal
  * to the pre-C2 read so the parity comparison stays honest.
  */

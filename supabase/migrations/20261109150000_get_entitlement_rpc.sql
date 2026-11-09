@@ -98,7 +98,7 @@ AS $$
           AND NOT EXISTS (
             SELECT 1 FROM disconnected d
             WHERE d.id = u.destination_id
-              AND d.platform = u.platform
+              AND d.platform::text = u.platform
           )
       ) AS facebook,
       count(*) FILTER (
@@ -109,7 +109,7 @@ AS $$
           AND NOT EXISTS (
             SELECT 1 FROM disconnected d
             WHERE d.id = u.destination_id
-              AND d.platform = u.platform
+              AND d.platform::text = u.platform
           )
       ) AS instagram,
       count(*) FILTER (
@@ -120,7 +120,7 @@ AS $$
           AND NOT EXISTS (
             SELECT 1 FROM disconnected d
             WHERE d.id = u.destination_id
-              AND d.platform = u.platform
+              AND d.platform::text = u.platform
           )
       ) AS threads,
       count(*) FILTER (
@@ -131,7 +131,7 @@ AS $$
           AND NOT EXISTS (
             SELECT 1 FROM disconnected d
             WHERE d.id = u.destination_id
-              AND d.platform = u.platform
+              AND d.platform::text = u.platform
           )
       ) AS x,
       count(*) FILTER (
@@ -142,7 +142,7 @@ AS $$
           AND NOT EXISTS (
             SELECT 1 FROM disconnected d
             WHERE d.id = u.destination_id
-              AND d.platform = u.platform
+              AND d.platform::text = u.platform
           )
       ) AS tiktok,
       count(*) FILTER (
@@ -153,7 +153,7 @@ AS $$
           AND NOT EXISTS (
             SELECT 1 FROM disconnected d
             WHERE d.id = u.destination_id
-              AND d.platform = u.platform
+              AND d.platform::text = u.platform
           )
       ) AS youtube
     FROM public.subscription_usage u
