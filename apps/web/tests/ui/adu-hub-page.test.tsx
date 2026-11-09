@@ -146,15 +146,17 @@ function lastPostBody() {
 // Radix renders the open SelectContent in a portal on document.body, not
 // inside the dialog node, so options must be queried from the whole screen.
 // Only one picker is open at a time, so the platform names are unambiguous.
-function expectPlatformOptionsDisabled() {
-  for (const platform of ['instagram', 'youtube', 'facebook']) {
+// Only Instagram is disabled: Facebook and YouTube were unblocked by
+// PR #202, and TikTok is the default platform.
+function expectPlatformOptions() {
+  const instagram = screen.getByRole('option', { name: 'instagram' });
+  expect(instagram.getAttribute('data-disabled')).not.toBeNull();
+  expect(instagram.getAttribute('aria-disabled')).toBe('true');
+  for (const platform of ['facebook', 'youtube', 'tiktok']) {
     const option = screen.getByRole('option', { name: platform });
-    expect(option.getAttribute('data-disabled')).not.toBeNull();
-    expect(option.getAttribute('aria-disabled')).toBe('true');
+    expect(option.getAttribute('data-disabled')).toBeNull();
+    expect(option.getAttribute('aria-disabled')).not.toBe('true');
   }
-  const tiktok = screen.getByRole('option', { name: 'tiktok' });
-  expect(tiktok.getAttribute('data-disabled')).toBeNull();
-  expect(tiktok.getAttribute('aria-disabled')).not.toBe('true');
 }
 
 // The shells under test render the feature-cap hook, which reads the
@@ -286,7 +288,7 @@ describe('AduHubPage Add Page dialog 4-step flow', () => {
     expect(checkbox?.getAttribute('data-disabled')).not.toBeNull();
   });
 
-  it('step 3: per-page pickers disable Facebook, Instagram, and YouTube and default to TikTok', async () => {
+  it('step 3: per-page pickers disable only Instagram and default to TikTok', async () => {
     const user = userEvent.setup();
     await openDialog(user);
     await pickCheckboxFor(user, 'My FB Account');
@@ -298,8 +300,12 @@ describe('AduHubPage Add Page dialog 4-step flow', () => {
     const dialog = screen.getByRole('dialog');
     const triggers = within(dialog).getAllByRole('combobox');
     expect(triggers).toHaveLength(3);
+    // Every picker defaults to TikTok before anything is chosen.
+    for (const trigger of triggers) {
+      expect(trigger).toHaveTextContent('tiktok');
+    }
     await user.click(triggers[0]!);
-    expectPlatformOptionsDisabled();
+    expectPlatformOptions();
     // Close the menu again: an open Radix menu leaves pointer-events none
     // on the rest of the page, which would block typing into the inputs.
     await user.keyboard('{Escape}');
