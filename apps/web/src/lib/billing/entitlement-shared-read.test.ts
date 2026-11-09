@@ -1,12 +1,79 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   assertFeatureAddWithinCap,
+  getCachedEntitlement,
   getEntitlement,
   getUsageCount,
   registerUsage,
   SubscriptionGateError,
 } from './entitlement';
+
+/**
+ * Plan-check C1 — the `react` mock below stands in for the React
+ * Server dispatcher that Next.js provides per request in
+ * production. The client `react` build's `cache()` is a
+ * passthrough (verified 2026-11-09 against react@19.3.1:
+ * `exports.cache = function (fn) { return function () { return
+ * fn.apply(null, arguments); }; }`) — only the `react-server`
+ * build memoizes, keyed off the dispatcher — so under vitest the
+ * cached read would never dedupe and no counting test could prove
+ * one read per request. This memoizer keys by argument identity
+ * exactly like the server build (objects via WeakMap, primitives
+ * via Map), so a fresh client object per test is a fresh cache
+ * entry and tests cannot leak into each other; two users on the
+ * same client are separate entries. `vi.mock` is file-scoped, so
+ * no other suite sees it.
+ */
+type CacheNode = {
+  value?: unknown;
+  status?: 'ok' | 'err';
+  objects?: WeakMap<object, CacheNode>;
+  primitives?: Map<unknown, CacheNode>;
+};
+vi.mock('react', () => {
+  const root: CacheNode = {};
+  function cache<T extends (...args: never[]) => unknown>(fn: T): T {
+    const wrapped = (...args: never[]): unknown => {
+      let node = root;
+      for (const arg of args) {
+        const isObject =
+          (typeof arg === 'object' && arg !== null) || typeof arg === 'function';
+        if (isObject) {
+          node.objects ??= new WeakMap();
+          let next = node.objects.get(arg as object);
+          if (!next) {
+            next = {};
+            node.objects.set(arg as object, next);
+          }
+          node = next;
+        } else {
+          node.primitives ??= new Map();
+          let next = node.primitives.get(arg);
+          if (!next) {
+            next = {};
+            node.primitives.set(arg, next);
+          }
+          node = next;
+        }
+      }
+      if (node.status === 'ok') return node.value;
+      if (node.status === 'err') throw node.value;
+      try {
+        const value = fn(...args);
+        node.status = 'ok';
+        node.value = value;
+        return value;
+      } catch (err) {
+        node.status = 'err';
+        node.value = err;
+        throw err;
+      }
+    };
+    return wrapped as unknown as T;
+  }
+  return { cache };
+});
 
 /**
  * Plan-check R3 + R5 + R5b (one shared plan read for
@@ -220,7 +287,15 @@ function makeClient() {
   return { client: client as unknown as SupabaseClient, tables, queryLog, failures };
 }
 
-const NOW = new Date('2026-11-01T12:00:00.000Z');
+/**
+ * Plan-check C1: the clock is the real one, not a fixed date. The
+ * gates' default read is the request-cached read, which creates
+ * its own `now` — so a fixed 2026-11-01 seed window would go
+ * stale (a paid period seeded to end 2026-11-21 stops being
+ * active under a real clock past that date). All seeds below are
+ * relative to NOW, so they stay valid whenever the suite runs.
+ */
+const NOW = new Date();
 const DAY = 86_400_000;
 
 function seedPaidPeriod(
@@ -378,14 +453,17 @@ describe('R3 — one shared entitlement read for check-then-register', () => {
     expect(countPeriodSelects(queryLog)).toBe(1);
   });
 
-  it('gate + register without the shared read issue two period selects', async () => {
+  it('gate + register without an explicit shared read issue one period select (C1: the cached default)', async () => {
     const { client, tables, queryLog } = makeClient();
     seedPaidPeriod(tables);
     seedDestination(tables, 'dest-1', 'active');
 
     await assertFeatureAddWithinCap(client, 'user-1', 'facebook', ['page-1'], NOW);
     await registerUsage(client, 'user-1', 'facebook', 'page-1', 'destination-queue', 'dest-1', NOW);
-    expect(countPeriodSelects(queryLog)).toBe(2);
+    // C1: no shared read was passed in, but the gates' default
+    // read is the request-cached one — so the two steps still
+    // share a single period select instead of two.
+    expect(countPeriodSelects(queryLog)).toBe(1);
   });
 
   it('cap decisions are identical with and without the shared read, on the matrix', async () => {
@@ -783,7 +861,7 @@ describe('Pre-insert re-check — a stale shared read cannot publish over the ca
     expect(tables['subscription_usage']).toHaveLength(2);
   });
 
-  it('without a shared read the register pays only its own fresh entitlement read — no extra re-check', async () => {
+  it('without a shared read the register pays its own cached read plus one re-check (C1: the re-check is unconditional)', async () => {
     // What one fresh entitlement read costs in head counts, so
     // the assertion below stays exact if platforms are added.
     const freshRead = makeClient();
@@ -807,9 +885,132 @@ describe('Pre-insert re-check — a stale shared read cannot publish over the ca
     );
     expect(result.alreadyUsed).toBe(false);
     expect(result.usedCount).toBe(1);
-    // The register's own fresh read is the last usage read before
-    // the insert here, so the re-check — shared-read only — pays
-    // nothing on top of it.
-    expect(countUsageHeadCounts(queryLog)).toBe(freshReadHeadCounts);
+    // C1: the gate read may be the request-cached read, which can
+    // predate this register — so the pre-insert re-check runs on
+    // every register now, not only when a shared read was passed
+    // in. One extra head count (the re-check) on top of the read.
+    expect(countUsageHeadCounts(queryLog)).toBe(freshReadHeadCounts + 1);
+  });
+});
+
+describe('C1 — one entitlement read per request (request-cached default)', () => {
+  it('bulk: one gate + three registers share one period select, usedCounts 1/2/3, a fourth at cap is refused', async () => {
+    const { client, tables, queryLog } = makeClient();
+    seedPaidPeriod(tables, 'user-1', 3);
+
+    // The Threads ADU bulk shape: one gate, then one register per
+    // item, no shared read passed anywhere — the cached default
+    // is the only thing sharing the read.
+    await assertFeatureAddWithinCap(
+      client,
+      'user-1',
+      'facebook',
+      ['page-1', 'page-2', 'page-3'],
+      NOW
+    );
+    const usedCounts: number[] = [];
+    for (const key of ['page-1', 'page-2', 'page-3']) {
+      const result = await registerUsage(
+        client,
+        'user-1',
+        'facebook',
+        key,
+        'destination-queue',
+        null,
+        NOW
+      );
+      expect(result.alreadyUsed).toBe(false);
+      usedCounts.push(result.usedCount);
+    }
+    expect(usedCounts).toEqual([1, 2, 3]);
+    expect(tables['subscription_usage']).toHaveLength(3);
+    // Gate plus three registers paid for ONE entitlement read.
+    // (The registers' pre-insert re-checks are count queries,
+    // not entitlement reads.)
+    expect(countPeriodSelects(queryLog)).toBe(1);
+    // At cap now: a fourth, different destination is refused by
+    // the register's fresh-count re-check, not by the stale
+    // cached gate read (which still says usage 0).
+    await expect(
+      registerUsage(client, 'user-1', 'facebook', 'page-4', 'destination-queue', null, NOW)
+    ).rejects.toMatchObject({ code: 'SUBSCRIPTION_CAP_REACHED' });
+    expect(tables['subscription_usage']).toHaveLength(3);
+  });
+
+  it('a period created in-request is visible to a post-write raw read and NOT to a cached read taken before the write', async () => {
+    const { client, tables } = makeClient();
+    const before = await getCachedEntitlement(client, 'user-1');
+    expect(before.plan).toBe('free');
+
+    // The write: a period lands after the cached read.
+    seedPaidPeriod(tables);
+    const cachedAfter = await getCachedEntitlement(client, 'user-1');
+    expect(cachedAfter.plan).toBe('free');
+    expect(cachedAfter).toBe(before);
+    // The raw read sees the write — this is the read any
+    // post-write code must use (the hard rule).
+    const rawAfter = await getEntitlement(client, 'user-1');
+    expect(rawAfter.plan).toBe('paid');
+    expect(rawAfter.period?.userId).toBe('user-1');
+  });
+
+  it('two users do not share a cached read; the same user does', async () => {
+    const { client, tables, queryLog } = makeClient();
+    seedPaidPeriod(tables, 'user-1');
+    seedPaidPeriod(tables, 'user-2');
+    const first = await getCachedEntitlement(client, 'user-1');
+    const again = await getCachedEntitlement(client, 'user-1');
+    const other = await getCachedEntitlement(client, 'user-2');
+    expect(again).toBe(first);
+    expect(other.period?.userId).toBe('user-2');
+    expect(first.period?.userId).toBe('user-1');
+    expect(countPeriodSelects(queryLog)).toBe(2);
+  });
+
+  it('a due scheduled downgrade activates inside the cached read and the answer reflects it', async () => {
+    const { client, tables } = makeClient();
+    tables['subscription_payments'].push({
+      id: 'payment-1',
+      user_id: 'user-1',
+      method: 'bank',
+      bank_method: 'easypaisa',
+      status: 'approved',
+      facebook_count: 2,
+      instagram_count: 0,
+      threads_count: 0,
+      x_count: 0,
+      tiktok_count: 0,
+      youtube_count: 0,
+      amount_pkr: 140,
+      is_upgrade: false,
+      is_downgrade: true,
+      scheduled_starts_at: new Date(NOW.getTime() - DAY).toISOString(),
+      period_id: null,
+      approved_at: new Date(NOW.getTime() - 2 * DAY).toISOString(),
+      created_at: new Date(NOW.getTime() - 2 * DAY).toISOString(),
+    });
+    const entitlement = await getCachedEntitlement(client, 'user-1');
+    expect(entitlement.plan).toBe('paid');
+    expect(entitlement.period?.counts.facebook).toBe(2);
+    expect(tables['subscription_periods']).toHaveLength(1);
+    expect(tables['subscription_periods'][0]?.['payment_id']).toBe('payment-1');
+  });
+
+  it('a competing usage row landing after the cached gate read makes the register refuse, with no row written', async () => {
+    const { client, tables } = makeClient();
+    seedPaidPeriod(tables, 'user-1', 1);
+    seedDestination(tables, 'dest-1', 'active');
+
+    // The cached gate read, taken while usage is 0 of 1.
+    await assertFeatureAddWithinCap(client, 'user-1', 'facebook', ['page-1'], NOW);
+
+    // The competitor: another request registers a different
+    // destination after the gate read and before this register.
+    seedUsage(tables, 'user-1', 'facebook', 'page-0', 'destination-queue', 'dest-0');
+    await expect(
+      registerUsage(client, 'user-1', 'facebook', 'page-1', 'destination-queue', 'dest-1', NOW)
+    ).rejects.toMatchObject({ code: 'SUBSCRIPTION_CAP_REACHED' });
+    expect(tables['subscription_usage']).toHaveLength(1);
+    expect(tables['subscription_usage'][0]?.['destination_key']).toBe('page-0');
   });
 });

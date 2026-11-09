@@ -4,7 +4,7 @@ import { authenticateTenantRoute } from '@/lib/route-auth';
 import { logServerError } from '@/lib/server-analytics';
 import { readJsonBody } from '@/lib/request-body';
 import {
-  getEntitlement,
+  getCachedEntitlement,
   isLegacyUncappedUsageFeature,
   registerUsage,
   SubscriptionGateError,
@@ -62,9 +62,10 @@ export async function POST(
   }
 
   try {
-    // R3: the entitlement is read once here and shared with the
-    // register — the register no longer pays for its own full
-    // read. R4: the response is built from the entitlement the
+    // R3 + C1: the entitlement is read once here — the
+    // request-cached read — and shared with the register below,
+    // so the register no longer pays for its own full read.
+    // R4: the response is built from the entitlement the
     // register returns instead of re-reading getActivePeriod +
     // getUsageCounts after the insert. The returned entitlement
     // is the PRE-insert read, so the registered platform's count
@@ -74,7 +75,7 @@ export async function POST(
     // already-used path), so it is the adjustment. A bare +1
     // here would overstate by one when the inserted row links to
     // a disconnected destination, whose row does not count.
-    const entitlement = await getEntitlement(client, session.userId);
+    const entitlement = await getCachedEntitlement(client, session.userId);
     const result = await registerUsage(
       client,
       session.userId,

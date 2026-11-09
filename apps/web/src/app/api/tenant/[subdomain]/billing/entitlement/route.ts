@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { authenticateTenantRoute } from '@/lib/route-auth';
 import { logServerError } from '@/lib/server-analytics';
-import { getEntitlement, SubscriptionGateError } from '@/lib/billing/entitlement';
+import { getCachedEntitlement, SubscriptionGateError } from '@/lib/billing/entitlement';
 import {
   getBillingAdminClient,
   mapEntitlementToResponse,
@@ -41,7 +41,9 @@ export async function GET(
   }
 
   try {
-    const entitlement = await getEntitlement(client, session.userId);
+    // Plan-check C1: this read is the request-cached one, so a
+    // second read for the same user in this request shares it.
+    const entitlement = await getCachedEntitlement(client, session.userId);
     return NextResponse.json(mapEntitlementToResponse(entitlement));
   } catch (err) {
     if (err instanceof SubscriptionGateError) {

@@ -25,7 +25,7 @@ import {
 } from '@/lib/server/adu';
 import {
   assertFeatureAddWithinCap,
-  getEntitlement,
+  getCachedEntitlement,
   type Entitlement,
 } from '@/lib/billing/entitlement';
 import { logServerError } from '@/lib/server-analytics';
@@ -417,7 +417,8 @@ export async function POST(
     // item's register below — the only writes between the two reads
     // are the config rows themselves, so the shared answer is
     // exact. Undefined when the gate is skipped (admin / no
-    // client); each register re-reads on its own then, as before.
+    // client); each register reads the request-cached read on its
+    // own then, so the registers still share one read.
     let sharedEntitlement: Entitlement | undefined;
     if (resolved.context.role !== 'admin') {
       const billingClient = getBillingAdminClient();
@@ -437,7 +438,7 @@ export async function POST(
             'facebook',
             resolvedItems.map((item) => item.destinationId)
           );
-          sharedEntitlement = await getEntitlement(billingClient, resolved.context.userId);
+          sharedEntitlement = await getCachedEntitlement(billingClient, resolved.context.userId);
           await assertFeatureAddWithinCap(
             billingClient,
             resolved.context.userId,
@@ -535,7 +536,7 @@ export async function POST(
           'facebook',
           [destinationId]
         );
-        sharedEntitlement = await getEntitlement(billingClient, resolved.context.userId);
+        sharedEntitlement = await getCachedEntitlement(billingClient, resolved.context.userId);
         await assertFeatureAddWithinCap(
           billingClient,
           resolved.context.userId,

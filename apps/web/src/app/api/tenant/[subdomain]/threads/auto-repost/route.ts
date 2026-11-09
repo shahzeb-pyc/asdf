@@ -18,7 +18,7 @@ import {
 import { resolveTenantWorkspaceId } from '@/lib/server/workspace-resolver';
 import {
   assertFeatureAddWithinCap,
-  getEntitlement,
+  getCachedEntitlement,
   registerUsage,
   SubscriptionGateError,
   type Entitlement,
@@ -491,7 +491,9 @@ export async function handleCreateThreadsMirror(
     // register at step 5b — the only write between the two reads
     // is the mirror row itself, so the shared answer is exact.
     // Undefined when the gate is skipped (admin / no client);
-    // registerUsage re-reads on its own then, as before.
+    // registerUsage reads the request-cached read on its own
+    // then, so it still shares the gate's answer when the gate
+    // ran.
     let sharedEntitlement: Entitlement | undefined;
     if (session.role !== 'admin') {
       const billingClient = getBillingAdminClient();
@@ -502,7 +504,7 @@ export async function handleCreateThreadsMirror(
       }
       if (billingClient) {
         try {
-          sharedEntitlement = await getEntitlement(billingClient, session.userId);
+          sharedEntitlement = await getCachedEntitlement(billingClient, session.userId);
           await assertFeatureAddWithinCap(
             billingClient,
             session.userId,

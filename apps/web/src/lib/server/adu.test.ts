@@ -8,6 +8,7 @@ import {
 } from './adu';
 import {
   assertFeatureAddWithinCap,
+  getEntitlement,
   getUsageCount,
   SubscriptionGateError,
 } from '@/lib/billing/entitlement';
@@ -314,11 +315,23 @@ describe('Threads ADU cap registration (plan-check B1)', () => {
 
     // After registering, the SAME key is already used (newCount 0,
     // so re-adding it passes), while a different key is now at cap.
-    const same = await assertFeatureAddWithinCap(client, 'user-1', 'threads', keys);
+    // Plan-check C1: the register above wrote a usage row, so
+    // these gates must read raw (the hard rule) and pass the
+    // result in — the gates' default read is the request-cached
+    // one and would still say usage 0.
+    const fresh = await getEntitlement(client, 'user-1');
+    const same = await assertFeatureAddWithinCap(
+      client,
+      'user-1',
+      'threads',
+      keys,
+      undefined,
+      fresh
+    );
     expect(same).toMatchObject({ allowed: 1, used: 1, newCount: 0 });
     const otherKeys = await aduDestinationKeysForCap(client, 'ws-1', 'threads', ['dest-2']);
     await expect(
-      assertFeatureAddWithinCap(client, 'user-1', 'threads', otherKeys)
+      assertFeatureAddWithinCap(client, 'user-1', 'threads', otherKeys, undefined, fresh)
     ).rejects.toMatchObject({ code: 'SUBSCRIPTION_CAP_REACHED' });
   });
 
