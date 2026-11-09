@@ -38,7 +38,15 @@ jobs:
         run: pnpm turbo run test -- --coverage
 
       - name: ADU scraper tests (standalone VPS service, outside the pnpm workspace)
-        run: node --test apps/adu-scraper/discovery/*.test.js
+        # The scraper is excluded from the pnpm workspace, so the root
+        # install does not provide its deps — and the scrapers tests
+        # (spec 158) import patchright/dotenv, which the dep-free
+        # discovery tests never needed. Install them here (exact pins
+        # in apps/adu-scraper/package.json; no lockfile, no scripts,
+        # no browser downloads) and run both suites.
+        run: |
+          npm install --prefix apps/adu-scraper --no-save --no-package-lock --ignore-scripts
+          node --test apps/adu-scraper/discovery/*.test.js apps/adu-scraper/scrapers/*.test.js
 
       - name: ADU downloader tests (standalone VPS service, pure functions only)
         run: |
