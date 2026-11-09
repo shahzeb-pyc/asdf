@@ -76,7 +76,6 @@ export function evaluateGraphApiError(
 ): GraphApiErrorEvaluation | null {
   const lowerMessage = (message ?? '').toLowerCase();
   if (code === 190 || code === 102) {
-  if (code === 190 || code === 102) {
     if (errorSubcode === 458) {
       return {
         accountStatus: 'expired',
