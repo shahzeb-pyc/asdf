@@ -5,13 +5,17 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  destinationFbStatusMarker,
   FB_PAGE_STATUS_FILTER_TO_WIRE,
   FB_PAGE_STATUS_LABELS,
   getFacebookPageStatusAlert,
+  getMirrorDisplayStatusLabel,
   isFacebookPageErrorStatus,
+  MIRROR_FB_STATUS_FILTER_TO_VALUE,
   MIRROR_FB_STATUS_LABELS,
   mirrorFbStatusFromPageStatus,
   pageStatusFromMirrorFbStatus,
+  resolveMirrorDisplayStatus,
 } from './facebook-page-status.js';
 
 describe('FB_PAGE_STATUS_LABELS — spec 155', () => {
@@ -148,5 +152,133 @@ describe('mirror fb_status mapping — spec 155', () => {
 
   it('mirrors label checkpoint as Verification required (no checkpoint name there)', () => {
     expect(MIRROR_FB_STATUS_LABELS.checkpoint).toBe('Verification required');
+  });
+
+  it('destinationFbStatusMarker: detail statuses set, active/rate-limited clear', () => {
+    expect(destinationFbStatusMarker('page_checkpoint')).toBe('checkpoint');
+    expect(destinationFbStatusMarker('missing_permission')).toBe('missing_permission');
+    expect(destinationFbStatusMarker('account_suspended')).toBe('account_suspended');
+    expect(destinationFbStatusMarker('active')).toBeNull();
+    expect(destinationFbStatusMarker('fb_rate_limited')).toBeNull();
+    expect(destinationFbStatusMarker('paused')).toBeNull();
+    expect(destinationFbStatusMarker(undefined)).toBeNull();
+  });
+});
+
+describe('getFacebookPageStatusAlert mirrors wording — spec 155', () => {
+  it('mirrors say "Resume posting" where Pages say "turn posting back on"', () => {
+    for (const status of [
+      'page_checkpoint',
+      'page_not_accessible',
+      'missing_page_access',
+      'missing_permission',
+      'check_developer_app',
+      'account_suspended',
+      '2fa_required_on_BM',
+    ] as const) {
+      const alert = getFacebookPageStatusAlert(status, 'mirrors');
+      expect(alert).not.toBeNull();
+      expect(alert?.description).toContain('Resume posting');
+      expect(alert?.description).not.toContain('turn posting back on');
+      expect(alert?.description).not.toContain('toggle');
+    }
+  });
+
+  it('Pages wording is unchanged by default', () => {
+    const alert = getFacebookPageStatusAlert('missing_permission');
+    expect(alert?.description).toContain('turn posting back on');
+  });
+
+  it('the mirrors banner keeps the same title, variant and action as Pages', () => {
+    expect(getFacebookPageStatusAlert('invalid_token', 'mirrors')?.action).toBe('reconnect');
+    expect(getFacebookPageStatusAlert('page_checkpoint', 'mirrors')?.action).toBe(
+      'mark_verified'
+    );
+    expect(getFacebookPageStatusAlert('fb_rate_limited', 'mirrors')?.action).toBeNull();
+    expect(getFacebookPageStatusAlert('active', 'mirrors')).toBeNull();
+  });
+});
+
+describe('resolveMirrorDisplayStatus — spec 155', () => {
+  it('active and paused pass through', () => {
+    expect(resolveMirrorDisplayStatus({ status: 'active' })).toBe('active');
+    expect(resolveMirrorDisplayStatus({ status: 'paused' })).toBe('paused');
+  });
+
+  it('error + own fb_status shows that status', () => {
+    expect(
+      resolveMirrorDisplayStatus({ status: 'error', fbStatus: 'missing_permission' })
+    ).toBe('missing_permission');
+    expect(resolveMirrorDisplayStatus({ status: 'error', fbStatus: 'checkpoint' })).toBe(
+      'checkpoint'
+    );
+  });
+
+  it('error + no own detail falls back to the target destination detail', () => {
+    expect(
+      resolveMirrorDisplayStatus({
+        status: 'error',
+        fbStatus: null,
+        targetFbStatus: 'account_suspended',
+      })
+    ).toBe('account_suspended');
+  });
+
+  it('error + neither detail is generic Error; own detail beats the target', () => {
+    expect(resolveMirrorDisplayStatus({ status: 'error' })).toBe('error');
+    expect(
+      resolveMirrorDisplayStatus({
+        status: 'error',
+        fbStatus: 'invalid_token',
+        targetFbStatus: 'missing_permission',
+      })
+    ).toBe('invalid_token');
+  });
+
+  it('a rate-limited mirror with a stale anchor reads as Active', () => {
+    const now = new Date('2026-11-09T16:00:00.000Z');
+    expect(
+      resolveMirrorDisplayStatus({
+        status: 'error',
+        fbStatus: 'fb_rate_limited',
+        fbRateLimitedAt: '2026-11-05T15:59:00.000Z',
+        now,
+      })
+    ).toBe('active');
+    // Fresh anchor: still rate-limited.
+    expect(
+      resolveMirrorDisplayStatus({
+        status: 'error',
+        fbStatus: 'fb_rate_limited',
+        fbRateLimitedAt: '2026-11-08T16:00:00.000Z',
+        now,
+      })
+    ).toBe('fb_rate_limited');
+  });
+
+  it('an unknown stored status reads as Error, never healthy', () => {
+    expect(resolveMirrorDisplayStatus({ status: 'bogus' })).toBe('error');
+  });
+
+  it('display labels: Active kept, checkpoint is Verification required, error is Error', () => {
+    expect(getMirrorDisplayStatusLabel('active')).toBe('Active');
+    expect(getMirrorDisplayStatusLabel('checkpoint')).toBe('Verification required');
+    expect(getMirrorDisplayStatusLabel('error')).toBe('Error');
+    expect(getMirrorDisplayStatusLabel('fb_rate_limited')).toBe('Rate limited');
+  });
+});
+
+describe('MIRROR_FB_STATUS_FILTER_TO_VALUE — spec 155', () => {
+  it('maps every filter label to its ?fbStatus= value', () => {
+    expect(MIRROR_FB_STATUS_FILTER_TO_VALUE['All Statuses']).toBeNull();
+    expect(MIRROR_FB_STATUS_FILTER_TO_VALUE.Active).toBe('active');
+    expect(MIRROR_FB_STATUS_FILTER_TO_VALUE.Paused).toBe('paused');
+    expect(MIRROR_FB_STATUS_FILTER_TO_VALUE.Error).toBe('error');
+    expect(MIRROR_FB_STATUS_FILTER_TO_VALUE['Verification Req.']).toBe('checkpoint');
+    expect(MIRROR_FB_STATUS_FILTER_TO_VALUE['Rate Limited']).toBe('fb_rate_limited');
+    expect(MIRROR_FB_STATUS_FILTER_TO_VALUE['Invalid Token']).toBe('invalid_token');
+    expect(MIRROR_FB_STATUS_FILTER_TO_VALUE['Missing Permission']).toBe(
+      'missing_permission'
+    );
   });
 });

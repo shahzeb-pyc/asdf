@@ -13,6 +13,7 @@ import {
   InternalError,
   MIRROR_FACEBOOK_RESTRICTED_MESSAGE,
 } from '@fbuploadpro/contracts';
+import { FacebookGraphError } from '../fb-client.js';
 import {
   buildMirrorTickDeps,
   MIRROR_JOB_STALE_AFTER_SECONDS,
@@ -33,6 +34,11 @@ function mirror(overrides: Partial<MirrorTickMirror> = {}): MirrorTickMirror {
     targetFound: true,
     targetToken: 'page-token',
     status: 'active',
+    // Spec 155: no Facebook detail, target active.
+    fbStatus: null,
+    fbRateLimitedAt: null,
+    targetStatus: 'active',
+    targetRateLimitedAt: null,
     lastCheckedAt: '2026-10-29T11:30:00.000Z',
     catchUpPending: false,
     lastPostedSourceId: null,
@@ -60,6 +66,9 @@ interface FakeState {
   published: Array<Parameters<MirrorTickDeps['publishReel']>[0]>;
   claimReturnsNullFor: Set<string>;
   publishFailsFor: Set<string>;
+  /** Spec 155: the exact error publishReel throws (a Graph error). */
+  publishError?: unknown;
+  fetchFeedCalls: number;
 }
 
 function fakeDeps(state: FakeState, feed: unknown[]): MirrorTickDeps {
@@ -76,14 +85,17 @@ function fakeDeps(state: FakeState, feed: unknown[]): MirrorTickDeps {
     updateMirror: async (id, patch) => {
       state.mirrorUpdates.push({ id, patch });
     },
-    fetchFeed: async () => feed as never,
+    fetchFeed: async () => {
+      state.fetchFeedCalls += 1;
+      return feed as never;
+    },
     resolveVideo: async ({ videoId }) => ({
       playUrl: `https://example.com/${videoId}.mp4`,
       title: `Caption for ${videoId}`,
     }),
     publishReel: async (params) => {
       if (state.publishFailsFor.has(params.videoUrl)) {
-        throw new InternalError('Graph exploded');
+        throw state.publishError ?? new InternalError('Graph exploded');
       }
       state.published.push(params);
       return `fb_${params.videoUrl}`;
@@ -100,6 +112,7 @@ function newState(): FakeState {
     published: [],
     claimReturnsNullFor: new Set(),
     publishFailsFor: new Set(),
+    fetchFeedCalls: 0,
   };
 }
 
@@ -538,5 +551,170 @@ describe('buildMirrorTickDeps resolve proxy (spec 150)', () => {
     expect('fetch' in params).toBe(false);
     expect('fetchFn' in params).toBe(false);
     expect(Object.values(params).every((value) => typeof value !== 'function')).toBe(true);
+  });
+});
+
+describe('processMirrorCheck Facebook error detail — spec 155', () => {
+  const NOW = new Date('2026-10-29T12:00:00.000Z');
+
+  function graphError(message: string, code: number, subcode?: number) {
+    return new FacebookGraphError(message, {
+      code,
+      ...(subcode !== undefined ? { error_subcode: subcode } : {}),
+      type: 'OAuthException',
+    });
+  }
+
+  /** The final stamp is the last mirror update. */
+  function finalStamp(state: FakeState) {
+    const last = state.mirrorUpdates[state.mirrorUpdates.length - 1];
+    expect(last).toBeDefined();
+    return last!.patch;
+  }
+
+  it('stamps the mapped fb_status on a Facebook publish failure', async () => {
+    const state = newState();
+    state.publishFailsFor.add('https://example.com/v1.mp4');
+    state.publishError = graphError('Missing role on the page.', 190, 492);
+    const result = await processMirrorCheck(
+      fakeDeps(state, [reel('v1', 1761720000)]),
+      mirror(),
+    );
+    expect(result.failed).toBe(1);
+    const stamp = finalStamp(state);
+    expect(stamp.status).toBe('error');
+    expect(stamp.fbStatus).toBe('missing_page_access');
+    expect(stamp.fbRateLimitedAt).toBeNull();
+    // The post row is still recorded failed with the raw message.
+    expect(state.postUpdates[0]?.patch.status).toBe('failed');
+  });
+
+  it('stamps the 3-day anchor on a rate-limited publish failure', async () => {
+    const state = newState();
+    state.publishFailsFor.add('https://example.com/v1.mp4');
+    state.publishError = graphError('Slow down.', 368, 1390008);
+    await processMirrorCheck(fakeDeps(state, [reel('v1', 1761720000)]), mirror());
+    const stamp = finalStamp(state);
+    expect(stamp.status).toBe('error');
+    expect(stamp.fbStatus).toBe('fb_rate_limited');
+    expect(stamp.fbRateLimitedAt).toBe(NOW.toISOString());
+  });
+
+  it('clears a stale fb_status when the new failure is transient/unmapped', async () => {
+    const state = newState();
+    state.publishFailsFor.add('https://example.com/v1.mp4');
+    state.publishError = graphError('Temporary failure.', 2);
+    await processMirrorCheck(
+      fakeDeps(state, [reel('v1', 1761720000)]),
+      mirror({ fbStatus: 'missing_permission', fbRateLimitedAt: null }),
+    );
+    const stamp = finalStamp(state);
+    expect(stamp.status).toBe('error');
+    expect(stamp.fbStatus).toBeNull();
+    expect(stamp.fbRateLimitedAt).toBeNull();
+  });
+
+  it('a clean check clears the fb_status and the anchor', async () => {
+    const state = newState();
+    await processMirrorCheck(
+      fakeDeps(state, []),
+      mirror({
+        status: 'error',
+        fbStatus: 'fb_rate_limited',
+        fbRateLimitedAt: '2026-10-29T11:00:00.000Z',
+      }),
+    );
+    const stamp = finalStamp(state);
+    expect(stamp.status).toBe('active');
+    expect(stamp.fbStatus).toBeNull();
+    expect(stamp.fbRateLimitedAt).toBeNull();
+  });
+
+  it('skips the check when the mirror is in error and the target is down', async () => {
+    const state = newState();
+    const result = await processMirrorCheck(
+      fakeDeps(state, [reel('v1', 1761720000)]),
+      mirror({ status: 'error', fbStatus: 'missing_permission', targetStatus: 'error' }),
+    );
+    expect(result).toEqual({ posted: 0, skipped: 0, failed: 0 });
+    expect(state.fetchFeedCalls).toBe(0);
+    expect(state.published).toEqual([]);
+    expect(state.claimed).toEqual([]);
+    // Only nextCheckAt advances — no feed fetch, no publish
+    // attempts, no failed rows, and the stored detail is untouched.
+    expect(state.mirrorUpdates).toHaveLength(1);
+    expect(state.mirrorUpdates[0]?.patch).toEqual({
+      nextCheckAt: new Date(NOW.getTime() + 60 * 60 * 1000).toISOString(),
+    });
+  });
+
+  it('skips while the target is rate-limited with a fresh anchor', async () => {
+    const state = newState();
+    await processMirrorCheck(
+      fakeDeps(state, [reel('v1', 1761720000)]),
+      mirror({
+        status: 'error',
+        fbStatus: 'fb_rate_limited',
+        fbRateLimitedAt: '2026-10-29T11:00:00.000Z',
+        targetStatus: 'rate_limited',
+        targetRateLimitedAt: '2026-10-29T11:00:00.000Z',
+      }),
+    );
+    expect(state.fetchFeedCalls).toBe(0);
+    expect(state.mirrorUpdates).toHaveLength(1);
+  });
+
+  it('resumes when the rate-limit anchor is stale, then clears on a clean check', async () => {
+    const state = newState();
+    await processMirrorCheck(
+      fakeDeps(state, []),
+      mirror({
+        status: 'error',
+        fbStatus: 'fb_rate_limited',
+        fbRateLimitedAt: '2026-10-25T12:00:00.000Z',
+        targetStatus: 'rate_limited',
+        targetRateLimitedAt: '2026-10-25T12:00:00.000Z',
+      }),
+    );
+    expect(state.fetchFeedCalls).toBe(1);
+    const stamp = finalStamp(state);
+    expect(stamp.status).toBe('active');
+    expect(stamp.fbStatus).toBeNull();
+  });
+
+  it('an errored mirror with an ACTIVE target still checks (hourly retry)', async () => {
+    const state = newState();
+    await processMirrorCheck(
+      fakeDeps(state, []),
+      mirror({ status: 'error', fbStatus: 'missing_permission', targetStatus: 'active' }),
+    );
+    expect(state.fetchFeedCalls).toBe(1);
+  });
+
+  it('the skip is Facebook-only: an Instagram mirror in error still checks', async () => {
+    const state = newState();
+    await processMirrorCheck(
+      fakeDeps(state, []),
+      mirror({
+        targetPlatform: 'instagram',
+        status: 'error',
+        targetStatus: 'error',
+      }),
+    );
+    expect(state.fetchFeedCalls).toBe(1);
+  });
+
+  it('an Instagram publish failure never stamps a Facebook detail', async () => {
+    const state = newState();
+    state.publishFailsFor.add('https://example.com/v1.mp4');
+    state.publishError = graphError('Missing role on the page.', 190, 492);
+    await processMirrorCheck(
+      fakeDeps(state, [reel('v1', 1761720000)]),
+      mirror({ targetPlatform: 'instagram' }),
+    );
+    const stamp = finalStamp(state);
+    expect(stamp.status).toBe('error');
+    expect('fbStatus' in stamp).toBe(false);
+    expect('fbRateLimitedAt' in stamp).toBe(false);
   });
 });
