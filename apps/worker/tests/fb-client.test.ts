@@ -409,6 +409,44 @@ describe('FacebookPublishClient', () => {
       expect(authErr.isAuthError).toBe(true);
     });
 
+    it('isAuthError is exactly the classifier requiresReauth decision (spec 155 item 5)', () => {
+      // Token-dead: generic 190, 190/458, 190/460, 190/463, and 102.
+      for (const [code, subcode] of [
+        [190, undefined],
+        [190, 458],
+        [190, 460],
+        [190, 463],
+        [102, undefined],
+      ] as Array<[number, number | undefined]>) {
+        const err = new FacebookGraphError('Token dead', {
+          message: 'Token dead',
+          code,
+          ...(subcode !== undefined ? { error_subcode: subcode } : {}),
+        });
+        expect(err.isAuthError).toBe(true);
+      }
+      // NOT token-dead: 190/492 (missing page role), 190/459 + 190/464
+      // (checkpoint), 190/2069031 (developer app), 10 / 200-299
+      // (missing permission / developer app). These used to report
+      // auth and were then keyed kind 'auth' by the publisher.
+      for (const [code, subcode] of [
+        [190, 492],
+        [190, 459],
+        [190, 464],
+        [190, 2069031],
+        [190, 2069032],
+        [10, undefined],
+        [250, undefined],
+      ] as Array<[number, number | undefined]>) {
+        const err = new FacebookGraphError('Not a dead token', {
+          message: 'Not a dead token',
+          code,
+          ...(subcode !== undefined ? { error_subcode: subcode } : {}),
+        });
+        expect(err.isAuthError).toBe(false);
+      }
+    });
+
     it('identifies content codes 382 and 1363040 as permanent client errors', () => {
       for (const code of [382, 1363040]) {
         const err = new FacebookGraphError('Content rejected', {

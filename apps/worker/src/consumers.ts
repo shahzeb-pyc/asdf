@@ -423,12 +423,16 @@ async function callSettleRpc(
  *     classification says the account is dead (Instagram, Threads,
  *     TikTok, YouTube on `kind === 'auth'`; X on both auth outcomes;
  *     Facebook only when `evaluateGraphApiError` says `expired`). A
- *     kind-based fallback re-expired the account for Facebook
+ *     kind-based fallback used to re-expire the account for Facebook
  *     190/459, 190/464, 190/492 and 190/2069032 — codes the classifier
- *     deliberately keeps active — because those outcomes arrive with
- *     `kind === 'auth'` (`FacebookGraphError.isAuthError` is true for
- *     ANY code 190) and no explicit account status. Settled by the
- *     RPC, never by a consumer-side refresh attempt.
+ *     deliberately keeps active — because those outcomes used to
+ *     arrive with `kind === 'auth'` (`FacebookGraphError.isAuthError`
+ *     was true for ANY code 190). Since spec 155 item 5,
+ *     `isAuthError` is exactly the classifier's `requiresReauth`, so
+ *     those codes now arrive with `kind === 'permanent'` and no
+ *     explicit account status, and the no-fallback rule is what keeps
+ *     those accounts active. Settled by the RPC, never by a
+ *     consumer-side refresh attempt.
  *
  * `p_retry_count` convention (matching the RPC, which derives the log's
  * attempt number as `p_retry_count + 1` and stores `p_retry_count` as

@@ -456,11 +456,17 @@ const ERROR_CASES: ErrorCase[] = [
   // 190/492's evaluation keeps the account active (the token is
   // fine — the user lost their role on the Page), so the queue no
   // longer expires the account for it: account expiry follows the
-  // classifier only (ADU statuses build, B0).
-  { name: '190/492 page role', code: 190, subcode: 492, kind: 'auth', status: 'failed', targetDestinationStatus: 'error' },
+  // classifier only (ADU statuses build, B0). Since the spec 155
+  // SEND BACK (item 5) `isAuthError` is exactly the classifier's
+  // `requiresReauth`, this now classifies 'permanent' — fail fast,
+  // not a token problem — instead of 'auth'.
+  { name: '190/492 page role', code: 190, subcode: 492, kind: 'permanent', status: 'failed', targetDestinationStatus: 'error' },
   { name: '102 session invalid', code: 102, kind: 'auth', status: 'failed', targetDestinationStatus: 'error', targetAccountStatus: 'expired' },
-  { name: '10 permission denied', code: 10, kind: 'auth', status: 'failed', targetDestinationStatus: 'error' },
-  { name: '250 (2xx) authorization denied', code: 250, kind: 'auth', status: 'failed', targetDestinationStatus: 'error' },
+  // 10 / 200-299 are permission errors, not dead tokens (spec 155,
+  // ADU table): the account stays active and the outcome is
+  // 'permanent', same as 190/492 above.
+  { name: '10 permission denied', code: 10, kind: 'permanent', status: 'failed', targetDestinationStatus: 'error' },
+  { name: '250 (2xx) authorization denied', code: 250, kind: 'permanent', status: 'failed', targetDestinationStatus: 'error' },
   // Permanent policy / client.
   {
     name: '368/4854002 checkpoint',
@@ -634,8 +640,8 @@ describe('FacebookPublisher — mapError (pure, total)', () => {
     const cases: Array<[unknown, string, string, string | undefined]> = [
       [new FacebookGraphError('m', { message: 'm', code: 190 }), 'auth', '190', undefined],
       [new FacebookGraphError('m', { message: 'm', code: 102, error_subcode: 460 }), 'auth', '102', '460'],
-      [new FacebookGraphError('m', { message: 'm', code: 10 }), 'auth', '10', undefined],
-      [new FacebookGraphError('m', { message: 'm', code: 299 }), 'auth', '299', undefined],
+      [new FacebookGraphError('m', { message: 'm', code: 10 }), 'permanent', '10', undefined],
+      [new FacebookGraphError('m', { message: 'm', code: 299 }), 'permanent', '299', undefined],
       [new FacebookGraphError('m', { message: 'm', code: 368, error_subcode: 4854002 }), 'permanent', '368', '4854002'],
       [new FacebookGraphError('m', { message: 'm', code: 368, error_subcode: 1404082 }), 'permanent', '368', '1404082'],
       [new FacebookGraphError('m', { message: 'm', code: 368, error_subcode: 1404102 }), 'permanent', '368', '1404102'],
