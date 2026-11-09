@@ -141,7 +141,7 @@ const CASES: Array<{
 ];
 
 function fakeSqlDb(current: { status: string; metadata: Record<string, unknown> }) {
-  const query = vi.fn(async (sql: string) => {
+  const query = vi.fn(async (sql: string): Promise<unknown[]> => {
     if (sql.includes('SELECT status, metadata, updated_at')) {
       return [{ status: current.status, metadata: current.metadata, updated_at: new Date().toISOString() }];
     }

@@ -76,7 +76,7 @@ const MIRROR_ROW = {
 describe('loadMirror (spec 155 B1)', () => {
   it('selects fb_status and fb_rate_limited_at in the legacy SQL path', async () => {
     mocks.isLegacyClient.mockReturnValue(true);
-    const query = vi.fn(async () => [MIRROR_ROW]);
+    const query = vi.fn(async (sql: string, _params: unknown[]) => [MIRROR_ROW]);
     const mirror = await loadMirror({ query } as never, WORKSPACE_ID, MIRROR_ID);
     expect(query).toHaveBeenCalledTimes(1);
     const sql = String(query.mock.calls[0]?.[0]);

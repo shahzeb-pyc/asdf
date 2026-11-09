@@ -597,7 +597,7 @@ describe('Publish consumers (spec 121)', () => {
       status: 'failed',
       targetDestinationStatus: 'error',
       targetDestinationFbStatus: 'account_suspended',
-      error: { kind: 'permanent', code: '368', subcode: 1404112, message: 'account suspended' },
+      error: { kind: 'permanent', code: '368', subcode: '1404112', message: 'account suspended' },
     }));
     const message = fakeMessage({ itemId: item.id, platform: 'facebook', lane: 'publish-fast' });
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
