@@ -9,6 +9,7 @@ fallback test fails if it inherits any of them.
 
 import json
 import os
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -78,12 +79,84 @@ def _fake_run_command_success(monkeypatch):
     return calls
 
 
+def _install_api_opener(monkeypatch, items):
+    """Canned urllib opener for the REAL API client: items are
+    (payload, headers) tuples or exceptions raised from open(). One
+    opener instance serves every build_opener() call, so a submit
+    followed by a poll consumes the items in order."""
+
+    class _Response:
+        def __init__(self, payload, headers=None):
+            self._body = json.dumps(payload).encode("utf-8")
+            self.headers = headers or {}
+
+        def read(self):
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    class _Opener:
+        def __init__(self, canned):
+            self._canned = list(canned)
+
+        def open(self, request, timeout=None):
+            item = self._canned.pop(0)
+            if isinstance(item, Exception):
+                raise item
+            payload, headers = item
+            return _Response(payload, headers)
+
+    opener = _Opener(items)
+    monkeypatch.setattr("urllib.request.build_opener", lambda *args: opener)
+    return opener
+
+
 def test_api_success_returns_api_file_and_title(monkeypatch, tmp_path):
     _fake_api_success(monkeypatch)
     path, caption = download_reel_media("youtube", YOUTUBE_URL)
     assert os.path.exists(path)
     assert Path(path).suffix == ".mp4"
     assert caption == "Real Title"
+
+
+def test_redirect_on_submit_falls_back_to_ytdlp(monkeypatch):
+    # A 3xx on submit: _NoRedirect raises RuntimeError, the client
+    # converts it to VideoDownloadApiError, and the orchestration
+    # falls back to direct yt-dlp — the real client runs here, not a
+    # stubbed download_video_via_api.
+    _install_api_opener(monkeypatch, [RuntimeError("redirect refused, verify the endpoint")])
+    calls = _fake_run_command_success(monkeypatch)
+    path, caption = download_reel_media("youtube", YOUTUBE_URL)
+    assert os.path.exists(path)
+    assert caption == "Fallback description"
+    assert len(calls) == 1
+    args, env = calls[0]
+    assert "--proxy" not in args
+    assert "--ignore-config" in args
+    assert isinstance(env, dict)
+    assert not any(var in env for var in PROXY_VARS)
+
+
+def test_redirect_on_poll_falls_back_to_ytdlp(monkeypatch):
+    # A 3xx on the progress poll: same chain as a submit redirect.
+    submit = {
+        "id": "job-123",
+        "progress_url": "https://p.savenow.to/ajax/progress.php?id=job-123",
+        "additional_info": {"title": "Submit Title"},
+    }
+    _install_api_opener(
+        monkeypatch,
+        [(submit, {}), RuntimeError("redirect refused, verify the endpoint")],
+    )
+    calls = _fake_run_command_success(monkeypatch)
+    path, caption = download_reel_media("youtube", YOUTUBE_URL)
+    assert os.path.exists(path)
+    assert caption == "Fallback description"
+    assert len(calls) == 1
 
 
 def test_api_failure_falls_back_to_ytdlp_with_no_proxy(monkeypatch):

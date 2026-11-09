@@ -98,6 +98,15 @@ def _http_get_json(url: str, *, label: str) -> tuple[dict, dict]:
         ) from exc
     except urllib.error.URLError as exc:
         raise VideoDownloadApiError(f"{label} failed: {exc.reason}") from exc
+    except RuntimeError as exc:
+        # _NoRedirect raises RuntimeError on a 3xx so the key (in the
+        # submit query string) can never leak to another host. Any
+        # transport-level RuntimeError here is an API failure and must
+        # route to the yt-dlp fallback — it can never be a config
+        # error: the key check happens in download_video before any
+        # HTTP call, and VideoDownloadApiConfigError is raised nowhere
+        # inside this function.
+        raise VideoDownloadApiError(f"{label} failed: {exc}") from exc
     try:
         return json.loads(body), headers
     except json.JSONDecodeError as exc:

@@ -183,6 +183,33 @@ def test_http_401_surfaces_error_code(monkeypatch, tmp_path):
     assert excinfo.value.error_code == "invalid_api_key"
 
 
+def test_redirect_on_submit_raises_api_error(monkeypatch, tmp_path):
+    # _NoRedirect raises RuntimeError on a 3xx; it must surface as a
+    # VideoDownloadApiError (so the caller falls back to yt-dlp), never
+    # as a config error (which must never fall back).
+    _install_opener(monkeypatch, [RuntimeError("redirect refused, verify the endpoint")])
+    monkeypatch.setattr(vda, "_fetch_file", lambda url, out, **kw: 10)
+    with pytest.raises(VideoDownloadApiError) as excinfo:
+        vda.download_video("https://www.youtube.com/shorts/X", FAKE_KEY, str(tmp_path / "o.mp4"))
+    assert not isinstance(excinfo.value, VideoDownloadApiConfigError)
+    assert "redirect refused" in str(excinfo.value)
+
+
+def test_redirect_on_poll_raises_api_error(monkeypatch, tmp_path):
+    _install_opener(
+        monkeypatch,
+        [
+            (_submit_payload(), {}),
+            RuntimeError("redirect refused, verify the endpoint"),
+        ],
+    )
+    monkeypatch.setattr(vda, "_fetch_file", lambda url, out, **kw: 10)
+    with pytest.raises(VideoDownloadApiError) as excinfo:
+        vda.download_video("https://www.youtube.com/shorts/X", FAKE_KEY, str(tmp_path / "o.mp4"))
+    assert not isinstance(excinfo.value, VideoDownloadApiConfigError)
+    assert "redirect refused" in str(excinfo.value)
+
+
 def test_cost_fields_absent_is_tolerated(monkeypatch, tmp_path):
     payload = _submit_payload()
     del payload["extended_duration"]
