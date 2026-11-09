@@ -4,6 +4,7 @@ import {
   CreateMirrorResponseSchema,
   decryptToken,
   encryptToken,
+  FB_RATE_LIMITED_COOLDOWN_MS,
   fetchAllFacebookPages,
   getTokenEncryptionKey,
   isFacebookAccountRestricted,
@@ -234,9 +235,21 @@ export function targetFbStatusFor(
   destination: DestinationRow | null
 ): MirrorFbStatus | null {
   if (mirror.target_platform !== 'facebook' || !destination) return null;
-  return mirrorFbStatusFromPageStatus(
-    unifiedDestinationStatusToWire(destination.status, destination.metadata)
-  );
+  const wire = unifiedDestinationStatusToWire(destination.status, destination.metadata);
+  // A rate-limited target whose 3-day anchor is stale reads as
+  // active — the Pages read-time rule — so the mirror never shows
+  // a cooldown that has already ended while nothing has flipped
+  // the destination row yet.
+  if (wire === 'fb_rate_limited') {
+    const anchor =
+      typeof destination.metadata?.rate_limited_at === 'string'
+        ? Date.parse(destination.metadata.rate_limited_at)
+        : Number.NaN;
+    if (!Number.isNaN(anchor) && Date.now() - anchor >= FB_RATE_LIMITED_COOLDOWN_MS) {
+      return null;
+    }
+  }
+  return mirrorFbStatusFromPageStatus(wire);
 }
 
 /**

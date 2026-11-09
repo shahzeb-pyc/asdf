@@ -1,19 +1,24 @@
 import {
   decryptToken,
+  evaluateGraphApiError,
+  FB_RATE_LIMITED_COOLDOWN_MS,
   fetchTikwmApiUserPosts,
   InternalError,
   isFacebookAccountRestricted,
+  isPageGoneSignal,
   isTikwmReelItem,
   isTikwmWatermarkedOnlyItem,
+  mirrorFbStatusFromPageStatus,
   MIRROR_FACEBOOK_RESTRICTED_MESSAGE,
   resolveTikwmVideo,
   selectNewReels,
+  type MirrorFbStatus,
   type TikwmApiKeyPauseStore,
   type TikwmVideoItem,
   truncateThreadsCaption,
   validateThreadsText,
 } from '@fbuploadpro/contracts';
-import { FacebookPublishClient } from './fb-client.js';
+import { FacebookGraphError, FacebookPublishClient } from './fb-client.js';
 import { createProxyFetchFn } from './proxy-fetch.js';
 import { InstagramPublishClient } from './instagram-client.js';
 import { publishInstagramMirrorReel } from './instagram-mirror-reel.js';
@@ -177,6 +182,22 @@ export interface MirrorTickMirror {
    *  or carries no token (the tick then errors loudly, never posts). */
   targetToken: string | null;
   status: string;
+  /**
+   * Spec 155: the mirror's own Facebook detail (`mirrors.fb_status`)
+   * and its 3-day auto-resume anchor (`mirrors.fb_rate_limited_at`).
+   * Null when there is no Facebook error. Instagram/Threads mirrors
+   * never carry these.
+   */
+  fbStatus: string | null;
+  fbRateLimitedAt: string | null;
+  /**
+   * Spec 155: the target destination's status + rate-limit anchor
+   * (destinations.status / metadata.rate_limited_at), for the
+   * error-skip rule in processMirrorCheck. Null when the target row
+   * is gone. Instagram/Threads mirrors ignore these.
+   */
+  targetStatus: string | null;
+  targetRateLimitedAt: string | null;
   /** Last successful feed check (setup counts: setup verifies the
    *  feed). Null before any check; the gap rule then does not
    *  apply — only the resume flag can mark such a tick catch-up. */
@@ -218,6 +239,14 @@ export interface MirrorTickDeps {
       lastCheckedAt?: string;
       nextCheckAt?: string;
       lastError?: string | null;
+      /**
+       * Spec 155: the Facebook detail for the mirror
+       * (`mirrors.fb_status`) + its 3-day anchor
+       * (`mirrors.fb_rate_limited_at`). Null clears the column;
+       * undefined leaves it untouched.
+       */
+      fbStatus?: string | null;
+      fbRateLimitedAt?: string | null;
     }
   ) => Promise<void>;
   fetchFeed: (username: string) => Promise<TikwmVideoItem[]>;
@@ -270,6 +299,83 @@ export interface MirrorCheckResult {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Spec 155: is the Facebook target well enough to check? A target
+ * is checkable when it is `active`, or when it is `rate_limited`
+ * with a stale 3-day anchor (the cooldown has ended — the mirror
+ * resumes and clears its own detail on a clean check). Every other
+ * state (error, disconnected, gone) is not checkable.
+ */
+function isFacebookTargetCheckable(mirror: MirrorTickMirror, now: Date): boolean {
+  if (mirror.targetStatus === 'active') return true;
+  if (mirror.targetStatus === 'rate_limited') {
+    const anchor = mirror.targetRateLimitedAt
+      ? Date.parse(mirror.targetRateLimitedAt)
+      : Number.NaN;
+    return (
+      !Number.isNaN(anchor) && now.getTime() - anchor >= FB_RATE_LIMITED_COOLDOWN_MS
+    );
+  }
+  return false;
+}
+
+/**
+ * Spec 155: reads the Graph facts out of any thrown publish error,
+ * defensively — a FacebookGraphError carries them, a plain object
+ * (e.g. a FacebookReelError wrapper) may carry numeric
+ * code/subcode/httpStatus, anything else yields no code.
+ */
+function extractGraphFacts(err: unknown): {
+  code: number | undefined;
+  subcode: number | undefined;
+  message: string;
+  httpStatus: number | undefined;
+} {
+  const message = errorMessage(err);
+  if (err instanceof FacebookGraphError) {
+    return {
+      code: err.code,
+      subcode: err.errorSubcode,
+      message,
+      httpStatus: err.diagnostic?.httpStatus,
+    };
+  }
+  const record = (err ?? {}) as Record<string, unknown>;
+  const numeric = (value: unknown): number | undefined =>
+    typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+  return {
+    code: numeric(record.code),
+    subcode:
+      numeric(record.error_subcode) ??
+      numeric(record.errorSubcode) ??
+      numeric(record.subcode),
+    message,
+    httpStatus: numeric(record.httpStatus),
+  };
+}
+
+/**
+ * Spec 155: maps a Facebook publish failure to the mirror's
+ * Facebook detail, or null when the failure says nothing about
+ * the target's state (transient / unmapped) — the caller clears
+ * the stored detail then, so a stale status never outlives the
+ * failure that produced it.
+ */
+function mapMirrorPublishErrorToFbStatus(err: unknown): MirrorFbStatus | null {
+  const facts = extractGraphFacts(err);
+  const evaluation =
+    facts.code !== undefined
+      ? evaluateGraphApiError(facts.code, facts.subcode, facts.message)
+      : null;
+  if (evaluation !== null) {
+    return mirrorFbStatusFromPageStatus(evaluation.pageStatus);
+  }
+  if (isPageGoneSignal(facts.message, facts.httpStatus)) {
+    return 'page_not_accessible';
+  }
+  return null;
 }
 
 function toIso(createTime: number | undefined): string | null {
@@ -331,10 +437,40 @@ export async function processMirrorCheck(
     }
   }
 
+  // Spec 155: a Facebook mirror in error whose target is not
+  // checkable skips the check entirely — no feed fetch, no publish
+  // attempts, no failed rows. Only nextCheckAt advances, so the
+  // mirror is re-evaluated next hour; when the target is active
+  // again (or its rate-limit anchor goes stale) the next check
+  // proceeds and clears the error. Instagram/Threads mirrors are
+  // untouched by this rule.
+  if (
+    mirror.targetPlatform === 'facebook' &&
+    mirror.status === 'error' &&
+    !isFacebookTargetCheckable(mirror, now)
+  ) {
+    try {
+      await deps.updateMirror(mirror.id, { nextCheckAt });
+    } catch (err) {
+      console.error(`[mirror-tick] mirror=${mirror.id} error-skip stamp failed:`, err);
+    }
+    console.info(
+      `[mirror-tick] mirror=${mirror.id} skipped: Facebook target not checkable (targetStatus=${mirror.targetStatus ?? 'gone'}); posted=0 skipped=0 failed=0`
+    );
+    return result;
+  }
+
   {
     let mirrorError: string | null = null;
     let feedFetched = false;
     let isCatchUp = false;
+    // Spec 155: the Facebook detail for the final stamp, decided by
+    // a publish failure below (or by a clean check, which clears
+    // it). Undefined = leave the stored detail untouched (a
+    // non-publish failure says nothing about the target).
+    let fbStatusPatch:
+      | { fbStatus: MirrorFbStatus | null; fbRateLimitedAt: string | null }
+      | undefined;
     try {
       const feed = await deps.fetchFeed(mirror.sourceUsername);
       const knownSourceIds = await deps.listKnownSourceIds(mirror.id);
@@ -537,6 +673,19 @@ export async function processMirrorCheck(
           await deps.updatePost(claimedId, { status: 'failed', error: message });
           mirrorError = message;
           result.failed += 1;
+          // Spec 155: a Facebook publish failure stamps the
+          // mirror's Facebook detail (or clears it when the
+          // failure is transient/unmapped). The mapping reads
+          // the RAW error, not the rewritten restriction message
+          // above. Other platforms leave the detail untouched.
+          if (mirror.targetPlatform === 'facebook') {
+            const mapped = mapMirrorPublishErrorToFbStatus(err);
+            fbStatusPatch = {
+              fbStatus: mapped,
+              fbRateLimitedAt:
+                mapped === 'fb_rate_limited' ? now.toISOString() : null,
+            };
+          }
           // Stop this mirror's loop: later reels stay unclaimed for
           // the next tick instead of stacking failures.
           break;
@@ -569,6 +718,17 @@ export async function processMirrorCheck(
         // the next tick.
         ...(feedFetched ? { lastCheckedAt: now.toISOString() } : {}),
         ...(isCatchUp && feedFetched ? { catchUpPending: false } : {}),
+        // Spec 155: the Facebook detail rides the final stamp. A
+        // publish failure sets it (or clears it when unmapped); a
+        // clean check clears it; any other failure leaves the
+        // stored detail untouched.
+        ...(mirror.targetPlatform === 'facebook'
+          ? fbStatusPatch !== undefined
+            ? fbStatusPatch
+            : !mirrorError
+              ? { fbStatus: null, fbRateLimitedAt: null }
+              : {}
+          : {}),
         nextCheckAt,
       });
     } catch (err) {
@@ -766,6 +926,8 @@ export function buildMirrorTickDeps(
       lastCheckedAt?: string;
       nextCheckAt?: string;
       lastError?: string | null;
+      fbStatus?: string | null;
+      fbRateLimitedAt?: string | null;
     }
   ): Promise<void> => {
     const values: Record<string, unknown> = {};
@@ -780,6 +942,12 @@ export function buildMirrorTickDeps(
     if (patch.lastCheckedAt !== undefined) values.last_checked_at = patch.lastCheckedAt;
     if (patch.nextCheckAt !== undefined) values.next_check_at = patch.nextCheckAt;
     if (patch.lastError !== undefined) values.last_error = patch.lastError;
+    // Spec 155: the Facebook detail + its 3-day anchor. Null clears
+    // the column; undefined leaves it untouched.
+    if (patch.fbStatus !== undefined) values.fb_status = patch.fbStatus;
+    if (patch.fbRateLimitedAt !== undefined) {
+      values.fb_rate_limited_at = patch.fbRateLimitedAt;
+    }
     const { error } = await (db as unknown as {
       from: (table: string) => {
         update: (values: Record<string, unknown>) => {
@@ -877,7 +1045,7 @@ export function buildMirrorTickDeps(
       const { data, error } = await db
         .from('mirrors')
         .select(
-          'id, workspace_id, source_platform, source_username, target_platform, target_external_id, status, catch_up_pending, last_checked_at, last_posted_source_id, last_posted_create_time'
+          'id, workspace_id, source_platform, source_username, target_platform, target_external_id, status, catch_up_pending, last_checked_at, last_posted_source_id, last_posted_create_time, fb_status, fb_rate_limited_at'
         )
         .eq('id', mirrorId)
         .maybeSingle();
@@ -899,7 +1067,7 @@ export function buildMirrorTickDeps(
       // target external id). First active row wins.
       const { data: destData, error: destError } = await db
         .from('destinations')
-        .select('encrypted_destination_token, status')
+        .select('encrypted_destination_token, status, metadata')
         .eq('workspace_id', row.workspace_id)
         .eq('platform', row.target_platform)
         .eq('external_destination_id', row.target_external_id)
@@ -950,6 +1118,21 @@ export function buildMirrorTickDeps(
         targetToken:
           typeof token === 'string' ? await decryptToken(token, masterKey) : null,
         status: typeof row.status === 'string' ? row.status : 'active',
+        // Spec 155: the mirror's own Facebook detail + anchor, and
+        // the target's status + rate-limit anchor (from its
+        // metadata) for the error-skip rule. Absent before the
+        // migration lands — null, never invented.
+        fbStatus: typeof row.fb_status === 'string' ? row.fb_status : null,
+        fbRateLimitedAt:
+          typeof row.fb_rate_limited_at === 'string' ? row.fb_rate_limited_at : null,
+        targetStatus: dest !== undefined && typeof dest.status === 'string' ? dest.status : null,
+        targetRateLimitedAt:
+          dest !== undefined &&
+          typeof dest.metadata === 'object' &&
+          dest.metadata !== null &&
+          typeof (dest.metadata as Record<string, unknown>).rate_limited_at === 'string'
+            ? ((dest.metadata as Record<string, unknown>).rate_limited_at as string)
+            : null,
         lastCheckedAt:
           typeof row.last_checked_at === 'string' ? row.last_checked_at : null,
         catchUpPending: row.catch_up_pending === true,
