@@ -13,7 +13,7 @@ import {
   InternalError,
   MIRROR_FACEBOOK_RESTRICTED_MESSAGE,
 } from '@fbuploadpro/contracts';
-import { FacebookGraphError } from '../fb-client.js';
+import { FacebookGraphError } from './fb-client.js';
 import {
   buildMirrorTickDeps,
   MIRROR_JOB_STALE_AFTER_SECONDS,

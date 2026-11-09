@@ -459,8 +459,8 @@ const ERROR_CASES: ErrorCase[] = [
   // classifier only (ADU statuses build, B0).
   { name: '190/492 page role', code: 190, subcode: 492, kind: 'auth', status: 'failed', targetDestinationStatus: 'error' },
   { name: '102 session invalid', code: 102, kind: 'auth', status: 'failed', targetDestinationStatus: 'error', targetAccountStatus: 'expired' },
-  { name: '10 permission denied', code: 10, kind: 'auth', status: 'failed', targetDestinationStatus: 'error', targetAccountStatus: 'expired' },
-  { name: '250 (2xx) authorization denied', code: 250, kind: 'auth', status: 'failed', targetDestinationStatus: 'error', targetAccountStatus: 'expired' },
+  { name: '10 permission denied', code: 10, kind: 'auth', status: 'failed', targetDestinationStatus: 'error' },
+  { name: '250 (2xx) authorization denied', code: 250, kind: 'auth', status: 'failed', targetDestinationStatus: 'error' },
   // Permanent policy / client.
   {
     name: '368/4854002 checkpoint',

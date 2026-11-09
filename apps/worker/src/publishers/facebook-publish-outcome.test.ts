@@ -340,7 +340,7 @@ describe('FacebookPublisher spec-155 outcome fb_status marker', () => {
   });
 
   it('a body-less page-gone failure maps to page_not_accessible', async () => {
-    const outcome = await publishOutcome(new Error('The page was not found.'));
+    const outcome = await publishOutcome(new Error('Page not found.'));
     expect(outcome.targetDestinationStatus).toBe('error');
     expect(outcome.targetDestinationFbStatus).toBe('page_not_accessible');
     // Uncoded errors stay retryable by the old fallback; the
