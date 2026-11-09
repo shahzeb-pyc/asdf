@@ -3,7 +3,7 @@ import { Inter } from 'next/font/google';
 import React, { type ReactNode } from 'react';
 import './globals.css';
 import { DesktopTitleBar } from '@/components/desktop';
-import { WhatsAppSupportButton } from '@/components/support';
+import { DeferredWhatsAppSupportButton } from '@/components/support/deferred-whatsapp-support-button';
 import { Analytics } from '@vercel/analytics/next';
 import { PostHogProvider } from '@/components/posthog-provider';
 import { fontSansClassName } from './fonts';
@@ -91,7 +91,7 @@ export default function RootLayout({
         >
           <DesktopTitleBar />
           <main>{children}</main>
-          <WhatsAppSupportButton />
+          <DeferredWhatsAppSupportButton />
           <Analytics />
         </PostHogProvider>
       </body>

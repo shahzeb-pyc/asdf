@@ -48,7 +48,57 @@ async function renderFrame(children: React.ReactNode) {
     params: Promise.resolve({ subdomain: 'acme' }),
     children,
   });
-  return render(jsx);
+  // Spec 152 O2 — the layout streams TenantShellContent (an async
+  // Server Component) behind Suspense. Client-side React in jsdom
+  // cannot render an async component ("async Client Component"), so
+  // resolve async Server Components in the tree first — the same
+  // await-the-server-component pattern the layout itself already
+  // uses — and render the resolved shell. This still exercises the
+  // real TenantShellContent (display name + entitlement seed) and
+  // the real UserShell; only the skeleton-first paint is bypassed,
+  // and that is a streaming concern proven by the real render, not
+  // by jsdom. Sync components are never invoked here: React renders
+  // them, hooks included.
+  const resolved = await resolveAsyncServerComponents(jsx);
+  return render(resolved);
+}
+
+/**
+ * Recursively await elements whose type is an async function
+ * (async Server Components) and leave everything else untouched.
+ * Async functions keep their `AsyncFunction` constructor through
+ * the test transform; sync components, host elements, Suspense and
+ * fragments are not functions of that kind and pass through.
+ */
+async function resolveAsyncServerComponents(
+  node: React.ReactNode
+): Promise<React.ReactNode> {
+  if (Array.isArray(node)) {
+    return Promise.all(node.map(resolveAsyncServerComponents));
+  }
+  if (!React.isValidElement(node)) {
+    return node;
+  }
+  const element = node as React.ReactElement<{
+    children?: React.ReactNode;
+  }>;
+  const { type, props } = element;
+  if (
+    typeof type === 'function' &&
+    Object.prototype.toString.call(type) === '[object AsyncFunction]'
+  ) {
+    const awaited = await (
+      type as (props: Record<string, unknown>) => Promise<React.ReactNode>
+    )(props as Record<string, unknown>);
+    return resolveAsyncServerComponents(awaited);
+  }
+  if (props.children !== undefined) {
+    const resolvedChildren = await resolveAsyncServerComponents(
+      props.children
+    );
+    return React.cloneElement(element, { ...props, children: resolvedChildren });
+  }
+  return element;
 }
 
 describe('Tenant frame (spec 130 PR-130-1)', () => {

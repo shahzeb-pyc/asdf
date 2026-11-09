@@ -137,3 +137,67 @@ describe('middleware bounced-session fix (login-cookie-loop)', () => {
     expect(response.headers.get('location')).toBeNull();
   });
 });
+
+describe('middleware API hot path (spec 152 O5)', () => {
+  beforeEach(() => {
+    vi.stubEnv('NEXT_PUBLIC_ROOT_DOMAIN', 'fbuploadpro.com');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  function apiRequest(
+    url: string,
+    init: { method?: string; origin?: string } = {}
+  ): NextRequest {
+    const request = new NextRequest(url, {
+      method: init.method ?? 'GET',
+      headers: init.origin ? { origin: init.origin } : {},
+    });
+    request.headers.set('host', new URL(url).host);
+    return request;
+  }
+
+  it('API GET passes through with no-store but no CSP headers', async () => {
+    const response = await middleware(
+      apiRequest('https://app.fbuploadpro.com/api/auth/session')
+    );
+    expect(response.headers.get('location')).toBeNull();
+    expect(response.headers.get('cache-control')).toContain('no-store');
+    expect(response.headers.get('Content-Security-Policy-Report-Only')).toBeNull();
+    expect(response.headers.get('Reporting-Endpoints')).toBeNull();
+  });
+
+  it('API mutating call with a foreign origin still answers 403, without CSP', async () => {
+    const response = await middleware(
+      apiRequest('https://app.fbuploadpro.com/api/auth/session', {
+        method: 'POST',
+        origin: 'https://evil.example.com',
+      })
+    );
+    expect(response.status).toBe(403);
+    expect(response.headers.get('Content-Security-Policy-Report-Only')).toBeNull();
+  });
+
+  it('API mutating call with an allowed origin passes through, without CSP', async () => {
+    const response = await middleware(
+      apiRequest('https://app.fbuploadpro.com/api/auth/session', {
+        method: 'POST',
+        origin: 'https://app.fbuploadpro.com',
+      })
+    );
+    expect(response.headers.get('location')).toBeNull();
+    expect(response.headers.get('Content-Security-Policy-Report-Only')).toBeNull();
+  });
+
+  it('HTML pages keep their CSP headers', async () => {
+    const response = await middleware(
+      requestWithCookie('https://app.fbuploadpro.com/privacy', null)
+    );
+    expect(response.headers.get('location')).toBeNull();
+    expect(response.headers.get('Content-Security-Policy-Report-Only')).toContain(
+      "default-src 'self'"
+    );
+  });
+});

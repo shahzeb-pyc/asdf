@@ -263,7 +263,10 @@ describe('DataProvider global session check', () => {
       'fetch',
       vi.fn(async (input: RequestInfo | URL) => {
         const url = typeof input === 'string' ? input : input.toString();
-        if (url === '/api/auth/session') {
+        // Spec 152 O4: mount/focus re-prove the token only
+        // (`?mode=token`); the 5-minute interval keeps the full check.
+        // Both hit the same endpoint and count as a session check.
+        if (url === '/api/auth/session' || url === '/api/auth/session?mode=token') {
           sessionCalls += 1;
           return new Response(JSON.stringify({ active: sessionStatus === 200 }), {
             status: sessionStatus,

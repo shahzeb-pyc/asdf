@@ -11,10 +11,10 @@ import { describe, it, expect } from 'vitest';
 import nextConfig from '../../next.config';
 
 describe('router cache (back-nav reuse)', () => {
-  it('keeps dynamic pages in the router cache for 30s', () => {
+  it('keeps dynamic pages in the router cache for 300s (spec 152 O7)', () => {
     const experimental = (nextConfig as { experimental?: { staleTimes?: { dynamic?: number; static?: number } } })
       .experimental;
-    expect(experimental?.staleTimes?.dynamic).toBe(30);
+    expect(experimental?.staleTimes?.dynamic).toBe(300);
   });
 
   it('keeps static segments cached longer than dynamic ones', () => {

@@ -300,6 +300,50 @@ export const EntitlementResponseSchema = z.object({
 });
 export type EntitlementResponse = z.infer<typeof EntitlementResponseSchema>;
 
+/**
+ * Plan-check C2 / spec 152 O1 — the single-query entitlement RPC
+ * (`public.get_entitlement`, migration 20261109150000). Contracts
+ * first: the RPC's JSON shape is typed here, and the web mapper
+ * (`getEntitlementViaRpc`) validates the answer against this schema
+ * instead of hand-checking fields — a malformed answer fails closed
+ * (ENTITLEMENT_UNAVAILABLE, never an invented Free).
+ *
+ * Shape mirrors the SQL exactly: `period` is the active
+ * `subscription_periods` row as `row_to_json` returns it (snake_case
+ * count columns, ISO timestamps, `superseded_at` null when live);
+ * `usage` is the six per-platform counts with the legacy
+ * publish-now exclusion and the disconnected-destination exclusion
+ * already applied in SQL; `has_prior_period` is the ever-paid flag.
+ * Ids are plain non-empty strings on purpose — the parity-test
+ * fixtures (and the mapper's `periodFromRow`) accept any string id,
+ * not only UUIDs, so a `.uuid()` here would reject answers the
+ * mapper already accepts. Counts use `.catch(0)`, matching
+ * `numberField`'s tolerance for a missing/mistyped count column.
+ */
+const rpcCountField = z.number().int().min(0).catch(0);
+
+export const EntitlementRpcPeriodRowSchema = z.object({
+  id: z.string().min(1),
+  user_id: z.string().min(1),
+  facebook_count: rpcCountField,
+  instagram_count: rpcCountField,
+  threads_count: rpcCountField,
+  x_count: rpcCountField,
+  tiktok_count: rpcCountField,
+  youtube_count: rpcCountField,
+  starts_at: z.string().min(1),
+  ends_at: z.string().min(1),
+  superseded_at: z.string().nullable(),
+});
+export type EntitlementRpcPeriodRow = z.infer<typeof EntitlementRpcPeriodRowSchema>;
+
+export const EntitlementRpcResultSchema = z.object({
+  period: EntitlementRpcPeriodRowSchema.nullable(),
+  usage: PlatformCountsSchema,
+  has_prior_period: z.boolean(),
+});
+export type EntitlementRpcResult = z.infer<typeof EntitlementRpcResultSchema>;
+
 export const BillingPaymentItemSchema = z.object({
   id: z.string().uuid(),
   method: PaymentMethodSchema,

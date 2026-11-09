@@ -33,16 +33,36 @@ const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
 const SIDEBAR_KEYBOARD_SHORTCUT = "b";
 const MOBILE_BREAKPOINT = 768;
 
+/**
+ * Spec 152 O8 — resolve the viewport BEFORE first paint.
+ *
+ * The old implementation initialised to `undefined` and learned the
+ * viewport only in a post-hydration effect, so a phone's first
+ * paint rendered the desktop sidebar branch (hidden by CSS, but its
+ * full DOM still rendered and hydrated) and the hamburger did
+ * nothing until the effect ran. `useSyncExternalStore` reads the
+ * media query during render instead: on a phone the mobile branch
+ * is the first render, the hamburger works as soon as hydration
+ * completes, and the hidden desktop tree is never mounted there.
+ *
+ * The server snapshot is `false` — the server cannot know the
+ * viewport, so SSR renders the desktop branch and React re-renders
+ * this subtree at hydration time on a phone (useSyncExternalStore's
+ * documented behaviour for a differing snapshot), not a beat later.
+ * The query is the same `md` breakpoint (768px) the layout's CSS
+ * uses, read through matchMedia so the JS branch and the CSS
+ * branch can never disagree.
+ */
 function useIsMobile(): boolean {
-  const [isMobile, setIsMobile] = React.useState<boolean | undefined>(undefined);
-  React.useEffect(() => {
-    const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`);
-    const onChange = () => setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
-    mql.addEventListener("change", onChange);
-    setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
-    return () => mql.removeEventListener("change", onChange);
-  }, []);
-  return !!isMobile;
+  return React.useSyncExternalStore(
+    (onStoreChange) => {
+      const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`);
+      mql.addEventListener('change', onStoreChange);
+      return () => mql.removeEventListener('change', onStoreChange);
+    },
+    () => window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`).matches,
+    () => false
+  );
 }
 
 type SidebarContextProps = {

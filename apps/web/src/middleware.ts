@@ -334,7 +334,6 @@ function handleDirectTenantPathOnApex(
 }
 
 export async function middleware(request: NextRequest): Promise<NextResponse> {
-  const nonce = generateNonce();
   const { pathname } = request.nextUrl;
   const host = request.headers.get('host') || '';
   const rootDomain = process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'localhost:3000';
@@ -357,17 +356,31 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     pathname.endsWith('.ico')
   ) {
     const isApiRoute = pathname.startsWith('/api');
-    if (isApiRoute && MUTATING_METHODS.has(request.method.toUpperCase())) {
-      const origin = request.headers.get('origin');
-      if (origin && !isAllowedApiOrigin(origin, host, rootDomain)) {
-        return applyCspHeaders(
-          applyNoStoreHeaders(
+    // Spec 152 O5 — API responses are JSON, never HTML: no inline
+    // script can execute from them, so the CSP response header and
+    // the x-nonce request header are pure overhead on the hottest
+    // path (every session check, entitlement fetch, downloader
+    // poll, and RSC-adjacent API call). Skip the nonce generation
+    // and both CSP header writes for /api/* only; the origin check
+    // and no-store behaviour below are unchanged, and HTML pages
+    // (/privacy, /account-suspended, icons) keep their CSP exactly
+    // as before. Nothing in an API route reads x-nonce (grep:
+    // only lib/csp.ts and middleware reference it).
+    if (isApiRoute) {
+      if (MUTATING_METHODS.has(request.method.toUpperCase())) {
+        const origin = request.headers.get('origin');
+        if (origin && !isAllowedApiOrigin(origin, host, rootDomain)) {
+          return applyNoStoreHeaders(
             NextResponse.json({ error: 'Forbidden: origin mismatch' }, { status: 403 })
-          ),
-          nonce
-        );
+          );
+        }
       }
+      const response = NextResponse.next({
+        request: { headers: stripUserHeaders(request) },
+      });
+      return applyNoStoreHeaders(response);
     }
+    const nonce = generateNonce();
     const requestHeaders = stripUserHeaders(request);
     setCspRequestHeaders(requestHeaders, nonce);
     const response = NextResponse.next({
@@ -375,11 +388,10 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
         headers: requestHeaders,
       },
     });
-    if (isApiRoute) {
-      applyNoStoreHeaders(response);
-    }
     return applyCspHeaders(response, nonce);
   }
+
+  const nonce = generateNonce();
 
   // Extract subdomain and determine routing target
   const { subdomain, isApex, isReserved } = extractSubdomain(host, rootDomain);

@@ -25,7 +25,6 @@ import {
  */
 
 export const DOWNLOAD_JOBS_ACTIVE_POLL_MS = 3000;
-export const DOWNLOAD_JOBS_IDLE_POLL_MS = 15000;
 
 export function isDownloadJobActive(job: DownloadJob): boolean {
   return job.status === 'queued' || job.status === 'resolving' || job.status === 'downloading';
@@ -53,13 +52,20 @@ export function useDownloadJobs(subdomain: string) {
   return useQuery({
     queryKey: definition.queryKey,
     queryFn: definition.queryFn,
-    // Fast while anything runs, slow idle: on return after closing the
-    // site the tray still restores promptly, without polling hot
-    // forever when nothing is downloading.
+    // Spec 152 O3 — poll ONLY while anything runs. The old idle
+    // 15s poll fired forever on every tenant page, even for users
+    // who never download anything. With no active jobs the query
+    // fetches once on mount and then stays quiet: a download
+    // started from the downloader dialog invalidates this query
+    // key on submit, so the tray still appears promptly and the
+    // 3s poll resumes. The one trade-off: a download started in
+    // ANOTHER tab no longer appears here until this shell remounts
+    // or navigates — accepted for spec 152, since the tray's own
+    // submit path covers the common case.
     refetchInterval: (query) => {
       const jobs = query.state.data?.jobs;
       const hasActive = jobs?.some(isDownloadJobActive) ?? false;
-      return hasActive ? DOWNLOAD_JOBS_ACTIVE_POLL_MS : DOWNLOAD_JOBS_IDLE_POLL_MS;
+      return hasActive ? DOWNLOAD_JOBS_ACTIVE_POLL_MS : false;
     },
   });
 }

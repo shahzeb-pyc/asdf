@@ -33,24 +33,29 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   // Router-cache reuse for back/forward navigation (perf launch
-  // pass): Next's default `dynamic: 0` re-fetches the RSC payload
-  // — and re-runs every server prefetch — on EVERY client
+  // pass, spec 152 O7): Next's default `dynamic: 0` re-fetches the
+  // RSC payload — and re-runs every server prefetch — on EVERY client
   // navigation, even when the React Query cache already holds
-  // fresh data. A 30s dynamic window makes back/forward within
-  // it instant with zero server calls, while data freshness is
-  // still governed by the query staleTimes (60s reference / 15s
-  // queue / 5min insights) plus background revalidation — never
-  // frozen data. Mutations invalidate query keys, so a mutated
-  // list refetches on next view regardless of this window. The
-  // only lag this introduces is server-rendered frame text (the
-  // workspace name in the layout) showing a up-to-30s-old value
-  // on a rapid revisit after a rename. Static segments reuse
-  // for 180s (Next's own default is 30s; static content here
-  // changes only on deploy).
+  // fresh data. A 300s dynamic window makes back/forward and section
+  // switches within it instant with zero server calls, while data
+  // freshness is still governed by the query staleTimes (60s
+  // reference / 15s queue / 5min insights) plus background
+  // revalidation — never frozen data. Mutations invalidate query
+  // keys, so a mutated list refetches on next view regardless of
+  // this window. The only lag this introduces is server-rendered
+  // frame text (the workspace name in the layout) showing a
+  // up-to-300s-old value on a rapid revisit after a rename —
+  // the freshness trade-off Shahzeb accepted for spec 152 (the old
+  // 30s window re-ran the whole layout seed, now O1's single RPC
+  // plus the workspace lookup, on every stale switch). Static
+  // segments reuse for 300s too (Next's own default is 30s; static
+  // content here changes only on deploy) — kept at or above the
+  // dynamic window so a static segment is never evicted before a
+  // dynamic one (router-cache.test.ts pins the invariant).
   experimental: {
     staleTimes: {
-      dynamic: 30,
-      static: 180,
+      dynamic: 300,
+      static: 300,
     },
   },
   // Analyzer builds only: webpack builds run Next's route-export type
