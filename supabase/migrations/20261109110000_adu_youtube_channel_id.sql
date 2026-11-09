@@ -6,8 +6,12 @@
 -- The uploads playlist ID is derived from the channel ID in code
 -- (UU + channel ID without the UC prefix) and is not stored.
 -- Additive, no backfill, no SECURITY DEFINER function, no new table.
--- This migration is NOT applied by the branch that creates it; it is
--- applied separately on the owner's tap.
+-- This migration auto-applies through the Supabase GitHub integration
+-- on merge to main; there is no separate manual step. After merging,
+-- verify the apply (ledger row for 20261109110000 plus the
+-- youtube_channel_id column present on adu_configs) before redeploying
+-- the VPS scraper, which fails loudly on YouTube jobs until the column
+-- lands.
 
 alter table public.adu_configs
   add column if not exists youtube_channel_id text;
