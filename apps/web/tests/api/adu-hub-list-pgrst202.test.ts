@@ -59,3 +59,42 @@ describe('ADU hub list GET (PGRST202 wiring)', () => {
     expect(await res.json()).toEqual({ error: 'Failed to load pages.' });
   });
 });
+
+describe('ADU hub list GET (status filter mapping)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  async function getWithStatus(filter: string) {
+    const rpc = vi.fn(async () => ({ data: [], error: null }));
+    mockedAduContext.mockResolvedValue({
+      context: { workspaceId: 'ws-1', supabase: { rpc } },
+    });
+    const res = await GET(
+      new NextRequest(
+        `http://localhost:3000/api/tenant/acme/auto-download-upload?status=${encodeURIComponent(filter)}`
+      ),
+      params()
+    );
+    expect(res.status).toBe(200);
+    return rpc;
+  }
+
+  it.each([
+    ['Paused', 'paused'],
+    ['Missing Page Access', 'missing_page_access'],
+    ['Missing Permission', 'missing_permission'],
+    ['Active', 'active'],
+    ['Completed', 'completed'],
+  ])('maps ?status=%s to p_status=%s on both RPCs', async (filter, value) => {
+    const rpc = await getWithStatus(filter);
+    expect(rpc).toHaveBeenCalledWith('adu_hub_list', expect.objectContaining({ p_status: value }));
+    expect(rpc).toHaveBeenCalledWith('adu_hub_stats', expect.objectContaining({ p_status: value }));
+  });
+
+  it('no longer maps the retired Inactive label — it behaves as no filter', async () => {
+    const rpc = await getWithStatus('Inactive');
+    expect(rpc).toHaveBeenCalledWith('adu_hub_list', expect.objectContaining({ p_status: null }));
+    expect(rpc).toHaveBeenCalledWith('adu_hub_stats', expect.objectContaining({ p_status: null }));
+  });
+});

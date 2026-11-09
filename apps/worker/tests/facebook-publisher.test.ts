@@ -437,6 +437,7 @@ interface ErrorCase {
   name: string;
   code: number;
   subcode?: number;
+  retryCount?: number;
   kind: 'auth' | 'retryable' | 'permanent';
   status: 'retry' | 'failed';
   retryDelaySeconds?: number;
@@ -452,10 +453,11 @@ const ERROR_CASES: ErrorCase[] = [
   // destination invalid_token -> error (new vocabulary).
   { name: '190 invalid token', code: 190, kind: 'auth', status: 'failed', targetDestinationStatus: 'error', targetAccountStatus: 'expired' },
   { name: '190/463 token expired', code: 190, subcode: 463, kind: 'auth', status: 'failed', targetDestinationStatus: 'error', targetAccountStatus: 'expired' },
-  // Old dispatcher quirk, preserved: 190/492's evaluation keeps the
-  // account active, but the dispatcher's `isAuth && code 190` rule
-  // still cascaded it to expired.
-  { name: '190/492 page role', code: 190, subcode: 492, kind: 'auth', status: 'failed', targetDestinationStatus: 'error', targetAccountStatus: 'expired' },
+  // 190/492's evaluation keeps the account active (the token is
+  // fine — the user lost their role on the Page), so the queue no
+  // longer expires the account for it: account expiry follows the
+  // classifier only (ADU statuses build, B0).
+  { name: '190/492 page role', code: 190, subcode: 492, kind: 'auth', status: 'failed', targetDestinationStatus: 'error' },
   { name: '102 session invalid', code: 102, kind: 'auth', status: 'failed', targetDestinationStatus: 'error', targetAccountStatus: 'expired' },
   { name: '10 permission denied', code: 10, kind: 'auth', status: 'failed', targetDestinationStatus: 'error', targetAccountStatus: 'expired' },
   { name: '250 (2xx) authorization denied', code: 250, kind: 'auth', status: 'failed', targetDestinationStatus: 'error', targetAccountStatus: 'expired' },
@@ -468,7 +470,7 @@ const ERROR_CASES: ErrorCase[] = [
     status: 'failed',
     targetDestinationStatus: 'error',
     expectedMessage:
-      'Confirm your identity before you can publish as this Page. Please log in to Facebook on a mobile device, switch to this Page, confirm verification, and then manually turn the Page to active.',
+      'Confirm your identity before you can publish as this Page. Log in to Facebook on a mobile device, switch to this Page, confirm verification, and then turn automation back on.',
   },
   {
     name: '368/1404082 already posted',
@@ -479,9 +481,33 @@ const ERROR_CASES: ErrorCase[] = [
     expectedMessage:
       "You've already posted this. Posting the same content repeatedly is not allowed by Facebook.",
   },
+  // SEND BACK fix (PR #190): 368/1404102 used to fall to the default-368
+  // branch (transient + rate_limited destination flip). A link against
+  // Community Standards is permanent for that post: it fails at once,
+  // the page stays active, and the user sees the real reason.
+  {
+    name: '368/1404102 link against Community Standards',
+    code: 368,
+    subcode: 1404102,
+    kind: 'permanent',
+    status: 'failed',
+    expectedMessage:
+      'This link goes against Facebook Community Standards. Remove the link or use a different one.',
+  },
+  // Content codes 382 (video too small) and 1363040 (aspect ratio over
+  // 9:16) have no classifier branch and fell to the retryable fallback,
+  // so they retried to exhaustion. They are permanent client errors:
+  // post fails at once, page stays active, no retry.
+  { name: '382 video too small', code: 382, kind: 'permanent', status: 'failed' },
+  { name: '1363040 aspect ratio over 9:16', code: 1363040, kind: 'permanent', status: 'failed' },
   { name: '506 duplicate post', code: 506, kind: 'permanent', status: 'failed' },
-  { name: '1609005 bad link', code: 1609005, kind: 'permanent', status: 'failed' },
-  { name: '100 invalid parameter', code: 100, kind: 'permanent', status: 'failed' },
+  // Content codes 100 / 1609005 retry ×2, then fail (owner decision,
+  // ADU statuses build): kind stays 'permanent', only the retry
+  // disposition changes with the attempt count.
+  { name: '1609005 bad link', code: 1609005, kind: 'permanent', status: 'retry', retryDelaySeconds: 300 },
+  { name: '1609005 bad link at retry 2', code: 1609005, retryCount: 2, kind: 'permanent', status: 'failed' },
+  { name: '100 invalid parameter', code: 100, kind: 'permanent', status: 'retry', retryDelaySeconds: 300 },
+  { name: '100 invalid parameter at retry 2', code: 100, retryCount: 2, kind: 'permanent', status: 'failed' },
   { name: '400 bad request (4xx client)', code: 400, kind: 'permanent', status: 'failed' },
   // Transient rate limits — page stays active, no status flip, no
   // cooldown; retry delay 300s at retry_count 0.
@@ -507,7 +533,11 @@ describe('FacebookPublisher — error-classification parity (publish outcomes)',
         ...(c.subcode !== undefined ? { error_subcode: c.subcode } : {}),
       });
       const publisher = new FacebookPublisher(mock);
-      const outcome = await publisher.publish(makeItem(), makeDestination(), TOKENS);
+      const outcome = await publisher.publish(
+        makeItem(c.retryCount !== undefined ? { retry_count: c.retryCount } : {}),
+        makeDestination(),
+        TOKENS,
+      );
 
       expect(outcome.status).toBe(c.status);
       expect(outcome.error?.kind).toBe(c.kind);
@@ -608,6 +638,9 @@ describe('FacebookPublisher — mapError (pure, total)', () => {
       [new FacebookGraphError('m', { message: 'm', code: 299 }), 'auth', '299', undefined],
       [new FacebookGraphError('m', { message: 'm', code: 368, error_subcode: 4854002 }), 'permanent', '368', '4854002'],
       [new FacebookGraphError('m', { message: 'm', code: 368, error_subcode: 1404082 }), 'permanent', '368', '1404082'],
+      [new FacebookGraphError('m', { message: 'm', code: 368, error_subcode: 1404102 }), 'permanent', '368', '1404102'],
+      [new FacebookGraphError('m', { message: 'm', code: 382 }), 'permanent', '382', undefined],
+      [new FacebookGraphError('m', { message: 'm', code: 1363040 }), 'permanent', '1363040', undefined],
       [new FacebookGraphError('m', { message: 'm', code: 368 }), 'retryable', '368', undefined],
       [new FacebookGraphError('m', { message: 'm', code: 506 }), 'permanent', '506', undefined],
       [new FacebookGraphError('m', { message: 'm', code: 1609005 }), 'permanent', '1609005', undefined],

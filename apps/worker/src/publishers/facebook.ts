@@ -132,14 +132,16 @@ function extractError(err: unknown): ExtractedError {
     message: rawMessage,
     telemetry: undefined,
     isAuthError: evaluation?.requiresReauth === true,
-    isPermanentPolicyError: code === 368 && (subcode === 4854002 || subcode === 1404082),
+    isPermanentPolicyError: code === 368 && (subcode === 4854002 || subcode === 1404082 || subcode === 1404102),
     isPermanentClientError:
       code === 100 ||
       code === 506 ||
       code === 1609005 ||
+      code === 382 ||
+      code === 1363040 ||
       (code !== undefined && code >= 400 && code < 500 && evaluation?.requiresReauth !== true),
     isRateLimit:
-      isRateLimitErrorCode(code, subcode) || (code === 368 && subcode !== 4854002 && subcode !== 1404082),
+      isRateLimitErrorCode(code, subcode) || (code === 368 && subcode !== 4854002 && subcode !== 1404082 && subcode !== 1404102),
     diagnostic: undefined,
   };
 }
@@ -149,8 +151,8 @@ function extractError(err: unknown): ExtractedError {
  * outcome computation, expressed in the shared taxonomy:
  *   auth      — evaluation requires reauth (190/102, 10, 200-299) or
  *               the Graph error's auth flag;
- *   permanent — permanent policy (368/4854002, 368/1404082), permanent
- *               client (100, 506, 1609005, other 4xx), or any
+ *   permanent — permanent policy (368/4854002, 368/1404082, 368/1404102), permanent
+ *               client (100, 506, 1609005, 382, 1363040, other 4xx), or any
  *               non-transient evaluation that is not auth;
  *   retryable — transient evaluations, rate-limit codes
  *               (4/17/32/341/613/80000-80014, 368 non-policy), and the
@@ -159,7 +161,7 @@ function extractError(err: unknown): ExtractedError {
  *               treated as transient.
  *
  * The message follows the old dispatcher's rule: for 368 with subcode
- * 4854002 or 1404082 the canonical evaluation message replaces the raw
+ * 4854002, 1404082 or 1404102 the canonical evaluation message replaces the raw
  * Graph message; every other error keeps its raw message.
  */
 function classifyExtracted(extracted: ExtractedError): ClassifiedPublishError {
@@ -167,7 +169,7 @@ function classifyExtracted(extracted: ExtractedError): ClassifiedPublishError {
   const evaluation = code !== undefined ? evaluateGraphApiError(code, subcode) : null;
 
   const message =
-    code === 368 && (subcode === 4854002 || subcode === 1404082) && evaluation
+    code === 368 && (subcode === 4854002 || subcode === 1404082 || subcode === 1404102) && evaluation
       ? evaluation.message
       : extracted.message;
 
@@ -562,10 +564,13 @@ export class FacebookPublisher implements Publisher {
    *     min(3600, 300 * 2^retry_count);
    *   - destination status: the evaluation's non-active page status,
    *     mapped to the unified vocabulary;
-   *   - account status: `expired` when the evaluation says expired or
-   *     an auth error carries code 190/102 (the old dispatcher's exact
-   *     condition — it cascaded even the 190/492 case whose evaluation
-   *     keeps the account `active`).
+   *   - account status: `expired` only when the classifier evaluation
+   *     says `expired`. The old dispatcher also expired the account
+   *     for any auth error carrying code 190/102, which bypassed the
+   *     classifier and expired the account for codes the classifier
+   *     deliberately keeps active (190/459, 190/464, 190/492,
+   *     190/2069032) — that second disjunct is removed; the
+   *     evaluation is the single decision point.
    *   Volume-limit errors (4/17/32/341/613/80000-80014) never park the
    *   page: they retry with the existing backoff and no status flip.
    *   Only the 368 spam throttle (and the temporarily-blocked signal)
@@ -596,15 +601,28 @@ export class FacebookPublisher implements Publisher {
     }
 
     let targetAccountStatus: DatabaseSocialAccountRow['status'] | undefined;
-    const isAccountExpired =
-      evaluation?.accountStatus === 'expired' ||
-      (extracted.isAuthError && (code === 190 || code === 102));
+    // Classifier-only: expire the account only when the evaluation
+    // says expired. (The legacy `isAuthError && (190 || 102)`
+    // disjunct bypassed the classifier and expired the account for
+    // 190/459, 190/464, 190/492 and 190/2069032, whose evaluations
+    // keep the account active.)
+    const isAccountExpired = evaluation?.accountStatus === 'expired';
     if (isAccountExpired) {
       targetAccountStatus = 'expired';
     }
 
     const isTransient = classified.kind === 'retryable';
-    const canRetry = isTransient && retryCount < effectiveMaxRetries;
+    // Content codes 100 / 1609005 (media Facebook couldn't fetch, link
+    // scraper failure) are permanent by classification, but the owner
+    // overruled that: they retry ×2, then fail — media-fetch failures
+    // are sometimes transient. The ×2 cap is independent of the tick's
+    // outer 5 budget: retry while retryCount < 2, failed at 2. `kind`
+    // stays the terminal classification; `status` carries the retry
+    // disposition.
+    const isContentRetryCode = code === 100 || code === 1609005;
+    const canRetry =
+      (isTransient && retryCount < effectiveMaxRetries) ||
+      (isContentRetryCode && retryCount < 2);
 
     const detail =
       extracted.diagnostic !== undefined

@@ -31,6 +31,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/shared/ui/select';
+import { StatusMark } from '@/components/shared/ui/status-mark';
 import { Switch } from '@/components/shared/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shared/ui/tabs';
 import { Textarea } from '@/components/shared/ui/textarea';
@@ -79,6 +80,28 @@ interface FailedJob {
 }
 
 const QUICK_TAGS = ['#reels', '#viral', '#trending', '#foryou', '#shorts'];
+
+type AduStatusMarkKind = 'operational' | 'queued' | 'critical';
+
+/**
+ * Maps an ADU display status to a shared `StatusMark` kind — the same
+ * mapping the Facebook detail page uses: operational = healthy,
+ * queued = waiting, critical = needs attention. Unknown labels map to
+ * critical — an unexpected value must never read as healthy.
+ */
+function getAduDetailStatusMarkKind(displayStatus: string): AduStatusMarkKind {
+  if (displayStatus === 'Active posting' || displayStatus === 'All reels posted') {
+    return 'operational';
+  }
+  if (
+    displayStatus === 'Scrape pending' ||
+    displayStatus === 'Scraping reels' ||
+    displayStatus === 'Paused'
+  ) {
+    return 'queued';
+  }
+  return 'critical';
+}
 
 export function IgAduDetailPage({ subdomain, configId }: { subdomain: string; configId: string }) {
   const [config, setConfig] = React.useState<ConfigView | null>(null);
@@ -156,8 +179,16 @@ export function IgAduDetailPage({ subdomain, configId }: { subdomain: string; co
   if (loading) return <div className="p-4 sm:p-6"><p className="text-body text-ink-sub">Loading account…</p></div>;
   if (!config) return <div className="p-4 sm:p-6">{error ? <Banner variant="critical" title="Account not found" description={error} /> : null}</div>;
 
-  const automationLocked = config.status === 'fb_rate_limited';
+  const automationLocked =
+    config.status === 'fb_rate_limited' ||
+    config.status === 'invalid_token' ||
+    config.status === 'completed' ||
+    config.status === 'invalid_username';
   const selected = selectedReel ?? reels[0] ?? null;
+  // The alert comes from the server view (contracts): the
+  // creator-suspended copy there is the decided all-time-50 wording,
+  // with no source change — this page renders it as-is.
+  const alertText = config.alert;
 
   return (
     <div className="flex flex-col gap-6 p-4 sm:p-6">
@@ -166,7 +197,7 @@ export function IgAduDetailPage({ subdomain, configId }: { subdomain: string; co
           <p className="text-metadata text-ink-dim">Instagram / Auto Download/Upload / {config.destinationName}</p>
           <div className="mt-1 flex flex-wrap items-center gap-2">
             <h1 className="text-lg leading-heading font-semibold text-ink">{config.destinationName}</h1>
-            <span className="rounded-full bg-surface px-2 py-1 text-metadata text-ink">{config.displayStatus}</span>
+            <StatusMark kind={getAduDetailStatusMarkKind(config.displayStatus)} label={config.displayStatus} testId="adu-detail-status-mark" />
           </div>
           <p className="text-body text-ink-sub">Internal ID: {config.destinationExternalId}</p>
           <p className="text-body text-ink-sub">
@@ -184,7 +215,7 @@ export function IgAduDetailPage({ subdomain, configId }: { subdomain: string; co
             <Switch
               checked={config.status === 'active'}
               disabled={automationLocked}
-              onCheckedChange={(checked) => void patch({ status: checked ? 'active' : 'inactive' }, 'Automation')}
+              onCheckedChange={(checked) => void patch({ status: checked ? 'active' : 'paused' }, 'Automation')}
             />
           </label>
           <Link href={`/tenant/${subdomain}/instagram/auto-download-upload`}><Button type="button" variant="outline">Back to Hub</Button></Link>
@@ -192,7 +223,7 @@ export function IgAduDetailPage({ subdomain, configId }: { subdomain: string; co
         </div>
       </div>
 
-      {config.alert ? <Banner variant="warning" title={config.displayStatus} description={config.alert} /> : null}
+      {alertText ? <Banner variant="warning" title={config.displayStatus} description={alertText} /> : null}
       {error ? <Banner variant="critical" title="Something went wrong" description={error} /> : null}
       {notice ? <Banner variant="success" title="Done" description={notice} onDismiss={() => setNotice(null)} /> : null}
 

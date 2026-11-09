@@ -79,14 +79,17 @@ function jsonResponse(body: unknown, ok = true) {
 }
 
 describe('IgAduDetailPage', () => {
+  let configOverrides: Record<string, unknown> = {};
+
   beforeEach(() => {
     vi.clearAllMocks();
+    configOverrides = {};
     vi.stubGlobal('fetch', fetchMock);
     fetchMock.mockImplementation((url: string, init?: { method?: string }) => {
       if (url.endsWith('/reels')) return jsonResponse({ reels: REELS });
       if (url.endsWith('/failed')) return jsonResponse({ jobs: JOBS });
       if (init?.method) return jsonResponse({ ok: true });
-      return jsonResponse({ config: CONFIG });
+      return jsonResponse({ config: { ...CONFIG, ...configOverrides } });
     });
   });
 
@@ -137,5 +140,55 @@ describe('IgAduDetailPage', () => {
     expect(await screen.findByText(/Code: IG_CONTAINER_FAILED/)).toBeTruthy();
     expect(screen.getByText('Container publish failed.')).toBeTruthy();
     expect(screen.getByText('failed')).toBeTruthy();
+  });
+
+  it('turning automation off writes paused, never inactive', async () => {
+    render(<IgAduDetailPage subdomain="acme" configId="cfg-1" />);
+    await screen.findByText('My IG Account');
+    fireEvent.click(screen.getByRole('switch'));
+    await waitFor(() => {
+      const patch = fetchMock.mock.calls.find(
+        (c) => c[1]?.method === 'PATCH' && !String(c[0]).includes('/reels')
+      );
+      expect(patch).toBeTruthy();
+      expect(JSON.parse(patch![1].body as string)).toEqual({ status: 'paused' });
+    });
+  });
+
+  it.each(['invalid_token', 'completed', 'fb_rate_limited'])(
+    'locks the toggle for %s',
+    async (status) => {
+      configOverrides = { status, displayStatus: status };
+      render(<IgAduDetailPage subdomain="acme" configId="cfg-1" />);
+      await screen.findByText('My IG Account');
+      expect(screen.getByRole('switch')).toBeDisabled();
+    }
+  );
+
+  it('shows the decided creator-suspended copy from the server alert', async () => {
+    configOverrides = {
+      status: 'creator_suspended',
+      displayStatus: 'Creator suspended',
+      alert:
+        'This source is unavailable after more than 50 failed downloads. Turn automation on to check whether the creator is available again.',
+    };
+    render(<IgAduDetailPage subdomain="acme" configId="cfg-1" />);
+    await screen.findByText('My IG Account');
+    expect(screen.getByText(/more than 50 failed downloads/i)).toBeTruthy();
+    expect(screen.getByText(/Turn automation on to check/)).toBeTruthy();
+    expect(document.body.textContent).not.toContain('Change the source in Settings');
+  });
+
+  it('marks a new status with colour + icon + text', async () => {
+    configOverrides = {
+      status: 'missing_permission',
+      displayStatus: 'Missing permission',
+      alert: 'A permission this account needs is missing.',
+    };
+    render(<IgAduDetailPage subdomain="acme" configId="cfg-1" />);
+    const mark = await screen.findByTestId('adu-detail-status-mark');
+    expect(mark.getAttribute('data-status')).toBe('critical');
+    expect(mark.textContent).toContain('Missing permission');
+    expect(screen.getByText('A permission this account needs is missing.')).toBeTruthy();
   });
 });

@@ -43,7 +43,7 @@ export const ADU_SOURCE_PLATFORMS: AduSourcePlatform[] = [
 
 export const AduConfigStatusSchema = z.enum([
   'active',
-  'inactive',
+  'paused',
   'completed',
   'fb_verification_required',
   'invalid_token',
@@ -54,6 +54,8 @@ export const AduConfigStatusSchema = z.enum([
   '2fa_required_on_BM',
   'check_developer_app',
   'account_suspended',
+  'missing_page_access',
+  'missing_permission',
 ]);
 export type AduConfigStatus = z.infer<typeof AduConfigStatusSchema>;
 
@@ -73,6 +75,7 @@ export const AduReelStatusSchema = z.enum([
   'download_failed',
   'posted',
   'skipped',
+  'failed',
 ]);
 export type AduReelStatus = z.infer<typeof AduReelStatusSchema>;
 
@@ -90,7 +93,7 @@ export type AduJobStatus = z.infer<typeof AduJobStatusSchema>;
 export const ADU_STATUS_FILTER_OPTIONS = [
   'All Statuses',
   'Active',
-  'Inactive',
+  'Paused',
   'Verification Req.',
   'Rate Limited',
   'Page Not Accessible',
@@ -101,12 +104,14 @@ export const ADU_STATUS_FILTER_OPTIONS = [
   '2FA Req. on BM',
   'Check Dev App',
   'Account Suspended',
+  'Missing Page Access',
+  'Missing Permission',
 ] as const;
 
 /** Display badge for a page status, once sync is done. */
 export const ADU_PAGE_STATUS_LABELS: Record<AduConfigStatus, string> = {
   active: 'Active posting',
-  inactive: 'Posting inactive',
+  paused: 'Paused',
   completed: 'All reels posted',
   fb_verification_required: 'Verification required',
   invalid_token: 'Invalid token',
@@ -117,6 +122,8 @@ export const ADU_PAGE_STATUS_LABELS: Record<AduConfigStatus, string> = {
   '2fa_required_on_BM': 'BM 2FA required',
   check_developer_app: 'Check developer app',
   account_suspended: 'Account suspended',
+  missing_page_access: 'Missing page access',
+  missing_permission: 'Missing permission',
 };
 
 export const ADU_SYNC_STATUS_LABELS: Record<AduSyncStatus, string> = {
@@ -151,8 +158,8 @@ export function aduStatusAlert(
     return 'The source could not be found. Check the source username in Settings, then try again.';
   if (status === 'active') return null;
   switch (status) {
-    case 'inactive':
-      return 'Posting is inactive. Activate automation from the header to resume.';
+    case 'paused':
+      return 'Posting is paused. Turn automation on to resume.';
     case 'fb_verification_required':
       return 'Facebook verification is required. Complete verification in the Meta app — do not reconnect the account.';
     case 'fb_rate_limited':
@@ -164,7 +171,7 @@ export function aduStatusAlert(
     case 'invalid_username':
       return 'The source is disabled. Change the source in Settings to continue.';
     case 'creator_suspended':
-      return 'This source is unavailable after too many download failures. Change the source in Settings, then reactivate.';
+      return 'This source is unavailable after more than 50 failed downloads. Turn automation on to check whether the creator is available again.';
     case 'completed':
       return 'All reels have been posted. Update the source in Settings to continue.';
     case '2fa_required_on_BM':
@@ -173,6 +180,56 @@ export function aduStatusAlert(
       return 'Check the developer app settings for this page, then reactivate.';
     case 'account_suspended':
       return 'The Facebook account is suspended. Resolve it in Facebook, then reactivate.';
+    case 'missing_page_access':
+      return 'Your account no longer has a role on this page, so posting is paused. Ask an admin to restore your role in Business Manager, then turn automation back on.';
+    case 'missing_permission':
+      return 'A permission this page needs is missing, so posting is paused. Ask an admin to grant the permission, then turn automation back on.';
+    default:
+      return null;
+  }
+}
+
+/**
+ * Instagram Auto Download/Upload alert, same status enum, Instagram wording.
+ * The Facebook alerts above are NOT reused: they name Facebook, Business
+ * Manager and Facebook Accounts, none of which apply to an Instagram
+ * destination. Facebook-only statuses map to the closest Instagram action
+ * instead of leaking Facebook copy into the Instagram section.
+ */
+export function instagramAduStatusAlert(
+  status: AduConfigStatus,
+  syncStatus: AduSyncStatus
+): string | null {
+  if (syncStatus === 'error')
+    return 'The source could not be found. Check the source username in Settings, then try again.';
+  if (status === 'active') return null;
+  switch (status) {
+    case 'paused':
+      return 'Posting is paused. Turn automation on to resume.';
+    case 'fb_verification_required':
+      return 'Instagram verification is required. Complete verification in the Instagram app — do not reconnect the account.';
+    case 'fb_rate_limited':
+      return 'Automation is paused for about 3 days because of an Instagram rate limit. It resumes automatically.';
+    case 'invalid_token':
+      return 'The Instagram connection is invalid. Reconnect the account in Instagram Accounts.';
+    case 'page_not_accessible':
+      return 'This Instagram account is not accessible. Check the account permissions and reconnect if needed.';
+    case 'invalid_username':
+      return 'The source is disabled. Change the source in Settings to continue.';
+    case 'creator_suspended':
+      return 'This source is unavailable after more than 50 failed downloads. Turn automation on to check whether the creator is available again.';
+    case 'completed':
+      return 'All reels have been posted. Update the source in Settings to continue.';
+    case '2fa_required_on_BM':
+      return 'Two-factor authentication is required on the account. Complete it, then turn automation back on.';
+    case 'check_developer_app':
+      return 'Access is blocked for this account. Fix the problem in your developer app, then turn automation back on.';
+    case 'account_suspended':
+      return 'The Instagram account is suspended. Once Instagram clears the restriction, turn automation back on.';
+    case 'missing_page_access':
+      return 'Your account no longer has access to this Instagram account, so posting is paused. Ask an admin to restore your access, then turn automation back on.';
+    case 'missing_permission':
+      return 'A permission this Instagram account needs is missing, so posting is paused. Ask an admin to grant the permission, then turn automation back on.';
     default:
       return null;
   }
@@ -193,8 +250,8 @@ export function threadsAduStatusAlert(
     return 'The source could not be found. Check the source username in Settings, then try again.';
   if (status === 'active') return null;
   switch (status) {
-    case 'inactive':
-      return 'Posting is inactive. Activate automation from the header to resume.';
+    case 'paused':
+      return 'Posting is paused. Turn automation on to resume.';
     case 'fb_verification_required':
       return 'Threads verification is required. Complete verification in the Threads app — do not reconnect the account.';
     case 'fb_rate_limited':
@@ -206,7 +263,7 @@ export function threadsAduStatusAlert(
     case 'invalid_username':
       return 'The source is disabled. Change the source in Settings to continue.';
     case 'creator_suspended':
-      return 'This source is unavailable after too many download failures. Change the source in Settings, then reactivate.';
+      return 'This source is unavailable after more than 50 failed downloads. Turn automation on to check whether the creator is available again.';
     case 'completed':
       return 'All videos have been posted. Update the source in Settings to continue.';
     case '2fa_required_on_BM':
@@ -215,6 +272,10 @@ export function threadsAduStatusAlert(
       return 'Check the developer app settings for this account, then reactivate.';
     case 'account_suspended':
       return 'The Threads account is suspended. Resolve it in Threads, then reactivate.';
+    case 'missing_page_access':
+      return 'Your account no longer has access to this Threads account, so posting is paused. Ask an admin to restore your access, then turn automation back on.';
+    case 'missing_permission':
+      return 'A permission this Threads account needs is missing, so posting is paused. Ask an admin to grant the permission, then turn automation back on.';
     default:
       return null;
   }

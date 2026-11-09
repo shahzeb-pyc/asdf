@@ -31,7 +31,7 @@ const CONFIG = {
   destinationStatus: 'active',
   accountName: 'My IG Account',
   status: 'active',
-  displayStatus: 'Active',
+  displayStatus: 'Active posting',
   followersCount: 1000,
   followersGained: 1250,
   createdAt: '2026-10-20T00:00:00.000Z',
@@ -308,5 +308,28 @@ describe('IgAduHubPage', () => {
     renderWithQuery(<IgAduHubPage subdomain="acme" />);
     expect(await screen.findByText('1 of 5 accounts used · 4 remaining')).toBeTruthy();
     expect(screen.getByRole('button', { name: '+ Add Account' })).toBeEnabled();
+  });
+
+  it('maps every ADU display status to the right StatusMark kind', async () => {
+    const { getAduStatusMarkKind } = await import(
+      '@/components/instagram/auto-download-upload/ig-adu-hub-page'
+    );
+    expect(getAduStatusMarkKind('Active posting')).toBe('operational');
+    expect(getAduStatusMarkKind('All reels posted')).toBe('operational');
+    expect(getAduStatusMarkKind('Scrape pending')).toBe('queued');
+    expect(getAduStatusMarkKind('Scraping reels')).toBe('queued');
+    expect(getAduStatusMarkKind('Paused')).toBe('queued');
+    expect(getAduStatusMarkKind('Missing page access')).toBe('critical');
+    expect(getAduStatusMarkKind('Missing permission')).toBe('critical');
+    expect(getAduStatusMarkKind('Verification required')).toBe('critical');
+    expect(getAduStatusMarkKind('Posting inactive')).toBe('critical');
+  });
+
+  it('card shows the status as a StatusMark, never a plain pill', async () => {
+    renderWithQuery(<IgAduHubPage subdomain="acme" />);
+    await screen.findByText('My IG Account');
+    const mark = screen.getByTestId('adu-page-status');
+    expect(mark).toHaveAttribute('data-status', 'operational');
+    expect(mark).toHaveTextContent('Active posting');
   });
 });

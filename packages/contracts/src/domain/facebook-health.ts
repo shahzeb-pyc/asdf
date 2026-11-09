@@ -15,12 +15,24 @@ export interface GraphApiErrorEvaluation {
 
 /**
  * Maps Facebook Graph API error codes and subcodes to internal domain health states.
- * - Error 190 / 102 (with subcodes 458, 459, 460, 463, 464, 467, 483, 492 or general): maps to expired / invalid_token, requiring re-auth.
+ * - Error 190 / 102 (with subcodes 458, 460, 463, 467, 483, 492 or general): maps to expired / invalid_token, requiring re-auth.
+ *   EXCEPTIONS inside 190: subcodes 459 and 464 are identity checkpoints, not dead
+ *   tokens — they map to page_checkpoint + manual verification with the account kept
+ *   active; subcode 2069032 is an app bug (wrong token type) — active/active,
+ *   non-transient, no re-auth, and the ADU mapper turns it into a generic
+ *   backend message.
  * - Error 10 / 200-299: maps to expired / invalid_token, requiring re-auth.
+ * - Error 3: app bug (API Method the app lacks the capability for) — active/active,
+ *   non-transient, no re-auth; the ADU mapper turns it into a generic backend message.
  * - Error 368:
  *   - Subcode 1390008 (or default 368): "We limit how often you can post, comment or do other things..." -> maps pageStatus to 'fb_rate_limited' with 3-day auto-recovery to 'active'.
  *   - Subcode 4854002: "Confirm your identity before you can publish as this Page." -> maps pageStatus to 'page_checkpoint' (requires user mobile login & verification, then manual reactivation).
+ *   - Subcode 1404078: Page Publishing Authorization incomplete -> page_checkpoint + manual verification (was misrouted to fb_rate_limited with a wrong 3-day auto-recovery).
  *   - Subcode 1404082: "You've already posted this. Posting the same content repeatedly..." -> keeps pageStatus 'active', marks post as failed (isTransient: false) with reason.
+ *   - Subcode 1404102: link against Community Standards -> keeps pageStatus 'active', marks post as failed (isTransient: false) with reason. It used to fall to the default-368 branch (fb_rate_limited with a wrong 3-day auto-recovery).
+ * - Error 400 with subcode 4854002: the same identity checkpoint arriving with
+ *   top-level code 400, not 368 — page_checkpoint + manual verification (branch on
+ *   the subcode, not only on code 368; it used to fall into the generic 4xx bucket).
  * - Error 506: Duplicate post -> keeps pageStatus 'active', marks post as failed (isTransient: false) with duplicate reason.
  * - Error 1609005: Bad/unreachable link -> keeps pageStatus 'active', marks post as failed (isTransient: false) with bad link reason.
  * - Error 4, 17, 32, 341, 613, 80000-80014 (API call volume rate limits): keeps accountStatus and pageStatus 'active' with isTransient: true.
@@ -37,6 +49,20 @@ export function evaluateGraphApiError(
         isTransient: false,
         requiresReauth: true,
         message: 'Application authorization was revoked by the user.',
+      };
+    }
+    // Subcodes 459 (user checkpointed) and 464 (unconfirmed user) are
+    // identity checkpoints, not dead tokens: the account stays active
+    // and the user verifies in the Meta app instead of reconnecting.
+    if (errorSubcode === 459 || errorSubcode === 464) {
+      return {
+        accountStatus: 'active',
+        pageStatus: 'page_checkpoint',
+        isTransient: false,
+        requiresReauth: false,
+        requiresManualVerification: true,
+        message:
+          'Confirm your identity before you can publish as this Page. Log in to Facebook on a mobile device, switch to this Page, confirm verification, and then turn automation back on.',
       };
     }
     if (errorSubcode === 460) {
@@ -67,6 +93,20 @@ export function evaluateGraphApiError(
           'User associated with the Page access token does not have an appropriate role on the Page.',
       };
     }
+    // Subcode 2069032 is an app bug (wrong token type — the call needs
+    // a Page token and got a user token), not a dead token: nothing
+    // flips and nothing retries. The ADU mapper turns it into a
+    // generic backend message with the full detail in the team log.
+    if (errorSubcode === 2069032) {
+      return {
+        accountStatus: 'active',
+        pageStatus: 'active',
+        isTransient: false,
+        requiresReauth: false,
+        message:
+          'The app called Facebook with the wrong token type. This is an app issue, not an account issue.',
+      };
+    }
     return {
       accountStatus: 'expired',
       pageStatus: 'invalid_token',
@@ -84,6 +124,21 @@ export function evaluateGraphApiError(
       isTransient: false,
       requiresReauth: true,
       message: 'Facebook permission or authorization denied. Please re-authenticate your account.',
+    };
+  }
+
+  // Error 3: API Method — the app called an endpoint or HTTP method it
+  // lacks the capability for. An app bug, not a dead token and not
+  // retryable: nothing flips. The ADU mapper turns it into a generic
+  // backend message with the full detail in the team log.
+  if (code === 3) {
+    return {
+      accountStatus: 'active',
+      pageStatus: 'active',
+      isTransient: false,
+      requiresReauth: false,
+      message:
+        'The app called a Facebook API method it does not have the capability for. This is an app issue, not an account issue.',
     };
   }
 
@@ -109,6 +164,22 @@ export function evaluateGraphApiError(
     };
   }
 
+  // Error 400 with subcode 4854002: the same identity checkpoint as
+  // 368/4854002, arriving with top-level code 400 instead of 368.
+  // Branch on the subcode, not only on code 368 — it used to fall
+  // into the generic 4xx bucket and lose the checkpoint meaning.
+  if (code === 400 && errorSubcode === 4854002) {
+    return {
+      accountStatus: 'active',
+      pageStatus: 'page_checkpoint',
+      isTransient: false,
+      requiresReauth: false,
+      requiresManualVerification: true,
+      message:
+        'Confirm your identity before you can publish as this Page. Log in to Facebook on a mobile device, switch to this Page, confirm verification, and then turn automation back on.',
+    };
+  }
+
   // Error 368: Facebook Page Policy / Action Restriction Subcodes
   if (code === 368) {
     // Subcode 4854002: "Confirm your identity before you can publish as this Page."
@@ -120,7 +191,23 @@ export function evaluateGraphApiError(
         requiresReauth: false,
         requiresManualVerification: true,
         message:
-          'Confirm your identity before you can publish as this Page. Please log in to Facebook on a mobile device, switch to this Page, confirm verification, and then manually turn the Page to active.',
+          'Confirm your identity before you can publish as this Page. Log in to Facebook on a mobile device, switch to this Page, confirm verification, and then turn automation back on.',
+      };
+    }
+
+    // Subcode 1404078: Page Publishing Authorization incomplete — a
+    // verification hold, not a rate limit. It used to fall to the
+    // default 368 branch (fb_rate_limited with a wrong 3-day
+    // auto-recovery that would wrongly re-activate it).
+    if (errorSubcode === 1404078) {
+      return {
+        accountStatus: 'active',
+        pageStatus: 'page_checkpoint',
+        isTransient: false,
+        requiresReauth: false,
+        requiresManualVerification: true,
+        message:
+          'Page Publishing Authorization is incomplete. Complete verification in the Meta app, then turn automation back on.',
       };
     }
 
@@ -133,6 +220,20 @@ export function evaluateGraphApiError(
         requiresReauth: false,
         message:
           "You've already posted this. Posting the same content repeatedly is not allowed by Facebook.",
+      };
+    }
+
+    // Subcode 1404102: the link goes against Community Standards — a
+    // per-post permanent failure, not a page rate limit. Mirrors the
+    // 1404082 branch: page stays active, no reauth, no transient retry.
+    if (errorSubcode === 1404102) {
+      return {
+        accountStatus: 'active',
+        pageStatus: 'active',
+        isTransient: false,
+        requiresReauth: false,
+        message:
+          'This link goes against Facebook Community Standards. Remove the link or use a different one.',
       };
     }
 

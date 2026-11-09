@@ -74,6 +74,16 @@ describe('Multi-Account Facebook OAuth Connection (User Story 1 - T059 & Spec 03
       }
     >();
 
+    const storedAduConfigs = new Map<
+      string,
+      {
+        id: string;
+        destinationId: string;
+        workspaceId: string;
+        status: string;
+      }
+    >();
+
     const mockSupabase = {
       from: vi.fn().mockImplementation((table: string) => {
         if (table === 'social_accounts') {
@@ -212,11 +222,46 @@ describe('Multi-Account Facebook OAuth Connection (User Story 1 - T059 & Spec 03
           };
         }
 
+        if (table === 'adu_configs') {
+          // ADU statuses (B2): reconnect flips invalid_token configs
+          // under a refreshed destination. The mock applies the
+          // update to rows matching the query's eq filters, like the
+          // real table — without this branch the flip throws
+          // "supabase.from(...).update is not a function" and aborts
+          // the whole page-token refresh.
+          return {
+            update: vi.fn().mockImplementation((updates: Record<string, any>) => {
+              const filters: Record<string, string | undefined> = {};
+              const chain: any = {
+                eq: vi.fn().mockImplementation((col: string, val: string) => {
+                  filters[col] = val;
+                  return chain;
+                }),
+                then: (resolve: (val: any) => void) => {
+                  for (const cfg of storedAduConfigs.values()) {
+                    if (
+                      (filters.destination_id === undefined ||
+                        cfg.destinationId === filters.destination_id) &&
+                      (filters.workspace_id === undefined ||
+                        cfg.workspaceId === filters.workspace_id) &&
+                      (filters.status === undefined || cfg.status === filters.status)
+                    ) {
+                      if (updates.status) cfg.status = updates.status;
+                    }
+                  }
+                  return Promise.resolve({ error: null }).then(resolve);
+                },
+              };
+              return chain;
+            }),
+          };
+        }
+
         return {};
       }),
     } as unknown as SupabaseClient<Database>;
 
-    return { storedAccounts, storedPages, mockSupabase };
+    return { storedAccounts, storedPages, storedAduConfigs, mockSupabase };
   }
 
   it('allows connecting multiple distinct Facebook accounts under the same workspace without collisions', async () => {
@@ -348,7 +393,8 @@ describe('Multi-Account Facebook OAuth Connection (User Story 1 - T059 & Spec 03
   });
 
   it('auto-refreshes the destination token for all linked pages on reconnect and sets status = active ONLY for error (invalid-token) pages without importing unlinked pages (Spec 031)', async () => {
-    const { storedAccounts, storedPages, mockSupabase } = createMockAccountStore();
+    const { storedAccounts, storedPages, storedAduConfigs, mockSupabase } =
+      createMockAccountStore();
     storedAccounts.set(`ws_multi_123:fb-john`, {
       id: 'acc_fb-john',
       fbAccountId: 'fb-john',
@@ -386,6 +432,23 @@ describe('Multi-Account Facebook OAuth Connection (User Story 1 - T059 & Spec 03
       encryptedPageToken: 'stale_token_c',
       status: 'active',
       metadata: {},
+    });
+
+    // ADU statuses (B2): one invalid_token config under the refreshed
+    // error page (must flip to active on reconnect) and one
+    // rate-limited config under the paused page (must keep its own
+    // recovery path — reconnect cannot fix it).
+    storedAduConfigs.set('cfg_a_invalid', {
+      id: 'cfg_a_invalid',
+      destinationId: 'page_row_a',
+      workspaceId: 'ws_multi_123',
+      status: 'invalid_token',
+    });
+    storedAduConfigs.set('cfg_b_rate', {
+      id: 'cfg_b_rate',
+      destinationId: 'page_row_b',
+      workspaceId: 'ws_multi_123',
+      status: 'fb_rate_limited',
     });
 
     const reconnectState = await signOAuthState(
@@ -485,6 +548,12 @@ describe('Multi-Account Facebook OAuth Connection (User Story 1 - T059 & Spec 03
 
     // Verify unlinked page was NOT auto-imported
     expect(storedPages.size).toBe(3);
+
+    // ADU statuses (B2): reconnect flips ONLY the invalid_token
+    // config under a refreshed destination; the rate-limited config
+    // keeps its status (auto-recovers after its cooldown).
+    expect(storedAduConfigs.get('cfg_a_invalid')!.status).toBe('active');
+    expect(storedAduConfigs.get('cfg_b_rate')!.status).toBe('fb_rate_limited');
   });
 
   it('saves the newly authenticated account AND redirects with ?reconnected_mismatch=1 when Facebook returns a different account than expectedFbAccountId (Spec 031)', async () => {

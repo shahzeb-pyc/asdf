@@ -62,7 +62,16 @@ class FakeBuilder {
   private rows(): Row[] {
     return (this.store[this.table] ?? []).filter((row) =>
       this.filters.every((f) => {
-        const v = row[f.col];
+        // Embedded-join filter (buildAduConfigView's failed-in-pipeline
+        // count selects `adu_reels!inner(status)` and filters on
+        // `adu_reels.status`): resolve the reel through the job's
+        // reel_id, exactly as the join does. A plain row lookup would
+        // read `undefined` for every job and count zero.
+        const v =
+          f.col === 'adu_reels.status'
+            ? (this.store['adu_reels'] ?? []).find((r) => r.id === row['reel_id'])
+                ?.status
+            : row[f.col];
         if (f.op === 'eq') return v === f.val;
         if (f.op === 'in') return (f.val as unknown[]).includes(v);
         return String(v) >= String(f.val);

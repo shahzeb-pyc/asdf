@@ -777,7 +777,10 @@ describe('AduHubPage list cards (Pages-section structure)', () => {
     expect(getAduStatusMarkKind('All reels posted')).toBe('operational');
     expect(getAduStatusMarkKind('Scrape pending')).toBe('queued');
     expect(getAduStatusMarkKind('Scraping reels')).toBe('queued');
-    expect(getAduStatusMarkKind('Posting inactive')).toBe('queued');
+    expect(getAduStatusMarkKind('Posting inactive')).toBe('critical');
+    expect(getAduStatusMarkKind('Paused')).toBe('queued');
+    expect(getAduStatusMarkKind('Missing page access')).toBe('critical');
+    expect(getAduStatusMarkKind('Missing permission')).toBe('critical');
     expect(getAduStatusMarkKind('Source not found')).toBe('critical');
     expect(getAduStatusMarkKind('Verification required')).toBe('critical');
     expect(getAduStatusMarkKind('Invalid token')).toBe('critical');

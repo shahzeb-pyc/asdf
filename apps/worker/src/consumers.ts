@@ -373,10 +373,20 @@ async function callSettleRpc(
  *   - `deferred` → outcome `deferred` with the publisher's deferral
  *     delay; the stored retry count does NOT advance — deferrals
  *     (platform caps, platform-wide pauses) are not the item's fault.
- *   - `failed` → outcome `failed`; an `auth`-classified error with no
- *     explicit account status still cascades the account to `expired`
- *     via `p_target_account_status` — settled by the RPC, never by a
- *     consumer-side refresh attempt.
+ *   - `failed` → outcome `failed`; `p_target_account_status` is
+ *     exactly what the publisher set (`null` when it set nothing) —
+ *     there is deliberately NO kind-based fallback to `expired`.
+ *     The publisher is the single decision point: every publisher
+ *     sets `targetAccountStatus: 'expired'` explicitly whenever its
+ *     classification says the account is dead (Instagram, Threads,
+ *     TikTok, YouTube on `kind === 'auth'`; X on both auth outcomes;
+ *     Facebook only when `evaluateGraphApiError` says `expired`). A
+ *     kind-based fallback re-expired the account for Facebook
+ *     190/459, 190/464, 190/492 and 190/2069032 — codes the classifier
+ *     deliberately keeps active — because those outcomes arrive with
+ *     `kind === 'auth'` (`FacebookGraphError.isAuthError` is true for
+ *     ANY code 190) and no explicit account status. Settled by the
+ *     RPC, never by a consumer-side refresh attempt.
  *
  * `p_retry_count` convention (matching the RPC, which derives the log's
  * attempt number as `p_retry_count + 1` and stores `p_retry_count` as
@@ -445,13 +455,16 @@ export function mapPublishOutcomeToSettleArgs(
     };
   }
 
+  // No kind-based fallback for the account status: the publisher is
+  // the single decision point (see the doc comment above). The base
+  // already carries `outcome.targetAccountStatus ?? null`, so a
+  // classifier-keeps-active Facebook failure (190/459, 190/464,
+  // 190/492, 190/2069032 — `kind === 'auth'` with no explicit account
+  // status) settles `null` and the account stays active.
   return {
     ...base,
     p_outcome_status: 'failed',
     p_retry_count: item.retry_count + 1,
-    p_target_account_status:
-      outcome.targetAccountStatus ??
-      (outcome.error?.kind === 'auth' ? 'expired' : null),
   };
 }
 
