@@ -69,9 +69,8 @@ describe('applyDestinationFbStatusMarker', () => {
 
   it('logs loudly but does not throw when the RPC itself throws', async () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const { db } = makeDb();
-    const rpcMock = db.rpc as unknown as ReturnType<typeof vi.fn>;
-    rpcMock.mockRejectedValue(new Error('rpc threw'));
+    const { db, rpc } = makeDb();
+    rpc.mockRejectedValue(new Error('rpc threw'));
     await expect(
       applyDestinationFbStatusMarker(db, DEST_ID, null),
     ).resolves.toBeUndefined();
