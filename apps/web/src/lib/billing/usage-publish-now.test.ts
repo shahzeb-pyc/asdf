@@ -199,15 +199,7 @@ function makeClient() {
   return { client: client as unknown as SupabaseClient, tables, failures };
 }
 
-/**
- * Plan-check C1: the clock is the real one, not a fixed date. The
- * gates' default read is the request-cached read, which creates
- * its own `now` — so a fixed 2026-11-01 seed window would go
- * stale (a paid period seeded to end 2026-11-21 stops being
- * active under a real clock past that date). All seeds below are
- * relative to NOW, so they stay valid whenever the suite runs.
- */
-const NOW = new Date();
+const NOW = new Date('2026-11-01T12:00:00.000Z');
 const DAY = 86_400_000;
 
 function seedActivePeriod(tables: Record<string, Row[]>) {

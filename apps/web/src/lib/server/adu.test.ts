@@ -315,10 +315,10 @@ describe('Threads ADU cap registration (plan-check B1)', () => {
 
     // After registering, the SAME key is already used (newCount 0,
     // so re-adding it passes), while a different key is now at cap.
-    // Plan-check C1: the register above wrote a usage row, so
-    // these gates must read raw (the hard rule) and pass the
-    // result in — the gates' default read is the request-cached
-    // one and would still say usage 0.
+    // Plan-check C1 (rework): the register above wrote a usage
+    // row, so these gates read raw and pass the result in — the
+    // hard-rule shape (a gate after a write must see the write).
+    // Reading raw here is also what the gates' default does.
     const fresh = await getEntitlement(client, 'user-1');
     const same = await assertFeatureAddWithinCap(
       client,
