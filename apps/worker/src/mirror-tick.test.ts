@@ -615,16 +615,150 @@ describe('processMirrorCheck Facebook error detail — spec 155', () => {
     expect(stamp.fbRateLimitedAt).toBeNull();
   });
 
-  it('a clean check clears the fb_status and the anchor', async () => {
+  it('a clean check clears the fb_status and the anchor once the anchor is stale', async () => {
     const state = newState();
     await processMirrorCheck(
       fakeDeps(state, []),
       mirror({
         status: 'error',
         fbStatus: 'fb_rate_limited',
-        fbRateLimitedAt: '2026-10-29T11:00:00.000Z',
+        // Stale on purpose: a fresh own anchor skips the check (B3
+        // below) — the detail only clears once the cooldown is over
+        // and the check actually runs.
+        fbRateLimitedAt: '2026-10-25T12:00:00.000Z',
       }),
     );
+    const stamp = finalStamp(state);
+    expect(stamp.status).toBe('active');
+    expect(stamp.fbStatus).toBeNull();
+    expect(stamp.fbRateLimitedAt).toBeNull();
+  });
+
+  it('B3: skips when the mirror’s own rate-limit anchor is fresh even with an ACTIVE target', async () => {
+    const state = newState();
+    const result = await processMirrorCheck(
+      fakeDeps(state, [reel('v1', 1761720000)]),
+      mirror({
+        status: 'error',
+        fbStatus: 'fb_rate_limited',
+        fbRateLimitedAt: '2026-10-29T11:00:00.000Z',
+        targetStatus: 'active',
+        targetRateLimitedAt: null,
+      }),
+    );
+    expect(result).toEqual({ posted: 0, skipped: 0, failed: 0 });
+    expect(state.fetchFeedCalls).toBe(0);
+    expect(state.published).toEqual([]);
+    expect(state.claimed).toEqual([]);
+    // Only nextCheckAt advances; the stored detail is untouched —
+    // the cooldown, not a new failure, is why nothing ran.
+    expect(state.mirrorUpdates).toHaveLength(1);
+    expect(state.mirrorUpdates[0]?.patch).toEqual({
+      nextCheckAt: new Date(NOW.getTime() + 60 * 60 * 1000).toISOString(),
+    });
+  });
+
+  it('B3: an ACTIVE mirror with a fresh own rate-limit anchor also skips (no publish through the cooldown)', async () => {
+    const state = newState();
+    await processMirrorCheck(
+      fakeDeps(state, [reel('v1', 1761720000)]),
+      mirror({
+        status: 'active',
+        fbStatus: 'fb_rate_limited',
+        fbRateLimitedAt: '2026-10-29T11:00:00.000Z',
+        targetStatus: 'active',
+      }),
+    );
+    expect(state.fetchFeedCalls).toBe(0);
+    expect(state.published).toEqual([]);
+    expect(state.mirrorUpdates).toHaveLength(1);
+  });
+
+  it('B4: a rate-limited target with no anchor resumes once updated_at is stale', async () => {
+    const state = newState();
+    await processMirrorCheck(
+      fakeDeps(state, []),
+      mirror({
+        status: 'error',
+        fbStatus: 'fb_rate_limited',
+        fbRateLimitedAt: '2026-10-25T12:00:00.000Z',
+        targetStatus: 'rate_limited',
+        targetRateLimitedAt: null,
+        // The ADU tick flips destinations to rate_limited with a
+        // bare { status } update and no metadata.rate_limited_at:
+        // updated_at is the only anchor such a row has.
+        targetUpdatedAt: '2026-10-25T12:00:00.000Z',
+      }),
+    );
+    expect(state.fetchFeedCalls).toBe(1);
+    const stamp = finalStamp(state);
+    expect(stamp.status).toBe('active');
+    expect(stamp.fbStatus).toBeNull();
+  });
+
+  it('B4: a rate-limited target with no anchor and a fresh updated_at still skips', async () => {
+    const state = newState();
+    await processMirrorCheck(
+      fakeDeps(state, [reel('v1', 1761720000)]),
+      mirror({
+        status: 'error',
+        fbStatus: 'fb_rate_limited',
+        fbRateLimitedAt: '2026-10-25T12:00:00.000Z',
+        targetStatus: 'rate_limited',
+        targetRateLimitedAt: null,
+        targetUpdatedAt: '2026-10-29T11:00:00.000Z',
+      }),
+    );
+    expect(state.fetchFeedCalls).toBe(0);
+    expect(state.mirrorUpdates).toHaveLength(1);
+  });
+
+  it('B4: a rate-limited target with neither anchor nor updated_at stays uncheckable (fail closed)', async () => {
+    const state = newState();
+    await processMirrorCheck(
+      fakeDeps(state, [reel('v1', 1761720000)]),
+      mirror({
+        status: 'error',
+        fbStatus: 'fb_rate_limited',
+        fbRateLimitedAt: '2026-10-25T12:00:00.000Z',
+        targetStatus: 'rate_limited',
+        targetRateLimitedAt: null,
+        targetUpdatedAt: null,
+      }),
+    );
+    expect(state.fetchFeedCalls).toBe(0);
+    expect(state.mirrorUpdates).toHaveLength(1);
+  });
+
+  it('a non-publish failure leaves the stored Facebook detail untouched', async () => {
+    const state = newState();
+    const deps = fakeDeps(state, []);
+    deps.fetchFeed = async () => {
+      throw new Error('tikwm exploded');
+    };
+    await processMirrorCheck(
+      deps,
+      mirror({ status: 'error', fbStatus: 'missing_permission', fbRateLimitedAt: null }),
+    );
+    // The final stamp advances the check clock but carries no
+    // fbStatus key: a feed failure says nothing about the target.
+    const stamp = finalStamp(state);
+    expect('fbStatus' in stamp).toBe(false);
+    expect('fbRateLimitedAt' in stamp).toBe(false);
+  });
+
+  it('B2 discriminator: a resumed mirror (active) with a stale own detail clears it on a clean check', async () => {
+    const state = newState();
+    await processMirrorCheck(
+      fakeDeps(state, []),
+      mirror({
+        status: 'active',
+        fbStatus: 'missing_permission',
+        fbRateLimitedAt: null,
+        targetStatus: 'active',
+      }),
+    );
+    expect(state.fetchFeedCalls).toBe(1);
     const stamp = finalStamp(state);
     expect(stamp.status).toBe('active');
     expect(stamp.fbStatus).toBeNull();
