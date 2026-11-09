@@ -37,6 +37,13 @@
  *       defers write no destination cooldown or anchor; the `queued`
  *       (retry) branch still advances the count (branches stay
  *       distinct).
+ *   (i) the `apply_destination_fb_status_marker` RPC (spec 155 SEND
+ *       BACK item 4, migration 20261109170000): exactly ONE overload
+ *       (uuid, text), SECURITY DEFINER with service_role-only EXECUTE
+ *       and a pinned search_path; setting a marker merges the single
+ *       key and preserves every other metadata key; clearing removes
+ *       only `fb_status`; an unknown marker raises; EXECUTE is denied
+ *       to authenticated + anon (42501).
  *
  * Usage:
  *   SETTLE_RPC_PG_URL=postgres://postgres@/settle139?host=<socket dir>&port=<port> \
@@ -563,6 +570,112 @@ async function sectionDeferred(pool: Pool): Promise<void> {
   check(logsC[0]?.result === 'retry', "retry branch still logs result 'retry'", String(logsC[0]?.result));
 }
 
+async function attemptMarker(
+  pool: Pool,
+  role: Role,
+  marker: string | null
+): Promise<Attempt> {
+  let result: Attempt = { ok: false, code: undefined, message: undefined, value: null };
+  try {
+    await asRole(pool, role, async (client) => {
+      try {
+        await client.query(
+          'SELECT public.apply_destination_fb_status_marker($1::uuid, $2::text)',
+          [DEST, marker]
+        );
+        result = { ok: true, code: undefined, message: undefined, value: null };
+      } catch (err) {
+        const e = err as { code?: string; message?: string };
+        result = { ok: false, code: e.code, message: e.message, value: null };
+      }
+    });
+  } catch (err) {
+    if (!result.ok && !result.code) throw err;
+  }
+  return result;
+}
+
+async function sectionMarkerRpc(pool: Pool): Promise<void> {
+  console.log('\n(i) apply_destination_fb_status_marker RPC (spec 155 item 4)');
+  const fns = await pool.query<{ args: string; acl: string; config: string[] | null; secdef: boolean }>(
+    `SELECT pg_get_function_identity_arguments(p.oid) AS args,
+            COALESCE(p.proacl::text, '(default: EXECUTE TO PUBLIC)') AS acl,
+            p.proconfig AS config,
+            p.prosecdef AS secdef
+       FROM pg_proc p
+      WHERE p.pronamespace = 'public'::regnamespace
+        AND p.proname = 'apply_destination_fb_status_marker'
+      ORDER BY args`
+  );
+  check(fns.rows.length === 1, 'exactly 1 marker overload exists (uuid, text)', `got ${fns.rows.length}`);
+  const fn = fns.rows[0];
+  if (fn) {
+    check(fn.args === 'p_destination_id uuid, p_marker text', 'marker signature is (uuid, text)', fn.args);
+    check(fn.secdef === true, 'marker function is SECURITY DEFINER');
+    check(fn.acl.includes('service_role=X/'), 'marker ACL grants EXECUTE to service_role', fn.acl);
+    check(
+      !fn.acl.includes('authenticated=') && !fn.acl.includes('anon=') && !fn.acl.startsWith('{=X'),
+      'marker ACL has no PUBLIC/anon/authenticated EXECUTE',
+      fn.acl
+    );
+    check(
+      (fn.config ?? []).includes('search_path=public, pg_temp'),
+      'marker search_path pinned to public, pg_temp',
+      JSON.stringify(fn.config)
+    );
+  }
+
+  const auth = await attemptMarker(pool, 'authenticated', 'missing_permission');
+  check(!auth.ok && auth.code === '42501', 'marker denied to authenticated (42501)', auth.ok ? 'call succeeded' : `${auth.code} ${auth.message}`);
+  const anon = await attemptMarker(pool, 'anon', 'missing_permission');
+  check(!anon.ok && anon.code === '42501', 'marker denied to anon (42501)', anon.ok ? 'call succeeded' : `${anon.code} ${anon.message}`);
+
+  // Set: merges the single key, preserves every other metadata key.
+  await pool.query(
+    `UPDATE public.destinations
+        SET metadata = '{"category": "Comedy", "starting_followers": 5, "rate_limited_at": "2026-10-25T12:00:00.000Z"}'::jsonb
+      WHERE id = $1::uuid`,
+    [DEST]
+  );
+  await pool.query('SELECT public.apply_destination_fb_status_marker($1::uuid, $2::text)', [
+    DEST,
+    'missing_permission',
+  ]);
+  const afterSet = await destRow(pool);
+  const metaSet = (afterSet.metadata ?? {}) as Record<string, unknown>;
+  check(metaSet.fb_status === 'missing_permission', 'set writes fb_status', JSON.stringify(metaSet));
+  check(
+    metaSet.category === 'Comedy' &&
+      metaSet.starting_followers === 5 &&
+      metaSet.rate_limited_at === '2026-10-25T12:00:00.000Z',
+    'set preserves every other metadata key',
+    JSON.stringify(metaSet)
+  );
+
+  // Clear: removes only fb_status.
+  await pool.query('SELECT public.apply_destination_fb_status_marker($1::uuid, NULL::text)', [DEST]);
+  const afterClear = await destRow(pool);
+  const metaClear = (afterClear.metadata ?? {}) as Record<string, unknown>;
+  check(!('fb_status' in metaClear), 'clear removes fb_status', JSON.stringify(metaClear));
+  check(
+    metaClear.category === 'Comedy' && metaClear.starting_followers === 5,
+    'clear preserves every other metadata key',
+    JSON.stringify(metaClear)
+  );
+
+  // Unknown marker raises instead of storing junk.
+  let raised = false;
+  try {
+    await pool.query('SELECT public.apply_destination_fb_status_marker($1::uuid, $2::text)', [
+      DEST,
+      'not_a_status',
+    ]);
+  } catch {
+    raised = true;
+  }
+  check(raised, 'unknown marker raises');
+}
+
 async function dump(pool: Pool): Promise<string> {
   const fns = await pool.query<{ args: string; acl: string; rettype: string }>(
     `SELECT pg_get_function_identity_arguments(p.oid) AS args,
@@ -594,6 +707,7 @@ async function main(): Promise<void> {
     await sectionCooldown(pool);
     await sectionDetail(pool);
     await sectionDeferred(pool);
+    await sectionMarkerRpc(pool);
 
     const text = await dump(pool);
     console.log('\n--- settle_queue_item_outcome catalog dump ---');

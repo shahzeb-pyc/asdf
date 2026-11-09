@@ -329,15 +329,20 @@ export async function persistPublishedPostId(
 /**
  * Spec 155: applies the publisher outcome's Facebook detail marker
  * (`metadata.fb_status`) to the destination row AFTER a successful
- * settle. The settle RPC does not know the marker, so this is a
- * separate direct update — the ADU tick's direct-flip precedent
- * (`adu-tick.ts`): read the row's current metadata, set the
- * `fb_status` key (or delete it when `marker` is null), write it
- * back. Best-effort by design: a failure is logged loudly but never
- * blocks or reopens the settle — the coarse status the settle wrote
- * is always right, and the next failure re-stamps the marker. The
- * marker is detail-only, so a lost write degrades the label, never
- * the state.
+ * settle, through the `apply_destination_fb_status_marker` RPC
+ * (migration 20261109170000) — a single statement
+ * (`metadata = metadata || '{"fb_status": ...}'`, or
+ * `metadata - 'fb_status'` for a clear), so concurrent marker
+ * writes serialize on the row lock and no concurrent metadata
+ * write can be clobbered. The old read-modify-write (read the
+ * row, edit metadata in memory, write it back) could invert
+ * markers, clobber a concurrent metadata write, or re-stamp a
+ * stale error after a reconnect-clear (SEND BACK item 4).
+ * Best-effort by design: a failure is logged loudly but never
+ * blocks or reopens the settle — the coarse status the settle
+ * wrote is always right, and the next failure re-stamps the
+ * marker. The marker is detail-only, so a lost write degrades
+ * the label, never the state.
  */
 export async function applyDestinationFbStatusMarker(
   db: ConsumerDbClient,
@@ -345,22 +350,10 @@ export async function applyDestinationFbStatusMarker(
   marker: string | null,
 ): Promise<void> {
   try {
-    const row = await loadRowById(db, 'destinations', destinationId);
-    const metadata = (
-      row !== null && typeof row.metadata === 'object' && row.metadata !== null
-        ? (row.metadata as Record<string, unknown>)
-        : {}
-    );
-    const nextMetadata: Record<string, unknown> = { ...metadata };
-    if (marker === null) {
-      delete nextMetadata.fb_status;
-    } else {
-      nextMetadata.fb_status = marker;
-    }
-    const { error } = await db
-      .from('destinations')
-      .update({ metadata: nextMetadata, updated_at: new Date().toISOString() })
-      .eq('id', destinationId);
+    const { error } = await db.rpc('apply_destination_fb_status_marker', {
+      p_destination_id: destinationId,
+      p_marker: marker,
+    });
     if (error) {
       console.error(
         `[consumer] failed to apply fb_status marker ${marker ?? '(clear)'} for destination ${destinationId}:`,

@@ -134,10 +134,12 @@ export const PublishOutcomeSchema = z.object({
    * Undefined means "leave the marker alone" (publisher has no opinion);
    * null means "clear it" (e.g. the destination flipped back to active or
    * to rate-limited, whose anchor lives in `rate_limited_at`). Consumers
-   * apply it AFTER a successful settle, directly on the destinations row
-   * (the settle RPC does not know the marker) — a marker write failure is
-   * logged loudly and never blocks the settle; the coarse status from the
-   * settle is always right even when the marker write fails.
+   * apply it AFTER a successful settle, through the
+   * `apply_destination_fb_status_marker` RPC (a single-statement jsonb
+   * merge — the settle RPC does not know the marker); a marker write
+   * failure is logged loudly and never blocks the settle; the coarse
+   * status from the settle is always right even when the marker write
+   * fails.
    */
   targetDestinationFbStatus: z
     .enum([
