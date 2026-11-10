@@ -582,7 +582,7 @@ describe('processMirrorCheck — S2 due downgrade un-pauses the mirror', () => {
           })
           .sort(
             (a, b) => Date.parse(b['ends_at'] as string) - Date.parse(a['ends_at'] as string)
-          )[0];
+          ).at(0);
         if (!period) return { data: false, error: null };
         const platform = args['p_platform'] as string;
         const key = args['p_destination_key'] as string;

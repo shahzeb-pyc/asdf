@@ -770,7 +770,9 @@ export async function runAduTick(options: {
       // (external_destination_id ?? id). A missing destination row
       // fails closed — the job stays pending_publish, exactly as
       // the publish loop's destination-missing failure below.
-      const gateDestinationId = gateConfig?.destination_id;
+      // (gateConfig is non-null here: the status check above
+      // continued on any other value.)
+      const gateDestinationId = gateConfig.destination_id;
       let gateDestinationRow: unknown = null;
       if (gateDestinationId) {
         const { data } = await supabase
