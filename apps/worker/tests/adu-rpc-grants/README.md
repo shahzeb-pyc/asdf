@@ -11,6 +11,10 @@ Proves the ADU RPC hardening from `supabase/migrations/20261030140000_adu_rpc_ha
   security definer.
 - Hub list paging, search, status filter, sort and stats sums behave
   as the hub route expects, on seeded data.
+- `adu_hub_list` returns `followers_updated_at` (spec 162, round 2):
+  a stamped config's timestamp round-trips through the RPC and an
+  unstamped config reads null, so the Facebook hub route can hand
+  the value to `buildAduConfigView`.
 - Re-applying the current hub-RPC definitions
   (`20261111010000_insights_worker_daily_followers.sql`, spec 162) is
   idempotent and the grants still hold afterwards. (The 20261030140000

@@ -21,6 +21,11 @@
  *       username / destination name / external id, Most/Least
  *       Followers sort, and stats sums (total followers = sum of
  *       current_followers; net gained = sum of max(0, current-starting)).
+ *       Plus the spec 162 send-back fix (round 2): adu_hub_list
+ *       returns followers_updated_at — a stamped config's timestamp
+ *       round-trips through the RPC and an unstamped config reads
+ *       null, so the Facebook hub route can hand the value to
+ *       buildAduConfigView instead of it being null forever.
  *   (d) The hub RPC definitions are idempotent: re-applying the
  *       20261111010000 (spec 162) hub-RPC block exits clean and the
  *       grants above still hold. The 20261030140000 hardening file
@@ -195,13 +200,15 @@ async function seed(pool: Pool): Promise<void> {
   // B active/300 gained on 300 starting (net 0), C paused/50 on 0 (net 50).
   // 'inactive' no longer exists (ADU statuses PR: turning automation
   // off is Pause now), so the third config is seeded 'paused'.
+  // A carries a stamped followers_updated_at (spec 162 round 2):
+  // the hub list must return the column and the stamp must round-trip.
   await pool.query(
     `INSERT INTO public.adu_configs (id, workspace_id, destination_id, source_platform, source_username,
-       timezone, posts_per_day, schedule_type, posting_times, status, sync_status, starting_followers, current_followers)
+       timezone, posts_per_day, schedule_type, posting_times, status, sync_status, starting_followers, current_followers, followers_updated_at)
      VALUES
-       ('a0000000-0000-4000-8000-000000000001', $1, $2, 'instagram', 'alpha_source', 'UTC', 1, 'dailyrandom', '{}', 'active', 'synced', 100, 150),
-       ('a0000000-0000-4000-8000-000000000002', $1, $3, 'tiktok', 'beta_source', 'UTC', 2, 'dailyrandom', '{}', 'active', 'synced', 300, 300),
-       ('a0000000-0000-4000-8000-000000000003', $1, $4, 'youtube', 'gamma_source', 'UTC', 1, 'dailyrandom', '{}', 'paused', 'synced', 0, 50)`,
+       ('a0000000-0000-4000-8000-000000000001', $1, $2, 'instagram', 'alpha_source', 'UTC', 1, 'dailyrandom', '{}', 'active', 'synced', 100, 150, '2026-11-10T22:00:00.000Z'),
+       ('a0000000-0000-4000-8000-000000000002', $1, $3, 'tiktok', 'beta_source', 'UTC', 2, 'dailyrandom', '{}', 'active', 'synced', 300, 300, NULL),
+       ('a0000000-0000-4000-8000-000000000003', $1, $4, 'youtube', 'gamma_source', 'UTC', 1, 'dailyrandom', '{}', 'paused', 'synced', 0, 50, NULL)`,
     [WS_ID, DEST_A, DEST_B, DEST_C],
   );
 }
@@ -305,6 +312,30 @@ async function main(): Promise<void> {
       Number(listMost.rows[0]?.current_followers) === 300,
       'hub list Most Followers sorts by current_followers desc',
       String(listMost.rows[0]?.current_followers),
+    );
+    // Spec 162 round 2: the timestamp column must be present in the
+    // RPC output at all — without it in RETURNS TABLE the key is
+    // absent (not null) and the hub view reads null forever. The
+    // stamped config's value must round-trip; unstamped configs read
+    // null, never a faked time.
+    const listAll = await attempt(pool, 'service_role',
+      'SELECT * FROM public.adu_hub_list($1, NULL, NULL, NULL, 9, 0)', [WS_ID]);
+    check(listAll.ok && listAll.rows.length === 3, 'hub list returns all 3 rows for timestamp check', String(listAll.rows.length));
+    check(
+      listAll.rows.every((r) => 'followers_updated_at' in r),
+      'hub list rows carry followers_updated_at',
+    );
+    const stamped = listAll.rows.find((r) => r.source_username === 'alpha_source');
+    check(
+      stamped !== undefined && new Date(stamped.followers_updated_at as string).toISOString() === '2026-11-10T22:00:00.000Z',
+      'hub list returns the stamped followers_updated_at',
+      String(stamped?.followers_updated_at),
+    );
+    check(
+      listAll.rows
+        .filter((r) => r.source_username !== 'alpha_source')
+        .every((r) => r.followers_updated_at === null),
+      'hub list returns null followers_updated_at for unstamped configs',
     );
     const stats = await attempt(pool, 'service_role',
       'SELECT * FROM public.adu_hub_stats($1, NULL, NULL)', [WS_ID]);

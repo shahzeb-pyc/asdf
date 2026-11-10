@@ -21,6 +21,15 @@
 --    then the original grant closure is re-applied verbatim
 --    (revoke from PUBLIC/anon/authenticated, grant to service_role
 --    only — the RPCs stay plain, NOT security definer).
+--    adu_hub_list ALSO returns followers_updated_at (send-back fix,
+--    spec 162 round 2): the Facebook hub route hands each RPC row
+--    straight to buildAduConfigView, which reads the timestamp only
+--    from the row it is handed — without the column the hub's
+--    "Updated …" line could never render. adu_hub_stats needs no
+--    timestamp (aggregate sums only) and threads_adu_hub_list needs
+--    none either (the Threads hub route re-fetches each config row
+--    with select('*'), so the timestamp already flows); the IG hub
+--    route likewise selects '*'. Only the Facebook list carries it.
 -- Facebook's Graph API field `followers_count` is untouched: it is
 -- Facebook's field, not our column.
 
@@ -62,6 +71,7 @@ returns table (
   sync_status text,
   starting_followers integer,
   current_followers integer,
+  followers_updated_at timestamptz,
   display_name text,
   created_at timestamptz,
   updated_at timestamptz,
@@ -88,7 +98,7 @@ as $$
     f.id, f.workspace_id, f.destination_id, f.source_platform,
     f.source_username, f.timezone, f.posts_per_day, f.schedule_type,
     f.posting_times, f.status, f.sync_status, f.starting_followers,
-    f.current_followers, f.display_name, f.created_at, f.updated_at,
+    f.current_followers, f.followers_updated_at, f.display_name, f.created_at, f.updated_at,
     count(*) over () as total_count
   from filtered f
   order by

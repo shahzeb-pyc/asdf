@@ -327,6 +327,15 @@ describe('Instagram ADU hub route', () => {
     expect(inserted?.destination_id).toBe('11111111-1111-4111-8111-111111111111');
     expect(inserted?.starting_followers).toBe(500);
     expect(inserted?.current_followers).toBe(500);
+    // Spec 162 (send-back fix): the creation path writes
+    // current_followers, so it stamps followers_updated_at too —
+    // the timestamp must mean "last successful follower check"
+    // from the moment the config exists, not only after the first
+    // daily worker run. Same assertion as the Threads creation test.
+    expect(typeof inserted?.followers_updated_at).toBe('string');
+    expect(
+      Number.isNaN(Date.parse(inserted?.followers_updated_at as string))
+    ).toBe(false);
   });
 
   it('single create rejects a Facebook destination with the Instagram-account error', async () => {
