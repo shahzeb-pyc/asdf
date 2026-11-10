@@ -285,7 +285,7 @@ export async function handlePatchIgAduConfig(
   if (error) {
     if (error.code === '23505') {
       return NextResponse.json(
-        { error: 'This page or source user is already configured.' },
+        { error: 'This account is already configured.' },
         { status: 400 }
       );
     }

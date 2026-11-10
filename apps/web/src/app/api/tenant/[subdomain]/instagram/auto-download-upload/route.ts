@@ -294,7 +294,7 @@ async function createOne(
     .single();
   if (error) {
     if (error.code === '23505') {
-      return { ok: false, error: 'This account or source user is already configured.' };
+      return { ok: false, error: 'This account is already configured.' };
     }
     if (aduMissingTable(error)) {
       return {

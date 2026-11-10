@@ -280,7 +280,7 @@ export async function handlePatchThreadsAduConfig(
   if (error) {
     if (error.code === '23505') {
       return NextResponse.json(
-        { error: 'This account or source user is already configured.' },
+        { error: 'This account is already configured.' },
         { status: 400 }
       );
     }
