@@ -11,8 +11,11 @@ Proves the ADU RPC hardening from `supabase/migrations/20261030140000_adu_rpc_ha
   security definer.
 - Hub list paging, search, status filter, sort and stats sums behave
   as the hub route expects, on seeded data.
-- Re-applying the hardening migration is idempotent and the grants
-  still hold afterwards.
+- Re-applying the current hub-RPC definitions
+  (`20261111010000_insights_worker_daily_followers.sql`, spec 162) is
+  idempotent and the grants still hold afterwards. (The 20261030140000
+  hardening file itself is no longer re-appliable as a whole: its hub
+  RPCs carry the pre-rename return type.)
 
 The RPCs are intentionally global for the service-side claim loop
 (lowest-buffered config first, SKIP LOCKED), so no in-function

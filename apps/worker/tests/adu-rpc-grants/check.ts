@@ -21,8 +21,13 @@
  *       username / destination name / external id, Most/Least
  *       Followers sort, and stats sums (total followers = sum of
  *       current_followers; net gained = sum of max(0, current-starting)).
- *   (d) The hardening migration is idempotent: re-applying
- *       20261030140000 exits clean and the grants above still hold.
+ *   (d) The hub RPC definitions are idempotent: re-applying the
+ *       20261111010000 (spec 162) hub-RPC block exits clean and the
+ *       grants above still hold. The 20261030140000 hardening file
+ *       itself is no longer re-appliable as a whole: its hub
+ *       CREATE OR REPLACE statements carry the pre-rename return
+ *       type, which PostgreSQL rejects (42P13) once the rename
+ *       landed — the rename, not the grants, broke that check.
  *
  * Usage:
  *   ADU_RPC_GRANTS_PG_URL=postgres://postgres@/adu_rpc?host=<socket>&port=5432 \
@@ -319,11 +324,38 @@ async function main(): Promise<void> {
       'SELECT * FROM public.adu_hub_list($1, NULL, NULL, NULL, 9, 0)', ['99999999-9999-4999-8999-999999999999']);
     check(emptyList.ok && emptyList.rows.length === 0, 'hub list for unknown workspace returns 0 rows');
 
-    console.log('(d) hardening migration idempotency');
-    const hardening = readFileSync(join(migrationsDir, '20261030140000_adu_rpc_hardening.sql'), 'utf8');
-    await pool.query(hardening);
+    console.log('(d) hub RPC definition idempotency (spec 162)');
+    // The 20261030140000 hardening file is no longer re-appliable as
+    // a whole: its hub CREATE OR REPLACE statements carry the
+    // pre-rename return type (followers_count/followers_gained),
+    // which PostgreSQL rejects with 42P13 once the spec 162 rename
+    // landed. The re-appliable unit now is the CURRENT hub-RPC
+    // block — the tail of 20261111010000 (DROP + CREATE + grant
+    // closure for all four hub RPCs). Re-applying it must exit
+    // clean and leave the grant closure intact.
+    const spec162 = readFileSync(
+      join(migrationsDir, '20261111010000_insights_worker_daily_followers.sql'),
+      'utf8',
+    );
+    const marker = '-- --- Facebook hub RPCs';
+    const at = spec162.indexOf(marker);
+    if (at < 0) throw new Error('spec 162 migration hub-RPC marker not found');
+    await pool.query(spec162.slice(at));
+    for (const fn of [
+      ...HUB_FUNCTIONS,
+      'threads_adu_hub_list',
+      'threads_adu_hub_stats',
+    ] as const) {
+      const g = await catalogGrants(pool, fn);
+      check(g.exists, `${fn}() still exists after re-apply`);
+      check(g.secdef === false, `${fn}() still NOT security definer after re-apply`);
+      check(
+        g.pub === false && g.anon_ === false && g.auth_ === false && g.svc === true,
+        `${fn}() grant closure still holds after re-apply`,
+      );
+    }
     const g2 = await catalogGrants(pool, 'claim_adu_buffer_downloads');
-    check(g2.pub === false && g2.svc === true, 'grants still hold after re-applying the hardening migration');
+    check(g2.pub === false && g2.svc === true, 'claim grants still hold after re-applying the hub RPC definitions');
   } finally {
     await pool.end();
   }

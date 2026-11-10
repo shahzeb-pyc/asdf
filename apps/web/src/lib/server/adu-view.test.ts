@@ -262,3 +262,31 @@ describe('buildAduConfigView alert wording follows the destination platform (B5)
     }
   });
 });
+
+describe('buildAduConfigView follower last-updated (spec 162)', () => {
+  const zeroCounts: CountSetup = {
+    pipeline: 0,
+    published: 0,
+    failed: 0,
+    failedInPipeline: 0,
+    publishedToday: 0,
+    failedToday: 0,
+  };
+
+  it('exposes followers_updated_at on the view when the worker stamped it', async () => {
+    const db = makeFakeSupabase(zeroCounts, 'facebook');
+    const view = await buildAduConfigView(db, {
+      ...configRow(),
+      followers_updated_at: '2026-11-10T22:00:00.000Z',
+    });
+    expect(view.followersUpdatedAt).toBe('2026-11-10T22:00:00.000Z');
+    expect(view.followersCount).toBe(10);
+    expect(view.followersGained).toBe(1);
+  });
+
+  it('reads null, never a faked time, when no check has ever stamped the config', async () => {
+    const db = makeFakeSupabase(zeroCounts, 'facebook');
+    const view = await buildAduConfigView(db, configRow());
+    expect(view.followersUpdatedAt).toBeNull();
+  });
+});
