@@ -227,7 +227,7 @@ BEGIN
       -- workspace's owner must have an active, non-superseded
       -- period; admin owners are exempt. A workspace with no
       -- resolvable owner fails closed.
-      AND ((qi.publish_now_requested_at IS NULL AND public.can_publish_for(d.workspace_id, d.platform::text, COALESCE(d.external_destination_id, d.id::text))) OR qi.publish_now_requested_at IS NOT NULL)
+      AND ((qi.publish_now_requested_at IS NULL AND public.can_publish_for(d.workspace_id, d.platform::text, COALESCE(d.external_destination_id, d.id::text))) OR (qi.publish_now_requested_at IS NOT NULL AND public.workspace_has_active_period(d.workspace_id)))
       AND (
         qi.kind = 'text'
         OR qi.media_url IS NOT NULL
@@ -399,7 +399,7 @@ BEGIN
       -- workspace's owner must have an active, non-superseded
       -- period; admin owners are exempt. A workspace with no
       -- resolvable owner fails closed.
-      AND ((qi.publish_now_requested_at IS NULL AND public.can_publish_for(d.workspace_id, d.platform::text, COALESCE(d.external_destination_id, d.id::text))) OR qi.publish_now_requested_at IS NOT NULL)
+      AND ((qi.publish_now_requested_at IS NULL AND public.can_publish_for(d.workspace_id, d.platform::text, COALESCE(d.external_destination_id, d.id::text))) OR (qi.publish_now_requested_at IS NOT NULL AND public.workspace_has_active_period(d.workspace_id)))
       AND (
         qi.kind = 'text'
         OR qi.media_url IS NOT NULL

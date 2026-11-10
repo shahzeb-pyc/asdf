@@ -19,11 +19,13 @@
  *    (claim_due_queue_items, claim_posting_slot_item) via CREATE
  *    OR REPLACE with unchanged signatures and unchanged
  *    REVOKE/GRANT lines — and replaces no other function.
- * 4. Each redefined RPC body calls can_publish_for, and ZERO
- *    bare workspace_has_active_period calls remain in either RPC
- *    body (the only call in the file is inside can_publish_for
- *    itself). The due claim carries the marked publish-now
- *    exemption; the slot claim passes p_now through.
+ * 4. Each redefined RPC body calls can_publish_for. The due claim
+ *    carries the marked publish-now exemption — marked rows are
+ *    judged by the period predicate only
+ *    (workspace_has_active_period), NOT exempt from it: the two
+ *    marked-row calls in the due body are the only
+ *    workspace_has_active_period calls outside can_publish_for
+ *    itself. The slot claim passes p_now through.
  * 5. claim_publish_now_items does not appear in the migration
  *    at all (Publish Now stays uncapped, PR #77).
  * Behavioural parity against a real Postgres (at-cap
@@ -81,7 +83,14 @@ describe('S2: can_publish_for migration', () => {
     );
     // The period half is a call to the C4 function, not a second predicate.
     expect(sql).toMatch(/public\.workspace_has_active_period\(p_workspace_id, p_at\)/);
-    expect(sql.match(/public\.workspace_has_active_period\(/g)).toHaveLength(1);
+    // Three calls in the file: one inside can_publish_for itself, plus
+    // the two marked-row calls in the due claim (the marked exemption
+    // is from the count half only — a marked row for an expired owner
+    // must still claim nothing, PR #211 SEND BACK fix).
+    expect(sql.match(/public\.workspace_has_active_period\(/g)).toHaveLength(3);
+    expect(
+      sql.match(/public\.workspace_has_active_period\(d\.workspace_id\)/g),
+    ).toHaveLength(2);
     // Admin exemption, same shape as the C4 function.
     expect(sql).toMatch(/u\.role = 'admin'/);
     // The active period row carries the counts (get_entitlement shape).
@@ -120,7 +129,7 @@ describe('S2: can_publish_for migration', () => {
     );
   });
 
-  it('every redefined RPC calls can_publish_for; no bare active-period call survives in any RPC body', () => {
+  it('every redefined RPC calls can_publish_for; the marked-row exemption is period-only', () => {
     const rpcBodies = sql.slice(
       sql.indexOf('CREATE OR REPLACE FUNCTION public.claim_due_queue_items'),
     );
@@ -130,7 +139,7 @@ describe('S2: can_publish_for migration', () => {
       rpcBodies.match(/public\.can_publish_for\(d\.workspace_id, d\.platform::text, COALESCE\(d\.external_destination_id, d\.id::text\)\)/g),
     ).toHaveLength(2);
     expect(rpcBodies).toMatch(
-      /\(qi\.publish_now_requested_at IS NULL AND public\.can_publish_for\(d\.workspace_id, d\.platform::text, COALESCE\(d\.external_destination_id, d\.id::text\)\)\) OR qi\.publish_now_requested_at IS NOT NULL/,
+      /\(qi\.publish_now_requested_at IS NULL AND public\.can_publish_for\(d\.workspace_id, d\.platform::text, COALESCE\(d\.external_destination_id, d\.id::text\)\)\) OR \(qi\.publish_now_requested_at IS NOT NULL AND public\.workspace_has_active_period\(d\.workspace_id\)\)/,
     );
     // Slot claim: one call site, workspace id and key from the
     // destinations select, window evaluated at p_now.
@@ -140,12 +149,17 @@ describe('S2: can_publish_for migration', () => {
     expect(rpcBodies).toMatch(
       /COALESCE\(d\.external_destination_id, p_destination_id::text\)/,
     );
-    // No bare workspace_has_active_period CALL in either RPC body —
-    // the only call in the whole file is inside can_publish_for.
+    // The ONLY workspace_has_active_period calls in either RPC body
+    // are the two marked-row ones in the due claim (default p_at,
+    // same as C4): a marked row is judged by the period predicate
+    // only — exempt from the count half, NOT from the period half.
     // (The pre-existing comments above the call sites still name
     // the C4 function; the diff-proof keeps them byte-identical,
     // so the assertion is on the call form, not the bare name.)
-    expect(rpcBodies).not.toMatch(/workspace_has_active_period\(/);
+    expect(
+      rpcBodies.match(/public\.workspace_has_active_period\(d\.workspace_id\)/g),
+    ).toHaveLength(2);
+    expect(rpcBodies).not.toMatch(/workspace_has_active_period\(p_workspace_id/);
   });
 
   it('claim_publish_now_items does not appear in the migration at all', () => {

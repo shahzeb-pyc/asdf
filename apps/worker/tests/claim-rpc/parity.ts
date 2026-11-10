@@ -8,7 +8,7 @@
  * current semantics (spec 138 parity contract §1–§8), NOT captured from
  * the implementation under test.
  *
- * The suite asserts the CURRENT claim semantics. Cases S2-1..S2-16
+ * The suite asserts the CURRENT claim semantics. Cases S2-1..S2-17
  * (appended for S2, can_publish_for count enforcement) assert the
  * count predicate: at-cap unregistered destinations claim zero,
  * registered/admin/marked rows claim normally, the slot and
@@ -759,6 +759,26 @@ async function caseS2DueMarked(ctx: Ctx): Promise<void> {
   );
 }
 
+async function caseS2DueMarkedExpired(ctx: Ctx): Promise<void> {
+  // Verifier regression (PR #211 SEND BACK): the marked-row
+  // exemption must be from the COUNT half only, not from the
+  // period half. A marked row for an expired owner claims nothing
+  // — same fixture as the verifier's live proof (expired period
+  // + at-cap usage + one marked queued Facebook item).
+  await setCount(ctx, 'facebook', 1);
+  await usage(ctx, 'facebook', 'other-key');
+  await ctx.client.query(`SELECT public.claim138_expire_period()`);
+  const d = await dest(ctx, 'facebook', 1);
+  const itemId = await item(ctx, d, 'facebook', 1);
+  await markPublishNow(ctx, itemId);
+  const claimed = await callRpc(ctx, 'facebook', null, 500, 3);
+  check(
+    claimed.length === 0,
+    's2 due marked publish-now row, expired period: nothing claimed',
+    `claimed=${claimed.length}`
+  );
+}
+
 async function caseS2DueDisconnected(ctx: Ctx): Promise<void> {
   await setCount(ctx, 'facebook', 1);
   const dDisc = await dest(ctx, 'facebook', 9, { status: 'disconnected' });
@@ -963,6 +983,7 @@ const CASES: Array<[string, (ctx: Ctx) => Promise<void>]> = [
   ['S2-14 slot outside window', caseS2SlotOutsideWindow],
   ['S2-15 publish-now at cap', caseS2PublishNow],
   ['S2-16 planner evidence (usage indexes)', caseS2Explain],
+  ['S2-17 due marked publish-now row, expired period', caseS2DueMarkedExpired],
 ];
 
 /** S2 race (criterion 11): two concurrent claim calls against the
