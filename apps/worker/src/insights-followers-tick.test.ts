@@ -553,7 +553,9 @@ describe('fetchLiveFollowersFromGraph', () => {
       'fb-page-a',
       'token',
       (async () => {
-        throw new Error('network down');
+        // Regression guardrail: worker code throws DomainError, never
+        // a bare Error — InternalError is already imported above.
+        throw new InternalError('network down');
       }) as never
     ).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(InsightsGraphError);
