@@ -20,7 +20,7 @@ import {
 } from '@fbuploadpro/contracts';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { FacebookGraphError, FacebookPublishClient } from './fb-client.js';
-import { workspaceOwnerHasActivePeriod } from './entitlement.js';
+import { workspaceCanPublishForDestination } from './entitlement.js';
 import { createProxyFetchFn } from './proxy-fetch.js';
 import { InstagramPublishClient } from './instagram-client.js';
 import { publishInstagramMirrorReel } from './instagram-mirror-reel.js';
@@ -292,17 +292,26 @@ export interface MirrorTickDeps {
     itemId?: string | undefined;
   }) => Promise<string>;
   /**
-   * Entitlement gate (audit fix 2026-11-01), wired by the consumer
-   * from the worker's Supabase client. When it returns false, the
-   * check claims and publishes NOTHING — the tick only advances
-   * nextCheckAt (never lastCheckedAt), so the gap catch-up rule
-   * still fires on renewal and paused reels do not flood. C4: this
-   * is the shared workspaceOwnerHasActivePeriod helper (one RPC
-   * call); the dep is REQUIRED — there is no ungated path, and a
-   * due scheduled downgrade activates through the helper and
-   * un-pauses the mirror, exactly like the ADU gate.
+   * Count-aware entitlement gate (audit fix 2026-11-01; S2), wired
+   * by the consumer from the worker's Supabase client. When it
+   * returns false, the check claims and publishes NOTHING — the
+   * tick only advances nextCheckAt (never lastCheckedAt), so the
+   * gap catch-up rule still fires on renewal and paused reels do
+   * not flood. S2: this is the shared
+   * workspaceCanPublishForDestination helper (one RPC call to
+   * can_publish_for, the same check the ADU gate and the claim
+   * RPCs use); the dep is REQUIRED — there is no ungated path,
+   * and a due scheduled downgrade activates through the helper
+   * and un-pauses the mirror, exactly like the ADU gate. The
+   * platform and destination key are the mirror row's target
+   * values, so an at-cap unregistered target pauses the check
+   * while a registered one proceeds.
    */
-  checkEntitlement: (workspaceId: string) => Promise<boolean>;
+  checkEntitlement: (
+    workspaceId: string,
+    platform: string,
+    destinationKey: string,
+  ) => Promise<boolean>;
   env?: PostHogEnv | undefined;
   now?: Date | undefined;
   waitUntil?: ((promise: Promise<unknown>) => void) | undefined;
@@ -453,7 +462,11 @@ export async function processMirrorCheck(
   {
     let entitled = false;
     try {
-      entitled = await deps.checkEntitlement(mirror.workspaceId);
+      entitled = await deps.checkEntitlement(
+        mirror.workspaceId,
+        mirror.targetPlatform,
+        mirror.targetExternalId
+      );
     } catch (err) {
       console.error(
         `[mirror-tick] mirror=${mirror.id} entitlement check failed; pausing this tick:`,
@@ -1013,18 +1026,20 @@ export function buildMirrorTickDeps(
     env: options?.env,
     now: options?.now,
     waitUntil: options?.waitUntil,
-    // Entitlement gate (audit fix 2026-11-01; C4): the shared
-    // workspaceOwnerHasActivePeriod helper — one RPC call to the
-    // workspace_has_active_period function, the same check the
-    // ADU gate and the claim RPCs use. A due scheduled downgrade
-    // activates through the helper and un-pauses the mirror.
-    // Any lookup failure fails closed (false). Called as a
-    // method on the client object, never detached (supabase-js
-    // rpc reads `this.rest` — see the enqueue RPC below).
-    checkEntitlement: async (workspaceId: string) =>
-      workspaceOwnerHasActivePeriod(
+    // Entitlement gate (audit fix 2026-11-01; S2): the shared
+    // workspaceCanPublishForDestination helper — one RPC call to
+    // the can_publish_for function, the same check the ADU gate
+    // and the claim RPCs use. A due scheduled downgrade activates
+    // through the helper and un-pauses the mirror. Any lookup
+    // failure fails closed (false). Called as a method on the
+    // client object, never detached (supabase-js rpc reads
+    // `this.rest` — see the enqueue RPC below).
+    checkEntitlement: async (workspaceId: string, platform: string, destinationKey: string) =>
+      workspaceCanPublishForDestination(
         db as unknown as SupabaseClient,
         workspaceId,
+        platform,
+        destinationKey,
         options?.now ?? new Date()
       ),
     listDueMirrorIds: async (now: Date, cap: number) => {
