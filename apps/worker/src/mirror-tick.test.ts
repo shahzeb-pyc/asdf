@@ -9,6 +9,7 @@
  * and skips before this runs.)
  */
 import { describe, expect, it, vi } from 'vitest';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   InternalError,
   MIRROR_FACEBOOK_RESTRICTED_MESSAGE,
@@ -101,6 +102,10 @@ function fakeDeps(state: FakeState, feed: unknown[]): MirrorTickDeps {
       state.published.push(params);
       return `fb_${params.videoUrl}`;
     },
+    // C4: the gate is required and always runs — the default fake
+    // is entitled, so the pre-existing tests keep proving the
+    // check body; the paused/failure tests below override it.
+    checkEntitlement: async () => true,
     now: new Date('2026-10-29T12:00:00.000Z'),
   };
 }
@@ -391,6 +396,278 @@ describe('processMirrorCheck', () => {
     const stamp = state.mirrorUpdates[state.mirrorUpdates.length - 1];
     expect(stamp?.patch.lastError).not.toBe(MIRROR_FACEBOOK_RESTRICTED_MESSAGE);
     expect(stamp?.patch.lastError).toContain('limited access');
+  });
+});
+
+describe('processMirrorCheck — C4 due downgrade un-pauses the mirror', () => {
+  /**
+   * Minimal in-memory Supabase fake, just enough for the REAL
+   * workspaceOwnerHasActivePeriod helper plus the activation it
+   * runs: rpc('workspace_has_active_period') computed from the
+   * rows, and from() chains for workspaces / users /
+   * subscription_periods / subscription_payments /
+   * seller_commissions. This test fails on the old code: the old
+   * inline mirror copy never called activateDueScheduledDowngrade,
+   * so the check would pause (posted 0, no period created).
+   */
+  type EntRow = Record<string, unknown>;
+  interface EntDb {
+    workspaces: EntRow[];
+    users: EntRow[];
+    periods: EntRow[];
+    payments: EntRow[];
+    commissions: EntRow[];
+    /** Every rpc() call, in order — proves the gate goes through the RPC. */
+    rpcCalls: Array<{ fn: string; args: Record<string, unknown> }>;
+    /** subscription_periods selects — must stay 0 on the live path. */
+    periodSelects: number;
+  }
+
+  class EntBuilder {
+    private filters: Array<(r: EntRow) => boolean> = [];
+    private limitN: number | null = null;
+    private insertRow: EntRow | null = null;
+    private updatePatch: EntRow | null = null;
+
+    constructor(
+      private db: EntDb,
+      private table: string
+    ) {}
+
+    select(): this {
+      if (this.table === 'subscription_periods') this.db.periodSelects += 1;
+      return this;
+    }
+
+    eq(col: string, val: unknown): this {
+      this.filters.push((r) => r[col] === val);
+      return this;
+    }
+
+    is(col: string, val: unknown): this {
+      this.filters.push((r) => (val === null ? r[col] == null : r[col] === val));
+      return this;
+    }
+
+    lte(col: string, val: string): this {
+      this.filters.push((r) => typeof r[col] === 'string' && (r[col] as string) <= val);
+      return this;
+    }
+
+    limit(n: number): this {
+      this.limitN = n;
+      return this;
+    }
+
+    insert(row: EntRow): this {
+      this.insertRow = {
+        ...row,
+        id: `period-${this.db.periods.length + 1}`,
+        superseded_at: null,
+      };
+      if (this.table === 'subscription_periods') this.db.periods.push(this.insertRow);
+      return this;
+    }
+
+    update(patch: EntRow): this {
+      this.updatePatch = patch;
+      return this;
+    }
+
+    async maybeSingle(): Promise<{ data: EntRow | null; error: null }> {
+      if (this.insertRow) return { data: this.insertRow, error: null };
+      return { data: this.matched()[0] ?? null, error: null };
+    }
+
+    async single(): Promise<{ data: EntRow | null; error: null }> {
+      if (this.insertRow) return { data: this.insertRow, error: null };
+      return { data: this.matched()[0] ?? null, error: null };
+    }
+
+    then(resolve: (value: { data: unknown; error: null }) => void): void {
+      if (this.updatePatch) {
+        const matched = this.matched();
+        for (const row of matched) Object.assign(row, this.updatePatch);
+        resolve({ data: matched.map((r) => ({ id: r['id'] })), error: null });
+        return;
+      }
+      resolve({ data: this.matched(), error: null });
+    }
+
+    private rows(): EntRow[] {
+      switch (this.table) {
+        case 'workspaces':
+          return this.db.workspaces;
+        case 'users':
+          return this.db.users;
+        case 'subscription_periods':
+          return this.db.periods;
+        case 'subscription_payments':
+          return this.db.payments;
+        case 'seller_commissions':
+          return this.db.commissions;
+        default:
+          return [];
+      }
+    }
+
+    private matched(): EntRow[] {
+      let rows = this.rows().filter((r) => this.filters.every((f) => f(r)));
+      if (this.limitN !== null) rows = rows.slice(0, this.limitN);
+      return rows;
+    }
+  }
+
+  function entitlementClient(db: EntDb): SupabaseClient {
+    return {
+      from: (table: string) => new EntBuilder(db, table),
+      rpc: async (fn: string, args: Record<string, unknown>) => {
+        db.rpcCalls.push({ fn, args });
+        if (fn !== 'workspace_has_active_period') {
+          throw new InternalError(`unexpected rpc ${fn}`);
+        }
+        const workspace = db.workspaces.find((w) => w['id'] === args['p_workspace_id']);
+        const ownerId = workspace?.['owner_id'];
+        const user = db.users.find((u) => u['id'] === ownerId);
+        if (user?.['role'] === 'admin') return { data: true, error: null };
+        const at = Date.parse(args['p_at'] as string);
+        const active = db.periods.some((p) => {
+          if (p['user_id'] !== ownerId || p['superseded_at'] !== null) return false;
+          const starts = Date.parse(p['starts_at'] as string);
+          const ends = Date.parse(p['ends_at'] as string);
+          return starts <= at && ends > at;
+        });
+        return { data: active, error: null };
+      },
+    } as unknown as SupabaseClient;
+  }
+
+  /**
+   * The gate comes from production wiring, never from a hand-injected
+   * function: buildMirrorTickDeps over the fake client, so the test
+   * exercises the exact checkEntitlement processMirrorCheck runs in
+   * production. Only the gate is wired — every other dep stays the
+   * in-memory fake, so the check body runs without network. A
+   * complete revert of the C4 wiring change is visible to this
+   * suite: on the old code the wired gate is the inline three-query
+   * copy, which never calls the RPC and never activates a due
+   * downgrade, so the due test fails there (posted 0, no period)
+   * and the live-period test fails on its RPC-count assertions.
+   */
+  function wiredDeps(state: FakeState, feed: unknown[], db: EntDb, now: Date): MirrorTickDeps {
+    const wired = buildMirrorTickDeps(
+      entitlementClient(db) as unknown as Parameters<typeof buildMirrorTickDeps>[0],
+      'test-master-key',
+      { now }
+    );
+    return { ...fakeDeps(state, feed), checkEntitlement: wired.checkEntitlement };
+  }
+
+  function dueDowngradeDb(): EntDb {
+    return {
+      workspaces: [{ id: 'ws_1', owner_id: 'user-1' }],
+      users: [{ id: 'user-1', role: 'user' }],
+      periods: [],
+      payments: [
+        {
+          id: 'payment-1',
+          user_id: 'user-1',
+          status: 'approved',
+          period_id: null,
+          is_downgrade: true,
+          scheduled_starts_at: '2026-10-20T00:00:00.000Z',
+          facebook_count: 2,
+          instagram_count: 0,
+          threads_count: 0,
+          x_count: 0,
+          tiktok_count: 0,
+          youtube_count: 0,
+        },
+      ],
+      commissions: [],
+      rpcCalls: [],
+      periodSelects: 0,
+    };
+  }
+
+  it('a due scheduled downgrade activates on the mirror tick and the check proceeds', async () => {
+    const db = dueDowngradeDb();
+    const state = newState();
+    const now = new Date('2026-10-29T12:00:00.000Z');
+    const deps = wiredDeps(state, [reel('v1', 100)], db, now);
+    const result = await processMirrorCheck(deps, mirror());
+    expect(result.posted).toBe(1);
+    expect(state.published).toHaveLength(1);
+    // The downgrade activated on the mirror tick itself: a period
+    // was created and linked, exactly like the ADU gate does today.
+    expect(db.periods).toHaveLength(1);
+    expect(db.payments[0]?.['period_id']).toBe('period-1');
+    // The gate ran through the shared helper: one RPC call that
+    // returned false, then the post-activation re-check RPC.
+    expect(db.rpcCalls).toHaveLength(2);
+    expect(db.rpcCalls.map((c) => c.fn)).toEqual([
+      'workspace_has_active_period',
+      'workspace_has_active_period',
+    ]);
+  });
+
+  it('mirror with live period proceeds through the wired shared-helper gate', async () => {
+    const db: EntDb = {
+      workspaces: [{ id: 'ws_1', owner_id: 'user-1' }],
+      users: [{ id: 'user-1', role: 'user' }],
+      periods: [
+        {
+          id: 'period-live',
+          user_id: 'user-1',
+          starts_at: '2026-10-01T00:00:00.000Z',
+          ends_at: '2026-11-28T00:00:00.000Z',
+          superseded_at: null,
+        },
+      ],
+      payments: [],
+      commissions: [],
+      rpcCalls: [],
+      periodSelects: 0,
+    };
+    const state = newState();
+    const now = new Date('2026-10-29T12:00:00.000Z');
+    const deps = wiredDeps(state, [reel('v1', 100)], db, now);
+    const result = await processMirrorCheck(deps, mirror());
+    expect(result.posted).toBe(1);
+    // The wired gate called the shared helper once, with the
+    // mirror's workspace, and read no periods table directly.
+    expect(db.rpcCalls).toEqual([
+      {
+        fn: 'workspace_has_active_period',
+        args: { p_workspace_id: 'ws_1', p_at: '2026-10-29T12:00:00.000Z' },
+      },
+    ]);
+    expect(db.periodSelects).toBe(0);
+  });
+
+  it('mirror with no period and nothing due stays paused through the wired gate', async () => {
+    const db: EntDb = {
+      workspaces: [{ id: 'ws_1', owner_id: 'user-1' }],
+      users: [{ id: 'user-1', role: 'user' }],
+      periods: [],
+      payments: [],
+      commissions: [],
+      rpcCalls: [],
+      periodSelects: 0,
+    };
+    const state = newState();
+    const now = new Date('2026-10-29T12:00:00.000Z');
+    const deps = wiredDeps(state, [reel('v1', 100), reel('v2', 200)], db, now);
+    const result = await processMirrorCheck(deps, mirror());
+    expect(result).toEqual({ posted: 0, skipped: 0, failed: 0 });
+    expect(state.claimed).toHaveLength(0);
+    expect(state.published).toHaveLength(0);
+    // Only the pause stamp: nextCheckAt advances, lastCheckedAt
+    // stays frozen, exactly like the hand-injected paused test.
+    expect(state.mirrorUpdates).toHaveLength(1);
+    expect(state.mirrorUpdates[0]?.patch).toEqual({
+      nextCheckAt: '2026-10-29T13:00:00.000Z',
+    });
   });
 });
 

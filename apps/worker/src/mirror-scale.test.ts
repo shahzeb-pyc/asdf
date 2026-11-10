@@ -166,6 +166,9 @@ function checkDeps(
       state.published.push(params.videoUrl);
       return `fb_${params.videoUrl}`;
     },
+    // C4: the entitlement gate is required — the default fake is
+    // entitled, so these tests keep proving the check body.
+    checkEntitlement: async () => true,
     now: new Date('2026-10-29T12:00:00.000Z'),
   };
 }

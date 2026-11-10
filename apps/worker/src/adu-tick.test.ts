@@ -120,6 +120,9 @@ class FakeBuilder {
 interface FakeDb {
   calls: Array<{ table: string; ops: Op[]; payload?: unknown }>;
   from: (table: string) => FakeBuilder;
+  /** C4: the shared workspace_has_active_period RPC. Defaults to
+   * entitled; the paused test below overrides it to false. */
+  rpc: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: unknown }>;
 }
 
 function makeDb(
@@ -133,6 +136,7 @@ function makeDb(
         calls.push({ table: t, ops: [...ops], payload });
         return handler(t, ops, calls);
       }),
+    rpc: async () => ({ data: true, error: null }),
   };
   return db;
 }
@@ -1168,11 +1172,15 @@ describe('runAduTick', () => {
       }
       if (table === 'adu_configs') return { data: [], error: null };
       // No active period: expired workspace, so the job pauses.
+      // C4: the gate is the workspace_has_active_period RPC now;
+      // the workspaces/users/periods rows below are still read on
+      // the false path (owner lookup + activation backstop).
       if (table === 'workspaces') return { data: { owner_id: 'user-1' }, error: null };
       if (table === 'users') return { data: { role: 'user' }, error: null };
       if (table === 'subscription_periods') return { data: [], error: null };
       return { data: [], error: null };
     });
+    db.rpc = async () => ({ data: false, error: null });
     const result = await runAduTick({
       db: db as never,
       registry: registryWith(publisher),
