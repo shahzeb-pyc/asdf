@@ -171,6 +171,11 @@ async function createOne(
       sync_status: 'pending',
       starting_followers: startingFollowers,
       current_followers: startingFollowers,
+      // Spec 162 (send-back fix): the creation path writes
+      // current_followers, so it stamps the last-updated time too —
+      // the migration header promises the timestamp is set by the
+      // daily worker AND by the ADU creation paths.
+      followers_updated_at: new Date().toISOString(),
     })
     .select('id')
     .single();
