@@ -246,6 +246,9 @@ interface FakeState {
   rpcCalls: number;
   rpcWrongUser: boolean;
   rpcError: unknown;
+  // When set, the RPC waits for this promise before answering, so a
+  // test can hold a read in flight and interleave a second caller.
+  rpcHold: Promise<void> | null;
   periodInsertError: unknown;
   usageInsertError: { code?: string } | null;
   selectErrors: Partial<Record<string, unknown>>;
@@ -267,6 +270,7 @@ function baseState(overrides: Partial<FakeState> = {}): FakeState {
     rpcCalls: 0,
     rpcWrongUser: false,
     rpcError: null,
+    rpcHold: null,
     periodInsertError: null,
     usageInsertError: null,
     selectErrors: {},
@@ -591,8 +595,12 @@ function fakeClient(state: FakeState): SupabaseClient {
       if (state.rpcError) {
         return Promise.resolve({ data: null, error: state.rpcError });
       }
+      const data = computeEntitlementRpc(state, args.p_user_id, args.p_now);
+      if (state.rpcHold) {
+        return state.rpcHold.then(() => ({ data, error: null }));
+      }
       return Promise.resolve({
-        data: computeEntitlementRpc(state, args.p_user_id, args.p_now),
+        data,
         error: null,
       });
     },
@@ -1072,6 +1080,39 @@ describe('cache error falls through to the live read (criterion 7)', () => {
     // The entry was deleted: the next read is a miss again.
     await expect(getEntitlementCached(client, 'user-1')).resolves.toMatchObject({ plan: 'paid' });
     expect(state.rpcCalls).toBe(3);
+  });
+
+  it('a clone failure for a waiter on an in-flight read deletes the entry and re-reads live', async () => {
+    const state = baseState({ periods: [periodRow()] });
+    const client = fakeClient(state);
+    let releaseRpc!: () => void;
+    state.rpcHold = new Promise<void>((resolve) => {
+      releaseRpc = resolve;
+    });
+    // The first read misses and holds its RPC in flight; the second
+    // read shares the pending promise. The miss owner clones first
+    // (call 1, succeeds); the waiter clones second (call 2, throws)
+    // and must fall through to its own live read instead of failing.
+    const first = getEntitlementCached(client, 'user-1');
+    const second = getEntitlementCached(client, 'user-1');
+    const realClone = globalThis.structuredClone;
+    const spy = vi.spyOn(globalThis, 'structuredClone');
+    spy.mockImplementationOnce((value) => realClone(value));
+    spy.mockImplementationOnce(() => {
+      throw new Error('clone down');
+    });
+    releaseRpc();
+    const [a, b] = await Promise.all([first, second]);
+    spy.mockRestore();
+    expect(a.plan).toBe('paid');
+    expect(b.plan).toBe('paid');
+    // One RPC for the shared miss, one for the waiter's fall-through.
+    expect(state.rpcCalls).toBe(2);
+    expect(mockedLogServerError).toHaveBeenCalledWith(
+      '[billing] cached entitlement clone failed, re-reading live',
+      expect.anything(),
+      { source: 'billing', userId: 'user-1' }
+    );
   });
 
   it('a wrong-user RPC answer throws, caches nothing, and the next read retries live', async () => {

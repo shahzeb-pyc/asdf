@@ -890,24 +890,16 @@ function entitlementCacheMapFor(client: SupabaseClient): Map<string, Entitlement
   return map;
 }
 
-function enforceEntitlementCacheBound(
-  map: Map<string, EntitlementCacheEntry>,
-  keepUserId: string
-): void {
+function enforceEntitlementCacheBound(map: Map<string, EntitlementCacheEntry>): void {
+  // Insertion-ordered Map: the first key is the oldest-inserted
+  // entry. Evicting it can, in the corner where the entry just
+  // stored is itself the oldest, drop an answer that was just
+  // computed — the caller still returns it, it is simply not
+  // cached, so correctness never depends on which entry goes.
+  // The loop condition guarantees a key exists, so the first key
+  // is always defined here.
   while (map.size > ENTITLEMENT_CACHE_MAX_ENTRIES) {
-    const oldestKey = map.keys().next().value as string | undefined;
-    if (oldestKey === undefined) return;
-    if (oldestKey === keepUserId) {
-      // The entry just written for this user is the oldest only if
-      // the key was already present (Map.set keeps insertion order);
-      // evict the next-oldest instead of the entry just stored.
-      const keys = [...map.keys()];
-      const nextOldest = keys.find((key) => key !== keepUserId);
-      if (!nextOldest) return;
-      map.delete(nextOldest);
-    } else {
-      map.delete(oldestKey);
-    }
+    map.delete(map.keys().next().value as string);
   }
 }
 
@@ -1001,7 +993,7 @@ export async function getEntitlementCached(
   const pending = getEntitlement(client, userId);
   const freshEntry: EntitlementCacheEntry = { pending };
   map.set(userId, freshEntry);
-  enforceEntitlementCacheBound(map, userId);
+  enforceEntitlementCacheBound(map);
   let fresh: Entitlement;
   try {
     fresh = await pending;
@@ -1018,7 +1010,7 @@ export async function getEntitlementCached(
     freshEntry.entitlement = fresh;
     freshEntry.storedAtMs = Date.now();
     delete freshEntry.pending;
-    enforceEntitlementCacheBound(map, userId);
+    enforceEntitlementCacheBound(map);
   }
   try {
     return structuredClone(fresh);
