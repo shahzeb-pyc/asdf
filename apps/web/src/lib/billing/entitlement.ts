@@ -1044,8 +1044,15 @@ export async function getEntitlementCached(
 export function invalidateEntitlementCache(client: SupabaseClient, userId: string): void {
   try {
     entitlementCache.get(client)?.delete(userId);
-  } catch {
-    // Best-effort by design: invalidation must never break a write.
+  } catch (err) {
+    // Best-effort by design: invalidation must never break a write,
+    // so the failure is logged loudly instead of thrown. (A
+    // Map.delete essentially cannot throw; this is the guardrail
+    // against a silent catch, not an expected path.)
+    logServerError('[billing] entitlement cache invalidation failed', err, {
+      source: 'billing',
+      userId,
+    });
   }
 }
 
