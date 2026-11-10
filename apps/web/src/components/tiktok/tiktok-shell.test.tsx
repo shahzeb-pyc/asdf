@@ -235,3 +235,43 @@ describe('TikTokShell plan cap (B2)', () => {
     expect(screen.getByTestId('header-add-mirror-btn')).not.toBeDisabled();
   });
 });
+
+describe('TikTokShell mirror card followers last-updated (spec 162)', () => {
+  it('shows when the stored total was last updated once the worker stamped it', async () => {
+    entitlementState.value = null;
+    getMock.mockResolvedValue(
+      listResponse([
+        mirror({
+          targetPlatform: 'facebook',
+          targetFollowers: 5000,
+          followersUpdatedAt: '2026-11-10T12:00:00.000Z',
+        }),
+      ])
+    );
+    renderShell();
+    await waitFor(() => {
+      expect(screen.getByTestId('tiktok-mirrors-grid')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('tiktok-mirror-page-followers-updated').textContent).toContain(
+      'Updated 10 Nov 2026'
+    );
+  });
+
+  it('shows no Updated line before the first worker run (timestamp null)', async () => {
+    entitlementState.value = null;
+    getMock.mockResolvedValue(
+      listResponse([
+        mirror({
+          targetPlatform: 'facebook',
+          targetFollowers: 5000,
+          followersUpdatedAt: null,
+        }),
+      ])
+    );
+    renderShell();
+    await waitFor(() => {
+      expect(screen.getByTestId('tiktok-mirrors-grid')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('tiktok-mirror-page-followers-updated')).toBeNull();
+  });
+});

@@ -42,6 +42,7 @@ import {
   getTimezoneUtcOffset,
 } from '@/lib/timezones';
 import { getUserInitials } from '@/lib/user-initials';
+import { formatFollowersUpdatedAt } from '@/lib/format-followers-updated-at';
 import { cn } from '@/lib/utils';
 import { FeatureCapText, useFeatureCap } from '@/components/billing/feature-cap';
 
@@ -193,6 +194,11 @@ interface AduConfigView {
   displayStatus: string;
   followersCount: number;
   followersGained: number;
+  /** Spec 162: last successful follower check (daily worker or ADU
+   *  creation); null when no check has ever stamped it. */
+  followersUpdatedAt: string | null;
+  /** Posting timezone — the "Updated" line renders in this zone. */
+  timezone: string;
   createdAt: string;
   postedCount: number;
   pendingCount: number;
@@ -408,6 +414,24 @@ function AduPageCard({ config, subdomain }: { config: AduConfigView; subdomain: 
             </span>{' '}
             followers · {config.sourcePlatform}
           </span>
+          {(() => {
+            // Spec 162: when the stored total was last updated
+            // (daily worker or ADU creation), in the posting
+            // timezone. Nothing renders when no check has ever
+            // stamped it — never a faked time.
+            const updated = formatFollowersUpdatedAt(
+              config.followersUpdatedAt,
+              config.timezone
+            );
+            return updated ? (
+              <span
+                data-testid="adu-page-followers-updated"
+                className="mt-0.5 block truncate text-metadata text-ink-dim"
+              >
+                Updated {updated}
+              </span>
+            ) : null;
+          })()}
         </div>
 
         {/* Circled arrow affordance (muted, gold on hover). */}

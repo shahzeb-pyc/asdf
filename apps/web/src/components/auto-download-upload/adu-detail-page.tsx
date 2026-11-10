@@ -43,6 +43,7 @@ import { buildTenantApiPath } from '@/lib/api/client';
 import { buildTenantHref, isTenantSubdomainHost } from '@/lib/tenant-href';
 import { getUserInitials } from '@/lib/user-initials';
 import { cn } from '@/lib/utils';
+import { formatFollowersUpdatedAt } from '@/lib/format-followers-updated-at';
 
 interface ConfigView {
   id: string;
@@ -66,6 +67,9 @@ interface ConfigView {
   alert: string | null;
   followersCount: number;
   followersGained: number;
+  /** Spec 162: last successful follower check (daily worker or ADU
+   *  creation); null when no check has ever stamped it. */
+  followersUpdatedAt: string | null;
   createdAt: string;
   postedCount: number;
   pendingCount: number;
@@ -519,6 +523,15 @@ function AduDetailPageInner({ subdomain, configId }: { subdomain: string; config
   metaItems.push(
     <span key="followers"><strong className="font-bold text-ink">{currentFollowers.toLocaleString('en-US')}</strong> followers</span>
   );
+  {
+    // Spec 162: when the stored total was last updated (daily worker
+    // or ADU creation), in the posting timezone. Nothing renders
+    // when no check has ever stamped it — never a faked time.
+    const updated = formatFollowersUpdatedAt(config.followersUpdatedAt, config.timezone);
+    if (updated) {
+      metaItems.push(<span key="followers-updated" data-testid="adu-detail-followers-updated">Updated {updated}</span>);
+    }
+  }
   if (netGained !== 0) {
     metaItems.push(
       <span key="gained">{netGained > 0 ? '+' : ''}{netGained.toLocaleString('en-US')} gained</span>

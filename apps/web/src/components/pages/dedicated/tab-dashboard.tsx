@@ -24,6 +24,7 @@ import type { FacebookPageItem } from '../page-card';
 import type { PostFormat } from '@fbuploadpro/contracts';
 import { formatSlotDisplay } from './posting-times/posting-time-utils';
 import { formatQueueTime } from './queue/queue-utils';
+import { formatFollowersUpdatedAt } from '@/lib/format-followers-updated-at';
 
 export interface PageQueueItemSummary {
   id: string;
@@ -82,33 +83,6 @@ export interface PageTabDashboardProps {
 function formatItemBadge(item: PageQueueItemSummary): string {
   const fmt = item.postFormat || (item.mediaType === 'video' ? 'video' : 'image');
   return fmt === 'image' ? 'PHOTO' : fmt.toUpperCase();
-}
-
-/**
- * Spec 162: "last updated" for the stored follower total, in the
- * PAGE timezone (R8 — never the browser timezone's bare output).
- * Null when the timestamp is absent or unparseable, so the card
- * shows a dash instead of a faked time. The timezone is
- * pre-validated against Intl.supportedValuesOf('timeZone') instead
- * of a try/catch around the formatter: an unsupported zone is an
- * unknown timestamp (dash), never a swallowed error and never a
- * time rendered in a zone the page does not use.
- */
-function formatFollowersUpdatedAt(iso: string | null | undefined, timezone: string): string | null {
-  if (!iso) return null;
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return null;
-  if (
-    typeof Intl.supportedValuesOf !== 'function' ||
-    !Intl.supportedValuesOf('timeZone').includes(timezone)
-  ) {
-    return null;
-  }
-  return new Intl.DateTimeFormat('en-GB', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-    timeZone: timezone,
-  }).format(date);
 }
 
 const cardClass = 'rounded-md border border-line bg-panel p-6 shadow-card';

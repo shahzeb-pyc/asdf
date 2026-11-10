@@ -322,6 +322,24 @@ export function MirrorDetailHeader({
                   </span>
                 </>
               ) : null}
+              {(() => {
+                // Spec 162: when the mirror's stored total was last
+                // updated by the daily worker. Date-only, like the
+                // header's "Added" date — the mirror views carry no
+                // page timezone. Nothing renders before the first
+                // worker run.
+                const updated = mirror.followersUpdatedAt
+                  ? formatAddedDate(mirror.followersUpdatedAt)
+                  : '';
+                return updated ? (
+                  <>
+                    <span aria-hidden className="text-line">|</span>
+                    <span data-testid="mirror-detail-followers-updated">
+                      Updated {updated}
+                    </span>
+                  </>
+                ) : null;
+              })()}
               {mirror.targetCategory ? (
                 <>
                   <span aria-hidden className="text-line">|</span>

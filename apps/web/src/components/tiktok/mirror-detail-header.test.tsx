@@ -124,3 +124,31 @@ describe('MirrorDetailHeader Resume lock (spec 155 B2)', () => {
     expect(item.hasAttribute('disabled')).toBe(false);
   });
 });
+
+describe('MirrorDetailHeader followers last-updated (spec 162)', () => {
+  it('shows when the stored total was last updated once the worker stamped it', () => {
+    renderHeader(
+      mirror({
+        targetFollowers: 5000,
+        targetStartingFollowers: 4000,
+        followersUpdatedAt: '2026-11-10T12:00:00.000Z',
+      })
+    );
+    expect(screen.getByTestId('mirror-detail-followers')).toBeDefined();
+    expect(screen.getByTestId('mirror-detail-followers-updated').textContent).toContain(
+      'Updated 10 Nov 2026'
+    );
+  });
+
+  it('shows no Updated line before the first worker run (timestamp null)', () => {
+    renderHeader(
+      mirror({
+        targetFollowers: 5000,
+        targetStartingFollowers: 4000,
+        followersUpdatedAt: null,
+      })
+    );
+    expect(screen.getByTestId('mirror-detail-followers')).toBeDefined();
+    expect(screen.queryByTestId('mirror-detail-followers-updated')).toBeNull();
+  });
+});
