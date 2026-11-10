@@ -4,6 +4,8 @@ import { NextRequest } from 'next/server';
 
 import {
   approveRefund,
+} from '@/lib/billing/refunds';
+import {
   assertCanPost,
   assertFeatureAddWithinCap,
   assertPaidPlan,
@@ -61,6 +63,9 @@ const clientHolder = vi.hoisted(() => ({ client: null as unknown as SupabaseClie
 const couponMock = vi.hoisted(() => ({
   applyFailsOnce: false,
   applyHook: null as null | (() => Promise<unknown>),
+  // When true, computeDiscount returns the full amount due instead
+  // of the real (70%-capped) figure — see the W4 test for why.
+  fullCover: false,
 }));
 
 vi.mock('@/lib/route-auth', () => ({
@@ -116,6 +121,10 @@ vi.mock('@/lib/billing/coupons', async (importOriginal) => {
       }
       return actual.applyRedemption(...args);
     },
+    computeDiscount: (...args: Parameters<typeof actual.computeDiscount>) => {
+      if (couponMock.fullCover) return args[1];
+      return actual.computeDiscount(...args);
+    },
   };
 });
 
@@ -144,8 +153,12 @@ function periodRow(overrides: Row = {}): Row {
     x_count: 10,
     tiktok_count: 10,
     youtube_count: 10,
-    starts_at: '2026-06-01T00:00:00.000Z',
-    ends_at: '2026-07-01T00:00:00.000Z',
+    // Wide window on purpose: active at both the fake-clock dates
+    // (June 2026) and real time, so tests that do not set a clock
+    // still read a live period. Tests that need a specific window
+    // (W3's refund math) override starts_at/ends_at explicitly.
+    starts_at: '2020-01-01T00:00:00.000Z',
+    ends_at: '2099-01-01T00:00:00.000Z',
     superseded_at: null,
     ...overrides,
   };
@@ -595,6 +608,7 @@ beforeEach(() => {
   authState.userId = 'user-1';
   couponMock.applyFailsOnce = false;
   couponMock.applyHook = null;
+  couponMock.fullCover = false;
 });
 
 afterEach(() => {
@@ -850,7 +864,12 @@ describe('invalidation on each plan write (criterion 2)', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-06-03T00:00:00.000Z'));
     const state = baseState({
-      periods: [periodRow()],
+      // Explicit June window: the refund math counts days used
+      // from starts_at, so the wide default window would make the
+      // refund work out to 0 and approval would refuse.
+      periods: [
+        periodRow({ starts_at: '2026-06-01T00:00:00.000Z', ends_at: '2026-07-01T00:00:00.000Z' }),
+      ],
       refundRequests: [refundRow()],
     });
     const client = fakeClient(state);
@@ -866,10 +885,19 @@ describe('invalidation on each plan write (criterion 2)', () => {
   });
 
   it('W4: the zero-due orphan guard invalidates after superseding the just-created period', async () => {
+    // NOTE — the 70% coupon cap (owner decision 2026-11-02) makes
+    // the zero-due path unreachable through a real coupon: no coupon
+    // may cover the full amount, so the route refuses before any
+    // hold. The orphan-guard code still exists for the pre-cap world
+    // it was written for, and this spec requires its invalidation
+    // to be pinned — so the test overrides computeDiscount to full
+    // cover, reaching the guard exactly as a fully-covering coupon
+    // would have. The test pins the invalidation line, not the cap.
     const state = baseState({ coupons: [couponRow()] });
     const client = fakeClient(state);
     clientHolder.client = client;
     authState.role = 'user';
+    couponMock.fullCover = true;
     couponMock.applyFailsOnce = true;
     // A concurrent read on the same instance lands between the
     // period creation and the orphan-guard supersede: W1 already
@@ -906,10 +934,12 @@ describe('invalidation on each plan write (criterion 2)', () => {
     expect(state.rpcCalls).toBe(2);
 
     // The W4 invalidation means the next read re-reads (1 RPC) and
-    // sees the superseded period as no plan — without it, the read
-    // would be a stale paid hit at 0 RPCs.
+    // sees the superseded period as no live plan — expired, not
+    // free, because the superseded row is still a prior period.
+    // Without the W4 line, the read would be a stale paid hit at
+    // 0 RPCs.
     const after = await getEntitlementCached(client, 'user-1');
-    expect(after.plan).toBe('free');
+    expect(after.plan).toBe('expired');
     expect(state.rpcCalls).toBe(3);
   });
 
@@ -1019,9 +1049,10 @@ describe('cache error falls through to the live read (criterion 7)', () => {
       expect.anything(),
       { source: 'billing', userId: 'user-1' }
     );
-    // The corrupt entry is gone: the next read re-reads live again.
+    // The corrupt entry is gone and the fall-through miss stored a
+    // fresh one: the next read is a hit on the fresh entry.
     await expect(getEntitlementCached(client, 'user-1')).resolves.toMatchObject({ plan: 'paid' });
-    expect(state.rpcCalls).toBe(3);
+    expect(state.rpcCalls).toBe(2);
   });
 
   it('a clone failure on a miss deletes the entry and re-reads live', async () => {
