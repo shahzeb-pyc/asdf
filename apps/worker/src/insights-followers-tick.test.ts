@@ -14,13 +14,20 @@
  *   leaves the row byte-identical in all three stores.
  * - Facebook-only: an Instagram ADU config and a non-Facebook mirror
  *   are untouched, as are status-gated rows.
- * - The scan is bounded and paged (200 rows per page).
+ * - The scan is bounded and paged (200 rows per page, ordered by
+ *   id) — and an interleaved insert / updated_at churn between
+ *   pages skips and duplicates nothing.
  * - A 429 backs off exponentially (1s, then 2s) and retries.
+ * - fetchLiveFollowersFromGraph itself is unit-tested with a mock
+ *   fetch: URL/fields/token, non-2xx (429 included), malformed
+ *   bodies, and the abort timeout.
  */
 import { describe, expect, it } from 'vitest';
 import { encryptToken, InternalError } from '@fbuploadpro/contracts';
 import {
+  fetchLiveFollowersFromGraph,
   INSIGHTS_FOLLOWERS_PAGE_SIZE,
+  InsightsGraphError,
   runInsightsFollowersCycle,
 } from './insights-followers-tick.js';
 
@@ -37,6 +44,8 @@ interface FakeDb {
   mirrors: Row[];
   /** Every range() call the tick made (pins the bounded scan). */
   ranges: Array<{ table: string; from: number | null; to: number | null }>;
+  /** Every order() call the tick made (pins the stable scan order). */
+  orders: Array<{ table: string; column: string; ascending: boolean }>;
   /** Every update the tick applied (table + patch + matched rows). */
   updates: Array<{ table: string; patch: Row; count: number }>;
 }
@@ -45,6 +54,8 @@ class FakeBuilder {
   private filters: Array<(r: Row) => boolean> = [];
   private rangeFrom: number | null = null;
   private rangeTo: number | null = null;
+  private orderColumn: string | null = null;
+  private orderAscending = true;
   private updatePatch: Row | null = null;
   private updateCountExact = false;
 
@@ -59,6 +70,13 @@ class FakeBuilder {
 
   eq(col: string, val: unknown): this {
     this.filters.push((r) => r[col] === val);
+    return this;
+  }
+
+  order(column: string, opts?: { ascending?: boolean }): this {
+    this.orderColumn = column;
+    this.orderAscending = opts?.ascending ?? true;
+    this.db.orders.push({ table: this.table, column, ascending: this.orderAscending });
     return this;
   }
 
@@ -96,6 +114,19 @@ class FakeBuilder {
     }
     this.db.ranges.push({ table: this.table, from: this.rangeFrom, to: this.rangeTo });
     let matched = this.matched();
+    if (this.orderColumn !== null) {
+      const column = this.orderColumn;
+      const ascending = this.orderAscending;
+      matched = [...matched].sort((a, b) => {
+        const av = a[column];
+        const bv = b[column];
+        if (av === bv) return 0;
+        if (av === undefined || av === null) return 1;
+        if (bv === undefined || bv === null) return -1;
+        const cmp = String(av) < String(bv) ? -1 : 1;
+        return ascending ? cmp : -cmp;
+      });
+    }
     if (this.rangeFrom !== null && this.rangeTo !== null) {
       matched = matched.slice(this.rangeFrom, this.rangeTo + 1);
     }
@@ -104,7 +135,7 @@ class FakeBuilder {
 }
 
 function fakeDb(): FakeDb {
-  return { destinations: [], adu_configs: [], mirrors: [], ranges: [], updates: [] };
+  return { destinations: [], adu_configs: [], mirrors: [], ranges: [], orders: [], updates: [] };
 }
 
 function fakeClient(db: FakeDb): unknown {
@@ -381,7 +412,7 @@ describe('runInsightsFollowersCycle', () => {
     })).toBe(before);
   });
 
-  it('pages the scan in 200-row bounds', async () => {
+  it('pages the scan in 200-row bounds, ordered by id', async () => {
     const db = fakeDb();
     for (let i = 0; i < 201; i += 1) {
       await seedDestination(db, {
@@ -406,5 +437,143 @@ describe('runInsightsFollowersCycle', () => {
         to: 2 * INSIGHTS_FOLLOWERS_PAGE_SIZE - 1,
       },
     ]);
+    // Send-back fix: the scan must pin a stable order — offset paging
+    // with no order can silently skip rows, and the tick mutates
+    // destinations.updated_at mid-run. Every scan page orders by id.
+    expect(db.orders).toEqual([
+      { table: 'destinations', column: 'id', ascending: true },
+      { table: 'destinations', column: 'id', ascending: true },
+    ]);
+  });
+
+  it('an interleaved insert and updated_at churn between pages skips and duplicates nothing', async () => {
+    const db = fakeDb();
+    for (let i = 0; i < 201; i += 1) {
+      await seedDestination(db, {
+        id: `dest-${i}`,
+        external_destination_id: `fb-page-${i}`,
+      });
+    }
+    // Mid-run churn, once, on the first live check (while page 1 is
+    // being processed, before page 2 is fetched): a new page is
+    // imported (it sorts after every seeded id) and every stored
+    // row's updated_at moves — the same mutation the tick itself
+    // performs. With the scan ordered by id, neither can shift a
+    // page boundary: the new row lands in page 2 and every seeded
+    // row is still visited exactly once.
+    let churned = false;
+    const result = await runInsightsFollowersCycle({
+      db: fakeClient(db) as never,
+      masterKey: MASTER_KEY,
+      now: NOW,
+      fetchFollowers: async () => {
+        if (!churned) {
+          churned = true;
+          for (const row of db.destinations) row.updated_at = NOW_ISO;
+          await seedDestination(db, {
+            id: 'dest-zzz',
+            external_destination_id: 'fb-page-zzz',
+          });
+        }
+        return 5000;
+      },
+    });
+    expect(result.scanned).toBe(202);
+    expect(result.updated).toBe(202);
+    expect(db.updates.filter((u) => u.table === 'destinations').length).toBe(202);
+    // The interleaved row was picked up in this run, not next day's.
+    const inserted = db.destinations.find((r) => r.id === 'dest-zzz');
+    expect((inserted?.metadata as Row).current_followers).toBe(5000);
+  });
+});
+
+describe('fetchLiveFollowersFromGraph', () => {
+  /** Minimal Response stand-in: only what the reader touches. */
+  function mockResponse(status: number, body: unknown): Response {
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      json: async () => body,
+    } as Response;
+  }
+
+  it('reads the page id, followers_count field and encoded token from the URL, and truncates the count', async () => {
+    const seen: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const fetchImpl = async (url: string, init?: RequestInit) => {
+      seen.push({ url, init });
+      return mockResponse(200, { followers_count: 5000.9 });
+    };
+    const count = await fetchLiveFollowersFromGraph(
+      'fb-page-a',
+      'tok/en x&y',
+      fetchImpl as never
+    );
+    expect(count).toBe(5000);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.url).toBe(
+      'https://graph.facebook.com/v26.0/fb-page-a?fields=followers_count&access_token=tok%2Fen%20x%26y'
+    );
+    // The abort timeout is wired: the call carries a live signal.
+    expect(seen[0]?.init?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('a non-2xx response throws with its status (429 included)', async () => {
+    for (const status of [429, 500, 400]) {
+      const err = await fetchLiveFollowersFromGraph(
+        'fb-page-a',
+        'token',
+        (async () => mockResponse(status, { error: { message: 'nope' } })) as never
+      ).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(InsightsGraphError);
+      expect((err as InsightsGraphError).status).toBe(status);
+      expect((err as Error).message).toContain(`HTTP ${status}`);
+    }
+  });
+
+  it('a missing, non-number, negative or non-finite followers_count throws without a status', async () => {
+    for (const body of [
+      null,
+      {},
+      { followers_count: '5000' },
+      { followers_count: -1 },
+      { followers_count: Number.NaN },
+    ]) {
+      const err = await fetchLiveFollowersFromGraph(
+        'fb-page-a',
+        'token',
+        (async () => mockResponse(200, body)) as never
+      ).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(InsightsGraphError);
+      expect((err as InsightsGraphError).status).toBeUndefined();
+    }
+  });
+
+  it('a fetch rejection throws without a status', async () => {
+    const err = await fetchLiveFollowersFromGraph(
+      'fb-page-a',
+      'token',
+      (async () => {
+        throw new Error('network down');
+      }) as never
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(InsightsGraphError);
+    expect((err as InsightsGraphError).status).toBeUndefined();
+    expect((err as Error).message).toContain('network down');
+  });
+
+  it('the abort timeout fires when Graph never answers', async () => {
+    const err = await fetchLiveFollowersFromGraph(
+      'fb-page-a',
+      'token',
+      ((_url: string, init?: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('The operation was aborted.', 'AbortError'));
+          });
+        })) as never,
+      5
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(InsightsGraphError);
+    expect((err as InsightsGraphError).status).toBeUndefined();
   });
 });

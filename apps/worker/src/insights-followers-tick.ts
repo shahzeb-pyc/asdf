@@ -31,7 +31,8 @@ import { decryptToken, InternalError } from '@fbuploadpro/contracts';
  * and mirrors are never touched.
  *
  * The scan is bounded and paged (200 rows per page, PostgREST
- * .range()); per-page Graph calls run at a small concurrency (5)
+ * .range(), ordered by id so page boundaries are stable even
+ * though the tick mutates destinations.updated_at mid-run); per-page Graph calls run at a small concurrency (5)
  * with exponential backoff on 429. A scan-level DB error throws
  * (fail loud — the cron invocation reports it, tomorrow retries).
  * No per-run rows are stored, so there is no retention problem.
@@ -215,6 +216,12 @@ async function listDestinationPage(
       'id, external_destination_id, encrypted_destination_token, status, metadata'
     )
     .eq('platform', 'facebook')
+    // Spec 162 (send-back fix): offset paging WITHOUT a stable order
+    // can silently skip rows — PostgREST returns rows in no
+    // guaranteed order, and this tick mutates destinations.updated_at
+    // mid-run, which can shift the order between page fetches. Order
+    // by the immutable id so every page boundary is stable.
+    .order('id', { ascending: true })
     .range(offset, offset + INSIGHTS_FOLLOWERS_PAGE_SIZE - 1);
   if (error) {
     throw new InternalError(
