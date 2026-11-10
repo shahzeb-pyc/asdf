@@ -18,7 +18,7 @@
  * - A 429 backs off exponentially (1s, then 2s) and retries.
  */
 import { describe, expect, it } from 'vitest';
-import { encryptToken } from '@fbuploadpro/contracts';
+import { encryptToken, InternalError } from '@fbuploadpro/contracts';
 import {
   INSIGHTS_FOLLOWERS_PAGE_SIZE,
   runInsightsFollowersCycle,
@@ -237,7 +237,7 @@ describe('runInsightsFollowersCycle', () => {
       masterKey: MASTER_KEY,
       now: NOW,
       fetchFollowers: async () => {
-        throw new Error('Graph checkpoint');
+        throw new InternalError('Graph checkpoint');
       },
     });
     expect(result.failed).toBe(1);

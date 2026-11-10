@@ -284,7 +284,7 @@ async function processDestination(
       .update({ metadata: nextMetadata, updated_at: nowIso })
       .eq('id', dest.id);
     if (destError) {
-      throw new Error(`destinations update failed: ${dbErrorDetail(destError)}`);
+      throw new InternalError(`destinations update failed: ${dbErrorDetail(destError)}`);
     }
 
     const { error: aduError, count: aduCount } = await supabase
@@ -296,7 +296,7 @@ async function processDestination(
       .eq('destination_id', dest.id)
       .eq('status', 'active');
     if (aduError) {
-      throw new Error(`adu_configs update failed: ${dbErrorDetail(aduError)}`);
+      throw new InternalError(`adu_configs update failed: ${dbErrorDetail(aduError)}`);
     }
     // The count is informational only — the row write itself is what
     // matters, and a null count is never treated as a failure.
@@ -308,7 +308,7 @@ async function processDestination(
       .eq('target_platform', 'facebook')
       .eq('target_external_id', fbPageId);
     if (mirrorError) {
-      throw new Error(`mirrors scan failed: ${dbErrorDetail(mirrorError)}`);
+      throw new InternalError(`mirrors scan failed: ${dbErrorDetail(mirrorError)}`);
     }
     let mirrorsUpdated = 0;
     for (const mirror of (mirrorRows ?? []) as MirrorScanRow[]) {
@@ -334,7 +334,7 @@ async function processDestination(
         .update(patch)
         .eq('id', mirror.id);
       if (mirrorUpdateError) {
-        throw new Error(
+        throw new InternalError(
           `mirrors update failed: ${dbErrorDetail(mirrorUpdateError)}`
         );
       }
