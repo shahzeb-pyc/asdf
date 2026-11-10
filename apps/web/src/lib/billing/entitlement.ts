@@ -912,11 +912,17 @@ function enforceEntitlementCacheBound(
 }
 
 function isValidCachedEntitlement(entitlement: Entitlement, userId: string): boolean {
-  if (entitlement.plan !== 'free' && entitlement.plan !== 'paid' && entitlement.plan !== 'expired') {
+  // Read through `unknown` on purpose: the whole point of this
+  // check is that a stored entry may not match its declared type
+  // (a corrupt or wrong-user entry), so a typed comparison would
+  // be — correctly, from the type's point of view — always true.
+  const raw = entitlement as unknown as Record<string, unknown>;
+  const plan = raw['plan'];
+  if (plan !== 'free' && plan !== 'paid' && plan !== 'expired') {
     return false;
   }
-  if (!entitlement.counts || typeof entitlement.counts !== 'object') return false;
-  if (!entitlement.usage || typeof entitlement.usage !== 'object') return false;
+  if (!raw['counts'] || typeof raw['counts'] !== 'object') return false;
+  if (!raw['usage'] || typeof raw['usage'] !== 'object') return false;
   if (entitlement.period && entitlement.period.userId !== userId) return false;
   return true;
 }
