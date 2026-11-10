@@ -13,6 +13,7 @@ import {
 import { logServerError } from '@/lib/server-analytics';
 import {
   getActivePeriod,
+  invalidateEntitlementCache,
   paymentFromRow,
   periodFromRow,
   SubscriptionGateError,
@@ -486,6 +487,11 @@ export async function approveRefund(
     .eq('id', period.id)
     .is('superseded_at', null);
   if (cancelError) failClosed(cancelError, 'refund period cancel failed');
+  // Plan-check S1 (W3): the plan drops to Free immediately on
+  // approval — the highest-value invalidation in the list. Without
+  // it, a refunded user keeps reading Paid display for up to 30 s.
+  // Best-effort per instance; the 30 s TTL is the guarantee.
+  invalidateEntitlementCache(client, period.userId);
 
   const { data, error } = await client
     .from('refund_requests')

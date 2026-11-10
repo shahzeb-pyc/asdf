@@ -5,6 +5,7 @@ import { logServerError } from '@/lib/server-analytics';
 import { readJsonBody } from '@/lib/request-body';
 import {
   approvePayment,
+  invalidateEntitlementCache,
   rejectPayment,
   SubscriptionGateError,
 } from '@/lib/billing/entitlement';
@@ -132,6 +133,14 @@ export async function POST(
     const { payment, period } = await approvePayment(client, paymentId, auth.session.userId, new Date(), {
       overrideReason,
     });
+    // Plan-check S1 (W2): approvePayment is called from exactly one
+    // production site (this route), so the route is the right layer
+    // for the invalidation createPeriodForPurchase (W1) does not
+    // cover: the schedule-only approval (no period created yet),
+    // the idempotent re-approve (no new period), and the lost-link
+    // race orphan supersede inside approvePayment. Best-effort per
+    // instance; the 30 s TTL is the guarantee.
+    invalidateEntitlementCache(client, payment.userId);
     // A scheduled downgrade has no period yet (option A): the
     // schedule lives on the payment and the period is created
     // when it goes live. Returning a period here would be a lie.

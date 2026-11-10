@@ -817,6 +817,233 @@ export async function getEntitlement(
 }
 
 /**
+ * Plan-check S1 — short server-side cache of the entitlement (30 s TTL).
+ *
+ * TTL — SETTLED BY THE OWNER: 30 seconds (`ENTITLEMENT_CACHE_TTL_MS`).
+ * Changing the TTL is changing that one constant; no invalidation
+ * logic, no test, and no call site depends on the value.
+ *
+ * Shape: a module-level in-memory map, one entry per user, per
+ * function instance. A hit costs zero database round trips; a miss
+ * costs exactly what a read costs today (the wrapper calls the raw
+ * read directly), so the change can only help or be neutral on
+ * latency. There is no sweep timer (unreliable on serverless); an
+ * expired entry is deleted lazily on access.
+ *
+ * SCOPE — display reads ONLY. The only caller of `getEntitlementCached`
+ * is `getCachedEntitlement` below (layout seed + Home loader, both in
+ * the RSC tree). Every enforcement read — cap gates
+ * (`assertCanPost`, `registerUsage`, `assertFeatureAddWithinCap`),
+ * `assertPaidPlan`, and every route handler that re-fetches as a
+ * "something changed" signal (`GET /billing/entitlement`,
+ * `GET /billing`) — stays on the raw `getEntitlement` and must never
+ * be pointed at this wrapper. No enforcement decision anywhere reads
+ * a cached answer.
+ *
+ * STALENESS — the honest bound. Cross-instance invalidation does not
+ * exist: Vercel runs many serverless instances, each holding its own
+ * map, and a write invalidates only the writing instance's entry
+ * (see `invalidateEntitlementCache` call sites). The 30 s TTL is the
+ * whole staleness bound — any entry, on any instance, may serve an
+ * answer up to 30 s old. A just-paid user can see Free UI for up to
+ * 30 s; a just-refunded user can see Paid UI for up to 30 s. Neither
+ * can be wrongly blocked or wrongly let through by a gate, because
+ * no gate reads the cache.
+ *
+ * FAIL-CLOSED. Errors are never cached and never converted. A hit is
+ * validated before it is served (plan enum, counts/usage present,
+ * `period.userId === userId`); an invalid entry is deleted, logged
+ * loudly, and treated as a miss. A clone failure is a miss. Any
+ * cache-internal throw falls through to the raw read — the only
+ * throws a caller ever sees from `getEntitlementCached` are the raw
+ * read's own throws.
+ */
+export const ENTITLEMENT_CACHE_TTL_MS = 30_000;
+
+/** Memory guard, not a correctness feature: ~5 MB worst case. */
+const ENTITLEMENT_CACHE_MAX_ENTRIES = 5_000;
+
+interface EntitlementCacheEntry {
+  /** The answer as computed on a miss. Cloned on every hit — never handed out by reference. */
+  entitlement?: Entitlement;
+  /** Wall-clock ms when the raw read resolved. */
+  storedAtMs?: number;
+  /** In-flight raw read, so concurrent misses share one RPC. Deleted on settle. */
+  pending?: Promise<Entitlement>;
+}
+
+/**
+ * Two-level key, mirroring the (client, userId) key the React cache
+ * already pins: the outer `WeakMap` exists so a different client
+ * instance (a test fake, a future second client) can never share
+ * entries with the admin singleton. Never key by anything the
+ * client sends — the user id always comes from the verified session.
+ */
+const entitlementCache = new WeakMap<SupabaseClient, Map<string, EntitlementCacheEntry>>();
+
+function entitlementCacheMapFor(client: SupabaseClient): Map<string, EntitlementCacheEntry> {
+  let map = entitlementCache.get(client);
+  if (!map) {
+    map = new Map<string, EntitlementCacheEntry>();
+    entitlementCache.set(client, map);
+  }
+  return map;
+}
+
+function enforceEntitlementCacheBound(
+  map: Map<string, EntitlementCacheEntry>,
+  keepUserId: string
+): void {
+  while (map.size > ENTITLEMENT_CACHE_MAX_ENTRIES) {
+    const oldestKey = map.keys().next().value as string | undefined;
+    if (oldestKey === undefined) return;
+    if (oldestKey === keepUserId) {
+      // The entry just written for this user is the oldest only if
+      // the key was already present (Map.set keeps insertion order);
+      // evict the next-oldest instead of the entry just stored.
+      const keys = [...map.keys()];
+      const nextOldest = keys.find((key) => key !== keepUserId);
+      if (!nextOldest) return;
+      map.delete(nextOldest);
+    } else {
+      map.delete(oldestKey);
+    }
+  }
+}
+
+function isValidCachedEntitlement(entitlement: Entitlement, userId: string): boolean {
+  if (entitlement.plan !== 'free' && entitlement.plan !== 'paid' && entitlement.plan !== 'expired') {
+    return false;
+  }
+  if (!entitlement.counts || typeof entitlement.counts !== 'object') return false;
+  if (!entitlement.usage || typeof entitlement.usage !== 'object') return false;
+  if (entitlement.period && entitlement.period.userId !== userId) return false;
+  return true;
+}
+
+/**
+ * Display-read wrapper above the raw `getEntitlement`: same answer,
+ * shared for 30 s per (client, userId). Takes no `now` parameter —
+ * like `getCachedEntitlement`, it creates the timestamp once per
+ * miss inside the raw read, so the cached answer's `now` is the miss
+ * time. Errors are never cached: a miss that fails is a miss again
+ * next time, and the throw propagates exactly as today.
+ */
+export async function getEntitlementCached(
+  client: SupabaseClient,
+  userId: string
+): Promise<Entitlement> {
+  let map: Map<string, EntitlementCacheEntry>;
+  try {
+    map = entitlementCacheMapFor(client);
+  } catch (err) {
+    // The cache must be physically incapable of taking down a page
+    // load that would have succeeded without it.
+    logServerError('[billing] entitlement cache unavailable, falling through to live read', err, {
+      source: 'billing',
+    });
+    return getEntitlement(client, userId);
+  }
+  const entry = map.get(userId);
+  if (entry?.pending) {
+    // A miss for this user is already in flight: share its single
+    // RPC. The raw read's own error propagates to every waiter.
+    // Each waiter clones, so no caller can mutate another's answer.
+    const shared = await entry.pending;
+    try {
+      return structuredClone(shared);
+    } catch (err) {
+      logServerError('[billing] cached entitlement clone failed, re-reading live', err, {
+        source: 'billing',
+        userId,
+      });
+      map.delete(userId);
+      return getEntitlement(client, userId);
+    }
+  }
+  if (entry?.entitlement !== undefined && entry.storedAtMs !== undefined) {
+    if (Date.now() - entry.storedAtMs < ENTITLEMENT_CACHE_TTL_MS) {
+      if (isValidCachedEntitlement(entry.entitlement, userId)) {
+        try {
+          return structuredClone(entry.entitlement);
+        } catch (err) {
+          logServerError('[billing] cached entitlement clone failed, re-reading live', err, {
+            source: 'billing',
+            userId,
+          });
+          map.delete(userId);
+          // Fall through to the miss path below.
+        }
+      } else {
+        // A wrong-user or malformed entry can never be served.
+        map.delete(userId);
+        logServerError('[billing] cached entitlement failed validation, treating as miss', null, {
+          source: 'billing',
+          userId,
+        });
+        // Fall through to the miss path below.
+      }
+    } else {
+      // Lazy expiry: no sweep timer on serverless.
+      map.delete(userId);
+    }
+  }
+  // Miss: store the pending promise BEFORE awaiting, so concurrent
+  // callers for the same user dedup onto this one raw read. The
+  // check-then-set above runs synchronously (no await between the
+  // get and this set), so two misses cannot both start a read.
+  const pending = getEntitlement(client, userId);
+  const freshEntry: EntitlementCacheEntry = { pending };
+  map.set(userId, freshEntry);
+  enforceEntitlementCacheBound(map, userId);
+  let fresh: Entitlement;
+  try {
+    fresh = await pending;
+  } catch (err) {
+    // Never cached: delete the entry so the next read retries, and
+    // propagate the raw read's own error to every waiter.
+    if (map.get(userId) === freshEntry) map.delete(userId);
+    throw err;
+  }
+  // The answer is in: keep it, drop the promise. If another write
+  // replaced this entry while the read was in flight (an
+  // invalidation), leave that entry alone.
+  if (map.get(userId) === freshEntry) {
+    freshEntry.entitlement = fresh;
+    freshEntry.storedAtMs = Date.now();
+    delete freshEntry.pending;
+    enforceEntitlementCacheBound(map, userId);
+  }
+  try {
+    return structuredClone(fresh);
+  } catch (err) {
+    logServerError('[billing] cached entitlement clone failed, re-reading live', err, {
+      source: 'billing',
+      userId,
+    });
+    if (map.get(userId) === freshEntry) map.delete(userId);
+    return getEntitlement(client, userId);
+  }
+}
+
+/**
+ * Best-effort, per-instance invalidation for a plan write: deletes
+ * the entry for (client, userId) on the instance that performed the
+ * write. Performs no I/O, touches no database, and NEVER throws —
+ * safe to call from every write path including error-handling paths.
+ * It is not the staleness guarantee: the 30 s TTL is. A write on
+ * another instance (or by the worker, or by direct SQL) leaves other
+ * instances' entries untouched until they expire.
+ */
+export function invalidateEntitlementCache(client: SupabaseClient, userId: string): void {
+  try {
+    entitlementCache.get(client)?.delete(userId);
+  } catch {
+    // Best-effort by design: invalidation must never break a write.
+  }
+}
+
+/**
  * Plan-check R1 — request-scoped shared entitlement read, for the
  * React Server Component tree ONLY.
  *
@@ -840,16 +1067,27 @@ export async function getEntitlement(
  * react-server build's cache() memoizes only when the cache
  * dispatcher is set, and that dispatcher is installed by the React
  * Server renderer during a render pass, which route handlers never
- * run. In a route handler this function is a passthrough to the
- * raw read: same cost, no dedup. So route handlers MUST NOT rely
- * on it — they share a read only through explicit plumbing (the
- * route reads once and passes the result in as
- * `sharedEntitlement`, R3). C1 first tried widening this to every
- * route handler and was sent back on exactly this point; the
- * rework reverted every route-handler switch to the raw read and
- * delivered the remaining win (Threads ADU bulk/single) through
- * plumbing instead. Only the layout seed and the Home loader —
- * both in the RSC tree, where the dispatcher exists — use this.
+ * run. In a route handler this function is NOT a passthrough to the
+ * raw read: plan-check S1 layers a cross-request in-memory TTL
+ * cache underneath it (`getEntitlementCached`, 30 s), so a route
+ * handler calling this would read an answer up to 30 s stale
+ * instead of a fresh one. So route handlers MUST NOT rely on it —
+ * they share a read only through explicit plumbing (the route reads
+ * once and passes the result in as `sharedEntitlement`, R3). C1
+ * first tried widening this to every route handler and was sent
+ * back on exactly this point; the rework reverted every
+ * route-handler switch to the raw read and delivered the remaining
+ * win (Threads ADU bulk/single) through plumbing instead. Only the
+ * layout seed and the Home loader — both in the RSC tree, where the
+ * dispatcher exists — use this.
+ *
+ * LAYERING after S1: RSC request → React `cache()` (per-request
+ * dedup, `now` normalisation) → TTL map (cross-request dedup, 30 s)
+ * → raw RPC read. The React layer is now redundant as a dedup
+ * mechanism, but it is KEPT, not deleted: its tests pin the C1 hard
+ * rule (write-then-read must be raw — see below), its call sites
+ * are the only ones in the RSC tree, and deleting it would churn
+ * the C1 safety case for zero benefit.
  *
  * THE HARD RULE — a cached read has no invalidation, so a read AFTER
  * a subscription-table write (`subscription_periods`,
@@ -876,7 +1114,10 @@ export async function getEntitlement(
  */
 export const getCachedEntitlement = cache(
   async (client: SupabaseClient, userId: string): Promise<Entitlement> => {
-    return getEntitlement(client, userId);
+    // Plan-check S1: display reads share one answer for 30 s per
+    // serverless instance (see getEntitlementCached). Gates and
+    // route handlers must never call this — they read raw.
+    return getEntitlementCached(client, userId);
   },
 );
 
@@ -1243,6 +1484,10 @@ export async function registerUsage(
             'Your plan could not be checked right now. Please try again.'
           );
         }
+        // Plan-check S1 (W5, best-effort): the legacy row is gone and a
+        // capped row is in its place, so the cached usage counts lag
+        // by one until the next invalidation or TTL expiry.
+        invalidateEntitlementCache(client, userId);
         return {
           alreadyUsed: false,
           usedCount: await getUsageCount(client, userId, platform),
@@ -1261,6 +1506,10 @@ export async function registerUsage(
       'Your plan could not be checked right now. Please try again.'
     );
   }
+  // Plan-check S1 (W5, best-effort display freshness — not
+  // load-bearing): the gates read raw, so this only freshens the
+  // next page load's display counts a little sooner.
+  invalidateEntitlementCache(client, userId);
   // R5b, clean-insert path only: the count after this insert is
   // the pre-insert fresh count (see the re-check above) plus the
   // row just added — no re-count needed. The base is the fresh
@@ -1321,7 +1570,11 @@ export async function releaseUsageForFeature(
       'Your plan could not be checked right now. Please try again.'
     );
   }
-  return Array.isArray(data) && data.length > 0;
+  const released = Array.isArray(data) && data.length > 0;
+  // Plan-check S1 (W5, best-effort): only when a row was actually
+  // released — no row deleted means the counts did not change.
+  if (released) invalidateEntitlementCache(client, userId);
+  return released;
 }
 
 
@@ -1518,6 +1771,12 @@ export async function createPeriodForPurchase(
       });
     }
   }
+  // Plan-check S1 (W1): every period creation in the web app funnels
+  // through this one primitive, so one invalidation here covers the
+  // approve path, createPeriodForPayment, zero-due activation, and
+  // downgrade activation inside the read path. Best-effort per
+  // instance; the 30 s TTL is the guarantee.
+  invalidateEntitlementCache(client, args.userId);
   return period;
 }
 
